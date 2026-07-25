@@ -215,16 +215,21 @@ the two callbacks; rows stay UI-focused (INV-15). The label page sets neither
 → the actions hide there (the same field-one-side-sets gate as
 `conversationId`).
 
-### Card unread derivation (v1 scope decision)
+### Card unread derivation
 
 Per spanned stream, a member message is unread iff it's past that stream's
-read frontier and not in the overlay. Frontiers: the root and member-threads
-by watermark sequence; **non-member thread legs fall back to the root
-watermark's `last_read_at` timestamp** (no row → no sequence frontier; the
-time fallback bounds false-quiet without a wall of false-unread on ship day).
-Documented approximation — a principled thread frontier is a follow-up. The
-board card rail must retain `sequence` on its rows (`eventToRenderable`
-currently drops it).
+read frontier and not in the overlay. Every leg — root, member-thread, and
+non-member thread leg alike — resolves through its OWN effective frontier
+(standalone `stream_read_state` row wins when present, membership mirror
+fills an absent row during the rollout). Non-member legs get theirs lazily:
+the per-stream bootstrap carries the viewer's standalone frontier and the
+client persists it on open (a confirmed-absent row seeds a never-read
+sentinel — for a non-member, "no row" IS "before the first message"). A leg
+with no frontier yet is ungated, not approximated: the v1 root
+`last_read_at` time fallback was removed with the non-member unlock (read
+state re-homed off `stream_members`) — a card only renders rows from streams
+whose bootstrap ran, so rendered legs resolve. The board card rail must
+retain `sequence` on its rows (`eventToRenderable` currently drops it).
 
 The stable-view "N new" pill (`use-stable-board-view`) is ordering-buffer
 state and stays fully independent of read state.
@@ -301,7 +306,7 @@ newestSeenRow)` per conversation; the gate re-checks effective unread at
   or overlay ids removed without a compensating watermark advance, exposing
   a row the surface shows. Never derived row state: derivation flaps (the
   `unreadCounts === 0` short-circuit falling back to a stale frontier when a
-  count leaves zero, the stale-`lastReadAt` time fallback) read as mass
+  count leaves zero, the timestamp fallback for sequenceless rows) read as mass
   read → unread regressions, and a false pin on a static board card never
   releases — that wedge was the first dogfood failure. Pinning unsees
   everything and suppresses **every eligible row** — not just the
@@ -325,5 +330,6 @@ newestSeenRow)` per conversation; the gate re-checks effective unread at
   stream path).
 - Offline queueing for read actions (existing read mutations are not queued;
   the new ones match — parity, not a regression).
-- A principled read frontier for non-member threads (v1 uses the root
-  `last_read_at` time fallback on cards).
+- A principled read frontier for non-member threads — delivered with the
+  read-state re-home: legs carry their own standalone frontier (v1 used the
+  root `last_read_at` time fallback on cards).

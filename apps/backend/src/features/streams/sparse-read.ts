@@ -39,13 +39,14 @@ async function resolveWatermarkSequence(db: Querier, streamId: string, eventId: 
 }
 
 /**
- * The member's effective watermark seed (read cutover): a `stream_read_state`
- * row wins whenever it exists — including a row whose watermark is NULL
- * (explicit unread-to-zero) — and the locked membership row fills only an
- * absent read-state row. Returns null for a non-member leg: those stay
- * overlay-only in this chunk (non-member compaction lands with the PR-3
- * unlock). Membership is still locked/required for the compaction and regress
- * writes below; this only changes which value seeds them.
+ * The viewer's effective watermark seed (read cutover + non-member unlock): a
+ * `stream_read_state` row wins whenever it exists — including a row whose
+ * watermark is NULL (explicit unread-to-zero) — and the locked membership row
+ * fills only an absent read-state row. A non-member leg (no membership row)
+ * seeds from its standalone row, which is ensured + locked FOR UPDATE here:
+ * members are serialized by the locked `stream_members` row, so the read-state
+ * row is the non-member leg's equivalent single-row lock (INV-20). Never
+ * creates a membership row — read state is not a membership surface (INV-62).
  */
 async function effectiveWatermarkSeed(
   db: Querier,
@@ -53,9 +54,12 @@ async function effectiveWatermarkSeed(
   memberId: string,
   membership: { lastReadEventId: string | null } | null
 ): Promise<string | null> {
-  if (!membership) return null
-  const readState = await ReadStateRepository.get(db, streamId, memberId)
-  return readState ? readState.lastReadEventId : membership.lastReadEventId
+  if (membership) {
+    const readState = await ReadStateRepository.get(db, streamId, memberId)
+    return readState ? readState.lastReadEventId : membership.lastReadEventId
+  }
+  const readState = await ReadStateRepository.ensureForUpdate(db, streamId, memberId)
+  return readState ? readState.lastReadEventId : null
 }
 
 async function ordinalFor(db: Querier, streamId: string, sequence: bigint): Promise<number> {
@@ -64,10 +68,13 @@ async function ordinalFor(db: Querier, streamId: string, sequence: bigint): Prom
 
 /**
  * Apply a conversation "mark read" to one stream: lock the membership row if it
- * exists, insert the overlay rows, compact the contiguous run above the watermark
- * into the watermark (pruning absorbed rows), and emit `stream:read_messages` with
- * the absolute snapshot — all on the caller's transaction (INV-6/7). A non-member
- * thread leg (no membership row) is overlay-only: no watermark, no compaction.
+ * exists (else the standalone read-state row — non-member legs are no longer
+ * overlay-only), insert the overlay rows, compact the contiguous run above the
+ * watermark into the watermark (pruning absorbed rows), and emit
+ * `stream:read_messages` with the absolute snapshot — all on the caller's
+ * transaction (INV-6/7). The compaction advance is monotonic in the standalone
+ * store for every viewer; the membership write stays compatibility-only and
+ * fires only when the row exists — it is NEVER upserted (INV-62).
  * Returns the post-write snapshot.
  */
 export async function applySparseRead(db: Querier, params: ApplySparseReadParams): Promise<ReadStateSnapshot> {
@@ -93,21 +100,22 @@ export async function applySparseRead(db: Querier, params: ApplySparseReadParams
     await SparseReadRepository.pruneAtOrBelow(db, streamId, memberId, watermarkSeq)
   }
 
+  const seedEventId = watermarkEventId
+  const target = await SparseReadRepository.findCompactionTarget(db, streamId, memberId, watermarkSeq)
+  if (target) {
+    watermarkEventId = target.eventId
+    watermarkSeq = target.sequence
+  }
+  // The tide also rises over sunken rocks: a trailing run of DELETED messages
+  // just above the (possibly compacted) watermark can never be read by anyone,
+  // so absorb it too — otherwise agent-deleted transients above the watermark
+  // stall it forever and the stream can never fully read from the board.
+  const deletedRun = await SparseReadRepository.findTrailingDeletedRunEnd(db, streamId, watermarkSeq)
+  if (deletedRun) {
+    watermarkEventId = deletedRun.eventId
+    watermarkSeq = deletedRun.sequence
+  }
   if (membership) {
-    const target = await SparseReadRepository.findCompactionTarget(db, streamId, memberId, watermarkSeq)
-    if (target) {
-      watermarkEventId = target.eventId
-      watermarkSeq = target.sequence
-    }
-    // The tide also rises over sunken rocks: a trailing run of DELETED messages
-    // just above the (possibly compacted) watermark can never be read by anyone,
-    // so absorb it too — otherwise agent-deleted transients above the watermark
-    // stall it forever and the stream can never fully read from the board.
-    const deletedRun = await SparseReadRepository.findTrailingDeletedRunEnd(db, streamId, watermarkSeq)
-    if (deletedRun) {
-      watermarkEventId = deletedRun.eventId
-      watermarkSeq = deletedRun.sequence
-    }
     if (watermarkEventId !== (membership.lastReadEventId ?? null)) {
       // Also fires when the read-state seed already sat above a regressed
       // membership row: the write converges membership UPWARD to the effective
@@ -120,6 +128,13 @@ export async function applySparseRead(db: Querier, params: ApplySparseReadParams
       }
       await SparseReadRepository.pruneAtOrBelow(db, streamId, memberId, watermarkSeq)
     }
+  } else if (watermarkEventId !== seedEventId) {
+    // Non-member leg: the compaction lands in the standalone store only (locked
+    // by the seed above) — membership is participation, never upserted on read.
+    if (watermarkEventId) {
+      await ReadStateRepository.advance(db, streamId, memberId, watermarkEventId)
+    }
+    await SparseReadRepository.pruneAtOrBelow(db, streamId, memberId, watermarkSeq)
   }
 
   const lastReadOrdinal = await ordinalFor(db, streamId, watermarkSeq)
@@ -153,9 +168,11 @@ export async function applySparseRead(db: Querier, params: ApplySparseReadParams
  * from the overlay, and — only when the watermark sits at/past the earliest
  * affected message — regress it to just before that message (existing
  * `stream:read_set` semantics, accepting collateral un-reading of interleaved
- * messages). When the watermark is already behind the affected run, or there's no
- * membership row (thread leg), the overlay delete alone suffices and the absolute
- * `stream:read_messages` snapshot is emitted. Returns the post-write snapshot.
+ * messages). The regress writes the standalone store for every viewer (one of
+ * the sanctioned downward moves) and the membership column only when the row
+ * exists. When the watermark is already behind the affected run, the overlay
+ * delete alone suffices and the absolute `stream:read_messages` snapshot is
+ * emitted. Returns the post-write snapshot.
  */
 export async function applySparseUnread(db: Querier, params: ApplySparseReadParams): Promise<ReadStateSnapshot> {
   const { workspaceId, streamId, memberId, messageIds } = params
@@ -168,12 +185,14 @@ export async function applySparseUnread(db: Querier, params: ApplySparseReadPara
   const watermarkEventId = await effectiveWatermarkSeed(db, streamId, memberId, membership)
   const watermarkSeq = await resolveWatermarkSequence(db, streamId, watermarkEventId)
 
-  if (membership && earliest && watermarkSeq >= earliest.sequence) {
+  if (earliest && watermarkSeq >= earliest.sequence) {
     const previous = await StreamEventRepository.findPreviousMessageEvent(db, streamId, earliest.sequence)
     const newWatermarkEventId = previous?.id ?? null
     const newWatermarkSeq = previous?.sequence ?? 0n
-    await StreamMemberRepository.update(db, streamId, memberId, { lastReadEventId: newWatermarkEventId })
-    // Shadow the regress into stream_read_state (unconditional; may be null — same tx).
+    if (membership) {
+      await StreamMemberRepository.update(db, streamId, memberId, { lastReadEventId: newWatermarkEventId })
+    }
+    // The regress lands in stream_read_state unconditionally (may be null — same tx).
     await ReadStateRepository.set(db, streamId, memberId, newWatermarkEventId)
 
     const lastReadOrdinal = await ordinalFor(db, streamId, newWatermarkSeq)

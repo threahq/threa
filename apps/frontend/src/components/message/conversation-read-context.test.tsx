@@ -1,8 +1,9 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
-import { renderHook, waitFor } from "@testing-library/react"
+import { act, renderHook, waitFor } from "@testing-library/react"
 import { createElement, type ReactNode } from "react"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { ServicesProvider, type ConversationService } from "@/contexts"
+import type { ReadStateSnapshot } from "@/hooks/use-unread-counts"
 // eslint-disable-next-line no-restricted-imports -- test seeds IDB directly to drive the real store-hook read path
 import { clearAllCachedData, db } from "@/db"
 import type { RenderableMessage } from "@/components/message/message-item"
@@ -120,14 +121,57 @@ describe("useConversationReadController", () => {
     expect(result.current.hasUnread([msg({ id: "m_reply", sequence: "5" })])).toBe(false)
   })
 
-  it("falls back to the root read-through time for a non-member thread leg", async () => {
+  it("a non-member thread leg resolves through its OWN standalone frontier (lazy-persisted read-state row)", async () => {
+    await seedReadState()
+    // The leg's standalone frontier (persisted by the per-stream bootstrap on
+    // open) — watermark at sequence 2. No membership row exists for the leg.
+    await db.streamReadState.put({
+      id: `${WS}:${THREAD}`,
+      workspaceId: WS,
+      streamId: THREAD,
+      lastReadEventId: "evt_t2",
+      lastReadSequence: "2",
+      lastReadAt: "2026-06-22T12:00:00.000Z",
+      _cachedAt: Date.now(),
+    })
+    const { result } = renderHook(() => useConversationReadController(WS, CONV, ROOT, ME), { wrapper: wrapper() })
+
+    await waitFor(() =>
+      expect(result.current.value.state(THREAD, "t_new", "5", "2026-06-22T13:00:00.000Z")).toBe("unread")
+    )
+    expect(result.current.value.state(THREAD, "t_old", "1", "2026-06-22T11:00:00.000Z")).toBe("read")
+  })
+
+  it("a resolved never-read leg (null-watermark sentinel) reads every sequenced row as unread", async () => {
+    await seedReadState()
+    await db.streamReadState.put({
+      id: `${WS}:${THREAD}`,
+      workspaceId: WS,
+      streamId: THREAD,
+      lastReadEventId: null,
+      lastReadSequence: null,
+      lastReadAt: null,
+      _cachedAt: Date.now(),
+    })
+    const { result } = renderHook(() => useConversationReadController(WS, CONV, ROOT, ME), { wrapper: wrapper() })
+
+    // Frontier before the first message: any sequenced row sits above it.
+    await waitFor(() =>
+      expect(result.current.value.state(THREAD, "t_first", "1", "2026-06-22T11:00:00.000Z")).toBe("unread")
+    )
+    expect(result.current.hasUnread([msg({ id: "t_first", streamId: THREAD, sequence: "1" })])).toBe(true)
+  })
+
+  it("an unresolved leg is ungated — the root last_read_at approximation is gone", async () => {
     await seedReadState()
     const { result } = renderHook(() => useConversationReadController(WS, CONV, ROOT, ME), { wrapper: wrapper() })
-    // A thread with no membership row: compare createdAt to the root's lastReadAt (T0).
+
+    // No frontier for the leg (never opened): NOT approximated against the
+    // root's read-through time — ungated until its own frontier resolves.
     await waitFor(() =>
-      expect(result.current.value.state(THREAD, "t_old", undefined, "2026-06-22T11:00:00.000Z")).toBe("read")
+      expect(result.current.value.state(THREAD, "t_old", undefined, "2026-06-22T11:00:00.000Z")).toBe("ungated")
     )
-    expect(result.current.value.state(THREAD, "t_new", undefined, "2026-06-22T13:00:00.000Z")).toBe("unread")
+    expect(result.current.value.state(THREAD, "t_new", "5", "2026-06-22T13:00:00.000Z")).toBe("ungated")
   })
 
   it("reports the card unread when a non-own member message is effectively unread, excluding own rows", async () => {
@@ -166,6 +210,55 @@ describe("useConversationReadController", () => {
     // effectively read and the card unread clears live.
     await waitFor(() => expect(result.current.hasUnread([reply])).toBe(false))
     expect(result.current.value.state(ROOT, "m_reply", "5", reply.createdAt)).toBe("read")
+  })
+
+  it("a delayed mark-read response cannot erase an explicit unread that landed after the request departed", async () => {
+    await seedReadState()
+    let resolveMarkRead!: (value: { streams: ReadStateSnapshot[] }) => void
+    markRead.mockReturnValue(new Promise<{ streams: ReadStateSnapshot[] }>((resolve) => (resolveMarkRead = resolve)))
+
+    const { result } = renderHook(() => useConversationReadController(WS, CONV, ROOT, ME), { wrapper: wrapper() })
+    const reply = msg({ id: "m_reply", authorId: OTHER, sequence: "5" })
+    await waitFor(() => expect(result.current.hasUnread([reply])).toBe(true))
+
+    result.current.value.markReadUpToHere("m_reply")
+    await waitFor(() => expect(markRead).toHaveBeenCalledWith(WS, CONV, "m_reply"))
+
+    // An explicit conversation unread lands while the read is in flight: its
+    // echo regresses the frontier to the never-read position and stamps the
+    // touched time on the standalone row.
+    await db.streamReadState.put({
+      id: `${WS}:${ROOT}`,
+      workspaceId: WS,
+      streamId: ROOT,
+      lastReadEventId: null,
+      lastReadSequence: null,
+      lastReadAt: new Date().toISOString(),
+      _cachedAt: Date.now(),
+    })
+
+    // The stale read response finally resolves with its absolute snapshot.
+    await act(async () => {
+      resolveMarkRead({
+        streams: [
+          {
+            streamId: ROOT,
+            readMessageIds: ["m_reply"],
+            lastReadEventId: "evt_5",
+            lastReadSequence: "5",
+            lastReadOrdinal: 5,
+          },
+        ],
+      })
+      await new Promise((resolve) => setTimeout(resolve, 10))
+    })
+
+    // The explicit unread survives: no overlay SET, no frontier restore.
+    const row = await db.streamReadState.get(`${WS}:${ROOT}`)
+    expect(row?.lastReadEventId).toBeNull()
+    const unreadState = await db.unreadState.get(WS)
+    expect(unreadState?.readMessageIds?.[ROOT]).toBeUndefined()
+    await waitFor(() => expect(result.current.value.state(ROOT, "m_reply", "5", reply.createdAt)).toBe("unread"))
   })
 
   it("marks unread from a message via the client", async () => {

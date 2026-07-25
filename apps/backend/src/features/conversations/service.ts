@@ -1410,9 +1410,16 @@ export class ConversationService {
       memberSet.add(stream.parentAnchorId)
     }
 
-    const fetchIds = new Set(memberSet)
-    fetchIds.add(targetMessageId)
-    const messagesMap = await MessageRepository.findByIds(client, [...fetchIds])
+    // The target must be one of the conversation's concrete member messages
+    // (including the thread-opening parent added above). A foreign id — a
+    // message that exists but isn't part of this conversation — must not supply
+    // the cross-stream cutoff timestamp (it would read/unread an arbitrary span
+    // of the conversation). Reject before any resolution or write.
+    if (!memberSet.has(targetMessageId)) {
+      throw new HttpError("Message not found", { status: 404, code: "MESSAGE_NOT_FOUND" })
+    }
+
+    const messagesMap = await MessageRepository.findByIds(client, [...memberSet])
 
     const target = messagesMap.get(targetMessageId)
     if (!target) {
@@ -1430,6 +1437,29 @@ export class ConversationService {
       const list = groups.get(message.streamId)
       if (list) list.push(id)
       else groups.set(message.streamId, [id])
+    }
+
+    // Boundary guard: every distinct stream the resolved messages live in must
+    // belong to this workspace and resolve (INV-62) to the same effective root
+    // as the conversation. A stale/corrupt member pointing at a foreign stream
+    // (cross-workspace, or a different thread root) must not be written. Runs
+    // over distinct streams only (one batch lookup, not per-message) and BEFORE
+    // any applySparseRead/Unread write.
+    const conversationRoot = stream?.rootStreamId ?? conversation.streamId
+    const memberStreams = await StreamRepository.findByIds(client, [...groups.keys()])
+    const memberStreamById = new Map(memberStreams.map((s) => [s.id, s]))
+    for (const memberStreamId of groups.keys()) {
+      const memberStream = memberStreamById.get(memberStreamId)
+      // A missing row, a cross-workspace stream, or a stream whose effective
+      // root (thread → root, same rule as `effectiveRootId`) differs from the
+      // conversation's root is foreign to this conversation.
+      if (
+        !memberStream ||
+        memberStream.workspaceId !== workspaceId ||
+        (memberStream.rootStreamId ?? memberStream.id) !== conversationRoot
+      ) {
+        throw new HttpError("Message not found", { status: 404, code: "MESSAGE_NOT_FOUND" })
+      }
     }
 
     // Map keys are unique, so a strict less-than comparator totally orders them.

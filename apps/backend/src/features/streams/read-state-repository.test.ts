@@ -266,6 +266,45 @@ describe("ReadStateRepository readers", () => {
   })
 })
 
+describe("ReadStateRepository.ensureForUpdate", () => {
+  test("seeds a never-read row then locks it — the non-member leg's serialization point", async () => {
+    const row = {
+      workspace_id: "ws_1",
+      stream_id: "stream_1",
+      user_id: "usr_1",
+      last_read_event_id: null,
+      last_read_at: null,
+      updated_at: new Date(),
+    }
+    const query = mock()
+      .mockResolvedValueOnce({ rows: [], rowCount: 0 })
+      .mockResolvedValueOnce({ rows: [row], rowCount: 1 })
+    const db = { query } as unknown as Querier
+
+    const result = await ReadStateRepository.ensureForUpdate(db, "stream_1", "usr_1")
+
+    expect(query).toHaveBeenCalledTimes(2)
+    const seed = flat(sqlText(query.mock.calls[0]))
+    expect(seed).toContain("INSERT INTO stream_read_state")
+    // DO NOTHING (not DO UPDATE): an existing row's watermark is never touched
+    // by the seed — the lock is the point. Workspace derived from streams (INV-8).
+    expect(seed).toContain("ON CONFLICT (stream_id, user_id) DO NOTHING")
+    expect(seed).toContain("SELECT s.workspace_id")
+    const lock = flat(sqlText(query.mock.calls[1]))
+    expect(lock).toContain("FOR UPDATE")
+    expect(result?.lastReadEventId).toBeNull()
+  })
+
+  test("returns null for a dangling stream id (no row to seed or lock)", async () => {
+    const query = mock()
+      .mockResolvedValueOnce({ rows: [], rowCount: 0 })
+      .mockResolvedValueOnce({ rows: [], rowCount: 0 })
+    const db = { query } as unknown as Querier
+
+    expect(await ReadStateRepository.ensureForUpdate(db, "stream_gone", "usr_1")).toBeNull()
+  })
+})
+
 describe("ReadStateRepository lifecycle deletes", () => {
   test("deleteForWorkspace filters on workspace_id", async () => {
     const { db, query } = makeDb()

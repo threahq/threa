@@ -1598,14 +1598,28 @@ describe("StreamService.markAsRead", () => {
     expect(result?.lastReadEventId).toBe("evt_real")
   })
 
-  test("emits nothing for a non-member", async () => {
+  test("advances the standalone frontier and emits stream:read for a non-member — without touching membership", async () => {
+    // Access (validated in the handler) gates the read, not membership (INV-62):
+    // a non-member thread viewer gets the same watermark semantics. The
+    // membership UPDATE runs and returns null — it is NEVER upserted.
     mockGetMessageOrdinalForEvent.mockResolvedValue({ sequence: 42n, messageOrdinal: 7 })
     mockMemberUpdate.mockResolvedValue(null)
 
-    await service.markAsRead("ws_1", "stream_1", "usr_1", "evt_9")
+    const result = await service.markAsRead("ws_1", "stream_1", "usr_1", "evt_9")
 
-    expect(mockInsertOutbox).not.toHaveBeenCalled()
-    expect(mockReadStateAdvance).not.toHaveBeenCalled()
+    expect(result).toBeNull()
+    expect(mockMemberUpdate).toHaveBeenCalledWith({}, "stream_1", "usr_1", { lastReadEventId: "evt_9" })
+    expect(mockReadStateAdvance).toHaveBeenCalledWith({}, "stream_1", "usr_1", "evt_9")
+    expect(mockPruneAtOrBelow).toHaveBeenCalledWith({}, "stream_1", "usr_1", 42n)
+    expect(mockInsertOutbox).toHaveBeenCalledWith({}, "stream:read", {
+      workspaceId: "ws_1",
+      authorId: "usr_1",
+      streamId: "stream_1",
+      lastReadEventId: "evt_9",
+      lastReadSequence: "42",
+      lastReadOrdinal: 7,
+      readMessageIds: [],
+    })
   })
 })
 
@@ -1669,17 +1683,21 @@ describe("StreamService.markUnread", () => {
     expect(mockReadStateSet).toHaveBeenCalledWith({}, "stream_1", "usr_1", null)
   })
 
-  test("returns null and emits nothing when the message is not in the stream", async () => {
+  test("throws MESSAGE_NOT_FOUND when the message is not in the stream", async () => {
     mockFindByMessageId.mockResolvedValue(null)
 
-    const result = await service.markUnread("ws_1", "stream_1", "usr_1", "msg_gone")
-
-    expect(result).toBeNull()
+    await expect(service.markUnread("ws_1", "stream_1", "usr_1", "msg_gone")).rejects.toMatchObject({
+      status: 404,
+      code: "MESSAGE_NOT_FOUND",
+    })
     expect(mockMemberUpdate).not.toHaveBeenCalled()
     expect(mockInsertOutbox).not.toHaveBeenCalled()
   })
 
-  test("does not emit when the membership update returns null (non-member)", async () => {
+  test("sets the standalone frontier and emits stream:read_set for a non-member — without touching membership", async () => {
+    // The same-class 404 is gone: a null membership update is a successful
+    // unread by an access-only viewer, not a missing message. The membership
+    // UPDATE runs and returns null — never upserted (INV-62).
     mockFindByMessageId.mockResolvedValue({ id: "evt_5", sequence: 50n } as never)
     mockFindPreviousMessageEvent.mockResolvedValue({ id: "evt_4", sequence: 40n } as never)
     mockCountMessagesThrough.mockResolvedValue(4)
@@ -1688,9 +1706,18 @@ describe("StreamService.markUnread", () => {
     const result = await service.markUnread("ws_1", "stream_1", "usr_1", "msg_5")
 
     expect(result).toBeNull()
-    expect(mockMemberUpdate).toHaveBeenCalled()
-    expect(mockInsertOutbox).not.toHaveBeenCalled()
-    expect(mockReadStateSet).not.toHaveBeenCalled()
+    expect(mockMemberUpdate).toHaveBeenCalledWith({}, "stream_1", "usr_1", { lastReadEventId: "evt_4" })
+    expect(mockReadStateSet).toHaveBeenCalledWith({}, "stream_1", "usr_1", "evt_4")
+    expect(mockDeleteAtOrAbove).toHaveBeenCalledWith({}, "stream_1", "usr_1", 50n)
+    expect(mockInsertOutbox).toHaveBeenCalledWith({}, "stream:read_set", {
+      workspaceId: "ws_1",
+      authorId: "usr_1",
+      streamId: "stream_1",
+      lastReadEventId: "evt_4",
+      lastReadSequence: "40",
+      lastReadOrdinal: 4,
+      readMessageIds: [],
+    })
   })
 })
 

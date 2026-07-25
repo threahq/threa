@@ -97,7 +97,12 @@ import {
 } from "./unread-counters"
 import { isAutoReadAttentiveNow } from "@/lib/auto-read-attention"
 import { commitCounterMutation, commitStreamPreview, type CatchUpBatch, type CounterMutator } from "./catch-up-batch"
-import { commitReadStateSnapshot, mergeReadStateIntoBootstrapCache, putReadStateIdb } from "./read-state"
+import {
+  commitReadStateSnapshot,
+  mergeReadStateIntoBootstrapCache,
+  putReadStateIdb,
+  toStreamReadFrontier,
+} from "./read-state"
 
 /** Workspace user shape from backend user repository. */
 interface WorkspaceUserPayload {
@@ -337,14 +342,6 @@ function toWorkspaceBootstrapMembership(membership: CachedStreamMembership): Str
     lastReadSequence: membership.lastReadSequence,
     lastReadAt: membership.lastReadAt,
     joinedAt: membership.joinedAt,
-  }
-}
-
-function toStreamReadFrontier(row: CachedStreamReadState): StreamReadFrontier {
-  return {
-    lastReadEventId: row.lastReadEventId,
-    lastReadSequence: row.lastReadSequence,
-    lastReadAt: row.lastReadAt,
   }
 }
 
@@ -2889,7 +2886,10 @@ export async function applyReconnectBootstrapBatch(
       }
 
       for (const [streamId, bootstrap] of streamBootstraps) {
-        await applyStreamBootstrapInCurrentTransaction(workspaceId, streamId, bootstrap, now)
+        // Carry the fetch window so a per-stream envelope's stale `readState`
+        // never clobbers a frontier touched during the reconnect (same rule
+        // the workspace map merge above applies).
+        await applyStreamBootstrapInCurrentTransaction(workspaceId, streamId, bootstrap, now, fetchStartedAt)
       }
 
       if (terminalStreamIds.size > 0) {

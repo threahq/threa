@@ -86,46 +86,41 @@ describe("getEffectiveReadState", () => {
 describe("usersReadThroughEffective", () => {
   test("no-ops without querying on an empty user list", async () => {
     const { db, query } = makeDb()
-    expect(await usersReadThroughEffective(db, "stream_1", [], 10n)).toEqual(new Set())
+    expect(await usersReadThroughEffective(db, "ws_1", "stream_1", [], 10n)).toEqual(new Set())
     expect(query).not.toHaveBeenCalled()
   })
 
-  test("membership fallback only applies to users WITHOUT a read-state row", async () => {
+  test("read-state branch is membership-agnostic — access, not membership, gates born-read", async () => {
     const { db, query } = makeDb()
-    await usersReadThroughEffective(db, "stream_1", ["usr_a", "usr_b"], 42n)
+    await usersReadThroughEffective(db, "ws_1", "stream_1", ["usr_a", "usr_b"], 42n)
 
     const text = flat(sqlText(query.mock.calls[0]))
-    // Read-state branch: watermark sequence resolved via stream_events.
-    expect(text).toContain("FROM stream_read_state rs")
-    expect(text).toContain("JOIN stream_events se ON se.id = rs.last_read_event_id")
-    expect(text).toContain("se.sequence >= $3")
+    // Read-state branch: watermark sequence resolved via stream_events, with
+    // NO stream_members join — a non-member viewer's own row qualifies
+    // (INV-62 access without membership), closing the late-insert race.
+    expect(text).toContain("FROM stream_read_state rs JOIN stream_events se ON se.id = rs.last_read_event_id")
+    expect(text).not.toContain("JOIN stream_members sm ON sm.stream_id = rs.stream_id")
+    expect(text).toContain("rs.workspace_id = $1")
     // Membership branch guarded by row absence — a present row (even with a
     // NULL watermark) never falls through to the membership column.
     expect(text).toContain("FROM stream_members sm")
     expect(text).toContain("NOT EXISTS")
     expect(text).toContain("rs.user_id = sm.member_id")
     expect(text).toContain("UNION")
-  })
-
-  test("read-state branch requires a CURRENT stream_members row — retained rows for former/non-members are excluded (chunk 2)", async () => {
-    const { db, query } = makeDb()
-    await usersReadThroughEffective(db, "stream_1", ["usr_a"], 42n)
-
-    const text = flat(sqlText(query.mock.calls[0]))
-    // The read-state branch joins the current membership on (stream_id,
-    // user_id): a retained stream_read_state row for a removed member finds
-    // no stream_members row and drops out of the born-read set. Chunk 3
-    // deliberately removes this gate.
-    expect(text).toContain("JOIN stream_members sm ON sm.stream_id = rs.stream_id AND sm.member_id = rs.user_id")
-    // Row presence stays authoritative WITHIN the member universe: a present
-    // row (even NULL watermark) still blocks the membership fallback.
-    expect(text).toContain("NOT EXISTS")
-    expect(text).toContain("rs.user_id = sm.member_id")
+    // INV-8 hardening on the membership fallback: it joins `streams` on the
+    // membership's stream and requires the workspace match, and binds the
+    // watermark event to that same stream (not just by event id) — a
+    // stale/corrupt cross-workspace watermark can't qualify a member.
+    expect(text).toContain("JOIN streams s ON s.id = sm.stream_id")
+    expect(text).toContain("s.workspace_id =")
+    expect(text).toContain("se.stream_id = sm.stream_id")
+    // Row-presence stays authoritative, now workspace-scoped.
+    expect(text).toContain("rs.user_id = sm.member_id AND rs.workspace_id =")
   })
 
   test("maps the returned user ids into the born-read set", async () => {
     const { db } = makeDb([{ user_id: "usr_a" }, { user_id: "usr_b" }])
-    expect(await usersReadThroughEffective(db, "stream_1", ["usr_a", "usr_b", "usr_c"], 42n)).toEqual(
+    expect(await usersReadThroughEffective(db, "ws_1", "stream_1", ["usr_a", "usr_b", "usr_c"], 42n)).toEqual(
       new Set(["usr_a", "usr_b"])
     )
   })

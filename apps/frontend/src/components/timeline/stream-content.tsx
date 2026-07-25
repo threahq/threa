@@ -630,7 +630,19 @@ export function StreamContent({
     () => idbReadStates.find((candidate) => candidate.streamId === streamId),
     [idbReadStates, streamId]
   )
-  const lastReadEventId = resolveFrontierEventId(idbReadState, idbStream, membership)
+  // The per-stream bootstrap carries the viewer's standalone frontier (non-
+  // member unlock); IDB catches up a tick after the query resolves, so consult
+  // the in-memory payload for first paint. A confirmed-absent row (null)
+  // resolves an access-without-membership viewer as never-read (frontier
+  // before the first message) — they have no membership mirror to fall back
+  // to; members fall through to the mirrors (shadow-window fallback).
+  const bootstrapReadState = useMemo(() => {
+    const rs = bootstrap?.readState
+    if (rs) return rs
+    if (rs === null && !bootstrap?.membership) return { lastReadEventId: null }
+    return undefined
+  }, [bootstrap?.readState, bootstrap?.membership])
+  const lastReadEventId = resolveFrontierEventId(idbReadState ?? bootstrapReadState, idbStream, membership)
 
   const stream = streamFromProps ?? idbStream ?? bootstrap?.stream
   const isThread = stream?.type === StreamTypes.THREAD

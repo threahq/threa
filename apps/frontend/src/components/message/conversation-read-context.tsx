@@ -36,19 +36,23 @@ export function useConversationRowRead(): ConversationRowRead | null {
 export const ConversationReadProvider = ConversationReadContext.Provider
 
 interface ReadFrontierRow {
+  lastReadEventId: string | null
   lastReadSequence?: string | null
   lastReadAt: string | null
 }
 
 /**
  * Derive one row's effective read state against the conversation's spanned
- * streams. A member stream compares the row's per-stream `sequence` to the
- * stream's watermark sequence; a non-member thread leg (no membership row) falls
- * back to the root watermark's `last_read_at` timestamp (the v1 approximation —
- * docs/sparse-read-overlay-design.md § "Card unread derivation"). The overlay
- * makes a row effectively read regardless of sequence. Sequenceless rows
- * (projection/backfill) fall back to the same timestamp comparison; `ungated`
- * when nothing can decide (callers show both actions / don't count unread).
+ * streams. Every leg — member OR access-without-membership (INV-62) — resolves
+ * through its OWN effective frontier: the membership mirror seeds the map and
+ * the standalone read-state rows override it (row presence authoritative), so
+ * a non-member thread leg carries its own watermark sequence once the lazy
+ * per-stream bootstrap persisted its frontier. The overlay makes a row
+ * effectively read regardless of sequence. A resolved null watermark (never
+ * read / explicit unread-to-zero) sits before the first message, so every
+ * sequenced row is unread. Sequenceless rows (projection/backfill) fall back
+ * to the frontier's timestamp; `ungated` when nothing can decide (callers show
+ * both actions / don't count unread).
  */
 function deriveRowState(
   streamId: string,
@@ -57,8 +61,7 @@ function deriveRowState(
   createdAt: string | Date,
   overlay: Record<string, string[]> | undefined,
   unreadCounts: Record<string, number> | undefined,
-  frontierByStream: Map<string, ReadFrontierRow>,
-  rootStreamId: string
+  frontierByStream: Map<string, ReadFrontierRow>
 ): RowReadState {
   if (overlay?.[streamId]?.includes(messageId)) return "read"
 
@@ -67,24 +70,25 @@ function deriveRowState(
   // what keeps the card honest when a watermark advance doesn't carry a
   // sequence the frontier map can see (mark-all-read advances counts to 0
   // without a per-stream sequence payload). Strict === 0: a missing entry means
-  // "no data" (non-member thread legs), which must fall through, not read.
+  // "no data" (a leg with no frontier yet), which must fall through, not read.
   if (unreadCounts?.[streamId] === 0) return "read"
 
-  const membership = frontierByStream.get(streamId)
-  if (membership) {
-    if (sequence != null && membership.lastReadSequence != null) {
-      return BigInt(sequence) > BigInt(membership.lastReadSequence) ? "unread" : "read"
+  const frontier = frontierByStream.get(streamId)
+  if (frontier) {
+    if (sequence != null && frontier.lastReadSequence != null) {
+      return BigInt(sequence) > BigInt(frontier.lastReadSequence) ? "unread" : "read"
     }
-    if (membership.lastReadAt != null) {
-      return new Date(createdAt).getTime() > new Date(membership.lastReadAt).getTime() ? "unread" : "read"
+    if (sequence != null && frontier.lastReadEventId == null) return "unread"
+    if (frontier.lastReadAt != null) {
+      return new Date(createdAt).getTime() > new Date(frontier.lastReadAt).getTime() ? "unread" : "read"
     }
     return "ungated"
   }
 
-  const root = frontierByStream.get(rootStreamId)
-  if (root?.lastReadAt != null) {
-    return new Date(createdAt).getTime() > new Date(root.lastReadAt).getTime() ? "unread" : "read"
-  }
+  // No frontier for this leg yet — it resolves through its own standalone row
+  // once synced (a card only renders rows from streams whose per-stream
+  // bootstrap ran, which persists the frontier). The old root `last_read_at`
+  // time approximation is gone: an unresolved leg is ungated, not approximated.
   return "ungated"
 }
 
@@ -116,8 +120,8 @@ export function useConversationReadController(
   /** One stream's RAW read truth (watermark sequence + overlay ids) — what the
    * auto-read hook diffs to detect a cross-device mark-unread. Raw primitives,
    * not derived row state: derivation flaps (the `unreadCounts === 0`
-   * short-circuit, a stale `lastReadAt` fallback) must never read as a
-   * regression, or auto-read false-pins and wedges on a static board card. */
+   * short-circuit, the timestamp fallback) must never read as a regression, or
+   * auto-read false-pins and wedges on a static board card. */
   getReadTruth: (streamId: string) => { lastReadSequence: string | null; readMessageIds: readonly string[] }
 } {
   const conversationService = useConversationService()
@@ -134,25 +138,39 @@ export function useConversationReadController(
   const frontierByStream = useMemo(() => {
     const map = new Map<string, ReadFrontierRow>()
     for (const m of memberships) {
-      map.set(m.streamId, { lastReadSequence: m.lastReadSequence, lastReadAt: m.lastReadAt })
+      map.set(m.streamId, {
+        lastReadEventId: m.lastReadEventId,
+        lastReadSequence: m.lastReadSequence,
+        lastReadAt: m.lastReadAt,
+      })
     }
     for (const rs of readStates) {
-      map.set(rs.streamId, { lastReadSequence: rs.lastReadSequence, lastReadAt: rs.lastReadAt })
+      map.set(rs.streamId, {
+        lastReadEventId: rs.lastReadEventId,
+        lastReadSequence: rs.lastReadSequence,
+        lastReadAt: rs.lastReadAt,
+      })
     }
     return map
   }, [memberships, readStates])
 
   const state = useCallback<ConversationRowRead["state"]>(
     (streamId, messageId, sequence, createdAt) =>
-      deriveRowState(streamId, messageId, sequence, createdAt, overlay, unreadCounts, frontierByStream, rootStreamId),
-    [overlay, unreadCounts, frontierByStream, rootStreamId]
+      deriveRowState(streamId, messageId, sequence, createdAt, overlay, unreadCounts, frontierByStream),
+    [overlay, unreadCounts, frontierByStream]
   )
 
   const markReadSilently = useCallback(
-    (messageId: string) =>
-      conversationService
+    (messageId: string) => {
+      // Mutation departure time: the response applies per-stream only to legs
+      // NOT touched after this instant (its own socket echo or a later action
+      // — e.g. an explicit unread this stale read must not erase). The echo is
+      // canonical; a delayed response is a no-op on touched legs.
+      const startedAt = Date.now()
+      return conversationService
         .markRead(workspaceId, conversationId, messageId)
-        .then((res) => applyReadStateSnapshots(workspaceId, res.streams)),
+        .then((res) => applyReadStateSnapshots(workspaceId, res.streams, startedAt))
+    },
     [conversationService, workspaceId, conversationId]
   )
 
@@ -179,9 +197,10 @@ export function useConversationReadController(
   const markUnread = useCallback(
     (messageId: string) => {
       explicitUnreadListenerRef.current?.()
+      const startedAt = Date.now()
       conversationService
         .markUnread(workspaceId, conversationId, messageId)
-        .then((res) => applyReadStateSnapshots(workspaceId, res.streams))
+        .then((res) => applyReadStateSnapshots(workspaceId, res.streams, startedAt))
         .catch(() => toast.error("Couldn't mark as unread"))
     },
     [conversationService, workspaceId, conversationId]

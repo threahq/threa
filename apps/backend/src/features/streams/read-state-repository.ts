@@ -198,6 +198,40 @@ export const ReadStateRepository = {
     )
   },
 
+  /**
+   * Ensure a row exists for this (stream, user) and return it locked FOR UPDATE —
+   * the non-member leg's serialization point (INV-20). Members are serialized by
+   * their locked `stream_members` row; a non-member leg has no membership row, so
+   * its read-state row carries the lock instead: concurrent conversation reads on
+   * the same leg take the same single-row lock (conversations processes streams
+   * in sorted order, so no new lock-order hazard). A seeded row carries a NULL
+   * watermark (never read = position before the first message). Two statements:
+   * ON CONFLICT DO NOTHING returns nothing for an existing row, and FOR UPDATE
+   * can't ride the insert. Returns null only for a dangling stream id.
+   */
+  async ensureForUpdate(db: Querier, streamId: string, userId: string): Promise<StreamReadState | null> {
+    await db.query(
+      `
+      INSERT INTO stream_read_state (workspace_id, stream_id, user_id, last_read_event_id, last_read_at, updated_at)
+      SELECT s.workspace_id, $1, $2, NULL, NULL, NOW()
+      FROM streams s
+      WHERE s.id = $1
+      ON CONFLICT (stream_id, user_id) DO NOTHING
+      `,
+      [streamId, userId]
+    )
+    const result = await db.query<StreamReadStateRow>(
+      `
+      SELECT ${SELECT_FIELDS}
+      FROM stream_read_state
+      WHERE stream_id = $1 AND user_id = $2
+      FOR UPDATE
+      `,
+      [streamId, userId]
+    )
+    return result.rows[0] ? mapRowToReadState(result.rows[0]) : null
+  },
+
   async get(db: Querier, streamId: string, userId: string): Promise<StreamReadState | null> {
     const result = await db.query<StreamReadStateRow>(sql`
       SELECT ${sql.raw(SELECT_FIELDS)}

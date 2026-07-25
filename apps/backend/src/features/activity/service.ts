@@ -116,7 +116,13 @@ export class ActivityService {
       const authorName = await this.resolveAuthorName(client, workspaceId, actorId, actorType)
 
       const recipientIds = [...userIds]
-      const readUserIds = await this.resolveAlreadyReadRecipients(client, streamId, messageId, recipientIds)
+      const readUserIds = await this.resolveAlreadyReadRecipients(
+        client,
+        workspaceId,
+        streamId,
+        messageId,
+        recipientIds
+      )
 
       return ActivityRepository.insertBatch(client, {
         workspaceId,
@@ -264,7 +270,13 @@ export class ActivityService {
         })
         .map((row) => row.memberId)
 
-      const readUserIds = await this.resolveAlreadyReadRecipients(client, streamId, messageId, eligibleUserIds)
+      const readUserIds = await this.resolveAlreadyReadRecipients(
+        client,
+        workspaceId,
+        streamId,
+        messageId,
+        eligibleUserIds
+      )
 
       return ActivityRepository.insertBatch(client, {
         workspaceId,
@@ -318,11 +330,13 @@ export class ActivityService {
    * yet (nothing to compare against), leaving every recipient unread.
    *
    * Read truth is the effective frontier (read cutover): a `stream_read_state`
-   * row wins when present, membership fills absent rows. The recipient universe
-   * stays the caller's member-filtered set — chunk 3 expands non-member coverage.
+   * row wins when present — membership-agnostic, so access-without-membership
+   * viewers (INV-62) are covered — and the membership column fills absent rows.
+   * The recipient universe stays the caller's access-filtered set.
    */
   private async resolveAlreadyReadRecipients(
     client: PoolClient,
+    workspaceId: string,
     streamId: string,
     messageId: string,
     userIds: string[]
@@ -330,7 +344,7 @@ export class ActivityService {
     if (userIds.length === 0) return new Set()
     const messageEvent = await StreamEventRepository.findByMessageId(client, streamId, messageId)
     if (!messageEvent) return new Set()
-    return usersReadThroughEffective(client, streamId, userIds, messageEvent.sequence)
+    return usersReadThroughEffective(client, workspaceId, streamId, userIds, messageEvent.sequence)
   }
 
   /**
