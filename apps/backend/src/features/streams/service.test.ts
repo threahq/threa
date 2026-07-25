@@ -2329,17 +2329,20 @@ describe("StreamService.addMember read-state shadow", () => {
     mockReadStateAdvance.mockClear()
   })
 
-  test("shadows the born-read watermark via ReadStateRepository.advance on the same tx client", async () => {
+  test("born-reads the member_added event in standalone read state on the same tx client", async () => {
     await service.addMember("stream_1", "usr_new", "ws_1", "usr_actor")
 
-    // addToStream sets the membership watermark to the member_added event, then
-    // shadows it into the standalone read-state store on the same tx client.
-    // The event id comes from eventId(), not the mock return — assert both calls
-    // received the same generated id.
-    const updateCall = mockUpdateMember.mock.calls.find((c) => c[1] === "stream_1" && c[2] === "usr_new")
-    expect(updateCall).toBeDefined()
-    const bornReadEventId = (updateCall![3] as { lastReadEventId: string }).lastReadEventId
+    const eventCall = mockInsertEvent.mock.calls.find(
+      (call) => (call[1] as { eventType?: string }).eventType === "member_added"
+    )
+    expect(eventCall).toBeDefined()
+    const bornReadEventId = (eventCall![1] as { id: string }).id
     expect(bornReadEventId).toBeTruthy()
-    expect(mockReadStateAdvance).toHaveBeenCalledWith({}, "stream_1", "usr_new", bornReadEventId)
+
+    const advanceCall = mockReadStateAdvance.mock.calls.find((call) => call[1] === "stream_1" && call[2] === "usr_new")
+    expect(advanceCall).toBeDefined()
+    expect(advanceCall![0]).toBe(eventCall![0])
+    expect(advanceCall![3]).toBe(bornReadEventId)
+    expect(mockUpdateMember).not.toHaveBeenCalled()
   })
 })
