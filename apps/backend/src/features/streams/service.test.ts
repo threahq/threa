@@ -2106,3 +2106,45 @@ describe("StreamService.createChannel read-state shadow", () => {
     expect(mockReadStateSetForUsers).toHaveBeenCalledWith({}, "stream_new", ["usr_a", "usr_b"], "evt_b")
   })
 })
+
+describe("StreamService.addMember read-state shadow", () => {
+  let service: StreamService
+  const mockFindByStreamAndMember = spyOn(StreamMemberRepository, "findByStreamAndMember")
+  const mockUpdateMember = spyOn(StreamMemberRepository, "update")
+  const mockUserFindById = spyOn(UserRepository, "findById")
+
+  beforeEach(() => {
+    service = new StreamService({} as never)
+    mockFindById.mockReset().mockResolvedValue({ id: "stream_1", workspaceId: "ws_1", type: "channel" } as never)
+    mockFindByStreamAndMember.mockReset().mockResolvedValue(null)
+    mockInsertMember.mockReset().mockResolvedValue({ streamId: "stream_1", memberId: "usr_new" } as never)
+    mockInsertEvent.mockReset().mockResolvedValue({
+      id: "evt_born",
+      streamId: "stream_1",
+      sequence: 5n,
+      eventType: "member_added",
+      payload: {},
+      actorId: "usr_new",
+      actorType: "user",
+      createdAt: new Date(),
+    } as never)
+    mockUpdateMember.mockReset().mockResolvedValue(undefined as never)
+    mockInsertOutbox.mockReset().mockResolvedValue({} as never)
+    mockUserFindById.mockReset().mockResolvedValue({ id: "usr_new", workspaceId: "ws_1" } as never)
+    mockReadStateAdvance.mockClear()
+  })
+
+  test("shadows the born-read watermark via ReadStateRepository.advance on the same tx client", async () => {
+    await service.addMember("stream_1", "usr_new", "ws_1", "usr_actor")
+
+    // addToStream sets the membership watermark to the member_added event, then
+    // shadows it into the standalone read-state store on the same tx client.
+    // The event id comes from eventId(), not the mock return — assert both calls
+    // received the same generated id.
+    const updateCall = mockUpdateMember.mock.calls.find((c) => c[1] === "stream_1" && c[2] === "usr_new")
+    expect(updateCall).toBeDefined()
+    const bornReadEventId = (updateCall![3] as { lastReadEventId: string }).lastReadEventId
+    expect(bornReadEventId).toBeTruthy()
+    expect(mockReadStateAdvance).toHaveBeenCalledWith({}, "stream_1", "usr_new", bornReadEventId)
+  })
+})

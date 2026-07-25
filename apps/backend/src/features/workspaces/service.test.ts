@@ -242,12 +242,14 @@ describe("WorkspaceService.ensureUserProvisioned", () => {
 
 describe("WorkspaceService.removeUser read-state cleanup", () => {
   const mockWithTransaction = spyOn(db, "withTransaction")
+  let transactionClient: PoolClient
 
   beforeEach(() => {
+    transactionClient = {} as PoolClient
     mockWithTransaction
       .mockReset()
       .mockImplementation(((_pool: unknown, fn: (client: PoolClient) => Promise<unknown>) =>
-        fn({} as PoolClient)) as never)
+        fn(transactionClient)) as never)
     spyOn(UserApiKeyRepository, "revokeAllByUser").mockResolvedValue(undefined as never)
     spyOn(UserRepository, "remove").mockResolvedValue(undefined as never)
     spyOn(OutboxRepository, "insert").mockResolvedValue(undefined as never)
@@ -257,11 +259,14 @@ describe("WorkspaceService.removeUser read-state cleanup", () => {
 
   test("deletes the user's read state in the same transaction as account removal", async () => {
     const deleteForUser = spyOn(ReadStateRepository, "deleteForUser").mockResolvedValue(undefined as never)
+    const removeUser = spyOn(UserRepository, "remove").mockResolvedValue(undefined as never)
     const service = createWorkspaceService(false)
 
     await service.removeUser("ws_1", "usr_1")
 
-    expect(UserRepository.remove).toHaveBeenCalledWith({}, "ws_1", "usr_1")
-    expect(deleteForUser).toHaveBeenCalledWith({}, "ws_1", "usr_1")
+    expect(removeUser).toHaveBeenCalledWith(transactionClient, "ws_1", "usr_1")
+    expect(deleteForUser).toHaveBeenCalledWith(transactionClient, "ws_1", "usr_1")
+    expect(removeUser.mock.calls[0]?.[0]).toBe(transactionClient)
+    expect(deleteForUser.mock.calls[0]?.[0]).toBe(transactionClient)
   })
 })
