@@ -153,20 +153,32 @@ async function inferRepository(): Promise<string> {
 }
 
 export function pullNumbersForBranch(
-  pulls: Array<{ number: number; head: { ref: string } }>,
-  branch: string
+  pulls: Array<{ number: number; head: { ref: string; repo: { full_name: string } | null } }>,
+  branch: string,
+  headRepository: string
 ): number[] {
-  return pulls.filter((pull) => pull.head.ref === branch).map((pull) => pull.number)
+  return pulls
+    .filter((pull) => pull.head.ref === branch && pull.head.repo?.full_name === headRepository)
+    .map((pull) => pull.number)
+}
+
+async function inferHeadRepository(branch: string, fallback: string): Promise<string> {
+  const configuredRemote = await $`git config --get ${`branch.${branch}.remote`}`.quiet().nothrow()
+  const remote = configuredRemote.exitCode === 0 ? configuredRemote.text().trim() : "origin"
+  if (!remote || remote === ".") return fallback
+  const remoteUrl = await $`git remote get-url --push ${remote}`.quiet().nothrow()
+  return remoteUrl.exitCode === 0 ? (repositoryFromRemote(remoteUrl.text()) ?? fallback) : fallback
 }
 
 async function inferPullNumber(repository: string, api: Api): Promise<number> {
   const branch = (await $`git branch --show-current`.quiet().text()).trim()
   if (!branch) throw new Error("Cannot infer PR from detached HEAD; pass a PR number or URL")
+  const headRepository = await inferHeadRepository(branch, repository)
   const pulls = (await allPages(api, `/repos/${repository}/pulls?state=open`)) as Array<{
     number: number
-    head: { ref: string }
+    head: { ref: string; repo: { full_name: string } | null }
   }>
-  const numbers = pullNumbersForBranch(pulls, branch)
+  const numbers = pullNumbersForBranch(pulls, branch, headRepository)
   if (numbers.length !== 1) {
     throw new Error(`Expected one open PR for ${branch}, found ${numbers.length}; pass a PR number or URL`)
   }
@@ -221,14 +233,23 @@ async function githubFetch(path: string, token: string, init?: RequestInit): Pro
   })
   if (!response.ok) {
     const body = await response.text()
-    const rateLimited = response.status === 403 && response.headers.get("x-ratelimit-remaining") === "0"
     throw new GitHubApiError(
       `GitHub ${response.status} ${path}: ${body.slice(0, 500)}`,
       response.status,
-      rateLimited || response.status === 408 || response.status === 429 || response.status >= 500
+      isRetryableGitHubResponse(response.status, response.headers, body)
     )
   }
   return response.json()
+}
+
+export function isRetryableGitHubResponse(status: number, headers: Headers, body: string): boolean {
+  if (status === 408 || status === 429 || status >= 500) return true
+  if (status !== 403) return false
+  return (
+    headers.get("x-ratelimit-remaining") === "0" ||
+    headers.has("retry-after") ||
+    /secondary rate limit|abuse detection/i.test(body)
+  )
 }
 
 async function allPages(api: Api, path: string): Promise<any[]> {
@@ -451,38 +472,37 @@ function emit(value: unknown): void {
   console.log(JSON.stringify(value))
 }
 
-async function main() {
-  const options = parseArgs(process.argv.slice(2))
-  const repository = options.repo ?? repositoryFromTarget(options.target) ?? (await inferRepository())
-  const token = await resolveToken()
-  const api: Api = (path, init) => githubFetch(path, token, init)
-  const number = pullNumberFromTarget(options.target) ?? (await inferPullNumber(repository, api))
-  let snapshot = await captureSnapshot(api, repository, number)
-  const saved = await readState(options.statePath)
+export function nextPollDelay(deadline: number, intervalMs: number, now = Date.now()): number | undefined {
+  if (deadline !== Infinity && now >= deadline) return undefined
+  return deadline === Infinity ? intervalMs : Math.min(intervalMs, deadline - now)
+}
 
-  if (options.once) {
-    await writeState(options.statePath, snapshot)
-    emit({ type: "snapshot", snapshot })
-    return
+function snapshotSummary(snapshot: Snapshot) {
+  return {
+    repository: snapshot.repository,
+    number: snapshot.number,
+    state: snapshot.state,
+    merged: snapshot.merged,
+    draft: snapshot.draft,
+    mergeable: snapshot.mergeable,
+    mergeableState: snapshot.mergeableState,
+    headSha: snapshot.headSha,
+    comments: snapshot.comments.length,
+    unresolvedThreads: snapshot.reviewThreads.filter((thread) => !thread.resolved).map((thread) => thread.id),
+    checks: snapshot.checks,
+    statuses: snapshot.statuses,
   }
+}
 
-  if (saved && saved.repository === repository && saved.number === number) {
-    const changes = diffSnapshots(saved, snapshot)
-    if (changes.length) {
-      await writeState(options.statePath, snapshot)
-      emit({ type: "changes", capturedAt: snapshot.capturedAt, changes, snapshot })
-      return
-    }
-  }
-
-  await writeState(options.statePath, snapshot)
-  emit({ type: "baseline", snapshot })
-  const startedAt = Date.now()
-  while (options.timeout === 0 || Date.now() - startedAt < options.timeout * 1000) {
-    await Bun.sleep(options.interval * 1000)
-    let next: Snapshot
+async function retryPollOperation<T>(
+  operation: () => Promise<T>,
+  deadline: number,
+  intervalMs: number
+): Promise<T | undefined> {
+  while (true) {
     try {
-      next = await captureSnapshot(api, repository, number)
+      const result = await operation()
+      return deadline !== Infinity && Date.now() >= deadline ? undefined : result
     } catch (error) {
       if (!isTransientPollError(error)) throw error
       emit({
@@ -490,18 +510,72 @@ async function main() {
         capturedAt: new Date().toISOString(),
         error: error instanceof Error ? error.message : String(error),
       })
-      continue
+      const delay = nextPollDelay(deadline, intervalMs)
+      if (delay === undefined) return undefined
+      await Bun.sleep(delay)
     }
+  }
+}
+
+async function main() {
+  const options = parseArgs(process.argv.slice(2))
+  const repository = options.repo ?? repositoryFromTarget(options.target) ?? (await inferRepository())
+  const token = await resolveToken()
+  const api: Api = (path, init) => githubFetch(path, token, init)
+  const intervalMs = options.interval * 1000
+
+  if (options.once) {
+    const number = pullNumberFromTarget(options.target) ?? (await inferPullNumber(repository, api))
+    const snapshot = await captureSnapshot(api, repository, number)
+    await writeState(options.statePath, snapshot)
+    emit({ type: "snapshot", snapshot })
+    return
+  }
+
+  const deadline = options.timeout === 0 ? Infinity : Date.now() + options.timeout * 1000
+  const explicitNumber = pullNumberFromTarget(options.target)
+  const number =
+    explicitNumber ?? (await retryPollOperation(() => inferPullNumber(repository, api), deadline, intervalMs))
+  if (number === undefined) {
+    emit({ type: "timeout", capturedAt: new Date().toISOString() })
+    process.exitCode = 3
+    return
+  }
+  let snapshot = await retryPollOperation(() => captureSnapshot(api, repository, number), deadline, intervalMs)
+  if (!snapshot) {
+    emit({ type: "timeout", capturedAt: new Date().toISOString(), repository, number })
+    process.exitCode = 3
+    return
+  }
+  const saved = await readState(options.statePath)
+
+  if (saved && saved.repository === repository && saved.number === number) {
+    const changes = diffSnapshots(saved, snapshot)
+    if (changes.length) {
+      await writeState(options.statePath, snapshot)
+      emit({ type: "changes", capturedAt: snapshot.capturedAt, changes, summary: snapshotSummary(snapshot) })
+      return
+    }
+  }
+
+  await writeState(options.statePath, snapshot)
+  emit({ type: "baseline", capturedAt: snapshot.capturedAt, summary: snapshotSummary(snapshot) })
+  while (true) {
+    const delay = nextPollDelay(deadline, intervalMs)
+    if (delay === undefined) break
+    await Bun.sleep(delay)
+    const next = await retryPollOperation(() => captureSnapshot(api, repository, number), deadline, intervalMs)
+    if (!next) break
     const changes = diffSnapshots(snapshot, next)
     if (changes.length) {
       await writeState(options.statePath, next)
-      emit({ type: "changes", capturedAt: next.capturedAt, changes, snapshot: next })
+      emit({ type: "changes", capturedAt: next.capturedAt, changes, summary: snapshotSummary(next) })
       return
     }
     snapshot = next
     await writeState(options.statePath, snapshot)
   }
-  emit({ type: "timeout", capturedAt: new Date().toISOString(), snapshot })
+  emit({ type: "timeout", capturedAt: new Date().toISOString(), summary: snapshotSummary(snapshot) })
   process.exitCode = 3
 }
 

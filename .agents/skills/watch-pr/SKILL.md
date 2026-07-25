@@ -26,9 +26,9 @@ Wait for the next change:
 bun "$WATCH_PR" 123 --repo owner/repo --interval 20 --timeout 1800 --state "$STATE"
 ```
 
-The PR target may be a number, GitHub PR URL, or omitted to infer the open PR for the current branch. Repository is inferred from `origin` unless `--repo` is passed. Authentication uses `GH_TOKEN`, then `GITHUB_TOKEN`, then `gh auth token`.
+The PR target may be a number, GitHub PR URL, or omitted to infer the open PR for the current branch. Repository is inferred from `origin` unless `--repo` is passed. Branch inference matches both branch name and its configured push repository, so fork branches require the base repository via `--repo` when `origin` points to the fork. Authentication uses `GH_TOKEN`, then `GITHUB_TOKEN`, then `gh auth token`.
 
-Output is NDJSON. A watch emits a `baseline`, reports retryable network/API failures as `poll_error`, then exits on the first `changes` event. Exit 3 means timeout without changes. The state file makes the next invocation compare against the last observation, closing the gap while the agent handles an event.
+Output is NDJSON. A watch emits a compact `baseline`, reports retryable network/API failures as `poll_error`, then exits on the first `changes` event. Change events include full changed resources and a compact PR summary; use `--once` when the full snapshot is needed. Exit 3 means timeout without changes. The state file makes the next invocation compare against the last observation, closing the gap while the agent handles an event.
 
 ## Event coverage
 

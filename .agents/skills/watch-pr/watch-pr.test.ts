@@ -2,7 +2,9 @@ import { describe, expect, test } from "bun:test"
 import {
   currentStatuses,
   diffSnapshots,
+  isRetryableGitHubResponse,
   isTransientPollError,
+  nextPollDelay,
   pullNumbersForBranch,
   repositoryFromRemote,
   type Snapshot,
@@ -51,10 +53,11 @@ describe("PR inference", () => {
     expect(
       pullNumbersForBranch(
         [
-          { number: 41, head: { ref: "other" } },
-          { number: 42, head: { ref: "feature" } },
+          { number: 41, head: { ref: "feature", repo: { full_name: "other/widgets" } } },
+          { number: 42, head: { ref: "feature", repo: { full_name: "acme/widgets" } } },
         ],
-        "feature"
+        "feature",
+        "acme/widgets"
       )
     ).toEqual([42])
   })
@@ -71,10 +74,23 @@ describe("currentStatuses", () => {
   })
 })
 
-describe("poll errors", () => {
+describe("poll lifecycle", () => {
   test("retries transport errors but not arbitrary failures", () => {
     expect(isTransientPollError(new TypeError("fetch failed"))).toBe(true)
     expect(isTransientPollError(new Error("invalid response"))).toBe(false)
+  })
+
+  test("recognizes primary and secondary GitHub rate limits", () => {
+    expect(isRetryableGitHubResponse(403, new Headers({ "x-ratelimit-remaining": "0" }), "")).toBe(true)
+    expect(isRetryableGitHubResponse(403, new Headers({ "retry-after": "60" }), "")).toBe(true)
+    expect(isRetryableGitHubResponse(403, new Headers(), "secondary rate limit")).toBe(true)
+    expect(isRetryableGitHubResponse(403, new Headers(), "forbidden")).toBe(false)
+  })
+
+  test("caps sleep at the deadline and stops once reached", () => {
+    expect(nextPollDelay(1_000, 20_000, 0)).toBe(1_000)
+    expect(nextPollDelay(1_000, 20_000, 1_000)).toBeUndefined()
+    expect(nextPollDelay(Infinity, 20_000, 1_000)).toBe(20_000)
   })
 })
 
