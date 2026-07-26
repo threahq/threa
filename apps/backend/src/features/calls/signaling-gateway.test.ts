@@ -125,6 +125,47 @@ describe("registerCallGateway call:join", () => {
     expect(callService.joinCall).toHaveBeenCalledWith(expect.objectContaining({ takeover: true }))
   })
 
+  it("tells a displaced device its endpoint was taken over, addressed to that endpoint's room", async () => {
+    const { socket, to, emit } = setup({
+      callService: {
+        joinCall: mock(async () => ({
+          call: { id: "call_1" },
+          participant: { id: "callp_1" },
+          endpoint: { id: "callep_new", epoch: 5, connectionSeq: 0 },
+          supersededEndpointId: "callep_old",
+        })),
+      },
+    })
+
+    await socket.trigger(
+      "call:join",
+      { ...JOIN, takeover: true },
+      mock(() => {})
+    )
+
+    expect(to).toHaveBeenCalledWith("call:call_1:ep:callep_old")
+    expect(emit).toHaveBeenCalledWith("call:endpoint:closed", {
+      callId: "call_1",
+      endpointId: "callep_old",
+      reason: "taken_over",
+    })
+  })
+
+  it("emits no takeover notice on an ordinary join or a rebind", async () => {
+    const { socket, to, emit } = setup()
+
+    await socket.trigger(
+      "call:join",
+      JOIN,
+      mock(() => {})
+    )
+
+    // A rebind returns the SAME endpoint id, so a notice here would tear down the
+    // device that just joined.
+    expect(to).not.toHaveBeenCalledWith("call:call_1:ep:callep_1")
+    expect(emit).not.toHaveBeenCalledWith("call:endpoint:closed", expect.anything())
+  })
+
   it("acks CALLS_UNAVAILABLE when the media plane is unconfigured", async () => {
     const { socket, callService } = setup({ cloudflareEnabled: false })
     const ack = mock(() => {})
