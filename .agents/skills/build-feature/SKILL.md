@@ -1,6 +1,6 @@
 ---
 name: build-feature
-description: Build a ratified plan as a stacked PR chain — per-chunk Opus-low implement, Opus-high adversarial verify, gh-stack PR, Opus-low PR review, bounded fixes, and a final whole-stack adversarial pass. Use when asked to /build-feature or to build out a plan as stacked PRs.
+description: Build a planned feature as a stacked PR chain — per-chunk Opus-low implement, Opus-high adversarial verify, gh-stack PR, Opus-low PR review, bounded fixes, and a final whole-stack adversarial pass. Use when asked to /build-feature or to build out a plan as stacked PRs.
 ---
 
 # Build a feature as a reviewed stacked-PR chain
@@ -22,19 +22,21 @@ Claude default is Opus at every layer. **Use Fable only when the user names it.*
 | PR reviewer | Opus `low`, `agentType: 'general-purpose'` | runs `/code-review <PR#>` on the opened PR |
 | Whole-stack reviewer | Opus `high` | cross-PR seams, plan conformance, stack hygiene |
 
-Reasoning effort is settable **only** through `Workflow`'s `agent(prompt, { effort })`; a plain `Agent` call inherits session effort and silently ignores the intent. So each chunk runs as two `Workflow` invocations — steps 2–4, then step 6 — with the orchestrator doing git, gh-stack, and PR creation in between, because workflow scripts have no shell or filesystem access.
+Reasoning effort is settable **only** through `Workflow`'s `agent(prompt, { model, effort, agentType })`; a plain `Agent` call inherits session effort and silently ignores the intent. Every dispatch on this page is therefore a `Workflow` invocation, including the single-agent ones (planner, whole-stack reviewer). Each chunk is two of them — steps 2–4, then step 6 — with the orchestrator doing git, `gh stack`, and PR creation in between, because workflow scripts have no shell or filesystem access.
 
-Two children concurrent at most; a child never delegates. Put StructuredOutput schemas on verifiers and fixers only — implementers report free text (Opus implementers reliably mangle StructuredOutput after a long file-writing run, and the work is usually already on disk).
+A child never delegates, with one exception: `/code-review` fans out to its own Sonnet lenses. That is the tool's design, not a violation — the PR reviewer's Opus `low` buys triage and skill orchestration, not the review lenses themselves.
+
+Put StructuredOutput schemas on verifiers and fixers only — implementers report free text (Opus implementers reliably mangle StructuredOutput after a long file-writing run, and the work is usually already on disk).
 
 ### Pi / OpenAI profile
 
-Only when the harness is Pi, not Claude. Planner and verifier: GPT-5.6 Sol `high`. Implementer: Sol `low` (request `low` explicitly — Pi maps Sol `minimal` to provider `low`). Whole-stack: Sol `high`, or one `xhigh` pass when the stack crosses security, authorization, migration, concurrency, or data-integrity boundaries. No external second-model pass — Sol already implemented and reviewed. Follow root `AGENTS.md` read-efficiency rules. Everything else on this page applies unchanged.
+Only when the harness is Pi, not Claude. Planner and verifier: GPT-5.6 Sol `high`. Implementer: Sol `low` (request `low` explicitly — Pi maps Sol `minimal` to provider `low`). Whole-stack: Sol `high`, or one `xhigh` pass when the stack crosses security, authorization, migration, concurrency, or data-integrity boundaries. Two children concurrent at most. No external second-model pass — Sol already implemented and reviewed. Follow root `AGENTS.md` read-efficiency rules. Everything else on this page applies unchanged.
 
 ## Plan first
 
 - Build only from a plan with an explicit PR-stack breakdown: each chunk is one PR with deliverables, enumerated tests, exclusions, and its base branch. A chat message is not a plan.
 - No plan → dispatch one planner to investigate and draft it. Publish the plan to Seer and share the URL; embed it in each PR body with `/sync-plan`. Files under `docs/plans/` are desired-design context, never implementation truth.
-- Start building as soon as the plan is published — no ratification round-trip — unless the plan contains a stop-class decision (schema migration, public API contract, data deletion, anything hard to reverse) or the user asked for a checkpoint. Then wait.
+- Start building as soon as the plan is published. No ratification round-trip: the user asked for a plan and a stack, not for a quiz. Wait only if the user asked for a checkpoint, or the plan requires a decision that cannot be undone by reverting the PRs — dropping or rewriting production data, a breaking public API change, deleting a user-facing surface. Append-only migrations, new tables, new endpoints, and feature-flagged rollouts are routine here (INV-17, INV-67): build them.
 - Deferred items in the plan are binding: do not build them.
 
 ## Per chunk
@@ -42,9 +44,13 @@ Only when the harness is Pi, not Claude. Planner and verifier: GPT-5.6 Sol `high
 1. **Brief** — write `.tmp/build-feature-<chunk>-brief.md`: binding plan sections, deliverables, neighbor files to imitate, enumerated tests, what NOT to build, exact `base_ref`. Agents get the path, never a pasted wall.
 2. **Implement** — one implementer in the chunk's working tree, no commits. Then run the brief's typecheck/tests yourself and read the diff.
 3. **Adversarially verify** — one verifier, given the brief, the diff path, and the gate summary. It re-derives behavior from the diff rather than trusting the implementer's report, walks the race and edge paths the plan names, and checks reuse (INV-35/37): name the existing abstraction a duplicate should collapse into. It reports only concrete findings with a failure scenario, self-scored ≥80. It does not rerun green suites.
-4. **Triage and fix** — one disposition per finding (below), one batched fix pass, one targeted recheck. Then save the reviewed patch: `{ git diff "$base_ref"...HEAD; git diff HEAD; } > .tmp/build-feature-<chunk>.diff`, with dispositions and gate outcomes in `.tmp/build-feature-<chunk>-evidence.md`.
-5. **Stack the PR** — `/commit`, then `gh stack add <branch>` and `/create-pr`; each chunk branches off the previous chunk, the first off `origin/main`. `/create-pr` owns `gh stack submit --auto`. **Confirm `gh stack view --json` reports a `Stack #NNNN` before continuing.** Chained-base PRs without a Stack are a failed step, not a variant — retrofit with `gh stack submit --auto --open`. Read the `gh-stack` skill before your first stack command this session; this list is a memory jog, not the contract.
-6. **Review the PR** — one PR reviewer runs `/code-review <PR#>` (PR mode posts the report as a comment). Triage its findings the same way, fix accepted ones in one batch, push. Do not wait on CodeRabbit here; its threads get swept once at the whole-stack stage.
+4. **Triage and fix** — one disposition per finding (below), one batched fix pass, one targeted recheck. Then save the reviewed patch to the exact paths `/create-pr` looks for, or it will re-audit the diff and fire its own `/code-review`: `{ git diff "$base_ref"...HEAD; git diff HEAD; } > .tmp/build-feature-reviewed.diff`, with `base_ref`, dispositions, and gate outcomes in `.tmp/build-feature-review-evidence.md`. Both are per-chunk scratch; overwrite them each chunk.
+5. **Stack the PR** — read the `gh-stack` skill before your first stack command this session; the order below is a memory jog, not the contract.
+   - `gh stack add <branch>` **before** `/commit` — `add` creates and switches to the branch, carrying the uncommitted work with it. Commit first and the chunk's diff lands on the previous chunk's branch and its PR.
+   - First chunk of a new stack: `gh stack init <branch>` (with `git config rerere.enabled true` and `remote.pushDefault origin` once), not `add` — `add` outside a stack exits 2, and `/create-pr` then silently opens an unstacked PR against `main`.
+   - Then `/commit`, then `/create-pr`, which owns `gh stack submit --auto`.
+   - **Confirm `gh stack view --json` reports a `Stack #NNNN` before continuing.** Chained-base PRs without a Stack are a failed step, not a variant — retrofit with `gh stack submit --auto --open`.
+6. **Review the PR** — one PR reviewer runs `/code-review <PR#>` (PR mode posts the report as a comment). Triage its findings, fix accepted ones in one batch, push. **One `/code-review` per PR, full stop** — it has no targeted mode, so a "confirmation" re-run is a fresh broad pass that will find new things forever. The pushed fix is covered by the whole-stack pass. Do not wait on CodeRabbit here; its threads get swept once at the whole-stack stage.
 
 ## Triage is yours
 
@@ -52,38 +58,42 @@ Every finding from every reviewer gets exactly one disposition, recorded in the 
 
 - **Accept** — real, in scope; fix it in this chunk.
 - **Refute** — wrong; write the one-line evidence (code path, test, invariant id). Refuting with evidence is expected and healthy; blind fixes have caused real regressions here.
-- **Defer** — real but outside the ratified scope; note it in the PR body and carry it into the whole-stack review.
+- **Defer** — real but outside the plan's scope; note it in the PR body and carry it into the whole-stack review.
 
 Reviewers advise; you decide. A refuted finding does not get a rematch in a later pass.
 
 ## Don't spiral
 
-- One batched fix pass per review pass — all accepted findings at once, never one at a time.
+The whole chunk gets a fixed budget, in counts, not vibes: **one broad adversarial pass, one batched fix, one targeted recheck, one surgical fix, then done** — plus the single `/code-review` in step 6 and its one fix batch. Nothing in this document authorizes a third fix on the same diff.
+
+- The broad pass produces the finding set for this chunk. That set is frozen at triage. Later passes cannot add to it, revive a refuted item, or import unrelated scope.
 - The recheck sees only the accepted findings and the lines changed for them. It may report exactly two things: an accepted finding that isn't actually fixed, and a regression the fix introduced. Anything else is out of bounds — discard it, no matter how interesting.
-- At most one surgical round after that recheck. Then the gate is closed for this diff revision.
-- A fresh broad review pass only when the diff changed materially for a reason other than remediating findings.
-- **Tripwire:** two consecutive rounds touching the same lines without the accepted-blocker count dropping means you are spiralling. Stop, report the state, ask.
+- A second broad pass only if the diff changed materially for a reason other than remediating findings — a scope addition, not a fix.
+- **Tripwire:** if a fix round touches lines a previous round already touched and the accepted set is not strictly smaller than before, you are spiralling. Stop, report the state, ask.
 - Gates run in the orchestrator: once after implement, once after the fix batch, then only affected gates. Reviewers get the summary and do not rerun green suites.
+
+A **blocker** is a finding about correctness, data integrity, security or authorization, or a plan deliverable that was not actually built. Nothing else is a blocker, whatever severity label the reviewer attached.
 
 ## Don't stall
 
 Keep going. None of these is a reason to stop, hand back, or split the chunk:
 
-- Red gates you haven't yet tried to fix; a failed, timed-out, or truncated child. Check `git status` first — the work is usually already on disk. Preserve it, resume or replace the agent. **A dead child is not a consumed fix round.**
+- A red gate. Fixing it is the job, not a reason to escalate. Keep trying genuinely different hypotheses; a repeat of a failure you already tried to fix the same way is not a new attempt. Escalate only after three distinct hypotheses have each failed, with all three written down.
+- A failed, timed-out, or truncated child. Check `git status` first — the work is usually already on disk. Preserve it, resume or replace the agent. **A dead child is not a consumed fix round.**
 - A reviewer you disagree with → refute with evidence and move on.
 - The chunk is bigger or messier than the plan implied but stays inside its ownership boundary → build it.
 - Missing optional credentials, no live smoke path, behavior unverifiable locally → use a deterministic substitute, record the caveat in the PR body.
-- Minor or deferred findings that survived the cap → PR body known-issues section, continue.
+- Minor or deferred findings that survived the budget → PR body known-issues section, continue.
 - Pre-existing failures you surfaced → fix them in-branch (INV-22).
 
-Stop and ask only for: a blocker surviving the round cap; the spiral tripwire; a plan change touching schema, public contract, or deletion; the same failure signature twice with no new hypothesis; or concrete evidence the chunk must coordinate a second independently-owned lifecycle or state machine — then preserve the patch and propose a split along that boundary. Chunk size alone is not that evidence.
+Stop and ask only for: a **blocker** surviving the chunk's fix budget; the spiral tripwire; three failed hypotheses on one gate; a mid-flight plan change that drops data, breaks a public contract, or removes a user-facing surface; or concrete evidence the chunk must coordinate a second independently-owned lifecycle or state machine — then preserve the patch and propose a split along that boundary. Chunk size alone is not that evidence. That list is closed. If the reason you want to stop is not on it, you are stalling; finish the chunk and put the concern in the PR body.
 
 ## After the last chunk
 
-7. **Whole-stack adversarial review** — one reviewer over `git diff origin/main...<tip>`: cross-PR seams, invariants invisible inside one chunk, and plan conformance — every ratified chunk built, nothing deferred smuggled in, PR bodies and `/sync-plan` blocks matching what actually shipped.
+7. **Whole-stack adversarial review** — one reviewer over `git diff origin/main...<tip>`: cross-PR seams, invariants invisible inside one chunk, and plan conformance — every planned chunk built, nothing deferred smuggled in, PR bodies and `/sync-plan` blocks matching what actually shipped.
 8. **Stack hygiene** — `gh stack view --json` shows every PR linked; `gh stack sync --prune` if `main` moved; CI green; every CodeRabbit thread dispositioned via `/respond-to-pr-review`.
 9. **UI features** — throwaway Playwright pass against the e2e stack: screenshots at 1440px and 390px, scroll inner containers (fullPage misses them), read the PNGs, delete the spec.
-10. Fold accepted findings in one batch under the same bounds, run affected gates, push, and report the per-PR links. No second external model unless the user asks.
+10. **Fold findings into the PR that owns them**, not into the tip branch: `gh stack checkout <branch>` → fix → commit → `gh stack rebase --upstack` → `gh stack push`. A chunk-2 fix committed on the tip ships in chunk 5's PR and leaves the reviewed PR wrong. One batch, same budget as a chunk, run affected gates, then report the per-PR links. No second external model unless the user asks.
 
 ## Gotchas
 
