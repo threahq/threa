@@ -1,4 +1,5 @@
 import { tool } from "ai"
+import type { Tool } from "ai"
 import { z } from "zod"
 
 const KeepResponseSchema = z.object({
@@ -9,7 +10,7 @@ const KeepResponseSchema = z.object({
  * Creates a keep_response tool definition WITHOUT an execute handler.
  * The runtime intercepts this call and treats it as an explicit no-change decision.
  */
-export function createKeepResponseTool() {
+export function createKeepResponseTool(): Tool<z.infer<typeof KeepResponseSchema>, never> {
   return tool({
     description:
       "Keep the previously sent response unchanged. Use this instead of send_message when no response updates are needed.",

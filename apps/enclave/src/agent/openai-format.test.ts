@@ -69,6 +69,18 @@ describe("toOpenAiTools", () => {
     expect(params.properties).toHaveProperty("name")
   })
 
+  it("falls back to an empty description when the tool's is missing or not a string", () => {
+    const tools = {
+      missing: { inputSchema: z.object({}) },
+      dynamic: { description: () => "computed at call time", inputSchema: z.object({}) },
+    } as unknown as Record<string, never>
+
+    expect(toOpenAiTools(tools)?.map((t) => [t.function.name, t.function.description])).toEqual([
+      ["missing", ""],
+      ["dynamic", ""],
+    ])
+  })
+
   it("returns undefined when there are no tools", () => {
     expect(toOpenAiTools(undefined)).toBeUndefined()
     expect(toOpenAiTools({})).toBeUndefined()

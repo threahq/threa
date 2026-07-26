@@ -334,7 +334,7 @@ export interface AI {
 
   // Model access (for advanced use cases)
   getLanguageModel(modelString: string): LanguageModel
-  getEmbeddingModel(modelString: string): EmbeddingModel<string>
+  getEmbeddingModel(modelString: string): EmbeddingModel
   getLangChainModel(modelString: string, context?: CostContext): Promise<LangChainModelResult>
 
   // Cost tracking for LangChain/LangGraph calls
@@ -433,7 +433,7 @@ export function createAI(config: AIConfig): AI {
     }
   }
 
-  function getEmbeddingModel(modelString: string): EmbeddingModel<string> {
+  function getEmbeddingModel(modelString: string): EmbeddingModel {
     const { provider, modelId } = parseModelId(modelString)
 
     switch (provider) {
@@ -634,40 +634,15 @@ export function createAI(config: AIConfig): AI {
     }
   }
 
-  function buildTelemetry(telemetry?: TelemetryConfig, modelString?: string, budgetDecision?: BudgetPolicyDecision) {
+  // ai@7 removed built-in OpenTelemetry: TelemetryOptions carries no metadata.
+  // Our own TelemetryConfig.metadata still flows to the access-log disclose sink
+  // and the cost recorder; only the SDK channel is gone.
+  function buildTelemetry(telemetry?: TelemetryConfig) {
     if (!telemetry) return undefined
-
-    // Include parsed model info in metadata for Langfuse model matching
-    let modelMetadata: Record<string, string | number | boolean | undefined> = {}
-    if (modelString) {
-      const parsed = parseModelId(modelString)
-      modelMetadata = {
-        model_id: parsed.modelId,
-        model_provider: parsed.modelProvider,
-        model_name: parsed.modelName,
-      }
-    }
-
-    const budgetMetadata = budgetDecision ? buildBudgetTelemetryMetadata(budgetDecision) : {}
-
-    // Non-scalar metadata (subjectRefs rides this channel for the access-log
-    // sink) is not a valid OTEL attribute value — the SDK would diag-warn and
-    // drop it, polluting traces. Only scalars flow to span attributes.
-    const scalarMetadata: Record<string, string | number | boolean | undefined> = {}
-    for (const [key, value] of Object.entries(telemetry.metadata ?? {})) {
-      if (value === undefined || typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
-        scalarMetadata[key] = value
-      }
-    }
 
     return {
       isEnabled: true,
       functionId: telemetry.functionId,
-      metadata: {
-        ...modelMetadata,
-        ...budgetMetadata,
-        ...scalarMetadata,
-      },
     } as const
   }
 
@@ -685,7 +660,7 @@ export function createAI(config: AIConfig): AI {
       | { promptTokens?: number; completionTokens?: number; totalTokens?: number }
       // Embedding model usage shape
       | { tokens?: number }
-    // AI SDK v5 uses providerMetadata (not experimental_providerMetadata)
+    // AI SDK v7 uses providerMetadata (not experimental_providerMetadata)
     providerMetadata?: {
       openrouter?: {
         usage?: {
@@ -821,11 +796,13 @@ export function createAI(config: AIConfig): AI {
         // Our Message type is compatible with AI SDK's ModelMessage at runtime
         // The cast is needed because our role type is a union while SDK uses discriminated types
         messages: options.messages as ModelMessage[],
+        // ai@7 throws AI_InvalidPromptError on any role: "system" message unless this is set;
+        // our callers express system prompts as system-role messages.
+        allowSystemInMessages: true,
         maxOutputTokens: options.maxTokens,
         temperature: options.temperature,
         abortSignal: options.abortSignal,
-        // @ts-expect-error AI SDK telemetry types are stricter than needed; our buildTelemetry output is compatible at runtime
-        experimental_telemetry: buildTelemetry(options.telemetry, effectiveModel, budgetDecision),
+        experimental_telemetry: buildTelemetry(options.telemetry),
       })
 
       const usage = extractUsageWithCost(response)
@@ -863,14 +840,12 @@ export function createAI(config: AIConfig): AI {
         model: options.model,
         system: options.system,
         messages: options.messages,
+        allowSystemInMessages: true,
         tools: options.tools,
         maxOutputTokens: options.maxTokens,
         temperature: options.temperature,
         abortSignal: options.abortSignal,
-        // @ts-expect-error AI SDK telemetry types are stricter than needed; our TelemetryConfig output is compatible at runtime
-        experimental_telemetry: options.telemetry
-          ? { isEnabled: true, functionId: options.telemetry.functionId, metadata: options.telemetry.metadata }
-          : undefined,
+        experimental_telemetry: buildTelemetry(options.telemetry),
       })
 
       // Usage recording requires the original model string because the resolved
@@ -926,11 +901,12 @@ export function createAI(config: AIConfig): AI {
         schema: options.schema,
         // Our Message type is compatible with AI SDK's ModelMessage at runtime
         messages: options.messages as ModelMessage[],
+        allowSystemInMessages: true,
         maxOutputTokens: options.maxTokens,
         temperature: options.temperature,
         abortSignal: options.abortSignal,
         experimental_repairText: repair,
-        experimental_telemetry: buildTelemetry(options.telemetry, effectiveModel, budgetDecision),
+        experimental_telemetry: buildTelemetry(options.telemetry),
       })
 
       const usage = extractUsageWithCost(response)
@@ -974,8 +950,7 @@ export function createAI(config: AIConfig): AI {
         model,
         value: options.value,
         abortSignal: options.abortSignal,
-        // @ts-expect-error AI SDK telemetry types are stricter than needed; our buildTelemetry output is compatible at runtime
-        experimental_telemetry: buildTelemetry(options.telemetry, effectiveModel, budgetDecision),
+        experimental_telemetry: buildTelemetry(options.telemetry),
       })
 
       const usage = extractUsageWithCost(response)
@@ -1018,8 +993,7 @@ export function createAI(config: AIConfig): AI {
         model,
         values: options.values,
         abortSignal: options.abortSignal,
-        // @ts-expect-error AI SDK telemetry types are stricter than needed; our buildTelemetry output is compatible at runtime
-        experimental_telemetry: buildTelemetry(options.telemetry, effectiveModel, budgetDecision),
+        experimental_telemetry: buildTelemetry(options.telemetry),
       })
 
       const usage = extractUsageWithCost(response)

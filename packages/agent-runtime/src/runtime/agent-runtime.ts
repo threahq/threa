@@ -379,9 +379,10 @@ export class AgentRuntime {
       }
 
       const assistantMsg = result.response.messages[0]
-      // @openrouter/ai-sdk-provider 1.5.4 stamps reasoning_details on both the
-      // reasoning part and every tool call, then replays both — Anthropic 400s on
-      // the duplicated thinking block. Strip before the message enters conversation.
+      // Defence in depth: @openrouter/ai-sdk-provider 2.0.2 (PR #344) stopped
+      // duplicating reasoning_details across the reasoning part and every tool
+      // call, which used to 400 Anthropic on replay. Idempotent no-op on a fixed
+      // provider; kept because this boundary has regressed twice.
       if (assistantMsg) conversation.push(sanitizeAssistantReplay(assistantMsg))
 
       if (result.toolCalls.length === 0) {
