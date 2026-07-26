@@ -403,7 +403,7 @@ async function main() {
     }
     remoteOrigin =
       tailscaleHttpsPort === 443 ? `https://${tailscale.host}` : `https://${tailscale.host}:${tailscaleHttpsPort}`
-    console.log(`Remote mode: ${remoteOrigin}  (auth callbacks)`)
+    console.log(`Remote mode: ${remoteOrigin}`)
   } else if (lanMode) {
     for (const host of lanHosts) {
       console.log(`LAN mode: http://${host}:3000${host === primaryLanHost ? "  (auth callbacks)" : ""}`)
@@ -583,7 +583,54 @@ async function main() {
   ]
   installDevLifecycle(processes)
 
+  // Printed LAST, and only once the frontend actually answers. Ordering is the
+  // whole point: Vite prints its own `Local:`/`Network:` URLs during startup,
+  // and in remote mode those are the raw port BEHIND the Tailscale proxy. They
+  // serve HTML, so they look right, but the app cannot work there — auth
+  // callbacks are registered against the HTTPS origin and the CSP's
+  // `upgrade-insecure-requests` rewrites the API/socket calls an http page
+  // makes. Anyone reading the last URL on screen would pick the wrong one, so
+  // the correct one has to be the last URL on screen.
+  if (remoteOrigin) {
+    void announceRemoteReady(remoteOrigin)
+  }
+
   await Promise.all(processes.map((child) => child.exited))
+}
+
+/**
+ * Wait for the frontend to answer, then print the one URL to open.
+ *
+ * `tailscale serve status` reports "No serve config" while this is running —
+ * foreground Serve keeps its listener in-process and only `--bg` writes config.
+ * That reads as broken, so the banner says otherwise before anyone checks.
+ */
+async function announceRemoteReady(origin: string): Promise<void> {
+  const deadline = Date.now() + 120_000
+  while (Date.now() < deadline) {
+    try {
+      await fetch("http://127.0.0.1:3000/", { signal: AbortSignal.timeout(2_000) })
+      break
+    } catch {
+      await new Promise((resolve) => setTimeout(resolve, 1_000))
+    }
+  }
+
+  const lines = [
+    `Open:  ${origin}`,
+    "",
+    "Ignore the localhost / 192.168.* / 100.* URLs above.",
+    "In remote mode those are the port behind the proxy, and",
+    "the app cannot work there.",
+    "",
+    '"tailscale serve status" reporting "No serve config" is',
+    "expected: foreground Serve writes none.",
+  ]
+  const width = Math.max(...lines.map((l) => l.length)) + 2
+  const rule = "─".repeat(width)
+  console.log(`\n┌${rule}┐`)
+  for (const l of lines) console.log(`│ ${l.padEnd(width - 1)}│`)
+  console.log(`└${rule}┘\n`)
 }
 
 main()
