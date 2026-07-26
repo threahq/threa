@@ -232,6 +232,7 @@ import { PoolMonitor } from "./lib/observability"
 import { ControlPlaneClient } from "./lib/control-plane-client"
 import { createBackfillPlanWorker, createBackfillChunkWorker } from "./lib/backfill"
 import { registerMentionBackfill } from "./features/mentions"
+import { registerStreamContextBackfill } from "./features/stream-context"
 
 export interface ServerInstance {
   server: Server
@@ -1343,6 +1344,7 @@ export async function startServer(): Promise<ServerInstance> {
   // Generic backfill framework. Register definitions BEFORE the workers can run
   // so a redelivered plan/chunk job can always resolve its definition by name.
   registerMentionBackfill()
+  registerStreamContextBackfill()
   registerGithubInstallationBackfill({ workspaceIntegrationService })
   jobQueue.registerHandler(JobQueues.BACKFILL_PLAN, createBackfillPlanWorker({ pool }), {
     tier: QueueTiers.LIGHT,

@@ -94,7 +94,7 @@ function resolveExtractedMemoScope(stream: Stream | null): { scope: MemoScope; s
  * owner's private tier instead of silently falling through to `workspace`. The
  * batch path already passes a top-level stream, so this is a no-op there.
  */
-async function resolveMemoScopeForStreamId(
+export async function resolveMemoScopeForStreamId(
   db: Querier,
   streamId: string
 ): Promise<{ scope: MemoScope; scopeUserId: string | null }> {

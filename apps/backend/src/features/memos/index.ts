@@ -36,7 +36,7 @@ export {
 
 export { EMBEDDING_MODEL_ID } from "./embedding-config"
 
-export { MemoService } from "./service"
+export { MemoService, resolveMemoScopeForStreamId } from "./service"
 export type {
   MemoServiceLike,
   MemoServiceConfig,
