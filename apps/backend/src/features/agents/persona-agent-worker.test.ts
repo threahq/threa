@@ -77,6 +77,56 @@ describe("createPersonaAgentWorker", () => {
     expect(captured?.purpose).toEqual({ kind: "catch_up" })
   })
 
+  describe("failed sessions", () => {
+    const failedData: PersonaAgentJobData = {
+      workspaceId: "ws_1",
+      streamId: "stream_1",
+      messageId: "msg_1",
+      personaId: "persona_ariadne",
+      triggeredBy: "user",
+    }
+
+    function makeFailedWorker(result: Partial<PersonaAgentResult>) {
+      return createPersonaAgentWorker({
+        agent: {
+          run: async () =>
+            ({
+              sessionId: "session_1",
+              messagesSent: 0,
+              sentMessageIds: [],
+              status: "failed",
+              ...result,
+            }) satisfies PersonaAgentResult,
+        },
+        serverId: "srv_1",
+        pool: {} as Pool,
+        jobQueue: {} as QueueManager,
+      })
+    }
+
+    it("does not re-throw when the provider said the failure is not retryable", async () => {
+      const worker = makeFailedWorker({ retryable: false })
+
+      expect(await worker({ id: "job_6", name: "persona.agent", data: failedData })).toBeUndefined()
+    })
+
+    it("re-throws a retryable failure so the queue retries", async () => {
+      const worker = makeFailedWorker({ retryable: true })
+
+      await expect(worker({ id: "job_7", name: "persona.agent", data: failedData })).rejects.toThrow(
+        "Persona agent failed for session session_1"
+      )
+    })
+
+    it("re-throws a failure with no retryable verdict", async () => {
+      const worker = makeFailedWorker({})
+
+      await expect(worker({ id: "job_8", name: "persona.agent", data: failedData })).rejects.toThrow(
+        "Persona agent failed for session session_1"
+      )
+    })
+  })
+
   describe("episode-summary enqueue on completion (roadmap 3.1)", () => {
     afterEach(() => mock.restore())
 

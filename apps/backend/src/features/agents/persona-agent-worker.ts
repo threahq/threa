@@ -57,7 +57,17 @@ export function createPersonaAgentWorker(deps: PersonaAgentWorkerDeps): JobHandl
     })
 
     if (result.status === "failed") {
-      // Re-throw to trigger queue system retry
+      // A retryable failure re-throws so the queue retries the same session. When the
+      // provider itself said the error is not retryable, the row is already FAILED and
+      // the terminal `agent_session:failed` event is emitted — a retry could only
+      // repeat the same rejection, so return normally.
+      if (result.retryable === false) {
+        logger.warn(
+          { jobId: job.id, streamId, sessionId: result.sessionId },
+          "Persona agent failed with a non-retryable provider error, not retrying"
+        )
+        return
+      }
       throw new Error(`Persona agent failed for session ${result.sessionId}`)
     }
 

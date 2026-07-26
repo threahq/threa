@@ -1,3 +1,4 @@
+import { APICallError } from "ai"
 import type { Pool } from "pg"
 import type { AgentSessionRerunContext } from "@threa/types"
 import { withTransaction } from "../../../db"
@@ -10,7 +11,7 @@ import { logger } from "../../../lib/logger"
 export type WithSessionResult =
   | { status: "skipped"; sessionId: string | null; reason: string }
   | { status: "completed"; sessionId: string; messagesSent: number; sentMessageIds: string[]; lastSeenSequence: bigint }
-  | { status: "failed"; sessionId: string; willRetry: boolean }
+  | { status: "failed"; sessionId: string; willRetry: boolean; retryable: boolean }
 
 /**
  * Manages the complete lifecycle of an agent session.
@@ -248,7 +249,12 @@ export async function withCompanionSession(
     // FAILED→RUNNING) but emit a non-terminal `agent_session:interrupted` so the
     // card shows "Interrupted, retrying…" instead of flashing red. When retry
     // accounting is absent (non-queue callers), treat the failure as terminal.
-    const willRetry = attempt !== undefined && maxAttempts !== undefined && attempt + 1 < maxAttempts
+    // `retryable: false` is the provider's own verdict (an AI SDK APICallError that
+    // says don't retry) — repeating a deterministic rejection only burns tokens. It
+    // is not the same as `willRetry: false`, which also covers the last attempt of
+    // an ordinary failure.
+    const retryable = !(APICallError.isInstance(err) && err.isRetryable === false)
+    const willRetry = retryable && attempt !== undefined && maxAttempts !== undefined && attempt + 1 < maxAttempts
 
     await withTransaction(pool, async (db) => {
       const failed = await AgentSessionRepository.updateStatus(db, session.id, SessionStatuses.FAILED, {
@@ -304,7 +310,7 @@ export async function withCompanionSession(
       }
     }).catch((e) => logger.error({ err: e }, "Failed to mark session as failed"))
 
-    return { status: "failed" as const, sessionId: session.id, willRetry }
+    return { status: "failed" as const, sessionId: session.id, willRetry, retryable }
   } finally {
     if (heartbeatInterval) clearInterval(heartbeatInterval)
   }
