@@ -1,6 +1,6 @@
 # Calls — chat while in fullscreen
 
-Status: **scoped, awaiting a pick.** No code written.
+Status: **Option A built.** Ratified by Kris 2026-07-26; implemented in this branch.
 
 ## The complaint
 
@@ -41,23 +41,31 @@ should not ride on this fix. Recorded as its own item, not planned here.
 Publish the panel's live width as a CSS var and have the fullscreen overlay stop
 short of it.
 
-- `usePanelLayout` writes `--panel-inset-right` = effective panel width when open,
-  `0px` when closed — exactly mirroring what `desktop-call-dock` already does with
-  `--call-dock-inset-right`, including the unmount reset.
-- `DesktopCallFullscreen` renders with `right: var(--panel-inset-right, 0px)`.
+- `ThreadPanelSlot` — the single component that owns the desktop panel column, and
+  the one the mobile take-over path never mounts — writes `--panel-inset-right` =
+  its display width, and `--panel-inset-duration` = `200ms` while it animates,
+  `0ms` while the user drags the resize handle. Mirrors what `desktop-call-dock`
+  does with `--call-dock-inset-right`, unmount reset included.
+- `DesktopCallFullscreen` renders with `right: var(--panel-inset-right, 0px)` and
+  transitions that edge over `--panel-inset-duration` using Tailwind's `ease-out`
+  curve — the CSS `ease-out` keyword is a different curve and the two edges drift
+  ~70px apart mid-transition, flashing the timeline between them.
 - `ChatButton` drops the desktop eject. Fullscreen stays fullscreen; the thread
   panel appears in the reserved column.
 
-Why it works cleanly: in fullscreen the dock sets `--call-dock-inset-right` to `0`
-(`desktop-call-dock.tsx:374`), so `<main>` is full-width beneath and its panel
-already sits flush against the viewport's right edge — the gap the overlay leaves
-lands exactly on it. One mount of the panel, no duplicate subscriptions or draft
-state, and the chat is the same `StreamPanel` as everywhere else.
+Why it works cleanly: in fullscreen the side dock unmounts and its cleanup resets
+`--call-dock-inset-right` to `0`, so `<main>` is full-width beneath and its panel
+sits flush against the viewport's right edge — the gap the overlay leaves lands
+exactly on it. One mount of the panel, no duplicate subscriptions or draft state,
+and the chat is the same `StreamPanel` as everywhere else.
 
-Cost: one CSS var, one style line, one deletion. Watch: the panel's resize handle
-sits on the boundary the overlay's edge now occupies (give the overlay a small
-right offset or let the handle own the z-order), and the overlay must animate its
-right edge in step with the panel's open/close transition.
+Cost: one CSS var pair, one style line, one deletion. Browser-verified at 1280px:
+overlay `x=260 w=540` ends exactly where the panel starts (`x=800 w=480`).
+
+`ThreadPanelSlot` has a third mount besides `stream.tsx` and `board.tsx` — the
+persona editor's test-chat pane (`pages/persona-editor.tsx`). It publishes the
+same inset, so a fullscreen call over that route would reserve a column for the
+test pane. Harmless and vanishingly rare; left alone deliberately.
 
 Mobile is unchanged: the panel replaces the main column there, so fullscreen
 collapsing to `standard` stays correct.
