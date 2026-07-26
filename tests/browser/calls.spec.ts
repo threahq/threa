@@ -27,6 +27,9 @@ interface DmPair {
   workspaceId: string
   dmStreamId: string
   inviteeUserId: string
+  /** A's credentials, so a test can log the SAME user in on a second "device". */
+  ownerEmail: string
+  ownerName: string
 }
 
 /** A owner + B member sharing a real DM stream, both viewing it, calls enabled. */
@@ -39,7 +42,7 @@ async function setUpDmPair(browser: Browser): Promise<DmPair> {
   const ownerPage = await ownerContext.newPage()
   const invitee = await loginInNewContext(browser, inviteeEmail, inviteeName)
 
-  await loginAndCreateWorkspace(ownerPage, "calls-a")
+  const owner = await loginAndCreateWorkspace(ownerPage, "calls-a")
   const workspaceId = ownerPage.url().match(/\/w\/([^/]+)/)?.[1]
   if (!workspaceId) throw new Error("Could not resolve workspaceId from owner URL")
 
@@ -90,6 +93,8 @@ async function setUpDmPair(browser: Browser): Promise<DmPair> {
     workspaceId,
     dmStreamId,
     inviteeUserId,
+    ownerEmail: owner.email,
+    ownerName: owner.name,
   }
 }
 
@@ -184,6 +189,48 @@ test.describe("1:1 DM calls", () => {
       const missed = activities.activities.filter((row) => row.activityType === "missed_call")
       expect(missed).toHaveLength(0)
     } finally {
+      await pair.ownerContext.close()
+      await pair.inviteeContext.close()
+    }
+  })
+
+  test("takeover: A's second device moves the call, and the first device is told where it went", async ({
+    browser,
+  }) => {
+    test.setTimeout(120000)
+    const pair = await setUpDmPair(browser)
+    const { ownerPage: a, inviteePage: b, workspaceId, dmStreamId, ownerEmail, ownerName } = pair
+    // A's second device: the SAME user in a fresh context, so the server sees a
+    // second media incarnation on one participant — the CALL_ENDPOINT_ACTIVE case.
+    const second = await loginInNewContext(browser, ownerEmail, ownerName)
+    try {
+      await startCallFromHeader(a)
+      await expect(b.getByText(/is calling/i)).toBeVisible({ timeout: 20000 })
+      await b.getByRole("button", { name: "Accept call" }).click()
+      await expect(a.locator(CALL_TILE)).toHaveCount(2, { timeout: 20000 })
+
+      await second.page.goto(`/w/${workspaceId}/s/${dmStreamId}`)
+      await second.page.getByRole("button", { name: "Start a call" }).click()
+      await second.page.getByRole("menuitem", { name: "Start voice call" }).click()
+
+      // Prompted, not toasted — and nothing has moved until the user says so.
+      await expect(second.page.getByText(/in this call on another device/i)).toBeVisible({ timeout: 20000 })
+      await expect(a.locator(CALL_TILE)).toHaveCount(2, { timeout: 5000 })
+
+      await second.page.getByRole("button", { name: "Join on this device" }).click()
+      await expect(second.page.locator(CALL_TILE)).toHaveCount(2, { timeout: 25000 })
+
+      // The displaced device is told, promptly — not left on a dead call until its
+      // lease renew fails 15s later.
+      await expect(a.getByText(/moved to another device/i)).toBeVisible({ timeout: 15000 })
+      await expect(a.locator(CALL_TILE)).toHaveCount(0, { timeout: 5000 })
+      // B never lost their peer: the identity stayed in the call, only its endpoint moved.
+      await expect(b.locator(CALL_TILE)).toHaveCount(2, { timeout: 20000 })
+
+      await second.page.getByRole("button", { name: "Leave call" }).click()
+      await b.getByRole("button", { name: "Leave call" }).click()
+    } finally {
+      await second.context.close()
       await pair.ownerContext.close()
       await pair.inviteeContext.close()
     }
