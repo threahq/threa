@@ -90,7 +90,7 @@ const linkDoc = (href: string): JSONContent => ({
 })
 
 describe("stream-context backfill plan", () => {
-  it("chunks messages at 500 and skips sealed streams", async () => {
+  it("chunks a stream's messages at 500 per chunk", async () => {
     const messageRows = [
       ...Array.from({ length: 501 }, (_, i) => ({ id: `msg_${String(i).padStart(4, "0")}`, stream_id: "stream_a" })),
       { id: "msg_b1", stream_id: "stream_b" },

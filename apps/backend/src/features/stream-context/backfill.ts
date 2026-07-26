@@ -1,6 +1,6 @@
-import { MemoScopes, StreamTypes, type JSONContent, type MemoScope } from "@threa/types"
+import { AuthorTypes, MemoScopes, StreamTypes, type JSONContent, type MemoScope } from "@threa/types"
 import { sql } from "../../db"
-import { registerBackfill, type BackfillContext } from "../../lib/backfill"
+import { chunkIds, registerBackfill, type BackfillContext } from "../../lib/backfill"
 import { streamContextItemId } from "../../lib/id"
 import { resolveMemoScopeForStreamId } from "../memos"
 import { contextRowsForMessage, contextSnippet } from "./extract"
@@ -8,8 +8,6 @@ import { StreamContextRepository } from "./repository"
 import type { NewStreamContextItem } from "./types"
 
 export const STREAM_CONTEXT_BACKFILL_NAME = "stream-context-index"
-
-const MESSAGE_CHUNK_SIZE = 500
 
 /** Top-level stream of `s` — a thread resolves to its root (INV-62). */
 const TOP_LEVEL_STREAM_SQL = sql.raw(
@@ -82,14 +80,6 @@ interface EventAnchorRow {
 
 function toBigInt(value: string | number | bigint | null): bigint | null {
   return value === null ? null : BigInt(value)
-}
-
-function chunkIds(ids: string[], size: number = MESSAGE_CHUNK_SIZE): string[][] {
-  const chunks: string[][] = []
-  for (let i = 0; i < ids.length; i += size) {
-    chunks.push(ids.slice(i, i + size))
-  }
-  return chunks
 }
 
 /**
@@ -226,10 +216,10 @@ function memoChunkRows(
       .filter((message): message is AnchorRow => message !== undefined)
     if (resolved.length === 0) continue
     const latest = resolved.reduce((a, b) => (b.created_at > a.created_at ? b : a))
-    // Anchor on a message that still exists: the delete hook unindexes by
-    // `source_message_id`, so anchoring on a deleted source would resurrect the
-    // row it removed, pointing at a message nothing can jump to.
-    const anchorId = memo.source_message_ids.find((id) => byId.has(id))!
+    // First SURVIVING source, matching `MemoService.indexCapturedMemos`: the
+    // delete hook unindexes by `source_message_id`, so the two paths must agree
+    // on the anchor or they write different identity keys for the same memo.
+    const anchorId = resolved[0]!.id
     rows.push({
       id: streamContextItemId(),
       workspaceId,
@@ -265,7 +255,7 @@ function delegationChunkRows(
     refId: task.id,
     groupKey: task.id,
     sourceMessageId: null,
-    authorId: task.created_by_kind === "user" ? task.created_by_id : null,
+    authorId: task.created_by_kind === AuthorTypes.USER ? task.created_by_id : null,
     occurredAt: task.created_at,
     sequence: null,
     snippet: contextSnippet(task.title),
@@ -317,7 +307,7 @@ function threadChunkRows(
     rows.push({
       ...base,
       sourceMessageId: null,
-      authorId: eventAnchor.actor_type === "user" ? eventAnchor.actor_id : null,
+      authorId: eventAnchor.actor_type === AuthorTypes.USER ? eventAnchor.actor_id : null,
       occurredAt: eventAnchor.created_at,
       sequence: toBigInt(eventAnchor.sequence),
       snippet: "",

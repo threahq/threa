@@ -860,7 +860,10 @@ export class MemoService implements MemoServiceLike {
         refKind: "memo",
         refId: memo.id,
         groupKey: memo.id,
-        sourceMessageId: memo.sourceMessageIds[0],
+        // First SURVIVING source, not first cited: a landmark anchored on a
+        // deleted message would be unreachable, and the backfill anchors the
+        // same way — the two must agree or they write different identity keys.
+        sourceMessageId: resolved[0]!.id,
         authorId: latest.authorId,
         occurredAt: latest.createdAt,
         sequence: latest.sequence,
