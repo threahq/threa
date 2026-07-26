@@ -7,7 +7,11 @@ import { PersonaAttachmentRepository } from "../../src/features/agents/persona-a
 import { PersonaConfigService } from "../../src/features/agents/persona-config-service"
 import { PersonaRepository } from "../../src/features/agents/persona-repository"
 import { AttachmentService, AttachmentExtractionRepository } from "../../src/features/attachments"
-import { buildSystemPrompt, joinSystemPrompt } from "../../src/features/agents/companion/prompt/system-prompt"
+import {
+  buildSystemPrompt,
+  joinSystemPrompt,
+  type SystemPromptInputs,
+} from "../../src/features/agents/companion/prompt/system-prompt"
 import type { Persona } from "../../src/features/agents/persona-repository"
 import type { StreamContext } from "../../src/features/agents/context-builder"
 import { setupTestDatabase, withTestTransaction, withTransaction } from "./setup"
@@ -16,7 +20,7 @@ import { setupTestDatabase, withTestTransaction, withTransaction } from "./setup
  * The builder returns a prompt split at its prompt-cache boundary; these
  * assertions are about the assembled prompt, so rejoin it.
  */
-const buildPrompt = (...args: Parameters<typeof buildSystemPrompt>) => joinSystemPrompt(buildSystemPrompt(...args))
+const buildPrompt = (inputs: SystemPromptInputs) => joinSystemPrompt(buildSystemPrompt(inputs))
 
 /**
  * End-to-end proof of the persona-context-attachments prompt path against a real
@@ -128,22 +132,19 @@ describe("persona context attachments → dispatch prompt (integration)", () => 
       expect(knowledge.map((k) => k.filename)).toEqual(["runbook.md", "draft-notes.txt"])
       expect(knowledge[0]!.fullText).toBe(runbookText)
 
-      const prompt = buildPrompt(
+      const prompt = buildPrompt({
         persona,
-        scratchpadContext,
-        null,
-        undefined,
-        undefined,
-        null,
-        [],
-        null,
-        null,
-        null,
-        null,
-        null,
-        undefined,
-        knowledge
-      )
+        context: scratchpadContext,
+        scratchpadCustomPrompt: null,
+        rollingConversationSummary: null,
+        tools: [],
+        conversationTopic: null,
+        spawnedFromContext: null,
+        followUp: null,
+        previousSessions: null,
+        streamBrief: null,
+        personaKnowledge: knowledge,
+      })
 
       expect(prompt).toContain("## Knowledge")
       expect(prompt).toContain("### runbook.md")
@@ -190,23 +191,26 @@ describe("persona context attachments → dispatch prompt (integration)", () => 
       const leaked = await PersonaAttachmentRepository.listForPersonaWithContent(client, otherWorkspaceId, personaRowId)
       expect(leaked).toEqual([])
 
-      const base = buildPrompt(persona, scratchpadContext, null, undefined, undefined, null, [])
-      const withForeign = buildPrompt(
+      const base = buildPrompt({
         persona,
-        scratchpadContext,
-        null,
-        undefined,
-        undefined,
-        null,
-        [],
-        null,
-        null,
-        null,
-        null,
-        null,
-        undefined,
-        leaked
-      )
+        context: scratchpadContext,
+        scratchpadCustomPrompt: null,
+        rollingConversationSummary: null,
+        tools: [],
+      })
+      const withForeign = buildPrompt({
+        persona,
+        context: scratchpadContext,
+        scratchpadCustomPrompt: null,
+        rollingConversationSummary: null,
+        tools: [],
+        conversationTopic: null,
+        spawnedFromContext: null,
+        followUp: null,
+        previousSessions: null,
+        streamBrief: null,
+        personaKnowledge: leaked,
+      })
       expect(withForeign).toBe(base)
       expect(base).not.toContain("## Knowledge")
     })
@@ -524,22 +528,19 @@ describe("PersonaConfigService.attachFromExisting → copy-on-attach (integratio
 
       // The REAL prompt path carries the copied content under the persona.
       const knowledge = await PersonaAttachmentRepository.listForPersonaWithContent(pool, workspaceId, personaRow.id)
-      const prompt = buildPrompt(
-        { ...persona, id: personaRow.id, workspaceId, systemPrompt: "Base system prompt" },
-        scratchpadContext,
-        null,
-        undefined,
-        undefined,
-        null,
-        [],
-        null,
-        null,
-        null,
-        null,
-        null,
-        undefined,
-        knowledge
-      )
+      const prompt = buildPrompt({
+        persona: { ...persona, id: personaRow.id, workspaceId, systemPrompt: "Base system prompt" },
+        context: scratchpadContext,
+        scratchpadCustomPrompt: null,
+        rollingConversationSummary: null,
+        tools: [],
+        conversationTopic: null,
+        spawnedFromContext: null,
+        followUp: null,
+        previousSessions: null,
+        streamBrief: null,
+        personaKnowledge: knowledge,
+      })
       expect(prompt).toContain("## Knowledge")
       expect(prompt).toContain("### runbook.md")
       expect(prompt).toContain(sourceText)
