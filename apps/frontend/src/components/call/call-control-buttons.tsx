@@ -5,6 +5,7 @@ import { createDraftPanelId } from "@/contexts"
 import { cn } from "@/lib/utils"
 import { useIsMobile } from "@/hooks/use-mobile"
 import { useAsyncAction } from "@/hooks/use-async-action"
+import { useAnchoredThreadId } from "@/hooks/use-anchored-thread"
 import { useCallManager } from "./call-manager-context"
 import {
   useCallCameraOn,
@@ -102,10 +103,12 @@ export function FlipButton({ className }: { className?: string }) {
 
 /**
  * Opens the call's chat thread — a thread anchored on the `call_started` event
- * (`chatAnchorId` from the start/join response). Opening the draft panel resolves
- * to the real thread once one exists (chunk-3 auto-redirect) and otherwise starts
- * one on first send, so a single target covers both. Navigation, so a <Link>
- * (INV-40); hidden until the anchor is known.
+ * (`chatAnchorId` from the start/join response). Targets the thread directly once
+ * this client knows it exists; otherwise the draft anchor, which starts one on
+ * first send and self-promotes if the thread was created elsewhere. Linking to
+ * the draft unconditionally is what made a second open flash the empty draft
+ * before redirecting. Navigation, so a <Link> (INV-40); hidden until the anchor
+ * is known.
  *
  * The dock mounts ABOVE `PanelProvider` (it survives navigation and takes no URL
  * state), so it can't call `getPanelUrl`. It builds the absolute host-stream URL
@@ -117,8 +120,10 @@ export function ChatButton({ className }: { className?: string }) {
   const streamId = useCallStreamId()
   const chatAnchorId = useCallChatAnchor()
   const isMobile = useIsMobile()
+  const threadId = useAnchoredThreadId(workspaceId ?? undefined, streamId, chatAnchorId)
   if (!workspaceId || !streamId || !chatAnchorId) return null
-  const search = new URLSearchParams({ panel: createDraftPanelId(streamId, chatAnchorId) }).toString()
+  const panel = threadId ?? createDraftPanelId(streamId, chatAnchorId)
+  const search = new URLSearchParams({ panel }).toString()
   return (
     <Button asChild variant="ghost" size="icon" className={cn("h-9 w-9", className)}>
       <Link
