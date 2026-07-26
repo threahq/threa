@@ -344,6 +344,58 @@ describe("useUnreadCounts", () => {
     ).toMatchObject({ lastReadEventId: "evt_5", lastReadSequence: "42" })
   })
 
+  it("does not write a stale frontier to the caches when an echo lands during the resolve", async () => {
+    // Resolving the read event is an await point the old synchronous path did
+    // not have. A `stream:read` echo landing in that window writes a higher
+    // frontier to IDB; without a re-check this handler's pre-computed frontier
+    // would then overwrite the query cache with the lower one, leaving the cache
+    // and IDB disagreeing — the exact frontier disagreement this stack fixes.
+    const queryClient = new QueryClient()
+    queryClient.setQueryData(workspaceKeys.bootstrap("ws_1"), {
+      ...makeBootstrap(),
+      streamReadState: { stream_1: { lastReadEventId: "evt_1", lastReadSequence: "10", lastReadAt: null } },
+    })
+    await seedEvent("evt_5", "stream_1", "42")
+
+    // The echo: fired from inside the resolve read, so it lands strictly after
+    // the handler's outer touched-at guard and before the cache writes.
+    const realGet = db.events.get.bind(db.events)
+    const getSpy = vi.spyOn(db.events, "get").mockImplementation((async (id: string) => {
+      await db.streamReadState.put({
+        id: "ws_1:stream_1",
+        workspaceId: "ws_1",
+        streamId: "stream_1",
+        lastReadEventId: "evt_900",
+        lastReadSequence: "900",
+        lastReadAt: new Date().toISOString(),
+        _cachedAt: Date.now() + 1000,
+      })
+      return realGet(id)
+    }) as unknown as typeof db.events.get)
+
+    mockMarkAsRead.mockResolvedValue({
+      streamId: "stream_1",
+      memberId: "member_1",
+      notificationLevel: "everything",
+      joinedAt: new Date().toISOString(),
+    })
+
+    const { result } = renderHook(() => useUnreadCounts("ws_1"), { wrapper: createWrapper(queryClient) })
+    act(() => {
+      result.current.markAsRead("stream_1", "evt_5")
+    })
+
+    await waitFor(() => expect(mockMarkAsRead).toHaveBeenCalled())
+    getSpy.mockRestore()
+    await expect(db.streamReadState.get("ws_1:stream_1")).resolves.toMatchObject({
+      lastReadEventId: "evt_900",
+      lastReadSequence: "900",
+    })
+    expect(
+      queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap("ws_1"))?.streamReadState?.stream_1
+    ).toMatchObject({ lastReadEventId: "evt_1", lastReadSequence: "10" })
+  })
+
   it("does not drag the frontier backward when marking read up to a row below the watermark", async () => {
     // "Mark as read up to here" on an older row. The server's store is monotonic
     // (ReadStateRepository.advance rejects the stale advance and returns the

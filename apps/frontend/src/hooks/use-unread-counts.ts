@@ -181,7 +181,11 @@ export function useUnreadCounts(workspaceId: string) {
               lastReadAt: new Date().toISOString(),
             }
           : null
-      if (frontier) {
+      // Re-check before the cache writes, not just before the IDB write below:
+      // the two resolution reads above are await points the old synchronous path
+      // did not have, so an echo landing in that window would otherwise leave the
+      // query cache holding a lower frontier than IDB.
+      if (frontier && !(await readStateTouchedSince(workspaceId, streamId, startedAt))) {
         mergeReadStateIntoBootstrapCache(queryClient, workspaceId, streamId, frontier)
         queryClient.setQueryData(
           streamKeys.bootstrap(workspaceId, streamId),
