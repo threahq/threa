@@ -5,6 +5,21 @@ import { ThreadPanelSlot } from "./thread-panel-slot"
 
 function noop() {}
 
+const baseProps = {
+  displayWidth: 420,
+  panelWidth: 420,
+  shouldAnimate: false,
+  showContent: true,
+  isResizing: false,
+  minWidth: 280,
+  maxWidth: 640,
+  onTransitionEnd: noop,
+  onResizeStart: noop,
+  onResizeMove: noop,
+  onResizeEnd: noop,
+  onResizeKeyDown: noop,
+}
+
 function renderSlot(overrides: Partial<ComponentProps<typeof ThreadPanelSlot>> = {}) {
   return render(
     <ThreadPanelSlot
@@ -82,5 +97,32 @@ describe("ThreadPanelSlot — panel inset vars", () => {
     const { unmount } = renderSlot({ shouldAnimate: true })
     unmount()
     expect(inset()).toEqual({ right: "0px", duration: "0ms" })
+  })
+})
+
+describe("ThreadPanelSlot — instance swap", () => {
+  beforeEach(() => {
+    document.documentElement.removeAttribute("style")
+  })
+
+  it("keeps the incoming slot's inset when routes swap one instance for another in a commit", () => {
+    // stream.tsx / board.tsx / persona-editor.tsx each mount their own slot, so
+    // navigating between two of them with a panel open on both unmounts one and
+    // mounts the other in the SAME commit. The consumer (the fullscreen call
+    // overlay) outlives the route, so a teardown that lands after the new mount
+    // leaves it reading 0px over an open panel.
+    const { rerender } = render(
+      <ThreadPanelSlot key="from" {...baseProps} displayWidth={420} panelWidth={420}>
+        <div data-testid="panel-content" />
+      </ThreadPanelSlot>
+    )
+    expect(inset()).toEqual({ right: "420px", duration: "0ms" })
+
+    rerender(
+      <ThreadPanelSlot key="to" {...baseProps} displayWidth={360} panelWidth={360}>
+        <div data-testid="panel-content" />
+      </ThreadPanelSlot>
+    )
+    expect(inset()).toEqual({ right: "360px", duration: "0ms" })
   })
 })

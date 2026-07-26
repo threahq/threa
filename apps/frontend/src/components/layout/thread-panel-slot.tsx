@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect } from "react"
+import { useLayoutEffect } from "react"
 import { cn } from "@/lib/utils"
 import { PanelResizeHandle } from "./panel-resize-handle"
 
@@ -43,7 +43,12 @@ export function ThreadPanelSlot({
     root.style.setProperty("--panel-inset-duration", shouldAnimate ? `${PANEL_TRANSITION_MS}ms` : "0ms")
   }, [displayWidth, shouldAnimate])
 
-  useEffect(
+  // A layout-effect cleanup, not a passive one: routes that each mount their own
+  // slot swap instances within a single commit, and React runs every layout
+  // teardown before any layout setup — so the outgoing reset lands before the
+  // incoming write. As a passive cleanup it would run after paint and blank the
+  // inset the new slot had just published.
+  useLayoutEffect(
     () => () => {
       const root = document.documentElement
       root.style.setProperty("--panel-inset-right", "0px")
