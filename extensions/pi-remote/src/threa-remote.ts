@@ -31,6 +31,8 @@ import {
   runHarnessKick,
   parseAllowedTmuxKey,
   sendAllowedTmuxKey,
+  ARCHIVE_RESTORE_GRACE_MS,
+  ARCHIVE_RESTORE_PROBE_MS,
   scrubSealedError,
   sealReply,
   sealStep,
@@ -102,13 +104,6 @@ const WS_BACKSTOP_POLL_MS = 15 * 60 * 1000
 // steer/stop and queued follow-ups stay responsive mid-turn (renewal itself is
 // covered by the dedicated claim-renew timer either way).
 const NO_SOCKET_POLL_CAP_MS = 2 * 60 * 1000
-// Archiving a scratchpad ends the session server-side, so this worktree's work
-// is done — but archiving is also how a mis-click gets undone, so the
-// destructive wind-down waits this long for an unarchive to reattach in place.
-const ARCHIVE_RESTORE_GRACE_MS = 5 * 60 * 1000
-// Probe cadence while detached, scaled so several probes always fit inside the
-// grace window even if the bot:session_restored push is missed too.
-const ARCHIVE_RESTORE_PROBE_MS = 45_000
 const WS_RECONNECTION_DELAY_MAX_MS = 30_000
 const TRACE_CONTENT_MAX_CHARS = 9_500
 // Sealed steps carry ciphertext the server never reads, so the plaintext step
@@ -325,6 +320,11 @@ let sessionTearingDown = false
 // reattach cadence, and the deadline runs the worktree wind-down.
 let archivePending: { rootStreamId: string; deadline: ReturnType<typeof setTimeout> } | undefined
 let archiveProbeInflight = false
+// Overridable so a test can watch the grace actually expire and the wind-down
+// actually run, instead of waiting five minutes and destroying a real worktree.
+// Mirrors RemoteSession's `archiveGraceMs` option.
+let archiveGraceMs: number = ARCHIVE_RESTORE_GRACE_MS
+let archiveWindDown: typeof windDownArchivedWorktree = windDownArchivedWorktree
 // Owns the /bot socket + routes presence/renew/steps over it (HTTP fallback
 // when the socket is down). Built lazily once the session ctx is known; torn
 // down + rebuilt on a workspace/auth change so it never reuses a stale target.
@@ -1834,9 +1834,9 @@ async function detachForArchive(ctx: ExtensionContext, rootStreamId: string): Pr
   if (archivePending || sessionTearingDown) return
   archivePending = {
     rootStreamId,
-    deadline: setTimeout(() => void windDownAfterArchiveGrace(ctx), ARCHIVE_RESTORE_GRACE_MS),
+    deadline: setTimeout(() => void windDownAfterArchiveGrace(ctx), archiveGraceMs),
   }
-  const minutes = Math.round(ARCHIVE_RESTORE_GRACE_MS / 60_000)
+  const minutes = Math.round(archiveGraceMs / 60_000)
   setRemoteStatus(ctx, `Threa remote: scratchpad archived; winding down in ${minutes}m`, "error")
   ctx.ui.notify(
     `Threa scratchpad archived. Unarchive within ${minutes} minutes to reattach; otherwise this branch is pushed and the worktree removed.`,
@@ -1851,8 +1851,9 @@ async function detachForArchive(ctx: ExtensionContext, rootStreamId: string): Pr
  * failure keeps the detached state so the probe cadence survives to retry.
  */
 async function reattachAfterArchive(ctx: ExtensionContext): Promise<void> {
-  if (!archivePending || !config) return
-  const rootStreamId = archivePending.rootStreamId
+  const pending = archivePending
+  if (!pending || !config) return
+  const rootStreamId = pending.rootStreamId
   const body = await request<{ data: RuntimeSessionLink }>(
     `/api/v1/workspaces/${config.workspaceId}/bot-runtime/sessions`,
     {
@@ -1869,7 +1870,13 @@ async function reattachAfterArchive(ctx: ExtensionContext): Promise<void> {
     }
   )
   if (body.data.rootStreamId !== rootStreamId) return
-  clearTimeout(archivePending.deadline)
+  // The grace deadline can fire (or a second reattach can win) while the
+  // request above is in flight — a 30s fetch timeout against a 45s probe
+  // cadence lands squarely inside the window. Reattaching against a session
+  // that already wound down would resurrect a dead worktree; the pinned
+  // identity check is what makes the wind-down terminal.
+  if (archivePending !== pending) return
+  clearTimeout(pending.deadline)
   archivePending = undefined
   setRemoteStatus(ctx, "Threa remote: linked")
   ctx.ui.notify("Threa scratchpad unarchived; reattached.", "info")
@@ -1887,7 +1894,7 @@ async function windDownAfterArchiveGrace(ctx: ExtensionContext): Promise<void> {
   archivePending = undefined
   stopPolling()
   stopClaimRenewTimer()
-  const report = windDownArchivedWorktree(ctx.cwd, (message) => emitPollDebug(ctx, message))
+  const report = archiveWindDown(ctx.cwd, (message) => emitPollDebug(ctx, message))
   teardownTransport()
   if (!report.windowKilled) {
     ctx.ui.notify(
@@ -4122,11 +4129,18 @@ export const __testing = {
     supervisedRevivalBlocked = value
   },
   probeArchiveState,
+  reattachAfterArchive,
   archivePendingRootStreamId: () => archivePending?.rootStreamId,
+  setArchiveWindDownForTesting: (graceMs: number, windDown: typeof windDownArchivedWorktree) => {
+    archiveGraceMs = graceMs
+    archiveWindDown = windDown
+  },
   clearArchivePendingForTesting: () => {
     if (archivePending) clearTimeout(archivePending.deadline)
     archivePending = undefined
     archiveProbeInflight = false
+    archiveGraceMs = ARCHIVE_RESTORE_GRACE_MS
+    archiveWindDown = windDownArchivedWorktree
   },
   setRateLimitWaitForTesting: (value: boolean) => {
     isWaitingForRetry = value

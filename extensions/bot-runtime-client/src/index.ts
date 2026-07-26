@@ -8,6 +8,8 @@ export {
   type TmuxKeyFailureCode,
 } from "./tmux-key"
 export {
+  ARCHIVE_RESTORE_GRACE_MS,
+  ARCHIVE_RESTORE_PROBE_MS,
   killOwnWindow,
   pushBranchAndScheduleRemoval,
   windDownArchivedWorktree,

@@ -373,7 +373,7 @@ export type ManagedAgentPane =
  * worktree. Identity is the runtime session (from the pane's launch command,
  * or derived from its cwd for a Claude pane launched without the env vars),
  * with the worktree as the fallback key for rows predating it. The recorded
- * ids only break a tie, and callers repair them from the resolved pane.
+ * ids only break a tie between panes that already matched a real key.
  */
 export function resolveManagedAgentPane(
   agent: Pick<ManagedAgent, "runtime" | "runtimeSessionId" | "worktree" | "tmuxPaneId" | "tmuxWindowId">,

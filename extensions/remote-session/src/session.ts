@@ -1,6 +1,8 @@
 import { homedir } from "node:os"
 import { join } from "node:path"
 import {
+  ARCHIVE_RESTORE_GRACE_MS,
+  ARCHIVE_RESTORE_PROBE_MS,
   BikKeystore,
   BotRuntimeTransport,
   mintStreamKeyWraps,
@@ -60,16 +62,6 @@ const WS_BACKSTOP_POLL_MS = 15 * 60 * 1000
 // socket reconnect resets to the fast cadence. Worst-case degraded latency for
 // a socketless session is one cap interval.
 const NO_SOCKET_POLL_CAP_MS = 2 * 60 * 1000
-// How long a session survives its scratchpad being archived before winding
-// down. An unarchive within this window reattaches the live agent in place
-// (bot:session_restored push, or the reattach probe below when the push was
-// missed); only after it expires does the connector's destructive wind-down
-// (branch push, tmux teardown) run.
-const ARCHIVE_RESTORE_GRACE_MS = 5 * 60 * 1000
-// Poll cadence while detached-pending-restore. Bounded by the grace window
-// (≤ ~7 requests), so it cannot become a quota burn; each probe is a
-// session-create that either reattaches (scratchpad unarchived) or 409s.
-const ARCHIVE_RESTORE_PROBE_MS = 45_000
 // Harness preflight can take 10s and replacement verification up to 15s.
 export const RECONNECT_HANDOFF_FALLBACK_MS = 30_000
 const MAX_CLAIMS_PER_DRAIN = 20

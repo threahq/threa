@@ -2067,6 +2067,88 @@ describe("archived-scratchpad wind-down", () => {
     }
   })
 
+  test("the grace expiring while still archived runs the worktree wind-down", async () => {
+    linkConfig()
+    const windDowns: string[] = []
+    __testing.setArchiveWindDownForTesting(50, (cwd) => {
+      windDowns.push(cwd)
+      return { committed: false, pushed: true, removalScheduled: true, windowKilled: true }
+    })
+    const fetchSpy = spyOn(globalThis, "fetch").mockImplementation(
+      async (input) =>
+        new Response(
+          JSON.stringify(
+            String(input).endsWith("/streams/stream_root")
+              ? { data: { archivedAt: "2026-07-20T10:00:00.000Z" } }
+              : { data: {} }
+          ),
+          { status: 200, headers: { "content-type": "application/json" } }
+        )
+    )
+    try {
+      await __testing.probeArchiveState(ctx)
+      expect(__testing.archivePendingRootStreamId()).toBe("stream_root")
+      expect(windDowns).toEqual([])
+
+      await Bun.sleep(120)
+
+      expect({ windDowns, pending: __testing.archivePendingRootStreamId() }).toEqual({
+        windDowns: ["/tmp"],
+        pending: undefined,
+      })
+    } finally {
+      fetchSpy.mockRestore()
+    }
+  })
+
+  test("a reattach that resolves after the wind-down already ran does not throw or half-reattach", async () => {
+    linkConfig()
+    let releaseReattach!: () => void
+    const reattachGate = new Promise<void>((resolve) => (releaseReattach = resolve))
+    __testing.setArchiveWindDownForTesting(50, () => ({
+      committed: false,
+      pushed: true,
+      removalScheduled: true,
+      windowKilled: false,
+    }))
+    const fetchSpy = spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input)
+      if (url.endsWith("/streams/stream_root")) {
+        return new Response(JSON.stringify({ data: { archivedAt: "2026-07-20T10:00:00.000Z" } }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        })
+      }
+      if (url.endsWith("/bot-runtime/sessions")) {
+        // The unarchive lands, but not before the grace deadline fires.
+        await reattachGate
+        return new Response(JSON.stringify({ data: { rootStreamId: "stream_root", runtimeSessionId: "runtime" } }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        })
+      }
+      return new Response(JSON.stringify({ data: {} }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      })
+    })
+    try {
+      await __testing.probeArchiveState(ctx)
+      const reattach = __testing.reattachAfterArchive(ctx)
+      await Bun.sleep(120)
+      expect(__testing.archivePendingRootStreamId()).toBeUndefined()
+
+      releaseReattach()
+      await reattach
+
+      // The wind-down won the race; the stale reattach must not resurrect the
+      // session (nor blow up on the already-cleared deadline).
+      expect(__testing.archivePendingRootStreamId()).toBeUndefined()
+    } finally {
+      fetchSpy.mockRestore()
+    }
+  })
+
   test("a probe failure is never treated as an archive", async () => {
     linkConfig()
     const fetchSpy = spyOn(globalThis, "fetch").mockImplementation(async () => {

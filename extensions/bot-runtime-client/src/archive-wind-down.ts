@@ -18,6 +18,16 @@ import { dirname, resolve } from "node:path"
  * repository checkout — only linked worktrees.
  */
 
+/**
+ * How long a runtime survives its scratchpad being archived before winding
+ * down. An unarchive inside this window reattaches the live agent in place.
+ * Shared: Claude (`@threa/remote-session`) and Pi run separate session
+ * implementations, and a grace tuned on one must not diverge from the other.
+ */
+export const ARCHIVE_RESTORE_GRACE_MS = 5 * 60 * 1000
+/** Reattach-probe cadence while detached. Bounded by the grace window, so it cannot become a quota burn. */
+export const ARCHIVE_RESTORE_PROBE_MS = 45_000
+
 export interface ArchiveCleanupReport {
   committed: boolean
   pushed: boolean
