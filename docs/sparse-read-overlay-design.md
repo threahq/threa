@@ -321,12 +321,13 @@ newestSeenRow)` per conversation; the gate re-checks effective unread at
 - Optimistic `temp_` rows are never targets (the id doesn't exist
   server-side yet).
 
+Non-member thread frontiers are delivered: read state lives in
+`stream_read_state`, so every leg — member or not — carries its own frontier
+(no timestamp approximation on cards).
+
 ## Out of scope for v1
 
 - Restoring activity badges on mark-unread (accepted gap, matches the
   stream path).
 - Offline queueing for read actions (existing read mutations are not queued;
   the new ones match — parity, not a regression).
-- Non-member thread frontiers are in scope and delivered: read state lives in
-  `stream_read_state`, so every leg — member or not — carries its own frontier
-  (no timestamp approximation on cards).

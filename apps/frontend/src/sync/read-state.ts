@@ -246,12 +246,13 @@ export async function resolveReadAllFrontiers(
   const workspaceMap =
     queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap(workspaceId))?.streamReadState ?? {}
 
+  const idbRows = await db.streamReadState.bulkGet(frontiers.map((snapshot) => `${workspaceId}:${snapshot.streamId}`))
   const resolved: ResolvedReadAllFrontier[] = []
-  for (const snapshot of frontiers) {
+  for (const [index, snapshot] of frontiers.entries()) {
     // Candidates in fixed source order: persisted IDB, per-stream bootstrap
     // cache, workspace bootstrap cache, then the incoming snapshot.
     const candidates: StreamReadFrontier[] = []
-    const idbRow = await db.streamReadState.get(`${workspaceId}:${snapshot.streamId}`)
+    const idbRow = idbRows[index]
     if (idbRow) {
       candidates.push({
         lastReadEventId: idbRow.lastReadEventId,
@@ -290,9 +291,17 @@ export async function resolveReadAllFrontiers(
 export async function putReadAllFrontiersIdb(workspaceId: string, resolved: ResolvedReadAllFrontier[]): Promise<void> {
   if (resolved.length === 0) return
   const cachedAt = Date.now()
-  for (const { streamId, frontier } of resolved) {
-    await putReadStateIdb(workspaceId, streamId, frontier, cachedAt)
-  }
+  await db.streamReadState.bulkPut(
+    resolved.map(({ streamId, frontier }) => ({
+      id: `${workspaceId}:${streamId}`,
+      workspaceId,
+      streamId,
+      lastReadEventId: frontier.lastReadEventId,
+      lastReadSequence: frontier.lastReadSequence,
+      lastReadAt: frontier.lastReadAt,
+      _cachedAt: cachedAt,
+    }))
+  )
 }
 
 /** Publish resolved frontiers to the in-memory caches: the workspace bootstrap

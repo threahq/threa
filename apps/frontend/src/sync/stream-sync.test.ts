@@ -904,7 +904,7 @@ describe("applyStreamBootstrap — read-state freshness (stale response guard)",
     await Promise.all([db.events.clear(), db.streams.clear(), db.streamReadState.clear(), db.streamMemberships.clear()])
   })
 
-  function membership(streamId: string, _lastReadEventId: string | null, _lastReadSequence: string | null): StreamMember {
+  function membership(streamId: string): StreamMember {
     return {
       streamId,
       memberId: "member_1",
@@ -931,7 +931,7 @@ describe("applyStreamBootstrap — read-state freshness (stale response guard)",
 
     const bootstrap = {
       ...makeBootstrap([], streamId),
-      membership: membership(streamId, "evt_100", "100"),
+      membership: membership(streamId),
       readState: {
         lastReadEventId: "evt_100",
         lastReadSequence: "100",
@@ -972,7 +972,7 @@ describe("applyStreamBootstrap — read-state freshness (stale response guard)",
 
     const bootstrap = {
       ...makeBootstrap([], streamId),
-      membership: membership(streamId, "evt_100", "100"),
+      membership: membership(streamId),
       readState: null, // server snapshot predates the row: "no standalone row"
     }
 
@@ -1002,7 +1002,7 @@ describe("applyStreamBootstrap — read-state freshness (stale response guard)",
 
     const bootstrap = {
       ...makeBootstrap([], streamId),
-      membership: membership(streamId, "evt_100", "100"),
+      membership: membership(streamId),
       readState: {
         lastReadEventId: "evt_100",
         lastReadSequence: "100",
@@ -1036,7 +1036,7 @@ describe("applyStreamBootstrap — read-state freshness (stale response guard)",
 
     const bootstrap = {
       ...makeBootstrap([], streamId),
-      membership: membership(streamId, "evt_100", "100"),
+      membership: membership(streamId),
       readState: {
         lastReadEventId: "evt_100",
         lastReadSequence: "100",
@@ -1069,7 +1069,7 @@ describe("applyStreamBootstrap — read-state freshness (stale response guard)",
 
     const bootstrap = {
       ...makeBootstrap([], streamId),
-      membership: membership(streamId, "evt_100", "100"),
+      membership: membership(streamId),
       readState: null,
     }
 
@@ -1102,7 +1102,7 @@ describe("applyStreamBootstrap — read-state freshness (stale response guard)",
 
     const bootstrap = {
       ...makeBootstrap([], streamId),
-      membership: membership(streamId, "evt_100", "100"),
+      membership: membership(streamId),
       readState: {
         lastReadEventId: "evt_100",
         lastReadSequence: "100",

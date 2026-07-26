@@ -421,7 +421,7 @@ describe("commitReadAll (atomic read-all application)", () => {
       streamReadState: {},
     })
 
-    const putSpy = vi.spyOn(db.streamReadState, "put").mockRejectedValue(new Error("idb boom"))
+    const putSpy = vi.spyOn(db.streamReadState, "bulkPut").mockRejectedValue(new Error("idb boom"))
     try {
       await expect(
         commitReadAll(

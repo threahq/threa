@@ -55,8 +55,8 @@ async function ordinalFor(db: Querier, streamId: string, sequence: bigint): Prom
 }
 
 /**
- * Apply a conversation "mark read" to one stream: lock the standalone read-state
- * row (ensured FOR UPDATE), insert the overlay rows, compact the contiguous run
+ * Apply a conversation "mark read" to one stream: insert the overlay rows, then
+ * lock the standalone read-state row (ensured FOR UPDATE) and compact the contiguous run
  * above the watermark into the watermark (pruning absorbed rows), and emit
  * `stream:read_messages` with the absolute snapshot — all on the caller's
  * transaction (INV-6/7). The compaction advance is monotonic in the standalone
