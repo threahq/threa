@@ -16,7 +16,10 @@ import type { Message } from "../../messaging"
  */
 
 export interface PersonaInvokeConfig {
+  /** The stable half of the prompt — what the enclave's cache breakpoint covers. */
   systemPrompt: string
+  /** The per-turn half, kept outside the cached prefix. */
+  systemVolatilePrompt: string
   /** May carry the `openrouter:` provider prefix; stripped to the bare model id. */
   model: string
   temperature: number | null
@@ -138,6 +141,7 @@ export function buildEnclaveSessionAssignment(inputs: BuildInvokeInputs): Enclav
     // The claim service assembles the full system prompt via the shared
     // `buildEnclaveSystemPrompt` and passes it through here as `systemPrompt`.
     system: persona.systemPrompt,
+    ...(persona.systemVolatilePrompt ? { systemVolatile: persona.systemVolatilePrompt } : {}),
     model: persona.model.replace(/^openrouter:/, ""),
     ...(persona.temperature !== null ? { temperature: persona.temperature } : {}),
     ...(persona.maxTokens !== null ? { maxTokens: persona.maxTokens } : {}),

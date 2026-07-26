@@ -429,7 +429,8 @@ export class EnclaveClaimService {
       triggerAuthorName,
       priorMessages: surrounding.filter((m) => m.id !== triggerId),
       persona: {
-        systemPrompt,
+        systemPrompt: systemPrompt.stable,
+        systemVolatilePrompt: systemPrompt.volatile,
         model: persona.model,
         temperature: persona.temperature,
         maxTokens: persona.maxTokens,

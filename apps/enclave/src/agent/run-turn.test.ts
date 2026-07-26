@@ -147,6 +147,86 @@ function baseRequest(over: Partial<EnclaveSessionAssignment>): EnclaveSessionAss
   }
 }
 
+/**
+ * The system prompt as the model receives it. The stable half now rides content
+ * parts so it can carry a cache breakpoint, and the per-turn half follows as a
+ * second system message — so reconstruct across every leading system message
+ * rather than reading `messages[0].content` as a string.
+ */
+function systemText(req: { messages: { role: string; content: unknown }[] } | undefined): string {
+  const out: string[] = []
+  for (const m of req?.messages ?? []) {
+    if (m.role !== "system") break
+    out.push(
+      typeof m.content === "string"
+        ? m.content
+        : ((m.content as { type: string; text?: string }[] | null) ?? [])
+            .map((part) => (part.type === "text" ? (part.text ?? "") : ""))
+            .join("")
+    )
+  }
+  return out.join("\n\n")
+}
+
+/** Messages after the leading system block(s). */
+function nonSystemMessages(req: { messages: { role: string }[] } | undefined) {
+  return (req?.messages ?? []).filter((m) => m.role !== "system")
+}
+
+describe("runEnclaveTurn prompt cache split", () => {
+  it("caches the stable half plus tool prose, leaving the per-turn tail unmarked", async () => {
+    const keyPair = await createEnclaveKeyPair()
+    const ssk = generateStreamKey()
+    const wrap = await wrapSskToEnclave(keyPair, ssk)
+    const prompt = await sealUnder(ssk, "hi", "msg_user", "usr_owner")
+    const chat = stubChat(textReply("hey"))
+    const { onMessage, onStepStarted, onStep, onSubstep } = collector()
+
+    await runEnclaveTurn(
+      { keyPair, rawChat: chat.fn, onMessage, onStepStarted, onStep, onSubstep },
+      baseRequest({
+        wraps: [wrap],
+        prompt,
+        system: "You are Ariadne.",
+        systemVolatile: "## Current Time\n\nIt is 10:00.",
+      })
+    )
+
+    const [stableMsg, volatileMsg] = chat.seen[0]?.messages ?? []
+    // Stable half is marked and carries the enclave's own tool prose, which
+    // holds for the stream's lifetime.
+    expect(Array.isArray(stableMsg?.content)).toBe(true)
+    const stable = systemText({ messages: [stableMsg!] })
+    expect(stable).toMatch(/^You are Ariadne\./)
+    expect(stable).toContain("## Reading URLs")
+    expect(stable).not.toContain("## Current Time")
+
+    // Per-turn tail follows as a SECOND, unmarked system message — marking it
+    // would buy a cache write for a span that changes every turn.
+    expect(volatileMsg?.role).toBe("system")
+    expect(typeof volatileMsg?.content).toBe("string")
+    expect(String(volatileMsg?.content)).toContain("## Current Time")
+  })
+
+  // A turn with no per-turn content emits one system message, not an empty second.
+  it("omits the per-turn message when the turn has no volatile content", async () => {
+    const keyPair = await createEnclaveKeyPair()
+    const ssk = generateStreamKey()
+    const wrap = await wrapSskToEnclave(keyPair, ssk)
+    const prompt = await sealUnder(ssk, "hi", "msg_user", "usr_owner")
+    const chat = stubChat(textReply("hey"))
+    const { onMessage, onStepStarted, onStep, onSubstep } = collector()
+
+    await runEnclaveTurn(
+      { keyPair, rawChat: chat.fn, onMessage, onStepStarted, onStep, onSubstep },
+      baseRequest({ wraps: [wrap], prompt, system: "You are Ariadne." })
+    )
+
+    expect(chat.seen[0]?.messages.filter((m) => m.role === "system")).toHaveLength(1)
+    expect(systemText(chat.seen[0])).toMatch(/^You are Ariadne\./)
+  })
+})
+
 describe("runEnclaveTurn", () => {
   it("opens the forwarded turn and seals a reply the owner's SSK can recover", async () => {
     const keyPair = await createEnclaveKeyPair()
@@ -164,11 +244,10 @@ describe("runEnclaveTurn", () => {
     // The model saw the system prompt then the decrypted user turn — never ciphertext —
     // and was offered the send_message tool. The shipped prompt leads; the
     // wired tools' prose (read_url + general_research here) is appended in-enclave.
-    const systemMessage = chat.seen[0]?.messages[0]
-    expect(systemMessage?.role).toBe("system")
-    expect(String(systemMessage?.content)).toMatch(/^You are Ariadne\./)
-    expect(String(systemMessage?.content)).toContain("## Reading URLs")
-    expect(chat.seen[0]?.messages.slice(1)).toEqual([{ role: "user", content: "What's the capital of France?" }])
+    expect(chat.seen[0]?.messages[0]?.role).toBe("system")
+    expect(systemText(chat.seen[0])).toMatch(/^You are Ariadne\./)
+    expect(systemText(chat.seen[0])).toContain("## Reading URLs")
+    expect(nonSystemMessages(chat.seen[0])).toEqual([{ role: "user", content: "What's the capital of France?" }])
     expect(chat.seen[0]?.tools?.some((t) => t.function.name === "send_message")).toBe(true)
 
     // Exactly one reply, streamed via onMessage, sealed under the same SSK and
@@ -358,7 +437,7 @@ describe("runEnclaveTurn", () => {
       baseRequest({ wraps: [wrap], prompt, priorSummary })
     )
 
-    const system = String(chat.seen[0]?.messages[0]?.content)
+    const system = systemText(chat.seen[0])
     expect(system).toContain("## Conversation Memory")
     expect(system).toContain("We decided to ship on Friday.")
   })
@@ -542,8 +621,8 @@ describe("runEnclaveTurn", () => {
       })
     )
 
-    expect(String(chat.seen[0]?.messages[0]?.content)).toMatch(/^You are Ariadne\./)
-    expect(chat.seen[0]?.messages.slice(1)).toEqual([
+    expect(systemText(chat.seen[0])).toMatch(/^You are Ariadne\./)
+    expect(nonSystemMessages(chat.seen[0])).toEqual([
       { role: "assistant", content: "Earlier, you greeted me." },
       { role: "user", content: "Continue." },
     ])
@@ -596,7 +675,7 @@ describe("runEnclaveTurn", () => {
 
     // The system message the model saw carries the opened digest (shared
     // formatter output), but never the one we couldn't open.
-    const system = String(chat.seen[0]?.messages[0]?.content ?? "")
+    const system = systemText(chat.seen[0])
     expect(system).toContain("You are Ariadne.")
     expect(system).toContain("## Prior Tool Work (Turn Digests)")
     expect(system).toContain("Spring tides align sun and moon.")
@@ -619,7 +698,7 @@ describe("runEnclaveTurn", () => {
 
     // No Tavily key in deps → web_search is not wired, so its section must not
     // be advertised; read_url + general_research are. No digest block.
-    const system = String(chat.seen[0]?.messages[0]?.content)
+    const system = systemText(chat.seen[0])
     expect(system).toMatch(/^You are Ariadne\./)
     expect(system).toContain("## Reading URLs")
     expect(system).toContain("## General Research")

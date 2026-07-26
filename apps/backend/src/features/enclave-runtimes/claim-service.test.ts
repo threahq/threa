@@ -90,7 +90,7 @@ function arrangeClaim(invocation: EnclaveInvocation = INVOCATION) {
   spyOn(StreamRepository, "findById").mockResolvedValue({ id: "stream_1", workspaceId: "ws_1" } as never)
   spyOn(StreamPoliciesRepository, "getToolPolicy").mockResolvedValue(null)
   spyOn(UserRepository, "findByIds").mockResolvedValue([{ name: "Kris" }] as never)
-  spyOn(agents, "buildEnclaveSystemPrompt").mockResolvedValue("You are Ariadne.")
+  spyOn(agents, "buildEnclaveSystemPrompt").mockResolvedValue({ stable: "You are Ariadne.", volatile: "" })
 
   const tx = { __tx: true } as never
   spyOn(db, "withTransaction").mockImplementation((async (_pool: unknown, fn: (client: never) => unknown) =>

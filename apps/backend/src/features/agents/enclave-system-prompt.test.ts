@@ -26,13 +26,17 @@ describe("buildEnclaveSystemPrompt", () => {
       persona: PERSONA,
     })
 
-    // The shared prompt is preserved verbatim and leads — the enclave receives
-    // it rejoined, so the split never reaches the encrypted wire.
-    expect(result.startsWith("BASE_PROMPT_BODY")).toBe(true)
-    // …followed by the limits section that names the boundary and the guidance.
-    expect(result).toContain("## Encrypted scratchpad limits")
-    expect(result).toContain("workspace memory (GAM)")
-    expect(result).toMatch(/do not guess or invent/i)
+    // The shared prompt's stable half leads, and the limits clause joins it —
+    // the clause holds for the stream's lifetime, so it belongs above the
+    // cache breakpoint rather than after the per-turn tail.
+    expect(result.stable.startsWith("BASE_PROMPT")).toBe(true)
+    expect(result.stable).toContain("## Encrypted scratchpad limits")
+    expect(result.stable).toContain("workspace memory (GAM)")
+    expect(result.stable).toMatch(/do not guess or invent/i)
+    // The per-turn half is passed through untouched and stays out of the
+    // cacheable region.
+    expect(result.volatile).toBe("_BODY")
+    expect(result.stable).not.toContain("_BODY")
   })
 
   it("builds the prompt with NO tool sections — the enclave appends them from its real toolset", async () => {
@@ -68,7 +72,7 @@ describe("buildEnclaveSystemPrompt", () => {
 
     const result = await buildEnclaveSystemPrompt({ pool: {} as Pool, stream: STREAM, preferences: PREFS, persona })
 
-    expect(result).toContain(
+    expect(result.stable + result.volatile).toContain(
       `## Response Style\n\n${BREVITY_PRESET_FRAGMENTS.thorough} ${TONE_PRESET_FRAGMENTS.direct}`
     )
   })

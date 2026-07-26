@@ -831,7 +831,23 @@ export interface EnclaveSessionAssignment {
    */
   history: (EnclaveSealedMessage & { role: "user" | "assistant"; sequence: string })[]
   prompt: EnclaveSealedMessage
+  /**
+   * The stable half of Ariadne's system prompt — everything that holds for the
+   * conversation's lifetime. This is what the enclave's prompt-cache breakpoint
+   * covers, so it must not carry per-turn content.
+   */
   system: string
+  /**
+   * The per-turn half of the prompt as the BACKEND derives it — temporal
+   * grounding and invocation purpose. Kept separate so it lands after the cache
+   * breakpoint: inside it, the cached prefix would change every turn and
+   * nothing would be reused. Absent when a turn has no per-turn content.
+   *
+   * The enclave appends its own per-turn sections (rolling conversation
+   * summary, prior-turn digests) to this half locally; they are never shipped
+   * here, since only the enclave can decrypt them.
+   */
+  systemVolatile?: string
   model: string
   temperature?: number
   maxTokens?: number

@@ -25,8 +25,14 @@ export interface OpenAiToolCall {
  * models like Claude — that's how the enclave feeds decrypted attachments to the
  * model without ever giving the server the plaintext.
  */
+/**
+ * A cache breakpoint in OpenRouter's OpenAI-compatible shape. Only text parts
+ * carry it, and only on providers that need an explicit marker.
+ */
+export type OpenAiCacheControl = { type: "ephemeral" }
+
 export type OpenAiContentPart =
-  | { type: "text"; text: string }
+  | { type: "text"; text: string; cache_control?: OpenAiCacheControl }
   | { type: "image_url"; image_url: { url: string } }
   | { type: "file"; file: { filename: string; file_data: string } }
 
@@ -123,9 +129,29 @@ function toolResultText(part: ToolResultPart): string {
  * `ToolResultPart`s; OpenAI wants one `tool` message per result, keyed by
  * `tool_call_id`, so those fan out.
  */
-export function toOpenAiMessages(system: string | undefined, messages: ModelMessage[]): OpenAiMessage[] {
+export function toOpenAiMessages(
+  system: string | undefined,
+  messages: ModelMessage[],
+  opts?: {
+    /** Per-turn system content, emitted UNMARKED after the breakpoint. */
+    volatileSystem?: string
+    /** Mark the stable system message as a cache breakpoint. */
+    cacheBreakpoint?: boolean
+  }
+): OpenAiMessage[] {
   const out: OpenAiMessage[] = []
-  if (system) out.push({ role: "system", content: system })
+  if (system) {
+    // The breakpoint rides a content part, since `cache_control` has nowhere to
+    // live on a plain string content.
+    out.push(
+      opts?.cacheBreakpoint
+        ? { role: "system", content: [{ type: "text", text: system, cache_control: { type: "ephemeral" } }] }
+        : { role: "system", content: system }
+    )
+  }
+  // Never marked: this is re-derived every turn, so caching it would buy a
+  // write premium for a span nothing can reuse.
+  if (opts?.volatileSystem) out.push({ role: "system", content: opts.volatileSystem })
 
   for (const m of messages) {
     switch (m.role) {

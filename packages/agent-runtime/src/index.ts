@@ -111,6 +111,7 @@ export { createKeepResponseTool } from "./tools/keep-response-tool"
 export {
   createAI,
   parseModelId,
+  providerRequiresCacheBreakpoints,
   applyCacheBreakpoints,
   isAbortError,
   AIBudgetExceededError,

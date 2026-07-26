@@ -2,7 +2,7 @@ import type { Pool } from "pg"
 import type { UserPreferences } from "@threa/types"
 import type { Stream } from "../streams"
 import { buildStreamContext } from "./context-builder"
-import { buildSystemPrompt, joinSystemPrompt } from "./companion/prompt/system-prompt"
+import { buildSystemPrompt, type SplitSystemPrompt } from "./companion/prompt/system-prompt"
 import { resolvePersonaStyleSlots } from "./companion/config"
 import type { Persona } from "./persona-repository"
 import type { BuiltInAgentConfig } from "./built-in-agents"
@@ -36,7 +36,7 @@ export async function buildEnclaveSystemPrompt(params: {
   deviceTimezone?: string
   /** The persona (Ariadne) — its base prompt is the seed buildSystemPrompt layers on. */
   persona: BuiltInAgentConfig
-}): Promise<string> {
+}): Promise<SplitSystemPrompt> {
   const { pool, stream, preferences, deviceTimezone, persona } = params
 
   // Same context builder the main app uses. For E2E it can't read message
@@ -85,15 +85,18 @@ export async function buildEnclaveSystemPrompt(params: {
   // her plainly so she can voice the boundary gracefully — kept as a
   // natural-language instruction (the model handles phrasing/locale), not a
   // code-level heuristic.
-  // Rejoined into one string: the enclave receives the prompt as opaque text
-  // over the encrypted channel, so splitting it here would be a wire-shape
-  // change for no gain — the enclave places its own cache breakpoints or none.
-  // In-turn caching is unaffected; only cross-turn reuse is forgone here.
-  return `${joinSystemPrompt(prompt)}
+  // Returned split at its cache boundary, same as the in-process path. The
+  // encrypted-limits clause is stable for the stream's lifetime, so it joins
+  // the cacheable half — which also moves it ahead of temporal grounding, since
+  // every stable section must precede every volatile one.
+  return {
+    stable: `${prompt.stable}
 
 ## Encrypted scratchpad limits
 
 You are running inside an end-to-end-encrypted scratchpad. You can read this conversation and do web research, but the rest of the workspace never enters this encrypted context: you have no access to workspace memory (GAM), other channels or scratchpads, saved knowledge, or any cross-stream search. This is a deliberate privacy boundary, not an error.
 
-If the user asks you to recall, summarize, or look something up from their workspace or another conversation, do not guess or invent it. Briefly explain that you can't see anything outside this encrypted scratchpad, and offer what you *can* do here (work with what's in this conversation, or research the web).`
+If the user asks you to recall, summarize, or look something up from their workspace or another conversation, do not guess or invent it. Briefly explain that you can't see anything outside this encrypted scratchpad, and offer what you *can* do here (work with what's in this conversation, or research the web).`,
+    volatile: prompt.volatile,
+  }
 }

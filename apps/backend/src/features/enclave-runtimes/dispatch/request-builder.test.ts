@@ -40,6 +40,7 @@ function msg(id: string, authorType: "user" | "persona", text: string, gen = 1):
 
 const PERSONA = {
   systemPrompt: "You are Ariadne.",
+  systemVolatilePrompt: "",
   model: "openrouter:anthropic/claude-sonnet-4.6",
   temperature: 0.7,
   maxTokens: null,

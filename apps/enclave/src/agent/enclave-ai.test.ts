@@ -34,8 +34,10 @@ describe("createEnclaveAI", () => {
     })
 
     expect(chat.seen[0]?.model).toBe("anthropic/claude-sonnet-4.6")
+    // The stable system message now rides a content part so it can carry the
+    // cache breakpoint; anthropic/* is in the set that needs an explicit one.
     expect(chat.seen[0]?.messages).toEqual([
-      { role: "system", content: "sys" },
+      { role: "system", content: [{ type: "text", text: "sys", cache_control: { type: "ephemeral" } }] },
       { role: "user", content: "capital of France?" },
     ])
     expect(result.text).toBe("Paris.")
@@ -99,5 +101,44 @@ describe("createEnclaveAI", () => {
     await ai.generateTextWithTools(opts)
     await ai.generateTextWithTools(opts)
     expect(usage).toEqual({ promptTokens: 8, completionTokens: 4, cost: 0.5 })
+  })
+})
+
+describe("createEnclaveAI cache breakpoints", () => {
+  const reply = { message: { content: "ok" }, model: "stub", usage: { prompt_tokens: 1, completion_tokens: 1 } }
+
+  it("emits the volatile half as an unmarked system message after the breakpoint", async () => {
+    const chat = stub(reply)
+    const ai = createEnclaveAI(chat.fn, { promptTokens: 0, completionTokens: 0, cost: 0 })
+
+    await ai.generateTextWithTools({
+      model: MODEL,
+      modelString: "anthropic/claude-sonnet-4.6",
+      system: "stable",
+      volatileSystem: "## Current Time\n\n10:00",
+      messages: [{ role: "user", content: "hi" }],
+    })
+
+    expect(chat.seen[0]?.messages).toEqual([
+      { role: "system", content: [{ type: "text", text: "stable", cache_control: { type: "ephemeral" } }] },
+      { role: "system", content: "## Current Time\n\n10:00" },
+      { role: "user", content: "hi" },
+    ])
+  })
+
+  // OpenAI caches automatically, so marking it would be noise. The provider set
+  // lives in agent-runtime so host and enclave cannot drift to different lists.
+  it("omits the breakpoint for a provider that needs no explicit marker", async () => {
+    const chat = stub(reply)
+    const ai = createEnclaveAI(chat.fn, { promptTokens: 0, completionTokens: 0, cost: 0 })
+
+    await ai.generateTextWithTools({
+      model: MODEL,
+      modelString: "openai/gpt-5-mini",
+      system: "stable",
+      messages: [{ role: "user", content: "hi" }],
+    })
+
+    expect(chat.seen[0]?.messages[0]).toEqual({ role: "system", content: "stable" })
   })
 })
