@@ -95,6 +95,7 @@ import {
   findTimelineTargetIndex,
   getTimelineItemKey,
   filterVisibleItems,
+  collectDividerAnchorIds,
   OLDER_SKELETON_ITEMS,
   type TimelineItem,
   type TimelineItemRenderContext,
@@ -1365,6 +1366,8 @@ export function StreamContent({
   // face on the virtualized path (roadmap 1.4).
   const callEndedPatches = useMemo(() => collectCallEndedPatches(timelineItems), [timelineItems])
 
+  const dividerAnchorIds = useMemo(() => collectDividerAnchorIds(visibleItems), [visibleItems])
+
   // Mirror of `visibleItems` for the long-lived scrollToMessage retry loop:
   // its closure is created once per scroll but runs for up to ~1.2s, during
   // which the event window can shift. Reading the ref keeps each retry tick
@@ -2027,6 +2030,9 @@ export function StreamContent({
     // Skip overlay-read events so the divider anchors on the first *effectively*
     // unread row, not one already read from a conversation surface.
     overlayReadIds: readOverlay,
+    // Keep the anchor on a row the list is actually rendering — see
+    // collectDividerAnchorIds.
+    anchorableEventIds: dividerAnchorIds,
     // Same signal that gates auto-read: while the viewer is away the divider may
     // re-latch forward at the first away-arrival (messages that came in while
     // blurred get the persistent red→grey strip, as if the stream were re-opened).

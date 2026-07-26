@@ -10,6 +10,11 @@ beforeEach(() => {
   )
 })
 
+/** Every event renders a row of its own — the ordinary all-messages timeline. */
+function anchorsOf(events: readonly { id: string }[]): Set<string> {
+  return new Set(events.map((event) => event.id))
+}
+
 function makeMessageEvent(id: string, actorId: string) {
   return {
     id,
@@ -35,6 +40,7 @@ describe("useUnreadDivider", () => {
           events,
           lastReadEventId,
           currentUserId: "me",
+          anchorableEventIds: anchorsOf(events),
           streamId: "stream_1",
           readStateResolved,
         }),
@@ -58,6 +64,7 @@ describe("useUnreadDivider", () => {
           events,
           lastReadEventId,
           currentUserId: "me",
+          anchorableEventIds: anchorsOf(events),
           streamId: "stream_1",
           readStateResolved: true,
         }),
@@ -89,6 +96,7 @@ describe("useUnreadDivider", () => {
           events,
           lastReadEventId,
           currentUserId: "me",
+          anchorableEventIds: anchorsOf(events),
           streamId: "stream_1",
           readStateResolved: true,
         }),
@@ -117,6 +125,7 @@ describe("useUnreadDivider", () => {
           events,
           lastReadEventId,
           currentUserId: "me",
+          anchorableEventIds: anchorsOf(events),
           streamId: "stream_1",
           readStateResolved: true,
         }),
@@ -142,6 +151,7 @@ describe("useUnreadDivider", () => {
           events,
           lastReadEventId: null,
           currentUserId: "me",
+          anchorableEventIds: anchorsOf(events),
           streamId,
           readStateResolved: true,
         }),
@@ -157,7 +167,14 @@ describe("useUnreadDivider", () => {
   it("hides the latched divider once dismissed, and re-shows it on a fresh stream", () => {
     const { result, rerender } = renderHook(
       ({ streamId, events }: { streamId: string; events: ReturnType<typeof makeMessageEvent>[] }) =>
-        useUnreadDivider({ events, lastReadEventId: null, currentUserId: "me", streamId, readStateResolved: true }),
+        useUnreadDivider({
+          events,
+          lastReadEventId: null,
+          currentUserId: "me",
+          anchorableEventIds: anchorsOf(events),
+          streamId,
+          readStateResolved: true,
+        }),
       { initialProps: { streamId: "stream_1", events: [makeMessageEvent("event_1", "other")] } }
     )
 
@@ -183,7 +200,15 @@ describe("useUnreadDivider", () => {
         streamId: string
         events: ReturnType<typeof makeMessageEvent>[]
         lastReadEventId: string | null
-      }) => useUnreadDivider({ events, lastReadEventId, currentUserId: "me", streamId, readStateResolved: true }),
+      }) =>
+        useUnreadDivider({
+          events,
+          lastReadEventId,
+          currentUserId: "me",
+          anchorableEventIds: anchorsOf(events),
+          streamId,
+          readStateResolved: true,
+        }),
       {
         initialProps: {
           streamId: "stream_1",
@@ -221,6 +246,7 @@ describe("useUnreadDivider", () => {
           events,
           lastReadEventId: null,
           currentUserId: "me",
+          anchorableEventIds: anchorsOf(events),
           streamId,
           highlightMessageId,
           readStateResolved: true,
@@ -255,6 +281,7 @@ describe("useUnreadDivider", () => {
         events,
         lastReadEventId: null,
         currentUserId: "me",
+        anchorableEventIds: anchorsOf(events),
         streamId: "stream_1",
         highlightMessageId: null,
         readStateResolved: true,
@@ -271,6 +298,7 @@ describe("useUnreadDivider", () => {
         events,
         lastReadEventId: null,
         currentUserId: "me",
+        anchorableEventIds: anchorsOf(events),
         streamId: "stream_1",
         readStateResolved: true,
         // event_1 was read individually above the watermark (a conversation-
@@ -301,6 +329,7 @@ describe("useUnreadDivider", () => {
           events,
           lastReadEventId,
           currentUserId: "me",
+          anchorableEventIds: anchorsOf(events),
           streamId: "stream_1",
           readStateResolved: true,
           isAttentive,
@@ -362,6 +391,7 @@ describe("useUnreadDivider", () => {
           events,
           lastReadEventId,
           currentUserId: "me",
+          anchorableEventIds: anchorsOf(events),
           streamId: "stream_1",
           readStateResolved: true,
           isAttentive: true,
@@ -393,6 +423,7 @@ describe("useUnreadDivider", () => {
           events,
           lastReadEventId: "event_1",
           currentUserId: "me",
+          anchorableEventIds: anchorsOf(events),
           streamId: "stream_1",
           readStateResolved: true,
           isAttentive,
@@ -419,6 +450,7 @@ describe("useUnreadDivider", () => {
           events,
           lastReadEventId: "event_1",
           currentUserId: "me",
+          anchorableEventIds: anchorsOf(events),
           streamId: "stream_1",
           readStateResolved: true,
           isAttentive,
@@ -447,6 +479,7 @@ describe("useUnreadDivider", () => {
           events,
           lastReadEventId,
           currentUserId: "me",
+          anchorableEventIds: anchorsOf(events),
           streamId: "stream_1",
           readStateResolved: true,
           isAttentive,
@@ -472,6 +505,45 @@ describe("useUnreadDivider", () => {
     expect(result.current.dividerEventId).toBe("event_2")
   })
 
+  it("skips an unread event that renders no row and anchors on the next one that does", () => {
+    // A first unread the timeline drops (a zero-height event type, another
+    // user's command events, a session card hidden in a channel) used to latch
+    // the divider on a row that does not exist: no "New" line rendered and both
+    // scroll paths resolved no index, so open-at-marker silently no-opped.
+    const events = [
+      { ...makeMessageEvent("event_1", "other"), eventType: "command_dispatched" as const },
+      makeMessageEvent("event_2", "other"),
+    ]
+    const { result } = renderHook(() =>
+      useUnreadDivider({
+        events,
+        lastReadEventId: null,
+        currentUserId: "me",
+        anchorableEventIds: new Set(["event_2"]),
+        streamId: "stream_1",
+        readStateResolved: true,
+      })
+    )
+
+    expect(result.current.dividerEventId).toBe("event_2")
+  })
+
+  it("shows no divider when no unread event renders a row", () => {
+    const events = [{ ...makeMessageEvent("event_1", "other"), eventType: "reaction_added" as const }]
+    const { result } = renderHook(() =>
+      useUnreadDivider({
+        events,
+        lastReadEventId: null,
+        currentUserId: "me",
+        anchorableEventIds: new Set<string>(),
+        streamId: "stream_1",
+        readStateResolved: true,
+      })
+    )
+
+    expect(result.current.dividerEventId).toBeUndefined()
+  })
+
   it("shows no divider when every candidate unread row is overlay-read", () => {
     const events = [makeMessageEvent("event_1", "other"), makeMessageEvent("event_2", "other")]
     const { result } = renderHook(() =>
@@ -479,6 +551,7 @@ describe("useUnreadDivider", () => {
         events,
         lastReadEventId: null,
         currentUserId: "me",
+        anchorableEventIds: anchorsOf(events),
         streamId: "stream_1",
         readStateResolved: true,
         overlayReadIds: new Set(["msg_event_1", "msg_event_2"]),
