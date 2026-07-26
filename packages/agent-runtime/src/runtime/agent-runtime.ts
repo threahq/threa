@@ -15,6 +15,7 @@ import type { AgentObserver } from "./agent-observer"
 
 const DEFAULT_MAX_ITERATIONS = 20
 const KEEP_RESPONSE_TOOL_NAME = "keep_response"
+const MAX_INVALID_DRAFTS = 3
 const MAX_REPEATED_INVALID_DRAFTS = 3
 const MAX_EMPTY_FINAL_DECISION_ATTEMPTS = 3
 
@@ -178,6 +179,18 @@ export function mergeSourceItems(existing: SourceItem[], incoming: SourceItem[])
   return merged
 }
 
+function buildRevisionPrompt(reason: string, pendingMessages: PendingMessage[]): string {
+  const drafts = pendingMessages.map((p) => p.content).join("\n---\n")
+  const multiple = pendingMessages.length > 1
+  return (
+    `[Final response needs revision]\n\n` +
+    `${reason}\n\n` +
+    `Your proposed response${multiple ? "s were" : " was"}:\n"${drafts}"\n\n` +
+    `Please provide ${multiple ? "revised final responses" : "a revised final response"} and call send_message again` +
+    `${multiple ? ` for every part — all ${pendingMessages.length} drafts above were discarded, so resend each one.` : "."}`
+  )
+}
+
 function makeToolResult(tc: { toolCallId: string; toolName: string }, value: string): ToolResultPart {
   return {
     type: "tool-result",
@@ -268,19 +281,24 @@ export class AgentRuntime {
     let hasTextReconsidered = false
     let lastProcessedSequence = nm?.lastProcessedSequence ?? BigInt(0)
     let keptResponseReason: string | null = null
+    let invalidDraftCount = 0
     let repeatedInvalidDraftCount = 0
     let lastInvalidDraft: string | null = null
     let emptyFinalDecisionAttempts = 0
     let stoppedByUser = false
     let validationFailureTerminal = false
+    let invalidDraftTerminal = false
 
-    // Counts repeated invalid final drafts across BOTH finalization paths —
-    // plain assistant text and send_message tool calls (the path the
-    // supersede-rerun prompt mandates), so neither can loop on revision
-    // prompts past the cap. Returns true when the terminal is reached: keep
-    // the previous response and record that this turn could not produce a
-    // valid revision (the roadmap 2.3 escalation marker).
+    // Two thresholds because the two turn kinds have different fallbacks. A
+    // supersede rerun (allowNoMessageOutput) already has a committed reply to
+    // fall back on, so it gets the full iteration budget to revise and only
+    // stops when the model is provably stuck — repeating the SAME rejected
+    // draft MAX_REPEATED_INVALID_DRAFTS times. An ordinary reply has nothing to
+    // fall back on and its failure mode is burning the whole budget on varied
+    // rejected drafts, so it is capped at MAX_INVALID_DRAFTS rejections total.
+    // Both paths cover plain assistant text and send_message tool calls.
     const registerInvalidDraft = (draft: string): boolean => {
+      invalidDraftCount += 1
       if (lastInvalidDraft === draft) {
         repeatedInvalidDraftCount += 1
       } else {
@@ -288,16 +306,22 @@ export class AgentRuntime {
         repeatedInvalidDraftCount = 1
       }
 
-      if (this.config.allowNoMessageOutput && repeatedInvalidDraftCount >= MAX_REPEATED_INVALID_DRAFTS) {
+      if (this.config.allowNoMessageOutput) {
+        if (repeatedInvalidDraftCount < MAX_REPEATED_INVALID_DRAFTS) return false
         keptResponseReason =
           "Kept the previous response because revised drafts repeatedly failed validation after context updates."
         validationFailureTerminal = true
         return true
       }
-      return false
+
+      if (invalidDraftCount < MAX_INVALID_DRAFTS) return false
+      invalidDraftTerminal = true
+      return true
     }
 
+    let iterationsRun = 0
     for (let iteration = 0; iteration < this.maxIterations; iteration++) {
+      iterationsRun = iteration + 1
       const abortReason = await this.config.shouldAbort?.()
       if (abortReason) {
         throw new Error(`Agent session aborted: ${abortReason}`)
@@ -459,10 +483,7 @@ export class AgentRuntime {
 
               this.pushRuntimePrompt(
                 conversation,
-                `[Final response needs revision]\n\n` +
-                  `${invalidPending.reason}\n\n` +
-                  `Your proposed response was:\n"${invalidPending.content}"\n\n` +
-                  `Please provide a revised final response and call send_message again.`
+                buildRevisionPrompt(invalidPending.reason, execResult.pendingMessages)
               )
               continue
             }
@@ -533,13 +554,7 @@ export class AgentRuntime {
           if (invalidPending) {
             if (registerInvalidDraft(invalidPending.content)) break
 
-            this.pushRuntimePrompt(
-              conversation,
-              `[Final response needs revision]\n\n` +
-                `${invalidPending.reason}\n\n` +
-                `Your proposed response was:\n"${invalidPending.content}"\n\n` +
-                `Please provide a revised final response and call send_message again.`
-            )
+            this.pushRuntimePrompt(conversation, buildRevisionPrompt(invalidPending.reason, execResult.pendingMessages))
             continue
           }
 
@@ -569,7 +584,7 @@ export class AgentRuntime {
     // would silently emit nothing.
     // Skip this salvage on a user Stop: committing a half-formed thinking step
     // the user just interrupted would surface content they chose to cut off.
-    if (sent.ids.length === 0 && lastContentStep && !stoppedByUser) {
+    if (sent.ids.length === 0 && lastContentStep && !stoppedByUser && !invalidDraftTerminal) {
       const validationError = this.config.validateFinalResponse
         ? await this.config.validateFinalResponse(lastContentStep)
         : null
@@ -593,7 +608,7 @@ export class AgentRuntime {
         })
 
         logger.info(
-          { sessionId: nm?.sessionId, streamId: nm?.streamId, iterations: this.maxIterations },
+          { sessionId: nm?.sessionId, streamId: nm?.streamId, iterations: iterationsRun },
           "Agent run completed without sending a message"
         )
         return {
@@ -611,10 +626,16 @@ export class AgentRuntime {
       }
 
       logger.error(
-        { sessionId: nm?.sessionId, streamId: nm?.streamId, iterations: this.maxIterations },
-        "Agent loop exhausted iterations without sending a message"
+        { sessionId: nm?.sessionId, streamId: nm?.streamId, iterations: iterationsRun },
+        invalidDraftTerminal
+          ? "Agent loop stopped after repeated invalid final drafts without sending a message"
+          : "Agent loop exhausted iterations without sending a message"
       )
-      throw new Error("Agent loop completed without sending a message")
+      throw new Error(
+        invalidDraftTerminal
+          ? "Agent loop stopped after repeated invalid final drafts without sending a message"
+          : "Agent loop completed without sending a message"
+      )
     }
 
     return { messagesSent, sentMessageIds: sent.ids, sentContents: sent.contents, lastProcessedSequence, sources }

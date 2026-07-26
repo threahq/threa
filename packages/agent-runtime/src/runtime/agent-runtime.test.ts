@@ -182,6 +182,47 @@ describe("AgentRuntime message counting", () => {
     expect(result.responseValidationFailed).toBe(true)
   })
 
+  it("keeps revising past the ordinary cap when a rerun's rejected drafts differ", async () => {
+    // Supersede reruns get the full iteration budget: an LLM judge's reason
+    // text varies, so drafts are never byte-identical and the ordinary
+    // 3-rejection cap would kill a turn that is still converging.
+    let calls = 0
+    const generateTextWithTools = mock(async () => {
+      calls++
+      return {
+        text: "",
+        toolCalls: [
+          {
+            toolCallId: `tool_${calls}`,
+            toolName: AgentToolNames.SEND_MESSAGE,
+            input: { content: `Draft ${calls}` },
+          },
+        ],
+        response: { messages: [{ role: "assistant", content: "" } as any] },
+      }
+    })
+    const sendMessage = mock(async () => ({ messageId: "msg_final", operation: "created" as const }))
+
+    const runtime = new AgentRuntime({
+      ai: { generateTextWithTools } as any,
+      model: {} as any,
+      systemPrompt: "You are helpful.",
+      messages: [{ role: "user", content: "Reply three times with numbers." }],
+      tools: [],
+      allowNoMessageOutput: true,
+      validateFinalResponse: async (content: string) =>
+        content === "Draft 4" ? null : `Rejected ${content}: needs the actual answer.`,
+      sendMessage,
+    })
+
+    const result = await runtime.run()
+
+    expect(generateTextWithTools).toHaveBeenCalledTimes(4)
+    expect(result.messagesSent).toBe(1)
+    expect(result.sentMessageIds).toEqual(["msg_final"])
+    expect(result.responseValidationFailed).toBeFalsy()
+  })
+
   it("forwards model config and cost context to generateTextWithTools", async () => {
     const captured: Array<{
       modelString?: string

@@ -10,6 +10,7 @@ import {
 } from "./agent-runtime"
 import type { AgentObserver } from "./agent-observer"
 import type { AgentTool } from "./agent-tool"
+import { composeOutputValidator } from "./output-guard"
 
 // The turn contract's structural spine: dispatch mints a TurnRequest, routes it
 // to the driver matching its delivery, and the driver runs the turn against the
@@ -271,7 +272,10 @@ function runTurnOnAgentRuntime(ai: AgentRuntimeAI, request: TurnRequest, sink: T
     telemetry: request.telemetry,
     costContext: request.costContext,
     allowNoMessageOutput: request.allowNoMessageOutput,
-    validateFinalResponse: request.validateFinalResponse,
+    validateFinalResponse: composeOutputValidator(
+      request.tools.map((t) => t.name),
+      request.validateFinalResponse
+    ),
     sendMessage: sink.commitMessage,
     observers: sink.observers,
     // A declared-unsupported interjection edge is a real "no provider" to the
