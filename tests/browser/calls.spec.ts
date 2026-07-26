@@ -216,9 +216,12 @@ test.describe("1:1 DM calls", () => {
       // 409s and then asks. Both the header and the timeline card say so.
       const takeOver = second.page.getByRole("button", { name: "Take over call on this device" })
       await expect(takeOver).toBeVisible({ timeout: 20000 })
-      // Exact, so the header's "Take over call on this device" doesn't match: this
-      // is the timeline card's own button.
-      await expect(second.page.getByRole("button", { name: "Take over", exact: true })).toBeVisible({ timeout: 20000 })
+      // Exact, so the header's "Take over call on this device" doesn't match. More
+      // than one matches by design — the timeline card and the rejoin bar both
+      // offer it, in the same words as the header (see rejoin-bar.tsx).
+      await expect(second.page.getByRole("button", { name: "Take over", exact: true }).first()).toBeVisible({
+        timeout: 20000,
+      })
       // Nothing has moved by merely offering it.
       await expect(a.locator(CALL_TILE)).toHaveCount(2, { timeout: 5000 })
 
@@ -234,6 +237,17 @@ test.describe("1:1 DM calls", () => {
       await expect(a.locator(CALL_TILE)).toHaveCount(0, { timeout: 5000 })
       // B never lost their peer: the identity stayed in the call, only its endpoint moved.
       await expect(b.locator(CALL_TILE)).toHaveCount(2, { timeout: 20000 })
+
+      // The chip is `fixed right-4` with no left anchor and renders on the branch
+      // mobile shares, so measure it at phone width: it must stay on screen.
+      await a.setViewportSize({ width: 360, height: 740 })
+      const chip = a.getByText(/moved to another device/i).locator("xpath=ancestor::div[1]")
+      const box = await chip.boundingBox()
+      expect(box).not.toBeNull()
+      expect(box!.x).toBeGreaterThanOrEqual(0)
+      expect(box!.x + box!.width).toBeLessThanOrEqual(360)
+      await expect(chip.getByRole("button", { name: "Rejoin here" })).toBeVisible()
+      await expect(chip.getByRole("button", { name: "Dismiss" })).toBeVisible()
 
       await second.page.getByRole("button", { name: "Leave call" }).click()
       await b.getByRole("button", { name: "Leave call" }).click()
@@ -261,7 +275,8 @@ test.describe("1:1 DM calls", () => {
       await a.goto(`/w/${workspaceId}/s/${dmStreamId}`)
       await expect(a.getByText(/still in this call/i)).toBeVisible({ timeout: 25000 })
 
-      await a.getByRole("button", { name: "Rejoin" }).click()
+      // One wording across the bar, the header and the card — see rejoin-bar.tsx.
+      await a.getByRole("button", { name: "Take over", exact: true }).first().click()
       // Both docks converge back to 2 participants.
       await expect(a.locator(CALL_TILE)).toHaveCount(2, { timeout: 25000 })
       await expect(b.locator(CALL_TILE)).toHaveCount(2, { timeout: 25000 })

@@ -54,14 +54,14 @@ describe("RejoinBar", () => {
     seedStoreLive()
     renderBar()
     expect(screen.getByText(/still in this call/i)).toBeTruthy()
-    expect(screen.getByRole("button", { name: "Rejoin" })).toBeTruthy()
+    expect(screen.getByRole("button", { name: "Take over" })).toBeTruthy()
   })
 
   it("Rejoin dispatches the launch flow with the call's mode, asking to take the endpoint back", async () => {
     stubBootstrap(LIVE)
     seedStoreLive()
     renderBar()
-    await userEvent.click(screen.getByRole("button", { name: "Rejoin" }))
+    await userEvent.click(screen.getByRole("button", { name: "Take over" }))
     // The bar only shows while a live endpoint the viewer isn't on exists — this
     // tab's own lapsed lease (a rebind) or another device (a takeover).
     expect(launch).toHaveBeenCalledWith({
