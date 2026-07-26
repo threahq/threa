@@ -44,7 +44,7 @@ Only when the harness is Pi, not Claude. Planner and verifier: GPT-5.6 Sol `high
 1. **Brief** — write `.tmp/build-feature-<chunk>-brief.md`: binding plan sections, deliverables, neighbor files to imitate, enumerated tests, what NOT to build, exact `base_ref`. Agents get the path, never a pasted wall.
 2. **Implement** — one implementer in the chunk's working tree, no commits. Then run the brief's typecheck/tests yourself and read the diff.
 3. **Adversarially verify** — one verifier, given the brief, the diff path, and the gate summary. It re-derives behavior from the diff rather than trusting the implementer's report, walks the race and edge paths the plan names, and checks reuse (INV-35/37): name the existing abstraction a duplicate should collapse into. It reports only concrete findings with a failure scenario, self-scored ≥80. It does not rerun green suites.
-4. **Triage and fix** — one disposition per finding (below), one batched fix pass, one targeted recheck. Then save the reviewed patch to the exact paths `/create-pr` looks for, or it will re-audit the diff and fire its own `/code-review`: `{ git diff "$base_ref"...HEAD; git diff HEAD; } > .tmp/build-feature-reviewed.diff`, with `base_ref`, dispositions, and gate outcomes in `.tmp/build-feature-review-evidence.md`. Both are per-chunk scratch; overwrite them each chunk.
+4. **Triage and fix** — one disposition per finding (below), one batched fix pass, one targeted recheck. Then save the reviewed patch to the exact paths `/create-pr` looks for, or it will re-audit the diff and fire its own `/code-review`: `git add -A -N` first — without the intent-to-add, new files are untracked and `git diff HEAD` silently omits them, so the reviewer and `/create-pr` both see a chunk with its new source and test files missing — then `{ git diff "$base_ref"...HEAD; git diff HEAD; } > .tmp/build-feature-reviewed.diff`, with `base_ref`, dispositions, and gate outcomes in `.tmp/build-feature-review-evidence.md`. Both are per-chunk scratch; overwrite them each chunk.
 5. **Stack the PR** — read the `gh-stack` skill before your first stack command this session; the order below is a memory jog, not the contract.
    - `gh stack add <branch>` **before** `/commit` — `add` creates and switches to the branch, carrying the uncommitted work with it. Commit first and the chunk's diff lands on the previous chunk's branch and its PR.
    - First chunk of a new stack: `gh stack init <branch>` (with `git config rerere.enabled true` and `remote.pushDefault origin` once), not `add` — `add` outside a stack exits 2, and `/create-pr` then silently opens an unstacked PR against `main`.
@@ -71,6 +71,8 @@ The chunk's budget is a count, not a vibe. **Two broad passes: step 3's adversar
 - An unplanned broad pass — anything beyond those two — only if the diff changed materially for a reason other than remediating findings: a scope addition, not a fix.
 - **Tripwire:** if a fix round touches lines a previous round already touched and the accepted set is not strictly smaller than before, you are spiralling. Stop, report the state, ask.
 - Gates run in the orchestrator: once after implement, once after the fix batch, then only affected gates. Reviewers get the summary and do not rerun green suites.
+- **Gates are outside this budget.** A red typecheck or test is fixed however many attempts it takes; an exhausted fix budget never authorizes shipping a red gate. The budget bounds *review* rounds, not correctness.
+- A refutation is void if a later fix changes the code it cited — re-examine that one finding. Nothing else about a frozen set reopens.
 
 A **blocker** is a finding whose consequence is one of: a user sees a wrong result, data is lost or corrupted, authorization is bypassed, or a named plan deliverable is absent. Consequence, not category — every finding that reaches triage is a correctness claim, so "it's a correctness issue" does not make it a blocker. A survivor that is not a blocker is minor by definition: it goes to the PR body's known-issues section and the run continues. There is no third bucket.
 
@@ -90,10 +92,10 @@ Stop and ask only for: a **blocker** surviving the chunk's fix budget; the spira
 
 ## After the last chunk
 
-7. **Whole-stack adversarial review** — one reviewer over `git diff origin/main...<tip>`: cross-PR seams, invariants invisible inside one chunk, and plan conformance — every planned chunk built, nothing deferred smuggled in, PR bodies and `/sync-plan` blocks matching what actually shipped.
-8. **Stack hygiene** — `gh stack view --json` shows every PR linked; `gh stack sync --prune` if `main` moved; CI green; every CodeRabbit thread dispositioned via `/respond-to-pr-review`.
-9. **UI features** — throwaway Playwright pass against the e2e stack: screenshots at 1440px and 390px, scroll inner containers (fullPage misses them), read the PNGs, delete the spec.
-10. **Fold findings into the PR that owns them**, not into the tip branch: `gh stack checkout <branch>` → fix → commit → `gh stack rebase --upstack` → `gh stack push`. A chunk-2 fix committed on the tip ships in chunk 5's PR and leaves the reviewed PR wrong. One batch, same budget as a chunk, run affected gates, then report the per-PR links. No second external model unless the user asks.
+1. **Stack hygiene first** — `git fetch origin main`, `gh stack sync --prune` if `main` moved, then recompute `<tip>`. Reviewing `origin/main...<tip>` before syncing validates a commit set that no longer exists. Confirm `gh stack view --json` lists every PR in the Stack and CI is green.
+2. **Whole-stack adversarial review** — one reviewer over `git diff origin/main...<tip>`: cross-PR seams, invariants invisible inside one chunk, and plan conformance — every planned chunk built, nothing deferred smuggled in, PR bodies and `/sync-plan` blocks matching what actually shipped. Disposition every CodeRabbit thread in the same batch via `/respond-to-pr-review`.
+3. **UI features** — throwaway Playwright pass against the e2e stack: screenshots at 1440px and 390px, scroll inner containers (fullPage misses them), read the PNGs, delete the spec.
+4. **Fold findings into the PR that owns them**, not into the tip branch: `gh stack checkout <branch>` → fix → commit → `gh stack rebase --upstack` → `gh stack push`. A chunk-2 fix committed on the tip ships in chunk 5's PR and leaves the reviewed PR wrong. One batch, same budget as a chunk, run affected gates, then report the per-PR links. No second external model unless the user asks.
 
 ## Gotchas
 
