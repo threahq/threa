@@ -14,6 +14,7 @@ import {
   setCallRoster,
   patchCallLocal,
   setCallActiveElsewhere,
+  setDisplacedCall,
   setCallCaptureError,
   setCallSurfaceMode,
   setDesktopSurfaceOverride,
@@ -22,6 +23,7 @@ import {
 } from "@/stores/call-store"
 import { __resetCallPrefsForTests, getCallPrefs, setDesktopCallSurface } from "@/stores/call-prefs-store"
 import { CallCaptureError, type CallController } from "@/calls/call-manager"
+import { ApiError } from "@/api/client"
 import { CallDock } from "./call-dock"
 import { CallManagerProvider } from "./call-manager-context"
 import { CallLaunchProvider, useCallLaunch, type CallLaunchRequest } from "./call-launch-context"
@@ -164,6 +166,27 @@ describe("CallDock — idle", () => {
     renderDock(makeManager())
     act(() => setCallActiveElsewhere(true))
     expect(screen.getByText(/Call active in another tab/i)).toBeInTheDocument()
+  })
+
+  it("says where the call went after another device took it over, and offers it back", async () => {
+    const manager = makeManager()
+    renderDock(manager)
+    // The manager writes this after its teardown; the surface it was rendering is
+    // already gone, so this chip is the only thing left that explains why.
+    act(() => setDisplacedCall({ callId: "call_1", workspaceId: WORKSPACE_ID, streamId: "stream_1", mode: "video" }))
+
+    expect(screen.getByText(/moved to another device/i)).toBeInTheDocument()
+    await userEvent.click(screen.getByRole("button", { name: "Rejoin here" }))
+    expect(manager.startCall).toHaveBeenCalledWith(
+      expect.objectContaining({ streamId: "stream_1", expectedCallId: "call_1" })
+    )
+  })
+
+  it("dismisses the moved-call chip", async () => {
+    renderDock(makeManager())
+    act(() => setDisplacedCall({ callId: "call_1", workspaceId: WORKSPACE_ID, streamId: "stream_1", mode: "video" }))
+    await userEvent.click(screen.getByRole("button", { name: "Dismiss" }))
+    expect(screen.queryByText(/moved to another device/i)).toBeNull()
   })
 })
 
@@ -309,6 +332,35 @@ describe("CallDock — pre-join permission taxonomy", () => {
     enterConnectedCall([participant({ userId: "usr_self", endpointId: "callep_self" })])
     await userEvent.click(screen.getByText("launch"))
     expect(manager.startCall).not.toHaveBeenCalled()
+  })
+
+  it("offers to move the call here when another device holds it, and retries with takeover", async () => {
+    // The server's 409 for "this user already has a live endpoint elsewhere".
+    const startCall = vi.fn(async () => {
+      throw new ApiError(409, "CALL_ENDPOINT_ACTIVE", "An active endpoint already exists for this user")
+    })
+    const manager = makeManager({ startCall })
+    renderDock(manager)
+
+    await userEvent.click(screen.getByText("launch"))
+    expect(await screen.findByText(/in this call on another device/i)).toBeInTheDocument()
+    // A choice, not a failure — no generic retry affordance.
+    expect(screen.queryByRole("button", { name: "Try again" })).toBeNull()
+
+    await userEvent.click(screen.getByRole("button", { name: "Join on this device" }))
+    expect(startCall).toHaveBeenLastCalledWith({
+      workspaceId: WORKSPACE_ID,
+      streamId: "stream_1",
+      mode: "video",
+      takeover: true,
+    })
+  })
+
+  it("never takes over on a first attempt", async () => {
+    const manager = makeManager()
+    renderDock(manager)
+    await userEvent.click(screen.getByText("launch"))
+    expect(manager.startCall).toHaveBeenCalledWith(expect.objectContaining({ takeover: undefined }))
   })
 
   it("shows the pre-join gate on a fresh launch after the prior call was minimized", async () => {

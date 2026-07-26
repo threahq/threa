@@ -9,6 +9,7 @@ import {
   type CallDeviceState,
   type CallDiagnostics,
   type CallCaptureErrorInfo,
+  type DisplacedCall,
 } from "@/stores/call-store"
 import type { CallMode } from "@/calls/config"
 import type { DesktopSurface } from "@/stores/call-prefs-store"
@@ -95,6 +96,11 @@ export function useCallDiagnostics(): CallDiagnostics {
 
 export function useCallActiveElsewhere(): boolean {
   return useCallSelector((s) => s.activeElsewhere)
+}
+
+/** The call another device took over, or null. See {@link DisplacedCall}. */
+export function useDisplacedCall(): DisplacedCall | null {
+  return useCallSelector((s) => s.displacedCall)
 }
 
 export function useCallCaptureError(): CallCaptureErrorInfo | null {

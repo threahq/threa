@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react"
 import { toast } from "sonner"
+import { ApiError } from "@/api/client"
 import type { CallMode } from "@/calls/config"
 import { CallCaptureError, CallStartCancelledError } from "@/calls/call-manager"
 import { getCallState } from "@/stores/call-store"
@@ -25,13 +26,15 @@ export interface CallLaunchRequest {
  * The pre-join flow state. `requesting` spans the whole join (the dock shows a
  * joining spinner across it); `permission_error` carries the taxonomy class so the
  * gate renders its distinct copy + retry; `join_error` is a non-media failure
- * (REST/socket) with a plain retry.
+ * (REST/socket) with a plain retry; `takeover_prompt` is the user's own other
+ * device already holding this call, which is a choice, not a failure.
  */
 export type CallLaunchState =
   | { status: "idle" }
   | { status: "requesting"; request: CallLaunchRequest }
   | { status: "permission_error"; request: CallLaunchRequest; error: MediaPermissionError }
   | { status: "join_error"; request: CallLaunchRequest; message: string }
+  | { status: "takeover_prompt"; request: CallLaunchRequest }
 
 interface CallLaunchContextValue {
   state: CallLaunchState
@@ -39,6 +42,8 @@ interface CallLaunchContextValue {
   callActive: boolean
   launch: (request: CallLaunchRequest) => void
   retry: () => void
+  /** Answer a `takeover_prompt`: rerun the same launch, displacing the other device. */
+  takeOver: () => void
   cancel: () => void
 }
 
@@ -52,7 +57,7 @@ export function CallLaunchProvider({ children }: { children: ReactNode }) {
   const runIdRef = useRef(0)
 
   const run = useCallback(
-    async (request: CallLaunchRequest) => {
+    async (request: CallLaunchRequest, opts?: { takeover?: boolean }) => {
       // Already in (or joining) a call: startCall would synchronously reject with
       // a plain Error, which the catch below would surface as a stale join_error
       // carrying the wrong request (and a "Try again" that starts an unintended
@@ -67,7 +72,7 @@ export function CallLaunchProvider({ children }: { children: ReactNode }) {
       // permission taxonomy is derived from startCall's own typed capture failure
       // instead of a separate pre-flight getUserMedia.
       try {
-        await manager.startCall(request)
+        await manager.startCall({ ...request, takeover: opts?.takeover })
         if (runId !== runIdRef.current) return
         setState({ status: "idle" })
       } catch (err) {
@@ -80,6 +85,13 @@ export function CallLaunchProvider({ children }: { children: ReactNode }) {
         if (err instanceof CallCaptureError) {
           const error = classifyMediaError((err as { cause?: unknown }).cause ?? err)
           setState({ status: "permission_error", request, error })
+          return
+        }
+        // The user is already in this call on another device (or another tab —
+        // the REST start runs before the Web Lock check, so both land here). Not a
+        // failure: offer to move the call to this device rather than toasting.
+        if (ApiError.isApiError(err) && err.code === "CALL_ENDPOINT_ACTIVE") {
+          setState({ status: "takeover_prompt", request })
           return
         }
         const message = err instanceof Error ? err.message : String(err)
@@ -96,6 +108,12 @@ export function CallLaunchProvider({ children }: { children: ReactNode }) {
     if (state.status === "permission_error" || state.status === "join_error") void run(state.request)
   }, [run, state])
 
+  // Takeover is only ever reachable from the prompt — never folded into `retry`,
+  // so no other error path can displace another device without being asked.
+  const takeOver = useCallback(() => {
+    if (state.status === "takeover_prompt") void run(state.request, { takeover: true })
+  }, [run, state])
+
   const cancel = useCallback(() => {
     runIdRef.current++
     setState({ status: "idle" })
@@ -106,7 +124,10 @@ export function CallLaunchProvider({ children }: { children: ReactNode }) {
   // (or connecting), any residual join_error/permission_error is stale — clear it
   // so no unprompted "Try again" survives to a normal call exit.
   useEffect(() => {
-    if (phase !== "idle" && (state.status === "join_error" || state.status === "permission_error")) {
+    if (
+      phase !== "idle" &&
+      (state.status === "join_error" || state.status === "permission_error" || state.status === "takeover_prompt")
+    ) {
       setState({ status: "idle" })
     }
   }, [phase, state.status])
@@ -114,8 +135,8 @@ export function CallLaunchProvider({ children }: { children: ReactNode }) {
   const callActive = phase !== "idle" || state.status === "requesting"
 
   const value = useMemo<CallLaunchContextValue>(
-    () => ({ state, callActive, launch, retry, cancel }),
-    [state, callActive, launch, retry, cancel]
+    () => ({ state, callActive, launch, retry, takeOver, cancel }),
+    [state, callActive, launch, retry, takeOver, cancel]
   )
 
   return <CallLaunchContext.Provider value={value}>{children}</CallLaunchContext.Provider>

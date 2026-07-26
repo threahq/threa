@@ -83,6 +83,20 @@ export interface CallCaptureErrorInfo {
   message: string
 }
 
+/**
+ * The call this device was displaced from when the user joined it on another
+ * device ("Join on this device"). Survives the teardown that removes the call
+ * itself — the manager writes it AFTER `clearCallState` — so the dock can say
+ * where the call went and offer it back instead of the surface silently
+ * vanishing. Cleared by a dismiss, by the next call, and by an account switch.
+ */
+export interface DisplacedCall {
+  callId: string
+  workspaceId: string
+  streamId: string
+  mode: CallMode
+}
+
 export interface CallState {
   phase: CallPhase
   /** Unified surface size ({@link CallSurfaceMode}); "min" until a surface steps it up. */
@@ -115,6 +129,8 @@ export interface CallState {
   local: CallLocalState
   /** True when another tab holds the call's Web Lock (this tab can offer rejoin). */
   activeElsewhere: boolean
+  /** Set when another device took this call over; see {@link DisplacedCall}. */
+  displacedCall: DisplacedCall | null
   /** Set when an account switch is requested with a live call — UI confirms (M1.2). */
   confirmPending: boolean
   diagnostics: CallDiagnostics
@@ -156,6 +172,7 @@ function idleState(): CallState {
     rosterVersion: 0,
     local: { muted: false, cameraOn: false, devices: EMPTY_DEVICES, speakingLevel: 0 },
     activeElsewhere: false,
+    displacedCall: null,
     confirmPending: false,
     diagnostics: { rttMs: null, packetLoss: null, qualityLimitation: null },
     captureError: null,
@@ -217,7 +234,9 @@ export function setCallSession(args: {
   chatAnchorId?: string | null
 }): void {
   const { chatAnchorId = null, ...session } = args
-  setState({ ...state, ...session, chatAnchorId, phase: "joining", connectedAt: null })
+  // A new call supersedes any "this moved to another device" notice, including
+  // the one whose Rejoin started this very call.
+  setState({ ...state, ...session, chatAnchorId, phase: "joining", connectedAt: null, displacedCall: null })
 }
 
 export function setCallRoster(roster: CallRosterParticipant[], rosterVersion: number): void {
@@ -244,6 +263,16 @@ export function setCallDiagnostics(diagnostics: CallDiagnostics): void {
 export function setCallActiveElsewhere(activeElsewhere: boolean): void {
   if (state.activeElsewhere === activeElsewhere) return
   setState({ ...state, activeElsewhere })
+}
+
+/**
+ * Record (or dismiss) the call another device took over. Written by the manager
+ * AFTER its teardown has cleared the call state, which is the only ordering that
+ * survives — see {@link DisplacedCall}.
+ */
+export function setDisplacedCall(displacedCall: DisplacedCall | null): void {
+  if (state.displacedCall === displacedCall) return
+  setState({ ...state, displacedCall })
 }
 
 export function setCallConfirmPending(confirmPending: boolean): void {

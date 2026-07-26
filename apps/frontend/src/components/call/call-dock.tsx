@@ -15,6 +15,7 @@ import {
   useCallStreamId,
   useCallWorkspaceId,
   useDesktopSurfaceOverride,
+  useDisplacedCall,
 } from "./call-store-hooks"
 
 // Bottom-anchored call surfaces clear the iOS home indicator on desktop (app
@@ -37,6 +38,7 @@ import { DesktopCallDock } from "./desktop-call-dock"
 import { FloatingCallSquare } from "./floating-call-square"
 import { DesktopCallFullscreen } from "./desktop-call-fullscreen"
 import { ActiveElsewhereChip } from "./active-elsewhere-chip"
+import { CallMovedChip } from "./call-moved-chip"
 
 /**
  * The docked call surface. Mounts at the app-layout level and is driven purely by
@@ -52,6 +54,7 @@ export function CallDock() {
   const phase = useCallPhase()
   const { state: launch } = useCallLaunch()
   const activeElsewhere = useCallActiveElsewhere()
+  const displaced = useDisplacedCall()
   const storeStreamId = useCallStreamId()
   const workspaceId = useCallWorkspaceId()
   const isMobile = useIsMobile()
@@ -98,10 +101,18 @@ export function CallDock() {
     }
   }, [inCall])
 
-  // Nothing to show: idle with no launch in flight. Surface the cross-tab chip if
-  // another tab holds the call, otherwise render nothing.
+  // Nothing to show: idle with no launch in flight. Surface the displaced-call
+  // chip if another device took this call over, then the cross-tab chip if another
+  // tab holds it, otherwise render nothing.
   if (!launching && !inCall && !joining) {
     joiningModeRef.current = "compact"
+    if (displaced) {
+      return (
+        <div className={cn("fixed right-4 z-50", DOCK_BOTTOM)}>
+          <CallMovedChip />
+        </div>
+      )
+    }
     if (activeElsewhere) {
       return (
         <div className={cn("fixed right-4 z-50", DOCK_BOTTOM)}>

@@ -55,6 +55,7 @@ beforeEach(() => {
     callActive: false,
     state: { status: "idle" },
     retry: vi.fn(),
+    takeOver: vi.fn(),
     cancel: vi.fn(),
   })
   vi.spyOn(ringTone, "installRingAudioWarmup").mockReturnValue(() => {})
