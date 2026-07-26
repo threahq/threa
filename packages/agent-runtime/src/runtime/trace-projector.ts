@@ -76,8 +76,7 @@ export interface TraceStepSink<OpenStep> {
  * Tool lifecycle vs. persistence:
  * - `tool:start` opens the step immediately so a refresh mid-execution sees the
  *   in-progress step instead of a gap. The open handle is cached by toolCallId.
- *   Hidden tools (trace.hidden) skip the user-facing trace entirely — they
- *   appear in OTEL/Langfuse only.
+ *   Hidden tools (trace.hidden) skip the user-facing trace entirely.
  * - `tool:progress` delivers the phase text plus the running snapshot through
  *   the sink. Empty/whitespace phases and phases with no open step (hidden
  *   tools) are skipped.

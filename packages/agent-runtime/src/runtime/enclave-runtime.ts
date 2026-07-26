@@ -1,10 +1,10 @@
 // Enclave-facing barrel: the agent loop and its tool primitives, with NO pull
-// on the AI provider layer (`createAI` → LangChain/OpenRouter SDK) or the OTEL
-// observer. The enclave runs the same loop next to decrypted plaintext, so it
-// must keep its dependency (and egress) surface minimal — it supplies its own
-// `AgentRuntimeAI` over a single OpenRouter connection and emits no telemetry.
-// The `.` and `./runtime` barrels intentionally keep exporting OtelObserver and
-// createAI for the backend; this entry point is the curated subset that does not.
+// on the AI provider layer (`createAI` → OpenRouter SDK). The enclave runs the
+// same loop next to decrypted plaintext, so it must keep its dependency (and
+// egress) surface minimal — it supplies its own `AgentRuntimeAI` over a single
+// OpenRouter connection. The `.` and `./runtime` barrels intentionally keep
+// exporting createAI for the backend; this entry point is the curated subset
+// that does not.
 export { AgentRuntime } from "./agent-runtime"
 export type { AgentRuntimeAI, AgentRuntimeConfig, AgentRuntimeResult, NewMessageAwareness } from "./agent-runtime"
 export { defineAgentTool, toVercelToolDefs, buildToolPromptSections } from "./agent-tool"
@@ -12,7 +12,7 @@ export type { AgentTool, AgentToolConfig, AgentToolResult, ExecutionPhase } from
 export { negotiateCapabilities } from "./negotiate-capabilities"
 export type { NegotiateCapabilitiesParams, NegotiatedCapabilities } from "./negotiate-capabilities"
 // The turn contract's sealed driver: the enclave runs the same AgentRuntime loop
-// behind a sealing sink. Provider-free (no createAI / OTEL), so it belongs in the
+// behind a sealing sink. Provider-free (no createAI), so it belongs in the
 // curated barrel; the companion's InProcessTurnDriver stays out — the enclave only
 // ever serves "sealed" delivery. `declaredUnsupported` lets it name the gaps it
 // can't fill (interjection, UX-12) instead of silently omitting them.
@@ -67,7 +67,7 @@ export {
 } from "./rolling-summary"
 
 // Web primitives + bounded research — enclave-safe (call external services
-// directly, no backend callback, no AI provider layer / OTEL pull).
+// directly, no backend callback, no AI provider layer pull).
 export { createWebSearchTool, type WebSearchInput, type WebSearchResult } from "../tools/web-search-tool"
 export { createReadUrlTool, type ReadUrlInput, type ReadUrlResult } from "../tools/read-url-tool"
 export {

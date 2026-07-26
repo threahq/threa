@@ -235,7 +235,6 @@ WebSocket connections bypass the router entirely. The frontend fetches `/api/wor
 - AWS S3 (regional bucket, e.g. `eu-north-1`) — file uploads (avatars, attachments)
 - OpenRouter — AI model gateway (routes to Anthropic, OpenAI, etc.)
 - WorkOS — session cookie validation (shared auth with control plane)
-- Langfuse — AI observability/telemetry (OTEL-based)
 
 **Talks to:**
 
@@ -294,7 +293,6 @@ Browser -> Backend (WebSocket):      Cookie (session cookie, name per env)
 | AWS S3                   | Backend                                                    | File storage (per-region buckets)                                                                                                 |
 | OpenRouter               | Backend                                                    | AI model gateway                                                                                                                  |
 | WorkOS                   | Control Plane, Backend                                     | Authentication (OAuth/SSO) — backoffice uses the same client via `WORKOS_DEDICATED_REDIRECT_HOSTS` per-host redirect URI override |
-| Langfuse                 | Backend                                                    | AI telemetry and observability                                                                                                    |
 
 ---
 

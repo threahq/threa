@@ -53,8 +53,8 @@ workflow spins up postgres+pgvector, runs the eval, and posts the report.
 
 Accepted flags mirror the CLI: `-s/--suite`, `-c/--case`, `-m/--model` (≤4),
 `-r/--runs` (≤12), `-p/--parallel` (≤8), `-t/--temperature`, `--min-pass-rate`.
-Values are allowlist-validated (`evals/slash/parse-args.ts`) — Langfuse is off
-and cost/latency are capped. Needs the `OPENROUTER_API_KEY` repo secret.
+Values are allowlist-validated (`evals/slash/parse-args.ts`) and cost/latency
+are capped. Needs the `OPENROUTER_API_KEY` repo secret.
 
 ## Variance: tune against tallies, not single runs
 
@@ -192,7 +192,6 @@ Options:
   --min-pass-rate <n>   Pass-rate a case must clear when runs > 1 (default: 1.0)
   --json <file>         Write machine-readable results JSON to <file>
   --config <file>       Run from YAML config file
-  --no-langfuse         Disable Langfuse recording
   -v, --verbose         Verbose output
 ```
 
@@ -260,16 +259,12 @@ Results are displayed in the terminal with:
 - Cost tracking (tokens and estimated cost)
 - Comparison table for multi-model runs
 
-Langfuse integration provides traces for debugging failed cases (unless `--no-langfuse` is passed).
-
 ## Environment Variables
 
-| Variable              | Required | Description                                 |
-| --------------------- | -------- | ------------------------------------------- |
-| `OPENROUTER_API_KEY`  | Yes      | API key for model calls                     |
-| `TAVILY_API_KEY`      | Yes\*    | Tavily key for companion `web_search` evals |
-| `LANGFUSE_PUBLIC_KEY` | No       | Langfuse observability                      |
-| `LANGFUSE_SECRET_KEY` | No       | Langfuse observability                      |
-| `DATABASE_URL`        | Yes      | PostgreSQL connection                       |
+| Variable             | Required | Description                                 |
+| -------------------- | -------- | ------------------------------------------- |
+| `OPENROUTER_API_KEY` | Yes      | API key for model calls                     |
+| `TAVILY_API_KEY`     | Yes\*    | Tavily key for companion `web_search` evals |
+| `DATABASE_URL`       | Yes      | PostgreSQL connection                       |
 
 \* Required when running the `companion` suite, which now uses the real `web_search` tool path.

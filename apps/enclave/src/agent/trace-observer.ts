@@ -48,7 +48,7 @@ import {
  * - `tool:start` → `tool:progress`* → `tool:complete`/`tool:error`: the real
  *   in-flight window — started carries no content (the result isn't known yet),
  *   substeps stream the phase text, and the finalize seals the tool's result.
- * Hidden tools (trace.hidden) are skipped entirely (OTEL-only), same as the backend.
+ * Hidden tools (trace.hidden) are skipped entirely, same as the backend.
  */
 export interface EnclaveTraceObserverDeps {
   streamId: string

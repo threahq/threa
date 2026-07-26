@@ -8,7 +8,7 @@
 #
 # Run (needs OPENROUTER_API_KEY with credit headroom + TAVILY_API_KEY):
 #   bun run eval -- --config evals/companion-model-comparison.yaml -r 3 -p 4 \
-#     --min-pass-rate 0.67 --json /tmp/companion-comparison.json --no-langfuse
+#     --min-pass-rate 0.67 --json /tmp/companion-comparison.json
 
 suites:
   - name: companion

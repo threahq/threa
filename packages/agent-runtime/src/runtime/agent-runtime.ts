@@ -341,20 +341,18 @@ export class AgentRuntime {
       const startTime = Date.now()
       let result: Awaited<ReturnType<typeof ai.generateTextWithTools>>
       try {
-        result = await this.wrapWithObserverContext(() =>
-          ai.generateTextWithTools({
-            model,
-            modelString: this.config.modelString,
-            system: fullSystemPrompt,
-            messages: truncatedMessages,
-            tools: this.toolDefs,
-            maxTokens: this.config.maxTokens ?? undefined,
-            temperature: this.config.temperature ?? undefined,
-            telemetry: this.config.telemetry,
-            context: this.config.costContext,
-            abortSignal: this.config.runAbortSignal,
-          })
-        )
+        result = await ai.generateTextWithTools({
+          model,
+          modelString: this.config.modelString,
+          system: fullSystemPrompt,
+          messages: truncatedMessages,
+          tools: this.toolDefs,
+          maxTokens: this.config.maxTokens ?? undefined,
+          temperature: this.config.temperature ?? undefined,
+          telemetry: this.config.telemetry,
+          context: this.config.costContext,
+          abortSignal: this.config.runAbortSignal,
+        })
       } catch (err) {
         // A Stop that fired mid-call aborts the LLM request. Treat it as a
         // graceful halt (return what the turn holds), not a session failure —
@@ -712,16 +710,11 @@ export class AgentRuntime {
         }
         const signal = this.config.toolSignalProvider?.(tc.toolCallId, tc.toolName)
 
-        // Wrap the tool execute in the observer-provided tool span context
-        // (OTEL) so that nested AI SDK calls inside the tool nest under the
-        // tool span instead of orphaning under the root.
-        const toolResult = await this.wrapToolWithObserverContext(tc.toolCallId, () =>
-          agentTool.config.execute(tc.input as any, {
-            toolCallId: tc.toolCallId,
-            onProgress,
-            signal,
-          })
-        )
+        const toolResult = await agentTool.config.execute(tc.input as any, {
+          toolCallId: tc.toolCallId,
+          onProgress,
+          signal,
+        })
         const durationMs = Date.now() - startTime
 
         if (toolResult.sources && toolResult.sources.length > 0) {
@@ -915,45 +908,6 @@ export class AgentRuntime {
         logger.warn({ err, eventType: event.type }, "Observer failed to handle event")
       }
     }
-  }
-
-  /**
-   * Compose all observers' wrapExecution hooks around an async operation.
-   * Allows OTEL observer to set the active span context so that
-   * child spans (e.g., from Vercel AI SDK) nest under the root span.
-   */
-  private async wrapWithObserverContext<T>(fn: () => Promise<T>): Promise<T> {
-    let wrapped = fn
-    for (const observer of this.observers) {
-      if (observer.wrapExecution) {
-        const prev = wrapped
-        const obs = observer
-        wrapped = () => obs.wrapExecution!(prev)
-      }
-    }
-    return wrapped()
-  }
-
-  /**
-   * Compose all observers' wrapToolExecution hooks around a tool's execute().
-   * The OTEL observer uses this to make the tool span the active context so
-   * nested AI SDK calls (e.g. workspace researcher's planner/evaluator
-   * `generateObject` calls) appear as children of the tool span in Langfuse,
-   * rather than orphaning.
-   *
-   * Must be called AFTER `tool:start` has been emitted so observers have a
-   * chance to register the tool's context.
-   */
-  private async wrapToolWithObserverContext<T>(toolCallId: string, fn: () => Promise<T>): Promise<T> {
-    let wrapped = fn
-    for (const observer of this.observers) {
-      if (observer.wrapToolExecution) {
-        const prev = wrapped
-        const obs = observer
-        wrapped = () => obs.wrapToolExecution!(toolCallId, prev)
-      }
-    }
-    return wrapped()
   }
 
   private extractInputSummary(): string | undefined {

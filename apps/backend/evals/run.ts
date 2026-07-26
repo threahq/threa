@@ -7,7 +7,6 @@
  *   bun run evals/run.ts -s companion             # Run specific suite
  *   bun run evals/run.ts -s companion -c case-001  # Run specific case
  *   bun run evals/run.ts -m openrouter:openai/gpt-5.4-nano  # Override model
- *   bun run evals/run.ts --no-langfuse           # Skip Langfuse recording
  */
 
 import { parseArgs } from "util"
@@ -61,7 +60,6 @@ Options:
   --min-pass-rate <n>   Pass-rate a case must clear when runs > 1 (0.0-1.0, default: 1.0)
   --json <file>         Write machine-readable results JSON to <file>
   --config <file>       Run from YAML config file (ignores -s, -m flags)
-  --no-langfuse         Disable Langfuse recording
   -v, --verbose         Verbose output
 
 Examples:
@@ -82,9 +80,6 @@ Examples:
 
   bun run evals/run.ts --config companion-config.yaml
     Run with detailed per-component configuration from YAML file
-
-  bun run evals/run.ts --no-langfuse -v
-    Run with verbose output, skip Langfuse recording
 
 Config File Format (YAML):
   suites:
@@ -120,7 +115,6 @@ async function main(): Promise<void> {
       "min-pass-rate": { type: "string" },
       json: { type: "string" },
       config: { type: "string" },
-      "no-langfuse": { type: "boolean" },
       verbose: { type: "boolean", short: "v" },
     },
     allowPositionals: true,
@@ -148,7 +142,6 @@ async function main(): Promise<void> {
     runs: values.runs ? parseInt(values.runs, 10) : undefined,
     minPassRate: values["min-pass-rate"] ? parseFloat(values["min-pass-rate"]) : undefined,
     jsonOutput: values.json,
-    noLangfuse: values["no-langfuse"],
     verbose: values.verbose,
   }
 
@@ -188,13 +181,8 @@ async function main(): Promise<void> {
   // Config file mode: run from YAML config
   if (values.config) {
     console.log(`\nRunning from config file: ${values.config}`)
-    if (options.noLangfuse) {
-      console.log("Langfuse recording disabled")
-    }
-
     try {
       const results = await runFromConfigFile(values.config, allSuites as any, {
-        noLangfuse: options.noLangfuse,
         verbose: options.verbose,
         parallel: options.parallel,
         runs: options.runs,
@@ -235,10 +223,6 @@ async function main(): Promise<void> {
 
   if (options.parallel && options.parallel > 1) {
     console.log(`Parallel workers: ${options.parallel}`)
-  }
-
-  if (options.noLangfuse) {
-    console.log("Langfuse recording disabled")
   }
 
   try {

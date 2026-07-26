@@ -88,7 +88,7 @@ export async function precomputeRefSummaries(
   // User-initiated endpoint — attribute summarization spend to the caller.
   // The background `ContextBagPrecomputeWorker` (outbox-driven) is the
   // legitimate "system" caller; here the request came from a user composing
-  // a draft, so cost goes to them per Langfuse + cost dashboards.
+  // a draft, so cost goes to them per the cost dashboards.
   const costContext: CostContext = { workspaceId, userId, origin: "user" }
 
   for (const resolved of resolveds) {

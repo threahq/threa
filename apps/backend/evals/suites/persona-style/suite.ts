@@ -17,8 +17,8 @@
  *
  * ## Usage
  *
- *   bun run eval -- -s persona-style --no-langfuse
- *   bun run eval -- -s persona-style -c tone-warm-001 --no-langfuse
+ *   bun run eval -- -s persona-style
+ *   bun run eval -- -s persona-style -c tone-warm-001
  */
 
 import { ulid } from "ulid"

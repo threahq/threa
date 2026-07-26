@@ -1,7 +1,7 @@
 /**
  * Unified AI component configuration. Production uses StaticConfigResolver;
  * evals swap in EvalConfigResolver for programmatic overrides. Async to
- * support future DB/Langfuse/remote config sources.
+ * support future DB/remote config sources.
  */
 
 /**

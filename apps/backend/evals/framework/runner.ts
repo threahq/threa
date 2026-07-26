@@ -6,11 +6,9 @@
  * 2. Create fixtures (workspace, users)
  * 3. Run each permutation
  * 4. Execute evaluators
- * 5. Record to Langfuse
- * 6. Clean up
+ * 5. Clean up
  */
 
-import type { Langfuse } from "langfuse"
 import { NoObjectGeneratedError } from "ai"
 import type {
   EvalSuite,
@@ -23,7 +21,6 @@ import type {
 } from "./types"
 import { createUsageAccumulator } from "./types"
 import { setupEvalDatabase, setupEvalTemplate, type EvalDatabaseResult, type EvalTemplateResult } from "./database"
-import { recordEvalRun, createLangfuseClient } from "./langfuse"
 import { createAI, type AI, type GenerateObjectOptions, type GenerateTextOptions } from "@threa/agent-runtime"
 import type { UsageAccumulator } from "./types"
 import { createWorkspaceFixture, type WorkspaceFixture } from "../fixtures/workspace"
@@ -361,9 +358,8 @@ async function runPermutationIsolated<TInput, TOutput, TExpected>(
   permutation: EvalPermutation,
   template: EvalTemplateResult,
   ai: AI,
-  options: PermutationRunOptions,
-  langfuseClient: Langfuse | null
-): Promise<{ result: PermutationResult<TOutput, TExpected>; traceId?: string }> {
+  options: PermutationRunOptions
+): Promise<PermutationResult<TOutput, TExpected>> {
   // Clone database from template
   const modelLabel = permutation.model.split("/").pop() || permutation.model
   const dbResult = await template.clone(modelLabel)
@@ -375,21 +371,7 @@ async function runPermutationIsolated<TInput, TOutput, TExpected>(
     const permLabel = permutation.runTitle || permutation.model
     console.log(`\n${colors.yellow}Permutation: ${permLabel}${colors.reset}`)
 
-    const result = await runPermutation(suite, permutation, dbResult, ai, fixture, options)
-
-    // Record to Langfuse if enabled
-    let traceId: string | undefined
-    if (langfuseClient) {
-      traceId = await recordEvalRun({
-        client: langfuseClient,
-        suiteName: suite.name,
-        permutation,
-        cases: result.cases,
-        runEvaluations: result.runEvaluations,
-      })
-    }
-
-    return { result, traceId }
+    return await runPermutation(suite, permutation, dbResult, ai, fixture, options)
   } finally {
     await dbResult.cleanup()
   }
@@ -570,11 +552,6 @@ function printSummary<TOutput, TExpected>(result: SuiteResult<TOutput, TExpected
     }
   }
 
-  // Show Langfuse trace ID if available
-  if (result.langfuseTraceId) {
-    console.log(`\n${colors.cyan}Langfuse Trace: ${result.langfuseTraceId}${colors.reset}`)
-  }
-
   console.log("\n" + "=".repeat(60))
 }
 
@@ -593,9 +570,6 @@ export async function runSuite<TInput, TOutput, TExpected>(
   // Create AI wrapper
   const ai = createEvalAI()
 
-  // Create Langfuse client if enabled
-  const langfuseClient = options.noLangfuse ? null : createLangfuseClient()
-
   // Determine permutations to run
   let permutations = suite.defaultPermutations
   if (options.model) {
@@ -608,7 +582,6 @@ export async function runSuite<TInput, TOutput, TExpected>(
   }
 
   const permutationResults: PermutationResult<TOutput, TExpected>[] = []
-  let lastTraceId: string | undefined
 
   // Use parallel execution with template DBs if multiple permutations
   const useParallel = permutations.length > 1 && (options.parallel ?? 1) > 1
@@ -632,19 +605,13 @@ export async function runSuite<TInput, TOutput, TExpected>(
 
       for (const chunk of chunks) {
         const results = await Promise.all(
-          chunk.map((permutation) => runPermutationIsolated(suite, permutation, template, ai, options, langfuseClient))
+          chunk.map((permutation) => runPermutationIsolated(suite, permutation, template, ai, options))
         )
 
-        for (const { result, traceId } of results) {
-          permutationResults.push(result)
-          if (traceId) lastTraceId = traceId
-        }
+        permutationResults.push(...results)
       }
     } finally {
       await template.cleanup()
-      if (langfuseClient) {
-        await langfuseClient.shutdownAsync()
-      }
     }
   } else {
     // Sequential execution with single database
@@ -658,30 +625,15 @@ export async function runSuite<TInput, TOutput, TExpected>(
 
         const permResult = await runPermutation(suite, permutation, dbResult, ai, fixture, options)
         permutationResults.push(permResult)
-
-        // Record to Langfuse if enabled
-        if (langfuseClient) {
-          lastTraceId = await recordEvalRun({
-            client: langfuseClient,
-            suiteName: suite.name,
-            permutation,
-            cases: permResult.cases,
-            runEvaluations: permResult.runEvaluations,
-          })
-        }
       }
     } finally {
       await dbResult.cleanup()
-      if (langfuseClient) {
-        await langfuseClient.shutdownAsync()
-      }
     }
   }
 
   const result: SuiteResult<TOutput, TExpected> = {
     suiteName: suite.name,
     permutations: permutationResults,
-    langfuseTraceId: lastTraceId,
   }
 
   // Print summary
@@ -767,86 +719,64 @@ export async function runFromConfigFile(
   // Create AI wrapper
   const ai = createEvalAI()
 
-  // Create Langfuse client if enabled
-  const langfuseClient = baseOptions.noLangfuse ? null : createLangfuseClient()
-
   const results: SuiteResult<unknown, unknown>[] = []
 
-  try {
-    for (const runConfig of config.suites) {
-      // Find the suite
-      const suite = allSuites.find((s) => s.name === runConfig.name)
-      if (!suite) {
-        console.log(`${colors.red}Unknown suite: ${runConfig.name}${colors.reset}`)
-        console.log(`Available suites: ${allSuites.map((s) => s.name).join(", ")}`)
-        continue
-      }
-
-      console.log(`\n${colors.cyan}Running suite: ${suite.name}${colors.reset}`)
-      console.log(`${colors.yellow}Run: ${runConfig.title}${colors.reset}`)
-      if (suite.description) {
-        console.log(`${colors.dim}${suite.description}${colors.reset}`)
-      }
-
-      // Create permutation from config
-      const basePermutation = suite.defaultPermutations[0] || { model: "openrouter:anthropic/claude-haiku-4.5" }
-
-      // Apply component overrides to determine the "main" model
-      // Use companion model if specified, otherwise the base permutation model
-      const mainModel = runConfig.components?.companion?.model ?? basePermutation.model
-      const mainTemperature = runConfig.components?.companion?.temperature ?? basePermutation.temperature
-
-      const permutation: EvalPermutation = {
-        model: mainModel,
-        temperature: mainTemperature,
-        runTitle: runConfig.title,
-      }
-
-      // Build options with component overrides
-      const runOptions: PermutationRunOptions = {
-        ...baseOptions,
-        cases: runConfig.cases,
-        componentOverrides: runConfig.components,
-      }
-
-      // Set up database and run
-      const dbResult = await setupEvalDatabase({ label: `${suite.name}-${runConfig.title.replace(/\s+/g, "-")}` })
-      const fixture = await createWorkspaceFixture(dbResult.pool)
-
-      try {
-        const permLabel = permutation.runTitle || permutation.model
-        console.log(`\n${colors.yellow}Permutation: ${permLabel}${colors.reset}`)
-
-        const permResult = await runPermutation(suite, permutation, dbResult, ai, fixture, runOptions)
-
-        // Record to Langfuse if enabled
-        let lastTraceId: string | undefined
-        if (langfuseClient) {
-          lastTraceId = await recordEvalRun({
-            client: langfuseClient,
-            suiteName: suite.name,
-            permutation,
-            cases: permResult.cases,
-            runEvaluations: permResult.runEvaluations,
-          })
-        }
-
-        const result: SuiteResult<unknown, unknown> = {
-          suiteName: `${suite.name}: ${runConfig.title}`,
-          permutations: [permResult],
-          langfuseTraceId: lastTraceId,
-        }
-
-        // Print summary
-        printSummary(result)
-        results.push(result)
-      } finally {
-        await dbResult.cleanup()
-      }
+  for (const runConfig of config.suites) {
+    // Find the suite
+    const suite = allSuites.find((s) => s.name === runConfig.name)
+    if (!suite) {
+      console.log(`${colors.red}Unknown suite: ${runConfig.name}${colors.reset}`)
+      console.log(`Available suites: ${allSuites.map((s) => s.name).join(", ")}`)
+      continue
     }
-  } finally {
-    if (langfuseClient) {
-      await langfuseClient.shutdownAsync()
+
+    console.log(`\n${colors.cyan}Running suite: ${suite.name}${colors.reset}`)
+    console.log(`${colors.yellow}Run: ${runConfig.title}${colors.reset}`)
+    if (suite.description) {
+      console.log(`${colors.dim}${suite.description}${colors.reset}`)
+    }
+
+    // Create permutation from config
+    const basePermutation = suite.defaultPermutations[0] || { model: "openrouter:anthropic/claude-haiku-4.5" }
+
+    // Apply component overrides to determine the "main" model
+    // Use companion model if specified, otherwise the base permutation model
+    const mainModel = runConfig.components?.companion?.model ?? basePermutation.model
+    const mainTemperature = runConfig.components?.companion?.temperature ?? basePermutation.temperature
+
+    const permutation: EvalPermutation = {
+      model: mainModel,
+      temperature: mainTemperature,
+      runTitle: runConfig.title,
+    }
+
+    // Build options with component overrides
+    const runOptions: PermutationRunOptions = {
+      ...baseOptions,
+      cases: runConfig.cases,
+      componentOverrides: runConfig.components,
+    }
+
+    // Set up database and run
+    const dbResult = await setupEvalDatabase({ label: `${suite.name}-${runConfig.title.replace(/\s+/g, "-")}` })
+    const fixture = await createWorkspaceFixture(dbResult.pool)
+
+    try {
+      const permLabel = permutation.runTitle || permutation.model
+      console.log(`\n${colors.yellow}Permutation: ${permLabel}${colors.reset}`)
+
+      const permResult = await runPermutation(suite, permutation, dbResult, ai, fixture, runOptions)
+
+      const result: SuiteResult<unknown, unknown> = {
+        suiteName: `${suite.name}: ${runConfig.title}`,
+        permutations: [permResult],
+      }
+
+      // Print summary
+      printSummary(result)
+      results.push(result)
+    } finally {
+      await dbResult.cleanup()
     }
   }
 

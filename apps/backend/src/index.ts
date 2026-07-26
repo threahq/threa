@@ -1,7 +1,3 @@
-// MUST be first - OTEL needs to instrument LangChain before it loads
-import { initLangfuse, shutdownLangfuse } from "./lib/langfuse"
-initLangfuse()
-
 import { startServer } from "./server"
 import { logger } from "./lib/logger"
 import { classifyGlobalCrash, serializeCrashReason } from "./lib/crash-policy"
@@ -36,7 +32,6 @@ async function shutdown(code: number) {
     shutdown: async () => {
       try {
         await stop()
-        await shutdownLangfuse()
       } catch (err) {
         logger.error({ err }, "Error during graceful shutdown")
       }
