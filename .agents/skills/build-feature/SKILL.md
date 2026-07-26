@@ -49,7 +49,7 @@ Only when the harness is Pi, not Claude. Planner and verifier: GPT-5.6 Sol `high
    - `gh stack add <branch>` **before** `/commit` — `add` creates and switches to the branch, carrying the uncommitted work with it. Commit first and the chunk's diff lands on the previous chunk's branch and its PR.
    - First chunk of a new stack: `gh stack init <branch>` (with `git config rerere.enabled true` and `remote.pushDefault origin` once), not `add` — `add` outside a stack exits 2, and `/create-pr` then silently opens an unstacked PR against `main`.
    - Then `/commit`, then `/create-pr`, which owns `gh stack submit --auto`.
-   - **Confirm `gh stack view --json` reports a `Stack #NNNN` before continuing.** Chained-base PRs without a Stack are a failed step, not a variant — retrofit with `gh stack submit --auto --open`.
+   - Confirm before continuing. After chunk 1: `gh stack view --json` lists the branch and the PR's base is `main`. A GitHub Stack object needs two PRs, so `Stack #NNNN` cannot exist yet and its absence means nothing here. **From chunk 2 on, `gh stack view --json` must report a `Stack #NNNN`** — chained-base PRs without one are a failed step, not a variant; retrofit with `gh stack submit --auto --open`.
 6. **Review the PR** — one PR reviewer runs `/code-review <PR#>` (PR mode posts the report as a comment). Triage its findings, fix accepted ones in one batch, push. **One `/code-review` per PR, full stop** — it has no targeted mode, so a "confirmation" re-run is a fresh broad pass that will find new things forever. The pushed fix is covered by the whole-stack pass. Do not wait on CodeRabbit here; its threads get swept once at the whole-stack stage.
 
 ## Triage is yours
@@ -64,15 +64,15 @@ Reviewers advise; you decide. A refuted finding does not get a rematch in a late
 
 ## Don't spiral
 
-The whole chunk gets a fixed budget, in counts, not vibes: **one broad adversarial pass, one batched fix, one targeted recheck, one surgical fix, then done** — plus the single `/code-review` in step 6 and its one fix batch. Nothing in this document authorizes a third fix on the same diff.
+The chunk's budget is a count, not a vibe. **Two broad passes: step 3's adversarial verify and step 6's one `/code-review`. Three fix batches: the batched fix, the surgical fix, and the post-`/code-review` fix.** That is the whole allowance. A third broad pass or a fourth fix on the same diff is not authorized anywhere in this document.
 
-- The broad pass produces the finding set for this chunk. That set is frozen at triage. Later passes cannot add to it, revive a refuted item, or import unrelated scope.
+- Each broad pass produces a finding set, frozen at triage. Nothing later adds to it, revives a refuted item, or imports unrelated scope.
 - The recheck sees only the accepted findings and the lines changed for them. It may report exactly two things: an accepted finding that isn't actually fixed, and a regression the fix introduced. Anything else is out of bounds — discard it, no matter how interesting.
-- A second broad pass only if the diff changed materially for a reason other than remediating findings — a scope addition, not a fix.
+- An unplanned broad pass — anything beyond those two — only if the diff changed materially for a reason other than remediating findings: a scope addition, not a fix.
 - **Tripwire:** if a fix round touches lines a previous round already touched and the accepted set is not strictly smaller than before, you are spiralling. Stop, report the state, ask.
 - Gates run in the orchestrator: once after implement, once after the fix batch, then only affected gates. Reviewers get the summary and do not rerun green suites.
 
-A **blocker** is a finding about correctness, data integrity, security or authorization, or a plan deliverable that was not actually built. Nothing else is a blocker, whatever severity label the reviewer attached.
+A **blocker** is a finding whose consequence is one of: a user sees a wrong result, data is lost or corrupted, authorization is bypassed, or a named plan deliverable is absent. Consequence, not category — every finding that reaches triage is a correctness claim, so "it's a correctness issue" does not make it a blocker. A survivor that is not a blocker is minor by definition: it goes to the PR body's known-issues section and the run continues. There is no third bucket.
 
 ## Don't stall
 
