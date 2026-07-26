@@ -1,18 +1,16 @@
 import { sql, type Querier } from "@threa/backend-common"
 import {
   type GitHubPreview,
-  type GitHubPreviewType,
   type LinearPreview,
-  type LinearPreviewType,
   type VideoPreview,
-  type VideoPreviewType,
+  type RichLinkPreviewType,
   type LinkPreviewContentType,
   type LinkPreviewStatus,
   isInAppLinkContentType,
 } from "@threa/types"
 
 /** Union of all rich provider preview types persisted in `link_previews.preview_type`. */
-export type RichPreviewType = GitHubPreviewType | LinearPreviewType | VideoPreviewType
+export type RichPreviewType = RichLinkPreviewType
 /** Union of all rich provider preview payloads stored in `link_previews.preview_data`. */
 export type RichPreview = GitHubPreview | LinearPreview | VideoPreview
 

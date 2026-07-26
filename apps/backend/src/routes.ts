@@ -98,6 +98,7 @@ import type { SavedSuggestionsService } from "./features/saved-suggestions"
 import type { ScheduledMessagesService } from "./features/scheduled-messages"
 import type { AgentFollowUpService, PersonaConfigService } from "./features/agents"
 import { createDelegationHandlers, type DelegationService } from "./features/delegations"
+import { createStreamContextHandlers, createStreamContextService } from "./features/stream-context"
 import { BotAccessRequestService, createBotAccessRequestHandlers } from "./features/bot-access-requests"
 import type { DraftsService } from "./features/drafts"
 import type { LabelService, LabelAssignmentService, LabelMessageService } from "./features/labels"
@@ -353,6 +354,9 @@ export function registerRoutes(app: Express, deps: Dependencies) {
   const agentSession = createAgentSessionHandlers({ pool })
   const agentFollowUps = createAgentFollowUpHandlers({ pool, agentFollowUpService })
   const delegations = createDelegationHandlers({ pool, delegationService })
+  const streamContext = createStreamContextHandlers({
+    streamContextService: createStreamContextService({ pool }),
+  })
   const botAccessRequestService = new BotAccessRequestService({ pool, streamService })
   const botAccessRequests = createBotAccessRequestHandlers({ botAccessRequestService, streamService })
   const contextBag = createContextBagHandlers({ pool, ai })
@@ -694,6 +698,18 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     ...authed,
     audit("streams.update", "write"),
     stream.update
+  )
+  app.get(
+    "/api/workspaces/:workspaceId/streams/:streamId/context",
+    ...authed,
+    audit("stream_context.list", "read"),
+    streamContext.list
+  )
+  app.get(
+    "/api/workspaces/:workspaceId/streams/:streamId/context/occurrences",
+    ...authed,
+    audit("stream_context.list", "read"),
+    streamContext.listOccurrences
   )
   app.get(
     "/api/workspaces/:workspaceId/streams/:streamId/bootstrap",

@@ -242,6 +242,7 @@ export {
   VIDEO_PREVIEW_TYPES,
   type VideoPreviewType,
   VideoPreviewTypes,
+  type RichLinkPreviewType,
   // Share flavors
   SHARE_FLAVORS,
   type ShareFlavor,
@@ -1051,3 +1052,23 @@ export {
   type AgentActivityStartedPayload,
   type AgentActivityEndedPayload,
 } from "./agent-trace"
+
+// "In this stream" context index
+export {
+  CONTEXT_CATEGORIES,
+  STREAM_CONTEXT_REF_KINDS,
+  STREAM_CONTEXT_SCOPES,
+  streamContextItemKey,
+  type ContextCategory,
+  type StreamContextRefKind,
+  type StreamContextScope,
+  type StreamContextItem,
+  type StreamContextItemDetail,
+  type StreamContextLinkDetail,
+  type StreamContextAttachmentDetail,
+  type StreamContextMemoDetail,
+  type StreamContextDelegationDetail,
+  type StreamContextThreadDetail,
+  type ListStreamContextResponse,
+  type ListStreamContextOccurrencesResponse,
+} from "./stream-context"
