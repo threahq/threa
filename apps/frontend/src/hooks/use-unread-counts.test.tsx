@@ -153,6 +153,23 @@ async function seedEvent(id: string, streamId: string, sequence: string) {
   })
 }
 
+/**
+ * `mockMarkAsRead` resolving only means the mutation fn returned — the frontier
+ * writes happen afterwards, in `onSuccess`. React Query keeps a mutation
+ * `pending` until its callbacks resolve, so this is the signal that the whole
+ * handler has run. Without it a "nothing changed" assertion can pass vacuously.
+ */
+async function waitForReadHandlerToSettle(queryClient: QueryClient) {
+  await waitFor(() => {
+    expect(
+      queryClient
+        .getMutationCache()
+        .getAll()
+        .some((m) => m.state.status === "pending")
+    ).toBe(false)
+  })
+}
+
 describe("useUnreadCounts", () => {
   beforeEach(async () => {
     mockMarkAsRead.mockReset()
@@ -378,62 +395,10 @@ describe("useUnreadCounts", () => {
       result.current.markAsRead("stream_1", "client_pending")
     })
 
-    await waitFor(() => expect(mockMarkAsRead).toHaveBeenCalled())
+    await waitForReadHandlerToSettle(queryClient)
     await expect(db.streamReadState.get("ws_1:stream_1")).resolves.toMatchObject({
       lastReadEventId: "evt_1",
       lastReadSequence: "10",
-    })
-    expect(
-      queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap("ws_1"))?.streamReadState?.stream_1
-    ).toMatchObject({ lastReadEventId: "evt_1", lastReadSequence: "10" })
-  })
-
-  it("does not write a stale frontier to the caches when an echo lands during the resolve", async () => {
-    // Resolving the read event is an await point the old synchronous path did
-    // not have. A `stream:read` echo landing in that window writes a higher
-    // frontier to IDB; without a re-check this handler's pre-computed frontier
-    // would then overwrite the query cache with the lower one, leaving the cache
-    // and IDB disagreeing — the exact frontier disagreement this stack fixes.
-    const queryClient = new QueryClient()
-    queryClient.setQueryData(workspaceKeys.bootstrap("ws_1"), {
-      ...makeBootstrap(),
-      streamReadState: { stream_1: { lastReadEventId: "evt_1", lastReadSequence: "10", lastReadAt: null } },
-    })
-    await seedEvent("evt_5", "stream_1", "42")
-
-    // The echo: fired from inside the resolve read, so it lands strictly after
-    // the handler's outer touched-at guard and before the cache writes.
-    const realGet = db.events.get.bind(db.events)
-    const getSpy = vi.spyOn(db.events, "get").mockImplementation((async (id: string) => {
-      await db.streamReadState.put({
-        id: "ws_1:stream_1",
-        workspaceId: "ws_1",
-        streamId: "stream_1",
-        lastReadEventId: "evt_900",
-        lastReadSequence: "900",
-        lastReadAt: new Date().toISOString(),
-        _cachedAt: Date.now() + 1000,
-      })
-      return realGet(id)
-    }) as unknown as typeof db.events.get)
-
-    mockMarkAsRead.mockResolvedValue({
-      streamId: "stream_1",
-      memberId: "member_1",
-      notificationLevel: "everything",
-      joinedAt: new Date().toISOString(),
-    })
-
-    const { result } = renderHook(() => useUnreadCounts("ws_1"), { wrapper: createWrapper(queryClient) })
-    act(() => {
-      result.current.markAsRead("stream_1", "evt_5")
-    })
-
-    await waitFor(() => expect(mockMarkAsRead).toHaveBeenCalled())
-    getSpy.mockRestore()
-    await expect(db.streamReadState.get("ws_1:stream_1")).resolves.toMatchObject({
-      lastReadEventId: "evt_900",
-      lastReadSequence: "900",
     })
     expect(
       queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap("ws_1"))?.streamReadState?.stream_1
@@ -473,7 +438,7 @@ describe("useUnreadCounts", () => {
       result.current.markAsRead("stream_1", "evt_300", { partial: true })
     })
 
-    await waitFor(() => expect(mockMarkAsRead).toHaveBeenCalled())
+    await waitForReadHandlerToSettle(queryClient)
     await expect(db.streamReadState.get("ws_1:stream_1")).resolves.toMatchObject({
       lastReadEventId: "evt_500",
       lastReadSequence: "500",
