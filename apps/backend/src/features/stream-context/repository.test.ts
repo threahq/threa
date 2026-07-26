@@ -2,6 +2,11 @@ import { describe, expect, it } from "bun:test"
 import { StreamContextRepository } from "./repository"
 import type { NewStreamContextItem } from "./types"
 
+// These assert the SQL each method emits, not its effect on rows — the fake
+// Querier never reaches Postgres. Conflict/idempotence BEHAVIOUR is covered by
+// the backfill's re-run test, which drives the same statements against a real
+// schema; what is pinned here is that the clause targets the identity index and
+// that every method stays set-based (INV-56).
 function fakeDb() {
   const queries: Array<{ text: string; values: unknown[] }> = []
   const db = {
@@ -36,7 +41,7 @@ function makeRow(overrides: Partial<NewStreamContextItem> = {}): NewStreamContex
 }
 
 describe("StreamContextRepository.insertMany", () => {
-  it("is one set-based statement, idempotent on the identity index", async () => {
+  it("emits one set-based statement whose conflict clause targets the identity index", async () => {
     const { db, queries } = fakeDb()
 
     await StreamContextRepository.insertMany(db, [makeRow(), makeRow({ id: "sctx_2", refId: "attach_1" })])
@@ -57,7 +62,7 @@ describe("StreamContextRepository.insertMany", () => {
 })
 
 describe("StreamContextRepository.replaceForMessage", () => {
-  it("drops every row the message owned before inserting the rebuilt set", async () => {
+  it("deletes the message's rows before inserting the rebuilt set", async () => {
     const { db, queries } = fakeDb()
 
     await StreamContextRepository.replaceForMessage(db, "ws_1", "msg_1", [makeRow({ refId: "https://example.com/b" })])
@@ -79,7 +84,7 @@ describe("StreamContextRepository.replaceForMessage", () => {
 })
 
 describe("StreamContextRepository.reparentMessages", () => {
-  it("rewrites stream, root and destination sequence for only the named messages, in one statement", async () => {
+  it("scopes the UPDATE to the named messages and carries their destination sequences, in one statement", async () => {
     const { db, queries } = fakeDb()
 
     await StreamContextRepository.reparentMessages(

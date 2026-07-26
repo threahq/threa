@@ -826,7 +826,11 @@ export class MemoService implements MemoServiceLike {
   ): Promise<void> {
     if (memos.length === 0) return
     const stream = await StreamRepository.findById(client, streamId)
-    if (!stream || stream.e2eEnabled === true) return
+    if (!stream) {
+      logger.warn({ workspaceId, streamId }, "Memo capture: stream row missing, skipping context landmarks")
+      return
+    }
+    if (stream.e2eEnabled === true) return
 
     const allSourceIds = [...new Set(memos.flatMap((memo) => memo.sourceMessageIds))]
     const sourceMessages = await MessageRepository.findByIdsInWorkspace(client, workspaceId, allSourceIds)

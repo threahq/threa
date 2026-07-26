@@ -664,6 +664,7 @@ export class StreamService {
     let anchorActorId: string | null = null
     let anchorActorType: AuthorType | null = null
     let anchorMessage: Message | null = null
+    let anchorEventRow: StreamEvent | null = null
     if (anchorId.startsWith("msg_")) {
       // Lock the anchor message: a concurrent `moveMessagesToThread` re-parents
       // the message (UPDATE messages.stream_id) after an unlocked read would have
@@ -700,6 +701,7 @@ export class StreamService {
         anchorActorId = anchorEvent.actorId
         anchorActorType = anchorEvent.actorType
       }
+      anchorEventRow = anchorEvent
     } else {
       throw new HttpError("Unrecognized thread anchor id", { status: 400, code: "ANCHOR_INVALID" })
     }
@@ -793,9 +795,12 @@ export class StreamService {
     }
 
     // "In this stream" landmark on the PARENT stream: a thread is an artifact of
-    // the message it hangs under, so it sits at that message's created_at.
-    // Sealed streams are never indexed.
-    if (created && anchorMessage && parentStream.e2eEnabled !== true) {
+    // whatever it hangs under, so it sits at that anchor's created_at. Both
+    // anchor kinds project; an event-anchored thread carries no source message,
+    // so the row's jump target is the thread itself. Sealed streams are never
+    // indexed.
+    const threadAnchor = anchorMessage ?? anchorEventRow
+    if (created && threadAnchor && parentStream.e2eEnabled !== true) {
       await StreamContextRepository.insertMany(client, [
         {
           id: streamContextItemId(),
@@ -806,12 +811,12 @@ export class StreamService {
           refKind: "thread",
           refId: stream.id,
           groupKey: stream.id,
-          sourceMessageId: anchorMessage.id,
-          authorId: anchorMessage.authorId,
-          occurredAt: anchorMessage.createdAt,
-          sequence: anchorMessage.sequence,
-          snippet: contextSnippet(anchorMessage.contentMarkdown),
-          detail: {},
+          sourceMessageId: anchorMessage?.id ?? null,
+          authorId: anchorMessage ? anchorMessage.authorId : anchorActorId,
+          occurredAt: threadAnchor.createdAt,
+          sequence: threadAnchor.sequence,
+          snippet: anchorMessage ? contextSnippet(anchorMessage.contentMarkdown) : "",
+          detail: anchorMessage ? {} : { anchorEventId: anchorId },
         },
       ])
     }

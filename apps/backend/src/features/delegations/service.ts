@@ -104,6 +104,12 @@ export class DelegationService {
 
       // "In this stream" landmark. Sealed streams are never indexed.
       const stream = await StreamRepository.findById(client, params.streamId)
+      if (!stream) {
+        logger.warn(
+          { workspaceId: params.workspaceId, streamId: params.streamId, delegationId: inserted.id },
+          "Delegation created against a missing stream row, skipping context landmark"
+        )
+      }
       if (stream && stream.e2eEnabled !== true) {
         await StreamContextRepository.insertMany(client, [
           {

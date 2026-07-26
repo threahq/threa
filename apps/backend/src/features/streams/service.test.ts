@@ -859,6 +859,47 @@ describe("StreamService.createThreadOn anchor routing", () => {
     )
   })
 
+  test("event anchor: indexes the thread at the anchor event's created_at, with no source message", async () => {
+    const mockInsertContext = spyOn(StreamContextRepository, "insertMany")
+    mockInsertContext.mockReset().mockResolvedValue(0)
+    const anchorCreatedAt = new Date("2026-05-03T11:15:00.000Z")
+    mockEventFindById.mockResolvedValue({
+      id: "event_1",
+      streamId: "stream_channel",
+      eventType: "delegation:created",
+      actorId: "member_author",
+      actorType: "user",
+      sequence: 12n,
+      createdAt: anchorCreatedAt,
+    } as never)
+
+    await service.create({
+      workspaceId: "ws_1",
+      type: "thread",
+      parentStreamId: "stream_channel",
+      parentAnchorId: "event_1",
+      createdBy: "member_creator",
+    })
+
+    const [row] = mockInsertContext.mock.calls[0]?.[1] as unknown as Array<Record<string, unknown>>
+    const { id, ...rest } = row
+    expect(rest).toEqual({
+      workspaceId: "ws_1",
+      streamId: "stream_channel",
+      rootStreamId: "stream_channel",
+      category: "thread",
+      refKind: "thread",
+      refId: thread.id,
+      groupKey: thread.id,
+      sourceMessageId: null,
+      authorId: "member_author",
+      occurredAt: anchorCreatedAt,
+      sequence: 12n,
+      snippet: "",
+      detail: { anchorEventId: "event_1" },
+    })
+  })
+
   test("event anchor: non-user actor is not added as a member", async () => {
     mockEventFindById.mockResolvedValue({
       id: "event_1",

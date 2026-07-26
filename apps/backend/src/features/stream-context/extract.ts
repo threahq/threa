@@ -84,7 +84,10 @@ export function contextRowsForMessage(params: ContextRowsForMessageParams): NewS
   for (const attachment of params.attachments) {
     const mimeCategory = categoryFromMime(attachment.mimeType)
     if (mimeCategory === "image" || mimeCategory === "video") {
-      const imageKind = attachment.mimeType.toLowerCase().startsWith("image/gif") ? "gif" : "image"
+      // Same equality the client's derive path uses — a prefix match would
+      // classify a parameterised mime differently on the two sides, and the
+      // rows are reconciled by key across both.
+      const imageKind = attachment.mimeType.toLowerCase() === "image/gif" ? "gif" : "image"
       const mediaKind = mimeCategory === "video" ? "video" : imageKind
       push("media", "attachment", attachment.id, attachment.id, { mediaKind })
     } else {
