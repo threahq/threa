@@ -201,10 +201,19 @@ describe("contextItemsFromEvent", () => {
               memoId: "memo_1",
               title: "Decision",
               knowledgeType: "decision",
-              sourceMessageIds: ["msg_9", "msg_10", "msg_11"],
+              sourceMessageIds: ["msg_10", "msg_11"],
             },
             // No resolvable source — the server skips it, so must we.
             { memoId: "memo_2", title: "Fact", knowledgeType: "fact", sourceMessageIds: [] },
+            // PARTIALLY resolvable: the server resolves sources workspace-wide,
+            // this sees only a window, so anchoring on the resolvable subset
+            // would key the row differently and never reconcile. Skip it.
+            {
+              memoId: "memo_3",
+              title: "Partial",
+              knowledgeType: "context",
+              sourceMessageIds: ["msg_9", "msg_10"],
+            },
           ],
         },
       },

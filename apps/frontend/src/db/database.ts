@@ -1502,7 +1502,7 @@ export class ThreaDatabase extends Dexie {
     // and converges from the sync appliers and the read endpoint.
     this.version(45).stores({
       streamContextItems:
-        "key, workspaceId, streamId, rootStreamId, [rootStreamId+occurredAt], [streamId+occurredAt], [groupRef+occurredAt]",
+        "key, workspaceId, streamId, rootStreamId, [workspaceId+sourceMessageId], [rootStreamId+occurredAt], [streamId+occurredAt], [groupRef+occurredAt]",
     })
 
     this.workspaceUsers = this.table(WORKSPACE_USERS_STORE) as EntityTable<CachedWorkspaceUser, "id">

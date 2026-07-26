@@ -113,6 +113,10 @@ export function contextItemsFromEvent(
     for (const url of collectLinkUrls(contentJson)) {
       if (url.length > MAX_URL_LENGTH) continue
       if (!/^https?:\/\//i.test(url)) continue
+      // The server drops non-public hosts (`isBlockedUrl` inside
+      // `filterAndDeduplicateUrls`), so projecting one here would leave a local
+      // row no server page can ever reconcile.
+      if (isLocalBlockedHost(url)) continue
       // The server emits only the FIRST raw href of each normalized group
       // (`filterAndDeduplicateUrls`), so two hrefs differing only by fragment or
       // tracking params yield ONE server row. Dedupe the same way or the extra
@@ -197,7 +201,11 @@ function memoRows(
     const resolved = memo.sourceMessageIds
       .map((id) => sourceMessages?.get(id))
       .filter((source): source is CachedEvent => source !== undefined)
-    if (resolved.length === 0) continue
+    // ALL cited sources must resolve, not merely one: the server resolves them
+    // workspace-wide while this sees a bounded event window, so a partial
+    // resolution anchors the row on a different message than the server does and
+    // the two keys never reconcile. No row is better than a permanent duplicate.
+    if (resolved.length !== memo.sourceMessageIds.length || resolved.length === 0) continue
     const latest = resolved.reduce((a, b) => (b.createdAt > a.createdAt ? b : a))
     const firstMessageId = (resolved[0].payload as { messageId?: string })?.messageId ?? null
     rows.push(
@@ -215,6 +223,24 @@ function memoRows(
     )
   }
   return rows
+}
+
+/**
+ * The server's `isBlockedUrl` rejects private/internal hosts before projecting a
+ * link. This is the host half of that rule — enough to stop a permanently
+ * unreconcilable local row; the server stays authoritative for the rest.
+ */
+function isLocalBlockedHost(raw: string): boolean {
+  try {
+    const host = new URL(raw).hostname.toLowerCase()
+    if (host === "localhost" || host.endsWith(".localhost") || host.endsWith(".local")) return true
+    if (host === "0.0.0.0" || host === "127.0.0.1" || host === "::1" || host === "[::1]") return true
+    if (/^10\./.test(host) || /^192\.168\./.test(host) || /^169\.254\./.test(host)) return true
+    if (/^172\.(1[6-9]|2\d|3[01])\./.test(host)) return true
+    return false
+  } catch {
+    return true
+  }
 }
 
 /** Tracking params `normalizeUrl` strips server-side. */

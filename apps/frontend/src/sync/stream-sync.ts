@@ -34,7 +34,12 @@ import {
 } from "./unread-counters"
 import { upsertActiveCall, updateCallParticipants } from "@/stores/active-calls-store"
 import { contextItemsFromEvent, type ContextRowsContext } from "@/lib/stream-context/rows"
-import { deleteContextRowsForMessage, putLocalContextRows, reparentContextRows } from "@/stores/stream-context-store"
+import {
+  deleteContextRowsForMessage,
+  putLocalContextRows,
+  reparentContextRows,
+  replaceContextRowsForMessage,
+} from "@/stores/stream-context-store"
 
 // ============================================================================
 // Bootstrap application — writes stream bootstrap data to IndexedDB
@@ -1057,13 +1062,22 @@ async function resolveContextScope(workspaceId: string, streamId: string): Promi
  * projects no rows for a sealed stream, and the panel derives that view from
  * decrypted content instead.
  */
-async function applyContextRowsForEvent(workspaceId: string, streamId: string, event: CachedEvent): Promise<void> {
+async function applyContextRowsForEvent(
+  workspaceId: string,
+  streamId: string,
+  event: CachedEvent,
+  opts?: { replaceMessageId?: string }
+): Promise<void> {
   if (isEncryptedPayload(event.payload)) return
   const rows = contextItemsFromEvent(
     event,
     await resolveContextScope(workspaceId, streamId),
     await resolveMemoSourceEvents(streamId, event)
   )
+  if (opts?.replaceMessageId) {
+    await replaceContextRowsForMessage(workspaceId, opts.replaceMessageId, rows)
+    return
+  }
   await putLocalContextRows(rows)
 }
 
@@ -1312,8 +1326,7 @@ export function registerStreamSocketHandlers(
       .filter((e) => (e.payload as { messageId?: string })?.messageId === editPayload.messageId)
       .first()
     if (editedEvent) {
-      await deleteContextRowsForMessage(workspaceId, editPayload.messageId)
-      await applyContextRowsForEvent(workspaceId, streamId, editedEvent)
+      await applyContextRowsForEvent(workspaceId, streamId, editedEvent, { replaceMessageId: editPayload.messageId })
     }
 
     if (!(payload.slots || payload.sharedMessages) && contentHasSharedMessage(editPayload.contentJson)) {

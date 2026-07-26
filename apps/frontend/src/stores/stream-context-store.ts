@@ -103,14 +103,52 @@ export async function putLocalContextRows(rows: CachedStreamContextItem[]): Prom
   })
 }
 
-/** Drop every row a message contributed — its delete, or the first half of an
- *  edit's replace (the server does the same with `replaceForMessage`). */
+/** Drop every row a message contributed — its delete (the server does the same
+ *  with `deleteByMessageId`). */
 export async function deleteContextRowsForMessage(workspaceId: string, messageId: string): Promise<void> {
-  await db.streamContextItems
-    .where("workspaceId")
-    .equals(workspaceId)
-    .filter((row) => row.sourceMessageId === messageId)
-    .delete()
+  await db.streamContextItems.where("[workspaceId+sourceMessageId]").equals([workspaceId, messageId]).delete()
+}
+
+/**
+ * Rebuild a message's rows after an edit, preserving what only the server knows.
+ *
+ * A delete-then-put would drop the reconciled `groupKey`/`detail` of rows the
+ * edit did not touch — `putLocalContextRows`' never-downgrade guard cannot see a
+ * row that was just deleted, so a typo fix would strip a link's title and
+ * regress its collapse key to the raw href. Surviving keys keep their reconciled
+ * fields and take only the re-derived ones; keys the edit removed are deleted;
+ * genuinely new keys land as pending.
+ */
+export async function replaceContextRowsForMessage(
+  workspaceId: string,
+  messageId: string,
+  rows: CachedStreamContextItem[]
+): Promise<void> {
+  await db.transaction("rw", db.streamContextItems, async () => {
+    const existing = await db.streamContextItems
+      .where("[workspaceId+sourceMessageId]")
+      .equals([workspaceId, messageId])
+      .toArray()
+    const existingByKey = new Map(existing.map((row) => [row.key, row]))
+    const nextKeys = new Set(rows.map((row) => row.key))
+
+    const removed = existing.filter((row) => !nextKeys.has(row.key)).map((row) => row.key)
+    if (removed.length > 0) await db.streamContextItems.bulkDelete(removed)
+
+    const merged = rows.map((row) => {
+      const prior = existingByKey.get(row.key)
+      if (!prior || prior._status === "pending") return { ...row, _status: "pending" as const }
+      return {
+        ...prior,
+        snippet: row.snippet,
+        occurredAt: row.occurredAt,
+        streamId: row.streamId,
+        rootStreamId: row.rootStreamId,
+        _cachedAt: row._cachedAt,
+      }
+    })
+    await db.streamContextItems.bulkPut(merged)
+  })
 }
 
 /**
@@ -126,10 +164,8 @@ export async function reparentContextRows(
   rootStreamId: string
 ): Promise<void> {
   if (messageIds.length === 0) return
-  const moved = new Set(messageIds)
   await db.streamContextItems
-    .where("workspaceId")
-    .equals(workspaceId)
-    .filter((row) => row.sourceMessageId !== null && moved.has(row.sourceMessageId))
+    .where("[workspaceId+sourceMessageId]")
+    .anyOf(messageIds.map((messageId) => [workspaceId, messageId]))
     .modify({ streamId, rootStreamId })
 }

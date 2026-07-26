@@ -8,6 +8,7 @@ import {
   deleteContextRowsForMessage,
   putLocalContextRows,
   reparentContextRows,
+  replaceContextRowsForMessage,
   seedStreamContextItems,
   useStreamContextOccurrences,
   useStreamContextRows,
@@ -152,6 +153,34 @@ describe("stream-context-store", () => {
     const row = await db.streamContextItems.get(local[0].key)
     expect(row).toMatchObject({ groupKey: "https://example.com/a", detail: { title: "Example" } })
     expect(row?._status).toBeUndefined()
+  })
+
+  it("keeps reconciled fields across an edit's replace, and drops only what the edit removed", async () => {
+    await seedStreamContextItems(WORKSPACE_ID, ROOT, [
+      serverItem({
+        key: "link:https://example.com/a:msg_1",
+        groupKey: "https://example.com/a",
+        detail: { title: "Example", url: "https://example.com/a" } as StreamContextItem["detail"],
+      }),
+      serverItem({
+        key: "link:https://example.com/gone:msg_1",
+        refId: "https://example.com/gone",
+        groupKey: "https://example.com/gone",
+      }),
+    ])
+
+    // The edit keeps the first link and adds a new one; the second is gone.
+    const rebuilt = contextItemsFromEvent(messageEvent("msg_1", "https://example.com/a", "2026-07-01T10:00:00.000Z"), {
+      workspaceId: WORKSPACE_ID,
+      streamId: ROOT,
+      rootStreamId: ROOT,
+    })
+    await replaceContextRowsForMessage(WORKSPACE_ID, "msg_1", rebuilt)
+
+    const rows = await db.streamContextItems.toArray()
+    expect(
+      rows.map((r) => ({ key: r.key, groupKey: r.groupKey, title: (r.detail as { title?: string }).title }))
+    ).toEqual([{ key: "link:https://example.com/a:msg_1", groupKey: "https://example.com/a", title: "Example" }])
   })
 
   it("lists every occurrence of a group, newest first", async () => {
