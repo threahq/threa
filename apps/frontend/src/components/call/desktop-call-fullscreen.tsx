@@ -84,8 +84,15 @@ export function DesktopCallFullscreen({
     <div
       data-testid="desktop-call-fullscreen"
       data-phase={joining ? "joining" : "connected"}
-      className="fixed inset-y-0 right-0 z-40 flex flex-col bg-background text-foreground"
-      style={{ left: "var(--app-content-left, 0px)" }}
+      className="fixed inset-y-0 z-40 flex flex-col bg-background text-foreground"
+      style={{
+        left: "var(--app-content-left, 0px)",
+        right: "var(--panel-inset-right, 0px)",
+        // cubic-bezier is Tailwind's `ease-out`, which the panel slot animates its
+        // width with. The CSS `ease-out` keyword is a different curve — the two edges
+        // would drift ~70px apart mid-transition and flash the timeline between them.
+        transition: "right var(--panel-inset-duration, 0ms) cubic-bezier(0, 0, 0.2, 1)",
+      }}
     >
       {captureError && <CaptureErrorBanner error={captureError} className="mx-3 mt-2" />}
       <div className="flex items-center gap-2 px-3 py-2">

@@ -176,7 +176,7 @@ describe("CallControls — call chat", () => {
   it.each([
     ["configured fullscreen", "fullscreen", "floating"],
     ["keep-last fullscreen", "keep_last", "fullscreen"],
-  ] as const)("reveals chat from %s without rewriting the last-surface preference", (_, pref, last) => {
+  ] as const)("reveals chat from %s without touching the desktop surface", (_, pref, last) => {
     vi.spyOn(useMobileModule, "useIsMobile").mockReturnValue(false)
     setDesktopCallSurface(pref)
     setLastDesktopSurface(last)
@@ -191,12 +191,17 @@ describe("CallControls — call chat", () => {
       setCallPhase("connected")
     })
     renderRouted(makeManager())
-    fireEvent.click(screen.getByRole("link", { name: "Open call chat" }))
-    expect(getCallState().desktopSurfaceOverride).toBe("sidebar")
-    expect(getCallPrefs().lastDesktopSurface).toBe(last)
+    const chat = screen.getByRole("link", { name: "Open call chat" })
+    fireEvent.click(chat)
+    // The overlay leaves the panel column free (--panel-inset-right), so chat opens
+    // beside the video instead of ejecting the user out of fullscreen.
+    expect(chat.getAttribute("href") ?? "").toContain("draft%3Astream_1%3Aevent_chat_1")
+    expect(getCallState().desktopSurfaceOverride).toBeNull()
+    expect(getCallPrefs()).toMatchObject({ desktopCallSurface: pref, lastDesktopSurface: last })
   })
 
-  it("collapses the fullscreen surface when chat opens (panel would render under the overlay)", () => {
+  it("keeps the desktop fullscreen surface when chat opens", () => {
+    vi.spyOn(useMobileModule, "useIsMobile").mockReturnValue(false)
     act(() => {
       setCallSession({
         callId: "call_1",
@@ -211,7 +216,25 @@ describe("CallControls — call chat", () => {
     })
     renderRouted(makeManager())
     fireEvent.click(screen.getByRole("link", { name: "Open call chat" }))
-    expect(getCallState().desktopSurfaceOverride).toBe("sidebar")
+    expect(getCallState()).toMatchObject({ desktopSurfaceOverride: "fullscreen", surfaceMode: "standard" })
+  })
+
+  it("collapses the mobile full surface when chat opens (panel takes over the screen there)", () => {
+    vi.spyOn(useMobileModule, "useIsMobile").mockReturnValue(true)
+    act(() => {
+      setCallSession({
+        callId: "call_1",
+        workspaceId: "ws_1",
+        streamId: "stream_1",
+        mode: "video",
+        chatAnchorId: "event_chat_1",
+      })
+      setCallPhase("connected")
+      setCallSurfaceMode("full")
+    })
+    renderRouted(makeManager())
+    fireEvent.click(screen.getByRole("link", { name: "Open call chat" }))
+    expect(getCallState().surfaceMode).toBe("standard")
   })
 
   it("hides the chat control until the anchor is known", () => {

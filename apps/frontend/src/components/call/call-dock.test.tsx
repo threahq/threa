@@ -490,6 +490,19 @@ describe("CallDock — desktop surface routing", () => {
     expect(getCallPrefs().filmstripSide).toBe("side")
   })
 
+  it("leaves the thread panel's column free so call chat renders beside the fullscreen video", () => {
+    setDesktopCallSurface("fullscreen")
+    renderDock(makeManager())
+    act(() => setCallSession({ callId: "call_1", workspaceId: WORKSPACE_ID, streamId: "stream_1", mode: "video" }))
+
+    const overlay = screen.getByTestId("desktop-call-fullscreen")
+    expect(overlay.className).not.toContain("right-0")
+    expect(overlay.getAttribute("style")).toContain("right: var(--panel-inset-right, 0px)")
+    expect(overlay.getAttribute("style")).toContain(
+      "transition: right var(--panel-inset-duration, 0ms) cubic-bezier(0, 0, 0.2, 1)"
+    )
+  })
+
   it("floating pref surfaces the pre-join permission gate inside the square during an active launch", async () => {
     setDesktopCallSurface("floating")
     const startCall = vi.fn(async () => {

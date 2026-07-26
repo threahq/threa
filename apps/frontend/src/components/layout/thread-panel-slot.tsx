@@ -1,5 +1,10 @@
+import { useEffect, useLayoutEffect } from "react"
 import { cn } from "@/lib/utils"
 import { PanelResizeHandle } from "./panel-resize-handle"
+
+// Keep in sync with the `duration-200` class on the slot: consumers of
+// `--panel-inset-duration` animate their edge against this element's width.
+const PANEL_TRANSITION_MS = 200
 
 interface ThreadPanelSlotProps {
   displayWidth: number
@@ -32,6 +37,21 @@ export function ThreadPanelSlot({
   onResizeKeyDown,
   children,
 }: ThreadPanelSlotProps) {
+  useLayoutEffect(() => {
+    const root = document.documentElement
+    root.style.setProperty("--panel-inset-right", `${displayWidth}px`)
+    root.style.setProperty("--panel-inset-duration", shouldAnimate ? `${PANEL_TRANSITION_MS}ms` : "0ms")
+  }, [displayWidth, shouldAnimate])
+
+  useEffect(
+    () => () => {
+      const root = document.documentElement
+      root.style.setProperty("--panel-inset-right", "0px")
+      root.style.setProperty("--panel-inset-duration", "0ms")
+    },
+    []
+  )
+
   return (
     <div
       data-testid="panel"
