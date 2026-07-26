@@ -362,3 +362,56 @@ describe("applyCacheBreakpoints", () => {
     expect(applyCacheBreakpoints(request)).toEqual({ system: request.system, messages: request.messages })
   })
 })
+
+describe("applyCacheBreakpoints — volatile system tail", () => {
+  const ANTHROPIC = "openrouter:anthropic/claude-sonnet-5"
+  const EPHEMERAL = { openrouter: { cacheControl: { type: "ephemeral" } } }
+
+  // The whole point of the split: per-turn content sits AFTER the breakpoint, so
+  // changing it leaves the cached prefix (tools + stable system) reusable.
+  it("emits the volatile tail as an unmarked system message after the breakpoint", () => {
+    const result = applyCacheBreakpoints({
+      system: "You are Ariadne.",
+      volatileSystem: "## Current Time\n\n10:00",
+      messages: [{ role: "user", content: "hi" }],
+      modelString: ANTHROPIC,
+    })
+
+    expect(result.messages).toEqual([
+      { role: "system", content: "You are Ariadne.", providerOptions: EPHEMERAL },
+      { role: "system", content: "## Current Time\n\n10:00" },
+      { role: "user", content: "hi", providerOptions: EPHEMERAL },
+    ])
+  })
+
+  // Caching the volatile message would pay a write premium every turn for a span
+  // that can never be reused, since its content changes every turn.
+  it("never places the second breakpoint on the volatile message", () => {
+    const result = applyCacheBreakpoints({
+      system: "You are Ariadne.",
+      volatileSystem: "## Current Time\n\n10:00",
+      messages: [],
+      modelString: ANTHROPIC,
+    })
+
+    expect(result.messages).toEqual([
+      { role: "system", content: "You are Ariadne.", providerOptions: EPHEMERAL },
+      { role: "system", content: "## Current Time\n\n10:00" },
+    ])
+  })
+
+  // Dropping the tail would silently strip temporal grounding from the prompt.
+  it("rejoins both halves when the provider takes no breakpoint", () => {
+    const result = applyCacheBreakpoints({
+      system: "You are Ariadne.",
+      volatileSystem: "## Current Time\n\n10:00",
+      messages: [{ role: "user", content: "hi" }],
+      modelString: "openrouter:openai/gpt-5.6-luna",
+    })
+
+    expect(result).toEqual({
+      system: "You are Ariadne.\n\n## Current Time\n\n10:00",
+      messages: [{ role: "user", content: "hi" }],
+    })
+  })
+})

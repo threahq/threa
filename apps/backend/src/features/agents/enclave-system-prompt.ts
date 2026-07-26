@@ -2,7 +2,7 @@ import type { Pool } from "pg"
 import type { UserPreferences } from "@threa/types"
 import type { Stream } from "../streams"
 import { buildStreamContext } from "./context-builder"
-import { buildSystemPrompt } from "./companion/prompt/system-prompt"
+import { buildSystemPrompt, joinSystemPrompt } from "./companion/prompt/system-prompt"
 import { resolvePersonaStyleSlots } from "./companion/config"
 import type { Persona } from "./persona-repository"
 import type { BuiltInAgentConfig } from "./built-in-agents"
@@ -85,7 +85,11 @@ export async function buildEnclaveSystemPrompt(params: {
   // her plainly so she can voice the boundary gracefully — kept as a
   // natural-language instruction (the model handles phrasing/locale), not a
   // code-level heuristic.
-  return `${prompt}
+  // Rejoined into one string: the enclave receives the prompt as opaque text
+  // over the encrypted channel, so splitting it here would be a wire-shape
+  // change for no gain — the enclave places its own cache breakpoints or none.
+  // In-turn caching is unaffected; only cross-turn reuse is forgone here.
+  return `${joinSystemPrompt(prompt)}
 
 ## Encrypted scratchpad limits
 

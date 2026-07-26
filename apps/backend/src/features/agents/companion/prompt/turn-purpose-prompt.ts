@@ -9,9 +9,13 @@ import type { TurnPurpose } from "../../turn-purpose"
  * (roadmap 1.5). One switch here is the single place a new kind adds its
  * prose — no scattered `if (trigger === …)` / `if (followUp)` branches.
  *
- * Two insertion points, both dispatched from the same purpose:
- * - "early" (mention, follow-up) — announces the invocation before the stream
- *   context, matching where these have always sat.
+ * Two insertion points, both dispatched from the same purpose. Both sit in the
+ * prompt's volatile half (below its prompt-cache breakpoint): every section
+ * here embeds per-turn data — the mentioner's name, the fired follow-up's note
+ * and time — so placing either above the breakpoint would change the cached
+ * prefix on every mention- or follow-up-triggered turn.
+ * - "early" (mention, follow-up) — announces the invocation ahead of the
+ *   temporal grounding and the rest of the per-turn tail.
  * - "late" (supersede reconciliation) — appended after everything else so its
  *   final-decision directive is the most salient instruction.
  */

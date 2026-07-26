@@ -7,10 +7,16 @@ import { PersonaAttachmentRepository } from "../../src/features/agents/persona-a
 import { PersonaConfigService } from "../../src/features/agents/persona-config-service"
 import { PersonaRepository } from "../../src/features/agents/persona-repository"
 import { AttachmentService, AttachmentExtractionRepository } from "../../src/features/attachments"
-import { buildSystemPrompt } from "../../src/features/agents/companion/prompt/system-prompt"
+import { buildSystemPrompt, joinSystemPrompt } from "../../src/features/agents/companion/prompt/system-prompt"
 import type { Persona } from "../../src/features/agents/persona-repository"
 import type { StreamContext } from "../../src/features/agents/context-builder"
 import { setupTestDatabase, withTestTransaction, withTransaction } from "./setup"
+
+/**
+ * The builder returns a prompt split at its prompt-cache boundary; these
+ * assertions are about the assembled prompt, so rejoin it.
+ */
+const buildPrompt = (...args: Parameters<typeof buildSystemPrompt>) => joinSystemPrompt(buildSystemPrompt(...args))
 
 /**
  * End-to-end proof of the persona-context-attachments prompt path against a real
@@ -122,7 +128,7 @@ describe("persona context attachments → dispatch prompt (integration)", () => 
       expect(knowledge.map((k) => k.filename)).toEqual(["runbook.md", "draft-notes.txt"])
       expect(knowledge[0]!.fullText).toBe(runbookText)
 
-      const prompt = buildSystemPrompt(
+      const prompt = buildPrompt(
         persona,
         scratchpadContext,
         null,
@@ -184,8 +190,8 @@ describe("persona context attachments → dispatch prompt (integration)", () => 
       const leaked = await PersonaAttachmentRepository.listForPersonaWithContent(client, otherWorkspaceId, personaRowId)
       expect(leaked).toEqual([])
 
-      const base = buildSystemPrompt(persona, scratchpadContext, null, undefined, undefined, null, [])
-      const withForeign = buildSystemPrompt(
+      const base = buildPrompt(persona, scratchpadContext, null, undefined, undefined, null, [])
+      const withForeign = buildPrompt(
         persona,
         scratchpadContext,
         null,
@@ -518,7 +524,7 @@ describe("PersonaConfigService.attachFromExisting → copy-on-attach (integratio
 
       // The REAL prompt path carries the copied content under the persona.
       const knowledge = await PersonaAttachmentRepository.listForPersonaWithContent(pool, workspaceId, personaRow.id)
-      const prompt = buildSystemPrompt(
+      const prompt = buildPrompt(
         { ...persona, id: personaRow.id, workspaceId, systemPrompt: "Base system prompt" },
         scratchpadContext,
         null,
