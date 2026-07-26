@@ -11,27 +11,34 @@ import { useDisplacedCall } from "./call-store-hooks"
  *
  * A chip with actions rather than a toast (INV-63): it needs a decision, and a
  * toast would expire before a user who was looking at their other device sees it.
- * Rejoin runs the ordinary launch, so if the other device is still holding the
- * call the takeover prompt confirms moving it back.
+ * This chip exists BECAUSE the other device holds the call, so its action asks
+ * for takeover directly — routing through a plain join would 409 and re-ask a
+ * question the chip already answered. Harmless if that device has since left:
+ * with no live endpoint, takeover mints a fresh one.
+ *
+ * The pill caps at the viewport so a phone truncates the message instead of
+ * pushing the actions off the left edge (it is `fixed right-4` with no left
+ * anchor, and this branch of the dock is shared with mobile).
  */
 export function CallMovedChip() {
   const displaced = useDisplacedCall()
   const { launch } = useCallLaunch()
   if (!displaced) return null
   return (
-    <div className="flex items-center gap-1.5 rounded-full border bg-background py-1.5 pl-3 pr-1.5 text-xs shadow-lg">
-      <PhoneForwarded className="h-3.5 w-3.5 text-muted-foreground" aria-hidden />
-      <span className="text-muted-foreground">Call moved to another device</span>
+    <div className="flex max-w-[calc(100vw-2rem)] items-center gap-1.5 rounded-full border bg-background py-1.5 pl-3 pr-1.5 text-xs shadow-lg">
+      <PhoneForwarded className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden />
+      <span className="min-w-0 truncate text-muted-foreground">Call moved to another device</span>
       <Button
         size="sm"
         variant="secondary"
-        className="h-6 px-2 text-[11px]"
+        className="h-8 shrink-0 px-2 text-[11px]"
         onClick={() =>
           launch({
             workspaceId: displaced.workspaceId,
             streamId: displaced.streamId,
             mode: displaced.mode,
             expectedCallId: displaced.callId,
+            takeover: true,
           })
         }
       >
@@ -40,7 +47,7 @@ export function CallMovedChip() {
       <Button
         size="icon"
         variant="ghost"
-        className="h-6 w-6"
+        className="h-8 w-8 shrink-0"
         aria-label="Dismiss"
         onClick={() => setDisplacedCall(null)}
       >

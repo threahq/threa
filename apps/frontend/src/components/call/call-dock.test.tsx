@@ -177,8 +177,10 @@ describe("CallDock — idle", () => {
 
     expect(screen.getByText(/moved to another device/i)).toBeInTheDocument()
     await userEvent.click(screen.getByRole("button", { name: "Rejoin here" }))
+    // Asks for takeover outright: this chip only exists because the other device
+    // holds the call, so a plain join would 409 and re-ask what the chip answered.
     expect(manager.startCall).toHaveBeenCalledWith(
-      expect.objectContaining({ streamId: "stream_1", expectedCallId: "call_1" })
+      expect.objectContaining({ streamId: "stream_1", expectedCallId: "call_1", takeover: true })
     )
   })
 
