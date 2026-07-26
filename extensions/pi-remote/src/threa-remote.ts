@@ -319,6 +319,10 @@ let sessionTearingDown = false
 // the restore grace window: claims are suspended, the poll probes at the
 // reattach cadence, and the deadline runs the worktree wind-down.
 let archivePending: { rootStreamId: string; deadline: ReturnType<typeof setTimeout> } | undefined
+// Set by startPolling so detachForArchive can pull the next tick forward: the
+// pending tick was scheduled with the socket backstop (15 min), which lands
+// ZERO reattach probes inside a 5-minute grace.
+let rearmPoll: ((delayMs: number) => void) | undefined
 let archiveProbeInflight = false
 // Overridable so a test can watch the grace actually expire and the wind-down
 // actually run, instead of waiting five minutes and destroying a real worktree.
@@ -1822,6 +1826,7 @@ function stopPolling(): void {
   pollingRunId += 1
   if (timer) clearTimeout(timer)
   timer = undefined
+  rearmPoll = undefined
 }
 
 /**
@@ -1836,6 +1841,8 @@ async function detachForArchive(ctx: ExtensionContext, rootStreamId: string): Pr
     rootStreamId,
     deadline: setTimeout(() => void windDownAfterArchiveGrace(ctx), archiveGraceMs),
   }
+  // An in-flight poll re-arms at the probe cadence from its own finally block.
+  if (pollInFlightRunId === undefined) rearmPoll?.(Math.min(ARCHIVE_RESTORE_PROBE_MS, archiveGraceMs))
   const minutes = Math.round(archiveGraceMs / 60_000)
   setRemoteStatus(ctx, `Threa remote: scratchpad archived; winding down in ${minutes}m`, "error")
   ctx.ui.notify(
@@ -1935,9 +1942,13 @@ async function probeArchiveState(ctx: ExtensionContext): Promise<void> {
 function handleArchivePush(ctx: ExtensionContext, payload: unknown): void {
   if (!isObject(payload)) return
   if (typeof payload.runtimeSessionId === "string" && payload.runtimeSessionId !== getRuntimeSessionId(ctx)) return
-  const rootStreamId =
-    typeof payload.rootStreamId === "string" ? payload.rootStreamId : getCurrentSessionLink(ctx)?.rootStreamId
-  if (!rootStreamId) return
+  // Scope to the CURRENT root too, not just the runtime session: a cold start
+  // with the same deterministic identity replaces an archived scratchpad, and
+  // a delayed event for the retired root would otherwise wind down the live
+  // one — the probe keeps seeing the old root archived, so it never recovers.
+  const linked = getCurrentSessionLink(ctx)?.rootStreamId
+  const rootStreamId = typeof payload.rootStreamId === "string" ? payload.rootStreamId : linked
+  if (!rootStreamId || (linked && rootStreamId !== linked)) return
   void detachForArchive(ctx, rootStreamId).catch(() => undefined)
 }
 
@@ -3762,6 +3773,11 @@ function startPolling(pi: ExtensionAPI, ctx: ExtensionContext): void {
       if (runId === pollingRunId) timer = setTimeout(() => void poll(), delayMs)
     }
   }
+  rearmPoll = (delayMs: number) => {
+    if (runId !== pollingRunId) return
+    if (timer) clearTimeout(timer)
+    timer = setTimeout(() => void poll(), delayMs)
+  }
   void poll()
 }
 
@@ -4130,6 +4146,10 @@ export const __testing = {
   },
   probeArchiveState,
   reattachAfterArchive,
+  handleArchivePush,
+  setArchivePendingForTesting: (rootStreamId: string) => {
+    archivePending = { rootStreamId, deadline: setTimeout(() => {}, 60_000) }
+  },
   archivePendingRootStreamId: () => archivePending?.rootStreamId,
   setArchiveWindDownForTesting: (graceMs: number, windDown: typeof windDownArchivedWorktree) => {
     archiveGraceMs = graceMs

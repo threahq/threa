@@ -65,8 +65,15 @@ export function pushBranchAndScheduleRemoval(cwd: string, log: (message: string)
     return report
   }
 
-  const dirty = git(cwd, ["status", "--porcelain"]).stdout.length > 0
-  if (dirty) {
+  // A failed `status` reads as an empty (clean) tree, which would skip the
+  // commit, push the old HEAD, and let --force delete work that was never
+  // saved. A diagnostic that did not run is not proof the tree is clean.
+  const status = git(cwd, ["status", "--porcelain"])
+  if (!status.ok) {
+    report.reason = "could not read worktree status — leaving everything as is"
+    return report
+  }
+  if (status.stdout.length > 0) {
     const added = git(cwd, ["add", "-A"])
     const commit = added.ok ? git(cwd, ["commit", "-m", "wip: auto-commit — scratchpad archived"]) : added
     if (!commit.ok) {

@@ -204,14 +204,18 @@ test("kick lookup leaves legacy inventory unchanged for managed and standalone a
   process.env.THREA_HARNESSD_INVENTORY = path
   try {
     const sent: Array<{ target: string; keys: string[] }> = []
-    kickAgent(
-      "managed-id",
-      (target, keys) => sent.push({ target, keys }),
-      () => {
-        throw new Error("exact managed match must take priority")
-      },
-      [claudePane({ sessionName: "legacy", windowName: "managed", paneId: "%9", startCommand: "claude" })]
-    )
+    // The legacy row has only a recycled pane id, so kick must refuse rather
+    // than type Enter into whatever window now holds %9.
+    expect(() =>
+      kickAgent(
+        "managed-id",
+        (target, keys) => sent.push({ target, keys }),
+        () => {
+          throw new Error("exact managed match must take priority")
+        },
+        [claudePane({ sessionName: "legacy", windowName: "managed", paneId: "%9", startCommand: "claude" })]
+      )
+    ).toThrow("only a recycled tmux id")
     kickAgent(
       "standalone-session",
       (target, keys) => sent.push({ target, keys }),
@@ -225,10 +229,7 @@ test("kick lookup leaves legacy inventory unchanged for managed and standalone a
         startCommand: "claude --dangerously-load-development-channels server:threa-channel",
       })
     )
-    expect(sent).toEqual([
-      { target: "%9", keys: ["Enter"] },
-      { target: "%8", keys: ["Enter"] },
-    ])
+    expect(sent).toEqual([{ target: "%8", keys: ["Enter"] }])
     const verify = new Database(path, { readonly: true })
     expect(verify.query("PRAGMA table_info(managed_agents)").all()).toEqual(schemaBefore)
     verify.close()
@@ -243,11 +244,11 @@ test("kick lookup works with a read-only inventory file", () => {
   const path = join(mkdtempSync(join(tmpdir(), "harnessd-readonly-kick-")), "inventory.sqlite")
   process.env.THREA_HARNESSD_INVENTORY = path
   try {
-    upsertAgent(agent({ tmuxWindowId: "@7", tmuxPaneId: "%8" }))
+    upsertAgent(agent({ worktree: "/repo/threa.repair", tmuxWindowId: "@7", tmuxPaneId: "%8" }))
     chmodSync(path, 0o444)
     const sent: Array<{ target: string; keys: string[] }> = []
     kickAgent("claude-1", (target, keys) => sent.push({ target, keys }), findLocalClaudeChannelPane, [
-      claudePane({ startCommand: "claude" }),
+      claudePane({ cwd: "/repo/threa.repair", startCommand: "claude" }),
     ])
     expect(sent).toEqual([{ target: "%8", keys: ["Enter"] }])
   } finally {

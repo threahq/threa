@@ -557,6 +557,9 @@ function resolveAgentTarget(agent: ManagedAgent, panes?: LocalTmuxPane[]): Local
   const resolved = panes ? resolveManagedAgentPane(agent, panes) : resolveManagedAgentPane(agent)
   if (resolved.status === "ambiguous") die(`${agent.name}: ${resolved.reason}`)
   if (resolved.status === "missing") die(`${agent.name} has no live tmux pane`)
+  // Killing or typing into the wrong window is the failure this resolver
+  // exists to prevent, so an id we cannot corroborate is not good enough.
+  if (resolved.status === "unverified") die(`${agent.name}: ${resolved.reason}; restart the managed session`)
   return resolved.pane
 }
 

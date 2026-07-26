@@ -182,11 +182,14 @@ describe("resolveManagedAgentPane", () => {
     })
   })
 
-  test("a row with neither identity nor worktree can only be checked for liveness", () => {
+  test("a row with neither identity nor worktree resolves as unverified, never as found", () => {
+    // %8 may be this agent's pane or a stranger's — tmux recycles the number,
+    // and there is no second key to corroborate it with.
     const live = pane()
     expect(resolveManagedAgentPane({ runtime: "claude", tmuxPaneId: "%8" }, [live], config, host)).toEqual({
-      status: "found",
+      status: "unverified",
       pane: live,
+      reason: "only a recycled tmux id (%8) identifies this row — no runtime session or worktree recorded",
     })
     expect(resolveManagedAgentPane({ runtime: "claude", tmuxPaneId: "%404" }, [live], config, host)).toEqual({
       status: "missing",

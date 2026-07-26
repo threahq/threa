@@ -365,6 +365,8 @@ export type ManagedAgentPane =
   | { status: "found"; pane: LocalTmuxPane }
   | { status: "missing" }
   | { status: "ambiguous"; reason: string }
+  /** A live pane matching only a recycled id — proof of liveness, never proof it is this agent's. */
+  | { status: "unverified"; pane: LocalTmuxPane; reason: string }
 
 /**
  * The live pane a managed agent occupies. tmux ids are NOT identity: a new
@@ -393,11 +395,19 @@ export function resolveManagedAgentPane(
     }
   }
 
-  // Neither key recorded (rows predating both): the id is all there is, so it
-  // can only be checked for liveness, never for being the right window.
+  // Neither key recorded (rows predating both): the id is all there is, and a
+  // recycled id points at a stranger's window just as readily as this agent's.
+  // Report it as unverified so a liveness check can count it while anything
+  // that types into or kills the window refuses.
   if (!agent.worktree) {
     const recorded = panes.find((pane) => agent.tmuxPaneId && pane.paneId === agent.tmuxPaneId)
-    return recorded ? { status: "found", pane: recorded } : { status: "missing" }
+    return recorded
+      ? {
+          status: "unverified",
+          pane: recorded,
+          reason: `only a recycled tmux id (${agent.tmuxPaneId}) identifies this row — no runtime session or worktree recorded`,
+        }
+      : { status: "missing" }
   }
   const inWorktree = panes.filter((pane) => pane.cwd === agent.worktree)
   if (inWorktree.length === 1) return { status: "found", pane: inWorktree[0]! }
