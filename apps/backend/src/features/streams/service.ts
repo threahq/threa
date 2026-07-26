@@ -53,6 +53,7 @@ import {
   type JSONContent,
   type AuthorType,
   type DescriptionSetEventPayload,
+  type StreamReadFrontierSnapshot,
 } from "@threa/types"
 import { ContextBagRepository, PersonaRepository, assertAssignablePersona } from "../agents"
 import { E2eStreamsRepository, E2eStreamActorsRepository, StreamE2eKeyWrapsRepository } from "../e2e-streams"
@@ -629,10 +630,8 @@ export class StreamService {
             }))
           )
 
-          // Set lastReadEventId so initial members don't see creation events as unread
+          // Born-read the creation events so initial members don't see them as unread.
           const lastEvent = events[events.length - 1]
-          await StreamMemberRepository.setLastReadEventIdForMembers(client, stream.id, validMemberIds, lastEvent.id)
-          // Shadow the born-read watermark into stream_read_state (same tx).
           await ReadStateRepository.setForUsers(client, stream.id, validMemberIds, lastEvent.id)
         }
       }
@@ -1570,12 +1569,9 @@ export class StreamService {
       actorType: "user",
     })
 
-    // Set read cursor *after* inserting the member_added event so it's not shown as unread
-    await StreamMemberRepository.update(client, stream.id, memberId, { lastReadEventId: evtId })
-    // Shadow the born-read watermark (same tx) — monotonic: a re-added user
-    // keeps any surviving higher position (plan decision 1, effective in the
-    // new store from day one); membership's reset-on-rejoin is unchanged
-    // during the shadow window and dies with the columns in PR 4.
+    // Born-read the member_added event (after inserting it) so it's not shown as
+    // unread. Monotonic advance: a re-added user keeps any surviving higher
+    // position — read state survives leave/rejoin (user-private truth).
     await ReadStateRepository.advance(client, stream.id, memberId, evtId)
 
     await OutboxRepository.insert(client, "stream:member_added", {
@@ -1932,17 +1928,14 @@ export class StreamService {
         return StreamMemberRepository.findByStreamAndMember(client, streamId, memberId)
       }
 
-      // Membership write is compatibility-only: the UPDATE moves the column when
-      // the row exists and returns null otherwise — it is NEVER upserted (INV-62).
-      const membership = await StreamMemberRepository.update(client, streamId, memberId, { lastReadEventId: eventId })
-      // The standalone advance runs for every viewer with access (validated in
-      // the handler): read state is user-anchored, not membership-gated. Source
-      // the payload from the post-write row: the standalone store is monotonic
-      // and can sit ABOVE the membership watermark after a stale-device write
-      // regressed membership, so the post-write frontier — not the raw event —
-      // is the read position this user's other sessions adopt. Membership keeps
-      // its regressible semantics until the columns die (PR 4); the cutover
-      // converges such rows upward only (owner-ratified).
+      // Read state is user-anchored, not membership-gated: the advance runs for
+      // every viewer with access (validated in the handler) whether or not a
+      // membership row exists. Membership is fetched read-only for participation
+      // only — it is never written on a read (membership ≠ access ≠ read state).
+      const membership = await StreamMemberRepository.findByStreamAndMember(client, streamId, memberId)
+      // Source the payload from the post-write row: the store is monotonic, so a
+      // stale-device advance is rejected and the post-write frontier — not the raw
+      // event — is the read position this user's other sessions adopt.
       const postWrite = await ReadStateRepository.advance(client, streamId, memberId, eventId)
       let readEventId = eventId
       let readPosition = position
@@ -2005,10 +1998,10 @@ export class StreamService {
         ? await StreamEventRepository.countMessagesThrough(client, streamId, previous.sequence)
         : 0
 
-      // Membership write is compatibility-only (null for a non-member — never
-      // upserted, INV-62); the standalone regress runs for every viewer with
-      // access. Explicit unread is one of the sanctioned downward moves.
-      const membership = await StreamMemberRepository.update(client, streamId, memberId, { lastReadEventId })
+      // The regress runs for every viewer with access (membership is fetched
+      // read-only for participation, never written — membership ≠ read state).
+      // Explicit unread is one of the sanctioned downward moves.
+      const membership = await StreamMemberRepository.findByStreamAndMember(client, streamId, memberId)
       await ReadStateRepository.set(client, streamId, memberId, lastReadEventId)
       // Mark-unread means "this message and everything after it is unread", so
       // overlay rows at/above the target contradict the intent — drop them. The
@@ -2035,7 +2028,10 @@ export class StreamService {
     })
   }
 
-  async markAllAsRead(workspaceId: string, memberId: string): Promise<string[]> {
+  async markAllAsRead(
+    workspaceId: string,
+    memberId: string
+  ): Promise<{ updatedStreamIds: string[]; frontiers: StreamReadFrontierSnapshot[] }> {
     return withTransaction(this.pool, async (client) => {
       const memberships = await StreamMemberRepository.list(client, { memberId })
 
@@ -2043,37 +2039,60 @@ export class StreamService {
       const workspaceStreamIds = new Set(streams.map((s) => s.id))
 
       const workspaceMemberships = memberships.filter((m) => workspaceStreamIds.has(m.streamId))
-      if (workspaceMemberships.length === 0) return []
+      if (workspaceMemberships.length === 0) return { updatedStreamIds: [], frontiers: [] }
 
       const streamIds = workspaceMemberships.map((m) => m.streamId)
 
       const latestEventIds = await StreamEventRepository.getLatestEventIdByStreamBatch(client, streamIds)
 
+      // Advance only streams whose read frontier sits below the latest event —
+      // read state is the sole source, so a stream already at its latest event
+      // (or with no new messages) is skipped and emits nothing.
+      const readStates = await ReadStateRepository.getBatch(client, memberId, streamIds)
+      const frontierByStream = new Map(readStates.map((r) => [r.streamId, r.lastReadEventId]))
       const updatesToApply = new Map<string, string>()
       for (const [streamId, latestEventId] of latestEventIds.entries()) {
-        const membership = workspaceMemberships.find((m) => m.streamId === streamId)
-        if (membership && membership.lastReadEventId !== latestEventId) {
+        if (frontierByStream.get(streamId) !== latestEventId) {
           updatesToApply.set(streamId, latestEventId)
         }
       }
 
-      if (updatesToApply.size > 0) {
-        await StreamMemberRepository.batchUpdateLastReadEventId(client, memberId, updatesToApply)
-        // Shadow the mark-all advance into stream_read_state (same tx).
-        await ReadStateRepository.batchAdvance(client, memberId, updatesToApply)
-      }
+      // The batch advance returns the authoritative post-write standalone row
+      // for EVERY attempted stream — including rows whose attempted advance the
+      // monotonic guard rejected in favor of a concurrent higher frontier
+      // (monotonic store; membership is never consulted). updatedStreamIds, the
+      // per-stream reads, and the frontier snapshot all derive from that
+      // complete set: one frontier per attempted valid stream, no gaps.
+      const advancedStates =
+        updatesToApply.size > 0 ? await ReadStateRepository.batchAdvance(client, memberId, updatesToApply) : []
 
-      const updatedStreamIds = Array.from(updatesToApply.keys())
+      const updatedStreamIds = advancedStates.map((state) => state.streamId)
 
+      let frontiers: StreamReadFrontierSnapshot[] = []
       if (updatedStreamIds.length > 0) {
-        // Read-all pins each membership to its stream's latest event, so nothing
+        // Read-all pins each frontier to its stream's latest event, so nothing
         // can remain above the watermark — wipe every absorbed overlay row (the
         // client clears each read stream's set on `stream:read_all`).
         await SparseReadRepository.deleteAllForStreams(client, memberId, updatedStreamIds)
-        // Read-all sets each membership to its stream's latest event, so the
+        // Read-all sets each frontier to its stream's latest event, so the
         // absolute read position per stream is the stream's total message
         // count (sync phase 2c).
         const messageCounts = await StreamEventRepository.countMessagesByStreamBatch(client, updatedStreamIds)
+        // Canonical post-write frontier per updated stream: the standalone
+        // watermark + its resolved per-stream sequence + the absolute ordinal.
+        // Carried additively (one bounded event, not N) so clients advance the
+        // watermark itself, not just the counter.
+        const watermarkEventIds = advancedStates
+          .map((state) => state.lastReadEventId)
+          .filter((id): id is string => id !== null)
+        const sequencesByEventId = await StreamEventRepository.getSequencesByEventIds(client, watermarkEventIds)
+        frontiers = advancedStates.map((state) => ({
+          streamId: state.streamId,
+          lastReadEventId: state.lastReadEventId,
+          lastReadSequence: state.lastReadEventId ? (sequencesByEventId.get(state.lastReadEventId) ?? null) : null,
+          lastReadOrdinal: messageCounts.get(state.streamId) ?? 0,
+          lastReadAt: state.lastReadAt ? state.lastReadAt.toISOString() : null,
+        }))
         await OutboxRepository.insert(client, "stream:read_all", {
           workspaceId,
           authorId: memberId,
@@ -2082,10 +2101,11 @@ export class StreamService {
             streamId,
             lastReadOrdinal: messageCounts.get(streamId) ?? 0,
           })),
+          frontiers,
         })
       }
 
-      return updatedStreamIds
+      return { updatedStreamIds, frontiers }
     })
   }
 
@@ -2101,38 +2121,22 @@ export class StreamService {
   }
 
   /**
-   * Effective read frontier for a bounded membership set (read cutover): a
-   * `stream_read_state` row wins whenever it exists (a present NULL watermark
-   * included); membership columns fill only absent rows.
+   * Read frontier for a bounded set of streams. `stream_read_state` is the sole
+   * source: every requested stream resolves, and a stream with no row is
+   * never-read (NULL watermark).
    */
-  async getEffectiveReadState(
-    userId: string,
-    memberships: Array<{ streamId: string; lastReadEventId: string | null; lastReadAt: Date | null }>
-  ): Promise<Map<string, EffectiveReadState>> {
-    return getEffectiveReadState(this.pool, userId, memberships)
+  async getEffectiveReadState(userId: string, streamIds: string[]): Promise<Map<string, EffectiveReadState>> {
+    return getEffectiveReadState(this.pool, userId, streamIds)
   }
 
   /**
-   * Per-stream unread count sourced from the effective frontier (standalone read
-   * state, membership fallback). Membership is nullable: an access-without-
-   * membership viewer (INV-62) has no fallback column, so an absent read-state
-   * row reads as "never read" (frontier before the first message — everything
-   * unread), the same semantics as a NULL membership watermark.
+   * Per-stream unread count sourced from the viewer's read frontier. An absent
+   * read-state row reads as "never read" (frontier before the first message —
+   * everything unread), so access-without-membership viewers (INV-62) work with
+   * no special case.
    */
-  async getEffectiveUnreadCount(
-    streamId: string,
-    userId: string,
-    membership: { lastReadEventId: string | null; lastReadAt: Date | null } | null
-  ): Promise<number> {
-    const effective = await getEffectiveReadState(this.pool, userId, [
-      {
-        streamId,
-        lastReadEventId: membership?.lastReadEventId ?? null,
-        lastReadAt: membership?.lastReadAt ?? null,
-      },
-    ])
-    // Row presence selects the source — a present NULL watermark must not
-    // fall through to the membership column.
+  async getEffectiveUnreadCount(streamId: string, userId: string): Promise<number> {
+    const effective = await getEffectiveReadState(this.pool, userId, [streamId])
     return this.getUnreadCount(streamId, userId, effective.get(streamId)?.lastReadEventId ?? null)
   }
 
@@ -2146,7 +2150,7 @@ export class StreamService {
     return SparseReadRepository.listOverlayIdsForMember(this.pool, memberId, streamIds)
   }
 
-  /** Resolve watermark event ids to per-stream sequences (bootstrap membership `lastReadSequence`). */
+  /** Resolve watermark event ids to per-stream sequences (bootstrap `streamReadState.lastReadSequence`). */
   async getSequencesByEventIds(eventIds: string[]): Promise<Map<string, string>> {
     return StreamEventRepository.getSequencesByEventIds(this.pool, eventIds)
   }

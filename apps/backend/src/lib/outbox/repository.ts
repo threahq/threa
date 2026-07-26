@@ -27,6 +27,7 @@ import type {
   AttachmentSafetyStatus,
   AttachmentUploadStatus,
   PersonaListItem,
+  StreamReadFrontierSnapshot,
 } from "@threa/types"
 
 export type OutboxEventType =
@@ -695,6 +696,14 @@ export interface StreamsReadAllOutboxPayload extends WorkspaceScopedPayload {
    * stream's total message count at read time.
    */
   reads: Array<{ streamId: string; lastReadOrdinal: number }>
+  /**
+   * The canonical post-write frontier per updated stream (additive) — the
+   * standalone watermark + resolved sequence + absolute ordinal a client
+   * advances its read state from. One bounded snapshot for the whole batch.
+   * Absent on events emitted before the field shipped: the client leaves its
+   * frontier untouched and reconciles on the next bootstrap.
+   */
+  frontiers?: StreamReadFrontierSnapshot[]
 }
 
 // User preferences event payload (author-scoped - only visible to the user who updated)

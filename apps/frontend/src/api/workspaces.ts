@@ -9,6 +9,7 @@ import type {
   UserApiKey,
   CreateUserApiKeyResponse,
   WorkspacePermissionSlug,
+  MarkAllAsReadResponse,
 } from "@threa/types"
 
 export type { WorkspaceBootstrap, CreateWorkspaceInput }
@@ -47,9 +48,8 @@ export const workspacesApi = {
     return res.workspace
   },
 
-  async markAllAsRead(workspaceId: string): Promise<string[]> {
-    const res = await api.post<{ updatedStreamIds: string[] }>(`/api/workspaces/${workspaceId}/streams/read-all`)
-    return res.updatedStreamIds
+  async markAllAsRead(workspaceId: string): Promise<MarkAllAsReadResponse> {
+    return api.post<MarkAllAsReadResponse>(`/api/workspaces/${workspaceId}/streams/read-all`)
   },
 
   async completeUserSetup(workspaceId: string, data: CompleteUserSetupInput): Promise<User> {

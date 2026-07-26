@@ -79,9 +79,9 @@ describe("Sparse read overlay", () => {
   }
 
   async function effectiveUnread(sid: string, memberId: string): Promise<number> {
-    const membership = await streamService.getMembership(sid, memberId)
+    const readState = await ReadStateRepository.get(pool, sid, memberId)
     const counts = await streamService.getUnreadCounts([
-      { streamId: sid, memberId, lastReadEventId: membership?.lastReadEventId ?? null },
+      { streamId: sid, memberId, lastReadEventId: readState?.lastReadEventId ?? null },
     ])
     return counts.get(sid)?.unreadCount ?? 0
   }
@@ -256,8 +256,8 @@ describe("Sparse read overlay", () => {
     )
     await streamService.markUnread(wid, sid, reader, msg2)
 
-    const membership = await streamService.getMembership(sid, reader)
-    expect(membership?.lastReadEventId).toBe(eventByMsg.get(msg1)!.id)
+    const readState = await ReadStateRepository.get(pool, sid, reader)
+    expect(readState?.lastReadEventId).toBe(eventByMsg.get(msg1)!.id)
     expect(await SparseReadRepository.countOverlay(pool, sid, reader)).toBe(0)
     // msg2, msg3 unread again.
     expect(await effectiveUnread(sid, reader)).toBe(2)
@@ -350,8 +350,8 @@ describe("Sparse read overlay", () => {
     )
     await streamService.markUnread(wid, sid, reader, msg4)
 
-    const membership = await streamService.getMembership(sid, reader)
-    expect(membership?.lastReadEventId).toBe(eventByMsg.get(msg3)!.id)
+    const readState = await ReadStateRepository.get(pool, sid, reader)
+    expect(readState?.lastReadEventId).toBe(eventByMsg.get(msg3)!.id)
     expect(await SparseReadRepository.countOverlay(pool, sid, reader)).toBe(0)
     expect(await effectiveUnread(sid, reader)).toBe(1)
   })

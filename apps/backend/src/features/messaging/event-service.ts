@@ -758,15 +758,10 @@ export class EventService {
     })
 
     // Advance the author's read position so their own message isn't counted unread.
+    // Read state is user-anchored: the born-read lands whether or not the author
+    // holds a membership row (membership ≠ access ≠ read state).
     if (params.authorType === "user") {
-      const authorMembership = await StreamMemberRepository.update(client, params.streamId, params.authorId, {
-        lastReadEventId: evtId,
-      })
-      // Shadow the born-read watermark only when a membership row was actually
-      // written (PR 1 shadows membership; non-member read state lands in PR 3 — same tx).
-      if (authorMembership) {
-        await ReadStateRepository.advance(client, params.streamId, params.authorId, evtId)
-      }
+      await ReadStateRepository.advance(client, params.streamId, params.authorId, evtId)
     }
 
     if (params.authorType === "persona") {
@@ -1383,12 +1378,7 @@ export class EventService {
         destinationStreamId: destinationThread.id,
         messageIds: uniqueMessageIds,
       })
-      await StreamMemberRepository.repointWatermarksForMovedEvents(
-        client,
-        params.sourceStreamId,
-        movableEvents.map((entry) => ({ eventId: entry.event.id, sequence: entry.event.sequence }))
-      )
-      // Shadow the A3 watermark repoint into stream_read_state (same tx, same moved set).
+      // A3: repoint any read-state row whose watermark was a moved event.
       await ReadStateRepository.repointForMovedEvents(
         client,
         params.sourceStreamId,

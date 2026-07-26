@@ -1,4 +1,4 @@
-import type { Stream, StreamEvent, StreamMember } from "@threa/types"
+import type { Stream, StreamEvent, StreamMember, StreamReadFrontier } from "@threa/types"
 
 function generateOptimisticEventId(): string {
   const timestamp = Date.now().toString(36)
@@ -28,6 +28,7 @@ export interface OptimisticBootstrap {
   events: StreamEvent[]
   members: StreamMember[]
   membership: StreamMember
+  readState: StreamReadFrontier
   latestSequence: string
 }
 
@@ -63,8 +64,6 @@ export function createOptimisticBootstrap({
     streamId: stream.id,
     memberId: stream.createdBy,
     notificationLevel: null,
-    lastReadEventId: event.id,
-    lastReadAt: message.createdAt,
     joinedAt: message.createdAt,
   }
 
@@ -73,6 +72,9 @@ export function createOptimisticBootstrap({
     events: [event],
     members: [membership],
     membership,
+    // The creator's own message is born-read: seed the frontier so the optimistic
+    // stream doesn't show it as unread.
+    readState: { lastReadEventId: event.id, lastReadSequence: "1", lastReadAt: message.createdAt },
     latestSequence: "1",
   }
 }

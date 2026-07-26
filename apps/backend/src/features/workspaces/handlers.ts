@@ -229,25 +229,20 @@ export function createWorkspaceHandlers({
         userId
       )
 
-      // Effective read frontier (read cutover): a stream_read_state row wins
-      // whenever it exists — including a NULL watermark (explicit unread-to-zero)
-      // — membership columns fill only absent rows. Unread counts, watermark
-      // sequences, and the overlay derivation below all source from this, not
-      // the raw membership columns.
-      const effectiveReadState = await streamService.getEffectiveReadState(userId, streamMemberships)
+      // Read frontier per member stream. stream_read_state is the sole source:
+      // every member stream resolves, and a stream with no row is never-read
+      // (NULL watermark). Unread counts, watermark sequences, and the overlay
+      // derivation below all source from this.
+      const membershipStreamIds = streamMemberships.map((m) => m.streamId)
+      const effectiveReadState = await streamService.getEffectiveReadState(userId, membershipStreamIds)
 
       const [unreadCountsMap, activityCounts, unreadActivities] = await Promise.all([
         streamService.getUnreadCounts(
-          streamMemberships.map((m) => {
-            const effective = effectiveReadState.get(m.streamId)
-            return {
-              streamId: m.streamId,
-              memberId: userId,
-              // Row presence selects the source — a present NULL watermark
-              // (explicit unread-to-zero) must not fall through to membership.
-              lastReadEventId: effective ? effective.lastReadEventId : m.lastReadEventId,
-            }
-          })
+          streamMemberships.map((m) => ({
+            streamId: m.streamId,
+            memberId: userId,
+            lastReadEventId: effectiveReadState.get(m.streamId)?.lastReadEventId ?? null,
+          }))
         ),
         activityService?.getUnreadCounts(userId, workspaceId),
         activityService?.listFeed(userId, workspaceId, { unreadOnly: true, othersOnly: true, limit: 200 }),
@@ -264,14 +259,7 @@ export function createWorkspaceHandlers({
       // above is already net of the overlay; the client also needs the raw ids
       // (to render row read state) and each watermark's sequence (to place the
       // read frontier against the overlay).
-      const membershipStreamIds = streamMemberships.map((m) => m.streamId)
-      // Resolve sequences for BOTH frontiers: the effective one (streamReadState
-      // map) and the compat membership mirror, which can point at a different
-      // (regressed) event during the shadow window.
       const watermarkEventIds = new Set<string>()
-      for (const m of streamMemberships) {
-        if (m.lastReadEventId) watermarkEventIds.add(m.lastReadEventId)
-      }
       for (const effective of effectiveReadState.values()) {
         if (effective.lastReadEventId) watermarkEventIds.add(effective.lastReadEventId)
       }
@@ -283,19 +271,14 @@ export function createWorkspaceHandlers({
       for (const [streamId, ids] of readOverlayMap) {
         if (ids.length > 0) readMessageIds[streamId] = ids
       }
-      const serializedMemberships = streamMemberships.map((m) => ({
-        ...m,
-        lastReadSequence: m.lastReadEventId ? (watermarkSequences.get(m.lastReadEventId) ?? null) : null,
-      }))
-      // The standalone read frontier per member stream. EVERY member stream gets
-      // an entry: a null lastReadEventId is an authoritative explicit frontier
-      // (position before the first message), which clients must distinguish from
-      // an absent row (never read / pre-cutover fallback to the membership mirror).
+      // The read frontier per member stream. EVERY member stream gets an entry: a
+      // null lastReadEventId is an authoritative explicit frontier (position before
+      // the first message), which clients must distinguish from an absent entry.
       const streamReadState: Record<string, StreamReadFrontier> = {}
       for (const m of streamMemberships) {
         const effective = effectiveReadState.get(m.streamId)
-        const lastReadEventId = effective ? effective.lastReadEventId : m.lastReadEventId
-        const lastReadAt = effective ? effective.lastReadAt : m.lastReadAt
+        const lastReadEventId = effective?.lastReadEventId ?? null
+        const lastReadAt = effective?.lastReadAt ?? null
         streamReadState[m.streamId] = {
           lastReadEventId,
           lastReadSequence: lastReadEventId ? (watermarkSequences.get(lastReadEventId) ?? null) : null,
@@ -368,7 +351,7 @@ export function createWorkspaceHandlers({
           users,
           streams: resolvedStreams,
           archivedStreams: resolvedArchivedStreams,
-          streamMemberships: serializedMemberships,
+          streamMemberships,
           streamReadState,
           readMessageIds,
           personas,
@@ -406,11 +389,11 @@ export function createWorkspaceHandlers({
       const userId = req.user!.id
       const workspaceId = req.workspaceId!
 
-      const updatedStreamIds = await streamService.markAllAsRead(workspaceId, userId)
+      const { updatedStreamIds, frontiers } = await streamService.markAllAsRead(workspaceId, userId)
 
       await activityService?.markAllAsRead(userId, workspaceId)
 
-      res.json({ updatedStreamIds })
+      res.json({ updatedStreamIds, frontiers })
     },
 
     async completeUserSetup(req: Request, res: Response) {

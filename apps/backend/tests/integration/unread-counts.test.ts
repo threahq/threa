@@ -1,7 +1,13 @@
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from "bun:test"
 import { Pool } from "pg"
 import { withTransaction } from "./setup"
-import { StreamService, StreamEventRepository, StreamMemberRepository } from "../../src/features/streams"
+import {
+  StreamService,
+  StreamEventRepository,
+  StreamMemberRepository,
+  ReadStateRepository,
+  usersReadThroughEffective,
+} from "../../src/features/streams"
 import { EventService } from "../../src/features/messaging"
 import { ActivityRepository, ActivityService } from "../../src/features/activity"
 import { streamId, userId, workspaceId } from "../../src/lib/id"
@@ -30,6 +36,7 @@ describe("Unread Counts", () => {
     await pool.query("DELETE FROM messages")
     await pool.query("DELETE FROM stream_events")
     await pool.query("DELETE FROM stream_sequences")
+    await pool.query("DELETE FROM stream_read_state")
     await pool.query("DELETE FROM stream_members")
     await pool.query("DELETE FROM streams")
     await pool.query(
@@ -179,22 +186,22 @@ describe("Unread Counts", () => {
         ...testMessageContent("Hello from author"),
       })
 
-      // Author's lastReadEventId should have been updated to include their own message
-      const authorMembership = await streamService.getMembership(testStreamId, authorId)
-      expect(authorMembership?.lastReadEventId).not.toBeNull()
+      // The author's read frontier should have advanced to include their own message
+      const authorReadState = await ReadStateRepository.get(pool, testStreamId, authorId)
+      expect(authorReadState?.lastReadEventId).not.toBeNull()
 
       // Author should have 0 unread
       const authorCounts = await streamService.getUnreadCounts([
-        { streamId: testStreamId, memberId: authorId, lastReadEventId: authorMembership!.lastReadEventId },
+        { streamId: testStreamId, memberId: authorId, lastReadEventId: authorReadState!.lastReadEventId },
       ])
       expect(authorCounts.get(testStreamId)).toEqual({ unreadCount: 0, totalCount: 1 })
 
-      // Other user should have 1 unread (their lastReadEventId is still null)
-      const otherMembership = await streamService.getMembership(testStreamId, otherUserId)
-      expect(otherMembership?.lastReadEventId).toBeNull()
+      // Other user should have 1 unread (no read-state row yet = never read)
+      const otherReadState = await ReadStateRepository.get(pool, testStreamId, otherUserId)
+      expect(otherReadState).toBeNull()
 
       const otherCounts = await streamService.getUnreadCounts([
-        { streamId: testStreamId, memberId: otherUserId, lastReadEventId: otherMembership!.lastReadEventId },
+        { streamId: testStreamId, memberId: otherUserId, lastReadEventId: null },
       ])
       expect(otherCounts.get(testStreamId)).toEqual({ unreadCount: 1, totalCount: 1 })
     })
@@ -260,7 +267,7 @@ describe("Unread Counts", () => {
   })
 
   describe("markAllAsRead", () => {
-    test("should update all stream memberships to latest event", async () => {
+    test("should advance every stream frontier to the latest event", async () => {
       const stream1 = streamId()
       const stream2 = streamId()
       const testWorkspaceId = workspaceId()
@@ -299,23 +306,23 @@ describe("Unread Counts", () => {
       })
 
       // Mark all as read
-      const updatedStreamIds = await streamService.markAllAsRead(testWorkspaceId, testUserId)
+      const { updatedStreamIds } = await streamService.markAllAsRead(testWorkspaceId, testUserId)
 
       expect(updatedStreamIds).toHaveLength(2)
       expect(updatedStreamIds).toContain(stream1)
       expect(updatedStreamIds).toContain(stream2)
 
-      // Verify memberships are updated
-      const membership1 = await streamService.getMembership(stream1, testUserId)
-      const membership2 = await streamService.getMembership(stream2, testUserId)
+      // Verify read frontiers advanced
+      const readState1 = await ReadStateRepository.get(pool, stream1, testUserId)
+      const readState2 = await ReadStateRepository.get(pool, stream2, testUserId)
 
-      expect(membership1?.lastReadEventId).not.toBeNull()
-      expect(membership2?.lastReadEventId).not.toBeNull()
+      expect(readState1?.lastReadEventId).not.toBeNull()
+      expect(readState2?.lastReadEventId).not.toBeNull()
 
       // Verify unread counts are now 0
       const counts = await streamService.getUnreadCounts([
-        { streamId: stream1, memberId: testUserId, lastReadEventId: membership1!.lastReadEventId },
-        { streamId: stream2, memberId: testUserId, lastReadEventId: membership2!.lastReadEventId },
+        { streamId: stream1, memberId: testUserId, lastReadEventId: readState1!.lastReadEventId },
+        { streamId: stream2, memberId: testUserId, lastReadEventId: readState2!.lastReadEventId },
       ])
 
       expect(counts.get(stream1)).toEqual({ unreadCount: 0, totalCount: 1 })
@@ -355,7 +362,7 @@ describe("Unread Counts", () => {
       await streamService.markAsRead(testWorkspaceId, stream1, testUserId, events1[0].id)
 
       // Now markAllAsRead should return empty (both are already read or have no messages)
-      const updatedStreamIds = await streamService.markAllAsRead(testWorkspaceId, testUserId)
+      const { updatedStreamIds } = await streamService.markAllAsRead(testWorkspaceId, testUserId)
 
       expect(updatedStreamIds).toHaveLength(0)
     })
@@ -400,20 +407,20 @@ describe("Unread Counts", () => {
       })
 
       // Mark all as read in workspace1 only
-      const updatedStreamIds = await streamService.markAllAsRead(workspace1, testUserId)
+      const { updatedStreamIds } = await streamService.markAllAsRead(workspace1, testUserId)
 
       expect(updatedStreamIds).toHaveLength(1)
       expect(updatedStreamIds).toContain(stream1)
       expect(updatedStreamIds).not.toContain(stream2)
 
       // Stream2 should still have unread (otherUserId sent a message that testUserId hasn't read)
-      const membership2 = await streamService.getMembership(stream2, testUserId)
-      expect(membership2?.lastReadEventId).toBeNull()
+      const readState2 = await ReadStateRepository.get(pool, stream2, testUserId)
+      expect(readState2).toBeNull()
     })
   })
 
-  describe("batchUpdateLastReadEventId", () => {
-    test("should update multiple memberships in a single query", async () => {
+  describe("ReadStateRepository.batchAdvance", () => {
+    test("advances multiple stream frontiers in a single query", async () => {
       const stream1 = streamId()
       const stream2 = streamId()
       const stream3 = streamId()
@@ -444,7 +451,7 @@ describe("Unread Counts", () => {
         eventIds.push(events[0].id)
       }
 
-      // Batch update
+      // Batch advance
       const updates = new Map<string, string>([
         [stream1, eventIds[0]],
         [stream2, eventIds[1]],
@@ -452,17 +459,17 @@ describe("Unread Counts", () => {
       ])
 
       await withTransaction(pool, async (client) => {
-        await StreamMemberRepository.batchUpdateLastReadEventId(client, testUserId, updates)
+        await ReadStateRepository.batchAdvance(client, testUserId, updates)
       })
 
-      // Verify all were updated
-      const m1 = await streamService.getMembership(stream1, testUserId)
-      const m2 = await streamService.getMembership(stream2, testUserId)
-      const m3 = await streamService.getMembership(stream3, testUserId)
+      // Verify all frontiers advanced
+      const r1 = await ReadStateRepository.get(pool, stream1, testUserId)
+      const r2 = await ReadStateRepository.get(pool, stream2, testUserId)
+      const r3 = await ReadStateRepository.get(pool, stream3, testUserId)
 
-      expect(m1?.lastReadEventId).toBe(eventIds[0])
-      expect(m2?.lastReadEventId).toBe(eventIds[1])
-      expect(m3?.lastReadEventId).toBe(eventIds[2])
+      expect(r1?.lastReadEventId).toBe(eventIds[0])
+      expect(r2?.lastReadEventId).toBe(eventIds[1])
+      expect(r3?.lastReadEventId).toBe(eventIds[2])
     })
   })
 
@@ -572,6 +579,8 @@ describe("Unread Counts", () => {
       })
 
       await streamService.markAllAsRead(testWorkspaceId, readerId)
+      const readState = await ReadStateRepository.get(pool, testStreamId, readerId)
+      expect(readState?.lastReadEventId).not.toBeNull()
 
       const result = await pool.query(
         `SELECT payload FROM outbox WHERE event_type = 'stream:read_all' AND payload->>'authorId' = $1 ORDER BY id`,
@@ -583,6 +592,15 @@ describe("Unread Counts", () => {
         authorId: readerId,
         streamIds: [testStreamId],
         reads: [{ streamId: testStreamId, lastReadOrdinal: 1 }],
+        frontiers: [
+          {
+            streamId: testStreamId,
+            lastReadEventId: readState?.lastReadEventId,
+            lastReadSequence: "1",
+            lastReadAt: readState?.lastReadAt?.toISOString(),
+            lastReadOrdinal: 1,
+          },
+        ],
       })
     })
 
@@ -608,8 +626,8 @@ describe("Unread Counts", () => {
     })
   })
 
-  describe("membersReadThrough", () => {
-    test("includes members at or past the target sequence, excludes behind / unread / dangling watermarks", async () => {
+  describe("usersReadThroughEffective", () => {
+    test("includes users at or past the target sequence, excludes behind / unread / dangling frontiers", async () => {
       const testStreamId = streamId()
       const testWorkspaceId = workspaceId()
       const atTarget = userId()
@@ -643,15 +661,16 @@ describe("Unread Counts", () => {
       const [firstEvent, targetEvent, thirdEvent] = events
 
       await withTransaction(pool, async (client) => {
-        await StreamMemberRepository.update(client, testStreamId, atTarget, { lastReadEventId: targetEvent.id })
-        await StreamMemberRepository.update(client, testStreamId, past, { lastReadEventId: thirdEvent.id })
-        await StreamMemberRepository.update(client, testStreamId, behind, { lastReadEventId: firstEvent.id })
-        await StreamMemberRepository.update(client, testStreamId, dangling, { lastReadEventId: "evt_does_not_exist" })
-        // `unread` keeps its null watermark (never read).
+        await ReadStateRepository.set(client, testStreamId, atTarget, targetEvent.id)
+        await ReadStateRepository.set(client, testStreamId, past, thirdEvent.id)
+        await ReadStateRepository.set(client, testStreamId, behind, firstEvent.id)
+        await ReadStateRepository.set(client, testStreamId, dangling, "evt_does_not_exist")
+        // `unread` keeps no row (never read).
       })
 
-      const result = await StreamMemberRepository.membersReadThrough(
+      const result = await usersReadThroughEffective(
         pool,
+        testWorkspaceId,
         testStreamId,
         [atTarget, past, behind, unread, dangling],
         targetEvent.sequence
@@ -662,8 +681,8 @@ describe("Unread Counts", () => {
       expect(result).toEqual(new Set([atTarget, past]))
     })
 
-    test("returns an empty set for empty memberIds", async () => {
-      expect(await StreamMemberRepository.membersReadThrough(pool, streamId(), [], 1n)).toEqual(new Set())
+    test("returns an empty set for empty userIds", async () => {
+      expect(await usersReadThroughEffective(pool, workspaceId(), streamId(), [], 1n)).toEqual(new Set())
     })
   })
 

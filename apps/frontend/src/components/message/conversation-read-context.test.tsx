@@ -62,17 +62,24 @@ async function seedReadState(
     mutedStreamIds: [],
     _cachedAt: Date.now(),
   })
-  // Root membership: watermark at sequence 3, read-through timestamp T0.
+  // Root membership (participation only).
   await db.streamMemberships.put({
     id: `${WS}:${ROOT}`,
     workspaceId: WS,
     streamId: ROOT,
     memberId: "member_me",
     notificationLevel: "everything",
+    joinedAt: "2026-06-01T00:00:00.000Z",
+    _cachedAt: Date.now(),
+  })
+  // Root read frontier: watermark at sequence 3, read-through timestamp T0.
+  await db.streamReadState.put({
+    id: `${WS}:${ROOT}`,
+    workspaceId: WS,
+    streamId: ROOT,
     lastReadEventId: "evt_3",
     lastReadSequence: "3",
     lastReadAt: "2026-06-22T12:00:00.000Z",
-    joinedAt: "2026-06-01T00:00:00.000Z",
     _cachedAt: Date.now(),
   })
 }
@@ -108,10 +115,9 @@ describe("useConversationReadController", () => {
   })
 
   it("treats a stream with zero effective unread as fully read despite a stale sequence frontier", async () => {
-    // Mark-all-read advances counts to 0 without a per-stream sequence payload,
-    // so the membership's lastReadSequence (3) goes stale. The count-0
-    // short-circuit must win over the sequence comparison — a row at sequence 5
-    // would otherwise re-derive as unread (phantom card dot).
+    // A legacy counter snapshot can reach 0 before its standalone frontier is
+    // hydrated. The count-0 short-circuit must win over the stale sequence — a
+    // row at sequence 5 would otherwise re-derive as unread (phantom card dot).
     await seedReadState({}, { [ROOT]: 0 })
     const { result } = renderHook(() => useConversationReadController(WS, CONV, ROOT, ME), { wrapper: wrapper() })
 

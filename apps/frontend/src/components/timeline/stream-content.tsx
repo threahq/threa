@@ -622,27 +622,23 @@ export function StreamContent({
     enabled: !isDraft && (!idbStream || !idbMembership),
   })
   const membership = idbMembership ?? bootstrap?.membership
-  // Effective read frontier (read cutover): a standalone read-state row wins
-  // whenever it exists — a present null watermark (explicit unread-to-zero)
-  // beats a stale non-null mirror — and the stream/membership mirrors fill
-  // only streams with no row yet.
+  // Read frontier: stream_read_state is the sole source. A present row wins —
+  // a null watermark is an explicit unread-to-zero.
   const idbReadState = useMemo(
     () => idbReadStates.find((candidate) => candidate.streamId === streamId),
     [idbReadStates, streamId]
   )
-  // The per-stream bootstrap carries the viewer's standalone frontier (non-
-  // member unlock); IDB catches up a tick after the query resolves, so consult
-  // the in-memory payload for first paint. A confirmed-absent row (null)
-  // resolves an access-without-membership viewer as never-read (frontier
-  // before the first message) — they have no membership mirror to fall back
-  // to; members fall through to the mirrors (shadow-window fallback).
+  // The per-stream bootstrap carries the viewer's frontier; IDB catches up a
+  // tick after the query resolves, so consult the in-memory payload for first
+  // paint. A confirmed-absent row (null) resolves as never-read (frontier
+  // before the first message).
   const bootstrapReadState = useMemo(() => {
     const rs = bootstrap?.readState
     if (rs) return rs
-    if (rs === null && !bootstrap?.membership) return { lastReadEventId: null }
+    if (rs === null) return { lastReadEventId: null }
     return undefined
-  }, [bootstrap?.readState, bootstrap?.membership])
-  const lastReadEventId = resolveFrontierEventId(idbReadState ?? bootstrapReadState, idbStream, membership)
+  }, [bootstrap?.readState])
+  const lastReadEventId = resolveFrontierEventId(idbReadState ?? bootstrapReadState)
 
   const stream = streamFromProps ?? idbStream ?? bootstrap?.stream
   const isThread = stream?.type === StreamTypes.THREAD

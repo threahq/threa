@@ -2,12 +2,13 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { renderHook, waitFor, act } from "@testing-library/react"
 import { createElement, type ReactNode } from "react"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
-import { ServicesProvider, type StreamService } from "@/contexts"
+import { ServicesProvider, type StreamService, type WorkspaceService } from "@/contexts"
 import { clearAllCachedData, db } from "@/db"
 import {
   DEFAULT_SIDEBAR_CONFIG,
   DEFAULT_WORKSPACE_SETTINGS,
   type Activity,
+  type MarkAllAsReadResponse,
   type StreamMember,
   type WorkspaceBootstrap,
 } from "@threa/types"
@@ -19,6 +20,7 @@ const mockMarkAsRead =
   vi.fn<(workspaceId: string, streamId: string, lastEventId: string) => Promise<StreamMember | null>>()
 const mockMarkUnread =
   vi.fn<(workspaceId: string, streamId: string, messageId: string) => Promise<StreamMember | null>>()
+const mockMarkAllAsRead = vi.fn<(workspaceId: string) => Promise<MarkAllAsReadResponse>>()
 const mockPostMessage = vi.fn()
 const originalServiceWorker = Object.getOwnPropertyDescriptor(navigator, "serviceWorker")
 
@@ -33,6 +35,9 @@ function createWrapper(queryClient: QueryClient) {
             markAsRead: mockMarkAsRead,
             markUnread: mockMarkUnread,
           } as unknown as StreamService,
+          workspaces: {
+            markAllAsRead: mockMarkAllAsRead,
+          } as unknown as WorkspaceService,
         },
         children,
       })
@@ -57,8 +62,6 @@ function makeBootstrap(): WorkspaceBootstrap {
         streamId: "stream_1",
         memberId: "member_1",
         notificationLevel: "everything",
-        lastReadEventId: "event_old",
-        lastReadAt: null,
         joinedAt: new Date().toISOString(),
       },
     ],
@@ -136,6 +139,7 @@ describe("useUnreadCounts", () => {
   beforeEach(async () => {
     mockMarkAsRead.mockReset()
     mockMarkUnread.mockReset()
+    mockMarkAllAsRead.mockReset()
     mockPostMessage.mockReset()
     Object.defineProperty(navigator, "serviceWorker", {
       configurable: true,
@@ -152,38 +156,16 @@ describe("useUnreadCounts", () => {
     }
   })
 
-  it("updates the membership read pointer in IndexedDB when marking a stream as read", async () => {
+  it("advances the standalone read frontier in IndexedDB when marking a stream as read", async () => {
     const queryClient = new QueryClient()
     queryClient.setQueryData(workspaceKeys.bootstrap("ws_1"), makeBootstrap())
 
-    await db.streams.put({
-      id: "stream_1",
-      workspaceId: "ws_1",
-      type: "channel",
-      displayName: "Engineering",
-      slug: "engineering",
-      description: null,
-      visibility: "public",
-      parentStreamId: null,
-      parentMessageId: null,
-      rootStreamId: null,
-      companionMode: "off",
-      companionPersonaId: null,
-      createdBy: "member_1",
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-      archivedAt: null,
-      lastReadEventId: "event_old",
-      _cachedAt: Date.now(),
-    })
     await db.streamMemberships.put({
       id: "ws_1:stream_1",
       workspaceId: "ws_1",
       streamId: "stream_1",
       memberId: "member_1",
       notificationLevel: "everything",
-      lastReadEventId: "event_old",
-      lastReadAt: null,
       joinedAt: new Date().toISOString(),
       _cachedAt: Date.now(),
     })
@@ -203,8 +185,6 @@ describe("useUnreadCounts", () => {
       streamId: "stream_1",
       memberId: "member_1",
       notificationLevel: "everything",
-      lastReadEventId: "event_new",
-      lastReadAt: new Date().toISOString(),
       joinedAt: new Date().toISOString(),
     })
 
@@ -216,17 +196,15 @@ describe("useUnreadCounts", () => {
       result.current.markAsRead("stream_1", "event_new")
     })
 
+    // The frontier lands in stream_read_state; membership is never written on a read.
     await waitFor(async () => {
-      await expect(db.streamMemberships.get("ws_1:stream_1")).resolves.toMatchObject({
+      await expect(db.streamReadState.get("ws_1:stream_1")).resolves.toMatchObject({
         lastReadEventId: "event_new",
       })
     })
 
-    expect(await db.streams.get("stream_1")).toMatchObject({ lastReadEventId: "event_new" })
     const bootstrap = queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap("ws_1"))
-    expect(bootstrap?.streamMemberships.find((membership) => membership.streamId === "stream_1")?.lastReadEventId).toBe(
-      "event_new"
-    )
+    expect(bootstrap?.streamReadState?.stream_1?.lastReadEventId).toBe("event_new")
     expect(bootstrap?.unreadCounts.stream_1).toBe(0)
   })
 
@@ -250,8 +228,6 @@ describe("useUnreadCounts", () => {
       streamId: "stream_1",
       memberId: "member_1",
       notificationLevel: "everything",
-      lastReadEventId: "event_mid",
-      lastReadAt: new Date().toISOString(),
       joinedAt: new Date().toISOString(),
     })
 
@@ -265,9 +241,7 @@ describe("useUnreadCounts", () => {
 
     await waitFor(() => {
       const bootstrap = queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap("ws_1"))
-      expect(
-        bootstrap?.streamMemberships.find((membership) => membership.streamId === "stream_1")?.lastReadEventId
-      ).toBe("event_mid")
+      expect(bootstrap?.streamReadState?.stream_1?.lastReadEventId).toBe("event_mid")
     })
 
     // Pointer advanced, but the badge is untouched — the server `stream:read`
@@ -285,8 +259,6 @@ describe("useUnreadCounts", () => {
       streamId: "stream_1",
       memberId: "member_1",
       notificationLevel: "everything",
-      lastReadEventId: "event_new",
-      lastReadAt: new Date().toISOString(),
       joinedAt: new Date().toISOString(),
     })
 
@@ -322,8 +294,6 @@ describe("useUnreadCounts", () => {
       streamId: "stream_1",
       memberId: "member_1",
       notificationLevel: "everything",
-      lastReadEventId: "event_new",
-      lastReadAt: new Date().toISOString(),
       joinedAt: new Date().toISOString(),
     })
 
@@ -376,8 +346,6 @@ describe("useUnreadCounts", () => {
       streamId: "stream_1",
       memberId: "member_1",
       notificationLevel: "everything",
-      lastReadEventId: "event_old",
-      lastReadAt: null,
       joinedAt: new Date().toISOString(),
       _cachedAt: Date.now(),
     })
@@ -412,12 +380,11 @@ describe("useUnreadCounts", () => {
       expect(state?.unreadActivities?.map((a) => a.id)).toEqual(["act_3"])
     })
 
-    // No membership row created, no stream row touched, and unrelated
-    // memberships stay put — but the standalone frontier DOES move: non-member
-    // unlocks get the same optimistic divider advance as members.
+    // No membership row created and unrelated memberships stay put — but the
+    // standalone frontier DOES move: non-member unlocks get the same optimistic
+    // divider advance as members.
     expect(await db.streamMemberships.get("ws_1:stream_thread")).toBeUndefined()
-    expect(await db.streams.get("stream_thread")).toBeUndefined()
-    expect(await db.streamMemberships.get("ws_1:stream_1")).toMatchObject({ lastReadEventId: "event_old" })
+    expect(await db.streamMemberships.get("ws_1:stream_1")).toMatchObject({ notificationLevel: "everything" })
     expect(await db.streamReadState.get("ws_1:stream_thread")).toMatchObject({
       streamId: "stream_thread",
       lastReadEventId: "event_new",
@@ -427,11 +394,14 @@ describe("useUnreadCounts", () => {
     expect(updated?.unreadActivities?.map((a) => a.id)).toEqual(["act_3"])
     expect(updated?.activityCounts).toEqual({ stream_2: 1 })
     expect(updated?.unreadActivityCount).toBe(1)
-    expect(updated?.streamMemberships.find((m) => m.streamId === "stream_1")?.lastReadEventId).toBe("event_old")
+    expect(updated?.streamMemberships.find((m) => m.streamId === "stream_1")?.notificationLevel).toBe("everything")
     expect(updated?.streamReadState?.stream_thread?.lastReadEventId).toBe("event_new")
   })
 
-  it("markUnread with a membership mirrors the pointer into the membership row and the standalone frontier", async () => {
+  it("markUnread writes nothing optimistically even with a membership — the stream:read_set echo owns the frontier", async () => {
+    // The unread response carries participation only (no watermark), so the
+    // optimistic path writes nothing for members and non-members alike; the
+    // echo SETs the standalone frontier.
     const queryClient = new QueryClient()
     queryClient.setQueryData(workspaceKeys.bootstrap("ws_1"), makeBootstrap())
     await db.streamMemberships.put({
@@ -440,8 +410,6 @@ describe("useUnreadCounts", () => {
       streamId: "stream_1",
       memberId: "member_1",
       notificationLevel: "everything",
-      lastReadEventId: "event_old",
-      lastReadAt: null,
       joinedAt: new Date().toISOString(),
       _cachedAt: Date.now(),
     })
@@ -450,8 +418,6 @@ describe("useUnreadCounts", () => {
       streamId: "stream_1",
       memberId: "member_1",
       notificationLevel: "everything",
-      lastReadEventId: "event_prev",
-      lastReadAt: "2026-07-24T00:00:00.000Z",
       joinedAt: new Date().toISOString(),
     })
 
@@ -460,10 +426,9 @@ describe("useUnreadCounts", () => {
       result.current.markUnread("stream_1", "msg_target")
     })
 
-    await waitFor(async () => {
-      expect(await db.streamReadState.get("ws_1:stream_1")).toMatchObject({ lastReadEventId: "event_prev" })
-    })
-    expect(await db.streamMemberships.get("ws_1:stream_1")).toMatchObject({ lastReadEventId: "event_prev" })
+    await waitFor(() => expect(mockMarkUnread).toHaveBeenCalledWith("ws_1", "stream_1", "msg_target"))
+    expect(await db.streamReadState.get("ws_1:stream_1")).toBeUndefined()
+    expect(await db.streamMemberships.get("ws_1:stream_1")).toMatchObject({ notificationLevel: "everything" })
   })
 
   it("markUnread with a null membership writes nothing optimistically — the stream:read_set echo owns the frontier", async () => {
@@ -485,17 +450,177 @@ describe("useUnreadCounts", () => {
     expect(await db.streamReadState.get("ws_1:stream_thread")).toBeUndefined()
   })
 
+  it("applies the returned frontier snapshot to the cache and IDB when marking all as read (initiating device)", async () => {
+    // No pre-existing frontier row: the touched-at guard sees nothing and the
+    // response frontiers apply.
+    const queryClient = new QueryClient()
+    queryClient.setQueryData(workspaceKeys.bootstrap("ws_1"), makeBootstrap())
+    await db.unreadState.put({
+      id: "ws_1",
+      workspaceId: "ws_1",
+      unreadCounts: { stream_1: 2 },
+      mentionCounts: { stream_1: 0 },
+      activityCounts: { stream_1: 0 },
+      unreadActivityCount: 0,
+      unreadActivities: [],
+      mutedStreamIds: [],
+      _cachedAt: Date.now(),
+    })
+
+    mockMarkAllAsRead.mockResolvedValue({
+      updatedStreamIds: ["stream_1"],
+      frontiers: [
+        {
+          streamId: "stream_1",
+          lastReadEventId: "event_latest",
+          lastReadSequence: "100",
+          lastReadOrdinal: 2,
+          lastReadAt: "2024-01-01T00:00:00.000Z",
+        },
+      ],
+    })
+
+    const { result } = renderHook(() => useUnreadCounts("ws_1"), { wrapper: createWrapper(queryClient) })
+    act(() => {
+      result.current.markAllAsRead()
+    })
+
+    // The frontier lands in stream_read_state AND the bootstrap cache (the
+    // divider's reload source), alongside the counter/overlay clear.
+    await waitFor(async () => {
+      await expect(db.streamReadState.get("ws_1:stream_1")).resolves.toMatchObject({
+        lastReadEventId: "event_latest",
+        lastReadSequence: "100",
+      })
+    })
+    const bootstrap = queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap("ws_1"))
+    expect(bootstrap?.streamReadState?.stream_1?.lastReadEventId).toBe("event_latest")
+    expect(bootstrap?.streamReadState?.stream_1?.lastReadSequence).toBe("100")
+    expect(bootstrap?.unreadCounts.stream_1).toBe(0)
+  })
+
+  it("never regresses a higher local frontier when marking all as read", async () => {
+    const queryClient = new QueryClient()
+    queryClient.setQueryData(workspaceKeys.bootstrap("ws_1"), {
+      ...makeBootstrap(),
+      streamReadState: { stream_1: { lastReadEventId: "event_ahead", lastReadSequence: "200", lastReadAt: null } },
+    })
+    await db.streamReadState.put({
+      id: "ws_1:stream_1",
+      workspaceId: "ws_1",
+      streamId: "stream_1",
+      lastReadEventId: "event_ahead",
+      lastReadSequence: "200",
+      lastReadAt: null,
+      // Pre-departure state: backdated so the touched-at guard treats it as
+      // pre-existing, not a mid-flight touch.
+      _cachedAt: Date.now() - 5000,
+    })
+    await db.unreadState.put({
+      id: "ws_1",
+      workspaceId: "ws_1",
+      unreadCounts: { stream_1: 2 },
+      mentionCounts: { stream_1: 0 },
+      activityCounts: { stream_1: 0 },
+      unreadActivityCount: 0,
+      unreadActivities: [],
+      mutedStreamIds: [],
+      _cachedAt: Date.now(),
+    })
+
+    // A stale/replayed snapshot (sequence 100 < local 200) must not move the
+    // frontier backward, though the counter still clears.
+    mockMarkAllAsRead.mockResolvedValue({
+      updatedStreamIds: ["stream_1"],
+      frontiers: [
+        {
+          streamId: "stream_1",
+          lastReadEventId: "event_latest",
+          lastReadSequence: "100",
+          lastReadOrdinal: 2,
+          lastReadAt: "2024-01-01T00:00:00.000Z",
+        },
+      ],
+    })
+
+    const { result } = renderHook(() => useUnreadCounts("ws_1"), { wrapper: createWrapper(queryClient) })
+    act(() => {
+      result.current.markAllAsRead()
+    })
+
+    await waitFor(() => {
+      const bootstrap = queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap("ws_1"))
+      expect(bootstrap?.unreadCounts.stream_1).toBe(0)
+    })
+    await waitFor(async () => {
+      await expect(db.streamReadState.get("ws_1:stream_1")).resolves.toMatchObject({
+        lastReadEventId: "event_ahead",
+        lastReadSequence: "200",
+      })
+    })
+    const bootstrap = queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap("ws_1"))
+    expect(bootstrap?.streamReadState?.stream_1?.lastReadSequence).toBe("200")
+  })
+
+  it("a legacy mark-all response without frontiers leaves existing frontier rows untouched", async () => {
+    const queryClient = new QueryClient()
+    queryClient.setQueryData(workspaceKeys.bootstrap("ws_1"), {
+      ...makeBootstrap(),
+      streamReadState: { stream_1: { lastReadEventId: "event_old", lastReadSequence: "50", lastReadAt: null } },
+    })
+    await db.streamReadState.put({
+      id: "ws_1:stream_1",
+      workspaceId: "ws_1",
+      streamId: "stream_1",
+      lastReadEventId: "event_old",
+      lastReadSequence: "50",
+      lastReadAt: null,
+      // Pre-departure state: backdated so the touched-at guard treats it as
+      // pre-existing, not a mid-flight touch.
+      _cachedAt: Date.now() - 5000,
+    })
+    await db.unreadState.put({
+      id: "ws_1",
+      workspaceId: "ws_1",
+      unreadCounts: { stream_1: 2 },
+      mentionCounts: { stream_1: 0 },
+      activityCounts: { stream_1: 0 },
+      unreadActivityCount: 0,
+      unreadActivities: [],
+      mutedStreamIds: [],
+      _cachedAt: Date.now(),
+    })
+
+    // Pre-frontier response shape: counter behavior only, no `frontiers` field.
+    mockMarkAllAsRead.mockResolvedValue({ updatedStreamIds: ["stream_1"] })
+
+    const { result } = renderHook(() => useUnreadCounts("ws_1"), { wrapper: createWrapper(queryClient) })
+    act(() => {
+      result.current.markAllAsRead()
+    })
+
+    await waitFor(() => {
+      const bootstrap = queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap("ws_1"))
+      expect(bootstrap?.unreadCounts.stream_1).toBe(0)
+    })
+    // Frontier is untouched — no delete, no regress; the next bootstrap reconciles.
+    await expect(db.streamReadState.get("ws_1:stream_1")).resolves.toMatchObject({
+      lastReadEventId: "event_old",
+      lastReadSequence: "50",
+    })
+    const bootstrap = queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap("ws_1"))
+    expect(bootstrap?.streamReadState?.stream_1?.lastReadSequence).toBe("50")
+  })
+
   // Ordering guard: the mutation captures its departure time; a read-state
   // write that lands while the request is in flight (the request's own socket
   // echo, or a LATER action) owns the stream, so the stale HTTP success is a
   // no-op. An old read must not erase a later explicit unread, and vice versa.
-  function memberResponse(lastReadEventId: string): StreamMember {
+  function memberResponse(): StreamMember {
     return {
       streamId: "stream_1",
       memberId: "member_1",
       notificationLevel: "everything",
-      lastReadEventId,
-      lastReadAt: new Date().toISOString(),
       joinedAt: new Date().toISOString(),
     }
   }
@@ -503,17 +628,6 @@ describe("useUnreadCounts", () => {
   it("a delayed markAsRead success is a no-op when a later explicit unread touched the stream mid-flight", async () => {
     const queryClient = new QueryClient()
     queryClient.setQueryData(workspaceKeys.bootstrap("ws_1"), makeBootstrap())
-    await db.streamMemberships.put({
-      id: "ws_1:stream_1",
-      workspaceId: "ws_1",
-      streamId: "stream_1",
-      memberId: "member_1",
-      notificationLevel: "everything",
-      lastReadEventId: "event_old",
-      lastReadAt: null,
-      joinedAt: new Date().toISOString(),
-      _cachedAt: Date.now() - 5000,
-    })
     await db.unreadState.put({
       id: "ws_1",
       workspaceId: "ws_1",
@@ -536,9 +650,8 @@ describe("useUnreadCounts", () => {
     await waitFor(() => expect(mockMarkAsRead).toHaveBeenCalledWith("ws_1", "stream_1", "evt_100"))
 
     // A LATER explicit unread lands while the read is in flight: its
-    // stream:read_set echo SETs frontier + mirror back to evt_50 and stamps
-    // the touched time.
-    const touchedAt = Date.now()
+    // stream:read_set echo SETs the standalone frontier back to evt_50 and
+    // stamps the touched time.
     await db.streamReadState.put({
       id: "ws_1:stream_1",
       workspaceId: "ws_1",
@@ -546,49 +659,28 @@ describe("useUnreadCounts", () => {
       lastReadEventId: "evt_50",
       lastReadSequence: "50",
       lastReadAt: new Date().toISOString(),
-      _cachedAt: touchedAt,
-    })
-    await db.streamMemberships.put({
-      id: "ws_1:stream_1",
-      workspaceId: "ws_1",
-      streamId: "stream_1",
-      memberId: "member_1",
-      notificationLevel: "everything",
-      lastReadEventId: "evt_50",
-      lastReadAt: new Date().toISOString(),
-      joinedAt: new Date().toISOString(),
-      _cachedAt: touchedAt,
+      _cachedAt: Date.now(),
     })
 
     // The stale read response finally resolves — it must NOT restore evt_100.
     await act(async () => {
-      resolveRead(memberResponse("evt_100"))
+      resolveRead(memberResponse())
       await new Promise((resolve) => setTimeout(resolve, 10))
     })
 
     expect(await db.streamReadState.get("ws_1:stream_1")).toMatchObject({ lastReadEventId: "evt_50" })
-    expect(await db.streamMemberships.get("ws_1:stream_1")).toMatchObject({ lastReadEventId: "evt_50" })
+    // The stale success wrote nothing: no frontier publish in the cache, no
+    // membership row fabricated, and a full read would have zeroed the badge.
     const bootstrap = queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap("ws_1"))
-    // The stale success wrote nothing: the cache still carries the seeded
-    // mirror (not evt_100) and a full read would have zeroed the badge.
-    expect(bootstrap?.streamMemberships.find((m) => m.streamId === "stream_1")?.lastReadEventId).toBe("event_old")
+    expect(bootstrap?.streamReadState?.stream_1?.lastReadEventId).toBeUndefined()
     expect(bootstrap?.unreadCounts.stream_1).toBe(2)
+    expect(await db.streamMemberships.get("ws_1:stream_1")).toBeUndefined()
+    expect(await db.unreadState.get("ws_1")).toMatchObject({ unreadCounts: { stream_1: 2 } })
   })
 
   it("a delayed markUnread success is a no-op when a later read touched the stream mid-flight", async () => {
     const queryClient = new QueryClient()
     queryClient.setQueryData(workspaceKeys.bootstrap("ws_1"), makeBootstrap())
-    await db.streamMemberships.put({
-      id: "ws_1:stream_1",
-      workspaceId: "ws_1",
-      streamId: "stream_1",
-      memberId: "member_1",
-      notificationLevel: "everything",
-      lastReadEventId: "event_old",
-      lastReadAt: null,
-      joinedAt: new Date().toISOString(),
-      _cachedAt: Date.now() - 5000,
-    })
 
     let resolveUnread!: (membership: StreamMember | null) => void
     mockMarkUnread.mockReturnValue(new Promise((resolve) => (resolveUnread = resolve)))
@@ -600,7 +692,7 @@ describe("useUnreadCounts", () => {
     await waitFor(() => expect(mockMarkUnread).toHaveBeenCalledWith("ws_1", "stream_1", "msg_target"))
 
     // A LATER read lands while the unread is in flight: its stream:read echo
-    // advances the frontier to evt_150 and stamps the touched time.
+    // advances the standalone frontier to evt_150 and stamps the touched time.
     await db.streamReadState.put({
       id: "ws_1:stream_1",
       workspaceId: "ws_1",
@@ -611,14 +703,245 @@ describe("useUnreadCounts", () => {
       _cachedAt: Date.now(),
     })
 
-    // The stale unread response resolves — it must NOT regress the frontier.
+    // The stale unread response resolves — it must NOT regress the frontier:
+    // the response carries participation only, nothing applies optimistically,
+    // and the echo owns the frontier.
     await act(async () => {
-      resolveUnread(memberResponse("evt_50"))
+      resolveUnread(memberResponse())
       await new Promise((resolve) => setTimeout(resolve, 10))
     })
 
     expect(await db.streamReadState.get("ws_1:stream_1")).toMatchObject({ lastReadEventId: "evt_150" })
-    // The stale success wrote nothing: the mirror keeps its seeded value.
-    expect(await db.streamMemberships.get("ws_1:stream_1")).toMatchObject({ lastReadEventId: "event_old" })
+    expect(await db.streamMemberships.get("ws_1:stream_1")).toBeUndefined()
+  })
+
+  // Mark-all ordering guard: the mutation captures its departure time; the
+  // response is filtered PER STREAM inside the single atomic transaction. A
+  // stream touched after departure (the request's own stream:read_all echo, or
+  // a LATER explicit unread) skips every response effect — an old mark-all
+  // must not erase a later unread. Untouched streams still apply.
+  function makeActivity(id: string, streamId: string): Activity {
+    return {
+      id,
+      workspaceId: "ws_1",
+      userId: "member_1",
+      activityType: "message",
+      streamId,
+      messageId: `msg_${id}`,
+      actorId: "persona_system_ariadne",
+      actorType: "persona",
+      context: {},
+      readAt: null,
+      createdAt: new Date().toISOString(),
+      isSelf: false,
+      emoji: null,
+    }
+  }
+
+  async function seedFrontier(
+    streamId: string,
+    lastReadEventId: string | null,
+    lastReadSequence: string | null,
+    cachedAt: number
+  ) {
+    await db.streamReadState.put({
+      id: `ws_1:${streamId}`,
+      workspaceId: "ws_1",
+      streamId,
+      lastReadEventId,
+      lastReadSequence,
+      lastReadAt: null,
+      _cachedAt: cachedAt,
+    })
+  }
+
+  async function seedMarkAllState() {
+    const queryClient = new QueryClient()
+    const bootstrap = makeBootstrap()
+    bootstrap.unreadCounts = { stream_1: 2, stream_2: 3 }
+    bootstrap.readMessageIds = { stream_1: ["msg_a"], stream_2: ["msg_b"] }
+    bootstrap.unreadActivities = [makeActivity("act_1", "stream_1"), makeActivity("act_2", "stream_2")]
+    bootstrap.activityCounts = { stream_1: 1, stream_2: 1 }
+    bootstrap.unreadActivityCount = 2
+    queryClient.setQueryData(workspaceKeys.bootstrap("ws_1"), bootstrap)
+
+    await db.unreadState.put({
+      id: "ws_1",
+      workspaceId: "ws_1",
+      unreadCounts: { stream_1: 2, stream_2: 3 },
+      mentionCounts: {},
+      activityCounts: { stream_1: 1, stream_2: 1 },
+      unreadActivityCount: 2,
+      unreadActivities: [makeActivity("act_1", "stream_1"), makeActivity("act_2", "stream_2")],
+      readMessageIds: { stream_1: ["msg_a"], stream_2: ["msg_b"] },
+      mutedStreamIds: [],
+      _cachedAt: Date.now() - 5000,
+    })
+    await seedFrontier("stream_1", "event_old", "10", Date.now() - 5000)
+    await seedFrontier("stream_2", "event_old", "20", Date.now() - 5000)
+    return queryClient
+  }
+
+  it("a delayed mark-all skips a stream a later explicit unread touched mid-flight; untouched streams still apply", async () => {
+    const queryClient = await seedMarkAllState()
+
+    let resolveMarkAll!: (response: MarkAllAsReadResponse) => void
+    mockMarkAllAsRead.mockReturnValue(new Promise((resolve) => (resolveMarkAll = resolve)))
+
+    const { result } = renderHook(() => useUnreadCounts("ws_1"), { wrapper: createWrapper(queryClient) })
+    act(() => {
+      result.current.markAllAsRead()
+    })
+    await waitFor(() => expect(mockMarkAllAsRead).toHaveBeenCalledWith("ws_1"))
+
+    // A LATER explicit unread (B) lands on stream_1 while the mark-all is in
+    // flight: its stream:read_set echo SETs the frontier back to evt_50, raises
+    // the count, SETs the overlay, and stamps the touched time.
+    const touchedAt = Date.now()
+    await seedFrontier("stream_1", "evt_50", "50", touchedAt)
+    await db.unreadState.put({
+      ...(await db.unreadState.get("ws_1"))!,
+      unreadCounts: { stream_1: 5, stream_2: 3 },
+      readMessageIds: { stream_1: ["msg_x"], stream_2: ["msg_b"] },
+      _cachedAt: touchedAt,
+    })
+    queryClient.setQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap("ws_1"), (old) => ({
+      ...old!,
+      unreadCounts: { stream_1: 5, stream_2: 3 },
+      readMessageIds: { stream_1: ["msg_x"], stream_2: ["msg_b"] },
+    }))
+
+    // The stale mark-all response finally resolves — stream_1 is touched, so
+    // only stream_2 may apply. Legacy shape (no `frontiers`): counter behavior
+    // only, frontier rows untouched.
+    await act(async () => {
+      resolveMarkAll({ updatedStreamIds: ["stream_1", "stream_2"] })
+      await new Promise((resolve) => setTimeout(resolve, 10))
+    })
+
+    await waitFor(async () => {
+      expect((await db.unreadState.get("ws_1"))?.unreadCounts.stream_2).toBe(0)
+    })
+
+    const state = await db.unreadState.get("ws_1")
+    // B's explicit unread survives on stream_1: count, overlay, held activity.
+    expect(state?.unreadCounts.stream_1).toBe(5)
+    expect(state?.readMessageIds?.stream_1).toEqual(["msg_x"])
+    expect(state?.unreadActivities?.map((a) => a.id)).toEqual(["act_1"])
+    expect(state?.activityCounts).toEqual({ stream_1: 1 })
+    expect(state?.unreadActivityCount).toBe(1)
+    // The untouched stream_2 applied in the same atomic transaction.
+    expect(state?.unreadCounts.stream_2).toBe(0)
+    expect(state?.readMessageIds?.stream_2).toBeUndefined()
+    expect(typeof state?.counterTouchedAt?.stream_2).toBe("number")
+    // B's frontier survives — operation order wins, no max-merge over the unread.
+    expect(await db.streamReadState.get("ws_1:stream_1")).toMatchObject({
+      lastReadEventId: "evt_50",
+      lastReadSequence: "50",
+    })
+
+    const updated = queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap("ws_1"))
+    expect(updated?.unreadCounts).toEqual({ stream_1: 5, stream_2: 0 })
+    expect(updated?.readMessageIds).toEqual({ stream_1: ["msg_x"] })
+    expect(updated?.unreadActivities?.map((a) => a.id)).toEqual(["act_1"])
+    expect(updated?.activityCounts).toEqual({ stream_1: 1 })
+    expect(updated?.unreadActivityCount).toBe(1)
+  })
+
+  it("a same-request socket echo followed by the delayed HTTP success is idempotent", async () => {
+    const queryClient = await seedMarkAllState()
+
+    let resolveMarkAll!: (response: MarkAllAsReadResponse) => void
+    mockMarkAllAsRead.mockReturnValue(new Promise((resolve) => (resolveMarkAll = resolve)))
+
+    const { result } = renderHook(() => useUnreadCounts("ws_1"), { wrapper: createWrapper(queryClient) })
+    act(() => {
+      result.current.markAllAsRead()
+    })
+    await waitFor(() => expect(mockMarkAllAsRead).toHaveBeenCalledWith("ws_1"))
+
+    // The request's own stream:read_all socket echo lands first: zeroes both
+    // counters, clears the overlays and held activities, and stamps every
+    // frontier row (sync-log order owns the state from here).
+    const echoAt = Date.now()
+    await db.unreadState.put({
+      ...(await db.unreadState.get("ws_1"))!,
+      unreadCounts: { stream_1: 0, stream_2: 0 },
+      readMessageIds: {},
+      unreadActivities: [],
+      activityCounts: {},
+      mentionCounts: {},
+      unreadActivityCount: 0,
+      _cachedAt: echoAt,
+    })
+    await seedFrontier("stream_1", "event_old", "10", echoAt)
+    await seedFrontier("stream_2", "event_old", "20", echoAt)
+    queryClient.setQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap("ws_1"), (old) => ({
+      ...old!,
+      unreadCounts: { stream_1: 0, stream_2: 0 },
+      readMessageIds: {},
+      unreadActivities: [],
+      activityCounts: {},
+      mentionCounts: {},
+      unreadActivityCount: 0,
+    }))
+
+    // The delayed HTTP success resolves with the same streams — every stream
+    // was touched by the echo, so the success is a no-op.
+    await act(async () => {
+      resolveMarkAll({ updatedStreamIds: ["stream_1", "stream_2"] })
+      await new Promise((resolve) => setTimeout(resolve, 10))
+    })
+
+    const state = await db.unreadState.get("ws_1")
+    expect(state?.unreadCounts).toEqual({ stream_1: 0, stream_2: 0 })
+    expect(state?.readMessageIds).toEqual({})
+    expect(state?.unreadActivities).toEqual([])
+    // Frontier rows keep the echo's values AND stamp — the HTTP success writes nothing.
+    expect(await db.streamReadState.get("ws_1:stream_1")).toMatchObject({
+      lastReadEventId: "event_old",
+      lastReadSequence: "10",
+      _cachedAt: echoAt,
+    })
+    expect(await db.streamReadState.get("ws_1:stream_2")).toMatchObject({
+      lastReadEventId: "event_old",
+      lastReadSequence: "20",
+      _cachedAt: echoAt,
+    })
+    const updated = queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap("ws_1"))
+    expect(updated?.unreadCounts).toEqual({ stream_1: 0, stream_2: 0 })
+    expect(updated?.readMessageIds).toEqual({})
+    expect(updated?.unreadActivities).toEqual([])
+  })
+
+  it("a failed mark-all transaction aborts atomically — the cache publishes, IDB keeps the pre-response state", async () => {
+    const queryClient = await seedMarkAllState()
+
+    mockMarkAllAsRead.mockResolvedValue({ updatedStreamIds: ["stream_1", "stream_2"] })
+    const putSpy = vi.spyOn(db.unreadState, "put").mockRejectedValueOnce(new Error("idb boom"))
+
+    const { result } = renderHook(() => useUnreadCounts("ws_1"), { wrapper: createWrapper(queryClient) })
+    act(() => {
+      result.current.markAllAsRead()
+    })
+
+    // Cache publication precedes the transaction and still applies.
+    await waitFor(() => {
+      const updated = queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap("ws_1"))
+      expect(updated?.unreadCounts).toEqual({ stream_1: 0, stream_2: 0 })
+    })
+
+    // The transaction aborts as a unit: no stream zeroed in IDB, overlays and
+    // held activities intact — the single atomic transaction's failure semantics.
+    await waitFor(() => expect(putSpy).toHaveBeenCalledTimes(1))
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 10))
+    })
+
+    const state = await db.unreadState.get("ws_1")
+    expect(state?.unreadCounts).toEqual({ stream_1: 2, stream_2: 3 })
+    expect(state?.readMessageIds).toEqual({ stream_1: ["msg_a"], stream_2: ["msg_b"] })
+    expect(state?.unreadActivities?.map((a) => a.id)).toEqual(["act_1", "act_2"])
+    putSpy.mockRestore()
   })
 })

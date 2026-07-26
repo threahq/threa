@@ -87,7 +87,6 @@ function toCachedStream(stream: Stream, previous: CachedStream | undefined): Cac
     ...stream,
     lastMessagePreview: previous?.lastMessagePreview ?? null,
     notificationLevel: previous?.notificationLevel ?? null,
-    lastReadEventId: previous?.lastReadEventId ?? null,
     _cachedAt: Date.now(),
   }
 }
@@ -379,8 +378,6 @@ function useDraftDmStream(workspaceId: string, streamId: string, enabled: boolea
             streamId: message.streamId,
             memberId: currentUserId,
             notificationLevel: null,
-            lastReadEventId: null,
-            lastReadAt: null,
             joinedAt: message.createdAt,
             _cachedAt: now,
           })
@@ -412,8 +409,6 @@ function useDraftDmStream(workspaceId: string, streamId: string, enabled: boolea
               streamId: message.streamId,
               memberId: currentUserId,
               notificationLevel: null,
-              lastReadEventId: null,
-              lastReadAt: null,
               joinedAt: message.createdAt,
             }
           : null

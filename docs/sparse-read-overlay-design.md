@@ -9,7 +9,7 @@ verifying the design.
 ## The problem: two read geometries over one ordering
 
 The timeline reads a **contiguous prefix**: one rising watermark per
-(stream, member) — `stream_members.last_read_event_id` — with unread derived as
+(stream, user) — `stream_read_state.last_read_event_id` — with unread derived as
 `latestOrdinal − readOrdinal` on both sides of the wire
 (`countUnreadByStreamBatch`, `unread-counters.ts`).
 
@@ -38,9 +38,9 @@ splits lose state.
 
 Two layers of truth, one derivation:
 
-1. **The watermark — unchanged.** `last_read_event_id`, contiguous-prefix
-   semantics. All existing events keep their meaning. The timeline keeps
-   owning it.
+1. **The watermark.** `stream_read_state.last_read_event_id`, contiguous-prefix
+   semantics, keyed by (stream, user) — read state is user-anchored, not a
+   membership surface (membership ≠ access ≠ read state). The timeline owns it.
 
 2. **A sparse overlay above the watermark.** Table
    `stream_member_message_reads`: individually-read messages _above_ the
@@ -117,13 +117,12 @@ that is load-bearing for threads (see below).
 
 Thread membership is participation, not access (INV-62): a viewer can read a
 thread's messages on a card with **no** `stream_members` row
-(`checkStreamAccess` resolves thread→root; `StreamMemberRepository.update`
-no-ops without a row, so the existing `markAsRead` is a silent no-op on such
-threads). The overlay deliberately does not require a membership row:
-non-member thread legs are **overlay-only** — no watermark to advance, no
-compaction target. This is why the overlay, not a membership upsert, is the
-right storage: upserting memberships on read would corrupt the
-membership≠access contract.
+(`checkStreamAccess` resolves thread→root). Read state is user-anchored in
+`stream_read_state`, so a non-member thread leg gets the same watermark +
+overlay semantics as a member — a real frontier to advance and compact into —
+without any membership row. This is why read state and the overlay, not a
+membership upsert, are the right storage: upserting memberships on read would
+corrupt the membership≠access contract.
 
 ## Wire contracts (pinned)
 
@@ -152,7 +151,7 @@ lastReadOrdinal: number }`.
   stream's post-move `message_created` count). The move transaction also:
   (a) rehomes overlay rows for moved messages (`stream_id`, `event_id`,
   `sequence` refreshed to destination), and (b) repoints any source
-  membership whose `last_read_event_id` is a moved event to the nearest
+  read-state row whose `last_read_event_id` is a moved event to the nearest
   surviving prior source event (set-based) — fix A3 below.
 - **Message delete**: the delete transaction marks the message's
   `user_activity` rows read (`read_at = NOW() WHERE message_id = … AND
@@ -219,17 +218,15 @@ the two callbacks; rows stay UI-focused (INV-15). The label page sets neither
 
 Per spanned stream, a member message is unread iff it's past that stream's
 read frontier and not in the overlay. Every leg — root, member-thread, and
-non-member thread leg alike — resolves through its OWN effective frontier
-(standalone `stream_read_state` row wins when present, membership mirror
-fills an absent row during the rollout). Non-member legs get theirs lazily:
-the per-stream bootstrap carries the viewer's standalone frontier and the
-client persists it on open (a confirmed-absent row seeds a never-read
-sentinel — for a non-member, "no row" IS "before the first message"). A leg
-with no frontier yet is ungated, not approximated: the v1 root
-`last_read_at` time fallback was removed with the non-member unlock (read
-state re-homed off `stream_members`) — a card only renders rows from streams
-whose bootstrap ran, so rendered legs resolve. The board card rail must
-retain `sequence` on its rows (`eventToRenderable` currently drops it).
+non-member thread leg alike — resolves through its OWN frontier in
+`stream_read_state` (the sole read source; membership carries no watermark).
+Non-member legs get theirs lazily: the per-stream bootstrap carries the
+viewer's frontier and the client persists it on open (a confirmed-absent row
+seeds a never-read sentinel — "no row" IS "before the first message"). A leg
+with no frontier yet is ungated, never approximated against another stream's
+timestamp — a card only renders rows from streams whose bootstrap ran, so
+rendered legs resolve. The board card rail must retain `sequence` on its rows
+(`eventToRenderable` currently drops it).
 
 The stable-view "N new" pill (`use-stable-board-view`) is ordering-buffer
 state and stays fully independent of read state.
@@ -265,11 +262,11 @@ Investigated and adversarially re-verified; three real defects:
    the held rows so the badge can never disagree with what the feed shows.
    This also mops up any residual variant: the badge converges to feed truth
    the moment the user looks.
-4. **A3 (verify during implementation)** — a source membership whose
-   `last_read_event_id` points at a since-moved event counts unread against a
-   foreign thread-space sequence in `countUnreadByStreamBatch`
-   (`event-repository.ts:707`) — survives reload. **Fix:** the watermark
-   repoint in the move transaction. Ship with a regression test either way.
+4. **A3** — a source read-state row whose `last_read_event_id` points at a
+   since-moved event counts unread against a foreign thread-space sequence in
+   `countUnreadByStreamBatch` (`event-repository.ts:707`) — survives reload.
+   **Fix:** the watermark repoint in the move transaction. Ship with a
+   regression test either way.
 
 _(The activity half's originally-hypothesized D2-guard blockage was refuted
 in verification: `prevRead` collapses to 0 in the canonical scenario and the
@@ -324,12 +321,13 @@ newestSeenRow)` per conversation; the gate re-checks effective unread at
 - Optimistic `temp_` rows are never targets (the id doesn't exist
   server-side yet).
 
+Non-member thread frontiers are delivered: read state lives in
+`stream_read_state`, so every leg — member or not — carries its own frontier
+(no timestamp approximation on cards).
+
 ## Out of scope for v1
 
 - Restoring activity badges on mark-unread (accepted gap, matches the
   stream path).
 - Offline queueing for read actions (existing read mutations are not queued;
   the new ones match — parity, not a regression).
-- A principled read frontier for non-member threads — delivered with the
-  read-state re-home: legs carry their own standalone frontier (v1 used the
-  root `last_read_at` time fallback on cards).

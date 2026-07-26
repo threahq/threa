@@ -6,8 +6,6 @@ interface StreamMemberRow {
   stream_id: string
   member_id: string
   notification_level: string | null
-  last_read_event_id: string | null
-  last_read_at: Date | null
   joined_at: Date
 }
 
@@ -15,14 +13,11 @@ export interface StreamMember {
   streamId: string
   memberId: string
   notificationLevel: NotificationLevel | null
-  lastReadEventId: string | null
-  lastReadAt: Date | null
   joinedAt: Date
 }
 
 export interface UpdateStreamMemberParams {
   notificationLevel?: NotificationLevel | null
-  lastReadEventId?: string | null
 }
 
 function mapRowToMember(row: StreamMemberRow): StreamMember {
@@ -30,8 +25,6 @@ function mapRowToMember(row: StreamMemberRow): StreamMember {
     streamId: row.stream_id,
     memberId: row.member_id,
     notificationLevel: row.notification_level as NotificationLevel | null,
-    lastReadEventId: row.last_read_event_id,
-    lastReadAt: row.last_read_at,
     joinedAt: row.joined_at,
   }
 }
@@ -39,28 +32,9 @@ function mapRowToMember(row: StreamMemberRow): StreamMember {
 export const StreamMemberRepository = {
   async findByStreamAndMember(db: Querier, streamId: string, memberId: string): Promise<StreamMember | null> {
     const result = await db.query<StreamMemberRow>(sql`
-      SELECT stream_id, member_id, notification_level,
-             last_read_event_id, last_read_at, joined_at
+      SELECT stream_id, member_id, notification_level, joined_at
       FROM stream_members
       WHERE stream_id = ${streamId} AND member_id = ${memberId}
-    `)
-    return result.rows[0] ? mapRowToMember(result.rows[0]) : null
-  },
-
-  /**
-   * Locked read of one membership row (`FOR UPDATE`). Returns null when the
-   * member has no row on the stream — the sparse-read core relies on this to tell
-   * a member stream (watermark + compaction) apart from a non-member thread leg
-   * (overlay-only, no row to lock). Serializes concurrent read/unread writes for
-   * the same (stream, member) behind the lock (INV-20).
-   */
-  async findByStreamAndMemberForUpdate(db: Querier, streamId: string, memberId: string): Promise<StreamMember | null> {
-    const result = await db.query<StreamMemberRow>(sql`
-      SELECT stream_id, member_id, notification_level,
-             last_read_event_id, last_read_at, joined_at
-      FROM stream_members
-      WHERE stream_id = ${streamId} AND member_id = ${memberId}
-      FOR UPDATE
     `)
     return result.rows[0] ? mapRowToMember(result.rows[0]) : null
   },
@@ -69,8 +43,7 @@ export const StreamMemberRepository = {
     if (streamIds.length === 0) return []
 
     const result = await db.query<StreamMemberRow>(sql`
-      SELECT stream_id, member_id, notification_level,
-             last_read_event_id, last_read_at, joined_at
+      SELECT stream_id, member_id, notification_level, joined_at
       FROM stream_members
       WHERE stream_id = ANY(${streamIds}) AND member_id = ${memberId}
     `)
@@ -83,8 +56,7 @@ export const StreamMemberRepository = {
   ): Promise<StreamMember[]> {
     if (filters.memberId && !filters.streamId && !filters.streamIds) {
       const result = await db.query<StreamMemberRow>(sql`
-        SELECT stream_id, member_id, notification_level,
-               last_read_event_id, last_read_at, joined_at
+        SELECT stream_id, member_id, notification_level, joined_at
         FROM stream_members
         WHERE member_id = ${filters.memberId}
         ORDER BY joined_at DESC
@@ -94,8 +66,7 @@ export const StreamMemberRepository = {
 
     if (filters.streamId && !filters.memberId) {
       const result = await db.query<StreamMemberRow>(sql`
-        SELECT stream_id, member_id, notification_level,
-               last_read_event_id, last_read_at, joined_at
+        SELECT stream_id, member_id, notification_level, joined_at
         FROM stream_members
         WHERE stream_id = ${filters.streamId}
         ORDER BY joined_at
@@ -105,8 +76,7 @@ export const StreamMemberRepository = {
 
     if (filters.streamIds && filters.streamIds.length > 0 && !filters.memberId) {
       const result = await db.query<StreamMemberRow>(sql`
-        SELECT stream_id, member_id, notification_level,
-               last_read_event_id, last_read_at, joined_at
+        SELECT stream_id, member_id, notification_level, joined_at
         FROM stream_members
         WHERE stream_id = ANY(${filters.streamIds})
         ORDER BY joined_at
@@ -126,8 +96,7 @@ export const StreamMemberRepository = {
 
     if (options?.cursorJoinedAt && options?.cursorMemberId) {
       const result = await db.query<StreamMemberRow>(sql`
-        SELECT stream_id, member_id, notification_level,
-               last_read_event_id, last_read_at, joined_at
+        SELECT stream_id, member_id, notification_level, joined_at
         FROM stream_members
         WHERE stream_id = ${streamId}
           AND (joined_at, member_id) > (${options.cursorJoinedAt}, ${options.cursorMemberId})
@@ -138,8 +107,7 @@ export const StreamMemberRepository = {
     }
 
     const result = await db.query<StreamMemberRow>(sql`
-      SELECT stream_id, member_id, notification_level,
-             last_read_event_id, last_read_at, joined_at
+      SELECT stream_id, member_id, notification_level, joined_at
       FROM stream_members
       WHERE stream_id = ${streamId}
       ORDER BY joined_at, member_id
@@ -153,8 +121,7 @@ export const StreamMemberRepository = {
       INSERT INTO stream_members (stream_id, member_id)
       VALUES (${streamId}, ${memberId})
       ON CONFLICT (stream_id, member_id) DO NOTHING
-      RETURNING stream_id, member_id, notification_level,
-                last_read_event_id, last_read_at, joined_at
+      RETURNING stream_id, member_id, notification_level, joined_at
     `)
     if (result.rows.length === 0) {
       const existing = await this.findByStreamAndMember(db, streamId, memberId)
@@ -173,8 +140,7 @@ export const StreamMemberRepository = {
       SELECT ${streamId}, members.member_id
       FROM unnest(${uniqueMemberIds}::text[]) AS members(member_id)
       ON CONFLICT (stream_id, member_id) DO NOTHING
-      RETURNING stream_id, member_id, notification_level,
-                last_read_event_id, last_read_at, joined_at
+      RETURNING stream_id, member_id, notification_level, joined_at
     `)
 
     if (inserted.rows.length === uniqueMemberIds.length) {
@@ -187,8 +153,7 @@ export const StreamMemberRepository = {
     }
 
     const existing = await db.query<StreamMemberRow>(sql`
-      SELECT stream_id, member_id, notification_level,
-             last_read_event_id, last_read_at, joined_at
+      SELECT stream_id, member_id, notification_level, joined_at
       FROM stream_members
       WHERE stream_id = ${streamId} AND member_id = ANY(${uniqueMemberIds})
     `)
@@ -215,11 +180,6 @@ export const StreamMemberRepository = {
       sets.push(`notification_level = $${paramIndex++}`)
       values.push(params.notificationLevel)
     }
-    if (params.lastReadEventId !== undefined) {
-      sets.push(`last_read_event_id = $${paramIndex++}`)
-      values.push(params.lastReadEventId)
-      sets.push(`last_read_at = NOW()`)
-    }
 
     if (sets.length === 0) return this.findByStreamAndMember(db, streamId, memberId)
 
@@ -228,76 +188,10 @@ export const StreamMemberRepository = {
     const query = `
       UPDATE stream_members SET ${sets.join(", ")}
       WHERE stream_id = $${paramIndex++} AND member_id = $${paramIndex}
-      RETURNING stream_id, member_id, notification_level,
-                last_read_event_id, last_read_at, joined_at
+      RETURNING stream_id, member_id, notification_level, joined_at
     `
     const result = await db.query<StreamMemberRow>(query, values)
     return result.rows[0] ? mapRowToMember(result.rows[0]) : null
-  },
-
-  /**
-   * Of `memberIds`, which have a read watermark at or past `sequence`? Resolves
-   * each member's last_read_event_id to its event sequence and keeps those that
-   * are >= the target. Members with no watermark (or one that no longer resolves
-   * to an event) are treated as behind and omitted. Used to born-read an activity
-   * whose source message the recipient has already read — closing the race where
-   * the read-time activity clear runs before the async activity row is written.
-   */
-  async membersReadThrough(db: Querier, streamId: string, memberIds: string[], sequence: bigint): Promise<Set<string>> {
-    if (memberIds.length === 0) return new Set()
-    const result = await db.query<{ member_id: string }>(sql`
-      SELECT sm.member_id
-      FROM stream_members sm
-      JOIN stream_events se ON se.id = sm.last_read_event_id
-      WHERE sm.stream_id = ${streamId}
-        AND sm.member_id = ANY(${memberIds})
-        AND se.sequence >= ${sequence.toString()}
-    `)
-    return new Set(result.rows.map((row) => row.member_id))
-  },
-
-  /**
-   * A3 fix (sparse-read design): after a move relocates events out of a source
-   * stream, any source membership whose `last_read_event_id` is one of those
-   * moved events now counts unread against a foreign thread-space sequence. Repoint
-   * each such watermark to the nearest surviving prior event in the source stream
-   * (greatest sequence strictly below the moved event's original source sequence),
-   * or null when nothing prior survives. Set-based (INV-56); MUST run AFTER the
-   * move so the moved rows are already gone from the source and can't be chosen as
-   * their own predecessor. `last_read_at` is deliberately left untouched: this is
-   * an automated correction, not a read, and the timestamp feeds the conversation
-   * card's time fallback — bumping it to NOW() would falsely mark every older
-   * sequenceless/non-member-thread row as read.
-   */
-  async repointWatermarksForMovedEvents(
-    db: Querier,
-    sourceStreamId: string,
-    movedEvents: Array<{ eventId: string; sequence: bigint }>
-  ): Promise<void> {
-    if (movedEvents.length === 0) return
-    const eventIds = movedEvents.map((e) => e.eventId)
-    const sequences = movedEvents.map((e) => e.sequence.toString())
-    await db.query(
-      `
-      WITH moved AS (
-        SELECT unnest($2::text[]) AS event_id, unnest($3::bigint[]) AS src_seq
-      ),
-      repoint AS (
-        SELECT sm.member_id,
-          (SELECT e.id FROM stream_events e
-             WHERE e.stream_id = $1 AND e.sequence < moved.src_seq
-             ORDER BY e.sequence DESC LIMIT 1) AS new_event_id
-        FROM stream_members sm
-        JOIN moved ON moved.event_id = sm.last_read_event_id
-        WHERE sm.stream_id = $1
-      )
-      UPDATE stream_members sm
-      SET last_read_event_id = repoint.new_event_id
-      FROM repoint
-      WHERE sm.stream_id = $1 AND sm.member_id = repoint.member_id
-      `,
-      [sourceStreamId, eventIds, sequences]
-    )
   },
 
   async delete(db: Querier, streamId: string, memberId: string): Promise<boolean> {
@@ -362,38 +256,6 @@ export const StreamMemberRepository = {
       WHERE stream_id = ${streamId} AND member_id = ANY(${memberIds})
     `)
     return new Set(result.rows.map((r) => r.member_id))
-  },
-
-  async batchUpdateLastReadEventId(db: Querier, memberId: string, updates: Map<string, string>): Promise<void> {
-    if (updates.size === 0) return
-
-    const streamIds = Array.from(updates.keys())
-    const eventIds = Array.from(updates.values())
-
-    await db.query(
-      `
-      UPDATE stream_members sm
-      SET last_read_event_id = u.event_id, last_read_at = NOW()
-      FROM (SELECT unnest($1::text[]) as stream_id, unnest($2::text[]) as event_id) u
-      WHERE sm.stream_id = u.stream_id AND sm.member_id = $3
-      `,
-      [streamIds, eventIds, memberId]
-    )
-  },
-
-  async setLastReadEventIdForMembers(
-    db: Querier,
-    streamId: string,
-    memberIds: string[],
-    lastReadEventId: string
-  ): Promise<void> {
-    if (memberIds.length === 0) return
-
-    await db.query(
-      `UPDATE stream_members SET last_read_event_id = $1, last_read_at = NOW()
-       WHERE stream_id = $2 AND member_id = ANY($3)`,
-      [lastReadEventId, streamId, memberIds]
-    )
   },
 
   async filterStreamsWithAllMembers(db: Querier, streamIds: string[], memberIds: string[]): Promise<Set<string>> {

@@ -29,6 +29,7 @@ import type {
   FeatureFlagLayers,
   StreamMember,
   StreamReadFrontier,
+  StreamReadFrontierSnapshot,
   UserPreferences,
   SidebarConfig,
   WorkspaceSettings,
@@ -98,6 +99,7 @@ import {
 import { isAutoReadAttentiveNow } from "@/lib/auto-read-attention"
 import { commitCounterMutation, commitStreamPreview, type CatchUpBatch, type CounterMutator } from "./catch-up-batch"
 import {
+  commitReadAll,
   commitReadStateSnapshot,
   mergeReadStateIntoBootstrapCache,
   putReadStateIdb,
@@ -191,6 +193,12 @@ interface StreamsReadAllPayload {
   streamIds: string[]
   /** Absolute read position per updated stream. */
   reads: Array<{ streamId: string; lastReadOrdinal: number }>
+  /**
+   * The canonical post-write frontier per updated stream (additive). Absent on
+   * legacy events from before the field shipped — the handler leaves existing
+   * frontiers untouched and relies on the next bootstrap to reconcile.
+   */
+  frontiers?: StreamReadFrontierSnapshot[]
 }
 
 // Read-pointer SET from an explicit "mark as unread". Unlike stream:read, the
@@ -338,9 +346,6 @@ function toWorkspaceBootstrapMembership(membership: CachedStreamMembership): Str
     streamId: membership.streamId,
     memberId: membership.memberId,
     notificationLevel: membership.notificationLevel,
-    lastReadEventId: membership.lastReadEventId,
-    lastReadSequence: membership.lastReadSequence,
-    lastReadAt: membership.lastReadAt,
     joinedAt: membership.joinedAt,
   }
 }
@@ -580,6 +585,17 @@ export function mergeReconnectWorkspaceBootstrap({
       membershipsByStreamId.delete(streamId)
     }
 
+    // The per-stream bootstrap carries the viewer's frontier (the field the
+    // membership watermark used to ride). A present row overrides; a confirmed
+    // absent row (null) is the never-read frontier. Absent field (payloads
+    // cached before it shipped) leaves whatever the workspace map holds.
+    if (bootstrap.readState !== undefined) {
+      readStateByStreamId.set(
+        streamId,
+        bootstrap.readState ?? { lastReadEventId: null, lastReadSequence: null, lastReadAt: null }
+      )
+    }
+
     unreadCounts[streamId] = bootstrap.unreadCount
     setMutedState(mutedStreamIds, streamId, bootstrap.stream.type, bootstrap.membership?.notificationLevel)
   }
@@ -756,8 +772,6 @@ export function registerWorkspaceSocketHandlers(
                 streamId: payload.stream.id,
                 memberId: currentUserId!,
                 notificationLevel: null,
-                lastReadEventId: null,
-                lastReadAt: null,
                 joinedAt: payload.stream.createdAt,
               },
             ]
@@ -790,8 +804,6 @@ export function registerWorkspaceSocketHandlers(
           streamId: payload.stream.id,
           memberId: currentUserId,
           notificationLevel: null,
-          lastReadEventId: null,
-          lastReadAt: null,
           joinedAt: payload.stream.createdAt,
           _cachedAt: now,
         })
@@ -865,9 +877,9 @@ export function registerWorkspaceSocketHandlers(
     })
 
     // Update IndexedDB — use update() (partial merge) instead of put() (full replace)
-    // to preserve fields not on the Stream payload: lastMessagePreview,
-    // notificationLevel, lastReadEventId (merged from membership during bootstrap).
-    // For DMs, also preserve the resolved displayName since the backend sends null.
+    // to preserve cached fields not carried by the Stream payload, notably the
+    // last-message preview and notification level. For DMs, also preserve the
+    // resolved displayName since the backend sends null.
     const idbUpdate =
       payload.stream.type === StreamTypes.DM && payload.stream.displayName == null
         ? (() => {
@@ -989,53 +1001,17 @@ export function registerWorkspaceSocketHandlers(
     const current = queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap(workspaceId))
     const hadActivity = (current?.activityCounts[payload.streamId] ?? 0) > 0
 
-    // Read-pointer mirror (non-counter) — applied immediately so the unread
-    // divider tracks even mid catch-up; the counter goes through commitCounter.
-    queryClient.setQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap(workspaceId), (old) => {
-      if (!old) return old
-      return {
-        ...old,
-        streamMemberships: old.streamMemberships.map((membership) =>
-          membership.streamId === payload.streamId
-            ? {
-                ...membership,
-                lastReadEventId: payload.lastReadEventId,
-                ...(payload.lastReadSequence !== undefined ? { lastReadSequence: payload.lastReadSequence } : {}),
-              }
-            : membership
-        ),
-      }
-    })
-
     commitCounter((state) =>
       applyStreamReadOrdinal(state, payload.streamId, payload.lastReadOrdinal, payload.readMessageIds)
     )
 
-    queryClient.setQueryData<import("@threa/types").StreamBootstrap | undefined>(
-      streamKeys.bootstrap(workspaceId, payload.streamId),
-      (old) => {
-        if (!old?.membership) return old
-        return {
-          ...old,
-          membership: {
-            ...old.membership,
-            lastReadEventId: payload.lastReadEventId,
-            ...(payload.lastReadSequence !== undefined ? { lastReadSequence: payload.lastReadSequence } : {}),
-          },
-        }
-      }
-    )
-
-    // Standalone frontier (read cutover): the payload carries the server's
-    // post-write read-state frontier, which can sit above the membership
-    // mirror (monotonic store). Advance semantics — like the ordinal
-    // max-merge above, a replayed/stale event never moves it backward.
-    // Legacy payloads may omit lastReadSequence: event ids are NOT
-    // order-comparable, so a sequence-less event can never be safely merged
-    // over an EXISTING standalone frontier — skip the standalone mutation and
-    // rely on the next bootstrap to reconcile. Seeding a compatibility row
-    // where no frontier exists is allowed (row presence beats the membership
-    // fallback). The legacy mirror + counter behavior above is unchanged.
+    // Read frontier (sole source): the payload carries the server's post-write
+    // frontier, applied immediately so the unread divider tracks even mid
+    // catch-up. Advance semantics — a replayed/stale event never moves it
+    // backward. Legacy payloads may omit lastReadSequence: event ids are NOT
+    // order-comparable, so a sequence-less event can never be safely merged over
+    // an EXISTING frontier — skip the mutation and rely on the next bootstrap to
+    // reconcile. Seeding a row where no frontier exists is allowed.
     const existingFrontier = current?.streamReadState?.[payload.streamId]
     const sequenceLess = payload.lastReadSequence === undefined
     const advanceFrontier = {
@@ -1048,32 +1024,18 @@ export function registerWorkspaceSocketHandlers(
       const existingSeq = existingFrontier?.lastReadSequence != null ? BigInt(existingFrontier.lastReadSequence) : null
       if (existingSeq == null || advanceSeq == null || advanceSeq >= existingSeq) {
         mergeReadStateIntoBootstrapCache(queryClient, workspaceId, payload.streamId, advanceFrontier)
+        queryClient.setQueryData<import("@threa/types").StreamBootstrap | undefined>(
+          streamKeys.bootstrap(workspaceId, payload.streamId),
+          (old) => (old ? { ...old, readState: advanceFrontier } : old)
+        )
       }
     }
 
-    // Keep the stream, membership, and standalone read-state mirrors in sync
-    // so unread-divider state updates immediately without waiting for a
-    // re-bootstrap/remount.
-    db.transaction("rw", [db.streams, db.streamMemberships, db.streamReadState], async () => {
+    db.transaction("rw", [db.streamReadState], async () => {
       const now = Date.now()
-      await db.streams.update(payload.streamId, { lastReadEventId: payload.lastReadEventId, _cachedAt: now })
-
-      const membershipId = `${workspaceId}:${payload.streamId}`
-      const membership = await db.streamMemberships.get(membershipId)
-      if (membership) {
-        await db.streamMemberships.put({
-          ...membership,
-          lastReadEventId: payload.lastReadEventId,
-          ...(payload.lastReadSequence !== undefined ? { lastReadSequence: payload.lastReadSequence } : {}),
-          id: membershipId,
-          workspaceId,
-          _cachedAt: now,
-        })
-      }
-
-      const existingRow = await db.streamReadState.get(membershipId)
-      // Same legacy guard as the cache merge above: a sequence-less event
-      // never overwrites an EXISTING standalone row — it may only seed one.
+      const existingRow = await db.streamReadState.get(`${workspaceId}:${payload.streamId}`)
+      // Same legacy guard as the cache merge above: a sequence-less event never
+      // overwrites an EXISTING row — it may only seed one.
       if (!sequenceLess || existingRow === undefined) {
         const rowSeq = advanceFrontier.lastReadSequence != null ? BigInt(advanceFrontier.lastReadSequence) : null
         const storedSeq = existingRow?.lastReadSequence != null ? BigInt(existingRow.lastReadSequence) : null
@@ -1098,70 +1060,29 @@ export function registerWorkspaceSocketHandlers(
   const handleStreamReadSet = (payload: StreamReadSetPayload) => {
     if (payload.workspaceId !== workspaceId) return
 
-    queryClient.setQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap(workspaceId), (old) => {
-      if (!old) return old
-      return {
-        ...old,
-        streamMemberships: old.streamMemberships.map((membership) =>
-          membership.streamId === payload.streamId
-            ? {
-                ...membership,
-                lastReadEventId: payload.lastReadEventId,
-                ...(payload.lastReadSequence !== undefined ? { lastReadSequence: payload.lastReadSequence } : {}),
-              }
-            : membership
-        ),
-      }
-    })
-
     commitCounter((state) =>
       applyStreamReadSet(state, payload.streamId, payload.lastReadOrdinal, payload.readMessageIds)
     )
 
-    queryClient.setQueryData<import("@threa/types").StreamBootstrap | undefined>(
-      streamKeys.bootstrap(workspaceId, payload.streamId),
-      (old) => {
-        if (!old?.membership) return old
-        return {
-          ...old,
-          membership: {
-            ...old.membership,
-            lastReadEventId: payload.lastReadEventId,
-            ...(payload.lastReadSequence !== undefined ? { lastReadSequence: payload.lastReadSequence } : {}),
-          },
-        }
-      }
-    )
-
-    // Standalone frontier (read cutover): explicit unread is one of the few
-    // authorized downward moves — SET, not max-merge (a null watermark parks
-    // before the first message and must beat any stale stored value).
+    // Read frontier (sole source): explicit unread is one of the few authorized
+    // downward moves — SET, not max-merge (a null watermark parks before the
+    // first message and must beat any stale stored value).
     const current = queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap(workspaceId))
     const existingFrontier = current?.streamReadState?.[payload.streamId]
-    mergeReadStateIntoBootstrapCache(queryClient, workspaceId, payload.streamId, {
+    const frontier = {
       lastReadEventId: payload.lastReadEventId,
       lastReadSequence: payload.lastReadSequence ?? existingFrontier?.lastReadSequence ?? null,
       lastReadAt: new Date().toISOString(),
-    })
+    }
+    mergeReadStateIntoBootstrapCache(queryClient, workspaceId, payload.streamId, frontier)
+    queryClient.setQueryData<import("@threa/types").StreamBootstrap | undefined>(
+      streamKeys.bootstrap(workspaceId, payload.streamId),
+      (old) => (old ? { ...old, readState: frontier } : old)
+    )
 
-    db.transaction("rw", [db.streams, db.streamMemberships, db.streamReadState], async () => {
+    db.transaction("rw", [db.streamReadState], async () => {
       const now = Date.now()
-      await db.streams.update(payload.streamId, { lastReadEventId: payload.lastReadEventId, _cachedAt: now })
-
-      const membershipId = `${workspaceId}:${payload.streamId}`
-      const membership = await db.streamMemberships.get(membershipId)
-      if (membership) {
-        await db.streamMemberships.put({
-          ...membership,
-          lastReadEventId: payload.lastReadEventId,
-          ...(payload.lastReadSequence !== undefined ? { lastReadSequence: payload.lastReadSequence } : {}),
-          id: membershipId,
-          workspaceId,
-          _cachedAt: now,
-        })
-      }
-
-      const existingRow = await db.streamReadState.get(membershipId)
+      const existingRow = await db.streamReadState.get(`${workspaceId}:${payload.streamId}`)
       await putReadStateIdb(
         workspaceId,
         payload.streamId,
@@ -1206,7 +1127,19 @@ export function registerWorkspaceSocketHandlers(
   const handleStreamReadAll = (payload: StreamsReadAllPayload) => {
     if (payload.workspaceId !== workspaceId) return
 
-    commitCounter((state) => applyStreamsReadAllOrdinals(state, payload.reads))
+    // Counter fold (absolute read positions + overlay clearing) and the
+    // canonical frontier rows persist in ONE transaction: folded into the
+    // catch-up batch when one is active (its flush covers every table the
+    // replay touched), else committed live through commitReadAll. The additive
+    // `frontiers` snapshot carries each updated stream's post-write watermark;
+    // legacy payloads omit it — counter behavior only, frontier rows untouched.
+    const batch = refs.getCatchUpBatch?.() ?? null
+    if (batch) {
+      batch.applyCounter((state) => applyStreamsReadAllOrdinals(state, payload.reads))
+      batch.applyReadAllFrontiers(payload.frontiers)
+    } else {
+      void commitReadAll(queryClient, workspaceId, payload.reads, payload.frontiers)
+    }
 
     // Standalone frontier (read cutover): read_all carries ordinals, no event
     // ids, so the frontier VALUES can't move here — but stamp the rows so an
@@ -1524,8 +1457,6 @@ export function registerWorkspaceSocketHandlers(
             streamId: payload.streamId,
             memberId: payload.memberId,
             notificationLevel: null,
-            lastReadEventId: null,
-            lastReadAt: null,
             joinedAt: new Date().toISOString(),
           },
         ],
@@ -1550,8 +1481,6 @@ export function registerWorkspaceSocketHandlers(
           streamId: payload.streamId,
           memberId: payload.memberId,
           notificationLevel: null,
-          lastReadEventId: null,
-          lastReadAt: null,
           joinedAt: new Date().toISOString(),
           _cachedAt: now,
         })
@@ -1570,8 +1499,6 @@ export function registerWorkspaceSocketHandlers(
                 streamId: payload.streamId,
                 memberId: payload.memberId,
                 notificationLevel: null,
-                lastReadEventId: null,
-                lastReadAt: null,
                 joinedAt: new Date().toISOString(),
               },
             ],
@@ -2512,7 +2439,6 @@ export async function applyWorkspaceBootstrap(
             return {
               ...s,
               notificationLevel: membership?.notificationLevel,
-              lastReadEventId: membership?.lastReadEventId,
               // Preserve fields workspace-bootstrap doesn't carry but stream-
               // bootstrap does (bag mirroring lives in `applyStreamBootstrap`).
               contextBag: existing?.contextBag,
@@ -2651,7 +2577,6 @@ export async function applyWorkspaceBootstrap(
       ...bootstrap.streams.map((s) => ({
         ...s,
         notificationLevel: membershipByStream.get(s.id)?.notificationLevel,
-        lastReadEventId: membershipByStream.get(s.id)?.lastReadEventId,
         _cachedAt: now,
       })),
       // Archived roots must be in the synchronous seed too, or the first paint
@@ -2805,7 +2730,6 @@ export async function applyReconnectBootstrapBatch(
             return {
               ...stream,
               notificationLevel: membership?.notificationLevel,
-              lastReadEventId: membership?.lastReadEventId,
               // Preserve fields workspace-bootstrap doesn't carry but
               // stream-bootstrap mirrors locally (`contextBag` is the
               // canonical example — see `applyStreamBootstrap`).
@@ -2916,7 +2840,6 @@ export async function applyReconnectBootstrapBatch(
       ...finalBootstrap.streams.map((stream) => ({
         ...stream,
         notificationLevel: membershipByStream.get(stream.id)?.notificationLevel,
-        lastReadEventId: membershipByStream.get(stream.id)?.lastReadEventId,
         _cachedAt: now,
       })),
       // Mirrors applyWorkspaceBootstrap: archived roots ride the seed so the

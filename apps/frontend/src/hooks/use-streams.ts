@@ -144,8 +144,6 @@ export function useCreateStream(workspaceId: string) {
         streamId: newStream.id,
         memberId: newStream.createdBy,
         notificationLevel: null,
-        lastReadEventId: null,
-        lastReadAt: null,
         joinedAt: newStream.createdAt,
       }
 
@@ -177,8 +175,6 @@ export function useCreateStream(workspaceId: string) {
           streamId: newStream.id,
           memberId: newStream.createdBy,
           notificationLevel: null,
-          lastReadEventId: null,
-          lastReadAt: null,
           joinedAt: newStream.createdAt,
           _cachedAt: now,
         }),

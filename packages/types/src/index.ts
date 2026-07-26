@@ -549,6 +549,8 @@ export type {
   CreateWorkspaceInput,
   WorkspaceBootstrap,
   StreamReadFrontier,
+  StreamReadFrontierSnapshot,
+  MarkAllAsReadResponse,
   ActiveAgentSession,
   ActiveCall,
   StreamActiveCall,

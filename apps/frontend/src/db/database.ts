@@ -120,7 +120,6 @@ export interface CachedStream {
   lastMessagePreview?: { authorId: string; authorType: AuthorType; content: string; createdAt: string } | null
   // User-specific state (from membership)
   notificationLevel?: string | null
-  lastReadEventId?: string | null
   /**
    * Persisted ContextBag attached to this stream. Mirrored into IDB by
    * `applyStreamBootstrap` so the timeline message-context badge can render
@@ -157,6 +156,12 @@ export interface CachedStream {
   _cachedAt: number
 }
 
+/**
+ * Stream participation only — membership carries no read state. The read
+ * frontier lives in {@link CachedStreamReadState} (membership ≠ access ≠ read
+ * state). Old rows cached before the watermark fields were dropped may still
+ * carry them; readers ignore them.
+ */
 export interface CachedStreamMembership {
   /** Composite key: `${workspaceId}:${streamId}` */
   id: string
@@ -164,16 +169,6 @@ export interface CachedStreamMembership {
   streamId: string
   memberId: string
   notificationLevel: NotificationLevel | null
-  lastReadEventId: string | null
-  /**
-   * The watermark event's per-stream sequence (stringified bigint), mirrored
-   * from the membership row / read events. Lets board-card unread derivation
-   * compare a row's sequence against the read frontier without holding the
-   * watermark event. Optional during rollout / for rows cached before it
-   * shipped. See docs/sparse-read-overlay-design.md.
-   */
-  lastReadSequence?: string | null
-  lastReadAt: string | null
   joinedAt: string
   _cachedAt: number
 }
@@ -188,13 +183,12 @@ export interface CachedDmPeer {
 }
 
 /**
- * The standalone per-user read frontier (read cutover: the watermark re-homed
- * off `stream_members` into `stream_read_state`). Row PRESENCE is authoritative
- * — a null `lastReadEventId` is an explicit "position before the first message"
- * frontier and must beat a stale non-null membership mirror; an ABSENT row falls
- * back to `streamMemberships` / `db.streams`. Seeded from the bootstrap's
- * `streamReadState` map and dual-written by the read appliers during the
- * transition. User-local: the database itself is per account (`accountDbName`).
+ * The per-user read frontier — the sole read source (sourced from
+ * `stream_read_state`). Row PRESENCE is authoritative: a null `lastReadEventId`
+ * is an explicit "position before the first message" frontier, distinct from an
+ * ABSENT row (never read). Seeded from the bootstrap's `streamReadState` map and
+ * kept current by the read socket appliers. User-local: the database itself is
+ * per account (`accountDbName`).
  */
 export interface CachedStreamReadState {
   /** Composite key: `${workspaceId}:${streamId}` */
@@ -1461,6 +1455,13 @@ export class ThreaDatabase extends Dexie {
     this.version(43).stores({
       streamReadState: "id, workspaceId, streamId, _cachedAt",
     })
+
+    // v44: stream_read_state is the sole read frontier. The membership watermark
+    // fields (`streamMemberships.lastReadEventId/lastReadSequence/lastReadAt`) and
+    // the `streams.lastReadEventId` compat frontier stop being written. They were
+    // unindexed value fields, so there is no schema delta and old rows are left
+    // as-is — readers ignore the stale properties (Dexie can't drop them).
+    this.version(44).stores({})
 
     this.workspaceUsers = this.table(WORKSPACE_USERS_STORE) as EntityTable<CachedWorkspaceUser, "id">
   }

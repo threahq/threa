@@ -341,8 +341,6 @@ describe("ActivityService inherited thread notifications", () => {
           streamId: rootId,
           memberId: TARGET_USER_ID,
           notificationLevel: NotificationLevels.EVERYTHING,
-          lastReadEventId: null,
-          lastReadAt: null,
           joinedAt: new Date(),
         },
       ])

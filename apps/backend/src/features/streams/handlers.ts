@@ -1047,15 +1047,14 @@ export function createStreamHandlers({
         })
       )
 
-      // Effective frontier for EVERY viewer with access (non-member unlock):
-      // a stream_read_state row wins when present (a NULL watermark included);
-      // the membership column fills an absent row; an access-without-membership
-      // viewer (INV-62) with neither reads as never-read (everything unread).
-      const unreadCount = await streamService.getEffectiveUnreadCount(streamId, userId, membership)
-      // The viewer's standalone frontier rides the per-stream response so
-      // non-member legs resolve theirs on open (the workspace bootstrap stays
-      // member-keyed). Sequence resolved off the watermark event, same as the
-      // workspace bootstrap's streamReadState map.
+      // Read frontier for EVERY viewer with access (non-member unlock): sourced
+      // solely from stream_read_state; an access-without-membership viewer (INV-62)
+      // with no row reads as never-read (everything unread).
+      const unreadCount = await streamService.getEffectiveUnreadCount(streamId, userId)
+      // The viewer's frontier rides the per-stream response so non-member legs
+      // resolve theirs on open (the workspace bootstrap stays member-keyed).
+      // Sequence resolved off the watermark event, same as the workspace
+      // bootstrap's streamReadState map.
       const readStateSequence = viewerReadState?.lastReadEventId
         ? ((await streamService.getSequencesByEventIds([viewerReadState.lastReadEventId])).get(
             viewerReadState.lastReadEventId

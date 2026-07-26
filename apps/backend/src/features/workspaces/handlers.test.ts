@@ -20,17 +20,9 @@ function makeStreamService(archivedStreams: unknown[]) {
     resolveDmDisplayNames: async (streams: Array<{ type?: string; displayName?: string | null }>) =>
       streams.map((s) => (s.type === "dm" ? { ...s, displayName: "Peer Name" } : s)),
     getMembershipsBatch: async () => [],
-    // Default: no standalone rows — the effective frontier mirrors membership.
-    getEffectiveReadState: async (
-      _userId: string,
-      memberships: Array<{ streamId: string; lastReadEventId: string | null; lastReadAt: Date | null }>
-    ) =>
-      new Map(
-        memberships.map((m) => [
-          m.streamId,
-          { streamId: m.streamId, lastReadEventId: m.lastReadEventId, lastReadAt: m.lastReadAt },
-        ])
-      ),
+    // Default: no read-state rows — every stream resolves as never-read.
+    getEffectiveReadState: async (_userId: string, streamIds: string[]) =>
+      new Map(streamIds.map((streamId) => [streamId, { streamId, lastReadEventId: null, lastReadAt: null }])),
     getUnreadCounts: async () => new Map(),
     getReadOverlayForMember: async () => new Map(),
     getSequencesByEventIds: async () => new Map(),
@@ -125,32 +117,25 @@ describe("workspace bootstrap handler", () => {
         streamId: "stream_a",
         memberId: "usr_1",
         notificationLevel: null,
-        lastReadEventId: "evt_m_a",
-        lastReadAt: new Date("2026-01-01T00:00:00.000Z"),
         joinedAt: new Date("2026-01-01T00:00:00.000Z"),
       },
       {
         streamId: "stream_b",
         memberId: "usr_1",
         notificationLevel: null,
-        lastReadEventId: "evt_m_b",
-        lastReadAt: new Date("2026-01-02T00:00:00.000Z"),
         joinedAt: new Date("2026-01-01T00:00:00.000Z"),
       },
       {
         streamId: "stream_c",
         memberId: "usr_1",
         notificationLevel: null,
-        lastReadEventId: "evt_m_c",
-        lastReadAt: new Date("2026-01-03T00:00:00.000Z"),
         joinedAt: new Date("2026-01-01T00:00:00.000Z"),
       },
     ]
     streamService.listWithPreviews = async () => memberships.map((m: any) => ({ id: m.streamId, type: "channel" }))
     streamService.getMembershipsBatch = async () => memberships
-    // stream_a: present row with NULL watermark (explicit unread-to-zero) beats
-    // the non-null membership column. stream_b: read-state above a regressed
-    // membership. stream_c: no row — membership fallback.
+    // stream_read_state is the sole source: stream_a has an explicit NULL
+    // watermark (unread-to-zero), stream_b and stream_c have real frontiers.
     streamService.getEffectiveReadState = async () =>
       new Map([
         ["stream_a", { streamId: "stream_a", lastReadEventId: null, lastReadAt: new Date("2026-02-01T00:00:00.000Z") }],
@@ -197,11 +182,14 @@ describe("workspace bootstrap handler", () => {
       },
     })
 
-    // The compat membership mirror keeps its own (possibly regressed) watermark
-    // and sequence, unchanged.
+    // Memberships carry participation only — no watermark fields.
     const serialized = getJson().data.streamMemberships
-    expect(serialized.find((m: any) => m.streamId === "stream_b").lastReadSequence).toBe("seq_of_evt_m_b")
-    expect(serialized.find((m: any) => m.streamId === "stream_b").lastReadEventId).toBe("evt_m_b")
+    expect(serialized.find((m: any) => m.streamId === "stream_b")).toEqual({
+      streamId: "stream_b",
+      memberId: "usr_1",
+      notificationLevel: null,
+      joinedAt: new Date("2026-01-01T00:00:00.000Z"),
+    })
   })
 
   it("emits the viewer's feature-flag layers, not a resolved map", async () => {

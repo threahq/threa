@@ -188,7 +188,7 @@ describe("EventService attachment safety checks", () => {
     spyOn(OutboxRepository, "insert").mockResolvedValue(undefined as any)
     spyOn(SharedMessageRepository, "deleteByShareMessageId").mockResolvedValue(undefined)
     spyOn(AttachmentReferenceRepository, "insertMany").mockResolvedValue(0)
-    spyOn(StreamMemberRepository, "update").mockResolvedValue(undefined as any)
+    spyOn(ReadStateRepository, "advance").mockResolvedValue(undefined as any)
     // One fresh row to attach → the bind call reports one row updated.
     spyOn(AttachmentRepository, "attachToMessage").mockResolvedValue(1)
     // Ciphertext send → the sink (INV-E1) requires the target stream to be E2E.
@@ -272,7 +272,7 @@ describe("EventService attachment safety checks", () => {
     spyOn(OutboxRepository, "insert").mockResolvedValue(undefined as any)
     spyOn(SharedMessageRepository, "deleteByShareMessageId").mockResolvedValue(undefined)
     spyOn(AttachmentReferenceRepository, "insertMany").mockResolvedValue(0)
-    spyOn(StreamMemberRepository, "update").mockResolvedValue(undefined as any)
+    spyOn(ReadStateRepository, "advance").mockResolvedValue(undefined as any)
     spyOn(AttachmentRepository, "attachToMessage").mockResolvedValue(1)
     return insertedEvents
   }
@@ -376,7 +376,7 @@ describe("EventService attachment safety checks", () => {
       type: "channel",
     } as any)
     spyOn(StreamMemberRepository, "isMember").mockResolvedValue(true)
-    spyOn(StreamMemberRepository, "update").mockResolvedValue(undefined as any)
+    spyOn(ReadStateRepository, "advance").mockResolvedValue(undefined as any)
     spyOn(StreamEventRepository, "insert").mockImplementation((async (_client: any, params: any) => ({
       id: "evt_1",
       streamId: params.streamId,
@@ -487,7 +487,7 @@ describe("EventService attachment safety checks", () => {
       type: "channel",
     } as any)
     const isMemberSpy = spyOn(StreamMemberRepository, "isMember").mockResolvedValue(false)
-    spyOn(StreamMemberRepository, "update").mockResolvedValue(undefined as any)
+    spyOn(ReadStateRepository, "advance").mockResolvedValue(undefined as any)
     spyOn(AttachmentReferenceRepository, "findReferencingStreamIds").mockResolvedValue([])
     spyOn(StreamEventRepository, "insert").mockImplementation((async (_client: any, params: any) => ({
       id: "evt_1",
@@ -940,7 +940,7 @@ describe("EventService.createMessage metadata propagation", () => {
     spyOn(AttachmentRepository, "attachToMessage").mockResolvedValue(0)
     spyOn(StreamEventRepository, "countMessagesThrough").mockResolvedValue(1)
     spyOn(StreamMemberRepository, "isMember").mockResolvedValue(true)
-    spyOn(StreamMemberRepository, "update").mockResolvedValue(undefined as any)
+    spyOn(ReadStateRepository, "advance").mockResolvedValue(undefined as any)
     spyOn(StreamEventRepository, "insert").mockImplementation((async (_client: any, params: any) => ({
       id: "evt_1",
       streamId: params.streamId,
@@ -1037,7 +1037,7 @@ describe("EventService.createMessage metadata propagation", () => {
   })
 })
 
-describe("EventService.createMessage born-read read-state shadow", () => {
+describe("EventService.createMessage author born-read", () => {
   const baseParams = {
     workspaceId: "ws_1",
     streamId: "stream_1",
@@ -1094,32 +1094,25 @@ describe("EventService.createMessage born-read read-state shadow", () => {
     mock.restore()
   })
 
-  it("advances the author's read state on the same tx client when the membership write lands", async () => {
-    spyOn(StreamMemberRepository, "update").mockResolvedValue({ streamId: "stream_1", memberId: "usr_1" } as any)
+  it("advances the author's read state on the same tx client", async () => {
     const service = new EventService({} as any)
 
     await service.createMessage(baseParams)
 
-    // The born-read watermark write and its read-state shadow land on the same tx
-    // client with the same (stream, author, event) — advance shadows the update.
-    const updateCall = (StreamMemberRepository.update as any).mock.calls[0]
-    expect(updateCall.slice(0, 3)).toEqual([{}, "stream_1", "usr_1"])
-    expect(ReadStateRepository.advance).toHaveBeenCalledWith(
-      updateCall[0],
-      "stream_1",
-      "usr_1",
-      updateCall[3].lastReadEventId
-    )
+    // The born-read lands in stream_read_state on the same tx client with the
+    // same (stream, author, event) — the author's own message isn't counted unread.
+    const createdEventId = (StreamEventRepository.insert as any).mock.calls[0][1].id
+    expect(ReadStateRepository.advance).toHaveBeenCalledWith({}, "stream_1", "usr_1", createdEventId)
   })
 
-  it("does not write read state for a non-member author (membership update no-ops)", async () => {
-    spyOn(StreamMemberRepository, "update").mockResolvedValue(null)
+  it("born-reads a non-member author too — read state is user-anchored, not membership-gated", async () => {
+    spyOn(StreamMemberRepository, "isMember").mockResolvedValue(false)
     const service = new EventService({} as any)
 
     await service.createMessage(baseParams)
 
-    expect(StreamMemberRepository.update).toHaveBeenCalled()
-    expect(ReadStateRepository.advance).not.toHaveBeenCalled()
+    const createdEventId = (StreamEventRepository.insert as any).mock.calls[0][1].id
+    expect(ReadStateRepository.advance).toHaveBeenCalledWith({}, "stream_1", "usr_1", createdEventId)
   })
 })
 
@@ -1145,7 +1138,7 @@ describe("EventService.createMessage conversation declaration (Mechanism C)", ()
     spyOn(AttachmentRepository, "attachToMessage").mockResolvedValue(0)
     spyOn(StreamEventRepository, "countMessagesThrough").mockResolvedValue(1)
     spyOn(StreamMemberRepository, "isMember").mockResolvedValue(true)
-    spyOn(StreamMemberRepository, "update").mockResolvedValue(undefined as any)
+    spyOn(ReadStateRepository, "advance").mockResolvedValue(undefined as any)
     spyOn(StreamEventRepository, "insert").mockImplementation((async (_client: any, params: any) => ({
       id: "evt_1",
       streamId: params.streamId,
@@ -1391,7 +1384,7 @@ describe("EventService.createMessage parent thread update (reply in thread)", ()
     spyOn(AttachmentRepository, "attachToMessage").mockResolvedValue(0)
     spyOn(StreamEventRepository, "countMessagesThrough").mockResolvedValue(1)
     spyOn(StreamMemberRepository, "isMember").mockResolvedValue(true)
-    spyOn(StreamMemberRepository, "update").mockResolvedValue(undefined as any)
+    spyOn(ReadStateRepository, "advance").mockResolvedValue(undefined as any)
     spyOn(StreamEventRepository, "insert").mockImplementation((async (_client: any, params: any) => ({
       id: "evt_1",
       streamId: params.streamId,
@@ -1555,7 +1548,7 @@ describe("EventService sharedMessages wire enrichment", () => {
       createdAt: new Date(),
     })) as any)
     spyOn(MessageRepository, "findByClientMessageId").mockResolvedValue(null)
-    spyOn(StreamMemberRepository, "update").mockResolvedValue(undefined as any)
+    spyOn(ReadStateRepository, "advance").mockResolvedValue(undefined as any)
     spyOn(OutboxRepository, "insert").mockResolvedValue(undefined as any)
     // Share validation runs over mocked repos (house style — the service
     // itself is not stubbed).
@@ -1744,7 +1737,6 @@ describe("EventService.moveMessagesToThread destination slot carrier (B3)", () =
     spyOn(StreamEventRepository, "moveEventsById").mockResolvedValue([])
     spyOn(MessageRepository, "moveToStream").mockResolvedValue(undefined as any)
     spyOn(SparseReadRepository, "rehomeReads").mockResolvedValue(undefined as any)
-    spyOn(StreamMemberRepository, "repointWatermarksForMovedEvents").mockResolvedValue(undefined as any)
     spyOn(ReadStateRepository, "repointForMovedEvents").mockResolvedValue(undefined as any)
     spyOn(DraftsRepository, "rescopeByScope").mockResolvedValue([])
     spyOn(MessageRepository, "updateStreamScopedReferences").mockResolvedValue(undefined as any)
@@ -1796,18 +1788,9 @@ describe("EventService.moveMessagesToThread destination slot carrier (B3)", () =
     expect(moved?.[2].slots).toEqual({ [sharedMessageSlotKey("msg_source")]: hydratedEntry })
     expect(moved?.[2].sharedMessages).toEqual({ msg_source: hydratedEntry })
 
-    // The read-state repoint shadows the membership repoint on the same tx client
-    // with the identical moved set (same source stream, same event+source-sequence pairs).
-    expect(StreamMemberRepository.repointWatermarksForMovedEvents).toHaveBeenCalledWith(
-      {},
-      "stream_src",
-      expect.any(Array)
-    )
-    expect(ReadStateRepository.repointForMovedEvents).toHaveBeenCalledWith(
-      {},
-      "stream_src",
-      (StreamMemberRepository.repointWatermarksForMovedEvents as any).mock.calls[0][2]
-    )
+    // A3: the moved events' source read frontiers are repointed on the same tx
+    // client (same source stream, event+source-sequence pairs).
+    expect(ReadStateRepository.repointForMovedEvents).toHaveBeenCalledWith({}, "stream_src", expect.any(Array))
   })
 
   it("omits both maps and skips hydration for a pointer-free move", async () => {

@@ -11,8 +11,6 @@ const mockMembership: StreamMember = {
   streamId: "stream_1",
   memberId: "member_1",
   notificationLevel: null,
-  lastReadEventId: null,
-  lastReadAt: null,
   joinedAt: "2025-01-01T00:00:00Z",
 }
 

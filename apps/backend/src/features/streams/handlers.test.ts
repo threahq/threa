@@ -548,8 +548,6 @@ describe("createStreamHandlers.markAsRead — access without membership", () => 
       streamId: "stream_thread",
       memberId: "usr_viewer",
       notificationLevel: null,
-      lastReadEventId: "evt_1",
-      lastReadAt: null,
       joinedAt: new Date(),
     }
     const validateStreamAccess = mock(() => Promise.resolve({ id: "stream_thread" } as never))

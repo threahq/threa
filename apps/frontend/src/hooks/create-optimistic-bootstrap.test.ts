@@ -80,7 +80,7 @@ describe("createOptimisticBootstrap", () => {
     expect(result.events[0].actorId).toBe("member_AUTHOR")
   })
 
-  it("should include membership with lastReadEventId set to the optimistic event", () => {
+  it("should include a participation-only membership and a born-read frontier on the optimistic event", () => {
     const result = createOptimisticBootstrap({
       stream: mockStream,
       message: { id: "msg_01TEST", createdAt: "2024-01-01T00:00:00Z" },
@@ -91,10 +91,14 @@ describe("createOptimisticBootstrap", () => {
       streamId: mockStream.id,
       memberId: mockStream.createdBy,
       notificationLevel: null,
-      lastReadEventId: result.events[0].id,
-      lastReadAt: "2024-01-01T00:00:00Z",
       joinedAt: "2024-01-01T00:00:00Z",
     })
     expect(result.members).toHaveLength(1)
+    // The creator's own message is born-read.
+    expect(result.readState).toEqual({
+      lastReadEventId: result.events[0].id,
+      lastReadSequence: "1",
+      lastReadAt: "2024-01-01T00:00:00Z",
+    })
   })
 })

@@ -9,9 +9,13 @@ import { deriveActivityCounts } from "@/sync/unread-counters"
 import {
   applyReadStateSnapshotsIdb,
   mergeReadStateIntoBootstrapCache,
+  publishReadAllFrontiersToCache,
+  putReadAllFrontiersIdb,
   putReadStateIdb,
   readStateTouchedSince,
+  resolveReadAllFrontiers,
   type ReadStateSnapshot,
+  type ResolvedReadAllFrontier,
 } from "@/sync/read-state"
 import { SW_MSG_CLEAR_NOTIFICATIONS } from "@/lib/sw-messages"
 import type { WorkspaceBootstrap } from "@threa/types"
@@ -106,9 +110,9 @@ export function useUnreadCounts(workspaceId: string) {
       const hadActivity = (current?.activityCounts[streamId] ?? 0) > 0
       // Null membership = a successful activity-only read by a viewer with
       // access but no membership row (INV-62: non-member thread leg, public
-      // channel never joined). The activity clear below still applies; there is
-      // no watermark to persist, and the membership-shaped writes must skip —
-      // spreading null would synthesize a junk membership row in IDB.
+      // channel never joined). The activity clear below still applies; the
+      // membership-shaped writes skip — spreading null would synthesize a junk
+      // membership row in IDB.
       const hasMembership = membership !== null
 
       // Coupling (D2/D4): reading a stream clears its held activity rows on BOTH
@@ -141,6 +145,7 @@ export function useUnreadCounts(workspaceId: string) {
           unreadActivities: rows,
           ...deriveActivityCounts(rows),
           ...messageCounters,
+          // Membership is participation only — merge the fresh row (no watermark).
           streamMemberships: hasMembership
             ? old.streamMemberships.map((existingMembership) =>
                 existingMembership.streamId === streamId ? { ...existingMembership, ...membership } : existingMembership
@@ -149,33 +154,29 @@ export function useUnreadCounts(workspaceId: string) {
         }
       })
 
-      if (hasMembership) {
-        queryClient.setQueryData(
-          streamKeys.bootstrap(workspaceId, streamId),
-          (old: import("@threa/types").StreamBootstrap | undefined) => {
-            if (!old) return old
-            return { ...old, membership: { ...old.membership, lastReadEventId: lastEventId } }
-          }
-        )
-      }
-
-      // Standalone frontier (read cutover + non-member unlock): frontier
-      // readers prefer the read-state row, so the optimistic advance must move
-      // it for EVERY viewer with access — member or not — or the divider
-      // stalls until the socket echo. The response carries no sequence; keep
-      // the stored one (the echo reconciles it), matching the membership
-      // mirror's optimistic-write convention.
+      // Read frontier (sole source): the optimistic advance must move it for
+      // EVERY viewer with access — member or not — or the divider stalls until
+      // the socket echo. The response carries no sequence; keep the stored one
+      // (the echo reconciles it).
       const existingFrontier = current?.streamReadState?.[streamId]
-      mergeReadStateIntoBootstrapCache(queryClient, workspaceId, streamId, {
+      const frontier = {
         lastReadEventId: lastEventId,
         lastReadSequence: existingFrontier?.lastReadSequence ?? null,
-        lastReadAt: membership?.lastReadAt ?? new Date().toISOString(),
-      })
+        lastReadAt: new Date().toISOString(),
+      }
+      mergeReadStateIntoBootstrapCache(queryClient, workspaceId, streamId, frontier)
+      queryClient.setQueryData(
+        streamKeys.bootstrap(workspaceId, streamId),
+        (old: import("@threa/types").StreamBootstrap | undefined) => {
+          if (!old) return old
+          return { ...old, readState: frontier }
+        }
+      )
 
-      // Keep the denormalized stream row, the membership row, and the
-      // standalone read-state row in sync: stream-content derives the unread
-      // divider from the effective frontier across those mirrors.
-      await db.transaction("rw", [db.unreadState, db.streams, db.streamMemberships, db.streamReadState], async () => {
+      // Counters, membership participation, and the standalone frontier row
+      // land in one transaction — the frontier row is the unread divider's
+      // sole source (no stream/membership watermark mirrors remain).
+      await db.transaction("rw", [db.unreadState, db.streamMemberships, db.streamReadState], async () => {
         // INV-20 re-check: a touch landing between the guard above and this
         // transaction still wins over the stale response.
         if (await readStateTouchedSince(workspaceId, streamId, startedAt)) return
@@ -204,8 +205,6 @@ export function useUnreadCounts(workspaceId: string) {
 
         const membershipId = `${workspaceId}:${streamId}`
         if (hasMembership) {
-          await db.streams.update(streamId, { lastReadEventId: lastEventId, _cachedAt: now })
-
           const existingMembership = await db.streamMemberships.get(membershipId)
           if (existingMembership) {
             await db.streamMemberships.put({
@@ -225,7 +224,7 @@ export function useUnreadCounts(workspaceId: string) {
           }
         }
 
-        // The standalone row moves for non-members too (no membership mirror).
+        // The frontier row moves for members and non-members alike.
         const existingRow = await db.streamReadState.get(membershipId)
         await putReadStateIdb(
           workspaceId,
@@ -233,7 +232,7 @@ export function useUnreadCounts(workspaceId: string) {
           {
             lastReadEventId: lastEventId,
             lastReadSequence: existingRow?.lastReadSequence ?? null,
-            lastReadAt: membership?.lastReadAt ?? new Date().toISOString(),
+            lastReadAt: new Date().toISOString(),
           },
           now
         )
@@ -245,140 +244,113 @@ export function useUnreadCounts(workspaceId: string) {
     },
   })
 
-  // Mark a message (and everything after it) unread. Only the read POINTER
-  // moves optimistically — the membership reseed makes the unread divider
-  // appear at once; the unread COUNT rises on the `stream:read_set` round-trip
-  // (applyStreamReadSet SETs it, which is allowed to move backward). Mirrors the
-  // partial markAsRead path, which likewise defers the count to the round-trip.
+  // Mark a message (and everything after it) unread. The response carries
+  // participation only — no watermark — so nothing moves optimistically: the
+  // `stream:read_set` echo SETs the standalone frontier (an authorized downward
+  // move) and raises the count on the round-trip. Membership is never written on
+  // a read (membership ≠ read state).
   const markUnreadMutation = useMutation({
-    mutationFn: async ({ streamId, messageId }: { streamId: string; messageId: string }) => {
-      const startedAt = Date.now()
-      const membership = await streamService.markUnread(workspaceId, streamId, messageId)
-      return { membership, startedAt }
-    },
-    onSuccess: async ({ membership, startedAt }, { streamId }) => {
-      // Null membership = a successful unread by a viewer with access but no
-      // membership row (INV-62). The response carries no watermark to apply —
-      // the `stream:read_set` echo SETs the standalone frontier and raises the
-      // count on the round-trip (the same deferral members get for the count).
-      if (!membership) return
-      // Symmetric ordering guard: a read-state write that landed after this
-      // mutation departed (its own read_set echo, or a later read this stale
-      // unread must not erase) owns the stream — success is a no-op.
-      if (await readStateTouchedSince(workspaceId, streamId, startedAt)) return
-
-      queryClient.setQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap(workspaceId), (old) => {
-        if (!old) return old
-        return {
-          ...old,
-          streamMemberships: old.streamMemberships.map((existingMembership) =>
-            existingMembership.streamId === streamId ? { ...existingMembership, ...membership } : existingMembership
-          ),
-        }
-      })
-
-      queryClient.setQueryData(
-        streamKeys.bootstrap(workspaceId, streamId),
-        (old: import("@threa/types").StreamBootstrap | undefined) => {
-          if (!old) return old
-          return { ...old, membership: { ...old.membership, lastReadEventId: membership.lastReadEventId } }
-        }
-      )
-
-      // Standalone frontier (read cutover): explicit unread SETs the row —
-      // it may move backward, and a null watermark parks before the first
-      // message (row presence beats any stale mirror).
-      const current = queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap(workspaceId))
-      const existingFrontier = current?.streamReadState?.[streamId]
-      mergeReadStateIntoBootstrapCache(queryClient, workspaceId, streamId, {
-        lastReadEventId: membership.lastReadEventId,
-        lastReadSequence: existingFrontier?.lastReadSequence ?? null,
-        lastReadAt: membership.lastReadAt ?? new Date().toISOString(),
-      })
-
-      await db.transaction("rw", [db.streams, db.streamMemberships, db.streamReadState], async () => {
-        if (await readStateTouchedSince(workspaceId, streamId, startedAt)) return
-        const now = Date.now()
-        await db.streams.update(streamId, { lastReadEventId: membership.lastReadEventId, _cachedAt: now })
-
-        const membershipId = `${workspaceId}:${streamId}`
-        const existingMembership = await db.streamMemberships.get(membershipId)
-        if (existingMembership) {
-          await db.streamMemberships.put({
-            ...existingMembership,
-            ...membership,
-            id: membershipId,
-            workspaceId,
-            _cachedAt: now,
-          })
-        } else {
-          await db.streamMemberships.put({
-            ...membership,
-            id: membershipId,
-            workspaceId,
-            _cachedAt: now,
-          })
-        }
-
-        const existingRow = await db.streamReadState.get(membershipId)
-        await putReadStateIdb(
-          workspaceId,
-          streamId,
-          {
-            lastReadEventId: membership.lastReadEventId,
-            lastReadSequence: existingRow?.lastReadSequence ?? null,
-            lastReadAt: membership.lastReadAt ?? new Date().toISOString(),
-          },
-          now
-        )
-      })
-    },
+    mutationFn: ({ streamId, messageId }: { streamId: string; messageId: string }) =>
+      streamService.markUnread(workspaceId, streamId, messageId),
   })
 
   const markAllAsReadMutation = useMutation({
-    mutationFn: () => workspaceService.markAllAsRead(workspaceId),
-    onSuccess: (updatedStreamIds) => {
-      // Mark-all-read clears every stream's message unread AND the held activity
-      // set (the derived activity/mention counts follow to zero).
+    mutationFn: async () => {
+      const startedAt = Date.now()
+      const { updatedStreamIds, frontiers } = await workspaceService.markAllAsRead(workspaceId)
+      return { updatedStreamIds, frontiers, startedAt }
+    },
+    onSuccess: async ({ updatedStreamIds, frontiers, startedAt }) => {
+      // Ordering guard (touched-at), per stream: a read-state write that landed
+      // after this request departed — its own stream:read_all socket echo, or a
+      // LATER action (an explicit unread this stale mark-all must not erase) —
+      // owns that stream. Skip every response effect there: counter zeroing,
+      // overlay clear, held-activity clear, frontier advance, cache
+      // publication. Untouched streams from the same response still apply in
+      // the same atomic transaction. Operation order (touched-at) decides — no
+      // max-merge over a later explicit unread.
+      const touched = new Set<string>()
+      for (const streamId of updatedStreamIds) {
+        if (await readStateTouchedSince(workspaceId, streamId, startedAt)) touched.add(streamId)
+      }
+      const effectiveStreamIds = updatedStreamIds.filter((streamId) => !touched.has(streamId))
+
+      // Counter/overlay/activity publication precedes the IDB transaction, so a
+      // persistence failure still leaves the initiating device's cache cleared.
+      // Touched streams keep their later state: counters stay raised, held
+      // activity rows survive — the stale response must not erase them.
       queryClient.setQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap(workspaceId), (old) => {
         if (!old) return old
         const newUnread = { ...old.unreadCounts }
         const newReadMessageIds = { ...old.readMessageIds }
-        for (const streamId of updatedStreamIds) {
+        for (const streamId of effectiveStreamIds) {
           newUnread[streamId] = 0
           delete newReadMessageIds[streamId]
         }
+        const rows = (old.unreadActivities ?? []).filter((a) => a.streamId !== null && touched.has(a.streamId))
         return {
           ...old,
           unreadCounts: newUnread,
           readMessageIds: newReadMessageIds,
-          unreadActivities: [],
-          ...deriveActivityCounts([]),
+          unreadActivities: rows,
+          ...deriveActivityCounts(rows),
         }
       })
 
-      db.transaction("rw", [db.unreadState], async () => {
-        const state = await db.unreadState.get(workspaceId)
-        if (!state) return
-        const now = Date.now()
-        const newUnread = { ...state.unreadCounts }
-        const newReadMessageIds = { ...state.readMessageIds }
-        const counterTouchedAt = { ...state.counterTouchedAt }
+      // Persistence: ONE transaction over every table this read-all touches —
+      // the counter singleton (unread zeroing, overlay clearing, activity
+      // clearing) plus `db.streamReadState` (the guard re-check reads it too) —
+      // so a failure can never land the counter clear without the frontier rows
+      // or vice versa. The response's canonical post-write frontiers resolve
+      // INSIDE the transaction (max-merged over IDB + caches, touched streams
+      // excluded so a later explicit unread is never max-merged away) so the
+      // pick and the write see the same table state; a response from before the
+      // field shipped omits `frontiers` — legacy counter behavior, frontier
+      // rows untouched.
+      const responseFrontiers = frontiers ?? []
+      let resolved: ResolvedReadAllFrontier[] = []
+      await db.transaction("rw", [db.unreadState, db.streamReadState], async () => {
+        // INV-20 re-check: a touch landing between the guard above and this
+        // transaction still wins over the stale response. The rw lock holds the
+        // outcome stable for the rest of the transaction.
+        const txTouched = new Set<string>()
         for (const streamId of updatedStreamIds) {
-          newUnread[streamId] = 0
-          delete newReadMessageIds[streamId]
-          counterTouchedAt[streamId] = now
+          if (await readStateTouchedSince(workspaceId, streamId, startedAt)) txTouched.add(streamId)
         }
-        await db.unreadState.put({
-          ...state,
-          unreadCounts: newUnread,
-          readMessageIds: newReadMessageIds,
-          unreadActivities: [],
-          ...deriveActivityCounts([]),
-          counterTouchedAt,
-          _cachedAt: now,
-        })
+        const state = await db.unreadState.get(workspaceId)
+        if (state) {
+          const now = Date.now()
+          const newUnread = { ...state.unreadCounts }
+          const newReadMessageIds = { ...state.readMessageIds }
+          const counterTouchedAt = { ...state.counterTouchedAt }
+          for (const streamId of updatedStreamIds) {
+            if (txTouched.has(streamId)) continue
+            newUnread[streamId] = 0
+            delete newReadMessageIds[streamId]
+            counterTouchedAt[streamId] = now
+          }
+          const rows = (state.unreadActivities ?? []).filter((a) => a.streamId !== null && txTouched.has(a.streamId))
+          await db.unreadState.put({
+            ...state,
+            unreadCounts: newUnread,
+            readMessageIds: newReadMessageIds,
+            unreadActivities: rows,
+            ...deriveActivityCounts(rows),
+            counterTouchedAt,
+            _cachedAt: now,
+          })
+        }
+        if (responseFrontiers.length > 0) {
+          const effectiveFrontiers = responseFrontiers.filter((snapshot) => !txTouched.has(snapshot.streamId))
+          resolved = await resolveReadAllFrontiers(queryClient, workspaceId, effectiveFrontiers)
+          await putReadAllFrontiersIdb(workspaceId, resolved)
+        }
       })
+
+      // Frontier publication only after persistence succeeded, so the divider
+      // tracks immediately on the initiating device — never publishing a state
+      // the IDB lacks.
+      publishReadAllFrontiersToCache(queryClient, workspaceId, resolved)
     },
   })
 

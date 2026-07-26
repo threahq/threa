@@ -6,6 +6,7 @@ import {
   StreamMemberRepository,
   StreamRepository,
   StreamService,
+  ReadStateRepository,
 } from "../../src/features/streams"
 import { EventService } from "../../src/features/messaging"
 import { streamId, userId, workspaceId, activityId } from "../../src/lib/id"
@@ -31,6 +32,7 @@ describe("Phantom-unread drift fixes", () => {
     await pool.query("DELETE FROM messages")
     await pool.query("DELETE FROM stream_events")
     await pool.query("DELETE FROM stream_sequences")
+    await pool.query("DELETE FROM stream_read_state")
     await pool.query("DELETE FROM stream_members")
     await pool.query("DELETE FROM streams")
     await pool.query(
@@ -117,7 +119,7 @@ describe("Phantom-unread drift fixes", () => {
 
     // Reader's watermark sits on m2 — which is about to be moved away.
     await streamService.markAsRead(wid, source, reader.id, eventByMsg.get(m2)!.id)
-    const before = await streamService.getMembership(source, reader.id)
+    const before = await ReadStateRepository.get(pool, source, reader.id)
     expect(before?.lastReadEventId).toBe(eventByMsg.get(m2)!.id)
 
     const validation = await eventService.validateMoveMessagesToThread({
@@ -139,7 +141,7 @@ describe("Phantom-unread drift fixes", () => {
     // After the fix: the watermark repoints to m1 (nearest surviving prior source
     // event); without it, it would still point at m2 (now in the thread) and the
     // unread count would resolve against a foreign thread-space sequence.
-    const after = await streamService.getMembership(source, reader.id)
+    const after = await ReadStateRepository.get(pool, source, reader.id)
     expect(after?.lastReadEventId).toBe(eventByMsg.get(m1)!.id)
     // The repoint is an automated correction, not a read: last_read_at must be
     // preserved — it feeds the conversation card's time fallback, and bumping it

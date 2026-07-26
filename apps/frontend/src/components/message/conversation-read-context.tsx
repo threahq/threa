@@ -1,11 +1,7 @@
 import { createContext, useCallback, useContext, useMemo, useRef } from "react"
 import { toast } from "sonner"
 import { useConversationService } from "@/contexts"
-import {
-  useWorkspaceStreamMemberships,
-  useWorkspaceStreamReadStates,
-  useWorkspaceUnreadState,
-} from "@/stores/workspace-store"
+import { useWorkspaceStreamReadStates, useWorkspaceUnreadState } from "@/stores/workspace-store"
 import { applyReadStateSnapshots } from "@/hooks/use-unread-counts"
 import type { RowReadState } from "@/components/timeline/read-frontier-context"
 import type { RenderableMessage } from "@/components/message/message-item"
@@ -128,22 +124,13 @@ export function useConversationReadController(
   const unreadState = useWorkspaceUnreadState(workspaceId)
   const overlay = unreadState?.readMessageIds
   const unreadCounts = unreadState?.unreadCounts
-  const memberships = useWorkspaceStreamMemberships(workspaceId)
   const readStates = useWorkspaceStreamReadStates(workspaceId)
 
-  // Effective frontier (read cutover): membership rows seed the map, then
-  // standalone read-state rows OVERRIDE them — row presence is authoritative,
-  // so a present null watermark (explicit unread-to-zero) beats a stale
-  // non-null membership sequence. Streams with no row keep the mirror.
+  // Read frontier per stream, sourced solely from stream_read_state. Row
+  // presence is authoritative: a present null watermark is an explicit
+  // unread-to-zero; an absent row is never-read.
   const frontierByStream = useMemo(() => {
     const map = new Map<string, ReadFrontierRow>()
-    for (const m of memberships) {
-      map.set(m.streamId, {
-        lastReadEventId: m.lastReadEventId,
-        lastReadSequence: m.lastReadSequence,
-        lastReadAt: m.lastReadAt,
-      })
-    }
     for (const rs of readStates) {
       map.set(rs.streamId, {
         lastReadEventId: rs.lastReadEventId,
@@ -152,7 +139,7 @@ export function useConversationReadController(
       })
     }
     return map
-  }, [memberships, readStates])
+  }, [readStates])
 
   const state = useCallback<ConversationRowRead["state"]>(
     (streamId, messageId, sequence, createdAt) =>

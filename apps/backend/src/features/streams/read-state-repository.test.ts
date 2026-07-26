@@ -1,6 +1,5 @@
 import { describe, expect, test, mock } from "bun:test"
 import { ReadStateRepository } from "./read-state-repository"
-import { StreamMemberRepository } from "./member-repository"
 import type { Querier } from "../../db"
 
 function makeDb(rows: Record<string, unknown>[] = []) {
@@ -141,12 +140,60 @@ describe("ReadStateRepository.batchAdvance", () => {
       ])
     )
 
-    expect(query).toHaveBeenCalledTimes(1)
+    // Upsert, then the authoritative same-tx re-read of every attempted row.
+    expect(query).toHaveBeenCalledTimes(2)
     const text = flat(sqlText(query.mock.calls[0]))
     expect(text).toContain("unnest($1::text[])")
     expect(text).toContain("ON CONFLICT (stream_id, user_id) DO UPDATE")
     expect(text).toContain("> COALESCE")
     expect(sqlValues(query.mock.calls[0])).toEqual([["stream_1", "stream_2"], ["evt_a", "evt_b"], "usr_1"])
+  })
+
+  test("returns the standing row for EVERY attempted stream, including guard-rejected concurrent advances", async () => {
+    // stream_2's attempted advance lost a race — a concurrent read already
+    // moved its watermark past the attempted event, so the monotonic guard
+    // rejected the update. The same-tx re-read still returns its standing
+    // higher row, so the mark-all snapshot is complete (one row per attempted
+    // stream, rejected or not).
+    const advanced = {
+      workspace_id: "ws_1",
+      stream_id: "stream_1",
+      user_id: "usr_1",
+      last_read_event_id: "evt_a",
+      last_read_at: new Date("2026-01-01T00:00:00.000Z"),
+      updated_at: new Date("2026-01-01T00:00:00.000Z"),
+    }
+    const standingHigher = {
+      workspace_id: "ws_1",
+      stream_id: "stream_2",
+      user_id: "usr_1",
+      last_read_event_id: "evt_higher",
+      last_read_at: new Date("2026-01-02T00:00:00.000Z"),
+      updated_at: new Date("2026-01-02T00:00:00.000Z"),
+    }
+    const query = mock()
+    query.mockResolvedValueOnce({ rows: [], rowCount: 1 }) // upsert (no RETURNING)
+    query.mockResolvedValueOnce({ rows: [advanced, standingHigher], rowCount: 2 }) // same-tx re-read
+    const db = { query } as unknown as Querier
+
+    const result = await ReadStateRepository.batchAdvance(
+      db,
+      "usr_1",
+      new Map([
+        ["stream_1", "evt_a"],
+        ["stream_2", "evt_b"],
+      ])
+    )
+
+    expect(query).toHaveBeenCalledTimes(2)
+    // The re-read scopes on the attempted (stream, user) pairs on the same client.
+    const reRead = flat(sqlText(query.mock.calls[1]))
+    expect(reRead).toContain("SELECT")
+    expect(reRead).toContain("FROM stream_read_state")
+    expect(sqlValues(query.mock.calls[1])).toEqual(["usr_1", ["stream_1", "stream_2"]])
+    // Both attempted streams come back — the rejected one at its higher standing frontier.
+    expect(result.map((r) => r.streamId).sort()).toEqual(["stream_1", "stream_2"])
+    expect(result.find((r) => r.streamId === "stream_2")?.lastReadEventId).toBe("evt_higher")
   })
 })
 
@@ -175,7 +222,7 @@ describe("ReadStateRepository.repointForMovedEvents", () => {
     expect(query).not.toHaveBeenCalled()
   })
 
-  test("mirrors the member-repository repoint shape, re-homed to stream_read_state/user_id", async () => {
+  test("repoints moved-event frontiers to the nearest surviving prior source event", async () => {
     const { db, query } = makeDb()
     await ReadStateRepository.repointForMovedEvents(db, "stream_src", [
       { eventId: "evt_m1", sequence: 20n },
@@ -183,8 +230,7 @@ describe("ReadStateRepository.repointForMovedEvents", () => {
     ])
 
     const text = flat(sqlText(query.mock.calls[0]))
-    // Same CTE skeleton as StreamMemberRepository.repointWatermarksForMovedEvents:
-    // a moved(event_id, src_seq) unnest, a repoint subquery picking the greatest
+    // A moved(event_id, src_seq) unnest, a repoint subquery picking the greatest
     // surviving prior source sequence, then UPDATE ... FROM repoint.
     expect(text).toContain("WITH moved AS")
     expect(text).toContain("unnest($2::text[]) AS event_id")
@@ -198,31 +244,6 @@ describe("ReadStateRepository.repointForMovedEvents", () => {
     // last_read_at deliberately untouched (automated correction, not a read).
     expect(text).not.toContain("last_read_at")
     expect(sqlValues(query.mock.calls[0])).toEqual(["stream_src", ["evt_m1", "evt_m2"], ["20", "40"]])
-  })
-
-  test("keeps the member-repository repoint SQL identical in everything but the table/key", async () => {
-    // Guard against drift: the two repoints must stay structurally identical so
-    // the shadow tracks membership exactly. Compare the normalized CTE + repoint
-    // subquery, ignoring the table name and the member_id/user_id key column.
-    const memberDb = makeDb()
-    await StreamMemberRepository.repointWatermarksForMovedEvents(memberDb.db, "stream_src", [
-      { eventId: "evt_m1", sequence: 20n },
-    ])
-    const memberText = flat(sqlText(memberDb.query.mock.calls[0]))
-      .replace(/stream_members/g, "stream_read_state")
-      .replace(/member_id/g, "user_id")
-      .replace(/sm\b/g, "rs")
-      // The read-state repoint additionally bumps updated_at (bookkeeping only).
-      .replace(
-        /SET last_read_event_id = repoint.new_event_id/,
-        "SET last_read_event_id = repoint.new_event_id, updated_at = NOW()"
-      )
-
-    const { db, query } = makeDb()
-    await ReadStateRepository.repointForMovedEvents(db, "stream_src", [{ eventId: "evt_m1", sequence: 20n }])
-    const readStateText = flat(sqlText(query.mock.calls[0]))
-
-    expect(readStateText).toBe(memberText)
   })
 })
 

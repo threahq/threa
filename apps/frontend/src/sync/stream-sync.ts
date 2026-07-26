@@ -508,9 +508,6 @@ async function writeBootstrapEventsAndStream(
   const fullStreamData = {
     ...stream,
     notificationLevel: bootstrap.membership?.notificationLevel,
-    // A frontier preserved as touched during the fetch window keeps its local
-    // mirror too — the stale response's membership watermark predates it.
-    ...(preservedReadState ? {} : { lastReadEventId: bootstrap.membership?.lastReadEventId }),
     // Mirror the persisted ContextBag into IDB so the timeline can read it
     // synchronously on first paint via the `useWorkspaceStreams` cache —
     // matches how attachments live on the message payload (sync from IDB).
@@ -536,32 +533,23 @@ async function writeBootstrapEventsAndStream(
 }
 
 /**
- * Persist the bootstrap's additive standalone frontier (non-member unlock).
- * A present row is max-merged over any stored row so a snapshot can't regress
- * a fresher socket echo — with one hard rule: an explicit unread-to-zero row
- * (null watermark, non-null lastReadAt — a sanctioned downward move) is never
- * clobbered by a non-null snapshot frontier, since the snapshot may predate
- * the unread. A confirmed ABSENT row (null) seeds a never-read sentinel for
- * access-without-membership viewers ONLY: they have no membership mirror to
- * fall back to, and "no row" IS the "before the first message" frontier — the
- * sentinel is what resolves their divider/card frontier on open. Members keep
- * the membership fallback for an absent row (shadow window), so no sentinel
- * there — and when a member's absent-row snapshot arrives, any standalone row
- * already in IDB (a never-read sentinel seeded earlier when this viewer was a
- * nonmember, or a legacy-column-only row from the rolling deploy) is CLEARED so
- * the frontier resolves through the membership watermark instead of a stale
- * sentinel that would poison it back to "never read". A non-null snapshot row
- * is still a later write the snapshot lacks — keep it. Absent field (payloads
- * cached before it shipped) changes nothing.
+ * Persist the bootstrap's read frontier — the sole read source. A present row is
+ * max-merged over any stored row so a snapshot can't regress a fresher socket
+ * echo — with one hard rule: an explicit unread-to-zero row (null watermark,
+ * non-null lastReadAt — a sanctioned downward move) is never clobbered by a
+ * non-null snapshot frontier, since the snapshot may predate the unread. A
+ * confirmed ABSENT row (null) is the "before the first message" frontier; seed a
+ * never-read sentinel when no row exists yet (without clobbering a fresher row).
+ * Absent field (payloads cached before it shipped) changes nothing.
  *
- * Freshness gate first (PR2 touched-at architecture): when `fetchStartedAt` is
- * given and the stored row was written at/after it — a socket read/read_set/
- * read_messages echo or an optimistic mutation landed while this request was
- * in flight — the local row postdates the snapshot and is preserved EXACTLY:
- * no merge, no absence-delete, no sentinel seed. The preserved frontier is
- * returned so the caller republishes it to the per-stream/workspace caches;
- * sequence max alone cannot decide here, since an explicit unread is a
- * sanctioned downward move — operation order (touched-at) decides.
+ * Freshness gate first: when `fetchStartedAt` is given and the stored row was
+ * written at/after it — a socket read/read_set/read_messages echo or an
+ * optimistic mutation landed while this request was in flight — the local row
+ * postdates the snapshot and is preserved EXACTLY: no merge, no sentinel seed.
+ * The preserved frontier is returned so the caller republishes it to the
+ * per-stream/workspace caches; sequence max alone cannot decide here, since an
+ * explicit unread is a sanctioned downward move — operation order (touched-at)
+ * decides.
  */
 async function persistBootstrapReadState(
   workspaceId: string,
@@ -576,18 +564,6 @@ async function persistBootstrapReadState(
     return toStreamReadFrontier(existingRow)
   }
   if (bootstrap.readState === null) {
-    if (bootstrap.membership) {
-      // Server has no standalone row AND the viewer is a member: the membership
-      // watermark is the frontier fallback (shadow window). Clear any standalone
-      // row — e.g. a never-read sentinel seeded earlier when this viewer was a
-      // nonmember, or a legacy-column-only row from the rolling deploy — so the
-      // read layer resolves through the membership instead of a stale sentinel
-      // that would poison the frontier back to "never read".
-      if (existingRow) {
-        await db.streamReadState.delete(`${workspaceId}:${streamId}`)
-      }
-      return undefined
-    }
     if (!existingRow) {
       await putReadStateIdb(
         workspaceId,

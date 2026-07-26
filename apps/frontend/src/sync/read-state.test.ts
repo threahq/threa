@@ -2,8 +2,16 @@ import { describe, it, expect, beforeEach, vi } from "vitest"
 import { QueryClient } from "@tanstack/react-query"
 import { db } from "@/db"
 import { workspaceKeys } from "@/hooks/use-workspaces"
-import { commitCounterMutation } from "./catch-up-batch"
-import { applyReadStateSnapshotsIdb, commitReadStateSnapshot, type ReadStateSnapshot } from "./read-state"
+import { streamKeys } from "@/hooks/use-streams"
+import { CatchUpBatch, commitCounterMutation } from "./catch-up-batch"
+import { applyStreamsReadAllOrdinals } from "./unread-counters"
+import {
+  applyReadStateSnapshotsIdb,
+  commitReadAll,
+  commitReadStateSnapshot,
+  resolveReadAllFrontiers,
+  type ReadStateSnapshot,
+} from "./read-state"
 
 function snapshot(overrides: Partial<ReadStateSnapshot> = {}): ReadStateSnapshot {
   return {
@@ -56,8 +64,6 @@ async function seedMembership() {
     streamId: "stream_1",
     memberId: "member_1",
     notificationLevel: null,
-    lastReadEventId: "evt_0",
-    lastReadAt: null,
     joinedAt: new Date().toISOString(),
     _cachedAt: Date.now(),
   })
@@ -96,7 +102,7 @@ describe("applyReadStateSnapshotsIdb", () => {
     expect(state?.unreadActivityCount).toBe(1)
   })
 
-  it("SETs the overlay, recomputes unread by the invariant, and mirrors the watermark", async () => {
+  it("SETs the overlay, recomputes unread by the invariant, and writes the frontier", async () => {
     await seedUnreadState()
     await seedMembership()
 
@@ -106,12 +112,8 @@ describe("applyReadStateSnapshotsIdb", () => {
     expect(state?.readMessageIds?.stream_1).toEqual(["msg_5", "msg_7"])
     expect(state?.unreadCounts.stream_1).toBe(4) // 10 - 4 - 2
 
-    const membership = await db.streamMemberships.get("ws_1:stream_1")
-    expect(membership?.lastReadEventId).toBe("evt_4")
-    expect(membership?.lastReadSequence).toBe("40")
-
-    // Standalone frontier dual-write (read cutover) — including the optimistic
-    // path with no membership row: upserting read state is always safe.
+    // The frontier lands in stream_read_state — including with no membership row:
+    // upserting read state is always safe. Membership is never touched on a read.
     const readState = await db.streamReadState.get("ws_1:stream_1")
     expect(readState?.lastReadEventId).toBe("evt_4")
     expect(readState?.lastReadSequence).toBe("40")
@@ -182,7 +184,8 @@ describe("applyReadStateSnapshotsIdb — startedAt freshness guard", () => {
       touchedAt - 1000
     )
 
-    // Frontier, overlay, and mirror survive EXACTLY — no regression.
+    // Frontier and overlay survive EXACTLY — no regression. Membership is
+    // participation only and is never touched on a read.
     expect(await db.streamReadState.get("ws_1:stream_1")).toMatchObject({
       lastReadEventId: "evt_10",
       lastReadSequence: "100",
@@ -190,7 +193,6 @@ describe("applyReadStateSnapshotsIdb — startedAt freshness guard", () => {
     const state = await db.unreadState.get("ws_1")
     expect(state?.readMessageIds?.stream_1).toEqual(["m8", "m9", "m10"])
     expect(state?.unreadCounts.stream_1).toBe(0)
-    expect(await db.streamMemberships.get("ws_1:stream_1")).toMatchObject({ lastReadEventId: "evt_0" })
   })
 
   it("applies normally when the frontier row predates the mutation departure", async () => {
@@ -295,6 +297,226 @@ describe("applyReadStateSnapshotsIdb — startedAt freshness guard", () => {
   })
 })
 
+describe("resolveReadAllFrontiers (canonical max across memory + IDB)", () => {
+  beforeEach(async () => {
+    await Promise.all([db.unreadState.clear(), db.streamReadState.clear()])
+  })
+
+  it("seeds from the incoming snapshot when no surface has a frontier (absence)", async () => {
+    const queryClient = new QueryClient()
+    const resolved = await resolveReadAllFrontiers(queryClient, "ws_1", [
+      {
+        streamId: "stream_9",
+        lastReadEventId: "evt_1",
+        lastReadSequence: "1",
+        lastReadOrdinal: 1,
+        lastReadAt: "2024-01-01T00:00:00.000Z",
+      },
+    ])
+    expect(resolved).toEqual([
+      {
+        streamId: "stream_9",
+        frontier: { lastReadEventId: "evt_1", lastReadSequence: "1", lastReadAt: "2024-01-01T00:00:00.000Z" },
+      },
+    ])
+  })
+
+  it("breaks equal sequences deterministically — the persisted IDB row wins the tie", async () => {
+    await db.streamReadState.put({
+      id: "ws_1:stream_1",
+      workspaceId: "ws_1",
+      streamId: "stream_1",
+      lastReadEventId: "evt_idb",
+      lastReadSequence: "15",
+      lastReadAt: "2024-01-01T00:00:00.000Z",
+      _cachedAt: Date.now(),
+    })
+    const queryClient = new QueryClient()
+    // Same sequence from the socket/HTTP payload — the fold replaces only on a
+    // STRICTLY greater sequence, so the durable row is kept (never rewritten
+    // with the incoming copy on a tie).
+    const resolved = await resolveReadAllFrontiers(queryClient, "ws_1", [
+      {
+        streamId: "stream_1",
+        lastReadEventId: "evt_incoming",
+        lastReadSequence: "15",
+        lastReadOrdinal: 15,
+        lastReadAt: null,
+      },
+    ])
+    expect(resolved[0]?.frontier.lastReadEventId).toBe("evt_idb")
+    expect(resolved[0]?.frontier.lastReadSequence).toBe("15")
+  })
+
+  it("resolves nothing for a legacy payload without frontiers", async () => {
+    expect(await resolveReadAllFrontiers(new QueryClient(), "ws_1", undefined)).toEqual([])
+    expect(await resolveReadAllFrontiers(new QueryClient(), "ws_1", [])).toEqual([])
+  })
+})
+
+describe("commitReadAll (atomic read-all application)", () => {
+  beforeEach(async () => {
+    await Promise.all([db.unreadState.clear(), db.streamReadState.clear()])
+  })
+
+  it("converges every surface to the canonical highest frontier (IDB 20 beats cache 10 and incoming 15)", async () => {
+    await seedUnreadState()
+    await db.streamReadState.put({
+      id: "ws_1:stream_1",
+      workspaceId: "ws_1",
+      streamId: "stream_1",
+      lastReadEventId: "evt_20",
+      lastReadSequence: "20",
+      lastReadAt: null,
+      _cachedAt: Date.now(),
+    })
+    const queryClient = new QueryClient()
+    queryClient.setQueryData(workspaceKeys.bootstrap("ws_1"), {
+      unreadCounts: { stream_1: 6 },
+      streamReadState: { stream_1: { lastReadEventId: "evt_10", lastReadSequence: "10", lastReadAt: null } },
+    })
+    queryClient.setQueryData(streamKeys.bootstrap("ws_1", "stream_1"), {
+      readState: { lastReadEventId: "evt_10", lastReadSequence: "10", lastReadAt: null },
+    })
+
+    await commitReadAll(
+      queryClient,
+      "ws_1",
+      [{ streamId: "stream_1", lastReadOrdinal: 10 }],
+      [
+        {
+          streamId: "stream_1",
+          lastReadEventId: "evt_15",
+          lastReadSequence: "15",
+          lastReadOrdinal: 10,
+          lastReadAt: null,
+        },
+      ]
+    )
+
+    // All three surfaces end at the canonical seq 20 — stale memory is lifted
+    // to the persisted row instead of the incoming 15 writing over it.
+    const readState = await db.streamReadState.get("ws_1:stream_1")
+    expect(readState?.lastReadSequence).toBe("20")
+    expect(readState?.lastReadEventId).toBe("evt_20")
+    const bootstrap = queryClient.getQueryData<{
+      unreadCounts: Record<string, number>
+      streamReadState?: Record<string, { lastReadSequence: string | null }>
+    }>(workspaceKeys.bootstrap("ws_1"))
+    expect(bootstrap?.streamReadState?.stream_1?.lastReadSequence).toBe("20")
+    const perStream = queryClient.getQueryData<{ readState?: { lastReadSequence: string | null } }>(
+      streamKeys.bootstrap("ws_1", "stream_1")
+    )
+    expect(perStream?.readState?.lastReadSequence).toBe("20")
+    // The counter clear rode the SAME transaction.
+    expect((await db.unreadState.get("ws_1"))?.unreadCounts.stream_1).toBe(0)
+    expect(bootstrap?.unreadCounts.stream_1).toBe(0)
+  })
+
+  it("rolls back the counter clear and publishes nothing when the frontier write fails (one transaction)", async () => {
+    await seedUnreadState()
+    const queryClient = new QueryClient()
+    queryClient.setQueryData(workspaceKeys.bootstrap("ws_1"), {
+      unreadCounts: { stream_1: 6 },
+      streamReadState: {},
+    })
+
+    const putSpy = vi.spyOn(db.streamReadState, "bulkPut").mockRejectedValue(new Error("idb boom"))
+    try {
+      await expect(
+        commitReadAll(
+          queryClient,
+          "ws_1",
+          [{ streamId: "stream_1", lastReadOrdinal: 10 }],
+          [
+            {
+              streamId: "stream_1",
+              lastReadEventId: "evt_10",
+              lastReadSequence: "100",
+              lastReadOrdinal: 10,
+              lastReadAt: null,
+            },
+          ]
+        )
+      ).rejects.toThrow("idb boom")
+    } finally {
+      putSpy.mockRestore()
+    }
+
+    // No partial IDB writes: the counter clear shared the aborted transaction.
+    const state = await db.unreadState.get("ws_1")
+    expect(state?.unreadCounts.stream_1).toBe(6)
+    // And the caches never published the state the IDB lacks.
+    const bootstrap = queryClient.getQueryData<{
+      unreadCounts: Record<string, number>
+      streamReadState?: Record<string, unknown>
+    }>(workspaceKeys.bootstrap("ws_1"))
+    expect(bootstrap?.unreadCounts.stream_1).toBe(6)
+    expect(bootstrap?.streamReadState?.stream_1).toBeUndefined()
+  })
+
+  it("a legacy payload without frontiers clears the counter alone and touches no frontier rows", async () => {
+    await seedUnreadState()
+    await db.streamReadState.put({
+      id: "ws_1:stream_1",
+      workspaceId: "ws_1",
+      streamId: "stream_1",
+      lastReadEventId: "evt_old",
+      lastReadSequence: "50",
+      lastReadAt: null,
+      _cachedAt: Date.now(),
+    })
+    const queryClient = new QueryClient()
+    queryClient.setQueryData(workspaceKeys.bootstrap("ws_1"), { unreadCounts: { stream_1: 6 } })
+
+    await commitReadAll(queryClient, "ws_1", [{ streamId: "stream_1", lastReadOrdinal: 10 }], undefined)
+
+    expect((await db.unreadState.get("ws_1"))?.unreadCounts.stream_1).toBe(0)
+    const readState = await db.streamReadState.get("ws_1:stream_1")
+    expect(readState?.lastReadEventId).toBe("evt_old")
+    expect(readState?.lastReadSequence).toBe("50")
+  })
+})
+
+describe("CatchUpBatch read-all flush", () => {
+  beforeEach(async () => {
+    await Promise.all([db.unreadState.clear(), db.streamReadState.clear(), db.streams.clear()])
+  })
+
+  it("persists the counter fold and the canonical frontier rows in the one flush transaction, publishing after commit", async () => {
+    await seedUnreadState()
+    const queryClient = new QueryClient()
+    queryClient.setQueryData(workspaceKeys.bootstrap("ws_1"), { unreadCounts: { stream_1: 6 } })
+
+    const batch = new CatchUpBatch(queryClient, "ws_1")
+    batch.applyCounter((state) => applyStreamsReadAllOrdinals(state, [{ streamId: "stream_1", lastReadOrdinal: 10 }]))
+    batch.applyReadAllFrontiers([
+      {
+        streamId: "stream_1",
+        lastReadEventId: "evt_10",
+        lastReadSequence: "100",
+        lastReadOrdinal: 10,
+        lastReadAt: null,
+      },
+    ])
+
+    // Buffered, not written — nothing lands before the flush.
+    expect((await db.unreadState.get("ws_1"))?.unreadCounts.stream_1).toBe(6)
+    expect(await db.streamReadState.get("ws_1:stream_1")).toBeUndefined()
+
+    await batch.flush()
+
+    expect((await db.unreadState.get("ws_1"))?.unreadCounts.stream_1).toBe(0)
+    expect((await db.streamReadState.get("ws_1:stream_1"))?.lastReadSequence).toBe("100")
+    const bootstrap = queryClient.getQueryData<{
+      unreadCounts: Record<string, number>
+      streamReadState?: Record<string, { lastReadSequence: string | null }>
+    }>(workspaceKeys.bootstrap("ws_1"))
+    expect(bootstrap?.unreadCounts.stream_1).toBe(0)
+    expect(bootstrap?.streamReadState?.stream_1?.lastReadSequence).toBe("100")
+  })
+})
+
 describe("commitReadStateSnapshot", () => {
   beforeEach(async () => {
     await Promise.all([
@@ -305,7 +527,7 @@ describe("commitReadStateSnapshot", () => {
     ])
   })
 
-  it("mirrors the watermark into the workspace bootstrap cache and folds the counter", async () => {
+  it("mirrors the frontier into the workspace bootstrap cache and folds the counter", async () => {
     await seedUnreadState()
     await seedMembership()
 
@@ -318,7 +540,7 @@ describe("commitReadStateSnapshot", () => {
       mentionCounts: {},
       activityCounts: {},
       unreadActivityCount: 0,
-      streamMemberships: [{ streamId: "stream_1", lastReadEventId: "evt_0", lastReadSequence: "0" }],
+      streamMemberships: [{ streamId: "stream_1" }],
     })
 
     commitReadStateSnapshot(queryClient, "ws_1", snapshot(), (m) => commitCounterMutation(queryClient, "ws_1", m))
@@ -326,19 +548,14 @@ describe("commitReadStateSnapshot", () => {
     const cached = queryClient.getQueryData<{
       unreadCounts: Record<string, number>
       readMessageIds: Record<string, string[]>
-      streamMemberships: Array<{ streamId: string; lastReadEventId: string | null; lastReadSequence?: string | null }>
+      streamReadState?: Record<string, { lastReadEventId: string | null; lastReadSequence: string | null }>
     }>(workspaceKeys.bootstrap("ws_1"))
     expect(cached?.unreadCounts.stream_1).toBe(4)
     expect(cached?.readMessageIds.stream_1).toEqual(["msg_5", "msg_7"])
-    expect(cached?.streamMemberships[0].lastReadEventId).toBe("evt_4")
-    expect(cached?.streamMemberships[0].lastReadSequence).toBe("40")
-    // The standalone frontier map mirrors the snapshot too (row presence is
-    // what frontier readers prefer).
-    const cachedWithReadState = cached as unknown as {
-      streamReadState?: Record<string, { lastReadEventId: string | null; lastReadSequence: string | null }>
-    }
-    expect(cachedWithReadState.streamReadState?.stream_1?.lastReadEventId).toBe("evt_4")
-    expect(cachedWithReadState.streamReadState?.stream_1?.lastReadSequence).toBe("40")
+    // The frontier map carries the snapshot (row presence is what frontier
+    // readers resolve).
+    expect(cached?.streamReadState?.stream_1?.lastReadEventId).toBe("evt_4")
+    expect(cached?.streamReadState?.stream_1?.lastReadSequence).toBe("40")
 
     await vi.waitFor(async () => {
       const readState = await db.streamReadState.get("ws_1:stream_1")

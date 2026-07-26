@@ -315,8 +315,6 @@ export class ActivityService {
         ...rootMember,
         streamId: stream.id,
         notificationLevel: null,
-        lastReadEventId: null,
-        lastReadAt: null,
       }
     })
   }
@@ -408,8 +406,6 @@ export class ActivityService {
                 ...rootAuthorMember,
                 streamId: stream.id,
                 notificationLevel: null,
-                lastReadEventId: null,
-                lastReadAt: null,
               })
             : null
         }
