@@ -20,7 +20,12 @@ const openStreamSettings = vi.fn()
 
 function LocationEcho() {
   const location = useLocation()
-  return <div data-testid="location">{location.pathname}</div>
+  return (
+    <>
+      <div data-testid="location">{location.pathname}</div>
+      <div data-testid="location-search">{location.search}</div>
+    </>
+  )
 }
 
 function renderWithRouter(ui: React.ReactElement, initialPath = "/w/workspace_1/stream/stream_scratchpad_1") {
@@ -177,6 +182,47 @@ describe("ScratchpadItem", () => {
     )
 
     expect(screen.getByText("Labels…")).toBeInTheDocument()
+  })
+
+  it("copies the scratchpad's link", async () => {
+    const writeText = vi.fn(async () => {})
+    Object.assign(navigator, { clipboard: { writeText } })
+
+    renderWithRouter(
+      <ScratchpadItem
+        workspaceId="workspace_1"
+        stream={createScratchpad()}
+        isActive={false}
+        unreadCount={0}
+        mentionCount={0}
+      />
+    )
+
+    fireEvent.click(screen.getByText("Copy link"))
+
+    await waitFor(() => {
+      expect(writeText).toHaveBeenCalledWith(`${window.location.origin}/w/workspace_1/s/stream_scratchpad_1`)
+    })
+  })
+
+  it("opens the attachment explorer scoped to the scratchpad", async () => {
+    renderWithRouter(
+      <ScratchpadItem
+        workspaceId="workspace_1"
+        stream={createScratchpad()}
+        isActive={false}
+        unreadCount={0}
+        mentionCount={0}
+      />
+    )
+
+    fireEvent.click(screen.getByText("Browse files…"))
+
+    await waitFor(() => {
+      const search = new URLSearchParams(screen.getByTestId("location-search").textContent ?? "")
+      expect(search.has("explorer")).toBe(true)
+      expect(search.get("streams")).toBe("stream_scratchpad_1")
+    })
   })
 
   it("shows the AI companion badge on companion-on scratchpads", () => {

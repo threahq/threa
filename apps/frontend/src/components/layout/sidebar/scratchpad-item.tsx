@@ -6,8 +6,10 @@ import {
   BellOff,
   FileEdit,
   FolderPlus,
+  Link2,
   Lock,
   MessageSquareText,
+  Paperclip,
   Plus,
   Settings,
   Sparkles,
@@ -15,6 +17,7 @@ import {
 } from "lucide-react"
 import { Link, useNavigate } from "react-router-dom"
 import { LabelPicker } from "@/components/labels/label-picker"
+import { useExplorerUrlState } from "@/components/attachment-explorer"
 import { SectionPicker } from "./section-picker"
 import { MentionIndicator } from "@/components/mention-indicator"
 import { isDraftId, useActors, useArchiveStream, useDraftScratchpads } from "@/hooks"
@@ -25,6 +28,7 @@ import { useStreamSettings } from "@/components/stream-settings/use-stream-setti
 import { Skeleton } from "@/components/ui/skeleton"
 import { cn } from "@/lib/utils"
 import { streamFallbackLabel } from "@/lib/streams"
+import { copyStreamLink } from "@/lib/stream-links"
 import { CompanionModes, LabelableResourceTypes } from "@threa/types"
 import { useUrgencyTracking } from "./use-urgency-tracking"
 import {
@@ -87,6 +91,7 @@ export function ScratchpadItem({
   const { toEmoji } = useWorkspaceEmoji(workspaceId)
   const { collapseOnMobile } = useSidebar()
   const { openStreamSettings } = useStreamSettings()
+  const { open: openExplorer } = useExplorerUrlState()
   const itemRef = useRef<HTMLAnchorElement>(null)
   const [labelPickerOpen, setLabelPickerOpen] = useState(false)
   const [sectionPickerOpen, setSectionPickerOpen] = useState(false)
@@ -185,6 +190,18 @@ export function ScratchpadItem({
               onSelect: () => setLabelPickerOpen(true),
             } satisfies SidebarActionItem,
             {
+              id: "copy-link",
+              label: "Copy link",
+              icon: Link2,
+              onSelect: () => void copyStreamLink(workspaceId, streamWithPreview.id),
+            } satisfies SidebarActionItem,
+            {
+              id: "browse-files",
+              label: "Browse files…",
+              icon: Paperclip,
+              onSelect: () => openExplorer({ streamIds: [streamWithPreview.id] }),
+            } satisfies SidebarActionItem,
+            {
               id: "add-to-section",
               label: "Add to section…",
               icon: FolderPlus,
@@ -201,7 +218,7 @@ export function ScratchpadItem({
         separatorBefore: !isDraft || boardActions.length > 0,
       },
     ],
-    [handleArchive, isDraft, openStreamSettings, streamWithPreview.id, boardActions]
+    [handleArchive, isDraft, openStreamSettings, openExplorer, streamWithPreview.id, workspaceId, boardActions]
   )
 
   const drawerPreview: SidebarActionPreview | null =
