@@ -7,6 +7,7 @@ export {
   type AllowedTmuxKey,
   type TmuxKeyFailureCode,
 } from "./tmux-key"
+export { ArchiveGraceController, type ArchiveGraceHooks, type ArchiveGraceOptions } from "./archive-grace"
 export {
   ARCHIVE_RESTORE_GRACE_MS,
   ARCHIVE_RESTORE_PROBE_MS,
