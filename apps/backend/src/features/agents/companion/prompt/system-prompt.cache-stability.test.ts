@@ -75,6 +75,7 @@ const PER_TURN_SENTINEL_VALUES: Record<string, Partial<SystemPromptInputs>> = {
   rollingConversationSummary: { rollingConversationSummary: SENTINEL },
   conversationTopic: { conversationTopic: SENTINEL },
   spawnedFromContext: { spawnedFromContext: SENTINEL },
+  previousSessions: { previousSessions: SENTINEL },
   followUp: {
     purpose: { kind: "follow_up", followUpId: "fup_1" },
     followUp: { note: SENTINEL, scheduledFor: new Date("2026-07-04T09:00:00.000Z") },
@@ -130,6 +131,7 @@ describe("system prompt cache stability", () => {
       conversationTopic: "topic one",
       rollingConversationSummary: "summary one",
       spawnedFromContext: "parent one",
+      previousSessions: "## Previous Sessions\n\nsession one",
     })
     const turnTwo = buildSystemPrompt({
       ...BASE,
@@ -138,6 +140,7 @@ describe("system prompt cache stability", () => {
       conversationTopic: "topic two",
       rollingConversationSummary: "summary two",
       spawnedFromContext: "parent two",
+      previousSessions: "## Previous Sessions\n\nsession two",
     })
 
     expect(turnOne.stable).toBe(turnTwo.stable)
