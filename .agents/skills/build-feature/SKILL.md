@@ -24,13 +24,13 @@ Claude default is Opus at every layer. **Use Fable only when the user names it.*
 
 Reasoning effort is settable **only** through `Workflow`'s `agent(prompt, { model, effort, agentType })`; a plain `Agent` call inherits session effort and silently ignores the intent. Every dispatch on this page is therefore a `Workflow` invocation, including the single-agent ones (planner, whole-stack reviewer). Each chunk is two of them — steps 2–4, then step 6 — with the orchestrator doing git, `gh stack`, and PR creation in between, because workflow scripts have no shell or filesystem access.
 
-A child never delegates, with one exception: `/code-review` fans out to its own Sonnet lenses. That is the tool's design, not a violation — the PR reviewer's Opus `low` buys triage and skill orchestration, not the review lenses themselves.
+**Reviewers may delegate; implementers and fixers may not.** An adversarial verifier is free to fan out parallel lenses — correctness and races, invariants, reuse and design — and synthesize them; that fan-out is one broad pass, not several, and its findings land in one frozen set. `/code-review` does this natively with its own Sonnet lenses, which is why the PR reviewer's Opus `low` buys triage and orchestration rather than the lenses themselves. A fixer that delegates is how the spiral starts: it never gets to.
 
 Put StructuredOutput schemas on verifiers and fixers only — implementers report free text (Opus implementers reliably mangle StructuredOutput after a long file-writing run, and the work is usually already on disk).
 
 ### Pi / OpenAI profile
 
-Only when the harness is Pi, not Claude. Planner and verifier: GPT-5.6 Sol `high`. Implementer: Sol `low` (request `low` explicitly — Pi maps Sol `minimal` to provider `low`). Whole-stack: Sol `high`, or one `xhigh` pass when the stack crosses security, authorization, migration, concurrency, or data-integrity boundaries. Two children concurrent at most. No external second-model pass — Sol already implemented and reviewed. Follow root `AGENTS.md` read-efficiency rules. Everything else on this page applies unchanged.
+Only when the harness is Pi, not Claude. Planner and verifier: GPT-5.6 Sol `high`. Implementer: Sol `low` (request `low` explicitly — Pi maps Sol `minimal` to provider `low`). Whole-stack: Sol `high`, or one `xhigh` pass when the stack crosses security, authorization, migration, concurrency, or data-integrity boundaries. Two children concurrent at most, and reviewers do not fan out — Pi runs are quota-bound. No external second-model pass — Sol already implemented and reviewed. Follow root `AGENTS.md` read-efficiency rules. Everything else on this page applies unchanged.
 
 ## Plan first
 
