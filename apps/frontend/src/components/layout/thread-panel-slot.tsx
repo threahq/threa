@@ -1,5 +1,10 @@
+import { useLayoutEffect } from "react"
 import { cn } from "@/lib/utils"
 import { PanelResizeHandle } from "./panel-resize-handle"
+
+// Keep in sync with the `duration-200` class on the slot: consumers of
+// `--panel-inset-duration` animate their edge against this element's width.
+const PANEL_TRANSITION_MS = 200
 
 interface ThreadPanelSlotProps {
   displayWidth: number
@@ -32,6 +37,26 @@ export function ThreadPanelSlot({
   onResizeKeyDown,
   children,
 }: ThreadPanelSlotProps) {
+  useLayoutEffect(() => {
+    const root = document.documentElement
+    root.style.setProperty("--panel-inset-right", `${displayWidth}px`)
+    root.style.setProperty("--panel-inset-duration", shouldAnimate ? `${PANEL_TRANSITION_MS}ms` : "0ms")
+  }, [displayWidth, shouldAnimate])
+
+  // A layout-effect cleanup, not a passive one: routes that each mount their own
+  // slot swap instances within a single commit, and React runs every layout
+  // teardown before any layout setup — so the outgoing reset lands before the
+  // incoming write. As a passive cleanup it would run after paint and blank the
+  // inset the new slot had just published.
+  useLayoutEffect(
+    () => () => {
+      const root = document.documentElement
+      root.style.setProperty("--panel-inset-right", "0px")
+      root.style.setProperty("--panel-inset-duration", "0ms")
+    },
+    []
+  )
+
   return (
     <div
       data-testid="panel"
