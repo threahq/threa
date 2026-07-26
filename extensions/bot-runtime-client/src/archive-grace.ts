@@ -107,6 +107,13 @@ export class ArchiveGraceController {
   async restored(): Promise<void> {
     const pending = this.pending
     if (this.stopped || !pending) return
+    // The server says the scratchpad is back, so restart the clock even if the
+    // relink below fails transiently: winding down 1s after an unarchive push
+    // because the grace happened to be nearly spent is the exact mis-click
+    // recovery this window exists for. Same `pending` object, so every
+    // post-await identity check still holds.
+    clearTimeout(pending.deadline)
+    pending.deadline = setTimeout(() => void this.windDown(pending), this.graceMs)
     await this.attemptReattach(pending)
   }
 

@@ -89,6 +89,33 @@ describe("ArchiveGraceController", () => {
     })
   })
 
+  test("a restore push restarts the grace even when the relink fails", async () => {
+    let attempts = 0
+    const { controller, recorded } = makeController(
+      {
+        reattach: async () => {
+          attempts += 1
+          throw new Error("threa unreachable")
+        },
+      },
+      160
+    )
+
+    await controller.archived("stream_root")
+    await Bun.sleep(120)
+    // Unarchived with the original grace nearly spent: winding down a second
+    // later is exactly the mis-click recovery this window exists for.
+    await controller.restored()
+    await Bun.sleep(100)
+
+    expect({ woundDown: recorded.woundDown, isDetached: controller.detached, attempts }).toEqual({
+      woundDown: [],
+      isDetached: true,
+      attempts: 1,
+    })
+    controller.stop()
+  })
+
   test("a reattach that throws keeps the session detached so the probe retries", async () => {
     const { controller, recorded } = makeController(
       {
