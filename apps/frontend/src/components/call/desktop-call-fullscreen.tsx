@@ -1,6 +1,13 @@
 import { useState, type RefObject } from "react"
-import { Users } from "lucide-react"
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
+import { PanelBottom, PanelRight, Users } from "lucide-react"
+import { Button } from "@/components/ui/button"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 import { useStreamName } from "@/hooks/use-stream-name"
 import { useWorkspaceUserId } from "@/hooks/use-workspaces"
 import { setCallFilmstripSide, useCallPrefs, type DesktopSurface } from "@/stores/call-prefs-store"
@@ -13,28 +20,41 @@ import { LayoutToggle } from "./layout-toggle"
 import { CallJoiningBody } from "./pre-join-gate"
 import { useCallCaptureError, useCallConnectedAt, useCallRoster } from "./call-store-hooks"
 
-function FilmstripSideToggle() {
+function FilmstripPositionPicker() {
   const { filmstripSide } = useCallPrefs()
+  const SelectedIcon = filmstripSide === "bottom" ? PanelBottom : PanelRight
   return (
-    <ToggleGroup
-      type="single"
-      size="sm"
-      role="radiogroup"
-      value={filmstripSide}
-      onValueChange={(value) => {
-        if (value === "bottom" || value === "side") setCallFilmstripSide(value)
-      }}
-      aria-label="Filmstrip position"
-      data-testid="call-filmstrip-side-toggle"
-      className="shrink-0 gap-0.5 rounded-md bg-muted p-0.5"
-    >
-      <ToggleGroupItem value="bottom" aria-label="Filmstrip bottom" className="h-7 px-2 text-xs">
-        Bottom
-      </ToggleGroupItem>
-      <ToggleGroupItem value="side" aria-label="Filmstrip side" className="h-7 px-2 text-xs">
-        Side
-      </ToggleGroupItem>
-    </ToggleGroup>
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-7 w-7 shrink-0"
+          aria-label={`Change thumbnail placement. Current: ${filmstripSide === "bottom" ? "Below video" : "Beside video"}`}
+          title="Change thumbnail placement"
+          data-testid="call-filmstrip-position-picker"
+        >
+          <SelectedIcon className="h-4 w-4" aria-hidden />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end">
+        <DropdownMenuRadioGroup
+          value={filmstripSide}
+          onValueChange={(value) => {
+            if (value === "bottom" || value === "side") setCallFilmstripSide(value)
+          }}
+        >
+          <DropdownMenuRadioItem value="bottom" className="gap-2">
+            <PanelBottom className="h-4 w-4" aria-hidden />
+            Thumbnails below video
+          </DropdownMenuRadioItem>
+          <DropdownMenuRadioItem value="side" className="gap-2">
+            <PanelRight className="h-4 w-4" aria-hidden />
+            Thumbnails beside video
+          </DropdownMenuRadioItem>
+        </DropdownMenuRadioGroup>
+      </DropdownMenuContent>
+    </DropdownMenu>
   )
 }
 
@@ -83,7 +103,7 @@ export function DesktopCallFullscreen({
           </span>
         )}
         <div className="ml-auto flex items-center gap-2">
-          {!joining && layout === "speaker" && <FilmstripSideToggle />}
+          {!joining && layout === "speaker" && <FilmstripPositionPicker />}
           {!joining && (
             <div data-testid="call-layout-slot">
               <LayoutToggle className="bg-muted" />

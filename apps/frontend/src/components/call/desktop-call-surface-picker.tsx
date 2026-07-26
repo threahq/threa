@@ -1,5 +1,5 @@
 import type { RefObject } from "react"
-import { ChevronDown } from "lucide-react"
+import { Maximize, PanelRight, PictureInPicture2, type LucideIcon } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
@@ -10,10 +10,10 @@ import {
 } from "@/components/ui/dropdown-menu"
 import type { DesktopSurface } from "@/stores/call-prefs-store"
 
-const OPTIONS: { value: DesktopSurface; label: string }[] = [
-  { value: "floating", label: "Floating" },
-  { value: "sidebar", label: "Sidebar" },
-  { value: "fullscreen", label: "Fullscreen" },
+const OPTIONS: { value: DesktopSurface; label: string; icon: LucideIcon }[] = [
+  { value: "floating", label: "Floating", icon: PictureInPicture2 },
+  { value: "sidebar", label: "Sidebar", icon: PanelRight },
+  { value: "fullscreen", label: "Fullscreen", icon: Maximize },
 ]
 
 export function DesktopCallSurfacePicker({
@@ -25,28 +25,33 @@ export function DesktopCallSurfacePicker({
   onValueChange: (value: DesktopSurface) => void
   triggerRef?: RefObject<HTMLButtonElement | null>
 }) {
-  const label = OPTIONS.find((option) => option.value === value)?.label ?? "Floating"
+  const selected = OPTIONS.find((option) => option.value === value) ?? OPTIONS[0]
+  const SelectedIcon = selected.icon
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
         <Button
           ref={triggerRef}
           variant="ghost"
-          size="sm"
-          className="h-7 shrink-0 gap-1 px-2"
-          aria-label="Call surface"
+          size="icon"
+          className="h-7 w-7 shrink-0"
+          aria-label={`Change call view. Current: ${selected.label}`}
+          title="Change call view"
         >
-          <span className="w-[4.5rem] text-left">{label}</span>
-          <ChevronDown className="h-3.5 w-3.5" aria-hidden />
+          <SelectedIcon className="h-4 w-4" aria-hidden />
         </Button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="end">
+      <DropdownMenuContent align="end" onPointerDown={(event) => event.stopPropagation()}>
         <DropdownMenuRadioGroup value={value} onValueChange={(next) => onValueChange(next as DesktopSurface)}>
-          {OPTIONS.map((option) => (
-            <DropdownMenuRadioItem key={option.value} value={option.value}>
-              {option.label}
-            </DropdownMenuRadioItem>
-          ))}
+          {OPTIONS.map((option) => {
+            const Icon = option.icon
+            return (
+              <DropdownMenuRadioItem key={option.value} value={option.value} className="gap-2">
+                <Icon className="h-4 w-4" aria-hidden />
+                {option.label}
+              </DropdownMenuRadioItem>
+            )
+          })}
         </DropdownMenuRadioGroup>
       </DropdownMenuContent>
     </DropdownMenu>
