@@ -44,7 +44,7 @@ import {
   useWorkspaceStreamMemberships,
   useWorkspaceStreamReadStates,
 } from "@/stores/workspace-store"
-import { resolveFrontierEventId } from "@/lib/read-frontier"
+import { resolveFrontierEventId, resolveFrontierSequence } from "@/lib/read-frontier"
 import { useUser } from "@/auth"
 import { Button } from "@/components/ui/button"
 import { toast } from "sonner"
@@ -283,10 +283,10 @@ export function canActOnDeepLinkNavigation<T extends string>(args: {
  * yet", an equivalent read position since suppressed events aren't readable
  * content). A fresh thread member's watermark is seeded on their member_added
  * event by the backend, but threads hide membership events from the rendered
- * window — so consumers that resolve the watermark against `displayEvents`
- * (the read frontier, the unread divider) would see an unresolvable pointer
- * and give up: no divider renders and auto-read never fires, leaving the
- * thread permanently unread (the ghost-unread-thread bug). A watermark outside
+ * window — so the auto-read frontier (`useLastSeenEvent`), which resolves the
+ * watermark's index in `displayEvents`, would see an unresolvable pointer and
+ * give up: auto-read never fires, leaving the thread permanently unread (the
+ * ghost-unread-thread bug). A watermark outside
  * the loaded window entirely is returned as-is: read progress is unknowable
  * there, and the consumers' existing suppression semantics must keep applying.
  */
@@ -636,10 +636,11 @@ export function StreamContent({
   const bootstrapReadState = useMemo(() => {
     const rs = bootstrap?.readState
     if (rs) return rs
-    if (rs === null) return { lastReadEventId: null }
+    if (rs === null) return { lastReadEventId: null, lastReadSequence: null, lastReadAt: null }
     return undefined
   }, [bootstrap?.readState])
   const lastReadEventId = resolveFrontierEventId(idbReadState ?? bootstrapReadState)
+  const frontierSequence = resolveFrontierSequence(idbReadState ?? bootstrapReadState)
 
   const stream = streamFromProps ?? idbStream ?? bootstrap?.stream
   const isThread = stream?.type === StreamTypes.THREAD
@@ -898,8 +899,8 @@ export function StreamContent({
   }, [events, isThread])
 
   // See remapSuppressedWatermark: a fresh thread member's watermark sits on a
-  // membership event that threads hide from the rendered window; the read
-  // frontier and the unread divider need it remapped to a rendered position.
+  // membership event that threads hide from the rendered window; the auto-read
+  // frontier (useLastSeenEvent) needs it remapped to a rendered position.
   const frontierLastReadEventId = useMemo(
     () => (isThread ? remapSuppressedWatermark(lastReadEventId, events, displayEvents) : lastReadEventId),
     [isThread, lastReadEventId, events, displayEvents]
@@ -2010,7 +2011,7 @@ export function StreamContent({
   // the divider via the "N new" jump button or by scrolling up.
   const { dividerEventId, dismiss: dismissUnreadDivider } = useUnreadDivider({
     events: displayEvents,
-    lastReadEventId: frontierLastReadEventId,
+    lastReadSequence: frontierSequence ?? null,
     currentUserId: currentWorkspaceUserId ?? undefined,
     streamId,
     isLoading,
@@ -2020,13 +2021,12 @@ export function StreamContent({
     // scrolls via the virtua-aware scrollToFirstUnread instead of the hook's
     // querySelector path (off-screen rows aren't in the DOM when virtualized).
     scrollToUnread: false,
-    // `lastReadEventId` is `string | null` once resolved; it is only `undefined`
-    // while the read sources (stream row / membership) are still hydrating. Gate
-    // on that so a not-yet-known read position can't be read as "all unread" and
-    // latch a divider on the first message (which would then stick for the
-    // session). `idbStream` alone isn't enough — its denormalized copy can be a
-    // stale null while the authoritative membership value is still loading.
-    readStateResolved: frontierLastReadEventId !== undefined,
+    // `frontierSequence` is `bigint | null` once resolved; it is `undefined`
+    // while the read sources are still hydrating OR when the watermark carries
+    // no sequence. Gate on that so an unknown read position can't be read as
+    // "all unread" and latch a divider on the first message (which would then
+    // stick for the session).
+    readStateResolved: frontierSequence !== undefined,
     // Skip overlay-read events so the divider anchors on the first *effectively*
     // unread row, not one already read from a conversation surface.
     overlayReadIds: readOverlay,
@@ -2043,8 +2043,8 @@ export function StreamContent({
   // once the read pointer has passed it (read through, or "Mark as read") — a
   // pure read-state signal, not a time-based fade.
   const isDividerDimmed = useMemo(
-    () => isDividerReadPast(events, dividerEventId, lastReadEventId),
-    [events, dividerEventId, lastReadEventId]
+    () => isDividerReadPast(events, dividerEventId, frontierSequence ?? null),
+    [events, dividerEventId, frontierSequence]
   )
 
   // Read the last loaded event from a ref so the Escape listener below doesn't
@@ -2215,9 +2215,7 @@ export function StreamContent({
       alreadyDecided: unreadMarkerOpenRef.current.decided,
       isLoading,
       isSettling: useVirtualized && virtualIsInitialSettling,
-      // `lastReadEventId` is only undefined while the read sources are still
-      // hydrating (same gate as readStateResolved on useUnreadDivider above).
-      readStateResolved: lastReadEventId !== undefined,
+      readStateResolved: frontierSequence !== undefined,
       isJumpMode,
       // The per-stream deep-link latch, not the transient ?m= param — a stream
       // entered via deep-link must never marker-scroll, even after ?m= clears.

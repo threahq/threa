@@ -4,7 +4,8 @@ import { useScrollToElement } from "./use-scroll-to-element"
 
 interface UseUnreadDividerOptions {
   events: StreamEvent[]
-  lastReadEventId: string | null | undefined
+  /** The read frontier as a per-stream sequence; `null` = explicit never-read. */
+  lastReadSequence: bigint | null
   currentUserId: string | undefined
   streamId: string
   /** Whether to scroll to first unread on initial load */
@@ -15,7 +16,7 @@ interface UseUnreadDividerOptions {
   isLoading?: boolean
   /**
    * Whether the viewer's read position is known yet. While false (membership /
-   * stream row still hydrating) `lastReadEventId` is not authoritative, so we
+   * stream row still hydrating) `lastReadSequence` is not authoritative, so we
    * must not treat the first message as unread — doing so would latch a divider
    * that then sticks for the session (the divider persists; there is no
    * clear-on-read to undo a bad guess). Defaults to false: a caller must
@@ -68,17 +69,19 @@ interface UseUnreadDividerResult {
  * pointer reaches or passes its position (the viewer read through it, or marked
  * it read). The divider renders red while this is false (unread still sits at or
  * after the line) and muted-gray once true — a pure read-state signal, no timer.
+ * The divider row is located in `events` (a rendered anchor by construction);
+ * the pointer side is a sequence compare, so a frontier outside the loaded
+ * window no longer pins the line red forever.
  */
 export function isDividerReadPast(
   events: StreamEvent[],
   dividerEventId: string | undefined,
-  lastReadEventId: string | null | undefined
+  lastReadSequence: bigint | null
 ): boolean {
-  if (!dividerEventId || lastReadEventId == null) return false
+  if (!dividerEventId || lastReadSequence === null) return false
   const divider = events.find((e) => e.id === dividerEventId)
-  const pointer = events.find((e) => e.id === lastReadEventId)
-  if (!divider || !pointer) return false
-  return BigInt(pointer.sequence) >= BigInt(divider.sequence)
+  if (!divider) return false
+  return lastReadSequence >= BigInt(divider.sequence)
 }
 
 /**
@@ -93,7 +96,7 @@ export function isDividerReadPast(
  */
 export function useUnreadDivider({
   events,
-  lastReadEventId,
+  lastReadSequence,
   currentUserId,
   streamId,
   scrollToUnread = true,
@@ -107,27 +110,22 @@ export function useUnreadDivider({
   const firstUnreadEventId = useMemo(() => {
     if (events.length === 0 || !readStateResolved) return undefined
 
-    const startIndex = lastReadEventId ? events.findIndex((e) => e.id === lastReadEventId) + 1 : 0
-
-    if (startIndex <= 0 && lastReadEventId) {
-      // lastReadEventId not found in events - can't determine first unread
-      return undefined
-    }
-
-    // Find the first *effectively* unread visible event from another user after
-    // the last read position. Skip events that render no row of their own and
-    // rows already in the overlay (individually read from a conversation
-    // surface).
-    for (let i = startIndex; i < events.length; i++) {
+    // Find the first *effectively* unread visible event from another user past
+    // the read frontier. Compared by sequence, not by the watermark event's
+    // position, so a frontier outside the loaded window still resolves. Skip
+    // events that render no row of their own and rows already in the overlay
+    // (individually read from a conversation surface).
+    for (let i = 0; i < events.length; i++) {
       const event = events[i]
       if (event.actorId === currentUserId || !anchorableEventIds.has(event.id)) continue
+      if (lastReadSequence !== null && BigInt(event.sequence) <= lastReadSequence) continue
       const messageId = (event.payload as { messageId?: string } | null)?.messageId
       if (messageId && overlayReadIds?.has(messageId)) continue
       return event.id
     }
 
     return undefined
-  }, [events, lastReadEventId, currentUserId, readStateResolved, overlayReadIds, anchorableEventIds])
+  }, [events, lastReadSequence, currentUserId, readStateResolved, overlayReadIds, anchorableEventIds])
 
   // Latch the first unread position for this stream and hold it for the whole
   // reading session. Done in render (not an effect) so it's immune to effect

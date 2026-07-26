@@ -15,11 +15,12 @@ function anchorsOf(events: readonly { id: string }[]): Set<string> {
   return new Set(events.map((event) => event.id))
 }
 
-function makeMessageEvent(id: string, actorId: string) {
+/** Sequence is derived from the id's numeric suffix (`event_3` → `"3"`). */
+function makeMessageEvent(id: string, actorId: string, sequence = id.replace(/^\D+/, "")) {
   return {
     id,
     streamId: "stream_1",
-    sequence: id,
+    sequence,
     eventType: "message_created",
     payload: { messageId: `msg_${id}` },
     actorId,
@@ -35,23 +36,23 @@ describe("useUnreadDivider", () => {
     // the session; the divider must wait until readStateResolved flips true.
     const events = [makeMessageEvent("event_1", "other")]
     const { result, rerender } = renderHook(
-      ({ readStateResolved, lastReadEventId }: { readStateResolved: boolean; lastReadEventId: string | null }) =>
+      ({ readStateResolved, lastReadSequence }: { readStateResolved: boolean; lastReadSequence: bigint | null }) =>
         useUnreadDivider({
           events,
-          lastReadEventId,
+          lastReadSequence,
           currentUserId: "me",
           anchorableEventIds: anchorsOf(events),
           streamId: "stream_1",
           readStateResolved,
         }),
-      { initialProps: { readStateResolved: false, lastReadEventId: null as string | null } }
+      { initialProps: { readStateResolved: false, lastReadSequence: null as bigint | null } }
     )
 
     expect(result.current.firstUnreadEventId).toBeUndefined()
     expect(result.current.dividerEventId).toBeUndefined()
 
     // Read position resolves and the message is already read → still no divider.
-    rerender({ readStateResolved: true, lastReadEventId: "event_1" })
+    rerender({ readStateResolved: true, lastReadSequence: 1n })
     expect(result.current.dividerEventId).toBeUndefined()
   })
 
@@ -59,26 +60,26 @@ describe("useUnreadDivider", () => {
     const events = [makeMessageEvent("event_1", "other"), makeMessageEvent("event_2", "other")]
 
     const { result, rerender } = renderHook(
-      ({ lastReadEventId }: { lastReadEventId: string | null | undefined }) =>
+      ({ lastReadSequence }: { lastReadSequence: bigint | null }) =>
         useUnreadDivider({
           events,
-          lastReadEventId,
+          lastReadSequence,
           currentUserId: "me",
           anchorableEventIds: anchorsOf(events),
           streamId: "stream_1",
           readStateResolved: true,
         }),
       {
-        initialProps: { lastReadEventId: null as string | null | undefined },
+        initialProps: { lastReadSequence: null as bigint | null },
       }
     )
 
-    rerender({ lastReadEventId: null })
+    rerender({ lastReadSequence: null })
     expect(result.current.dividerEventId).toBe("event_1")
 
     // Auto-mark-as-read clears the live unread, but the divider stays latched
     // at its position for the rest of the reading session.
-    rerender({ lastReadEventId: "event_2" })
+    rerender({ lastReadSequence: 2n })
     expect(result.current.firstUnreadEventId).toBeUndefined()
     expect(result.current.dividerEventId).toBe("event_1")
   })
@@ -91,16 +92,16 @@ describe("useUnreadDivider", () => {
       makeMessageEvent("event_4", "other"),
     ]
     const { result, rerender } = renderHook(
-      ({ lastReadEventId }: { lastReadEventId: string | null }) =>
+      ({ lastReadSequence }: { lastReadSequence: bigint | null }) =>
         useUnreadDivider({
           events,
-          lastReadEventId,
+          lastReadSequence,
           currentUserId: "me",
           anchorableEventIds: anchorsOf(events),
           streamId: "stream_1",
           readStateResolved: true,
         }),
-      { initialProps: { lastReadEventId: "event_3" as string | null } }
+      { initialProps: { lastReadSequence: 3n as bigint | null } }
     )
 
     // Read through event_3 → divider latched at event_4.
@@ -108,7 +109,7 @@ describe("useUnreadDivider", () => {
 
     // Mark event_2 unread → the read pointer moves back to event_1, so the first
     // unread is now event_2. The divider must follow it UP, not stay at event_4.
-    rerender({ lastReadEventId: "event_1" })
+    rerender({ lastReadSequence: 1n })
     expect(result.current.dividerEventId).toBe("event_2")
   })
 
@@ -120,16 +121,16 @@ describe("useUnreadDivider", () => {
       makeMessageEvent("event_4", "other"),
     ]
     const { result, rerender } = renderHook(
-      ({ lastReadEventId }: { lastReadEventId: string | null }) =>
+      ({ lastReadSequence }: { lastReadSequence: bigint | null }) =>
         useUnreadDivider({
           events,
-          lastReadEventId,
+          lastReadSequence,
           currentUserId: "me",
           anchorableEventIds: anchorsOf(events),
           streamId: "stream_1",
           readStateResolved: true,
         }),
-      { initialProps: { lastReadEventId: "event_3" as string | null } }
+      { initialProps: { lastReadSequence: 3n as bigint | null } }
     )
 
     expect(result.current.dividerEventId).toBe("event_4")
@@ -138,7 +139,7 @@ describe("useUnreadDivider", () => {
 
     // Marking an earlier message unread re-positions the divider, so the prior
     // dismissal (keyed to event_4) no longer applies.
-    rerender({ lastReadEventId: "event_1" })
+    rerender({ lastReadSequence: 1n })
     expect(result.current.dividerEventId).toBe("event_2")
   })
 
@@ -149,7 +150,7 @@ describe("useUnreadDivider", () => {
       ({ streamId, events }: { streamId: string; events: ReturnType<typeof makeMessageEvent>[] }) =>
         useUnreadDivider({
           events,
-          lastReadEventId: null,
+          lastReadSequence: null,
           currentUserId: "me",
           anchorableEventIds: anchorsOf(events),
           streamId,
@@ -169,7 +170,7 @@ describe("useUnreadDivider", () => {
       ({ streamId, events }: { streamId: string; events: ReturnType<typeof makeMessageEvent>[] }) =>
         useUnreadDivider({
           events,
-          lastReadEventId: null,
+          lastReadSequence: null,
           currentUserId: "me",
           anchorableEventIds: anchorsOf(events),
           streamId,
@@ -195,15 +196,15 @@ describe("useUnreadDivider", () => {
       ({
         streamId,
         events,
-        lastReadEventId,
+        lastReadSequence,
       }: {
         streamId: string
         events: ReturnType<typeof makeMessageEvent>[]
-        lastReadEventId: string | null
+        lastReadSequence: bigint | null
       }) =>
         useUnreadDivider({
           events,
-          lastReadEventId,
+          lastReadSequence,
           currentUserId: "me",
           anchorableEventIds: anchorsOf(events),
           streamId,
@@ -213,7 +214,7 @@ describe("useUnreadDivider", () => {
         initialProps: {
           streamId: "stream_1",
           events: [makeMessageEvent("event_1", "other")],
-          lastReadEventId: null as string | null,
+          lastReadSequence: null as bigint | null,
         },
       }
     )
@@ -223,7 +224,7 @@ describe("useUnreadDivider", () => {
     rerender({
       streamId: "stream_2",
       events: [makeMessageEvent("event_9", "other")],
-      lastReadEventId: "event_9",
+      lastReadSequence: 9n,
     })
     expect(result.current.dividerEventId).toBeUndefined()
   })
@@ -244,7 +245,7 @@ describe("useUnreadDivider", () => {
       ({ highlightMessageId, streamId }: { highlightMessageId: string | null; streamId: string }) =>
         useUnreadDivider({
           events,
-          lastReadEventId: null,
+          lastReadSequence: null,
           currentUserId: "me",
           anchorableEventIds: anchorsOf(events),
           streamId,
@@ -279,7 +280,7 @@ describe("useUnreadDivider", () => {
     renderHook(() =>
       useUnreadDivider({
         events,
-        lastReadEventId: null,
+        lastReadSequence: null,
         currentUserId: "me",
         anchorableEventIds: anchorsOf(events),
         streamId: "stream_1",
@@ -296,7 +297,7 @@ describe("useUnreadDivider", () => {
     const { result } = renderHook(() =>
       useUnreadDivider({
         events,
-        lastReadEventId: null,
+        lastReadSequence: null,
         currentUserId: "me",
         anchorableEventIds: anchorsOf(events),
         streamId: "stream_1",
@@ -318,16 +319,16 @@ describe("useUnreadDivider", () => {
     const { result, rerender } = renderHook(
       ({
         events,
-        lastReadEventId,
+        lastReadSequence,
         isAttentive,
       }: {
         events: ReturnType<typeof makeMessageEvent>[]
-        lastReadEventId: string | null
+        lastReadSequence: bigint | null
         isAttentive: boolean
       }) =>
         useUnreadDivider({
           events,
-          lastReadEventId,
+          lastReadSequence,
           currentUserId: "me",
           anchorableEventIds: anchorsOf(events),
           streamId: "stream_1",
@@ -337,7 +338,7 @@ describe("useUnreadDivider", () => {
       {
         initialProps: {
           events: [makeMessageEvent("event_1", "other"), makeMessageEvent("event_2", "other")],
-          lastReadEventId: null as string | null,
+          lastReadSequence: null as bigint | null,
           isAttentive: true,
         },
       }
@@ -347,7 +348,7 @@ describe("useUnreadDivider", () => {
     expect(result.current.dividerEventId).toBe("event_1")
     rerender({
       events: [makeMessageEvent("event_1", "other"), makeMessageEvent("event_2", "other")],
-      lastReadEventId: "event_2",
+      lastReadSequence: 2n,
       isAttentive: true,
     })
     expect(result.current.dividerEventId).toBe("event_1")
@@ -358,22 +359,18 @@ describe("useUnreadDivider", () => {
       makeMessageEvent("event_2", "other"),
       makeMessageEvent("event_3", "other"),
     ]
-    rerender({ events: withBlurredArrival, lastReadEventId: "event_2", isAttentive: false })
+    rerender({ events: withBlurredArrival, lastReadSequence: 2n, isAttentive: false })
     expect(result.current.dividerEventId).toBe("event_3")
-
-    // isDividerReadPast compares numeric bigint sequences; the helper's
-    // sequence is its id string, so remap for the red→grey assertions.
-    const sequenced = withBlurredArrival.map((e, i) => ({ ...e, sequence: String(i + 1) })) as typeof withBlurredArrival
 
     // Refocus: the divider stays on the away block while it is still unread…
-    rerender({ events: withBlurredArrival, lastReadEventId: "event_2", isAttentive: true })
+    rerender({ events: withBlurredArrival, lastReadSequence: 2n, isAttentive: true })
     expect(result.current.dividerEventId).toBe("event_3")
-    expect(isDividerReadPast(sequenced, "event_3", "event_2")).toBe(false)
+    expect(isDividerReadPast(withBlurredArrival, "event_3", 2n)).toBe(false)
 
     // …and holds position (dimming to grey) once auto-read passes it.
-    rerender({ events: withBlurredArrival, lastReadEventId: "event_3", isAttentive: true })
+    rerender({ events: withBlurredArrival, lastReadSequence: 3n, isAttentive: true })
     expect(result.current.dividerEventId).toBe("event_3")
-    expect(isDividerReadPast(sequenced, "event_3", "event_3")).toBe(true)
+    expect(isDividerReadPast(withBlurredArrival, "event_3", 3n)).toBe(true)
   })
 
   it("does NOT move the divider forward while the viewer is attentive", () => {
@@ -382,14 +379,14 @@ describe("useUnreadDivider", () => {
     const { result, rerender } = renderHook(
       ({
         events,
-        lastReadEventId,
+        lastReadSequence,
       }: {
         events: ReturnType<typeof makeMessageEvent>[]
-        lastReadEventId: string | null
+        lastReadSequence: bigint | null
       }) =>
         useUnreadDivider({
           events,
-          lastReadEventId,
+          lastReadSequence,
           currentUserId: "me",
           anchorableEventIds: anchorsOf(events),
           streamId: "stream_1",
@@ -399,18 +396,18 @@ describe("useUnreadDivider", () => {
       {
         initialProps: {
           events: [makeMessageEvent("event_1", "other")],
-          lastReadEventId: null as string | null,
+          lastReadSequence: null as bigint | null,
         },
       }
     )
 
     expect(result.current.dividerEventId).toBe("event_1")
-    rerender({ events: [makeMessageEvent("event_1", "other")], lastReadEventId: "event_1" })
+    rerender({ events: [makeMessageEvent("event_1", "other")], lastReadSequence: 1n })
 
     // A focused live arrival: first unread is now event_2, but the latch holds.
     rerender({
       events: [makeMessageEvent("event_1", "other"), makeMessageEvent("event_2", "other")],
-      lastReadEventId: "event_1",
+      lastReadSequence: 1n,
     })
     expect(result.current.dividerEventId).toBe("event_1")
   })
@@ -421,7 +418,7 @@ describe("useUnreadDivider", () => {
       ({ events, isAttentive }: { events: ReturnType<typeof makeMessageEvent>[]; isAttentive: boolean }) =>
         useUnreadDivider({
           events,
-          lastReadEventId: "event_1",
+          lastReadSequence: 1n,
           currentUserId: "me",
           anchorableEventIds: anchorsOf(events),
           streamId: "stream_1",
@@ -448,7 +445,7 @@ describe("useUnreadDivider", () => {
       ({ events, isAttentive }: { events: ReturnType<typeof makeMessageEvent>[]; isAttentive: boolean }) =>
         useUnreadDivider({
           events,
-          lastReadEventId: "event_1",
+          lastReadSequence: 1n,
           currentUserId: "me",
           anchorableEventIds: anchorsOf(events),
           streamId: "stream_1",
@@ -468,16 +465,16 @@ describe("useUnreadDivider", () => {
     const { result, rerender } = renderHook(
       ({
         events,
-        lastReadEventId,
+        lastReadSequence,
         isAttentive,
       }: {
         events: ReturnType<typeof makeMessageEvent>[]
-        lastReadEventId: string | null
+        lastReadSequence: bigint | null
         isAttentive: boolean
       }) =>
         useUnreadDivider({
           events,
-          lastReadEventId,
+          lastReadSequence,
           currentUserId: "me",
           anchorableEventIds: anchorsOf(events),
           streamId: "stream_1",
@@ -487,7 +484,7 @@ describe("useUnreadDivider", () => {
       {
         initialProps: {
           events: [makeMessageEvent("event_1", "other")],
-          lastReadEventId: null as string | null,
+          lastReadSequence: null as bigint | null,
           isAttentive: true,
         },
       }
@@ -499,7 +496,7 @@ describe("useUnreadDivider", () => {
 
     rerender({
       events: [makeMessageEvent("event_1", "other"), makeMessageEvent("event_2", "other")],
-      lastReadEventId: "event_1",
+      lastReadSequence: 1n,
       isAttentive: false,
     })
     expect(result.current.dividerEventId).toBe("event_2")
@@ -517,7 +514,7 @@ describe("useUnreadDivider", () => {
     const { result } = renderHook(() =>
       useUnreadDivider({
         events,
-        lastReadEventId: null,
+        lastReadSequence: null,
         currentUserId: "me",
         anchorableEventIds: new Set(["event_2"]),
         streamId: "stream_1",
@@ -533,7 +530,7 @@ describe("useUnreadDivider", () => {
     const { result } = renderHook(() =>
       useUnreadDivider({
         events,
-        lastReadEventId: null,
+        lastReadSequence: null,
         currentUserId: "me",
         anchorableEventIds: new Set<string>(),
         streamId: "stream_1",
@@ -549,12 +546,114 @@ describe("useUnreadDivider", () => {
     const { result } = renderHook(() =>
       useUnreadDivider({
         events,
-        lastReadEventId: null,
+        lastReadSequence: null,
         currentUserId: "me",
         anchorableEventIds: anchorsOf(events),
         streamId: "stream_1",
         readStateResolved: true,
         overlayReadIds: new Set(["msg_event_1", "msg_event_2"]),
+      })
+    )
+
+    expect(result.current.dividerEventId).toBeUndefined()
+  })
+
+  it("anchors the divider when the frontier sits far below the loaded window", () => {
+    // THE DEFECT: the watermark event (sequence 5) is nowhere in the tail-anchored
+    // window, so the old position lookup returned undefined and no line rendered.
+    const events = [makeMessageEvent("event_a", "other", "100"), makeMessageEvent("event_b", "other", "150")]
+    const { result } = renderHook(() =>
+      useUnreadDivider({
+        events,
+        lastReadSequence: 5n,
+        currentUserId: "me",
+        anchorableEventIds: anchorsOf(events),
+        streamId: "stream_1",
+        readStateResolved: true,
+      })
+    )
+
+    expect(result.current.dividerEventId).toBe("event_a")
+  })
+
+  it("places the divider on the first event past a frontier whose own event is not loaded", () => {
+    const events = [
+      makeMessageEvent("event_a", "other", "100"),
+      makeMessageEvent("event_b", "other", "130"),
+      makeMessageEvent("event_c", "other", "150"),
+    ]
+    const { result } = renderHook(() =>
+      useUnreadDivider({
+        events,
+        lastReadSequence: 120n,
+        currentUserId: "me",
+        anchorableEventIds: anchorsOf(events),
+        streamId: "stream_1",
+        readStateResolved: true,
+      })
+    )
+
+    expect(result.current.dividerEventId).toBe("event_b")
+  })
+
+  it("treats a null frontier as never-read and anchors on the first loaded row", () => {
+    const events = [makeMessageEvent("event_a", "other", "100"), makeMessageEvent("event_b", "other", "150")]
+    const { result } = renderHook(() =>
+      useUnreadDivider({
+        events,
+        lastReadSequence: null,
+        currentUserId: "me",
+        anchorableEventIds: anchorsOf(events),
+        streamId: "stream_1",
+        readStateResolved: true,
+      })
+    )
+
+    expect(result.current.dividerEventId).toBe("event_a")
+  })
+
+  it("never latches or scrolls while the frontier is unresolved", () => {
+    // The input that makes resolveUnreadMarkerOpen return "wait": no divider and
+    // no scroll, so the once-per-stream marker decision stays unconsumed.
+    const events = [makeMessageEvent("event_1", "other")]
+    const enabledCalls: (boolean | undefined)[] = []
+    vi.spyOn(useScrollToElementModule, "useScrollToElement").mockImplementation(((
+      options: { enabled?: boolean } = {}
+    ) => {
+      enabledCalls.push(options.enabled)
+      return undefined
+    }) as unknown as typeof useScrollToElementModule.useScrollToElement)
+
+    const { result } = renderHook(() =>
+      useUnreadDivider({
+        events,
+        lastReadSequence: null,
+        currentUserId: "me",
+        anchorableEventIds: anchorsOf(events),
+        streamId: "stream_1",
+        readStateResolved: false,
+      })
+    )
+
+    expect(result.current.dividerEventId).toBeUndefined()
+    expect(enabledCalls[enabledCalls.length - 1]).toBe(false)
+  })
+
+  it("does not anchor on the viewer's own pending event with a placeholder sequence", () => {
+    // Optimistic sends carry a Date.now()-scale sequence far above the window
+    // (lib/optimistic-sequence.ts) — own rows are never unread regardless.
+    const events = [
+      makeMessageEvent("event_a", "other", "100"),
+      makeMessageEvent("event_pending", "me", String(Date.now())),
+    ]
+    const { result } = renderHook(() =>
+      useUnreadDivider({
+        events,
+        lastReadSequence: 100n,
+        currentUserId: "me",
+        anchorableEventIds: anchorsOf(events),
+        streamId: "stream_1",
+        readStateResolved: true,
       })
     )
 
@@ -572,16 +671,22 @@ describe("isDividerReadPast", () => {
 
   it("is red (not read past) while the read pointer sits before the divider", () => {
     // Divider at event_2, pointer at event_1 (unread still at/after the line).
-    expect(isDividerReadPast(events, "event_2", "event_1")).toBe(false)
+    expect(isDividerReadPast(events, "event_2", 1n)).toBe(false)
   })
 
   it("is grey (read past) once the pointer reaches or passes the divider", () => {
-    expect(isDividerReadPast(events, "event_2", "event_2")).toBe(true)
-    expect(isDividerReadPast(events, "event_2", "event_3")).toBe(true)
+    expect(isDividerReadPast(events, "event_2", 2n)).toBe(true)
+    expect(isDividerReadPast(events, "event_2", 3n)).toBe(true)
+  })
+
+  it("is grey when the frontier is past the divider but the watermark event is not loaded", () => {
+    // The second half of the defect: an out-of-window watermark used to pin the
+    // line red forever, since the pointer row could not be found in `events`.
+    expect(isDividerReadPast(events, "event_2", 999n)).toBe(true)
   })
 
   it("is red when nothing is read yet (null pointer) or the divider is hidden", () => {
     expect(isDividerReadPast(events, "event_2", null)).toBe(false)
-    expect(isDividerReadPast(events, undefined, "event_3")).toBe(false)
+    expect(isDividerReadPast(events, undefined, 3n)).toBe(false)
   })
 })
