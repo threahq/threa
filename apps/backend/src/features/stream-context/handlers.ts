@@ -13,8 +13,10 @@ const baseQuerySchema = z.object({
   limit: z.coerce.number().int().positive().max(MAX_LIMIT).default(DEFAULT_LIMIT),
 })
 
-const listQuerySchema = baseQuerySchema.extend({
-  category: z.enum(CONTEXT_CATEGORIES).optional(),
+/** The narrowing filters, shared by both routes: `occurrenceCount` is counted
+ *  over the filtered set, so an expansion that dropped them would return more
+ *  rows than the number the user clicked. */
+const filterQuerySchema = z.object({
   q: z.string().min(1).max(500).optional(),
   /** Author id — the panel resolves `from:@slug` to an id before calling. */
   from: z.string().min(1).optional(),
@@ -22,7 +24,11 @@ const listQuerySchema = baseQuerySchema.extend({
   after: z.string().datetime().optional(),
 })
 
-const occurrencesQuerySchema = baseQuerySchema.extend({
+const listQuerySchema = baseQuerySchema.merge(filterQuerySchema).extend({
+  category: z.enum(CONTEXT_CATEGORIES).optional(),
+})
+
+const occurrencesQuerySchema = baseQuerySchema.merge(filterQuerySchema).extend({
   category: z.enum(CONTEXT_CATEGORIES),
   groupKey: z.string().min(1),
 })
@@ -60,6 +66,10 @@ export function createStreamContextHandlers({ streamContextService }: Dependenci
         scope: query.scope,
         category: query.category,
         groupKey: query.groupKey,
+        queryText: query.q,
+        authorId: query.from,
+        before: query.before ? new Date(query.before) : undefined,
+        after: query.after ? new Date(query.after) : undefined,
         cursor: query.cursor,
         limit: query.limit,
       })

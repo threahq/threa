@@ -77,6 +77,8 @@ export const ACCESS_LOG_OPERATIONS = [
   "user_e2e_keys.revoke",
   "enclave.list_active_keys",
   // Streams
+  "stream_context.list",
+  "stream_context.occurrences",
   "streams.list",
   "streams.create",
   "streams.read_all",
@@ -203,7 +205,6 @@ export const ACCESS_LOG_OPERATIONS = [
   "scheduled_messages.send_now",
   // Agent follow-ups / delegations / bot-access
   "agent_follow_ups.cancel",
-  "stream_context.list",
   "delegations.list",
   "delegations.get",
   "delegations.cancel",

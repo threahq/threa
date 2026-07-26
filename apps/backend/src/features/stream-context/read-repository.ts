@@ -35,11 +35,7 @@ export interface ListFeedParams extends StreamContextFeedFilters {
   limit: number
 }
 
-export interface ListOccurrencesParams {
-  workspaceId: string
-  rootStreamId: string
-  streamId: string
-  scope: StreamContextScope
+export interface ListOccurrencesParams extends StreamContextFeedFilters {
   category: ContextCategory
   groupKey: string
   cursor?: StreamContextCursor
@@ -221,7 +217,7 @@ function scopedSql(filters: StreamContextFeedFilters, extra?: { groupKey?: strin
       dt.claimed_by_label AS task_claimed_by_label,
       dt.status_note AS task_status_note,
       dt.result_message_id AS task_result_message_id,
-      th.name AS thread_name,
+      th.display_name AS thread_name,
       th.reply_count AS thread_reply_count,
       th.last_reply_at AS thread_last_reply_at,
       th.parent_anchor_id AS thread_anchor_event_id
@@ -265,7 +261,7 @@ function scopedSql(filters: StreamContextFeedFilters, extra?: { groupKey?: strin
         OR att.filename ILIKE ${likePattern}
         OR mem.title ILIKE ${likePattern}
         OR dt.title ILIKE ${likePattern}
-        OR th.name ILIKE ${likePattern}
+        OR th.display_name ILIKE ${likePattern}
       )
   `
 }
@@ -322,16 +318,10 @@ export const StreamContextReadRepository = {
 
   /** The uncollapsed occurrences of one artifact, same ordering and same live joins. */
   async listOccurrences(db: Querier, params: ListOccurrencesParams): Promise<StreamContextFeedRow[]> {
-    const scoped = scopedSql(
-      {
-        workspaceId: params.workspaceId,
-        rootStreamId: params.rootStreamId,
-        streamId: params.streamId,
-        scope: params.scope,
-        category: params.category,
-      },
-      { groupKey: params.groupKey }
-    )
+    // Same filters as the feed: `occurrenceCount` is counted over the filtered
+    // set, so an expansion that ignored them would return more rows than the
+    // number the user clicked.
+    const scoped = scopedSql({ ...params, category: params.category }, { groupKey: params.groupKey })
     const cursor = params.cursor
     const result = await db.query<DbRow>(composeSql`
       WITH scoped AS (${scoped})

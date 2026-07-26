@@ -708,7 +708,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
   app.get(
     "/api/workspaces/:workspaceId/streams/:streamId/context/occurrences",
     ...authed,
-    audit("stream_context.list", "read"),
+    audit("stream_context.occurrences", "read"),
     streamContext.listOccurrences
   )
   app.get(

@@ -38,6 +38,10 @@ export interface ListStreamContextOccurrencesParams {
   scope: StreamContextScope
   category: ContextCategory
   groupKey: string
+  queryText?: string
+  authorId?: string
+  before?: Date
+  after?: Date
   cursor?: string
   limit: number
 }
@@ -124,6 +128,10 @@ export function createStreamContextService({ pool }: Dependencies) {
         scope: params.scope,
         category: params.category,
         groupKey: params.groupKey,
+        queryText: params.queryText,
+        authorId: params.authorId,
+        before: params.before,
+        after: params.after,
         cursor,
         limit: params.limit + 1,
       })
