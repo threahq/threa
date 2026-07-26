@@ -30,6 +30,8 @@ Factual repo questions are yours to answer: Grep/Glob/Agent, starting from `docs
 
 "Always X" / "never Y" rules (INV-*, skill rules) are binding — re-read them before acting in their domain. Read a module and its neighbors before editing; features colocate (INV-51), so the answer is usually one directory away. Apply an invariant's intent, not its surface shape: INV-20 means "write paths tolerate concurrent callers", not "sprinkle ON CONFLICT".
 
+**Naming a skill is an instruction to load it.** When this file, the user, or another skill names one, invoke it before the first command in its domain — a summary here or a note in your own memory is a pointer, never the contract, and both go stale as skills gain tooling. A skill routinely ships a script or step its summary omits, so "the summary looked complete" is exactly how the omission stays invisible. If you concluded a capability doesn't exist without reading the skill that owns it, you concluded it from the wrong source; a skill's own fallback rules also override whatever workaround you devised.
+
 ## Runtime
 
 Bun, not Node: `bun <file>`, `bun run test`, `bun install`, `bun run <script>`, `bun build`. Bun auto-loads `.env` — no dotenv.
@@ -45,11 +47,14 @@ Anthropic artifacts don't render for this user; publish on Seer instead. Use it 
 
 Test-first when practical; else run the nearest suite and verify manually. Never ship unexecuted tests: `bun run test`, `bun run test:e2e`. Failing tests get fixed, never dismissed as pre-existing (INV-22).
 
-**Stacked PRs: always `gh stack`** (GitHub-native Stacks; extension installed — verify `gh extension list | grep stack`, never assume absence). Hand-rolling stacks with plain branches + `gh pr create --base` is the recurring failure — don't. `/gh-stack` skill has the full contract; core loop:
+**Stacked PRs: always `gh stack`** (GitHub-native Stacks; extension installed — verify `gh extension list | grep stack`, never assume absence). Hand-rolling stacks with plain branches + `gh pr create --base` is the recurring failure — don't.
+
+**Invoke the `/gh-stack` skill before your first stack command, every session.** The bullets below are a memory jog, NOT the contract — the skill carries operations they do not mention, `merge-stack.ts` chief among them. Anyone who works from this list alone reaches a wrong conclusion and acts on it; that has now happened more than once, always the same way: the summary feels complete, the tool that solves the problem is never discovered, and a forbidden fallback gets used instead. Repo memory is not a substitute either — it goes stale as the skill gains tooling. If you have already formed a plan for a stack without opening the skill, that plan is unvalidated.
 
 - Once: `git config rerere.enabled true` and `git config remote.pushDefault origin`
 - `gh stack init <branches bottom→top>` (adopts existing branches) · `gh stack add <branch>` per layer · `gh stack submit --auto` (recognizes `/create-pr`-made PRs and links them into the Stack)
 - **`submit` is mandatory, not optional.** `/create-pr` (or `gh pr create --base <parent>`) opens the PRs but does NOT make a Stack — running `init`/`add` then skipping `submit` leaves unlinked, chained-base PRs. Finish every stack with `gh stack submit --auto` and confirm `gh stack view --json` shows a `Stack #NNNN`. Already have unlinked PRs? `gh stack submit --auto --open` retrofits the linkage in place.
+- **Merging a Stack: `bun .agents/skills/gh-stack/scripts/merge-stack.ts <top-pr> --yes`** (`--dry-run` first to validate). Lands the whole stack server-side in one operation. `gh pr merge` on a linked Stack is REFUSED by GitHub ("must be merged sequentially using the stack merge API"), `gh stack` has no merge command, and the documented REST API has no merge route — none of that means there is no way to merge, and probing for one is wasted effort. If the wrapper fails, **stop and report**; do NOT `gh stack unstack` and merge per layer. Unstacking deletes base branches on merge, which auto-CLOSES every PR above (GitHub then refuses both reopen and base change, so each must be recreated).
 - After merges: `gh stack sync --prune` — auto-recovers squash-merges; replaces manual rebase-on-main
 - Non-interactive always: branch names as args, `submit --auto`, `view --json`
 
