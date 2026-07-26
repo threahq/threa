@@ -1,8 +1,10 @@
-import { ChevronDown, Phone, Video } from "lucide-react"
+import { ChevronDown, Phone, PhoneForwarded, Video } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { cn } from "@/lib/utils"
+import { useActiveCallsForStream } from "@/stores/active-calls-store"
 import { useCallLaunch } from "./call-launch-context"
+import { useCallOnAnotherDevice } from "./use-call-on-another-device"
 
 /**
  * The call-start affordance: a small menu offering "Start voice call" (mic only,
@@ -11,6 +13,11 @@ import { useCallLaunch } from "./call-launch-context"
  * menu — rather than a hidden default. The launch runs inside the item click's user
  * gesture so iOS honors the AudioContext (INV via CallLaunch). Disabled (and the
  * menu unopenable) while a call is already active.
+ *
+ * When this stream's live call already has the viewer on ANOTHER device, the menu
+ * collapses to a single "Take over" button: the voice/video choice belongs to the
+ * call that is already running, and the only thing left to decide is which device
+ * carries it. The camera is still a tap away once the call lands here.
  */
 export function CallStartMenu({
   workspaceId,
@@ -26,7 +33,30 @@ export function CallStartMenu({
   className?: string
 }) {
   const { launch, callActive } = useCallLaunch()
+  // Store-only (no fetch): this menu renders on channels and DMs, which are their
+  // own root, so the stream's live call is the entry filed under it.
+  const liveHere = useActiveCallsForStream(workspaceId, streamId).find((call) => call.streamId === streamId)
+  const liveCallId = expectedCallId ?? liveHere?.callId
+  const onAnotherDevice = useCallOnAnotherDevice(workspaceId, liveCallId)
   const start = (cameraOn: boolean) => launch({ workspaceId, streamId, mode: "video", expectedCallId, cameraOn })
+
+  if (onAnotherDevice) {
+    return (
+      <Button
+        variant="ghost"
+        size="sm"
+        className={cn("h-8 gap-1 px-2", className)}
+        disabled={callActive}
+        title={callActive ? "You're already in a call" : "Move this call to this device"}
+        aria-label="Take over call on this device"
+        onClick={() => launch({ workspaceId, streamId, mode: "video", expectedCallId: liveCallId, takeover: true })}
+      >
+        <PhoneForwarded className="h-4 w-4" />
+        <span className="text-xs">Take over</span>
+      </Button>
+    )
+  }
+
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>

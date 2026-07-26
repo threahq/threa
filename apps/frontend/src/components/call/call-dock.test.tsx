@@ -360,7 +360,13 @@ describe("CallDock — pre-join permission taxonomy", () => {
     const manager = makeManager()
     renderDock(manager)
     await userEvent.click(screen.getByText("launch"))
-    expect(manager.startCall).toHaveBeenCalledWith(expect.objectContaining({ takeover: undefined }))
+    // The launch request is passed through untouched — a plain join carries no
+    // takeover, so the server's 409 (and the prompt) is what introduces it.
+    expect(manager.startCall).toHaveBeenCalledWith({
+      workspaceId: WORKSPACE_ID,
+      streamId: "stream_1",
+      mode: "video",
+    })
   })
 
   it("shows the pre-join gate on a fresh launch after the prior call was minimized", async () => {

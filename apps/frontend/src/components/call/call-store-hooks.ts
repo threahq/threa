@@ -51,6 +51,11 @@ export function useDesktopSurfaceOverride(): DesktopSurface | null {
   return useCallSelector((s) => s.desktopSurfaceOverride)
 }
 
+/** The call this device is in (or joining), or null. */
+export function useCallId(): string | null {
+  return useCallSelector((s) => s.callId)
+}
+
 export function useCallStreamId(): string | null {
   return useCallSelector((s) => s.streamId)
 }

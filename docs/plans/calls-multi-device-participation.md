@@ -102,11 +102,37 @@ So the displaced client tears down **locally only**. That is internal to
 `CallManager` (`teardown()` is private and emits nothing), so no `CallController`
 API change: the manager handles the socket event itself.
 
+### The UI knows before the click
+
+Kris's ruling: an action that fails and then asks "are you sure?" is the wrong
+shape. The entry point should already know the call is on another device and
+offer takeover as the action — the Teams framing, "take over" rather than "join".
+
+The client can know: the active-calls store carries `participantUserIds`, kept
+fresh by `call:participants_changed` and seeded per stream from the stream
+bootstrap. `useCallOnAnotherDevice(workspaceId, callId)` is true when that roster
+lists the viewer and no local session is on that call.
+
+- The timeline call card's **Join** becomes **Take over** (and the row/menu action
+  "Take over call on this device"), launching with `takeover: true`.
+- The stream header's start menu collapses to a single **Take over** button: the
+  running call already settled voice-vs-video, so the only open question is which
+  device carries it.
+- The rejoin bar asks for takeover too. It only ever shows while a live endpoint
+  the viewer isn't on exists — this tab's own lapsed lease or another device — and
+  takeover is a no-op in the first case, because a lapsed-socket endpoint is
+  `reconnecting` and the rebind branch runs first.
+
+The 409 prompt below stays as the **fallback**, not the main path: a device that
+joined a second ago, a roster this client hasn't received, or an entry point on a
+stream whose roster was never loaded.
+
 ### Frontend shape
 
 6. `CallManagerDeps.startCallRest` and `CallManager.startCall` params gain
    `takeover?: boolean`.
-7. `CallLaunchState` += `{ status: "takeover_prompt"; request }`. In
+7. `CallLaunchRequest` += `takeover?: boolean` (set by an entry point that already
+   knows). `CallLaunchState` += `{ status: "takeover_prompt"; request }`. In
    `CallLaunchProvider.run`'s catch, an `ApiError` with code
    `CALL_ENDPOINT_ACTIVE` sets that state instead of `join_error` + toast; a new
    `takeOver()` action re-runs the same request with `takeover: true`. The dock

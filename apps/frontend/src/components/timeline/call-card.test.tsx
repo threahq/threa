@@ -7,6 +7,7 @@ import * as hooksModule from "@/hooks"
 import { PanelProvider } from "@/contexts"
 import * as launchModule from "@/components/call/call-launch-context"
 import * as callHooksModule from "@/components/call/call-store-hooks"
+import * as anotherDeviceModule from "@/components/call/use-call-on-another-device"
 import { upsertActiveCall, __resetActiveCallsStore } from "@/stores/active-calls-store"
 import { CallCard } from "./call-card"
 
@@ -28,6 +29,8 @@ beforeEach(() => {
   } as unknown as ReturnType<typeof launchModule.useCallLaunch>)
   vi.spyOn(callHooksModule, "useCallPhase").mockReturnValue("idle")
   vi.spyOn(callHooksModule, "useCallStreamId").mockReturnValue(null)
+  // Default: the viewer is not in this call anywhere. The take-over case flips it.
+  vi.spyOn(anotherDeviceModule, "useCallOnAnotherDevice").mockReturnValue(false)
   vi.spyOn(hooksModule, "useTouchCapable").mockReturnValue(false)
   vi.spyOn(hooksModule, "useInputMode").mockReturnValue("mouse")
 })
@@ -103,6 +106,32 @@ describe("CallCard", () => {
       streamId: "stream_1",
       mode: "video",
       expectedCallId: "call_1",
+      takeover: false,
+    })
+  })
+
+  it("offers Take over instead of Join when the viewer holds this call on another device", async () => {
+    upsertActiveCall("ws_1", {
+      callId: "call_1",
+      streamId: "stream_1",
+      rootStreamId: "stream_1",
+      mode: "video",
+      participantCount: 1,
+      participantUserIds: ["usr_a"],
+    })
+    vi.spyOn(anotherDeviceModule, "useCallOnAnotherDevice").mockReturnValue(true)
+    renderCard()
+
+    // The card says what will happen BEFORE the click — no Join that 409s and
+    // then asks for confirmation.
+    expect(screen.queryByRole("button", { name: "Join" })).toBeNull()
+    await userEvent.click(screen.getByRole("button", { name: "Take over" }))
+    expect(launch).toHaveBeenCalledWith({
+      workspaceId: "ws_1",
+      streamId: "stream_1",
+      mode: "video",
+      expectedCallId: "call_1",
+      takeover: true,
     })
   })
 

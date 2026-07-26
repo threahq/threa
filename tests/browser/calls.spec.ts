@@ -210,15 +210,23 @@ test.describe("1:1 DM calls", () => {
       await expect(a.locator(CALL_TILE)).toHaveCount(2, { timeout: 20000 })
 
       await second.page.goto(`/w/${workspaceId}/s/${dmStreamId}`)
-      await second.page.getByRole("button", { name: "Start a call" }).click()
-      await second.page.getByRole("menuitem", { name: "Start voice call" }).click()
 
-      // Prompted, not toasted — and nothing has moved until the user says so.
-      await expect(second.page.getByText(/in this call on another device/i)).toBeVisible({ timeout: 20000 })
+      // The second device knows from the stream's roster that this user is already
+      // in the call, so the entry point offers Take over up front — no Join that
+      // 409s and then asks. Both the header and the timeline card say so.
+      const takeOver = second.page.getByRole("button", { name: "Take over call on this device" })
+      await expect(takeOver).toBeVisible({ timeout: 20000 })
+      // Exact, so the header's "Take over call on this device" doesn't match: this
+      // is the timeline card's own button.
+      await expect(second.page.getByRole("button", { name: "Take over", exact: true })).toBeVisible({ timeout: 20000 })
+      // Nothing has moved by merely offering it.
       await expect(a.locator(CALL_TILE)).toHaveCount(2, { timeout: 5000 })
 
-      await second.page.getByRole("button", { name: "Join on this device" }).click()
+      await takeOver.click()
       await expect(second.page.locator(CALL_TILE)).toHaveCount(2, { timeout: 25000 })
+      // Straight in: the 409 prompt is the fallback for what the UI can't see
+      // coming, and it must not appear on the path the UI predicted.
+      await expect(second.page.getByText(/in this call on another device/i)).toHaveCount(0)
 
       // The displaced device is told, promptly — not left on a dead call until its
       // lease renew fails 15s later.

@@ -20,6 +20,13 @@ export interface CallLaunchRequest {
   expectedCallId?: string
   /** Join with the camera already publishing (the "Start with camera" choice). */
   cameraOn?: boolean
+  /**
+   * Displace this user's live endpoint on another device instead of being
+   * rejected by it (409 `CALL_ENDPOINT_ACTIVE`). Set by an entry point that
+   * already knows the call is on another device — see `useCallOnAnotherDevice` —
+   * or by answering the takeover prompt. Never set on a plain first join.
+   */
+  takeover?: boolean
 }
 
 /**
@@ -57,7 +64,7 @@ export function CallLaunchProvider({ children }: { children: ReactNode }) {
   const runIdRef = useRef(0)
 
   const run = useCallback(
-    async (request: CallLaunchRequest, opts?: { takeover?: boolean }) => {
+    async (request: CallLaunchRequest) => {
       // Already in (or joining) a call: startCall would synchronously reject with
       // a plain Error, which the catch below would surface as a stale join_error
       // carrying the wrong request (and a "Try again" that starts an unintended
@@ -72,7 +79,7 @@ export function CallLaunchProvider({ children }: { children: ReactNode }) {
       // permission taxonomy is derived from startCall's own typed capture failure
       // instead of a separate pre-flight getUserMedia.
       try {
-        await manager.startCall({ ...request, takeover: opts?.takeover })
+        await manager.startCall(request)
         if (runId !== runIdRef.current) return
         setState({ status: "idle" })
       } catch (err) {
@@ -108,10 +115,11 @@ export function CallLaunchProvider({ children }: { children: ReactNode }) {
     if (state.status === "permission_error" || state.status === "join_error") void run(state.request)
   }, [run, state])
 
-  // Takeover is only ever reachable from the prompt — never folded into `retry`,
-  // so no other error path can displace another device without being asked.
+  // `retry` replays the request untouched, so takeover is only ever added by an
+  // entry point that already knew (`request.takeover`) or by answering this
+  // prompt — no error path can displace another device unasked.
   const takeOver = useCallback(() => {
-    if (state.status === "takeover_prompt") void run(state.request, { takeover: true })
+    if (state.status === "takeover_prompt") void run({ ...state.request, takeover: true })
   }, [run, state])
 
   const cancel = useCallback(() => {

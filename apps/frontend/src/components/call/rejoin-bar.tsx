@@ -70,7 +70,19 @@ export function RejoinBar({ workspaceId, streamId }: { workspaceId: string; stre
         <Button
           size="sm"
           className="h-7 px-3 text-[12px]"
-          onClick={() => launch({ workspaceId, streamId, mode: activeCall.mode, expectedCallId: activeCall.callId })}
+          onClick={() =>
+            launch({
+              workspaceId,
+              streamId,
+              mode: activeCall.mode,
+              expectedCallId: activeCall.callId,
+              // The bar only shows while the viewer holds a live endpoint they are
+              // not on — a lapsed lease from this tab's previous incarnation (a
+              // rebind server-side) or a genuinely live other device. Asking for
+              // takeover covers both; it is a no-op when the rebind path applies.
+              takeover: true,
+            })
+          }
         >
           Rejoin
         </Button>

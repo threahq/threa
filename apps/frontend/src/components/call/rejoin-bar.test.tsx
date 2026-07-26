@@ -57,16 +57,19 @@ describe("RejoinBar", () => {
     expect(screen.getByRole("button", { name: "Rejoin" })).toBeTruthy()
   })
 
-  it("Rejoin dispatches the launch flow with the call's mode", async () => {
+  it("Rejoin dispatches the launch flow with the call's mode, asking to take the endpoint back", async () => {
     stubBootstrap(LIVE)
     seedStoreLive()
     renderBar()
     await userEvent.click(screen.getByRole("button", { name: "Rejoin" }))
+    // The bar only shows while a live endpoint the viewer isn't on exists — this
+    // tab's own lapsed lease (a rebind) or another device (a takeover).
     expect(launch).toHaveBeenCalledWith({
       workspaceId: "ws_1",
       streamId: "stream_1",
       mode: "video",
       expectedCallId: "call_1",
+      takeover: true,
     })
   })
 
