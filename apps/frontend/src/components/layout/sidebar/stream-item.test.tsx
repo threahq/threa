@@ -1,6 +1,6 @@
 import { act, type ReactNode } from "react"
 import { describe, expect, it, beforeEach, afterEach, vi } from "vitest"
-import { MemoryRouter } from "react-router-dom"
+import { MemoryRouter, useLocation } from "react-router-dom"
 import { fireEvent, render, screen, spyOnExport } from "@/test"
 import { StreamTypes, Visibilities } from "@threa/types"
 import { Hash } from "lucide-react"
@@ -28,8 +28,18 @@ const touchState = {
   touchCapable: true,
 }
 
+function LocationSearchEcho() {
+  const location = useLocation()
+  return <div data-testid="location-search">{location.search}</div>
+}
+
 function renderWithRouter(ui: React.ReactElement) {
-  return render(<MemoryRouter>{ui}</MemoryRouter>)
+  return render(
+    <MemoryRouter>
+      {ui}
+      <LocationSearchEcho />
+    </MemoryRouter>
+  )
 }
 
 function createStream(overrides: Partial<StreamItemData> = {}): StreamItemData {
@@ -169,6 +179,35 @@ describe("StreamItem", () => {
     fireEvent.click(screen.getByRole("button", { name: "Settings" }))
 
     expect(openStreamSettings).toHaveBeenCalledWith("stream_general")
+  })
+
+  it("opens the attachment explorer scoped to the stream", async () => {
+    const stream = createStream()
+
+    renderWithRouter(
+      <StreamItem
+        workspaceId="workspace_1"
+        stream={stream}
+        isActive={false}
+        unreadCount={0}
+        mentionCount={0}
+        allStreams={[stream]}
+      />
+    )
+
+    fireEvent.touchStart(screen.getByRole("link", { name: /general/i }), {
+      touches: [{ clientX: 16, clientY: 16 }],
+    })
+
+    await act(async () => {
+      vi.advanceTimersByTime(500)
+    })
+
+    fireEvent.click(screen.getByRole("button", { name: "Browse files…" }))
+
+    const search = new URLSearchParams(screen.getByTestId("location-search").textContent ?? "")
+    expect(search.has("explorer")).toBe(true)
+    expect(search.get("streams")).toBe("stream_general")
   })
 
   it("keeps compact hover previews hidden on mobile", () => {
