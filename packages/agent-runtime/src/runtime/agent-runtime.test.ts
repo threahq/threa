@@ -478,6 +478,91 @@ describe("AgentRuntime source commitment", () => {
   })
 })
 
+describe("AgentRuntime reasoning replay", () => {
+  it("replays the assistant turn with a single copy of reasoning_details", async () => {
+    const detail = {
+      type: "reasoning.text",
+      text: "Thinking about the request.",
+      index: 0,
+      signature: "ErkJCok",
+      format: "anthropic-claude-v1",
+    }
+    const echoTool = defineAgentTool({
+      name: "echo_tool",
+      description: "test",
+      categories: [],
+      inputSchema: z.object({}),
+      execute: async () => ({ output: "ok" }),
+      trace: { stepType: AgentStepTypes.VISIT_PAGE, formatContent: () => "{}" },
+    })
+
+    const calls: Array<Array<{ role: string; content: unknown }>> = []
+    let firstCall = true
+    const generateTextWithTools = async ({ messages }: { messages: Array<{ role: string; content: unknown }> }) => {
+      calls.push(messages)
+      if (firstCall) {
+        firstCall = false
+        return {
+          text: "",
+          toolCalls: [{ toolCallId: "tc_1", toolName: "echo_tool", input: {} }],
+          response: {
+            messages: [
+              {
+                role: "assistant" as const,
+                content: [
+                  {
+                    type: "reasoning",
+                    text: "thinking",
+                    providerOptions: { openrouter: { reasoning_details: [detail] } },
+                  },
+                  {
+                    type: "tool-call",
+                    toolCallId: "tc_1",
+                    toolName: "echo_tool",
+                    input: {},
+                    providerOptions: { openrouter: { reasoning_details: [detail] } },
+                  },
+                ],
+              } as any,
+            ],
+          },
+        }
+      }
+      return {
+        text: "Done.",
+        toolCalls: [],
+        response: { messages: [{ role: "assistant" as const, content: "Done." } as any] },
+      }
+    }
+
+    const runtime = new AgentRuntime({
+      ai: { generateTextWithTools } as any,
+      model: {} as any,
+      systemPrompt: "You are helpful.",
+      messages: [{ role: "user", content: "do it" }],
+      tools: [echoTool],
+      sendMessage: async () => ({ messageId: "msg_1", operation: "created" }),
+    })
+
+    await runtime.run()
+
+    const replayed = calls[1]?.find((m) => m.role === "assistant")
+    expect(replayed).toEqual({
+      role: "assistant",
+      content: [
+        { type: "reasoning", text: "thinking", providerOptions: { openrouter: { reasoning_details: [detail] } } },
+        {
+          type: "tool-call",
+          toolCallId: "tc_1",
+          toolName: "echo_tool",
+          input: {},
+          providerOptions: { openrouter: {} },
+        },
+      ],
+    })
+  })
+})
+
 describe("AgentRuntime tool progress + signal plumbing", () => {
   it("provides toolSignalProvider's signal to the tool's execute opts", async () => {
     const controller = new AbortController()

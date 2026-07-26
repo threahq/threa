@@ -4,6 +4,7 @@ import { AgentToolNames } from "@threa/types"
 import type { AI, CostContext, TelemetryMetadataValue } from "../ai/ai"
 import { logger } from "../logger"
 import { protectToolOutputText } from "./tool-trust-boundary"
+import { sanitizeAssistantReplay } from "./reasoning-replay"
 import { MAX_MESSAGE_CHARS, truncateMessages } from "./truncation"
 import { createKeepResponseTool } from "../tools/keep-response-tool"
 import { createSendMessageTool } from "../tools/send-message-tool"
@@ -354,7 +355,10 @@ export class AgentRuntime {
       }
 
       const assistantMsg = result.response.messages[0]
-      if (assistantMsg) conversation.push(assistantMsg)
+      // @openrouter/ai-sdk-provider 1.5.4 stamps reasoning_details on both the
+      // reasoning part and every tool call, then replays both — Anthropic 400s on
+      // the duplicated thinking block. Strip before the message enters conversation.
+      if (assistantMsg) conversation.push(sanitizeAssistantReplay(assistantMsg))
 
       if (result.toolCalls.length === 0) {
         const currentText = extractAssistantText(result)
