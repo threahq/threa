@@ -66,22 +66,82 @@ export function joinSystemPrompt(prompt: SplitSystemPrompt): string {
   return prompt.stable + prompt.volatile
 }
 
-export function buildSystemPrompt(
-  persona: Persona,
-  context: StreamContext,
-  scratchpadCustomPrompt?: string | null,
-  purpose: TurnPurpose = { kind: "catch_up" },
-  mentionerName?: string,
-  rollingConversationSummary?: string | null,
-  tools: AgentTool[] = [],
-  conversationTopic?: string | null,
-  spawnedFromContext?: string | null,
-  followUp?: { note: string; scheduledFor: Date } | null,
-  previousSessions?: string | null,
-  streamBrief?: string | null,
-  styleSlots?: { tone?: string; brevity?: string },
+/**
+ * Everything the system prompt is built from. Named rather than positional so
+ * each input can be classified below — and so a new one cannot be added without
+ * making that classification.
+ */
+export interface SystemPromptInputs {
+  persona: Persona
+  context: StreamContext
+  scratchpadCustomPrompt?: string | null
+  purpose?: TurnPurpose
+  mentionerName?: string
+  rollingConversationSummary?: string | null
+  tools?: AgentTool[]
+  conversationTopic?: string | null
+  spawnedFromContext?: string | null
+  followUp?: { note: string; scheduledFor: Date } | null
+  previousSessions?: string | null
+  streamBrief?: string | null
+  styleSlots?: { tone?: string; brevity?: string }
   personaKnowledge?: PersonaAttachmentContentItem[] | null
-): SplitSystemPrompt {
+}
+
+/**
+ * Where a change to each input is allowed to show up.
+ *
+ * `conversation` — holds for the conversation's lifetime, so it may sit in the
+ * cached half. `turn` — re-derived per turn, so it must not: inside the cached
+ * prefix it changes the prefix every turn and the cache is never read back.
+ *
+ * This misclassification has shipped four times (temporal grounding, the
+ * mention/follow-up section, `## Current Topic` + rolling summary, and the
+ * cross-surface stitch), every time silently: no error, no failing test, just a
+ * hit rate that never materialises. `Record<keyof SystemPromptInputs, …>` is
+ * what makes it structural — adding a field to the interface fails the build
+ * until it is classified here, and `system-prompt.cache-stability.test.ts`
+ * proves each `turn` entry actually stays out of the cached half.
+ *
+ * `context` is the one input that legitimately carries both (stream metadata is
+ * conversation-scoped, `context.temporal` is per-turn), so it is classified
+ * `mixed` and covered by its own dedicated assertions in that test.
+ */
+export const SYSTEM_PROMPT_INPUT_STABILITY = {
+  persona: "conversation",
+  context: "mixed",
+  scratchpadCustomPrompt: "conversation",
+  purpose: "turn",
+  mentionerName: "turn",
+  rollingConversationSummary: "turn",
+  tools: "conversation",
+  conversationTopic: "turn",
+  spawnedFromContext: "turn",
+  followUp: "turn",
+  previousSessions: "conversation",
+  streamBrief: "conversation",
+  styleSlots: "conversation",
+  personaKnowledge: "conversation",
+} as const satisfies Record<keyof SystemPromptInputs, "conversation" | "turn" | "mixed">
+
+export function buildSystemPrompt(inputs: SystemPromptInputs): SplitSystemPrompt {
+  const {
+    persona,
+    context,
+    scratchpadCustomPrompt,
+    purpose = { kind: "catch_up" },
+    mentionerName,
+    rollingConversationSummary,
+    tools = [],
+    conversationTopic,
+    spawnedFromContext,
+    followUp,
+    previousSessions,
+    streamBrief,
+    styleSlots,
+    personaKnowledge,
+  } = inputs
+
   if (!persona.systemPrompt) {
     throw new Error(`Persona "${persona.name}" (${persona.id}) has no system prompt configured`)
   }

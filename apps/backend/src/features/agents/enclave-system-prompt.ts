@@ -54,30 +54,22 @@ export async function buildEnclaveSystemPrompt(params: {
     updatedAt: new Date(),
   }
 
-  const prompt = buildSystemPrompt(
-    enclavePersona,
+  const prompt = buildSystemPrompt({
+    persona: enclavePersona,
     context,
-    preferences.scratchpadCustomPrompt,
-    undefined,
-    undefined,
+    scratchpadCustomPrompt: preferences.scratchpadCustomPrompt,
     // No rolling conversation summary — that's derived from plaintext history
     // the backend can't read for an E2E stream.
-    null,
+    rollingConversationSummary: null,
     // No tool sections server-side: the enclave appends them from its real
     // toolset (see the module doc above).
-    [],
-    // ENCLAVE PARITY: the intervening positional args default undefined, but
-    // styleSlots MUST be passed explicitly — the enclave resolves the persona
-    // server-side, so a set tone/brevity preset has to reach the same prompt
-    // builder here or the encrypted turn silently diverges from the in-process
-    // companion's response style.
-    null,
-    null,
-    null,
-    null,
-    null,
-    resolvePersonaStyleSlots(enclavePersona)
-  )
+    tools: [],
+    // ENCLAVE PARITY: styleSlots must be passed — the enclave resolves the
+    // persona server-side, so a set tone/brevity preset has to reach the same
+    // prompt builder here or the encrypted turn silently diverges from the
+    // in-process companion's response style.
+    styleSlots: resolvePersonaStyleSlots(enclavePersona),
+  })
 
   // The shared prompt advertises the reduced toolset but never explains *why*
   // capabilities are missing. Without this, asked to recall something from the
