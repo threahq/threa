@@ -2,7 +2,9 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest"
 import { act } from "@testing-library/react"
 import { MemoryRouter } from "react-router-dom"
 import { fireEvent, render, screen, userEvent } from "@/test"
+import { StreamTypes } from "@threa/types"
 import * as useMobileModule from "@/hooks/use-mobile"
+import * as workspaceStore from "@/stores/workspace-store"
 import {
   clearCallState,
   getCallState,
@@ -22,6 +24,10 @@ import {
 } from "@/stores/call-prefs-store"
 import { CallControls, DevicePickerMenu } from "./call-controls"
 import { CallManagerProvider } from "./call-manager-context"
+
+// The store's own row type, reached through the hook so this component test does
+// not import `@/db` (INV-15).
+type CachedWorkspaceStream = ReturnType<typeof workspaceStore.useWorkspaceStreamsRaw>[number]
 
 function makeManager(overrides: Partial<CallController> = {}): CallController {
   return {
@@ -171,6 +177,32 @@ describe("CallControls — call chat", () => {
     // on the call_started event id.
     expect(href).toContain("/w/ws_1/s/stream_1")
     expect(href).toContain("draft%3Astream_1%3Aevent_chat_1")
+  })
+
+  it("targets the real thread once the chat thread exists, so no draft flashes first", () => {
+    vi.spyOn(workspaceStore, "useWorkspaceStreamsRaw").mockReturnValue([
+      {
+        id: "stream_chat_thread",
+        workspaceId: "ws_1",
+        type: StreamTypes.THREAD,
+        parentStreamId: "stream_1",
+        parentAnchorId: "event_chat_1",
+      } as CachedWorkspaceStream,
+    ])
+    act(() => {
+      setCallSession({
+        callId: "call_1",
+        workspaceId: "ws_1",
+        streamId: "stream_1",
+        mode: "video",
+        chatAnchorId: "event_chat_1",
+      })
+      setCallPhase("connected")
+    })
+    renderRouted(makeManager())
+    const href = screen.getByRole("link", { name: "Open call chat" }).getAttribute("href") ?? ""
+    expect(href).toContain("panel=stream_chat_thread")
+    expect(href).not.toContain("draft")
   })
 
   it.each([
