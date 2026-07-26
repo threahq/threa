@@ -140,3 +140,21 @@ describe("runGeneralResearch", () => {
     expect(result.sources).toEqual([{ type: "web", title: "Result", url: "https://example.com/r" }])
   })
 })
+
+describe("runGeneralResearch is not behind the persona output guard", () => {
+  test("returns a brief quoting tool-call markup intact instead of re-prompting to max_iterations", async () => {
+    const brief =
+      'Evidence — the message body was, verbatim:\n<invoke name="workspace_research">\n<parameter name="query">preview bugs</parameter>\n</invoke>'
+    const deps = buildDeps(() => ({
+      text: brief,
+      toolCalls: [],
+      response: { messages: [{ role: "assistant", content: brief }] },
+    }))
+
+    const result = await runGeneralResearch(deps, baseInput())
+
+    expect(result.brief).toBe(brief)
+    expect(result.partial).toBeUndefined()
+    expect(result.partialReason).toBeUndefined()
+  })
+})
