@@ -2242,7 +2242,7 @@ export function StreamContent({
     isLoading,
     useVirtualized,
     virtualIsInitialSettling,
-    lastReadEventId,
+    frontierSequence,
     isJumpMode,
     skipInitialScroll,
     dividerEventId,
