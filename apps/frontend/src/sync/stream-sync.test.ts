@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from "vitest"
+import { describe, it, expect, afterEach, beforeEach, vi } from "vitest"
 import { QueryClient } from "@tanstack/react-query"
 import type { Socket } from "socket.io-client"
 import { db, type CachedEvent } from "@/db"
@@ -19,8 +19,10 @@ import { commandsApi } from "@/api"
 import { clearDecryptCache, getCachedDecryption } from "@/lib/crypto/decrypt-cache"
 import { sharedMessageSlotKey } from "@threa/types"
 import type {
+  AttachmentSummary,
   BotRuntimePresenceSummary,
   LinkPreviewSummary,
+  Stream,
   SharedMessageSlot,
   SlotMap,
   StreamBootstrap,
@@ -3457,5 +3459,363 @@ describe("applyStreamBootstrap standalone frontier persistence (non-member unloc
   it("leaves the store untouched when the field is absent (payload cached before it shipped)", async () => {
     await applyStreamBootstrap("ws_1", streamId, makeBootstrap([], streamId))
     expect(await db.streamReadState.get(`ws_1:${streamId}`)).toBeUndefined()
+  })
+})
+
+describe("registerStreamSocketHandlers — stream context rows", () => {
+  const STREAM_ID = "stream_ctx"
+  const THREAD_ID = "stream_ctx_thread"
+
+  function createTestSocket() {
+    const handlers = new Map<string, Set<(payload: unknown) => unknown>>()
+    const socket = {
+      on(event: string, handler: (payload: unknown) => unknown) {
+        const set = handlers.get(event) ?? new Set()
+        set.add(handler)
+        handlers.set(event, set)
+        return this
+      },
+      off(event: string, handler: (payload: unknown) => unknown) {
+        handlers.get(event)?.delete(handler)
+        return this
+      },
+    } as unknown as Socket
+
+    return {
+      socket,
+      async emit(event: string, payload: unknown) {
+        await Promise.all([...(handlers.get(event) ?? [])].map((handler) => handler(payload)))
+      },
+    }
+  }
+
+  function messageEvent(
+    messageId: string,
+    body: { href?: string; attachments?: AttachmentSummary[] },
+    sequence = "10"
+  ): StreamEvent {
+    return {
+      id: `event_${messageId}`,
+      streamId: STREAM_ID,
+      sequence,
+      eventType: "message_created",
+      payload: {
+        messageId,
+        contentMarkdown: "hello",
+        contentJson: {
+          type: "doc",
+          content: [
+            {
+              type: "paragraph",
+              content: body.href
+                ? [{ type: "text", text: "x", marks: [{ type: "link", attrs: { href: body.href } }] }]
+                : [{ type: "text", text: "x" }],
+            },
+          ],
+        },
+        attachments: body.attachments ?? [],
+      },
+      actorId: "usr_1",
+      actorType: "user",
+      createdAt: "2026-07-01T10:00:00.000Z",
+    }
+  }
+
+  let harness: ReturnType<typeof createTestSocket>
+  let unregister: () => void
+
+  beforeEach(async () => {
+    await db.events.clear()
+    await db.streams.clear()
+    await db.streamContextItems.clear()
+    await db.streams.put({
+      id: STREAM_ID,
+      workspaceId: "ws_1",
+      type: "channel",
+      displayName: "ctx",
+      slug: "ctx",
+      description: null,
+      visibility: "public",
+      parentStreamId: null,
+      rootStreamId: null,
+      companionMode: "off",
+      companionPersonaId: null,
+      createdBy: "usr_1",
+      createdAt: "2026-07-01T00:00:00.000Z",
+      updatedAt: "2026-07-01T00:00:00.000Z",
+      archivedAt: null,
+      _cachedAt: Date.now(),
+    } as never)
+    harness = createTestSocket()
+    unregister = registerStreamSocketHandlers(harness.socket, "ws_1", STREAM_ID, new QueryClient())
+  })
+
+  afterEach(() => unregister())
+
+  it("writes a pending row per artifact when a message lands", async () => {
+    await harness.emit("message:created", {
+      workspaceId: "ws_1",
+      streamId: STREAM_ID,
+      event: messageEvent("msg_1", {
+        href: "https://example.com/a",
+        attachments: [{ id: "att_1", filename: "p.png", mimeType: "image/png", sizeBytes: 5 }],
+      }),
+    })
+
+    const rows = await db.streamContextItems.toArray()
+    expect(rows.map((r) => [r.key, r.streamId, r.rootStreamId, r._status]).sort()).toEqual([
+      ["link:https://example.com/a:msg_1", STREAM_ID, STREAM_ID, "pending"],
+      ["media:att_1:msg_1", STREAM_ID, STREAM_ID, "pending"],
+    ])
+    expect(rows.every((r) => r.occurredAt === "2026-07-01T10:00:00.000Z")).toBe(true)
+  })
+
+  it("files a thread's rows under its root so the tree feed sees them", async () => {
+    await db.streams.put({
+      id: THREAD_ID,
+      workspaceId: "ws_1",
+      type: "thread",
+      displayName: null,
+      slug: null,
+      description: null,
+      visibility: "private",
+      parentStreamId: STREAM_ID,
+      rootStreamId: STREAM_ID,
+      companionMode: "off",
+      companionPersonaId: null,
+      createdBy: "usr_1",
+      createdAt: "2026-07-01T00:00:00.000Z",
+      updatedAt: "2026-07-01T00:00:00.000Z",
+      archivedAt: null,
+      _cachedAt: Date.now(),
+    } as never)
+    const threadHarness = createTestSocket()
+    const off = registerStreamSocketHandlers(threadHarness.socket, "ws_1", THREAD_ID, new QueryClient())
+
+    await threadHarness.emit("message:created", {
+      workspaceId: "ws_1",
+      streamId: THREAD_ID,
+      event: { ...messageEvent("msg_t", { href: "https://example.com/t" }), streamId: THREAD_ID },
+    })
+    off()
+
+    expect(await db.streamContextItems.get("link:https://example.com/t:msg_t")).toMatchObject({
+      streamId: THREAD_ID,
+      rootStreamId: STREAM_ID,
+    })
+  })
+
+  it("rebuilds a message's rows on edit, dropping a link the edit removed", async () => {
+    await harness.emit("message:created", {
+      workspaceId: "ws_1",
+      streamId: STREAM_ID,
+      event: messageEvent("msg_1", {
+        href: "https://example.com/gone",
+        attachments: [{ id: "att_1", filename: "p.png", mimeType: "image/png", sizeBytes: 5 }],
+      }),
+    })
+
+    await harness.emit("message:edited", {
+      workspaceId: "ws_1",
+      streamId: STREAM_ID,
+      event: {
+        id: "event_edit",
+        streamId: STREAM_ID,
+        sequence: "11",
+        eventType: "message_edited",
+        payload: {
+          messageId: "msg_1",
+          contentMarkdown: "hello",
+          contentJson: {
+            type: "doc",
+            content: [
+              {
+                type: "paragraph",
+                content: [
+                  { type: "text", text: "x", marks: [{ type: "link", attrs: { href: "https://example.com/new" } }] },
+                ],
+              },
+            ],
+          },
+        },
+        actorId: "usr_1",
+        actorType: "user",
+        createdAt: "2026-07-01T11:00:00.000Z",
+      },
+    })
+
+    const keys = (await db.streamContextItems.toArray()).map((r) => r.key).sort()
+    // The attachment row survives (the edit payload doesn't carry attachments);
+    // the removed link is gone and the new one is there.
+    expect(keys).toEqual(["link:https://example.com/new:msg_1", "media:att_1:msg_1"])
+  })
+
+  it("drops a deleted message's rows", async () => {
+    await harness.emit("message:created", {
+      workspaceId: "ws_1",
+      streamId: STREAM_ID,
+      event: messageEvent("msg_1", { href: "https://example.com/a" }),
+    })
+    await harness.emit("message:deleted", {
+      workspaceId: "ws_1",
+      streamId: STREAM_ID,
+      messageId: "msg_1",
+      deletedAt: "2026-07-01T12:00:00.000Z",
+    })
+    expect(await db.streamContextItems.toArray()).toEqual([])
+  })
+
+  it("writes memo rows from a memos:captured broadcast, anchored on the source message", async () => {
+    await harness.emit("message:created", {
+      workspaceId: "ws_1",
+      streamId: STREAM_ID,
+      event: { ...messageEvent("msg_9", {}, "5"), createdAt: "2026-07-01T09:00:00.000Z" },
+    })
+
+    await harness.emit("stream:memos_captured", {
+      workspaceId: "ws_1",
+      streamId: STREAM_ID,
+      event: {
+        id: "event_memos",
+        streamId: STREAM_ID,
+        sequence: "20",
+        eventType: "memos:captured",
+        payload: {
+          memos: [{ memoId: "memo_1", title: "Decision", knowledgeType: "decision", sourceMessageIds: ["msg_9"] }],
+        },
+        actorId: null,
+        actorType: null,
+        createdAt: "2026-07-01T13:00:00.000Z",
+      },
+    })
+
+    // Anchored on the source message's own time, not the debounced capture time.
+    expect(await db.streamContextItems.get("memo:memo_1:msg_9")).toMatchObject({
+      category: "memo",
+      sourceMessageId: "msg_9",
+      streamId: STREAM_ID,
+      occurredAt: "2026-07-01T09:00:00.000Z",
+    })
+  })
+
+  it("re-homes moved messages' rows onto the destination thread", async () => {
+    await harness.emit("message:created", {
+      workspaceId: "ws_1",
+      streamId: STREAM_ID,
+      event: messageEvent("msg_1", { href: "https://example.com/a" }),
+    })
+
+    const thread = {
+      id: THREAD_ID,
+      workspaceId: "ws_1",
+      type: "thread",
+      displayName: null,
+      slug: null,
+      description: null,
+      visibility: "private",
+      parentStreamId: STREAM_ID,
+      rootStreamId: STREAM_ID,
+      companionMode: "off",
+      companionPersonaId: null,
+      createdBy: "usr_1",
+      createdAt: "2026-07-01T00:00:00.000Z",
+      updatedAt: "2026-07-01T00:00:00.000Z",
+      archivedAt: null,
+    } as unknown as Stream
+
+    // Emitted on the SOURCE stream's handler only: the destination is a
+    // brand-new thread with no subscription at move time, so the destination leg
+    // does not exist in the real fan-out.
+    await harness.emit("messages:moved", {
+      workspaceId: "ws_1",
+      streamId: STREAM_ID,
+      sourceStreamId: STREAM_ID,
+      destinationStreamId: THREAD_ID,
+      targetMessageId: "msg_target",
+      movedMessageIds: ["msg_1"],
+      thread,
+      events: [],
+      removedEventIds: [],
+      sourceTombstoneEvent: {
+        id: "event_tomb",
+        streamId: STREAM_ID,
+        sequence: "30",
+        eventType: "messages_moved",
+        payload: {},
+        actorId: "usr_1",
+        actorType: "user",
+        createdAt: "2026-07-01T14:00:00.000Z",
+      },
+      parentReplyCount: 1,
+      parentThreadSummary: null,
+    })
+
+    expect(await db.streamContextItems.get("link:https://example.com/a:msg_1")).toMatchObject({
+      streamId: THREAD_ID,
+      rootStreamId: STREAM_ID,
+    })
+  })
+
+  it("leaves a reconciled server row untouched when its event is replayed", async () => {
+    const event = messageEvent("msg_1", { href: "https://example.com/a" })
+    await harness.emit("message:created", { workspaceId: "ws_1", streamId: STREAM_ID, event })
+
+    // The read endpoint seeds the server's copy over the same key.
+    const seeded = await db.streamContextItems.get("link:https://example.com/a:msg_1")
+    await db.streamContextItems.put({
+      ...seeded!,
+      groupKey: "https://example.com/a",
+      groupRef: "link:https://example.com/a",
+      detail: { ...seeded!.detail, title: "Example" },
+      _status: undefined,
+    })
+
+    // Catch-up replays the same event through the same handler.
+    await harness.emit("message:created", { workspaceId: "ws_1", streamId: STREAM_ID, event })
+
+    expect(await db.streamContextItems.get("link:https://example.com/a:msg_1")).toMatchObject({
+      detail: expect.objectContaining({ title: "Example" }),
+      _status: undefined,
+    })
+  })
+
+  it("keeps a message's rows on edit when its created event is outside the cached window", async () => {
+    // A seeded server row whose message_created event this session never cached.
+    await db.streamContextItems.put({
+      key: "link:https://example.com/old:msg_old",
+      workspaceId: "ws_1",
+      streamId: STREAM_ID,
+      rootStreamId: STREAM_ID,
+      category: "link",
+      refKind: "url",
+      refId: "https://example.com/old",
+      groupKey: "https://example.com/old",
+      groupRef: "link:https://example.com/old",
+      sourceMessageId: "msg_old",
+      authorId: "usr_1",
+      occurredAt: "2026-06-01T10:00:00.000Z",
+      sequence: "1",
+      snippet: "old",
+      occurrenceCount: 1,
+      detail: { url: "https://example.com/old", title: "Old" },
+      _cachedAt: Date.now(),
+    } as never)
+
+    await harness.emit("message:edited", {
+      workspaceId: "ws_1",
+      streamId: STREAM_ID,
+      event: {
+        id: "event_edit_old",
+        streamId: STREAM_ID,
+        sequence: "99",
+        eventType: "message_edited",
+        payload: { messageId: "msg_old", contentMarkdown: "typo fixed", contentJson: { type: "doc", content: [] } },
+        actorId: "usr_1",
+        actorType: "user",
+        createdAt: "2026-07-01T15:00:00.000Z",
+      },
+    })
+
+    expect(await db.streamContextItems.get("link:https://example.com/old:msg_old")).toBeDefined()
   })
 })

@@ -33,6 +33,8 @@ import {
   rehomeActivities,
 } from "./unread-counters"
 import { upsertActiveCall, updateCallParticipants } from "@/stores/active-calls-store"
+import { contextItemsFromEvent, type ContextRowsContext } from "@/lib/stream-context/rows"
+import { deleteContextRowsForMessage, putLocalContextRows, reparentContextRows } from "@/stores/stream-context-store"
 
 // ============================================================================
 // Bootstrap application — writes stream bootstrap data to IndexedDB
@@ -1035,6 +1037,59 @@ function isEncryptedPayload(payload: unknown): boolean {
   return !!p && typeof p.ciphertext === "string" && !!p.envelope
 }
 
+/**
+ * The scope a stream's context rows are filed under: the stream itself plus its
+ * effective root, so a thread's artifacts still surface in the root's tree feed
+ * (INV-62). Falls back to the stream as its own root when its row isn't cached.
+ */
+async function resolveContextScope(workspaceId: string, streamId: string): Promise<ContextRowsContext> {
+  const stream = await db.streams.get(streamId)
+  return { workspaceId, streamId, rootStreamId: stream?.rootStreamId ?? streamId }
+}
+
+/**
+ * Maintain the local "In this stream" rows for an event the client just applied.
+ * Derived rows are `_status: "pending"` until the read endpoint seeds the
+ * server's copy over the same `key`, so the panel shows an artifact the instant
+ * its message lands — offline included — without a duplicate on reconcile.
+ *
+ * E2E events are skipped: their payload is ciphertext at rest, the server
+ * projects no rows for a sealed stream, and the panel derives that view from
+ * decrypted content instead.
+ */
+async function applyContextRowsForEvent(workspaceId: string, streamId: string, event: CachedEvent): Promise<void> {
+  if (isEncryptedPayload(event.payload)) return
+  const rows = contextItemsFromEvent(
+    event,
+    await resolveContextScope(workspaceId, streamId),
+    await resolveMemoSourceEvents(streamId, event)
+  )
+  await putLocalContextRows(rows)
+}
+
+/**
+ * The `message_created` events a `memos:captured` payload cites, by message id.
+ * A memo row is anchored on its source messages, not on the capture broadcast
+ * (extraction is debounced, so capture time lands minutes after the landmark) —
+ * `indexCapturedMemos` resolves the same way, and the two must agree or they
+ * write different identity keys. Empty for every other event type.
+ */
+async function resolveMemoSourceEvents(streamId: string, event: CachedEvent): Promise<Map<string, CachedEvent>> {
+  const resolved = new Map<string, CachedEvent>()
+  if (event.eventType !== "memos:captured") return resolved
+  const payload = event.payload as { memos?: { sourceMessageIds?: string[] }[] } | undefined
+  const wanted = new Set((payload?.memos ?? []).flatMap((memo) => memo.sourceMessageIds ?? []))
+  if (wanted.size === 0) return resolved
+  await db.events
+    .where("[streamId+eventType]")
+    .equals([streamId, "message_created"])
+    .each((candidate) => {
+      const messageId = (candidate.payload as { messageId?: string })?.messageId
+      if (messageId && wanted.has(messageId)) resolved.set(messageId, candidate)
+    })
+  return resolved
+}
+
 export interface StreamSocketHandlerOptions {
   /**
    * Called after a live event was written whose sequence leaves a hole behind
@@ -1176,6 +1231,13 @@ export function registerStreamSocketHandlers(
       onSequenceGap?.({ streamId, afterSequence: gapAfterSequence })
     }
 
+    await applyContextRowsForEvent(workspaceId, streamId, {
+      ...newEvent,
+      workspaceId,
+      _sequenceNum: sequenceToNum(newEvent.sequence),
+      _cachedAt: now,
+    })
+
     // Seed the decrypt cache so the encrypted server event renders its content
     // immediately. Only meaningful for E2E events (the wire payload carries a
     // ciphertext); for plaintext sends the render path ignores the cache.
@@ -1238,6 +1300,22 @@ export function registerStreamSocketHandlers(
       await writeSlotCarrier({ database: db, workspaceId, streamId, carrier: payload, mode: "merge", cachedAt: now })
     })
 
+    // Replace, not patch: an edit can drop a link the message used to carry, so
+    // the message's rows are rebuilt from the now-updated event (which still
+    // holds the attachments the edit payload doesn't carry). Only when a rebuild
+    // source exists — `db.events` holds a window, not the whole history, and
+    // deleting without rebuilding would drop the seeded server rows of an older
+    // message with nothing to write back.
+    const editedEvent = await db.events
+      .where("[streamId+eventType]")
+      .equals([streamId, "message_created"])
+      .filter((e) => (e.payload as { messageId?: string })?.messageId === editPayload.messageId)
+      .first()
+    if (editedEvent) {
+      await deleteContextRowsForMessage(workspaceId, editPayload.messageId)
+      await applyContextRowsForEvent(workspaceId, streamId, editedEvent)
+    }
+
     if (!(payload.slots || payload.sharedMessages) && contentHasSharedMessage(editPayload.contentJson)) {
       // Deploy-skew fallback — see handleMessageCreated.
       await queryClient.invalidateQueries({ queryKey: streamKeys.bootstrap(workspaceId, streamId) })
@@ -1251,6 +1329,10 @@ export function registerStreamSocketHandlers(
       ...p,
       deletedAt: payload.deletedAt,
     }))
+
+    // A deleted message holds no context rows — the server drops them in the
+    // delete transaction with no separate event.
+    await deleteContextRowsForMessage(workspaceId, payload.messageId)
 
     // Fix A2: the delete transaction marks the message's activity rows read
     // server-side with no counter event, so drop the held rows here to match.
@@ -1313,6 +1395,19 @@ export function registerStreamSocketHandlers(
         await db.streams.put(streamUpdate)
       }
     })
+
+    // Re-home the moved messages' context rows onto the thread. Gated on the
+    // SOURCE (like the activity rehome below): the destination of a move is
+    // usually a freshly created thread with no subscription and therefore no
+    // registered handlers, so a destination gate would never fire.
+    if (payload.sourceStreamId === streamId) {
+      await reparentContextRows(
+        workspaceId,
+        payload.movedMessageIds,
+        payload.destinationStreamId,
+        payload.thread.rootStreamId ?? payload.thread.id
+      )
+    }
 
     queryClient.setQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap(workspaceId), (old) => {
       if (!old) return old
@@ -1489,6 +1584,17 @@ export function registerStreamSocketHandlers(
     })
     if (gapAfterSequence !== null) {
       onSequenceGap?.({ streamId, afterSequence: gapAfterSequence })
+    }
+
+    // `memos:captured` is the only appended row that carries context artifacts
+    // (INV-62 — the capture broadcast names each memo and its source messages).
+    if (payload.event.eventType === "memos:captured") {
+      await applyContextRowsForEvent(workspaceId, streamId, {
+        ...payload.event,
+        workspaceId,
+        _sequenceNum: sequenceToNum(payload.event.sequence),
+        _cachedAt: now,
+      })
     }
   }
 
