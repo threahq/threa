@@ -1,8 +1,7 @@
 import { homedir } from "node:os"
 import { join } from "node:path"
 import {
-  ARCHIVE_RESTORE_GRACE_MS,
-  ARCHIVE_RESTORE_PROBE_MS,
+  ArchiveGraceController,
   BikKeystore,
   BotRuntimeTransport,
   mintStreamKeyWraps,
@@ -348,15 +347,7 @@ export class RemoteSession {
   private reconnectResetTimer: ReturnType<typeof setTimeout> | undefined
   private reconnectFallbackTask: Promise<unknown> | undefined
   private stopped = false
-  private readonly archiveGraceMs: number
-  /**
-   * Set while the linked scratchpad is archived and the session is waiting out
-   * the restore grace window. Claims are suspended; the poll probes
-   * session-create at ARCHIVE_RESTORE_PROBE_MS; the deadline runs the
-   * connector wind-down that used to fire immediately on archive.
-   */
-  private archivePending: { rootStreamId: string; deadline: ReturnType<typeof setTimeout> } | undefined
-  private archiveProbeInflight = false
+  private readonly archive: ArchiveGraceController
   private pollTimer: ReturnType<typeof setTimeout> | undefined
   private renewTimer: ReturnType<typeof setInterval> | undefined
   /** Consecutive empty poll ticks while the socket is down; drives the poll backoff. */
@@ -375,7 +366,17 @@ export class RemoteSession {
     this.delegate = options.delegate
     this.runtime = options.runtime
     this.log = options.log ?? (() => undefined)
-    this.archiveGraceMs = options.archiveGraceMs ?? ARCHIVE_RESTORE_GRACE_MS
+    this.archive = new ArchiveGraceController(
+      {
+        isArchived: async (rootStreamId) => Boolean(await this.client.getStreamArchivedAt(rootStreamId)),
+        reattach: () => this.relinkAfterRestore(),
+        onDetached: (rootStreamId) => this.detachForArchive(rootStreamId),
+        onReattached: () => this.claimDrain().then(() => undefined),
+        onWindDown: (rootStreamId) => this.windDownForArchive(rootStreamId),
+        log: this.log,
+      },
+      options.archiveGraceMs === undefined ? {} : { graceMs: options.archiveGraceMs }
+    )
     this.bik = new BikKeystore({
       path: this.config.bikPath ?? join(homedir(), ".threa", `bik-${sanitizeId(this.runtime.kind)}.json`),
       log: this.log,
@@ -433,12 +434,12 @@ export class RemoteSession {
   }
 
   get statusSnapshot(): RemoteSessionStatusSnapshot {
-    const linkState = this.archivePending ? "detached" : this.link ? "linked" : "unlinked"
+    const linkState = this.archive.detached ? "detached" : this.link ? "linked" : "unlinked"
     return {
       stopped: this.stopped,
       linkGeneration: this.linkGeneration,
       linkState,
-      rootStreamId: this.link?.rootStreamId ?? this.archivePending?.rootStreamId,
+      rootStreamId: this.link?.rootStreamId ?? this.archive.pendingRootStreamId,
       activeStreamId: this.link?.activeStreamId,
       socketConnected: this.transport.socketConnected,
       inflightCount: this.inflight.size,
@@ -464,34 +465,43 @@ export class RemoteSession {
 
   /** Create (or recover) the scratchpad link. Best-effort so a transient Threa outage self-heals on the next poll tick. */
   private async ensureLink(): Promise<void> {
-    if (this.link || this.stopped) return
-    // Snapshot the detach state so a response that raced an archive push is
-    // dropped: a createSession issued BEFORE the archive can resolve with the
-    // pre-archive link after archivePending was set — accepting it would cancel
-    // the wind-down against a scratchpad that is still archived server-side.
-    const pendingAtStart = this.archivePending
+    // While detached the controller's reattach is the ONLY path allowed to
+    // relink: a link created here would cancel a wind-down against a
+    // scratchpad that is still archived server-side.
+    if (this.link || this.stopped || this.archive.detached) return
     try {
-      const link = await this.createSession()
-      if (this.stopped) return
-      if (this.archivePending !== pendingAtStart) {
-        this.log("link response raced an archive state change — dropped; the next probe decides")
-        return
-      }
-      this.link = link
-      this.linkGeneration += 1
-      // A successful link while detached-pending-restore is the reattach (the
-      // server revived the archived link for this runtime session) — the probe
-      // beat the bot:session_restored push. Cancel the wind-down.
-      if (this.archivePending) {
-        clearTimeout(this.archivePending.deadline)
-        this.archivePending = undefined
-        this.log("scratchpad restored — reattached")
-      }
-      this.log(`linked to scratchpad ${this.config.baseUrl}${this.link.streamUrlPath}`)
-      await this.syncPresence()
+      await this.createLink()
     } catch (error) {
       this.log(`could not link to Threa (will retry): ${this.summarize(error)}${this.linkErrorHint(error)}`)
     }
+  }
+
+  /** The reattach hook: a confirmed link is what cancels the grace, so failure must read as "still archived". */
+  private async relinkAfterRestore(): Promise<boolean> {
+    try {
+      return await this.createLink()
+    } catch (error) {
+      this.log(`reattach link failed: ${this.summarize(error)}${this.linkErrorHint(error)}`)
+      return false
+    }
+  }
+
+  private async createLink(): Promise<boolean> {
+    const generation = this.archive.generation
+    const link = await this.createSession()
+    // A pre-archive session-create can resolve AFTER the archive lands;
+    // committing it would resurrect a link to a scratchpad that is archived
+    // server-side and hide the detach from the next probe.
+    if (this.stopped) return false
+    if (this.archive.generation !== generation) {
+      this.log("link response raced an archive state change — dropped; the next probe decides")
+      return false
+    }
+    this.link = link
+    this.linkGeneration += 1
+    this.log(`linked to scratchpad ${this.config.baseUrl}${this.link.streamUrlPath}`)
+    await this.syncPresence()
+    return true
   }
 
   /** Actionable next step for the link failures a retry alone will never fix. */
@@ -500,7 +510,7 @@ export class RemoteSession {
     if (error.status === 401 || error.status === 403) {
       return " — check THREA_API_KEY (must be a bot key, threa_bk_…) and THREA_WORKSPACE_ID"
     }
-    if (error.code === "SCRATCHPAD_ARCHIVED" && !this.archivePending) {
+    if (error.code === "SCRATCHPAD_ARCHIVED" && !this.archive.detached) {
       return " — the server does not support ifArchived replace yet; unarchive the scratchpad in Threa to link"
     }
     return ""
@@ -511,10 +521,7 @@ export class RemoteSession {
     this.stopped = true
     if (this.pollTimer) clearTimeout(this.pollTimer)
     if (this.renewTimer) clearInterval(this.renewTimer)
-    if (this.archivePending) {
-      clearTimeout(this.archivePending.deadline)
-      this.archivePending = undefined
-    }
+    this.archive.stop()
     this.resetReconnectHandoff()
     await this.reconnectFallbackTask
     // Fast, idempotent teardown first so SIGTERM cleanup isn't held hostage by
@@ -562,7 +569,7 @@ export class RemoteSession {
       // default, but supervisors reviving a known stream can force wait so an
       // archive between their preflight and process launch cannot mint another
       // scratchpad.
-      ifArchived: this.archivePending ? "wait" : (this.config.coldStartIfArchived ?? "replace"),
+      ifArchived: this.archive.detached ? "wait" : (this.config.coldStartIfArchived ?? "replace"),
       ifMissing: this.config.expectedRootStreamId ? "error" : (this.config.coldStartIfMissing ?? "create"),
       ...(this.config.defaultLabel && { labelName: this.config.defaultLabel }),
       ...(e2e ? { e2e: { ownerKeyId: e2e.ownerKeyId } } : {}),
@@ -652,7 +659,7 @@ export class RemoteSession {
     // No claims while detached-pending-restore: the scratchpad is archived, so
     // any claimable work predates the archive and would reply into a closed
     // stream. Restore re-runs the drain.
-    if (this.stopped || this.claiming || this.archivePending || this.reconnectHandoff) return false
+    if (this.stopped || this.claiming || this.archive.detached || this.reconnectHandoff) return false
     let claimedAny = false
     this.claiming = true
     try {
@@ -882,7 +889,7 @@ export class RemoteSession {
           this.onHandoffReset = outcome.onHandoffReset
           await this.syncPresence()
           const completed = await this.completeAck(invocation, outcome.message)
-          if (!completed || this.stopped || !this.link || this.archivePending) {
+          if (!completed || this.stopped || !this.link || this.archive.detached) {
             this.resetReconnectHandoff()
             return
           }
@@ -1485,41 +1492,55 @@ export class RemoteSession {
   }
 
   /**
-   * The linked scratchpad was archived. The server has already ended the
-   * session link, so no more work can arrive: fail any in-flight turn (its
-   * reply could no longer land), go offline, and detach — but do NOT wind down
-   * yet. An unarchive within the grace window revives the link server-side and
-   * reattaches this live session (bot:session_restored, or the ensureLink
-   * probe); only when the grace expires does the connector's destructive
-   * wind-down run. Scoped to this session: the event is room-targeted, but a
-   * runtime that re-registered under a new session id must not die to a stale
-   * event for the old one.
+   * A `bot:session_archived` push. Scoped to this session AND this root: a
+   * runtime that re-registered under a new session id, or a cold start that
+   * replaced an archived scratchpad with a fresh one, must not die to a stale
+   * event for the retired root.
    */
   private async handleSessionArchived(payload: unknown): Promise<void> {
     const data = (payload ?? {}) as { runtimeSessionId?: unknown; rootStreamId?: unknown }
     if (typeof data.runtimeSessionId === "string" && data.runtimeSessionId !== this.config.runtimeSessionId) return
-    if (this.stopped || this.archivePending) return
-    const rootStreamId = typeof data.rootStreamId === "string" ? data.rootStreamId : (this.link?.rootStreamId ?? "")
-    this.log(
-      `scratchpad ${rootStreamId} archived — detaching (reattaches if unarchived within ${Math.round(this.archiveGraceMs / 1000)}s)`
-    )
+    const linked = this.link?.rootStreamId
+    const rootStreamId = typeof data.rootStreamId === "string" ? data.rootStreamId : linked
+    if (!rootStreamId || (linked && rootStreamId !== linked)) return
+    await this.archive.archived(rootStreamId)
+  }
+
+  /** A `bot:session_restored` push: the server revived this session's link. */
+  private async handleSessionRestored(payload: unknown): Promise<void> {
+    const data = (payload ?? {}) as { runtimeSessionId?: unknown }
+    if (typeof data.runtimeSessionId === "string" && data.runtimeSessionId !== this.config.runtimeSessionId) return
+    await this.archive.restored()
+  }
+
+  /**
+   * `bot:session_archived` is a one-shot push with no replay: a socket that was
+   * down when the archive landed never learns of it, and the runtime then holds
+   * a link to a dead scratchpad forever — taking its tmux window and worktree
+   * with it. Re-derive from the server on every poll tick and socket bootstrap.
+   */
+  private async probeArchiveBackstop(): Promise<void> {
+    await this.archive.probe(this.link?.rootStreamId)
+  }
+
+  /**
+   * Detach effects. No more work can arrive, so fail any in-flight turn (its
+   * reply could no longer land), drop the link, and go offline — but the
+   * worktree survives until the grace expires.
+   */
+  private async detachForArchive(rootStreamId: string): Promise<void> {
     const inflight = [...this.inflight]
     for (const [, entry] of inflight) clearTimeout(entry.deadline)
     this.inflight.clear()
     this.activeTurnStream = undefined
     this.link = undefined
     this.linkGeneration += 1
-    const pending = {
-      rootStreamId,
-      deadline: setTimeout(() => void this.windDownAfterGrace(rootStreamId), this.archiveGraceMs),
-    }
-    this.archivePending = pending
     this.resetReconnectHandoff()
     await this.reconnectFallbackTask
     // Pull the next poll tick onto the probe cadence NOW — the pending tick was
-    // scheduled with the slow socket-backstop delay (15 min), which could land
+    // scheduled with the slow socket-backstop delay (15 min), which would land
     // zero probes inside the grace window if the restore push is then missed.
-    this.reschedulePoll(this.archiveProbeDelayMs)
+    this.reschedulePoll(this.archive.probeDelayMs)
     await Promise.allSettled(
       inflight.map(([id, entry]) =>
         this.client.fail(id, {
@@ -1531,78 +1552,14 @@ export class RemoteSession {
     )
     // A restore can reattach and publish 'available' during the awaits above —
     // don't overwrite it with a stale 'offline'.
-    if (this.stopped || this.archivePending !== pending) return
+    if (this.stopped || this.archive.pendingRootStreamId !== rootStreamId) return
     await this.transport.updatePresence(this.presenceBody("offline")).catch(() => undefined)
   }
 
-  /**
-   * bot:session_archived is a one-shot push with no replay: a socket that was
-   * down when the archive landed never learns of it, and the runtime then holds
-   * a link to a dead scratchpad forever — taking its tmux window and worktree
-   * with it. Re-derive the state from the server on every poll tick and on
-   * every socket (re)connect, and route a confirmed archive through the same
-   * grace-window path the push takes, so an unarchive still reattaches.
-   */
-  private async probeArchiveBackstop(): Promise<void> {
-    const rootStreamId = this.link?.rootStreamId
-    if (this.stopped || this.archivePending || this.archiveProbeInflight || !rootStreamId) return
-    this.archiveProbeInflight = true
-    try {
-      const archivedAt = await this.client.getStreamArchivedAt(rootStreamId)
-      // The awaits above can race a real push or a relink onto another root;
-      // re-check rather than detach on a snapshot that is no longer current.
-      if (!archivedAt) return
-      if (this.stopped || this.archivePending || this.link?.rootStreamId !== rootStreamId) return
-      this.log(`archive backstop: scratchpad ${rootStreamId} archived at ${archivedAt} with no push received`)
-      await this.handleSessionArchived({ runtimeSessionId: this.config.runtimeSessionId, rootStreamId })
-    } catch (error) {
-      this.log(`archive backstop probe failed: ${this.summarize(error)}`)
-    } finally {
-      this.archiveProbeInflight = false
-    }
-  }
-
-  /** The grace expired with the scratchpad still archived: run the wind-down that used to fire on archive. */
-  private async windDownAfterGrace(rootStreamId: string): Promise<void> {
-    if (this.stopped || !this.archivePending) return
-    this.archivePending = undefined
-    this.log(`scratchpad ${rootStreamId} stayed archived — winding down`)
+  /** The grace expired with the scratchpad still archived: hand the connector its terminal wind-down. */
+  private async windDownForArchive(rootStreamId: string): Promise<void> {
     await this.shutdown()
-    try {
-      await this.delegate.onArchived?.({ rootStreamId })
-    } catch (error) {
-      this.log(`onArchived hook failed: ${this.summarize(error)}`)
-    }
-  }
-
-  /**
-   * The archived scratchpad was unarchived and the server revived this
-   * session's link: cancel the pending wind-down, re-establish the link (the
-   * session-create path returns the revived link for the SAME scratchpad), and
-   * resume claiming — the live agent reattaches with no restart.
-   */
-  private async handleSessionRestored(payload: unknown): Promise<void> {
-    const data = (payload ?? {}) as { runtimeSessionId?: unknown; rootStreamId?: unknown }
-    if (typeof data.runtimeSessionId === "string" && data.runtimeSessionId !== this.config.runtimeSessionId) return
-    if (this.stopped) return
-    if (this.archivePending) {
-      // Don't clear the pending state yet — only ensureLink's confirmed link
-      // does that. If the createSession below fails transiently, the probe
-      // cadence and claim suppression must survive; clearing here would drop
-      // the session onto the 15-min backstop unlinked. The restore does cancel
-      // the CURRENT wind-down, but a fresh grace deadline re-arms so a
-      // reattach that never succeeds still winds down bounded.
-      clearTimeout(this.archivePending.deadline)
-      const rootStreamId = this.archivePending.rootStreamId
-      this.archivePending = {
-        rootStreamId,
-        deadline: setTimeout(() => void this.windDownAfterGrace(rootStreamId), this.archiveGraceMs),
-      }
-      this.log(`scratchpad ${rootStreamId} restored — reattaching`)
-    }
-    if (!this.link) await this.ensureLink()
-    else await this.syncPresence()
-    await this.claimDrain()
+    await this.delegate.onArchived?.({ rootStreamId })
   }
 
   // --- Timers ---------------------------------------------------------------
@@ -1646,18 +1603,16 @@ export class RemoteSession {
 
   private async pollTick(): Promise<void> {
     if (this.stopped) return
+    // Always first: while detached this is the reattach attempt (ensureLink
+    // refuses to relink during the grace), and while linked it is the
+    // missed-push backstop.
+    await this.probeArchiveBackstop()
     if (!this.link) await this.ensureLink()
-    else await this.probeArchiveBackstop()
     if (!this.transport.socketConnected) await this.transport.connect()
     const claimed = await this.claimDrain()
     // shutdown() can land during the awaits above; re-arming then would leave
     // a live timer past teardown.
     if (!this.stopped) this.reschedulePoll(this.nextPollDelay(claimed))
-  }
-
-  /** Reattach-probe cadence while detached: scaled to the grace window so several probes always fit inside it. */
-  private get archiveProbeDelayMs(): number {
-    return Math.min(ARCHIVE_RESTORE_PROBE_MS, Math.max(Math.floor(this.archiveGraceMs / 4), 10))
   }
 
   /**
@@ -1670,7 +1625,7 @@ export class RemoteSession {
     // Detached-pending-restore: probe at a fixed cadence so a missed
     // bot:session_restored push still reattaches within the grace window. The
     // window bounds the total probes, so this cannot become a quota burn.
-    if (this.archivePending) return this.archiveProbeDelayMs
+    if (this.archive.detached) return this.archive.probeDelayMs
     if (this.transport.socketConnected) {
       this.emptyNoSocketPolls = 0
       return WS_BACKSTOP_POLL_MS
@@ -1704,7 +1659,7 @@ export class RemoteSession {
         this.log(`session-control handoff reset failed: ${this.summarize(error)}`)
       }
     }
-    if (this.stopped || !this.link || this.archivePending) {
+    if (this.stopped || !this.link || this.archive.detached) {
       if (callbackTask) this.reconnectFallbackTask = callbackTask
       return
     }
