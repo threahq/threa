@@ -14,9 +14,10 @@ import { ReadStateRepository, type StreamReadState } from "./read-state-reposito
 import { getEffectiveReadState, type EffectiveReadState } from "./effective-read-state"
 import { StreamEventRepository, type StreamEvent } from "./event-repository"
 import { SparseReadRepository } from "./sparse-read-repository"
-import { MessageRepository } from "../messaging"
+import { MessageRepository, type Message } from "../messaging"
+import { StreamContextRepository, contextSnippet } from "../stream-context"
 import { OutboxRepository } from "../../lib/outbox"
-import { streamId, eventId } from "../../lib/id"
+import { streamId, eventId, streamContextItemId } from "../../lib/id"
 import { logger } from "../../lib/logger"
 import {
   DuplicateSlugError,
@@ -662,6 +663,7 @@ export class StreamService {
     const anchorId = params.parentAnchorId
     let anchorActorId: string | null = null
     let anchorActorType: AuthorType | null = null
+    let anchorMessage: Message | null = null
     if (anchorId.startsWith("msg_")) {
       // Lock the anchor message: a concurrent `moveMessagesToThread` re-parents
       // the message (UPDATE messages.stream_id) after an unlocked read would have
@@ -676,6 +678,7 @@ export class StreamService {
       }
       anchorActorId = parentMessage.authorId
       anchorActorType = parentMessage.authorType
+      anchorMessage = parentMessage
     } else if (anchorId.startsWith("event_")) {
       const anchorEvent = await StreamEventRepository.findById(client, anchorId)
       if (!anchorEvent || anchorEvent.streamId !== params.parentStreamId) {
@@ -787,6 +790,30 @@ export class StreamService {
     // for other members).
     if (anchorActorType === "user" && anchorActorId !== null && anchorActorId !== params.createdBy) {
       await this.addToStream(client, stream, anchorActorId, params.createdBy)
+    }
+
+    // "In this stream" landmark on the PARENT stream: a thread is an artifact of
+    // the message it hangs under, so it sits at that message's created_at.
+    // Sealed streams are never indexed.
+    if (created && anchorMessage && parentStream.e2eEnabled !== true) {
+      await StreamContextRepository.insertMany(client, [
+        {
+          id: streamContextItemId(),
+          workspaceId: params.workspaceId,
+          streamId: parentStream.id,
+          rootStreamId: parentStream.rootStreamId ?? parentStream.id,
+          category: "thread",
+          refKind: "thread",
+          refId: stream.id,
+          groupKey: stream.id,
+          sourceMessageId: anchorMessage.id,
+          authorId: anchorMessage.authorId,
+          occurredAt: anchorMessage.createdAt,
+          sequence: anchorMessage.sequence,
+          snippet: contextSnippet(anchorMessage.contentMarkdown),
+          detail: {},
+        },
+      ])
     }
 
     if (created) {

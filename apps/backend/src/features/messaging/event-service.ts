@@ -26,7 +26,15 @@ import { OutboxRepository } from "../../lib/outbox"
 import { AgentSessionRepository, StreamPersonaParticipantRepository } from "../agents"
 import { DraftsRepository, toDraftView } from "../drafts"
 import { E2eStreamsRepository } from "../e2e-streams"
-import { attachmentReferenceId, eventId, messageId, messageVersionId, streamId as generateStreamId } from "../../lib/id"
+import { StreamContextRepository, contextRowsForMessage, contextSnippet } from "../stream-context"
+import {
+  attachmentReferenceId,
+  eventId,
+  messageId,
+  messageVersionId,
+  streamContextItemId,
+  streamId as generateStreamId,
+} from "../../lib/id"
 import { MessageVersionRepository, type MessageVersion } from "./version-repository"
 import { serializeBigInt } from "@threa/backend-common"
 import { messagesTotal } from "../../lib/observability"
@@ -790,6 +798,27 @@ export class EventService {
       )
     }
 
+    // "In this stream" projection (INV-7): links, media, files this message
+    // carries, keyed by the message's own created_at. Sealed streams are never
+    // indexed — the server can't read their content.
+    if (stream?.e2eEnabled !== true) {
+      await StreamContextRepository.insertMany(
+        client,
+        contextRowsForMessage({
+          workspaceId: params.workspaceId,
+          streamId: params.streamId,
+          rootStreamId: stream?.rootStreamId ?? params.streamId,
+          messageId: msgId,
+          authorId: params.authorId,
+          occurredAt: message.createdAt,
+          sequence: event.sequence,
+          contentJson: params.contentJson,
+          contentMarkdown: params.contentMarkdown,
+          attachments: attachmentSummaries ?? [],
+        })
+      )
+    }
+
     // Validate and record cross-stream share references in contentJson, inside
     // the transaction so the shared_messages access-projection commits atomically
     // with the event + projection (INV-7).
@@ -1013,6 +1042,30 @@ export class EventService {
         })
 
         const stream = await StreamRepository.findById(client, params.streamId)
+
+        // Rebuild the "In this stream" projection from the edited body. The
+        // landmark keeps the message's ORIGINAL created_at — an edit must not
+        // move it in the feed.
+        const contextAttachments =
+          validatedReferenceIds.length > 0 ? await AttachmentRepository.findByIds(client, validatedReferenceIds) : []
+        await StreamContextRepository.replaceForMessage(
+          client,
+          params.workspaceId,
+          params.messageId,
+          contextRowsForMessage({
+            workspaceId: params.workspaceId,
+            streamId: params.streamId,
+            rootStreamId: stream?.rootStreamId ?? params.streamId,
+            messageId: params.messageId,
+            authorId: existing.authorId,
+            occurredAt: existing.createdAt,
+            sequence: existing.sequence,
+            contentJson: params.contentJson,
+            contentMarkdown: params.contentMarkdown,
+            attachments: contextAttachments,
+          })
+        )
+
         if (stream?.parentStreamId && stream.parentAnchorId) {
           // No count change on edit — refresh only the thread summary; omit
           // replyCount so a stale unlocked read can't clobber a concurrent
@@ -1132,6 +1185,8 @@ export class EventService {
           AND message_id = ${params.messageId}
           AND read_at IS NULL
       `)
+
+      await StreamContextRepository.deleteByMessageId(client, params.workspaceId, params.messageId)
 
       if (message) {
         await OutboxRepository.insert(client, "message:deleted", {
@@ -1410,6 +1465,41 @@ export class EventService {
             },
           }))
         )
+      }
+
+      // The moved messages' context rows follow them into the destination
+      // thread; the thread inherits the source's root, so the tree-scoped feed
+      // is unchanged while the stream-scoped one now attributes them correctly.
+      await StreamContextRepository.reparentMessages(
+        client,
+        params.workspaceId,
+        updates.map((update) => ({ messageId: update.messageId, sequence: update.sequence })),
+        destinationThread.id,
+        destinationThread.rootStreamId ?? rootStreamId
+      )
+
+      // A move that MINTS the thread is a thread-creation site too: the same
+      // landmark `createThreadOn` writes on the parent, anchored at the target
+      // message (which stays in the source stream).
+      if (created && sourceStream.e2eEnabled !== true) {
+        await StreamContextRepository.insertMany(client, [
+          {
+            id: streamContextItemId(),
+            workspaceId: params.workspaceId,
+            streamId: params.sourceStreamId,
+            rootStreamId,
+            category: "thread",
+            refKind: "thread",
+            refId: destinationThread.id,
+            groupKey: destinationThread.id,
+            sourceMessageId: targetMessage.id,
+            authorId: targetMessage.authorId,
+            occurredAt: targetMessage.createdAt,
+            sequence: targetMessage.sequence,
+            snippet: contextSnippet(targetMessage.contentMarkdown),
+            detail: {},
+          },
+        ])
       }
 
       await MessageRepository.updateStreamScopedReferences(client, {

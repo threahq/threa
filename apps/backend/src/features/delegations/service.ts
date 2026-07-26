@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto"
 import type { Pool, PoolClient } from "pg"
 import { withTransaction } from "../../db"
-import { delegationId, eventId } from "../../lib/id"
+import { delegationId, eventId, streamContextItemId } from "../../lib/id"
 import { OutboxRepository } from "../../lib/outbox"
 import { logger } from "../../lib/logger"
 import {
@@ -10,7 +10,8 @@ import {
   type DelegationCreatedEventPayload,
   type DelegationStatusChangedEventPayload,
 } from "@threa/types"
-import { StreamEventRepository } from "../streams"
+import { StreamEventRepository, StreamRepository } from "../streams"
+import { StreamContextRepository, contextSnippet } from "../stream-context"
 import { hashCallbackToken } from "../agents"
 import { DELEGATION_CLAIM_TTL_SECONDS } from "./config"
 import { DelegatedTaskRepository, type DelegatedTask, type DelegatedTaskWithEvent } from "./repository"
@@ -100,6 +101,30 @@ export class DelegationService {
         actorId: params.createdById,
         actorType: params.createdByKind,
       })
+
+      // "In this stream" landmark. Sealed streams are never indexed.
+      const stream = await StreamRepository.findById(client, params.streamId)
+      if (stream && stream.e2eEnabled !== true) {
+        await StreamContextRepository.insertMany(client, [
+          {
+            id: streamContextItemId(),
+            workspaceId: params.workspaceId,
+            streamId: params.streamId,
+            rootStreamId: stream.rootStreamId ?? stream.id,
+            category: "delegation",
+            refKind: "delegation",
+            refId: inserted.id,
+            groupKey: inserted.id,
+            sourceMessageId: null,
+            authorId: params.createdByKind === AuthorTypes.USER ? params.createdById : null,
+            occurredAt: inserted.createdAt,
+            sequence: null,
+            snippet: contextSnippet(inserted.title),
+            detail: { title: inserted.title },
+          },
+        ])
+      }
+
       return inserted
     })
   }

@@ -7,13 +7,14 @@ import { enrichMessagesWithLinkPreviews } from "../link-previews"
 import { OutboxRepository } from "../../lib/outbox"
 import { UserRepository } from "../workspaces"
 import { WorkspaceSettingsRepository } from "../workspace-settings"
+import { StreamContextRepository, contextSnippet, type NewStreamContextItem } from "../stream-context"
 import { MemoRepository, type Memo } from "./repository"
 import { PendingItemRepository, type PendingMemoItem } from "./pending-item-repository"
 import { MemoClassifier } from "./classifier"
 import { Memorizer } from "./memorizer"
 import { MessageFormatter } from "../../lib/ai/message-formatter"
 import type { EmbeddingServiceLike } from "./embedding-service"
-import { memoId, eventId } from "../../lib/id"
+import { memoId, eventId, streamContextItemId } from "../../lib/id"
 import { logger } from "../../lib/logger"
 import {
   MemoTypes,
@@ -732,6 +733,8 @@ export class MemoService implements MemoServiceLike {
       }
       memosCreated = createdMemos.length
 
+      await this.indexCapturedMemos(client, workspaceId, streamId, createdMemos)
+
       // Memory capture is visible in situ (INV-62): append one broadcast
       // timeline event per conversation that yielded memos, in the same
       // transaction as the memo rows, so memory creation is never silent.
@@ -807,6 +810,55 @@ export class MemoService implements MemoServiceLike {
     )
 
     return { processed, memosCreated }
+  }
+
+  /**
+   * "In this stream" projection rows for freshly captured memos. The landmark
+   * sits at the LATEST source message's `created_at`, not the capture time —
+   * extraction is debounced, so capture time lands minutes late. Sealed streams
+   * are never indexed.
+   */
+  private async indexCapturedMemos(
+    client: PoolClient,
+    workspaceId: string,
+    streamId: string,
+    memos: Array<Pick<MemoToCreate, "id" | "title" | "knowledgeType" | "sourceMessageIds">>
+  ): Promise<void> {
+    if (memos.length === 0) return
+    const stream = await StreamRepository.findById(client, streamId)
+    if (!stream || stream.e2eEnabled === true) return
+
+    const allSourceIds = [...new Set(memos.flatMap((memo) => memo.sourceMessageIds))]
+    const sourceMessages = await MessageRepository.findByIdsInWorkspace(client, workspaceId, allSourceIds)
+
+    const rows: NewStreamContextItem[] = []
+    for (const memo of memos) {
+      const resolved = memo.sourceMessageIds
+        .map((id) => sourceMessages.get(id))
+        .filter((message): message is Message => message !== undefined)
+      if (resolved.length === 0) {
+        logger.warn({ memoId: memo.id, workspaceId, streamId }, "Memo has no resolvable source message — not indexed")
+        continue
+      }
+      const latest = resolved.reduce((a, b) => (b.createdAt > a.createdAt ? b : a))
+      rows.push({
+        id: streamContextItemId(),
+        workspaceId,
+        streamId,
+        rootStreamId: stream.rootStreamId ?? stream.id,
+        category: "memo",
+        refKind: "memo",
+        refId: memo.id,
+        groupKey: memo.id,
+        sourceMessageId: memo.sourceMessageIds[0],
+        authorId: latest.authorId,
+        occurredAt: latest.createdAt,
+        sequence: latest.sequence,
+        snippet: contextSnippet(memo.title),
+        detail: { title: memo.title, knowledgeType: memo.knowledgeType },
+      })
+    }
+    await StreamContextRepository.insertMany(client, rows)
   }
 
   /**
@@ -976,6 +1028,14 @@ export class MemoService implements MemoServiceLike {
             eventType: "stream:memos_captured" as const,
             payload: { workspaceId, streamId, event: captureEvent },
           },
+        ])
+
+        // Same suppression: the projection row denormalizes the memo title into
+        // a stream-scoped row every member of that stream can read, so indexing
+        // a private memo into a wider stream leaks exactly what the skipped
+        // broadcast would have.
+        await this.indexCapturedMemos(client, workspaceId, streamId, [
+          { id: newMemoId, title, knowledgeType, sourceMessageIds: resolvedSourceIds },
         ])
       }
 

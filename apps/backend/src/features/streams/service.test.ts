@@ -10,6 +10,7 @@ import { OutboxRepository } from "../../lib/outbox"
 import { UserRepository } from "../workspaces"
 import { PersonaRepository } from "../agents"
 import { MessageRepository } from "../messaging"
+import { StreamContextRepository } from "../stream-context"
 import { E2eStreamsRepository, E2eStreamActorsRepository, StreamE2eKeyWrapsRepository } from "../e2e-streams"
 import { EnclaveRuntimesRepository } from "../enclave-runtimes"
 import { BotRuntimeInstanceRepository } from "../bot-runtimes/repository"
@@ -516,9 +517,11 @@ describe("StreamService.createThread (via create)", () => {
   const mockIsMember = spyOn(StreamMemberRepository, "isMember")
   const mockFindByStreamAndMember = spyOn(StreamMemberRepository, "findByStreamAndMember")
   const mockUpdateMember = spyOn(StreamMemberRepository, "update")
+  const mockInsertContext = spyOn(StreamContextRepository, "insertMany")
 
   beforeEach(() => {
     service = new StreamService({} as never)
+    mockInsertContext.mockReset().mockResolvedValue(0)
     mockFindById.mockReset().mockResolvedValue(parentStream as never)
     mockInsertThreadOrFind.mockReset().mockResolvedValue({ stream: thread, created: true } as never)
     mockIsMember.mockReset().mockResolvedValue(false)
@@ -549,6 +552,9 @@ describe("StreamService.createThread (via create)", () => {
       streamId: "stream_channel",
       authorType: "user",
       authorId: "member_author",
+      contentMarkdown: "anchor",
+      createdAt: new Date("2026-05-01T00:00:00.000Z"),
+      sequence: 1n,
     } as never)
 
     await service.create({
@@ -570,6 +576,45 @@ describe("StreamService.createThread (via create)", () => {
     )
   })
 
+  test("indexes the thread on the parent stream at the anchor message's created_at", async () => {
+    const anchorCreatedAt = new Date("2026-05-02T08:30:00.000Z")
+    mockMessageFindByIdForUpdate.mockResolvedValue({
+      id: "msg_1",
+      streamId: "stream_channel",
+      authorType: "user",
+      authorId: "member_author",
+      sequence: 9n,
+      contentMarkdown: "**anchor** message",
+      createdAt: anchorCreatedAt,
+    } as never)
+
+    await service.create({
+      workspaceId: "ws_1",
+      type: "thread",
+      parentStreamId: "stream_channel",
+      parentAnchorId: "msg_1",
+      createdBy: "member_creator",
+    })
+
+    const [row] = mockInsertContext.mock.calls[0]?.[1] as unknown as Array<Record<string, unknown>>
+    const { id, ...rest } = row
+    expect(rest).toEqual({
+      workspaceId: "ws_1",
+      streamId: "stream_channel",
+      rootStreamId: "stream_channel",
+      category: "thread",
+      refKind: "thread",
+      refId: "stream_new",
+      groupKey: "stream_new",
+      sourceMessageId: "msg_1",
+      authorId: "member_author",
+      occurredAt: anchorCreatedAt,
+      sequence: 9n,
+      snippet: "anchor message",
+      detail: {},
+    })
+  })
+
   test("inherits memoryMode from the root stream", async () => {
     mockFindById.mockReset().mockResolvedValue({ ...parentStream, memoryMode: "off" } as never)
     mockMessageFindByIdForUpdate.mockResolvedValue({
@@ -577,6 +622,9 @@ describe("StreamService.createThread (via create)", () => {
       streamId: "stream_channel",
       authorType: "user",
       authorId: "member_author",
+      contentMarkdown: "anchor",
+      createdAt: new Date("2026-05-01T00:00:00.000Z"),
+      sequence: 1n,
     } as never)
 
     await service.create({
@@ -596,6 +644,9 @@ describe("StreamService.createThread (via create)", () => {
       streamId: "stream_channel",
       authorType: "user",
       authorId: "member_creator",
+      contentMarkdown: "anchor",
+      createdAt: new Date("2026-05-01T00:00:00.000Z"),
+      sequence: 1n,
     } as never)
 
     await service.create({
@@ -616,6 +667,9 @@ describe("StreamService.createThread (via create)", () => {
       streamId: "stream_channel",
       authorType: "bot",
       authorId: "bot_1",
+      contentMarkdown: "anchor",
+      createdAt: new Date("2026-05-01T00:00:00.000Z"),
+      sequence: 1n,
     } as never)
 
     await service.create({
@@ -636,6 +690,9 @@ describe("StreamService.createThread (via create)", () => {
       streamId: "stream_channel",
       authorType: "user",
       authorId: "member_author",
+      contentMarkdown: "anchor",
+      createdAt: new Date("2026-05-01T00:00:00.000Z"),
+      sequence: 1n,
     } as never)
 
     await service.create({
@@ -677,6 +734,9 @@ describe("StreamService.createThread (via create)", () => {
       streamId: "stream_root",
       authorType: "user",
       authorId: "member_author",
+      contentMarkdown: "anchor",
+      createdAt: new Date("2026-05-01T00:00:00.000Z"),
+      sequence: 1n,
     } as never)
     // findById: parent/root → e2eRoot; the post-copy re-read of the thread → sealed.
     mockFindById
@@ -916,6 +976,9 @@ describe("StreamService.createThreadOn anchor routing", () => {
       streamId: "stream_channel",
       authorType: "user",
       authorId: "member_author",
+      contentMarkdown: "anchor",
+      createdAt: new Date("2026-05-01T00:00:00.000Z"),
+      sequence: 1n,
     } as never)
 
     await service.create({
