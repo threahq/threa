@@ -352,6 +352,16 @@ export class AgentRuntime {
           telemetry: this.config.telemetry,
           context: this.config.costContext,
           abortSignal: this.config.runAbortSignal,
+          // The loop re-sends tools + system prompt + conversation once per
+          // iteration, so from the second iteration onward the prefix is read
+          // back rather than reprocessed.
+          //
+          // One case still misses: `retrievedContext` is folded into the system
+          // prompt above, and workspace research populates it mid-loop, so a
+          // turn that retrieves shifts the breakpointed prefix for its
+          // remaining iterations. Splitting the per-turn tail out of the cached
+          // span is the follow-up that closes it.
+          cachePrefix: true,
         })
       } catch (err) {
         // A Stop that fired mid-call aborts the LLM request. Treat it as a

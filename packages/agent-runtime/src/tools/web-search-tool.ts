@@ -64,8 +64,14 @@ function redactQuery(query: string): string {
 
 export function createWebSearchTool(params: CreateWebSearchToolParams) {
   const { tavilyApiKey, maxResults = 5, currentTime, timezone } = params
+  // The invocation time is deliberately NOT interpolated into this string.
+  // Tool definitions render ahead of the system prompt in the prompt-cache
+  // prefix, so a per-request value here changes that prefix on every call and
+  // drives the cache hit rate to zero for the whole toolset. The live time
+  // reaches the model through the system prompt's `## Current Time` section
+  // (same indirection `schedule_follow_up` uses) and rides tool output below.
   const recencyHint = currentTime
-    ? ` Current invocation time is ${currentTime}${timezone ? ` (${timezone})` : ""}; for latest, recent, current, or news queries, include the current date/year in your query and judge results against that invocation time.`
+    ? ` For latest, recent, current, or news queries, take the current date/year from the "## Current Time" section, include it in your query, and judge results against that time.`
     : ""
 
   // The system prompt's temporal grounding section only exists when the host

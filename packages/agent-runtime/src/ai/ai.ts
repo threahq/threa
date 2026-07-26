@@ -223,6 +223,23 @@ export interface GenerateTextWithToolsOptions {
   context?: CostContext
   /** Abort signal for graceful cancellation / per-call timeouts */
   abortSignal?: AbortSignal
+  /**
+   * Place Anthropic prompt-cache breakpoints on this request. Caching is a
+   * prefix match over `tools` → `system` → `messages`, so one breakpoint on the
+   * system message also caches every tool definition ahead of it (~12k tokens
+   * for the companion toolset) and a second on the newest message caches the
+   * conversation an agent loop appends to each iteration.
+   *
+   * Opt-in because a cache write costs 1.25x base input and only pays back from
+   * the second request against the same prefix — true of every agent turn (the
+   * loop re-sends the prefix once per iteration), not of one-shot calls.
+   *
+   * Requires `modelString`: breakpoints are placed only for providers that need
+   * an explicit marker — see `PROVIDERS_REQUIRING_CACHE_BREAKPOINTS`, which is
+   * the single source of truth for that set. Personas may run any registry
+   * model, and a provider that caches automatically needs nothing here.
+   */
+  cachePrefix?: boolean
 }
 
 export interface GenerateTextWithToolsResult {
@@ -276,6 +293,14 @@ export interface UsageWithCost {
   promptTokens?: number
   completionTokens?: number
   totalTokens?: number
+  /**
+   * Prompt tokens served from the provider's cache rather than reprocessed.
+   * A share of `promptTokens`, not an addition to it. Absent when the provider
+   * reports no cache detail. Read this against `promptTokens` to get a hit rate
+   * per call site — the only way to tell whether a cache breakpoint is paying
+   * for its 1.25x write premium on a given surface.
+   */
+  cachedPromptTokens?: number
   /** Cost in USD from OpenRouter, if available */
   cost?: number
 }
@@ -354,6 +379,72 @@ interface BudgetPolicyDecision {
   currentUsageUsd?: number
   budgetUsd?: number
   percentUsed?: number
+}
+
+/**
+ * Model providers whose prompt caching requires an explicit breakpoint on the
+ * request. Measured against OpenRouter, 2026-07-26: both Anthropic and Gemini
+ * cache the marked prefix and cache NOTHING without the marker. OpenAI is
+ * deliberately absent — its caching is automatic and needs no marker, so
+ * marking it would be noise.
+ *
+ * Keyed on `modelProvider` (the segment inside the OpenRouter path), so it is
+ * unaffected by which upstream OpenRouter routes to — an Anthropic model served
+ * via Bedrock still caches on this marker.
+ */
+const PROVIDERS_REQUIRING_CACHE_BREAKPOINTS = new Set(["anthropic", "google"])
+
+/**
+ * Merge a cache breakpoint into a message's provider options. Merges *inside*
+ * the `openrouter` key rather than replacing it — a message may already carry
+ * sibling options there (reasoning effort, transforms) that a shallow spread
+ * would silently drop.
+ */
+function withCacheControl(existing?: ModelMessage["providerOptions"]): ModelMessage["providerOptions"] {
+  return {
+    ...existing,
+    openrouter: { ...existing?.openrouter, cacheControl: { type: "ephemeral" } },
+  }
+}
+
+/**
+ * Rewrite a request to carry Anthropic prompt-cache breakpoints.
+ *
+ * The system prompt has to move into the message list: the AI SDK's top-level
+ * `system` string has nowhere to carry `providerOptions`, and the breakpoint
+ * must ride the message that ends the stable prefix. The AI SDK renders a
+ * top-level `system` into exactly this message anyway, so the wire shape is
+ * unchanged apart from `cache_control`.
+ *
+ * Returns the request untouched for providers that don't take an explicit
+ * breakpoint. Losing the optimization is the correct degradation there — it
+ * changes cost, never behavior.
+ */
+export function applyCacheBreakpoints(params: { system?: string; messages: ModelMessage[]; modelString?: string }): {
+  system?: string
+  messages: ModelMessage[]
+} {
+  const { system, messages, modelString } = params
+  if (!modelString || !PROVIDERS_REQUIRING_CACHE_BREAKPOINTS.has(parseModelId(modelString).modelProvider)) {
+    return { system, messages }
+  }
+
+  const out: ModelMessage[] = []
+  if (system) {
+    out.push({ role: "system", content: system, providerOptions: withCacheControl() })
+  }
+  out.push(...messages)
+
+  // Second breakpoint on the newest message so the conversation an agent loop
+  // grows each iteration is read back rather than reprocessed. Skipped when the
+  // system message IS the last one — that breakpoint is already placed.
+  const lastIsTheSystemBreakpoint = Boolean(system) && out.length === 1
+  const last = out.at(-1)
+  if (last && !lastIsTheSystemBreakpoint) {
+    out[out.length - 1] = { ...last, providerOptions: withCacheControl(last.providerOptions) } as ModelMessage
+  }
+
+  return { system: undefined, messages: out }
 }
 
 /**
@@ -668,6 +759,7 @@ export function createAI(config: AIConfig): AI {
           totalTokens?: number
           promptTokens?: number
           completionTokens?: number
+          promptTokensDetails?: { cachedTokens?: number }
         }
       }
     }
@@ -690,6 +782,7 @@ export function createAI(config: AIConfig): AI {
       promptTokens: openrouterUsage?.promptTokens ?? langUsage.promptTokens,
       completionTokens: openrouterUsage?.completionTokens ?? langUsage.completionTokens,
       totalTokens: openrouterUsage?.totalTokens ?? langUsage.totalTokens,
+      cachedPromptTokens: openrouterUsage?.promptTokensDetails?.cachedTokens,
       cost: openrouterUsage?.cost,
     }
   }
@@ -836,10 +929,18 @@ export function createAI(config: AIConfig): AI {
         modelString: options.modelString,
         metadata: options.telemetry?.metadata as Record<string, unknown> | undefined,
       })
+      const { system, messages } = options.cachePrefix
+        ? applyCacheBreakpoints({
+            system: options.system,
+            messages: options.messages,
+            modelString: options.modelString,
+          })
+        : { system: options.system, messages: options.messages }
+
       const response = await aiGenerateText({
         model: options.model,
-        system: options.system,
-        messages: options.messages,
+        system,
+        messages,
         allowSystemInMessages: true,
         tools: options.tools,
         maxOutputTokens: options.maxTokens,
