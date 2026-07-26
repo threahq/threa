@@ -215,6 +215,20 @@ describe("ArchiveGraceController", () => {
     expect(recorded.woundDown).toEqual([])
   })
 
+  test("the generation moves on every attach/detach transition", async () => {
+    const { controller } = makeController({ reattach: async () => true }, 10_000)
+    const start = controller.generation
+
+    await controller.archived("stream_root")
+    const detached = controller.generation
+    await controller.restored()
+
+    // A caller holding `start` across an await must see BOTH transitions, or a
+    // link created pre-archive gets committed post-archive.
+    expect([detached > start, controller.generation > detached]).toEqual([true, true])
+    controller.stop()
+  })
+
   test("the probe cadence always fits several probes inside the grace", () => {
     const { controller } = makeController({}, 200)
     expect(controller.probeDelayMs).toBe(50)

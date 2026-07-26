@@ -53,6 +53,7 @@ export class ArchiveGraceController {
   private pending: Pending | undefined
   private probing = false
   private stopped = false
+  private transitions = 0
   private readonly graceMs: number
 
   constructor(
@@ -69,6 +70,17 @@ export class ArchiveGraceController {
 
   get pendingRootStreamId(): string | undefined {
     return this.pending?.rootStreamId
+  }
+
+  /**
+   * Bumped on every attach/detach transition. A runtime with a request already
+   * in flight snapshots this before awaiting and drops its result if the value
+   * moved — otherwise a link created before the archive lands is committed
+   * after it, resurrecting a link to a scratchpad that is archived
+   * server-side.
+   */
+  get generation(): number {
+    return this.transitions
   }
 
   /**
@@ -93,6 +105,7 @@ export class ArchiveGraceController {
       deadline: setTimeout(() => void this.windDown(pending), this.graceMs),
     }
     this.pending = pending
+    this.transitions += 1
     this.hooks.log(
       `scratchpad ${rootStreamId} archived — detaching (reattaches if unarchived within ${Math.round(this.graceMs / 1000)}s)`
     )
@@ -167,6 +180,7 @@ export class ArchiveGraceController {
     if (!reattached || this.stopped || this.pending !== pending) return
     clearTimeout(pending.deadline)
     this.pending = undefined
+    this.transitions += 1
     this.hooks.log(`scratchpad ${pending.rootStreamId} restored — reattached`)
     await this.hooks.onReattached(pending.rootStreamId)
   }
@@ -175,6 +189,7 @@ export class ArchiveGraceController {
     if (this.stopped || this.pending !== pending) return
     clearTimeout(pending.deadline)
     this.pending = undefined
+    this.transitions += 1
     this.hooks.log(`scratchpad ${pending.rootStreamId} stayed archived — winding down`)
     try {
       await this.hooks.onWindDown(pending.rootStreamId)
