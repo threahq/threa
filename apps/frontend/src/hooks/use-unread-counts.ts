@@ -160,9 +160,18 @@ export function useUnreadCounts(workspaceId: string) {
       // event's real one from the cache — an id advanced without its sequence
       // reads as "never read" downstream. Resolution happens before the
       // transaction below so the transaction stays as narrow as it was.
-      const readEvent = await db.events.get(lastEventId)
+      // An unconfirmed row is cached under its client id with a Date.now()-scale
+      // placeholder sequence (`nextOptimisticSequence`), so it resolves here even
+      // though the server has no such event — it no-ops the read and emits no
+      // echo. Writing that placeholder would pin the frontier above every real
+      // sequence for the session: no divider, no open-at-marker, and no recovery,
+      // since every later echo and bootstrap merge is monotonic. Treat it as
+      // unresolvable, like an id with no row at all. Reachable whenever the
+      // viewer's own send is the bottom row when auto-read fires.
+      const cached = await db.events.get(lastEventId)
+      const readEvent = cached && (cached._status === "pending" || cached._status === "failed") ? undefined : cached
       if (!readEvent) {
-        console.warn("Read frontier not advanced — no cached event for read pointer", { streamId, lastEventId })
+        console.warn("Read frontier not advanced — read pointer has no confirmed event", { streamId, lastEventId })
       }
       // Monotonic, like the server: `ReadStateRepository.advance` rejects a
       // stale-device advance and returns the higher stored frontier, so a

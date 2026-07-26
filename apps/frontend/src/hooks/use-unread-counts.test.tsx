@@ -344,6 +344,50 @@ describe("useUnreadCounts", () => {
     ).toMatchObject({ lastReadEventId: "evt_5", lastReadSequence: "42" })
   })
 
+  it("leaves the frontier untouched when the read pointer is the viewer's own unconfirmed send", async () => {
+    // An optimistic row is cached with a Date.now()-scale placeholder sequence.
+    // Writing it would pin the frontier above every real sequence for the
+    // session — no divider, no open-at-marker, and no recovery, since every
+    // later echo and bootstrap merge is monotonic.
+    const queryClient = new QueryClient()
+    queryClient.setQueryData(workspaceKeys.bootstrap("ws_1"), {
+      ...makeBootstrap(),
+      streamReadState: { stream_1: { lastReadEventId: "evt_1", lastReadSequence: "10", lastReadAt: null } },
+    })
+    await db.streamReadState.put({
+      id: "ws_1:stream_1",
+      workspaceId: "ws_1",
+      streamId: "stream_1",
+      lastReadEventId: "evt_1",
+      lastReadSequence: "10",
+      lastReadAt: null,
+      _cachedAt: Date.now() - 5000,
+    })
+    await seedEvent("client_pending", "stream_1", String(Date.now()))
+    await db.events.update("client_pending", { _clientId: "client_pending", _status: "pending" })
+
+    mockMarkAsRead.mockResolvedValue({
+      streamId: "stream_1",
+      memberId: "member_1",
+      notificationLevel: "everything",
+      joinedAt: new Date().toISOString(),
+    })
+
+    const { result } = renderHook(() => useUnreadCounts("ws_1"), { wrapper: createWrapper(queryClient) })
+    act(() => {
+      result.current.markAsRead("stream_1", "client_pending")
+    })
+
+    await waitFor(() => expect(mockMarkAsRead).toHaveBeenCalled())
+    await expect(db.streamReadState.get("ws_1:stream_1")).resolves.toMatchObject({
+      lastReadEventId: "evt_1",
+      lastReadSequence: "10",
+    })
+    expect(
+      queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap("ws_1"))?.streamReadState?.stream_1
+    ).toMatchObject({ lastReadEventId: "evt_1", lastReadSequence: "10" })
+  })
+
   it("does not write a stale frontier to the caches when an echo lands during the resolve", async () => {
     // Resolving the read event is an await point the old synchronous path did
     // not have. A `stream:read` echo landing in that window writes a higher
