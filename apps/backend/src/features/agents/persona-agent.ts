@@ -282,6 +282,7 @@ export interface PersonaAgentResult {
   status: "completed" | "failed" | "skipped"
   skipReason?: string
   lastSeenSequence?: bigint
+  retryable?: boolean
   streamId?: string
   personaId?: string
 }
@@ -436,11 +437,7 @@ export class PersonaAgent {
       parentStreamId = streamId
       parentMessageId = messageId
       logger.info({ threadId: thread.id, streamId, messageId }, "Created thread for channel mention (eager)")
-    } else if (
-      stream.type === StreamTypes.THREAD &&
-      stream.parentStreamId &&
-      stream.parentAnchorId
-    ) {
+    } else if (stream.type === StreamTypes.THREAD && stream.parentStreamId && stream.parentAnchorId) {
       // Session in an existing thread: viewers of the parent timeline watch it
       // through the thread slot on the anchor (message or card), so the inline
       // indicator events must reach the parent stream's room too — the same
@@ -1313,6 +1310,7 @@ export class PersonaAgent {
           messagesSent: 0,
           sentMessageIds: [],
           status: "failed",
+          retryable: result.retryable,
         }
 
       case "completed":

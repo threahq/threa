@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, mock, spyOn } from "bun:test"
+import { APICallError } from "ai"
 import * as dbModule from "../../../db"
 import { OutboxRepository } from "../../../lib/outbox"
 import { StreamEventRepository } from "../../streams"
@@ -213,7 +214,10 @@ describe("withCompanionSession", () => {
     expect(insertOutboxSpy).not.toHaveBeenCalled()
   })
 
-  async function runFailingSession(retryAccounting?: { attempt: number; maxAttempts: number }) {
+  async function runFailingSession(
+    retryAccounting?: { attempt: number; maxAttempts: number },
+    thrown: unknown = new Error("boom")
+  ) {
     const session = makeRunningSession()
     mockTransactions()
     spyOn(AgentSessionRepository, "findByTriggerMessage").mockResolvedValue(null)
@@ -240,7 +244,7 @@ describe("withCompanionSession", () => {
         ...retryAccounting,
       },
       async () => {
-        throw new Error("boom")
+        throw thrown
       }
     )
     return { result, insertEventSpy, insertOutboxSpy }
@@ -249,7 +253,7 @@ describe("withCompanionSession", () => {
   it("emits a non-terminal agent_session:interrupted on a retryable failure", async () => {
     const { result, insertEventSpy, insertOutboxSpy } = await runFailingSession({ attempt: 0, maxAttempts: 5 })
 
-    expect(result).toEqual({ status: "failed", sessionId: "session_1", willRetry: true })
+    expect(result).toEqual({ status: "failed", sessionId: "session_1", willRetry: true, retryable: true })
     expect(insertEventSpy).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({
@@ -263,7 +267,7 @@ describe("withCompanionSession", () => {
   it("emits terminal agent_session:failed on the last attempt", async () => {
     const { result, insertEventSpy, insertOutboxSpy } = await runFailingSession({ attempt: 4, maxAttempts: 5 })
 
-    expect(result).toEqual({ status: "failed", sessionId: "session_1", willRetry: false })
+    expect(result).toEqual({ status: "failed", sessionId: "session_1", willRetry: false, retryable: true })
     expect(insertEventSpy).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({ eventType: "agent_session:failed" })
@@ -271,10 +275,35 @@ describe("withCompanionSession", () => {
     expect(insertOutboxSpy).toHaveBeenCalledWith(expect.anything(), "agent_session:failed", expect.anything())
   })
 
+  it("fails terminally on the first attempt when the provider says the error is not retryable", async () => {
+    const providerError = new APICallError({
+      message: "Provider returned error",
+      url: "https://openrouter.ai/api/v1/chat/completions",
+      requestBodyValues: {},
+      statusCode: 400,
+      isRetryable: false,
+    })
+    const { result, insertEventSpy, insertOutboxSpy } = await runFailingSession(
+      { attempt: 0, maxAttempts: 5 },
+      providerError
+    )
+
+    expect(result).toEqual({ status: "failed", sessionId: "session_1", willRetry: false, retryable: false })
+    expect(insertEventSpy).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ eventType: "agent_session:failed" })
+    )
+    expect(insertEventSpy).not.toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ eventType: "agent_session:interrupted" })
+    )
+    expect(insertOutboxSpy).toHaveBeenCalledWith(expect.anything(), "agent_session:failed", expect.anything())
+  })
+
   it("treats a failure as terminal when retry accounting is absent (non-queue callers)", async () => {
     const { result, insertEventSpy } = await runFailingSession()
 
-    expect(result).toEqual({ status: "failed", sessionId: "session_1", willRetry: false })
+    expect(result).toEqual({ status: "failed", sessionId: "session_1", willRetry: false, retryable: true })
     expect(insertEventSpy).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({ eventType: "agent_session:failed" })
