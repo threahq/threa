@@ -364,6 +364,7 @@ export class RemoteSession {
    * connector wind-down that used to fire immediately on archive.
    */
   private archivePending: { rootStreamId: string; deadline: ReturnType<typeof setTimeout> } | undefined
+  private archiveProbeInflight = false
   private pollTimer: ReturnType<typeof setTimeout> | undefined
   private renewTimer: ReturnType<typeof setInterval> | undefined
   /** Consecutive empty poll ticks while the socket is down; drives the poll backoff. */
@@ -408,6 +409,9 @@ export class RemoteSession {
             ? { onDelegationAvailable: (payload: DelegationAvailableNudge) => options.onDelegationAvailable?.(payload) }
             : {}),
           onBootstrap: (bootstrap) => {
+            // A reconnect is exactly when an archive push went missing, so
+            // re-derive before trusting the link the bootstrap arrived on.
+            void this.probeArchiveBackstop()
             if (bootstrap.availableInvocations.length > 0 || bootstrap.ownedClaims.length > 0) void this.claimDrain()
           },
           onSessionArchived: (payload) => void this.handleSessionArchived(payload),
@@ -1539,6 +1543,33 @@ export class RemoteSession {
     await this.transport.updatePresence(this.presenceBody("offline")).catch(() => undefined)
   }
 
+  /**
+   * bot:session_archived is a one-shot push with no replay: a socket that was
+   * down when the archive landed never learns of it, and the runtime then holds
+   * a link to a dead scratchpad forever — taking its tmux window and worktree
+   * with it. Re-derive the state from the server on every poll tick and on
+   * every socket (re)connect, and route a confirmed archive through the same
+   * grace-window path the push takes, so an unarchive still reattaches.
+   */
+  private async probeArchiveBackstop(): Promise<void> {
+    const rootStreamId = this.link?.rootStreamId
+    if (this.stopped || this.archivePending || this.archiveProbeInflight || !rootStreamId) return
+    this.archiveProbeInflight = true
+    try {
+      const archivedAt = await this.client.getStreamArchivedAt(rootStreamId)
+      // The awaits above can race a real push or a relink onto another root;
+      // re-check rather than detach on a snapshot that is no longer current.
+      if (!archivedAt) return
+      if (this.stopped || this.archivePending || this.link?.rootStreamId !== rootStreamId) return
+      this.log(`archive backstop: scratchpad ${rootStreamId} archived at ${archivedAt} with no push received`)
+      await this.handleSessionArchived({ runtimeSessionId: this.config.runtimeSessionId, rootStreamId })
+    } catch (error) {
+      this.log(`archive backstop probe failed: ${this.summarize(error)}`)
+    } finally {
+      this.archiveProbeInflight = false
+    }
+  }
+
   /** The grace expired with the scratchpad still archived: run the wind-down that used to fire on archive. */
   private async windDownAfterGrace(rootStreamId: string): Promise<void> {
     if (this.stopped || !this.archivePending) return
@@ -1624,6 +1655,7 @@ export class RemoteSession {
   private async pollTick(): Promise<void> {
     if (this.stopped) return
     if (!this.link) await this.ensureLink()
+    else await this.probeArchiveBackstop()
     if (!this.transport.socketConnected) await this.transport.connect()
     const claimed = await this.claimDrain()
     // shutdown() can land during the awaits above; re-arming then would leave

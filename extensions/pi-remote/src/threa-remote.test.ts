@@ -1986,3 +1986,97 @@ describe("nextQuietPollMs (no-socket idle backoff)", () => {
     expect(__testing.nextQuietPollMs()).toBe(3000)
   })
 })
+
+describe("archived-scratchpad wind-down", () => {
+  const ctx = {
+    sessionManager: { getSessionId: () => "runtime" },
+    isIdle: () => true,
+    cwd: "/tmp",
+    ui: { notify: () => {} },
+  } as never
+
+  function linkConfig() {
+    __testing.setConfigForTesting({
+      baseUrl: "https://app.threa.io",
+      workspaceId: "ws_123",
+      apiKey: "threa_bk_test",
+      linkedSessions: {
+        runtime: {
+          enabled: true,
+          instanceId: "pi-instance",
+          runtimeSessionId: "runtime",
+          rootStreamId: "stream_root",
+        },
+      },
+    })
+  }
+
+  afterEach(() => {
+    __testing.clearArchivePendingForTesting()
+    __testing.setConfigForTesting(undefined)
+  })
+
+  test("an archive with no push detaches on the poll probe and suspends claiming", async () => {
+    linkConfig()
+    const fetchSpy = spyOn(globalThis, "fetch").mockImplementation(
+      async (input) =>
+        new Response(
+          JSON.stringify(
+            String(input).endsWith("/streams/stream_root")
+              ? { data: { archivedAt: "2026-07-20T10:00:00.000Z" } }
+              : { data: {} }
+          ),
+          { status: 200, headers: { "content-type": "application/json" } }
+        )
+    )
+    try {
+      await __testing.probeArchiveState(ctx)
+
+      expect(__testing.archivePendingRootStreamId()).toBe("stream_root")
+      // Detached: no claims against an archived scratchpad, and the poll drops
+      // onto the reattach probe cadence instead of the 15-min backstop.
+      expect(await __testing.claimIfIdle({} as never, ctx)).toBe(false)
+      expect(__testing.nextQuietPollMs()).toBe(45_000)
+    } finally {
+      fetchSpy.mockRestore()
+    }
+  })
+
+  test("an unarchive inside the grace window reattaches instead of winding down", async () => {
+    linkConfig()
+    let archived = true
+    const fetchSpy = spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input)
+      const body = url.endsWith("/streams/stream_root")
+        ? { data: { archivedAt: archived ? "2026-07-20T10:00:00.000Z" : null } }
+        : url.endsWith("/bot-runtime/sessions")
+          ? { data: { rootStreamId: "stream_root", runtimeSessionId: "runtime" } }
+          : { data: {} }
+      return new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } })
+    })
+    try {
+      await __testing.probeArchiveState(ctx)
+      expect(__testing.archivePendingRootStreamId()).toBe("stream_root")
+
+      archived = false
+      await __testing.probeArchiveState(ctx)
+
+      expect(__testing.archivePendingRootStreamId()).toBeUndefined()
+    } finally {
+      fetchSpy.mockRestore()
+    }
+  })
+
+  test("a probe failure is never treated as an archive", async () => {
+    linkConfig()
+    const fetchSpy = spyOn(globalThis, "fetch").mockImplementation(async () => {
+      throw new Error("threa unreachable")
+    })
+    try {
+      await __testing.probeArchiveState(ctx)
+      expect(__testing.archivePendingRootStreamId()).toBeUndefined()
+    } finally {
+      fetchSpy.mockRestore()
+    }
+  })
+})

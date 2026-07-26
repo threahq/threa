@@ -7,6 +7,13 @@ export {
   type AllowedTmuxKey,
   type TmuxKeyFailureCode,
 } from "./tmux-key"
+export {
+  killOwnWindow,
+  pushBranchAndScheduleRemoval,
+  windDownArchivedWorktree,
+  type ArchiveCleanupReport,
+  type ArchiveWindDownReport,
+} from "./archive-wind-down"
 export { harnessDaemonEntrypoint, runHarnessKick, type HarnessKickResult } from "./harness-kick"
 export {
   harnessReconnectAvailable,

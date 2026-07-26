@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { mkdtempSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { pushBranchAndScheduleRemoval } from "./archive-cleanup"
+import { pushBranchAndScheduleRemoval } from "./archive-wind-down"
 
 const noLog = () => undefined
 
@@ -16,7 +16,7 @@ function sh(cwd: string, command: string): string {
 
 /** A main repo on a feature branch with a bare `origin`, plus a linked worktree. */
 function makeFixture(): { main: string; worktree: string; origin: string } {
-  const root = mkdtempSync(join(tmpdir(), "archive-cleanup-"))
+  const root = mkdtempSync(join(tmpdir(), "archive-wind-down-"))
   const origin = join(root, "origin.git")
   const main = join(root, "main")
   sh(root, `git init --bare origin.git`)

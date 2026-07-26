@@ -415,7 +415,8 @@ describe("RemoteSession session-archived handling (grace window)", () => {
       handleSessionRestored: (p: unknown) => Promise<void>
       claimDrain: () => Promise<boolean>
       nextPollDelay: (claimed: boolean) => number
-      link: unknown
+      probeArchiveBackstop: () => Promise<void>
+      link: { rootStreamId: string } | undefined
       archivePending: unknown
     }
 
@@ -487,6 +488,90 @@ describe("RemoteSession session-archived handling (grace window)", () => {
     expect(asInternal(session).link).toMatchObject({ rootStreamId: "stream_root" })
     expect(archived).toEqual([])
     await session.shutdown()
+  })
+
+  /** Links the session to `stream_root` the way start() does, so the backstop has something to probe. */
+  async function withLink(session: RemoteSession): Promise<void> {
+    await (session as unknown as { ensureLink: () => Promise<void> }).ensureLink()
+  }
+
+  const linkingClient = (overrides: Record<string, unknown>) =>
+    ({
+      fail: async () => {},
+      claim: async () => null,
+      createSession: async () => ({
+        linkId: "brsl_1",
+        rootStreamId: "stream_root",
+        activeStreamId: "stream_root",
+        runtimeSessionId: "rts-test",
+        streamUrlPath: "/w/ws_1/s/stream_root",
+      }),
+      ...overrides,
+    }) as unknown as ThreaClient
+
+  test("an archive with no push is caught by the backstop probe and winds down through the same grace window", async () => {
+    let links = 0
+    const client = linkingClient({
+      getStreamArchivedAt: async () => "2026-07-20T10:00:00.000Z",
+      // The initial link, then the reattach probes the detach schedules — which
+      // keep failing because the scratchpad is still archived.
+      createSession: async () => {
+        if (links++ > 0) throw new ThreaApiError("scratchpad is archived", 409, "SCRATCHPAD_ARCHIVED")
+        return {
+          linkId: "brsl_1",
+          rootStreamId: "stream_root",
+          activeStreamId: "stream_root",
+          runtimeSessionId: "rts-test",
+          streamUrlPath: "/w/ws_1/s/stream_root",
+        }
+      },
+    })
+    const { transport, presence } = makeFakeTransport()
+    const archived: Array<{ rootStreamId: string }> = []
+    const session = makeGraceSession({
+      client,
+      transport,
+      archiveGraceMs: 300,
+      onArchived: (payload) => void archived.push(payload),
+    })
+    await withLink(session)
+
+    // bot:session_archived never arrived — only the probe knows.
+    await asInternal(session).probeArchiveBackstop()
+
+    expect(asInternal(session).archivePending).toBeDefined()
+    expect(presence.at(-1)?.status).toBe("offline")
+    // Still archived when the grace expires (the reattach probe re-links, but
+    // handleSessionRestored never fires), so the connector wind-down runs.
+    await new Promise((resolve) => setTimeout(resolve, 450))
+    expect(archived).toEqual([{ rootStreamId: "stream_root" }])
+    await session.shutdown()
+  })
+
+  test("the backstop leaves a live scratchpad linked, and a probe failure is never treated as an archive", async () => {
+    for (const getStreamArchivedAt of [
+      async () => null,
+      async () => {
+        throw new ThreaApiError("threa unreachable", 503)
+      },
+    ]) {
+      const { transport } = makeFakeTransport()
+      const archived: Array<{ rootStreamId: string }> = []
+      const session = makeGraceSession({
+        client: linkingClient({ getStreamArchivedAt }),
+        transport,
+        archiveGraceMs: 60_000,
+        onArchived: (payload) => void archived.push(payload),
+      })
+      await withLink(session)
+
+      await asInternal(session).probeArchiveBackstop()
+
+      expect(asInternal(session).archivePending).toBeUndefined()
+      expect(asInternal(session).link).toMatchObject({ rootStreamId: "stream_root" })
+      expect(archived).toEqual([])
+      await session.shutdown()
+    }
   })
 
   test("a cold-start link asks the server to replace an archived scratchpad (ifArchived=replace)", async () => {

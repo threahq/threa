@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process"
+import { spawn, spawnSync } from "node:child_process"
 import { dirname, resolve } from "node:path"
 
 /**
@@ -25,14 +25,18 @@ export interface ArchiveCleanupReport {
   reason?: string
 }
 
+export interface ArchiveWindDownReport extends ArchiveCleanupReport {
+  windowKilled: boolean
+}
+
 const PROTECTED_BRANCHES = new Set(["main", "master", "HEAD"])
 const GIT_TIMEOUT_MS = 30_000
 const PUSH_TIMEOUT_MS = 120_000
 
 function git(cwd: string, args: string[], timeoutMs = GIT_TIMEOUT_MS): { ok: boolean; stdout: string } {
   try {
-    const result = Bun.spawnSync(["git", ...args], { cwd, stdout: "pipe", stderr: "pipe", timeout: timeoutMs })
-    return { ok: result.exitCode === 0, stdout: result.stdout.toString().trim() }
+    const result = spawnSync("git", args, { cwd, encoding: "utf8", timeout: timeoutMs })
+    return { ok: result.status === 0, stdout: (result.stdout ?? "").trim() }
   } catch {
     return { ok: false, stdout: "" }
   }
@@ -95,6 +99,39 @@ export function pushBranchAndScheduleRemoval(cwd: string, log: (message: string)
     report.reason = "could not schedule worktree removal (branch is pushed; remove manually)"
   }
   return report
+}
+
+function paneTarget(): string | undefined {
+  return process.env.THREA_TMUX_TARGET?.trim() || process.env.TMUX_PANE?.trim() || undefined
+}
+
+/**
+ * Kill the tmux window the runtime lives in — deliberate self-termination for
+ * the archived-scratchpad wind-down. The runtime dies with the window, so
+ * callers do any last writes first.
+ */
+export function killOwnWindow(): boolean {
+  const target = paneTarget()
+  if (!target) return false
+  try {
+    return spawnSync("tmux", ["kill-window", "-t", target], { encoding: "utf8" }).status === 0
+  } catch {
+    return false
+  }
+}
+
+/**
+ * The whole archived-scratchpad wind-down for a harness runtime: preserve the
+ * work, then take the tmux window down. Outside tmux there is nothing to kill,
+ * and the caller decides how to exit.
+ */
+export function windDownArchivedWorktree(cwd: string, log: (message: string) => void): ArchiveWindDownReport {
+  const report = pushBranchAndScheduleRemoval(cwd, log)
+  log(
+    `archive cleanup: committed=${report.committed} pushed=${report.pushed} removal=${report.removalScheduled}` +
+      (report.reason ? ` (${report.reason})` : "")
+  )
+  return { ...report, windowKilled: killOwnWindow() }
 }
 
 function shellQuote(value: string): string {

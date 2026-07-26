@@ -7,6 +7,7 @@ import {
   runHarnessKick,
   parseAllowedTmuxKey,
   sendAllowedTmuxKey,
+  windDownArchivedWorktree,
   type BotRuntimeTransport,
 } from "@threa/bot-runtime-client"
 import {
@@ -28,9 +29,8 @@ import {
 import { z } from "zod"
 import { CarryOnController } from "./carry-on"
 import { THINKING_LEVELS, modelSuggestions } from "./model-catalog"
-import { pushBranchAndScheduleRemoval } from "./archive-cleanup"
 import { formatClaudeStatusReport } from "./status"
-import { interrupt, killOwnWindow, steerText, submitLine, tmuxAvailable } from "./tmux-control"
+import { interrupt, steerText, submitLine, tmuxAvailable } from "./tmux-control"
 import { TranscriptTracer } from "./transcript-trace"
 
 const RUNTIME_KIND = "claude-code-channel"
@@ -580,12 +580,7 @@ export class ChannelServer {
    */
   private windDownForArchive(): void {
     log("scratchpad archived — preserving work and shutting down")
-    const report = pushBranchAndScheduleRemoval(process.cwd(), log)
-    log(
-      `archive cleanup: committed=${report.committed} pushed=${report.pushed} removal=${report.removalScheduled}` +
-        (report.reason ? ` (${report.reason})` : "")
-    )
-    if (!killOwnWindow()) process.exit(0)
+    if (!windDownArchivedWorktree(process.cwd(), log).windowKilled) process.exit(0)
   }
 
   // --- Delegations ------------------------------------------------------------

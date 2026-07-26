@@ -36,16 +36,22 @@ export function ensureTmuxSession(session: string, create = false): void {
 }
 
 /** A surviving tmux window means a LaunchAgent reload must not start a duplicate agent. */
-export function agentWindowExists(agent: ManagedAgent): boolean {
-  if (agent.tmuxWindowId) {
-    const result = output(["tmux", "display-message", "-p", "-t", agent.tmuxWindowId, "#{session_name}"], {
-      allowFailure: true,
-    })
-    if (result.exitCode === 0 && (!agent.tmuxSession || result.stdout.trim() === agent.tmuxSession)) return true
-  }
+export function agentWindowExists(agent: ManagedAgent, inspect: typeof output = output): boolean {
   const window = agent.tmuxWindow ?? agent.name
+  if (agent.tmuxWindowId) {
+    // The id alone is not identity: tmux restarts its numbering from @0, so a
+    // recorded @169 routinely resolves to an unrelated agent's window on a
+    // later server. Confirm the name too, or a stale row reads as "already
+    // running" against someone else's window.
+    const result = inspect(
+      ["tmux", "display-message", "-p", "-t", agent.tmuxWindowId, "#{session_name}\t#{window_name}"],
+      { allowFailure: true }
+    )
+    const [session, name] = result.stdout.trim().split("\t")
+    if (result.exitCode === 0 && name === window && (!agent.tmuxSession || session === agent.tmuxSession)) return true
+  }
   const target = agent.tmuxSession ? ["-t", agent.tmuxSession] : ["-a"]
-  return output(["tmux", "list-windows", ...target, "-F", "#{window_name}"], { allowFailure: true })
+  return inspect(["tmux", "list-windows", ...target, "-F", "#{window_name}"], { allowFailure: true })
     .stdout.split("\n")
     .includes(window)
 }
