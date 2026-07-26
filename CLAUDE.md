@@ -117,7 +117,7 @@ Race-safe writes:
 
 - Real-time delivery via the outbox pattern, never ad hoc publishes (INV-4). Outbox events written in the same transaction as domain writes; dispatcher publishes async. Event-source updates and read projections commit together (INV-7).
 - Services own transactions (INV-6). Handlers/workers thin, infrastructure-only (INV-34). Data access through repositories (INV-5); composable generic repo methods over one-off sprawl (INV-27).
-- No hidden singletons (exceptions: logger, Langfuse/OTEL, web-push bootstrap) (INV-9). Dependency names describe what they are (INV-10). Fail loudly, no silent fallbacks (INV-11). Pass constructed dependencies, not raw config (INV-12); construct long-lived collaborators once (INV-13) — `new ConversationService({ pool, outboxPublisher })` then call with params, never per-call assembly from connection strings. Reuse existing helpers over parallel implementations (INV-35, INV-37).
+- No hidden singletons (exceptions: logger, web-push bootstrap) (INV-9). Dependency names describe what they are (INV-10). Fail loudly, no silent fallbacks (INV-11). Pass constructed dependencies, not raw config (INV-12); construct long-lived collaborators once (INV-13) — `new ConversationService({ pool, outboxPublisher })` then call with params, never per-call assembly from connection strings. Reuse existing helpers over parallel implementations (INV-35, INV-37).
 
 ### API Contracts & Types
 

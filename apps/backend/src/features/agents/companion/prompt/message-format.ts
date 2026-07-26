@@ -122,7 +122,6 @@ function idTag(msg: MessageWithAttachments): string {
 
 /**
  * Format structured data as compact JSON for inclusion in attachment descriptions.
- * Note: Label avoids "data:" pattern which Langfuse SDK incorrectly parses as data URI.
  */
 function formatStructuredData(data: ChartData | TableData | DiagramData | null): string | null {
   if (!data) return null

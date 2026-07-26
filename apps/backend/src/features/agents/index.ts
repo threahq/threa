@@ -9,7 +9,7 @@ export type { TurnPurpose, TurnPurposeKind } from "./turn-purpose"
 export { resolveTurnModel } from "./turn-model"
 export type { ResolvedTurnModel, TurnModelContext } from "./turn-model"
 
-export { defineAgentTool, toVercelToolDefs, AgentRuntime, createSessionTraceProjector, OtelObserver } from "./runtime"
+export { defineAgentTool, toVercelToolDefs, AgentRuntime, createSessionTraceProjector } from "./runtime"
 export type {
   AgentTool,
   AgentToolConfig,

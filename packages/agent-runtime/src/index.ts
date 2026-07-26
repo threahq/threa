@@ -15,7 +15,6 @@ export type {
 } from "./runtime/negotiate-capabilities"
 export type { AgentEvent, NewMessageInfo, TraceContextMessage } from "./runtime/agent-events"
 export type { AgentObserver } from "./runtime/agent-observer"
-export { OtelObserver } from "./runtime/otel-observer"
 export { AgentRuntime, mergeSourceItems } from "./runtime/agent-runtime"
 export type { AgentRuntimeConfig, AgentRuntimeResult, NewMessageAwareness } from "./runtime/agent-runtime"
 export {

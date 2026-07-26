@@ -199,7 +199,7 @@ carries its function id and model metadata (INV-19). All model access goes throu
 ### The enclave runs a stripped-down build
 
 `packages/agent-runtime/src/enclave-runtime.ts` re-exports a minimal slice of the runtime
-with no OTEL and no `createAI`, for the enclave to run an e2e-capable persona over its own
+without `createAI`, for the enclave to run an e2e-capable persona over its own
 transport. Only personas flagged `e2eCapable` (Ariadne, `built-in-agents.ts:95`) can be the
 enclave actor; the dispatch gate refuses a non-capable one (`isE2eCapablePersona`). The
 enclave-side wiring lives in the enclave service, not here. See e2e-encrypted-scratchpads.
@@ -209,7 +209,7 @@ companion's seam: it builds a `TurnRequest` (delivery `"sealed"`) and a `TurnSin
 `commitMessage` seals each reply under the stream SSK and whose observers seal each trace
 step, then hands both to an `EnclaveTurnDriver` — the same `runTurnOnAgentRuntime` mapping
 the plaintext driver uses, differing only by delivery and sealing. The driver is exported
-from the curated barrel (no OTEL, no `createAI`) and is constructed per turn because the
+from the curated barrel (no `createAI`) and is constructed per turn because the
 enclave's `AgentRuntimeAI` is per turn (it accumulates that turn's token usage). The enclave
 sees messages that arrive mid-turn by _pulling_ them (UX-12): its sink's interjection edge is
 a real `NewMessageAwareness` that, at each reconsider boundary, calls

@@ -41,7 +41,7 @@ import { resolveTurnModel } from "./turn-model"
 import { resolveContextWindowPolicy } from "./context-window-policy"
 import { resolveBagForStream, persistSnapshot, appendBagToSystemPrompt, type ResolvedBag } from "./context-bag"
 import { createMemoizedGithubClient, createMemoizedLinearClient, type RunGeneralResearchOptions } from "./tools"
-import { createSessionTraceProjector, OtelObserver, type AgentRuntimeConfig, type NewMessageInfo } from "./runtime"
+import { createSessionTraceProjector, type AgentRuntimeConfig, type NewMessageInfo } from "./runtime"
 import {
   InProcessTurnDriver,
   TurnDeliveries,
@@ -1043,21 +1043,7 @@ export class PersonaAgent {
         // handed to the loop as raw closures.
         const turnSink: TurnSink = {
           commitMessage: doSendMessage,
-          observers: [
-            createSessionTraceProjector(trace),
-            digestCollector,
-            new OtelObserver({
-              sessionId: session.id,
-              streamId: targetStreamId,
-              personaId: persona.id,
-              metadata: {
-                model_id: parsed.modelId,
-                model_provider: parsed.modelProvider,
-                model_name: parsed.modelName,
-                model_escalated: turnModel.escalated,
-              },
-            }),
-          ],
+          observers: [createSessionTraceProjector(trace), digestCollector],
           shouldAbort: async () => {
             const latestSession = await AgentSessionRepository.findById(db, session.id)
             if (!latestSession) return "session missing"

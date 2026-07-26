@@ -2,7 +2,7 @@
  * Core types for the AI evaluation framework.
  *
  * Designed for end-to-end evals with real database, real services, and real AI calls.
- * Integrates with Langfuse for experiment tracking.
+ * Console-reported; no external experiment tracker.
  */
 
 import type { Pool } from "pg"
@@ -137,7 +137,7 @@ export interface EvalCase<TInput, TExpected> {
  * Score is typically 0.0 (fail) to 1.0 (pass), but can be any numeric range.
  */
 export interface EvaluatorResult {
-  /** Name of the evaluator (used in Langfuse scoring) */
+  /** Name of the evaluator */
   name: string
   /** Score value - typically 0.0 to 1.0 */
   score: number
@@ -217,8 +217,6 @@ export interface PermutationResult<TOutput, TExpected> {
 export interface SuiteResult<TOutput, TExpected> {
   suiteName: string
   permutations: PermutationResult<TOutput, TExpected>[]
-  /** Langfuse trace ID if recording was enabled */
-  langfuseTraceId?: string
 }
 
 // -----------------------------------------------------------------------------
@@ -298,8 +296,6 @@ export interface RunnerOptions {
   minPassRate?: number
   /** Write machine-readable results JSON to this path. */
   jsonOutput?: string
-  /** Disable Langfuse recording */
-  noLangfuse?: boolean
   /** Verbose output */
   verbose?: boolean
 }

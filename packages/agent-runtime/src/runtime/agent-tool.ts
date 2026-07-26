@@ -73,10 +73,10 @@ export interface AgentToolConfig<TSchema extends z.ZodTypeAny = z.ZodTypeAny> {
   trace: {
     stepType: AgentStepType
     /**
-     * When true, the tool's execution is recorded in Langfuse (OTEL) but not in
-     * the user-facing session trace. Used for lightweight workspace lookup tools
-     * whose individual results are noise in the trace dialog — the deep
-     * `workspace_research` tool captures the aggregate picture instead.
+     * When true, the tool's execution is kept out of the user-facing session
+     * trace. Used for lightweight workspace lookup tools whose individual
+     * results are noise in the trace dialog — the deep `workspace_research`
+     * tool captures the aggregate picture instead.
      */
     hidden?: boolean
     formatContent: (input: z.infer<TSchema>, result: AgentToolResult) => string

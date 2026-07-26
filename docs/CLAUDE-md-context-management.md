@@ -145,11 +145,11 @@ Kitchen sink is living reference - update when adding components, patterns, or s
 ```markdown
 # Before
 
-Pass dependencies explicitly; no module-level state or `getInstance()` patterns. Exceptions: (1) Logger (Pino) - stateless and side-effect-free. (2) Langfuse/OTEL SDK - must initialize before any LangChain imports to instrument them; this constraint forces module-level state.
+Pass dependencies explicitly; no module-level state or `getInstance()` patterns. Exceptions: (1) Logger (Pino) - stateless and side-effect-free. (2) Web-push bootstrap - the library configures itself at module load.
 
 # After
 
-Pass dependencies explicitly; no module-level state or `getInstance()`. Exceptions: (1) Logger (Pino) - stateless, side-effect-free. (2) Langfuse/OTEL SDK - must initialize before LangChain imports for instrumentation; forces module-level state.
+Pass dependencies explicitly; no module-level state or `getInstance()`. Exceptions: (1) Logger (Pino) - stateless, side-effect-free. (2) Web-push bootstrap - library self-configures at module load.
 ```
 
 **INV-13: Construct, Don't Assemble:**

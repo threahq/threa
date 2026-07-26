@@ -743,9 +743,9 @@ export function createEnclaveSessionHandlers({ pool, eventService, io, costServi
       }
 
       // Record the turn's usage against the workspace + invoking user, the same
-      // recording path a companion turn uses (#9). The enclave runs no OTEL
-      // (egress discipline), so it reports summed token counts + OpenRouter's
-      // billed cost and we record them here — aggregate accounting, never content
+      // recording path a companion turn uses (#9). Under egress discipline the
+      // enclave reports summed token counts + OpenRouter's billed cost and we
+      // record them here — aggregate accounting, never content
       // (INV-E7). Only after we actually won the RUNNING→COMPLETED transition, so
       // a redelivery (handled by the already-completed no-op above) can't
       // double-charge. Best-effort: a recording failure must not fail the ack.

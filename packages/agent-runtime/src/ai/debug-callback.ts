@@ -8,7 +8,6 @@
  * ```typescript
  * const result = await compiledGraph.invoke(input, {
  *   callbacks: [
- *     ...getLangfuseCallbacks({ ... }),
  *     ...getDebugCallbacks(),
  *   ],
  * })

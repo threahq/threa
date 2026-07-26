@@ -11,7 +11,6 @@ export {
   type NewMessageInfo,
   type TraceContextMessage,
   type AgentObserver,
-  OtelObserver,
   AgentRuntime,
   TraceProjector,
   type TraceStepSink,

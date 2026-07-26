@@ -4,8 +4,8 @@ import type { OpenAiMessage, OpenAiTool } from "./agent/openai-format"
 /**
  * The enclave's LLM transport.
  *
- * Deliberately NOT the backend's `createAI` wrapper (INV-28): that wrapper pulls
- * Langfuse/OTEL telemetry, and the whole point of the enclave is isolation —
+ * Deliberately NOT the backend's `createAI` wrapper (INV-28): the whole point
+ * of the enclave is isolation —
  * decrypted prompts and replies must never leave this process except to the LLM
  * provider. A raw, dependency-free OpenRouter chat-completions client keeps the
  * egress surface to exactly one host and emits no telemetry carrying message

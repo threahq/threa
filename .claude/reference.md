@@ -19,7 +19,6 @@ This file contains detailed reference material not needed every turn. Read when 
 - IDs: ULID (prefixed, sortable)
 - Logging: Pino
 - AI: Vercel AI SDK + LangChain/LangGraph + OpenRouter
-- Observability: Langfuse + OpenTelemetry
 - Schema: Zod
 - Testing: Bun test + Playwright
 
@@ -144,14 +143,11 @@ bun run db:start
 bun run dev
 # Ctrl+C after migrations complete
 
-# Optional: Start Langfuse for AI observability
-bun run langfuse:start
-
 # Reset database (destroys data)
 bun run db:reset
 ```
 
-**IMPORTANT:** Never run `db:start`, `db:reset`, `langfuse:start` from worktrees. Infrastructure in primary folder only.
+**IMPORTANT:** Never run `db:start` or `db:reset` from worktrees. Infrastructure in primary folder only.
 
 ### Git Worktrees (Feature Development)
 
@@ -187,26 +183,3 @@ bun run test:unit         # Unit tests (fast, no db)
 bun run test:integration  # Integration tests (with test db)
 bun run test:e2e          # E2E tests
 ```
-
-### Langfuse (AI Observability)
-
-Optional. Visibility into LLM calls, costs, performance.
-
-```bash
-# In primary /threa folder only:
-docker compose -f docker-compose.langfuse.yml up -d
-
-# UI at http://localhost:3100
-# Create account, create project, copy keys to .env:
-#   LANGFUSE_SECRET_KEY=sk-lf-...
-#   LANGFUSE_PUBLIC_KEY=pk-lf-...
-#   LANGFUSE_BASE_URL=http://localhost:3100
-
-# Restart backend to enable tracing
-```
-
-Langfuse uses OpenTelemetry to auto-trace LangChain, Vercel AI SDK calls.
-
-Local credentials (safe to share):
-Email: dev@threa.local
-Password: threa-dev-password123

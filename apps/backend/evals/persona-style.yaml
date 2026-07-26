@@ -8,8 +8,8 @@
 # `-s persona-style` run is equivalent to this file.
 #
 # Run (needs OPENROUTER_API_KEY + DATABASE_URL from .env; dev DB, not prod):
-#   bun run eval -- -s persona-style --no-langfuse
-#   bun run eval -- --config evals/persona-style.yaml --no-langfuse
+#   bun run eval -- -s persona-style
+#   bun run eval -- --config evals/persona-style.yaml
 
 suites:
   - name: persona-style

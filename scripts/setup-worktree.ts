@@ -90,7 +90,7 @@ function extractDatabaseName(envContent: string): string | null {
 }
 
 async function findPostgresContainer(): Promise<string | null> {
-  // Find running threa-postgres container specifically (not langfuse or other postgres containers)
+  // Find running threa-postgres container specifically (not other postgres containers)
   const result = await $`docker ps --format '{{.Names}}' --filter 'name=threa-postgres'`.quiet().nothrow()
   const containers = result.stdout.toString().trim().split("\n").filter(Boolean)
 

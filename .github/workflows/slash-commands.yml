@@ -149,7 +149,7 @@ jobs:
           ARGS=$(cat /tmp/eval_args)
           set +e
           # ARGS is charset-validated (no spaces/quotes/globs) — safe to word-split.
-          bun run evals/run.ts $ARGS --no-langfuse --json /tmp/eval_results.json
+          bun run evals/run.ts $ARGS --json /tmp/eval_results.json
           echo "exit_code=$?" >> "$GITHUB_OUTPUT"
 
       - name: Format report

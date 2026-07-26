@@ -10,7 +10,6 @@
  * const result = await costTracker.runWithTracking(async () => {
  *   return compiledGraph.invoke(input, {
  *     callbacks: [
- *       ...getLangfuseCallbacks({ ... }),
  *       ...getCostTrackingCallbacks({
  *         costRecorder,
  *         workspaceId,
@@ -129,7 +128,6 @@ export class CostTrackingCallback extends BaseCallbackHandler {
  * Returns empty array if no costRecorder is provided, allowing safe spreading:
  * ```typescript
  * callbacks: [
- *   ...getLangfuseCallbacks({ ... }),
  *   ...getCostTrackingCallbacks({ ... }), // safe even if no costRecorder
  * ]
  * ```

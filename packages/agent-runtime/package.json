@@ -7,8 +7,7 @@
   "exports": {
     ".": "./src/index.ts",
     "./runtime": "./src/runtime/enclave-runtime.ts",
-    "./logger": "./src/logger.ts",
-    "./test-otel-setup": "./src/runtime/test-otel-setup.ts"
+    "./logger": "./src/logger.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
@@ -18,9 +17,6 @@
     "@langchain/core": "^1.1.5",
     "@langchain/openai": "^1.2.0",
     "@openrouter/ai-sdk-provider": "^3",
-    "@opentelemetry/api": "^1.9.0",
-    "@opentelemetry/context-async-hooks": "^2.2.0",
-    "@opentelemetry/sdk-trace-base": "^2.0.1",
     "@threa/types": "workspace:*",
     "ai": "^7",
     "ipaddr.js": "^2.3.0",

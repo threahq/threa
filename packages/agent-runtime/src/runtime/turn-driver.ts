@@ -78,7 +78,7 @@ export function isDeclaredUnsupported(value: unknown): value is DeclaredUnsuppor
 export interface TurnSink {
   /** Terminal action: deliver one committed message to the conversation. */
   commitMessage: (commit: TurnCommit) => Promise<TurnCommitReceipt>
-  /** Event sink — trace projection, digest collection, OTEL. */
+  /** Event sink — trace projection, digest collection. */
   observers?: AgentObserver[]
   /**
    * Mid-turn interjection (new-message awareness). A real provider lets the loop

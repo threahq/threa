@@ -44,8 +44,8 @@ export interface GeneralResearchResult {
  * by the caller. The backend resolves these through its ConfigResolver + AI; the
  * enclave supplies its own `AgentRuntimeAI` over a single OpenRouter connection
  * and the model id from the assignment — neither path pulls the heavy AI
- * provider layer into this module, so it stays importable on the enclave's
- * OTEL-free barrel.
+ * provider layer into this module, so it stays importable from the enclave's
+ * curated barrel.
  */
 export interface RunGeneralResearchDeps {
   /** The minimal generate surface the inner loop calls. */
@@ -196,7 +196,7 @@ export async function runGeneralResearch(
 
 /**
  * Local abort-shape check. Mirrors the AI wrapper's `isAbortError` but lives here
- * so the enclave's OTEL-free barrel can import the researcher without pulling in
+ * so the enclave's curated barrel can import the researcher without pulling in
  * the LangChain/OpenRouter provider layer that `ai/ai.ts` carries.
  */
 function isAbortLikeError(err: unknown): boolean {
