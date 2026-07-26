@@ -5,6 +5,7 @@ import {
   listLocalTmuxPanes,
   parseClaudeChannelLaunch,
   parseTmuxPanes,
+  resolveManagedAgentPane,
   type LocalTmuxPane,
 } from "./discovery"
 
@@ -126,5 +127,69 @@ describe("findLocalClaudeChannelPane", () => {
         "host-a"
       )
     ).toThrow("multiple live unmanaged Claude channel panes match ccs-shared: %8, %9")
+  })
+})
+
+describe("resolveManagedAgentPane", () => {
+  const host = "host-a"
+  const config = {}
+  const agent = { runtime: "claude" as const, worktree: "/Users/me/dev/threa.feature" }
+
+  test("a recycled window id pointing at another worktree is not this agent", () => {
+    // The recorded @7/%8 now belong to an unrelated agent: tmux restarts its
+    // numbering at @0 on a new server, so the ids alone would say "running".
+    const resolved = resolveManagedAgentPane(
+      { ...agent, tmuxWindowId: "@7", tmuxPaneId: "%8" },
+      [pane({ cwd: "/Users/me/dev/threa.somebody-else", windowName: "somebody-else" })],
+      config,
+      host
+    )
+    expect(resolved).toEqual({ status: "missing" })
+  })
+
+  test("resolves by runtime session identity, ignoring stale recorded ids", () => {
+    const live = pane({ windowId: "@42", paneId: "%43" })
+    const resolved = resolveManagedAgentPane(
+      {
+        ...agent,
+        runtimeSessionId: deriveClaudeRuntimeIdentity(live.cwd, config, host).runtimeSessionId,
+        tmuxWindowId: "@7",
+        tmuxPaneId: "%8",
+      },
+      [pane({ cwd: "/Users/me/dev/threa.other", windowId: "@7", paneId: "%8" }), live],
+      config,
+      host
+    )
+    expect(resolved).toEqual({ status: "found", pane: live })
+  })
+
+  test("falls back to the worktree when no runtime session is recorded", () => {
+    const live = pane({ windowId: "@42", paneId: "%43" })
+    const resolved = resolveManagedAgentPane({ ...agent, tmuxWindowId: "@7" }, [live], config, host)
+    expect(resolved).toEqual({ status: "found", pane: live })
+  })
+
+  test("two panes in one worktree with no matching id is ambiguous, not a guess", () => {
+    const resolved = resolveManagedAgentPane(
+      { ...agent, tmuxPaneId: "%99" },
+      [pane(), pane({ paneId: "%9", windowId: "@8" })],
+      config,
+      host
+    )
+    expect(resolved).toEqual({
+      status: "ambiguous",
+      reason: "2 panes share /Users/me/dev/threa.feature and none matches the recorded ids",
+    })
+  })
+
+  test("a row with neither identity nor worktree can only be checked for liveness", () => {
+    const live = pane()
+    expect(resolveManagedAgentPane({ runtime: "claude", tmuxPaneId: "%8" }, [live], config, host)).toEqual({
+      status: "found",
+      pane: live,
+    })
+    expect(resolveManagedAgentPane({ runtime: "claude", tmuxPaneId: "%404" }, [live], config, host)).toEqual({
+      status: "missing",
+    })
   })
 })

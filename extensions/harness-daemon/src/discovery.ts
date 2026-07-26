@@ -2,7 +2,7 @@ import { basename } from "node:path"
 import { hostname } from "node:os"
 import { output } from "./shell"
 import { deriveClaudeRuntimeIdentity, readThreaChannelConfig, sanitizeId } from "./spawners"
-import type { ThreaChannelConfig } from "./types"
+import type { ManagedAgent, ThreaChannelConfig } from "./types"
 
 export interface LocalTmuxPane {
   sessionName: string
@@ -359,6 +359,60 @@ export function listLocalTmuxPanes(run: typeof output = output): LocalTmuxPane[]
     throw new Error(`could not inspect local tmux panes: ${result.stderr.trim() || `tmux exited ${result.exitCode}`}`)
   }
   return parseTmuxPanes(result.stdout)
+}
+
+export type ManagedAgentPane =
+  | { status: "found"; pane: LocalTmuxPane }
+  | { status: "missing" }
+  | { status: "ambiguous"; reason: string }
+
+/**
+ * The live pane a managed agent occupies. tmux ids are NOT identity: a new
+ * tmux server restarts numbering at `@0`/`%0`, so a recorded `@169` routinely
+ * resolves to an unrelated agent's window — acting on one has killed the wrong
+ * worktree. Identity is the runtime session (from the pane's launch command,
+ * or derived from its cwd for a Claude pane launched without the env vars),
+ * with the worktree as the fallback key for rows predating it. The recorded
+ * ids only break a tie, and callers repair them from the resolved pane.
+ */
+export function resolveManagedAgentPane(
+  agent: Pick<ManagedAgent, "runtime" | "runtimeSessionId" | "worktree" | "tmuxPaneId" | "tmuxWindowId">,
+  panes: LocalTmuxPane[] = listLocalTmuxPanes(),
+  config: ThreaChannelConfig = readThreaChannelConfig(),
+  host = hostname()
+): ManagedAgentPane {
+  if (agent.runtimeSessionId) {
+    try {
+      const pane =
+        agent.runtime === "pi"
+          ? findLocalPiPane(agent.runtimeSessionId, panes)
+          : findLocalClaudeChannelPane(agent.runtimeSessionId, panes, config, host)
+      return pane ? { status: "found", pane } : { status: "missing" }
+    } catch (error) {
+      return { status: "ambiguous", reason: error instanceof Error ? error.message : String(error) }
+    }
+  }
+
+  // Neither key recorded (rows predating both): the id is all there is, so it
+  // can only be checked for liveness, never for being the right window.
+  if (!agent.worktree) {
+    const recorded = panes.find((pane) => agent.tmuxPaneId && pane.paneId === agent.tmuxPaneId)
+    return recorded ? { status: "found", pane: recorded } : { status: "missing" }
+  }
+  const inWorktree = panes.filter((pane) => pane.cwd === agent.worktree)
+  if (inWorktree.length === 1) return { status: "found", pane: inWorktree[0]! }
+  if (inWorktree.length === 0) return { status: "missing" }
+  const recorded = inWorktree.find(
+    (pane) =>
+      (agent.tmuxPaneId && pane.paneId === agent.tmuxPaneId) ||
+      (agent.tmuxWindowId && pane.windowId === agent.tmuxWindowId)
+  )
+  return recorded
+    ? { status: "found", pane: recorded }
+    : {
+        status: "ambiguous",
+        reason: `${inWorktree.length} panes share ${agent.worktree} and none matches the recorded ids`,
+      }
 }
 
 function runtimeSessionIdForPane(pane: LocalTmuxPane, config: ThreaChannelConfig, host: string): string | undefined {
