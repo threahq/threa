@@ -1,4 +1,5 @@
 import { tool } from "ai"
+import type { Tool } from "ai"
 import { z } from "zod"
 import type { SourceItem } from "@threa/types"
 
@@ -25,7 +26,7 @@ export interface SendMessageResult {
  * Creates a send_message tool definition WITHOUT an execute handler.
  * The agent loop intercepts send_message calls and stages them (prep-then-send pattern).
  */
-export function createSendMessageTool() {
+export function createSendMessageTool(): Tool<SendMessageInput, never> {
   return tool({
     description: "Send a message to the conversation. You can call this multiple times to send multiple messages.",
     inputSchema: SendMessageSchema,

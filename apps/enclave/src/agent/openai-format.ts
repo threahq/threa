@@ -163,7 +163,7 @@ export function toOpenAiTools(tools: Record<string, Tool<any, any>> | undefined)
     type: "function" as const,
     function: {
       name,
-      description: def.description ?? "",
+      description: typeof def.description === "string" ? def.description : "",
       parameters: toJsonSchema((def as { inputSchema?: unknown }).inputSchema),
     },
   }))

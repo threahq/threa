@@ -18,9 +18,10 @@ const MAX_SINGLE_MESSAGE_CHARS = 50_000
 function getMessageLength(message: ModelMessage): number {
   if (message.role === "tool") {
     // Tool messages have ToolContent = Array<ToolResultPart>
-    // Each ToolResultPart has output: { type: 'text' | 'json', value: string | JSONValue }
+    // ToolResultPart.output is a six-way union in v7; only 'execution-denied' has no `value`,
+    // hence the "value" in part.output guard.
     return message.content.reduce((sum, part) => {
-      if (part.type === "tool-result") {
+      if (part.type === "tool-result" && "value" in part.output) {
         if (part.output.type === "text") return sum + part.output.value.length
         return sum + JSON.stringify(part.output.value).length
       }
@@ -49,7 +50,7 @@ function truncateSingleMessage(message: ModelMessage, maxChars: number): ModelMe
     return {
       ...message,
       content: message.content.map((part) => {
-        if (part.type === "tool-result") {
+        if (part.type === "tool-result" && "value" in part.output) {
           const resultStr = part.output.type === "text" ? part.output.value : JSON.stringify(part.output.value)
           if (resultStr.length > maxChars) {
             return {
