@@ -1986,3 +1986,199 @@ describe("nextQuietPollMs (no-socket idle backoff)", () => {
     expect(__testing.nextQuietPollMs()).toBe(3000)
   })
 })
+
+describe("archived-scratchpad wind-down", () => {
+  const ctx = {
+    sessionManager: { getSessionId: () => "runtime" },
+    isIdle: () => true,
+    cwd: "/tmp",
+    ui: { notify: () => {} },
+  } as never
+
+  function linkConfig() {
+    __testing.setConfigForTesting({
+      baseUrl: "https://app.threa.io",
+      workspaceId: "ws_123",
+      apiKey: "threa_bk_test",
+      linkedSessions: {
+        runtime: {
+          enabled: true,
+          instanceId: "pi-instance",
+          runtimeSessionId: "runtime",
+          rootStreamId: "stream_root",
+        },
+      },
+    })
+  }
+
+  afterEach(() => {
+    __testing.clearArchivePendingForTesting()
+    __testing.setConfigForTesting(undefined)
+  })
+
+  test("an archive with no push detaches on the poll probe and suspends claiming", async () => {
+    linkConfig()
+    const fetchSpy = spyOn(globalThis, "fetch").mockImplementation(
+      async (input) =>
+        new Response(
+          JSON.stringify(
+            String(input).endsWith("/streams/stream_root")
+              ? { data: { archivedAt: "2026-07-20T10:00:00.000Z" } }
+              : { data: {} }
+          ),
+          { status: 200, headers: { "content-type": "application/json" } }
+        )
+    )
+    try {
+      await __testing.probeArchiveState(ctx)
+
+      expect(__testing.archivePendingRootStreamId()).toBe("stream_root")
+      // Detached: no claims against an archived scratchpad, and the poll drops
+      // onto the reattach probe cadence instead of the 15-min backstop.
+      expect(await __testing.claimIfIdle({} as never, ctx)).toBe(false)
+      expect(__testing.nextQuietPollMs()).toBe(45_000)
+    } finally {
+      fetchSpy.mockRestore()
+    }
+  })
+
+  test("an unarchive inside the grace window reattaches instead of winding down", async () => {
+    linkConfig()
+    let archived = true
+    const fetchSpy = spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input)
+      const body = url.endsWith("/streams/stream_root")
+        ? { data: { archivedAt: archived ? "2026-07-20T10:00:00.000Z" : null } }
+        : url.endsWith("/bot-runtime/sessions")
+          ? { data: { rootStreamId: "stream_root", runtimeSessionId: "runtime" } }
+          : { data: {} }
+      return new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } })
+    })
+    try {
+      await __testing.probeArchiveState(ctx)
+      expect(__testing.archivePendingRootStreamId()).toBe("stream_root")
+
+      archived = false
+      await __testing.probeArchiveState(ctx)
+
+      expect(__testing.archivePendingRootStreamId()).toBeUndefined()
+    } finally {
+      fetchSpy.mockRestore()
+    }
+  })
+
+  test("the grace expiring while still archived runs the worktree wind-down", async () => {
+    linkConfig()
+    const windDowns: string[] = []
+    __testing.setArchiveWindDownForTesting(50, (cwd) => {
+      windDowns.push(cwd)
+      return { committed: false, pushed: true, removalScheduled: true, windowKilled: true }
+    })
+    const fetchSpy = spyOn(globalThis, "fetch").mockImplementation(
+      async (input) =>
+        new Response(
+          JSON.stringify(
+            String(input).endsWith("/streams/stream_root")
+              ? { data: { archivedAt: "2026-07-20T10:00:00.000Z" } }
+              : { data: {} }
+          ),
+          { status: 200, headers: { "content-type": "application/json" } }
+        )
+    )
+    try {
+      await __testing.probeArchiveState(ctx)
+      expect(__testing.archivePendingRootStreamId()).toBe("stream_root")
+      expect(windDowns).toEqual([])
+
+      await Bun.sleep(120)
+
+      expect({ windDowns, pending: __testing.archivePendingRootStreamId() }).toEqual({
+        windDowns: ["/tmp"],
+        pending: undefined,
+      })
+    } finally {
+      fetchSpy.mockRestore()
+    }
+  })
+
+  test("a reattach that resolves after the wind-down already ran does not throw or half-reattach", async () => {
+    linkConfig()
+    let releaseReattach!: () => void
+    const reattachGate = new Promise<void>((resolve) => (releaseReattach = resolve))
+    __testing.setArchiveWindDownForTesting(50, () => ({
+      committed: false,
+      pushed: true,
+      removalScheduled: true,
+      windowKilled: false,
+    }))
+    const fetchSpy = spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input)
+      if (url.endsWith("/streams/stream_root")) {
+        return new Response(JSON.stringify({ data: { archivedAt: "2026-07-20T10:00:00.000Z" } }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        })
+      }
+      if (url.endsWith("/bot-runtime/sessions")) {
+        // The unarchive lands, but not before the grace deadline fires.
+        await reattachGate
+        return new Response(JSON.stringify({ data: { rootStreamId: "stream_root", runtimeSessionId: "runtime" } }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        })
+      }
+      return new Response(JSON.stringify({ data: {} }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      })
+    })
+    try {
+      await __testing.probeArchiveState(ctx)
+      const reattach = __testing.reattachAfterArchive(ctx)
+      await Bun.sleep(120)
+      expect(__testing.archivePendingRootStreamId()).toBeUndefined()
+
+      releaseReattach()
+      await reattach
+
+      // The wind-down won the race; the stale reattach must not resurrect the
+      // session (nor blow up on the already-cleared deadline).
+      expect(__testing.archivePendingRootStreamId()).toBeUndefined()
+    } finally {
+      fetchSpy.mockRestore()
+    }
+  })
+
+  test("detaching pulls the poll onto the probe cadence instead of the socket backstop", () => {
+    linkConfig()
+    // With the socket up the pending tick is 15 minutes out — longer than the
+    // whole grace — so a missed restore push would never get a probe.
+    expect(__testing.nextQuietPollMs()).not.toBe(45_000)
+    __testing.setArchivePendingForTesting("stream_root")
+    expect(__testing.nextQuietPollMs()).toBe(45_000)
+  })
+
+  test("an archive event for a retired root does not wind down the scratchpad now linked", () => {
+    linkConfig()
+    // Cold start replaced archived root A with live root B under the same
+    // deterministic runtime identity; A's outbox event arrives late.
+    __testing.handleArchivePush(ctx, { runtimeSessionId: "runtime", rootStreamId: "stream_retired" })
+    expect(__testing.archivePendingRootStreamId()).toBeUndefined()
+
+    __testing.handleArchivePush(ctx, { runtimeSessionId: "runtime", rootStreamId: "stream_root" })
+    expect(__testing.archivePendingRootStreamId()).toBe("stream_root")
+  })
+
+  test("a probe failure is never treated as an archive", async () => {
+    linkConfig()
+    const fetchSpy = spyOn(globalThis, "fetch").mockImplementation(async () => {
+      throw new Error("threa unreachable")
+    })
+    try {
+      await __testing.probeArchiveState(ctx)
+      expect(__testing.archivePendingRootStreamId()).toBeUndefined()
+    } finally {
+      fetchSpy.mockRestore()
+    }
+  })
+})

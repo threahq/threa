@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process"
+import { spawn, spawnSync } from "node:child_process"
 import { dirname, resolve } from "node:path"
 
 /**
@@ -18,11 +18,25 @@ import { dirname, resolve } from "node:path"
  * repository checkout — only linked worktrees.
  */
 
+/**
+ * How long a runtime survives its scratchpad being archived before winding
+ * down. An unarchive inside this window reattaches the live agent in place.
+ * Shared: Claude (`@threa/remote-session`) and Pi run separate session
+ * implementations, and a grace tuned on one must not diverge from the other.
+ */
+export const ARCHIVE_RESTORE_GRACE_MS = 5 * 60 * 1000
+/** Reattach-probe cadence while detached. Bounded by the grace window, so it cannot become a quota burn. */
+export const ARCHIVE_RESTORE_PROBE_MS = 45_000
+
 export interface ArchiveCleanupReport {
   committed: boolean
   pushed: boolean
   removalScheduled: boolean
   reason?: string
+}
+
+export interface ArchiveWindDownReport extends ArchiveCleanupReport {
+  windowKilled: boolean
 }
 
 const PROTECTED_BRANCHES = new Set(["main", "master", "HEAD"])
@@ -31,8 +45,8 @@ const PUSH_TIMEOUT_MS = 120_000
 
 function git(cwd: string, args: string[], timeoutMs = GIT_TIMEOUT_MS): { ok: boolean; stdout: string } {
   try {
-    const result = Bun.spawnSync(["git", ...args], { cwd, stdout: "pipe", stderr: "pipe", timeout: timeoutMs })
-    return { ok: result.exitCode === 0, stdout: result.stdout.toString().trim() }
+    const result = spawnSync("git", args, { cwd, encoding: "utf8", timeout: timeoutMs })
+    return { ok: result.status === 0, stdout: (result.stdout ?? "").trim() }
   } catch {
     return { ok: false, stdout: "" }
   }
@@ -51,8 +65,15 @@ export function pushBranchAndScheduleRemoval(cwd: string, log: (message: string)
     return report
   }
 
-  const dirty = git(cwd, ["status", "--porcelain"]).stdout.length > 0
-  if (dirty) {
+  // A failed `status` reads as an empty (clean) tree, which would skip the
+  // commit, push the old HEAD, and let --force delete work that was never
+  // saved. A diagnostic that did not run is not proof the tree is clean.
+  const status = git(cwd, ["status", "--porcelain"])
+  if (!status.ok) {
+    report.reason = "could not read worktree status — leaving everything as is"
+    return report
+  }
+  if (status.stdout.length > 0) {
     const added = git(cwd, ["add", "-A"])
     const commit = added.ok ? git(cwd, ["commit", "-m", "wip: auto-commit — scratchpad archived"]) : added
     if (!commit.ok) {
@@ -95,6 +116,39 @@ export function pushBranchAndScheduleRemoval(cwd: string, log: (message: string)
     report.reason = "could not schedule worktree removal (branch is pushed; remove manually)"
   }
   return report
+}
+
+function paneTarget(): string | undefined {
+  return process.env.THREA_TMUX_TARGET?.trim() || process.env.TMUX_PANE?.trim() || undefined
+}
+
+/**
+ * Kill the tmux window the runtime lives in — deliberate self-termination for
+ * the archived-scratchpad wind-down. The runtime dies with the window, so
+ * callers do any last writes first.
+ */
+export function killOwnWindow(): boolean {
+  const target = paneTarget()
+  if (!target) return false
+  try {
+    return spawnSync("tmux", ["kill-window", "-t", target], { encoding: "utf8" }).status === 0
+  } catch {
+    return false
+  }
+}
+
+/**
+ * The whole archived-scratchpad wind-down for a harness runtime: preserve the
+ * work, then take the tmux window down. Outside tmux there is nothing to kill,
+ * and the caller decides how to exit.
+ */
+export function windDownArchivedWorktree(cwd: string, log: (message: string) => void): ArchiveWindDownReport {
+  const report = pushBranchAndScheduleRemoval(cwd, log)
+  log(
+    `archive cleanup: committed=${report.committed} pushed=${report.pushed} removal=${report.removalScheduled}` +
+      (report.reason ? ` (${report.reason})` : "")
+  )
+  return { ...report, windowKilled: killOwnWindow() }
 }
 
 function shellQuote(value: string): string {

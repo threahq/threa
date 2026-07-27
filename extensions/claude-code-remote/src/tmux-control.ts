@@ -187,18 +187,3 @@ function pasteText(target: string, text: string): boolean {
     return false
   }
 }
-
-/**
- * Kill the tmux window this channel (and its Claude Code parent) lives in —
- * deliberate self-termination for the archived-scratchpad wind-down. The
- * channel dies with the window; callers do any last writes first.
- */
-export function killOwnWindow(): boolean {
-  const target = paneTarget()
-  if (!target) return false
-  try {
-    return Bun.spawnSync(["tmux", "kill-window", "-t", target], { stdout: "pipe", stderr: "pipe" }).exitCode === 0
-  } catch {
-    return false
-  }
-}

@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test"
-import { mkdtempSync, writeFileSync } from "node:fs"
+import { existsSync, mkdtempSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { pushBranchAndScheduleRemoval } from "./archive-cleanup"
+import { pushBranchAndScheduleRemoval } from "./archive-wind-down"
 
 const noLog = () => undefined
 
@@ -16,7 +16,7 @@ function sh(cwd: string, command: string): string {
 
 /** A main repo on a feature branch with a bare `origin`, plus a linked worktree. */
 function makeFixture(): { main: string; worktree: string; origin: string } {
-  const root = mkdtempSync(join(tmpdir(), "archive-cleanup-"))
+  const root = mkdtempSync(join(tmpdir(), "archive-wind-down-"))
   const origin = join(root, "origin.git")
   const main = join(root, "main")
   sh(root, `git init --bare origin.git`)
@@ -100,6 +100,23 @@ describe("pushBranchAndScheduleRemoval", () => {
     expect(report.removalScheduled).toBe(false)
     expect(report.reason).toContain("main repository checkout")
     expect(originHasBranch(origin, "feature/from-main")).toBe(true)
+  })
+
+  test("a git status that cannot run is not proof of a clean tree", () => {
+    // A corrupt index makes `status --porcelain` exit non-zero with empty
+    // stdout. Reading that as "clean" would skip the commit, push the old
+    // HEAD, and let --force delete work that was never saved.
+    const { worktree, origin } = makeFixture()
+    writeFileSync(join(worktree, "wip.txt"), "unsaved work\n")
+    const gitDir = sh(worktree, "git rev-parse --path-format=absolute --git-dir")
+    writeFileSync(join(gitDir, "index"), "not an index\n")
+
+    const report = pushBranchAndScheduleRemoval(worktree, noLog)
+
+    expect(report).toMatchObject({ committed: false, pushed: false, removalScheduled: false })
+    expect(report.reason).toContain("could not read worktree status")
+    expect(originHasBranch(origin, "feature/archive-test")).toBe(false)
+    expect(existsSync(join(worktree, "wip.txt"))).toBe(true)
   })
 
   test("reports a non-repo directory without doing anything", () => {
