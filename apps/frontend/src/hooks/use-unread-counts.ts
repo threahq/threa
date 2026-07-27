@@ -156,22 +156,54 @@ export function useUnreadCounts(workspaceId: string) {
 
       // Read frontier (sole source): the optimistic advance must move it for
       // EVERY viewer with access — member or not — or the divider stalls until
-      // the socket echo. The response carries no sequence; keep the stored one
-      // (the echo reconciles it).
-      const existingFrontier = current?.streamReadState?.[streamId]
-      const frontier = {
-        lastReadEventId: lastEventId,
-        lastReadSequence: existingFrontier?.lastReadSequence ?? null,
-        lastReadAt: new Date().toISOString(),
+      // the socket echo. The response carries no sequence, so resolve the read
+      // event's real one from the cache — an id advanced without its sequence
+      // reads as "never read" downstream. Resolution happens before the
+      // transaction below so the transaction stays as narrow as it was.
+      // An unconfirmed row is cached under its client id with a Date.now()-scale
+      // placeholder sequence (`nextOptimisticSequence`), so it resolves here even
+      // though the server has no such event — it no-ops the read and emits no
+      // echo. Writing that placeholder would pin the frontier above every real
+      // sequence for the session: no divider, no open-at-marker, and no recovery,
+      // since every later echo and bootstrap merge is monotonic. Treat it as
+      // unresolvable, like an id with no row at all. Reachable whenever the
+      // viewer's own send is the bottom row when auto-read fires.
+      const cached = await db.events.get(lastEventId)
+      const readEvent = cached && (cached._status === "pending" || cached._status === "failed") ? undefined : cached
+      if (!readEvent) {
+        console.warn("Read frontier not advanced — read pointer has no confirmed event", { streamId, lastEventId })
       }
-      mergeReadStateIntoBootstrapCache(queryClient, workspaceId, streamId, frontier)
-      queryClient.setQueryData(
-        streamKeys.bootstrap(workspaceId, streamId),
-        (old: import("@threa/types").StreamBootstrap | undefined) => {
-          if (!old) return old
-          return { ...old, readState: frontier }
-        }
-      )
+      // Monotonic, like the server: `ReadStateRepository.advance` rejects a
+      // stale-device advance and returns the higher stored frontier, so a
+      // "Mark as read up to here" on a row BELOW the watermark must not drag the
+      // local frontier backward — that would resurface an already-read run as
+      // unread until the echo lands. A sanctioned downward move is markUnread's
+      // `stream:read_set`, not this path.
+      const storedSequence = (await db.streamReadState.get(`${workspaceId}:${streamId}`))?.lastReadSequence
+      const movesBackward =
+        readEvent != null && storedSequence != null && BigInt(readEvent.sequence) < BigInt(storedSequence)
+      const frontier =
+        readEvent && !movesBackward
+          ? {
+              lastReadEventId: lastEventId,
+              lastReadSequence: readEvent.sequence,
+              lastReadAt: new Date().toISOString(),
+            }
+          : null
+      // Re-check before the cache writes, not just before the IDB write below:
+      // the two resolution reads above are await points the old synchronous path
+      // did not have, so an echo landing in that window would otherwise leave the
+      // query cache holding a lower frontier than IDB.
+      if (frontier && !(await readStateTouchedSince(workspaceId, streamId, startedAt))) {
+        mergeReadStateIntoBootstrapCache(queryClient, workspaceId, streamId, frontier)
+        queryClient.setQueryData(
+          streamKeys.bootstrap(workspaceId, streamId),
+          (old: import("@threa/types").StreamBootstrap | undefined) => {
+            if (!old) return old
+            return { ...old, readState: frontier }
+          }
+        )
+      }
 
       // Counters, membership participation, and the standalone frontier row
       // land in one transaction — the frontier row is the unread divider's
@@ -225,17 +257,9 @@ export function useUnreadCounts(workspaceId: string) {
         }
 
         // The frontier row moves for members and non-members alike.
-        const existingRow = await db.streamReadState.get(membershipId)
-        await putReadStateIdb(
-          workspaceId,
-          streamId,
-          {
-            lastReadEventId: lastEventId,
-            lastReadSequence: existingRow?.lastReadSequence ?? null,
-            lastReadAt: new Date().toISOString(),
-          },
-          now
-        )
+        if (frontier) {
+          await putReadStateIdb(workspaceId, streamId, frontier, now)
+        }
       })
 
       if (hadActivity) {

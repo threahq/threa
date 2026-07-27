@@ -10,9 +10,11 @@ import {
   type Activity,
   type MarkAllAsReadResponse,
   type StreamMember,
+  type StreamReadFrontier,
   type WorkspaceBootstrap,
 } from "@threa/types"
 import { SW_MSG_CLEAR_NOTIFICATIONS } from "@/lib/sw-messages"
+import { streamKeys } from "./use-streams"
 import { workspaceKeys } from "./use-workspaces"
 import { useUnreadCounts } from "./use-unread-counts"
 
@@ -135,6 +137,39 @@ function makeBootstrap(): WorkspaceBootstrap {
   }
 }
 
+async function seedEvent(id: string, streamId: string, sequence: string) {
+  await db.events.put({
+    id,
+    workspaceId: "ws_1",
+    streamId,
+    sequence,
+    _sequenceNum: Number(sequence),
+    eventType: "message_created",
+    payload: {},
+    actorId: "member_1",
+    actorType: "user",
+    createdAt: new Date().toISOString(),
+    _cachedAt: Date.now(),
+  })
+}
+
+/**
+ * `mockMarkAsRead` resolving only means the mutation fn returned — the frontier
+ * writes happen afterwards, in `onSuccess`. React Query keeps a mutation
+ * `pending` until its callbacks resolve, so this is the signal that the whole
+ * handler has run. Without it a "nothing changed" assertion can pass vacuously.
+ */
+async function waitForReadHandlerToSettle(queryClient: QueryClient) {
+  await waitFor(() => {
+    expect(
+      queryClient
+        .getMutationCache()
+        .getAll()
+        .some((m) => m.state.status === "pending")
+    ).toBe(false)
+  })
+}
+
 describe("useUnreadCounts", () => {
   beforeEach(async () => {
     mockMarkAsRead.mockReset()
@@ -180,6 +215,7 @@ describe("useUnreadCounts", () => {
       mutedStreamIds: [],
       _cachedAt: Date.now(),
     })
+    await seedEvent("event_new", "stream_1", "77")
 
     mockMarkAsRead.mockResolvedValue({
       streamId: "stream_1",
@@ -208,6 +244,269 @@ describe("useUnreadCounts", () => {
     expect(bootstrap?.unreadCounts.stream_1).toBe(0)
   })
 
+  it("writes the read event's real sequence into the frontier row, replacing the stored one", async () => {
+    const queryClient = new QueryClient()
+    queryClient.setQueryData(workspaceKeys.bootstrap("ws_1"), {
+      ...makeBootstrap(),
+      streamReadState: { stream_1: { lastReadEventId: "evt_1", lastReadSequence: "10", lastReadAt: null } },
+    })
+    await db.streamReadState.put({
+      id: "ws_1:stream_1",
+      workspaceId: "ws_1",
+      streamId: "stream_1",
+      lastReadEventId: "evt_1",
+      lastReadSequence: "10",
+      lastReadAt: null,
+      _cachedAt: Date.now() - 5000,
+    })
+    await seedEvent("evt_5", "stream_1", "42")
+
+    mockMarkAsRead.mockResolvedValue({
+      streamId: "stream_1",
+      memberId: "member_1",
+      notificationLevel: "everything",
+      joinedAt: new Date().toISOString(),
+    })
+
+    const { result } = renderHook(() => useUnreadCounts("ws_1"), { wrapper: createWrapper(queryClient) })
+    act(() => {
+      result.current.markAsRead("stream_1", "evt_5")
+    })
+
+    await waitFor(async () => {
+      await expect(db.streamReadState.get("ws_1:stream_1")).resolves.toMatchObject({ lastReadEventId: "evt_5" })
+    })
+
+    const row = await db.streamReadState.get("ws_1:stream_1")
+    expect({ ...row, lastReadAt: typeof row?.lastReadAt, _cachedAt: typeof row?._cachedAt }).toEqual({
+      id: "ws_1:stream_1",
+      workspaceId: "ws_1",
+      streamId: "stream_1",
+      lastReadEventId: "evt_5",
+      lastReadSequence: "42",
+      lastReadAt: "string",
+      _cachedAt: "number",
+    })
+  })
+
+  it("mirrors the resolved sequence into both the workspace and per-stream bootstrap caches", async () => {
+    const queryClient = new QueryClient()
+    queryClient.setQueryData(workspaceKeys.bootstrap("ws_1"), {
+      ...makeBootstrap(),
+      streamReadState: { stream_1: { lastReadEventId: "evt_1", lastReadSequence: "10", lastReadAt: null } },
+    })
+    queryClient.setQueryData(streamKeys.bootstrap("ws_1", "stream_1"), {
+      readState: { lastReadEventId: "evt_1", lastReadSequence: "10", lastReadAt: null },
+    })
+    await seedEvent("evt_5", "stream_1", "42")
+
+    mockMarkAsRead.mockResolvedValue({
+      streamId: "stream_1",
+      memberId: "member_1",
+      notificationLevel: "everything",
+      joinedAt: new Date().toISOString(),
+    })
+
+    const { result } = renderHook(() => useUnreadCounts("ws_1"), { wrapper: createWrapper(queryClient) })
+    act(() => {
+      result.current.markAsRead("stream_1", "evt_5")
+    })
+
+    await waitFor(() => {
+      const bootstrap = queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap("ws_1"))
+      expect(bootstrap?.streamReadState?.stream_1?.lastReadSequence).toBe("42")
+    })
+    const workspaceFrontier = queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap("ws_1"))
+      ?.streamReadState?.stream_1
+    const streamFrontier = queryClient.getQueryData<{ readState: StreamReadFrontier }>(
+      streamKeys.bootstrap("ws_1", "stream_1")
+    )?.readState
+    expect({ workspace: workspaceFrontier?.lastReadSequence, stream: streamFrontier?.lastReadSequence }).toEqual({
+      workspace: "42",
+      stream: "42",
+    })
+    expect({ workspace: workspaceFrontier?.lastReadEventId, stream: streamFrontier?.lastReadEventId }).toEqual({
+      workspace: "evt_5",
+      stream: "evt_5",
+    })
+  })
+
+  it("seeds a real sequence on a never-read stream instead of leaving it null", async () => {
+    // A null sequence alongside an advanced id reads as "never read" downstream:
+    // a just-read window would render entirely unread.
+    const queryClient = new QueryClient()
+    queryClient.setQueryData(workspaceKeys.bootstrap("ws_1"), makeBootstrap())
+    await seedEvent("evt_5", "stream_1", "42")
+
+    mockMarkAsRead.mockResolvedValue({
+      streamId: "stream_1",
+      memberId: "member_1",
+      notificationLevel: "everything",
+      joinedAt: new Date().toISOString(),
+    })
+
+    const { result } = renderHook(() => useUnreadCounts("ws_1"), { wrapper: createWrapper(queryClient) })
+    act(() => {
+      result.current.markAsRead("stream_1", "evt_5")
+    })
+
+    await waitFor(async () => {
+      await expect(db.streamReadState.get("ws_1:stream_1")).resolves.toMatchObject({
+        lastReadEventId: "evt_5",
+        lastReadSequence: "42",
+      })
+    })
+    expect(
+      queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap("ws_1"))?.streamReadState?.stream_1
+    ).toMatchObject({ lastReadEventId: "evt_5", lastReadSequence: "42" })
+  })
+
+  it("leaves the frontier untouched when the read pointer is the viewer's own unconfirmed send", async () => {
+    // An optimistic row is cached with a Date.now()-scale placeholder sequence.
+    // Writing it would pin the frontier above every real sequence for the
+    // session — no divider, no open-at-marker, and no recovery, since every
+    // later echo and bootstrap merge is monotonic.
+    const queryClient = new QueryClient()
+    queryClient.setQueryData(workspaceKeys.bootstrap("ws_1"), {
+      ...makeBootstrap(),
+      streamReadState: { stream_1: { lastReadEventId: "evt_1", lastReadSequence: "10", lastReadAt: null } },
+    })
+    await db.streamReadState.put({
+      id: "ws_1:stream_1",
+      workspaceId: "ws_1",
+      streamId: "stream_1",
+      lastReadEventId: "evt_1",
+      lastReadSequence: "10",
+      lastReadAt: null,
+      _cachedAt: Date.now() - 5000,
+    })
+    await seedEvent("client_pending", "stream_1", String(Date.now()))
+    await db.events.update("client_pending", { _clientId: "client_pending", _status: "pending" })
+
+    mockMarkAsRead.mockResolvedValue({
+      streamId: "stream_1",
+      memberId: "member_1",
+      notificationLevel: "everything",
+      joinedAt: new Date().toISOString(),
+    })
+
+    const { result } = renderHook(() => useUnreadCounts("ws_1"), { wrapper: createWrapper(queryClient) })
+    act(() => {
+      result.current.markAsRead("stream_1", "client_pending")
+    })
+
+    await waitForReadHandlerToSettle(queryClient)
+    await expect(db.streamReadState.get("ws_1:stream_1")).resolves.toMatchObject({
+      lastReadEventId: "evt_1",
+      lastReadSequence: "10",
+    })
+    expect(
+      queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap("ws_1"))?.streamReadState?.stream_1
+    ).toMatchObject({ lastReadEventId: "evt_1", lastReadSequence: "10" })
+  })
+
+  it("does not drag the frontier backward when marking read up to a row below the watermark", async () => {
+    // "Mark as read up to here" on an older row. The server's store is monotonic
+    // (ReadStateRepository.advance rejects the stale advance and returns the
+    // higher frontier), so lowering it locally would resurface an already-read
+    // run as unread until the echo landed.
+    const queryClient = new QueryClient()
+    queryClient.setQueryData(workspaceKeys.bootstrap("ws_1"), {
+      ...makeBootstrap(),
+      streamReadState: { stream_1: { lastReadEventId: "evt_500", lastReadSequence: "500", lastReadAt: null } },
+    })
+    await db.streamReadState.put({
+      id: "ws_1:stream_1",
+      workspaceId: "ws_1",
+      streamId: "stream_1",
+      lastReadEventId: "evt_500",
+      lastReadSequence: "500",
+      lastReadAt: null,
+      _cachedAt: Date.now() - 5000,
+    })
+    await seedEvent("evt_300", "stream_1", "300")
+
+    mockMarkAsRead.mockResolvedValue({
+      streamId: "stream_1",
+      memberId: "member_1",
+      notificationLevel: "everything",
+      joinedAt: new Date().toISOString(),
+    })
+
+    const { result } = renderHook(() => useUnreadCounts("ws_1"), { wrapper: createWrapper(queryClient) })
+    act(() => {
+      result.current.markAsRead("stream_1", "evt_300", { partial: true })
+    })
+
+    await waitForReadHandlerToSettle(queryClient)
+    await expect(db.streamReadState.get("ws_1:stream_1")).resolves.toMatchObject({
+      lastReadEventId: "evt_500",
+      lastReadSequence: "500",
+    })
+    expect(
+      queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap("ws_1"))?.streamReadState?.stream_1
+    ).toMatchObject({ lastReadEventId: "evt_500", lastReadSequence: "500" })
+  })
+
+  it("leaves the frontier untouched when the read pointer resolves to no cached event", async () => {
+    // INV-11: an id without its sequence is never written. The counters and held
+    // activity rows still clear — only the frontier advance is skipped.
+    const queryClient = new QueryClient()
+    const bootstrap = makeBootstrap()
+    bootstrap.unreadActivities = [
+      {
+        id: "act_1",
+        workspaceId: "ws_1",
+        userId: "member_1",
+        activityType: "message",
+        streamId: "stream_1",
+        messageId: "msg_act_1",
+        actorId: "persona_system_ariadne",
+        actorType: "persona",
+        context: {},
+        readAt: null,
+        createdAt: new Date().toISOString(),
+        isSelf: false,
+        emoji: null,
+      },
+    ]
+    bootstrap.activityCounts = { stream_1: 1 }
+    bootstrap.unreadActivityCount = 1
+    queryClient.setQueryData(workspaceKeys.bootstrap("ws_1"), bootstrap)
+    await db.unreadState.put({
+      id: "ws_1",
+      workspaceId: "ws_1",
+      unreadCounts: { stream_1: 2 },
+      mentionCounts: { stream_1: 0 },
+      activityCounts: { stream_1: 1 },
+      unreadActivityCount: 1,
+      unreadActivities: bootstrap.unreadActivities,
+      mutedStreamIds: [],
+      _cachedAt: Date.now(),
+    })
+
+    mockMarkAsRead.mockResolvedValue({
+      streamId: "stream_1",
+      memberId: "member_1",
+      notificationLevel: "everything",
+      joinedAt: new Date().toISOString(),
+    })
+
+    const { result } = renderHook(() => useUnreadCounts("ws_1"), { wrapper: createWrapper(queryClient) })
+    act(() => {
+      result.current.markAsRead("stream_1", "evt_missing")
+    })
+
+    await waitFor(async () => {
+      expect((await db.unreadState.get("ws_1"))?.unreadCounts.stream_1).toBe(0)
+    })
+    expect((await db.unreadState.get("ws_1"))?.unreadActivities).toEqual([])
+    expect(await db.streamReadState.get("ws_1:stream_1")).toBeUndefined()
+    expect(
+      queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap("ws_1"))?.streamReadState?.stream_1
+    ).toBeUndefined()
+  })
+
   it("advances the read pointer but keeps the unread badge on a partial read", async () => {
     const queryClient = new QueryClient()
     queryClient.setQueryData(workspaceKeys.bootstrap("ws_1"), makeBootstrap())
@@ -223,6 +522,8 @@ describe("useUnreadCounts", () => {
       mutedStreamIds: [],
       _cachedAt: Date.now(),
     })
+
+    await seedEvent("event_mid", "stream_1", "33")
 
     mockMarkAsRead.mockResolvedValue({
       streamId: "stream_1",
@@ -364,6 +665,8 @@ describe("useUnreadCounts", () => {
       mutedStreamIds: [],
       _cachedAt: Date.now(),
     })
+
+    await seedEvent("event_new", "stream_thread", "88")
 
     mockMarkAsRead.mockResolvedValue(null)
 
