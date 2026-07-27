@@ -456,6 +456,9 @@ export {
   threaFetchUserAgent,
 } from "./outbound-fetch"
 
+// URL filtering/dedup values shared by the backend link filter and the client projection
+export { BLOCKED_HOSTNAMES, BLOCKED_IP_PATTERNS, TRACKING_PARAMS } from "./url-normalization"
+
 // Attachment categories (mime → category mapping for the attachment explorer)
 export { ATTACHMENT_CATEGORIES, categoryFromMime, mimePrefixesForCategory } from "./attachment-categories"
 export type { AttachmentCategory } from "./attachment-categories"
@@ -1057,6 +1060,7 @@ export {
 export {
   CONTEXT_CATEGORIES,
   STREAM_CONTEXT_REF_KINDS,
+  MESSAGE_BODY_CONTEXT_CATEGORIES,
   STREAM_CONTEXT_SCOPES,
   streamContextItemKey,
   type ContextCategory,

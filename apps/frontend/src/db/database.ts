@@ -13,6 +13,7 @@ import type {
   SidebarConfig,
   Slot,
   StreamContextBagPayload,
+  StreamContextItem,
   StreamPurpose,
   StreamType,
   ThreaDocument,
@@ -966,6 +967,33 @@ export interface CachedBoardMutedStream {
   _cachedAt: number
 }
 /**
+ * One "In this stream" context row — the client's copy of a
+ * `stream_context_items` projection row (link, media, file, memo, delegation,
+ * thread), and the panel's read authority once C5 cuts it over.
+ *
+ * Keyed by the wire `key` (`${category}:${refId}:${sourceMessageId}` — see
+ * `streamContextItemKey`), never the server's ULID: the same key is derivable
+ * locally from a timeline event, so a locally-derived row and the server row it
+ * anticipates collapse to one row on `bulkPut` instead of double-rendering.
+ *
+ * `groupRef` is the compound-index carrier for occurrence lookups
+ * (`${category}:${groupKey}`). `groupKey` is server-computed (the GitHub/Linear-
+ * aware URL normalizer stays backend-only), so a locally-derived row leaves it
+ * equal to `refId` and groups by the raw href until the server row overwrites
+ * it under the same `key`.
+ */
+export interface CachedStreamContextItem extends StreamContextItem {
+  workspaceId: string
+  /** The stream's effective root — the scope the tree feed reads. */
+  rootStreamId: string
+  /** `${category}:${groupKey}`, indexed with `occurredAt` for occurrences. */
+  groupRef: string
+  _cachedAt: number
+  /** Locally derived, not yet reconciled against a server row. */
+  _status?: "pending"
+}
+
+/**
  * One hydrated slot value persisted for offline/cold-start pointer rendering
  * (Amendment A). Slots live here — NOT in the TanStack bootstrap cache: the
  * sync layer is the single write boundary, and render reads canonical rows via
@@ -1014,6 +1042,7 @@ export class ThreaDatabase extends Dexie {
   boardMutedStreams!: EntityTable<CachedBoardMutedStream, "id">
   uploadJobs!: EntityTable<CachedUploadJob, "attachmentId">
   slots!: Table<CachedSlot, [string, string]>
+  streamContextItems!: EntityTable<CachedStreamContextItem, "key">
 
   constructor(name: string) {
     super(name)
@@ -1463,6 +1492,19 @@ export class ThreaDatabase extends Dexie {
     // as-is — readers ignore the stale properties (Dexie can't drop them).
     this.version(44).stores({})
 
+    // v45: "In this stream" context rows get their own store so the panel reads
+    // from IDB like the timeline does, instead of re-deriving the whole view
+    // from the loaded event window. Primary key is the wire `key` so a locally
+    // derived row and its server counterpart reconcile in place. The three
+    // compound indexes are the three reads: the tree feed, the single-stream
+    // feed, and a group's occurrences — all ordered by `occurredAt` (ISO
+    // timestamps sort lexically, so no numeric mirror is needed). Starts empty
+    // and converges from the sync appliers and the read endpoint.
+    this.version(45).stores({
+      streamContextItems:
+        "key, workspaceId, streamId, rootStreamId, [workspaceId+sourceMessageId], [rootStreamId+occurredAt], [streamId+occurredAt], [groupRef+occurredAt]",
+    })
+
     this.workspaceUsers = this.table(WORKSPACE_USERS_STORE) as EntityTable<CachedWorkspaceUser, "id">
   }
 }
@@ -1541,6 +1583,7 @@ export async function clearAllCachedData(): Promise<void> {
       db.labelAssignments.clear(),
       db.sidebarConfigs.clear(),
       db.conversations.clear(),
+      db.streamContextItems.clear(),
       db.slots.clear(),
       // The persisted device key seals this identity's private key for
       // auto-resume — sign-out must drop it so the next account can't resume

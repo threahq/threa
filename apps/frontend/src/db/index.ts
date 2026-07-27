@@ -38,5 +38,6 @@ export type {
   CachedBoardPost,
   CachedUploadJob,
   CachedSlot,
+  CachedStreamContextItem,
 } from "./database"
 export type { EventType } from "@threa/types"

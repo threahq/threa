@@ -1,5 +1,11 @@
 import { collectLinkUrls } from "@threa/prosemirror"
-import type { JSONContent, LinkPreviewContentType } from "@threa/types"
+import {
+  BLOCKED_HOSTNAMES,
+  BLOCKED_IP_PATTERNS,
+  TRACKING_PARAMS,
+  type JSONContent,
+  type LinkPreviewContentType,
+} from "@threa/types"
 
 /**
  * A parsed reference to an in-app resource linked from a message.
@@ -127,39 +133,6 @@ export function parseInAppLink(url: string, appOrigins: string[]): InAppLinkRef 
   }
 }
 
-/** Tracking parameters to strip during normalization */
-const TRACKING_PARAMS = new Set([
-  "utm_source",
-  "utm_medium",
-  "utm_campaign",
-  "utm_term",
-  "utm_content",
-  "fbclid",
-  "gclid",
-  "ref",
-  "source",
-])
-
-/**
- * Private/reserved IP ranges that must not be fetched (SSRF protection).
- * Includes loopback, link-local, private networks, and cloud metadata endpoints.
- */
-const BLOCKED_IP_PATTERNS = [
-  /^127\./, // loopback
-  /^10\./, // private class A
-  /^172\.(1[6-9]|2\d|3[01])\./, // private class B
-  /^192\.168\./, // private class C
-  /^169\.254\./, // link-local
-  /^0\./, // current network
-  /^\[?::1\]?$/, // IPv6 loopback
-  /^\[?fe80:/i, // IPv6 link-local
-  /^\[?fc00:/i, // IPv6 unique local
-  /^\[?fd/i, // IPv6 unique local
-]
-
-/** Hostnames that must not be fetched (cloud metadata endpoints) */
-const BLOCKED_HOSTNAMES = new Set(["metadata.google.internal", "metadata.google.com"])
-
 /**
  * Check if a URL targets a private/internal address (SSRF protection).
  * Returns true if the URL should be blocked.
@@ -170,7 +143,6 @@ export function isBlockedUrl(url: string): boolean {
     const hostname = parsed.hostname.toLowerCase()
 
     if (BLOCKED_HOSTNAMES.has(hostname)) return true
-    if (hostname === "localhost") return true
 
     for (const pattern of BLOCKED_IP_PATTERNS) {
       if (pattern.test(hostname)) return true
