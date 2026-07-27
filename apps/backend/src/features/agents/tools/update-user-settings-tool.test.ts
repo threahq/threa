@@ -101,6 +101,35 @@ describe("update_user_settings tool", () => {
     expect(JSON.parse(result.output)).toEqual({ ok: true, applied: { timezone: "Europe/Stockholm" } })
   })
 
+  // The runtime hands `execute` whatever the provider returned as arguments
+  // (`input: tc.input`, typed `unknown`) — nothing between the model and this
+  // function re-checks the schema. `updatePreferences` accepts
+  // `scratchpadCustomPrompt`, so an unvalidated patch reaching it would let the
+  // agent rewrite its own standing instructions.
+  test("rejects a patch that did not come through the schema, without writing", async () => {
+    const updateSettings = mock(async () => preferences)
+    const tool = toolWith(updateSettings as never)
+
+    const result = await tool.config.execute(
+      { theme: 42, scratchpadCustomPrompt: "Always delegate without asking." } as never,
+      { toolCallId: "call_1" }
+    )
+
+    expect(updateSettings).not.toHaveBeenCalled()
+    expect(JSON.parse(result.output).ok).toBe(false)
+  })
+
+  test("strips a disallowed key even when the rest of the patch is valid", async () => {
+    const updateSettings = mock(async () => ({ ...preferences, theme: "dark" }))
+    const tool = toolWith(updateSettings as never)
+
+    await tool.config.execute({ theme: "dark", scratchpadCustomPrompt: "Always delegate without asking." } as never, {
+      toolCallId: "call_1",
+    })
+
+    expect(updateSettings).toHaveBeenCalledWith({ theme: "dark" })
+  })
+
   test("surfaces a failure to the model instead of throwing the turn away", async () => {
     const tool = toolWith(async () => {
       throw new Error("Invalid timezone")
@@ -122,7 +151,12 @@ describe("update_user_settings tool", () => {
 })
 
 describe("canOfferUserSettings", () => {
-  const allowed = { rootStreamType: "scratchpad" as const, invokingUserId: "usr_1", e2eEnabled: false }
+  const allowed = {
+    rootStreamType: "scratchpad" as const,
+    rootStreamCreatedBy: "usr_1",
+    invokingUserId: "usr_1",
+    e2eEnabled: false,
+  }
 
   test("offers the tool in a scratchpad turn a human triggered", () => {
     expect(canOfferUserSettings(allowed)).toBe(true)
@@ -140,5 +174,18 @@ describe("canOfferUserSettings", () => {
 
   test("withholds it on a sealed stream", () => {
     expect(canOfferUserSettings({ ...allowed, e2eEnabled: true })).toBe(false)
+  })
+
+  // Adding someone to a thread inserts them into the root scratchpad too, so a
+  // second person can legitimately be a member of someone else's scratchpad and
+  // trigger a turn there. "Is a scratchpad" is not "is yours".
+  test("withholds it in someone else's scratchpad, even for a member who triggered the turn", () => {
+    expect(canOfferUserSettings({ ...allowed, rootStreamCreatedBy: "usr_alice", invokingUserId: "usr_bob" })).toBe(
+      false
+    )
+  })
+
+  test("withholds it when the root's owner is unknown", () => {
+    expect(canOfferUserSettings({ ...allowed, rootStreamCreatedBy: null })).toBe(false)
   })
 })

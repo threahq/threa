@@ -54,9 +54,12 @@ Rules that matter:
  * is one reviewable expression rather than a condition buried in the middle of
  * turn assembly:
  *
- * - The effective ROOT must be a scratchpad. Settings are personal; a channel
- *   or DM is shared context. A thread inherits its root's surface, the same
- *   rule access uses (INV-62).
+ * - The effective ROOT must be a scratchpad the INVOKING USER OWNS. "Scratchpad"
+ *   alone is not enough: adding someone to a thread inserts them into the root
+ *   scratchpad too, so a second person can legitimately be a member of someone
+ *   else's scratchpad and trigger a turn there. Settings are personal — they
+ *   are editable in your own space, not merely in a space shaped like one. A
+ *   thread inherits its root's surface, the same rule access uses (INV-62).
  * - A human must have triggered the turn. A catch-up or fired follow-up has no
  *   user whose settings these are.
  * - The stream must not be sealed. The enclave runs its own loop and cannot
@@ -65,10 +68,16 @@ Rules that matter:
  */
 export function canOfferUserSettings(params: {
   rootStreamType: StreamType | null
+  rootStreamCreatedBy: string | null
   invokingUserId: string | undefined
   e2eEnabled: boolean
 }): boolean {
-  return params.rootStreamType === StreamTypes.SCRATCHPAD && Boolean(params.invokingUserId) && !params.e2eEnabled
+  return (
+    params.rootStreamType === StreamTypes.SCRATCHPAD &&
+    Boolean(params.invokingUserId) &&
+    params.rootStreamCreatedBy === params.invokingUserId &&
+    !params.e2eEnabled
+  )
 }
 
 /**
@@ -93,8 +102,28 @@ export function createUpdateUserSettingsTool(deps: UpdateUserSettingsToolDeps) {
     inputSchema: UpdateUserSettingsSchema,
     promptBlock: PROMPT_BLOCK,
 
-    execute: async (input): Promise<AgentToolResult> => {
-      const patch = input as AgentSettablePreferences
+    execute: async (rawInput): Promise<AgentToolResult> => {
+      // Re-validated HERE, not trusted from upstream. The runtime hands
+      // `execute` whatever the provider returned as the call's arguments
+      // (`input: tc.input`, typed `unknown`), so a call the SDK rejected — or
+      // one from any future path that skips schema enforcement — would arrive
+      // with keys this tool must never write. `updatePreferences` accepts
+      // `scratchpadCustomPrompt` and `defaultCompanionPersonaId` happily, so
+      // the allowlist has to be authoritative at the point of the write, the
+      // same way the target user is bound at construction rather than trusted
+      // from the model.
+      const parsed = UpdateUserSettingsSchema.safeParse(rawInput)
+      if (!parsed.success) {
+        logger.warn({ issues: parsed.error.issues }, "update_user_settings rejected an invalid patch")
+        return {
+          output: JSON.stringify({
+            ok: false,
+            error: `Those settings aren't valid: ${parsed.error.issues.map((i) => `${i.path.join(".") || "(root)"}: ${i.message}`).join("; ")}`,
+          }),
+        }
+      }
+
+      const patch = parsed.data as AgentSettablePreferences
       const changedKeys = Object.keys(patch).filter((key) => (patch as Record<string, unknown>)[key] !== undefined)
 
       try {

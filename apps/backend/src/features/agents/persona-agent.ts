@@ -394,10 +394,9 @@ export class PersonaAgent {
       // ROOT's type, not the thread's — read here, in the transaction that is
       // already resolving the root for the policy, rather than as a second
       // query later.
-      const rootStreamType =
-        policyStreamId === streamId
-          ? stream.type
-          : ((await StreamRepository.findById(client, policyStreamId))?.type ?? null)
+      const rootStream = policyStreamId === streamId ? stream : await StreamRepository.findById(client, policyStreamId)
+      const rootStreamType = rootStream?.type ?? null
+      const rootStreamCreatedBy = rootStream?.createdBy ?? null
 
       return {
         skip: false as const,
@@ -407,6 +406,7 @@ export class PersonaAgent {
         triggerMessageRevision,
         streamToolPolicy,
         rootStreamType,
+        rootStreamCreatedBy,
       }
     })
 
@@ -420,7 +420,15 @@ export class PersonaAgent {
       }
     }
 
-    const { persona, stream, initialSequence, triggerMessageRevision, streamToolPolicy, rootStreamType } = precheck
+    const {
+      persona,
+      stream,
+      initialSequence,
+      triggerMessageRevision,
+      streamToolPolicy,
+      rootStreamType,
+      rootStreamCreatedBy,
+    } = precheck
 
     // A fired follow-up has no trigger message (synthetic `messageId`); load its
     // row so the turn can be told it IS the scheduled check-in firing (roadmap
@@ -875,6 +883,7 @@ export class PersonaAgent {
           settingsUserId &&
           canOfferUserSettings({
             rootStreamType,
+            rootStreamCreatedBy,
             invokingUserId: settingsUserId,
             e2eEnabled: stream.e2eEnabled === true,
           })
@@ -1064,6 +1073,11 @@ export class PersonaAgent {
               streamId: session.streamId,
               personaId: persona.id,
               sessionId: session.id,
+              // The principal every guarded tool on this turn acts as — the
+              // same id their deps are bound to. Without it the guardian
+              // cannot tell the bound user's request from another
+              // participant's message in the same stream.
+              invokingUserId: agentContext.invokingUserId,
               costContext: {
                 workspaceId,
                 userId: agentContext.invokingUserId,

@@ -909,7 +909,13 @@ export const AgentSessionRepository = {
           tokens_used = COALESCE(EXCLUDED.tokens_used, agent_session_steps.tokens_used),
           -- On retry, reset both timestamps: new attempt = new start, clear old completion
           started_at = EXCLUDED.started_at,
-          completed_at = EXCLUDED.completed_at
+          completed_at = EXCLUDED.completed_at,
+          -- ...and the guardian verdict, for the same reason. A resumed session
+          -- restarts step numbering, so step N of attempt 2 is a DIFFERENT call
+          -- from step N of attempt 1 — often a tier-1 one. COALESCE-ing here
+          -- would show the earlier attempt's approval badge on it.
+          verification_status = NULL,
+          verification_reason = NULL
         RETURNING ${sql.raw(STEP_SELECT_FIELDS)}
       `
     )

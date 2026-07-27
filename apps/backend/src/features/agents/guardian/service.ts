@@ -25,6 +25,18 @@ export interface ToolGuardianTurn {
   streamId: string
   personaId: string
   sessionId: string
+  /**
+   * The user this turn's guarded tools act AS — the same id the tool's deps are
+   * bound to. Only this person can authorize; everyone else in the window is
+   * context. Without it the guardian sees a flat list of `user:` lines and
+   * cannot tell a request from the bound principal apart from one typed by
+   * another participant mid-turn, which in a channel is a live path to a
+   * delegation running under the wrong person's credentials.
+   *
+   * Undefined on turns with no human trigger — which also have no guarded
+   * tools, since every one of them requires an invoking user.
+   */
+  invokingUserId?: string
   costContext?: CostContext
 }
 
@@ -100,12 +112,30 @@ export class ToolGuardianService implements ToolGuardian {
   ) {}
 
   async review(request: ToolGuardianRequest): Promise<ToolGuardianVerdict> {
+    // Enforced here, not left to the prompt. With no bound principal there is
+    // nobody who could have authorized this, so no conversation can justify it
+    // — and a model asked to reason about "(unknown)" will sometimes decide the
+    // request looks reasonable anyway. Every guarded tool requires an invoking
+    // user to be built at all, so reaching this is a wiring fault, and denying
+    // is the same fail-closed direction the runtime takes on a throw.
+    if (!this.turn.invokingUserId) {
+      logger.error(
+        { toolName: request.toolName, sessionId: this.turn.sessionId },
+        "Tool guardian asked to review a guarded call with no invoking user"
+      )
+      return {
+        allowed: false,
+        reason: "This turn has no user who could authorize the action, so it was not taken.",
+      }
+    }
+
     const config = await this.deps.configResolver.resolve(COMPONENT_PATHS.TOOL_GUARDIAN)
 
     const prompt = TOOL_GUARDIAN_PROMPT.replace("{{TOOL_NAME}}", request.toolName)
       .replace("{{TOOL_DESCRIPTION}}", request.toolDescription)
       .replace("{{TOOL_ARGUMENTS}}", truncate(JSON.stringify(request.input, null, 2), TOOL_GUARDIAN_ARGUMENT_CHARS))
       .replace("{{CONVERSATION}}", renderGuardianConversation(request.messages))
+      .replace("{{PRINCIPAL}}", this.turn.invokingUserId)
 
     const { value } = await this.deps.ai.generateObject({
       model: config.modelId,
