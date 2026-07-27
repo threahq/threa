@@ -1,4 +1,4 @@
-import { useMemo } from "react"
+import { useMemo, useRef } from "react"
 import { useStreamEvents } from "@/stores/stream-store"
 import { useStreamDelegations } from "@/hooks/use-stream-delegations"
 import { deriveStreamContext } from "@/lib/stream-context/derive"
@@ -61,6 +61,8 @@ export function StreamContextDerivedPanel({
   const visible = effectiveFilter === "all" ? items : items.filter((i) => i.category === effectiveFilter)
   const isLoading = events === undefined || (delegationsPending && visible.length === 0)
 
+  const scrollerRef = useRef<HTMLDivElement | null>(null)
+
   let body: React.ReactNode
   if (isLoading) {
     body = <ContextSkeleton />
@@ -69,6 +71,7 @@ export function StreamContextDerivedPanel({
   } else {
     body = (
       <ContextTimeline
+        scrollRef={scrollerRef}
         items={visible}
         renderItem={(item) => (
           <StreamContextRow
@@ -92,7 +95,10 @@ export function StreamContextDerivedPanel({
         <ContextChipRow chips={chipsFromCounts(counts, total)} active={effectiveFilter} onSelect={setFilter} />
       )}
       {note && <p className="shrink-0 border-b px-3 py-1.5 text-[11px] text-muted-foreground">{note}</p>}
-      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-2 pt-2 pb-[max(0.5rem,env(safe-area-inset-bottom))]">
+      <div
+        ref={scrollerRef}
+        className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-2 pt-2 pb-[max(0.5rem,env(safe-area-inset-bottom))]"
+      >
         {body}
       </div>
     </div>

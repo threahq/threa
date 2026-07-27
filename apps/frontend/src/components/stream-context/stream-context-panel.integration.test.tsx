@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
+import { createElement, Fragment } from "react"
 import { render, screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { MemoryRouter } from "react-router-dom"
@@ -11,6 +12,7 @@ import * as hooks from "@/hooks"
 import * as connectionStatus from "@/components/layout/connection-status"
 import { workspaceKeys } from "@/hooks/use-workspaces"
 import { delegationKeys } from "@/hooks/use-stream-delegations"
+import * as streamContextListModule from "@/components/stream-context/stream-context-list"
 import { streamContextItemKey, type ListStreamContextResponse, type StreamContextItem } from "@threa/types"
 import { StreamContextPanel } from "./stream-context-panel"
 
@@ -94,6 +96,13 @@ function renderPanel(options: { flag?: "on" | "off"; entry?: string } = {}) {
 
 beforeEach(async () => {
   vi.restoreAllMocks()
+  // `virtua` renders zero rows under jsdom's zero-height, no-op-ResizeObserver
+  // layout, so swap the panel's virtualization seam for a passthrough that
+  // renders every child — these tests exercise the real rows; the windowing
+  // itself is verified in a browser. Same swap board.test.tsx makes (INV-48).
+  vi.spyOn(streamContextListModule, "StreamContextList").mockImplementation(({ children }) =>
+    createElement(Fragment, null, children)
+  )
   observerCallbacks = []
   vi.stubGlobal(
     "IntersectionObserver",

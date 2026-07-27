@@ -155,6 +155,7 @@ export function StreamContextIndexPanel(props: StreamContextPanelProps) {
   }, [feedCounts, countsKey])
   const total = Object.values(counts).reduce((sum, n) => sum + n, 0)
 
+  const scrollerRef = useRef<HTMLDivElement | null>(null)
   const sentinelRef = useRef<HTMLDivElement | null>(null)
   const { hasNextPage, isFetchingNextPage, fetchNextPage } = feed
   useEffect(() => {
@@ -215,6 +216,7 @@ export function StreamContextIndexPanel(props: StreamContextPanelProps) {
   } else {
     body = (
       <ContextTimeline
+        scrollRef={scrollerRef}
         items={items}
         renderItem={(item) => (
           <ContextRowWithOccurrences
@@ -296,7 +298,10 @@ export function StreamContextIndexPanel(props: StreamContextPanelProps) {
         <ContextChipRow chips={chipsFromCounts(counts, total)} active={effectiveFilter} onSelect={setFilter} />
       )}
 
-      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-2 pt-2 pb-[max(0.5rem,env(safe-area-inset-bottom))]">
+      <div
+        ref={scrollerRef}
+        className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-2 pt-2 pb-[max(0.5rem,env(safe-area-inset-bottom))]"
+      >
         {body}
       </div>
     </div>
