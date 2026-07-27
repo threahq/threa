@@ -400,6 +400,18 @@ interface BudgetPolicyDecision {
 const PROVIDERS_REQUIRING_CACHE_BREAKPOINTS = new Set(["anthropic", "google"])
 
 /**
+ * Whether a model provider needs an explicit cache breakpoint. Takes the bare
+ * provider segment rather than a `provider:model` string because the enclave —
+ * which places its own breakpoints over a hand-rolled OpenAI transport — only
+ * ever holds the OpenRouter path (`anthropic/claude-sonnet-5`), never the
+ * prefixed form `parseModelId` expects. Exported so that host and enclave read
+ * the same set instead of keeping two copies that can drift apart (INV-33).
+ */
+export function providerRequiresCacheBreakpoints(modelProvider: string): boolean {
+  return PROVIDERS_REQUIRING_CACHE_BREAKPOINTS.has(modelProvider)
+}
+
+/**
  * Merge a cache breakpoint into a message's provider options. Merges *inside*
  * the `openrouter` key rather than replacing it — a message may already carry
  * sibling options there (reasoning effort, transforms) that a shallow spread
@@ -441,7 +453,7 @@ export function applyCacheBreakpoints(params: {
   messages: ModelMessage[]
 } {
   const { system, volatileSystem, messages, modelString } = params
-  if (!modelString || !PROVIDERS_REQUIRING_CACHE_BREAKPOINTS.has(parseModelId(modelString).modelProvider)) {
+  if (!modelString || !providerRequiresCacheBreakpoints(parseModelId(modelString).modelProvider)) {
     // No breakpoint to split on, so the halves must be rejoined — returning
     // only `system` would silently drop the volatile tail from the prompt.
     const joined = [system, volatileSystem].filter(Boolean).join("\n\n")

@@ -63,3 +63,27 @@ describe("sessionAssignmentSchema", () => {
     expect(sessionAssignmentSchema.parse(BASE).allowedToolCategories).toBeUndefined()
   })
 })
+
+describe("sessionAssignmentSchema system prompt bounds", () => {
+  it("accepts the two halves when their combined length is within the cap", () => {
+    const result = sessionAssignmentSchema.safeParse({
+      ...BASE,
+      system: "a".repeat(60_000),
+      systemVolatile: "b".repeat(39_000),
+    })
+
+    expect(result.success).toBe(true)
+  })
+
+  // Capping each half independently would double the bound the single `system`
+  // field used to enforce — the split must not loosen the input limit.
+  it("rejects halves that individually fit but jointly exceed the cap", () => {
+    const result = sessionAssignmentSchema.safeParse({
+      ...BASE,
+      system: "a".repeat(80_000),
+      systemVolatile: "b".repeat(80_000),
+    })
+
+    expect(result.success).toBe(false)
+  })
+})

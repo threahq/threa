@@ -1,4 +1,5 @@
 import type { AgentRuntimeAI } from "@threa/agent-runtime/runtime"
+import { providerRequiresCacheBreakpoints } from "@threa/agent-runtime"
 import type { RawChatFn } from "../llm"
 import { buildAssistantMessage, toOpenAiMessages, toOpenAiTools } from "./openai-format"
 
@@ -29,11 +30,21 @@ function parseArguments(raw: string): unknown {
 export function createEnclaveAI(rawChat: RawChatFn, usage: UsageAccumulator): AgentRuntimeAI {
   return {
     async generateTextWithTools(options) {
+      // The enclave holds only the bare OpenRouter path ("anthropic/claude-sonnet-5"),
+      // never the `provider:model` form, so the provider segment is read off the
+      // front. The predicate itself lives in agent-runtime so host and enclave
+      // cannot drift to different provider sets.
+      const modelId = options.modelString ?? String(options.model)
+      const cacheBreakpoint = providerRequiresCacheBreakpoints(modelId.split("/")[0] ?? "")
+
       const result = await rawChat({
         // The loop resolves the model once and passes it as `modelString`; the
         // opaque `model` object is only meaningful to the SDK provider we don't use.
-        model: options.modelString ?? String(options.model),
-        messages: toOpenAiMessages(options.system, options.messages),
+        model: modelId,
+        messages: toOpenAiMessages(options.system, options.messages, {
+          volatileSystem: options.volatileSystem,
+          cacheBreakpoint,
+        }),
         tools: toOpenAiTools(options.tools),
         temperature: options.temperature,
         maxTokens: options.maxTokens,

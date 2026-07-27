@@ -338,9 +338,19 @@ export async function runEnclaveTurn(
   // policy above). Advertise exactly the built toolset, then fold in prior
   // turns' digests.
   const toolSections = buildToolPromptSections(turnTools)
-  const systemPrompt = [request.system, toolSections, memoryBlock, digestBlock]
-    .filter((block): block is string => Boolean(block))
-    .join("\n\n")
+
+  // Regrouped stable-first so the cache breakpoint has something reusable to
+  // cover. The backend ships its prompt already split; the enclave's own
+  // additions sort the same way — tool prose holds for the stream's lifetime,
+  // while the rolling conversation summary and prior-turn digests are
+  // re-derived every turn. Assembling in source order instead would leave the
+  // backend's per-turn tail between two stable regions, and nothing before the
+  // breakpoint would survive to the next turn.
+  const stableSystem = [request.system, toolSections].filter((block): block is string => Boolean(block)).join("\n\n")
+  const volatileSystem =
+    [request.systemVolatile, memoryBlock, digestBlock]
+      .filter((block): block is string => Boolean(block))
+      .join("\n\n") || undefined
 
   // Split the turn into what it IS (the request: model binding, prompt, history,
   // toolset, sampling) and what it touches in the host (the sink: the sealing
@@ -352,7 +362,8 @@ export async function runEnclaveTurn(
     delivery: TurnDeliveries.SEALED,
     model,
     modelString: request.model,
-    systemPrompt,
+    systemPrompt: stableSystem,
+    volatileSystemPrompt: volatileSystem,
     messages,
     tools: turnTools,
     maxTokens: request.maxTokens,
