@@ -177,8 +177,10 @@ describe("CallDock — idle", () => {
 
     expect(screen.getByText(/moved to another device/i)).toBeInTheDocument()
     await userEvent.click(screen.getByRole("button", { name: "Rejoin here" }))
+    // Asks for takeover outright: this chip only exists because the other device
+    // holds the call, so a plain join would 409 and re-ask what the chip answered.
     expect(manager.startCall).toHaveBeenCalledWith(
-      expect.objectContaining({ streamId: "stream_1", expectedCallId: "call_1" })
+      expect.objectContaining({ streamId: "stream_1", expectedCallId: "call_1", takeover: true })
     )
   })
 
@@ -360,7 +362,13 @@ describe("CallDock — pre-join permission taxonomy", () => {
     const manager = makeManager()
     renderDock(manager)
     await userEvent.click(screen.getByText("launch"))
-    expect(manager.startCall).toHaveBeenCalledWith(expect.objectContaining({ takeover: undefined }))
+    // The launch request is passed through untouched — a plain join carries no
+    // takeover, so the server's 409 (and the prompt) is what introduces it.
+    expect(manager.startCall).toHaveBeenCalledWith({
+      workspaceId: WORKSPACE_ID,
+      streamId: "stream_1",
+      mode: "video",
+    })
   })
 
   it("shows the pre-join gate on a fresh launch after the prior call was minimized", async () => {

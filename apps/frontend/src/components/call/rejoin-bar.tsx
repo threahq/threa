@@ -15,7 +15,15 @@ import { useCallPhase, useCallStreamId } from "./call-store-hooks"
  * surfaces exactly that, and this prominent bar offers a fresh rejoin.
  *
  * Rejoin mints a new incarnation via the launch flow (start-or-join on the same
- * stream, gesture-safe). "Leave" is a real leave, not a dismiss: it closes the
+ * stream, gesture-safe) and asks for takeover — it renders under exactly the
+ * condition `useCallOnAnotherDevice` reports to the header and the timeline card,
+ * which both label the action "Take over", and a bar reading "Rejoin" beside a
+ * header reading "Take over" for one click is a contradiction the viewer can see.
+ * The two cases behind that condition are indistinguishable from the client (this
+ * tab's own lapsed lease after a reload vs. a genuinely live second device), so
+ * one wording covers both; the server resolves the first as a rebind anyway.
+ *
+ * "Leave" is a real leave, not a dismiss: it closes the
  * viewer's live endpoints server-side so the lease can't keep them a zombie
  * participant for the ~45s grace window (the alternative — a silent dismiss —
  * would leave a ghost tile for peers).
@@ -70,9 +78,22 @@ export function RejoinBar({ workspaceId, streamId }: { workspaceId: string; stre
         <Button
           size="sm"
           className="h-7 px-3 text-[12px]"
-          onClick={() => launch({ workspaceId, streamId, mode: activeCall.mode, expectedCallId: activeCall.callId })}
+          title="Move this call to this device"
+          onClick={() =>
+            launch({
+              workspaceId,
+              streamId,
+              mode: activeCall.mode,
+              expectedCallId: activeCall.callId,
+              // The bar only shows while the viewer holds a live endpoint they are
+              // not on — a lapsed lease from this tab's previous incarnation (a
+              // rebind server-side) or a genuinely live other device. Asking for
+              // takeover covers both; it is a no-op when the rebind path applies.
+              takeover: true,
+            })
+          }
         >
-          Rejoin
+          Take over
         </Button>
       </div>
     </div>
