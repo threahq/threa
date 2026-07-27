@@ -431,7 +431,7 @@ function OccurrenceList({
   onOpenThread: (threadId: string) => void
 }) {
   const groupRef = contextGroupRef(row)
-  const occurrences = useStreamContextOccurrences(groupRef)
+  const occurrences = useStreamContextOccurrences(workspaceId, row.rootStreamId, groupRef)
   const { formatRelative } = useFormattedDate()
   const { q, from, before, after } = filters
 
