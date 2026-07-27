@@ -353,6 +353,31 @@ const ZERO_HEIGHT_EVENT_TYPES = new Set([
 ])
 
 /**
+ * Ids the unread divider may anchor on — exactly what `isFirstUnread` matches
+ * and `findEventItemIndex` resolves, computed from the rows the timeline is
+ * actually rendering. A row that never reaches the list (a zero-height event
+ * type, another user's command events, a session card hidden in a channel)
+ * contributes nothing, so a divider anchored off this set can never point at a
+ * row that does not exist — which rendered no "New" line and made both scroll
+ * paths no-op silently. The zero-height re-check covers the non-virtualized
+ * (thread) list, which does not run `filterVisibleItems` but still renders
+ * those events as null.
+ */
+export function collectDividerAnchorIds(items: TimelineItem[]): Set<string> {
+  const ids = new Set<string>()
+  for (const item of items) {
+    if (item.type === "event") {
+      if (ZERO_HEIGHT_EVENT_TYPES.has(item.event.eventType)) continue
+      ids.add(item.event.id)
+    } else if (item.type === "command_group" || item.type === "session_group") {
+      const firstEventId = item.events[0]?.id
+      if (firstEventId) ids.add(firstEventId)
+    }
+  }
+  return ids
+}
+
+/**
  * Filters out timeline items that would render as zero-height elements.
  * Must be applied before computing virtualizer count/keys to prevent overlap.
  */

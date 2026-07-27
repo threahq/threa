@@ -7,6 +7,7 @@ import {
   collectDelegationStatusPatches,
   collectBotAccessStatusPatches,
   collectCallEndedPatches,
+  collectDividerAnchorIds,
   filterVisibleItems,
   findFirstMessageId,
   findMessageItemIndex,
@@ -652,6 +653,46 @@ describe("findEventItemIndex", () => {
 
   it("returns -1 when the event is not in the window so the cold-load scroll falls back to the bottom", () => {
     expect(findEventItemIndex([eventItem("evt_1")], "evt_gone")).toBe(-1)
+  })
+})
+
+describe("collectDividerAnchorIds", () => {
+  it("collects exactly the ids findEventItemIndex can resolve", () => {
+    const items: TimelineItem[] = [
+      { type: "event", event: createEvent({ id: "evt_1", sequence: "1", eventType: "message_created", payload: {} }) },
+      {
+        type: "session_group",
+        sessionId: "sess_1",
+        sessionVersion: 1,
+        events: [
+          createSessionStartedEvent("evt_2", "2", "sess_1", "msg_1"),
+          createSessionCompletedEvent("evt_3", "3", "sess_1"),
+        ],
+      },
+      {
+        type: "command_group",
+        commandId: "cmd_1",
+        events: [createEvent({ id: "evt_4", sequence: "4", eventType: "command_dispatched", payload: {} })],
+      },
+      { type: "day_divider", dayStartMs: 0 },
+    ]
+
+    // Groups anchor on their FIRST event only — evt_3 is inside the session card
+    // but is not a row of its own, so it can never carry the divider.
+    expect(collectDividerAnchorIds(items)).toEqual(new Set(["evt_1", "evt_2", "evt_4"]))
+    for (const id of ["evt_1", "evt_2", "evt_4"]) expect(findEventItemIndex(items, id)).toBeGreaterThanOrEqual(0)
+    expect(findEventItemIndex(items, "evt_3")).toBe(-1)
+  })
+
+  it("drops zero-height event rows the thread list renders as null", () => {
+    // The non-virtualized (thread) list skips filterVisibleItems, so the
+    // zero-height rule has to be re-applied here or the divider anchors on a
+    // reaction and renders nothing.
+    const items: TimelineItem[] = [
+      { type: "event", event: createEvent({ id: "evt_1", sequence: "1", eventType: "reaction_added", payload: {} }) },
+      { type: "event", event: createEvent({ id: "evt_2", sequence: "2", eventType: "message_created", payload: {} }) },
+    ]
+    expect(collectDividerAnchorIds(items)).toEqual(new Set(["evt_2"]))
   })
 })
 

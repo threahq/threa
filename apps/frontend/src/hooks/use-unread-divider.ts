@@ -2,13 +2,6 @@ import { useState, useRef, useMemo, useCallback } from "react"
 import type { StreamEvent } from "@threa/types"
 import { useScrollToElement } from "./use-scroll-to-element"
 
-/**
- * Event types that don't render as visible timeline items.
- * Reactions update existing messages in place and return null from EventItem,
- * so they should not trigger the unread divider.
- */
-const INVISIBLE_EVENT_TYPES = new Set(["reaction_added", "reaction_removed"])
-
 interface UseUnreadDividerOptions {
   events: StreamEvent[]
   lastReadEventId: string | null | undefined
@@ -36,6 +29,16 @@ interface UseUnreadDividerOptions {
    * surface is skipped. See docs/sparse-read-overlay-design.md.
    */
   overlayReadIds?: ReadonlySet<string>
+  /**
+   * Ids the rendered timeline can actually anchor a divider on
+   * (`collectDividerAnchorIds` over the list's items). An unread event outside
+   * this set renders no row — a zero-height event type, another user's command
+   * events, a session card hidden in a channel — so anchoring there produced an
+   * invisible divider and a scroll target neither `scrollToMessage` nor
+   * `scrollToFirstUnread` could resolve. Skipping them lands the divider on the
+   * first unread row the viewer can actually see.
+   */
+  anchorableEventIds: ReadonlySet<string>
   /**
    * Whether the viewer's attention is plausibly on this page — the same signal
    * that gates auto-read (`useAutoReadAttention`). While false, the read pointer
@@ -98,6 +101,7 @@ export function useUnreadDivider({
   isLoading = false,
   readStateResolved = false,
   overlayReadIds,
+  anchorableEventIds,
   isAttentive = true,
 }: UseUnreadDividerOptions): UseUnreadDividerResult {
   const firstUnreadEventId = useMemo(() => {
@@ -111,19 +115,19 @@ export function useUnreadDivider({
     }
 
     // Find the first *effectively* unread visible event from another user after
-    // the last read position. Skip event types that don't render as timeline
-    // items (e.g. reactions) and rows already in the overlay (individually read
-    // from a conversation surface).
+    // the last read position. Skip events that render no row of their own and
+    // rows already in the overlay (individually read from a conversation
+    // surface).
     for (let i = startIndex; i < events.length; i++) {
       const event = events[i]
-      if (event.actorId === currentUserId || INVISIBLE_EVENT_TYPES.has(event.eventType)) continue
+      if (event.actorId === currentUserId || !anchorableEventIds.has(event.id)) continue
       const messageId = (event.payload as { messageId?: string } | null)?.messageId
       if (messageId && overlayReadIds?.has(messageId)) continue
       return event.id
     }
 
     return undefined
-  }, [events, lastReadEventId, currentUserId, readStateResolved, overlayReadIds])
+  }, [events, lastReadEventId, currentUserId, readStateResolved, overlayReadIds, anchorableEventIds])
 
   // Latch the first unread position for this stream and hold it for the whole
   // reading session. Done in render (not an effect) so it's immune to effect
