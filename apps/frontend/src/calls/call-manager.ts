@@ -430,6 +430,7 @@ export class CallManager implements CallController {
         onDeviceChange: null,
       }
       this.session = session
+      this.wireMediaSessionToggles(session)
 
       // Composer dictation off for the call's life — one active capture only.
       setDictationExternalHold(true)
@@ -479,13 +480,38 @@ export class CallManager implements CallController {
     this.mediaSession = mediaSession
     if (!mediaSession) return
     mediaSession.activate({ title: this.callTitle ?? "Call", subtitle: "Threa" })
+    // Hang-up only until the session exists: `setMuted`/`setCameraOn` both
+    // early-return on a null session, so registering them here would put a mute
+    // button on the lock screen that does nothing for the whole ring-out window.
+    // `leaveCall` handles the starting path (it cancels the in-flight start).
+    mediaSession.setHandlers({
+      hangup: () => void this.leaveCall(),
+      toggleMicrophone: null,
+      toggleCamera: null,
+    })
+  }
+
+  /**
+   * Give the notification its toggles once they can act. Camera only on a video
+   * call — `setCameraOn` returns immediately on `audio_only`, and the server's
+   * mode isn't known inside the start gesture, so a handler registered there
+   * would be a dead button on the default launch mode.
+   */
+  private wireMediaSessionToggles(session: CallSession): void {
+    const mediaSession = this.mediaSession
+    if (!mediaSession) return
     // The controller's own methods, so the notification drives exactly the paths
     // the in-app controls drive (INV-35).
     mediaSession.setHandlers({
       hangup: () => void this.leaveCall(),
       toggleMicrophone: () => this.setMuted(!getCallState().local.muted),
-      toggleCamera: () => void this.setCameraOn(!getCallState().local.cameraOn),
+      toggleCamera: session.mode === "audio_only" ? null : () => void this.setCameraOn(!getCallState().local.cameraOn),
     })
+    // The API's toggles default to inactive, so an unseeded notification shows a
+    // live call as muted — and the first tap, read as "unmute", mutes.
+    const local = getCallState().local
+    mediaSession.setMicrophoneActive(!local.muted)
+    mediaSession.setCameraActive(local.cameraOn)
   }
 
   private releaseMediaSession(): void {

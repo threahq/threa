@@ -129,6 +129,8 @@ function makeSocket(): FakeSocket {
 
 interface FakeMediaSession extends CallMediaSession {
   handlers: CallMediaSessionHandlers | null
+  /** Which actions each `setHandlers` registered, in order — the gesture set, then the session set. */
+  registered: Array<Record<keyof CallMediaSessionHandlers, boolean>>
   releases: number
   activations: Array<{ title: string; subtitle: string }>
 }
@@ -140,6 +142,7 @@ interface FakeMediaSession extends CallMediaSession {
 function makeMediaSession(events: string[]): FakeMediaSession {
   const fake: FakeMediaSession = {
     handlers: null,
+    registered: [],
     releases: 0,
     activations: [],
     activate: vi.fn((metadata: { title: string; subtitle: string }) => {
@@ -149,6 +152,11 @@ function makeMediaSession(events: string[]): FakeMediaSession {
     setTitle: vi.fn(),
     setHandlers: vi.fn((handlers: CallMediaSessionHandlers) => {
       fake.handlers = handlers
+      fake.registered.push({
+        hangup: handlers.hangup !== null,
+        toggleMicrophone: handlers.toggleMicrophone !== null,
+        toggleCamera: handlers.toggleCamera !== null,
+      })
     }),
     setMicrophoneActive: vi.fn(),
     setCameraActive: vi.fn(),
@@ -950,11 +958,41 @@ describe("CallManager", () => {
       const { manager, socket, mediaSession } = await startedWithMediaSession()
       socket.emitted.length = 0
 
-      mediaSession.handlers?.hangup()
+      mediaSession.handlers?.hangup?.()
       await new Promise((r) => setTimeout(r, 0))
 
       expect(socket.emitted.map((e) => e.event)).toContain("call:leave")
       expect(manager.isActive()).toBe(false)
+    })
+
+    it("shows only hang-up while ringing out, then the toggles the call can actually honour", async () => {
+      const { mediaSession } = await startedWithMediaSession()
+
+      // In the gesture the session does not exist yet, so setMuted/setCameraOn
+      // would no-op; an audio-only call never gets a camera button at all.
+      expect(mediaSession.registered).toEqual([
+        { hangup: true, toggleMicrophone: false, toggleCamera: false },
+        { hangup: true, toggleMicrophone: true, toggleCamera: false },
+      ])
+    })
+
+    it("registers the camera toggle on a video call", async () => {
+      const { mediaSession } = await startedWithMediaSession({ mode: "video" })
+
+      expect(mediaSession.registered.at(-1)).toEqual({
+        hangup: true,
+        toggleMicrophone: true,
+        toggleCamera: true,
+      })
+    })
+
+    it("seeds the toggles from the live call, so the notification never opens showing it muted", async () => {
+      const { mediaSession } = await startedWithMediaSession()
+
+      // The API's toggles default to inactive; unseeded, the first lock-screen tap
+      // reads as "unmute" and mutes.
+      expect(mediaSession.setMicrophoneActive).toHaveBeenCalledWith(true)
+      expect(mediaSession.setCameraActive).toHaveBeenCalledWith(false)
     })
 
     it("mirrors mute and camera state onto the notification toggles", async () => {

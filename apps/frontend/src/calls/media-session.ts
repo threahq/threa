@@ -69,10 +69,15 @@ export interface MediaSessionLike {
   setCameraActive?(active: boolean): void
 }
 
+/**
+ * A null handler unregisters its action, which also removes the control from the
+ * notification — the only way not to show a button that cannot work yet (mute
+ * before the session exists) or ever (camera on an audio-only call).
+ */
 export interface CallMediaSessionHandlers {
-  hangup: () => void
-  toggleMicrophone: () => void
-  toggleCamera: () => void
+  hangup: (() => void) | null
+  toggleMicrophone: (() => void) | null
+  toggleCamera: (() => void) | null
 }
 
 export interface CallMediaSession {
