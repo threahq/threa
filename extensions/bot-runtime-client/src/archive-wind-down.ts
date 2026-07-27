@@ -27,6 +27,13 @@ import { dirname, resolve } from "node:path"
 export const ARCHIVE_RESTORE_GRACE_MS = 5 * 60 * 1000
 /** Reattach-probe cadence while detached. Bounded by the grace window, so it cannot become a quota burn. */
 export const ARCHIVE_RESTORE_PROBE_MS = 45_000
+/**
+ * Poll cadence while the `/bot` socket is up: pushes deliver work within a
+ * frame, so the poll is only a backstop for a dropped one. Shared because it
+ * is also the worst case for a runtime to notice an archive it was not pushed,
+ * which is what any external reaper has to wait out.
+ */
+export const WS_BACKSTOP_POLL_MS = 15 * 60 * 1000
 
 export interface ArchiveCleanupReport {
   committed: boolean

@@ -3,6 +3,7 @@ import { join } from "node:path"
 import {
   ArchiveGraceController,
   BikKeystore,
+  WS_BACKSTOP_POLL_MS,
   clearHarnessLink,
   recordHarnessLink,
   BotRuntimeTransport,
@@ -49,14 +50,6 @@ const CLAIM_TTL_SECONDS = 120
 // Renew at a third of the lease so a single transient renew failure can't let
 // the claim expire (two misses still leaves a full interval of margin).
 const RENEW_INTERVAL_MS = Math.floor((CLAIM_TTL_SECONDS * 1000) / 3)
-// While the /bot socket is healthy the server PUSHES work (bot_invocation:available,
-// plus the hello bootstrap on every connect/resync), so this poll is only
-// insurance against a silently dropped push. Every tick is an HTTP claim through
-// the billed edge Worker — at 30s an idle fleet of sessions burned thousands of
-// requests/day doing nothing. 15 min bounds a lost push's worst-case latency at
-// ~100 requests/day/session; reconnects still drain immediately via the hello
-// bootstrap callback.
-const WS_BACKSTOP_POLL_MS = 15 * 60 * 1000
 // With NO socket, the poll is the only delivery path, but a fast fixed cadence
 // is how a single wedged session burned ~29k billed edge requests/day. Back off
 // empty ticks exponentially from config.pollMs to this cap; a claimed turn or a

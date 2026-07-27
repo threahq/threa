@@ -11,6 +11,7 @@ export { ArchiveGraceController, type ArchiveGraceHooks, type ArchiveGraceOption
 export {
   ARCHIVE_RESTORE_GRACE_MS,
   ARCHIVE_RESTORE_PROBE_MS,
+  WS_BACKSTOP_POLL_MS,
   killOwnWindow,
   pushBranchAndScheduleRemoval,
   windDownArchivedWorktree,

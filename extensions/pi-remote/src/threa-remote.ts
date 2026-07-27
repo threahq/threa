@@ -32,6 +32,7 @@ import {
   parseAllowedTmuxKey,
   sendAllowedTmuxKey,
   ArchiveGraceController,
+  WS_BACKSTOP_POLL_MS,
   clearHarnessLink,
   recordHarnessLink,
   scrubSealedError,
@@ -90,14 +91,6 @@ const CLAIM_TTL_SECONDS = 120
 // long turn's claim alive — the claim poll only backstops at 15 min while the
 // socket is up, far past the TTL, so renewal must never ride on it.
 const CLAIM_RENEW_INTERVAL_MS = Math.floor((CLAIM_TTL_SECONDS * 1000) / 3)
-// Cadence the safety-backstop poll runs at while a `/bot` WebSocket is up.
-// Pushes deliver new invocations within a frame; the poll is only there to
-// catch the rare missed-emit / mid-flight-disconnect case (plan §5). Every
-// tick is an HTTP claim through the billed edge Worker, so it runs at 15 min
-// — an idle fleet at the old 30s cadence burned thousands of edge requests a
-// day doing nothing; reconnects still drain immediately via the hello
-// bootstrap, so only a silently dropped push waits this long.
-const WS_BACKSTOP_POLL_MS = 15 * 60 * 1000
 // With NO socket the poll is the only delivery path, but an idle session
 // spinning at pollMs (3s) burns ~29k billed edge requests/day. Empty idle ticks
 // back off exponentially to this cap; a claim, an active turn, or a socket
