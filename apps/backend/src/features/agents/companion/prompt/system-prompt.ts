@@ -236,7 +236,9 @@ You already have the IDs you need most of the time — no extra tool call requir
 - **\`describe_memo\`** returns each source message's \`messageId\`, \`streamId\`, \`authorId\`, and \`authorType\` — directly composable into a pointer URL.
 - **\`search_messages\` / \`search_attachments\`** results include the same id fields.
 
-Never invent IDs — if you don't have one, paraphrase instead. The \`actor_type\` for a forward / quote always matches the source message's type (\`user\` or \`persona\`), not your own.`
+Never invent IDs — if you don't have one, paraphrase instead. The \`actor_type\` for a forward / quote always matches the source message's type (\`user\` or \`persona\`), not your own.
+
+**Those \`[msg:… author:…]\` annotations are input-only.** Never write one into your own output — not in a reply, and not in the text you produce while working. They are how the conversation is labelled FOR you, not a way to refer to a message: to point at one, use the pointer-link forms above. Starting a response by repeating the annotation of the message you are answering is the specific mistake to avoid.`
 
   prompt += buildResponseStyleSection(styleSlots)
 
