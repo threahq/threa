@@ -15,6 +15,7 @@ import {
   spawnAgent,
   steerAgent,
   stopAgent,
+  reapArchived,
   watchUnarchived,
 } from "./commands"
 import { die } from "./errors"
@@ -35,6 +36,7 @@ async function main(): Promise<void> {
     await resumeActive(parseResume(args))
     return
   }
+  if (command === "reap") return reapArchived({ dryRun: args.includes("--dry-run") })
   if (command === "watch-unarchived") return watchUnarchived(parseResume(args))
   if (command === "boot-resume") return bootResume(parseResume(args))
   if (command === "install-watch" || command === "install-boot-resume") {
