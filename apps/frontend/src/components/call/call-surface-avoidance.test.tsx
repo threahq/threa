@@ -115,6 +115,7 @@ function makeManager(overrides: Partial<CallController> = {}): CallController {
     flipCamera: vi.fn(async () => {}),
     setOutputDevice: vi.fn(async () => {}),
     getVideoStream: vi.fn(() => null),
+    setCallTitle: vi.fn(),
     ...overrides,
   }
 }

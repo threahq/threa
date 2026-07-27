@@ -23,6 +23,7 @@ import {
   type CallDeviceState,
 } from "@/stores/call-store"
 import { recordCallLifecycleEvent, type CallLifecycleKind } from "./lifecycle-log"
+import { createCallMediaSession, type CallMediaSession } from "./media-session"
 import {
   CloudflareSfuTransport,
   type MediaTransport,
@@ -155,6 +156,12 @@ export interface CallManagerDeps {
   requestWakeLock(): Promise<WakeLockLike | null>
   mintIncarnation(): string
   /**
+   * The lock-screen media session for a call, or null where the platform has no
+   * Media Session API. Constructed once per call and injected, so no test touches
+   * a real `navigator.mediaSession`.
+   */
+  createMediaSession(): CallMediaSession | null
+  /**
    * True on platforms that allow only one active `getUserMedia` at a time (iOS
    * Safari): a recapture must stop the live tracks before acquiring, so an
    * acquire failure is rolled back to the prior constraints. False elsewhere,
@@ -251,6 +258,12 @@ export interface CallController {
   flipCamera(): Promise<void>
   setOutputDevice(deviceId: string): Promise<void>
   getVideoStream(endpointId: string): MediaStream | null
+  /**
+   * Push the call's human label (the stream/DM name) at the lock-screen media
+   * session. The manager holds a `streamId`, not a name, and the one stream-name
+   * resolver is a hook — so the label is pushed in, never pulled.
+   */
+  setCallTitle(title: string): void
 }
 
 /**
@@ -280,6 +293,11 @@ export class CallManager implements CallController {
   // — the iOS single-active-capture rule and the reentrancy latch in one chain.
   private captureChain: Promise<void> = Promise.resolve()
   private unregisterHangup: (() => void) | null = null
+  // The live call's lock-screen media session. Held on the manager, not the
+  // session, because it is activated inside the start gesture — before the
+  // session object exists — and `setCallTitle` can arrive at any point from then.
+  private mediaSession: CallMediaSession | null = null
+  private callTitle: string | null = null
   private readonly audioContainer: HTMLElement | null
 
   constructor(deps: CallManagerDeps, audioContainer?: HTMLElement | null) {
@@ -333,6 +351,9 @@ export class CallManager implements CallController {
     // Synchronous, in-gesture (see startCall doc). Held on a temp until the session exists.
     const audioContext = this.deps.createAudioContext()
     void audioContext?.resume().catch(() => {})
+    // Also synchronous and in-gesture: the silent element only plays from a user
+    // gesture, and a call that is merely ringing out must already own the session.
+    this.activateMediaSession()
 
     // Held on locals so the catch can release them even when a throw precedes
     // `this.session = session` (teardown early-returns on a null session).
@@ -453,6 +474,32 @@ export class CallManager implements CallController {
     }
   }
 
+  private activateMediaSession(): void {
+    const mediaSession = this.deps.createMediaSession()
+    this.mediaSession = mediaSession
+    if (!mediaSession) return
+    mediaSession.activate({ title: this.callTitle ?? "Call", subtitle: "Threa" })
+    // The controller's own methods, so the notification drives exactly the paths
+    // the in-app controls drive (INV-35).
+    mediaSession.setHandlers({
+      hangup: () => void this.leaveCall(),
+      toggleMicrophone: () => this.setMuted(!getCallState().local.muted),
+      toggleCamera: () => void this.setCameraOn(!getCallState().local.cameraOn),
+    })
+  }
+
+  private releaseMediaSession(): void {
+    this.mediaSession?.release()
+    this.mediaSession = null
+    // Or the next call opens its notification under this one's label.
+    this.callTitle = null
+  }
+
+  setCallTitle(title: string): void {
+    this.callTitle = title
+    this.mediaSession?.setTitle(title)
+  }
+
   /**
    * Throws {@link CallStartCancelledError} at a start checkpoint when `leaveCall`
    * cancelled the in-flight join, or when a newer generation superseded this one.
@@ -497,6 +544,7 @@ export class CallManager implements CallController {
         // ignore
       }
       void locals.audioContext?.close?.().catch(() => {})
+      this.releaseMediaSession()
       clearCallState()
     }
     if (locals.callId) {
@@ -550,6 +598,7 @@ export class CallManager implements CallController {
     const session = this.session
     if (!session) return
     if (session.micTrack) session.micTrack.enabled = !muted
+    this.mediaSession?.setMicrophoneActive(!muted)
     patchCallLocal({ muted })
     this.emitState(session, { muted })
   }
@@ -580,6 +629,7 @@ export class CallManager implements CallController {
         await session.transport.unpublish("camera")
         this.clearVideoStream(session, session.endpointId)
       }
+      this.mediaSession?.setCameraActive(on)
       patchCallLocal({ cameraOn: on })
       this.emitState(session, { cameraOn: on })
     })
@@ -1427,6 +1477,7 @@ export class CallManager implements CallController {
     // the just-switched-to account (the handlers also gate on gen, belt-and-braces).
     this.removeSocketHandlers(session)
     void session.wakeLock?.release().catch(() => {})
+    this.releaseMediaSession()
     session.releaseLock?.()
     setDictationExternalHold(false)
     try {
@@ -1451,6 +1502,7 @@ export class CallManager implements CallController {
     this.removeSessionListeners(session)
     session.releaseLock?.()
     await session.wakeLock?.release().catch(() => {})
+    this.releaseMediaSession()
     try {
       session.socket.disconnect()
     } catch {
@@ -1577,6 +1629,9 @@ export function defaultCallManagerDeps(): CallManagerDeps {
     },
     mintIncarnation() {
       return `mi_${ulid()}`
+    },
+    createMediaSession() {
+      return createCallMediaSession()
     },
     singleActiveCapture: detectSingleActiveCapture(),
   }

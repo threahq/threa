@@ -12,6 +12,7 @@ import { ApiError } from "@/api/client"
 import { getCallState, clearCallState, resetCallStoreCache, type CallRosterParticipant } from "@/stores/call-store"
 import { isDictationExternalHeld, setDictationExternalHold } from "@/contexts/dictation-coordinator-context"
 import { clearCallLifecycleLog, getCallLifecycleEvents } from "./lifecycle-log"
+import type { CallMediaSession, CallMediaSessionHandlers } from "./media-session"
 
 // Shared teardown-order log: the mic track, socket, and transport push into it so
 // the ordered-hangup test can pin emit-leave → close-transport → stop-tracks.
@@ -126,7 +127,39 @@ function makeSocket(): FakeSocket {
   return socket
 }
 
-function makeDeps(socket: FakeSocket, transport: MediaTransport) {
+interface FakeMediaSession extends CallMediaSession {
+  handlers: CallMediaSessionHandlers | null
+  releases: number
+  activations: Array<{ title: string; subtitle: string }>
+}
+
+/**
+ * A media session that records into the transport's event log, so a test can pin
+ * `activate` against `connect`/`publish:mic` in one ordering (INV-24).
+ */
+function makeMediaSession(events: string[]): FakeMediaSession {
+  const fake: FakeMediaSession = {
+    handlers: null,
+    releases: 0,
+    activations: [],
+    activate: vi.fn((metadata: { title: string; subtitle: string }) => {
+      fake.activations.push(metadata)
+      events.push("mediaSession:activate")
+    }),
+    setTitle: vi.fn(),
+    setHandlers: vi.fn((handlers: CallMediaSessionHandlers) => {
+      fake.handlers = handlers
+    }),
+    setMicrophoneActive: vi.fn(),
+    setCameraActive: vi.fn(),
+    release: vi.fn(() => {
+      fake.releases++
+    }),
+  }
+  return fake
+}
+
+function makeDeps(socket: FakeSocket, transport: MediaTransport, mediaSession: CallMediaSession | null = null) {
   let inc = 0
   const deps: CallManagerDeps = {
     startCallRest: vi.fn(async ({ workspaceId, streamId, mode }) => ({
@@ -152,6 +185,7 @@ function makeDeps(socket: FakeSocket, transport: MediaTransport) {
     locks: null,
     requestWakeLock: vi.fn(async () => null),
     mintIncarnation: vi.fn(() => `inc-${++inc}`),
+    createMediaSession: vi.fn(() => mediaSession),
     singleActiveCapture: false,
   }
   return deps
@@ -884,6 +918,111 @@ describe("CallManager", () => {
     expect(getCallState().phase).toBe("idle")
     // The bound start 409'd before admitting us — there is nothing to self-leave.
     expect(deps.leaveCallRest).not.toHaveBeenCalled()
+  })
+
+  // ── lock-screen media session ──────────────────────────────────────────────
+
+  describe("media session", () => {
+    async function startedWithMediaSession(overrides: { mode?: "audio_only" | "video" } = {}) {
+      const socket = makeSocket()
+      const transport = makeTransport()
+      const mediaSession = makeMediaSession(transport._events)
+      const deps = makeDeps(socket, transport, mediaSession)
+      const manager = newManager(deps, null)
+      await manager.startCall({
+        workspaceId: "ws_1",
+        streamId: "stream_1",
+        mode: overrides.mode ?? "audio_only",
+      })
+      return { manager, socket, transport, mediaSession }
+    }
+
+    it("activates the session before the transport connects, so a ringing-out call already owns one", async () => {
+      const { transport, mediaSession } = await startedWithMediaSession()
+
+      expect(mediaSession.activate).toHaveBeenCalledWith({ title: "Call", subtitle: "Threa" })
+      // Activation precedes both the transport connect and the first capture.
+      expect(transport._events.indexOf("mediaSession:activate")).toBe(0)
+      expect(transport._events.slice(0, 3)).toEqual(["mediaSession:activate", "connect", "publish:mic"])
+    })
+
+    it("the registered hangup handler leaves the call for real", async () => {
+      const { manager, socket, mediaSession } = await startedWithMediaSession()
+      socket.emitted.length = 0
+
+      mediaSession.handlers?.hangup()
+      await new Promise((r) => setTimeout(r, 0))
+
+      expect(socket.emitted.map((e) => e.event)).toContain("call:leave")
+      expect(manager.isActive()).toBe(false)
+    })
+
+    it("mirrors mute and camera state onto the notification toggles", async () => {
+      const { manager, mediaSession } = await startedWithMediaSession({ mode: "video" })
+
+      manager.setMuted(true)
+      await manager.setCameraOn(true)
+
+      expect(mediaSession.setMicrophoneActive).toHaveBeenCalledWith(false)
+      expect(mediaSession.setCameraActive).toHaveBeenCalledWith(true)
+    })
+
+    it("setCallTitle pushes the resolved stream label at the live session", async () => {
+      const { manager, mediaSession } = await startedWithMediaSession()
+
+      manager.setCallTitle("#design")
+
+      expect(mediaSession.setTitle).toHaveBeenCalledWith("#design")
+    })
+
+    it("leaveCall releases the session exactly once", async () => {
+      const { manager, mediaSession } = await startedWithMediaSession()
+
+      await manager.leaveCall()
+
+      expect(mediaSession.releases).toBe(1)
+    })
+
+    it("the store-flush hangupSync path releases the session exactly once", async () => {
+      const { manager, mediaSession } = await startedWithMediaSession()
+
+      // Account switch / logout flush → hangupSync.
+      resetCallStoreCache()
+
+      expect(manager.isActive()).toBe(false)
+      expect(mediaSession.releases).toBe(1)
+    })
+
+    it("a later call on the same manager never opens under the previous call's label", async () => {
+      const { manager, mediaSession } = await startedWithMediaSession()
+      manager.setCallTitle("Grace")
+      await manager.leaveCall()
+
+      await manager.startCall({ workspaceId: "ws_1", streamId: "stream_2", mode: "audio_only" })
+
+      // The dock pushes the real label once the name resolves; until then the
+      // notification must not claim this call is with whoever the last one was.
+      expect(mediaSession.setTitle).toHaveBeenCalledWith("Grace")
+      expect(mediaSession.activations).toEqual([
+        { title: "Call", subtitle: "Threa" },
+        { title: "Call", subtitle: "Threa" },
+      ])
+    })
+
+    it("an unsupported platform (null media session) leaves the whole start path working", async () => {
+      const socket = makeSocket()
+      const transport = makeTransport()
+      const deps = makeDeps(socket, transport, null)
+      const manager = newManager(deps, null)
+
+      await manager.startCall({ workspaceId: "ws_1", streamId: "stream_1", mode: "video" })
+      manager.setMuted(true)
+      manager.setCallTitle("#design")
+      await manager.setCameraOn(true)
+
+      expect(getCallState().phase).toBe("connected")
+      expect(manager.isActive()).toBe(true)
+    })
   })
 
   // ── lifecycle log (diagnostic only — no behavior reads it) ─────────────────
