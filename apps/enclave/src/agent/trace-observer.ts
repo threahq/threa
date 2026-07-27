@@ -122,6 +122,17 @@ class EnclaveSealingSink implements TraceStepSink<EnclaveOpenStep> {
     })
   }
 
+  /**
+   * Guarded (tier 2+) tools are never offered on this surface, so a verdict
+   * cannot arrive here. Required by `TraceStepSink` all the same: the interface
+   * makes every surface decide what it does with one, which is the only guard
+   * available (a runtime throw is swallowed by `AgentRuntime.emit`). If this
+   * ever fires, a guarded tool reached a surface that cannot show its approval
+   * state — the state the tier system exists to prevent.
+   */
+  async verify(): Promise<void> {
+    throw new Error("EnclaveSealingSink cannot record a guardian verdict; guarded tools must not run on this surface")
+  }
   async substep(params: {
     stepType: AgentStepType
     step: EnclaveOpenStep
