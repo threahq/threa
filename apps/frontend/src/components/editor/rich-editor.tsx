@@ -16,6 +16,7 @@ import {
   type MentionTypeLookup,
 } from "./editor-markdown"
 import { serializeClipboardSlice } from "./clipboard-copy"
+import { insertPlainText, isPlainTextPaste } from "./plain-text-paste"
 import {
   useMentionSuggestion,
   useChannelSuggestion,
@@ -632,11 +633,18 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
         ),
       },
       clipboardTextSerializer: serializeClipboardSlice,
-      handlePaste: (_view, event) => {
+      handlePaste: (view, event) => {
+        // Paste-without-formatting takes the clipboard's markdown down to the
+        // text it stands for, so it must preempt the internal-paste shortcut
+        // below (which would restore the styled document) and the chip/markdown
+        // conversions further down. Snippet conversion still applies — that
+        // guard is about size, not styling.
+        const pasteAsPlainText = isPlainTextPaste(view)
+
         // Deliberately skips everything below, including snippet conversion:
         // an internal paste restores the exact document (chips included), and
         // converting a user's own composed content into a snippet would lose it.
-        if (isProseMirrorClipboardEvent(event)) {
+        if (!pasteAsPlainText && isProseMirrorClipboardEvent(event)) {
           return false
         }
 
@@ -667,7 +675,7 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
         }
 
         // A bare memo link pastes as an embed card rather than a plain URL.
-        if (enableMemoEmbed) {
+        if (!pasteAsPlainText && enableMemoEmbed) {
           const memoId = parseMemoUrl(text.trim())
           if (memoId) {
             editorRef.current.commands.insertMemoEmbed({ memoId })
@@ -678,7 +686,7 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
 
         // A bare in-app stream/message link pastes as an inline chip rather than
         // a raw URL, replacing the link text in the composer.
-        if (tryInsertInAppLinkChip(editorRef.current, text)) {
+        if (!pasteAsPlainText && tryInsertInAppLinkChip(editorRef.current, text)) {
           event.preventDefault()
           return true
         }
@@ -695,7 +703,8 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
           return true
         }
 
-        const handled = insertPastedText(
+        const insert = pasteAsPlainText ? insertPlainText : insertPastedText
+        const handled = insert(
           editorRef.current,
           text,
           enableMentions ? getMentionTypeRef.current : undefined,
