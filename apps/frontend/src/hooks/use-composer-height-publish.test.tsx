@@ -73,15 +73,71 @@ function Harness({
   )
 }
 
+/** Manual ResizeObserver that can fire for one specific observed element. */
+function installTargetedResizeObserver(): {
+  fireFor: (target: Element, blockSize: number) => void
+  restore: () => void
+} {
+  const original = global.ResizeObserver
+  const callbacks = new Map<Element, ResizeCallback>()
+  class TargetedResizeObserver {
+    constructor(private readonly cb: ResizeCallback) {}
+    observe(target: Element) {
+      callbacks.set(target, this.cb)
+    }
+    unobserve(target: Element) {
+      callbacks.delete(target)
+    }
+    disconnect() {
+      for (const [target, cb] of callbacks) if (cb === this.cb) callbacks.delete(target)
+    }
+  }
+  global.ResizeObserver = TargetedResizeObserver as unknown as typeof ResizeObserver
+  return {
+    fireFor: (target, blockSize) =>
+      callbacks.get(target)?.(
+        [{ borderBoxSize: [{ blockSize, inlineSize: 0 }] }] as unknown as ResizeObserverEntry[],
+        {} as ResizeObserver
+      ),
+    restore: () => {
+      global.ResizeObserver = original
+    },
+  }
+}
+
+/** Main timeline + thread panel, the two editor zones that can coexist. */
+function TwoZones({ showPanel }: { showPanel: boolean }) {
+  const mainRef = useComposerHeightPublish()
+  const panelRef = useComposerHeightPublish()
+  return (
+    <>
+      <div data-editor-zone="main">
+        <div data-testid="main-composer" ref={mainRef} />
+      </div>
+      {showPanel && (
+        <div data-editor-zone="panel">
+          <div data-testid="panel-composer" ref={panelRef} />
+        </div>
+      )}
+    </>
+  )
+}
+
+function rootHeight(): string {
+  return document.documentElement.style.getPropertyValue("--composer-height")
+}
+
 describe("useComposerHeightPublish", () => {
   let restoreRect: () => void
 
   beforeEach(() => {
     restoreRect = pinInitialHeight(80)
+    document.documentElement.style.removeProperty("--composer-height")
   })
 
   afterEach(() => {
     restoreRect()
+    document.documentElement.style.removeProperty("--composer-height")
   })
 
   it("publishes the measured height as --composer-height on the editor zone", () => {
@@ -225,6 +281,48 @@ describe("useComposerHeightPublish", () => {
       ro.fire(160)
       expect(onHeightChange).toHaveBeenCalledTimes(2)
       expect(onHeightChange).toHaveBeenLastCalledWith(160, { initial: false })
+    } finally {
+      ro.restore()
+    }
+  })
+
+  it("mirrors the live height onto :root, replacing the boot approximation", () => {
+    const ro = installManualResizeObserver()
+    try {
+      // What `applyPersistedComposerHeight` leaves at boot: a previous session's
+      // long draft. Surfaces outside every editor zone (the call dock's chips,
+      // the incoming ring) read this, so it must not survive the first measure.
+      document.documentElement.style.setProperty("--composer-height", "350px")
+      render(<Harness onHeightChange={() => {}} />)
+      expect(rootHeight()).toBe("80px")
+
+      ro.fire(132)
+      expect(rootHeight()).toBe("132px")
+    } finally {
+      ro.restore()
+    }
+  })
+
+  it("gives :root to the most recently measured zone, and to the survivor when it unmounts", () => {
+    const ro = installTargetedResizeObserver()
+    try {
+      const { getByTestId, rerender } = render(<TwoZones showPanel />)
+      const main = getByTestId("main-composer")
+      const panel = getByTestId("panel-composer")
+
+      ro.fireFor(panel, 240)
+      expect(rootHeight()).toBe("240px")
+
+      ro.fireFor(main, 96)
+      expect(rootHeight()).toBe("96px")
+
+      ro.fireFor(panel, 240)
+      expect(rootHeight()).toBe("240px")
+
+      // Panel closes: fall back to the main composer's real height, not the
+      // panel's last measurement and not the boot value.
+      rerender(<TwoZones showPanel={false} />)
+      expect(rootHeight()).toBe("96px")
     } finally {
       ro.restore()
     }
