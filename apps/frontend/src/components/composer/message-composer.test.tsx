@@ -9,6 +9,7 @@ import type { CachedDraft } from "@/hooks"
 import type { PendingAttachment } from "@/hooks/use-attachments"
 import type { JSONContent } from "@threa/types"
 import * as useMobileModule from "@/hooks/use-mobile"
+import * as contextsModule from "@/contexts"
 import * as editorModule from "@/components/editor"
 import { queueComposerCommandRequest } from "@/stores/composer-command-request-store"
 
@@ -367,6 +368,29 @@ describe("MessageComposer", () => {
       render(<MessageComposer {...defaultProps} pendingAttachments={[]} />)
 
       expect(screen.queryByText(/\.txt$/)).not.toBeInTheDocument()
+    })
+  })
+
+  describe("collapsed composer action side", () => {
+    // The collapsed row renders its own Send button rather than going through
+    // EditorActionBar (which this suite mocks), so it needs mirroring of its
+    // own — it was the one surface the original change missed.
+    function collapsedRow(side: "left" | "right") {
+      isMobileMockValue = true
+      vi.spyOn(contextsModule, "usePreferencesOptional").mockReturnValue({
+        preferences: { accessibility: { composerActionSide: side } },
+      } as unknown as ReturnType<typeof contextsModule.usePreferencesOptional>)
+
+      render(<MessageComposer {...defaultProps} placeholder="Write a reply..." />)
+      return screen.getByText("Write a reply...").parentElement
+    }
+
+    it("keeps Send trailing the preview by default", () => {
+      expect(collapsedRow("right")).not.toHaveClass("flex-row-reverse")
+    })
+
+    it("mirrors so Send leads the preview", () => {
+      expect(collapsedRow("left")).toHaveClass("flex-row-reverse")
     })
   })
 

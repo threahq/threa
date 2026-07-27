@@ -170,6 +170,18 @@ describe("action side", () => {
     expect(renderBar("left")).toHaveClass("flex-row-reverse")
   })
 
+  it("aligns the format hint to the mirrored far edge", () => {
+    // The hint span is `flex-1`, so it spans the free width; without an
+    // alignment flip its text hugs Send instead of the opposite edge.
+    renderBar("left")
+    expect(screen.getByText("Select text to format")).toHaveClass("text-right")
+  })
+
+  it("leaves the format hint at the leading edge by default", () => {
+    renderBar()
+    expect(screen.getByText("Select text to format")).not.toHaveClass("text-right")
+  })
+
   it("anchors the overflow menu to the edge the '+' trigger moved to", async () => {
     // 170px folds every collapsible action, so the "+" trigger renders.
     vi.spyOn(elementWidthModule, "useElementWidth").mockReturnValue(170)

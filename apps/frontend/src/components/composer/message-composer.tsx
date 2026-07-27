@@ -1234,7 +1234,13 @@ export function MessageComposer({
               }}
             >
               {isMobile && !mobileChromeOpen && (
-                <div className={cn(COLLAPSED_COMPOSER_ROW, "text-sm select-none pointer-events-none")}>
+                <div
+                  className={cn(
+                    COLLAPSED_COMPOSER_ROW,
+                    "text-sm select-none pointer-events-none",
+                    mirrored && "flex-row-reverse"
+                  )}
+                >
                   <span className="flex-1 min-w-0 truncate text-muted-foreground">{previewText || placeholder}</span>
                   <div className="pointer-events-auto">{sendButton}</div>
                 </div>
