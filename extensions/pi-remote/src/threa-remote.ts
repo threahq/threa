@@ -32,6 +32,9 @@ import {
   parseAllowedTmuxKey,
   sendAllowedTmuxKey,
   ArchiveGraceController,
+  WS_BACKSTOP_POLL_MS,
+  clearHarnessLink,
+  recordHarnessLink,
   scrubSealedError,
   sealReply,
   sealStep,
@@ -88,14 +91,6 @@ const CLAIM_TTL_SECONDS = 120
 // long turn's claim alive — the claim poll only backstops at 15 min while the
 // socket is up, far past the TTL, so renewal must never ride on it.
 const CLAIM_RENEW_INTERVAL_MS = Math.floor((CLAIM_TTL_SECONDS * 1000) / 3)
-// Cadence the safety-backstop poll runs at while a `/bot` WebSocket is up.
-// Pushes deliver new invocations within a frame; the poll is only there to
-// catch the rare missed-emit / mid-flight-disconnect case (plan §5). Every
-// tick is an HTTP claim through the billed edge Worker, so it runs at 15 min
-// — an idle fleet at the old 30s cadence burned thousands of edge requests a
-// day doing nothing; reconnects still drain immediately via the hello
-// bootstrap, so only a silently dropped push waits this long.
-const WS_BACKSTOP_POLL_MS = 15 * 60 * 1000
 // With NO socket the poll is the only delivery path, but an idle session
 // spinning at pollMs (3s) burns ~29k billed edge requests/day. Empty idle ticks
 // back off exponentially to this cap; a claim, an active turn, or a socket
@@ -1367,6 +1362,7 @@ async function createRemoteSession(ctx: ExtensionCommandContext, args: string): 
   }
   saveConfig()
 
+  syncHarnessLink(ctx)
   ctx.ui.notify(`Threa remote linked: ${body.data.streamUrlPath}`, "info")
   setRemoteStatus(ctx, `Threa remote: ${displayName}`)
   await heartbeat("available", undefined, ctx)
@@ -1879,6 +1875,7 @@ function ensureArchiveController(ctx: ExtensionContext): ArchiveGraceController 
         await heartbeat("available", undefined, ctx).catch(() => undefined)
       },
       onWindDown: () => {
+        clearHarnessLink(getRuntimeSessionId(ctx))
         stopPolling()
         stopClaimRenewTimer()
         const report = archiveWindDown(ctx.cwd, (message) => emitPollDebug(ctx, message))
@@ -1898,9 +1895,27 @@ function ensureArchiveController(ctx: ExtensionContext): ArchiveGraceController 
   return archive
 }
 
+/**
+ * Record what this window owns so harnessd can reap it later. Idempotent, and
+ * refreshed from the poll tick as well as on link, because an archive that
+ * lands while this process is dead has nothing else to go on.
+ */
+function syncHarnessLink(ctx: ExtensionContext): void {
+  const link = getCurrentSessionLink(ctx)
+  if (!config || !link?.rootStreamId) return
+  recordHarnessLink({
+    runtimeKind: "pi-local",
+    runtimeSessionId: getRuntimeSessionId(ctx),
+    instanceId: getSessionInstanceId(ctx),
+    rootStreamId: link.rootStreamId,
+    worktree: ctx.cwd,
+  })
+}
+
 /** The poll-tick backstop: `bot:session_archived` is a one-shot push with no replay. */
 async function probeArchiveState(ctx: ExtensionContext): Promise<void> {
   if (!config || sessionTearingDown) return
+  syncHarnessLink(ctx)
   await ensureArchiveController(ctx).probe(getCurrentSessionLink(ctx)?.rootStreamId)
 }
 

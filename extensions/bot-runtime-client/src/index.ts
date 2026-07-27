@@ -11,12 +11,20 @@ export { ArchiveGraceController, type ArchiveGraceHooks, type ArchiveGraceOption
 export {
   ARCHIVE_RESTORE_GRACE_MS,
   ARCHIVE_RESTORE_PROBE_MS,
+  WS_BACKSTOP_POLL_MS,
   killOwnWindow,
   pushBranchAndScheduleRemoval,
   windDownArchivedWorktree,
   type ArchiveCleanupReport,
   type ArchiveWindDownReport,
 } from "./archive-wind-down"
+export {
+  clearHarnessLink,
+  harnessLinksDir,
+  readHarnessLinks,
+  recordHarnessLink,
+  type HarnessLink,
+} from "./harness-links"
 export { harnessDaemonEntrypoint, runHarnessKick, type HarnessKickResult } from "./harness-kick"
 export {
   harnessReconnectAvailable,
