@@ -1,5 +1,6 @@
+import { useCallback, useEffect, useRef, useState } from "react"
 import { toast } from "sonner"
-import { Settings, Signal } from "lucide-react"
+import { Check, Copy, Settings, Signal } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
@@ -18,6 +19,7 @@ import { CALL_SURFACE_PROTECTED_ATTR } from "./call-surface-geometry"
 import { useCallManager } from "./call-manager-context"
 import { CameraButton, ChatButton, FlipButton, LeaveButton, MuteButton } from "./call-control-buttons"
 import { useCallDevices, useCallDiagnostics } from "./call-store-hooks"
+import { useCallLifecycleEvents, type CallLifecycleEntry } from "@/calls/lifecycle-log"
 
 // setSinkId (output device selection) is unsupported on Safari/Firefox; hide the
 // speaker picker where the API is absent rather than showing a dead control.
@@ -146,6 +148,71 @@ function formatLimitation(limitation: CallDiagnostics["qualityLimitation"]): str
   }
 }
 
+/** Device-local wall clock with milliseconds — a lifecycle log is read by ordering. */
+function formatLifecycleTime(at: number): string {
+  const d = new Date(at)
+  const pad = (n: number, width = 2) => String(n).padStart(width, "0")
+  return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}.${pad(d.getMilliseconds(), 3)}`
+}
+
+function lifecycleLogText(entries: CallLifecycleEntry[]): string {
+  return entries.map((e) => [formatLifecycleTime(e.at), e.kind, e.detail].filter(Boolean).join(" ")).join("\n")
+}
+
+/**
+ * Page-lifecycle / socket / lease trace for the current and previous calls. It
+ * survives teardown by design — a call that already died is exactly what it has
+ * to explain.
+ */
+function LifecycleLogSection() {
+  const events = useCallLifecycleEvents()
+  const [copied, setCopied] = useState(false)
+  const resetRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  useEffect(() => () => void (resetRef.current && clearTimeout(resetRef.current)), [])
+
+  const newestFirst = [...events].reverse()
+  const copy = useCallback(async () => {
+    try {
+      await navigator.clipboard.writeText(lifecycleLogText(newestFirst))
+    } catch {
+      return
+    }
+    setCopied(true)
+    if (resetRef.current) clearTimeout(resetRef.current)
+    resetRef.current = setTimeout(() => setCopied(false), 1200)
+  }, [newestFirst])
+
+  return (
+    <div className="mt-3 border-t pt-2">
+      <div className="mb-1 flex items-center justify-between gap-2">
+        <p className="font-medium">Lifecycle</p>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-7 w-7"
+          aria-label={copied ? "Copied" : "Copy lifecycle log"}
+          disabled={newestFirst.length === 0}
+          onClick={() => void copy()}
+        >
+          {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+        </Button>
+      </div>
+      {newestFirst.length === 0 ? (
+        <p className="text-muted-foreground text-xs">No events yet</p>
+      ) : (
+        <ul className="max-h-40 space-y-0.5 overflow-y-auto text-xs">
+          {newestFirst.map((e, i) => (
+            <li key={`${e.at}:${e.kind}:${i}`} className="flex justify-between gap-2">
+              <span className="text-muted-foreground tabular-nums">{formatLifecycleTime(e.at)}</span>
+              <span className="truncate">{e.detail ? `${e.kind} ${e.detail}` : e.kind}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  )
+}
+
 export function ConnectionDiagnostics({ diagnostics }: { diagnostics: CallDiagnostics }) {
   return (
     <Popover>
@@ -170,6 +237,7 @@ export function ConnectionDiagnostics({ diagnostics }: { diagnostics: CallDiagno
             <dd>{formatLimitation(diagnostics.qualityLimitation)}</dd>
           </div>
         </dl>
+        <LifecycleLogSection />
       </PopoverContent>
     </Popover>
   )

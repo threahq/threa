@@ -22,6 +22,7 @@ import {
   type CallRosterParticipant,
   type CallDeviceState,
 } from "@/stores/call-store"
+import { recordCallLifecycleEvent, type CallLifecycleKind } from "./lifecycle-log"
 import {
   CloudflareSfuTransport,
   type MediaTransport,
@@ -204,7 +205,8 @@ interface CallSession {
   meterRaf: number | null
   wakeLock: WakeLockLike | null
   releaseLock: (() => void) | null
-  onVisibility: (() => void) | null
+  /** Detaches every page-lifecycle listener installed for this session. */
+  onLifecycle: (() => void) | null
   onDeviceChange: (() => void) | null
 }
 
@@ -403,7 +405,7 @@ export class CallManager implements CallController {
         meterRaf: null,
         wakeLock: null,
         releaseLock,
-        onVisibility: null,
+        onLifecycle: null,
         onDeviceChange: null,
       }
       this.session = session
@@ -740,10 +742,12 @@ export class CallManager implements CallController {
       // A socket drop is NOT a call end (the lease holds the slot). Demote to
       // reconnecting; the CF media session survives brief socket loss.
       if (!this.sessionForGen(gen)) return
+      recordCallLifecycleEvent({ kind: "socket_disconnect" })
       setCallPhase("reconnecting")
     })
     session.socket.on("connect", () => {
       if (!this.sessionForGen(gen)) return
+      recordCallLifecycleEvent({ kind: "socket_connect" })
       // Transient reconnect: rejoin with the SAME incarnation (rebinds the same
       // endpoint + epoch). A new incarnation is only minted by a fresh page load.
       this.joinOverSocket(session.socket, {
@@ -765,17 +769,20 @@ export class CallManager implements CallController {
           // the user re-enters via the stream's live-call card / rejoin surfaces
           // (a fresh incarnation on the fresh endpoint).
           if (join.endpointId !== s.endpointId) {
+            recordCallLifecycleEvent({ kind: "rejoin_new_endpoint", detail: join.endpointId })
             void this.teardown()
             return
           }
+          recordCallLifecycleEvent({ kind: "rejoin_same_endpoint" })
           s.endpointId = join.endpointId
           this.applyRoster(s, join.rosterVersion, join.roster)
           setCallPhase("connected")
         })
-        .catch(() => {
+        .catch((err: unknown) => {
           // Same recheck: a stale failed rejoin for the OLD call must not tear
           // down whatever `this.session` now is (possibly a newly started call).
           if (!this.sessionForGen(gen)) return
+          recordCallLifecycleEvent({ kind: "rejoin_failed", detail: err instanceof Error ? err.message : undefined })
           void this.teardown()
         })
     })
@@ -1185,6 +1192,8 @@ export class CallManager implements CallController {
         // stale ack never tears down a newer call.
         if (!this.sessionForGen(gen)) return
         const ack = result as Ack<{ leaseExpiresAt: string }>
+        if (ack?.ok) recordCallLifecycleEvent({ kind: "lease_renew_ok" })
+        else recordCallLifecycleEvent({ kind: "lease_renew_failed", detail: ack?.code })
         // A superseded lease means our endpoint was taken over — the call is lost
         // on this incarnation. The socket push above normally gets here first;
         // this is the backstop for a device that lost the socket, and it lands on
@@ -1256,23 +1265,46 @@ export class CallManager implements CallController {
 
   // ── wake lock + devices ─────────────────────────────────────────────────
 
+  /**
+   * One listener set for the page-lifecycle signals: visibility carries both the
+   * log entry and the wake-lock re-acquire (one listener, two jobs), `freeze`/
+   * `resume` are `document` events, `pagehide`/`pageshow` are `window` events.
+   * The returned detach closure is stored on the session — a listener left
+   * attached retains the whole session closure and stacks per call.
+   */
+  private installLifecycleListeners(session: CallSession): void {
+    if (typeof document === "undefined") return
+    const onVisibility = () => {
+      if (this.session !== session) return
+      const visible = document.visibilityState === "visible"
+      recordCallLifecycleEvent({ kind: visible ? "visible" : "hidden" })
+      if (visible && (!session.wakeLock || session.wakeLock.released)) {
+        void this.deps.requestWakeLock().then((lock) => {
+          if (this.session === session) session.wakeLock = lock
+        })
+      }
+    }
+    const recorder = (kind: CallLifecycleKind) => () => {
+      if (this.session !== session) return
+      recordCallLifecycleEvent({ kind })
+    }
+    const bindings: Array<[EventTarget, string, () => void]> = [
+      [document, "visibilitychange", onVisibility],
+      [document, "freeze", recorder("freeze")],
+      [document, "resume", recorder("resume")],
+    ]
+    if (typeof window !== "undefined") {
+      bindings.push([window, "pagehide", recorder("pagehide")], [window, "pageshow", recorder("pageshow")])
+    }
+    for (const [target, event, handler] of bindings) target.addEventListener(event, handler)
+    session.onLifecycle = () => {
+      for (const [target, event, handler] of bindings) target.removeEventListener(event, handler)
+    }
+  }
+
   private async acquireWakeLock(session: CallSession): Promise<void> {
     session.wakeLock = await this.deps.requestWakeLock().catch(() => null)
-    if (typeof document !== "undefined") {
-      const onVisibility = () => {
-        if (this.session !== session) return
-        if (document.visibilityState === "visible" && (!session.wakeLock || session.wakeLock.released)) {
-          void this.deps.requestWakeLock().then((lock) => {
-            if (this.session === session) session.wakeLock = lock
-          })
-        }
-      }
-      document.addEventListener("visibilitychange", onVisibility)
-      // Store the bound handler so teardown can detach it — a listener left on
-      // `document` retains the whole session closure and leaks it (and stacks
-      // per call).
-      session.onVisibility = onVisibility
-    }
+    this.installLifecycleListeners(session)
     // Auto-refresh the device list on hot-plug/unplug for the call's life.
     if (typeof navigator !== "undefined" && navigator.mediaDevices) {
       const onDeviceChange = () => {
@@ -1409,6 +1441,7 @@ export class CallManager implements CallController {
   private async teardown(): Promise<void> {
     const session = this.session
     if (!session) return
+    recordCallLifecycleEvent({ kind: "teardown" })
     this.session = null
     this.clearTimers(session)
     this.removeSocketHandlers(session)
@@ -1452,13 +1485,11 @@ export class CallManager implements CallController {
   }
 
   private removeSessionListeners(session: CallSession): void {
-    if (session.onVisibility && typeof document !== "undefined") {
-      document.removeEventListener("visibilitychange", session.onVisibility)
-    }
+    session.onLifecycle?.()
     if (session.onDeviceChange && typeof navigator !== "undefined" && navigator.mediaDevices) {
       navigator.mediaDevices.removeEventListener("devicechange", session.onDeviceChange)
     }
-    session.onVisibility = null
+    session.onLifecycle = null
     session.onDeviceChange = null
   }
 

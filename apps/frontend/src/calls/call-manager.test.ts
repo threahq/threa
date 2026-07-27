@@ -11,6 +11,7 @@ import { AUDIO_CAPTURE_CONSTRAINTS, VIDEO_CAPTURE_CONSTRAINTS } from "./config"
 import { ApiError } from "@/api/client"
 import { getCallState, clearCallState, resetCallStoreCache, type CallRosterParticipant } from "@/stores/call-store"
 import { isDictationExternalHeld, setDictationExternalHold } from "@/contexts/dictation-coordinator-context"
+import { clearCallLifecycleLog, getCallLifecycleEvents } from "./lifecycle-log"
 
 // Shared teardown-order log: the mic track, socket, and transport push into it so
 // the ordered-hangup test can pin emit-leave → close-transport → stop-tracks.
@@ -84,6 +85,8 @@ interface FakeSocket extends CallSocket {
   pendingJoinAck: ((result: unknown) => void) | null
   /** When true, `call:join` acks with a failure so the join promise rejects. */
   failJoin: boolean
+  /** The ack `call:lease:renew` replies with. */
+  leaseRenewAck: unknown
   fire(event: string, ...args: unknown[]): void
 }
 
@@ -98,6 +101,7 @@ function makeSocket(): FakeSocket {
     deferJoin: false,
     pendingJoinAck: null,
     failJoin: false,
+    leaseRenewAck: { ok: true, data: { leaseExpiresAt: new Date().toISOString() } },
     emit(event, payload, ack) {
       emitted.push({ event, payload })
       if (event === "call:leave") order.push("leave")
@@ -106,7 +110,7 @@ function makeSocket(): FakeSocket {
         else if (socket.deferJoin) socket.pendingJoinAck = ack ?? null
         else ack?.({ ok: true, data: socket.joinAck })
       } else if (event === "call:leave") ack?.({ ok: true })
-      else if (event === "call:lease:renew") ack?.({ ok: true, data: { leaseExpiresAt: new Date().toISOString() } })
+      else if (event === "call:lease:renew") ack?.(socket.leaseRenewAck)
     },
     on(event, handler) {
       handlers.set(event, handler)
@@ -165,21 +169,35 @@ function participant(overrides: Partial<CallRosterParticipant>): CallRosterParti
   }
 }
 
+// Every manager built by a test, so the afterEach can hang up the ones a test
+// left connected. A live session keeps its document/window lifecycle listeners
+// attached, and those write into the shared lifecycle log from later tests.
+const managers: CallManager[] = []
+
+function newManager(deps: CallManagerDeps, audioContainer: HTMLElement | null): CallManager {
+  const manager = new CallManager(deps, audioContainer)
+  managers.push(manager)
+  return manager
+}
+
 describe("CallManager", () => {
   beforeEach(() => {
     order = []
     clearCallState()
     setDictationExternalHold(false)
   })
-  afterEach(() => {
+  afterEach(async () => {
     vi.useRealTimers()
+    for (const manager of managers.splice(0)) {
+      if (manager.isActive()) await manager.leaveCall()
+    }
   })
 
   it("join happy path: REST → socket join → connect → publish mic → connected", async () => {
     const socket = makeSocket()
     const transport = makeTransport()
     const deps = makeDeps(socket, transport)
-    const manager = new CallManager(deps, null)
+    const manager = newManager(deps, null)
 
     await manager.startCall({ workspaceId: "ws_1", streamId: "stream_1", mode: "audio_only" })
 
@@ -195,7 +213,7 @@ describe("CallManager", () => {
   it("join defaults to mic-on / camera-off even in video mode; camera publishes only on setCameraOn", async () => {
     const socket = makeSocket()
     const transport = makeTransport()
-    const manager = new CallManager(makeDeps(socket, transport), null)
+    const manager = newManager(makeDeps(socket, transport), null)
     await manager.startCall({ workspaceId: "ws_1", streamId: "stream_1", mode: "video" })
     // Plan §In-call features: join is mic-on, camera-off — no camera capture yet.
     expect(transport._events).toContain("publish:mic")
@@ -210,7 +228,7 @@ describe("CallManager", () => {
   it("joins with the camera publishing when cameraOn is requested (Start with camera)", async () => {
     const socket = makeSocket()
     const transport = makeTransport()
-    const manager = new CallManager(makeDeps(socket, transport), null)
+    const manager = newManager(makeDeps(socket, transport), null)
     await manager.startCall({ workspaceId: "ws_1", streamId: "stream_1", mode: "video", cameraOn: true })
     // Camera is up at join, not deferred to a setCameraOn tap.
     expect(transport._events).toContain("publish:mic")
@@ -233,7 +251,7 @@ describe("CallManager", () => {
       rosterVersion: 0,
       roster: [],
     })
-    const manager = new CallManager(deps, null)
+    const manager = newManager(deps, null)
 
     await manager.startCall({ workspaceId: "ws_1", streamId: "stream_1", mode: "video" })
 
@@ -246,7 +264,7 @@ describe("CallManager", () => {
   it("audio_only mode ignores setCameraOn", async () => {
     const socket = makeSocket()
     const transport = makeTransport()
-    const manager = new CallManager(makeDeps(socket, transport), null)
+    const manager = newManager(makeDeps(socket, transport), null)
     await manager.startCall({ workspaceId: "ws_1", streamId: "stream_1", mode: "audio_only" })
     await manager.setCameraOn(true)
     expect(transport._events).not.toContain("publish:camera")
@@ -255,7 +273,7 @@ describe("CallManager", () => {
   it("drops a stale/duplicate roster version, applies a newer one", async () => {
     const socket = makeSocket()
     const transport = makeTransport()
-    const manager = new CallManager(makeDeps(socket, transport), null)
+    const manager = newManager(makeDeps(socket, transport), null)
     await manager.startCall({ workspaceId: "ws_1", streamId: "stream_1", mode: "audio_only" })
 
     // Newer version applies.
@@ -272,7 +290,7 @@ describe("CallManager", () => {
   it("track-registry diff drives pull then stopPull", async () => {
     const socket = makeSocket()
     const transport = makeTransport()
-    const manager = new CallManager(makeDeps(socket, transport), null)
+    const manager = newManager(makeDeps(socket, transport), null)
     await manager.startCall({ workspaceId: "ws_1", streamId: "stream_1", mode: "audio_only" })
 
     socket.fire("call:roster", {
@@ -297,7 +315,7 @@ describe("CallManager", () => {
   it("skips peers with no cfSessionId (0.2 roster gap) rather than pulling an unaddressable ref", async () => {
     const socket = makeSocket()
     const transport = makeTransport()
-    const manager = new CallManager(makeDeps(socket, transport), null)
+    const manager = newManager(makeDeps(socket, transport), null)
     await manager.startCall({ workspaceId: "ws_1", streamId: "stream_1", mode: "audio_only" })
 
     socket.fire("call:roster", {
@@ -314,7 +332,7 @@ describe("CallManager", () => {
     vi.useFakeTimers()
     const socket = makeSocket()
     const transport = makeTransport()
-    const manager = new CallManager(makeDeps(socket, transport), null)
+    const manager = newManager(makeDeps(socket, transport), null)
     await manager.startCall({ workspaceId: "ws_1", streamId: "stream_1", mode: "audio_only" })
 
     socket.emitted.length = 0
@@ -381,7 +399,7 @@ describe("CallManager", () => {
   it("mute gates track.enabled and emits call:state", async () => {
     const socket = makeSocket()
     const transport = makeTransport()
-    const manager = new CallManager(makeDeps(socket, transport), null)
+    const manager = newManager(makeDeps(socket, transport), null)
     await manager.startCall({ workspaceId: "ws_1", streamId: "stream_1", mode: "audio_only" })
 
     const micTrack = getMicTrack(transport)
@@ -394,7 +412,7 @@ describe("CallManager", () => {
   it("ordered teardown: emit leave → close transport → stop tracks", async () => {
     const socket = makeSocket()
     const transport = makeTransport()
-    const manager = new CallManager(makeDeps(socket, transport), null)
+    const manager = newManager(makeDeps(socket, transport), null)
     await manager.startCall({ workspaceId: "ws_1", streamId: "stream_1", mode: "audio_only" })
     order = []
 
@@ -411,7 +429,7 @@ describe("CallManager", () => {
     const socket = makeSocket()
     const transport = makeTransport()
     const deps = makeDeps(socket, transport)
-    const manager = new CallManager(deps, null)
+    const manager = newManager(deps, null)
     await manager.startCall({ workspaceId: "ws_1", streamId: "stream_1", mode: "audio_only" })
     expect(deps.mintIncarnation).toHaveBeenCalledTimes(1)
 
@@ -431,7 +449,7 @@ describe("CallManager", () => {
     const socket = makeSocket()
     const transport = makeTransport()
     const deps = makeDeps(socket, transport)
-    const manager = new CallManager(deps, null)
+    const manager = newManager(deps, null)
     await manager.startCall({ workspaceId: "ws_1", streamId: "stream_1", mode: "audio_only" })
     await manager.leaveCall()
 
@@ -452,7 +470,7 @@ describe("CallManager", () => {
   it("double startCall throws synchronously while the first is joining (in-flight guard)", async () => {
     const socket = makeSocket()
     const transport = makeTransport()
-    const manager = new CallManager(makeDeps(socket, transport), null)
+    const manager = newManager(makeDeps(socket, transport), null)
 
     // The first start suspends at its first await with the `starting` sentinel set.
     const first = manager.startCall({ workspaceId: "ws_1", streamId: "stream_1", mode: "audio_only" })
@@ -470,7 +488,7 @@ describe("CallManager", () => {
   it("a stale reconnect-join continuation no-ops after teardown", async () => {
     const socket = makeSocket()
     const transport = makeTransport()
-    const manager = new CallManager(makeDeps(socket, transport), null)
+    const manager = newManager(makeDeps(socket, transport), null)
     await manager.startCall({ workspaceId: "ws_1", streamId: "stream_1", mode: "audio_only" })
 
     // A socket reconnect fires a rejoin whose ack we hold in flight.
@@ -505,7 +523,7 @@ describe("CallManager", () => {
           releaseWake = () => resolve(null)
         })
     )
-    const manager = new CallManager(deps, null)
+    const manager = newManager(deps, null)
 
     const start = manager.startCall({ workspaceId: "ws_1", streamId: "stream_1", mode: "audio_only" })
     // Drain all microtasks so runStart reaches the parked wake-lock request.
@@ -541,7 +559,7 @@ describe("CallManager", () => {
       if (c.video) kinds.push("video")
       return makeStream(kinds)
     })
-    const manager = new CallManager(deps, null)
+    const manager = newManager(deps, null)
     await manager.startCall({ workspaceId: "ws_1", streamId: "stream_1", mode: "audio_only" })
 
     // Fire two switches without awaiting the first — the chain must serialize them.
@@ -561,7 +579,7 @@ describe("CallManager", () => {
     const socket = makeSocket()
     const transport = makeTransport()
     const deps = makeDeps(socket, transport)
-    const manager = new CallManager(deps, null)
+    const manager = newManager(deps, null)
     await manager.startCall({ workspaceId: "ws_1", streamId: "stream_1", mode: "video" })
     await manager.setCameraOn(true)
 
@@ -584,7 +602,7 @@ describe("CallManager", () => {
     const socket = makeSocket()
     const transport = makeTransport()
     const deps = makeDeps(socket, transport)
-    const manager = new CallManager(deps, null)
+    const manager = newManager(deps, null)
     // Join defaults to camera-off, so the switch only records the preference.
     await manager.startCall({ workspaceId: "ws_1", streamId: "stream_1", mode: "video" })
 
@@ -606,7 +624,7 @@ describe("CallManager", () => {
     const socket = makeSocket()
     const transport = makeTransport()
     const deps = makeDeps(socket, transport)
-    const manager = new CallManager(deps, null)
+    const manager = newManager(deps, null)
     await manager.startCall({ workspaceId: "ws_1", streamId: "stream_1", mode: "video" })
     // Seed an explicit device pref, then turn the camera on with it.
     await manager.switchCameraDevice("cam-1")
@@ -645,7 +663,7 @@ describe("CallManager", () => {
       if (c.video) kinds.push("video")
       return makeStream(kinds)
     })
-    const manager = new CallManager(deps, null)
+    const manager = newManager(deps, null)
     await manager.startCall({ workspaceId: "ws_1", streamId: "stream_1", mode: "audio_only" })
 
     const err = await manager.switchInputDevice("dev-x").catch((e) => e)
@@ -662,7 +680,7 @@ describe("CallManager", () => {
   it("a roster event dispatched before hangupSync no-ops after the flush", async () => {
     const socket = makeSocket()
     const transport = makeTransport()
-    const manager = new CallManager(makeDeps(socket, transport), null)
+    const manager = newManager(makeDeps(socket, transport), null)
     await manager.startCall({ workspaceId: "ws_1", streamId: "stream_1", mode: "audio_only" })
 
     // Capture the handler as if a roster broadcast were already dispatched into the loop.
@@ -689,7 +707,7 @@ describe("CallManager", () => {
     socket.failJoin = true
     const transport = makeTransport()
     const deps = makeDeps(socket, transport)
-    const manager = new CallManager(deps, null)
+    const manager = newManager(deps, null)
 
     await expect(manager.startCall({ workspaceId: "ws_1", streamId: "stream_1", mode: "audio_only" })).rejects.toThrow()
 
@@ -713,7 +731,7 @@ describe("CallManager", () => {
           releaseWake = () => resolve(null)
         })
     )
-    const manager = new CallManager(deps, null)
+    const manager = newManager(deps, null)
 
     const start = manager.startCall({ workspaceId: "ws_1", streamId: "stream_1", mode: "audio_only" })
     await new Promise((r) => setTimeout(r, 0))
@@ -732,7 +750,7 @@ describe("CallManager", () => {
     const transport = makeTransport()
     const deps = makeDeps(socket, transport)
     ;(deps.startCallRest as ReturnType<typeof vi.fn>).mockRejectedValue(new Error("network down"))
-    const manager = new CallManager(deps, null)
+    const manager = newManager(deps, null)
 
     await expect(manager.startCall({ workspaceId: "ws_1", streamId: "stream_1", mode: "audio_only" })).rejects.toThrow(
       /network down/
@@ -749,7 +767,7 @@ describe("CallManager", () => {
     socket.deferJoin = true
     const transport = makeTransport()
     const deps = makeDeps(socket, transport)
-    const manager = new CallManager(deps, null)
+    const manager = newManager(deps, null)
 
     const start = manager.startCall({ workspaceId: "ws_1", streamId: "stream_1", mode: "audio_only" })
     // Park at the socket join — `starting` is true with no session yet.
@@ -775,7 +793,7 @@ describe("CallManager", () => {
   it("F3: a reconnect returning a NEW endpoint id tears down instead of staying connected", async () => {
     const socket = makeSocket()
     const transport = makeTransport()
-    const manager = new CallManager(makeDeps(socket, transport), null)
+    const manager = newManager(makeDeps(socket, transport), null)
     await manager.startCall({ workspaceId: "ws_1", streamId: "stream_1", mode: "audio_only" })
     expect(getCallState().phase).toBe("connected")
 
@@ -813,7 +831,7 @@ describe("CallManager", () => {
       if (kind === "camera") throw new Error("camera publish rejected")
       transport._events.push(`publish:${kind}`)
     })
-    const manager = new CallManager(deps, null)
+    const manager = newManager(deps, null)
     await manager.startCall({ workspaceId: "ws_1", streamId: "stream_1", mode: "video" })
 
     const err = await manager.setCameraOn(true).catch((e) => e)
@@ -835,7 +853,7 @@ describe("CallManager", () => {
     const socket = makeSocket()
     const transport = makeTransport()
     const deps = makeDeps(socket, transport)
-    const manager = new CallManager(deps, null)
+    const manager = newManager(deps, null)
 
     await manager.startCall({ workspaceId: "ws_1", streamId: "stream_1", mode: "video", expectedCallId: "call_ring" })
 
@@ -854,7 +872,7 @@ describe("CallManager", () => {
     const transport = makeTransport()
     const deps = makeDeps(socket, transport)
     ;(deps.startCallRest as ReturnType<typeof vi.fn>).mockRejectedValue(new ApiError(409, "CALL_ENDED", "Call ended"))
-    const manager = new CallManager(deps, null)
+    const manager = newManager(deps, null)
 
     const err = await manager
       .startCall({ workspaceId: "ws_1", streamId: "stream_1", mode: "video", expectedCallId: "call_gone" })
@@ -866,6 +884,131 @@ describe("CallManager", () => {
     expect(getCallState().phase).toBe("idle")
     // The bound start 409'd before admitting us — there is nothing to self-leave.
     expect(deps.leaveCallRest).not.toHaveBeenCalled()
+  })
+
+  // ── lifecycle log (diagnostic only — no behavior reads it) ─────────────────
+
+  describe("lifecycle log", () => {
+    function kinds(): string[] {
+      return getCallLifecycleEvents().map((e) => e.kind)
+    }
+
+    async function startedManager(socket: FakeSocket, transport: MediaTransport) {
+      const manager = newManager(makeDeps(socket, transport), null)
+      await manager.startCall({ workspaceId: "ws_1", streamId: "stream_1", mode: "audio_only" })
+      clearCallLifecycleLog()
+      return manager
+    }
+
+    function setVisibility(value: DocumentVisibilityState): void {
+      Object.defineProperty(document, "visibilityState", { configurable: true, get: () => value })
+    }
+
+    beforeEach(() => {
+      clearCallLifecycleLog()
+    })
+    afterEach(() => {
+      Object.defineProperty(document, "visibilityState", { configurable: true, get: () => "visible" })
+      clearCallLifecycleLog()
+    })
+
+    it("records page-lifecycle events from document and window", async () => {
+      await startedManager(makeSocket(), makeTransport())
+
+      setVisibility("hidden")
+      document.dispatchEvent(new Event("visibilitychange"))
+      setVisibility("visible")
+      document.dispatchEvent(new Event("visibilitychange"))
+      document.dispatchEvent(new Event("freeze"))
+      document.dispatchEvent(new Event("resume"))
+      window.dispatchEvent(new Event("pagehide"))
+
+      expect(kinds()).toEqual(["hidden", "visible", "freeze", "resume", "pagehide"])
+    })
+
+    it("records a socket drop and a rejoin onto the same endpoint", async () => {
+      const socket = makeSocket()
+      await startedManager(socket, makeTransport())
+
+      socket.fire("disconnect")
+      socket.fire("connect")
+      await new Promise((r) => setTimeout(r, 0))
+
+      expect(kinds()).toEqual(["socket_disconnect", "socket_connect", "rejoin_same_endpoint"])
+    })
+
+    it("records a rejoin that returns a different endpoint id", async () => {
+      const socket = makeSocket()
+      await startedManager(socket, makeTransport())
+
+      socket.joinAck = { ...socket.joinAck, endpointId: "ep_2" }
+      socket.fire("disconnect")
+      socket.fire("connect")
+      await new Promise((r) => setTimeout(r, 0))
+
+      expect(getCallLifecycleEvents().map((e) => ({ kind: e.kind, detail: e.detail }))).toEqual([
+        { kind: "socket_disconnect", detail: undefined },
+        { kind: "socket_connect", detail: undefined },
+        { kind: "rejoin_new_endpoint", detail: "ep_2" },
+        { kind: "teardown", detail: undefined },
+      ])
+    })
+
+    it("records a failed rejoin", async () => {
+      const socket = makeSocket()
+      await startedManager(socket, makeTransport())
+
+      socket.failJoin = true
+      socket.fire("disconnect")
+      socket.fire("connect")
+      await new Promise((r) => setTimeout(r, 0))
+
+      expect(kinds()).toEqual(["socket_disconnect", "socket_connect", "rejoin_failed", "teardown"])
+    })
+
+    it("records lease renews, with the ack code as the failure detail", async () => {
+      vi.useFakeTimers()
+      const socket = makeSocket()
+      await startedManager(socket, makeTransport())
+
+      vi.advanceTimersByTime(15_000)
+      expect(kinds()).toEqual(["lease_renew_ok"])
+
+      socket.leaseRenewAck = { ok: false, code: "CALL_LEASE_SUPERSEDED" }
+      vi.advanceTimersByTime(15_000)
+      expect(getCallLifecycleEvents().at(1)).toMatchObject({
+        kind: "lease_renew_failed",
+        detail: "CALL_LEASE_SUPERSEDED",
+      })
+    })
+
+    it("leak guard: every lifecycle listener is detached on leaveCall", async () => {
+      const docAdd = vi.spyOn(document, "addEventListener")
+      const docRemove = vi.spyOn(document, "removeEventListener")
+      const winAdd = vi.spyOn(window, "addEventListener")
+      const winRemove = vi.spyOn(window, "removeEventListener")
+      const manager = await startedManager(makeSocket(), makeTransport())
+
+      const lifecycleEvents = new Set(["visibilitychange", "freeze", "resume", "pagehide", "pageshow"])
+      const attached = [...docAdd.mock.calls, ...winAdd.mock.calls].filter(([event]) =>
+        lifecycleEvents.has(event as string)
+      )
+      expect(attached.map(([event]) => event)).toEqual(["visibilitychange", "freeze", "resume", "pagehide", "pageshow"])
+
+      await manager.leaveCall()
+
+      // Same handler identity, not just the same event name — a listener left on
+      // `document` retains the session closure and stacks per call.
+      const detached = [...docRemove.mock.calls, ...winRemove.mock.calls]
+      for (const binding of attached) expect(detached).toContainEqual(binding)
+
+      clearCallLifecycleLog()
+      document.dispatchEvent(new Event("freeze"))
+      window.dispatchEvent(new Event("pagehide"))
+      expect(getCallLifecycleEvents()).toEqual([])
+
+      for (const spy of [docAdd, docRemove, winAdd, winRemove]) spy.mockRestore()
+    })
   })
 })
 
