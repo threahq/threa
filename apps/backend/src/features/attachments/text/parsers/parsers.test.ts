@@ -1,5 +1,6 @@
 import { describe, test, expect } from "bun:test"
 import { getParser } from "./index"
+import { PREVIEW_MAX_CHARS } from "./preview"
 
 describe("plainTextParser", () => {
   const parser = getParser("plain")
@@ -246,5 +247,42 @@ func Main() {
       expect(result.structure.imports).toContain("fmt")
       expect(result.structure.exports).toContain("Main")
     }
+  })
+})
+
+describe("preview bounds", () => {
+  // A line budget alone bounds nothing: minified HTML/JSON and single-line log
+  // dumps put a whole file on one line. Production sent 278,480 prompt tokens
+  // for one such HTML file before the character cap existed.
+  const oneLongLine = "x".repeat(500_000)
+
+  test("caps a single enormous line at the character ceiling", () => {
+    const result = getParser("plain").parse(oneLongLine, "minified.html")
+
+    expect(result.previewContent.length).toBeLessThanOrEqual(PREVIEW_MAX_CHARS + 32)
+    expect(result.previewContent.endsWith("…[preview truncated]")).toBe(true)
+  })
+
+  test("caps every format, not just the one that was reported", () => {
+    const cases: Array<[Parameters<typeof getParser>[0], string]> = [
+      ["plain", "minified.html"],
+      ["json", "logs.json"],
+      ["csv", "rows.csv"],
+      ["yaml", "config.yaml"],
+      ["markdown", "notes.md"],
+      ["code", "bundle.js"],
+    ]
+
+    for (const [format, filename] of cases) {
+      const result = getParser(format).parse(oneLongLine, filename)
+      expect({ format, over: result.previewContent.length > PREVIEW_MAX_CHARS + 32 }).toEqual({ format, over: false })
+    }
+  })
+
+  test("leaves a preview that fits untouched", () => {
+    const content = "Line 1\nLine 2\nLine 3"
+    const result = getParser("plain").parse(content, "file.txt")
+
+    expect(result.previewContent).toBe(content)
   })
 })

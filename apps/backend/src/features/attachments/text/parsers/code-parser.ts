@@ -1,6 +1,7 @@
 import type { TextSection, CodeStructure } from "@threa/types"
 import type { ParseResult, TextParser } from "./types"
 import { EXTENSION_LANGUAGE_MAP, getFileExtension } from "../config"
+import { buildPreview } from "./preview"
 
 const PREVIEW_LINES = 100
 const LINES_PER_SECTION = 50
@@ -42,7 +43,7 @@ export const codeParser: TextParser = {
       format: "code",
       sections,
       structure,
-      previewContent: lines.slice(0, PREVIEW_LINES).join("\n"),
+      previewContent: buildPreview(lines, PREVIEW_LINES),
       totalLines,
     }
   },

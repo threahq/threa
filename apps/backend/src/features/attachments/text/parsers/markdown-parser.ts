@@ -1,5 +1,6 @@
 import type { TextSection, MarkdownStructure } from "@threa/types"
 import type { ParseResult, TextParser } from "./types"
+import { buildPreview } from "./preview"
 
 const PREVIEW_LINES = 100
 
@@ -72,7 +73,7 @@ export const markdownParser: TextParser = {
       })
     }
 
-    const previewContent = lines.slice(0, PREVIEW_LINES).join("\n")
+    const previewContent = buildPreview(lines, PREVIEW_LINES)
 
     const structure: MarkdownStructure = {
       toc,
