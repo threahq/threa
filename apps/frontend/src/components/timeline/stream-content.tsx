@@ -1392,6 +1392,18 @@ export function StreamContent({
   // the bottom only stops auto-follow when the *user* did it — content growth
   // (new message, link preview, virtua measuring) must not disarm follow.
   const userInteractedAtRef = useRef(0)
+  // Clear the stamp in RENDER on a stream switch, not in the stream-reset effect
+  // below. StreamContent stays mounted across streams, and the open-at-marker
+  // decision is a layout effect — which runs before passive effects in the same
+  // commit — so a passive reset let it read the PREVIOUS stream's stamp and
+  // consume the once-per-stream decision as "the user already scrolled". Any
+  // pointerdown on the old timeline (clicking a message) then silently disabled
+  // open-at-marker for the next stream opened.
+  const gestureStampStreamRef = useRef(streamId)
+  if (gestureStampStreamRef.current !== streamId) {
+    gestureStampStreamRef.current = streamId
+    userInteractedAtRef.current = 0
+  }
 
   const {
     listRef,
@@ -1924,7 +1936,6 @@ export function StreamContent({
     pendingScrollTarget.current = null
     setDeepLinkGaveUp(false)
     setDeepLinkHoldExpired(false)
-    userInteractedAtRef.current = 0
     exitJumpMode()
     setIsSearchOpen(false)
     clearSearch()
