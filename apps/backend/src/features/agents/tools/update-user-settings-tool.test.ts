@@ -185,6 +185,19 @@ describe("canOfferUserSettings", () => {
     )
   })
 
+  // A `referenced_message_edited` rerun fires when someone edits a message the
+  // ORIGINAL session merely referenced. The principal stays the original
+  // invoker, but the supersede prompt presents the editor's text as
+  // authoritative intent — so the person steering the turn is not the person it
+  // acts as.
+  test("withholds it on a rerun caused by someone else's edit", () => {
+    expect(canOfferUserSettings({ ...allowed, rerunCause: "referenced_message_edited" })).toBe(false)
+  })
+
+  test("still offers it on a rerun of the invoker's own edited message", () => {
+    expect(canOfferUserSettings({ ...allowed, rerunCause: "invoking_message_edited" })).toBe(true)
+  })
+
   test("withholds it when the root's owner is unknown", () => {
     expect(canOfferUserSettings({ ...allowed, rootStreamCreatedBy: null })).toBe(false)
   })

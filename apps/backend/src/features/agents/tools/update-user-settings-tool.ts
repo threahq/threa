@@ -6,6 +6,7 @@ import {
   StreamTypes,
   TOOL_CATEGORIES_BY_NAME,
   type AgentSettablePreferences,
+  type AgentSessionRerunCause,
   type StreamType,
 } from "@threa/types"
 import { updatePreferencesSchema } from "../../user-preferences"
@@ -71,7 +72,17 @@ export function canOfferUserSettings(params: {
   rootStreamCreatedBy: string | null
   invokingUserId: string | undefined
   e2eEnabled: boolean
+  /**
+   * Why this turn is a supersede rerun, when it is one. A
+   * `referenced_message_edited` rerun is triggered by an edit to a message the
+   * ORIGINAL session merely referenced — so the person who caused this turn is
+   * not the principal it runs as, while the supersede prompt presents their
+   * edited text as authoritative intent. Whoever's edit fired it must not be
+   * able to steer a durable write against the original invoker's account.
+   */
+  rerunCause?: AgentSessionRerunCause
 }): boolean {
+  if (params.rerunCause === "referenced_message_edited") return false
   return (
     params.rootStreamType === StreamTypes.SCRATCHPAD &&
     Boolean(params.invokingUserId) &&

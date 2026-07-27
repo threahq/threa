@@ -82,6 +82,11 @@ export const DRAFT_TEST_EXCLUDED_TOOLS: ReadonlySet<AgentToolName> = new Set<Age
   AgentToolNames.UPDATE_STREAM_BRIEF,
   AgentToolNames.DELEGATE_TASK,
   AgentToolNames.SAVE_MEMO,
+  // Writes the tester's REAL preferences, which outlive the ephemeral test
+  // stream — the same reason every other entry is here. Every tier-2 tool
+  // belongs in this set by definition (tier 2 means durable state outside the
+  // stream); `config.test.ts` asserts that so the next one cannot be forgotten.
+  AgentToolNames.UPDATE_USER_SETTINGS,
 ])
 
 /**

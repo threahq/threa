@@ -885,6 +885,7 @@ export class PersonaAgent {
             rootStreamType,
             rootStreamCreatedBy,
             invokingUserId: settingsUserId,
+            rerunCause: rerunContext?.cause,
             e2eEnabled: stream.e2eEnabled === true,
           })
             ? {

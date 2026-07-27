@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { AGENT_TOOL_NAMES, AgentToolNames } from "@threa/types"
+import { AGENT_TOOL_NAMES, AgentToolNames, TOOL_TIERS_BY_NAME, ToolTiers } from "@threa/types"
 import { DRAFT_TEST_EXCLUDED_TOOLS, stripDraftTestExcludedTools } from "./config"
 
 describe("DRAFT_TEST_EXCLUDED_TOOLS", () => {
@@ -12,8 +12,27 @@ describe("DRAFT_TEST_EXCLUDED_TOOLS", () => {
         AgentToolNames.UPDATE_STREAM_BRIEF,
         AgentToolNames.DELEGATE_TASK,
         AgentToolNames.SAVE_MEMO,
+        AgentToolNames.UPDATE_USER_SETTINGS,
       ].sort()
     )
+  })
+
+  /**
+   * Derived rather than listed, because the list above is hand-maintained and
+   * hand-maintained sets go stale silently: `update_user_settings` was added to
+   * the tier table and to the toolset but not here, so a persona under test
+   * could write the tester's REAL preferences — which outlive the ephemeral
+   * test stream, the exact thing this set exists to prevent. Tier 2 means
+   * "durable state outside this stream or acts with the user's authority", so
+   * every tier-2 tool qualifies by definition.
+   */
+  test("excludes every guarded tool, so the next one cannot be forgotten", () => {
+    const guarded = AGENT_TOOL_NAMES.filter((name) => TOOL_TIERS_BY_NAME[name] >= ToolTiers.GUARDED)
+
+    expect(guarded.length).toBeGreaterThan(0)
+    for (const name of guarded) {
+      expect(DRAFT_TEST_EXCLUDED_TOOLS.has(name)).toBe(true)
+    }
   })
 
   test("every excluded name is a real tool in the catalog (no stale entry)", () => {
