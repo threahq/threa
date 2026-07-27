@@ -6,6 +6,7 @@ import type { AI } from "@threa/agent-runtime"
 import type { ConfigResolver, ComponentConfig } from "../../../lib/ai/config-resolver"
 
 import { NoObjectGeneratedError } from "ai"
+import { BOUNDARY_EXTRACTION_PROMPT, BOUNDARY_EXTRACTION_SYSTEM_PROMPT } from "./config"
 
 const mockGenerateObject = mock(
   async (): Promise<{ value: any; response: any; usage: any }> => ({
@@ -795,6 +796,60 @@ describe("LLMBoundaryExtractor", () => {
       const userPrompt = call.messages.find((m) => m.role === "user")?.content ?? ""
       expect(userPrompt).toContain("[msg_stale] (26h ago)")
       expect(userPrompt).toContain("last active 26h ago")
+    })
+  })
+
+  // The rules block is ~3k tokens and identical on every call across every
+  // workspace, so it is worth caching — but a provider only caches the span
+  // before the first difference. Any per-call value that leaks into the system
+  // message truncates that span to nothing and silently restores full price on
+  // ~1k calls a month.
+  describe("cacheable prefix", () => {
+    test("keeps every per-call value out of the system message", async () => {
+      const context = createMockContext({ streamType: "dm" })
+      mockGenerateObject.mockResolvedValueOnce({
+        value: { assignments: [{ conversationId: null, isPrimary: true }], newConversationTopic: "T", confidence: 0.9 },
+        response: { usage: {} },
+        usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 },
+      })
+
+      await extractor.extract(context)
+
+      const calls = mockGenerateObject.mock.calls as unknown as Array<
+        [{ messages: { role: string; content: string }[] }]
+      >
+      const messages = calls[0]?.[0]?.messages ?? []
+      const systemPrompt = messages.find((m) => m.role === "system")?.content ?? ""
+      const userPrompt = messages.find((m) => m.role === "user")?.content ?? ""
+
+      // Nothing from this call's data may appear in the cached half.
+      expect(systemPrompt).not.toContain(context.newMessage.contentMarkdown)
+      expect(systemPrompt).not.toContain(context.newMessage.id)
+      for (const conversation of context.activeConversations) {
+        expect(systemPrompt).not.toContain(conversation.id)
+      }
+      // …and it all has to be in the half that follows.
+      expect(userPrompt).toContain(context.newMessage.contentMarkdown)
+
+      // (Length and placeholder checks run against the real constants below —
+      // this resolver is a stub, so its systemPrompt says nothing about prod.)
+      expect(systemPrompt).toBeTruthy()
+    })
+
+    test("ships the whole rules block as a fixed system prompt, with the data slots in the user template", () => {
+      // Every per-call value lives in the user template; none in the system half.
+      expect(BOUNDARY_EXTRACTION_SYSTEM_PROMPT).not.toMatch(/\{\{[A-Z_]+\}\}/)
+      expect(BOUNDARY_EXTRACTION_PROMPT.match(/\{\{[A-Z_]+\}\}/g)).toEqual([
+        "{{CONVERSATIONS}}",
+        "{{RECENT_MESSAGES}}",
+        "{{AUTHOR}}",
+        "{{CONTENT}}",
+        "{{REPLY_CONTEXT}}",
+      ])
+
+      // Under OpenAI's 1024-token floor nothing caches at all. ~4.7 chars per
+      // token on this prose, so 8000 characters is a comfortable margin.
+      expect(BOUNDARY_EXTRACTION_SYSTEM_PROMPT.length).toBeGreaterThan(8000)
     })
   })
 })

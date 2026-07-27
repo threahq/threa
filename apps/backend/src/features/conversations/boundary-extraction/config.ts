@@ -21,27 +21,16 @@ export const BOUNDARY_EXTRACTION_TEMPERATURE = 0.2
 export const NEW_MESSAGE_ATTACHMENT_CHARS = 2000
 export const RECENT_ATTACHMENT_CHARS = 400
 
-export const BOUNDARY_EXTRACTION_SYSTEM_PROMPT = `You are a conversation boundary classifier. You analyze messages and output ONLY valid JSON matching the required schema. No explanations, no markdown, no prose - just the JSON object.`
+export const BOUNDARY_EXTRACTION_SYSTEM_PROMPT = `You are a conversation boundary classifier. You analyze messages and output ONLY valid JSON matching the required schema. No explanations, no markdown, no prose - just the JSON object.
 
-export const BOUNDARY_EXTRACTION_PROMPT = `Analyze this new message and decide which conversation(s) it belongs to. You may also move recent messages that were placed in the wrong conversation, now that this new message clarifies what was happening.
+Analyze this new message and decide which conversation(s) it belongs to. You may also move recent messages that were placed in the wrong conversation, now that this new message clarifies what was happening.
 
-## Active Conversations
-{{CONVERSATIONS}}
+The message to classify, the active conversations, the recent messages, and any explicit reply arrive in the next message, under those four headings.
 
-## Recent Messages
-{{RECENT_MESSAGES}}
-
-## New Message
-From: {{AUTHOR}}
-Content: {{CONTENT}}
-
-## Explicit reply
-{{REPLY_CONTEXT}}
-
-When the new message explicitly quote-replies an earlier message, that is a deliberate user action and the STRONGEST available signal of continuity — it OVERRIDES every other signal, including recency and whatever exchange is currently live. When this section lists a quoted conversation, assign the new message (as primary) to that conversation, even if a different conversation owns all the most recent messages. Override this only when the new message's own words explicitly open a different subject while quoting ("unrelated, but…"). A reply that merely reacts, agrees, asks a follow-up, or builds on the quoted message ("samma här", "kör på det", "sounds good") ALWAYS stays in the quoted message's conversation — brevity is not a reason to leave it in the live exchange. The quoted message's conversation is listed in Active Conversations above, so you can always assign to it.
+When the new message explicitly quote-replies an earlier message, that is a deliberate user action and the STRONGEST available signal of continuity — it OVERRIDES every other signal, including recency and whatever exchange is currently live. When this section lists a quoted conversation, assign the new message (as primary) to that conversation, even if a different conversation owns all the most recent messages. Override this only when the new message's own words explicitly open a different subject while quoting ("unrelated, but…"). A reply that merely reacts, agrees, asks a follow-up, or builds on the quoted message ("samma här", "kör på det", "sounds good") ALWAYS stays in the quoted message's conversation — brevity is not a reason to leave it in the live exchange. The quoted message's conversation is listed in the Active Conversations section below, so you can always assign to it.
 
 ## Attachments
-Some messages above may include an indented \`[attachment <filename> (<kind>)]:\` block beneath them. That block is the extracted text of the attachment — the transcript for audio/video, OCR text for an image, the parsed body for a PDF/Word/Excel, etc. Treat that extracted text as **part of the message's content** when judging topic continuity: a voice memo whose transcript is about onboarding is an onboarding message even if its written content is empty. Pay particular attention to the new message's attachments, since a short or empty written body is often a wrapper around the real payload that lives in the attachment.
+Some messages in the sections below may include an indented \`[attachment <filename> (<kind>)]:\` block beneath them. That block is the extracted text of the attachment — the transcript for audio/video, OCR text for an image, the parsed body for a PDF/Word/Excel, etc. Treat that extracted text as **part of the message's content** when judging topic continuity: a voice memo whose transcript is about onboarding is an onboarding message even if its written content is empty. Pay particular attention to the new message's attachments, since a short or empty written body is often a wrapper around the real payload that lives in the attachment.
 
 ## Time
 Messages carry an age like "(5m ago)" or "(2d ago)" and conversations carry "last active …", all relative to the new message ("just now" = within the last minute). Treat time as first-class evidence. Chat happens in sessions: turns minutes apart are one live exchange; a gap of several hours — an afternoon, overnight, a weekend — usually means the participants came back for a NEW conversation, even in the same stream between the same people.
@@ -105,6 +94,19 @@ When you set newConversationTopic, write a short title of 2-5 words that names t
 - Keep names, products, technical terms, and other proper nouns exactly as they appear in the conversation. Never translate, localize, or re-spell them — carry the participants' own words into the title verbatim.
 
 Respond with ONLY the JSON object. No explanation, no markdown code blocks.`
+
+export const BOUNDARY_EXTRACTION_PROMPT = `## Active Conversations
+{{CONVERSATIONS}}
+
+## Recent Messages
+{{RECENT_MESSAGES}}
+
+## New Message
+From: {{AUTHOR}}
+Content: {{CONTENT}}
+
+## Explicit reply
+{{REPLY_CONTEXT}}`
 
 // --- On-demand conversation split (agent-proposed) -------------------------
 // Re-cluster the messages of ONE existing conversation into ≥1 topic group, in
