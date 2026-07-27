@@ -325,6 +325,59 @@ describe("CallManager", () => {
     expect(socket.emitted.filter((e) => e.event === "call:lease:renew")).toHaveLength(2)
   })
 
+  it("gives the call up when another device takes it over, without leaving server-side", async () => {
+    const socket = makeSocket()
+    const transport = makeTransport()
+    const deps = makeDeps(socket, transport)
+    const manager = new CallManager(deps, null)
+    await manager.startCall({ workspaceId: "ws_1", streamId: "stream_1", mode: "video" })
+
+    socket.fire("call:endpoint:closed", { callId: "call_1", endpointId: "ep_1", reason: "taken_over" })
+    await vi.waitFor(() => expect(getCallState().phase).toBe("idle"))
+
+    // No leave of any kind: `call:leave` would cancel this user's own outgoing
+    // ring, and the REST self-leave closes EVERY endpoint — including the device
+    // that just took over.
+    expect(socket.emitted.some((e) => e.event === "call:leave")).toBe(false)
+    expect(deps.leaveCallRest).not.toHaveBeenCalled()
+    expect(transport.close).toHaveBeenCalled()
+    // The notice outlives the teardown that cleared the rest of the call state.
+    expect(getCallState().displacedCall).toEqual({
+      callId: "call_1",
+      workspaceId: "ws_1",
+      streamId: "stream_1",
+      mode: "video",
+    })
+  })
+
+  it("ignores an endpoint-closed event for another call or another endpoint", async () => {
+    const socket = makeSocket()
+    const manager = new CallManager(makeDeps(socket, makeTransport()), null)
+    await manager.startCall({ workspaceId: "ws_1", streamId: "stream_1", mode: "audio_only" })
+
+    socket.fire("call:endpoint:closed", { callId: "call_other", endpointId: "ep_1" })
+    socket.fire("call:endpoint:closed", { callId: "call_1", endpointId: "ep_stale" })
+
+    expect(getCallState().phase).toBe("connected")
+    expect(getCallState().displacedCall).toBeNull()
+  })
+
+  it("lands on the same displaced state when only the lease renew reports the takeover", async () => {
+    vi.useFakeTimers()
+    const socket = makeSocket()
+    const manager = new CallManager(makeDeps(socket, makeTransport()), null)
+    await manager.startCall({ workspaceId: "ws_1", streamId: "stream_1", mode: "audio_only" })
+
+    // The backstop for a device that lost the socket push.
+    socket.emit = ((event: string, _p: unknown, ack?: (r: unknown) => void) => {
+      if (event === "call:lease:renew") ack?.({ ok: false, code: "CALL_LEASE_SUPERSEDED" })
+    }) as CallSocket["emit"]
+    vi.advanceTimersByTime(15_000)
+    await vi.waitFor(() => expect(getCallState().phase).toBe("idle"))
+
+    expect(getCallState().displacedCall).toMatchObject({ callId: "call_1", streamId: "stream_1" })
+  })
+
   it("mute gates track.enabled and emits call:state", async () => {
     const socket = makeSocket()
     const transport = makeTransport()

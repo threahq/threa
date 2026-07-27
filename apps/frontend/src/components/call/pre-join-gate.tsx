@@ -64,7 +64,7 @@ export function CallJoiningBody() {
  * failed pre-connection.
  */
 export function PreJoinGate({ onDark = false }: { onDark?: boolean } = {}) {
-  const { state, retry, cancel } = useCallLaunch()
+  const { state, retry, takeOver, cancel } = useCallLaunch()
   // On the mobile island the gate sits on the dark call surface, so subdue text to
   // white-wash and give the ghost Cancel a dark hover — keeps joining → error one shape.
   const subtle = onDark ? "text-white/70" : "text-muted-foreground"
@@ -93,6 +93,25 @@ export function PreJoinGate({ onDark = false }: { onDark?: boolean } = {}) {
           </Button>
           <Button size="sm" onClick={retry}>
             Try again
+          </Button>
+        </div>
+      </div>
+    )
+  }
+
+  // The user's own other device (or tab) is already in this call. A choice, not a
+  // failure — so no "Try again", and the primary action says where the call ends up.
+  if (state.status === "takeover_prompt") {
+    return (
+      <div {...{ [CALL_SURFACE_PROTECTED_ATTR]: "" }} className="flex flex-col items-center gap-3 py-6 text-center">
+        <p className="text-sm font-medium">You&rsquo;re in this call on another device</p>
+        <p className={cn("text-xs", subtle)}>Joining here will move the call to this device.</p>
+        <div className="flex gap-2">
+          <Button variant="ghost" size="sm" className={cancelClass} onClick={cancel}>
+            Cancel
+          </Button>
+          <Button size="sm" onClick={takeOver}>
+            Join on this device
           </Button>
         </div>
       </div>

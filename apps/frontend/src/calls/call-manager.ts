@@ -12,6 +12,7 @@ import {
   setCallDevices,
   setCallDiagnostics,
   setCallActiveElsewhere,
+  setDisplacedCall,
   setCallConfirmPending,
   setCallCaptureError,
   bumpCallMediaEpoch,
@@ -130,6 +131,12 @@ export interface CallManagerDeps {
      * know the call they mean to enter; a fresh start-or-join passes none.
      */
     expectedCallId?: string
+    /**
+     * "Join on this device": displace this user's live endpoint on another
+     * device instead of being rejected by it. Only ever set by the retry after a
+     * 409 `CALL_ENDPOINT_ACTIVE` — a first attempt must never take over silently.
+     */
+    takeover?: boolean
   }): Promise<StartCallResponse>
   /**
    * Endpoint-free REST self-leave: closes every live endpoint this user holds on
@@ -231,6 +238,8 @@ export interface CallController {
     mode: CallMode
     expectedCallId?: string
     cameraOn?: boolean
+    /** Displace this user's other device — see {@link CallManagerDeps.startCallRest}. */
+    takeover?: boolean
   }): Promise<void>
   leaveCall(): Promise<void>
   setMuted(muted: boolean): void
@@ -298,6 +307,7 @@ export class CallManager implements CallController {
     mode: CallMode
     expectedCallId?: string
     cameraOn?: boolean
+    takeover?: boolean
   }): Promise<void> {
     if (this.session || this.starting) throw new Error("A call is already active")
     this.starting = true
@@ -308,7 +318,14 @@ export class CallManager implements CallController {
 
   private async runStart(
     gen: number,
-    params: { workspaceId: string; streamId: string; mode: CallMode; expectedCallId?: string; cameraOn?: boolean }
+    params: {
+      workspaceId: string
+      streamId: string
+      mode: CallMode
+      expectedCallId?: string
+      cameraOn?: boolean
+      takeover?: boolean
+    }
   ): Promise<void> {
     const mediaIncarnation = this.deps.mintIncarnation()
     // Synchronous, in-gesture (see startCall doc). Held on a temp until the session exists.
@@ -708,6 +725,17 @@ export class CallManager implements CallController {
       if (evt.callId !== s.callId) return
       this.applyRoster(s, evt.rosterVersion, evt.roster)
     })
+    // Another of this user's devices took the call over: the server closed this
+    // endpoint and its CF session, so the media here is already dead. Addressed to
+    // this endpoint's own room, so it is always about us — but gate on the ids
+    // anyway, since a rebind reuses an endpoint id across sessions.
+    session.socket.on("call:endpoint:closed", (payload: unknown) => {
+      const s = this.sessionForGen(gen)
+      if (!s) return
+      const evt = payload as { callId?: string; endpointId?: string }
+      if (evt.callId !== s.callId || evt.endpointId !== s.endpointId) return
+      void this.handleTakenOver(s)
+    })
     session.socket.on("disconnect", () => {
       // A socket drop is NOT a call end (the lease holds the slot). Demote to
       // reconnecting; the CF media session survives brief socket loss.
@@ -751,6 +779,30 @@ export class CallManager implements CallController {
           void this.teardown()
         })
     })
+  }
+
+  /**
+   * Give the call up to the device that took it over, and say where it went.
+   *
+   * Local teardown ONLY — this must not leave server-side. `call:leave` would
+   * cancel this user's own outgoing ring (taking over a still-ringing DM call
+   * would kill the ring the new device wants), and the endpoint-free REST leave
+   * closes EVERY live endpoint of the user, including the one that just took
+   * over. The server already closed this endpoint under the call-row lock;
+   * there is nothing left here to settle.
+   *
+   * The notice is written after `teardown` (which clears the store) so it
+   * survives — {@link DisplacedCall}.
+   */
+  private async handleTakenOver(session: CallSession): Promise<void> {
+    const displaced = {
+      callId: session.callId,
+      workspaceId: session.workspaceId,
+      streamId: session.streamId,
+      mode: session.mode,
+    }
+    await this.teardown()
+    setDisplacedCall(displaced)
   }
 
   private applyRoster(session: CallSession, version: number, roster: CallRosterParticipant[]): void {
@@ -1134,8 +1186,13 @@ export class CallManager implements CallController {
         if (!this.sessionForGen(gen)) return
         const ack = result as Ack<{ leaseExpiresAt: string }>
         // A superseded lease means our endpoint was taken over — the call is lost
-        // on this incarnation; tear down rather than pretend we're still in.
-        if (!ack?.ok && ack?.code === "CALL_LEASE_SUPERSEDED") void this.teardown()
+        // on this incarnation. The socket push above normally gets here first;
+        // this is the backstop for a device that lost the socket, and it lands on
+        // the same displaced state so the outcome doesn't depend on which won.
+        if (!ack?.ok && ack?.code === "CALL_LEASE_SUPERSEDED") {
+          const s = this.sessionForGen(gen)
+          if (s) void this.handleTakenOver(s)
+        }
       })
     }, interval)
   }
@@ -1386,6 +1443,7 @@ export class CallManager implements CallController {
   private removeSocketHandlers(session: CallSession): void {
     try {
       session.socket.off("call:roster")
+      session.socket.off("call:endpoint:closed")
       session.socket.off("disconnect")
       session.socket.off("connect")
     } catch {
@@ -1439,12 +1497,13 @@ function detectSingleActiveCapture(): boolean {
 
 export function defaultCallManagerDeps(): CallManagerDeps {
   return {
-    async startCallRest({ workspaceId, streamId, mode, mediaIncarnation, expectedCallId }) {
+    async startCallRest({ workspaceId, streamId, mode, mediaIncarnation, expectedCallId, takeover }) {
       return api.post<StartCallResponse>(`/api/workspaces/${workspaceId}/calls`, {
         streamId,
         mode,
         mediaIncarnation,
         expectedCallId,
+        takeover,
       })
     },
     async leaveCallRest({ workspaceId, callId }) {
