@@ -8,6 +8,14 @@ import type { LinkPreviewContentType, LinkPreviewStatus, RichLinkPreviewType } f
 export const CONTEXT_CATEGORIES = ["link", "media", "file", "memo", "delegation", "thread"] as const
 export type ContextCategory = (typeof CONTEXT_CATEGORIES)[number]
 
+/**
+ * Categories a message body owns, i.e. exactly what a message's context-row
+ * derivation rebuilds. An edit refresh must not touch the other categories —
+ * memo, delegation and thread landmarks are anchored on a message but written by
+ * other paths and nothing re-creates them.
+ */
+export const MESSAGE_BODY_CONTEXT_CATEGORIES = ["link", "media", "file"] as const
+
 export const STREAM_CONTEXT_REF_KINDS = ["url", "attachment", "giphy", "memo", "delegation", "thread"] as const
 export type StreamContextRefKind = (typeof STREAM_CONTEXT_REF_KINDS)[number]
 

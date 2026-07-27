@@ -168,6 +168,45 @@ describe("contextItemsFromEvent", () => {
     expect(rows).toEqual([])
   })
 
+  it("blocks the same hosts the server's isBlockedUrl blocks (shared lists)", () => {
+    const rows = contextItemsFromEvent(
+      messageEvent({
+        messageId: "msg_1",
+        contentMarkdown: "",
+        contentJson: doc(
+          { type: "text", text: "a", marks: [{ type: "link", attrs: { href: "http://0.10.0.1/x" } }] },
+          { type: "text", text: "b", marks: [{ type: "link", attrs: { href: "http://[fd00::1]/x" } }] },
+          {
+            type: "text",
+            text: "c",
+            marks: [{ type: "link", attrs: { href: "https://metadata.google.internal/x" } }],
+          }
+        ),
+      }),
+      CTX
+    )
+    expect(rows).toEqual([])
+  })
+
+  it("collapses a ?ref= duplicate the way the server's TRACKING_PARAMS do", () => {
+    const rows = contextItemsFromEvent(
+      messageEvent({
+        messageId: "msg_1",
+        contentMarkdown: "",
+        contentJson: doc(
+          { type: "text", text: "a", marks: [{ type: "link", attrs: { href: "https://example.com/post" } }] },
+          {
+            type: "text",
+            text: "b",
+            marks: [{ type: "link", attrs: { href: "https://example.com/post?ref=threa" } }],
+          }
+        ),
+      }),
+      CTX
+    )
+    expect(rows.map((r) => r.key)).toEqual(["link:https://example.com/post:msg_1"])
+  })
+
   it("anchors memo rows on the first surviving source and the latest source's timestamp", () => {
     // msg_9 is cited first but deleted (absent from the window); msg_10 and
     // msg_11 survive, msg_11 being the later of the two.

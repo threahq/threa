@@ -1,7 +1,7 @@
 import Dexie from "dexie"
 import { useLiveQuery } from "dexie-react-hooks"
 import { db, type CachedStreamContextItem } from "@/db"
-import type { StreamContextItem, StreamContextScope } from "@threa/types"
+import { MESSAGE_BODY_CONTEXT_CATEGORIES, type StreamContextItem, type StreamContextScope } from "@threa/types"
 
 /** The compound-index carrier for occurrence lookups — see {@link CachedStreamContextItem}. */
 export function contextGroupRef(item: Pick<StreamContextItem, "category" | "groupKey">): string {
@@ -54,15 +54,25 @@ export function useStreamContextRows(
  * Locally derived rows group by their raw `refId` until the server's normalized
  * `groupKey` lands, so an expanded group can gain members on reconcile.
  */
-export function useStreamContextOccurrences(groupRef: string | null): CachedStreamContextItem[] | undefined {
+export function useStreamContextOccurrences(
+  workspaceId: string,
+  rootStreamId: string,
+  groupRef: string | null
+): CachedStreamContextItem[] | undefined {
   return useLiveQuery(async () => {
     if (!groupRef) return []
-    return db.streamContextItems
+    const rows = await db.streamContextItems
       .where("[groupRef+occurredAt]")
       .between([groupRef, Dexie.minKey], [groupRef, Dexie.maxKey])
       .reverse()
       .toArray()
-  }, [groupRef])
+    // One IDB database backs every workspace of the account and a groupRef is
+    // only `category:groupKey`, so the same link shared in another workspace or
+    // another root lands under the same key. The server's `listOccurrences`
+    // filters workspace + root; an unfiltered read would list more occurrences
+    // than the row was labelled with and jump into a foreign stream.
+    return rows.filter((row) => row.workspaceId === workspaceId && row.rootStreamId === rootStreamId)
+  }, [workspaceId, rootStreamId, groupRef])
 }
 
 /**
@@ -132,7 +142,15 @@ export async function replaceContextRowsForMessage(
     const existingByKey = new Map(existing.map((row) => [row.key, row]))
     const nextKeys = new Set(rows.map((row) => row.key))
 
-    const removed = existing.filter((row) => !nextKeys.has(row.key)).map((row) => row.key)
+    // Only the categories the body owns are replaceable — a memo or thread
+    // landmark carries the same `sourceMessageId` but is written by another path
+    // that never re-creates it (mirrors the server's `replaceForMessage`, which
+    // deletes `MESSAGE_BODY_CONTEXT_CATEGORIES` only).
+    const removed = existing
+      .filter(
+        (row) => (MESSAGE_BODY_CONTEXT_CATEGORIES as readonly string[]).includes(row.category) && !nextKeys.has(row.key)
+      )
+      .map((row) => row.key)
     if (removed.length > 0) await db.streamContextItems.bulkDelete(removed)
 
     const merged = rows.map((row) => {

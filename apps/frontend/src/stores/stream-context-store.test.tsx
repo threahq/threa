@@ -190,9 +190,40 @@ describe("stream-context-store", () => {
       serverItem({ key: "link:z:msg_3", refId: "z", groupKey: "z", sourceMessageId: "msg_3" }),
     ])
 
-    const { result } = renderHook(() => useStreamContextOccurrences("link:https://example.com/a"))
+    const { result } = renderHook(() => useStreamContextOccurrences(WORKSPACE_ID, ROOT, "link:https://example.com/a"))
     await waitFor(() => expect(result.current).toBeDefined())
     expect(result.current?.map((r) => r.key)).toEqual(["link:a:msg_2", "link:a:msg_1"])
+  })
+
+  it("scopes occurrences to the current workspace and root", async () => {
+    await seedStreamContextItems(WORKSPACE_ID, ROOT, [serverItem({ key: "link:a:msg_1" })])
+    await seedStreamContextItems("ws_other", ROOT, [serverItem({ key: "link:a:msg_other" })])
+    await seedStreamContextItems(WORKSPACE_ID, "stream_other_root", [
+      serverItem({ key: "link:a:msg_root2", streamId: "stream_other_root" }),
+    ])
+
+    const { result } = renderHook(() => useStreamContextOccurrences(WORKSPACE_ID, ROOT, "link:https://example.com/a"))
+    await waitFor(() => expect(result.current).toBeDefined())
+    expect(result.current?.map((r) => r.key)).toEqual(["link:a:msg_1"])
+  })
+
+  it("keeps a thread landmark anchored on an edited message", async () => {
+    await seedStreamContextItems(WORKSPACE_ID, ROOT, [
+      serverItem({ key: "link:https://example.com/a:msg_1" }),
+      serverItem({
+        key: "thread:stream_t1:msg_1",
+        category: "thread",
+        refKind: "thread",
+        refId: "stream_t1",
+        groupKey: "stream_t1",
+        detail: { name: "Thread", replyCount: 2, lastReplyAt: null, anchorEventId: null },
+      }),
+    ])
+
+    // Edited to drop the link entirely.
+    await replaceContextRowsForMessage(WORKSPACE_ID, "msg_1", [])
+
+    expect((await db.streamContextItems.toArray()).map((r) => r.key)).toEqual(["thread:stream_t1:msg_1"])
   })
 
   it("deletes every row a message contributed", async () => {

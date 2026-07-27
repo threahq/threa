@@ -1,7 +1,10 @@
 import { collectGiphyEmbeds, collectLinkUrls } from "@threa/prosemirror"
 import {
+  BLOCKED_HOSTNAMES,
+  BLOCKED_IP_PATTERNS,
   categoryFromMime,
   streamContextItemKey,
+  TRACKING_PARAMS,
   type AttachmentSummary,
   type CapturedMemoSummary,
   type ContextCategory,
@@ -227,24 +230,20 @@ function memoRows(
 
 /**
  * The server's `isBlockedUrl` rejects private/internal hosts before projecting a
- * link. This is the host half of that rule — enough to stop a permanently
- * unreconcilable local row; the server stays authoritative for the rest.
+ * link, so projecting one here would leave a permanently unreconcilable row.
+ * Matches against the shared lists (INV-33) so the two sides cannot drift; the
+ * extra suffix rules only block MORE, which self-heals when the seed lands.
  */
 function isLocalBlockedHost(raw: string): boolean {
   try {
     const host = new URL(raw).hostname.toLowerCase()
-    if (host === "localhost" || host.endsWith(".localhost") || host.endsWith(".local")) return true
-    if (host === "0.0.0.0" || host === "127.0.0.1" || host === "::1" || host === "[::1]") return true
-    if (/^10\./.test(host) || /^192\.168\./.test(host) || /^169\.254\./.test(host)) return true
-    if (/^172\.(1[6-9]|2\d|3[01])\./.test(host)) return true
-    return false
+    if (BLOCKED_HOSTNAMES.has(host)) return true
+    if (host.endsWith(".localhost") || host.endsWith(".local")) return true
+    return BLOCKED_IP_PATTERNS.some((pattern) => pattern.test(host))
   } catch {
     return true
   }
 }
-
-/** Tracking params `normalizeUrl` strips server-side. */
-const TRACKING_PARAMS = ["utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content"]
 
 /**
  * The host/fragment/tracking-param rules the server's `normalizeUrl` applies,
