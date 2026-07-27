@@ -3,6 +3,8 @@ import { useLiveQuery } from "dexie-react-hooks"
 import { db, type CachedStreamContextItem } from "@/db"
 import { MESSAGE_BODY_CONTEXT_CATEGORIES, type StreamContextItem, type StreamContextScope } from "@threa/types"
 
+export type { CachedStreamContextItem }
+
 /** The compound-index carrier for occurrence lookups — see {@link CachedStreamContextItem}. */
 export function contextGroupRef(item: Pick<StreamContextItem, "category" | "groupKey">): string {
   return `${item.category}:${item.groupKey}`

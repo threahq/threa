@@ -13,6 +13,7 @@ import {
   TerminalSquare,
 } from "lucide-react"
 import { attachmentContentUrl } from "@/api"
+import { HighlightedText } from "@/components/search/highlight"
 import { CATEGORY_META } from "@/components/attachment-explorer/category"
 import { useFormattedDate } from "@/hooks"
 import { formatFileSize } from "@/lib/file-size"
@@ -31,6 +32,8 @@ interface StreamContextRowProps {
   onOpenThread: (threadId: string) => void
   onOpenMemo: (memoId: string) => void
   onOpenGallery: (key: string) => void
+  /** Free-text terms to <mark> in the row's labels; empty for an unfiltered feed. */
+  searchTerms?: string[]
 }
 
 function prettyHost(url: string): string {
@@ -125,6 +128,7 @@ export function StreamContextRow({
   onOpenThread,
   onOpenMemo,
   onOpenGallery,
+  searchTerms = [],
 }: StreamContextRowProps) {
   const navigate = useNavigate()
   const { formatRelative } = useFormattedDate()
@@ -347,7 +351,9 @@ export function StreamContextRow({
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-1.5">
               {badge}
-              <span className="truncate text-sm font-medium leading-snug">{primaryText}</span>
+              <span className="truncate text-sm font-medium leading-snug">
+                <HighlightedText text={primaryText} terms={searchTerms} />
+              </span>
               {item.category === "link" && opensExternally && (
                 // Persistent (not hover-gated) so a link row reads as "opens
                 // externally" at a glance, distinct from the rows that jump to
@@ -356,7 +362,11 @@ export function StreamContextRow({
                 <ExternalLink className="size-3 shrink-0 text-muted-foreground/70" aria-hidden />
               )}
             </div>
-            {secondaryText && <p className="mt-0.5 truncate text-xs text-muted-foreground">{secondaryText}</p>}
+            {secondaryText && (
+              <p className="mt-0.5 truncate text-xs text-muted-foreground">
+                <HighlightedText text={secondaryText} terms={searchTerms} />
+              </p>
+            )}
           </div>
           <span className="pointer-events-none shrink-0 pt-0.5 text-[11px] tabular-nums text-muted-foreground">
             {time}
