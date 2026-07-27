@@ -70,6 +70,17 @@ async function pastePlainText(page: Page, text: string): Promise<void> {
   }, text)
 }
 
+/** Paste into the composer at wherever the caret already is, without clicking it first. */
+async function pasteAtCaret(page: Page, text: string): Promise<void> {
+  await page.evaluate((value) => {
+    const editor = document.querySelector("main [contenteditable='true']")
+    if (!editor) throw new Error("Editor not found")
+    const clipboardData = new DataTransfer()
+    clipboardData.setData("text/plain", value)
+    editor.dispatchEvent(new ClipboardEvent("paste", { clipboardData, bubbles: true, cancelable: true }))
+  }, text)
+}
+
 /**
  * Fire a synthetic copy/cut on the editor selection and return what the
  * editor wrote to `text/plain` — i.e. the output of the composer's
@@ -257,5 +268,66 @@ test.describe("Composer copy/paste roundtrip", () => {
     // Paste the cut markdown back — the full document must come back.
     await pastePlainText(page, cut)
     await expectEditorHasAllStyles(page)
+  })
+
+  /**
+   * Copying from strictly inside a block must not carry that block's own
+   * markdown: the fence/quote marker/bullet belongs to text the selection
+   * never touched, and pasting it back into the block wrote it out literally.
+   */
+  test("copying from inside a code block copies bare and pastes back without a fence", async ({ page }) => {
+    await pastePlainText(page, "```plaintext\n> Hi there\n```")
+    const editor = composerEditor(page)
+    await expect(editor.locator("pre code")).toHaveText("> Hi there")
+
+    let copied = ""
+    await expect(async () => {
+      await selectEditorText(page, "there")
+      copied = await captureEditorClipboard(page, "copy")
+      expect(copied).not.toBe("")
+    }).toPass({ timeout: 10000 })
+    expect(copied).toBe("there")
+
+    // Collapse to the end of the copied run — still inside the code block —
+    // and paste there, the move the fence used to break.
+    await page.keyboard.press("ArrowRight")
+    await pasteAtCaret(page, copied)
+
+    await expect(editor.locator("pre code")).toHaveText("> Hi therethere")
+    await expect(editor.locator("pre")).toHaveCount(1)
+  })
+
+  test("copying from inside a quote copies bare", async ({ page }) => {
+    await pastePlainText(page, "> quoted line")
+    await expect(composerEditor(page).locator("blockquote")).toContainText("quoted line")
+
+    let copied = ""
+    await expect(async () => {
+      await selectEditorText(page, "quoted")
+      copied = await captureEditorClipboard(page, "copy")
+      expect(copied).not.toBe("")
+    }).toPass({ timeout: 10000 })
+    expect(copied).toBe("quoted")
+  })
+
+  test("copying part of a mark run drops the mark, the whole run keeps it", async ({ page }) => {
+    await pastePlainText(page, "**bold words** tail")
+    await expect(composerEditor(page).locator("strong")).toHaveText("bold words")
+
+    let partial = ""
+    await expect(async () => {
+      await selectEditorText(page, "words")
+      partial = await captureEditorClipboard(page, "copy")
+      expect(partial).not.toBe("")
+    }).toPass({ timeout: 10000 })
+    expect(partial).toBe("words")
+
+    let whole = ""
+    await expect(async () => {
+      await selectEditorText(page, "bold words")
+      whole = await captureEditorClipboard(page, "copy")
+      expect(whole).not.toBe("")
+    }).toPass({ timeout: 10000 })
+    expect(whole).toBe("**bold words**")
   })
 })
