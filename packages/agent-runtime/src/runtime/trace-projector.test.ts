@@ -27,6 +27,7 @@ function createSinkStub() {
     toolCallId: string
     toolName: string
   }> = []
+  const verified: Array<{ id: number; status: string; reason: string }> = []
 
   const sink: TraceStepSink<{ id: number }> = {
     async record(step) {
@@ -50,9 +51,12 @@ function createSinkStub() {
         toolName: params.toolName,
       })
     },
+    async verify(params) {
+      verified.push({ id: params.step.id, status: params.status, reason: params.reason })
+    },
   }
 
-  return { sink, records, opened, completed, substeps }
+  return { sink, records, opened, completed, substeps, verified }
 }
 
 const toolStart = (toolCallId: string, hidden?: boolean) =>
@@ -469,5 +473,50 @@ describe("TraceProjector hidden tools", () => {
 
     expect(records).toHaveLength(1)
     expect(records[0]!.stepType).toBe(AgentStepTypes.TOOL_ERROR)
+  })
+})
+
+describe("TraceProjector guardian verdicts", () => {
+  const verification = (toolCallId: string, status: "pending" | "approved" | "denied", reason: string) =>
+    ({ type: "tool:verification", toolCallId, toolName: "delegate_task", status, reason, durationMs: 0 }) as const
+
+  it("patches the call's own step rather than opening one of its own", async () => {
+    const { sink, opened, verified } = createSinkStub()
+    const projector = new TraceProjector(sink)
+
+    await projector.handle(toolStart("call_1"))
+    await projector.handle(verification("call_1", "pending", ""))
+    await projector.handle(verification("call_1", "approved", "The user asked for this."))
+
+    expect(opened).toHaveLength(1)
+    expect(verified).toEqual([
+      { id: 1, status: "pending", reason: "" },
+      { id: 1, status: "approved", reason: "The user asked for this." },
+    ])
+  })
+
+  it("ignores a verdict for a hidden tool, which opened no step", async () => {
+    const { sink, verified } = createSinkStub()
+    const projector = new TraceProjector(sink)
+
+    await projector.handle(toolStart("call_1", true))
+    await projector.handle(verification("call_1", "approved", "ok"))
+
+    expect(verified).toHaveLength(0)
+  })
+
+  // A sink that cannot show approval state must not silently swallow the
+  // verdict — that would render a guarded call as an ordinary unverified one,
+  // which is the exact confusion this layer exists to prevent.
+  it("throws when the sink cannot record a verdict", async () => {
+    const { sink } = createSinkStub()
+    const { verify: _dropped, ...withoutVerify } = sink
+    const projector = new TraceProjector(withoutVerify)
+
+    await projector.handle(toolStart("call_1"))
+
+    await expect(projector.handle(verification("call_1", "approved", "ok"))).rejects.toThrow(
+      /cannot record a guardian verdict/
+    )
   })
 })

@@ -28,6 +28,9 @@ import {
   GENERAL_RESEARCH_MAX_ITERATIONS,
   COMPANION_MODEL_ID,
   COMPANION_TEMPERATURE,
+  TOOL_GUARDIAN_MODEL_ID,
+  TOOL_GUARDIAN_TEMPERATURE,
+  TOOL_GUARDIAN_SYSTEM_PROMPT,
 } from "../../features/agents"
 import { EMBEDDING_MODEL_ID } from "../../features/memos"
 
@@ -76,6 +79,12 @@ function buildDefaultConfigs(): Map<string, ComponentConfig> {
     modelId: GENERAL_RESEARCH_MODEL_ID,
     temperature: GENERAL_RESEARCH_TEMPERATURE,
     maxIterations: GENERAL_RESEARCH_MAX_ITERATIONS,
+  })
+
+  configs.set(COMPONENT_PATHS.TOOL_GUARDIAN, {
+    modelId: TOOL_GUARDIAN_MODEL_ID,
+    temperature: TOOL_GUARDIAN_TEMPERATURE,
+    systemPrompt: TOOL_GUARDIAN_SYSTEM_PROMPT,
   })
 
   configs.set(COMPONENT_PATHS.EMBEDDING, {

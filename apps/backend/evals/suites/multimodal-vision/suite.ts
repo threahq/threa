@@ -406,6 +406,7 @@ async function runVisionTask(input: MultimodalVisionInput, ctx: EvalContext): Pr
       temperature: COMPANION_SUMMARY_TEMPERATURE,
     })
     const personaAgent = new PersonaAgent({
+      configResolver: ctx.configResolver,
       pool: ctx.pool,
       ai: ctx.ai,
       traceEmitter,

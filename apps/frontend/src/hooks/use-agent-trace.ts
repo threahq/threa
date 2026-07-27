@@ -17,6 +17,7 @@ import type {
   StepStartedPayload,
   StepProgressPayload,
   StepCompletedPayload,
+  StepVerificationPayload,
   SessionTerminalPayload,
   AgentStepType,
 } from "@threa/types"
@@ -167,6 +168,26 @@ export function useAgentTrace(workspaceId: string, sessionId: string): UseAgentT
     [sessionId]
   )
 
+  // The guardian's verdict on a guarded tool call. A PATCH, not a replacement:
+  // the step's content and sources arrive on their own events, and the verdict
+  // lands between `started` and `completed`, so merging is what keeps the
+  // spinner from wiping the step it belongs to. A verdict for a step we have
+  // not seen yet is dropped rather than synthesized — `completed` carries the
+  // persisted verification, so the state is recovered either way.
+  const handleStepVerification = useCallback(
+    (payload: StepVerificationPayload) => {
+      if (payload?.sessionId !== sessionId || !payload.stepId) return
+      setRealtimeSteps((prev) => {
+        const existing = prev.get(payload.stepId)
+        if (!existing) return prev
+        const next = new Map(prev)
+        next.set(payload.stepId, { ...existing, verification: payload.verification })
+        return next
+      })
+    },
+    [sessionId]
+  )
+
   // Substep: ephemeral phase text from a long-running tool. We accumulate per
   // step type so the trace dialog can render an inline timeline of phases for the
   // currently in-flight step. Cleared on step completion (handleStepCompleted).
@@ -271,6 +292,7 @@ export function useAgentTrace(workspaceId: string, sessionId: string): UseAgentT
     socket.on("agent_session:step:started", handleStepStarted)
     socket.on("agent_session:step:progress", handleStepProgress)
     socket.on("agent_session:step:completed", handleStepCompleted)
+    socket.on("agent_session:step:verification", handleStepVerification)
     socket.on("agent_session:substep", handleSubstep)
     socket.on("agent_session:completed", handleCompleted)
     socket.on("agent_session:failed", handleFailed)
@@ -303,6 +325,7 @@ export function useAgentTrace(workspaceId: string, sessionId: string): UseAgentT
       socket.off("agent_session:step:started", handleStepStarted)
       socket.off("agent_session:step:progress", handleStepProgress)
       socket.off("agent_session:step:completed", handleStepCompleted)
+      socket.off("agent_session:step:verification", handleStepVerification)
       socket.off("agent_session:substep", handleSubstep)
       socket.off("agent_session:completed", handleCompleted)
       socket.off("agent_session:failed", handleFailed)
@@ -315,6 +338,7 @@ export function useAgentTrace(workspaceId: string, sessionId: string): UseAgentT
     handleStepStarted,
     handleStepProgress,
     handleStepCompleted,
+    handleStepVerification,
     handleSubstep,
     handleCompleted,
     handleFailed,

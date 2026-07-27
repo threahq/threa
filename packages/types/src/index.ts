@@ -159,6 +159,10 @@ export {
   AGENT_STEP_TYPES,
   type AgentStepType,
   AgentStepTypes,
+  // Guardian verification state on a guarded tool call's step
+  TOOL_VERIFICATION_STATUSES,
+  type ToolVerificationStatus,
+  ToolVerificationStatuses,
   AGENT_RECONSIDERATION_DECISIONS,
   type AgentReconsiderationDecision,
   AgentReconsiderationDecisions,
@@ -1061,6 +1065,7 @@ export {
   type StepStartedPayload,
   type StepProgressPayload,
   type StepCompletedPayload,
+  type StepVerificationPayload,
   type SessionTerminalPayload,
   type AgentActivityStartedPayload,
   type AgentActivityEndedPayload,

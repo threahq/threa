@@ -794,6 +794,25 @@ export const AGENT_SESSION_EVENT_TYPES = [
 ] as const
 export type AgentSessionEventType = (typeof AGENT_SESSION_EVENT_TYPES)[number]
 
+/**
+ * Where a guarded (tier 2+) tool call stands with the guardian. Carried on the
+ * step the call opened rather than as a step of its own, so the trace shows one
+ * row per action with its approval state attached.
+ *
+ * `pending` is written when the call's step opens and is what renders as a
+ * spinner; it is not a resting state — a step left pending means the turn died
+ * mid-review, which is why it is distinguishable from a step with no
+ * verification at all (tier 1, and every step written before tiers existed).
+ */
+export const TOOL_VERIFICATION_STATUSES = ["pending", "approved", "denied"] as const
+export type ToolVerificationStatus = (typeof TOOL_VERIFICATION_STATUSES)[number]
+
+export const ToolVerificationStatuses = {
+  PENDING: "pending",
+  APPROVED: "approved",
+  DENIED: "denied",
+} as const satisfies Record<string, ToolVerificationStatus>
+
 // Agent step types (semantic - frontend maps to display labels)
 export const AGENT_STEP_TYPES = [
   "context_received",

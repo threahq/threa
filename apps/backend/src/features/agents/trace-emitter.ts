@@ -1,6 +1,6 @@
 import type { Pool } from "pg"
 import type { Server } from "socket.io"
-import type { AgentStepType, TraceSource } from "@threa/types"
+import type { AgentStepType, ToolVerificationStatus, TraceSource } from "@threa/types"
 import { AgentSessionRepository } from "./session-repository"
 import { stepId as generateStepId } from "../../lib/id"
 
@@ -267,6 +267,26 @@ export class ActiveStep {
     })
   }
 
+  /**
+   * Record the guardian's state for a guarded tool call on this step.
+   *
+   * Awaited, unlike `updateSubsteps`: the verdict decides whether the action
+   * happens, so it must be durable before the runtime acts on it. Written as a
+   * patch, so a `pending` write followed by the verdict leaves one row that
+   * moves through both states rather than two rows.
+   */
+  async verify(params: { status: ToolVerificationStatus; reason?: string }): Promise<void> {
+    await AgentSessionRepository.updateStep(this.deps.pool, this.params.stepId, {
+      verification: { status: params.status, ...(params.reason ? { reason: params.reason } : {}) },
+    })
+
+    this.deps.io.to(this.params.sessionRoom).emit("agent_session:step:verification", {
+      sessionId: this.params.sessionId,
+      stepId: this.params.stepId,
+      verification: { status: params.status, reason: params.reason },
+    })
+  }
+
   /** Complete the step. Persists to DB + emits to socket. */
   async complete(params?: {
     content?: string
@@ -298,6 +318,7 @@ export class ActiveStep {
             content: updated.content,
             sources: updated.sources,
             messageId: updated.messageId,
+            verification: updated.verification,
             startedAt: updated.startedAt.toISOString(),
             completedAt: updated.completedAt?.toISOString(),
           }

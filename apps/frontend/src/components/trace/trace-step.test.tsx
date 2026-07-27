@@ -656,3 +656,64 @@ describe("TraceStep", () => {
     expect(screen.queryByRole("button", { name: /sources/i })).not.toBeInTheDocument()
   })
 })
+
+describe("TraceStep guardian verification", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks()
+    vi.spyOn(relativeTimeModule, "RelativeTime").mockImplementation((() => (
+      <span>just now</span>
+    )) as unknown as typeof relativeTimeModule.RelativeTime)
+  })
+
+  function renderStep(step: AgentSessionStep) {
+    render(
+      <MemoryRouter>
+        <TraceStep step={step} workspaceId="ws_1" streamId="stream_1" />
+      </MemoryRouter>
+    )
+  }
+
+  it("shows the check running while the guardian decides", () => {
+    renderStep(createStep({ stepType: "tool_call", content: "", verification: { status: "pending" } }))
+
+    expect(screen.getByText("Checking")).toBeInTheDocument()
+  })
+
+  it("marks an approved call approved", () => {
+    renderStep(
+      createStep({
+        stepType: "tool_call",
+        content: "",
+        verification: { status: "approved", reason: "The user asked for this." },
+      })
+    )
+
+    expect(screen.getByText("Approved")).toBeInTheDocument()
+  })
+
+  it("marks a denied call as not taken and shows why in the body", () => {
+    renderStep(
+      createStep({
+        stepType: "tool_call",
+        content: "Not taken — waiting for your approval. The user never asked for a delegation.",
+        verification: { status: "denied", reason: "The user never asked for a delegation." },
+      })
+    )
+
+    expect(screen.getByText("Not taken")).toBeInTheDocument()
+    // The reason is body text, not a tooltip — readable and copyable without
+    // hovering, and it can't shift the layout (INV-21).
+    expect(screen.getByText(/never asked for a delegation/)).toBeInTheDocument()
+  })
+
+  // Every step written before tiers existed, and every tier-1 step, has no
+  // verification at all. That must render exactly as it did before rather than
+  // as an unapproved-looking action.
+  it("renders no badge on an unguarded step", () => {
+    renderStep(createStep({ stepType: "tool_call", content: "" }))
+
+    expect(screen.queryByText("Checking")).not.toBeInTheDocument()
+    expect(screen.queryByText("Approved")).not.toBeInTheDocument()
+    expect(screen.queryByText("Not taken")).not.toBeInTheDocument()
+  })
+})

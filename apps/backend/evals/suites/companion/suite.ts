@@ -420,6 +420,7 @@ async function runCompanionTask(input: CompanionInput, ctx: EvalContext): Promis
       createMalwareScanner(stubStorage, { malwareScanEnabled: false })
     )
     const personaAgent = new PersonaAgent({
+      configResolver: ctx.configResolver,
       pool: ctx.pool,
       ai: ctx.ai,
       traceEmitter,

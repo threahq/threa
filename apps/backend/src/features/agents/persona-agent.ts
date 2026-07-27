@@ -42,6 +42,8 @@ import { resolveContextWindowPolicy } from "./context-window-policy"
 import { resolveBagForStream, persistSnapshot, appendBagToSystemPrompt, type ResolvedBag } from "./context-bag"
 import { createMemoizedGithubClient, createMemoizedLinearClient, type RunGeneralResearchOptions } from "./tools"
 import { createSessionTraceProjector, type AgentRuntimeConfig, type NewMessageInfo } from "./runtime"
+import { ToolGuardianService } from "./guardian/service"
+import type { ConfigResolver } from "../../lib/ai/config-resolver"
 import {
   InProcessTurnDriver,
   TurnDeliveries,
@@ -72,6 +74,8 @@ export interface PersonaAgentDeps {
    */
   sessionAbortRegistry: SessionAbortRegistry
   userPreferencesService: UserPreferencesService
+  /** Resolves per-component AI config (model, temperature, prompt) — used by the tool guardian. */
+  configResolver: ConfigResolver
   workspaceAgent: WorkspaceAgent
   generalResearcher: GeneralResearcher
   searchService: SearchService
@@ -1006,6 +1010,28 @@ export class PersonaAgent {
           // instead of the runtime auto-committing filler. Derived from the
           // purpose kind, never set ad hoc (roadmap 1.5).
           allowNoMessageOutput: turnFlags.allowNoMessageOutput,
+          // Reviews every tier-2 call before it runs. Always supplied on this
+          // path rather than only when a guarded tool is present: which tools
+          // the turn holds is decided further up (persona enablement, stream
+          // policy, dependency availability), so gating the guardian on that
+          // decision would put a second copy of it here to drift out of sync.
+          // AgentRuntime refuses to start if a guarded tool arrives without
+          // one, which is the check that actually holds.
+          toolGuardian: new ToolGuardianService(
+            { ai, configResolver: this.deps.configResolver },
+            {
+              workspaceId,
+              streamId: session.streamId,
+              personaId: persona.id,
+              sessionId: session.id,
+              costContext: {
+                workspaceId,
+                userId: agentContext.invokingUserId,
+                sessionId: session.id,
+                origin: agentContext.invokingUserId ? "user" : "system",
+              },
+            }
+          ),
           validateFinalResponse: isSupersedeRerun
             ? buildSupersedeResponseValidator({
                 ai,

@@ -1,4 +1,4 @@
-import type { AgentStepType, TraceSource, AuthorType } from "@threa/types"
+import type { AgentStepType, TraceSource, AuthorType, ToolVerificationStatus } from "@threa/types"
 
 export interface NewMessageInfo {
   sequence: bigint
@@ -51,6 +51,20 @@ export type AgentEvent =
       toolName: string
       stepType: AgentStepType
       substep: string
+    }
+  | {
+      /**
+       * A guarded (tier 2+) call's guardian verdict, emitted between
+       * `tool:start` and either `tool:complete` (approved) or the denial. It
+       * patches the step the call already opened rather than opening one of its
+       * own, so the trace shows one row per action carrying its approval state.
+       */
+      type: "tool:verification"
+      toolCallId: string
+      toolName: string
+      status: ToolVerificationStatus
+      reason: string
+      durationMs: number
     }
   | {
       type: "tool:complete"
