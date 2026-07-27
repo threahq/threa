@@ -16,6 +16,28 @@ interface CategoryGroup {
   functions: AIUsageByFunction[]
 }
 
+/**
+ * Share of prompt tokens the provider served from its cache. Rendered only
+ * above zero: a fresh column of "0%" on every row would read as a fault rather
+ * than as "this component has no cacheable prefix", which is the common and
+ * unremarkable case.
+ */
+function cacheHitPct(promptTokens: number, cachedPromptTokens: number): number | null {
+  if (promptTokens <= 0 || cachedPromptTokens <= 0) return null
+  return (cachedPromptTokens / promptTokens) * 100
+}
+
+function CacheHitLabel({ promptTokens, cachedPromptTokens }: { promptTokens: number; cachedPromptTokens: number }) {
+  const pct = cacheHitPct(promptTokens, cachedPromptTokens)
+  // Fixed width whether or not the label renders, so expanding a category can't
+  // shift the columns beside it (INV-21).
+  return (
+    <span className="w-16 text-right text-[11px] tabular-nums text-muted-foreground">
+      {pct === null ? "" : `${pct.toFixed(0)}% cached`}
+    </span>
+  )
+}
+
 function CategoryRow({
   group,
   isExpanded,
@@ -60,6 +82,7 @@ function CategoryRow({
             <li key={fn.functionId} className="flex items-baseline gap-2 text-[11px]">
               <span className="min-w-0 flex-1 truncate font-mono text-muted-foreground">{fn.functionId}</span>
               <span className="tabular-nums text-foreground">{formatCurrency(fn.totalCostUsd)}</span>
+              <CacheHitLabel promptTokens={fn.promptTokens} cachedPromptTokens={fn.cachedPromptTokens} />
               <span className="w-16 text-right tabular-nums text-muted-foreground">
                 {fn.recordCount.toLocaleString()} calls
               </span>
@@ -184,6 +207,7 @@ export function CapabilityBreakdown({
                         {model.model}
                       </span>
                       <span className="tabular-nums">{formatCurrency(model.totalCostUsd)}</span>
+                      <CacheHitLabel promptTokens={model.promptTokens} cachedPromptTokens={model.cachedPromptTokens} />
                       <span className="w-24 text-right text-[11px] tabular-nums text-muted-foreground">
                         {model.totalTokens.toLocaleString()} tok
                       </span>

@@ -1975,8 +1975,10 @@ export interface CommandFailedPayload {
 
 export interface AIUsageSummary {
   totalCostUsd: number
-  totalPromptTokens: number
-  totalCompletionTokens: number
+  promptTokens: number
+  /** Prompt tokens the provider served from its cache — a subset of promptTokens. */
+  cachedPromptTokens: number
+  completionTokens: number
   totalTokens: number
   recordCount: number
 }
@@ -2006,6 +2008,8 @@ export interface AIUsageByFunction {
   category: AIUsageCategory
   totalCostUsd: number
   totalTokens: number
+  promptTokens: number
+  cachedPromptTokens: number
   recordCount: number
 }
 
@@ -2013,6 +2017,8 @@ export interface AIUsageByModel {
   model: string
   totalCostUsd: number
   totalTokens: number
+  promptTokens: number
+  cachedPromptTokens: number
   recordCount: number
 }
 

@@ -63,6 +63,7 @@ export class AICostService implements AICostServiceLike {
         model: params.model,
         provider: params.provider,
         promptTokens: params.usage.promptTokens ?? 0,
+        cachedPromptTokens: params.usage.cachedPromptTokens ?? 0,
         completionTokens: params.usage.completionTokens ?? 0,
         totalTokens: params.usage.totalTokens ?? 0,
         costUsd: cost,
@@ -215,10 +216,24 @@ export function createNoOpCostService(): AICostServiceLike {
       // No-op
     },
     async getWorkspaceUsage() {
-      return { totalCostUsd: 0, totalTokens: 0, promptTokens: 0, completionTokens: 0, recordCount: 0 }
+      return {
+        totalCostUsd: 0,
+        totalTokens: 0,
+        promptTokens: 0,
+        cachedPromptTokens: 0,
+        completionTokens: 0,
+        recordCount: 0,
+      }
     },
     async getCurrentMonthUsage() {
-      return { totalCostUsd: 0, totalTokens: 0, promptTokens: 0, completionTokens: 0, recordCount: 0 }
+      return {
+        totalCostUsd: 0,
+        totalTokens: 0,
+        promptTokens: 0,
+        cachedPromptTokens: 0,
+        completionTokens: 0,
+        recordCount: 0,
+      }
     },
   }
 }
