@@ -114,6 +114,13 @@ reviews:
         replicate the thread-to-root rule. Flag audience/visibility predicates built on
         direct stream_members rows alone — they drop thread content for root-stream
         members. (INV-62)
+        SQL correctness is verified against a real schema. Flag any unit test that asserts
+        on the query TEXT a repository emits (expect(captured.text).toContain("INSERT INTO
+        ..."), regex matches on a captured statement): it proves the string was built, not
+        that the statement runs — not that the columns exist, not that ON CONFLICT matches
+        a real index. Statements belong in apps/backend/tests/integration/, seeding rows
+        and asserting on the rows that come back. A fake Querier that routes on query text
+        to select canned rows is fine; the ban is on assertions. (INV-68)
     - path: "apps/frontend/src/**/*.tsx"
       instructions: |
         Do not define React components inside other React components. Extract to separate
@@ -146,6 +153,13 @@ reviews:
         dedicated client. (INV-30)
         Validate API inputs (body, query, params) with Zod schemas, not manual typeof
         checks. (INV-55)
+        SQL correctness is verified against a real schema. Flag any unit test that asserts
+        on the query TEXT a repository emits (expect(captured.text).toContain("INSERT INTO
+        ..."), regex matches on a captured statement): it proves the string was built, not
+        that the statement runs — not that the columns exist, not that ON CONFLICT matches
+        a real index. Statements belong in a DB-backed integration test, seeding rows and
+        asserting on the rows that come back. A fake Querier that routes on query text to
+        select canned rows is fine; the ban is on assertions. (INV-68)
     - path: "packages/backend-common/src/**"
       instructions: |
         Never do select-then-update without locking or concurrency control. Use ON CONFLICT,
@@ -161,6 +175,13 @@ reviews:
         (INV-66)
         Avoid withClient for single-query paths. Pass pool directly instead of acquiring a
         dedicated client. (INV-30)
+        SQL correctness is verified against a real schema. Flag any unit test that asserts
+        on the query TEXT a repository emits (expect(captured.text).toContain("INSERT INTO
+        ..."), regex matches on a captured statement): it proves the string was built, not
+        that the statement runs — not that the columns exist, not that ON CONFLICT matches
+        a real index. Statements belong in a DB-backed integration test, seeding rows and
+        asserting on the rows that come back. A fake Querier that routes on query text to
+        select canned rows is fine; the ban is on assertions. (INV-68)
 
   auto_review:
     enabled: true

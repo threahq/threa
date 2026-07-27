@@ -149,6 +149,7 @@ Race-safe writes:
 - Fix failing tests; never dismiss as pre-existing (INV-22). No `.skip()`/`.todo()` (INV-26).
 - Assert presence/content of specific events, not counts (INV-23). One object comparison over chains of narrow assertions (INV-24).
 - No `mock.module()`/`vi.mock()` on shared modules — scoped `spyOn` against namespace imports (INV-48). Frontend integration tests mount real components and exercise observable behavior (INV-39).
+- SQL correctness is verified against a real schema (INV-68). Asserting on a repository's emitted query TEXT (`expect(captured.text).toContain("INSERT INTO …")`) proves the string was built, never that it runs — not that the columns exist, not that an `ON CONFLICT` clause matches a real index, not that a join finds rows. Two prod incidents came from that gap: `SELECT th.name` against a column renamed in 2025 (every feed read would have thrown), and `WHERE workspace_id = $1` on `messages`, which has no such column (every backfill plan dead-lettered for a month, silently). Both passed unit tests, typecheck and CI. Statements are verified under `apps/backend/tests/integration/` — seed rows, run the statement, assert on what comes back. A shape claim with no runtime equivalent is deleted, not ported; if it survives, its test name says it checks shape so nobody reads it as coverage. Enforced by a ratchet in `apps/backend/src/db/no-sql-text-assertions.test.ts`: per-file counts may only go down, a new file is rejected. A fake `Querier` that ROUTES on query text to pick canned rows is fine — the ban is on assertions.
 
 ### Hygiene & Scope
 
@@ -162,7 +163,7 @@ Race-safe writes:
 - **API contracts:** INV-31, 32, 33, 46, 55, 58, 64
 - **AI/evals:** INV-16, 19, 28, 44, 45, 54, 65
 - **Frontend/UX:** INV-14, 15, 18, 21, 40, 42, 53, 59, 60, 61, 62, 63
-- **Testing:** INV-22, 23, 24, 26, 39, 48
+- **Testing:** INV-22, 23, 24, 26, 39, 48, 68
 - **Hygiene:** INV-25, 29, 36, 38, 43, 47, 49
 
 New invariant: document here with the next id, add enforcing tests, reference it in nearby code where non-obvious.

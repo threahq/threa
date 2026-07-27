@@ -8,6 +8,11 @@ import type { BackfillContext } from "../../lib/backfill"
  * Fake pool that answers each query from a matcher list and applies the identity
  * index's `ON CONFLICT DO NOTHING` to `stream_context_items` inserts, so the
  * idempotence test observes the real conflict rule rather than a stub.
+ *
+ * What this suite covers is the chunk PROJECTION — which rows a given set of
+ * database rows turns into. It cannot say whether the statements that produced
+ * those rows are valid SQL; `tests/integration/stream-context-backfill.test.ts`
+ * runs them against the real schema and owns that half.
  */
 function fakePool(responses: Array<{ match: RegExp; rows: unknown[] }>) {
   const inserted = new Map<string, Record<string, unknown>>()
@@ -125,34 +130,10 @@ describe("stream-context backfill plan", () => {
     ])
   })
 
-  it("excludes sealed streams in the stream query itself", async () => {
-    const { ctx, queries } = fakePool([{ match: /FROM streams s/, rows: [] }])
+  it("plans nothing when the workspace has no indexable stream", async () => {
+    const { ctx } = fakePool([{ match: /FROM streams s/, rows: [] }])
 
-    const chunks = await plan(ctx, "ws_1")
-
-    const streamQuery = queries.find((text) => text.includes("FROM streams s"))!
-    expect({
-      chunks,
-      excludesSealed: /NOT EXISTS \(\s*SELECT 1 FROM e2e_streams e WHERE e\.stream_id = s\.id\)/.test(streamQuery),
-    }).toEqual({ chunks: [], excludesSealed: true })
-  })
-
-  it("groups memo chunks by the source messages' top-level stream", async () => {
-    const { ctx, queries } = fakePool([
-      { match: /FROM streams s/, rows: [{ id: "stream_a", root_stream_id: "stream_a" }] },
-    ])
-
-    await plan(ctx, "ws_1")
-
-    // A thread's memos belong on its root — the stream the write path indexes
-    // to — so the plan must resolve the message's stream to its top level.
-    const memoQuery = queries.find((text) => text.includes("FROM memos mo"))!
-    expect({
-      joinsStreams: /JOIN streams s ON s\.id = m\.stream_id/.test(memoQuery),
-      resolvesRoot: /CASE WHEN s\.type = 'thread' THEN COALESCE\(s\.root_stream_id, s\.id\) ELSE s\.id END/.test(
-        memoQuery
-      ),
-    }).toEqual({ joinsStreams: true, resolvesRoot: true })
+    expect(await plan(ctx, "ws_1")).toEqual([])
   })
 })
 
