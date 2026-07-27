@@ -1,6 +1,7 @@
 export { defineAgentTool, tierOfBuiltTool, toVercelToolDefs, buildToolPromptSections } from "./runtime/agent-tool"
 export type { AgentTool, AgentToolConfig, AgentToolResult, ExecutionPhase } from "./runtime/agent-tool"
 export type { ToolGuardian, ToolGuardianRequest, ToolGuardianVerdict } from "./runtime/tool-guardian"
+export { stripEchoedPointerTag } from "./runtime/output-guard"
 export {
   negotiateCapabilities,
   resolveDeliveryVerdict,

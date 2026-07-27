@@ -4,6 +4,7 @@ import { AgentToolNames, ToolVerificationStatuses, requiresGuardianReview } from
 import type { AI, CostContext, TelemetryMetadataValue } from "../ai/ai"
 import { logger } from "../logger"
 import { protectToolOutputText } from "./tool-trust-boundary"
+import { stripEchoedPointerTag } from "./output-guard"
 import { sanitizeAssistantReplay } from "./reasoning-replay"
 import { MAX_MESSAGE_CHARS, truncateMessages } from "./truncation"
 import { createKeepResponseTool } from "../tools/keep-response-tool"
@@ -422,7 +423,7 @@ export class AgentRuntime {
 
       if (result.text.trim() || result.toolCalls.length > 0) {
         const thinkingContent = result.text.trim()
-          ? result.text
+          ? stripEchoedPointerTag(result.text)
           : JSON.stringify({ toolPlan: result.toolCalls.map((tc: { toolName: string }) => tc.toolName) })
         await this.emit({ type: "thinking", content: thinkingContent, durationMs })
       }
