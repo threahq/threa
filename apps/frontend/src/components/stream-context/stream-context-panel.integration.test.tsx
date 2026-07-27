@@ -511,6 +511,50 @@ describe("StreamContextPanel — flag on", () => {
     expect(scrollToIndex).toHaveBeenCalledWith(2, { align: "start" })
   })
 
+  it("pages into unloaded history to reach a jump target, then lands on it", async () => {
+    const scrollToIndex = vi.fn()
+    vi.spyOn(streamContextListModule, "StreamContextList").mockImplementation(({ children, listRef }) => {
+      if (listRef) (listRef as { current: unknown }).current = { scrollToIndex }
+      return createElement(Fragment, null, children)
+    })
+    // Only the newest day is cached; the 12th arrives with the jump's page.
+    const older = serverItem({
+      category: "link",
+      refId: "https://older.example",
+      occurredAt: "2026-07-12T10:00:00.000Z",
+    })
+    await db.streamContextItems.put(
+      cachedRow(
+        serverItem({ category: "link", refId: "https://newest.example", occurredAt: "2026-07-20T10:00:00.000Z" })
+      )
+    )
+    // The jump's page is held open, so the assertions below can distinguish
+    // "waited for the page" from "read IDB before it landed".
+    let releasePage: (value: ListStreamContextResponse) => void = () => {}
+    vi.spyOn(streamContextApi, "list")
+      .mockResolvedValueOnce(listResponse({ counts: null, nextCursor: "c1" }))
+      .mockImplementationOnce(
+        () =>
+          new Promise<ListStreamContextResponse>((resolve) => {
+            releasePage = resolve
+          })
+      )
+
+    renderPanel()
+    await userEvent.click((await screen.findAllByRole("button", { name: /Jump to a date/ }))[0]!)
+    await userEvent.click(await screen.findByText("Jump to a specific date…"))
+    await userEvent.click(await screen.findByText("12"))
+
+    // Still in flight: nothing to land on yet. If `fetchNextPage` resolved
+    // before the page landed, the loop would have burned its budget against
+    // stale IDB and given up here instead of waiting.
+    expect(scrollToIndex).not.toHaveBeenCalled()
+
+    releasePage(listResponse({ items: [older], counts: null }))
+
+    await waitFor(() => expect(scrollToIndex).toHaveBeenCalledWith(2, { align: "start" }))
+  })
+
   it("does not offer expansion on a locally derived row (no server groupKey yet)", async () => {
     await db.streamContextItems.put(
       cachedRow(

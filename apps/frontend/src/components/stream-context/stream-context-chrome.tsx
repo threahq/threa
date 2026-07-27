@@ -1,7 +1,7 @@
 import { useState } from "react"
 import type { VirtualizerHandle } from "virtua"
 import { useSearchParams } from "react-router-dom"
-import { PanelRight, Sparkles } from "lucide-react"
+import { ChevronDown, PanelRight, Sparkles } from "lucide-react"
 import { SidePanelClose, SidePanelHeader, SidePanelTitle } from "@/components/ui/side-panel"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
@@ -185,12 +185,18 @@ function DayMarkerJump({ label, day, onJumpToDate }: { label: string; day: Date;
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
+        {/* Carries the chevron the timeline's date pill uses, because that is
+            what makes a date read as a control — on touch there is no hover to
+            reveal it. `py-2` lifts the tap target off the 11px label to a
+            thumb-sized row; the visual rhythm is unchanged because the marker
+            keeps its own `py-1`. */}
         <button
           type="button"
           aria-label={`Jump to a date — showing ${label}`}
-          className="w-full rounded-md text-left transition-colors hover:bg-accent/60 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="group flex w-full items-center rounded-md py-2 text-left transition-colors hover:bg-accent/60 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         >
           <TimelineDayMarker label={label} />
+          <ChevronDown className="ml-1 size-3 shrink-0 text-muted-foreground opacity-60" aria-hidden />
         </button>
       </PopoverTrigger>
       <PopoverContent align="start" className="w-64 p-0">

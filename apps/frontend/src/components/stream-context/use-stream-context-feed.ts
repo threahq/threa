@@ -27,7 +27,9 @@ export interface StreamContextFeed {
   /** `client` = sealed stream; the panel derives locally instead. */
   mode: ListStreamContextResponse["mode"] | null
   hasNextPage: boolean
-  fetchNextPage: () => void
+  /** Resolves when the page has landed and been seeded — a date jump pages in a
+   *  loop and must not re-read IDB before the rows are there. */
+  fetchNextPage: () => Promise<unknown>
   isFetchingNextPage: boolean
   isLoading: boolean
   isError: boolean
@@ -82,7 +84,7 @@ export function useStreamContextFeed(
     counts: firstPage?.counts ?? null,
     mode: firstPage?.mode ?? null,
     hasNextPage: query.hasNextPage,
-    fetchNextPage: () => void query.fetchNextPage(),
+    fetchNextPage: () => query.fetchNextPage(),
     isFetchingNextPage: query.isFetchingNextPage,
     isLoading: query.isLoading,
     isError: query.isError,

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import type { VirtualizerHandle } from "virtua"
 import { ChevronDown, ChevronRight, Search, WifiOff, X } from "lucide-react"
+import { toast } from "sonner"
 import { streamContextApi } from "@/api"
 import { useIsOnline } from "@/components/layout/connection-status"
 import { extractSearchTerms } from "@/components/search/highlight"
@@ -189,10 +190,15 @@ export function StreamContextIndexPanel(props: StreamContextPanelProps) {
     return -1
   }, [])
 
+  const [jumping, setJumping] = useState(false)
   const jumpToDate = useCallback(
     async (date: Date) => {
       const endOfDayMs = localStartOfDayMs(date) + DAY_MS
       let index = markerIndexFor(items, endOfDayMs)
+      // Paging to an unloaded date is several round trips; without this the
+      // panel just sits there. Only set it when a fetch is actually needed, so
+      // the common in-window jump stays instant and flicker-free.
+      if (index === -1 && feed.hasNextPage) setJumping(true)
       // Not loaded that far back yet: page until it is, bounded so a date older
       // than the whole stream can't spin. Each page widens the IDB-backed list.
       for (let page = 0; index === -1 && page < MAX_JUMP_PAGES && feed.hasNextPage; page += 1) {
@@ -212,8 +218,20 @@ export function StreamContextIndexPanel(props: StreamContextPanelProps) {
           endOfDayMs
         )
       }
-      if (index === -1) return
+      setJumping(false)
+      if (index === -1) {
+        // Same wording the timeline's date jump uses for the same dead end, so
+        // the two surfaces fail identically (INV-63: this needs attention and
+        // has no on-screen anchor of its own).
+        toast.info("Nothing indexed on or before that date")
+        return
+      }
       listRef.current?.scrollToIndex(index, { align: "start" })
+      // The marker that opened the menu is usually windowed out by the jump, so
+      // Radix's focus-return lands on a removed node and focus falls to <body>.
+      // Park it on the scroller instead: the user stays inside the panel and can
+      // keep tabbing from where they landed.
+      scrollerRef.current?.focus({ preventScroll: true })
     },
     [items, markerIndexFor, feed, workspaceId, streamId, rootStreamId, category, searchTerms, authorId, before, after]
   )
@@ -302,7 +320,7 @@ export function StreamContextIndexPanel(props: StreamContextPanelProps) {
         footer={
           <>
             <div ref={sentinelRef} aria-hidden className="h-px" />
-            {isFetchingNextPage && <ContextSkeleton />}
+            {(isFetchingNextPage || jumping) && <ContextSkeleton />}
             {boundaryNode}
           </>
         }
@@ -361,6 +379,10 @@ export function StreamContextIndexPanel(props: StreamContextPanelProps) {
 
       <div
         ref={scrollerRef}
+        // Focusable so a date jump can park focus here when the marker that
+        // opened the menu is windowed out (Radix would otherwise return focus to
+        // a removed node and drop it to <body>).
+        tabIndex={-1}
         className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-2 pt-2 pb-[max(0.5rem,env(safe-area-inset-bottom))]"
       >
         {body}
