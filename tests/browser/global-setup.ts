@@ -38,7 +38,7 @@ function findContainer(pattern: string): string | null {
  * In CI, uses the container names from GitHub Actions workflow.
  * Locally, finds containers by the service name pattern from docker-compose.test.yml.
  */
-function getContainerNames(): { postgres: string; minio: string } {
+export function getContainerNames(): { postgres: string; minio: string } {
   if (isCI) {
     return { postgres: "postgres", minio: "minio" }
   }

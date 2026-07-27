@@ -1,6 +1,7 @@
 import { execFileSync } from "child_process"
 import * as path from "path"
 import { test, expect, type Page } from "@playwright/test"
+import { getContainerNames } from "./global-setup"
 import { loginAndCreateWorkspace, createChannel, expectApiOk } from "./helpers"
 
 /**
@@ -68,9 +69,12 @@ function backdateOlderHalf(streamId: string): void {
        AND id IN (SELECT id FROM stream_events WHERE stream_id = '${streamId}' ORDER BY sequence LIMIT ${MESSAGE_COUNT / 2})`
   // 10 days back, so the "Last week" preset (7 days) lands on it under the
   // nearest-earlier rule.
+  // Resolved the same way global-setup does — "postgres" in CI, the
+  // compose container locally. A hardcoded name passes locally (any worktree's
+  // container reaches the same instance) and fails in CI.
   execFileSync("docker", [
     "exec",
-    process.env.PLAYWRIGHT_PG_CONTAINER ?? "threapersons-editor-postgres-test-1",
+    getContainerNames().postgres,
     "psql",
     "-U",
     "threa",
