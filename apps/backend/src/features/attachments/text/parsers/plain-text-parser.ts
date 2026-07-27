@@ -7,6 +7,7 @@
 
 import type { TextSection } from "@threa/types"
 import type { ParseResult, TextParser } from "./types"
+import { buildPreview } from "./preview"
 
 const PREVIEW_LINES = 100
 const SECTION_SIZE = 100 // Lines per section for large files
@@ -33,7 +34,7 @@ export const plainTextParser: TextParser = {
       }
     }
 
-    const previewContent = lines.slice(0, PREVIEW_LINES).join("\n")
+    const previewContent = buildPreview(lines, PREVIEW_LINES)
 
     return {
       format: "plain",

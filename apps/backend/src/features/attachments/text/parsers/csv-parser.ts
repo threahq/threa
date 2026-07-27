@@ -1,5 +1,6 @@
 import type { TextSection, CsvStructure } from "@threa/types"
 import type { ParseResult, TextParser } from "./types"
+import { buildPreview } from "./preview"
 
 const PREVIEW_LINES = 50
 const SAMPLE_ROWS = 5
@@ -58,7 +59,7 @@ export const csvParser: TextParser = {
       format: "csv",
       sections,
       structure,
-      previewContent: lines.slice(0, PREVIEW_LINES).join("\n"),
+      previewContent: buildPreview(lines, PREVIEW_LINES),
       totalLines,
     }
   },

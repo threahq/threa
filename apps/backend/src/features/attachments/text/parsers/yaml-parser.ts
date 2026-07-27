@@ -2,6 +2,7 @@
 import yaml from "js-yaml"
 import type { TextSection, JsonStructure } from "@threa/types"
 import type { ParseResult, TextParser } from "./types"
+import { buildPreview } from "./preview"
 
 const PREVIEW_LINES = 50
 const MAX_KEYS_TO_SHOW = 20
@@ -20,7 +21,7 @@ export const yamlParser: TextParser = {
         format: "yaml",
         sections: [],
         structure: null,
-        previewContent: lines.slice(0, PREVIEW_LINES).join("\n"),
+        previewContent: buildPreview(lines, PREVIEW_LINES),
         totalLines,
       }
     }
@@ -82,7 +83,7 @@ export const yamlParser: TextParser = {
       format: "yaml",
       sections,
       structure,
-      previewContent: lines.slice(0, PREVIEW_LINES).join("\n"),
+      previewContent: buildPreview(lines, PREVIEW_LINES),
       totalLines,
     }
   },
