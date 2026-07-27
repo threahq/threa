@@ -893,18 +893,13 @@ describe("Event Sourcing", () => {
   describe("Transaction Atomicity", () => {
     test("should rollback all changes on failure", async () => {
       const testStreamId = streamId()
-      const testWorkspaceId = workspaceId()
       const testUserId = userId()
 
-      // Get baseline counts
-      const beforeEvents = await pool.query("SELECT COUNT(*) as count FROM stream_events")
-      const beforeMessages = await pool.query("SELECT COUNT(*) as count FROM messages")
-      const beforeOutbox = await pool.query("SELECT COUNT(*) as count FROM outbox")
-
-      // Try to create a message with an invalid stream_id that would cause FK failure
-      // Since we don't have FK constraints, we'll simulate by using a custom transaction
+      // The PRODUCTION wrapper, which commits on success — `withTestTransaction`
+      // rolls back either way, so a test built on it passes whether or not the
+      // throw propagates and proves nothing about atomicity.
       try {
-        await withTestTransaction(pool, async (client) => {
+        await withTransaction(pool, async (client) => {
           // Insert event
           await StreamEventRepository.insert(client, {
             id: "evt_test",
@@ -932,14 +927,19 @@ describe("Event Sourcing", () => {
         // Expected to fail
       }
 
-      // Verify nothing was persisted
-      const afterEvents = await pool.query("SELECT COUNT(*) as count FROM stream_events")
-      const afterMessages = await pool.query("SELECT COUNT(*) as count FROM messages")
-      const afterOutbox = await pool.query("SELECT COUNT(*) as count FROM outbox")
+      // Scoped to this run's stream id, not whole-table counts: `threa_test` is
+      // shared, and a background worker committing one row between the two
+      // counts failed this on CI while the rollback itself was fine.
+      const survivors = await pool.query<{ source: string; id: string }>(
+        `SELECT 'event' AS source, id FROM stream_events WHERE stream_id = $1
+         UNION ALL
+         SELECT 'message', id FROM messages WHERE stream_id = $1
+         UNION ALL
+         SELECT 'outbox', id::text FROM outbox WHERE payload->>'streamId' = $1`,
+        [testStreamId]
+      )
 
-      expect(afterEvents.rows[0].count).toBe(beforeEvents.rows[0].count)
-      expect(afterMessages.rows[0].count).toBe(beforeMessages.rows[0].count)
-      expect(afterOutbox.rows[0].count).toBe(beforeOutbox.rows[0].count)
+      expect(survivors.rows).toEqual([])
     })
   })
 })
