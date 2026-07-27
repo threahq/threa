@@ -65,6 +65,17 @@ export function withoutProbeBackoff(agent: ManagedAgent, nowMs: number): Managed
 
 export type ScratchpadStatus = "active" | "archived" | "inaccessible" | "unavailable"
 
+/** When the scratchpad was archived, for callers that must wait out a grace before acting. */
+export async function fetchScratchpadArchivedAt(params: {
+  baseUrl: string
+  workspaceId: string
+  apiKey: string
+  streamId: string
+}): Promise<string | undefined> {
+  const detail = await fetchScratchpadStatusOnce(params)
+  return typeof detail === "string" ? undefined : detail.archivedAt
+}
+
 export async function fetchScratchpadStatus(
   params: {
     baseUrl: string
@@ -77,10 +88,11 @@ export async function fetchScratchpadStatus(
   // A full `up` pass probes every inventory row; retrying through 429s keeps
   // one rate-limit blip from aborting the whole sweep as "unavailable".
   for (let attempt = 0; ; attempt += 1) {
-    const status = await fetchScratchpadStatusOnce(params)
-    if (typeof status === "string") return status
+    const result = await fetchScratchpadStatusOnce(params)
+    if (typeof result === "string") return result
+    if (result.status) return result.status
     if (attempt >= 2) return "unavailable"
-    await sleep(status.rateLimitedForMs || 2_000 * (attempt + 1))
+    await sleep(result.rateLimitedForMs || 2_000 * (attempt + 1))
   }
 }
 
@@ -89,7 +101,7 @@ async function fetchScratchpadStatusOnce(params: {
   workspaceId: string
   apiKey: string
   streamId: string
-}): Promise<ScratchpadStatus | { rateLimitedForMs: number }> {
+}): Promise<ScratchpadStatus | { rateLimitedForMs?: number; status?: ScratchpadStatus; archivedAt?: string }> {
   try {
     const response = await fetch(
       `${params.baseUrl.replace(/\/$/, "")}/api/v1/workspaces/${params.workspaceId}/streams/${params.streamId}`,
@@ -105,7 +117,7 @@ async function fetchScratchpadStatusOnce(params: {
     if (!response.ok) return response.status >= 500 ? "unavailable" : "inaccessible"
     const json = (await response.json()) as { data?: { archivedAt?: string | null } }
     if (!json.data || typeof json.data !== "object") return "inaccessible"
-    return json.data.archivedAt ? "archived" : "active"
+    return json.data.archivedAt ? { status: "archived", archivedAt: json.data.archivedAt } : "active"
   } catch {
     return "unavailable"
   }

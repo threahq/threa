@@ -42,6 +42,7 @@ import {
 } from "./resume"
 import { attachedTmuxSession, ensureTmuxSession, sendKeys } from "./tmux"
 import type { ManagedAgent, ResumeOptions, SpawnOptions, SpawnResult, ThreaChannelConfig } from "./types"
+import { defaultReapDeps, reapArchivedWorktrees } from "./reap"
 import { restorableWorktreeSource, restoreManagedWorktree } from "./worktree"
 import { runWatchLoop, unavailableBackoffMs, uniqueSupervisorTargets, watchIntervalMs } from "./watch"
 
@@ -121,6 +122,7 @@ export async function spawnAgent(options: SpawnOptions): Promise<void> {
 }
 
 export async function watchUnarchived(options: ResumeOptions): Promise<void> {
+  const watchStartedAtMs = Date.now()
   const session = options.tmux ?? "threa-agents"
   const reconnectIntervalMs = watchIntervalMs()
   const claudeConfig = readThreaChannelConfig()
@@ -147,6 +149,13 @@ export async function watchUnarchived(options: ResumeOptions): Promise<void> {
           { ...options, tmux: session, recreateWorktree: true, respectProbeBackoff: true },
           target
         )
+        // Reap on the untargeted sweep only: a restore event means a specific
+        // scratchpad just came BACK, which is the opposite of reapable.
+        if (!target && !options.dryRun) {
+          await reapArchived({ observingSinceMs: watchStartedAtMs }).catch((error) =>
+            console.warn(`harnessd: reap pass failed: ${error instanceof Error ? error.message : String(error)}`)
+          )
+        }
         if (!unavailable) {
           // A targeted restore event must not cancel an outstanding full
           // reconnect catch-up: another dormant runtime may still need it.
@@ -191,6 +200,48 @@ export async function watchUnarchived(options: ResumeOptions): Promise<void> {
       console.error(`harnessd: supervisor connect failed: ${error instanceof Error ? error.message : String(error)}`)
     },
   })
+}
+
+/**
+ * Clean up worktrees whose scratchpad was archived while nothing was running to
+ * notice. The live-runtime wind-down cannot cover that case; harnessd outlives
+ * reboots, so the backstop lives here.
+ */
+export async function reapArchived(options: { dryRun?: boolean; observingSinceMs?: number } = {}): Promise<void> {
+  const claudeConfig = readThreaChannelConfig()
+  const piConfig = readPiRemoteConfig()
+  const targetFor = (config: { baseUrl?: string; workspaceId?: string; apiKey?: string }) => {
+    const workspaceId = process.env.THREA_WORKSPACE_ID || config.workspaceId
+    const apiKey = process.env.THREA_API_KEY || config.apiKey
+    if (!workspaceId || !apiKey) return undefined
+    return { baseUrl: configuredThreaBaseUrl(config), workspaceId, apiKey }
+  }
+  const [target] = uniqueSupervisorTargets([targetFor(claudeConfig), targetFor(piConfig)])
+  if (!target) throw new Error("harnessd: no Threa credentials found for the reap pass")
+
+  // Same lock as resumeActive: a revive can be recreating the very worktree
+  // this pass would force-remove, and they race the server independently.
+  const deps = defaultReapDeps(target)
+  if (options.observingSinceMs !== undefined) deps.observingSinceMs = options.observingSinceMs
+  const release = options.dryRun
+    ? () => {}
+    : await acquireProcessLock(join(dirname(inventoryPath()), "resume-active.lock"))
+  let outcomes
+  try {
+    outcomes = await reapArchivedWorktrees(deps, options.dryRun ?? false)
+  } finally {
+    release()
+  }
+  if (outcomes.length === 0) {
+    console.log("No recorded harness links.")
+    return
+  }
+  const counts = new Map<string, number>()
+  for (const outcome of outcomes) {
+    console.log(`${outcome.status}\t${outcome.worktree}${outcome.detail ? `\t${outcome.detail}` : ""}`)
+    counts.set(outcome.status, (counts.get(outcome.status) ?? 0) + 1)
+  }
+  console.log(`harnessd: ${[...counts].map(([status, count]) => `${count} ${status}`).join(", ")}`)
 }
 
 export async function bootResume(options: ResumeOptions): Promise<void> {

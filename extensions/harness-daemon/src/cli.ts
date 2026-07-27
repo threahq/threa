@@ -12,6 +12,7 @@ Usage:
   threa-harnessd list
   threa-harnessd up [--tmux <session>] [--dry-run] [--recreate-worktree]
   threa-harnessd resume-active                (alias of up; also revive-unarchived, restore-active)
+  threa-harnessd reap [--dry-run]             (clean up worktrees whose scratchpad was archived while nothing was running)
   threa-harnessd watch-unarchived [--tmux <session>] [--dry-run]
   threa-harnessd boot-resume [--tmux <session>] [--dry-run]
   threa-harnessd install-watch [--tmux <session>]
