@@ -347,7 +347,7 @@ describe("CallManager", () => {
     const socket = makeSocket()
     const transport = makeTransport()
     const deps = makeDeps(socket, transport)
-    const manager = new CallManager(deps, null)
+    const manager = newManager(deps, null)
     await manager.startCall({ workspaceId: "ws_1", streamId: "stream_1", mode: "video" })
 
     socket.fire("call:endpoint:closed", { callId: "call_1", endpointId: "ep_1", reason: "taken_over" })
@@ -370,7 +370,7 @@ describe("CallManager", () => {
 
   it("ignores an endpoint-closed event for another call or another endpoint", async () => {
     const socket = makeSocket()
-    const manager = new CallManager(makeDeps(socket, makeTransport()), null)
+    const manager = newManager(makeDeps(socket, makeTransport()), null)
     await manager.startCall({ workspaceId: "ws_1", streamId: "stream_1", mode: "audio_only" })
 
     socket.fire("call:endpoint:closed", { callId: "call_other", endpointId: "ep_1" })
@@ -383,7 +383,7 @@ describe("CallManager", () => {
   it("lands on the same displaced state when only the lease renew reports the takeover", async () => {
     vi.useFakeTimers()
     const socket = makeSocket()
-    const manager = new CallManager(makeDeps(socket, makeTransport()), null)
+    const manager = newManager(makeDeps(socket, makeTransport()), null)
     await manager.startCall({ workspaceId: "ws_1", streamId: "stream_1", mode: "audio_only" })
 
     // The backstop for a device that lost the socket push.
