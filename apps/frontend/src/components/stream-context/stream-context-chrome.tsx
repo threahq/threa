@@ -2,6 +2,7 @@ import { useSearchParams } from "react-router-dom"
 import { PanelRight, Sparkles } from "lucide-react"
 import { SidePanelClose, SidePanelHeader, SidePanelTitle } from "@/components/ui/side-panel"
 import { Skeleton } from "@/components/ui/skeleton"
+import { StreamContextList } from "./stream-context-list"
 import { groupItemsByDay } from "@/lib/stream-context/grouping"
 import { CONTEXT_CATEGORIES, type ContextCategory, type ContextItem } from "@/lib/stream-context/types"
 import { cn } from "@/lib/utils"
@@ -178,28 +179,39 @@ export function ContextTimeline({
   items,
   renderItem,
   footer,
+  scrollRef,
 }: {
   items: ContextItem[]
   renderItem: (item: ContextItem) => React.ReactNode
   footer?: React.ReactNode
+  /** The panel's scroller. Given one, rows are windowed; without one they all mount. */
+  scrollRef?: React.RefObject<HTMLDivElement | null>
 }) {
-  const groups = groupItemsByDay(items, new Date())
+  // Flattened, not nested per day: virtua windows a flat child list, so a day
+  // marker is a row of its own rather than a wrapper around its group. Keyed on
+  // a stable item id — date labels repeat across years and would collide.
+  //
+  // The first group's lack of top padding is an explicit flag, NOT `first:pt-0`:
+  // virtua wraps every child in its own item element, so `:first-child` would
+  // match every marker and collapse the gap between all day groups. The board's
+  // feed carries the same `row.first` flag for the same reason.
+  const rows = groupItemsByDay(items, new Date()).flatMap((group, index) => [
+    <div key={`day:${group.items[0].key}`} className={index === 0 ? "pt-0" : "pt-3"}>
+      <TimelineDayMarker label={group.label} />
+    </div>,
+    ...group.items.map((item) => <div key={item.key}>{renderItem(item)}</div>),
+  ])
+
   return (
     <div className="relative pb-2">
       {/* the spine — one continuous line behind every node; a hint of gold at
-          its origin (the golden thread) fading down. */}
+          its origin (the golden thread) fading down. Outside the virtualizer:
+          it spans the whole list, not any one windowed row. */}
       <div
         aria-hidden
         className="absolute bottom-3 left-6 top-3 w-px bg-gradient-to-b from-primary/40 via-border to-border"
       />
-      {groups.map((group) => (
-        // Key on a stable item id, not the display label (date labels can
-        // repeat across years and would collide).
-        <div key={group.items[0].key} className="pt-3 first:pt-0">
-          <TimelineDayMarker label={group.label} />
-          {group.items.map((item) => renderItem(item))}
-        </div>
-      ))}
+      {scrollRef ? <StreamContextList scrollRef={scrollRef}>{rows}</StreamContextList> : rows}
       {footer}
     </div>
   )
