@@ -227,8 +227,12 @@ export const extractionResponseSchema = z.object({
     )
     .nullable()
     .describe("Updates to completeness/status/summary for affected conversations, or null if none"),
+  // No `reasoning` field here on purpose. Structured output is generated in
+  // schema order, so a rationale declared after the decisions is emitted after
+  // them and cannot inform them — it was pure output cost (21.6% of completion
+  // tokens, measured) and nothing ever read it. The split schema's `reasoning`
+  // IS consumed and surfaces in the user-facing proposal; that one stays.
   confidence: z.number().min(0).max(1).describe("Overall confidence in this classification (0.0 to 1.0)"),
-  reasoning: z.string().nullable().describe("Brief explanation of the classification decision"),
 })
 
 export type ExtractionResponse = z.infer<typeof extractionResponseSchema>
