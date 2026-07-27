@@ -1,4 +1,4 @@
-import { Virtualizer } from "virtua"
+import { Virtualizer, type VirtualizerHandle } from "virtua"
 import type { ReactNode, RefObject } from "react"
 
 /**
@@ -16,6 +16,9 @@ import type { ReactNode, RefObject } from "react"
 export interface StreamContextListProps {
   /** The scroller the panel owns; virtua reads native scroll metrics off it. */
   scrollRef: RefObject<HTMLDivElement | null>
+  /** virtua's imperative handle, so a date jump can `scrollToIndex` a row that
+   *  is not mounted — the whole point of windowing is that it usually isn't. */
+  listRef?: RefObject<VirtualizerHandle | null>
   children: ReactNode
 }
 
@@ -24,9 +27,9 @@ export interface StreamContextListProps {
 // be generous.
 const BUFFER_SIZE_PX = 600
 
-export function StreamContextList({ scrollRef, children }: StreamContextListProps) {
+export function StreamContextList({ scrollRef, listRef, children }: StreamContextListProps) {
   return (
-    <Virtualizer scrollRef={scrollRef} bufferSize={BUFFER_SIZE_PX}>
+    <Virtualizer ref={listRef} scrollRef={scrollRef} bufferSize={BUFFER_SIZE_PX}>
       {children}
     </Virtualizer>
   )

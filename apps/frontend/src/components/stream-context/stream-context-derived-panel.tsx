@@ -1,6 +1,9 @@
-import { useMemo, useRef } from "react"
+import { useCallback, useMemo, useRef } from "react"
+import type { VirtualizerHandle } from "virtua"
 import { useStreamEvents } from "@/stores/stream-store"
 import { useStreamDelegations } from "@/hooks/use-stream-delegations"
+import { localStartOfDayMs } from "@/lib/dates"
+import { groupItemsByDay } from "@/lib/stream-context/grouping"
 import { deriveStreamContext } from "@/lib/stream-context/derive"
 import { delegationContextItems, withDelegations } from "@/lib/stream-context/delegations"
 import { StreamContextRow } from "./stream-context-row"
@@ -21,6 +24,8 @@ import {
  * Still the path for sealed streams (the server holds ciphertext, never an
  * index) and for workspaces with `streamContextIndex` off.
  */
+const DAY_MS = 24 * 60 * 60 * 1000
+
 export function StreamContextDerivedPanel({
   workspaceId,
   streamId,
@@ -62,6 +67,25 @@ export function StreamContextDerivedPanel({
   const isLoading = events === undefined || (delegationsPending && visible.length === 0)
 
   const scrollerRef = useRef<HTMLDivElement | null>(null)
+  const listRef = useRef<VirtualizerHandle | null>(null)
+
+  // Same jump affordance as the indexed panel, minus the paging: this path
+  // renders the loaded window only, so a date beyond it has nothing to land on
+  // and the jump is a no-op rather than a fetch.
+  const jumpToDate = useCallback(
+    (date: Date) => {
+      const endOfDayMs = localStartOfDayMs(date) + DAY_MS
+      let flatIndex = 0
+      for (const group of groupItemsByDay(visible, new Date())) {
+        if (Date.parse(group.items[0].createdAt) < endOfDayMs) {
+          listRef.current?.scrollToIndex(flatIndex, { align: "start" })
+          return
+        }
+        flatIndex += 1 + group.items.length
+      }
+    },
+    [visible]
+  )
 
   let body: React.ReactNode
   if (isLoading) {
@@ -72,6 +96,8 @@ export function StreamContextDerivedPanel({
     body = (
       <ContextTimeline
         scrollRef={scrollerRef}
+        listRef={listRef}
+        onJumpToDate={jumpToDate}
         items={visible}
         renderItem={(item) => (
           <StreamContextRow

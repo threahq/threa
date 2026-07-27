@@ -481,6 +481,36 @@ describe("StreamContextPanel — flag on", () => {
     expect(onJumpToMessage).toHaveBeenCalledWith("event_delegation_1")
   })
 
+  it("jumps the list to a picked date, landing on the nearest earlier day", async () => {
+    const scrollToIndex = vi.fn()
+    vi.spyOn(streamContextListModule, "StreamContextList").mockImplementation(({ children, listRef }) => {
+      if (listRef) (listRef as { current: unknown }).current = { scrollToIndex }
+      return createElement(Fragment, null, children)
+    })
+    // Newest-first: [marker 20th, row, marker 12th, row, marker 2nd, row].
+    await db.streamContextItems.bulkPut([
+      cachedRow(
+        serverItem({ category: "link", refId: "https://newest.example", occurredAt: "2026-07-20T10:00:00.000Z" })
+      ),
+      cachedRow(
+        serverItem({ category: "link", refId: "https://target.example", occurredAt: "2026-07-12T10:00:00.000Z" })
+      ),
+      cachedRow(
+        serverItem({ category: "link", refId: "https://oldest.example", occurredAt: "2026-07-02T10:00:00.000Z" })
+      ),
+    ])
+    vi.spyOn(streamContextApi, "list").mockResolvedValue(listResponse({ counts: null }))
+
+    renderPanel()
+    await userEvent.click((await screen.findAllByRole("button", { name: /Jump to a date/ }))[0]!)
+    await userEvent.click(await screen.findByText("Jump to a specific date…"))
+    await userEvent.click(await screen.findByText("12"))
+
+    // The 12th's marker sits at flat index 2 — past the 20th's marker and its
+    // one row. Landing on the marker, not the row, so the header reads the day.
+    expect(scrollToIndex).toHaveBeenCalledWith(2, { align: "start" })
+  })
+
   it("does not offer expansion on a locally derived row (no server groupKey yet)", async () => {
     await db.streamContextItems.put(
       cachedRow(

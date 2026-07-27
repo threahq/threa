@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import type { VirtualizerHandle } from "virtua"
 import { ChevronDown, ChevronRight, Search, WifiOff, X } from "lucide-react"
 import { streamContextApi } from "@/api"
 import { useIsOnline } from "@/components/layout/connection-status"
@@ -13,11 +14,14 @@ import { parseSearchQuery, type ParsedFilter } from "@/lib/search-query-parser"
 import { contextItemFromCached } from "@/lib/stream-context/from-cached"
 import { collapseContextRows, countByCategory, filterContextRows } from "@/lib/stream-context/filter"
 import type { ContextCategory, ContextItem } from "@/lib/stream-context/types"
+import { localStartOfDayMs } from "@/lib/dates"
+import { groupItemsByDay } from "@/lib/stream-context/grouping"
 import { cn } from "@/lib/utils"
 import {
   contextGroupRef,
   seedStreamContextItems,
   useStreamContextOccurrences,
+  readStreamContextRows,
   useStreamContextRows,
   type CachedStreamContextItem,
 } from "@/stores/stream-context-store"
@@ -60,6 +64,12 @@ const NEXT_PAGE_PREFETCH_MARGIN = "300px"
  * {@link useStreamContextFeed}'s paged seeds. Sealed streams get `mode: "client"`
  * back from the endpoint and fall through to the derive path.
  */
+const DAY_MS = 24 * 60 * 60 * 1000
+// A jump into unloaded history pages until it reaches the day. Bounded so a date
+// older than the whole stream settles instead of paging forever; at 40 rows a
+// page this reaches ~400 artifacts back, and the user can keep scrolling.
+const MAX_JUMP_PAGES = 10
+
 export function StreamContextIndexPanel(props: StreamContextPanelProps) {
   const { workspaceId, streamId, onClose, onJumpToMessage, onOpenThread, onOpenMemo, onOpenGallery } = props
   const stream = useStreamFromStore(streamId)
@@ -156,7 +166,57 @@ export function StreamContextIndexPanel(props: StreamContextPanelProps) {
   const total = Object.values(counts).reduce((sum, n) => sum + n, 0)
 
   const scrollerRef = useRef<HTMLDivElement | null>(null)
+  const listRef = useRef<VirtualizerHandle | null>(null)
   const sentinelRef = useRef<HTMLDivElement | null>(null)
+
+  // Jump the LIST to a date — navigation, not filtering: the feed stays one
+  // continuous list and the view moves. Rows are newest-first, so the first
+  // group at or before the day's end is the nearest-earlier landing spot (dates
+  // here are sparse; most days hold nothing).
+  //
+  // The index is into the FLAT child list the timeline renders — it interleaves
+  // a day marker before each group — not into the rows. Landing on the marker
+  // also reads better: the header states which day you are now at. The target is
+  // usually not mounted, hence virtua's `scrollToIndex` over a DOM scroll.
+  const items = visibleRows.map(contextItemFromCached).filter((item): item is ContextItem => item !== null)
+
+  const markerIndexFor = useCallback((candidates: ContextItem[], endOfDayMs: number): number => {
+    let flatIndex = 0
+    for (const group of groupItemsByDay(candidates, new Date())) {
+      if (Date.parse(group.items[0].createdAt) < endOfDayMs) return flatIndex
+      flatIndex += 1 + group.items.length
+    }
+    return -1
+  }, [])
+
+  const jumpToDate = useCallback(
+    async (date: Date) => {
+      const endOfDayMs = localStartOfDayMs(date) + DAY_MS
+      let index = markerIndexFor(items, endOfDayMs)
+      // Not loaded that far back yet: page until it is, bounded so a date older
+      // than the whole stream can't spin. Each page widens the IDB-backed list.
+      for (let page = 0; index === -1 && page < MAX_JUMP_PAGES && feed.hasNextPage; page += 1) {
+        await feed.fetchNextPage()
+        const fresh = await readStreamContextRows(workspaceId, streamId, rootStreamId, "tree")
+        const rebuilt = collapseContextRows(
+          filterContextRows(fresh, {
+            category,
+            terms: searchTerms,
+            authorId: authorId ?? undefined,
+            before,
+            after,
+          })
+        )
+        index = markerIndexFor(
+          rebuilt.map(contextItemFromCached).filter((item): item is ContextItem => item !== null),
+          endOfDayMs
+        )
+      }
+      if (index === -1) return
+      listRef.current?.scrollToIndex(index, { align: "start" })
+    },
+    [items, markerIndexFor, feed, workspaceId, streamId, rootStreamId, category, searchTerms, authorId, before, after]
+  )
   const { hasNextPage, isFetchingNextPage, fetchNextPage } = feed
   useEffect(() => {
     const node = sentinelRef.current
@@ -184,7 +244,6 @@ export function StreamContextIndexPanel(props: StreamContextPanelProps) {
   }
 
   const isLoading = rows === undefined || (feed.isLoading && visibleRows.length === 0)
-  const items = visibleRows.map(contextItemFromCached).filter((item): item is ContextItem => item !== null)
   const itemsByKey = new Map(visibleRows.map((row) => [row.key, row]))
 
   // The cached window ends here and the next page can't be fetched — say so
@@ -217,6 +276,8 @@ export function StreamContextIndexPanel(props: StreamContextPanelProps) {
     body = (
       <ContextTimeline
         scrollRef={scrollerRef}
+        listRef={listRef}
+        onJumpToDate={jumpToDate}
         items={items}
         renderItem={(item) => (
           <ContextRowWithOccurrences

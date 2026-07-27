@@ -29,6 +29,29 @@ function toCached(workspaceId: string, rootStreamId: string, item: StreamContext
  * `scope: "tree"` reads the root's whole thread tree (INV-62 — a thread's
  * content belongs to its root's context); `"stream"` reads just this stream.
  */
+/**
+ * One-shot read of the same rows {@link useStreamContextRows} subscribes to.
+ * The live query drives render; a date jump needs the CURRENT rows mid-loop,
+ * after each page lands and before React has re-rendered, so it reads directly.
+ */
+export async function readStreamContextRows(
+  workspaceId: string,
+  streamId: string,
+  rootStreamId: string,
+  scope: StreamContextScope
+): Promise<CachedStreamContextItem[]> {
+  const [index, anchor] =
+    scope === "tree"
+      ? (["[rootStreamId+occurredAt]", rootStreamId] as const)
+      : (["[streamId+occurredAt]", streamId] as const)
+  const rows = await db.streamContextItems
+    .where(index)
+    .between([anchor, Dexie.minKey], [anchor, Dexie.maxKey])
+    .reverse()
+    .toArray()
+  return rows.filter((row) => row.workspaceId === workspaceId)
+}
+
 export function useStreamContextRows(
   workspaceId: string,
   streamId: string,

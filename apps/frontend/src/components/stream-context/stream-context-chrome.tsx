@@ -1,7 +1,11 @@
+import { useState } from "react"
+import type { VirtualizerHandle } from "virtua"
 import { useSearchParams } from "react-router-dom"
 import { PanelRight, Sparkles } from "lucide-react"
 import { SidePanelClose, SidePanelHeader, SidePanelTitle } from "@/components/ui/side-panel"
 import { Skeleton } from "@/components/ui/skeleton"
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import { DateJumpMenu } from "@/components/timeline/date-jump-menu"
 import { StreamContextList } from "./stream-context-list"
 import { groupItemsByDay } from "@/lib/stream-context/grouping"
 import { CONTEXT_CATEGORIES, type ContextCategory, type ContextItem } from "@/lib/stream-context/types"
@@ -171,6 +175,38 @@ export function TimelineDayMarker({ label }: { label: string }) {
 }
 
 /**
+ * The day marker as a jump affordance: tapping a date opens the same menu the
+ * timeline's date pill uses, and picking moves this list rather than the
+ * messages. Mirrors how dates work in the stream view, which is where the
+ * gesture is learned.
+ */
+function DayMarkerJump({ label, day, onJumpToDate }: { label: string; day: Date; onJumpToDate: (date: Date) => void }) {
+  const [open, setOpen] = useState(false)
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          aria-label={`Jump to a date — showing ${label}`}
+          className="w-full rounded-md text-left transition-colors hover:bg-accent/60 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          <TimelineDayMarker label={label} />
+        </button>
+      </PopoverTrigger>
+      <PopoverContent align="start" className="w-64 p-0">
+        <DateJumpMenu
+          defaultMonth={day}
+          onPick={(date) => {
+            onJumpToDate(date)
+            setOpen(false)
+          }}
+        />
+      </PopoverContent>
+    </Popover>
+  )
+}
+
+/**
  * The day-grouped timeline body. `renderItem` lets a caller decorate a row
  * (the index panel wraps multi-occurrence rows in an expander) without the row
  * component knowing about either path.
@@ -180,12 +216,18 @@ export function ContextTimeline({
   renderItem,
   footer,
   scrollRef,
+  listRef,
+  onJumpToDate,
 }: {
   items: ContextItem[]
   renderItem: (item: ContextItem) => React.ReactNode
   footer?: React.ReactNode
   /** The panel's scroller. Given one, rows are windowed; without one they all mount. */
   scrollRef?: React.RefObject<HTMLDivElement | null>
+  /** virtua's handle, so the panel can scroll to an unmounted row on a date jump. */
+  listRef?: React.RefObject<VirtualizerHandle | null>
+  /** Given one, day markers become jump-to-date triggers. */
+  onJumpToDate?: (date: Date) => void
 }) {
   // Flattened, not nested per day: virtua windows a flat child list, so a day
   // marker is a row of its own rather than a wrapper around its group. Keyed on
@@ -197,7 +239,11 @@ export function ContextTimeline({
   // feed carries the same `row.first` flag for the same reason.
   const rows = groupItemsByDay(items, new Date()).flatMap((group, index) => [
     <div key={`day:${group.items[0].key}`} className={index === 0 ? "pt-0" : "pt-3"}>
-      <TimelineDayMarker label={group.label} />
+      {onJumpToDate ? (
+        <DayMarkerJump label={group.label} day={new Date(group.items[0].createdAt)} onJumpToDate={onJumpToDate} />
+      ) : (
+        <TimelineDayMarker label={group.label} />
+      )}
     </div>,
     ...group.items.map((item) => <div key={item.key}>{renderItem(item)}</div>),
   ])
@@ -211,7 +257,13 @@ export function ContextTimeline({
         aria-hidden
         className="absolute bottom-3 left-6 top-3 w-px bg-gradient-to-b from-primary/40 via-border to-border"
       />
-      {scrollRef ? <StreamContextList scrollRef={scrollRef}>{rows}</StreamContextList> : rows}
+      {scrollRef ? (
+        <StreamContextList scrollRef={scrollRef} listRef={listRef}>
+          {rows}
+        </StreamContextList>
+      ) : (
+        rows
+      )}
       {footer}
     </div>
   )
