@@ -1,8 +1,9 @@
 import { describe, expect, it, beforeEach, vi } from "vitest"
 import { MemoryRouter, Routes, Route, useLocation } from "react-router-dom"
 import { fireEvent, render, screen, waitFor } from "@/test"
-import { StreamTypes, Visibilities } from "@threa/types"
+import { LabelableResourceTypes, StreamTypes, Visibilities } from "@threa/types"
 import { ScratchpadItem } from "./scratchpad-item"
+import { SidebarLabelsProvider } from "./sidebar-labels"
 import type { StreamItemData } from "./types"
 import type { SidebarBoardMode } from "./board-sidebar-mode"
 import * as contextsModule from "@/contexts"
@@ -12,6 +13,7 @@ import * as streamSettingsModule from "@/components/stream-settings/use-stream-s
 import * as urgencyTrackingModule from "./use-urgency-tracking"
 import * as itemDrawerModule from "./use-sidebar-item-drawer"
 import * as sidebarActionsModule from "./sidebar-actions"
+import * as workspaceStoreModule from "@/stores/workspace-store"
 
 const collapseOnMobile = vi.fn()
 const archiveStream = vi.fn(async () => {})
@@ -435,6 +437,46 @@ describe("ScratchpadItem", () => {
       />
     )
     expect(screen.getByRole("link", { name: /Notes/i })).toHaveAttribute("href", "/w/workspace_1/s/stream_scratchpad_1")
+  })
+
+  it("shows the unsent-draft hint alongside the label dots, however many labels", () => {
+    vi.spyOn(workspaceStoreModule, "useWorkspaceLabels").mockReturnValue([
+      { id: "label_1", name: "Hardware", color: "#3b82f6", emoji: "💻", archivedAt: null },
+      { id: "label_2", name: "Urgent", color: "#ef4444", emoji: null, archivedAt: null },
+    ] as unknown as ReturnType<typeof workspaceStoreModule.useWorkspaceLabels>)
+    vi.spyOn(workspaceStoreModule, "useWorkspaceLabelAssignments").mockReturnValue([
+      { labelId: "label_1", resourceType: LabelableResourceTypes.STREAM, resourceId: "stream_scratchpad_1" },
+      { labelId: "label_2", resourceType: LabelableResourceTypes.STREAM, resourceId: "stream_scratchpad_1" },
+    ] as unknown as ReturnType<typeof workspaceStoreModule.useWorkspaceLabelAssignments>)
+
+    renderWithRouter(
+      <SidebarLabelsProvider workspaceId="workspace_1">
+        <ScratchpadItem
+          workspaceId="workspace_1"
+          stream={createScratchpad({ hasLoadedDraft: true })}
+          isActive={false}
+          unreadCount={0}
+          mentionCount={0}
+        />
+      </SidebarLabelsProvider>
+    )
+
+    expect(screen.getByRole("img", { name: "2 labels" })).toBeInTheDocument()
+    expect(screen.getByRole("img", { name: "Unsent draft" })).toBeInTheDocument()
+  })
+
+  it("hides the unsent-draft hint on the active scratchpad (its composer already shows the draft)", () => {
+    renderWithRouter(
+      <ScratchpadItem
+        workspaceId="workspace_1"
+        stream={createScratchpad({ hasLoadedDraft: true })}
+        isActive
+        unreadCount={0}
+        mentionCount={0}
+      />
+    )
+
+    expect(screen.queryByRole("img", { name: "Unsent draft" })).not.toBeInTheDocument()
   })
 
   it("chats mode: no board verbs on the scratchpad", () => {
