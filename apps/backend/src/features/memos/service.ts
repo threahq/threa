@@ -10,6 +10,7 @@ import { WorkspaceSettingsRepository } from "../workspace-settings"
 import { StreamContextRepository, contextSnippet, type NewStreamContextItem } from "../stream-context"
 import { MemoRepository, type Memo } from "./repository"
 import { PendingItemRepository, type PendingMemoItem } from "./pending-item-repository"
+import { classificationFingerprint } from "./classification-fingerprint"
 import { MemoClassifier } from "./classifier"
 import { Memorizer } from "./memorizer"
 import { MessageFormatter } from "../../lib/ai/message-formatter"
@@ -394,6 +395,7 @@ export class MemoService implements MemoServiceLike {
     const memoryContext = fetchedData.existingMemos.map((m) => m.abstract)
     const memosToCreate: MemoToCreate[] = []
     const deferredItemIds = new Set<string>()
+    const classifiedFingerprints: Array<{ id: string; fingerprint: string }> = []
     let memosCreated = 0
     let memosDeduped = 0
     let itemsFailed = 0
@@ -462,12 +464,27 @@ export class MemoService implements MemoServiceLike {
 
         const existingMemos = fetchedData.existingConversationMemos.get(item.itemId) ?? []
 
+        // Nothing the classifier is shown has moved since the last pass, so it
+        // would be asked an identical question. The accumulator re-queues on
+        // every `conversation:updated`, including completeness and summary
+        // changes that carry no new content.
+        const fingerprint = classificationFingerprint(conversation, messagesArray, existingMemos)
+        if (item.classifiedFingerprint === fingerprint) {
+          logger.debug(
+            { conversationId: conversation.id },
+            "Conversation unchanged since last classification — skipping"
+          )
+          continue
+        }
+
         // First user message author's timezone, used to anchor relative dates in
         // memos and to render existing-memo timestamps for the classifier.
         const firstUserMsg = messagesArray.find((m) => m.authorType === "user")
         const authorTimezone = firstUserMsg
           ? (fetchedData.authorTimezones.get(firstUserMsg.authorId) ?? undefined)
           : undefined
+
+        classifiedFingerprints.push({ id: item.id, fingerprint })
 
         // AI call (no connection held)
         const classification = await this.classifier.classifyConversation(
@@ -792,6 +809,10 @@ export class MemoService implements MemoServiceLike {
       // Deferred items stay unprocessed and are retried on the next batch check
       // cycle (~30s quiet interval, not 5-min cap) since last_activity_at is
       // already older than the quiet threshold.
+      // Written before markProcessed so a conversation that reached the model
+      // this pass can be recognised as unchanged on the next one.
+      await PendingItemRepository.recordClassifiedFingerprints(client, classifiedFingerprints)
+
       const itemsToMark = fetchedData.pending.filter((p) => !deferredItemIds.has(p.id))
       if (itemsToMark.length > 0) {
         await PendingItemRepository.markProcessed(
