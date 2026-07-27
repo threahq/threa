@@ -11,6 +11,7 @@ export {
   type UpdateFollowUpToolResult,
   type FollowUpSummary,
   type UpdateStreamBriefToolDeps,
+  type UpdateUserSettingsToolDeps,
   type UpdateStreamBriefToolResult,
   type SaveMemoToolDeps,
   type SaveMemoToolResult,
@@ -56,6 +57,11 @@ export { createListFollowUpsTool, type ListFollowUpsInput } from "./list-follow-
 export { createCancelFollowUpTool, type CancelFollowUpInput } from "./cancel-follow-up-tool"
 export { createUpdateFollowUpTool, type UpdateFollowUpInput } from "./update-follow-up-tool"
 export { createUpdateStreamBriefTool, type UpdateStreamBriefInput } from "./update-stream-brief-tool"
+export {
+  createUpdateUserSettingsTool,
+  canOfferUserSettings,
+  type UpdateUserSettingsInput,
+} from "./update-user-settings-tool"
 export { createDelegateTaskTool, type DelegateTaskInput } from "./delegate-task-tool"
 export { createSaveMemoTool, type SaveMemoInput } from "./save-memo-tool"
 export {

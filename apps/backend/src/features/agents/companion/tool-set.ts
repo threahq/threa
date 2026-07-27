@@ -9,6 +9,7 @@ import type {
   ReactionToolDeps,
   SaveMemoToolDeps,
   UpdateStreamBriefToolDeps,
+  UpdateUserSettingsToolDeps,
   WorkspaceToolDeps,
 } from "../tools/tool-deps"
 import { logger } from "../../../lib/logger"
@@ -27,6 +28,7 @@ import {
   createCancelFollowUpTool,
   createUpdateFollowUpTool,
   createUpdateStreamBriefTool,
+  createUpdateUserSettingsTool,
   createDelegateTaskTool,
   createSaveMemoTool,
   createWorkspaceResearchTool,
@@ -91,6 +93,14 @@ export interface ToolSetConfig {
    * sub-agent — it reads/searches, it never writes durable memory).
    */
   saveMemo?: SaveMemoToolDeps
+  /**
+   * Settings-change callback bound to the INVOKING USER, gating the
+   * `update_user_settings` tool. Present only when the turn is a human-triggered
+   * one in that user's own scratchpad (or a thread rooted in one) and the stream
+   * is not sealed — settings are personal, so a channel or DM never offers this,
+   * and a turn with no human trigger has no user whose settings to change.
+   */
+  settings?: UpdateUserSettingsToolDeps
   github?: GitHubToolDeps
   linear?: LinearToolDeps
   supportsVision?: boolean
@@ -116,6 +126,7 @@ export function buildToolSet(config: ToolSetConfig): AgentTool[] {
     briefVersion,
     delegation,
     saveMemo,
+    settings,
     github,
     linear,
     supportsVision,
@@ -196,6 +207,9 @@ export function buildToolSet(config: ToolSetConfig): AgentTool[] {
       : null,
     delegation && isToolEnabled(enabledTools, AgentToolNames.DELEGATE_TASK) ? createDelegateTaskTool(delegation) : null,
     saveMemo && isToolEnabled(enabledTools, AgentToolNames.SAVE_MEMO) ? createSaveMemoTool(saveMemo) : null,
+    settings && isToolEnabled(enabledTools, AgentToolNames.UPDATE_USER_SETTINGS)
+      ? createUpdateUserSettingsTool(settings)
+      : null,
 
     // GitHub tools (workspace-scoped via installed GitHub App; read-only)
     github && isToolEnabled(enabledTools, AgentToolNames.GITHUB_REPOS) ? createGithubReposTool(github) : null,

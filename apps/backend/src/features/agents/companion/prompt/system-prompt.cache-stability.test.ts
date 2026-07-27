@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { StreamTypes } from "@threa/types"
+import { DEFAULT_USER_PREFERENCES, StreamTypes, type UserPreferences } from "@threa/types"
 import type { Persona } from "../../persona-repository"
 import type { StreamContext } from "../../context-builder"
 import { buildSystemPrompt, SYSTEM_PROMPT_INPUT_STABILITY, type SystemPromptInputs } from "./system-prompt"
@@ -62,6 +62,14 @@ const context: StreamContext = {
   },
 } as unknown as StreamContext
 
+const BASE_PREFERENCES: UserPreferences = {
+  ...DEFAULT_USER_PREFERENCES,
+  workspaceId: "ws_test",
+  userId: "usr_test",
+  createdAt: "2026-01-01T00:00:00.000Z",
+  updatedAt: "2026-01-01T00:00:00.000Z",
+}
+
 const BASE: SystemPromptInputs = { persona, context }
 
 /**
@@ -76,6 +84,16 @@ const PER_TURN_SENTINEL_VALUES: Record<string, Partial<SystemPromptInputs>> = {
   conversationTopic: { conversationTopic: SENTINEL },
   spawnedFromContext: { spawnedFromContext: SENTINEL },
   previousSessions: { previousSessions: SENTINEL },
+  currentSettings: {
+    currentSettings: {
+      ...DEFAULT_USER_PREFERENCES,
+      workspaceId: "ws_test",
+      userId: "usr_test",
+      timezone: SENTINEL,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    } satisfies UserPreferences,
+  },
   followUp: {
     purpose: { kind: "follow_up", followUpId: "fup_1" },
     followUp: { note: SENTINEL, scheduledFor: new Date("2026-07-04T09:00:00.000Z") },
@@ -132,6 +150,7 @@ describe("system prompt cache stability", () => {
       rollingConversationSummary: "summary one",
       spawnedFromContext: "parent one",
       previousSessions: "## Previous Sessions\n\nsession one",
+      currentSettings: { ...BASE_PREFERENCES, timezone: "Europe/Stockholm" },
     })
     const turnTwo = buildSystemPrompt({
       ...BASE,
@@ -141,6 +160,7 @@ describe("system prompt cache stability", () => {
       rollingConversationSummary: "summary two",
       spawnedFromContext: "parent two",
       previousSessions: "## Previous Sessions\n\nsession two",
+      currentSettings: { ...BASE_PREFERENCES, timezone: "America/New_York" },
     })
 
     expect(turnOne.stable).toBe(turnTwo.stable)

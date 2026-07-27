@@ -1,4 +1,5 @@
 import { buildToolPromptSections, formatConversationMemoryForPrompt, type AgentTool } from "@threa/agent-runtime"
+import type { UserPreferences } from "@threa/types"
 import { buildTemporalPromptSection } from "../../../../lib/temporal"
 import type { Persona } from "../../persona-repository"
 import type { PersonaAttachmentContentItem } from "../../persona-attachment-repository"
@@ -8,6 +9,7 @@ import { WORKSPACE_RESEARCH_TOOL_NAME } from "../../tools"
 import { buildPromptSectionForStreamType } from "./stream-context-sections"
 import { buildPersonaKnowledgeSection } from "./persona-knowledge"
 import { buildEarlyPurposeSection, buildLatePurposeSection } from "./turn-purpose-prompt"
+import { buildCurrentSettingsSection } from "./current-settings"
 
 /**
  * Default guidance for each aspect of the `## Response Style` section, used
@@ -86,6 +88,11 @@ export interface SystemPromptInputs {
   streamBrief?: string | null
   styleSlots?: { tone?: string; brevity?: string }
   personaKnowledge?: PersonaAttachmentContentItem[] | null
+  /**
+   * The invoking user's current settings, rendered only when
+   * `update_user_settings` is in the toolset. Absent everywhere else.
+   */
+  currentSettings?: UserPreferences | null
 }
 
 /**
@@ -132,6 +139,11 @@ export const SYSTEM_PROMPT_INPUT_STABILITY = {
   streamBrief: "conversation",
   styleSlots: "conversation",
   personaKnowledge: "conversation",
+  // Per-turn, and the classification is not a formality: the agent can change
+  // these mid-conversation, so the block differs from one turn to the next
+  // exactly when the feature is working. Classified by how the value is
+  // produced, not by how standing it reads (see the note above).
+  currentSettings: "turn",
 } as const satisfies Record<keyof SystemPromptInputs, "conversation" | "turn" | "mixed">
 
 export function buildSystemPrompt(inputs: SystemPromptInputs): SplitSystemPrompt {
@@ -150,6 +162,7 @@ export function buildSystemPrompt(inputs: SystemPromptInputs): SplitSystemPrompt
     streamBrief,
     styleSlots,
     personaKnowledge,
+    currentSettings,
   } = inputs
 
   if (!persona.systemPrompt) {
@@ -317,6 +330,10 @@ ${spawnedFromContext.trim()}`
   // cached prefix drifting by that much every turn.
   if (previousSessions?.trim()) {
     volatile += `\n\n${previousSessions.trim()}`
+  }
+
+  if (currentSettings) {
+    volatile += buildCurrentSettingsSection(currentSettings)
   }
 
   const conversationMemory = formatConversationMemoryForPrompt(rollingConversationSummary)

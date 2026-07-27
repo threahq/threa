@@ -479,3 +479,39 @@ export type NestedPreferenceKey =
   | PreferenceKey
   | `accessibility.${keyof AccessibilityPreferences}`
   | `keyboardShortcuts.${string}`
+
+/**
+ * The preferences an agent may change on the user's behalf.
+ *
+ * A deliberate allowlist, not "everything the settings page can edit". Three
+ * things are held back for reasons that are not about caution in general:
+ *
+ * - `scratchpadCustomPrompt` is the agent's own standing instructions, and
+ *   `defaultCompanionPersonaId` picks which agent runs. A tool that rewrites
+ *   its own prompt or swaps itself out is a different risk class from one that
+ *   changes a date format, and neither is something a user asks for in passing.
+ * - `keyboardShortcuts`, `statusPresets`, `voice*`, `board*`, and the collapse
+ *   thresholds are high-arity structured state with no natural-language demand
+ *   behind them yet.
+ * - `sidebarCollapsed` and `gettingStartedDismissed` are UI state the user
+ *   changes by using the UI.
+ *
+ * `satisfies` over `UpdateUserPreferencesInput` keys, so a new preference does
+ * not silently inherit agent write access — it is simply absent until someone
+ * adds it here on purpose.
+ */
+export const AGENT_SETTABLE_PREFERENCE_KEYS = [
+  "theme",
+  "messageDisplay",
+  "dateFormat",
+  "timeFormat",
+  "timezone",
+  "language",
+  "notificationLevel",
+  "unreadOpenPosition",
+  "workSchedule",
+] as const satisfies readonly (keyof UpdateUserPreferencesInput)[]
+
+export type AgentSettablePreferenceKey = (typeof AGENT_SETTABLE_PREFERENCE_KEYS)[number]
+
+export type AgentSettablePreferences = Pick<UpdateUserPreferencesInput, AgentSettablePreferenceKey>

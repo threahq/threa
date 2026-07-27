@@ -108,6 +108,13 @@ export const TOOL_CATEGORIES_BY_NAME = {
   // (service `sourceStreamIds`), so it is never retrievable wider than the stream
   // that produced it. (Passive capture is gated separately by memory_mode.)
   save_memo: ["workspace"],
+  // The user's own preference rows are workspace-scoped user state, so this
+  // takes the `workspace` grant like `save_memo` does for the knowledge layer:
+  // a scratchpad that denies workspace tools opts out of settings changes too.
+  // A dedicated `settings` category would be more precise, but the categories
+  // are a user-facing picker, and one more checkbox is not worth the precision
+  // until someone actually wants web-but-not-settings.
+  update_user_settings: ["workspace"],
 
   // GitHub reads are public-web-class egress (a structured read_url), so they
   // ride the `web` grant as well as `github`.

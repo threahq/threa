@@ -1,5 +1,5 @@
 import type { Pool } from "pg"
-import type { KnowledgeType, MemoScope } from "@threa/types"
+import type { AgentSettablePreferences, KnowledgeType, MemoScope, UserPreferences } from "@threa/types"
 import type { AttachmentService } from "../../attachments"
 import type { MemoExplorerService } from "../../memos"
 import type { SearchService } from "../../search"
@@ -118,6 +118,17 @@ export interface UpdateStreamBriefToolDeps {
     reason: string
     expectedVersion: number
   }) => Promise<UpdateStreamBriefToolResult>
+}
+
+/**
+ * Callback for the `update_user_settings` tool, bound to the invoking user by
+ * the caller. The tool supplies only the patch — never a user id — so a
+ * cross-user write cannot be expressed by the model at all. Returns the
+ * preferences as stored, which is what the tool reports back (the stored value
+ * can differ from the requested one, e.g. a cleared override).
+ */
+export interface UpdateUserSettingsToolDeps {
+  updateSettings: (patch: AgentSettablePreferences) => Promise<UserPreferences>
 }
 
 /**
