@@ -6,6 +6,7 @@ import { MemoService } from "./service"
 import { MEMO_REFLECTIVE_MAX_MEMOS } from "./config"
 import { MemoRepository } from "./repository"
 import { PendingItemRepository, type PendingMemoItem } from "./pending-item-repository"
+import { classificationFingerprint } from "./classification-fingerprint"
 import type { MemoContent } from "./memorizer"
 import type { ConversationClassification } from "./classifier"
 import { OutboxRepository } from "../../lib/outbox"
@@ -23,7 +24,7 @@ const WORKSPACE_ID = "ws_1"
 const STREAM_ID = "stream_1"
 const CONVERSATION_ID = "conv_1"
 
-function fakePendingItem(): PendingMemoItem {
+function fakePendingItem(overrides: Partial<PendingMemoItem> = {}): PendingMemoItem {
   return {
     id: "pend_1",
     workspaceId: WORKSPACE_ID,
@@ -32,6 +33,8 @@ function fakePendingItem(): PendingMemoItem {
     itemId: CONVERSATION_ID,
     queuedAt: new Date(),
     processedAt: null,
+    classifiedFingerprint: null,
+    ...overrides,
   }
 }
 
@@ -108,7 +111,7 @@ const classification: ConversationClassification = {
   containsActionItems: false,
 }
 
-function setupService(options: { memoContents: MemoContent[] }) {
+function setupService(options: { memoContents: MemoContent[]; pendingItem?: Partial<PendingMemoItem> }) {
   const clientQuery = mock(async () => ({ rows: [] }))
   const fakeClient = { query: clientQuery } as unknown as PoolClient
   spyOn(dbModule, "withClient").mockImplementation((async (_pool: unknown, fn: (c: PoolClient) => unknown) =>
@@ -116,8 +119,11 @@ function setupService(options: { memoContents: MemoContent[] }) {
   spyOn(dbModule, "withTransaction").mockImplementation((async (_pool: unknown, fn: (c: PoolClient) => unknown) =>
     fn(fakeClient)) as typeof dbModule.withTransaction)
 
-  spyOn(PendingItemRepository, "findUnprocessed").mockResolvedValue([fakePendingItem()])
+  spyOn(PendingItemRepository, "findUnprocessed").mockResolvedValue([fakePendingItem(options.pendingItem)])
   spyOn(PendingItemRepository, "markProcessed").mockResolvedValue(undefined as never)
+  const recordFingerprints = spyOn(PendingItemRepository, "recordClassifiedFingerprints").mockResolvedValue(
+    undefined as never
+  )
   spyOn(MemoRepository, "findByStream").mockResolvedValue([])
   spyOn(StreamRepository, "findById").mockResolvedValue(fakeStream())
   spyOn(MemoRepository, "getAllTags").mockResolvedValue([])
@@ -151,9 +157,11 @@ function setupService(options: { memoContents: MemoContent[] }) {
   const streamEventInsertMany = spyOn(StreamEventRepository, "insertMany").mockResolvedValue([insertedStreamEvent])
   const contextInsertMany = spyOn(StreamContextRepository, "insertMany").mockResolvedValue(0)
 
+  const classifyConversation = mock(async () => classification)
+
   const service = new MemoService({
     pool: {} as never,
-    classifier: { classifyConversation: async () => classification } as never,
+    classifier: { classifyConversation } as never,
     memorizer: {
       memorizeConversation: async () => options.memoContents,
       reviseMemo: async () => [],
@@ -173,6 +181,8 @@ function setupService(options: { memoContents: MemoContent[] }) {
     clientQuery,
     contextInsertMany,
     findSourceMessages,
+    classifyConversation,
+    recordFingerprints,
   }
 }
 
@@ -1140,5 +1150,61 @@ describe("MemoService — stream-context projection privacy + scoping", () => {
         sourceMessageId: "msg_trigger",
       }),
     ])
+  })
+})
+
+describe("MemoService.processBatch — re-classification change gate", () => {
+  afterEach(() => mock.restore())
+
+  it("classifies a conversation it has never seen and records what it was shown", async () => {
+    const { service, classifyConversation, recordFingerprints } = setupService({ memoContents: [memoContent] })
+
+    await service.processBatch(WORKSPACE_ID, STREAM_ID)
+
+    expect(classifyConversation).toHaveBeenCalledTimes(1)
+    expect(recordFingerprints.mock.calls[0]?.[1]).toEqual([
+      { id: "pend_1", fingerprint: expect.any(String) as unknown as string },
+    ])
+  })
+
+  it("skips the AI call when the conversation is unchanged since that pass", async () => {
+    // The digest the previous pass would have stored, derived from the same
+    // fakes this batch will load.
+    const stored = classificationFingerprint(fakeConversation(), [...fakeMessages().values()], [])
+    const { service, classifyConversation, recordFingerprints } = setupService({
+      memoContents: [memoContent],
+      pendingItem: { classifiedFingerprint: stored },
+    })
+
+    const result = await service.processBatch(WORKSPACE_ID, STREAM_ID)
+
+    expect(classifyConversation).not.toHaveBeenCalled()
+    expect(result.memosCreated).toBe(0)
+    // Nothing new was asked, so nothing new is recorded — the stored digest still stands.
+    expect(recordFingerprints.mock.calls[0]?.[1]).toEqual([])
+  })
+
+  it("still marks a skipped item processed, so it does not re-queue forever", async () => {
+    const stored = classificationFingerprint(fakeConversation(), [...fakeMessages().values()], [])
+    const { service } = setupService({
+      memoContents: [memoContent],
+      pendingItem: { classifiedFingerprint: stored },
+    })
+    const markProcessed = PendingItemRepository.markProcessed as unknown as ReturnType<typeof mock>
+
+    await service.processBatch(WORKSPACE_ID, STREAM_ID)
+
+    expect(markProcessed.mock.calls[0]?.[1]).toEqual(["pend_1"])
+  })
+
+  it("classifies again when the stored digest is stale", async () => {
+    const { service, classifyConversation } = setupService({
+      memoContents: [memoContent],
+      pendingItem: { classifiedFingerprint: "digest-from-before-the-last-two-messages" },
+    })
+
+    await service.processBatch(WORKSPACE_ID, STREAM_ID)
+
+    expect(classifyConversation).toHaveBeenCalledTimes(1)
   })
 })

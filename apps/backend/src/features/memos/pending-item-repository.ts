@@ -10,6 +10,7 @@ interface PendingItemRow {
   item_id: string
   queued_at: Date
   processed_at: Date | null
+  classified_fingerprint: string | null
 }
 
 export interface PendingMemoItem {
@@ -20,6 +21,8 @@ export interface PendingMemoItem {
   itemId: string
   queuedAt: Date
   processedAt: Date | null
+  /** Digest of the classifier inputs at the last pass; null = never classified. */
+  classifiedFingerprint: string | null
 }
 
 export interface QueuePendingItemParams {
@@ -39,10 +42,11 @@ function mapRowToPendingItem(row: PendingItemRow): PendingMemoItem {
     itemId: row.item_id,
     queuedAt: row.queued_at,
     processedAt: row.processed_at,
+    classifiedFingerprint: row.classified_fingerprint,
   }
 }
 
-const SELECT_FIELDS = `id, workspace_id, stream_id, item_type, item_id, queued_at, processed_at`
+const SELECT_FIELDS = `id, workspace_id, stream_id, item_type, item_id, queued_at, processed_at, classified_fingerprint`
 
 export const PendingItemRepository = {
   async queue(client: PoolClient, items: QueuePendingItemParams[]): Promise<PendingMemoItem[]> {
@@ -92,6 +96,29 @@ export const PendingItemRepository = {
       UPDATE memo_pending_items
       SET processed_at = NOW()
       WHERE id = ANY(${ids})
+    `)
+  },
+
+  /**
+   * Store what the classifier was shown, so the next pass over the same
+   * conversation can tell whether the question has changed. Written only for
+   * items that actually reached the model — a skipped item's stored digest is
+   * still the right one, and a deferred item was never asked.
+   */
+  async recordClassifiedFingerprints(
+    client: PoolClient,
+    entries: Array<{ id: string; fingerprint: string }>
+  ): Promise<void> {
+    if (entries.length === 0) return
+
+    await client.query(sql`
+      UPDATE memo_pending_items AS p
+      SET classified_fingerprint = v.fingerprint
+      FROM UNNEST(
+        ${entries.map((e) => e.id)}::text[],
+        ${entries.map((e) => e.fingerprint)}::text[]
+      ) AS v(id, fingerprint)
+      WHERE p.id = v.id
     `)
   },
 
