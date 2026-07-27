@@ -9,9 +9,15 @@
  * Model for workspace agent retrieval planning / evaluation.
  *
  * Chosen for fast, predictable tail latency (single reliable provider path) and
- * solid structured-output compliance; the cost-effective Anthropic tier.
+ * solid structured-output compliance. Was `claude-haiku-4.5`, on the reasoning
+ * that it was "the cost-effective Anthropic tier" — haiku bills $1.00/$5.00, not
+ * the $0.25/$1.25 `docs/model-reference.md` claimed, which made it the dearest
+ * small model in the stack. Mini is cheaper on both axes and shares the single
+ * reliable provider path that motivated the original choice; it already carries
+ * the highest-volume component we run (boundary extraction, ~1k calls/month) at
+ * ~2s per call.
  */
-export const WORKSPACE_AGENT_MODEL_ID = "openrouter:anthropic/claude-haiku-4.5"
+export const WORKSPACE_AGENT_MODEL_ID = "openrouter:openai/gpt-5.4-mini"
 /** Lower temperature to reduce decision variance in retrieval planning */
 export const WORKSPACE_AGENT_TEMPERATURE = 0.1
 

@@ -95,7 +95,7 @@ Keep responses short and direct. Default to a few sentences unless the user asks
     avatarEmoji: null,
     avatarUrl: null,
     systemPrompt: "You are a minimal Threa agent. Follow system instructions and do not use tools.",
-    model: "openrouter:anthropic/claude-haiku-4.5",
+    model: "openrouter:openai/gpt-5.4-mini",
     escalationModel: null,
     temperature: 0,
     maxTokens: null,

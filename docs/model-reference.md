@@ -1,8 +1,38 @@
 # AI Model Reference
 
-**Last updated:** 2026-07-11
+**Last updated:** 2026-07-27
 
 This document provides a comprehensive reference for AI models including capabilities, pricing, and usage guidelines. Always verify against this file when working with AI integration.
+
+## Price table
+
+All figures per 1M tokens, verified against the live OpenRouter models endpoint on 2026-07-27. **Verify before making a model-choice argument** — this table was wrong about `claude-haiku-4.5` by 4× for months, and five components were pinned to it on the strength of that number:
+
+```bash
+curl -s https://openrouter.ai/api/v1/models -H "Authorization: Bearer $OPENROUTER_API_KEY" \
+ | jq -r '.data[] | select(.id|test("MODEL")) | [.id,(.pricing.prompt|tonumber*1e6),(.pricing.completion|tonumber*1e6),(.pricing.input_cache_read//"-"),(.pricing.input_cache_write//"-")] | @tsv'
+```
+
+| Model                           | Input | Output | Cache read | Cache write |
+| ------------------------------- | ----- | ------ | ---------- | ----------- |
+| `openai/gpt-5.4-nano`           | $0.20 | $1.25  | $0.02      | free        |
+| `openai/gpt-5.4-mini`           | $0.75 | $4.50  | $0.075     | free        |
+| `openai/gpt-5.6-luna`           | $1.00 | $6.00  | $0.107     | **$1.25**   |
+| `anthropic/claude-haiku-4.5`    | $1.00 | $5.00  | $0.10      | $1.25       |
+| `anthropic/claude-sonnet-5`     | $2.00 | $10.00 | $0.20      | $2.50       |
+| `anthropic/claude-sonnet-4.6`   | $3.00 | $15.00 | $0.30      | $3.75       |
+| `anthropic/claude-opus-4.8`     | $5.00 | $25.00 | $0.50      | $6.25       |
+| `google/gemini-2.5-flash`       | $0.30 | $2.50  | $0.03      | $0.083      |
+| `google/gemini-2.5-flash-lite`  | $0.10 | $0.40  | $0.01      | $0.083      |
+| `google/gemini-2.5-pro`         | $1.25 | $10.00 | $0.125     | $0.375      |
+| `openai/text-embedding-3-small` | $0.02 | —      | —          | —           |
+
+**Cache columns are not a footnote — they change which model is cheapest.**
+
+- **Free writes (OpenAI family).** Caching is automatic and costs nothing to attempt, so a stable ≥1024-token prefix is pure upside. A cache miss bills the normal input rate.
+- **Paid writes (Anthropic, Google, and `gpt-5.6-luna`).** A miss on a cacheable-size prompt bills the **write** rate, not the input rate. This is a bet that the prefix will be read back; below roughly 1.4 reads per write it loses money. `gpt-5.6-luna`'s listed $1.00 input is therefore the rate that never applies — in production it bills $1.25 on a miss or $0.107 on a hit.
+- **Anthropic and Google need an explicit breakpoint** (`applyCacheBreakpoints`, `packages/agent-runtime/src/ai/ai.ts`); the OpenAI family needs only prefix stability.
+- **A prefix only caches if it is genuinely a prefix.** Interpolating a date, a language rule, or a message list _above_ the static block truncates the cacheable span to whatever precedes the first variable — commonly a few dozen tokens, under the 1024-token floor, so nothing caches at all.
 
 ## Model Capabilities Registry
 
@@ -38,7 +68,7 @@ All models use `provider:modelPath` format:
 
 **Description:** Anthropic's Claude 5-generation Sonnet (July 2026). Near-Opus quality on agentic and coding work at Sonnet cost. Adaptive thinking on by default; new tokenizer produces ~30% more tokens for the same text vs Sonnet 4.6 (per-token price is lower, so equivalent-request cost is roughly a wash during intro pricing). 1M context window.
 
-**Typical cost:** ~$2.00 per 1M input tokens, ~$10.00 per 1M output tokens (introductory pricing through 2026-08-31; $3.00/$15.00 after)
+**Typical cost:** ~$2.00 per 1M input tokens, ~$10.00 per 1M output tokens (introductory pricing through 2026-08-31; $3.00/$15.00 after). Cache read $0.20, cache write $2.50.
 
 **When to use:**
 
@@ -56,7 +86,7 @@ All models use `provider:modelPath` format:
 
 **Description:** Latest high-quality reasoning model from Anthropic's Claude 4.6 generation. Successor to Claude Sonnet 4.5 with improved capabilities.
 
-**Typical cost:** ~$3.00 per 1M input tokens, ~$15.00 per 1M output tokens
+**Typical cost:** ~$3.00 per 1M input tokens, ~$15.00 per 1M output tokens (cache read $0.30, cache write $3.75)
 
 **When to use:**
 
@@ -75,7 +105,7 @@ All models use `provider:modelPath` format:
 
 **Description:** Anthropic's most capable generally available model (Opus family). Text, image, and file inputs with reasoning support and a 1M-token context window. Same per-token price as Opus 4.5/4.6/4.7 (~1.7x Sonnet input, ~1.7x output).
 
-**Typical cost:** ~$5.00 per 1M input tokens, ~$25.00 per 1M output tokens
+**Typical cost:** ~$5.00 per 1M input tokens, ~$25.00 per 1M output tokens (cache read $0.50, cache write $6.25)
 
 **When to use:**
 
@@ -91,19 +121,46 @@ All models use `provider:modelPath` format:
 
 **Name:** Claude Haiku 4.5
 
-**Description:** Fast, cost-effective model from Anthropic's Claude 4.5 generation. Good balance of speed, cost, and accuracy for structured tasks.
+**Description:** Fast model from Anthropic's Claude 4.5 generation. Despite the name, **not the cheap tier** — it is the most expensive small model available to us, above `gpt-5.4-mini` on input and output and 5× `gpt-5.4-nano` on input.
 
-**Typical cost:** ~$0.25 per 1M input tokens, ~$1.25 per 1M output tokens
+**Typical cost:** ~$1.00 per 1M input tokens, ~$5.00 per 1M output tokens (cache read $0.10, cache **write** $1.25)
+
+**When to use:** nothing, currently. No production component selects it.
+
+This entry read `$0.25/$1.25` until 2026-07-27 — 4× under the real price. On the strength of that number five components were pinned to haiku "for cost" (companion summary, workspace-agent plan/eval, turn digest, supersede validator, the Empty Agent shell) and the over-budget degradation map in `ai-usage/budget-service.ts` degraded Sonnet _to_ it, buying 2× where `gpt-5.4-mini` buys 2.7× and `gpt-5.4-nano` buys 10×. All six now target mini. Left in `models.yaml` so personas a user deliberately pinned to it keep resolving.
+
+**Use instead:** `gpt-5.4-mini` for structured condensation and extraction, `gpt-5.4-nano` for classification and ranking.
+
+---
+
+### openrouter:google/gemini-2.5-flash
+
+**Name:** Gemini 2.5 Flash
+
+**Description:** Fast multimodal model with a 1M-token context window. Vision quality is the reason it is here — it reads screenshots, charts, and scanned documents well enough to drive downstream extraction.
+
+**Typical cost:** ~$0.30 per 1M input tokens, ~$2.50 per 1M output tokens (cache read $0.03, cache write $0.083)
 
 **When to use:**
 
-- Classification and extraction (structured output)
-- Simple reasoning tasks
-- General chat and conversations
-- High-volume batch operations where quality bar is met
-- Stream naming, memo classification
+- Image captioning and OCR (`image-caption`) — production choice
+- Large-attachment summarization where the 1M window matters (`text-summary`)
 
-**Use instead of:** `claude-3-haiku`, `claude-3.5-haiku`, or any Claude 3.x series models
+**Note:** for image work, output is typically the larger half of the bill — the structured extraction schema (headings, labels, body, chart/table/diagram data) is verbose. Shape the schema before reaching for a cheaper model.
+
+---
+
+### openrouter:google/gemini-2.5-flash-lite
+
+**Name:** Gemini 2.5 Flash Lite
+
+**Description:** Smaller, cheaper sibling of 2.5 Flash — 3× cheaper input, 6× cheaper output.
+
+**Typical cost:** ~$0.10 per 1M input tokens, ~$0.40 per 1M output tokens (cache read $0.01, cache write $0.083)
+
+**When to use:**
+
+- Not yet in production. It is the obvious swap target for `image-caption`, but there is **no eval suite for that component** (`evals/suites/multimodal-vision` drives `PersonaAgent.run()`, not the captioner), and captions feed boundary extraction, memo extraction, and agent context — a quality regression there is silent. Build the suite before swapping.
 
 ---
 
@@ -113,7 +170,7 @@ All models use `provider:modelPath` format:
 
 **Description:** High-quality reasoning model from Anthropic's Claude 4 generation. Best for complex tasks requiring nuanced understanding and generation.
 
-**Typical cost:** ~$3.00 per 1M input tokens, ~$15.00 per 1M output tokens
+**Typical cost:** ~$3.00 per 1M input tokens, ~$15.00 per 1M output tokens (cache read $0.30, cache write $3.75)
 
 **When to use:**
 
@@ -133,7 +190,7 @@ All models use `provider:modelPath` format:
 
 **Description:** Cost-effective model from OpenAI's GPT-5 generation. Good balance of performance and cost for general tasks.
 
-**Typical cost:** ~$0.40 per 1M input tokens, ~$1.60 per 1M output tokens
+**Typical cost:** ~$0.25 per 1M input tokens, ~$2.00 per 1M output tokens
 
 **When to use:**
 
@@ -153,7 +210,7 @@ All models use `provider:modelPath` format:
 
 **Description:** Ultra-fast, cost-effective model from OpenAI's GPT-5 generation. Optimized for high-throughput tasks.
 
-**Typical cost:** ~$0.10 per 1M input tokens, ~$0.40 per 1M output tokens
+**Typical cost:** ~$0.05 per 1M input tokens, ~$0.40 per 1M output tokens
 
 **When to use:**
 
@@ -173,7 +230,7 @@ All models use `provider:modelPath` format:
 
 **Description:** High-capability small model from OpenAI's GPT-5.4 generation (March 2026). Significantly improves over GPT-5 Mini across coding, reasoning, multimodal understanding, and tool use while running 2x faster. Supports configurable reasoning effort levels. 400K context window.
 
-**Typical cost:** ~$0.75 per 1M input tokens, ~$4.50 per 1M output tokens
+**Typical cost:** ~$0.75 per 1M input tokens, ~$4.50 per 1M output tokens (cache read $0.075, writes free)
 
 **When to use:**
 
@@ -193,7 +250,7 @@ All models use `provider:modelPath` format:
 
 **Description:** Fast, cost-efficient model in OpenAI's GPT-5.6 series (July 2026). Positioned for high-volume, latency-sensitive tasks — chat, classification, lightweight agentic workflows. 1M context window. Available EU-pinned. A `gpt-5.6-luna-pro` variant (same price) serves the same weights with `reasoning.mode: pro` for harder tasks at higher latency.
 
-**Typical cost:** ~$1.00 per 1M input tokens, ~$6.00 per 1M output tokens
+**Typical cost:** ~$1.25 per 1M input tokens on a cache miss, ~$6.00 per 1M output tokens; $0.107 per 1M on a cache hit. The $1.00 headline rate applies only below the 1024-token cache floor — see the write-premium note in the price table.
 
 **When to use:**
 
@@ -213,7 +270,7 @@ All models use `provider:modelPath` format:
 
 **Description:** Smallest, cheapest model in OpenAI's GPT-5.4 generation (March 2026). Optimized for low-latency, high-volume tasks. Outperforms GPT-5 Mini on benchmarks despite lower cost. Supports configurable reasoning effort levels. 400K context window.
 
-**Typical cost:** ~$0.20 per 1M input tokens, ~$1.25 per 1M output tokens
+**Typical cost:** ~$0.20 per 1M input tokens, ~$1.25 per 1M output tokens (cache read $0.02, writes free)
 
 **When to use:**
 

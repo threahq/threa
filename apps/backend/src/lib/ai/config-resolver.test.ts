@@ -28,7 +28,7 @@ describe("StaticConfigResolver", () => {
     expect(companionConfig.temperature).toBe(0.7)
 
     const researcherConfig = await resolver.resolve(COMPONENT_PATHS.COMPANION_RESEARCHER)
-    expect(researcherConfig.modelId).toBe("openrouter:anthropic/claude-haiku-4.5")
+    expect(researcherConfig.modelId).toBe("openrouter:openai/gpt-5.4-mini")
     expect(researcherConfig.temperature).toBe(0.1)
 
     const embeddingConfig = await resolver.resolve(COMPONENT_PATHS.EMBEDDING)
