@@ -17,7 +17,7 @@ const PREFS = { scratchpadCustomPrompt: null } as never
 describe("buildEnclaveSystemPrompt", () => {
   it("appends the encrypted-scratchpad limits clause after the shared prompt (UX-7)", async () => {
     spyOn(contextBuilder, "buildStreamContext").mockResolvedValue({} as never)
-    spyOn(systemPrompt, "buildSystemPrompt").mockReturnValue("BASE_PROMPT_BODY")
+    spyOn(systemPrompt, "buildSystemPrompt").mockReturnValue({ stable: "BASE_PROMPT", volatile: "_BODY" })
 
     const result = await buildEnclaveSystemPrompt({
       pool: {} as Pool,
@@ -26,7 +26,8 @@ describe("buildEnclaveSystemPrompt", () => {
       persona: PERSONA,
     })
 
-    // The shared prompt is preserved verbatim and leads…
+    // The shared prompt is preserved verbatim and leads — the enclave receives
+    // it rejoined, so the split never reaches the encrypted wire.
     expect(result.startsWith("BASE_PROMPT_BODY")).toBe(true)
     // …followed by the limits section that names the boundary and the guidance.
     expect(result).toContain("## Encrypted scratchpad limits")
@@ -36,7 +37,7 @@ describe("buildEnclaveSystemPrompt", () => {
 
   it("builds the prompt with NO tool sections — the enclave appends them from its real toolset", async () => {
     spyOn(contextBuilder, "buildStreamContext").mockResolvedValue({} as never)
-    const build = spyOn(systemPrompt, "buildSystemPrompt").mockReturnValue("BASE")
+    const build = spyOn(systemPrompt, "buildSystemPrompt").mockReturnValue({ stable: "BASE", volatile: "" })
 
     await buildEnclaveSystemPrompt({ pool: {} as Pool, stream: STREAM, preferences: PREFS, persona: PERSONA })
 

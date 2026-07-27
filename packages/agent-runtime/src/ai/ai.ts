@@ -214,6 +214,11 @@ export interface GenerateTextWithToolsOptions {
    */
   modelString?: string
   system?: string
+  /**
+   * Per-turn system content kept out of the cached prefix. Only meaningful with
+   * `cachePrefix`; without it the two halves are simply rejoined.
+   */
+  volatileSystem?: string
   messages: ModelMessage[]
   tools?: Record<string, Tool<any, any>>
   maxTokens?: number
@@ -420,27 +425,44 @@ function withCacheControl(existing?: ModelMessage["providerOptions"]): ModelMess
  * breakpoint. Losing the optimization is the correct degradation there — it
  * changes cost, never behavior.
  */
-export function applyCacheBreakpoints(params: { system?: string; messages: ModelMessage[]; modelString?: string }): {
+export function applyCacheBreakpoints(params: {
+  system?: string
+  /**
+   * Per-turn system content (temporal grounding, turn digests, retrieved
+   * context). Emitted as a second, UNMARKED system message after the
+   * breakpoint, so changing it leaves the cached prefix intact — that is the
+   * difference between reusing the prefix across turns and reusing nothing.
+   */
+  volatileSystem?: string
+  messages: ModelMessage[]
+  modelString?: string
+}): {
   system?: string
   messages: ModelMessage[]
 } {
-  const { system, messages, modelString } = params
+  const { system, volatileSystem, messages, modelString } = params
   if (!modelString || !PROVIDERS_REQUIRING_CACHE_BREAKPOINTS.has(parseModelId(modelString).modelProvider)) {
-    return { system, messages }
+    // No breakpoint to split on, so the halves must be rejoined — returning
+    // only `system` would silently drop the volatile tail from the prompt.
+    const joined = [system, volatileSystem].filter(Boolean).join("\n\n")
+    return { system: joined || undefined, messages }
   }
 
   const out: ModelMessage[] = []
   if (system) {
     out.push({ role: "system", content: system, providerOptions: withCacheControl() })
   }
+  if (volatileSystem) {
+    out.push({ role: "system", content: volatileSystem })
+  }
   out.push(...messages)
 
-  // Second breakpoint on the newest message so the conversation an agent loop
-  // grows each iteration is read back rather than reprocessed. Skipped when the
-  // system message IS the last one — that breakpoint is already placed.
-  const lastIsTheSystemBreakpoint = Boolean(system) && out.length === 1
-  const last = out.at(-1)
-  if (last && !lastIsTheSystemBreakpoint) {
+  // Second breakpoint on the newest conversation message, so the history an
+  // agent loop grows each iteration is read back rather than reprocessed. It
+  // must never land on the volatile system message: that content changes every
+  // turn, so caching it would pay a write premium for a span nothing can reuse.
+  const last = messages.length > 0 ? out.at(-1) : undefined
+  if (last) {
     out[out.length - 1] = { ...last, providerOptions: withCacheControl(last.providerOptions) } as ModelMessage
   }
 
@@ -932,10 +954,14 @@ export function createAI(config: AIConfig): AI {
       const { system, messages } = options.cachePrefix
         ? applyCacheBreakpoints({
             system: options.system,
+            volatileSystem: options.volatileSystem,
             messages: options.messages,
             modelString: options.modelString,
           })
-        : { system: options.system, messages: options.messages }
+        : {
+            system: [options.system, options.volatileSystem].filter(Boolean).join("\n\n") || undefined,
+            messages: options.messages,
+          }
 
       const response = await aiGenerateText({
         model: options.model,

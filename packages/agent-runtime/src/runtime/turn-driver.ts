@@ -111,6 +111,8 @@ export interface TurnRequest {
   /** Original provider:model string for `model` — required alongside `costContext` for usage recording. */
   modelString?: string
   systemPrompt: string
+  /** Per-turn system content held outside the prompt-cache prefix. See `AgentRuntimeConfig`. */
+  volatileSystemPrompt?: string
   messages: ModelMessage[]
   tools: AgentTool[]
   maxTokens?: number | null
@@ -263,6 +265,7 @@ function runTurnOnAgentRuntime(ai: AgentRuntimeAI, request: TurnRequest, sink: T
     model: request.model,
     modelString: request.modelString,
     systemPrompt: request.systemPrompt,
+    volatileSystemPrompt: request.volatileSystemPrompt,
     messages: request.messages,
     tools: request.tools,
     maxTokens: request.maxTokens,

@@ -22,7 +22,7 @@ import { awaitLinkPreviewProcessing } from "../../link-previews"
 import { buildStreamContext, type StreamContext } from "../context-builder"
 import type { ContextWindowPolicy } from "../context-window-policy"
 import type { ConversationSummaryService } from "../conversation-summary-service"
-import { buildSystemPrompt } from "./prompt/system-prompt"
+import { buildSystemPrompt, type SplitSystemPrompt } from "./prompt/system-prompt"
 import { resolvePersonaStyleSlots } from "./config"
 import { loadTurnDigestPromptBlock } from "./turn-digests"
 import { loadEpisodeSummaryPromptBlock } from "./episode-summaries"
@@ -80,7 +80,7 @@ export interface AgentContext {
    * `catch_up` so its prompt section (and derived flags) match the behavior the
    * turn actually takes. The plan/row aren't known until after context build.
    */
-  composeSystemPrompt: (tools: AgentTool[], purpose: TurnPurpose) => string
+  composeSystemPrompt: (tools: AgentTool[], purpose: TurnPurpose) => SplitSystemPrompt
   messages: ModelMessage[]
   triggerMessage: Message | null
   invokingUserId: string | undefined
@@ -440,8 +440,8 @@ export async function buildAgentContext(deps: ContextDeps, params: ContextParams
       ? formatSpawnedFromContext(crossSurfaceStitch, authorNames, streamContext.temporal)
       : null
 
-  const composeSystemPrompt = (tools: AgentTool[], effectivePurpose: TurnPurpose): string => {
-    let systemPrompt = buildSystemPrompt(
+  const composeSystemPrompt = (tools: AgentTool[], effectivePurpose: TurnPurpose): SplitSystemPrompt => {
+    const systemPrompt = buildSystemPrompt(
       persona,
       streamContext,
       scratchpadCustomPrompt,
@@ -457,10 +457,11 @@ export async function buildAgentContext(deps: ContextDeps, params: ContextParams
       resolvePersonaStyleSlots(persona),
       personaKnowledge
     )
-    if (turnDigestBlock) {
-      systemPrompt += `\n\n${turnDigestBlock}`
-    }
-    return systemPrompt
+    // Prior-turn digests are re-derived each turn, so they belong outside the
+    // cached span alongside temporal grounding.
+    return turnDigestBlock
+      ? { ...systemPrompt, volatile: `${systemPrompt.volatile}\n\n${turnDigestBlock}` }
+      : systemPrompt
   }
 
   const messages = formatMessagesWithTemporal(streamContext.conversationHistory, streamContext, authorNames)

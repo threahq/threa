@@ -969,6 +969,14 @@ export class PersonaAgent {
         // turn_digest step can carry the tool work into later turns (C-1).
         const digestCollector = new TurnDigestCollector()
 
+        // Split at its cache boundary: the stable half is what the prompt-cache
+        // breakpoint covers (tool definitions ride the same span), the volatile
+        // half carries temporal grounding, turn digests, and the bag delta.
+        const composedPrompt = appendBagToSystemPrompt(
+          agentContext.composeSystemPrompt(tools, effectivePurpose),
+          resolvedBag
+        )
+
         // The turn as dispatch mints it: delivery + model binding + this
         // turn's prompt, history, toolset, and sampling params.
         const turnRequest: TurnRequest = {
@@ -986,7 +994,8 @@ export class PersonaAgent {
           // The purpose's prompt section (mention/follow-up early, supersede
           // reconciliation last) is composed here from the effective purpose —
           // one dispatch, no bespoke supersede wrap at the call site (roadmap 1.5).
-          systemPrompt: appendBagToSystemPrompt(agentContext.composeSystemPrompt(tools, effectivePurpose), resolvedBag),
+          systemPrompt: composedPrompt.stable,
+          volatileSystemPrompt: composedPrompt.volatile,
           messages: agentContext.messages,
           initialContext,
           tools,

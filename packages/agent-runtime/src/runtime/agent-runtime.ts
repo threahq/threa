@@ -53,6 +53,15 @@ export interface AgentRuntimeConfig {
    */
   modelString?: string
   systemPrompt: string
+  /**
+   * The part of the system prompt that is re-derived every turn (temporal
+   * grounding, turn digests, per-turn purpose). Kept separate from
+   * `systemPrompt` so the prompt-cache breakpoint can sit between them: with
+   * this content inside the cached span the prefix changes every turn and
+   * nothing is reused across turns. Omit it and the whole prompt is treated as
+   * stable, which is correct for hosts that assemble their own prompt.
+   */
+  volatileSystemPrompt?: string
   messages: ModelMessage[]
   tools: AgentTool[]
   maxTokens?: number | null
@@ -334,7 +343,9 @@ export class AgentRuntime {
         break
       }
 
-      const fullSystemPrompt = retrievedContext ? `${systemPrompt}\n\n${retrievedContext}` : systemPrompt
+      // Workspace-research context is retrieved mid-loop, so it joins the
+      // volatile tail rather than the cached prefix.
+      const volatileSystemPrompt = [this.config.volatileSystemPrompt, retrievedContext].filter(Boolean).join("\n\n")
       const preparedConversation = this.prepareConversationForModel(conversation)
       const truncatedMessages = truncateMessages(preparedConversation, MAX_MESSAGE_CHARS)
 
@@ -344,7 +355,8 @@ export class AgentRuntime {
         result = await ai.generateTextWithTools({
           model,
           modelString: this.config.modelString,
-          system: fullSystemPrompt,
+          system: systemPrompt,
+          volatileSystem: volatileSystemPrompt || undefined,
           messages: truncatedMessages,
           tools: this.toolDefs,
           maxTokens: this.config.maxTokens ?? undefined,
@@ -355,12 +367,6 @@ export class AgentRuntime {
           // The loop re-sends tools + system prompt + conversation once per
           // iteration, so from the second iteration onward the prefix is read
           // back rather than reprocessed.
-          //
-          // One case still misses: `retrievedContext` is folded into the system
-          // prompt above, and workspace research populates it mid-loop, so a
-          // turn that retrieves shifts the breakpointed prefix for its
-          // remaining iterations. Splitting the per-turn tail out of the cached
-          // span is the follow-up that closes it.
           cachePrefix: true,
         })
       } catch (err) {

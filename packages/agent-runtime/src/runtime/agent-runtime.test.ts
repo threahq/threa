@@ -1044,3 +1044,64 @@ describe("AgentRuntime mid-turn reconsideration", () => {
     expect(result.noMessageReason).toBe("Interjection is a side conversation; prior response stands.")
   })
 })
+
+describe("AgentRuntime prompt-cache wiring", () => {
+  // The `applyCacheBreakpoints` unit tests would all still pass if the runtime
+  // stopped forwarding the halves, so assert the seam this file owns: what the
+  // loop actually hands the AI wrapper.
+  it("forwards both prompt halves and opts into cache breakpoints", async () => {
+    const calls: Array<{ system?: string; volatileSystem?: string; cachePrefix?: boolean }> = []
+    const generateTextWithTools = mock(async (opts: any) => {
+      calls.push({ system: opts.system, volatileSystem: opts.volatileSystem, cachePrefix: opts.cachePrefix })
+      return {
+        text: "",
+        toolCalls: [{ toolCallId: "t1", toolName: "send_message", input: { content: "hi" } }],
+        response: { messages: [] },
+      }
+    })
+
+    const runtime = new AgentRuntime({
+      ai: { generateTextWithTools } as any,
+      model: {} as any,
+      modelString: "openrouter:anthropic/claude-sonnet-5",
+      systemPrompt: "STABLE HALF",
+      volatileSystemPrompt: "VOLATILE HALF",
+      messages: [{ role: "user", content: "hi" }],
+      tools: [],
+      sendMessage: async () => ({ messageId: "msg_1" }),
+    })
+
+    await runtime.run()
+
+    expect(calls[0]).toEqual({
+      system: "STABLE HALF",
+      volatileSystem: "VOLATILE HALF",
+      cachePrefix: true,
+    })
+  })
+
+  it("omits the volatile half rather than sending an empty string", async () => {
+    const calls: Array<{ volatileSystem?: string }> = []
+    const generateTextWithTools = mock(async (opts: any) => {
+      calls.push({ volatileSystem: opts.volatileSystem })
+      return {
+        text: "",
+        toolCalls: [{ toolCallId: "t1", toolName: "send_message", input: { content: "hi" } }],
+        response: { messages: [] },
+      }
+    })
+
+    const runtime = new AgentRuntime({
+      ai: { generateTextWithTools } as any,
+      model: {} as any,
+      systemPrompt: "STABLE HALF",
+      messages: [{ role: "user", content: "hi" }],
+      tools: [],
+      sendMessage: async () => ({ messageId: "msg_1" }),
+    })
+
+    await runtime.run()
+
+    expect(calls[0]?.volatileSystem).toBeUndefined()
+  })
+})

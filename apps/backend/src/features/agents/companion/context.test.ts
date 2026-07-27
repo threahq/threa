@@ -4,6 +4,7 @@ import { StreamBriefRepository, type StreamBrief } from "../../streams"
 import { buildAgentContext } from "./context"
 import type { Persona } from "../persona-repository"
 import { PersonaAttachmentRepository } from "../persona-attachment-repository"
+import { joinSystemPrompt } from "./prompt/system-prompt"
 
 const persona: Persona = {
   id: "persona_1",
@@ -81,7 +82,7 @@ describe("buildAgentContext stream brief (roadmap 4.1)", () => {
 
     expect(findByStreamId.mock.calls.at(-1)?.slice(1)).toEqual(["ws_1", "stream_root"])
 
-    const prompt = context.composeSystemPrompt([], { kind: "catch_up" })
+    const prompt = joinSystemPrompt(context.composeSystemPrompt([], { kind: "catch_up" }))
     expect(prompt).toContain("## Stream Brief")
     expect(prompt).toContain("Root brief: prefer Bun over Node")
   })
@@ -109,7 +110,7 @@ describe("buildAgentContext stream brief (roadmap 4.1)", () => {
       policy: { episode: { kind: "stream" }, maxMessages: 10, maxChars: 10_000, carryDigests: false },
     })
 
-    expect(context.composeSystemPrompt([], { kind: "catch_up" })).not.toContain("## Stream Brief")
+    expect(joinSystemPrompt(context.composeSystemPrompt([], { kind: "catch_up" }))).not.toContain("## Stream Brief")
   })
 })
 
@@ -140,7 +141,7 @@ describe("buildAgentContext persona knowledge (context attachments, decision 7)"
     })
 
     expect(listWithContent).not.toHaveBeenCalled()
-    expect(context.composeSystemPrompt([], { kind: "catch_up" })).not.toContain("## Knowledge")
+    expect(joinSystemPrompt(context.composeSystemPrompt([], { kind: "catch_up" }))).not.toContain("## Knowledge")
   })
 
   it("injects the persona's attachments in position order, resolving them by the persona id", async () => {
@@ -181,7 +182,7 @@ describe("buildAgentContext persona knowledge (context attachments, decision 7)"
     // here resolves the saved attachments with no special-casing (decision 7).
     expect(listWithContent.mock.calls.at(-1)?.slice(1)).toEqual(["ws_1", "persona_custom"])
 
-    const prompt = context.composeSystemPrompt([], { kind: "catch_up" })
+    const prompt = joinSystemPrompt(context.composeSystemPrompt([], { kind: "catch_up" }))
     expect(prompt).toContain("## Knowledge")
     expect(prompt).toContain("### guide.md\n\nGUIDE CONTENT")
     expect(prompt).toContain("### spec.txt\n\nSPEC SUMMARY")
