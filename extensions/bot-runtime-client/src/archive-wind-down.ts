@@ -41,6 +41,9 @@ export interface ArchiveWindDownReport extends ArchiveCleanupReport {
 
 const PROTECTED_BRANCHES = new Set(["main", "master", "HEAD"])
 const GIT_TIMEOUT_MS = 30_000
+// Staging + writing a commit for a large dirty tree is slower than a plain
+// query, and this one must not be the thing that loses the work.
+const COMMIT_TIMEOUT_MS = 120_000
 const PUSH_TIMEOUT_MS = 120_000
 
 function git(cwd: string, args: string[], timeoutMs = GIT_TIMEOUT_MS): { ok: boolean; stdout: string } {
@@ -75,7 +78,14 @@ export function pushBranchAndScheduleRemoval(cwd: string, log: (message: string)
   }
   if (status.stdout.length > 0) {
     const added = git(cwd, ["add", "-A"])
-    const commit = added.ok ? git(cwd, ["commit", "-m", "wip: auto-commit — scratchpad archived"]) : added
+    // --no-verify: this is an emergency preservation commit of work that is by
+    // definition unfinished, so gating it on the project's pre-commit hook is
+    // both wrong and fatal. Threa's hook runs a monorepo-wide lint + typecheck
+    // that takes minutes, so every dirty worktree failed here and the "nothing
+    // dies with the worktree" promise silently never happened.
+    const commit = added.ok
+      ? git(cwd, ["commit", "--no-verify", "-m", "wip: auto-commit — scratchpad archived"], COMMIT_TIMEOUT_MS)
+      : added
     if (!commit.ok) {
       report.reason = "could not commit dirty work — leaving the worktree"
       return report
