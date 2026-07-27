@@ -94,7 +94,7 @@ function resolveExtractedMemoScope(stream: Stream | null): { scope: MemoScope; s
  * owner's private tier instead of silently falling through to `workspace`. The
  * batch path already passes a top-level stream, so this is a no-op there.
  */
-async function resolveMemoScopeForStreamId(
+export async function resolveMemoScopeForStreamId(
   db: Querier,
   streamId: string
 ): Promise<{ scope: MemoScope; scopeUserId: string | null }> {
@@ -860,7 +860,10 @@ export class MemoService implements MemoServiceLike {
         refKind: "memo",
         refId: memo.id,
         groupKey: memo.id,
-        sourceMessageId: memo.sourceMessageIds[0],
+        // First SURVIVING source, not first cited: a landmark anchored on a
+        // deleted message would be unreachable, and the backfill anchors the
+        // same way — the two must agree or they write different identity keys.
+        sourceMessageId: resolved[0]!.id,
         authorId: latest.authorId,
         occurredAt: latest.createdAt,
         sequence: latest.sequence,

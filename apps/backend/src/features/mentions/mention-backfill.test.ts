@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test"
 import type { JSONContent, MentionActorType } from "@threa/types"
-import { chunkIds, resolveContentRows } from "./mention-backfill"
+import { resolveContentRows } from "./mention-backfill"
+import { chunkIds } from "../../lib/backfill"
 import type { MentionResolutionMaps } from "./resolution"
 
 const mention = (id: string, slug: string, mentionType: string): JSONContent => ({

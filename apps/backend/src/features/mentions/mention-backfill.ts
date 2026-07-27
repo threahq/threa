@@ -1,7 +1,7 @@
 import type { JSONContent } from "@threa/types"
 import { collectUnresolvedChannelLinkSlugs, collectUnresolvedMentionSlugs } from "@threa/prosemirror"
 import { sql } from "../../db"
-import { registerBackfill, type BackfillContext } from "../../lib/backfill"
+import { chunkIds, registerBackfill, type BackfillContext } from "../../lib/backfill"
 // Barrel import (INV-52). The messaging barrel exports `deriveContentMarkdown`
 // before `EventService`, so this resolves cleanly despite the messaging↔mentions
 // cycle (event-service imports this feature's resolver) — the binding is only
@@ -10,8 +10,6 @@ import { deriveContentMarkdown } from "../messaging"
 import { applyMentionResolution, buildMentionResolutionMaps, type MentionResolutionMaps } from "./resolution"
 
 export const MENTION_BACKFILL_NAME = "mention-actor-refs"
-
-const CHUNK_SIZE = 500
 
 /**
  * Tables holding ProseMirror `contentJson` that may carry unresolved mention /
@@ -97,14 +95,6 @@ export function resolveContentRows(
     if (changed) updates.push({ id: row.id, contentJson, contentMarkdown: deriveContentMarkdown(contentJson) })
   }
   return updates
-}
-
-export function chunkIds(ids: string[], size: number = CHUNK_SIZE): string[][] {
-  const chunks: string[][] = []
-  for (let i = 0; i < ids.length; i += size) {
-    chunks.push(ids.slice(i, i + size))
-  }
-  return chunks
 }
 
 async function plan(ctx: BackfillContext, workspaceId: string): Promise<MentionBackfillChunk[]> {

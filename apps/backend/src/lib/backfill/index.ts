@@ -1,4 +1,5 @@
 export { registerBackfill, getBackfill } from "./registry"
+export { chunkIds, DEFAULT_BACKFILL_CHUNK_SIZE } from "./chunk-ids"
 export type { BackfillDefinition, BackfillContext } from "./registry"
 export { createBackfillPlanWorker } from "./plan-worker"
 export type { BackfillPlanWorkerDeps } from "./plan-worker"

@@ -34,6 +34,16 @@ export const StreamContextRepository = {
     return result.rowCount ?? 0
   },
 
+  async deleteByIds(db: Querier, workspaceId: string, ids: string[]): Promise<number> {
+    if (ids.length === 0) return 0
+    const result = await db.query(sql`
+      DELETE FROM stream_context_items
+      WHERE workspace_id = ${workspaceId}
+        AND id = ANY(${ids})
+    `)
+    return result.rowCount ?? 0
+  },
+
   async deleteByMessageId(
     db: Querier,
     workspaceId: string,
