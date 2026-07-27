@@ -56,6 +56,22 @@ describe("ContextTimeline virtualization wiring", () => {
     expect(screen.getByText("b")).toBeInTheDocument()
   })
 
+  it("spaces day markers by an explicit flag, not `:first-child`", () => {
+    // virtua wraps every child in its own item element, so a `first:pt-0` class
+    // would match EVERY marker and collapse the gap between all day groups —
+    // invisible to jsdom (no CSS) and to the passthrough swap. Pin the classes.
+    const seam = vi
+      .spyOn(streamContextListModule, "StreamContextList")
+      .mockImplementation(({ children }) => createElement(Fragment, null, children))
+
+    render(<ContextTimeline items={items} renderItem={renderItem} scrollRef={createRef<HTMLDivElement>()} />)
+
+    const markers = (seam.mock.calls[0]![0].children as { props: { className?: string } }[]).filter(
+      (child) => typeof child.props.className === "string"
+    )
+    expect(markers.map((m) => m.props.className)).toEqual(["pt-0", "pt-3"])
+  })
+
   it("renders every row unwindowed when no scroller is supplied", () => {
     const seam = vi.spyOn(streamContextListModule, "StreamContextList")
 

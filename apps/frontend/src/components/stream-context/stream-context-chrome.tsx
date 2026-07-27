@@ -190,8 +190,13 @@ export function ContextTimeline({
   // Flattened, not nested per day: virtua windows a flat child list, so a day
   // marker is a row of its own rather than a wrapper around its group. Keyed on
   // a stable item id — date labels repeat across years and would collide.
-  const rows = groupItemsByDay(items, new Date()).flatMap((group) => [
-    <div key={`day:${group.items[0].key}`} className="pt-3 first:pt-0">
+  //
+  // The first group's lack of top padding is an explicit flag, NOT `first:pt-0`:
+  // virtua wraps every child in its own item element, so `:first-child` would
+  // match every marker and collapse the gap between all day groups. The board's
+  // feed carries the same `row.first` flag for the same reason.
+  const rows = groupItemsByDay(items, new Date()).flatMap((group, index) => [
+    <div key={`day:${group.items[0].key}`} className={index === 0 ? "pt-0" : "pt-3"}>
       <TimelineDayMarker label={group.label} />
     </div>,
     ...group.items.map((item) => <div key={item.key}>{renderItem(item)}</div>),
