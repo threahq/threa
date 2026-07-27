@@ -81,12 +81,25 @@ const IN_APP_BADGES: Record<string, string> = {
   delegation_link: "Delegation",
 }
 
-function linkBadge(preview: LinkPreviewSummary | undefined): {
+/**
+ * The row's type badge from a preview's `previewType`/`contentType` pair —
+ * shared by the derive path (which reads a `LinkPreviewSummary` off the event)
+ * and the index path (which reads the same two fields off the wire `detail`).
+ */
+export function linkPreviewBadge(
+  preview:
+    | {
+        previewType?: LinkPreviewSummary["previewType"] | null
+        contentType?: LinkPreviewSummary["contentType"] | null
+      }
+    | null
+    | undefined
+): {
   previewKind: LinkContextItem["previewKind"]
   badge: string | null
 } {
   if (!preview) return { previewKind: "generic", badge: null }
-  if (isInAppLinkContentType(preview.contentType)) {
+  if (preview.contentType && isInAppLinkContentType(preview.contentType)) {
     return { previewKind: "in-app", badge: IN_APP_BADGES[preview.contentType] ?? "Threa" }
   }
   const previewType = preview.previewType
@@ -177,7 +190,7 @@ export function deriveStreamContext(events: readonly CachedEvent[] | undefined):
         existing.refCount += 1
         return
       }
-      const { previewKind, badge } = linkBadge(preview)
+      const { previewKind, badge } = linkPreviewBadge(preview)
       links.set(norm, {
         key: `link:${norm}`,
         category: "link",

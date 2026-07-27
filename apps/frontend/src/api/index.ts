@@ -7,6 +7,12 @@ export { e2eKeyWrapsApi } from "./e2e-key-wraps"
 export { messagesApi, type CreateMessageInput, type UpdateMessageInput } from "./messages"
 export { attachmentsApi, attachmentContentUrl } from "./attachments"
 export {
+  streamContextApi,
+  type StreamContextFilters,
+  type ListStreamContextRequest,
+  type ListStreamContextOccurrencesRequest,
+} from "./stream-context"
+export {
   commandsApi,
   type DispatchCommandInput,
   type DispatchCommandResponse,

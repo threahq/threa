@@ -32,7 +32,7 @@ import { cn } from "@/lib/utils"
  * because the syntax distinguishes channels (`in:#slug`) from DMs (`in:@slug`)
  * and the two need different value pickers.
  */
-type FilterKind = "from" | "with" | "in-channel" | "in-dm" | "type" | "status" | "after" | "before"
+export type FilterKind = "from" | "with" | "in-channel" | "in-dm" | "type" | "status" | "after" | "before"
 
 interface FilterKindDef {
   kind: FilterKind
@@ -61,6 +61,12 @@ interface SearchFilterMenuProps {
   query: string
   onQueryChange: (query: string) => void
   className?: string
+  /**
+   * Restrict the offered filters, in this order. Surfaces whose scope makes a
+   * filter meaningless (the stream-scoped context panel has no `in:`/`type:`)
+   * narrow the menu rather than forking it. Defaults to every kind.
+   */
+  kinds?: readonly FilterKind[]
 }
 
 /**
@@ -74,10 +80,14 @@ interface SearchFilterMenuProps {
  * `SearchableSelect`) — typing filter syntax on a touch keyboard is exactly
  * the flow this menu replaces. A mouse on a touchscreen laptop gets the popover.
  */
-export function SearchFilterMenu({ workspaceId, query, onQueryChange, className }: SearchFilterMenuProps) {
+export function SearchFilterMenu({ workspaceId, query, onQueryChange, className, kinds }: SearchFilterMenuProps) {
   const isTouch = useInputMode() === "touch"
   const [open, setOpen] = useState(false)
   const [step, setStep] = useState<FilterKind | null>(null)
+  const offered = useMemo(
+    () => (kinds ? kinds.map((kind) => FILTER_KINDS.find((f) => f.kind === kind)!).filter(Boolean) : FILTER_KINDS),
+    [kinds]
+  )
 
   // Reopening always starts at the kind list, never a stale value picker.
   useEffect(() => {
@@ -91,7 +101,7 @@ export function SearchFilterMenu({ workspaceId, query, onQueryChange, className 
     setOpen(false)
   }
 
-  const activeKind = step !== null ? FILTER_KINDS.find((f) => f.kind === step) : undefined
+  const activeKind = step !== null ? offered.find((f) => f.kind === step) : undefined
 
   const content = (
     // The search surfaces listen for ArrowUp/ArrowDown/Escape to drive result
@@ -100,7 +110,7 @@ export function SearchFilterMenu({ workspaceId, query, onQueryChange, className 
     // so stopping bubble propagation here does not break closing the menu.)
     <div onKeyDown={(event) => event.stopPropagation()}>
       {step === null || !activeKind ? (
-        <FilterKindList onPick={setStep} />
+        <FilterKindList kinds={offered} onPick={setStep} />
       ) : (
         <>
           <div className="flex items-center gap-1 border-b px-2 py-1.5">
@@ -156,14 +166,14 @@ export function SearchFilterMenu({ workspaceId, query, onQueryChange, className 
   )
 }
 
-function FilterKindList({ onPick }: { onPick: (kind: FilterKind) => void }) {
+function FilterKindList({ kinds, onPick }: { kinds: FilterKindDef[]; onPick: (kind: FilterKind) => void }) {
   return (
     <Command>
       <CommandInput placeholder="Filter by..." />
       <CommandList className="max-h-[min(60vh,360px)] overscroll-contain">
         <CommandEmpty>No matching filter.</CommandEmpty>
         <CommandGroup>
-          {FILTER_KINDS.map(({ kind, label, syntax, icon: Icon }) => (
+          {kinds.map(({ kind, label, syntax, icon: Icon }) => (
             <CommandItem key={kind} value={kind} keywords={[label, syntax]} onSelect={() => onPick(kind)}>
               <Icon className="h-4 w-4 text-muted-foreground" />
               <span>{label}</span>
