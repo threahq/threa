@@ -41,9 +41,12 @@ export const TOOL_GUARDIAN_MESSAGE_CHARS = 1500
  * the user's local agent executes the whole thing. The window has to cover what
  * actually gets executed.
  *
- * The `+` headroom covers JSON framing and the other fields around the brief.
+ * Applied PER STRING FIELD, before serialization — see `renderGuardianArguments`.
+ * A budget over the serialized whole truncates escaping rather than content: a
+ * valid brief of backslashes serializes to twice its length and loses its tail
+ * while every field is individually within limits.
  */
-export const TOOL_GUARDIAN_ARGUMENT_CHARS = DELEGATION_BRIEF_MAX_CHARS + 4_000
+export const TOOL_GUARDIAN_ARGUMENT_CHARS = DELEGATION_BRIEF_MAX_CHARS
 
 /**
  * Wall-clock budget for one review. On expiry the call is DENIED, not allowed:

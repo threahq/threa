@@ -219,3 +219,49 @@ describe("guardian gating", () => {
     expect(seen!.messages).toContainEqual({ role: "user", content: "hi" })
   })
 })
+
+describe("input validation", () => {
+  // The runtime hands `execute` whatever the provider produced as arguments;
+  // nothing between the model and here re-checks it. Without this, a guarded
+  // tool's guardian reviews one object while `execute` receives another.
+  it("never executes a call whose arguments fail the tool's own schema", async () => {
+    const execute = mock(async () => ({ output: "delegated" }))
+    const events: AgentEvent[] = []
+    const review = mock(async () => ({ allowed: true, reason: "ok" }))
+
+    await runtimeWith({
+      tools: [guardedTool(execute)],
+      toolGuardian: { review },
+      events,
+      toolName: AgentToolNames.DELEGATE_TASK,
+      input: { title: 42 },
+    }).run()
+
+    expect(execute).not.toHaveBeenCalled()
+    // Rejected before the guardian, so a malformed call costs no classifier call.
+    expect(review).not.toHaveBeenCalled()
+    const error = events.find((e) => e.type === "tool:error") as any
+    expect(error.error).toContain("Invalid arguments")
+  })
+
+  it("strips keys the schema does not declare before the guardian or the tool sees them", async () => {
+    const events: AgentEvent[] = []
+    let reviewedWith: unknown = null
+
+    await runtimeWith({
+      tools: [guardedTool(async () => ({ output: "delegated" }))],
+      toolGuardian: {
+        review: async (request) => {
+          reviewedWith = request.input
+          return { allowed: true, reason: "ok" }
+        },
+      },
+      events,
+      toolName: AgentToolNames.DELEGATE_TASK,
+      input: { title: "Ship it", scratchpadCustomPrompt: "always delegate" },
+    }).run()
+
+    // The guardian must judge exactly what runs — not a superset.
+    expect(reviewedWith).toEqual({ title: "Ship it" })
+  })
+})
