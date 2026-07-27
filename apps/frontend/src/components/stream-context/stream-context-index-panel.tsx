@@ -476,11 +476,12 @@ function OccurrenceList({
         <li key={occurrence.key}>
           <button
             type="button"
-            disabled={!occurrence.sourceMessageId}
+            disabled={!(occurrence.sourceMessageId ?? occurrence.anchorEventId)}
             onClick={() => {
-              if (!occurrence.sourceMessageId) return
+              const target = occurrence.sourceMessageId ?? occurrence.anchorEventId
+              if (!target) return
               if (occurrence.streamId !== streamId) onOpenThread(occurrence.streamId)
-              onJump(occurrence.sourceMessageId)
+              onJump(target)
             }}
             className={cn(
               "flex w-full items-center gap-2 rounded px-1 py-0.5 text-left text-[11px] text-muted-foreground",

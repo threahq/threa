@@ -15,7 +15,12 @@ interface ContextItemBase {
   category: ContextCategory
   /** ISO timestamp used for recency ordering (newest first). */
   createdAt: string
-  /** The message this item was derived from, for "jump to origin". */
+  /**
+   * The deep-link target for "jump to origin": the source message's id, or —
+   * for an artifact that lives in no message, like a delegation card — the id
+   * of the event that anchors it. `?m=` resolves either (see
+   * `matchesDeepLinkTarget`), so one field carries both shapes.
+   */
   sourceMessageId: string | null
   /** First line of the source message, markdown-stripped (INV-60). */
   snippet: string

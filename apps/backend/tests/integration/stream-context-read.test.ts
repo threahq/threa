@@ -18,6 +18,7 @@ import { StreamService } from "../../src/features/streams"
 import { EventService } from "../../src/features/messaging"
 import { createStreamContextService } from "../../src/features/stream-context"
 import { userId, workspaceId } from "../../src/lib/id"
+import { sql } from "../../src/db"
 import { StreamTypes, Visibilities } from "@threa/types"
 
 describe("stream context read path", () => {
@@ -142,6 +143,49 @@ describe("stream context read path", () => {
     })
 
     expect(response.items.map((item) => item.refId)).toEqual(["https://example.com/thread-doc"])
+  })
+
+  test("a delegation row carries its created event as the jump target", async () => {
+    // Delegations live in an event, not a message, so the feed's only deep-link
+    // target is the `delegation:created` card. The join that resolves it is the
+    // thing that can silently break.
+    const taskId = `dtask_${wsId.slice(-10)}`
+    const eventRow = await withTransaction(pool, async (client) => {
+      await client.query(sql`
+        INSERT INTO delegated_tasks (id, workspace_id, stream_id, created_by_kind, created_by_id, title, brief)
+        VALUES (${taskId}, ${wsId}, ${channelId}, 'user', ${memberId}, 'Ship the thing', 'brief')
+      `)
+      const event = await client.query<{ id: string }>(sql`
+        INSERT INTO stream_events (id, stream_id, sequence, event_type, payload, actor_id, actor_type)
+        VALUES (
+          ${`event_${taskId}`}, ${channelId}, 9999, 'delegation:created',
+          ${JSON.stringify({ delegationId: taskId })}::jsonb, ${memberId}, 'user'
+        )
+        RETURNING id
+      `)
+      await client.query(sql`
+        INSERT INTO stream_context_items
+          (id, workspace_id, stream_id, root_stream_id, category, ref_kind, ref_id, group_key, occurred_at, snippet, detail)
+        VALUES (
+          ${`sctx_${taskId}`}, ${wsId}, ${channelId}, ${channelId}, 'delegation', 'delegation',
+          ${taskId}, ${taskId}, NOW(), 'Ship the thing', '{}'::jsonb
+        )
+      `)
+      return event.rows[0]!.id
+    })
+
+    const response = await service.list({
+      workspaceId: wsId,
+      userId: memberId,
+      streamId: channelId,
+      scope: "stream",
+      category: "delegation",
+      limit: 40,
+    })
+
+    expect(response.items.map((item) => ({ refId: item.refId, anchorEventId: item.anchorEventId }))).toEqual([
+      { refId: taskId, anchorEventId: eventRow },
+    ])
   })
 
   test("a filtered feed pages by the filter's own cursor", async () => {
