@@ -28,8 +28,10 @@ export interface StreamContextFeed {
   mode: ListStreamContextResponse["mode"] | null
   hasNextPage: boolean
   /** Resolves when the page has landed and been seeded — a date jump pages in a
-   *  loop and must not re-read IDB before the rows are there. */
-  fetchNextPage: () => Promise<unknown>
+   *  loop and must not re-read IDB before the rows are there. Its `hasNextPage`
+   *  is the post-fetch truth; the field above is a render-time snapshot and
+   *  stays stale inside such a loop. */
+  fetchNextPage: () => Promise<{ hasNextPage: boolean }>
   isFetchingNextPage: boolean
   isLoading: boolean
   isError: boolean
@@ -84,7 +86,18 @@ export function useStreamContextFeed(
     counts: firstPage?.counts ?? null,
     mode: firstPage?.mode ?? null,
     hasNextPage: query.hasNextPage,
-    fetchNextPage: () => query.fetchNextPage(),
+    // Seed before resolving. The effect above also seeds, but it runs a render
+    // later — a caller that awaits this and then reads IDB (the date jump) would
+    // race it and see the page missing.
+    fetchNextPage: async () => {
+      const result = await query.fetchNextPage()
+      await seedStreamContextItems(
+        workspaceId,
+        rootStreamId,
+        (result.data?.pages ?? []).flatMap((page) => page.items)
+      )
+      return { hasNextPage: result.hasNextPage }
+    },
     isFetchingNextPage: query.isFetchingNextPage,
     isLoading: query.isLoading,
     isError: query.isError,

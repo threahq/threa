@@ -4,7 +4,7 @@ import { toast } from "sonner"
 import { useStreamEvents } from "@/stores/stream-store"
 import { useStreamDelegations } from "@/hooks/use-stream-delegations"
 import { localStartOfDayMs } from "@/lib/dates"
-import { groupItemsByDay } from "@/lib/stream-context/grouping"
+import { markerIndexForDate } from "@/lib/stream-context/grouping"
 import { deriveStreamContext } from "@/lib/stream-context/derive"
 import { delegationContextItems, withDelegations } from "@/lib/stream-context/delegations"
 import { StreamContextRow } from "./stream-context-row"
@@ -75,19 +75,15 @@ export function StreamContextDerivedPanel({
   // and the jump is a no-op rather than a fetch.
   const jumpToDate = useCallback(
     (date: Date) => {
-      const endOfDayMs = localStartOfDayMs(date) + DAY_MS
-      let flatIndex = 0
-      for (const group of groupItemsByDay(visible, new Date())) {
-        if (Date.parse(group.items[0].createdAt) < endOfDayMs) {
-          listRef.current?.scrollToIndex(flatIndex, { align: "start" })
-          scrollerRef.current?.focus({ preventScroll: true })
-          return
-        }
-        flatIndex += 1 + group.items.length
+      const index = markerIndexForDate(visible, localStartOfDayMs(date) + DAY_MS, new Date())
+      if (index === -1) {
+        // This path holds only the loaded window, so an older date has nothing
+        // to land on — say so rather than silently doing nothing.
+        toast.info("Nothing indexed on or before that date")
+        return
       }
-      // This path holds only the loaded window, so an older date has nothing to
-      // land on — say so rather than silently doing nothing.
-      toast.info("Nothing indexed on or before that date")
+      listRef.current?.scrollToIndex(index, { align: "start" })
+      scrollerRef.current?.focus({ preventScroll: true })
     },
     [visible]
   )

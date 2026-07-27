@@ -16,7 +16,7 @@ import { contextItemFromCached } from "@/lib/stream-context/from-cached"
 import { collapseContextRows, countByCategory, filterContextRows } from "@/lib/stream-context/filter"
 import type { ContextCategory, ContextItem } from "@/lib/stream-context/types"
 import { localStartOfDayMs } from "@/lib/dates"
-import { groupItemsByDay } from "@/lib/stream-context/grouping"
+import { markerIndexForDate } from "@/lib/stream-context/grouping"
 import { cn } from "@/lib/utils"
 import {
   contextGroupRef,
@@ -171,38 +171,27 @@ export function StreamContextIndexPanel(props: StreamContextPanelProps) {
   const sentinelRef = useRef<HTMLDivElement | null>(null)
 
   // Jump the LIST to a date — navigation, not filtering: the feed stays one
-  // continuous list and the view moves. Rows are newest-first, so the first
-  // group at or before the day's end is the nearest-earlier landing spot (dates
-  // here are sparse; most days hold nothing).
-  //
-  // The index is into the FLAT child list the timeline renders — it interleaves
-  // a day marker before each group — not into the rows. Landing on the marker
-  // also reads better: the header states which day you are now at. The target is
-  // usually not mounted, hence virtua's `scrollToIndex` over a DOM scroll.
+  // continuous list and the view moves. The target is usually not mounted,
+  // hence virtua's `scrollToIndex` over a DOM scroll.
   const items = visibleRows.map(contextItemFromCached).filter((item): item is ContextItem => item !== null)
-
-  const markerIndexFor = useCallback((candidates: ContextItem[], endOfDayMs: number): number => {
-    let flatIndex = 0
-    for (const group of groupItemsByDay(candidates, new Date())) {
-      if (Date.parse(group.items[0].createdAt) < endOfDayMs) return flatIndex
-      flatIndex += 1 + group.items.length
-    }
-    return -1
-  }, [])
 
   const [jumping, setJumping] = useState(false)
   const jumpToDate = useCallback(
     async (date: Date) => {
       const endOfDayMs = localStartOfDayMs(date) + DAY_MS
-      let index = markerIndexFor(items, endOfDayMs)
+      let index = markerIndexForDate(items, endOfDayMs, new Date())
       // Paging to an unloaded date is several round trips; without this the
       // panel just sits there. Only set it when a fetch is actually needed, so
       // the common in-window jump stays instant and flicker-free.
       if (index === -1 && feed.hasNextPage) setJumping(true)
       // Not loaded that far back yet: page until it is, bounded so a date older
       // than the whole stream can't spin. Each page widens the IDB-backed list.
-      for (let page = 0; index === -1 && page < MAX_JUMP_PAGES && feed.hasNextPage; page += 1) {
-        await feed.fetchNextPage()
+      // `more` tracks the FETCH's own result — `feed.hasNextPage` is captured at
+      // render and stays true here, so it would keep re-reading IDB for every
+      // remaining iteration after history runs out.
+      let more = feed.hasNextPage
+      for (let page = 0; index === -1 && page < MAX_JUMP_PAGES && more; page += 1) {
+        more = (await feed.fetchNextPage()).hasNextPage
         const fresh = await readStreamContextRows(workspaceId, streamId, rootStreamId, "tree")
         const rebuilt = collapseContextRows(
           filterContextRows(fresh, {
@@ -213,9 +202,10 @@ export function StreamContextIndexPanel(props: StreamContextPanelProps) {
             after,
           })
         )
-        index = markerIndexFor(
+        index = markerIndexForDate(
           rebuilt.map(contextItemFromCached).filter((item): item is ContextItem => item !== null),
-          endOfDayMs
+          endOfDayMs,
+          new Date()
         )
       }
       setJumping(false)
@@ -233,7 +223,7 @@ export function StreamContextIndexPanel(props: StreamContextPanelProps) {
       // keep tabbing from where they landed.
       scrollerRef.current?.focus({ preventScroll: true })
     },
-    [items, markerIndexFor, feed, workspaceId, streamId, rootStreamId, category, searchTerms, authorId, before, after]
+    [items, feed, workspaceId, streamId, rootStreamId, category, searchTerms, authorId, before, after]
   )
   const { hasNextPage, isFetchingNextPage, fetchNextPage } = feed
   useEffect(() => {
