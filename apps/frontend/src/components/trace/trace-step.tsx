@@ -7,6 +7,7 @@ import {
   type AgentSessionStep,
   type AgentStepType,
   type PiToolTraceSectionLabel,
+  ToolVerificationStatuses,
   type ToolVerificationStatus,
   type TraceSource,
 } from "@threa/types"
@@ -88,12 +89,24 @@ export function TraceStep({
   const messageLink = step.messageId ? `/w/${workspaceId}/s/${streamId}?m=${step.messageId}` : null
   const hueColor = `hsl(${config.hue} ${config.saturation}% ${config.lightness}%)`
 
+  // A guarded call's step opens BEFORE the guardian decides, so for the whole
+  // review window `isInProgress` is true while the action has not started and
+  // may never start. Saying "Running…" there is the one thing the verification
+  // badge exists to stop the trace from implying. While a verdict is pending
+  // the badge's own spinner carries liveness and the right slot keeps only the
+  // session controls.
+  const awaitingVerdict = step.verification?.status === ToolVerificationStatuses.PENDING
+
   // In-progress steps replace the default timestamp + duration right-slot with
   // a spinning loader + "Running…" label + available session controls.
   const rightSlot = isInProgress ? (
     <>
-      <Loader2 className="h-3.5 w-3.5 animate-spin" style={{ color: hueColor }} />
-      <span className="text-muted-foreground">Running…</span>
+      {!awaitingVerdict && (
+        <>
+          <Loader2 className="h-3.5 w-3.5 animate-spin" style={{ color: hueColor }} />
+          <span className="text-muted-foreground">Running…</span>
+        </>
+      )}
       {onSteerSession && <RedirectSessionButton onClick={onSteerSession} />}
       {onStopSession && <StopSessionButton onClick={onStopSession} />}
     </>
@@ -210,7 +223,13 @@ interface StepHeaderProps {
 
 function StepHeader({ config, Icon, startedAt, duration, rightSlot, verification }: StepHeaderProps) {
   return (
-    <div className="flex items-center gap-2.5 mb-3">
+    // Wraps because this row can now carry three groups at once — the step-type
+    // chip, the verification badge, and the in-flight controls — and its scroll
+    // ancestor is `overflow-x-hidden` (trace-dialog's TraceBody), so anything
+    // past the edge is CLIPPED, not scrollable. On a phone that silently ate the
+    // Stop / Redirect buttons during a guarded call: the one moment a user most
+    // wants to interrupt. Wrapping drops the right group to its own line instead.
+    <div className="flex flex-wrap items-center gap-2.5 mb-3">
       <div
         className="px-2.5 py-1 rounded-md text-[11px] font-semibold uppercase tracking-wide inline-flex items-center gap-1.5"
         style={{

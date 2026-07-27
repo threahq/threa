@@ -673,10 +673,45 @@ describe("TraceStep guardian verification", () => {
     )
   }
 
+  // A guarded step is in-progress for the whole review window, so this must be
+  // rendered with `completedAt: undefined` — the state every real guarded call
+  // passes through. With a completed fixture the assertion below passes
+  // vacuously and the contradiction it guards against goes unnoticed.
   it("shows the check running while the guardian decides", () => {
-    renderStep(createStep({ stepType: "tool_call", content: "", verification: { status: "pending" } }))
+    renderStep(
+      createStep({ stepType: "tool_call", content: "", completedAt: undefined, verification: { status: "pending" } })
+    )
 
     expect(screen.getByText("Checking")).toBeInTheDocument()
+  })
+
+  it("does not claim the tool is running while the verdict is still pending", () => {
+    renderStep(
+      createStep({ stepType: "tool_call", content: "", completedAt: undefined, verification: { status: "pending" } })
+    )
+
+    // "Running…" alongside "Checking" reads as "it already started" — the exact
+    // ambiguity the badge exists to remove.
+    expect(screen.queryByText("Running…")).not.toBeInTheDocument()
+  })
+
+  it("still says Running once the call is approved and executing", () => {
+    renderStep(
+      createStep({
+        stepType: "tool_call",
+        content: "",
+        completedAt: undefined,
+        verification: { status: "approved", reason: "asked for" },
+      })
+    )
+
+    expect(screen.getByText("Running…")).toBeInTheDocument()
+  })
+
+  it("still says Running on an unguarded in-flight step", () => {
+    renderStep(createStep({ stepType: "tool_call", content: "", completedAt: undefined }))
+
+    expect(screen.getByText("Running…")).toBeInTheDocument()
   })
 
   it("marks an approved call approved", () => {
