@@ -84,6 +84,7 @@ interface DbRow {
   task_claimed_by_label: string | null
   task_status_note: string | null
   task_result_message_id: string | null
+  delegation_event_id: string | null
   thread_name: string | null
   thread_reply_count: number | null
   thread_last_reply_at: Date | null
@@ -145,6 +146,20 @@ function detailFor(row: DbRow): StreamContextItemDetail {
   }
 }
 
+/**
+ * The event a row deep-links to when it has no source message: the delegation's
+ * created card, or the anchor a card-anchored thread hangs under. Null for every
+ * artifact that lives in a message — those jump by `sourceMessageId`.
+ */
+function anchorEventIdFor(row: DbRow): string | null {
+  if (row.category === "delegation") return row.delegation_event_id
+  if (row.category === "thread") {
+    const anchor = stringOrNull(row.detail.anchorEventId) ?? row.thread_anchor_event_id
+    return anchor?.startsWith("event_") ? anchor : null
+  }
+  return null
+}
+
 function mapRow(row: DbRow): StreamContextFeedRow {
   const category = row.category as ContextCategory
   return {
@@ -155,6 +170,7 @@ function mapRow(row: DbRow): StreamContextFeedRow {
     groupKey: row.group_key,
     streamId: row.stream_id,
     sourceMessageId: row.source_message_id,
+    anchorEventId: anchorEventIdFor(row),
     authorId: row.author_id,
     occurredAt: row.occurred_at.toISOString(),
     sequence: row.sequence === null ? null : String(row.sequence),
@@ -217,6 +233,7 @@ function scopedSql(filters: StreamContextFeedFilters, extra?: { groupKey?: strin
       dt.claimed_by_label AS task_claimed_by_label,
       dt.status_note AS task_status_note,
       dt.result_message_id AS task_result_message_id,
+      de.id AS delegation_event_id,
       th.display_name AS thread_name,
       th.reply_count AS thread_reply_count,
       th.last_reply_at AS thread_last_reply_at,
@@ -238,6 +255,11 @@ function scopedSql(filters: StreamContextFeedFilters, extra?: { groupKey?: strin
       ON sci.category = 'delegation'
      AND dt.workspace_id = sci.workspace_id
      AND dt.id = sci.ref_id
+    LEFT JOIN stream_events de
+      ON sci.category = 'delegation'
+     AND de.stream_id = sci.stream_id
+     AND de.event_type = 'delegation:created'
+     AND de.payload->>'delegationId' = sci.ref_id
     LEFT JOIN streams th
       ON sci.category = 'thread'
      AND th.workspace_id = sci.workspace_id

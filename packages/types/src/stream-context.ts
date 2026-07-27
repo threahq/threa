@@ -96,6 +96,13 @@ export interface StreamContextItem {
   /** The stream the artifact lives in — a thread of the root under `scope=tree`. */
   streamId: string
   sourceMessageId: string | null
+  /**
+   * The stream event to deep-link when the artifact has no source message —
+   * a delegation's `delegation:created` card, or a thread anchored on a card.
+   * `?m=` accepts either id (see `matchesDeepLinkTarget`), so a row jumps with
+   * whichever of the two it has.
+   */
+  anchorEventId: string | null
   authorId: string | null
   /** ISO — the source message's `created_at`. */
   occurredAt: string

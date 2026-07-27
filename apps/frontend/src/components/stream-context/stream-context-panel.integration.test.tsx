@@ -414,6 +414,30 @@ describe("StreamContextPanel — flag on", () => {
     await waitFor(() => expect(screen.queryByText("Filtered")).not.toBeInTheDocument())
   })
 
+  it("jumps a delegation row to its card, which lives in an event and not a message", async () => {
+    // Delegations are created by a tool call, not by posting a message, so the
+    // row's only deep-link target is the `delegation:created` event. `?m=`
+    // resolves an event id as readily as a message id.
+    await db.streamContextItems.put(
+      cachedRow(
+        serverItem({
+          category: "delegation",
+          refKind: "delegation",
+          refId: "task_1",
+          sourceMessageId: null,
+          anchorEventId: "event_delegation_1",
+          detail: { title: "Ship the thing", status: "open" },
+        })
+      )
+    )
+    vi.spyOn(streamContextApi, "list").mockResolvedValue(listResponse({ counts: null }))
+
+    const { onJumpToMessage } = renderPanel()
+
+    await userEvent.click(await screen.findByRole("button", { name: /Go to delegation/ }))
+    expect(onJumpToMessage).toHaveBeenCalledWith("event_delegation_1")
+  })
+
   it("does not offer expansion on a locally derived row (no server groupKey yet)", async () => {
     await db.streamContextItems.put(
       cachedRow(

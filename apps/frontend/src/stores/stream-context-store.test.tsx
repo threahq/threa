@@ -21,6 +21,7 @@ function serverItem(overrides: Partial<StreamContextItem> & { key: string }): St
   return {
     category: "link",
     refKind: "url",
+    anchorEventId: null,
     refId: "https://example.com/a",
     groupKey: "https://example.com/a",
     streamId: ROOT,

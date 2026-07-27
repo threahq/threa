@@ -298,6 +298,10 @@ function buildRow(
   }
 ): CachedStreamContextItem {
   return {
+    // Locally derived rows always come from a message, so they never carry an
+    // anchor event; the server fills one in for delegations and card-anchored
+    // threads, which this path does not derive.
+    anchorEventId: null,
     key: streamContextItemKey({
       category: input.category,
       refId: input.refId,

@@ -30,7 +30,9 @@ export function contextItemFromCached(row: CachedStreamContextItem): ContextItem
   const base = {
     key: row.key,
     createdAt: row.occurredAt,
-    sourceMessageId: row.sourceMessageId,
+    // Delegations and card-anchored threads have no source message; they jump
+    // by the event that anchors them, which `?m=` resolves just as well.
+    sourceMessageId: row.sourceMessageId ?? row.anchorEventId ?? null,
     snippet: row.snippet,
   }
 

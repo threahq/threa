@@ -168,6 +168,7 @@ describe("StreamContextReadRepository.listFeed", () => {
       refKind: "url",
       refId: "https://example.com/a?utm_source=x",
       groupKey: "https://example.com/a",
+      anchorEventId: null,
       streamId: "stream_thread",
       sourceMessageId: "msg_1",
       authorId: "usr_1",
