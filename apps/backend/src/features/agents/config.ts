@@ -4,7 +4,7 @@ import { AgentToolNames, type AgentToolName } from "@threa/types"
  * Persona agent supersede rerun response validation config (INV-44).
  * Shared between production code and any future evals.
  */
-export const SUPERSEDE_RESPONSE_VALIDATOR_MODEL_ID = "openrouter:anthropic/claude-haiku-4.5"
+export const SUPERSEDE_RESPONSE_VALIDATOR_MODEL_ID = "openrouter:openai/gpt-5.4-mini"
 export const SUPERSEDE_RESPONSE_VALIDATOR_MAX_TOKENS = 180
 export const SUPERSEDE_RESPONSE_VALIDATOR_TEMPERATURE = 0
 
@@ -14,7 +14,7 @@ export const SUPERSEDE_RESPONSE_VALIDATOR_TEMPERATURE = 0
  * the shared component (`@threa/agent-runtime` turn-digest). The enclave uses
  * its own pinned turn model instead — it has exactly one egress-approved model.
  */
-export const TURN_DIGEST_MODEL_ID = "openrouter:anthropic/claude-haiku-4.5"
+export const TURN_DIGEST_MODEL_ID = "openrouter:openai/gpt-5.4-mini"
 
 /**
  * Follow-up scheduling bounds (`schedule_follow_up` tool, roadmap 1.1).
