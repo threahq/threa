@@ -111,3 +111,40 @@ describe("getSession access (INV-62)", () => {
     expect(res.body).toEqual({ error: "Session not found" })
   })
 })
+
+/**
+ * The guardian's verdict is persisted on the step, but the trace badge reads it
+ * from THIS response — and a serializer that lists fields by hand drops a new
+ * one silently. That is exactly how it shipped once: DB row `approved`, live
+ * socket patch correct, badge invisible on reload because the bootstrap never
+ * carried it. Caught by a real browser run, not by any test, so this is the
+ * test.
+ */
+describe("getSession carries the guardian verdict", () => {
+  test("serializes `verification` for a guarded step", async () => {
+    stubCommonReads()
+    spyOn(AgentSessionRepository, "findStepsBySession").mockResolvedValue([
+      { ...(STEP as object), verification: { status: "approved", reason: "The user asked for this." } },
+    ] as never)
+    spyOn(streamsModule, "checkStreamAccess").mockResolvedValue(THREAD_STREAM)
+
+    const handlers = createAgentSessionHandlers({ pool: {} as Pool })
+    const res = mockRes()
+    await handlers.getSession(mockReq(), res as never)
+
+    const [step] = (res.body as { steps: Array<{ verification?: unknown }> }).steps
+    expect(step!.verification).toEqual({ status: "approved", reason: "The user asked for this." })
+  })
+
+  test("leaves it absent on an unguarded step, so old traces render unchanged", async () => {
+    stubCommonReads()
+    spyOn(streamsModule, "checkStreamAccess").mockResolvedValue(THREAD_STREAM)
+
+    const handlers = createAgentSessionHandlers({ pool: {} as Pool })
+    const res = mockRes()
+    await handlers.getSession(mockReq(), res as never)
+
+    const [step] = (res.body as { steps: Array<{ verification?: unknown }> }).steps
+    expect(step!.verification).toBeUndefined()
+  })
+})

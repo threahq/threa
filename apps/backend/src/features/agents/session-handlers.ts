@@ -96,6 +96,7 @@ export function createAgentSessionHandlers({ pool }: Dependencies) {
             sources: step.sources ?? undefined,
             messageId: step.messageId ?? undefined,
             tokensUsed: step.tokensUsed ?? undefined,
+            verification: step.verification,
             duration:
               step.completedAt && step.startedAt ? step.completedAt.getTime() - step.startedAt.getTime() : undefined,
             startedAt: step.startedAt.toISOString(),
