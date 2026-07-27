@@ -97,6 +97,44 @@ export function applyPersistedComposerHeight(): void {
 }
 
 /**
+ * Live publishers of the global variable, in write order (a `Map` re-keyed on
+ * every write, so the last entry is the most recently measured composer).
+ */
+const rootPublishers = new Map<HTMLElement, number>()
+
+/**
+ * Mirrors a live composer measurement onto `:root`.
+ *
+ * `useComposerHeightPublish` scopes the variable to the nearest
+ * `[data-editor-zone]`, which is right for the timeline spacer but leaves the
+ * app-level fixed surfaces (the call dock's idle chips, the incoming-call ring)
+ * out of reach — they mount as siblings of the shell, so on a phone they read
+ * the boot approximation applied above for the whole session. A previous
+ * session's long draft persists ~350px and the chip then floats mid-screen.
+ *
+ * Most recent writer wins. Several editor zones can be mounted (main timeline +
+ * thread panel), but only the one the user last touched is under the dock on a
+ * phone, and it is the one that last measured. Dropping a publisher falls back
+ * to the newest survivor rather than the boot value, so closing the panel
+ * re-reveals the main composer's real height instead of a stale one.
+ */
+export function publishComposerHeightToRoot(el: HTMLElement, heightPx: number): void {
+  if (typeof document === "undefined") return
+  rootPublishers.delete(el)
+  rootPublishers.set(el, heightPx)
+  document.documentElement.style.setProperty(CSS_VAR, `${heightPx}px`)
+}
+
+export function unpublishComposerHeightFromRoot(el: HTMLElement): void {
+  if (typeof document === "undefined") return
+  if (!rootPublishers.delete(el)) return
+  let survivor: number | null = null
+  for (const px of rootPublishers.values()) survivor = px
+  if (survivor === null) return
+  document.documentElement.style.setProperty(CSS_VAR, `${survivor}px`)
+}
+
+/**
  * Persists a freshly-measured composer height for the next page load, keyed by
  * the current viewport so mobile and desktop never seed each other's fallback.
  * No-op when the value is outside the sanity window so corrupt measurements

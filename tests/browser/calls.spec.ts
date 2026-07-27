@@ -239,13 +239,38 @@ test.describe("1:1 DM calls", () => {
       await expect(b.locator(CALL_TILE)).toHaveCount(2, { timeout: 20000 })
 
       // The chip is `fixed right-4` with no left anchor and renders on the branch
-      // mobile shares, so measure it at phone width: it must stay on screen.
+      // mobile shares, so measure it at phone width: it must stay on screen, and
+      // sit just above the composer rather than floating over the timeline.
+      //
+      // Seeding `:root` reproduces the reported bug's precondition: that is where
+      // `applyPersistedComposerHeight` writes a previous session's composer height
+      // at boot, and the chip mounts outside every `[data-editor-zone]`, so it
+      // reads that value and nothing else. Seed before the resize, which makes the
+      // live composer re-measure — the correction under test.
+      await a.evaluate(() => document.documentElement.style.setProperty("--composer-height", "350px"))
       await a.setViewportSize({ width: 360, height: 740 })
       const chip = a.getByText(/moved to another device/i).locator("xpath=ancestor::div[1]")
       const box = await chip.boundingBox()
       expect(box).not.toBeNull()
       expect(box!.x).toBeGreaterThanOrEqual(0)
       expect(box!.x + box!.width).toBeLessThanOrEqual(360)
+
+      // DOCK_BOTTOM's `+ 1rem` above the real composer, measured against the
+      // composer's own box so no persisted approximation can satisfy it. Asserted
+      // as a distance from 16px so an overlap fails as loudly as a float.
+      const composer = a.locator("[data-message-composer-root]").first()
+      await expect
+        .poll(
+          async () => {
+            const chipBox = await chip.boundingBox()
+            const composerBox = await composer.boundingBox()
+            if (!chipBox || !composerBox) return Number.POSITIVE_INFINITY
+            return Math.abs(composerBox.y - (chipBox.y + chipBox.height) - 16)
+          },
+          { timeout: 5000 }
+        )
+        .toBeLessThanOrEqual(4)
+
       await expect(chip.getByRole("button", { name: "Rejoin here" })).toBeVisible()
       await expect(chip.getByRole("button", { name: "Dismiss" })).toBeVisible()
 

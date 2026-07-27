@@ -1,5 +1,9 @@
 import { useCallback, useLayoutEffect, useRef, useState } from "react"
-import { persistComposerHeight } from "@/lib/composer-height-storage"
+import {
+  persistComposerHeight,
+  publishComposerHeightToRoot,
+  unpublishComposerHeightFromRoot,
+} from "@/lib/composer-height-storage"
 
 interface UseComposerHeightPublishOptions {
   active?: boolean
@@ -33,7 +37,10 @@ interface UseComposerHeightPublishOptions {
  * preserving its parent component and hooks. Scrollable
  * siblings inside the same editor zone can consume the variable (e.g.
  * plain-scroll `padding-bottom`) to reserve space for the floating composer
- * pill.
+ * pill. The same measurement is mirrored to `:root` via
+ * `publishComposerHeightToRoot` for surfaces that sit outside every editor zone
+ * (the call dock's bottom-anchored chips and ring) — see that function for the
+ * multiple-zone rule.
  *
  * The first measurement runs in a layout effect (before paint) so the variable
  * and the timeline's bottom anchor can be corrected in the same frame the list
@@ -94,6 +101,7 @@ export function useComposerHeightPublish({
         return
       }
       zone.style.setProperty("--composer-height", `${px}px`)
+      publishComposerHeightToRoot(el, px)
       persistComposerHeight(px)
       // Notify on any change from the height the footer was last sized for —
       // including the initial measure when it differs from first paint (see the
@@ -120,6 +128,7 @@ export function useComposerHeightPublish({
     return () => {
       cancelAnimationFrame(retryRafId)
       ro.disconnect()
+      unpublishComposerHeightFromRoot(el)
       // Intentionally leave --composer-height set so stream navigation
       // starts with a reasonable approximation instead of falling back to 0px.
     }
