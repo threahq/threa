@@ -3,6 +3,7 @@ import tsPlugin from "@typescript-eslint/eslint-plugin"
 import threaPlugin, {
   dotenvRestrictedImportPattern,
   providerSdkRestrictedImportPattern,
+  sqlTextAssertionExemptions,
   testRestrictedProperties,
 } from "../../eslint/threa-plugin.js"
 
@@ -133,6 +134,19 @@ export default [
     files: ["**/*.{test,spec}.ts", "tests/**/*.ts"],
     rules: {
       "no-restricted-properties": ["error", ...testRestrictedProperties],
+    },
+  },
+
+  // INV-68: SQL correctness is verified against a real schema, never by
+  // asserting on the query text a repository emits. The files below predate the
+  // rule; their counts are frozen in `sqlTextAssertionAllowlist` and enforced by
+  // apps/backend/src/db/no-sql-text-assertions.test.ts, which is what stops them
+  // growing (ESLint can only see a violation, not that one was removed).
+  {
+    files: ["**/*.{test,spec}.ts"],
+    ignores: sqlTextAssertionExemptions("apps/backend"),
+    rules: {
+      "threa/no-sql-text-assertion": "error",
     },
   },
 ]
