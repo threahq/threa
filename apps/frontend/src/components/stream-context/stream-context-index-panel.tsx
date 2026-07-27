@@ -82,12 +82,28 @@ export function StreamContextIndexPanel(props: StreamContextPanelProps) {
   const debounced = useSearchState(debouncedQuery, users)
   const unsupported = live.parsed.filters.filter((f) => !isSupported(f))
 
+  // Counts are whole-scope and CATEGORY-INDEPENDENT server-side (`service.list`
+  // strips the category before counting), but they ride the feed's first page,
+  // and that query is keyed on the category. Selecting a chip therefore starts a
+  // fresh query with no counts yet, so anything reading `feed.counts` directly
+  // would drop to the local tally — hundreds → tens → hundreds as the page lands.
+  // Hold the last server counts and keep using them while the category changes;
+  // key them by the filters that DO narrow them so a new search can't show stale
+  // numbers.
+  const countsKey = [
+    streamId,
+    debounced.parsed.text ?? "",
+    debounced.authorId ?? "",
+    debounced.before ?? "",
+    debounced.after ?? "",
+  ].join("|")
+  const [heldCounts, setHeldCounts] = useState<{ key: string; counts: Record<ContextCategory, number> } | null>(null)
+  const serverCounts = heldCounts?.key === countsKey ? heldCounts.counts : null
+
   // A `?context=<category>` deep link (or a chip whose category later empties
   // out) must not strand the panel on a filter the scope has nothing for — fall
   // back to "all" once the server-owned counts say so, for the query and the
-  // chip row alike. Counts are whole-scope and category-independent server-side,
-  // so the fallback converges in one render rather than oscillating.
-  const [serverCounts, setServerCounts] = useState<Record<ContextCategory, number> | null>(null)
+  // chip row alike.
   const effectiveFilter: Filter = filter !== "all" && serverCounts?.[filter] === 0 ? "all" : filter
 
   const category: ContextCategory | undefined = effectiveFilter === "all" ? undefined : effectiveFilter
@@ -132,11 +148,11 @@ export function StreamContextIndexPanel(props: StreamContextPanelProps) {
       ),
     [rows, searchTerms, authorId, before, after]
   )
-  const counts = feed.counts ?? localCounts
+  const counts = feed.counts ?? serverCounts ?? localCounts
   const feedCounts = feed.counts
   useEffect(() => {
-    if (feedCounts) setServerCounts(feedCounts)
-  }, [feedCounts])
+    if (feedCounts) setHeldCounts({ key: countsKey, counts: feedCounts })
+  }, [feedCounts, countsKey])
   const total = Object.values(counts).reduce((sum, n) => sum + n, 0)
 
   const sentinelRef = useRef<HTMLDivElement | null>(null)
