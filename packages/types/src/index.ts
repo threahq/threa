@@ -473,6 +473,16 @@ export {
 } from "./tool-privacy"
 export type { ToolPrivacyCategory, ToolPrivacyPolicy } from "./tool-privacy"
 
+export {
+  TOOL_TIERS,
+  ToolTiers,
+  TOOL_TIERS_BY_NAME,
+  GUARDED_TOOL_NAMES,
+  tierOfTool,
+  requiresGuardianReview,
+} from "./tool-tiers"
+export type { ToolTier } from "./tool-tiers"
+
 // API types
 export type {
   // Streams

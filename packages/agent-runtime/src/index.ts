@@ -1,4 +1,4 @@
-export { defineAgentTool, toVercelToolDefs, buildToolPromptSections } from "./runtime/agent-tool"
+export { defineAgentTool, tierOfBuiltTool, toVercelToolDefs, buildToolPromptSections } from "./runtime/agent-tool"
 export type { AgentTool, AgentToolConfig, AgentToolResult, ExecutionPhase } from "./runtime/agent-tool"
 export {
   negotiateCapabilities,
