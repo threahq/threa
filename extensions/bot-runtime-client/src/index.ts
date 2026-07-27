@@ -7,20 +7,19 @@ export {
   type AllowedTmuxKey,
   type TmuxKeyFailureCode,
 } from "./tmux-key"
-export { ArchiveGraceController, type ArchiveGraceHooks, type ArchiveGraceOptions } from "./archive-grace"
 export {
   ARCHIVE_RESTORE_GRACE_MS,
   ARCHIVE_RESTORE_PROBE_MS,
+  ArchiveGraceController,
   WS_BACKSTOP_POLL_MS,
-  killOwnWindow,
-  pushBranchAndScheduleRemoval,
-  windDownArchivedWorktree,
-  type ArchiveCleanupReport,
-  type ArchiveWindDownReport,
-} from "./archive-wind-down"
+  type ArchiveGraceHooks,
+  type ArchiveGraceOptions,
+} from "./archive-grace"
+export { killOwnWindow } from "./tmux-window"
 export {
   clearHarnessLink,
   harnessLinksDir,
+  markHarnessLinkWoundDown,
   readHarnessLinks,
   recordHarnessLink,
   type HarnessLink,

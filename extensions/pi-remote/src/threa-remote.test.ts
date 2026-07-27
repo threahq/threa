@@ -1,3 +1,4 @@
+import { readHarnessLinks } from "@threa/bot-runtime-client"
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test"
 import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs"
 import { homedir, tmpdir } from "node:os"
@@ -2069,12 +2070,12 @@ describe("archived-scratchpad wind-down", () => {
     }
   })
 
-  test("the grace expiring while still archived runs the worktree wind-down", async () => {
+  test("the grace expiring while still archived hands the worktree to harnessd and takes the window down", async () => {
     linkConfig()
-    const windDowns: string[] = []
-    __testing.setArchiveWindDownForTesting(50, (cwd) => {
-      windDowns.push(cwd)
-      return { committed: false, pushed: true, removalScheduled: true, windowKilled: true }
+    let windowsKilled = 0
+    __testing.setArchiveWindDownForTesting(50, () => {
+      windowsKilled += 1
+      return true
     })
     const fetchSpy = spyOn(globalThis, "fetch").mockImplementation(
       async (input) =>
@@ -2090,13 +2091,22 @@ describe("archived-scratchpad wind-down", () => {
     try {
       await __testing.probeArchiveState(ctx)
       expect(__testing.archivePendingRootStreamId()).toBe("stream_root")
-      expect(windDowns).toEqual([])
+      expect(windowsKilled).toBe(0)
 
       await Bun.sleep(120)
 
-      expect({ windDowns, pending: __testing.archivePendingRootStreamId() }).toEqual({
-        windDowns: ["/tmp"],
+      // The record must survive, carrying the mark: harnessd does the pushing
+      // and the removal, and it can only find this worktree through the record.
+      expect({
+        windowsKilled,
+        pending: __testing.archivePendingRootStreamId(),
+        marked: readHarnessLinks()
+          .filter((link) => link.runtimeSessionId === "runtime")
+          .map((link) => ({ worktree: link.worktree, requested: typeof link.windDownRequestedAt === "string" })),
+      }).toEqual({
+        windowsKilled: 1,
         pending: undefined,
+        marked: [{ worktree: "/tmp", requested: true }],
       })
     } finally {
       fetchSpy.mockRestore()
@@ -2107,12 +2117,7 @@ describe("archived-scratchpad wind-down", () => {
     linkConfig()
     let releaseReattach!: () => void
     const reattachGate = new Promise<void>((resolve) => (releaseReattach = resolve))
-    __testing.setArchiveWindDownForTesting(50, () => ({
-      committed: false,
-      pushed: true,
-      removalScheduled: true,
-      windowKilled: false,
-    }))
+    __testing.setArchiveWindDownForTesting(50, () => false)
     const fetchSpy = spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = String(input)
       if (url.endsWith("/streams/stream_root")) {

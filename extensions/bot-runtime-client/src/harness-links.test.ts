@@ -1,8 +1,14 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test"
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs"
+import { existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { clearHarnessLink, harnessLinksDir, readHarnessLinks, recordHarnessLink } from "./harness-links"
+import {
+  clearHarnessLink,
+  harnessLinksDir,
+  markHarnessLinkWoundDown,
+  readHarnessLinks,
+  recordHarnessLink,
+} from "./harness-links"
 
 let dir: string
 const previous = process.env.THREA_HARNESS_LINKS_DIR
@@ -107,5 +113,44 @@ describe("harness link registry", () => {
 
   test("reading before anything has been recorded is empty, not an error", () => {
     expect(readHarnessLinks()).toEqual([])
+  })
+
+  test("marking a wind-down keeps the record findable and preserves its fields", () => {
+    // Clearing it here instead would strand the worktree: harnessd does the
+    // pushing and the removal, and the record is how it finds the worktree.
+    recordHarnessLink(link())
+
+    markHarnessLinkWoundDown("ccs-abc")
+
+    const [marked] = readHarnessLinks()
+    expect(marked).toMatchObject({
+      runtimeSessionId: "ccs-abc",
+      rootStreamId: "stream_root",
+      worktree: "/repo/threa.feature",
+    })
+    expect(typeof marked?.windDownRequestedAt).toBe("string")
+  })
+
+  test("a relink after an unarchive clears the mark", () => {
+    // The mark must not survive a revival: the worktree is live again, and a
+    // stale mark tells the reaper to skip every margin protecting it.
+    recordHarnessLink(link())
+    markHarnessLinkWoundDown("ccs-abc")
+
+    recordHarnessLink(link())
+
+    expect(readHarnessLinks()[0]?.windDownRequestedAt).toBeUndefined()
+  })
+
+  test("marking a session that was never recorded writes no file at all", () => {
+    // A mark is a hand-off of a worktree a live runtime claimed. Minting a
+    // record here would point the reaper at a directory nobody vouched for.
+    // Another session's record first, so the links dir exists and a stray
+    // write would actually land.
+    recordHarnessLink(link())
+
+    markHarnessLinkWoundDown("ccs-never-linked")
+
+    expect(existsSync(join(harnessLinksDir(), "ccs-never-linked.json"))).toBe(false)
   })
 })

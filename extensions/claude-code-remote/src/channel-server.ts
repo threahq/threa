@@ -5,9 +5,9 @@ import {
   harnessReconnectAvailable,
   prepareHarnessReconnect,
   runHarnessKick,
+  killOwnWindow,
   parseAllowedTmuxKey,
   sendAllowedTmuxKey,
-  windDownArchivedWorktree,
   type BotRuntimeTransport,
 } from "@threa/bot-runtime-client"
 import {
@@ -572,15 +572,17 @@ export class ChannelServer {
   }
 
   /**
-   * The scratchpad was archived (SDK is already offline). Preserve the work on
-   * the remote, then take the whole tmux window down — Claude Code, this
-   * channel, and the shell die together; a detached helper removes the
-   * worktree afterwards. Recovery is `git fetch` + the pushed branch, never a
-   * local revival. Outside tmux there is nothing to kill but ourselves.
+   * The scratchpad was archived (SDK is already offline, and the session has
+   * marked its harness link for harnessd). Take the whole tmux window down —
+   * Claude Code, this channel, and the shell die together, which leaves
+   * harnessd an unoccupied worktree it can preserve and remove without having
+   * to identify whoever is sitting in the pane. Recovery is `git fetch` + the
+   * pushed branch, never a local revival. Outside tmux there is nothing to
+   * kill but ourselves.
    */
   private windDownForArchive(): void {
-    log("scratchpad archived — preserving work and shutting down")
-    if (!windDownArchivedWorktree(process.cwd(), log).windowKilled) process.exit(0)
+    log("scratchpad archived — handing the worktree to harnessd and shutting down")
+    if (!killOwnWindow()) process.exit(0)
   }
 
   // --- Delegations ------------------------------------------------------------

@@ -2,11 +2,11 @@ import {
   ARCHIVE_RESTORE_GRACE_MS,
   WS_BACKSTOP_POLL_MS,
   clearHarnessLink,
-  pushBranchAndScheduleRemoval,
   readHarnessLinks,
   type HarnessLink,
 } from "@threa/bot-runtime-client"
 import { existsSync } from "node:fs"
+import { pushBranchAndScheduleRemoval } from "./archive-wind-down"
 import { listLocalTmuxPanes, resolveManagedAgentPane, type LocalTmuxPane } from "./discovery"
 import { output } from "./shell"
 import { fetchScratchpadArchivedAt, fetchScratchpadStatus, type ScratchpadStatus } from "./resume"
@@ -15,25 +15,30 @@ import { fetchScratchpadArchivedAt, fetchScratchpadStatus, type ScratchpadStatus
  * The reaper: clean up worktrees whose scratchpad was archived while nothing
  * was around to notice.
  *
- * A live runtime winds itself down when its scratchpad is archived. That
- * covers the common case and nothing here should interfere with it. What it
- * cannot cover is an archive that lands when the owning runtime is dead or
- * absent — the machine was asleep, it rebooted, the process was killed — and
- * a cold start does not help either: Claude's cold start replaces an archived
- * scratchpad with a fresh one rather than winding down, so the worktree and
- * its tmux window survive indefinitely.
+ * Two routes reach the same cleanup, and both land here because harnessd is
+ * where `resume-active.lock` is held — a revive can be recreating the very
+ * worktree this pass would force-remove:
  *
- * harnessd is the only component that outlives all of that, so the backstop
- * belongs here.
+ *   - A live runtime watched its restore grace expire, marked its link record
+ *     `windDownRequestedAt`, and exited. The decision is already made and the
+ *     grace already served, so this pass acts on the next sweep with no
+ *     further margin.
+ *   - Nobody was around to decide: the archive landed while the owning runtime
+ *     was dead or absent (asleep, rebooted, killed). A cold start does not
+ *     help either — Claude's replaces an archived scratchpad with a fresh one
+ *     rather than winding down — so the worktree and its window survive
+ *     indefinitely. Those wait out {@link REAP_AFTER_MS}.
  */
 
 /**
- * How long after `archivedAt` the reaper may act.
+ * How long after `archivedAt` the reaper may act on a record NO runtime marked.
  *
  * A live runtime can take a full socket-backstop poll to notice the archive,
  * and then holds its own grace window before winding down. Acting sooner would
  * steal an unarchive from a runtime that was about to reattach, so wait out
- * both and add the same margin again.
+ * both and add the same margin again. A `windDownRequestedAt` record skips
+ * this entirely: the runtime already served the grace this margin protects,
+ * and making it wait again would turn ordinary cleanup from 5 into 25 minutes.
  */
 export const REAP_AFTER_MS = WS_BACKSTOP_POLL_MS + ARCHIVE_RESTORE_GRACE_MS * 2
 
@@ -141,18 +146,25 @@ export async function reapLink(link: HarnessLink, deps: ReapDeps, dryRun: boolea
     return { ...base, status: "skipped inaccessible", detail: "cannot read the scratchpad; leaving it alone" }
   }
 
-  const archivedAt = await deps.archivedAt(link.rootStreamId)
-  const archivedMs = archivedAt ? Date.parse(archivedAt) : Number.NaN
-  if (!Number.isFinite(archivedMs)) {
-    return { ...base, status: "skipped unavailable", detail: "archived but no readable archivedAt" }
-  }
-  const age = deps.now() - archivedMs
-  if (age < REAP_AFTER_MS) {
-    return {
-      ...base,
-      status: "skipped grace",
-      detail: `archived ${Math.round(age / 60_000)}m ago; the owning runtime gets until ${Math.round(REAP_AFTER_MS / 60_000)}m`,
+  // The owning runtime watched the grace expire and handed the worktree over
+  // before exiting. Re-deriving a margin from archivedAt would only re-serve a
+  // window that is already spent.
+  let why = "the owning runtime served its grace and asked for the wind-down"
+  if (!link.windDownRequestedAt) {
+    const archivedAt = await deps.archivedAt(link.rootStreamId)
+    const archivedMs = archivedAt ? Date.parse(archivedAt) : Number.NaN
+    if (!Number.isFinite(archivedMs)) {
+      return { ...base, status: "skipped unavailable", detail: "archived but no readable archivedAt" }
     }
+    const age = deps.now() - archivedMs
+    if (age < REAP_AFTER_MS) {
+      return {
+        ...base,
+        status: "skipped grace",
+        detail: `archived ${Math.round(age / 60_000)}m ago; the owning runtime gets until ${Math.round(REAP_AFTER_MS / 60_000)}m`,
+      }
+    }
+    why = `archived ${Math.round(age / 60_000)}m ago`
   }
 
   const window = decideWindow(link, deps.panes())
@@ -164,9 +176,7 @@ export async function reapLink(link: HarnessLink, deps: ReapDeps, dryRun: boolea
     return { ...base, status: "skipped worktree missing" }
   }
 
-  if (dryRun) {
-    return { ...base, status: "would reap", detail: `archived ${Math.round(age / 60_000)}m ago` }
-  }
+  if (dryRun) return { ...base, status: "would reap", detail: why }
 
   const report = deps.windDown(link.worktree, (message) => deps.log(`${link.worktree}: ${message}`))
   // The window goes either way: the scratchpad is archived, so the session is
@@ -189,23 +199,27 @@ export async function reapLink(link: HarnessLink, deps: ReapDeps, dryRun: boolea
  * can already be spent — but the runtime that owns the worktree was asleep
  * too, and its detection-plus-grace clock only restarts now. Reaping in that
  * instant races a live runtime that never got its chance. An explicitly
- * invoked `reap` skips this: a human asking is the signal.
+ * invoked `reap` skips this: a human asking is the signal, and so is a
+ * `windDownRequestedAt` record — a runtime that already decided cannot be the
+ * runtime this window is holding a place for.
  */
 export const OBSERVER_WARMUP_MS = WS_BACKSTOP_POLL_MS + ARCHIVE_RESTORE_GRACE_MS
 
 export async function reapArchivedWorktrees(deps: ReapDeps, dryRun = false): Promise<ReapOutcome[]> {
   const links = deps.links()
   if (links.length === 0) return []
-  if (deps.observingSinceMs !== undefined && deps.now() - deps.observingSinceMs < OBSERVER_WARMUP_MS) {
-    return links.map((link) => ({
-      runtimeSessionId: link.runtimeSessionId,
-      worktree: link.worktree,
-      status: "skipped observer too young" as const,
-      detail: "watching since less than one detection window; runtimes get first refusal",
-    }))
-  }
+  const warmingUp = deps.observingSinceMs !== undefined && deps.now() - deps.observingSinceMs < OBSERVER_WARMUP_MS
   const outcomes: ReapOutcome[] = []
   for (const link of links) {
+    if (warmingUp && !link.windDownRequestedAt) {
+      outcomes.push({
+        runtimeSessionId: link.runtimeSessionId,
+        worktree: link.worktree,
+        status: "skipped observer too young",
+        detail: "watching since less than one detection window; runtimes get first refusal",
+      })
+      continue
+    }
     try {
       outcomes.push(await reapLink(link, deps, dryRun))
     } catch (error) {

@@ -11,39 +11,25 @@ import { dirname, resolve } from "node:path"
  *      die with the worktree)
  *   2. `git push origin HEAD:<branch>`
  *   3. push succeeded AND this is a linked worktree → schedule removal via a
- *      detached shell (this process dies with its tmux window moments later,
- *      so the removal must outlive it)
+ *      detached shell (the caller may die moments later, so the removal must
+ *      outlive it)
  *
  * Never touches `main`/`master`/detached HEAD, and never removes the main
  * repository checkout — only linked worktrees.
+ *
+ * This lives in harnessd, not in the runtimes' shared client library, and has
+ * exactly one caller: {@link reapLink}, which holds `resume-active.lock`. A
+ * revive can be recreating the very worktree this would force-remove, and the
+ * two race the server independently — so the destructive half of the wind-down
+ * belongs where that lock is held. A runtime that decides to wind down marks
+ * its link record (`windDownRequestedAt`) and exits instead.
  */
-
-/**
- * How long a runtime survives its scratchpad being archived before winding
- * down. An unarchive inside this window reattaches the live agent in place.
- * Shared: Claude (`@threa/remote-session`) and Pi run separate session
- * implementations, and a grace tuned on one must not diverge from the other.
- */
-export const ARCHIVE_RESTORE_GRACE_MS = 5 * 60 * 1000
-/** Reattach-probe cadence while detached. Bounded by the grace window, so it cannot become a quota burn. */
-export const ARCHIVE_RESTORE_PROBE_MS = 45_000
-/**
- * Poll cadence while the `/bot` socket is up: pushes deliver work within a
- * frame, so the poll is only a backstop for a dropped one. Shared because it
- * is also the worst case for a runtime to notice an archive it was not pushed,
- * which is what any external reaper has to wait out.
- */
-export const WS_BACKSTOP_POLL_MS = 15 * 60 * 1000
 
 export interface ArchiveCleanupReport {
   committed: boolean
   pushed: boolean
   removalScheduled: boolean
   reason?: string
-}
-
-export interface ArchiveWindDownReport extends ArchiveCleanupReport {
-  windowKilled: boolean
 }
 
 const PROTECTED_BRANCHES = new Set(["main", "master", "HEAD"])
@@ -133,39 +119,6 @@ export function pushBranchAndScheduleRemoval(cwd: string, log: (message: string)
     report.reason = "could not schedule worktree removal (branch is pushed; remove manually)"
   }
   return report
-}
-
-function paneTarget(): string | undefined {
-  return process.env.THREA_TMUX_TARGET?.trim() || process.env.TMUX_PANE?.trim() || undefined
-}
-
-/**
- * Kill the tmux window the runtime lives in — deliberate self-termination for
- * the archived-scratchpad wind-down. The runtime dies with the window, so
- * callers do any last writes first.
- */
-export function killOwnWindow(): boolean {
-  const target = paneTarget()
-  if (!target) return false
-  try {
-    return spawnSync("tmux", ["kill-window", "-t", target], { encoding: "utf8" }).status === 0
-  } catch {
-    return false
-  }
-}
-
-/**
- * The whole archived-scratchpad wind-down for a harness runtime: preserve the
- * work, then take the tmux window down. Outside tmux there is nothing to kill,
- * and the caller decides how to exit.
- */
-export function windDownArchivedWorktree(cwd: string, log: (message: string) => void): ArchiveWindDownReport {
-  const report = pushBranchAndScheduleRemoval(cwd, log)
-  log(
-    `archive cleanup: committed=${report.committed} pushed=${report.pushed} removal=${report.removalScheduled}` +
-      (report.reason ? ` (${report.reason})` : "")
-  )
-  return { ...report, windowKilled: killOwnWindow() }
 }
 
 function shellQuote(value: string): string {

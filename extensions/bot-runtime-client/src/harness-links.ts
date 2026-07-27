@@ -26,6 +26,14 @@ export interface HarnessLink {
   /** Owning process, so a reader can tell a live runtime from an abandoned record. */
   pid: number
   updatedAt: string
+  /**
+   * Set by a runtime that watched the restore grace expire and is exiting:
+   * harnessd may preserve and remove this worktree on its next pass with no
+   * further margin, because the grace it would otherwise wait out has already
+   * been served. Absent on every record written by {@link recordHarnessLink},
+   * so a relink after an unarchive clears it.
+   */
+  windDownRequestedAt?: string
 }
 
 export function harnessLinksDir(): string {
@@ -72,6 +80,33 @@ export function recordHarnessLink(link: Omit<HarnessLink, "updatedAt" | "pid"> &
     }
   } catch {
     // A missing record only costs the reaper a candidate; it never breaks a turn.
+  }
+}
+
+/**
+ * Hand this worktree to harnessd: the restore grace expired with the
+ * scratchpad still archived, so preserving the branch and removing the
+ * worktree is now due.
+ *
+ * The runtime does not do that work itself. Only harnessd holds
+ * `resume-active.lock`, which a concurrent revive of the same worktree also
+ * takes, and only harnessd outlives the tmux window this runtime is about to
+ * kill. Marking rather than clearing is what keeps the record findable.
+ *
+ * No-op when nothing was recorded — this must never mint a record for a
+ * worktree no live runtime ever claimed.
+ */
+export function markHarnessLinkWoundDown(runtimeSessionId: string): void {
+  const path = linkPath(runtimeSessionId)
+  if (!path) return
+  try {
+    const existing = readHarnessLinks().find((link) => link.runtimeSessionId === runtimeSessionId)
+    if (!existing) return
+    const record: HarnessLink = { ...existing, windDownRequestedAt: new Date().toISOString() }
+    writeFileSync(path, `${JSON.stringify(record, null, 2)}\n`)
+  } catch {
+    // Losing the mark only costs the reaper its shortcut: the record is still
+    // there, and the ordinary archivedAt margin reaps the worktree anyway.
   }
 }
 
@@ -123,6 +158,9 @@ export function readHarnessLinks(): HarnessLink[] {
           worktree: parsed.worktree,
           pid: typeof parsed.pid === "number" ? parsed.pid : 0,
           updatedAt: typeof parsed.updatedAt === "string" ? parsed.updatedAt : "",
+          ...(typeof parsed.windDownRequestedAt === "string" && parsed.windDownRequestedAt
+            ? { windDownRequestedAt: parsed.windDownRequestedAt }
+            : {}),
         })
       }
     } catch {
