@@ -8,6 +8,17 @@ import { cn } from "@/lib/utils"
 
 export type Filter = "all" | ContextCategory
 
+/** The props both panel implementations take; `StreamContextPanel` picks one. */
+export interface StreamContextPanelProps {
+  workspaceId: string
+  streamId: string
+  onClose: () => void
+  onJumpToMessage: (messageId: string) => void
+  onOpenThread: (threadId: string) => void
+  onOpenMemo: (memoId: string) => void
+  onOpenGallery: (key: string) => void
+}
+
 export const CATEGORY_LABELS: Record<ContextCategory, string> = {
   link: "Links",
   media: "Media",

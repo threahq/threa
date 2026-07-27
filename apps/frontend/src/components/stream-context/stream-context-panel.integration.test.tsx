@@ -64,7 +64,7 @@ function listResponse(overrides: Partial<ListStreamContextResponse> = {}): ListS
   return { items: [], counts: { ...EMPTY_COUNTS }, nextCursor: null, mode: "index", ...overrides }
 }
 
-function renderPanel(options: { flag?: "on" | "off" } = {}) {
+function renderPanel(options: { flag?: "on" | "off"; entry?: string } = {}) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   queryClient.setQueryData(workspaceKeys.bootstrap(WS), {
     featureFlags: { workspace: { streamContextIndex: options.flag ?? "on" }, user: {} },
@@ -73,7 +73,7 @@ function renderPanel(options: { flag?: "on" | "off" } = {}) {
   const onJumpToMessage = vi.fn()
   const onOpenThread = vi.fn()
   render(
-    <MemoryRouter initialEntries={["/s"]}>
+    <MemoryRouter initialEntries={[options.entry ?? "/s"]}>
       <QueryClientProvider client={queryClient}>
         <TooltipProvider>
           <StreamContextPanel
@@ -98,11 +98,17 @@ beforeEach(async () => {
   vi.stubGlobal(
     "IntersectionObserver",
     class {
+      cb: IntersectionObserverCallback
       constructor(cb: IntersectionObserverCallback) {
+        this.cb = cb
         observerCallbacks.push(cb)
       }
       observe() {}
-      disconnect() {}
+      // A disconnected observer must stop firing, or a re-render's stale
+      // callback pages a second time and clobbers the real page.
+      disconnect() {
+        observerCallbacks = observerCallbacks.filter((cb) => cb !== this.cb)
+      }
       unobserve() {}
       takeRecords() {
         return []
@@ -474,6 +480,88 @@ describe("StreamContextPanel — flag on", () => {
 
     expect(await screen.findByText("notes.pdf")).toBeInTheDocument()
     expect(await screen.findByText(/encrypted/i)).toBeInTheDocument()
+  })
+
+  it("surfaces an out-of-scope filter instead of forwarding it, and offers only the supported kinds", async () => {
+    const list = vi.spyOn(streamContextApi, "list").mockResolvedValue(listResponse())
+
+    renderPanel()
+    await waitFor(() => expect(list).toHaveBeenCalledTimes(1))
+
+    await userEvent.type(screen.getByLabelText("Search in this stream"), "in:#general foo")
+
+    expect(await screen.findByText(/in: is not supported here/)).toBeInTheDocument()
+    await waitFor(() => expect(list.mock.calls.at(-1)?.[2]).toMatchObject({ q: "foo" }))
+    for (const call of list.mock.calls) expect(call[2]).not.toHaveProperty("in")
+
+    await userEvent.click(screen.getByLabelText("Add search filter"))
+    const options = await screen.findAllByRole("option")
+    expect(options.map((o) => o.textContent)).toEqual([
+      expect.stringContaining("From user"),
+      expect.stringContaining("After date"),
+      expect.stringContaining("Before date"),
+    ])
+  })
+
+  it("falls back to All when a ?context= deep link names a category the server has none of", async () => {
+    await db.streamContextItems.put(
+      cachedRow(
+        serverItem({
+          category: "link",
+          refId: "https://a.example",
+          detail: { url: "https://a.example", title: "Alpha" },
+        })
+      )
+    )
+    const list = vi
+      .spyOn(streamContextApi, "list")
+      .mockResolvedValue(listResponse({ counts: { ...EMPTY_COUNTS, link: 1 } }))
+
+    renderPanel({ entry: "/s?context=memo" })
+
+    expect(await screen.findByText("Alpha")).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: /^All/ })).toHaveAttribute("aria-pressed", "true")
+    await waitFor(() => expect(list.mock.calls.at(-1)?.[2]).toMatchObject({ category: undefined }))
+  })
+
+  it("counts the fallback chips over the searched set while the list is category-narrowed", async () => {
+    await db.streamContextItems.bulkPut([
+      cachedRow(
+        serverItem({
+          category: "link",
+          refId: "https://alpha.example",
+          detail: { url: "https://alpha.example", title: "Alpha report" },
+        })
+      ),
+      cachedRow(
+        serverItem({
+          category: "link",
+          refId: "https://zulu.example",
+          detail: { url: "https://zulu.example", title: "Zulu memo" },
+        })
+      ),
+      cachedRow(
+        serverItem({
+          category: "memo",
+          refId: "memo_1",
+          refKind: "memo",
+          detail: { title: "Alpha decision", knowledgeType: "decision" },
+        })
+      ),
+    ])
+    // No server counts (offline / first paint), so the chips fall back to the
+    // local tally.
+    vi.spyOn(streamContextApi, "list").mockResolvedValue(listResponse({ counts: null }))
+
+    renderPanel()
+    await screen.findByText("Alpha report")
+
+    await userEvent.click(screen.getByRole("button", { name: /^Memories/ }))
+    await userEvent.type(screen.getByLabelText("Search in this stream"), "alpha")
+
+    // "Zulu memo" is out of the search, so the Links chip must not still say 2.
+    await waitFor(() => expect(screen.getByRole("button", { name: /^Links/ })).toHaveTextContent("1"))
+    expect(screen.getByRole("button", { name: /^Memories/ })).toHaveTextContent("1")
   })
 
   it("renders the offline boundary when nothing at all is cached", async () => {

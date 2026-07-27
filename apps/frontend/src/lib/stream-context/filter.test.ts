@@ -27,6 +27,18 @@ function row(overrides: Partial<CachedStreamContextItem> = {}): CachedStreamCont
   } as CachedStreamContextItem
 }
 
+describe("filterContextRows date bounds", () => {
+  // The endpoint is `occurred_at >= after` and `occurred_at < before`; phase 1
+  // has to match on the boundary instant or a row flickers out until the server
+  // page lands.
+  it("keeps a row exactly on the after bound and drops one exactly on before", () => {
+    const onBound = row({ occurredAt: "2026-06-24T10:00:00.000Z" })
+
+    expect(filterContextRows([onBound], { after: "2026-06-24T10:00:00.000Z" })).toEqual([onBound])
+    expect(filterContextRows([onBound], { before: "2026-06-24T10:00:00.000Z" })).toEqual([])
+  })
+})
+
 describe("collapseContextRows", () => {
   it("keeps one row per group, represented by its newest occurrence", () => {
     const older = row({ sourceMessageId: "msg_a", occurredAt: "2026-06-20T10:00:00.000Z", snippet: "first" })

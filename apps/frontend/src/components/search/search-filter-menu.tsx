@@ -84,10 +84,7 @@ export function SearchFilterMenu({ workspaceId, query, onQueryChange, className,
   const isTouch = useInputMode() === "touch"
   const [open, setOpen] = useState(false)
   const [step, setStep] = useState<FilterKind | null>(null)
-  const offered = useMemo(
-    () => (kinds ? kinds.map((kind) => FILTER_KINDS.find((f) => f.kind === kind)!).filter(Boolean) : FILTER_KINDS),
-    [kinds]
-  )
+  const offered = useMemo(() => (kinds ? FILTER_KINDS.filter((f) => kinds.includes(f.kind)) : FILTER_KINDS), [kinds])
 
   // Reopening always starts at the kind list, never a stale value picker.
   useEffect(() => {

@@ -1,6 +1,7 @@
 import { useFeatureFlag } from "@/hooks"
-import { StreamContextDerivedPanel, type StreamContextPanelProps } from "./stream-context-derived-panel"
+import { StreamContextDerivedPanel } from "./stream-context-derived-panel"
 import { StreamContextIndexPanel } from "./stream-context-index-panel"
+import type { StreamContextPanelProps } from "./stream-context-chrome"
 
 export type { StreamContextPanelProps }
 

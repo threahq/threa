@@ -13,17 +13,8 @@ import {
   ContextTimeline,
   useContextFilter,
   type Filter,
+  type StreamContextPanelProps,
 } from "./stream-context-chrome"
-
-export interface StreamContextPanelProps {
-  workspaceId: string
-  streamId: string
-  onClose: () => void
-  onJumpToMessage: (messageId: string) => void
-  onOpenThread: (threadId: string) => void
-  onOpenMemo: (memoId: string) => void
-  onOpenGallery: (key: string) => void
-}
 
 /**
  * The pre-index panel: context derived from the loaded timeline window only.

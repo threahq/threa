@@ -1,5 +1,5 @@
+import { CONTEXT_CATEGORIES, type ContextCategory } from "@threa/types"
 import type { CachedStreamContextItem } from "@/db"
-import type { ContextCategory } from "./types"
 
 export interface ContextRowFilters {
   category?: ContextCategory
@@ -42,7 +42,7 @@ export function filterContextRows(
     if (filters.category && row.category !== filters.category) return false
     if (filters.authorId && row.authorId !== filters.authorId) return false
     if (filters.before && row.occurredAt >= filters.before) return false
-    if (filters.after && row.occurredAt <= filters.after) return false
+    if (filters.after && row.occurredAt < filters.after) return false
     if (terms.length > 0) {
       const text = contextRowText(row)
       if (!terms.every((term) => text.includes(term))) return false
@@ -78,7 +78,7 @@ export function collapseContextRows(rows: readonly CachedStreamContextItem[]): C
 
 /** Per-category counts over an already-filtered set, for the fallback chips. */
 export function countByCategory(rows: readonly CachedStreamContextItem[]): Record<ContextCategory, number> {
-  const counts: Record<ContextCategory, number> = { link: 0, media: 0, file: 0, memo: 0, delegation: 0, thread: 0 }
+  const counts = Object.fromEntries(CONTEXT_CATEGORIES.map((c) => [c, 0])) as Record<ContextCategory, number>
   for (const row of rows) counts[row.category] += 1
   return counts
 }

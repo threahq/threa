@@ -33,8 +33,10 @@ import {
   ContextSkeleton,
   ContextTimeline,
   useContextFilter,
+  type Filter,
+  type StreamContextPanelProps,
 } from "./stream-context-chrome"
-import { StreamContextDerivedPanel, type StreamContextPanelProps } from "./stream-context-derived-panel"
+import { StreamContextDerivedPanel } from "./stream-context-derived-panel"
 
 /**
  * `in:`/`type:`/`status:`/`with:` are meaningless in a single stream's context
@@ -80,7 +82,15 @@ export function StreamContextIndexPanel(props: StreamContextPanelProps) {
   const debounced = useSearchState(debouncedQuery, users)
   const unsupported = live.parsed.filters.filter((f) => !isSupported(f))
 
-  const category: ContextCategory | undefined = filter === "all" ? undefined : filter
+  // A `?context=<category>` deep link (or a chip whose category later empties
+  // out) must not strand the panel on a filter the scope has nothing for — fall
+  // back to "all" once the server-owned counts say so, for the query and the
+  // chip row alike. Counts are whole-scope and category-independent server-side,
+  // so the fallback converges in one render rather than oscillating.
+  const [serverCounts, setServerCounts] = useState<Record<ContextCategory, number> | null>(null)
+  const effectiveFilter: Filter = filter !== "all" && serverCounts?.[filter] === 0 ? "all" : filter
+
+  const category: ContextCategory | undefined = effectiveFilter === "all" ? undefined : effectiveFilter
   const feed = useStreamContextFeed(workspaceId, streamId, rootStreamId, {
     scope: "tree",
     category,
@@ -110,10 +120,23 @@ export function StreamContextIndexPanel(props: StreamContextPanelProps) {
     [rows, category, searchTerms, authorId, before, after]
   )
   // Counts are whole-scope facts the server owns; the local tally is the
-  // offline/first-paint fallback and is computed over the unfiltered window —
-  // collapsed, so a repeatedly shared link counts once, as it does server-side.
-  const localCounts = useMemo(() => countByCategory(collapseContextRows(rows ?? [])), [rows])
+  // offline/first-paint fallback: computed over the same search/author/date
+  // narrowing as the list but never the category, so every chip stays reachable
+  // — collapsed, so a repeatedly shared link counts once, as it does server-side.
+  const localCounts = useMemo(
+    () =>
+      countByCategory(
+        collapseContextRows(
+          filterContextRows(rows ?? [], { terms: searchTerms, authorId: authorId ?? undefined, before, after })
+        )
+      ),
+    [rows, searchTerms, authorId, before, after]
+  )
   const counts = feed.counts ?? localCounts
+  const feedCounts = feed.counts
+  useEffect(() => {
+    if (feedCounts) setServerCounts(feedCounts)
+  }, [feedCounts])
   const total = Object.values(counts).reduce((sum, n) => sum + n, 0)
 
   const sentinelRef = useRef<HTMLDivElement | null>(null)
@@ -186,7 +209,6 @@ export function StreamContextIndexPanel(props: StreamContextPanelProps) {
             streamId={streamId}
             searchTerms={searchTerms}
             filters={{
-              category,
               q: debounced.parsed.text || undefined,
               from: debounced.authorId ?? undefined,
               before: debounced.before,
@@ -254,7 +276,9 @@ export function StreamContextIndexPanel(props: StreamContextPanelProps) {
         )}
       </div>
 
-      {total > 0 && <ContextChipRow chips={chipsFromCounts(counts, total)} active={filter} onSelect={setFilter} />}
+      {total > 0 && (
+        <ContextChipRow chips={chipsFromCounts(counts, total)} active={effectiveFilter} onSelect={setFilter} />
+      )}
 
       <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-2 pt-2 pb-[max(0.5rem,env(safe-area-inset-bottom))]">
         {body}
@@ -295,7 +319,6 @@ function isoBound(value: string | undefined, edge: "start" | "end"): string | un
 }
 
 interface RowFilters {
-  category?: ContextCategory
   q?: string
   from?: string
   before?: string
@@ -410,7 +433,7 @@ function OccurrenceList({
   const groupRef = contextGroupRef(row)
   const occurrences = useStreamContextOccurrences(groupRef)
   const { formatRelative } = useFormattedDate()
-  const { category, q, from, before, after } = filters
+  const { q, from, before, after } = filters
 
   useEffect(() => {
     let cancelled = false
@@ -435,7 +458,7 @@ function OccurrenceList({
     return () => {
       cancelled = true
     }
-  }, [workspaceId, streamId, row.category, row.groupKey, row.rootStreamId, category, q, from, before, after])
+  }, [workspaceId, streamId, row.category, row.groupKey, row.rootStreamId, q, from, before, after])
 
   // IDB holds every occurrence ever seeded for the group, including ones an
   // earlier unfiltered fetch brought in, so the text filter has to be applied
