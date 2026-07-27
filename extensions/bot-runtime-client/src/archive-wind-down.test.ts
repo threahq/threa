@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { existsSync, mkdtempSync, writeFileSync } from "node:fs"
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { pushBranchAndScheduleRemoval } from "./archive-wind-down"
@@ -100,6 +100,27 @@ describe("pushBranchAndScheduleRemoval", () => {
     expect(report.removalScheduled).toBe(false)
     expect(report.reason).toContain("main repository checkout")
     expect(originHasBranch(origin, "feature/from-main")).toBe(true)
+  })
+
+  test("a blocking pre-commit hook does not stop the work being preserved", () => {
+    // Threa's own hook runs a monorepo lint + typecheck that takes minutes;
+    // without --no-verify every dirty worktree failed to commit and the
+    // "nothing dies with the worktree" promise silently never happened.
+    const { worktree, origin } = makeFixture()
+    writeFileSync(join(worktree, "wip.txt"), "unsaved work\n")
+    // A linked worktree reads hooks from the repo's COMMON dir, not its own
+    // gitdir — putting them in the gitdir is a hook that never runs.
+    const commonDir = sh(worktree, "git rev-parse --path-format=absolute --git-common-dir")
+    const hooks = join(commonDir, "hooks")
+    mkdirSync(hooks, { recursive: true })
+    const hook = join(hooks, "pre-commit")
+    writeFileSync(hook, "#!/bin/sh\necho 'lint failed' >&2\nexit 1\n")
+    chmodSync(hook, 0o755)
+
+    const report = pushBranchAndScheduleRemoval(worktree, noLog)
+
+    expect(report).toMatchObject({ committed: true, pushed: true })
+    expect(sh(origin, `git log -1 --format=%s feature/archive-test`)).toBe("wip: auto-commit — scratchpad archived")
   })
 
   test("a git status that cannot run is not proof of a clean tree", () => {
