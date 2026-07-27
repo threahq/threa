@@ -39,14 +39,16 @@ function listIdsQuery(table: BackfillTable, workspaceId: string) {
     case "messages":
       return sql`
         SELECT id FROM messages
-        WHERE workspace_id = ${workspaceId} AND content_json IS NOT NULL AND e2e_version IS NULL
+        WHERE stream_id IN (SELECT id FROM streams WHERE workspace_id = ${workspaceId})
+          AND content_json IS NOT NULL AND e2e_version IS NULL
         ORDER BY id
       `
     case "message_versions":
       return sql`
         SELECT v.id FROM message_versions v
         JOIN messages m ON m.id = v.message_id
-        WHERE m.workspace_id = ${workspaceId} AND m.e2e_version IS NULL AND v.content_json IS NOT NULL
+        JOIN streams s ON s.id = m.stream_id
+        WHERE s.workspace_id = ${workspaceId} AND m.e2e_version IS NULL AND v.content_json IS NOT NULL
         ORDER BY v.id
       `
     case "scheduled_messages":
@@ -69,7 +71,18 @@ function selectRowsQuery(table: BackfillTable, workspaceId: string, ids: string[
     return sql`
       SELECT v.id, v.content_json FROM message_versions v
       JOIN messages m ON m.id = v.message_id
-      WHERE m.workspace_id = ${workspaceId} AND v.id = ANY(${ids}) AND v.content_json IS NOT NULL
+      JOIN streams s ON s.id = m.stream_id
+      WHERE s.workspace_id = ${workspaceId} AND v.id = ANY(${ids}) AND v.content_json IS NOT NULL
+    `
+  }
+  // `messages` carries no `workspace_id` of its own — it scopes through its
+  // stream, the same way `MessageRepository.findByIdsInWorkspace` does.
+  if (table === "messages") {
+    return sql`
+      SELECT id, content_json FROM messages
+      WHERE id = ANY(${ids})
+        AND content_json IS NOT NULL
+        AND stream_id IN (SELECT id FROM streams WHERE workspace_id = ${workspaceId})
     `
   }
   return sql`

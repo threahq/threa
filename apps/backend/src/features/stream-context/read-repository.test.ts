@@ -146,7 +146,11 @@ describe("StreamContextReadRepository.listFeed", () => {
     expect(text).toContain("att.filename ILIKE")
     expect(text).toContain("mem.title ILIKE")
     expect(text).toContain("dt.title ILIKE")
-    expect(text).toContain("sci.snippet ILIKE")
+    expect(text).toContain("sci.ref_id ILIKE")
+    // The message's snippet is deliberately NOT matched: every artifact of a
+    // message shares it, so one message carrying five links would match all
+    // five for a term naming only one.
+    expect(text).not.toContain("sci.snippet ILIKE")
     expect(values).toContain("usr_7")
     expect(values).toContain("%budget%")
     const dates = values.filter((v) => v instanceof Date).map((v) => (v as Date).toISOString())

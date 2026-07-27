@@ -254,7 +254,7 @@ function scopedSql(filters: StreamContextFeedFilters, extra?: { groupKey?: strin
       AND (${filters.after === undefined} OR sci.occurred_at >= ${filters.after ?? EPOCH}::timestamptz)
       AND (
         ${!hasQuery}
-        OR sci.snippet ILIKE ${likePattern}
+        OR sci.ref_id ILIKE ${likePattern}
         OR lp.title ILIKE ${likePattern}
         OR lp.site_name ILIKE ${likePattern}
         OR lp.url ILIKE ${likePattern}

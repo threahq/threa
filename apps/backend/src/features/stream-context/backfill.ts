@@ -105,8 +105,7 @@ export async function plan(ctx: BackfillContext, workspaceId: string): Promise<S
 
   const messages = await ctx.pool.query<{ id: string; stream_id: string }>(sql`
     SELECT id, stream_id FROM messages
-    WHERE workspace_id = ${workspaceId}
-      AND stream_id = ANY(${streamIds})
+    WHERE stream_id = ANY(${streamIds})
       AND deleted_at IS NULL
     ORDER BY stream_id, id
   `)
@@ -126,7 +125,6 @@ export async function plan(ctx: BackfillContext, workspaceId: string): Promise<S
     JOIN messages m ON m.id = ANY(mo.source_message_ids)
     JOIN streams s ON s.id = m.stream_id AND s.workspace_id = ${workspaceId}
     WHERE mo.workspace_id = ${workspaceId}
-      AND m.workspace_id = ${workspaceId}
       AND m.stream_id = ANY(${streamIds})
   `)
   const delegationStreams = await ctx.pool.query<{ stream_id: string }>(sql`
@@ -332,7 +330,9 @@ async function loadAnchorMessages(ctx: BackfillContext, workspaceId: string, ids
   const result = await ctx.pool.query<AnchorRow>(sql`
     SELECT id, author_id, created_at, sequence, content_markdown
     FROM messages
-    WHERE workspace_id = ${workspaceId} AND id = ANY(${ids}) AND deleted_at IS NULL
+    WHERE id = ANY(${ids})
+      AND deleted_at IS NULL
+      AND stream_id IN (SELECT id FROM streams WHERE workspace_id = ${workspaceId})
   `)
   return result.rows
 }
@@ -354,7 +354,7 @@ async function reconcileMessagesChunk(
 ): Promise<number> {
   const current = await ctx.pool.query<{ id: string; edited_at: Date | null }>(sql`
     SELECT id, edited_at FROM messages
-    WHERE workspace_id = ${workspaceId}
+    WHERE stream_id = ${chunk.streamId}
       AND id = ANY(${snapshot.map((message) => message.id)})
       AND stream_id = ${chunk.streamId}
       AND deleted_at IS NULL
@@ -385,8 +385,7 @@ async function processMessagesChunk(
   const messages = await ctx.pool.query<MessageRow>(sql`
     SELECT id, author_id, created_at, sequence, content_json, content_markdown, edited_at
     FROM messages
-    WHERE workspace_id = ${workspaceId}
-      AND stream_id = ${chunk.streamId}
+    WHERE stream_id = ${chunk.streamId}
       AND id = ANY(${chunk.ids})
       AND deleted_at IS NULL
     ORDER BY id
@@ -425,7 +424,6 @@ async function processMemosChunk(
     JOIN messages m ON m.id = ANY(mo.source_message_ids)
     JOIN streams s ON s.id = m.stream_id AND s.workspace_id = ${workspaceId}
     WHERE mo.workspace_id = ${workspaceId}
-      AND m.workspace_id = ${workspaceId}
       AND ${TOP_LEVEL_STREAM_SQL} = ${chunk.streamId}
   `)
   if (memos.rows.length === 0) return []
