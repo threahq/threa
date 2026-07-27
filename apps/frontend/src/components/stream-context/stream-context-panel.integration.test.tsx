@@ -222,6 +222,40 @@ describe("StreamContextPanel — flag on", () => {
     await userEvent.click(screen.getByRole("button", { name: /^Memories/ }))
     expect(await screen.findByText("Retention decision")).toBeInTheDocument()
     expect(screen.queryByText("Alpha")).not.toBeInTheDocument()
+
+    // Counts are category-independent server-side, but they ride the feed's
+    // first page and that query is keyed on the category — so selecting a chip
+    // must not drop the chips back to the local IDB tally while the new page
+    // loads. Without the held counts this reads "1" (the cached row) mid-flight.
+    expect(screen.getByRole("button", { name: /^Links/ })).toHaveTextContent("9")
+    expect(screen.getByRole("button", { name: /^Memories/ })).toHaveTextContent("4")
+  })
+
+  it("keeps server counts across a chip change while the new page is in flight", async () => {
+    await db.streamContextItems.bulkPut([
+      cachedRow(serverItem({ category: "link", refId: "https://a.example", detail: { url: "https://a.example" } })),
+    ])
+    let resolveSecond: (value: ListStreamContextResponse) => void = () => {}
+    vi.spyOn(streamContextApi, "list")
+      .mockResolvedValueOnce(listResponse({ counts: { ...EMPTY_COUNTS, link: 240, memo: 37 } }))
+      .mockImplementationOnce(
+        () =>
+          new Promise<ListStreamContextResponse>((resolve) => {
+            resolveSecond = resolve
+          })
+      )
+
+    renderPanel()
+    expect(await screen.findByRole("button", { name: /^Links/ })).toHaveTextContent("240")
+
+    // The second page never resolves, so this pins what the chips read while a
+    // category query is still in flight — the moment the flip-flop happened.
+    await userEvent.click(screen.getByRole("button", { name: /^Memories/ }))
+    await waitFor(() => expect(streamContextApi.list).toHaveBeenCalledTimes(2))
+    expect(screen.getByRole("button", { name: /^Links/ })).toHaveTextContent("240")
+    expect(screen.getByRole("button", { name: /^Memories/ })).toHaveTextContent("37")
+
+    resolveSecond(listResponse({ counts: { ...EMPTY_COUNTS, link: 240, memo: 37 } }))
   })
 
   it("filters locally as you type, before the debounced server phase runs", async () => {
