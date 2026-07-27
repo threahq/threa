@@ -38,6 +38,27 @@ export function broadcastRoster(io: Server, callId: string, snapshot: CallRoster
   })
 }
 
+/**
+ * Tell a displaced device that another of this user's devices took the call over.
+ * Addressed to the superseded endpoint's own room, so only that device hears it.
+ *
+ * Without this the displaced client learns nothing until its next lease renew
+ * fails (`CALL_LEASE_SUPERSEDED`, one TTL/3 away) while its media is already
+ * dead — a silent stretch of "Reconnecting…" ending in the call vanishing. The
+ * renew remains the backstop for a device that has lost the socket.
+ *
+ * Only ever called with `supersededEndpointId` from a takeover: a rebind reuses
+ * the endpoint id, and this event on that room would tear down the very device
+ * that just joined.
+ */
+export function notifyEndpointTakenOver(io: Server, callId: string, endpointId: string): void {
+  io.of(CALLS_NAMESPACE).to(endpointRoom(callId, endpointId)).emit("call:endpoint:closed", {
+    callId,
+    endpointId,
+    reason: "taken_over",
+  })
+}
+
 const joinSchema = z.object({
   workspaceId: z.string().min(1),
   callId: z.string().min(1),
@@ -215,6 +236,7 @@ export function registerCallGateway(io: Server, deps: Dependencies) {
         })
         // Let existing members observe the new arrival.
         broadcastRoster(io, callId, snapshot)
+        if (result.supersededEndpointId) notifyEndpointTakenOver(io, callId, result.supersededEndpointId)
       } catch (err) {
         respondError(err, ack, "call:join", { workspaceId, callId })
       }

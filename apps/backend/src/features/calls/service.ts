@@ -77,12 +77,21 @@ export interface StartCallResult {
    * only if the started card row is somehow missing (never for a fresh create).
    */
   chatAnchorId: string | null
+  /** See {@link JoinCallResult.supersededEndpointId}. */
+  supersededEndpointId: string | null
 }
 
 export interface JoinCallResult {
   call: Call
   participant: CallParticipant
   endpoint: CallEndpoint
+  /**
+   * The endpoint a `takeover` displaced, or null. Its device is still holding a
+   * call the server has closed under it, so the caller notifies that endpoint's
+   * room after the commit. Never set by a rebind — a rebind keeps the SAME
+   * endpoint id, which is the room the arriving device itself sits in.
+   */
+  supersededEndpointId: string | null
 }
 
 /** A versioned roster snapshot: the per-participant rows plus the version they were read at. */
@@ -143,6 +152,8 @@ export class CallService {
       mode: CallMode
       mediaIncarnation?: string
       expectedCallId?: string
+      /** Displace this user's other device rather than 409 — see {@link admitEndpoint}. */
+      takeover?: boolean
     },
     tx?: PoolClient
   ): Promise<StartCallResult> {
@@ -189,6 +200,7 @@ export class CallService {
         callId: targetCallId,
         userId: params.userId,
         mediaIncarnation: params.mediaIncarnation,
+        takeover: params.takeover,
       })
 
       // A newly created call is a slotted broadcast row on the host stream
@@ -242,6 +254,7 @@ export class CallService {
           participant: admitted.participant,
           endpoint: admitted.endpoint,
           chatAnchorId,
+          supersededEndpointId: admitted.supersededEndpointId,
         },
         closedSessionIds: admitted.closedSessionIds,
       }
@@ -322,7 +335,12 @@ export class CallService {
 
     const incarnation = params.mediaIncarnation ?? null
     const live = await CallEndpointRepository.findLiveByParticipant(client, params.workspaceId, participant.id)
-    const { endpoint, closedCfSessionId } = await this.admitEndpoint(client, { params, participant, live, incarnation })
+    const { endpoint, closedCfSessionId, supersededEndpointId } = await this.admitEndpoint(client, {
+      params,
+      participant,
+      live,
+      incarnation,
+    })
 
     const accepted = await CallInvitationRepository.acceptRingingForUser(client, {
       workspaceId: params.workspaceId,
@@ -342,7 +360,13 @@ export class CallService {
     await CallRepository.bumpRosterVersion(client, params.workspaceId, params.callId)
     await this.emitParticipantsChanged(client, params.workspaceId, call.streamId, params.callId)
 
-    return { call, participant, endpoint, closedSessionIds: closedCfSessionId ? [closedCfSessionId] : [] }
+    return {
+      call,
+      participant,
+      endpoint,
+      supersededEndpointId,
+      closedSessionIds: closedCfSessionId ? [closedCfSessionId] : [],
+    }
   }
 
   /**
@@ -366,12 +390,17 @@ export class CallService {
       live: CallEndpoint | null
       incarnation: string | null
     }
-  ): Promise<{ endpoint: CallEndpoint; closedCfSessionId: string | null }> {
+  ): Promise<{ endpoint: CallEndpoint; closedCfSessionId: string | null; supersededEndpointId: string | null }> {
     const { params, participant, live, incarnation } = args
     const leaseExpiresAt = new Date(Date.now() + ENDPOINT_LEASE_TTL_MS)
     // The CF session dropped by a takeover/rebind, to close AFTER the tx commits
     // (INV-41). This is the one place the teardown handle was being lost.
     let closedCfSessionId: string | null = null
+    // Set ONLY by the takeover branch: that device keeps rendering a call the
+    // server just closed under it, so the caller pushes it a control event after
+    // the commit. A rebind must never set it — it reuses the endpoint id, so the
+    // notification would land on the arriving device instead.
+    let supersededEndpointId: string | null = null
 
     if (live) {
       // Rebind only applies to the incarnation-aware socket-join path. A caller
@@ -393,7 +422,7 @@ export class CallService {
           // by the join serializes this read). A same-incarnation reconnect keeps
           // the session, so nothing is torn down.
           if (live.cfSessionId && live.mediaIncarnation !== incarnation) closedCfSessionId = live.cfSessionId
-          return { endpoint: rebound, closedCfSessionId }
+          return { endpoint: rebound, closedCfSessionId, supersededEndpointId }
         }
         // Lost the row to a concurrent close between read and CAS; fall through to a fresh mint.
       } else if (!params.takeover) {
@@ -404,6 +433,9 @@ export class CallService {
       } else {
         const closed = await CallEndpointRepository.close(client, params.workspaceId, live.id)
         closedCfSessionId = closed?.cfSessionId ?? null
+        // Only when the close actually landed: a row already closed by a
+        // concurrent leave/reap has no device left to notify.
+        supersededEndpointId = closed?.id ?? null
       }
     }
 
@@ -417,7 +449,7 @@ export class CallService {
       mediaIncarnation: incarnation,
       leaseExpiresAt,
     })
-    return { endpoint, closedCfSessionId }
+    return { endpoint, closedCfSessionId, supersededEndpointId }
   }
 
   /**

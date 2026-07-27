@@ -449,6 +449,111 @@ describe("CallService.joinCall — second endpoint / takeover", () => {
     expect(closeSession).toHaveBeenCalledWith("sess_old")
     expect(order).toEqual(["db-close", "cf-close"])
   })
+
+  it("reports the displaced endpoint on a takeover and nothing on a rebind", async () => {
+    stubTransaction()
+    spyOn(accessModule, "checkCallAccess").mockResolvedValue({ call: fakeCall() })
+    spyOn(CallRepository, "findByIdForUpdate").mockResolvedValue(fakeCall())
+    spyOn(CallParticipantRepository, "countJoined").mockResolvedValue(1)
+    spyOn(CallParticipantRepository, "admit").mockResolvedValue(fakeParticipant())
+    spyOn(CallInvitationRepository, "acceptRingingForUser").mockResolvedValue([])
+    spyOn(CallEndpointRepository, "findLiveByParticipant").mockResolvedValue(
+      fakeEndpoint({ id: "callep_old", epoch: 3, mediaIncarnation: "inc_other" })
+    )
+    spyOn(CallEndpointRepository, "close").mockResolvedValue(fakeEndpoint({ id: "callep_old", status: "closed" }))
+    spyOn(CallEndpointRepository, "maxEpochForParticipant").mockResolvedValue(3)
+    spyOn(CallEndpointRepository, "insert").mockResolvedValue(fakeEndpoint({ id: "callep_new", epoch: 4 }))
+    const rebind = spyOn(CallEndpointRepository, "rebind").mockResolvedValue(
+      fakeEndpoint({ id: "callep_old", epoch: 3 })
+    )
+
+    const service = makeService()
+    const takenOver = await service.joinCall({
+      workspaceId: "ws_1",
+      callId: "call_1",
+      userId: "usr_a",
+      mediaIncarnation: "inc_new",
+      takeover: true,
+    })
+    // A rebind reuses the endpoint id, so the "another device took this over"
+    // notification would land on the arriving device — it must report nothing.
+    const rebound = await service.joinCall({
+      workspaceId: "ws_1",
+      callId: "call_1",
+      userId: "usr_a",
+      mediaIncarnation: "inc_other",
+    })
+
+    expect(rebind).toHaveBeenCalled()
+    expect({ takeover: takenOver.supersededEndpointId, rebind: rebound.supersededEndpointId }).toEqual({
+      takeover: "callep_old",
+      rebind: null,
+    })
+  })
+})
+
+describe("CallService.startCall — takeover", () => {
+  afterEach(() => mock.restore())
+
+  it("forwards takeover into the locked join so a second device can displace the first", async () => {
+    stubTransaction()
+    spyOn(streamsModule, "checkStreamAccess").mockResolvedValue({ id: "stream_1", type: "channel" } as never)
+    spyOn(CallRepository, "insertIfNoActiveCall").mockResolvedValue(null)
+    spyOn(CallRepository, "findOpenByStream").mockResolvedValue(fakeCall())
+    spyOn(CallRepository, "findByIdForUpdate").mockResolvedValue(fakeCall())
+    spyOn(CallRepository, "findCallStartedEventId").mockResolvedValue("evt_started")
+    spyOn(CallParticipantRepository, "countJoined").mockResolvedValue(1)
+    spyOn(CallParticipantRepository, "admit").mockResolvedValue(fakeParticipant())
+    spyOn(CallInvitationRepository, "acceptRingingForUser").mockResolvedValue([])
+    spyOn(CallEndpointRepository, "findLiveByParticipant").mockResolvedValue(
+      fakeEndpoint({ id: "callep_old", epoch: 3, mediaIncarnation: "inc_phone" })
+    )
+    const close = spyOn(CallEndpointRepository, "close").mockResolvedValue(
+      fakeEndpoint({ id: "callep_old", status: "closed" })
+    )
+    spyOn(CallEndpointRepository, "maxEpochForParticipant").mockResolvedValue(3)
+    spyOn(CallEndpointRepository, "insert").mockResolvedValue(fakeEndpoint({ id: "callep_new", epoch: 4 }))
+
+    // The client only ever reaches admitEndpoint through REST start, so without
+    // this forwarding "Join on this device" is unreachable.
+    const result = await makeService().startCall({
+      workspaceId: "ws_1",
+      streamId: "stream_1",
+      userId: "usr_a",
+      mode: "video",
+      mediaIncarnation: "inc_laptop",
+      takeover: true,
+    })
+
+    expect(close).toHaveBeenCalledWith(expect.anything(), "ws_1", "callep_old")
+    expect({ endpointId: result.endpoint.id, superseded: result.supersededEndpointId }).toEqual({
+      endpointId: "callep_new",
+      superseded: "callep_old",
+    })
+  })
+
+  it("still rejects a second device when takeover is not asked for", async () => {
+    stubTransaction()
+    spyOn(streamsModule, "checkStreamAccess").mockResolvedValue({ id: "stream_1", type: "channel" } as never)
+    spyOn(CallRepository, "insertIfNoActiveCall").mockResolvedValue(null)
+    spyOn(CallRepository, "findOpenByStream").mockResolvedValue(fakeCall())
+    spyOn(CallRepository, "findByIdForUpdate").mockResolvedValue(fakeCall())
+    spyOn(CallParticipantRepository, "countJoined").mockResolvedValue(1)
+    spyOn(CallParticipantRepository, "admit").mockResolvedValue(fakeParticipant())
+    spyOn(CallEndpointRepository, "findLiveByParticipant").mockResolvedValue(
+      fakeEndpoint({ id: "callep_old", epoch: 3, mediaIncarnation: "inc_phone" })
+    )
+
+    await expect(
+      makeService().startCall({
+        workspaceId: "ws_1",
+        streamId: "stream_1",
+        userId: "usr_a",
+        mode: "video",
+        mediaIncarnation: "inc_laptop",
+      })
+    ).rejects.toMatchObject({ code: "CALL_ENDPOINT_ACTIVE", status: 409 })
+  })
 })
 
 describe("CallService.leaveCall", () => {

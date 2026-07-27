@@ -89,6 +89,45 @@ describe("createCallHandlers.start — gating", () => {
       expect.objectContaining({ call: { id: "call_1" }, rosterVersion: 1, roster: [{ userId: "usr_1" }] })
     )
   })
+
+  it("forwards takeover and notifies the device it displaced", async () => {
+    const notify = spyOn(gatewayModule, "notifyEndpointTakenOver").mockImplementation(() => {})
+    const startCall = mock(async (_p: unknown) => ({
+      call: { id: "call_1" },
+      created: false,
+      participant: { id: "callp_1" },
+      endpoint: { id: "callep_new" },
+      supersededEndpointId: "callep_old",
+    }))
+    const getRosterSnapshot = mock(async () => ({ rosterVersion: 2, roster: [] }))
+    const handlers = makeHandlers({ callService: { startCall, getRosterSnapshot } })
+
+    await handlers.start(
+      fakeReq({ body: { streamId: "stream_1", mode: "video", mediaIncarnation: "inc_1", takeover: true } }),
+      fakeRes()
+    )
+
+    expect(startCall.mock.calls[0][0]).toMatchObject({ takeover: true })
+    expect(notify).toHaveBeenCalledWith(expect.anything(), "call_1", "callep_old")
+  })
+
+  it("notifies nobody when the start displaced no device", async () => {
+    const notify = spyOn(gatewayModule, "notifyEndpointTakenOver").mockImplementation(() => {})
+    const startCall = mock(async () => ({
+      call: { id: "call_1" },
+      created: true,
+      participant: { id: "callp_1" },
+      endpoint: { id: "callep_1" },
+      supersededEndpointId: null,
+    }))
+    const handlers = makeHandlers({
+      callService: { startCall, getRosterSnapshot: mock(async () => ({ rosterVersion: 1, roster: [] })) },
+    })
+
+    await handlers.start(fakeReq({ body: { streamId: "stream_1", mode: "video" } }), fakeRes())
+
+    expect(notify).not.toHaveBeenCalled()
+  })
 })
 
 describe("createCallHandlers.bootstrap", () => {

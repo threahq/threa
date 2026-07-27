@@ -6,7 +6,7 @@ import { HttpError } from "../../lib/errors"
 import type { FeatureFlagService } from "../feature-flags"
 import { checkCallAccess } from "./access"
 import type { CallService } from "./service"
-import { broadcastRoster } from "./signaling-gateway"
+import { broadcastRoster, notifyEndpointTakenOver } from "./signaling-gateway"
 import { CALL_MODES, PUBLISHED_TRACK_KINDS } from "./config"
 
 const sessionDescriptionSchema = z.object({
@@ -24,6 +24,9 @@ const startSchema = z.object({
   // set and the call it would actually join differs, the ring's call ended in the
   // click window → 409 CALL_ENDED instead of silently joining/starting another.
   expectedCallId: z.string().min(1).optional(),
+  // "Join on this device": retry after a 409 CALL_ENDPOINT_ACTIVE, displacing the
+  // user's own live endpoint on another device instead of being rejected by it.
+  takeover: z.boolean().optional(),
 })
 
 const cfSessionSchema = z.object({
@@ -125,8 +128,14 @@ export function createCallHandlers({ pool, io, callService, featureFlagService, 
         mode: body.mode,
         mediaIncarnation: body.mediaIncarnation,
         expectedCallId: body.expectedCallId,
+        takeover: body.takeover,
       })
       const snapshot = await callService.getRosterSnapshot(workspaceId, result.call.id)
+      // A takeover displaced another of this user's devices: tell it directly
+      // rather than leaving it to discover a dead call on its next lease renew.
+      if (result.supersededEndpointId) {
+        notifyEndpointTakenOver(io, result.call.id, result.supersededEndpointId)
+      }
 
       res.status(result.created ? 201 : 200).json({
         call: result.call,
