@@ -20,6 +20,7 @@ import { LabelPicker } from "@/components/labels/label-picker"
 import { useExplorerUrlState } from "@/components/attachment-explorer"
 import { SectionPicker } from "./section-picker"
 import { MentionIndicator } from "@/components/mention-indicator"
+import { DraftIndicator } from "@/components/draft-indicator"
 import { isDraftId, useActors, useArchiveStream, useDraftScratchpads } from "@/hooks"
 import { useWorkspaceEmoji } from "@/hooks/use-workspace-emoji"
 import { useInputMode } from "@/hooks/use-input-mode"
@@ -348,6 +349,8 @@ export function ScratchpadItem({
                   )}
                   <div className="ml-auto flex items-center gap-1.5">
                     <StreamLabelDots streamId={streamWithPreview.id} />
+                    {/* Suppressed on the active stream — its composer already shows the draft. */}
+                    {streamWithPreview.hasLoadedDraft && !isActive && <DraftIndicator />}
                     <MentionIndicator count={mentionCount} />
                   </div>
                 </div>
