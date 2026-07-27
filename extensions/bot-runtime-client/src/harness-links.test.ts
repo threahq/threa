@@ -68,6 +68,27 @@ describe("harness link registry", () => {
     expect(links[0]?.rootStreamId).toBe("stream_replaced")
   })
 
+  test("a new session in the same worktree supersedes the previous record", () => {
+    // Worktree paths are stable per feature name and get reused. A record left
+    // by a crashed runtime would otherwise point a reaper at that directory
+    // using the OLD session's root stream, while a live session occupies it.
+    recordHarnessLink(link({ runtimeSessionId: "ccs-old", rootStreamId: "stream_old" }))
+    recordHarnessLink(link({ runtimeSessionId: "ccs-new", rootStreamId: "stream_new" }))
+
+    expect(readHarnessLinks()).toMatchObject([{ runtimeSessionId: "ccs-new", rootStreamId: "stream_new" }])
+  })
+
+  test("a record for a different worktree is left alone", () => {
+    recordHarnessLink(link({ runtimeSessionId: "ccs-a" }))
+    recordHarnessLink(link({ runtimeSessionId: "ccs-b", worktree: "/repo/threa.other" }))
+
+    expect(
+      readHarnessLinks()
+        .map((l) => l.runtimeSessionId)
+        .sort()
+    ).toEqual(["ccs-a", "ccs-b"])
+  })
+
   test("a malformed or half-written file is skipped, never fatal", () => {
     recordHarnessLink(link())
     mkdirSync(harnessLinksDir(), { recursive: true })

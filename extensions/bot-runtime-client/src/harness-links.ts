@@ -44,7 +44,16 @@ function linkPath(runtimeSessionId: string): string | undefined {
   return join(harnessLinksDir(), `${runtimeSessionId}.json`)
 }
 
-/** Best-effort: a runtime must never fail its turn because bookkeeping could not be written. */
+/**
+ * Best-effort: a runtime must never fail its turn because bookkeeping could not
+ * be written.
+ *
+ * Supersedes any other record for the same worktree. One worktree hosts one
+ * runtime at a time, and a leftover record from a previous session would point
+ * a reaper at that directory using the OLD session's root stream — archive
+ * that stale root and the reaper would push and delete a worktree whose
+ * current occupant is very much alive.
+ */
 export function recordHarnessLink(link: Omit<HarnessLink, "updatedAt" | "pid"> & { pid?: number }): void {
   const path = linkPath(link.runtimeSessionId)
   if (!path) return
@@ -56,12 +65,24 @@ export function recordHarnessLink(link: Omit<HarnessLink, "updatedAt" | "pid"> &
       updatedAt: new Date().toISOString(),
     }
     writeFileSync(path, `${JSON.stringify(record, null, 2)}\n`)
+    for (const other of readHarnessLinks()) {
+      if (other.worktree === record.worktree && other.runtimeSessionId !== record.runtimeSessionId) {
+        clearHarnessLink(other.runtimeSessionId)
+      }
+    }
   } catch {
     // A missing record only costs the reaper a candidate; it never breaks a turn.
   }
 }
 
-/** Clean shutdown or completed wind-down: this runtime no longer owns anything. */
+/**
+ * Only for a completed wind-down, or superseding a stale record.
+ *
+ * Deliberately NOT called on ordinary shutdown: a runtime that exits normally
+ * and is archived afterwards is the exact case the reaper exists for, and
+ * dropping the record on exit would leave it with nothing to find. Records for
+ * worktrees that no longer exist are pruned by the reaper instead.
+ */
 export function clearHarnessLink(runtimeSessionId: string): void {
   const path = linkPath(runtimeSessionId)
   if (!path) return

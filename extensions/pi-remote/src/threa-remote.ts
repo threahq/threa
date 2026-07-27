@@ -4536,7 +4536,6 @@ export default function (pi: ExtensionAPI): void {
     // let an unlinked child tear down or complete the linked parent's claim.
     if (!shouldHandleSessionEvents(ctx)) return
     sessionTearingDown = true
-    clearHarnessLink(getRuntimeSessionId(ctx))
     sessionLifecycleGeneration++
     claimIfIdleRerunRequested = false
     reconnectPending = false

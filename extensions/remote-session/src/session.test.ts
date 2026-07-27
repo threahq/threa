@@ -15,7 +15,14 @@ import {
   type SessionControlActuator,
 } from "./session"
 import type { RemoteSessionConfig } from "./identity"
+import { mkdtempSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
 import { ThreaApiError, type ClaimedInvocation, type ThreaClient } from "./client"
+
+// Harness links are written to a real path under $HOME; point them at a temp
+// dir so a test run can never litter (or reap from) the developer's machine.
+process.env.THREA_HARNESS_LINKS_DIR = mkdtempSync(join(tmpdir(), "harness-links-test-"))
 
 function makeConfig(overrides?: Partial<RemoteSessionConfig>): RemoteSessionConfig {
   return {

@@ -4,6 +4,8 @@ import { homedir, tmpdir } from "node:os"
 import { join } from "node:path"
 import threaRemote, { __testing } from "./threa-remote"
 
+process.env.THREA_HARNESS_LINKS_DIR = mkdtempSync(join(tmpdir(), "harness-links-test-"))
+
 let testStorageDirectory: string
 
 beforeEach(async () => {

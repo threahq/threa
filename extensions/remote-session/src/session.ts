@@ -523,7 +523,6 @@ export class RemoteSession {
   async shutdown(): Promise<void> {
     if (this.stopped) return
     this.stopped = true
-    clearHarnessLink(this.config.runtimeSessionId)
     if (this.pollTimer) clearTimeout(this.pollTimer)
     if (this.renewTimer) clearInterval(this.renewTimer)
     this.archive.stop()
@@ -1564,6 +1563,9 @@ export class RemoteSession {
   /** The grace expired with the scratchpad still archived: hand the connector its terminal wind-down. */
   private async windDownForArchive(rootStreamId: string): Promise<void> {
     await this.shutdown()
+    // Only here, never on an ordinary shutdown: a runtime that exits normally
+    // and is archived afterwards is precisely what the reaper is for.
+    clearHarnessLink(this.config.runtimeSessionId)
     await this.delegate.onArchived?.({ rootStreamId })
   }
 
