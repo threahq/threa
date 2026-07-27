@@ -13,8 +13,10 @@ import { setupTestDatabase, withTransaction, addTestMember, testMessageContent }
 import { WorkspaceRepository } from "../../src/features/workspaces"
 import { StreamService } from "../../src/features/streams"
 import { EventService } from "../../src/features/messaging"
+import { MemoRepository } from "../../src/features/memos"
+import { E2eStreamsRepository } from "../../src/features/e2e-streams"
 import { plan, processChunk } from "../../src/features/stream-context/backfill"
-import { workspaceId } from "../../src/lib/id"
+import { memoId, userEncryptionKeyId, workspaceId } from "../../src/lib/id"
 import { sql } from "../../src/db"
 import { StreamTypes, Visibilities } from "@threa/types"
 
@@ -27,6 +29,9 @@ describe("stream-context backfill against the real schema", () => {
   let peerId: string
   let channelId: string
   let dmId: string
+  let sealedStreamId: string
+  let threadId: string
+  let memoRefId: string
 
   beforeAll(async () => {
     pool = await setupTestDatabase()
@@ -72,6 +77,67 @@ describe("stream-context backfill against the real schema", () => {
       })
     }
 
+    const anchor = await eventService.createMessage({
+      workspaceId: wsId,
+      streamId: channelId,
+      authorId: ownerId,
+      authorType: "user",
+      ...testMessageContent("anchor for the thread"),
+    })
+    const thread = await streamService.create({
+      workspaceId: wsId,
+      type: StreamTypes.THREAD,
+      parentStreamId: channelId,
+      parentAnchorId: anchor.id,
+      createdBy: ownerId,
+    })
+    threadId = thread.id
+    const threadMessage = await eventService.createMessage({
+      workspaceId: wsId,
+      streamId: threadId,
+      authorId: ownerId,
+      authorType: "user",
+      ...testMessageContent("we decided in the thread"),
+    })
+    memoRefId = memoId()
+    await withTransaction(pool, async (client) => {
+      await MemoRepository.insert(client, {
+        id: memoRefId,
+        workspaceId: wsId,
+        memoType: "message",
+        sourceMessageId: threadMessage.id,
+        title: "Thread decision",
+        abstract: "Settled in the thread",
+        sourceMessageIds: [threadMessage.id],
+        participantIds: [ownerId],
+        knowledgeType: "decision",
+      })
+    })
+
+    const sealed = await streamService.create({
+      workspaceId: wsId,
+      type: StreamTypes.SCRATCHPAD,
+      name: "sealed-pad",
+      visibility: Visibilities.PRIVATE,
+      createdBy: ownerId,
+    })
+    sealedStreamId = sealed.id
+    // Indexable content FIRST, then the seal: without it the stream would earn
+    // a chunk, so the exclusion is what keeps it out rather than emptiness.
+    await eventService.createMessage({
+      workspaceId: wsId,
+      streamId: sealedStreamId,
+      authorId: ownerId,
+      authorType: "user",
+      ...testMessageContent("secret https://example.com/sealed/doc"),
+    })
+    await E2eStreamsRepository.markStreamE2e(pool, {
+      streamId: sealedStreamId,
+      workspaceId: wsId,
+      ownerUserId: ownerId,
+      ownerUserKeyId: userEncryptionKeyId(),
+    })
+
     // The rows the live write path just created are what the backfill must
     // converge on, so clear them and let the backfill rebuild from stored state.
     await pool.query(sql`DELETE FROM stream_context_items WHERE workspace_id = ${wsId}`)
@@ -91,6 +157,18 @@ describe("stream-context backfill against the real schema", () => {
     })
   })
 
+  test("plan skips sealed streams, so nothing E2E can reach processChunk", async () => {
+    const chunks = await plan(ctx as never, wsId)
+
+    expect(chunks.map((chunk) => chunk.streamId)).not.toContain(sealedStreamId)
+  })
+
+  test("a thread's memo is planned against the top-level stream the write path indexes to", async () => {
+    const chunks = await plan(ctx as never, wsId)
+
+    expect(chunks.filter((chunk) => chunk.kind === "memos").map((chunk) => chunk.streamId)).toEqual([channelId])
+  })
+
   test("every chunk kind executes and the message chunks rebuild the rows", async () => {
     const chunks = await plan(ctx as never, wsId)
     for (const chunk of chunks) {
@@ -99,12 +177,14 @@ describe("stream-context backfill against the real schema", () => {
 
     const rows = await pool.query<{ stream_id: string; category: string; ref_id: string }>(sql`
       SELECT stream_id, category, ref_id FROM stream_context_items WHERE workspace_id = ${wsId}
-      ORDER BY ref_id
+      ORDER BY category, ref_id
     `)
 
     expect(rows.rows).toEqual([
       { stream_id: channelId, category: "link", ref_id: `https://example.com/${channelId}/doc` },
       { stream_id: dmId, category: "link", ref_id: `https://example.com/${dmId}/doc` },
+      { stream_id: channelId, category: "memo", ref_id: memoRefId },
+      { stream_id: channelId, category: "thread", ref_id: threadId },
     ])
   })
 
