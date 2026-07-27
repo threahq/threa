@@ -11,6 +11,7 @@ interface AIUsageRecordRow {
   model: string
   provider: string
   prompt_tokens: number
+  cached_prompt_tokens: number
   completion_tokens: number
   total_tokens: number
   cost_usd: string // NUMERIC comes as string from pg
@@ -28,6 +29,8 @@ export interface AIUsageRecord {
   model: string
   provider: string
   promptTokens: number
+  /** Prompt tokens the provider served from its cache — a subset of promptTokens. */
+  cachedPromptTokens: number
   completionTokens: number
   totalTokens: number
   costUsd: number
@@ -45,6 +48,7 @@ export interface InsertAIUsageRecordParams {
   model: string
   provider: string
   promptTokens: number
+  cachedPromptTokens: number
   completionTokens: number
   totalTokens: number
   costUsd: number
@@ -56,6 +60,7 @@ export interface UsageSummary {
   totalCostUsd: number
   totalTokens: number
   promptTokens: number
+  cachedPromptTokens: number
   completionTokens: number
   recordCount: number
 }
@@ -64,6 +69,8 @@ export interface ModelBreakdown {
   model: string
   totalCostUsd: number
   totalTokens: number
+  promptTokens: number
+  cachedPromptTokens: number
   recordCount: number
 }
 
@@ -71,6 +78,8 @@ export interface FunctionBreakdown {
   functionId: string
   totalCostUsd: number
   totalTokens: number
+  promptTokens: number
+  cachedPromptTokens: number
   recordCount: number
 }
 
@@ -106,6 +115,7 @@ function mapRowToRecord(row: AIUsageRecordRow): AIUsageRecord {
     model: row.model,
     provider: row.provider,
     promptTokens: row.prompt_tokens,
+    cachedPromptTokens: row.cached_prompt_tokens,
     completionTokens: row.completion_tokens,
     totalTokens: row.total_tokens,
     costUsd: parseFloat(row.cost_usd),
@@ -117,7 +127,7 @@ function mapRowToRecord(row: AIUsageRecordRow): AIUsageRecord {
 
 const SELECT_FIELDS = `
   id, workspace_id, user_id, session_id, function_id,
-  model, provider, prompt_tokens, completion_tokens,
+  model, provider, prompt_tokens, cached_prompt_tokens, completion_tokens,
   total_tokens, cost_usd, origin, metadata, created_at
 `
 
@@ -126,7 +136,7 @@ export const AIUsageRepository = {
     const result = await db.query<AIUsageRecordRow>(sql`
       INSERT INTO ai_usage_records (
         id, workspace_id, user_id, session_id, function_id,
-        model, provider, prompt_tokens, completion_tokens,
+        model, provider, prompt_tokens, cached_prompt_tokens, completion_tokens,
         total_tokens, cost_usd, origin, metadata
       )
       VALUES (
@@ -138,6 +148,7 @@ export const AIUsageRepository = {
         ${params.model},
         ${params.provider},
         ${params.promptTokens},
+        ${params.cachedPromptTokens},
         ${params.completionTokens},
         ${params.totalTokens},
         ${params.costUsd},
@@ -163,6 +174,7 @@ export const AIUsageRepository = {
       total_cost_usd: string | null
       total_tokens: string | null
       prompt_tokens: string | null
+      cached_prompt_tokens: string | null
       completion_tokens: string | null
       record_count: string
     }>(sql`
@@ -170,6 +182,7 @@ export const AIUsageRepository = {
         COALESCE(SUM(cost_usd), 0) as total_cost_usd,
         COALESCE(SUM(total_tokens), 0) as total_tokens,
         COALESCE(SUM(prompt_tokens), 0) as prompt_tokens,
+        COALESCE(SUM(cached_prompt_tokens), 0) as cached_prompt_tokens,
         COALESCE(SUM(completion_tokens), 0) as completion_tokens,
         COUNT(*) as record_count
       FROM ai_usage_records
@@ -183,6 +196,7 @@ export const AIUsageRepository = {
       totalCostUsd: parseFloat(row.total_cost_usd ?? "0"),
       totalTokens: parseInt(row.total_tokens ?? "0", 10),
       promptTokens: parseInt(row.prompt_tokens ?? "0", 10),
+      cachedPromptTokens: parseInt(row.cached_prompt_tokens ?? "0", 10),
       completionTokens: parseInt(row.completion_tokens ?? "0", 10),
       recordCount: parseInt(row.record_count, 10),
     }
@@ -199,6 +213,7 @@ export const AIUsageRepository = {
       total_cost_usd: string | null
       total_tokens: string | null
       prompt_tokens: string | null
+      cached_prompt_tokens: string | null
       completion_tokens: string | null
       record_count: string
     }>(sql`
@@ -206,6 +221,7 @@ export const AIUsageRepository = {
         COALESCE(SUM(cost_usd), 0) as total_cost_usd,
         COALESCE(SUM(total_tokens), 0) as total_tokens,
         COALESCE(SUM(prompt_tokens), 0) as prompt_tokens,
+        COALESCE(SUM(cached_prompt_tokens), 0) as cached_prompt_tokens,
         COALESCE(SUM(completion_tokens), 0) as completion_tokens,
         COUNT(*) as record_count
       FROM ai_usage_records
@@ -220,6 +236,7 @@ export const AIUsageRepository = {
       totalCostUsd: parseFloat(row.total_cost_usd ?? "0"),
       totalTokens: parseInt(row.total_tokens ?? "0", 10),
       promptTokens: parseInt(row.prompt_tokens ?? "0", 10),
+      cachedPromptTokens: parseInt(row.cached_prompt_tokens ?? "0", 10),
       completionTokens: parseInt(row.completion_tokens ?? "0", 10),
       recordCount: parseInt(row.record_count, 10),
     }
@@ -235,12 +252,16 @@ export const AIUsageRepository = {
       model: string
       total_cost_usd: string
       total_tokens: string
+      prompt_tokens: string
+      cached_prompt_tokens: string
       record_count: string
     }>(sql`
       SELECT
         model,
         SUM(cost_usd) as total_cost_usd,
         SUM(total_tokens) as total_tokens,
+        SUM(prompt_tokens) as prompt_tokens,
+        SUM(cached_prompt_tokens) as cached_prompt_tokens,
         COUNT(*) as record_count
       FROM ai_usage_records
       WHERE workspace_id = ${workspaceId}
@@ -254,6 +275,8 @@ export const AIUsageRepository = {
       model: row.model,
       totalCostUsd: parseFloat(row.total_cost_usd),
       totalTokens: parseInt(row.total_tokens, 10),
+      promptTokens: parseInt(row.prompt_tokens, 10),
+      cachedPromptTokens: parseInt(row.cached_prompt_tokens, 10),
       recordCount: parseInt(row.record_count, 10),
     }))
   },
@@ -268,12 +291,16 @@ export const AIUsageRepository = {
       function_id: string
       total_cost_usd: string
       total_tokens: string
+      prompt_tokens: string
+      cached_prompt_tokens: string
       record_count: string
     }>(sql`
       SELECT
         function_id,
         SUM(cost_usd) as total_cost_usd,
         SUM(total_tokens) as total_tokens,
+        SUM(prompt_tokens) as prompt_tokens,
+        SUM(cached_prompt_tokens) as cached_prompt_tokens,
         COUNT(*) as record_count
       FROM ai_usage_records
       WHERE workspace_id = ${workspaceId}
@@ -287,6 +314,8 @@ export const AIUsageRepository = {
       functionId: row.function_id,
       totalCostUsd: parseFloat(row.total_cost_usd),
       totalTokens: parseInt(row.total_tokens, 10),
+      promptTokens: parseInt(row.prompt_tokens, 10),
+      cachedPromptTokens: parseInt(row.cached_prompt_tokens, 10),
       recordCount: parseInt(row.record_count, 10),
     }))
   },
