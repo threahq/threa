@@ -339,11 +339,11 @@ How to write the memos that clear both gates:
 2. EXTRACT, DON'T SUMMARIZE. Capture the durable conclusion — the decision, the answer, the fact, the procedure that was worked out — not a play-by-play of the discussion. A memo is what someone would want to recall in six months, never a transcript of who said what.
 3. BE TERSE. An abstract is a few sentences at most. If it reads like a recap of the conversation, rewrite it down to the bare conclusion.
 4. DON'T BACKSLIDE PAST THE GATES. Everything that failed either gate above stays out — do not smuggle a passing state, a reaction, or relayed news back in by phrasing it as a tidy standalone fact. However durable-sounding you can make it read, if the participants did not produce it, it is not a memo.
-{{MEMO_LANGUAGE_RULE}}
+5. WRITE IN THE LANGUAGE NAMED UNDER "Output language" at the end of these instructions.
 6. BE FACTUAL. State the knowledge directly. No meta-commentary like "this memo captures..." or "the team discussed...".
 7. Use consistent vocabulary with prior memos when the same concept reappears.
 8. RESOLVE PRONOUNS when possible - If you can determine who "he/she/they" refers to from the conversation, use their actual name. If unclear (e.g., conversation continues from offline), leave the pronoun. When in doubt, preserve the original wording.
-9. ANCHOR DATES when possible - Convert relative dates ("yesterday", "next week") to actual dates using today's date: {{CURRENT_DATE}}. Message tags also carry a relative \`age\` (e.g. \`age="3 days ago"\`) — use it to anchor dates and to judge durability: a passing state from days ago has gone stale, while a decision or validated learning stays durable regardless of age. If ambiguous, leave as-is.
+9. ANCHOR DATES when possible - Convert relative dates ("yesterday", "next week") to actual dates using today's date, given under "Today" at the end of these instructions. Message tags also carry a relative \`age\` (e.g. \`age="3 days ago"\`) — use it to anchor dates and to judge durability: a passing state from days ago has gone stale, while a decision or validated learning stays durable regardless of age. If ambiguous, leave as-is.
 10. CAPTURE THE LANDING, NOT THE JOURNEY. When a conversation weighs options or swings back and forth, the memo records where it LANDED — the final position with the winning rationale. A stance the conversation itself later abandoned or reversed is the journey, not the knowledge; never emit a memo for it, and never present an intermediate lean as the decision.
 11. NEVER INVERT A CONCLUSION. State a decision only in the direction the messages actually commit to. Before writing a decision memo, locate the message where the choice is committed ("let's do X", "ok, we'll go with X", agreement right after X was proposed) and make the memo's headline match THAT side — a memo whose supporting rationale argues for X must not conclude Y. If you cannot tell which side was chosen, it is not a decision memo; capture nothing rather than guessing.
 
@@ -354,7 +354,11 @@ CHOOSING knowledgeType — pick the tightest fit; if nothing fits, the memo prob
 - reference: a stable, look-it-up fact worth pinning (an id, a value, a name).
 - context: durable "why it is this way" background that outlives the moment. Reach for it LAST, not as a catch-all — a transient status, a passing reaction, or an event that fits none of the other types is not context, it is not a memo.
 
-Output ONLY valid JSON matching the schema.`
+Output ONLY valid JSON matching the schema.
+
+---
+Output language: {{MEMO_LANGUAGE_RULE}}
+Today: {{CURRENT_DATE}}`
 
 /**
  * Rule 5 of the memorizer prompt. With a canonical `memoLanguage` every memo is
@@ -364,9 +368,9 @@ Output ONLY valid JSON matching the schema.`
  */
 function memoLanguageRule(memoLanguage?: string | null): string {
   if (memoLanguage && memoLanguage.trim().length > 0) {
-    return `5. WRITE EVERY MEMO IN ${memoLanguage.trim()}. Translate the knowledge into ${memoLanguage.trim()} no matter what language the conversation used, but keep names, products, technical terms, and other proper nouns exactly as they appear in the conversation.`
+    return `WRITE EVERY MEMO IN ${memoLanguage.trim()}. Translate the knowledge into ${memoLanguage.trim()} no matter what language the conversation used, but keep names, products, technical terms, and other proper nouns exactly as they appear in the conversation.`
   }
-  return `5. WRITE IN THE CONVERSATION'S LANGUAGE. Use the same language the participants used. Do NOT translate (e.g. a Swedish conversation produces Swedish memos).`
+  return `WRITE IN THE CONVERSATION'S LANGUAGE. Use the same language the participants used. Do NOT translate (e.g. a Swedish conversation produces Swedish memos).`
 }
 
 export function getMemorizerSystemPrompt(timezone?: string, memoLanguage?: string | null): string {
