@@ -32,6 +32,8 @@ const VENDOR_FILES = [
   "harness-kick.ts",
   "harness-reconnect.ts",
   "tmux-key.ts",
+  "archive-wind-down.ts",
+  "archive-grace.ts",
 ]
 
 // 1. Clean any prior install — both the legacy single-file form and the dir form.
@@ -59,6 +61,22 @@ if (rewritten === code) {
   throw new Error("import rewrite failed: '@threa/bot-runtime-client' specifier not found in src/threa-remote.ts")
 }
 writeFileSync(entry, rewritten)
+
+// 4b. A file added to bot-runtime-client and re-exported from its index but
+//     missing from VENDOR_FILES produces an install that cannot even be
+//     imported — and nothing notices until someone reloads Pi. Resolve every
+//     relative import in the vendored copy against the copy itself.
+const missing: string[] = []
+for (const file of VENDOR_FILES) {
+  const source = readFileSync(join(vendor, file), "utf8")
+  for (const [, specifier] of source.matchAll(/\bfrom\s+["'](\.\/[^"']+)["']/g)) {
+    const target = `${specifier.slice(2)}.ts`
+    if (!VENDOR_FILES.includes(target)) missing.push(`${file} imports ${specifier}`)
+  }
+}
+if (missing.length > 0) {
+  throw new Error(`vendored bot-runtime-client is incomplete — add these to VENDOR_FILES:\n  ${missing.join("\n  ")}`)
+}
 
 // 5. Drop the now-vendored dep from the copied package.json, and inherit the
 //    vendored source's own runtime deps (@hpke/*, ulid for the sealed path) so
