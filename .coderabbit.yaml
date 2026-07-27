@@ -120,7 +120,9 @@ reviews:
         that the statement runs — not that the columns exist, not that ON CONFLICT matches
         a real index. Statements belong in apps/backend/tests/integration/, seeding rows
         and asserting on the rows that come back. A fake Querier that routes on query text
-        to select canned rows is fine; the ban is on assertions. (INV-68)
+        to select canned rows is fine; the ban is on assertions. Enforced by the
+        threa/no-sql-text-assertion ESLint rule plus a per-file count ratchet in
+        apps/backend/src/db/no-sql-text-assertions.test.ts. (INV-68)
     - path: "apps/frontend/src/**/*.tsx"
       instructions: |
         Do not define React components inside other React components. Extract to separate
@@ -159,7 +161,9 @@ reviews:
         that the statement runs — not that the columns exist, not that ON CONFLICT matches
         a real index. Statements belong in a DB-backed integration test, seeding rows and
         asserting on the rows that come back. A fake Querier that routes on query text to
-        select canned rows is fine; the ban is on assertions. (INV-68)
+        select canned rows is fine; the ban is on assertions. Enforced by the
+        threa/no-sql-text-assertion ESLint rule plus a per-file count ratchet in
+        apps/backend/src/db/no-sql-text-assertions.test.ts. (INV-68)
     - path: "packages/backend-common/src/**"
       instructions: |
         Never do select-then-update without locking or concurrency control. Use ON CONFLICT,
@@ -181,7 +185,9 @@ reviews:
         that the statement runs — not that the columns exist, not that ON CONFLICT matches
         a real index. Statements belong in a DB-backed integration test, seeding rows and
         asserting on the rows that come back. A fake Querier that routes on query text to
-        select canned rows is fine; the ban is on assertions. (INV-68)
+        select canned rows is fine; the ban is on assertions. Enforced by the
+        threa/no-sql-text-assertion ESLint rule plus a per-file count ratchet in
+        apps/backend/src/db/no-sql-text-assertions.test.ts. (INV-68)
 
   auto_review:
     enabled: true
