@@ -32,6 +32,8 @@ import {
   parseAllowedTmuxKey,
   sendAllowedTmuxKey,
   ArchiveGraceController,
+  clearHarnessLink,
+  recordHarnessLink,
   scrubSealedError,
   sealReply,
   sealStep,
@@ -1367,6 +1369,7 @@ async function createRemoteSession(ctx: ExtensionCommandContext, args: string): 
   }
   saveConfig()
 
+  syncHarnessLink(ctx)
   ctx.ui.notify(`Threa remote linked: ${body.data.streamUrlPath}`, "info")
   setRemoteStatus(ctx, `Threa remote: ${displayName}`)
   await heartbeat("available", undefined, ctx)
@@ -1879,6 +1882,7 @@ function ensureArchiveController(ctx: ExtensionContext): ArchiveGraceController 
         await heartbeat("available", undefined, ctx).catch(() => undefined)
       },
       onWindDown: () => {
+        clearHarnessLink(getRuntimeSessionId(ctx))
         stopPolling()
         stopClaimRenewTimer()
         const report = archiveWindDown(ctx.cwd, (message) => emitPollDebug(ctx, message))
@@ -1898,9 +1902,27 @@ function ensureArchiveController(ctx: ExtensionContext): ArchiveGraceController 
   return archive
 }
 
+/**
+ * Record what this window owns so harnessd can reap it later. Idempotent, and
+ * refreshed from the poll tick as well as on link, because an archive that
+ * lands while this process is dead has nothing else to go on.
+ */
+function syncHarnessLink(ctx: ExtensionContext): void {
+  const link = getCurrentSessionLink(ctx)
+  if (!config || !link?.rootStreamId) return
+  recordHarnessLink({
+    runtimeKind: "pi-local",
+    runtimeSessionId: getRuntimeSessionId(ctx),
+    instanceId: getSessionInstanceId(ctx),
+    rootStreamId: link.rootStreamId,
+    worktree: ctx.cwd,
+  })
+}
+
 /** The poll-tick backstop: `bot:session_archived` is a one-shot push with no replay. */
 async function probeArchiveState(ctx: ExtensionContext): Promise<void> {
   if (!config || sessionTearingDown) return
+  syncHarnessLink(ctx)
   await ensureArchiveController(ctx).probe(getCurrentSessionLink(ctx)?.rootStreamId)
 }
 
@@ -4521,6 +4543,7 @@ export default function (pi: ExtensionAPI): void {
     // let an unlinked child tear down or complete the linked parent's claim.
     if (!shouldHandleSessionEvents(ctx)) return
     sessionTearingDown = true
+    clearHarnessLink(getRuntimeSessionId(ctx))
     sessionLifecycleGeneration++
     claimIfIdleRerunRequested = false
     reconnectPending = false

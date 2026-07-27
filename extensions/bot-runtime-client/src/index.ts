@@ -17,6 +17,13 @@ export {
   type ArchiveCleanupReport,
   type ArchiveWindDownReport,
 } from "./archive-wind-down"
+export {
+  clearHarnessLink,
+  harnessLinksDir,
+  readHarnessLinks,
+  recordHarnessLink,
+  type HarnessLink,
+} from "./harness-links"
 export { harnessDaemonEntrypoint, runHarnessKick, type HarnessKickResult } from "./harness-kick"
 export {
   harnessReconnectAvailable,

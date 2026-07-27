@@ -3,6 +3,8 @@ import { join } from "node:path"
 import {
   ArchiveGraceController,
   BikKeystore,
+  clearHarnessLink,
+  recordHarnessLink,
   BotRuntimeTransport,
   mintStreamKeyWraps,
   openSealedAck,
@@ -499,6 +501,15 @@ export class RemoteSession {
     }
     this.link = link
     this.linkGeneration += 1
+    // Record what this window owns so harnessd can reap it later: an archive
+    // that lands while this process is dead has nothing else to go on.
+    recordHarnessLink({
+      runtimeKind: this.runtime.kind,
+      runtimeSessionId: this.config.runtimeSessionId,
+      instanceId: this.config.instanceId,
+      rootStreamId: link.rootStreamId,
+      worktree: process.cwd(),
+    })
     this.log(`linked to scratchpad ${this.config.baseUrl}${this.link.streamUrlPath}`)
     await this.syncPresence()
     return true
@@ -519,6 +530,7 @@ export class RemoteSession {
   async shutdown(): Promise<void> {
     if (this.stopped) return
     this.stopped = true
+    clearHarnessLink(this.config.runtimeSessionId)
     if (this.pollTimer) clearTimeout(this.pollTimer)
     if (this.renewTimer) clearInterval(this.renewTimer)
     this.archive.stop()
