@@ -119,6 +119,17 @@ async function selectEditorText(page: Page, text: string): Promise<void> {
   }, text)
 }
 
+/**
+ * Collapse the selection to its end and wait for it to take. Pasting while a
+ * selection still stands replaces it, so a test that means to paste *after* the
+ * copied run has to land the caret first — `ArrowRight` races the DOM-range
+ * selection ProseMirror is still reading.
+ */
+async function collapseSelectionToEnd(page: Page): Promise<void> {
+  await page.evaluate(() => window.getSelection()?.collapseToEnd())
+  await page.waitForFunction(() => window.getSelection()?.isCollapsed === true)
+}
+
 /** Every style from {@link buildCanonicalMarkdown}, asserted against the live editor DOM. */
 async function expectEditorHasAllStyles(page: Page): Promise<void> {
   const editor = composerEditor(page)
@@ -288,9 +299,9 @@ test.describe("Composer copy/paste roundtrip", () => {
     }).toPass({ timeout: 10000 })
     expect(copied).toBe("there")
 
-    // Collapse to the end of the copied run — still inside the code block —
-    // and paste there, the move the fence used to break.
-    await page.keyboard.press("ArrowRight")
+    // Paste at the end of the copied run — still inside the code block — the
+    // move the fence used to break.
+    await collapseSelectionToEnd(page)
     await pasteAtCaret(page, copied)
 
     await expect(editor.locator("pre code")).toHaveText("> Hi therethere")
