@@ -441,22 +441,22 @@ export async function buildAgentContext(deps: ContextDeps, params: ContextParams
       : null
 
   const composeSystemPrompt = (tools: AgentTool[], effectivePurpose: TurnPurpose): SplitSystemPrompt => {
-    const systemPrompt = buildSystemPrompt(
+    const systemPrompt = buildSystemPrompt({
       persona,
-      streamContext,
+      context: streamContext,
       scratchpadCustomPrompt,
-      effectivePurpose,
+      purpose: effectivePurpose,
       mentionerName,
       rollingConversationSummary,
       tools,
       conversationTopic,
       spawnedFromContext,
       followUp,
-      previousSessionsBlock,
-      streamBrief?.content ?? null,
-      resolvePersonaStyleSlots(persona),
-      personaKnowledge
-    )
+      previousSessions: previousSessionsBlock,
+      streamBrief: streamBrief?.content ?? null,
+      styleSlots: resolvePersonaStyleSlots(persona),
+      personaKnowledge,
+    })
     // Prior-turn digests are re-derived each turn, so they belong outside the
     // cached span alongside temporal grounding.
     return turnDigestBlock

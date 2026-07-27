@@ -45,9 +45,11 @@ describe("buildEnclaveSystemPrompt", () => {
 
     await buildEnclaveSystemPrompt({ pool: {} as Pool, stream: STREAM, preferences: PREFS, persona: PERSONA })
 
-    const [, , , , , rollingSummary, tools] = build.mock.calls[0]!
-    expect(rollingSummary).toBeNull() // no plaintext history to summarize
-    expect(tools).toEqual([]) // tool prose is assembled in-enclave (run-turn)
+    // Named inputs, so the assertion reads as the contract rather than as
+    // positional archaeology.
+    const [inputs] = build.mock.calls[0]!
+    expect(inputs.rollingConversationSummary).toBeNull() // no plaintext history to summarize
+    expect(inputs.tools).toEqual([]) // tool prose is assembled in-enclave (run-turn)
   })
 
   it("carries the persona's tone/brevity preset fragments into the prompt (enclave parity)", async () => {
