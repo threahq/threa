@@ -417,7 +417,7 @@ describe("RemoteSession session-archived handling (grace window)", () => {
       nextPollDelay: (claimed: boolean) => number
       probeArchiveBackstop: () => Promise<void>
       link: { rootStreamId: string } | undefined
-      archivePending: unknown
+      archive: { detached: boolean }
     }
 
   test("detaches on archive: goes offline, fails in-flight turns, but does NOT wind down within the grace window", async () => {
@@ -443,7 +443,7 @@ describe("RemoteSession session-archived handling (grace window)", () => {
     expect(failed).toEqual(["binv_running"])
     // The wind-down is deferred: an unarchive within the grace window reattaches instead.
     expect(archived).toEqual([])
-    expect(asInternal(session).archivePending).toBeDefined()
+    expect(asInternal(session).archive.detached).toBe(true)
     // Detached: no claims while the scratchpad is archived, and the poll probes at the reattach cadence.
     expect(await asInternal(session).claimDrain()).toBe(false)
     expect(asInternal(session).nextPollDelay(false)).toBe(15_000)
@@ -484,7 +484,7 @@ describe("RemoteSession session-archived handling (grace window)", () => {
     // The probe WAITS on the archived scratchpad (grace-window reattach) — it
     // must never ask the server to replace it with a fresh one.
     expect((created[0] as Record<string, unknown>).ifArchived).toBe("wait")
-    expect(asInternal(session).archivePending).toBeUndefined()
+    expect(asInternal(session).archive.detached).toBe(false)
     expect(asInternal(session).link).toMatchObject({ rootStreamId: "stream_root" })
     expect(archived).toEqual([])
     await session.shutdown()
@@ -539,7 +539,7 @@ describe("RemoteSession session-archived handling (grace window)", () => {
     // bot:session_archived never arrived — only the probe knows.
     await asInternal(session).probeArchiveBackstop()
 
-    expect(asInternal(session).archivePending).toBeDefined()
+    expect(asInternal(session).archive.detached).toBe(true)
     expect(presence.at(-1)?.status).toBe("offline")
     // Still archived when the grace expires (the reattach probe re-links, but
     // handleSessionRestored never fires), so the connector wind-down runs.
@@ -567,7 +567,7 @@ describe("RemoteSession session-archived handling (grace window)", () => {
 
       await asInternal(session).probeArchiveBackstop()
 
-      expect(asInternal(session).archivePending).toBeUndefined()
+      expect(asInternal(session).archive.detached).toBe(false)
       expect(asInternal(session).link).toMatchObject({ rootStreamId: "stream_root" })
       expect(archived).toEqual([])
       await session.shutdown()
@@ -683,7 +683,7 @@ describe("RemoteSession session-archived handling (grace window)", () => {
     await inflightLink
 
     expect(asInternal(session).link).toBeUndefined()
-    expect(asInternal(session).archivePending).toBeDefined()
+    expect(asInternal(session).archive.detached).toBe(true)
     await session.shutdown()
   })
 
@@ -719,7 +719,7 @@ describe("RemoteSession session-archived handling (grace window)", () => {
     // Reattached: session-create re-issued (the server revives the same link),
     // presence back to available, wind-down cancelled, claims live again.
     expect(created).toHaveLength(1)
-    expect(asInternal(session).archivePending).toBeUndefined()
+    expect(asInternal(session).archive.detached).toBe(false)
     expect(asInternal(session).link).toMatchObject({ rootStreamId: "stream_root" })
     expect(session.statusSnapshot.linkGeneration).toBe(2)
     expect(presence.at(-1)?.status).toBe("available")
@@ -747,7 +747,7 @@ describe("RemoteSession session-archived handling (grace window)", () => {
     // Still detached-pending: probe cadence + claim suppression survive the
     // transient failure instead of dropping to the 15-min backstop unlinked.
     expect(asInternal(session).link).toBeUndefined()
-    expect(asInternal(session).archivePending).toBeDefined()
+    expect(asInternal(session).archive.detached).toBe(true)
     expect(asInternal(session).nextPollDelay(false)).toBe(15_000)
     await session.shutdown()
   })
@@ -816,7 +816,7 @@ describe("RemoteSession session-archived handling (grace window)", () => {
 
     expect(archived).toEqual([])
     expect(presence).toEqual([])
-    expect(asInternal(session).archivePending).toBeUndefined()
+    expect(asInternal(session).archive.detached).toBe(false)
   })
 })
 
