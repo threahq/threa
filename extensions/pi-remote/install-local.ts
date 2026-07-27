@@ -34,6 +34,7 @@ const VENDOR_FILES = [
   "tmux-key.ts",
   "archive-wind-down.ts",
   "archive-grace.ts",
+  "harness-links.ts",
 ]
 
 // 1. Clean any prior install — both the legacy single-file form and the dir form.
