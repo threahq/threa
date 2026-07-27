@@ -7,20 +7,37 @@ describe("getMemorizerSystemPrompt", () => {
     const prompt = getMemorizerSystemPrompt("UTC")
     const today = new Date().toISOString().split("T")[0]
 
-    expect(prompt).toContain(`today's date: ${today}`)
+    expect(prompt).toContain(`\nToday: ${today}`)
   })
 
   it("should use author timezone for date formatting", () => {
     const prompt = getMemorizerSystemPrompt("Pacific/Auckland")
 
-    expect(prompt).toMatch(/today's date: \d{4}-\d{2}-\d{2}/)
+    expect(prompt).toMatch(/\nToday: \d{4}-\d{2}-\d{2}$/)
   })
 
   it("should default to UTC when no timezone provided", () => {
     const prompt = getMemorizerSystemPrompt()
     const today = new Date().toISOString().split("T")[0]
 
-    expect(prompt).toContain(`today's date: ${today}`)
+    expect(prompt).toContain(`\nToday: ${today}`)
+  })
+
+  it("keeps the date and language rule in the tail, so the block above them is a stable cache prefix", () => {
+    // Two renderings that differ in both timezone and canonical language must
+    // share everything up to the tail — that shared span is what the provider
+    // caches, and it has to clear the 1024-token floor to cache at all.
+    const sv = getMemorizerSystemPrompt("Europe/Stockholm", "Swedish")
+    const en = getMemorizerSystemPrompt("America/New_York", null)
+
+    let shared = 0
+    while (shared < Math.min(sv.length, en.length) && sv[shared] === en[shared]) shared++
+
+    // ~4.6 chars/token on this prose; 4800 chars is comfortably over the floor.
+    expect(shared).toBeGreaterThan(4800)
+    expect(sv.slice(0, shared)).toContain("NEVER INVERT A CONCLUSION")
+    expect(sv.slice(shared)).toContain("Swedish")
+    expect(sv.slice(shared)).toMatch(/Today: \d{4}-\d{2}-\d{2}$/)
   })
 
   it("should contain normalization guidance", () => {
