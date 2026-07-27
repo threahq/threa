@@ -84,17 +84,36 @@ export interface CallCaptureErrorInfo {
 }
 
 /**
- * The call this device was displaced from when the user joined it on another
- * device ("Join on this device"). Survives the teardown that removes the call
- * itself — the manager writes it AFTER `clearCallState` — so the dock can say
- * where the call went and offer it back instead of the surface silently
- * vanishing. Cleared by a dismiss, by the next call, and by an account switch.
+ * Why the call left this device, in descending order of what we actually know.
+ *
+ * `taken_over` is claimed ONLY for the `call:endpoint:closed` push — the server
+ * closed this endpoint under the call-row lock, so it is the one signal that
+ * proves another device took the call. Every other signal is a lost endpoint
+ * with no cause attached: `renewLease` returns the same null for a superseded
+ * lease as for one the sweeper reaped, and a re-join that fails or comes back
+ * with a new endpoint id says nothing about who has the call now. Those split on
+ * the only evidence the client holds — whether this page was suspended since its
+ * last good renew — into `ended_while_away` (it was) and `connection_lost` (it
+ * was not, so the likely cause is a network gap longer than the lease TTL).
+ *
+ * Guessing `taken_over` for the ambiguous cases is what this type exists to
+ * prevent: it tells a user their call moved to a device they never touched.
+ */
+export type DisplacedCallReason = "taken_over" | "ended_while_away" | "connection_lost"
+
+/**
+ * The call this device lost without the user ending it. Survives the teardown
+ * that removes the call itself — the manager writes it AFTER `clearCallState` —
+ * so the dock can say what happened and offer the call back instead of the
+ * surface silently vanishing. Cleared by a dismiss, by the next call, and by an
+ * account switch.
  */
 export interface DisplacedCall {
   callId: string
   workspaceId: string
   streamId: string
   mode: CallMode
+  reason: DisplacedCallReason
 }
 
 export interface CallState {

@@ -407,6 +407,7 @@ describe("CallManager", () => {
       workspaceId: "ws_1",
       streamId: "stream_1",
       mode: "video",
+      reason: "taken_over",
     })
   })
 
@@ -422,7 +423,7 @@ describe("CallManager", () => {
     expect(getCallState().displacedCall).toBeNull()
   })
 
-  it("lands on the same displaced state when only the lease renew reports the takeover", async () => {
+  it("still explains itself when only the lease renew reports the lost endpoint", async () => {
     vi.useFakeTimers()
     const socket = makeSocket()
     const manager = newManager(makeDeps(socket, makeTransport()), null)
@@ -435,7 +436,13 @@ describe("CallManager", () => {
     vi.advanceTimersByTime(15_000)
     await vi.waitFor(() => expect(getCallState().phase).toBe("idle"))
 
-    expect(getCallState().displacedCall).toMatchObject({ callId: "call_1", streamId: "stream_1" })
+    // NOT `taken_over`: a swept lease and a superseded one are the same null from
+    // `renewLease`, so this signal cannot name another device.
+    expect(getCallState().displacedCall).toMatchObject({
+      callId: "call_1",
+      streamId: "stream_1",
+      reason: "connection_lost",
+    })
   })
 
   it("mute gates track.enabled and emits call:state", async () => {
@@ -832,7 +839,7 @@ describe("CallManager", () => {
 
   // ── F3: a reconnect that returns a different endpoint id must not stay connected ──
 
-  it("F3: a reconnect returning a NEW endpoint id tears down instead of staying connected", async () => {
+  it("F3: a reconnect returning a NEW endpoint id tears down and says the connection was lost", async () => {
     const socket = makeSocket()
     const transport = makeTransport()
     const manager = newManager(makeDeps(socket, transport), null)
@@ -848,8 +855,134 @@ describe("CallManager", () => {
 
     // The transport is bound to the old endpoint — a changed id is unrecoverable.
     expect(manager.isActive()).toBe(false)
-    expect(getCallState().phase).not.toBe("connected")
     expect(getCallState().phase).toBe("idle")
+    // Never a silent vanish — and never a takeover claim: the page never froze, so
+    // the lease most likely lapsed across a network gap. Only the endpoint-closed
+    // push can name another device.
+    expect(getCallState().displacedCall).toEqual({
+      callId: "call_1",
+      workspaceId: "ws_1",
+      streamId: "stream_1",
+      mode: "audio_only",
+      reason: "connection_lost",
+    })
+  })
+
+  it("F3: the same reconnect after a freeze says the call ended while the page was away", async () => {
+    const socket = makeSocket()
+    const manager = newManager(makeDeps(socket, makeTransport()), null)
+    await manager.startCall({ workspaceId: "ws_1", streamId: "stream_1", mode: "audio_only" })
+
+    document.dispatchEvent(new Event("freeze"))
+    socket.joinAck = { ...socket.joinAck, endpointId: "ep_2" }
+    socket.fire("disconnect")
+    socket.fire("connect")
+    await new Promise((r) => setTimeout(r, 0))
+
+    expect(getCallState().displacedCall).toMatchObject({ callId: "call_1", reason: "ended_while_away" })
+  })
+
+  it("F3: a pagehide is the same evidence as a freeze", async () => {
+    const socket = makeSocket()
+    const manager = newManager(makeDeps(socket, makeTransport()), null)
+    await manager.startCall({ workspaceId: "ws_1", streamId: "stream_1", mode: "audio_only" })
+
+    window.dispatchEvent(new Event("pagehide"))
+    socket.joinAck = { ...socket.joinAck, endpointId: "ep_2" }
+    socket.fire("disconnect")
+    socket.fire("connect")
+    await new Promise((r) => setTimeout(r, 0))
+
+    expect(getCallState().displacedCall).toMatchObject({ reason: "ended_while_away" })
+  })
+
+  it("F3: a rejoin that fails outright says so instead of vanishing", async () => {
+    const socket = makeSocket()
+    const manager = newManager(makeDeps(socket, makeTransport()), null)
+    await manager.startCall({ workspaceId: "ws_1", streamId: "stream_1", mode: "audio_only" })
+
+    document.dispatchEvent(new Event("freeze"))
+    socket.failJoin = true
+    socket.fire("disconnect")
+    socket.fire("connect")
+    await new Promise((r) => setTimeout(r, 0))
+
+    expect(getCallState().phase).toBe("idle")
+    expect(getCallState().displacedCall).toMatchObject({ callId: "call_1", reason: "ended_while_away" })
+  })
+
+  it("F3: leaving during an in-flight rejoin ends the call without a notice", async () => {
+    vi.useFakeTimers()
+    const socket = makeSocket()
+    const manager = newManager(makeDeps(socket, makeTransport()), null)
+    await manager.startCall({ workspaceId: "ws_1", streamId: "stream_1", mode: "audio_only" })
+
+    // Reconnecting, rejoin ack outstanding, and the user gives up and hangs up.
+    // The link is dead both ways, so the leave ack never comes back either and
+    // `emitLeave` holds the session for its full 2s timeout.
+    socket.deferJoin = true
+    socket.joinAck = { ...socket.joinAck, endpointId: "ep_2" }
+    socket.fire("disconnect")
+    socket.fire("connect")
+    const emit = socket.emit
+    socket.emit = ((event: string, payload: unknown, ack?: (r: unknown) => void) => {
+      if (event === "call:leave") return
+      emit.call(socket, event, payload, ack)
+    }) as CallSocket["emit"]
+
+    const leaving = manager.leaveCall()
+    // Mid-leave, the rejoin lands with a new endpoint id. A deliberate hangup
+    // must not be explained away as the call having gone somewhere.
+    socket.pendingJoinAck?.({ ok: true, data: socket.joinAck })
+    await vi.advanceTimersByTimeAsync(2_000)
+    await leaving
+
+    expect(getCallState().displacedCall).toBeNull()
+  })
+
+  it("F3: a successful lease renew clears the suspended evidence, so a later loss is not blamed on the lock", async () => {
+    vi.useFakeTimers()
+    const socket = makeSocket()
+    const manager = newManager(makeDeps(socket, makeTransport()), null)
+    await manager.startCall({ workspaceId: "ws_1", streamId: "stream_1", mode: "audio_only" })
+
+    document.dispatchEvent(new Event("freeze"))
+    vi.advanceTimersByTime(15_000)
+    socket.leaseRenewAck = { ok: false, code: "CALL_LEASE_SUPERSEDED" }
+    vi.advanceTimersByTime(15_000)
+    await vi.waitFor(() => expect(getCallState().phase).toBe("idle"))
+
+    // The renew proved the lease survived the freeze, so whatever killed it after
+    // that is not the lock — and is still not evidence of another device.
+    expect(getCallState().displacedCall).toMatchObject({ reason: "connection_lost" })
+  })
+
+  it("F3: a lease superseded while still suspended reads as ended-while-away", async () => {
+    vi.useFakeTimers()
+    const socket = makeSocket()
+    const manager = newManager(makeDeps(socket, makeTransport()), null)
+    await manager.startCall({ workspaceId: "ws_1", streamId: "stream_1", mode: "audio_only" })
+
+    document.dispatchEvent(new Event("freeze"))
+    socket.leaseRenewAck = { ok: false, code: "CALL_LEASE_SUPERSEDED" }
+    vi.advanceTimersByTime(15_000)
+    await vi.waitFor(() => expect(getCallState().phase).toBe("idle"))
+
+    expect(getCallState().displacedCall).toMatchObject({ reason: "ended_while_away" })
+  })
+
+  it("F3: the endpoint-closed push stays a takeover even after a freeze", async () => {
+    const socket = makeSocket()
+    const manager = newManager(makeDeps(socket, makeTransport()), null)
+    await manager.startCall({ workspaceId: "ws_1", streamId: "stream_1", mode: "video" })
+
+    // The server addressed this endpoint under the call-row lock: unambiguous,
+    // whatever the page was doing.
+    document.dispatchEvent(new Event("freeze"))
+    socket.fire("call:endpoint:closed", { callId: "call_1", endpointId: "ep_1", reason: "taken_over" })
+    await vi.waitFor(() => expect(getCallState().phase).toBe("idle"))
+
+    expect(getCallState().displacedCall).toMatchObject({ reason: "taken_over" })
   })
 
   // ── F4: a failed camera publish must not leave a live undisclosed camera track ──

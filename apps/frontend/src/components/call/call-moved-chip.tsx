@@ -1,13 +1,14 @@
 import { PhoneForwarded, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
-import { setDisplacedCall } from "@/stores/call-store"
+import { setDisplacedCall, type DisplacedCallReason } from "@/stores/call-store"
 import { useCallLaunch } from "./call-launch-context"
 import { useDisplacedCall } from "./call-store-hooks"
 
 /**
- * Shown after another of this user's devices took the call over ("Join on this
- * device" there). The server closed this endpoint, so the dock has already torn
- * down — without this the call surface would simply vanish mid-conversation.
+ * Shown after the call left this device without the user ending it: another
+ * device took it over ("Join on this device" there), or the lease lapsed while
+ * this page was frozen. The dock has already torn down — without this the call
+ * surface would simply vanish mid-conversation.
  *
  * A chip with actions rather than a toast (INV-63): it needs a decision, and a
  * toast would expire before a user who was looking at their other device sees it.
@@ -20,6 +21,12 @@ import { useDisplacedCall } from "./call-store-hooks"
  * pushing the actions off the left edge (it is `fixed right-4` with no left
  * anchor, and this branch of the dock is shared with mobile).
  */
+const DISPLACED_TEXT: Record<DisplacedCallReason, string> = {
+  taken_over: "Call moved to another device",
+  ended_while_away: "Call ended while your phone was locked",
+  connection_lost: "Call ended — this device lost its connection",
+}
+
 export function CallMovedChip() {
   const displaced = useDisplacedCall()
   const { launch } = useCallLaunch()
@@ -27,7 +34,7 @@ export function CallMovedChip() {
   return (
     <div className="flex max-w-[calc(100vw-2rem)] items-center gap-1.5 rounded-full border bg-background py-1.5 pl-3 pr-1.5 text-xs shadow-lg">
       <PhoneForwarded className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden />
-      <span className="min-w-0 truncate text-muted-foreground">Call moved to another device</span>
+      <span className="min-w-0 truncate text-muted-foreground">{DISPLACED_TEXT[displaced.reason]}</span>
       <Button
         size="sm"
         variant="secondary"

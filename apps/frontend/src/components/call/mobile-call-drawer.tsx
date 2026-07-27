@@ -18,6 +18,7 @@ import { CameraButton, FlipButton, LeaveButton, MuteButton } from "./call-contro
 import { ISLAND_SURFACE } from "./call-island"
 import { CallTimer } from "./call-timer"
 import { CaptureErrorBanner } from "./call-capture-error"
+import { IosLockNotice } from "./ios-lock-notice"
 import { LayoutToggle } from "./layout-toggle"
 import { useCallCaptureError, useCallConnectedAt, useCallRoster, useCallSurfaceMode } from "./call-store-hooks"
 import { DRAWER_MIN_HEIGHT, nearestMode } from "./mobile-call-drawer-snap"
@@ -300,6 +301,10 @@ export function MobileCallDrawer({ workspaceId, streamId }: { workspaceId: strin
         style={{ height: dragging && dragHeight != null ? `${dragHeight}px` : RESTING_HEIGHT[contentMode] }}
       >
         {contentMode !== "min" && captureError && <CaptureErrorBanner error={captureError} className="mx-3 mt-2" />}
+        {/* Not `min`/`compact`: both are fixed-height dark pills (72px for compact,
+            all of it spoken for by the control row) that would clip the row and
+            paint a light banner on a dark surface. */}
+        {(contentMode === "standard" || contentMode === "full") && <IosLockNotice className="mx-3 mt-2" />}
         <div className="min-h-0 flex-1 overflow-hidden">
           {contentMode === "min" && <TabView connectedAt={connectedAt} captureError={captureError} />}
           {contentMode === "compact" && <BarView {...viewProps} />}
