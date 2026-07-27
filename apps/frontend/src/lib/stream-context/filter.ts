@@ -13,14 +13,19 @@ export interface ContextRowFilters {
 }
 
 /**
- * The searchable text of a row: its snippet plus whatever the joined detail
- * carries (a link's title/url, an attachment's filename, a memo/task title, a
- * thread's name). Locally derived rows have an empty detail, so they match on
- * the snippet alone until the server row reconciles them.
+ * The searchable text of a row: the ARTIFACT's own text — its ref (url /
+ * attachment id / memo id) plus whatever the joined detail carries (a link's
+ * title/url, an attachment's filename, a memo/task title, a thread's name).
+ *
+ * Deliberately NOT the snippet. The snippet is the source message's first line,
+ * which every artifact of that message shares, so including it made one message
+ * carrying five links match all five for a term naming only one — the filter
+ * looked broken because only the true match highlighted. Mirrors the endpoint's
+ * predicate; the two must agree or phase 2 widens into rows phase 1 excluded.
  */
 export function contextRowText(row: CachedStreamContextItem): string {
   const detail = row.detail as unknown as Record<string, unknown>
-  const parts = [row.snippet, row.refId]
+  const parts = [row.refId]
   for (const field of ["url", "title", "siteName", "description", "filename", "giphyTitle", "name", "statusNote"]) {
     const value = detail?.[field]
     if (typeof value === "string") parts.push(value)

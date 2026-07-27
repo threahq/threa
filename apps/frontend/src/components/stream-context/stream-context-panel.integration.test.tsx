@@ -378,7 +378,7 @@ describe("StreamContextPanel — flag on", () => {
     expect(screen.getByRole("button", { name: /^Links/ })).toHaveTextContent("1")
   })
 
-  it("applies the active text filter to an expanded group's occurrences", async () => {
+  it("filters by the artifact's own text, not the message it came from", async () => {
     const shared = {
       category: "link" as const,
       refId: "https://filtered.example",
@@ -397,11 +397,21 @@ describe("StreamContextPanel — flag on", () => {
     vi.spyOn(streamContextApi, "occurrences").mockResolvedValue({ items: [newer, older], nextCursor: null })
 
     renderPanel()
-    await userEvent.type(await screen.findByLabelText("Search in this stream"), "quarterly")
+    const search = await screen.findByLabelText("Search in this stream")
 
+    // The artifact's own title matches, so the group survives and expands to
+    // every occurrence — the count and the expansion agree.
+    await userEvent.type(search, "Filtered")
     await userEvent.click(await screen.findByRole("button", { name: /Shared 2 times/ }))
     expect(await screen.findByText("quarterly plan")).toBeInTheDocument()
-    expect(screen.queryByText("old draft")).not.toBeInTheDocument()
+    expect(screen.getByText("old draft")).toBeInTheDocument()
+
+    // A term that appears only in one source message's snippet matches nothing:
+    // every artifact of a message shares that snippet, so matching it made a
+    // message carrying five links match all five for a term naming only one.
+    await userEvent.clear(search)
+    await userEvent.type(search, "quarterly")
+    await waitFor(() => expect(screen.queryByText("Filtered")).not.toBeInTheDocument())
   })
 
   it("does not offer expansion on a locally derived row (no server groupKey yet)", async () => {
