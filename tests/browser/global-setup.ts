@@ -8,7 +8,7 @@
  * Local: Uses docker-compose.test.yml (ports 5455/9002) to avoid dev conflicts
  * CI: Uses GitHub Actions services (ports 5454/9000)
  */
-import { execSync, spawnSync } from "child_process"
+import { execFileSync, execSync, spawnSync } from "child_process"
 import * as path from "path"
 
 const isCI = !!process.env.CI
@@ -38,7 +38,7 @@ function findContainer(pattern: string): string | null {
  * In CI, uses the container names from GitHub Actions workflow.
  * Locally, finds containers by the service name pattern from docker-compose.test.yml.
  */
-export function getContainerNames(): { postgres: string; minio: string } {
+function getContainerNames(): { postgres: string; minio: string } {
   if (isCI) {
     return { postgres: "postgres", minio: "minio" }
   }
@@ -54,6 +54,30 @@ export function getContainerNames(): { postgres: string; minio: string } {
   }
 
   return { postgres, minio }
+}
+
+/**
+ * Run SQL against the browser-test database from a spec.
+ *
+ * The two environments are reached differently and there is no name that works
+ * in both: CI's postgres is a GitHub Actions *service* container, addressable
+ * over TCP on the runner but carrying a generated docker name, while the local
+ * one is a compose container on a port the dev stack doesn't use.
+ */
+export function runTestSql(sql: string): void {
+  const db = deriveTestDatabaseName()
+  // argv, never a shell string: multi-line SQL through a shell reaches psql
+  // with its newlines still escaped, and psql reads `\n` as a meta-command.
+  const psql = ["psql", "-U", "threa", "-d", db, "-v", "ON_ERROR_STOP=1", "-c", sql]
+  const [command, args, env] = isCI
+    ? ([
+        psql[0]!,
+        ["-h", "localhost", "-p", String(DB_PORT), ...psql.slice(1)],
+        { ...process.env, PGPASSWORD: "threa" },
+      ] as const)
+    : (["docker", ["exec", getContainerNames().postgres, ...psql], process.env] as const)
+
+  execFileSync(command, args, { encoding: "utf-8", env })
 }
 
 /**

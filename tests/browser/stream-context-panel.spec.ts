@@ -1,7 +1,5 @@
-import { execFileSync } from "child_process"
-import * as path from "path"
 import { test, expect, type Page } from "@playwright/test"
-import { getContainerNames } from "./global-setup"
+import { runTestSql } from "./global-setup"
 import { loginAndCreateWorkspace, createChannel, expectApiOk } from "./helpers"
 
 /**
@@ -43,46 +41,21 @@ async function seedLinkMessages(page: Page, workspaceId: string, streamId: strin
   }
 }
 
-/** Same derivation global-setup and playwright.config use. */
-function testDatabaseName(): string {
-  const explicit = process.env.PLAYWRIGHT_TEST_DB_NAME?.trim()
-  if (explicit) return explicit
-  const sanitized = path
-    .basename(process.cwd())
-    .toLowerCase()
-    .replace(/[^a-z0-9]/g, "_")
-    .replace(/_+/g, "_")
-    .replace(/^_|_$/g, "")
-  return `${sanitized || "threa"}_browser_test`
-}
-
 /**
  * Backdate half the stream's events so the panel renders more than one day
  * group. Without this every seeded row lands today, and "jump to today" is
  * indistinguishable from the browser restoring focus to the trigger at the top —
  * a jump that moves DOWN to an older day is the assertion focus cannot fake.
- * `docker exec psql` mirrors what global-setup already does for DB work.
+ *
+ * 10 days back, so the "Last week" preset (7 days) lands on it under the
+ * nearest-earlier rule.
  */
 function backdateOlderHalf(streamId: string): void {
-  const sql = `UPDATE stream_events SET created_at = NOW() - INTERVAL '10 days'
-     WHERE stream_id = '${streamId}'
-       AND id IN (SELECT id FROM stream_events WHERE stream_id = '${streamId}' ORDER BY sequence LIMIT ${MESSAGE_COUNT / 2})`
-  // 10 days back, so the "Last week" preset (7 days) lands on it under the
-  // nearest-earlier rule.
-  // Resolved the same way global-setup does — "postgres" in CI, the
-  // compose container locally. A hardcoded name passes locally (any worktree's
-  // container reaches the same instance) and fails in CI.
-  execFileSync("docker", [
-    "exec",
-    getContainerNames().postgres,
-    "psql",
-    "-U",
-    "threa",
-    "-d",
-    testDatabaseName(),
-    "-c",
-    sql,
-  ])
+  runTestSql(
+    `UPDATE stream_events SET created_at = NOW() - INTERVAL '10 days'
+       WHERE stream_id = '${streamId}'
+         AND id IN (SELECT id FROM stream_events WHERE stream_id = '${streamId}' ORDER BY sequence LIMIT ${MESSAGE_COUNT / 2})`
+  )
 }
 
 function panelScroller(page: Page) {
