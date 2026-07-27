@@ -3,6 +3,7 @@ import { AtSign, Slash, Paperclip, Maximize2, Minimize2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { cn } from "@/lib/utils"
+import type { ComposerActionSide } from "@threa/types"
 import type { RichEditorHandle } from "./rich-editor"
 
 function handlePointerAction(action: () => void) {
@@ -38,6 +39,12 @@ export interface EditorActionBarProps {
   onDesktopExpandClick?: () => void
   // Trailing slot: Send button (composer) or Cancel+Save (edit form)
   trailingContent: ReactNode
+  /**
+   * Which edge the row's controls hug. "left" mirrors the row so `trailingContent`
+   * (which carries Send) lands under a left thumb rather than in the opposite
+   * corner from it.
+   */
+  side?: ComposerActionSide
 }
 
 export function EditorActionBar({
@@ -56,10 +63,11 @@ export function EditorActionBar({
   showDesktopExpand = false,
   onDesktopExpandClick,
   trailingContent,
+  side = "right",
 }: EditorActionBarProps) {
   return (
-    <div className="flex items-center gap-1">
-      {/* Spacer — pushes buttons to the right */}
+    <div className={cn("flex items-center gap-1", side === "left" && "flex-row-reverse")}>
+      {/* Spacer — pushes buttons to whichever edge `side` names */}
       <span className="flex-1" />
 
       {/* Expand/collapse toggle — mobile inline expansion */}

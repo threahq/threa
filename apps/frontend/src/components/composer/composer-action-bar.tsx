@@ -5,6 +5,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { useElementWidth } from "@/hooks/use-element-width"
 import { cn } from "@/lib/utils"
+import type { ComposerActionSide } from "@threa/types"
 
 /**
  * Approximate rendered width of one 28px icon button plus its 4px flex gap.
@@ -34,10 +35,10 @@ interface CollapsibleAction {
  * without a real ResizeObserver (jsdom stubs it to a no-op).
  *
  * Actions keep their incoming array order in both result lists (that's the
- * left-to-right display order); only `collapsePriority` decides *which* ones
- * fold. A constant slot is reserved for the always-present left affordance
- * (the format hint, or the "+" trigger) so the count doesn't oscillate as the
- * menu appears and disappears.
+ * display order); only `collapsePriority` decides *which* ones fold. A constant
+ * slot is reserved for the always-present leading affordance (the format hint,
+ * or the "+" trigger) so the count doesn't oscillate as the menu appears and
+ * disappears.
  */
 export function planActionOverflow<T extends { key: string; collapsePriority: number }>(
   actions: T[],
@@ -102,12 +103,14 @@ export interface ComposerActionBarProps {
   /** Scheduled-messages picker trigger; inline (its popover needs an anchor), dropped first under extreme squeeze. */
   scheduledMessagesTrigger?: ReactNode
   sendButton: ReactNode
+  /** Which edge Send hugs; "left" mirrors the whole row. */
+  side?: ComposerActionSide
 }
 
 /**
  * The desktop composer's bottom action row. Folds its secondary insert actions
- * (emoji, mention, command, attach, expand) into a left-anchored "+" menu as
- * the composer narrows — so the bar stays on one clean line in a side panel or
+ * (emoji, mention, command, attach, expand) into a "+" menu anchored opposite
+ * Send as the composer narrows — so the bar stays on one clean line in a side panel or
  * small window instead of overflowing. Formatting and Send are always inline;
  * the un-foldable triggers (dictation, stash, schedule) drop from the tail only
  * if the bar is squeezed past the all-folded minimum (`+` Aa Send), so the row
@@ -129,7 +132,9 @@ export function ComposerActionBar({
   stashedDraftsTrigger,
   scheduledMessagesTrigger,
   sendButton,
+  side = "right",
 }: ComposerActionBarProps) {
+  const mirrored = side === "left"
   const barRef = useRef<HTMLDivElement>(null)
   const width = useElementWidth(barRef)
 
@@ -207,11 +212,11 @@ export function ComposerActionBar({
   const mainInlineActions = inlineActions.filter((a) => a.key !== "expand")
 
   return (
-    <div ref={barRef} className="flex items-center gap-1">
+    <div ref={barRef} className={cn("flex items-center gap-1", mirrored && "flex-row-reverse")}>
       {overflowActions.length > 0 ? (
         <>
-          {/* Left-anchored overflow menu. Bordered so it reads as "more
-              options" rather than just another flat ghost action. */}
+          {/* Overflow menu, anchored to the edge opposite Send. Bordered so it
+              reads as "more options" rather than just another flat ghost action. */}
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button
@@ -230,13 +235,15 @@ export function ComposerActionBar({
                 emoji/mention suggestion popups still anchor at the caret. */}
             <DropdownMenuContent
               side="top"
-              align="start"
+              align={mirrored ? "end" : "start"}
               className="min-w-[168px]"
               onCloseAutoFocus={(e) => e.preventDefault()}
             >
-              {/* Render collapsed actions bottom-up so the leftmost toolbar item
-                  sits closest to the "+" trigger and the rightmost item is
-                  farthest away — matching the spatial order of the bar. */}
+              {/* Render collapsed actions bottom-up so the toolbar item nearest
+                  the "+" trigger sits closest to it in the menu and the farthest
+                  one is farthest away. Unaffected by `mirrored`: row-reverse
+                  flips the whole row, so "+" and its neighbours mirror together
+                  and their relative order is preserved. */}
               {[...overflowActions].reverse().map((action) => (
                 <DropdownMenuItem key={action.key} className="gap-2 cursor-pointer" onSelect={action.onSelect}>
                   <span className="flex h-4 w-4 items-center justify-center text-muted-foreground">{action.icon}</span>

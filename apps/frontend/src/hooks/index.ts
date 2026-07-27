@@ -260,3 +260,5 @@ export {
   type CachedLabel,
   type CachedLabelAssignment,
 } from "./use-labels"
+
+export { useComposerActionSide, composerPopoverAlign } from "./use-composer-action-side"

@@ -10,6 +10,7 @@ import {
   FONT_SIZE_OPTIONS,
   FONT_FAMILY_OPTIONS,
   MESSAGE_SEND_MODE_OPTIONS,
+  COMPOSER_ACTION_SIDE_OPTIONS,
   LINK_PREVIEW_DEFAULT_OPTIONS,
   LABEL_REMOVE_ON_MOVE_OPTIONS,
   UNREAD_OPEN_POSITION_OPTIONS,
@@ -133,6 +134,7 @@ const updatePreferencesSchema = z.object({
       highContrast: z.boolean().optional(),
       fontSize: z.enum(FONT_SIZE_OPTIONS).optional(),
       fontFamily: z.enum(FONT_FAMILY_OPTIONS).optional(),
+      composerActionSide: z.enum(COMPOSER_ACTION_SIDE_OPTIONS).optional(),
     })
     .optional(),
 })

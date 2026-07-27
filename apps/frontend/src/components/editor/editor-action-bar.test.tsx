@@ -88,3 +88,19 @@ describe("EditorActionBar", () => {
     expect(onDesktopExpandClick).toHaveBeenCalled()
   })
 })
+
+describe("action side", () => {
+  // The mirror is a flex-direction flip, so the class on the row is the only
+  // signal jsdom can see — it has no layout to measure.
+  const row = () => screen.getByRole("button", { name: "Formatting" }).parentElement
+
+  it("keeps the row in source order by default", () => {
+    renderBar()
+    expect(row()).not.toHaveClass("flex-row-reverse")
+  })
+
+  it("mirrors the row so Send lands on the left", () => {
+    renderBar({ side: "left" })
+    expect(row()).toHaveClass("flex-row-reverse")
+  })
+})

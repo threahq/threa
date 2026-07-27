@@ -11,6 +11,7 @@ import { stripMarkdownToInline } from "@/lib/markdown"
 import { formatFutureTime, formatSendCountdown } from "@/lib/dates"
 import { useScheduledList, useCancelScheduled, useSendScheduledNow } from "@/hooks"
 import { useInputMode } from "@/hooks/use-input-mode"
+import { composerPopoverAlign, useComposerActionSide } from "@/hooks/use-composer-action-side"
 import { useTouchCapable } from "@/hooks/use-touch-capable"
 import { useLongPress } from "@/hooks/use-long-press"
 import { usePreferencesOptional } from "@/contexts"
@@ -94,6 +95,7 @@ export function ScheduledMessagesPicker({
   // Virtual-keyboard guard keys off the ACTIVE input — a soft keyboard is only
   // up when the user is actually typing with a finger.
   const isTouchInput = useInputMode() === "touch"
+  const actionSide = useComposerActionSide()
   // Browser-local timezone is the default everywhere in the UI — native
   // pickers operate in device-local, so we keep the custom-time path on
   // device-local to avoid silent drift. The user's saved profile timezone
@@ -233,7 +235,7 @@ export function ScheduledMessagesPicker({
         </Tooltip>
 
         <PopoverContent
-          align="end"
+          align={composerPopoverAlign(actionSide)}
           side="top"
           sideOffset={8}
           className="w-80 p-0"

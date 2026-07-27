@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, afterEach } from "vitest"
 import { render, screen } from "@testing-library/react"
+import userEvent from "@testing-library/user-event"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import * as elementWidthModule from "@/hooks/use-element-width"
 import { ComposerActionBar, planActionOverflow, planTriggerVisibility } from "./composer-action-bar"
@@ -133,5 +134,47 @@ describe("squeezed trigger mounting", () => {
     const trigger = screen.getByTestId("stash-trigger")
     expect(trigger).toBeInTheDocument()
     expect(trigger).not.toBeVisible()
+  })
+})
+
+describe("action side", () => {
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  function renderBar(side?: "left" | "right") {
+    render(
+      <TooltipProvider>
+        <ComposerActionBar
+          formatOpen={false}
+          onToggleFormat={() => {}}
+          onInsertEmoji={() => {}}
+          onInsertMention={() => {}}
+          onInsertCommand={() => {}}
+          onAttachClick={() => {}}
+          side={side}
+          sendButton={<button type="button">Send</button>}
+        />
+      </TooltipProvider>
+    )
+    // The mirror is a flex-direction flip, so the class on the row is the only
+    // signal jsdom can see — it has no layout to measure.
+    return screen.getByRole("button", { name: "Formatting" }).parentElement
+  }
+
+  it("keeps the row in source order by default", () => {
+    expect(renderBar()).not.toHaveClass("flex-row-reverse")
+  })
+
+  it("mirrors the row so Send lands on the left", () => {
+    expect(renderBar("left")).toHaveClass("flex-row-reverse")
+  })
+
+  it("anchors the overflow menu to the edge the '+' trigger moved to", async () => {
+    // 170px folds every collapsible action, so the "+" trigger renders.
+    vi.spyOn(elementWidthModule, "useElementWidth").mockReturnValue(170)
+    renderBar("left")
+    await userEvent.click(screen.getByRole("button", { name: "More actions" }))
+    expect(screen.getByRole("menu")).toHaveAttribute("data-align", "end")
   })
 })

@@ -8,6 +8,7 @@ import { draftInlineText, draftPreviewStatusLabel } from "@/lib/drafts/decryptio
 import { formatRelativeTime } from "@/lib/dates"
 import { cn } from "@/lib/utils"
 import { useInputMode } from "@/hooks/use-input-mode"
+import { composerPopoverAlign, useComposerActionSide } from "@/hooks/use-composer-action-side"
 import { keepEditorFocusProps } from "@/lib/keep-editor-focus"
 import { usePreferencesOptional } from "@/contexts"
 import { formatKeyBinding, getEffectiveKeyBinding } from "@/lib/keyboard-shortcuts"
@@ -97,6 +98,7 @@ export function StashedDraftsPicker({
   // Active input drives the virtual-keyboard guard and the "Tap"/"Press" +
   // keyboard-shortcut copy — a hardware keyboard is present only with a mouse.
   const isTouch = useInputMode() === "touch"
+  const actionSide = useComposerActionSide()
   const count = drafts.length
   const now = useMemo(() => new Date(), [open])
 
@@ -198,7 +200,7 @@ export function StashedDraftsPicker({
 
         <PopoverContent
           ref={contentRef}
-          align="end"
+          align={composerPopoverAlign(actionSide)}
           side="top"
           sideOffset={8}
           className="w-80 p-0"

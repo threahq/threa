@@ -14,6 +14,7 @@ import { flushSync } from "react-dom"
 import { ArrowUp, X, Plus, AtSign, Slash, Paperclip } from "lucide-react"
 import { useIsMobile } from "@/hooks/use-mobile"
 import { useInputMode } from "@/hooks/use-input-mode"
+import { useComposerActionSide } from "@/hooks/use-composer-action-side"
 import { usePreferencesOptional } from "@/contexts"
 import { getEffectiveKeyBinding, matchesKeyBinding } from "@/lib/keyboard-shortcuts"
 import { RichEditor, EditorToolbar, EditorActionBar } from "@/components/editor"
@@ -376,6 +377,8 @@ export function MessageComposer({
   // isn't torn down mid-take.
   const [voiceActive, setVoiceActive] = useState(false)
   const isMobile = useIsMobile()
+  const actionSide = useComposerActionSide()
+  const mirrored = actionSide === "left"
   // Selection toolbar is a hover/mouse affordance, so it keys off the active
   // input mode (a finger suppresses it) rather than viewport width — a mouse on
   // a touchscreen laptop still gets it.
@@ -971,7 +974,12 @@ export function MessageComposer({
               <div className="h-[50vh]" />
             </div>
 
-            <div className="absolute bottom-[max(1rem,env(safe-area-inset-bottom))] right-4 z-10 flex items-center gap-1.5">
+            <div
+              className={cn(
+                "absolute bottom-[max(1rem,env(safe-area-inset-bottom))] z-10 flex items-center gap-1.5",
+                mirrored ? "left-4 flex-row-reverse" : "right-4"
+              )}
+            >
               {/* Action drawer — always visible on desktop; on touch (no hover) it
                 stays behind the + button and opens on tap. `inert` while
                 collapsed on mobile so its buttons drop out of tab order instead
@@ -980,6 +988,7 @@ export function MessageComposer({
                 inert={isMobile && !fabActionsOpen}
                 className={cn(
                   "flex items-center gap-1 overflow-hidden transition-all duration-200 ease-out",
+                  mirrored && "flex-row-reverse",
                   isMobile ? "max-w-0 opacity-0" : "max-w-[240px] opacity-100",
                   fabActionsOpen && "max-w-[240px] opacity-100"
                 )}
@@ -1125,7 +1134,7 @@ export function MessageComposer({
                       <ArrowUp className="h-4 w-4" />
                     </Button>
                   </TooltipTrigger>
-                  <TooltipContent side="left" className="text-xs">
+                  <TooltipContent side={mirrored ? "right" : "left"} className="text-xs">
                     {sendHint}
                   </TooltipContent>
                 </Tooltip>
@@ -1289,9 +1298,12 @@ export function MessageComposer({
                       onMobileExpandedChange={setMobileExpanded}
                       showAttach
                       onAttachClick={handleAttachClick}
+                      side={actionSide}
                       trailingContent={
                         micButton || stashedDraftsTrigger || scheduledMessagesTrigger ? (
-                          <div className="flex items-center gap-1">
+                          // Mirrored too, so Send stays the outermost control
+                          // rather than sitting behind the triggers.
+                          <div className={cn("flex items-center gap-1", mirrored && "flex-row-reverse")}>
                             {micButton}
                             {stashedDraftsTrigger}
                             {scheduledMessagesTrigger}
@@ -1304,6 +1316,7 @@ export function MessageComposer({
                     />
                   ) : (
                     <ComposerActionBar
+                      side={actionSide}
                       disabled={controlsDisabled}
                       formatOpen={formatOpen}
                       onToggleFormat={() => setFormatOpen((v) => !v)}
@@ -1336,7 +1349,7 @@ export function MessageComposer({
             </div>
           </div>
 
-          <div className="flex justify-end px-1 pt-1">
+          <div className={cn("flex px-1 pt-1", mirrored ? "justify-start" : "justify-end")}>
             <span className="text-[10px] text-muted-foreground opacity-60 hidden sm:block select-none pointer-events-none">
               {sendHint}
             </span>
