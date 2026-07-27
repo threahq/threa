@@ -256,8 +256,14 @@ export function ComposerActionBar({
         </>
       ) : (
         // truncate, never wrap: a second line grows the bar and shifts the
-        // composer (INV-21).
-        <span className="text-[11px] text-muted-foreground flex-1 truncate select-none pointer-events-none">
+        // composer (INV-21). The span spans the free width, so its text needs
+        // aligning to the far edge or the mirror leaves it hugging Send.
+        <span
+          className={cn(
+            "text-[11px] text-muted-foreground flex-1 truncate select-none pointer-events-none",
+            mirrored && "text-right"
+          )}
+        >
           Select text to format
         </span>
       )}
