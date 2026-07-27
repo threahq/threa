@@ -1,5 +1,5 @@
 import { describe, it, expect, mock } from "bun:test"
-import { parseModelId, createAI, AIBudgetExceededError } from "./ai"
+import { parseModelId, createAI, AIBudgetExceededError, applyCacheBreakpoints } from "./ai"
 
 // Import fixture data captured from real OpenRouter API calls (2026-01-06)
 import fixtures from "./fixtures/openrouter-responses.json"
@@ -264,5 +264,101 @@ describe("OpenRouter response fixtures", () => {
         },
       },
     })
+  })
+})
+
+describe("applyCacheBreakpoints", () => {
+  const ANTHROPIC = "openrouter:anthropic/claude-sonnet-5"
+  const EPHEMERAL = { openrouter: { cacheControl: { type: "ephemeral" } } }
+
+  it("moves the system prompt into messages and breaks on it plus the newest message", () => {
+    const result = applyCacheBreakpoints({
+      system: "You are Ariadne.",
+      messages: [
+        { role: "user", content: "hi" },
+        { role: "assistant", content: "hello" },
+      ],
+      modelString: ANTHROPIC,
+    })
+
+    expect(result).toEqual({
+      system: undefined,
+      messages: [
+        { role: "system", content: "You are Ariadne.", providerOptions: EPHEMERAL },
+        { role: "user", content: "hi" },
+        { role: "assistant", content: "hello", providerOptions: EPHEMERAL },
+      ],
+    })
+  })
+
+  it("places a single breakpoint when the system prompt is the only message", () => {
+    const result = applyCacheBreakpoints({ system: "Prompt.", messages: [], modelString: ANTHROPIC })
+
+    expect(result).toEqual({
+      system: undefined,
+      messages: [{ role: "system", content: "Prompt.", providerOptions: EPHEMERAL }],
+    })
+  })
+
+  it("breaks on the newest message when there is no system prompt", () => {
+    const result = applyCacheBreakpoints({
+      messages: [{ role: "user", content: "hi" }],
+      modelString: ANTHROPIC,
+    })
+
+    expect(result).toEqual({
+      system: undefined,
+      messages: [{ role: "user", content: "hi", providerOptions: EPHEMERAL }],
+    })
+  })
+
+  // A shallow spread over providerOptions would replace the whole `openrouter`
+  // key and silently drop sibling options such as reasoning effort.
+  it("merges alongside sibling openrouter options rather than replacing them", () => {
+    const result = applyCacheBreakpoints({
+      messages: [
+        {
+          role: "user",
+          content: "hi",
+          providerOptions: { openrouter: { reasoning: { effort: "high" } }, anthropic: { foo: "bar" } },
+        },
+      ],
+      modelString: ANTHROPIC,
+    })
+
+    expect(result.messages[0]?.providerOptions).toEqual({
+      anthropic: { foo: "bar" },
+      openrouter: { reasoning: { effort: "high" }, cacheControl: { type: "ephemeral" } },
+    })
+  })
+
+  // Measured 2026-07-26: Gemini caches the marked prefix and caches nothing
+  // without the marker, exactly like Anthropic.
+  it("breaks on Gemini too, which also requires an explicit marker", () => {
+    const result = applyCacheBreakpoints({
+      system: "Prompt.",
+      messages: [{ role: "user", content: "hi" }],
+      modelString: "openrouter:google/gemini-2.5-pro",
+    })
+
+    expect(result.messages.map((m) => m.providerOptions)).toEqual([EPHEMERAL, EPHEMERAL])
+  })
+
+  // OpenAI caching is automatic and needs no marker; personas may run any
+  // registry model, and losing the optimization is the correct degradation.
+  it("leaves the request untouched for providers that need no marker", () => {
+    const request = {
+      system: "Prompt.",
+      messages: [{ role: "user" as const, content: "hi" }],
+      modelString: "openrouter:openai/gpt-5.6-luna",
+    }
+
+    expect(applyCacheBreakpoints(request)).toEqual({ system: request.system, messages: request.messages })
+  })
+
+  it("leaves the request untouched when no model string is available", () => {
+    const request = { system: "Prompt.", messages: [{ role: "user" as const, content: "hi" }] }
+
+    expect(applyCacheBreakpoints(request)).toEqual({ system: request.system, messages: request.messages })
   })
 })

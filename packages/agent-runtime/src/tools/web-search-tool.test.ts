@@ -67,7 +67,7 @@ describe("web-search-tool", () => {
     expect(body.include_answer).toBe(true)
   })
 
-  it("should expose invocation time in the tool description and output", async () => {
+  it("should carry invocation time in output but never in the definition", async () => {
     globalThis.fetch = mock(() =>
       Promise.resolve({
         ok: true,
@@ -83,10 +83,22 @@ describe("web-search-tool", () => {
     const { output } = await tool.config.execute({ query: "AI news 2026" }, toolOpts)
     const parsed = JSON.parse(output)
 
-    expect(tool.config.description).toContain("Current invocation time is 2026-11-15T10:00:00.000Z")
-    expect(tool.config.description).toContain("include the current date/year")
+    expect(tool.config.description).toContain("include it in your query")
     expect(parsed.searchedAt).toBe("2026-11-15T10:00:00.000Z")
     expect(parsed.timezone).toBe("Europe/Stockholm")
+  })
+
+  // Tool definitions render ahead of the system prompt in the prompt-cache
+  // prefix: any per-request value in a description or promptBlock invalidates
+  // the cached prefix on every call, silently dropping the hit rate to zero
+  // for the entire toolset. Guards against reintroducing the invocation time.
+  it("should produce a byte-identical definition across differing invocation times", () => {
+    const define = (currentTime: string) => {
+      const t = createWebSearchTool({ tavilyApiKey: "test-api-key", currentTime, timezone: "Europe/Stockholm" })
+      return { description: t.config.description, promptBlock: t.config.promptBlock }
+    }
+
+    expect(define("2026-11-15T10:00:00.000Z")).toEqual(define("2026-11-15T10:00:31.000Z"))
   })
 
   it("should return error on API failure", async () => {
