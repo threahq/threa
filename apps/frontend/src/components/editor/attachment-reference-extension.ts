@@ -97,8 +97,11 @@ export const AttachmentReferenceExtension = Node.create({
     return [{ tag: 'span[data-type="attachment-reference"]' }]
   },
 
+  // No content hole: the node is an atom, and ProseMirror's DOMSerializer
+  // throws on one ("Content hole not allowed in a leaf node spec"), taking
+  // down every copy of a selection that holds a chip.
   renderHTML({ HTMLAttributes }) {
-    return ["span", mergeAttributes(HTMLAttributes, { "data-type": "attachment-reference" }), 0]
+    return ["span", mergeAttributes(HTMLAttributes, { "data-type": "attachment-reference" })]
   },
 
   // Plain text rendering for copy/paste out of editor
