@@ -77,6 +77,8 @@ export const ACCESS_LOG_OPERATIONS = [
   "user_e2e_keys.revoke",
   "enclave.list_active_keys",
   // Streams
+  "stream_context.list",
+  "stream_context.occurrences",
   "streams.list",
   "streams.create",
   "streams.read_all",

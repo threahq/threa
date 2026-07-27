@@ -1079,6 +1079,9 @@ export const VideoPreviewTypes = {
   VIDEO: "video",
 } as const satisfies Record<string, VideoPreviewType>
 
+/** Every value `link_previews.preview_type` can hold — the closed set of rich provider cards. */
+export type RichLinkPreviewType = GitHubPreviewType | LinearPreviewType | VideoPreviewType
+
 export const SHARE_FLAVORS = ["pointer", "quote"] as const
 export type ShareFlavor = (typeof SHARE_FLAVORS)[number]
 

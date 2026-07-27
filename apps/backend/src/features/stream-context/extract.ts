@@ -2,7 +2,7 @@ import { collectGiphyEmbeds } from "@threa/prosemirror"
 import { categoryFromMime, stripMarkdownToInline, type AttachmentSummary, type JSONContent } from "@threa/types"
 import { streamContextItemId } from "../../lib/id"
 import { extractUrls, normalizeUrl, getAppOrigins } from "../link-previews"
-import type { ContextCategory, ContextRefKind, NewStreamContextItem } from "./types"
+import type { ContextCategory, StreamContextRefKind, NewStreamContextItem } from "./types"
 
 /** btree index bound — a longer href cannot be indexed, so it is not projected. */
 const MAX_URL_LENGTH = 2000
@@ -39,7 +39,7 @@ export function contextRowsForMessage(params: ContextRowsForMessageParams): NewS
 
   const push = (
     category: ContextCategory,
-    refKind: ContextRefKind,
+    refKind: StreamContextRefKind,
     refId: string,
     groupKey: string,
     detail: Record<string, unknown>

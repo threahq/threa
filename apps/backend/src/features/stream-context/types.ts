@@ -1,5 +1,4 @@
-export const CONTEXT_CATEGORIES = ["link", "media", "file", "memo", "delegation", "thread"] as const
-export type ContextCategory = (typeof CONTEXT_CATEGORIES)[number]
+import type { ContextCategory, StreamContextRefKind } from "@threa/types"
 
 /**
  * Categories a message body owns, i.e. exactly what `contextRowsForMessage`
@@ -9,8 +8,8 @@ export type ContextCategory = (typeof CONTEXT_CATEGORIES)[number]
  */
 export const MESSAGE_BODY_CONTEXT_CATEGORIES = ["link", "media", "file"] as const
 
-export const CONTEXT_REF_KINDS = ["url", "attachment", "giphy", "memo", "delegation", "thread"] as const
-export type ContextRefKind = (typeof CONTEXT_REF_KINDS)[number]
+export { CONTEXT_CATEGORIES, STREAM_CONTEXT_REF_KINDS } from "@threa/types"
+export type { ContextCategory, StreamContextRefKind } from "@threa/types"
 
 export interface NewStreamContextItem {
   id: string
@@ -18,7 +17,7 @@ export interface NewStreamContextItem {
   streamId: string
   rootStreamId: string
   category: ContextCategory
-  refKind: ContextRefKind
+  refKind: StreamContextRefKind
   refId: string
   groupKey: string
   sourceMessageId: string | null

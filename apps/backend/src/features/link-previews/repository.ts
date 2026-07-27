@@ -1,18 +1,15 @@
 import { sql, type Querier } from "@threa/backend-common"
 import {
   type GitHubPreview,
-  type GitHubPreviewType,
   type LinearPreview,
-  type LinearPreviewType,
   type VideoPreview,
-  type VideoPreviewType,
+  type RichLinkPreviewType,
   type LinkPreviewContentType,
   type LinkPreviewStatus,
   isInAppLinkContentType,
 } from "@threa/types"
 
 /** Union of all rich provider preview types persisted in `link_previews.preview_type`. */
-export type RichPreviewType = GitHubPreviewType | LinearPreviewType | VideoPreviewType
 /** Union of all rich provider preview payloads stored in `link_previews.preview_data`. */
 export type RichPreview = GitHubPreview | LinearPreview | VideoPreview
 
@@ -28,7 +25,7 @@ export interface LinkPreview {
   siteName: string | null
   contentType: LinkPreviewContentType
   status: LinkPreviewStatus
-  previewType: RichPreviewType | null
+  previewType: RichLinkPreviewType | null
   previewData: RichPreview | null
   targetWorkspaceId: string | null
   targetStreamId: string | null
@@ -77,7 +74,7 @@ export interface UpdateLinkPreviewParams {
   faviconUrl?: string | null
   siteName?: string | null
   contentType?: LinkPreviewContentType
-  previewType?: RichPreviewType | null
+  previewType?: RichLinkPreviewType | null
   previewData?: RichPreview | null
   status: LinkPreviewStatus
   expiresAt?: Date | null
@@ -104,7 +101,7 @@ function mapRow(row: Record<string, unknown>): LinkPreview {
     siteName: row.site_name as string | null,
     contentType: row.content_type as LinkPreviewContentType,
     status: row.status as LinkPreviewStatus,
-    previewType: (row.preview_type as RichPreviewType | null) ?? null,
+    previewType: (row.preview_type as RichLinkPreviewType | null) ?? null,
     previewData: (row.preview_data as RichPreview | null) ?? null,
     targetWorkspaceId: (row.target_workspace_id as string | null) ?? null,
     targetStreamId: (row.target_stream_id as string | null) ?? null,
