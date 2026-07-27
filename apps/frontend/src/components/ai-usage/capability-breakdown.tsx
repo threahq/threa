@@ -27,13 +27,26 @@ function cacheHitPct(promptTokens: number, cachedPromptTokens: number): number |
   return (cachedPromptTokens / promptTokens) * 100
 }
 
+/**
+ * A non-zero share must never render as "0% cached" — that reads as "caching is
+ * broken" when it means "caching started partway through the billing period".
+ * The window is month-to-date, so the first cached call after a prompt is made
+ * cacheable lands against a denominator of everything billed at full price
+ * before it: one 2,816-token hit against boundary extraction's ~4M tokens for
+ * the month is 0.07%, which rounds to zero and inverts the signal.
+ */
+function formatCacheHit(pct: number): string {
+  if (pct < 1) return "<1% cached"
+  return `${pct.toFixed(0)}% cached`
+}
+
 function CacheHitLabel({ promptTokens, cachedPromptTokens }: { promptTokens: number; cachedPromptTokens: number }) {
   const pct = cacheHitPct(promptTokens, cachedPromptTokens)
   // Fixed width whether or not the label renders, so expanding a category can't
   // shift the columns beside it (INV-21).
   return (
     <span className="w-16 text-right text-[11px] tabular-nums text-muted-foreground">
-      {pct === null ? "" : `${pct.toFixed(0)}% cached`}
+      {pct === null ? "" : formatCacheHit(pct)}
     </span>
   )
 }

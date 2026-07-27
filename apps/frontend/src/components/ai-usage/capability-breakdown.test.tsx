@@ -96,6 +96,29 @@ describe("CapabilityBreakdown", () => {
     expect(screen.getByText("75% cached")).toBeInTheDocument()
   })
 
+  it("never rounds a real cache hit down to 0%", () => {
+    // The panel window is month-to-date, so the first hits after a prompt is
+    // made cacheable sit against everything billed at full price before them.
+    // "0% cached" there would read as broken when it means "just started".
+    const barelyCached: AIUsageByModel[] = [
+      {
+        model: "provider/big",
+        totalCostUsd: 0.3,
+        totalTokens: 9000,
+        promptTokens: 4_000_000,
+        cachedPromptTokens: 2816,
+        recordCount: 12,
+      },
+    ]
+    // The by-model list only renders alongside at least one capability row.
+    render(
+      <CapabilityBreakdown byFunction={byFunction} byModel={barelyCached} totalCost={totalCost} isLoading={false} />
+    )
+
+    expect(screen.getByText("<1% cached")).toBeInTheDocument()
+    expect(screen.queryByText("0% cached")).not.toBeInTheDocument()
+  })
+
   it("renders the empty state when there is no function usage", () => {
     render(<CapabilityBreakdown byFunction={[]} byModel={[]} totalCost={0} isLoading={false} />)
     expect(screen.getByText(/No AI usage recorded yet this cycle/i)).toBeInTheDocument()
