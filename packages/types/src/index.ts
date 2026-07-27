@@ -771,6 +771,10 @@ export {
   MESSAGE_SEND_MODE_OPTIONS,
   type MessageSendMode,
   MessageSendModes,
+  // Composer action side
+  COMPOSER_ACTION_SIDE_OPTIONS,
+  type ComposerActionSide,
+  ComposerActionSides,
   // Link preview default
   LINK_PREVIEW_DEFAULT_OPTIONS,
   type LinkPreviewDefault,

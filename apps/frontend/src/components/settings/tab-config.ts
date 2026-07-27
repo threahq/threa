@@ -60,7 +60,7 @@ export const SETTINGS_TAB_CONFIG: Record<SettingsTab, SettingsTabConfig> = {
   },
   accessibility: {
     label: "Accessibility",
-    description: "Motion, contrast, and fonts",
-    keywords: ["font", "contrast", "motion", "a11y", "dyslexic"],
+    description: "Motion, contrast, fonts, and composer layout",
+    keywords: ["font", "contrast", "motion", "a11y", "dyslexic", "left-handed", "handedness", "reach", "send"],
   },
 }

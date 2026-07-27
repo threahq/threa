@@ -178,3 +178,24 @@ describe("updatePreferencesSchema message collapse settings", () => {
     expect(parsed.messageCollapseToHeight).toBeUndefined()
   })
 })
+
+describe("updatePreferencesSchema accessibility.composerActionSide", () => {
+  it("accepts both sides", () => {
+    expect(updatePreferencesSchema.parse({ accessibility: { composerActionSide: "left" } }).accessibility).toEqual({
+      composerActionSide: "left",
+    })
+    expect(updatePreferencesSchema.parse({ accessibility: { composerActionSide: "right" } }).accessibility).toEqual({
+      composerActionSide: "right",
+    })
+  })
+
+  it("rejects an unknown side", () => {
+    expect(updatePreferencesSchema.safeParse({ accessibility: { composerActionSide: "top" } }).success).toBe(false)
+  })
+
+  it("is omitted when not supplied, so a partial accessibility update leaves it alone", () => {
+    expect(updatePreferencesSchema.parse({ accessibility: { reducedMotion: true } }).accessibility).toEqual({
+      reducedMotion: true,
+    })
+  })
+})

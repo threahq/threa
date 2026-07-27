@@ -85,6 +85,17 @@ export const MessageSendModes = {
   CMD_ENTER: "cmdEnter",
 } as const satisfies Record<string, MessageSendMode>
 
+// Which end of the composer's action row holds Send and its neighboring
+// controls. "right" is the conventional layout; "left" mirrors the row so Send
+// falls inside a left thumb's arc instead of the opposite corner.
+export const COMPOSER_ACTION_SIDE_OPTIONS = ["right", "left"] as const
+export type ComposerActionSide = (typeof COMPOSER_ACTION_SIDE_OPTIONS)[number]
+
+export const ComposerActionSides = {
+  RIGHT: "right",
+  LEFT: "left",
+} as const satisfies Record<string, ComposerActionSide>
+
 // Where a stream opens when there are unread messages. "latest" (default)
 // lands at the newest message with an "N new messages" affordance pointing up
 // at the unread marker; "marker" (Discord-style) lands on the first unread
@@ -241,6 +252,7 @@ export interface AccessibilityPreferences {
   highContrast: boolean
   fontSize: FontSize
   fontFamily: FontFamily
+  composerActionSide: ComposerActionSide
 }
 
 /**
@@ -251,6 +263,7 @@ export const DEFAULT_ACCESSIBILITY: AccessibilityPreferences = {
   highContrast: false,
   fontSize: "medium",
   fontFamily: "system",
+  composerActionSide: "right",
 }
 
 /**

@@ -3,7 +3,15 @@ import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
 import { Separator } from "@/components/ui/separator"
 import { Switch } from "@/components/ui/switch"
 import { usePreferences } from "@/contexts"
-import { FONT_SIZE_OPTIONS, FONT_FAMILY_OPTIONS, type FontSize, type FontFamily } from "@threa/types"
+import {
+  FONT_SIZE_OPTIONS,
+  FONT_FAMILY_OPTIONS,
+  COMPOSER_ACTION_SIDE_OPTIONS,
+  DEFAULT_ACCESSIBILITY,
+  type FontSize,
+  type FontFamily,
+  type ComposerActionSide,
+} from "@threa/types"
 
 const FONT_SIZE_LABELS: Record<FontSize, string> = {
   small: "Small (14px)",
@@ -17,6 +25,16 @@ const FONT_FAMILY_LABELS: Record<FontFamily, string> = {
   dyslexic: "OpenDyslexic",
 }
 
+const COMPOSER_ACTION_SIDE_LABELS: Record<ComposerActionSide, string> = {
+  right: "Right",
+  left: "Left",
+}
+
+const COMPOSER_ACTION_SIDE_DESCRIPTIONS: Record<ComposerActionSide, string> = {
+  right: "Send sits at the right end of the composer, after the other controls",
+  left: "Mirrors the row so Send sits at the left end, within reach of a left thumb",
+}
+
 const FONT_FAMILY_DESCRIPTIONS: Record<FontFamily, string> = {
   system: "Clean, readable font for everyday use",
   monospace: "Fixed-width font for code-like appearance",
@@ -26,12 +44,7 @@ const FONT_FAMILY_DESCRIPTIONS: Record<FontFamily, string> = {
 export function AccessibilitySettings() {
   const { preferences, updateAccessibility } = usePreferences()
 
-  const accessibility = preferences?.accessibility ?? {
-    reducedMotion: false,
-    highContrast: false,
-    fontSize: "medium" as const,
-    fontFamily: "system" as const,
-  }
+  const accessibility = preferences?.accessibility ?? DEFAULT_ACCESSIBILITY
 
   return (
     <div className="space-y-6">
@@ -71,6 +84,32 @@ export function AccessibilitySettings() {
             onCheckedChange={(checked) => updateAccessibility({ highContrast: checked })}
           />
         </div>
+      </section>
+
+      <Separator />
+
+      <section className="space-y-3">
+        <div>
+          <h3 className="text-sm font-medium">Composer actions</h3>
+          <p className="text-sm text-muted-foreground">Which end of the composer holds the Send button</p>
+        </div>
+        <RadioGroup
+          value={accessibility.composerActionSide}
+          onValueChange={(value) => updateAccessibility({ composerActionSide: value as ComposerActionSide })}
+          className="space-y-4"
+        >
+          {COMPOSER_ACTION_SIDE_OPTIONS.map((option) => (
+            <div key={option} className="flex items-start space-x-3">
+              <RadioGroupItem value={option} id={`composer-action-side-${option}`} className="mt-1" />
+              <div className="grid gap-1">
+                <Label htmlFor={`composer-action-side-${option}`} className="cursor-pointer">
+                  {COMPOSER_ACTION_SIDE_LABELS[option]}
+                </Label>
+                <p className="text-sm text-muted-foreground">{COMPOSER_ACTION_SIDE_DESCRIPTIONS[option]}</p>
+              </div>
+            </div>
+          ))}
+        </RadioGroup>
       </section>
 
       <Separator />

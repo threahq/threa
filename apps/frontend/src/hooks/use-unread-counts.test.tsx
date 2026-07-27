@@ -122,6 +122,7 @@ function makeBootstrap(): WorkspaceBootstrap {
         fontFamily: "system",
         reducedMotion: false,
         highContrast: false,
+        composerActionSide: "right",
       },
       keyboardShortcuts: {},
       createdAt: new Date().toISOString(),
