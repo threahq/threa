@@ -31,8 +31,7 @@ import {
   runHarnessKick,
   parseAllowedTmuxKey,
   sendAllowedTmuxKey,
-  ARCHIVE_RESTORE_GRACE_MS,
-  ARCHIVE_RESTORE_PROBE_MS,
+  ArchiveGraceController,
   scrubSealedError,
   sealReply,
   sealStep,
@@ -318,16 +317,16 @@ let sessionTearingDown = false
 // Set while the linked scratchpad is archived and the session is waiting out
 // the restore grace window: claims are suspended, the poll probes at the
 // reattach cadence, and the deadline runs the worktree wind-down.
-let archivePending: { rootStreamId: string; deadline: ReturnType<typeof setTimeout> } | undefined
-// Set by startPolling so detachForArchive can pull the next tick forward: the
-// pending tick was scheduled with the socket backstop (15 min), which lands
-// ZERO reattach probes inside a 5-minute grace.
+// The archive → grace → wind-down machine, shared with the Claude runtime.
+// Built lazily because every hook needs the extension ctx.
+let archive: ArchiveGraceController | undefined
+// Set by startPolling so a detach can pull the next tick forward: the pending
+// tick was scheduled with the socket backstop (15 min), which lands ZERO
+// reattach probes inside a 5-minute grace.
 let rearmPoll: ((delayMs: number) => void) | undefined
-let archiveProbeInflight = false
-// Overridable so a test can watch the grace actually expire and the wind-down
-// actually run, instead of waiting five minutes and destroying a real worktree.
-// Mirrors RemoteSession's `archiveGraceMs` option.
-let archiveGraceMs: number = ARCHIVE_RESTORE_GRACE_MS
+// Overridable so a test can watch the grace expire and the wind-down run
+// instead of waiting five minutes and destroying a real worktree.
+let archiveGraceMs: number | undefined
 let archiveWindDown: typeof windDownArchivedWorktree = windDownArchivedWorktree
 // Owns the /bot socket + routes presence/renew/steps over it (HTTP fallback
 // when the socket is down). Built lazily once the session ctx is known; torn
@@ -1830,132 +1829,99 @@ function stopPolling(): void {
 }
 
 /**
- * The linked scratchpad is archived. The server has already ended the session,
- * so no more work can arrive: go offline and stop claiming, but hold the
- * destructive wind-down for the grace window — an unarchive inside it
- * reattaches this live session with no restart.
+ * The controller for this Pi session. Hooks carry the Pi-specific effects; the
+ * pending state, deadline, probe guard and post-await identity checks live in
+ * the shared machine.
  */
-async function detachForArchive(ctx: ExtensionContext, rootStreamId: string): Promise<void> {
-  if (archivePending || sessionTearingDown) return
-  archivePending = {
-    rootStreamId,
-    deadline: setTimeout(() => void windDownAfterArchiveGrace(ctx), archiveGraceMs),
-  }
-  // An in-flight poll re-arms at the probe cadence from its own finally block.
-  if (pollInFlightRunId === undefined) rearmPoll?.(Math.min(ARCHIVE_RESTORE_PROBE_MS, archiveGraceMs))
-  const minutes = Math.round(archiveGraceMs / 60_000)
-  setRemoteStatus(ctx, `Threa remote: scratchpad archived; winding down in ${minutes}m`, "error")
-  ctx.ui.notify(
-    `Threa scratchpad archived. Unarchive within ${minutes} minutes to reattach; otherwise this branch is pushed and the worktree removed.`,
-    "warning"
-  )
-  await heartbeat("offline", undefined, ctx).catch(() => undefined)
-}
-
-/**
- * The scratchpad came back inside the grace window: revive the server-side
- * link for this same runtime session and cancel the wind-down. A transient
- * failure keeps the detached state so the probe cadence survives to retry.
- */
-async function reattachAfterArchive(ctx: ExtensionContext): Promise<void> {
-  const pending = archivePending
-  if (!pending || !config) return
-  const rootStreamId = pending.rootStreamId
-  const body = await request<{ data: RuntimeSessionLink }>(
-    `/api/v1/workspaces/${config.workspaceId}/bot-runtime/sessions`,
+function ensureArchiveController(ctx: ExtensionContext): ArchiveGraceController {
+  archive ??= new ArchiveGraceController(
     {
-      method: "POST",
-      body: JSON.stringify({
-        runtimeKind: "pi-local",
-        instanceId: getSessionInstanceId(ctx),
-        runtimeSessionId: getRuntimeSessionId(ctx),
-        displayName: defaultDisplayNameFor(ctx.cwd, config.defaultDisplayName),
-        localCwd: ctx.cwd,
-        ifArchived: "wait",
-        ifMissing: "error",
-      }),
-    }
+      isArchived: async (rootStreamId) => {
+        if (!config) return undefined
+        const body = await request<{ data: { archivedAt?: string | null } }>(
+          `/api/v1/workspaces/${config.workspaceId}/streams/${rootStreamId}`
+        )
+        return Boolean(body.data?.archivedAt)
+      },
+      reattach: async (rootStreamId) => {
+        if (!config) return false
+        const body = await request<{ data: RuntimeSessionLink }>(
+          `/api/v1/workspaces/${config.workspaceId}/bot-runtime/sessions`,
+          {
+            method: "POST",
+            body: JSON.stringify({
+              runtimeKind: "pi-local",
+              instanceId: getSessionInstanceId(ctx),
+              runtimeSessionId: getRuntimeSessionId(ctx),
+              displayName: defaultDisplayNameFor(ctx.cwd, config.defaultDisplayName),
+              localCwd: ctx.cwd,
+              ifArchived: "wait",
+              ifMissing: "error",
+            }),
+          }
+        )
+        return body.data.rootStreamId === rootStreamId
+      },
+      onDetached: async (_rootStreamId, graceMs) => {
+        // An in-flight poll re-arms at the probe cadence from its own finally block.
+        if (pollInFlightRunId === undefined) rearmPoll?.(ensureArchiveController(ctx).probeDelayMs)
+        const minutes = Math.round(graceMs / 60_000)
+        setRemoteStatus(ctx, `Threa remote: scratchpad archived; winding down in ${minutes}m`, "error")
+        ctx.ui.notify(
+          `Threa scratchpad archived. Unarchive within ${minutes} minutes to reattach; otherwise this branch is pushed and the worktree removed.`,
+          "warning"
+        )
+        await heartbeat("offline", undefined, ctx).catch(() => undefined)
+      },
+      onReattached: async () => {
+        setRemoteStatus(ctx, "Threa remote: linked")
+        ctx.ui.notify("Threa scratchpad unarchived; reattached.", "info")
+        await heartbeat("available", undefined, ctx).catch(() => undefined)
+      },
+      onWindDown: () => {
+        stopPolling()
+        stopClaimRenewTimer()
+        const report = archiveWindDown(ctx.cwd, (message) => emitPollDebug(ctx, message))
+        teardownTransport()
+        if (report.windowKilled) return
+        ctx.ui.notify(
+          report.pushed
+            ? "Threa scratchpad archived; branch pushed. This worktree is finished — close the window."
+            : `Threa scratchpad archived, but the wind-down could not preserve the work: ${report.reason ?? "unknown"}`,
+          report.pushed ? "warning" : "error"
+        )
+      },
+      log: (message) => emitPollDebug(ctx, message),
+    },
+    archiveGraceMs === undefined ? {} : { graceMs: archiveGraceMs }
   )
-  if (body.data.rootStreamId !== rootStreamId) return
-  // The grace deadline can fire (or a second reattach can win) while the
-  // request above is in flight — a 30s fetch timeout against a 45s probe
-  // cadence lands squarely inside the window. Reattaching against a session
-  // that already wound down would resurrect a dead worktree; the pinned
-  // identity check is what makes the wind-down terminal.
-  if (archivePending !== pending) return
-  clearTimeout(pending.deadline)
-  archivePending = undefined
-  setRemoteStatus(ctx, "Threa remote: linked")
-  ctx.ui.notify("Threa scratchpad unarchived; reattached.", "info")
-  await heartbeat("available", undefined, ctx).catch(() => undefined)
+  return archive
 }
 
-/**
- * The grace expired with the scratchpad still archived: preserve the work on
- * the remote and take the tmux window down. Pi dies with the window, so this
- * may never return; recovery is `git fetch` plus the pushed branch.
- */
-async function windDownAfterArchiveGrace(ctx: ExtensionContext): Promise<void> {
-  if (!archivePending) return
-  clearTimeout(archivePending.deadline)
-  archivePending = undefined
-  stopPolling()
-  stopClaimRenewTimer()
-  const report = archiveWindDown(ctx.cwd, (message) => emitPollDebug(ctx, message))
-  teardownTransport()
-  if (!report.windowKilled) {
-    ctx.ui.notify(
-      report.pushed
-        ? "Threa scratchpad archived; branch pushed. This worktree is finished — close the window."
-        : `Threa scratchpad archived, but the wind-down could not preserve the work: ${report.reason ?? "unknown"}`,
-      report.pushed ? "warning" : "error"
-    )
-  }
-}
-
-/**
- * bot:session_archived is a one-shot push with no replay, so a socket that was
- * down when the archive landed would otherwise hold this worktree open
- * forever. Re-derive the state from the server on the poll tick and drive both
- * directions of the transition from it.
- */
+/** The poll-tick backstop: `bot:session_archived` is a one-shot push with no replay. */
 async function probeArchiveState(ctx: ExtensionContext): Promise<void> {
-  if (!config || archiveProbeInflight || sessionTearingDown) return
-  const rootStreamId = archivePending?.rootStreamId ?? getCurrentSessionLink(ctx)?.rootStreamId
-  if (!rootStreamId) return
-  archiveProbeInflight = true
-  try {
-    const body = await request<{ data: { archivedAt?: string | null } }>(
-      `/api/v1/workspaces/${config.workspaceId}/streams/${rootStreamId}`
-    )
-    const archived = Boolean(body.data?.archivedAt)
-    if (archived && !archivePending) await detachForArchive(ctx, rootStreamId)
-    else if (!archived && archivePending) await reattachAfterArchive(ctx)
-  } catch (error) {
-    emitPollDebug(ctx, `archive probe failed: ${summarizeError(error)}`)
-  } finally {
-    archiveProbeInflight = false
-  }
+  if (!config || sessionTearingDown) return
+  await ensureArchiveController(ctx).probe(getCurrentSessionLink(ctx)?.rootStreamId)
 }
 
-/** Scoped to this session: a runtime that re-registered must not die to a stale event for the old one. */
+/**
+ * Scoped to this runtime session AND the currently linked root: a cold start
+ * replaces an archived scratchpad under the same deterministic identity, so a
+ * delayed event for the retired root must not wind down the live one.
+ */
 function handleArchivePush(ctx: ExtensionContext, payload: unknown): void {
-  if (!isObject(payload)) return
+  if (!isObject(payload) || sessionTearingDown) return
   if (typeof payload.runtimeSessionId === "string" && payload.runtimeSessionId !== getRuntimeSessionId(ctx)) return
-  // Scope to the CURRENT root too, not just the runtime session: a cold start
-  // with the same deterministic identity replaces an archived scratchpad, and
-  // a delayed event for the retired root would otherwise wind down the live
-  // one — the probe keeps seeing the old root archived, so it never recovers.
   const linked = getCurrentSessionLink(ctx)?.rootStreamId
   const rootStreamId = typeof payload.rootStreamId === "string" ? payload.rootStreamId : linked
   if (!rootStreamId || (linked && rootStreamId !== linked)) return
-  void detachForArchive(ctx, rootStreamId).catch(() => undefined)
+  void ensureArchiveController(ctx).archived(rootStreamId)
 }
 
 function handleRestorePush(ctx: ExtensionContext, payload: unknown): void {
-  if (!isObject(payload)) return
+  if (!isObject(payload) || sessionTearingDown) return
   if (typeof payload.runtimeSessionId === "string" && payload.runtimeSessionId !== getRuntimeSessionId(ctx)) return
-  void reattachAfterArchive(ctx).catch((error) => emitPollDebug(ctx, `reattach failed: ${summarizeError(error)}`))
+  void ensureArchiveController(ctx).restored()
 }
 
 function basePollMs(): number {
@@ -1982,7 +1948,7 @@ function nextQuietPollMs(): number {
   // Detached-pending-restore: probe at a fixed cadence so a missed
   // bot:session_restored push still reattaches inside the grace window. The
   // window bounds the total probes, so this cannot become a quota burn.
-  if (archivePending) return ARCHIVE_RESTORE_PROBE_MS
+  if (archive?.detached) return archive.probeDelayMs
   if (transport?.socketConnected || pending || steeredInvocations.length > 0) {
     consecutiveQuietPolls = 0
     return basePollMs()
@@ -3440,7 +3406,7 @@ async function claimIfIdlePass(pi: ExtensionAPI, ctx: ExtensionContext, lifecycl
     return false
   // No claims while detached: the scratchpad is archived, so any claimable work
   // predates it and would answer into a closed stream. A reattach re-drains.
-  if (archivePending) return false
+  if (archive?.detached) return false
   if (pending) await renewActiveClaims()
 
   if (isWaitingForRetry) {
@@ -4145,21 +4111,20 @@ export const __testing = {
     supervisedRevivalBlocked = value
   },
   probeArchiveState,
-  reattachAfterArchive,
   handleArchivePush,
-  setArchivePendingForTesting: (rootStreamId: string) => {
-    archivePending = { rootStreamId, deadline: setTimeout(() => {}, 60_000) }
-  },
-  archivePendingRootStreamId: () => archivePending?.rootStreamId,
+  handleRestorePush,
+  archiveDetached: () => archive?.detached ?? false,
+  archivePendingRootStreamId: () => archive?.pendingRootStreamId,
+  setArchivePendingForTesting: (ctx: ExtensionContext, rootStreamId: string) =>
+    ensureArchiveController(ctx).archived(rootStreamId),
   setArchiveWindDownForTesting: (graceMs: number, windDown: typeof windDownArchivedWorktree) => {
     archiveGraceMs = graceMs
     archiveWindDown = windDown
   },
   clearArchivePendingForTesting: () => {
-    if (archivePending) clearTimeout(archivePending.deadline)
-    archivePending = undefined
-    archiveProbeInflight = false
-    archiveGraceMs = ARCHIVE_RESTORE_GRACE_MS
+    archive?.stop()
+    archive = undefined
+    archiveGraceMs = undefined
     archiveWindDown = windDownArchivedWorktree
   },
   setRateLimitWaitForTesting: (value: boolean) => {

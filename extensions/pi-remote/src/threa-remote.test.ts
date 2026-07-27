@@ -1992,7 +1992,7 @@ describe("archived-scratchpad wind-down", () => {
     sessionManager: { getSessionId: () => "runtime" },
     isIdle: () => true,
     cwd: "/tmp",
-    ui: { notify: () => {} },
+    ui: { notify: () => {}, setStatus: () => {}, theme: { fg: (_tone: string, text: string) => text } },
   } as never
 
   function linkConfig() {
@@ -2134,7 +2134,7 @@ describe("archived-scratchpad wind-down", () => {
     })
     try {
       await __testing.probeArchiveState(ctx)
-      const reattach = __testing.reattachAfterArchive(ctx)
+      const reattach = __testing.probeArchiveState(ctx)
       await Bun.sleep(120)
       expect(__testing.archivePendingRootStreamId()).toBeUndefined()
 
@@ -2149,23 +2149,25 @@ describe("archived-scratchpad wind-down", () => {
     }
   })
 
-  test("detaching pulls the poll onto the probe cadence instead of the socket backstop", () => {
+  test("detaching pulls the poll onto the probe cadence instead of the socket backstop", async () => {
     linkConfig()
     // With the socket up the pending tick is 15 minutes out — longer than the
     // whole grace — so a missed restore push would never get a probe.
     expect(__testing.nextQuietPollMs()).not.toBe(45_000)
-    __testing.setArchivePendingForTesting("stream_root")
+    await __testing.setArchivePendingForTesting(ctx, "stream_root")
     expect(__testing.nextQuietPollMs()).toBe(45_000)
   })
 
-  test("an archive event for a retired root does not wind down the scratchpad now linked", () => {
+  test("an archive event for a retired root does not wind down the scratchpad now linked", async () => {
     linkConfig()
     // Cold start replaced archived root A with live root B under the same
     // deterministic runtime identity; A's outbox event arrives late.
     __testing.handleArchivePush(ctx, { runtimeSessionId: "runtime", rootStreamId: "stream_retired" })
+    await Bun.sleep(0)
     expect(__testing.archivePendingRootStreamId()).toBeUndefined()
 
     __testing.handleArchivePush(ctx, { runtimeSessionId: "runtime", rootStreamId: "stream_root" })
+    await Bun.sleep(0)
     expect(__testing.archivePendingRootStreamId()).toBe("stream_root")
   })
 
