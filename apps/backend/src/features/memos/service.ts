@@ -832,6 +832,12 @@ export class MemoService implements MemoServiceLike {
     }
     if (stream.e2eEnabled === true) return
 
+    // Landmarks are filed on the top-level stream, never on a thread: save_memo
+    // and reflective capture bind to the session's stream, which can be a
+    // thread, and the identity index includes stream_id — filing the same memo
+    // on both a thread and its root would surface it twice.
+    const targetStreamId = stream.rootStreamId ?? stream.id
+
     const allSourceIds = [...new Set(memos.flatMap((memo) => memo.sourceMessageIds))]
     const sourceMessages = await MessageRepository.findByIdsInWorkspace(client, workspaceId, allSourceIds)
 
@@ -848,8 +854,8 @@ export class MemoService implements MemoServiceLike {
       rows.push({
         id: streamContextItemId(),
         workspaceId,
-        streamId,
-        rootStreamId: stream.rootStreamId ?? stream.id,
+        streamId: targetStreamId,
+        rootStreamId: targetStreamId,
         category: "memo",
         refKind: "memo",
         refId: memo.id,
@@ -1225,6 +1231,21 @@ export class MemoService implements MemoServiceLike {
             payload: { workspaceId, streamId, event: captureEvent },
           },
         ])
+
+        // Same transaction as the event (INV-7): the client derives a memo row
+        // from every memos:captured broadcast, so a capture without its
+        // projection row leaves a pending row no server page reconciles.
+        await this.indexCapturedMemos(
+          client,
+          workspaceId,
+          streamId,
+          capturedMemos.map((memo) => ({
+            id: memo.memoId,
+            title: memo.title,
+            knowledgeType: memo.knowledgeType,
+            sourceMessageIds: memo.sourceMessageIds,
+          }))
+        )
       }
 
       logger.info(

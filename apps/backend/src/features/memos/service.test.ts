@@ -857,6 +857,24 @@ function setupReflection(opts: { classification?: Partial<ConversationClassifica
     createdAt: new Date(),
   }
   const streamEventInsertMany = spyOn(StreamEventRepository, "insertMany").mockResolvedValue([captureEvent])
+  spyOn(StreamRepository, "findById").mockResolvedValue(fakeStream())
+  spyOn(MessageRepository, "findByIdsInWorkspace").mockResolvedValue(
+    new Map([
+      [
+        "msg_trigger",
+        {
+          id: "msg_trigger",
+          workspaceId: WORKSPACE_ID,
+          streamId: STREAM_ID,
+          authorId: "usr_1",
+          authorType: "user",
+          sequence: 5n,
+          createdAt: new Date("2026-07-01T11:00:00.000Z"),
+        } as unknown as Message,
+      ],
+    ])
+  )
+  const contextInsertMany = spyOn(StreamContextRepository, "insertMany").mockResolvedValue(0)
 
   const classifyConversation = mock(async () => ({
     isKnowledgeWorthy: true,
@@ -884,6 +902,7 @@ function setupReflection(opts: { classification?: Partial<ConversationClassifica
     streamEventInsertMany,
     outboxInsert,
     outboxInsertMany,
+    contextInsertMany,
     classifyConversation,
     memorizeConversation,
   }
@@ -1089,5 +1108,37 @@ describe("MemoService — stream-context projection privacy + scoping", () => {
     await service.saveMemo({ ...saveMemoInput, scope: "user", invokingUserId: "usr_owner" })
 
     expect(contextInsertMany).toHaveBeenCalled()
+  })
+
+  it("files a save made inside a thread on the thread's root stream", async () => {
+    const { service, contextInsertMany } = setupSaveMemo()
+    spyOn(StreamRepository, "findById").mockResolvedValue(
+      fakeStream({ id: "stream_thread", type: "thread", rootStreamId: "stream_root" })
+    )
+
+    await service.saveMemo(saveMemoInput)
+
+    expect(contextInsertMany.mock.calls[0][1][0]).toMatchObject({
+      streamId: "stream_root",
+      rootStreamId: "stream_root",
+      category: "memo",
+    })
+  })
+
+  it("writes the projection row for a reflective capture, same transaction as the event", async () => {
+    const { service, contextInsertMany, streamEventInsertMany } = setupReflection({})
+
+    await service.captureSessionReflection(reflectionInput)
+
+    expect(streamEventInsertMany).toHaveBeenCalled()
+    expect(contextInsertMany.mock.calls[0][1]).toEqual([
+      expect.objectContaining({
+        workspaceId: WORKSPACE_ID,
+        streamId: STREAM_ID,
+        category: "memo",
+        refKind: "memo",
+        sourceMessageId: "msg_trigger",
+      }),
+    ])
   })
 })

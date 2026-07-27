@@ -1,5 +1,5 @@
 import { sql, type Querier } from "../../db"
-import type { NewStreamContextItem } from "./types"
+import { MESSAGE_BODY_CONTEXT_CATEGORIES, type ContextCategory, type NewStreamContextItem } from "./types"
 
 export const StreamContextRepository = {
   /**
@@ -34,23 +34,39 @@ export const StreamContextRepository = {
     return result.rowCount ?? 0
   },
 
-  async deleteByMessageId(db: Querier, workspaceId: string, messageId: string): Promise<number> {
-    const result = await db.query(sql`
-      DELETE FROM stream_context_items
-      WHERE workspace_id = ${workspaceId}
-        AND source_message_id = ${messageId}
-    `)
+  async deleteByMessageId(
+    db: Querier,
+    workspaceId: string,
+    messageId: string,
+    categories?: readonly ContextCategory[]
+  ): Promise<number> {
+    const result = categories
+      ? await db.query(sql`
+          DELETE FROM stream_context_items
+          WHERE workspace_id = ${workspaceId}
+            AND source_message_id = ${messageId}
+            AND category = ANY(${[...categories]}::text[])
+        `)
+      : await db.query(sql`
+          DELETE FROM stream_context_items
+          WHERE workspace_id = ${workspaceId}
+            AND source_message_id = ${messageId}
+        `)
     return result.rowCount ?? 0
   },
 
-  /** Delete-then-insert refresh for an edited message. The caller owns the transaction. */
+  /**
+   * Delete-then-insert refresh for an edited message. The caller owns the
+   * transaction. Scoped to the categories a message body owns: memo and thread
+   * landmarks also carry this `source_message_id` and no path re-creates them.
+   */
   async replaceForMessage(
     db: Querier,
     workspaceId: string,
     messageId: string,
     rows: NewStreamContextItem[]
   ): Promise<number> {
-    await this.deleteByMessageId(db, workspaceId, messageId)
+    await this.deleteByMessageId(db, workspaceId, messageId, MESSAGE_BODY_CONTEXT_CATEGORIES)
     return this.insertMany(db, rows)
   },
 

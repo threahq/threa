@@ -69,9 +69,18 @@ describe("StreamContextRepository.replaceForMessage", () => {
 
     expect(queries).toHaveLength(2)
     expect(queries[0].text).toContain("DELETE FROM stream_context_items")
-    expect(queries[0].values).toEqual(["ws_1", "msg_1"])
+    expect(queries[0].values.slice(0, 2)).toEqual(["ws_1", "msg_1"])
     expect(queries[1].text).toContain("INSERT INTO stream_context_items")
     expect(queries[1].values[6]).toEqual(["https://example.com/b"])
+  })
+
+  it("scopes the delete to message-body categories, sparing memo/thread landmarks on the same message", async () => {
+    const { db, queries } = fakeDb()
+
+    await StreamContextRepository.replaceForMessage(db, "ws_1", "msg_1", [makeRow()])
+
+    expect(queries[0].text).toContain("category = ANY(")
+    expect(queries[0].values).toEqual(["ws_1", "msg_1", ["link", "media", "file"]])
   })
 
   it("still clears the rows when the edited content has none left", async () => {
