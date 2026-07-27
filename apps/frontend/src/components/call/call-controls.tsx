@@ -203,8 +203,8 @@ function LifecycleLogSection() {
         <ul className="max-h-40 space-y-0.5 overflow-y-auto text-xs">
           {newestFirst.map((e, i) => (
             <li key={`${e.at}:${e.kind}:${i}`} className="flex justify-between gap-2">
-              <span className="text-muted-foreground tabular-nums">{formatLifecycleTime(e.at)}</span>
-              <span className="truncate">{e.detail ? `${e.kind} ${e.detail}` : e.kind}</span>
+              <span className="text-muted-foreground shrink-0 tabular-nums">{formatLifecycleTime(e.at)}</span>
+              <span className="min-w-0 truncate">{e.detail ? `${e.kind} ${e.detail}` : e.kind}</span>
             </li>
           ))}
         </ul>
