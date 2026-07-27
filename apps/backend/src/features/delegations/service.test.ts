@@ -4,7 +4,8 @@ import { AuthorTypes, DelegationStatuses } from "@threa/types"
 import { DelegationService } from "./service"
 import { DelegatedTaskRepository, type DelegatedTask } from "./repository"
 import { OutboxRepository } from "../../lib/outbox"
-import { StreamEventRepository } from "../streams"
+import { StreamEventRepository, StreamRepository } from "../streams"
+import { StreamContextRepository } from "../stream-context"
 import { hashCallbackToken } from "../agents"
 import * as dbModule from "../../db"
 
@@ -43,6 +44,12 @@ function stubEventAppend() {
   return { insertEvent, insertOutbox }
 }
 
+/** Stub the stream lookup + "In this stream" projection write the create path performs. */
+function stubContextIndex(stream: Record<string, unknown> = { id: "stream_1", rootStreamId: null }) {
+  spyOn(StreamRepository, "findById").mockResolvedValue(stream as never)
+  return spyOn(StreamContextRepository, "insertMany").mockResolvedValue(0)
+}
+
 function stubTransaction() {
   spyOn(dbModule, "withTransaction").mockImplementation(async (_pool: any, fn: any) => fn({} as PoolClient))
 }
@@ -58,6 +65,7 @@ describe("DelegationService.create", () => {
     stubTransaction()
     spyOn(DelegatedTaskRepository, "insert").mockResolvedValue(fakeDelegation())
     const { insertEvent, insertOutbox } = stubEventAppend()
+    stubContextIndex()
 
     const created = await makeService().create({
       workspaceId: "ws_1",
@@ -89,6 +97,64 @@ describe("DelegationService.create", () => {
       })
     )
     expect(insertOutbox.mock.calls[0]?.[1]).toBe("stream:delegation_created")
+  })
+
+  it("indexes the delegation at the task's created_at", async () => {
+    stubTransaction()
+    spyOn(DelegatedTaskRepository, "insert").mockResolvedValue(fakeDelegation())
+    stubEventAppend()
+    const insertContext = stubContextIndex()
+
+    await makeService().create({
+      workspaceId: "ws_1",
+      streamId: "stream_1",
+      sessionId: "session_1",
+      sourceConversationId: "conv_1",
+      createdByKind: AuthorTypes.PERSONA,
+      createdById: "persona_system_ariadne",
+      title: "Add rate limiting",
+      brief: "Do the thing. Done when tests pass.",
+      contextRefs: ["memo:memo_1"],
+    })
+
+    const [row] = insertContext.mock.calls[0]?.[1] as unknown as Array<Record<string, unknown>>
+    const { id, ...rest } = row
+    expect(rest).toEqual({
+      workspaceId: "ws_1",
+      streamId: "stream_1",
+      rootStreamId: "stream_1",
+      category: "delegation",
+      refKind: "delegation",
+      refId: "dlg_1",
+      groupKey: "dlg_1",
+      sourceMessageId: null,
+      authorId: null,
+      occurredAt: NOW,
+      sequence: null,
+      snippet: "Add rate limiting",
+      detail: { title: "Add rate limiting" },
+    })
+  })
+
+  it("skips the projection for a sealed stream", async () => {
+    stubTransaction()
+    spyOn(DelegatedTaskRepository, "insert").mockResolvedValue(fakeDelegation())
+    stubEventAppend()
+    const insertContext = stubContextIndex({ id: "stream_1", rootStreamId: null, e2eEnabled: true })
+
+    await makeService().create({
+      workspaceId: "ws_1",
+      streamId: "stream_1",
+      sessionId: "session_1",
+      sourceConversationId: "conv_1",
+      createdByKind: AuthorTypes.PERSONA,
+      createdById: "persona_system_ariadne",
+      title: "Add rate limiting",
+      brief: "Do the thing. Done when tests pass.",
+      contextRefs: ["memo:memo_1"],
+    })
+
+    expect(insertContext).not.toHaveBeenCalled()
   })
 })
 

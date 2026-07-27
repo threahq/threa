@@ -26,6 +26,17 @@ import { messagesTotal } from "../../lib/observability"
 import { StreamPersonaParticipantRepository } from "../agents"
 import { DraftsRepository } from "../drafts"
 import { E2eStreamsRepository } from "../e2e-streams"
+import { StreamContextRepository } from "../stream-context"
+
+// The suites below drive the service with a bare `{}` client, so the
+// "In this stream" projection writes are stubbed globally; the suite that
+// asserts them re-spies with its own recorders.
+beforeEach(() => {
+  spyOn(StreamContextRepository, "insertMany").mockResolvedValue(0)
+  spyOn(StreamContextRepository, "replaceForMessage").mockResolvedValue(0)
+  spyOn(StreamContextRepository, "deleteByMessageId").mockResolvedValue(0)
+  spyOn(StreamContextRepository, "reparentMessages").mockResolvedValue(0)
+})
 
 describe("EventService attachment safety checks", () => {
   beforeEach(() => {
@@ -1696,6 +1707,8 @@ describe("EventService.moveMessagesToThread destination slot carrier (B3)", () =
       deletedAt: null,
       authorId: "usr_2",
       authorType: "user",
+      contentMarkdown: "**anchor** message",
+      createdAt: new Date("2026-07-01T08:00:00.000Z"),
     } as any)
     spyOn(MessageRepository, "findByIdsForUpdate").mockResolvedValue([
       movedMessage({ type: "doc", content: [shareNode] }),
@@ -1793,6 +1806,73 @@ describe("EventService.moveMessagesToThread destination slot carrier (B3)", () =
     expect(ReadStateRepository.repointForMovedEvents).toHaveBeenCalledWith({}, "stream_src", expect.any(Array))
   })
 
+  it("re-homes the moved messages' context rows onto the destination thread", async () => {
+    const service = new EventService({} as any)
+    await service.moveMessagesToThread({
+      workspaceId: "ws_1",
+      sourceStreamId: "stream_src",
+      targetMessageId: "msg_target",
+      messageIds: ["msg_a"],
+      actorId: "usr_1",
+      leaseKey: "lease_1",
+    })
+
+    expect(StreamContextRepository.reparentMessages).toHaveBeenCalledWith(
+      {},
+      "ws_1",
+      [{ messageId: "msg_a", sequence: 10n }],
+      "stream_thread",
+      "stream_src"
+    )
+  })
+
+  it("writes the thread landmark for a thread the move just created", async () => {
+    const service = new EventService({} as any)
+    await service.moveMessagesToThread({
+      workspaceId: "ws_1",
+      sourceStreamId: "stream_src",
+      targetMessageId: "msg_target",
+      messageIds: ["msg_a"],
+      actorId: "usr_1",
+      leaseKey: "lease_1",
+    })
+
+    const rows = (StreamContextRepository.insertMany as any).mock.calls[0][1]
+    expect(rows.map(({ id, ...rest }: Record<string, unknown>) => rest)).toEqual([
+      {
+        workspaceId: "ws_1",
+        streamId: "stream_src",
+        rootStreamId: "stream_src",
+        category: "thread",
+        refKind: "thread",
+        refId: "stream_thread",
+        groupKey: "stream_thread",
+        sourceMessageId: "msg_target",
+        authorId: "usr_2",
+        occurredAt: new Date("2026-07-01T08:00:00.000Z"),
+        sequence: 1n,
+        snippet: "anchor message",
+        detail: {},
+      },
+    ])
+  })
+
+  it("writes no landmark when the move lands in an existing thread", async () => {
+    ;(StreamRepository.insertThreadOrFind as any).mockResolvedValue({ stream: destinationThread, created: false })
+
+    const service = new EventService({} as any)
+    await service.moveMessagesToThread({
+      workspaceId: "ws_1",
+      sourceStreamId: "stream_src",
+      targetMessageId: "msg_target",
+      messageIds: ["msg_a"],
+      actorId: "usr_1",
+      leaseKey: "lease_1",
+    })
+
+    expect(StreamContextRepository.insertMany).not.toHaveBeenCalled()
+  })
+
   it("omits both maps and skips hydration for a pointer-free move", async () => {
     ;(MessageRepository.findByIdsForUpdate as any).mockResolvedValue([
       movedMessage({ type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "plain" }] }] }),
@@ -1812,5 +1892,202 @@ describe("EventService.moveMessagesToThread destination slot carrier (B3)", () =
     const moved = (OutboxRepository.insert as any).mock.calls.find((c: unknown[]) => c[1] === "messages:moved")
     expect(moved?.[2]).not.toHaveProperty("slots")
     expect(moved?.[2]).not.toHaveProperty("sharedMessages")
+  })
+})
+
+describe("EventService stream-context projection", () => {
+  const linkContent = {
+    type: "doc",
+    content: [
+      {
+        type: "paragraph",
+        content: [{ type: "text", text: "link", marks: [{ type: "link", attrs: { href: "https://example.com/a" } }] }],
+      },
+    ],
+  }
+
+  function stubCreatePath(stream: Record<string, unknown>) {
+    spyOn(db, "withTransaction").mockImplementation(((_db: unknown, callback: (client: any) => Promise<unknown>) =>
+      callback({})) as any)
+    spyOn(StreamRepository, "findById").mockResolvedValue(stream as any)
+    spyOn(AttachmentRepository, "findByIds").mockResolvedValue([])
+    spyOn(StreamEventRepository, "countMessagesThrough").mockResolvedValue(1)
+    spyOn(StreamMemberRepository, "isMember").mockResolvedValue(true)
+    spyOn(ReadStateRepository, "advance").mockResolvedValue(undefined as any)
+    spyOn(StreamEventRepository, "insert").mockResolvedValue({
+      id: "evt_1",
+      streamId: "stream_1",
+      sequence: 11n,
+      eventType: "message_created",
+      payload: {},
+      actorId: "usr_1",
+      actorType: "user",
+      createdAt: new Date("2026-07-20T10:00:00.000Z"),
+    } as any)
+    // Deliberately EARLIER than the event's created_at: the landmark must come
+    // from the message row (transaction start), not the app-clock event stamp.
+    spyOn(MessageRepository, "insert").mockImplementation((async (_client: any, params: any) => ({
+      ...params,
+      createdAt: new Date("2026-07-20T09:59:59.500Z"),
+    })) as any)
+    spyOn(MessageRepository, "findById").mockResolvedValue(null)
+    spyOn(OutboxRepository, "insert").mockResolvedValue(undefined as any)
+    spyOn(messagesTotal, "inc").mockImplementation(() => undefined)
+    spyOn(SharedMessageRepository, "deleteByShareMessageId").mockResolvedValue(undefined)
+  }
+
+  afterEach(() => {
+    mock.restore()
+  })
+
+  it("indexes a created message's artifacts at the MESSAGE's created_at", async () => {
+    stubCreatePath({ id: "stream_1", type: "thread", rootStreamId: "stream_root" })
+    const service = new EventService({} as any)
+
+    await service.createMessage({
+      workspaceId: "ws_1",
+      streamId: "stream_1",
+      authorId: "usr_1",
+      authorType: "user",
+      contentJson: linkContent,
+      contentMarkdown: "see https://example.com/a",
+    })
+
+    const rows = (StreamContextRepository.insertMany as any).mock.calls[0][1]
+    expect(rows.map(({ id, ...rest }: Record<string, unknown>) => rest)).toEqual([
+      {
+        workspaceId: "ws_1",
+        streamId: "stream_1",
+        rootStreamId: "stream_root",
+        category: "link",
+        refKind: "url",
+        refId: "https://example.com/a",
+        groupKey: "https://example.com/a",
+        sourceMessageId: expect.stringContaining("msg_"),
+        authorId: "usr_1",
+        occurredAt: new Date("2026-07-20T09:59:59.500Z"),
+        sequence: 11n,
+        snippet: "see https://example.com/a",
+        detail: { url: "https://example.com/a" },
+      },
+    ])
+  })
+
+  it("writes nothing for a sealed stream", async () => {
+    stubCreatePath({ id: "stream_1", type: "scratchpad", rootStreamId: null, e2eEnabled: true })
+    const service = new EventService({} as any)
+
+    await service.createMessage({
+      workspaceId: "ws_1",
+      streamId: "stream_1",
+      authorId: "usr_1",
+      authorType: "user",
+      contentJson: linkContent,
+      contentMarkdown: E2E_PLACEHOLDER_CONTENT_MARKDOWN,
+      ciphertext: Buffer.from("sealed"),
+      envelope: { v: 1 } as any,
+      e2eVersion: 1,
+    })
+
+    expect(StreamContextRepository.insertMany).not.toHaveBeenCalled()
+  })
+
+  it("rebuilds an edited message's rows without moving the landmark", async () => {
+    const existingMessage = {
+      id: "msg_edit",
+      streamId: "stream_1",
+      sequence: 4n,
+      authorId: "usr_1",
+      authorType: "user",
+      contentJson: { type: "doc", content: [] },
+      contentMarkdown: "before edit",
+      createdAt: new Date("2026-07-01T09:00:00.000Z"),
+    }
+    spyOn(db, "withTransaction").mockImplementation(((_db: unknown, callback: (client: any) => Promise<unknown>) =>
+      callback({})) as any)
+    spyOn(E2eStreamsRepository, "isE2eStream").mockResolvedValue(false)
+    spyOn(MessageRepository, "findByIdForUpdate").mockResolvedValue(existingMessage as any)
+    spyOn(StreamRepository, "findById").mockResolvedValue({
+      id: "stream_1",
+      type: "channel",
+      rootStreamId: null,
+      parentStreamId: null,
+    } as any)
+    spyOn(MessageVersionRepository, "insert").mockResolvedValue({} as any)
+    spyOn(StreamEventRepository, "insert").mockResolvedValue({
+      id: "evt_edit",
+      streamId: "stream_1",
+      sequence: 12n,
+      eventType: "message_edited",
+      payload: {},
+      actorId: "usr_1",
+      actorType: "user",
+      createdAt: new Date("2026-07-20T10:00:00.000Z"),
+    } as any)
+    spyOn(MessageRepository, "updateContent").mockResolvedValue({ ...existingMessage } as any)
+    spyOn(OutboxRepository, "insert").mockResolvedValue(undefined as any)
+    spyOn(SharedMessageRepository, "deleteByShareMessageId").mockResolvedValue(undefined)
+    spyOn(AttachmentReferenceRepository, "deleteByMessageId").mockResolvedValue(0)
+
+    const service = new EventService({} as any)
+    await service.editMessage({
+      workspaceId: "ws_1",
+      messageId: "msg_edit",
+      streamId: "stream_1",
+      contentJson: linkContent,
+      contentMarkdown: "see https://example.com/a",
+      actorId: "usr_1",
+      actorType: "user",
+    })
+
+    const [, workspaceId, messageId, rows] = (StreamContextRepository.replaceForMessage as any).mock.calls[0]
+    expect({ workspaceId, messageId, rows: rows.map(({ id, ...rest }: Record<string, unknown>) => rest) }).toEqual({
+      workspaceId: "ws_1",
+      messageId: "msg_edit",
+      rows: [
+        {
+          workspaceId: "ws_1",
+          streamId: "stream_1",
+          rootStreamId: "stream_1",
+          category: "link",
+          refKind: "url",
+          refId: "https://example.com/a",
+          groupKey: "https://example.com/a",
+          sourceMessageId: "msg_edit",
+          authorId: "usr_1",
+          occurredAt: new Date("2026-07-01T09:00:00.000Z"),
+          sequence: 4n,
+          snippet: "see https://example.com/a",
+          detail: { url: "https://example.com/a" },
+        },
+      ],
+    })
+  })
+
+  it("drops a deleted message's rows", async () => {
+    spyOn(db, "withTransaction").mockImplementation(((_db: unknown, callback: (client: any) => Promise<unknown>) => {
+      const client = { query: async () => ({ rows: [], rowCount: 0 }) }
+      return callback(client)
+    }) as any)
+    spyOn(MessageRepository, "findByIdForUpdate").mockResolvedValue({
+      id: "msg_del",
+      streamId: "stream_1",
+      authorId: "usr_1",
+      authorType: "user",
+      deletedAt: null,
+    } as any)
+    spyOn(StreamEventRepository, "insert").mockResolvedValue({ id: "evt_del" } as any)
+    spyOn(MessageRepository, "softDelete").mockResolvedValue(null as any)
+
+    const service = new EventService({} as any)
+    await service.deleteMessage({
+      workspaceId: "ws_1",
+      streamId: "stream_1",
+      messageId: "msg_del",
+      actorId: "usr_1",
+      actorType: "user",
+    })
+
+    expect(StreamContextRepository.deleteByMessageId).toHaveBeenCalledWith(expect.anything(), "ws_1", "msg_del")
   })
 })

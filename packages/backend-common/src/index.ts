@@ -99,6 +99,7 @@ export {
   draftId,
   sharedMessageId,
   attachmentReferenceId,
+  streamContextItemId,
   streamContextAttachmentId,
   contextSummaryId,
   leaseId,
