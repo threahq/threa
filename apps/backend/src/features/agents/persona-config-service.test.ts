@@ -18,7 +18,7 @@ import { PersonaAttachmentRepository } from "./persona-attachment-repository"
 import { PERSONA_ATTACHMENT_INLINE_FULLTEXT_MAX_CHARS } from "./config"
 import { COMPANION_MODEL_ID, TONE_PRESET_FRAGMENTS, BREVITY_PRESET_FRAGMENTS } from "./companion/config"
 import { OutboxRepository } from "../../lib/outbox"
-import { ARIADNE_AGENT_ID, EMPTY_AGENT_ID, getVisibleBuiltInAgentConfig } from "./built-in-agents"
+import { ARIADNE_AGENT_ID, BUILT_IN_AGENTS, EMPTY_AGENT_ID, getVisibleBuiltInAgentConfig } from "./built-in-agents"
 import { AttachmentReferenceRepository } from "../attachments"
 import { SharedMessageRepository } from "../messaging"
 import * as dbModule from "../../db"
@@ -518,14 +518,14 @@ describe("PersonaConfigService.setOverride", () => {
     spyOn(OutboxRepository, "insert").mockResolvedValue({} as any)
     spyOn(PersonaConfigRevisionRepository, "insert").mockResolvedValue({ version: 1 })
 
-    // Ariadne's default escalation model id (opus-4.8) is absent from
+    // Ariadne's default escalation model id is absent from
     // FAKE_MODEL_REGISTRY, but a built-in default id stays assignable to the
     // editable `model` field even when the registry lacks it (INV-16 permissive
     // for code defaults). escalationModel itself is now a locked field.
     const result = await makeService().setOverride(
       WORKSPACE_ID,
       ARIADNE_AGENT_ID,
-      { model: "openrouter:anthropic/claude-opus-4.8" },
+      { model: BUILT_IN_AGENTS[ARIADNE_AGENT_ID].escalationModel! },
       null,
       CALLER_ID
     )

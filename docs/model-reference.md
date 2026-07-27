@@ -13,19 +13,25 @@ curl -s https://openrouter.ai/api/v1/models -H "Authorization: Bearer $OPENROUTE
  | jq -r '.data[] | select(.id|test("MODEL")) | [.id,(.pricing.prompt|tonumber*1e6),(.pricing.completion|tonumber*1e6),(.pricing.input_cache_read//"-"),(.pricing.input_cache_write//"-")] | @tsv'
 ```
 
-| Model                           | Input | Output | Cache read | Cache write |
-| ------------------------------- | ----- | ------ | ---------- | ----------- |
-| `openai/gpt-5.4-nano`           | $0.20 | $1.25  | $0.02      | free        |
-| `openai/gpt-5.4-mini`           | $0.75 | $4.50  | $0.075     | free        |
-| `openai/gpt-5.6-luna`           | $1.00 | $6.00  | $0.107     | **$1.25**   |
-| `anthropic/claude-haiku-4.5`    | $1.00 | $5.00  | $0.10      | $1.25       |
-| `anthropic/claude-sonnet-5`     | $2.00 | $10.00 | $0.20      | $2.50       |
-| `anthropic/claude-sonnet-4.6`   | $3.00 | $15.00 | $0.30      | $3.75       |
-| `anthropic/claude-opus-4.8`     | $5.00 | $25.00 | $0.50      | $6.25       |
-| `google/gemini-2.5-flash`       | $0.30 | $2.50  | $0.03      | $0.083      |
-| `google/gemini-2.5-flash-lite`  | $0.10 | $0.40  | $0.01      | $0.083      |
-| `google/gemini-2.5-pro`         | $1.25 | $10.00 | $0.125     | $0.375      |
-| `openai/text-embedding-3-small` | $0.02 | —      | —          | —           |
+| Model                           | Input | Output | Cache read | Cache write | Context |
+| ------------------------------- | ----- | ------ | ---------- | ----------- | ------- |
+| `openai/gpt-5.4-nano`           | $0.20 | $1.25  | $0.02      | free        | 400K    |
+| `openai/gpt-5.4-mini`           | $0.75 | $4.50  | $0.075     | free        | 400K    |
+| `openai/gpt-5.6-luna`           | $1.00 | $6.00  | $0.107     | **$1.25**   | 1.05M   |
+| `openai/gpt-5.6-terra`          | $2.50 | $15.00 | $0.25      | $3.125      | 1.05M   |
+| `openai/gpt-5.6-sol`            | $5.00 | $30.00 | $0.50      | $6.25       | 1.05M   |
+| `anthropic/claude-haiku-4.5`    | $1.00 | $5.00  | $0.10      | $1.25       | 200K    |
+| `anthropic/claude-sonnet-5`     | $2.00 | $10.00 | $0.20      | $2.50       | 1M      |
+| `anthropic/claude-sonnet-4.6`   | $3.00 | $15.00 | $0.30      | $3.75       | 1M      |
+| `anthropic/claude-opus-5`       | $5.00 | $25.00 | $0.50      | $6.25       | 1M      |
+| `google/gemini-2.5-flash-lite`  | $0.10 | $0.40  | $0.01      | $0.083      | 1M      |
+| `google/gemini-3.1-flash-lite`  | $0.25 | $1.50  | $0.025     | $0.083      | 1M      |
+| `google/gemini-2.5-flash`       | $0.30 | $2.50  | $0.03      | $0.083      | 1M      |
+| `google/gemini-3.5-flash-lite`  | $0.30 | $2.50  | $0.03      | $0.083      | 1M      |
+| `google/gemini-3.6-flash`       | $1.50 | $7.50  | $0.15      | $0.083      | 1M      |
+| `openai/text-embedding-3-small` | $0.02 | —      | —          | —           | —       |
+
+Anthropic, Google and OpenAI only. That is a deliberate constraint, not an accident of history: those three can be run regionally, through OpenRouter or direct with the provider, and that has repeatedly mattered more than a cheaper per-token rate elsewhere.
 
 **Cache columns are not a footnote — they change which model is cheapest.**
 
@@ -44,7 +50,7 @@ import { createModelRegistry } from "./lib/ai/model-registry"
 const modelRegistry = createModelRegistry()
 
 // Check if a model supports vision (image input)
-if (modelRegistry.supportsVision("openrouter:anthropic/claude-sonnet-4.5")) {
+if (modelRegistry.supportsVision("openrouter:anthropic/claude-sonnet-5")) {
   // Model can process images
 }
 ```
@@ -55,26 +61,45 @@ When adding new models, update `models.yaml` with their capabilities.
 
 All models use `provider:modelPath` format:
 
-- `openrouter:anthropic/claude-haiku-4.5`
-- `openrouter:anthropic/claude-sonnet-4.5`
+- `openrouter:anthropic/claude-sonnet-5`
+- `openrouter:openai/gpt-5.4-mini`
 
-**Note:** OpenRouter uses version numbers (e.g., `claude-sonnet-4.5`), not date-suffixed versions (e.g., `claude-sonnet-4-20250514`). Don't use date suffixes - they don't exist on OpenRouter.
+**Note:** OpenRouter uses version numbers (e.g., `claude-sonnet-5`), not date-suffixed versions (e.g., `claude-sonnet-4-20250514`). Don't use date suffixes - they don't exist on OpenRouter.
 
 ## Inference Models
+
+Everything listed here is also in `models.yaml`, so it is offered in the persona
+model picker. The two lists are meant to stay identical — an entry is an offer.
+
+### openrouter:anthropic/claude-opus-5
+
+**Name:** Claude Opus 5
+
+**Description:** Anthropic's flagship, for demanding reasoning, coding and long-horizon agentic work. 1M context. Same per-token price as the Opus 4.x line it replaces, with a larger context window than Opus 4.5.
+
+**Typical cost:** ~$5.00 / ~$25.00 per 1M (cache read $0.50, cache write $6.25)
+
+**When to use:**
+
+- Escalation model for persona turns whose previous attempt failed response validation (`escalationModel`)
+- Low-volume, high-stakes calls where quality dominates cost
+
+**Use instead of:** any Opus 4.x.
+
+---
 
 ### openrouter:anthropic/claude-sonnet-5
 
 **Name:** Claude Sonnet 5
 
-**Description:** Anthropic's Claude 5-generation Sonnet (July 2026). Near-Opus quality on agentic and coding work at Sonnet cost. Adaptive thinking on by default; new tokenizer produces ~30% more tokens for the same text vs Sonnet 4.6 (per-token price is lower, so equivalent-request cost is roughly a wash during intro pricing). 1M context window.
+**Description:** Near-Opus quality on agentic and coding work at Sonnet cost. Adaptive thinking on by default; the tokenizer produces ~30% more tokens for the same text than Sonnet 4.6, so per-request cost is roughly a wash despite the lower per-token price. 1M context.
 
-**Typical cost:** ~$2.00 per 1M input tokens, ~$10.00 per 1M output tokens (introductory pricing through 2026-08-31; $3.00/$15.00 after). Cache read $0.20, cache write $2.50.
+**Typical cost:** ~$2.00 / ~$10.00 per 1M (introductory through 2026-08-31; $3.00/$15.00 after). Cache read $0.20, cache write $2.50.
 
 **When to use:**
 
 - Default Ariadne companion persona model (since 2026-07-11; won the July 2026 companion eval vs 4.6 — 51/84 vs 46/84 case-runs, best judge quality — at ~34% higher per-conversation cost and ~30% higher latency)
 - Complex reasoning and multi-turn agent conversations
-- Tasks where quality justifies Sonnet-tier cost
 
 **Use instead of:** `claude-sonnet-4.6`
 
@@ -84,36 +109,11 @@ All models use `provider:modelPath` format:
 
 **Name:** Claude Sonnet 4.6
 
-**Description:** Latest high-quality reasoning model from Anthropic's Claude 4.6 generation. Successor to Claude Sonnet 4.5 with improved capabilities.
+**Description:** The prior Sonnet generation. Kept because it is still pinned by a persona in production and because the July 2026 companion eval measured it directly against Sonnet 5, so the comparison is real rather than assumed.
 
-**Typical cost:** ~$3.00 per 1M input tokens, ~$15.00 per 1M output tokens (cache read $0.30, cache write $3.75)
+**Typical cost:** ~$3.00 / ~$15.00 per 1M (cache read $0.30, cache write $3.75)
 
-**When to use:**
-
-- Complex reasoning and generation
-- Multi-turn agent conversations
-- Nuanced text generation requiring high quality
-- Tasks where quality justifies higher cost
-
-**Use instead of:** `claude-sonnet-4.5` for improved quality
-
----
-
-### openrouter:anthropic/claude-opus-4.8
-
-**Name:** Claude Opus 4.8
-
-**Description:** Anthropic's most capable generally available model (Opus family). Text, image, and file inputs with reasoning support and a 1M-token context window. Same per-token price as Opus 4.5/4.6/4.7 (~1.7x Sonnet input, ~1.7x output).
-
-**Typical cost:** ~$5.00 per 1M input tokens, ~$25.00 per 1M output tokens (cache read $0.50, cache write $6.25)
-
-**When to use:**
-
-- Escalation model for persona turns whose previous attempt failed response validation (`escalationModel`, roadmap 2.3)
-- Hardest reasoning tasks where Sonnet demonstrably falls short
-- Low-volume, high-stakes calls where quality dominates cost
-
-**Use instead of:** `claude-opus-4.5`, `claude-opus-4.6`, `claude-opus-4.7`, or any Claude 3.x/4.0/4.1 Opus
+**When to use:** nothing new. Prefer `claude-sonnet-5` — cheaper and it won the eval.
 
 ---
 
@@ -121,146 +121,15 @@ All models use `provider:modelPath` format:
 
 **Name:** Claude Haiku 4.5
 
-**Description:** Fast model from Anthropic's Claude 4.5 generation. Despite the name, **not the cheap tier** — it is the most expensive small model available to us, above `gpt-5.4-mini` on input and output and 5× `gpt-5.4-nano` on input.
+**Description:** Fast, but **not the cheap tier** — the most expensive small model here, above `gpt-5.4-mini` on both axes and 5× `gpt-5.4-nano` on input.
 
-**Typical cost:** ~$1.00 per 1M input tokens, ~$5.00 per 1M output tokens (cache read $0.10, cache **write** $1.25)
+**Typical cost:** ~$1.00 / ~$5.00 per 1M (cache read $0.10, cache **write** $1.25)
 
-**When to use:** nothing, currently. No production component selects it.
+**When to use:** nothing. No production component selects it.
 
-This entry read `$0.25/$1.25` until 2026-07-27 — 4× under the real price. On the strength of that number five components were pinned to haiku "for cost" (companion summary, workspace-agent plan/eval, turn digest, supersede validator, the Empty Agent shell) and the over-budget degradation map in `ai-usage/budget-service.ts` degraded Sonnet _to_ it, buying 2× where `gpt-5.4-mini` buys 2.7× and `gpt-5.4-nano` buys 10×. All six now target mini. Left in `models.yaml` so personas a user deliberately pinned to it keep resolving.
+This entry read `$0.25/$1.25` until 2026-07-27 — 4× under the real price. On the strength of that number five components were pinned to haiku "for cost" (companion summary, workspace-agent plan/eval, turn digest, supersede validator, the Empty Agent shell) and the over-budget degradation map degraded Sonnet _to_ it, buying 2× where `gpt-5.4-mini` buys 2.7× and `gpt-5.4-nano` buys 10×. All six now target mini. Left in the registry so a persona deliberately pinned to it keeps resolving.
 
 **Use instead:** `gpt-5.4-mini` for structured condensation and extraction, `gpt-5.4-nano` for classification and ranking.
-
----
-
-### openrouter:google/gemini-2.5-flash
-
-**Name:** Gemini 2.5 Flash
-
-**Description:** Fast multimodal model with a 1M-token context window. Vision quality is the reason it is here — it reads screenshots, charts, and scanned documents well enough to drive downstream extraction.
-
-**Typical cost:** ~$0.30 per 1M input tokens, ~$2.50 per 1M output tokens (cache read $0.03, cache write $0.083)
-
-**When to use:**
-
-- Image captioning and OCR (`image-caption`) — production choice
-- Large-attachment summarization where the 1M window matters (`text-summary`)
-
-**Note:** for image work, output is typically the larger half of the bill — the structured extraction schema (headings, labels, body, chart/table/diagram data) is verbose. Shape the schema before reaching for a cheaper model.
-
----
-
-### openrouter:google/gemini-2.5-flash-lite
-
-**Name:** Gemini 2.5 Flash Lite
-
-**Description:** Smaller, cheaper sibling of 2.5 Flash — 3× cheaper input, 6× cheaper output.
-
-**Typical cost:** ~$0.10 per 1M input tokens, ~$0.40 per 1M output tokens (cache read $0.01, cache write $0.083)
-
-**When to use:**
-
-- Not yet in production. It is the obvious swap target for `image-caption`, but there is **no eval suite for that component** (`evals/suites/multimodal-vision` drives `PersonaAgent.run()`, not the captioner), and captions feed boundary extraction, memo extraction, and agent context — a quality regression there is silent. Build the suite before swapping.
-
----
-
-### openrouter:anthropic/claude-sonnet-4.5
-
-**Name:** Claude Sonnet 4.5
-
-**Description:** High-quality reasoning model from Anthropic's Claude 4 generation. Best for complex tasks requiring nuanced understanding and generation.
-
-**Typical cost:** ~$3.00 per 1M input tokens, ~$15.00 per 1M output tokens (cache read $0.30, cache write $3.75)
-
-**When to use:**
-
-- Complex reasoning and generation
-- Multi-turn agent conversations (LangGraph/LangChain)
-- Nuanced text generation requiring high quality
-- Tasks where quality justifies higher cost
-- Companion agent responses, simulation agents
-
-**Use instead of:** `claude-3-sonnet`, `claude-3.5-sonnet`, `claude-3-opus`, or any Claude 3.x series models
-
----
-
-### openrouter:openai/gpt-5-mini
-
-**Name:** GPT-5 Mini
-
-**Description:** Cost-effective model from OpenAI's GPT-5 generation. Good balance of performance and cost for general tasks.
-
-**Typical cost:** ~$0.25 per 1M input tokens, ~$2.00 per 1M output tokens
-
-**When to use:**
-
-- Classification and extraction tasks
-- General reasoning and chat
-- Structured output generation
-- Tasks where GPT ecosystem is preferred
-- Cost-sensitive applications
-
-**Use instead of:** `gpt-4o`, `gpt-4o-mini`, `gpt-3.5-turbo`
-
----
-
-### openrouter:openai/gpt-5-nano
-
-**Name:** GPT-5 Nano
-
-**Description:** Ultra-fast, cost-effective model from OpenAI's GPT-5 generation. Optimized for high-throughput tasks.
-
-**Typical cost:** ~$0.05 per 1M input tokens, ~$0.40 per 1M output tokens
-
-**When to use:**
-
-- High-volume batch operations
-- Simple classification tasks
-- Fast response requirements
-- Extremely cost-sensitive workloads
-- Tasks where speed matters more than nuance
-
-**Use instead of:** `gpt-3.5-turbo`, `gpt-4o-mini`
-
----
-
-### openrouter:openai/gpt-5.4-mini
-
-**Name:** GPT-5.4 Mini
-
-**Description:** High-capability small model from OpenAI's GPT-5.4 generation (March 2026). Significantly improves over GPT-5 Mini across coding, reasoning, multimodal understanding, and tool use while running 2x faster. Supports configurable reasoning effort levels. 400K context window.
-
-**Typical cost:** ~$0.75 per 1M input tokens, ~$4.50 per 1M output tokens (cache read $0.075, writes free)
-
-**When to use:**
-
-- Complex structured output and abstractive writing
-- Agent workflows and coding assistants at scale
-- Tasks requiring high-quality reasoning in a cost-effective tier
-- Multi-turn conversations with tool use
-- Memo generation where quality justifies the cost over nano
-
-**Use instead of:** `gpt-5-mini` for improved quality across all tasks
-
----
-
-### openrouter:openai/gpt-5.6-luna
-
-**Name:** GPT-5.6 Luna
-
-**Description:** Fast, cost-efficient model in OpenAI's GPT-5.6 series (July 2026). Positioned for high-volume, latency-sensitive tasks — chat, classification, lightweight agentic workflows. 1M context window. Available EU-pinned. A `gpt-5.6-luna-pro` variant (same price) serves the same weights with `reasoning.mode: pro` for harder tasks at higher latency.
-
-**Typical cost:** ~$1.25 per 1M input tokens on a cache miss, ~$6.00 per 1M output tokens; $0.107 per 1M on a cache hit. The $1.00 headline rate applies only below the 1024-token cache floor — see the write-premium note in the price table.
-
-**When to use:**
-
-- Memo memorization (production choice since July 2026)
-- Extraction/summarization where small-model conclusion errors are costly
-- Classification workloads that mini gets almost-but-not-quite right
-
-**Eval history (July 2026, 6-run tallies vs gpt-5.4-mini):** memorizer 10/10 cases perfect vs mini's 8/10 — Luna never leaked the anti-gossip residuals (news-facts, transient-status) and never inverted a decision direction; boundary-extraction effectively tied (avg pass 0.996 vs 0.992); memo-classifier tied (11/11 both). ~40% slower per call than mini and +33% price, so mini keeps the high-volume per-message components (boundary extraction, classifier) and Luna runs the memorizer, where quality dominates and the settle gate keeps volume low.
-
-**July 2026 open-weight sweep (boundary-extraction, 3-run tallies, via OpenRouter):** all EU-pinnable candidates lost on latency, not price. `deepseek/deepseek-v4-pro` matched mini on quality (106/107 calls passing) at almost half mini's price, but averaged **15.9s/call** vs mini's ~2s — unusable for a per-message component on OpenRouter's provider backing; revisit if a direct/dedicated endpoint appears. `deepseek/deepseek-v4-flash` scored 0.976 (drops sandwich-split and gap-resume, the classic small-model boundary failures) at ~10.8s/call. `z-ai/glm-5.2` 0.919 — rejected. `qwen/qwen3.5-flash-02-23` 24% pass with calls up to 8.9 minutes — rejected. Same conclusion as the spring gpt-oss-120b removal: open-weight quality can be there, OpenRouter's patchwork provider latency is not.
 
 ---
 
@@ -268,39 +137,139 @@ This entry read `$0.25/$1.25` until 2026-07-27 — 4× under the real price. On 
 
 **Name:** GPT-5.4 Nano
 
-**Description:** Smallest, cheapest model in OpenAI's GPT-5.4 generation (March 2026). Optimized for low-latency, high-volume tasks. Outperforms GPT-5 Mini on benchmarks despite lower cost. Supports configurable reasoning effort levels. 400K context window.
+**Description:** Cheapest model here. Designed for classification, extraction and ranking. 400K context.
 
-**Typical cost:** ~$0.20 per 1M input tokens, ~$1.25 per 1M output tokens (cache read $0.02, writes free)
+**Typical cost:** ~$0.20 / ~$1.25 per 1M (cache read $0.02, writes free)
 
 **When to use:**
 
-- Classification, data extraction, and ranking (primary design target)
-- Memo classification (gem detection)
-- High-volume batch pipelines
-- Sub-agent tasks in multi-agent systems
-- Cost-sensitive workloads that still need good quality
+- Saved-suggestion extraction and voice-transcript polish (production choices)
+- High-volume classification and ranking
 
-**Use instead of:** `gpt-5-mini`, `gpt-5-nano` for better quality at comparable or lower cost
+**Caution:** re-tested July 2026 on the memo-classifier and boundary-extraction suites and rejected for both — it classified real knowledge as not-worthy 6/9 with the same three misses every round (silent knowledge loss) and failed sandwich-split/gap-resume every round (30–33/35 against mini's 33–35/35). Cheap, but not for anything where a miss is invisible.
 
 ---
 
-### openrouter:openai/gpt-oss-120b
+### openrouter:openai/gpt-5.4-mini
 
-**Name:** GPT-OSS 120B
+**Name:** GPT-5.4 Mini
 
-**Description:** Open-weight 117B-parameter MoE model from OpenAI (Apache 2.0). Activates 5.1B params per forward pass, optimized for single H100 with native MXFP4 quantization. Supports configurable reasoning depth, chain-of-thought, and native tool use.
+**Description:** The workhorse. Structured output and abstractive writing at a small-model price, ~2s per call, no cache-write premium. 400K context.
 
-**Context:** 131K tokens (400K available on some providers)
-
-**Typical cost:** ~$0.04 per 1M input tokens, ~$0.19 per 1M output tokens
+**Typical cost:** ~$0.75 / ~$4.50 per 1M (cache read $0.075, writes free)
 
 **When to use:**
 
-- High-volume reasoning tasks where open-weight licensing matters
-- Cost-sensitive workloads where quality bar is low
-- Self-hosted inference on single H100
+- Boundary extraction and memo classification (highest-volume components we run)
+- Companion summary, workspace-agent plan/eval, turn digest, supersede validation, episode summaries
+- The over-budget degradation target
+- Default choice when a component needs structured output and has no eval suite to justify anything more specific
 
-**Note:** History: originally ran memo classification, memorization, and the researcher agent; replaced by `claude-haiku-4.5` (researcher) and `gpt-5.4-mini` (memo classifier/memorizer) in spring 2026 due to unreliable tail latency on OpenRouter's patchwork provider backing and insufficient quality for structured extraction. **Re-tested July 2026 against the boundary-extraction / memo-classifier / memorizer eval suites and rejected again**: nano systematically classified real knowledge as not-worthy (6/9 with the same three misses every round — silent knowledge loss) and failed sandwich-split/gap-resume boundary cases every round (30-33/35 vs mini's 33-35/35). The ~3.6x price gap does not buy back those failure modes. Caution for future comparisons: the eval CLI's `-m` flag did not reach ConfigResolver-backed components until the July 2026 runner fix — earlier "nano" comparisons silently ran the production model.
+---
+
+### openrouter:openai/gpt-5.6-luna
+
+**Name:** GPT-5.6 Luna
+
+**Description:** Fast, high-volume tier of the GPT-5.6 series. 1.05M context. Available EU-pinned. A `gpt-5.6-luna-pro` variant (same price) serves the same weights with `reasoning.mode: pro`.
+
+**Typical cost:** ~$1.25 / ~$6.00 per 1M **on a cache miss**, ~$0.107 per 1M on a hit. The $1.00 headline input rate applies only below the 1024-token cache floor — every real prompt is a write or a read.
+
+**When to use:**
+
+- Memo memorization (production choice since July 2026)
+- Extraction and summarization where a small model's conclusion errors are costly
+
+**Eval history (July 2026, 6-run tallies vs `gpt-5.4-mini`):** memorizer 10/10 cases perfect against mini's 8/10 — Luna never leaked the anti-gossip residuals and never inverted a decision direction; boundary-extraction effectively tied (0.996 vs 0.992); memo-classifier tied (11/11 both). ~40% slower per call, so mini keeps the high-volume per-message components and Luna runs the memorizer, where quality dominates and the settle gate keeps volume low.
+
+---
+
+### openrouter:openai/gpt-5.6-terra
+
+**Name:** GPT-5.6 Terra
+
+**Description:** Balanced tier of the GPT-5.6 series, between Sol and Luna. Everyday coding, reasoning and agentic work. 1.05M context.
+
+**Typical cost:** ~$2.50 / ~$15.00 per 1M (cache read $0.25, cache write $3.125)
+
+**When to use:** not evaluated here yet. Offered in the picker; nothing selects it by default.
+
+---
+
+### openrouter:openai/gpt-5.6-sol
+
+**Name:** GPT-5.6 Sol
+
+**Description:** Flagship of the GPT-5.6 series. Complex reasoning, coding and agentic workflows, strongest on multi-step command-line work. 1.05M context.
+
+**Typical cost:** ~$5.00 / ~$30.00 per 1M (cache read $0.50, cache write $6.25)
+
+**When to use:** not evaluated here yet. Offered in the picker; nothing selects it by default.
+
+---
+
+### openrouter:google/gemini-2.5-flash-lite
+
+**Name:** Gemini 2.5 Flash Lite
+
+**Description:** Cheapest vision-capable model here — 3× cheaper input and 6× cheaper output than 2.5 Flash. 1M context.
+
+**Typical cost:** ~$0.10 / ~$0.40 per 1M (cache read $0.01, cache write $0.083)
+
+**When to use:** the obvious swap target for `image-caption`, but **there is no eval suite for that component** (`evals/suites/multimodal-vision` drives `PersonaAgent.run()`, not the captioner), and captions feed boundary extraction, memo extraction and agent context — a regression there is silent. Build the suite first.
+
+---
+
+### openrouter:google/gemini-2.5-flash
+
+**Name:** Gemini 2.5 Flash
+
+**Description:** Fast multimodal model, 1M context. Vision quality is why it is here — it reads screenshots, charts and scanned documents well enough to drive downstream extraction.
+
+**Typical cost:** ~$0.30 / ~$2.50 per 1M (cache read $0.03, cache write $0.083)
+
+**When to use:**
+
+- Image captioning and OCR (`image-caption`) — production choice
+- Large-attachment summarization where the 1M window matters (`text-summary`)
+
+**Note:** on image work, output is usually the larger half of the bill — the structured extraction schema (headings, labels, body, chart/table/diagram data) is verbose. Shape the schema before reaching for a cheaper model.
+
+---
+
+### openrouter:google/gemini-3.1-flash-lite
+
+**Name:** Gemini 3.1 Flash Lite
+
+**Description:** GA high-efficiency multimodal model for low-latency, high-volume work. 1M context. Cheaper on output than 2.5 Flash while being a newer generation.
+
+**Typical cost:** ~$0.25 / ~$1.50 per 1M (cache read $0.025, cache write $0.083)
+
+**When to use:** not evaluated here yet. A candidate for `image-caption` alongside 2.5 Flash Lite once that suite exists.
+
+---
+
+### openrouter:google/gemini-3.5-flash-lite
+
+**Name:** Gemini 3.5 Flash Lite
+
+**Description:** High-efficiency model with upgraded agentic behaviour, aimed at subagents running focused tasks. 1M context. Same price as 2.5 Flash, newer generation.
+
+**Typical cost:** ~$0.30 / ~$2.50 per 1M (cache read $0.03, cache write $0.083)
+
+**When to use:** not evaluated here yet.
+
+---
+
+### openrouter:google/gemini-3.6-flash
+
+**Name:** Gemini 3.6 Flash
+
+**Description:** Google's current high-efficiency model for coding and agentic workflows. 1M context.
+
+**Typical cost:** ~$1.50 / ~$7.50 per 1M (cache read $0.15, cache write $0.083)
+
+**When to use:** not evaluated here yet. Note the cache-write rate is far below the read-heavy Anthropic/OpenAI premium tiers, so a stable prefix pays back quickly here.
 
 ---
 
@@ -370,19 +339,18 @@ omitted → server-configured default (`voiceConfig.defaultModel`).
 
 ## Deprecated Models (Do Not Use)
 
-**Claude 3 Series:**
+Anything not listed under [Inference Models](#inference-models) is deprecated. It was removed from `models.yaml` on 2026-07-27, so it is no longer offered in the persona picker.
 
-- ❌ `openrouter:anthropic/claude-3-haiku` → Use `openrouter:anthropic/claude-haiku-4.5`
-- ❌ `openrouter:anthropic/claude-3-sonnet` → Use `openrouter:anthropic/claude-sonnet-4.5`
-- ❌ `openrouter:anthropic/claude-3.5-sonnet` → Use `openrouter:anthropic/claude-sonnet-4.5`
-- ❌ `openrouter:anthropic/claude-3-opus` → Use `openrouter:anthropic/claude-opus-4.8`
+| Removed                                                                        | Use instead                          |
+| ------------------------------------------------------------------------------ | ------------------------------------ |
+| `claude-opus-4.5`, `claude-opus-4.8`, any Opus 4.x                             | `claude-opus-5`                      |
+| `claude-sonnet-4.5`, `claude-sonnet-4`, `claude-3.5-sonnet`, `claude-3-sonnet` | `claude-sonnet-5`                    |
+| `claude-3-haiku`, `claude-3.5-haiku`                                           | `gpt-5.4-mini` (see the haiku entry) |
+| `gpt-5`, `gpt-5-mini`, `gpt-4o`, `gpt-4-turbo`                                 | `gpt-5.4-mini`                       |
+| `gpt-5-nano`, `gpt-4o-mini`, `gpt-3.5-turbo`                                   | `gpt-5.4-nano`                       |
+| `gemini-2.5-pro`                                                               | `gemini-3.6-flash`                   |
+| `gpt-oss-120b`, any open-weight model                                          | `gpt-5.4-nano`                       |
 
-**OpenAI Legacy:**
+**On open-weight models.** `gpt-oss-120b` originally ran memo classification, memorization and the researcher agent, and was replaced in spring 2026 for unreliable tail latency on OpenRouter's patchwork provider backing. It was re-tested in July 2026 and rejected again on quality. A July 2026 sweep reached the same conclusion for the DeepSeek line: `deepseek-v4-pro` matched mini on quality (106/107 calls passing) at almost half the price but averaged **15.9s per call** against mini's ~2s; `deepseek-v4-flash` scored 0.976 and dropped the classic sandwich-split and gap-resume cases; `z-ai/glm-5.2` scored 0.919; `qwen3.5-flash` passed 24% with calls up to 8.9 minutes. Open-weight quality can be there; OpenRouter's provider latency is not. That, plus the regional-execution constraint, is why the registry is Anthropic/Google/OpenAI only.
 
-- ❌ `openrouter:openai/gpt-3.5-turbo` → Use `openrouter:openai/gpt-5.4-nano`
-- ❌ `openrouter:openai/gpt-4o` → Use `openrouter:openai/gpt-5` or `openrouter:openai/gpt-5.4-mini`
-- ❌ `openrouter:openai/gpt-4o-mini` → Use `openrouter:openai/gpt-5.4-nano`
-- ❌ `openrouter:openai/gpt-5-mini` → Use `openrouter:openai/gpt-5.4-mini` or `openrouter:openai/gpt-5.4-nano`
-- ❌ `openrouter:openai/gpt-5-nano` → Use `openrouter:openai/gpt-5.4-nano`
-
-**Why deprecated:** These are superseded by newer model generations with improved capabilities and pricing.
+**Caution when comparing models:** the eval CLI's `-m` flag did not reach ConfigResolver-backed components until the July 2026 runner fix, so any "nano" comparison older than that silently ran the production model.

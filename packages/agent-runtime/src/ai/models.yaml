@@ -1,12 +1,33 @@
 # Model Capabilities Registry
 #
 # Defines input/output modalities for each model following OpenRouter modality format.
-# This is the source of truth for model capabilities in the codebase.
+# This is the source of truth for model capabilities in the codebase, and it is
+# also what the persona model picker offers (`listAvailableModels`).
 #
-# See docs/model-reference.md for detailed model recommendations and pricing.
+# Scope: current-generation models from Anthropic, Google and OpenAI only.
+# Restricted to those three so every model here can be run regionally, either
+# through OpenRouter or direct with the provider. Superseded generations are
+# removed rather than left selectable — an entry here is an offer.
+#
+# Removing an entry is not free: `supportsVision` returns false for an unknown
+# model, so a persona still pinned to a removed id silently stops receiving
+# image attachments. Check `personas.model`, `personas.escalation_model` and
+# `agent_config_overrides.patch->>'model'` before dropping one.
+#
+# `inputModalities` is deliberately narrower than what the providers accept —
+# the Gemini models also take video and audio, but no code path feeds them
+# either, and `audio` here would make `supportsAudioInput` true and offer the
+# model to the voice-transcription strategy registry.
+#
+# See docs/model-reference.md for pricing, cache rates, and usage guidance.
 
 models:
-  # Anthropic Claude models
+  # Anthropic
+  openrouter:anthropic/claude-opus-5:
+    name: Claude Opus 5
+    inputModalities: [text, image]
+    outputModalities: [text]
+
   openrouter:anthropic/claude-sonnet-5:
     name: Claude Sonnet 5
     inputModalities: [text, image]
@@ -17,54 +38,53 @@ models:
     inputModalities: [text, image]
     outputModalities: [text]
 
-  openrouter:anthropic/claude-sonnet-4.5:
-    name: Claude Sonnet 4.5
-    inputModalities: [text, image]
-    outputModalities: [text]
-
   openrouter:anthropic/claude-haiku-4.5:
     name: Claude Haiku 4.5
     inputModalities: [text, image]
     outputModalities: [text]
 
-  openrouter:anthropic/claude-opus-4.5:
-    name: Claude Opus 4.5
+  # Google
+  openrouter:google/gemini-3.6-flash:
+    name: Gemini 3.6 Flash
     inputModalities: [text, image]
     outputModalities: [text]
 
-  openrouter:anthropic/claude-opus-4.8:
-    name: Claude Opus 4.8
+  openrouter:google/gemini-3.5-flash-lite:
+    name: Gemini 3.5 Flash Lite
     inputModalities: [text, image]
     outputModalities: [text]
 
-  # Google Gemini models
+  openrouter:google/gemini-3.1-flash-lite:
+    name: Gemini 3.1 Flash Lite
+    inputModalities: [text, image]
+    outputModalities: [text]
+
   openrouter:google/gemini-2.5-flash:
     name: Gemini 2.5 Flash
     inputModalities: [text, image]
     outputModalities: [text]
 
-  openrouter:google/gemini-2.5-pro:
-    name: Gemini 2.5 Pro
+  openrouter:google/gemini-2.5-flash-lite:
+    name: Gemini 2.5 Flash Lite
     inputModalities: [text, image]
     outputModalities: [text]
 
-  # OpenAI GPT-5 models
-  openrouter:openai/gpt-5:
-    name: GPT-5
+  # OpenAI
+  openrouter:openai/gpt-5.6-sol:
+    name: GPT-5.6 Sol
     inputModalities: [text, image]
     outputModalities: [text]
 
-  openrouter:openai/gpt-5-mini:
-    name: GPT-5 Mini
+  openrouter:openai/gpt-5.6-terra:
+    name: GPT-5.6 Terra
     inputModalities: [text, image]
     outputModalities: [text]
 
-  openrouter:openai/gpt-5-nano:
-    name: GPT-5 Nano
-    inputModalities: [text]
+  openrouter:openai/gpt-5.6-luna:
+    name: GPT-5.6 Luna
+    inputModalities: [text, image]
     outputModalities: [text]
 
-  # OpenAI GPT-5.4 models
   openrouter:openai/gpt-5.4-mini:
     name: GPT-5.4 Mini
     inputModalities: [text, image]
@@ -73,18 +93,6 @@ models:
   openrouter:openai/gpt-5.4-nano:
     name: GPT-5.4 Nano
     inputModalities: [text, image]
-    outputModalities: [text]
-
-  # OpenAI GPT-5.6 models
-  openrouter:openai/gpt-5.6-luna:
-    name: GPT-5.6 Luna
-    inputModalities: [text, image]
-    outputModalities: [text]
-
-  # OpenAI Open-weight models (text-only)
-  openrouter:openai/gpt-oss-120b:
-    name: GPT-OSS 120B
-    inputModalities: [text]
     outputModalities: [text]
 
   # Embedding models (text-only)
