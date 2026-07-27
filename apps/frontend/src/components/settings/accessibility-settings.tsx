@@ -44,7 +44,10 @@ const FONT_FAMILY_DESCRIPTIONS: Record<FontFamily, string> = {
 export function AccessibilitySettings() {
   const { preferences, updateAccessibility } = usePreferences()
 
-  const accessibility = preferences?.accessibility ?? DEFAULT_ACCESSIBILITY
+  // Spread over the defaults rather than replacing them: preferences come from
+  // the IDB cache, so a blob written before a field existed carries an
+  // `accessibility` object missing it, and the control would render unset.
+  const accessibility = { ...DEFAULT_ACCESSIBILITY, ...preferences?.accessibility }
 
   return (
     <div className="space-y-6">

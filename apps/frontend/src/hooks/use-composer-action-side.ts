@@ -1,5 +1,5 @@
 import { usePreferencesOptional } from "@/contexts"
-import { type ComposerActionSide } from "@threa/types"
+import { DEFAULT_ACCESSIBILITY, type ComposerActionSide } from "@threa/types"
 
 /**
  * Which end of the composer's action row holds Send.
@@ -9,10 +9,13 @@ import { type ComposerActionSide } from "@threa/types"
  * timeline, board — and handed to the bar as opaque nodes, so the bar cannot
  * reach their popover alignment. They read it here instead of adding the prop
  * to three hosts. Falls back to the default outside a provider (markdown
- * previews, component tests).
+ * previews, component tests) and for a cached preferences blob written before
+ * this field existed.
  */
 export function useComposerActionSide(): ComposerActionSide {
-  return usePreferencesOptional()?.preferences?.accessibility?.composerActionSide ?? "right"
+  return (
+    usePreferencesOptional()?.preferences?.accessibility?.composerActionSide ?? DEFAULT_ACCESSIBILITY.composerActionSide
+  )
 }
 
 /**
