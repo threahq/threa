@@ -535,6 +535,12 @@ describe("resolveUnreadMarkerOpen", () => {
     expect(resolveUnreadMarkerOpen({ ...base, readStateResolved: false })).toBe("wait")
   })
 
+  it("waits rather than skips on an unresolved read position even with a divider latched", () => {
+    // An unresolvable frontier is not "never read": consuming the once-per-stream
+    // decision here is the recurring bug — the stream opens at the tail forever.
+    expect(resolveUnreadMarkerOpen({ ...base, readStateResolved: false, dividerEventId: "event_5" })).toBe("wait")
+  })
+
   it("skips in latest mode — the default open-at-bottom behaviour is untouched", () => {
     expect(resolveUnreadMarkerOpen({ ...base, unreadOpenPosition: "latest" })).toBe("skip")
   })
