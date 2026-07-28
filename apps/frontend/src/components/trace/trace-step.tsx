@@ -7,6 +7,8 @@ import {
   type AgentSessionStep,
   type AgentStepType,
   type PiToolTraceSectionLabel,
+  ToolVerificationStatuses,
+  type ToolVerificationStatus,
   type TraceSource,
 } from "@threa/types"
 import { cn } from "@/lib/utils"
@@ -15,6 +17,7 @@ import { RelativeTime } from "@/components/relative-time"
 import { formatDuration } from "@/lib/dates"
 import { STEP_DISPLAY_CONFIG } from "@/lib/step-config"
 import {
+  Check,
   ChevronRight,
   CircleSlash,
   Clock,
@@ -22,6 +25,7 @@ import {
   EyeOff,
   Loader2,
   MessageSquareReply,
+  X,
   type LucideIcon,
 } from "lucide-react"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
@@ -85,12 +89,24 @@ export function TraceStep({
   const messageLink = step.messageId ? `/w/${workspaceId}/s/${streamId}?m=${step.messageId}` : null
   const hueColor = `hsl(${config.hue} ${config.saturation}% ${config.lightness}%)`
 
+  // A guarded call's step opens BEFORE the guardian decides, so for the whole
+  // review window `isInProgress` is true while the action has not started and
+  // may never start. Saying "Running…" there is the one thing the verification
+  // badge exists to stop the trace from implying. While a verdict is pending
+  // the badge's own spinner carries liveness and the right slot keeps only the
+  // session controls.
+  const awaitingVerdict = step.verification?.status === ToolVerificationStatuses.PENDING
+
   // In-progress steps replace the default timestamp + duration right-slot with
   // a spinning loader + "Running…" label + available session controls.
   const rightSlot = isInProgress ? (
     <>
-      <Loader2 className="h-3.5 w-3.5 animate-spin" style={{ color: hueColor }} />
-      <span className="text-muted-foreground">Running…</span>
+      {!awaitingVerdict && (
+        <>
+          <Loader2 className="h-3.5 w-3.5 animate-spin" style={{ color: hueColor }} />
+          <span className="text-muted-foreground">Running…</span>
+        </>
+      )}
       {onSteerSession && <RedirectSessionButton onClick={onSteerSession} />}
       {onStopSession && <StopSessionButton onClick={onStopSession} />}
     </>
@@ -103,7 +119,14 @@ export function TraceStep({
         background: `hsl(${config.hue} ${config.saturation}% ${config.lightness}% / 0.03)`,
       }}
     >
-      <StepHeader config={config} Icon={Icon} startedAt={step.startedAt} duration={duration} rightSlot={rightSlot} />
+      <StepHeader
+        config={config}
+        Icon={Icon}
+        startedAt={step.startedAt}
+        duration={duration}
+        rightSlot={rightSlot}
+        verification={step.verification}
+      />
 
       {/*
         Render the body when there's content OR when the step is in-progress (so
@@ -144,6 +167,45 @@ function StepDecryptNotice({ status }: { status: "locked" | "pending" | "failed"
   return <div className="text-sm italic text-muted-foreground">{STEP_DECRYPT_NOTICE_TEXT[status]}</div>
 }
 
+/**
+ * The guardian's state for a guarded (tier-2) tool call, shown on the call's own
+ * step: spinner while the check runs, then a check or a cross.
+ *
+ * Fixed footprint across all three states (INV-21) — same padding, same icon
+ * box — so the header does not reflow when the verdict lands. The denial reason
+ * is deliberately NOT in a tooltip: it is already the step's body text, where it
+ * can be read and copied.
+ */
+const VERIFICATION_DISPLAY = {
+  pending: {
+    label: "Checking",
+    icon: Loader2,
+    iconClassName: "animate-spin",
+    className: "bg-muted text-muted-foreground",
+  },
+  approved: { label: "Approved", icon: Check, iconClassName: "", className: "bg-foreground/5 text-foreground/70" },
+  denied: { label: "Not taken", icon: X, iconClassName: "", className: "bg-destructive/10 text-destructive" },
+} as const satisfies Record<
+  ToolVerificationStatus,
+  { label: string; icon: LucideIcon; iconClassName: string; className: string }
+>
+
+function VerificationBadge({ verification }: { verification: NonNullable<AgentSessionStep["verification"]> }) {
+  const display = VERIFICATION_DISPLAY[verification.status]
+  const StatusIcon = display.icon
+  return (
+    <span
+      className={cn(
+        "px-2 py-1 rounded-md text-[11px] font-semibold uppercase tracking-wide inline-flex items-center gap-1.5",
+        display.className
+      )}
+    >
+      <StatusIcon className={cn("w-3.5 h-3.5", display.iconClassName)} />
+      {display.label}
+    </span>
+  )
+}
+
 interface StepHeaderProps {
   config: { label: string; hue: number; saturation: number; lightness: number }
   Icon: LucideIcon
@@ -155,11 +217,19 @@ interface StepHeaderProps {
    * "Running…" indicator + Stop research button instead of a completion time.
    */
   rightSlot?: React.ReactNode
+  /** Guardian state for a guarded tool call; absent on every unguarded step. */
+  verification?: AgentSessionStep["verification"]
 }
 
-function StepHeader({ config, Icon, startedAt, duration, rightSlot }: StepHeaderProps) {
+function StepHeader({ config, Icon, startedAt, duration, rightSlot, verification }: StepHeaderProps) {
   return (
-    <div className="flex items-center gap-2.5 mb-3">
+    // Wraps because this row can now carry three groups at once — the step-type
+    // chip, the verification badge, and the in-flight controls — and its scroll
+    // ancestor is `overflow-x-hidden` (trace-dialog's TraceBody), so anything
+    // past the edge is CLIPPED, not scrollable. On a phone that silently ate the
+    // Stop / Redirect buttons during a guarded call: the one moment a user most
+    // wants to interrupt. Wrapping drops the right group to its own line instead.
+    <div className="flex flex-wrap items-center gap-2.5 mb-3">
       <div
         className="px-2.5 py-1 rounded-md text-[11px] font-semibold uppercase tracking-wide inline-flex items-center gap-1.5"
         style={{
@@ -170,6 +240,7 @@ function StepHeader({ config, Icon, startedAt, duration, rightSlot }: StepHeader
         <Icon className="w-3.5 h-3.5" />
         {config.label}
       </div>
+      {verification && <VerificationBadge verification={verification} />}
       <div className="flex items-center gap-2 ml-auto text-[11px] text-muted-foreground">
         {rightSlot ??
           (startedAt && (

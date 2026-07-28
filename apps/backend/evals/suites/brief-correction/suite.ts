@@ -272,6 +272,7 @@ async function runBriefCorrectionTask(input: BriefCorrectionInput, ctx: EvalCont
     const editMessage: PersonaAgentDeps["editMessage"] = async () => null
     const deleteMessage: PersonaAgentDeps["deleteMessage"] = async () => null
     const personaAgent = new PersonaAgent({
+      configResolver: ctx.configResolver,
       pool: ctx.pool,
       ai: ctx.ai,
       traceEmitter,

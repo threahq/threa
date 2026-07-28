@@ -5,7 +5,7 @@ import {
   type TraceStepSink,
   type TraceSubstepEntry,
 } from "@threa/agent-runtime"
-import type { AgentStepType } from "@threa/types"
+import type { AgentStepType, ToolVerificationStatus } from "@threa/types"
 import type { ActiveStep, SessionTrace } from "../trace-emitter"
 import { logger } from "../../../lib/logger"
 
@@ -41,6 +41,10 @@ export class SessionTraceStepSink implements TraceStepSink<ActiveStep> {
       messageId: final.messageId,
       durationMs: final.durationMs,
     })
+  }
+
+  async verify(params: { step: ActiveStep; status: ToolVerificationStatus; reason: string }): Promise<void> {
+    await params.step.verify({ status: params.status, reason: params.reason })
   }
 
   async substep(params: {

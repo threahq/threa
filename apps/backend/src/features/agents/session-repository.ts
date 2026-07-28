@@ -1,4 +1,4 @@
-import type { AgentSessionStatus, AgentStepType, TraceSource } from "@threa/types"
+import type { AgentSessionStatus, AgentStepType, ToolVerificationStatus, TraceSource } from "@threa/types"
 import { AgentSessionStatuses, AgentStepTypes } from "@threa/types"
 import { isUniqueViolation } from "@threa/backend-common"
 import type { Querier } from "../../db"
@@ -49,6 +49,8 @@ interface StepRow {
   sources: TraceSource[] | null
   message_id: string | null
   tokens_used: number | null
+  verification_status: string | null
+  verification_reason: string | null
   started_at: Date
   completed_at: Date | null
 }
@@ -133,6 +135,8 @@ export interface AgentSessionStep {
   sources: TraceSource[] | null
   messageId: string | null
   tokensUsed: number | null
+  /** Guardian state for a guarded (tier 2+) tool call; absent on every other step. */
+  verification?: { status: ToolVerificationStatus; reason?: string }
   startedAt: Date
   completedAt: Date | null
 }
@@ -249,6 +253,12 @@ function mapRowToStep(row: StepRow): AgentSessionStep {
     sources: row.sources,
     messageId: row.message_id,
     tokensUsed: row.tokens_used,
+    verification: row.verification_status
+      ? {
+          status: row.verification_status as ToolVerificationStatus,
+          ...(row.verification_reason ? { reason: row.verification_reason } : {}),
+        }
+      : undefined,
     startedAt: row.started_at,
     completedAt: row.completed_at,
   }
@@ -265,7 +275,8 @@ const SESSION_SELECT_FIELDS = `
 const STEP_SELECT_FIELDS = `
   id, session_id, step_number, step_type,
   content, content_ciphertext, content_envelope,
-  sources, message_id, tokens_used, started_at, completed_at
+  sources, message_id, tokens_used, verification_status, verification_reason,
+  started_at, completed_at
 `
 
 export const AgentSessionRepository = {
@@ -929,6 +940,12 @@ export const AgentSessionRepository = {
       contentEnvelope?: unknown
       sources?: TraceSource[]
       messageId?: string
+      /**
+       * Guardian verdict for a guarded tool call. Written as its own patch
+       * between the step opening and its result, so the trace can show the
+       * review resolving before the action does.
+       */
+      verification?: { status: ToolVerificationStatus; reason?: string }
       completedAt?: Date
       /**
        * Scope the update to one session so a caller-controlled `stepId` can only
@@ -956,6 +973,8 @@ export const AgentSessionRepository = {
           content_envelope = COALESCE(${params.contentEnvelope ? JSON.stringify(params.contentEnvelope) : null}, content_envelope),
           sources = COALESCE(${params.sources ? JSON.stringify(params.sources) : null}, sources),
           message_id = COALESCE(${params.messageId ?? null}, message_id),
+          verification_status = COALESCE(${params.verification?.status ?? null}, verification_status),
+          verification_reason = COALESCE(${params.verification?.reason ?? null}, verification_reason),
           completed_at = COALESCE(${params.completedAt ?? null}, completed_at)
         WHERE id = ${stepId}
           AND (${params.sessionId ?? null}::text IS NULL OR session_id = ${params.sessionId ?? null})

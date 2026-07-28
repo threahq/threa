@@ -15,6 +15,7 @@ export const FUNCTION_CATEGORY_MAP: Record<string, AIUsageCategory> = {
   "conversation-split": "conversation",
 
   "agent-loop": "agents",
+  "tool-guardian": "agents",
   "turn-digest": "agents",
   "agent-rerun-response-validation": "agents",
   "summary-update": "agents",

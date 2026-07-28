@@ -1,4 +1,10 @@
-import { AgentReconsiderationDecisions, AgentStepTypes, type AgentStepType, type TraceSource } from "@threa/types"
+import {
+  AgentReconsiderationDecisions,
+  AgentStepTypes,
+  type AgentStepType,
+  type ToolVerificationStatus,
+  type TraceSource,
+} from "@threa/types"
 import type { AgentEvent, TraceContextMessage } from "./agent-events"
 import type { AgentObserver } from "./agent-observer"
 
@@ -64,6 +70,19 @@ export interface TraceStepSink<OpenStep> {
     toolCallId: string
     toolName: string
   }): Promise<void>
+  /**
+   * Attach a guardian verdict to an open tool step.
+   *
+   * Optional because only surfaces that can run a guarded tool need it, and
+   * today that is the in-process companion alone: `delegate_task` is withheld
+   * on sealed streams, and bot invocation frames are normalized from an
+   * external bot's own reported steps rather than executed here. The projector
+   * THROWS rather than skipping when a verdict arrives at a sink without it —
+   * a guarded call running on a surface that cannot show its approval state is
+   * the failure this whole layer exists to make impossible, so it must not
+   * degrade into a silently unverified-looking step.
+   */
+  verify?(params: { step: OpenStep; status: ToolVerificationStatus; reason: string }): Promise<void>
 }
 
 /**
@@ -152,6 +171,23 @@ export class TraceProjector<OpenStep = unknown> implements AgentObserver {
           toolCallId: event.toolCallId,
           toolName: event.toolName,
         })
+        break
+      }
+
+      case "tool:verification": {
+        const step = this.openByToolCallId.get(event.toolCallId)
+        // Hidden tools open no step. Nothing hidden is guarded today, and the
+        // runtime's constructor check is what keeps that true; if it ever
+        // changes, the verdict has nowhere to render and skipping is correct
+        // — the call itself is recorded nowhere either.
+        if (!step) break
+        if (!this.sink.verify) {
+          throw new Error(
+            `Trace sink cannot record a guardian verdict, but ${event.toolName} is guarded. ` +
+              `A guarded tool must not run on a surface that cannot show its approval state.`
+          )
+        }
+        await this.sink.verify({ step, status: event.status, reason: event.reason })
         break
       }
 

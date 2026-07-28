@@ -1,4 +1,4 @@
-import type { AgentSessionStatus, AgentStepType, AuthoredByKind } from "./constants"
+import type { AgentSessionStatus, AgentStepType, AuthoredByKind, ToolVerificationStatus } from "./constants"
 
 export const TRACE_SOURCE_TYPES = ["web", "workspace", "workspace_message", "workspace_memo", "github"] as const
 export type TraceSourceType = (typeof TRACE_SOURCE_TYPES)[number]
@@ -76,6 +76,13 @@ export interface AgentSessionStep {
   messageId?: string
   duration?: number
   tokensUsed?: number
+  /**
+   * Guardian state for a tier-2 tool call (see `TOOL_VERIFICATION_STATUSES`).
+   * Absent on every tier-1 step and on every step written before tiers existed,
+   * which is why "no verification" and "not yet reviewed" are different values
+   * rather than one nullable flag.
+   */
+  verification?: { status: ToolVerificationStatus; reason?: string }
   startedAt: string
   completedAt?: string
 }
@@ -206,6 +213,18 @@ export interface StepProgressPayload {
 export interface StepCompletedPayload {
   sessionId: string
   step: AgentSessionStep
+}
+
+/**
+ * A guarded tool call's guardian state moving (`pending` → `approved`/`denied`).
+ * A patch on an existing step, not a step of its own — the receiver merges it
+ * into the step it already holds rather than replacing it, since the step's
+ * content and sources arrive on their own events.
+ */
+export interface StepVerificationPayload {
+  sessionId: string
+  stepId: string
+  verification: { status: ToolVerificationStatus; reason?: string }
 }
 
 export interface SessionTerminalPayload {

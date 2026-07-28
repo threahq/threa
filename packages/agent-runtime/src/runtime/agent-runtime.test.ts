@@ -1105,3 +1105,43 @@ describe("AgentRuntime prompt-cache wiring", () => {
     expect(calls[0]?.volatileSystem).toBeUndefined()
   })
 })
+
+describe("AgentRuntime thinking steps", () => {
+  // The helper is unit-tested in output-guard.test.ts; this covers the seam,
+  // which is the part that was missing — the guard existed and simply was not
+  // wired to the trace.
+  it("strips a pointer tag the model echoed into its pre-tool text", async () => {
+    const events: AgentEvent[] = []
+    let calls = 0
+
+    const runtime = new AgentRuntime({
+      ai: {
+        generateTextWithTools: async () => {
+          calls += 1
+          if (calls === 1) {
+            return {
+              text: "[msg:msg_01ABC author:member_9]'s theme is already dark, so no change was made.",
+              toolCalls: [
+                { toolCallId: "t1", toolName: AgentToolNames.SEND_MESSAGE, input: { content: "Already dark." } },
+              ],
+              response: { messages: [] as any[] },
+            }
+          }
+          return { text: "", toolCalls: [], response: { messages: [] as any[] } }
+        },
+      } as any,
+      model: {} as any,
+      systemPrompt: "You are helpful.",
+      messages: [{ role: "user", content: "dark mode?" }],
+      tools: [],
+      observers: [{ handle: async (event: AgentEvent) => void events.push(event) }],
+      sendMessage: async () => ({ messageId: "msg_1", operation: "created" as const }),
+    })
+
+    await runtime.run()
+
+    const thinking = events.find((e) => e.type === "thinking") as { content: string }
+    expect(thinking.content).toBe("'s theme is already dark, so no change was made.")
+    expect(thinking.content).not.toContain("[msg:")
+  })
+})

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { composeOutputValidator, findInternalSyntax } from "./output-guard"
+import { composeOutputValidator, findInternalSyntax, stripEchoedPointerTag } from "./output-guard"
 
 describe("findInternalSyntax", () => {
   test("rejects a leading msg pointer tag", () => {
@@ -119,5 +119,37 @@ describe("composeOutputValidator", () => {
 
   test("passes clean content when no next validator is given", async () => {
     expect(await composeOutputValidator([])("All good.")).toBeNull()
+  })
+})
+
+describe("stripEchoedPointerTag", () => {
+  // Reported 2026-07-27: the THINKING step opened with the conversation-history
+  // annotation the model had been fed, so the trace read as if Ariadne were
+  // re-processing an older message. The committed reply was already clean —
+  // `findInternalSyntax` covers that surface and this one had no guard at all.
+  test("drops a leading pointer tag the model echoed back", () => {
+    expect(
+      stripEchoedPointerTag("[msg:msg_01ABC author:member_9]'s theme is already dark, so no change was made.")
+    ).toBe("'s theme is already dark, so no change was made.")
+  })
+
+  test("drops the tag whatever the pointer kind", () => {
+    expect(stripEchoedPointerTag("[attach:att_1] reading the file")).toBe("reading the file")
+    expect(stripEchoedPointerTag("[memo:memo_1] recalling that")).toBe("recalling that")
+  })
+
+  test("keeps a tag the model quotes mid-sentence, which is a real reference", () => {
+    const text = "The answer is in [msg:msg_01ABC] — see the second paragraph."
+    expect(stripEchoedPointerTag(text)).toBe(text)
+  })
+
+  test("leaves ordinary text alone", () => {
+    expect(stripEchoedPointerTag("Planning to check the timezone.")).toBe("Planning to check the timezone.")
+    expect(stripEchoedPointerTag("")).toBe("")
+  })
+
+  test("leaves a leading markdown link alone — only bare internal tags go", () => {
+    const text = "[the spec](https://example.com) covers it."
+    expect(stripEchoedPointerTag(text)).toBe(text)
   })
 })

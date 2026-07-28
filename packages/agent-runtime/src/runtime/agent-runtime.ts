@@ -1,15 +1,17 @@
 import type { LanguageModel, ModelMessage, Tool, ToolResultPart } from "ai"
 import type { SourceItem, TraceSource } from "@threa/types"
-import { AgentToolNames } from "@threa/types"
+import { AgentToolNames, ToolVerificationStatuses, requiresGuardianReview } from "@threa/types"
 import type { AI, CostContext, TelemetryMetadataValue } from "../ai/ai"
 import { logger } from "../logger"
 import { protectToolOutputText } from "./tool-trust-boundary"
+import { stripEchoedPointerTag } from "./output-guard"
 import { sanitizeAssistantReplay } from "./reasoning-replay"
 import { MAX_MESSAGE_CHARS, truncateMessages } from "./truncation"
 import { createKeepResponseTool } from "../tools/keep-response-tool"
 import { createSendMessageTool } from "../tools/send-message-tool"
 import type { AgentTool, AgentToolResult } from "./agent-tool"
-import { toVercelToolDefs } from "./agent-tool"
+import { tierOfBuiltTool, toVercelToolDefs } from "./agent-tool"
+import type { ToolGuardian, ToolGuardianVerdict } from "./tool-guardian"
 import type { AgentEvent, NewMessageInfo, TraceContextMessage } from "./agent-events"
 import type { AgentObserver } from "./agent-observer"
 
@@ -113,6 +115,18 @@ export interface AgentRuntimeConfig {
   toolSignalProvider?: (toolCallId: string, toolName: string) => AbortSignal | undefined
 
   /**
+   * Reviews every tier-2+ tool call before it executes (see `ToolGuardian`).
+   *
+   * Required whenever `tools` contains one: the constructor throws otherwise,
+   * rather than the loop discovering it call-by-call. A missing guardian is a
+   * wiring mistake, and the only safe behaviours are "refuse to start" and
+   * "deny every guarded call" — of those, refusing to start is the one that
+   * surfaces at the seam where the mistake was made instead of looking, at
+   * runtime, like a model that simply never chose the tool.
+   */
+  toolGuardian?: ToolGuardian
+
+  /**
    * Optional run-level graceful stop signal (a user Stop). When it aborts, the
    * loop finishes the current step and returns whatever it holds — a reply
    * already committed, or no message — instead of throwing. It is threaded into
@@ -200,6 +214,22 @@ function buildRevisionPrompt(reason: string, pendingMessages: PendingMessage[]):
   )
 }
 
+/**
+ * What the model sees when the guardian denies a call. Shaped as an instruction
+ * rather than an error: the model must not retry, and must not stay silent
+ * either — a silent no-op is indistinguishable from a broken feature, which is
+ * the outcome this layer exists to prevent.
+ */
+function denialResult(toolName: string, reason: string): Record<string, unknown> {
+  return {
+    status: "not_taken_pending_user_approval",
+    tool: toolName,
+    reason,
+    whatToDoNext:
+      "Do NOT call this tool again in this turn. Tell the user plainly what you were about to do, with the specific values, say why you wanted to do it, and ask them to confirm. If they confirm, you may act on their answer.",
+  }
+}
+
 function makeToolResult(tc: { toolCallId: string; toolName: string }, value: string): ToolResultPart {
   return {
     type: "tool-result",
@@ -220,6 +250,16 @@ export class AgentRuntime {
     this.observers = config.observers ?? []
     this.toolMap = new Map(config.tools.map((t) => [t.name, t]))
     this.toolDefs = this.buildToolDefs()
+
+    if (!config.toolGuardian) {
+      const guarded = config.tools.filter((tool) => requiresGuardianReview(tierOfBuiltTool(tool))).map((t) => t.name)
+      if (guarded.length > 0) {
+        throw new Error(
+          `AgentRuntime was built with guarded tools (${guarded.join(", ")}) but no toolGuardian. ` +
+            `Either supply one or don't offer these tools on this surface.`
+        )
+      }
+    }
   }
 
   /**
@@ -383,7 +423,7 @@ export class AgentRuntime {
 
       if (result.text.trim() || result.toolCalls.length > 0) {
         const thinkingContent = result.text.trim()
-          ? result.text
+          ? stripEchoedPointerTag(result.text)
           : JSON.stringify({ toolPlan: result.toolCalls.map((tc: { toolName: string }) => tc.toolName) })
         await this.emit({ type: "thinking", content: thinkingContent, durationMs })
       }
@@ -477,7 +517,8 @@ export class AgentRuntime {
           input: tc.input,
         })),
         sources,
-        retrievedContext
+        retrievedContext,
+        conversation
       )
       sources = execResult.sources
       retrievedContext = execResult.retrievedContext
@@ -656,10 +697,85 @@ export class AgentRuntime {
     return { messagesSent, sentMessageIds: sent.ids, sentContents: sent.contents, lastProcessedSequence, sources }
   }
 
+  /**
+   * Review one guarded call and project the verdict onto its open step.
+   *
+   * Fails CLOSED: a guardian that errors, times out, or is somehow absent
+   * denies. The user loses a round-trip; they do not lose a write they never
+   * asked for. The denial is emitted through `tool:complete` so the step
+   * finalizes on the same path a real result would, rather than sitting open
+   * for the rest of the turn.
+   */
+  private async reviewGuardedCall(
+    agentTool: AgentTool,
+    tc: { toolCallId: string; toolName: string; input: unknown },
+    conversation: ModelMessage[]
+  ): Promise<ToolGuardianVerdict> {
+    const startedAt = Date.now()
+
+    // Marks the step as under review before the call that decides it, so the
+    // trace shows the check running rather than materializing a verdict out of
+    // nothing several seconds later.
+    await this.emit({
+      type: "tool:verification",
+      toolCallId: tc.toolCallId,
+      toolName: tc.toolName,
+      status: ToolVerificationStatuses.PENDING,
+      reason: "",
+      durationMs: 0,
+    })
+
+    let verdict: ToolGuardianVerdict
+    try {
+      if (!this.config.toolGuardian) {
+        throw new Error("no toolGuardian configured")
+      }
+      verdict = await this.config.toolGuardian.review({
+        toolName: tc.toolName,
+        toolDescription: agentTool.config.description,
+        input: tc.input,
+        messages: conversation,
+      })
+    } catch (error) {
+      verdict = {
+        allowed: false,
+        reason: `The approval check could not complete (${error instanceof Error ? error.message : String(error)}), so this action was not taken.`,
+      }
+    }
+    const durationMs = Date.now() - startedAt
+
+    await this.emit({
+      type: "tool:verification",
+      toolCallId: tc.toolCallId,
+      toolName: tc.toolName,
+      status: verdict.allowed ? ToolVerificationStatuses.APPROVED : ToolVerificationStatuses.DENIED,
+      reason: verdict.reason,
+      durationMs,
+    })
+
+    if (!verdict.allowed) {
+      await this.emit({
+        type: "tool:complete",
+        toolCallId: tc.toolCallId,
+        toolName: tc.toolName,
+        input: tc.input,
+        output: verdict.reason,
+        durationMs,
+        trace: {
+          stepType: agentTool.config.trace.stepType,
+          content: `Not taken — waiting for your approval. ${verdict.reason}`,
+        },
+      })
+    }
+
+    return verdict
+  }
+
   private async executeToolCalls(
     toolCalls: Array<{ toolCallId: string; toolName: string; input: unknown }>,
     currentSources: SourceItem[],
-    currentContext: string | null
+    currentContext: string | null,
+    conversation: ModelMessage[]
   ): Promise<{
     resultParts: ToolResultPart[]
     extraMessages: ModelMessage[]
@@ -712,6 +828,14 @@ export class AgentRuntime {
         hidden: agentTool.config.trace.hidden,
       })
       const startTime = Date.now()
+
+      if (requiresGuardianReview(tierOfBuiltTool(agentTool))) {
+        const verdict = await this.reviewGuardedCall(agentTool, tc, conversation)
+        if (!verdict.allowed) {
+          resultParts.push(makeToolResult(tc, JSON.stringify(denialResult(tc.toolName, verdict.reason))))
+          continue
+        }
+      }
 
       try {
         const onProgress = (substep: string) => {

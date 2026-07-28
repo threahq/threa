@@ -265,3 +265,13 @@ export {
   GENERAL_RESEARCH_TOTAL_BUDGET_MS,
   GENERAL_RESEARCH_TOOL_POLICY,
 } from "./general-researcher"
+
+export { ToolGuardianService } from "./guardian/service"
+export type { ToolGuardianServiceDeps, ToolGuardianTurn } from "./guardian/service"
+export {
+  TOOL_GUARDIAN_MODEL_ID,
+  TOOL_GUARDIAN_TEMPERATURE,
+  TOOL_GUARDIAN_SYSTEM_PROMPT,
+  TOOL_GUARDIAN_PROMPT,
+  toolGuardianResponseSchema,
+} from "./guardian/config"

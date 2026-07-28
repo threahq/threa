@@ -215,6 +215,7 @@ async function runPersonaStyleTask(input: PersonaStyleInput, ctx: EvalContext): 
     }
 
     const personaAgent = new PersonaAgent({
+      configResolver: ctx.configResolver,
       pool: ctx.pool,
       ai: ctx.ai,
       traceEmitter,

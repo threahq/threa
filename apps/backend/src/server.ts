@@ -882,6 +882,7 @@ export async function startServer(): Promise<ServerInstance> {
   const reflectiveCaptureService = new ReflectiveCaptureService({ pool, memoService })
 
   const personaAgent = new PersonaAgent({
+    configResolver,
     pool,
     ai,
     traceEmitter,

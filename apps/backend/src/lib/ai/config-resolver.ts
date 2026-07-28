@@ -61,6 +61,7 @@ export const COMPONENT_PATHS = {
   COMPANION_AGENT: "companion:agent",
   COMPANION_RESEARCHER: "companion:researcher",
   GENERAL_RESEARCHER: "general:researcher",
+  TOOL_GUARDIAN: "agents:tool-guardian",
   EMBEDDING: "embedding",
 } as const
 
@@ -76,6 +77,7 @@ export interface PathConfigMap {
   "companion:agent": CompanionAgentConfig
   "companion:researcher": ResearcherConfig
   "general:researcher": GeneralResearcherConfig
+  "agents:tool-guardian": ComponentConfig
   embedding: ComponentConfig
 }
 

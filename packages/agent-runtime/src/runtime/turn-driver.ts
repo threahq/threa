@@ -10,6 +10,7 @@ import {
 } from "./agent-runtime"
 import type { AgentObserver } from "./agent-observer"
 import type { AgentTool } from "./agent-tool"
+import type { ToolGuardian } from "./tool-guardian"
 import { composeOutputValidator } from "./output-guard"
 
 // The turn contract's structural spine: dispatch mints a TurnRequest, routes it
@@ -123,6 +124,12 @@ export interface TurnRequest {
   costContext?: CostContext
   allowNoMessageOutput?: boolean
   validateFinalResponse?: AgentRuntimeConfig["validateFinalResponse"]
+  /**
+   * Reviews tier-2+ tool calls before they run. Rides the request, not the
+   * sink, because it is bound to the turn's identity (who asked, in which
+   * stream) rather than to how the turn is delivered.
+   */
+  toolGuardian?: ToolGuardian
 }
 
 export type TurnResult = AgentRuntimeResult
@@ -287,6 +294,7 @@ function runTurnOnAgentRuntime(ai: AgentRuntimeAI, request: TurnRequest, sink: T
     shouldAbort: sink.shouldAbort,
     toolSignalProvider: sink.toolSignalProvider,
     runAbortSignal: sink.runAbortSignal,
+    toolGuardian: request.toolGuardian,
   })
   return runtime.run()
 }

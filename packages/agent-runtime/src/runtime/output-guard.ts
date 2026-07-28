@@ -100,6 +100,27 @@ export function findInternalSyntax(content: string, options?: { toolNames?: read
 }
 
 /**
+ * Strip a leading internal pointer tag from text that is DISPLAYED rather than
+ * committed — today, the model's pre-tool-call chatter that becomes a THINKING
+ * trace step.
+ *
+ * `findInternalSyntax` rejects the same tag on a committed message, so a reply
+ * never carries one; the trace had no such guard, and the model echoing the
+ * conversation-history annotation it was fed (`[msg:… author:…]` followed by
+ * the message's own text) surfaced verbatim in Ariadne's visible thinking. It
+ * reads as if she were re-processing an old request, which is how it was
+ * reported.
+ *
+ * Strips rather than rejects: a trace step is a record of what happened, not
+ * something the model can be asked to rewrite. Only a LEADING tag goes — one
+ * quoted mid-sentence is the model legitimately referring to a message.
+ */
+export function stripEchoedPointerTag(text: string): string {
+  const match = /^\s*\[(?:msg|attach|memo):[^\]]*\]\s*/.exec(text)
+  return match ? text.slice(match[0].length) : text
+}
+
+/**
  * Turn-level output validation: the built-in guard first, then the caller's own
  * validator. Wired where a turn commits user-visible messages, never onto every
  * `AgentRuntime` host — internal-brief hosts quote evidence legitimately.
