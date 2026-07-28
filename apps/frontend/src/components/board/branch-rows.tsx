@@ -16,6 +16,7 @@ import {
 } from "@/components/ui/alert-dialog"
 import { BoardEventRowItem, type BoardRow } from "@/components/board/board-row-item"
 import { DayDivider } from "@/components/timeline/day-divider"
+import { UnreadDivider } from "@/components/timeline/unread-divider"
 import { isContinuation, type RenderableMessage } from "@/components/message/message-item"
 import type { BranchConversationView } from "@/lib/board/branch-grouping"
 
@@ -291,6 +292,15 @@ function renderRowContent(row: BoardRow, props: BranchedBoardRowsProps): ReactNo
       return <ContinueThreadRow key={row.key} to={continueThreadTo(row.streamId)} hiddenCount={row.hiddenCount} />
     case "day":
       return <DayDivider key={row.key} dayStartMs={row.dayStartMs} />
+    case "unread":
+      // UnreadDivider is absolute and overlays the gap above its row; the panel
+      // is not virtualized, so an in-flow spacer that reserves the gap is all it
+      // needs. It dims by colour, so nothing shifts when it settles (INV-21).
+      return (
+        <div key={row.key} className="relative h-6">
+          <UnreadDivider isDimmed={row.isDimmed} />
+        </div>
+      )
   }
 }
 

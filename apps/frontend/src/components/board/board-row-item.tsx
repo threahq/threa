@@ -31,6 +31,7 @@ export type BoardRow =
   | { kind: "branch-group"; key: string; branch: BranchConversationView; displayDepth?: number }
   | { kind: "continue-thread"; key: string; streamId: string; hiddenCount: number; displayDepth?: number }
   | { kind: "day"; key: string; dayStartMs: number; displayDepth?: number }
+  | { kind: "unread"; key: "unread"; isDimmed?: boolean; displayDepth?: number }
 
 function rowDayStartMs(row: BoardRow): number | null {
   // Only depth-0 rows are globally time-sorted; indented thread runs are spliced
@@ -70,6 +71,22 @@ export function injectBoardDayDividers(rows: BoardRow[]): BoardRow[] {
     }
     result.push(row)
   }
+  return result
+}
+
+/**
+ * Insert the single "New" divider row immediately before the marker's message
+ * row — after {@link injectBoardDayDividers}, so a marker that opens a new day
+ * reads `[day chip][New][message]`: the day labels the boundary, the New line
+ * stays adjacent to the row it overlays. Pure; no-op when there is no marker or
+ * its row is not in the list.
+ */
+export function injectUnreadDivider(rows: BoardRow[], markerMessageId: string | null, isDimmed = false): BoardRow[] {
+  if (!markerMessageId) return rows
+  const index = rows.findIndex((row) => row.kind === "message" && row.message.id === markerMessageId)
+  if (index < 0) return rows
+  const result = rows.slice()
+  result.splice(index, 0, { kind: "unread", key: "unread", isDimmed, displayDepth: rows[index].displayDepth })
   return result
 }
 

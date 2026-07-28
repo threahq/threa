@@ -565,6 +565,291 @@ describe("ConversationPanel", () => {
     })
   })
 
+  /**
+   * The panel's read state comes from the workspace caches (INV-62: read state
+   * lives in stream_read_state, never on membership) — seed a frontier row and
+   * the unread singleton so `deriveRowState` resolves for real. `frontier` is a
+   * live box so a test can flip rows to read mid-session (what auto-read does).
+   */
+  function installReadState(initial: { lastReadAt: string | null }) {
+    const box = { lastReadAt: initial.lastReadAt }
+    vi.spyOn(workspaceStoreModule, "useWorkspaceStreamReadStates").mockImplementation((() => [
+      {
+        id: `${WORKSPACE_ID}:stream_1`,
+        workspaceId: WORKSPACE_ID,
+        streamId: "stream_1",
+        lastReadEventId: "evt_1",
+        lastReadSequence: null,
+        lastReadAt: box.lastReadAt,
+        _cachedAt: 0,
+      },
+    ]) as never)
+    vi.spyOn(workspaceStoreModule, "useWorkspaceUnreadState").mockImplementation((() => ({
+      workspaceId: WORKSPACE_ID,
+      readMessageIds: {},
+      unreadCounts: {},
+      _cachedAt: 0,
+    })) as never)
+    return box
+  }
+
+  /** Two rows from another author, an hour apart, so a frontier can split them.
+   *  The backfill returns the same rows, so the server path can't quietly
+   *  replace the unread reply with the default own-authored fixture. */
+  function unreadFixture() {
+    const reply = makeMessage({
+      id: "msg_2",
+      authorId: "usr_other",
+      contentMarkdown: "Reply two body.",
+      createdAt: "2026-06-22T12:00:00.000Z",
+    })
+    return { cached: asCached(postWithUnread()), getBoardMessages: async () => [reply] }
+  }
+
+  function postWithUnread(): BoardPost {
+    const post = makePost()
+    post.openingMessage = makeMessage({
+      id: "msg_1",
+      authorId: "usr_other",
+      createdAt: "2026-06-22T11:00:00.000Z",
+    })
+    post.recentMessages = [
+      makeMessage({
+        id: "msg_2",
+        authorId: "usr_other",
+        contentMarkdown: "Reply two body.",
+        createdAt: "2026-06-22T12:00:00.000Z",
+      }),
+    ]
+    return post
+  }
+
+  /** Records the element every scrollIntoView call landed on. */
+  function captureScrollIntoView() {
+    const targets: HTMLElement[] = []
+    const original = Element.prototype.scrollIntoView
+    Element.prototype.scrollIntoView = function (this: HTMLElement) {
+      targets.push(this)
+    }
+    return {
+      targets,
+      restore: () => {
+        Element.prototype.scrollIntoView = original
+      },
+      hitRow: (messageId: string) => targets.some((el) => el.closest(`[data-message-id="${messageId}"]`) != null),
+    }
+  }
+
+  function dividerIsRightBefore(messageId: string) {
+    const divider = screen.getByText("New")
+    const row = document.querySelector(`[data-message-id="${messageId}"]`)
+    if (!row) throw new Error(`row ${messageId} not rendered`)
+    // DOCUMENT_POSITION_FOLLOWING: the row comes after the divider.
+    return (divider.compareDocumentPosition(row) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0
+  }
+
+  it("opens at the unread divider instead of the tail when unread rows exist", async () => {
+    installReadState({ lastReadAt: "2026-06-22T11:30:00.000Z" })
+    const restore = installScrollMetrics()
+    const scrolls = captureScrollIntoView()
+    try {
+      mountPanel(unreadFixture())
+      await screen.findByText("Reply two body.")
+
+      await waitFor(() => expect(scrolls.hitRow("msg_2")).toBe(true))
+      expect(dividerIsRightBefore("msg_2")).toBe(true)
+      // The tail scroll never ran — the marker owns the opening position.
+      expect(scroller().scrollTop).toBe(0)
+    } finally {
+      scrolls.restore()
+      restore()
+    }
+  })
+
+  it("opens at the tail when everything is read", async () => {
+    installReadState({ lastReadAt: "2026-06-22T23:00:00.000Z" })
+    const restore = installScrollMetrics()
+    try {
+      mountPanel(unreadFixture())
+      await screen.findByText("Reply two body.")
+
+      expect(screen.queryByText("New")).toBeNull()
+      await waitFor(() => expect(scroller().scrollTop).toBe(1000))
+    } finally {
+      restore()
+    }
+  })
+
+  it("lets the ?m= deep link win over the unread marker", async () => {
+    installReadState({ lastReadAt: "2026-06-22T11:30:00.000Z" })
+    const restore = installScrollMetrics()
+    const scrolls = captureScrollIntoView()
+    try {
+      // Deep link to the READ row while msg_2 is the marker: only one of the two
+      // can own the viewport, and the explicit link is the user's intent.
+      mountPanel({ ...unreadFixture(), highlightMessageId: "msg_1" })
+      await screen.findByText("Reply two body.")
+
+      await waitFor(() => expect(scrolls.hitRow("msg_1")).toBe(true))
+      expect(scrolls.hitRow("msg_2")).toBe(false)
+      // The divider still draws — the marker is a landmark, not a scroll claim.
+      expect(dividerIsRightBefore("msg_2")).toBe(true)
+    } finally {
+      scrolls.restore()
+      restore()
+    }
+  })
+
+  it("shows the N-new banner while the divider sits above the viewport, and dismissing it tails the bottom", async () => {
+    installReadState({ lastReadAt: "2026-06-22T11:30:00.000Z" })
+    const restore = installScrollMetrics()
+    const scrolls = captureScrollIntoView()
+    // jsdom has no layout: put the scroller's top edge below every row's, so the
+    // marker row reads as scrolled off the top.
+    const originalRect = HTMLElement.prototype.getBoundingClientRect
+    HTMLElement.prototype.getBoundingClientRect = function (this: HTMLElement) {
+      return { top: this.classList.contains("overflow-y-auto") ? 100 : 0 } as DOMRect
+    }
+    try {
+      const user = userEvent.setup()
+      mountPanel(unreadFixture())
+      await screen.findByText("Reply two body.")
+
+      const banner = await screen.findByRole("button", { name: "1 new message" })
+      // The open-at-marker one-shot already scrolled to msg_2, and the capture
+      // only appends — clear it so the assertion discriminates the click.
+      scrolls.targets.length = 0
+      await user.click(banner)
+      expect(scrolls.hitRow("msg_2")).toBe(true)
+
+      await user.click(screen.getByRole("button", { name: "Dismiss unread marker" }))
+      expect(scroller().scrollTop).toBe(1000)
+      await waitFor(() => expect(screen.queryByText("New")).toBeNull())
+    } finally {
+      HTMLElement.prototype.getBoundingClientRect = originalRect
+      scrolls.restore()
+      restore()
+    }
+  })
+
+  it("re-scrolls to the marker when the panel returns to a conversation it already opened at", async () => {
+    // The body is not keyed on the conversation, so a switch away and back keeps
+    // the same mount: the one-shot must reset per conversation, or the revisit
+    // re-latches the same message id, matches the stale ref, and scrolls nowhere
+    // at all (skipInitialScroll suppresses the tail scroll too).
+    installReadState({ lastReadAt: "2026-06-22T11:30:00.000Z" })
+    const restore = installScrollMetrics()
+    const scrolls = captureScrollIntoView()
+    try {
+      const second = postWithUnread()
+      second.conversation = { ...second.conversation, id: "conv_2", messageIds: ["msg_9"] }
+      second.openingMessage = makeMessage({
+        id: "msg_9",
+        authorId: "usr_other",
+        contentMarkdown: "Second conversation opener.",
+        // Below the frontier: B is fully read, so its marker is null and the
+        // one-shot effect early-returns without ever touching the ref.
+        createdAt: "2026-06-22T11:00:00.000Z",
+      })
+      second.recentMessages = []
+      second.totalReplies = 0
+      const { nav } = mountPanel({
+        cachedById: { [CONVERSATION_ID]: asCached(postWithUnread()), conv_2: asCached(second) },
+        getBoardMessages: async () => [
+          makeMessage({
+            id: "msg_2",
+            authorId: "usr_other",
+            contentMarkdown: "Reply two body.",
+            createdAt: "2026-06-22T12:00:00.000Z",
+          }),
+        ],
+      })
+      await screen.findByText("Reply two body.")
+      await waitFor(() => expect(scrolls.hitRow("msg_2")).toBe(true))
+
+      act(() => nav.openConversation("conv_2"))
+      await screen.findByText("Second conversation opener.")
+
+      scrolls.targets.length = 0
+      act(() => nav.openConversation(CONVERSATION_ID))
+      await screen.findByText("Reply two body.")
+      await waitFor(() => expect(scrolls.hitRow("msg_2")).toBe(true))
+    } finally {
+      scrolls.restore()
+      restore()
+    }
+  })
+
+  it("re-pins the tail when the composer grows while the user sits at the bottom of a marked conversation", async () => {
+    // R4's symptom: the pill is absolutely positioned, so only the scroller's
+    // padding grows. The opening guard (the marker owns the first scroll) must
+    // not swallow the runtime re-pin, or the last message slides behind the
+    // composer for exactly the conversations this feature targets.
+    installReadState({ lastReadAt: "2026-06-22T11:30:00.000Z" })
+    const restore = installScrollMetrics()
+    const composerHeight = { current: 40 }
+    const originalRect = HTMLElement.prototype.getBoundingClientRect
+    HTMLElement.prototype.getBoundingClientRect = function (this: HTMLElement) {
+      return { top: 0, height: composerHeight.current } as DOMRect
+    }
+    const originalRO = global.ResizeObserver
+    const observers: (() => void)[] = []
+    global.ResizeObserver = class {
+      constructor(cb: () => void) {
+        observers.push(cb)
+      }
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    } as unknown as typeof ResizeObserver
+    try {
+      mountPanel(unreadFixture())
+      await screen.findByText("Reply two body.")
+
+      // The user scrolls down to the live tail (past the programmatic-scroll
+      // grace period, so the scroll event is taken at face value).
+      const el = scroller()
+      await new Promise((r) => setTimeout(r, 200))
+      el.scrollTop = 700
+      act(() => fireEvent.scroll(el))
+
+      // The composer grows: every observer fires, but only the shell's height
+      // actually changed (the scroller's clientHeight is fixed).
+      composerHeight.current = 140
+      act(() => {
+        for (const cb of observers) cb()
+      })
+
+      await waitFor(() => expect(el.scrollTop).toBe(1000))
+    } finally {
+      global.ResizeObserver = originalRO
+      HTMLElement.prototype.getBoundingClientRect = originalRect
+      restore()
+    }
+  })
+
+  it("keeps the divider in place when auto-read marks the rows read (R6)", async () => {
+    // The regression the whole chunk exists to avoid: auto-read starts clearing
+    // the live unread the moment the panel paints. A marker latched anywhere but
+    // in render would move to the tail or vanish on that commit.
+    const frontier = installReadState({ lastReadAt: "2026-06-22T11:30:00.000Z" })
+    const restore = installScrollMetrics()
+    try {
+      mountPanel(unreadFixture())
+      await screen.findByText("Reply two body.")
+      expect(dividerIsRightBefore("msg_2")).toBe(true)
+
+      // Everything is read now; force a re-render through an unrelated signal.
+      frontier.lastReadAt = "2026-06-22T23:00:00.000Z"
+      act(() => requestConversationReplyOpen(CONVERSATION_ID))
+
+      await waitFor(() => expect(screen.getByText("New")).toBeTruthy())
+      expect(dividerIsRightBefore("msg_2")).toBe(true)
+    } finally {
+      restore()
+    }
+  })
+
   it("opens at the tail of the conversation", async () => {
     const restore = installScrollMetrics()
     try {
