@@ -342,19 +342,18 @@ export class SyncEngine {
 
     if (this.eventGate) {
       this.trackHeartbeat(socket)
-      // Read-before-stamp: the cursor position (head, on a first run) must be
-      // read BEFORE the bootstrap data fetch so any race falls on the
-      // duplicate side (entry also present in the snapshot — idempotent),
-      // never the gap side (entry stamped below a position read after the
-      // snapshot — permanent loss).
+      // Read-before-stamp: the cursor must never end up above the snapshot the
+      // bootstrap applies, so any race falls on the duplicate side (entry also
+      // present in the snapshot — idempotent) rather than the gap side (entry
+      // stamped below the position — permanent loss).
       //
-      // A cold boot skips the client-side head read entirely: its bootstrap
-      // stamps the cursor from the snapshot's own server-read `syncHead`
-      // instead, which is the same guarantee taken from the one party that can
-      // actually pair it with the snapshot it hands back. Reading head here
-      // would be strictly worse, because the service worker can answer the
-      // bootstrap with a snapshot captured before this device went away —
-      // leaving the cursor above the snapshot and stranding everything between.
+      // A reconnect satisfies that by reading head here, before the fetch. A
+      // cold boot cannot: the service worker may answer its bootstrap with a
+      // snapshot captured before this device went away, so a head read here
+      // would sit above it. It takes the guarantee from the snapshot's own
+      // server-read `syncHead` instead — the one party that can pair a head
+      // with the snapshot it hands back — and this call leaves the position
+      // unset until then (see `coldSnapshotSettled`).
       await this.initializeActiveCursor()
       if (this.isDestroyed) return
     }
@@ -1330,18 +1329,18 @@ export class SyncEngine {
   }
 
   /**
-   * Active mode, on connect: load the persisted cursor and, on a first run,
-   * seed it from head — BEFORE the workspace bootstrap data fetch, so the
-   * position is a lower bound of the snapshot (read-before-stamp). Errors are
-   * non-fatal: catch-up retries seeding later, and the bootstrap healing this
-   * phase keeps (INV-53) covers the rare first-run-plus-network-failure gap.
+   * Active mode, on connect: load the persisted cursor and, when it is unset
+   * and no cold snapshot is pending, seed it from head. Errors are non-fatal:
+   * catch-up retries seeding later, and the bootstrap healing this phase keeps
+   * (INV-53) covers the rare first-run-plus-network-failure gap.
    *
-   * `seedFromHead: false` (cold boot) loads the cursor but leaves an unset one
-   * unset, because that connect's bootstrap stamps it from the snapshot's own
-   * `syncHead`. Client-read head and server-stamped snapshot head are only
-   * interchangeable while the snapshot is guaranteed to come off the network;
-   * the service worker's lock-time bootstrap copy breaks that, and `advance` is
-   * a monotonic max, so a head seeded here would win and mask the real one.
+   * While `coldSnapshotSettled` is false this loads the cursor but leaves an
+   * unset one unset, because the pending bootstrap stamps it from the
+   * snapshot's own `syncHead`. Client-read head and server-stamped snapshot
+   * head are only interchangeable while the snapshot is guaranteed to come off
+   * the network; the service worker's lock-time bootstrap copy breaks that, and
+   * `advance` is a monotonic max, so a head seeded here would win and mask the
+   * real one.
    */
   private async initializeActiveCursor(): Promise<void> {
     const cursorStore = (this.syncLogCursor ??= new SyncLogCursor(this.workspaceId))
