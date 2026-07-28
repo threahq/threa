@@ -137,6 +137,7 @@ export function BoardCard({
     events: railEvents,
     messagesById,
     taggedByConversation,
+    deletedById,
   } = useBoardCardMessages(post, streamType, {
     branchStreamIds: inlineComposer.branchStreamIds,
     extraDraftPanelIds: inlineComposer.extraDraftPanelIds,
@@ -207,9 +208,12 @@ export function BoardCard({
     getReadTruth,
   } = useConversationReadController(workspaceId, conversation.id, streamId, currentUserId)
   // Over the card's known local messages (opening + the full local reply rail);
-  // own-authored rows are excluded inside `hasUnread`.
+  // own-authored rows are excluded inside `hasUnread`. A tombstone renders no
+  // observable row, so auto-read could never clear a dot it lit — it is excluded
+  // here exactly as it is from `autoReadRows` below, keeping "what lights the dot"
+  // and "what can clear it" the same set.
   const knownMessages = useMemo(
-    () => (openingMessage ? [openingMessage, ...railReplies] : railReplies),
+    () => (openingMessage ? [openingMessage, ...railReplies] : railReplies).filter((m) => !m.deletedAt),
     [openingMessage, railReplies]
   )
   const cardHasUnread = hasUnread(knownMessages)
@@ -368,7 +372,18 @@ export function BoardCard({
   // backfill's `data` lingers after `enabled` goes false).
   else if (incompleteLocally && allMessages)
     replies = (allMessages as RenderableMessage[]).filter((m) => m.id !== openingMessage?.id)
-  else replies = railReplies
+  else {
+    // The rail excludes deleted rows, so without this the tombstone the collapsed
+    // window and the backfill both draw would vanish here — and every row below it
+    // would shift up — the moment the rail caught up. Same merge as the panel
+    // (conversation-panel.tsx): the conversation's own deleted members, deduped.
+    // Expanded-only, so no count changes (`hiddenCount` is 0 here).
+    const railIds = new Set(railReplies.map((m) => m.id))
+    const tombstones = [...deletedById.values()].filter(
+      (m) => conversation.messageIds.includes(m.id) && m.id !== openingMessage?.id && !railIds.has(m.id)
+    )
+    replies = tombstones.length > 0 ? [...railReplies, ...tombstones] : railReplies
+  }
   // Merge this card's own just-sent replies with the confirmed set, skipping any
   // the rail or a backfill already carries, then sort by time: a pending reply
   // can be OLDER than a confirmed one (someone else's reply lands while yours is

@@ -770,6 +770,55 @@ describe("BoardCard deleted messages", () => {
     expect(await screen.findByText("This message was deleted")).toBeTruthy()
     expect(container.querySelector('[data-message-id="m_r2"]')).toBeNull()
   })
+
+  it("renders a tombstone for a deleted reply once the rail is complete", async () => {
+    // The rail path: every reply is local, so the card falls through to
+    // `railReplies` — which excludes deleted rows. Without the tombstone merge the
+    // deleted middle reply simply disappears here (and it IS drawn on the other two
+    // paths), so the card reflows as sync completes.
+    await db.events.bulkPut([
+      messageEvent("m_open", "Opening body.", 10),
+      messageEvent("m_r1", "First reply.", 11),
+      messageEvent("m_r2", "Second reply.", 12),
+      messageEvent("m_rd", "The deleted body.", 13, "2026-06-22T12:05:00.000Z"),
+      messageEvent("m_r3", "Third reply.", 14),
+      messageEvent("m_r4", "Fourth reply.", 15),
+      messageEvent("m_r5", "Fifth reply.", 16),
+    ])
+    const post = makePost({ messageIds: ["m_open", "m_r1", "m_r2", "m_rd", "m_r3", "m_r4", "m_r5"] })
+    ;(post as unknown as { totalReplies: number }).totalReplies = 5
+    mountCard(post)
+
+    // Collapsed the card previews the trailing live replies only; expanding falls
+    // through to the complete local rail.
+    await userEvent.click(await screen.findByText(/2 more messages/))
+
+    expect(await screen.findByText("This message was deleted")).toBeTruthy()
+    expect(screen.queryByText("The deleted body.")).toBeNull()
+    expect(screen.getByText("First reply.")).toBeTruthy()
+    expect(screen.getByText("Fifth reply.")).toBeTruthy()
+  })
+})
+
+describe("BoardCard unread dot on a deleted opening", () => {
+  it("keeps the dot off when the only known message is a deleted opening", async () => {
+    // Projection path (no IDB events): the opening arrives blanked but flagged.
+    // A tombstone renders no observable row, so auto-read can never clear a dot it
+    // lit — it must not reach the unread derivation at all. `hasUnread` here reports
+    // on whatever set the card hands it, so the assertion is about that set.
+    vi.spyOn(conversationReadModule, "useConversationReadController").mockReturnValue({
+      value: readValue,
+      hasUnread: (messages) => messages.length > 0,
+      markReadSilently: () => Promise.resolve(),
+      setExplicitUnreadListener: () => {},
+      getReadTruth: () => ({ lastReadSequence: null, readMessageIds: [] }),
+    })
+    const post = makePost({ messageIds: ["m_open"] }, { contentMarkdown: "", deletedAt: "2026-06-22T12:06:00.000Z" })
+    mountCard(post)
+
+    expect(await screen.findByText("This message was deleted")).toBeTruthy()
+    expect(screen.queryByLabelText("Unread")).toBeNull()
+  })
 })
 
 /** A `message_created` row on the card's stream, seeded into IDB so the card's
