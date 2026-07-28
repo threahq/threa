@@ -81,6 +81,7 @@ function makeManager(): CallController {
     flipCamera: vi.fn(async () => {}),
     setOutputDevice: vi.fn(async () => {}),
     getVideoStream: vi.fn(() => null),
+    setCallTitle: vi.fn(),
   }
 }
 

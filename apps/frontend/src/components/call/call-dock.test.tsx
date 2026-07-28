@@ -82,6 +82,7 @@ function makeManager(overrides: Partial<CallController> = {}): CallController {
     flipCamera: vi.fn(async () => {}),
     setOutputDevice: vi.fn(async () => {}),
     getVideoStream: vi.fn(() => null),
+    setCallTitle: vi.fn(),
     ...overrides,
   }
 }
@@ -466,6 +467,70 @@ describe("CallDock — mobile drawer vs desktop dock", () => {
     await userEvent.click(screen.getByText("launch"))
     expect(await screen.findByText(/Microphone access denied/i)).toBeInTheDocument()
     expect(screen.getByRole("button", { name: /Try again/i })).toBeInTheDocument()
+  })
+})
+
+describe("CallDock — lock-screen media session title", () => {
+  function seedStreams(
+    streams: Array<{ id: string; type: string; slug?: string | null; displayName?: string | null }>,
+    dmPeers: Array<{ streamId: string; userId: string }> = []
+  ) {
+    seedWorkspaceCache(WORKSPACE_ID, {
+      workspace: {
+        id: WORKSPACE_ID,
+        name: "Workspace",
+        slug: "workspace",
+        createdAt: "2026-03-01T10:00:00Z",
+        updatedAt: "2026-03-01T10:00:00Z",
+        _cachedAt: Date.now(),
+      },
+      users: [
+        user({ id: "usr_self", workosUserId: "workos_self", slug: "self", name: "Ada" }),
+        user({ id: "usr_peer", workosUserId: "workos_peer", slug: "peer", name: "Grace" }),
+      ],
+      streams: streams.map((s) => ({ ...s, workspaceId: WORKSPACE_ID, _cachedAt: Date.now() })),
+      memberships: [],
+      dmPeers: dmPeers.map((p) => ({ ...p, workspaceId: WORKSPACE_ID, _cachedAt: Date.now() })),
+      personas: [],
+      bots: [],
+    } as unknown as Parameters<typeof seedWorkspaceCache>[1])
+  }
+
+  it("pushes the resolved channel name at the manager", () => {
+    seedStreams([{ id: "stream_1", type: "channel", slug: "design", displayName: null }])
+    const manager = makeManager()
+    renderDock(manager)
+    enterConnectedCall([participant({ userId: "usr_self", endpointId: "callep_self" })])
+    expect(manager.setCallTitle).toHaveBeenCalledWith("#design")
+  })
+
+  it("resolves the label during the launch window, before the store has a call session", () => {
+    // Ringing out is exactly when a locked phone reads the notification, and the
+    // store's workspace id is null for that whole window — only the launch request
+    // carries one. Clicked synchronously: awaiting lets the workspace store's IDB
+    // read (empty in jsdom) land and clobber the seeded cache.
+    seedStreams([{ id: "stream_1", type: "channel", slug: "design", displayName: null }])
+    const manager = makeManager({ startCall: vi.fn(() => new Promise<void>(() => {})) })
+    renderDock(manager)
+
+    act(() => screen.getByText("launch").click())
+
+    expect(getCallState().workspaceId).toBeNull()
+    expect(manager.setCallTitle).toHaveBeenCalledWith("#design")
+  })
+
+  it("resolves a DM to the peer's name — the case a hand-rolled lookup gets wrong", () => {
+    // A DM the viewer can open is not necessarily in the streams cache, and its
+    // `displayName` is null on the wire; only the peer lookup gets this right.
+    seedStreams([], [{ streamId: "stream_dm", userId: "usr_peer" }])
+    const manager = makeManager()
+    renderDock(manager)
+    act(() => {
+      setCallSession({ callId: "call_1", workspaceId: WORKSPACE_ID, streamId: "stream_dm", mode: "video" })
+      setCallPhase("connected")
+      setCallRoster([participant({ userId: "usr_self", endpointId: "callep_self" })], 1)
+    })
+    expect(manager.setCallTitle).toHaveBeenCalledWith("Grace")
   })
 })
 

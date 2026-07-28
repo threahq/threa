@@ -39,6 +39,7 @@ import { FloatingCallSquare } from "./floating-call-square"
 import { DesktopCallFullscreen } from "./desktop-call-fullscreen"
 import { ActiveElsewhereChip } from "./active-elsewhere-chip"
 import { CallMovedChip } from "./call-moved-chip"
+import { useCallMediaSessionTitle } from "./use-call-media-session-title"
 
 /**
  * The docked call surface. Mounts at the app-layout level and is driven purely by
@@ -101,6 +102,13 @@ export function CallDock() {
     }
   }, [inCall])
 
+  const streamIdForLabel = storeStreamId ?? (launch.status !== "idle" ? launch.request.streamId : null)
+  // The store's workspace id is null until the start REST call lands, and the
+  // resolver needs one — so the launch request supplies it for the ring-out
+  // window, which is exactly when a locked phone reads the notification.
+  const workspaceIdForLabel = workspaceId ?? (launch.status !== "idle" ? launch.request.workspaceId : null)
+  useCallMediaSessionTitle(workspaceIdForLabel, streamIdForLabel)
+
   // Nothing to show: idle with no launch in flight. Surface the displaced-call
   // chip if another device took this call over, then the cross-tab chip if another
   // tab holds it, otherwise render nothing.
@@ -122,8 +130,6 @@ export function CallDock() {
     }
     return null
   }
-
-  const streamIdForLabel = storeStreamId ?? (launch.status !== "idle" ? launch.request.streamId : null)
 
   // Mobile is unchanged: the 4-mode top drawer in-call, the same top island for
   // joining/permission (one surface, no bottom→top jump).
