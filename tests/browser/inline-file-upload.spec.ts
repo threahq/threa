@@ -276,4 +276,72 @@ test.describe("Inline File Uploads", () => {
     // After unhover: pill should NOT be highlighted anymore
     await expect(attachmentPill).not.toHaveAttribute("data-highlighted", "true", { timeout: 1000 })
   })
+
+  /**
+   * The chip is an atom whose `renderHTML` used to carry a content hole, so
+   * ProseMirror's clipboard serializer threw ("Content hole not allowed in a
+   * leaf node spec") on any selection holding one — nothing reached the
+   * clipboard and the chip could not be moved.
+   */
+  test("should copy and paste an attachment chip", async ({ page }) => {
+    const editor = page.locator("[contenteditable='true']")
+    await editor.click()
+
+    await page.evaluate(async () => {
+      const target = document.querySelector("[contenteditable='true']")
+      if (!target) throw new Error("Editor not found")
+      const file = new File([new Blob(["Hello, world!"], { type: "text/plain" })], "document.txt", {
+        type: "text/plain",
+      })
+      const dataTransfer = new DataTransfer()
+      dataTransfer.items.add(file)
+      target.dispatchEvent(
+        new ClipboardEvent("paste", { bubbles: true, cancelable: true, clipboardData: dataTransfer })
+      )
+    })
+
+    await expect(editor.locator("span[data-type='attachment-reference']")).toHaveCount(1, { timeout: 10000 })
+
+    // Copy the composer's content (chip included), then paste the same
+    // flavours back — the real in-app clipboard path, which restores the
+    // document from the `data-pm-slice` HTML. Retried until the upload has
+    // settled, since a chip still reserving carries a temp id.
+    let copied = { html: "", text: "" }
+    await expect(async () => {
+      await editor.click()
+      await page.keyboard.press("Control+a")
+      copied = await page.evaluate(() => {
+        const target = document.querySelector("[contenteditable='true']")
+        if (!target) throw new Error("Editor not found")
+        const clipboardData = new DataTransfer()
+        target.dispatchEvent(new ClipboardEvent("copy", { bubbles: true, cancelable: true, clipboardData }))
+        return { html: clipboardData.getData("text/html"), text: clipboardData.getData("text/plain") }
+      })
+      expect(copied.html).toContain('data-status="uploaded"')
+    }).toPass({ timeout: 15000 })
+    expect(copied.html).toContain("data-pm-slice")
+    expect(copied.html).toContain("attachment-reference")
+
+    // Collapse the select-all before pasting — pasting while it still stands
+    // replaces the document instead of duplicating the chip.
+    await page.keyboard.press("ArrowRight")
+    await page.waitForFunction(() => window.getSelection()?.isCollapsed === true)
+
+    await page.evaluate((flavours) => {
+      const target = document.querySelector("[contenteditable='true']")
+      if (!target) throw new Error("Editor not found")
+      const clipboardData = new DataTransfer()
+      clipboardData.setData("text/html", flavours.html)
+      clipboardData.setData("text/plain", flavours.text)
+      target.dispatchEvent(new ClipboardEvent("paste", { bubbles: true, cancelable: true, clipboardData }))
+    }, copied)
+
+    await expect(editor.locator("span[data-type='attachment-reference']")).toHaveCount(2, { timeout: 5000 })
+
+    // Both chips point at the same attachment, so the message carries two
+    // references and one attachment.
+    await page.getByRole("button", { name: "Send" }).click()
+    await expect(page.locator(".markdown-content button:has-text('document.txt')")).toHaveCount(2, { timeout: 10000 })
+    await expect(page.getByRole("button", { name: /document\.txt 13 B/ })).toHaveCount(1, { timeout: 10000 })
+  })
 })
