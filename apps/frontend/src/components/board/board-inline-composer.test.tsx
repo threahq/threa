@@ -334,23 +334,23 @@ describe("InlineComposerForm refocus-after-send", () => {
     composerStub.canSend = true
   })
 
-  it("returns focus to the resting bar when the user is driving with a mouse/keyboard", async () => {
+  it("returns focus to the resting bar with its ring when the user is driving with a mouse/keyboard", async () => {
     const onClose = vi.fn()
     render(<Anchored>{form({ onClose })}</Anchored>)
 
     lastComposerProps().onSubmit()
 
-    await waitFor(() => expect(onClose).toHaveBeenCalledWith({ refocus: true }))
+    await waitFor(() => expect(onClose).toHaveBeenCalledWith({ refocus: true, quiet: false }))
   })
 
-  it("declines the refocus on a touch send — the resting button inherits :focus-visible from the editor, painting a ring no finger navigated to", async () => {
+  it("still restores focus on a touch send, quietly — dropping it would strand a screen-reader user on <body>, but the ring would mark a control no finger navigated to", async () => {
     vi.spyOn(inputModeModule, "useInputMode").mockReturnValue("touch")
     const onClose = vi.fn()
     render(<Anchored>{form({ onClose })}</Anchored>)
 
     lastComposerProps().onSubmit()
 
-    await waitFor(() => expect(onClose).toHaveBeenCalledWith({ refocus: false }))
+    await waitFor(() => expect(onClose).toHaveBeenCalledWith({ refocus: true, quiet: true }))
   })
 })
 
@@ -390,7 +390,7 @@ describe("InlineComposerForm stash + schedule", () => {
       conversation: { intent: "existing", conversationId: "conv_1" },
     })
     expect(composerStub.resolveDraft).toHaveBeenCalled()
-    expect(onClose).toHaveBeenCalledWith({ refocus: true })
+    expect(onClose).toHaveBeenCalledWith({ refocus: true, quiet: false })
   })
 
   it("restores the content and stays open when scheduling fails", async () => {

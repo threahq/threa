@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest"
-import { render, screen } from "@testing-library/react"
+import { act, render, screen } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { BoardReplyComposer } from "./board-reply-composer"
 import { spyOnExport } from "@/test"
@@ -97,6 +97,37 @@ describe("BoardReplyComposer alwaysDocked (docked-composer semantics)", () => {
     expect(form).toHaveAttribute("data-draft-key", "board:reply:conv_1")
     expect(form).toHaveAttribute("data-schedule-conv", "conv_1")
     expect(form).toHaveAttribute("data-reply-target-title", "")
+  })
+
+  it("quiet close: focus still lands on the resting bar, but its ring is withheld until the next keystroke", async () => {
+    vi.spyOn(useMobileModule, "useIsMobile").mockReturnValue(false)
+    mount()
+    await userEvent.click(screen.getByRole("button", { name: "Write a reply…" }))
+
+    const onClose = (formSpy.mock.calls.at(-1)![0] as InlineComposerFormProps).onClose
+    act(() => onClose({ refocus: true, quiet: true }))
+
+    const resting = screen.getByRole("button", { name: "Write a reply…" })
+    // Focus is restored either way — dropping it strands a screen-reader user.
+    expect(document.activeElement).toBe(resting)
+    expect(resting.className).toContain("focus-visible:ring-0")
+
+    // Any keystroke means the user is navigating: the ring comes back.
+    await userEvent.keyboard("{Tab}")
+    expect(screen.getByRole("button", { name: "Write a reply…" }).className).not.toContain("focus-visible:ring-0")
+  })
+
+  it("loud close: focus and the ring both land on the resting bar", async () => {
+    vi.spyOn(useMobileModule, "useIsMobile").mockReturnValue(false)
+    mount()
+    await userEvent.click(screen.getByRole("button", { name: "Write a reply…" }))
+
+    const onClose = (formSpy.mock.calls.at(-1)![0] as InlineComposerFormProps).onClose
+    act(() => onClose({ refocus: true, quiet: false }))
+
+    const resting = screen.getByRole("button", { name: "Write a reply…" })
+    expect(document.activeElement).toBe(resting)
+    expect(resting.className).not.toContain("focus-visible:ring-0")
   })
 
   it("board-card default: collapsed, and opening carries the advertised stash row for check-out", async () => {

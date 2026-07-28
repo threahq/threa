@@ -6,6 +6,7 @@ import { useScopeDraftPreview } from "@/hooks"
 import { CollapsedComposerBar } from "@/components/composer/collapsed-composer-bar"
 import { InlineComposerForm, type InlineComposerSubmit } from "@/components/board/board-inline-composer"
 import { boardReplyDraftKey } from "@/lib/board/draft-keys"
+import { cn } from "@/lib/utils"
 import type { BoardPost } from "@threa/types"
 
 interface BoardReplyComposerProps {
@@ -112,16 +113,30 @@ export function BoardReplyComposer(props: BoardReplyComposerProps) {
   // Return focus to the resting button after an explicit collapse so keyboard
   // navigation isn't dropped onto <body>. A blur-driven collapse passes
   // refocus=false — the user already moved focus elsewhere.
-  const refocusOnCollapseRef = useRef(false)
+  const refocusOnCollapseRef = useRef<{ quiet: boolean } | null>(null)
+  // A quiet restore still moves focus (a screen reader or keyboard user must not
+  // be stranded on <body>); it only withholds the ring, because the button
+  // inherits :focus-visible from the editor it was focused out of and would
+  // otherwise mark itself for a user who tapped. One-shot: any keystroke means
+  // the ring has to come back, so the next keydown clears it.
+  const [quietFocus, setQuietFocus] = useState(false)
   useEffect(() => {
-    if (!open && refocusOnCollapseRef.current) {
-      refocusOnCollapseRef.current = false
-      buttonRef.current?.focus()
-    }
+    if (open) return
+    const pending = refocusOnCollapseRef.current
+    if (!pending) return
+    refocusOnCollapseRef.current = null
+    setQuietFocus(pending.quiet)
+    buttonRef.current?.focus()
   }, [open])
+  useEffect(() => {
+    if (!quietFocus) return
+    const clear = () => setQuietFocus(false)
+    window.addEventListener("keydown", clear, { capture: true })
+    return () => window.removeEventListener("keydown", clear, { capture: true })
+  }, [quietFocus])
 
-  const close = useCallback((opts?: { refocus?: boolean }) => {
-    refocusOnCollapseRef.current = opts?.refocus ?? false
+  const close = useCallback((opts?: { refocus?: boolean; quiet?: boolean }) => {
+    refocusOnCollapseRef.current = opts?.refocus ? { quiet: opts.quiet ?? false } : null
     setOpen(false)
   }, [])
 
@@ -151,7 +166,9 @@ export function BoardReplyComposer(props: BoardReplyComposerProps) {
     return (
       <CollapsedComposerBar
         buttonRef={buttonRef}
-        className="mt-3"
+        // twMerge keeps the last of a conflicting pair, so these win over the
+        // bar's own ring for as long as the quiet restore holds.
+        className={cn("mt-3", quietFocus && "focus-visible:ring-0 focus-visible:ring-offset-0")}
         draft={scopeDraft}
         placeholder="Write a reply…"
         onClick={() => setOpen(true)}
@@ -185,7 +202,7 @@ function BoardReplyComposerForm({
   docked,
   armedReply,
 }: BoardReplyComposerProps & {
-  onClose: (opts?: { refocus?: boolean }) => void
+  onClose: (opts?: { refocus?: boolean; quiet?: boolean }) => void
   pendingQuote: QuoteReplyData | null
   onQuoteConsumed: () => void
   restoreStashedId: string | null
