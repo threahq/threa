@@ -301,6 +301,14 @@ function renderRowContent(row: BoardRow, props: BranchedBoardRowsProps): ReactNo
           <UnreadDivider isDimmed={row.isDimmed} />
         </div>
       )
+    // A new BoardRow kind with no case here would return undefined and render an
+    // invisible gap that still counts toward the row list — tsconfig sets no
+    // `noImplicitReturns` and ReactNode admits undefined, so only this makes it
+    // a compile error.
+    default: {
+      const exhaustive: never = row
+      return exhaustive
+    }
   }
 }
 
