@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto"
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { homedir, hostname } from "node:os"
 import { basename, dirname, join } from "node:path"
+import { acceptClaudeBootPrompts } from "./claude-boot"
 import { die } from "./errors"
 import { commandExists, commandPath, run, shellQuote } from "./shell"
 import { capturePane, createWindow, ensureTmuxSession, pickTmuxWindow, sendKeys, tmuxSession } from "./tmux"
@@ -229,13 +230,6 @@ export class PiRuntimeSpawner extends RuntimeSpawner {
   }
 }
 
-// Boot dialogs (trust prompt, MCP-server approval, update notices) all end
-// with an "Enter to confirm/continue" hint; the composer's input line is a
-// bare "❯" only once boot has settled (during a dialog that line carries the
-// highlighted option, e.g. "❯ 1. Use this MCP server").
-const BOOT_DIALOG_RE = /Enter to confirm|Enter to continue/
-const IDLE_PROMPT_RE = /^❯\s*$/m
-
 function prepareClaudeChannel(): string {
   const channelDir = join(import.meta.dir, "..", "..", "claude-code-remote")
   const channelEntry = join(channelDir, "src", "index.ts")
@@ -295,7 +289,7 @@ export class ClaudeRuntimeSpawner extends RuntimeSpawner {
       Object.assign(partial, { tmuxWindow: window, tmuxWindowId: windowId, tmuxPaneId: paneId })
       console.log(`harnessd: launched Claude Code in tmux ${session}:${window} (${windowId})`)
 
-      if (!options.noAutoAccept) await this.acceptBootPrompts(paneId)
+      if (!options.noAutoAccept) await acceptClaudeBootPrompts(paneId)
 
       const outputText = capturePane(paneId)
       return {
@@ -351,7 +345,7 @@ export class ClaudeRuntimeSpawner extends RuntimeSpawner {
     )
     console.log(`harnessd: resumed Claude Code in tmux ${session}:${window} (${windowId})`)
     try {
-      await this.acceptBootPrompts(paneId)
+      await acceptClaudeBootPrompts(paneId)
       sendKeys(paneId, ["/remote-control", "Enter"])
       await Bun.sleep(Number(process.env.THREA_HARNESSD_CLAUDE_REMOTE_WAIT_MS ?? 2000))
       sendKeys(paneId, ["/rc", "Enter"])
@@ -406,28 +400,6 @@ export class ClaudeRuntimeSpawner extends RuntimeSpawner {
       )
     )
     return path
-  }
-
-  /**
-   * Walk Claude Code through its boot dialogs by pressing Enter until the
-   * composer prompt is idle. Polling capture-pane beats fixed sleeps: a fast
-   * boot isn't held for the full wait and a slow one isn't abandoned with a
-   * dialog still open (which left the channel half-wired often enough that the
-   * old two-blind-Enters approach needed constant retuning).
-   */
-  private async acceptBootPrompts(paneId: string): Promise<void> {
-    const deadline = Date.now() + Number(process.env.THREA_HARNESSD_CLAUDE_BOOT_WAIT_MS ?? 45_000)
-    while (Date.now() < deadline) {
-      const text = capturePane(paneId)
-      if (BOOT_DIALOG_RE.test(text)) {
-        sendKeys(paneId, ["Enter"])
-        await Bun.sleep(1000)
-        continue
-      }
-      if (IDLE_PROMPT_RE.test(text)) return
-      await Bun.sleep(500)
-    }
-    console.warn("harnessd: Claude Code boot did not settle before the wait deadline; continuing")
   }
 
   private async prelinkScratchpad(
