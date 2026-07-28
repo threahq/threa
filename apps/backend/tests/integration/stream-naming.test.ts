@@ -143,17 +143,31 @@ describe("Stream Naming", () => {
         expect(result.source).toBe("placeholder")
       })
 
-      test("uses placeholder if displayName set but not generated", () => {
-        // displayName without displayNameGeneratedAt means manual name wasn't set properly
+      test("renders a name set at creation, with no auto-namer timestamp", () => {
+        // This assertion used to be the opposite, on the theory that a name
+        // without `displayNameGeneratedAt` meant it "wasn't set properly".
+        // `StreamRepository.insert` has no such column, so that description fit
+        // every scratchpad a bot ever created: the name was stored and never
+        // rendered, and `needsAutoNaming` (displayName === null) skipped those
+        // streams, so nothing ever set the timestamp either.
         const stream = createMockStream({
           type: "scratchpad",
           displayName: "Manual Name",
           displayNameGeneratedAt: null,
         })
         const result = getEffectiveDisplayName(stream)
-        // This case falls through to placeholder since displayNameGeneratedAt is null
-        expect(result.displayName).toBe("New scratchpad")
-        expect(result.source).toBe("placeholder")
+        expect(result.displayName).toBe("Manual Name")
+        expect(result.source).toBe("explicit")
+      })
+
+      test("only a genuinely nameless scratchpad gets the placeholder", () => {
+        for (const displayName of [null, "", "   "]) {
+          const stream = createMockStream({ type: "scratchpad", displayName, displayNameGeneratedAt: null })
+          expect(getEffectiveDisplayName(stream)).toEqual({
+            displayName: "New scratchpad",
+            source: "placeholder",
+          })
+        }
       })
     })
 
