@@ -1,8 +1,14 @@
 # Calls in the background on a phone
 
-Status: **Planned, not built.** Nothing here is measured on real hardware yet.
-Every code claim below was checked against the source at `b6760411`; the
-`Verified` / `Unverified` notes say which is which.
+Status: **Built, not measured.** All three chunks shipped as PRs #1622, #1623 and
+#1625 (Stack #1624); nothing here has been run on real hardware yet, which is
+what the §Verification list is for.
+
+"What the code actually does today" and every line reference below describe the
+source **as of `b6760411`**, before this stack — that is what the chunks were
+planned against, and it is deliberately not rewritten, so the problem statement
+still reads as it did. Where the build diverged from the plan, the divergence is
+recorded in place, next to the deliverable it changed.
 
 ## The ceiling, stated up front
 
@@ -190,17 +196,38 @@ worth keeping alive.
   `setMicrophoneActive(active)`, `setCameraActive(active)`, `release()`.
   It owns **one long-lived `<audio>`** for the session's life: a self-contained
   silent-WAV `data:` URI (no network, CSP-safe), `loop = true`, not muted,
-  started inside the start gesture. Every `navigator.mediaSession.setActionHandler`
+  started inside the start gesture.
+
+  **Built at 8 seconds, generated at runtime.** Chromium classifies a player
+  whose `duration` is under `kMinimumContentDuration` (5s) as _transient_ and
+  builds no controllable media session for it, and `loop` does not raise
+  `duration` — so the short clip the plan implied would have shipped the whole
+  chunk as a no-op on Android with every unit test green. `SILENT_WAV_SECONDS` /
+  `SILENT_WAV_SAMPLE_RATE` are the source of truth; generating rather than
+  embedding keeps ~64KB of zeros out of the bundle.
+
+  Every `navigator.mediaSession.setActionHandler`
   call is individually `try`/`catch`ed — an unsupported action throws
   `TypeError` and must not take the supported ones down with it. `release()`
   pauses and removes the element, clears each handler, nulls `metadata`, and sets
   `playbackState = "none"`.
+
 - `call-manager.ts`: `CallManagerDeps.createMediaSession(): CallMediaSession | null`
   (production wires `createCallMediaSession()` when `navigator.mediaSession`
   exists, else null — INV-12/13, constructed once, injected, so no test touches a
-  real Media Session). `CallSession.mediaSession` holds the handle.
+  real Media Session). **Built on `CallManager` (`this.mediaSession`), not on
+  `CallSession`:** activation happens inside the start gesture, before the
+  session object exists, and `setCallTitle` can arrive at any point in the join
+  window — a session-owned field would silently drop the title pushed while
+  joining, which is the normal case.
   - `runStart` activates it **before** the transport connect and before the first
-    capture, so a call that is only ringing out already owns a session.
+    capture, so a call that is only ringing out already owns a session. Only the
+    hang-up action is registered there: `setMuted`/`setCameraOn` both early-return
+    without a session, and a null handler is what removes a control from the
+    notification, so no button is shown before it can act. `wireMediaSessionToggles`
+    adds mute — and camera only on a video call — after the capture, seeded from
+    the live state (the API's toggles default to inactive, so an unseeded
+    notification shows a live call as muted and the first tap mutes).
   - Handlers: `hangup → void this.leaveCall()`,
     `toggleMicrophone → this.setMuted(!muted)`,
     `toggleCamera → void this.setCameraOn(!cameraOn)` — the existing controller
@@ -274,7 +301,9 @@ when the truth is "your phone was locked and the lease lapsed".
 **Deliverables**
 
 - `apps/frontend/src/stores/call-store.ts`: `DisplacedCall` gains
-  `reason: "taken_over" | "ended_while_away"`. The interface name stays —
+  `reason: "taken_over" | "ended_while_away" | "connection_lost"`. **Built with a
+  third reason the plan did not have** — see the mapping correction below. The
+  interface name stays —
   renaming it (and `CallMovedChip`, `useDisplacedCall`, the dock branch, the e2e
   selector) is churn with no behavior in it.
 - `call-manager.ts`: `CallSession.suspendedSinceRenew: boolean`, set by the
@@ -286,19 +315,31 @@ when the truth is "your phone was locked and the lease lapsed".
     server addressed it to this endpoint under the call-row lock; it is the one
     unambiguous takeover signal. Existing copy and the e2e assertion at
     `tests/browser/calls.spec.ts:236` are unchanged by design.
-  - re-join returning a different endpoint id (`:767`), a failed re-join
-    (`:775`), and a `CALL_LEASE_SUPERSEDED` renew (`:1192`) →
-    `suspendedSinceRenew ? "ended_while_away" : "taken_over"`. All three are
+  - re-join returning a different endpoint id, a failed re-join, and a
+    `CALL_LEASE_SUPERSEDED` renew →
+    `suspendedSinceRenew ? "ended_while_away" : "connection_lost"`. All three are
     ambiguous from the client (a reaped lease and a superseded one are the same
     null from `renewLease`); the freeze/pagehide evidence is the only thing that
     tells them apart, which is why this chunk sits on top of the instrumentation.
+
+    **Correction to the plan as first written.** It mapped these to
+    `suspendedSinceRenew ? "ended_while_away" : "taken_over"`, which reintroduces
+    the exact falsehood the chunk exists to remove. Nothing in that branch is
+    evidence of another device: a >45s network gap on a desktop that never froze
+    (tunnel, Wi-Fi switch, VPN flap) reaps the lease the same way, and the socket
+    `disconnect` handler only demotes to `reconnecting`, so a session can sit
+    there indefinitely waiting for it. Only the `call:endpoint:closed` push
+    proves a takeover, so only it may claim one.
+
   - The two `teardown()`-only branches now write the notice **after** teardown,
     the ordering `handleTakenOver` already uses (teardown clears the store, so a
     notice written before it would be wiped).
+
 - `apps/frontend/src/components/call/call-moved-chip.tsx`: copy switches on
   `reason` — `"taken_over"` keeps "Call moved to another device" / "Rejoin
-  here"; `"ended_while_away"` reads "Call ended while your phone was locked" with
-  the same one-tap action. The action stays a `takeover: true` launch bound to
+  here"; `"ended_while_away"` reads "Call ended while your phone was locked";
+  `"connection_lost"` reads "Call ended — this device lost its connection". All
+  three keep the same one-tap action. The action stays a `takeover: true` launch bound to
   `expectedCallId`: the user's own stale endpoint may still hold a lease, so a
   plain join would 409 and re-ask a question the chip already answered.
   **No auto-rejoin** — it would re-open the mic with no gesture.
@@ -306,10 +347,14 @@ when the truth is "your phone was locked and the lease lapsed".
   plus `MacIntel` + `maxTouchPoints > 1` for iPadOS).
 - `apps/frontend/src/components/call/ios-lock-notice.tsx` — a one-line banner
   shaped exactly like `CaptureErrorBanner` (INV-35), rendered by
-  `MobileCallDrawer` at the same place (`mobile-call-drawer.tsx:302`, so
-  `contentMode !== "min"`), only when `isIosWebKit()`: locking the phone ends the
-  call. Static from mount, fixed row — no layout shift (INV-21), no toast, no
-  dismissal state.
+  `MobileCallDrawer` beside the capture banner, only when `isIosWebKit()`:
+  locking the phone ends the call. Static from mount, fixed row — no layout
+  shift (INV-21), no toast, no dismissal state. **Built for `standard`/`full`
+  only, not the plan's `contentMode !== "min"`:** `min` and `compact` are
+  fixed-height dark pills (compact is a hard 72px, all of it spoken for by the
+  control row), so a permanent banner there clips the controls and paints a
+  light surface on a dark one. `CaptureErrorBanner` shares that placement but is
+  transient and exceptional; this notice is permanent for every iOS user.
 
 **Tests**
 
@@ -345,12 +390,24 @@ when the truth is "your phone was locked and the lease lapsed".
   adjacent bug, found while reading this path. It needs its own copy and an
   action-less chip (Rejoin is wrong when access is gone), so it belongs with
   stream-access work, not here. Recorded so it is not lost.
-- Touching `detectSingleActiveCapture` (`call-manager.ts:1491`) or
-  `use-visual-viewport.ts`'s private `isIOS`. Both are iOS probes with slightly
-  different predicates; unifying them changes load-bearing capture behavior and a
-  545-line viewport suite from a chunk about copy. Three probes remain, one of
-  them new and shared — stated, not hidden.
+- `use-visual-viewport.ts`'s private `isIOS`. Folding it in changes a 545-line
+  viewport suite from a chunk about copy.
 - Lease tuning. Still gated on the §3 data.
+
+**Built beyond this section, deliberately:**
+
+- `detectSingleActiveCapture` now delegates to `isIosWebKit()`. The plan excluded
+  touching it, on the assumption the predicates differed; they were byte-identical
+  at `b6760411`, so the delegation preserves behaviour exactly and INV-35 is
+  better served by one probe than two. It keeps its own name and doc, because a
+  single-active-capture rule is a different claim from a platform fact.
+- `CallDock` opens an iOS call at `standard` rather than `compact`. The notice is
+  gated to the modes with room for it, and `compact` is what an audio call would
+  otherwise land on — a warning the user never sees is not a warning.
+- `IosLockNotice` also renders on the three desktop surfaces, beside their capture
+  banners (INV-35). `useIsMobile()` is viewport-based, so an iPad — and an iPhone
+  in landscape — never mounts `MobileCallDrawer`, and gating the warning there
+  would hide it from exactly the devices `isIosWebKit()` detects.
 
 **Why this boundary:** a reviewer sees one store field, one derived reason, three
 call sites that already tore down now saying why, and one banner. It is also the

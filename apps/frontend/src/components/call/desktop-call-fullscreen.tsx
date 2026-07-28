@@ -13,6 +13,7 @@ import { useWorkspaceUserId } from "@/hooks/use-workspaces"
 import { setCallFilmstripSide, useCallPrefs, type DesktopSurface } from "@/stores/call-prefs-store"
 import { CallControls } from "./call-controls"
 import { CaptureErrorBanner } from "./call-capture-error"
+import { IosLockNotice } from "./ios-lock-notice"
 import { CallStageLayout } from "./call-stage-layout"
 import { CallTimer } from "./call-timer"
 import { DesktopCallSurfacePicker } from "./desktop-call-surface-picker"
@@ -95,6 +96,7 @@ export function DesktopCallFullscreen({
       }}
     >
       {captureError && <CaptureErrorBanner error={captureError} className="mx-3 mt-2" />}
+      <IosLockNotice className="mx-3 mt-2" />
       <div className="flex items-center gap-2 px-3 py-2">
         <div className="flex min-w-0 flex-col">
           <span className="truncate text-sm font-medium">{title}</span>

@@ -3,6 +3,7 @@ import { io } from "socket.io-client"
 import { api } from "@/api/client"
 import { getCachedWsConfig } from "@/lib/cached-ws-config"
 import { setDictationExternalHold } from "@/contexts/dictation-coordinator-context"
+import { isIosWebKit } from "@/lib/platform"
 import {
   setCallSession,
   setCallPhase,
@@ -21,6 +22,7 @@ import {
   getCallState,
   type CallRosterParticipant,
   type CallDeviceState,
+  type DisplacedCallReason,
 } from "@/stores/call-store"
 import { recordCallLifecycleEvent, type CallLifecycleKind } from "./lifecycle-log"
 import { createCallMediaSession, type CallMediaSession } from "./media-session"
@@ -212,6 +214,13 @@ interface CallSession {
   meterRaf: number | null
   wakeLock: WakeLockLike | null
   releaseLock: (() => void) | null
+  /**
+   * The page was frozen or hidden by a `pagehide` since the last lease renew
+   * that succeeded — i.e. we were suspended and have NOT proven the lease
+   * survived. `freeze`/`pagehide` only: a desktop tab switch fires
+   * `visibilitychange` and would mislabel a genuine takeover.
+   */
+  suspendedSinceRenew: boolean
   /** Detaches every page-lifecycle listener installed for this session. */
   onLifecycle: (() => void) | null
   onDeviceChange: (() => void) | null
@@ -426,6 +435,7 @@ export class CallManager implements CallController {
         meterRaf: null,
         wakeLock: null,
         releaseLock,
+        suspendedSinceRenew: false,
         onLifecycle: null,
         onDeviceChange: null,
       }
@@ -611,6 +621,11 @@ export class CallManager implements CallController {
     }
     const session = this.session
     if (!session) return
+    // Retire the generation before awaiting the leave ack (up to 2s, and longer
+    // in the reconnecting case this is most often used from). Until now nothing
+    // read it during that window; a re-join continuation landing in it would
+    // write a displaced notice for a call the user deliberately ended.
+    this.sessionGen++
     await this.emitLeave(session)
     await this.teardown()
   }
@@ -817,7 +832,7 @@ export class CallManager implements CallController {
       if (!s) return
       const evt = payload as { callId?: string; endpointId?: string }
       if (evt.callId !== s.callId || evt.endpointId !== s.endpointId) return
-      void this.handleTakenOver(s)
+      void this.handleTakenOver(s, "taken_over")
     })
     session.socket.on("disconnect", () => {
       // A socket drop is NOT a call end (the lease holds the slot). Demote to
@@ -851,7 +866,7 @@ export class CallManager implements CallController {
           // (a fresh incarnation on the fresh endpoint).
           if (join.endpointId !== s.endpointId) {
             recordCallLifecycleEvent({ kind: "rejoin_new_endpoint", detail: join.endpointId })
-            void this.teardown()
+            void this.handleTakenOver(s, this.ambiguousDisplacedReason(s))
             return
           }
           recordCallLifecycleEvent({ kind: "rejoin_same_endpoint" })
@@ -862,35 +877,52 @@ export class CallManager implements CallController {
         .catch((err: unknown) => {
           // Same recheck: a stale failed rejoin for the OLD call must not tear
           // down whatever `this.session` now is (possibly a newly started call).
-          if (!this.sessionForGen(gen)) return
+          const s = this.sessionForGen(gen)
+          if (!s) return
           recordCallLifecycleEvent({ kind: "rejoin_failed", detail: err instanceof Error ? err.message : undefined })
-          void this.teardown()
+          void this.handleTakenOver(s, this.ambiguousDisplacedReason(s))
         })
     })
   }
 
   /**
-   * Give the call up to the device that took it over, and say where it went.
+   * Give the call up and say why it is gone: another device took it over, or a
+   * lease lapsed while this page was suspended. Every path that loses the call
+   * without the user asking lands here, so none of them can vanish silently.
    *
    * Local teardown ONLY — this must not leave server-side. `call:leave` would
    * cancel this user's own outgoing ring (taking over a still-ringing DM call
    * would kill the ring the new device wants), and the endpoint-free REST leave
    * closes EVERY live endpoint of the user, including the one that just took
-   * over. The server already closed this endpoint under the call-row lock;
-   * there is nothing left here to settle.
+   * over. The endpoint here is already closed or reaped server-side; there is
+   * nothing left to settle.
    *
    * The notice is written after `teardown` (which clears the store) so it
    * survives — {@link DisplacedCall}.
    */
-  private async handleTakenOver(session: CallSession): Promise<void> {
+  private async handleTakenOver(session: CallSession, reason: DisplacedCallReason): Promise<void> {
     const displaced = {
       callId: session.callId,
       workspaceId: session.workspaceId,
       streamId: session.streamId,
       mode: session.mode,
+      reason,
     }
     await this.teardown()
     setDisplacedCall(displaced)
+  }
+
+  /**
+   * A lost endpoint with no cause attached. `renewLease` returns the same null
+   * for a superseded lease as for one the sweeper reaped, and a re-join that
+   * fails or returns a new endpoint id says nothing about who holds the call —
+   * so none of these may claim a takeover, which only the
+   * `call:endpoint:closed` push proves. Being suspended since the last good
+   * renew is the only evidence the client has, and it separates a locked phone
+   * from a network gap longer than the lease TTL.
+   */
+  private ambiguousDisplacedReason(session: CallSession): DisplacedCallReason {
+    return session.suspendedSinceRenew ? "ended_while_away" : "connection_lost"
   }
 
   private applyRoster(session: CallSession, version: number, roster: CallRosterParticipant[]): void {
@@ -1273,15 +1305,17 @@ export class CallManager implements CallController {
         // stale ack never tears down a newer call.
         if (!this.sessionForGen(gen)) return
         const ack = result as Ack<{ leaseExpiresAt: string }>
-        if (ack?.ok) recordCallLifecycleEvent({ kind: "lease_renew_ok" })
-        else recordCallLifecycleEvent({ kind: "lease_renew_failed", detail: ack?.code })
+        if (ack?.ok) {
+          session.suspendedSinceRenew = false
+          recordCallLifecycleEvent({ kind: "lease_renew_ok" })
+        } else recordCallLifecycleEvent({ kind: "lease_renew_failed", detail: ack?.code })
         // A superseded lease means our endpoint was taken over — the call is lost
         // on this incarnation. The socket push above normally gets here first;
         // this is the backstop for a device that lost the socket, and it lands on
         // the same displaced state so the outcome doesn't depend on which won.
         if (!ack?.ok && ack?.code === "CALL_LEASE_SUPERSEDED") {
           const s = this.sessionForGen(gen)
-          if (s) void this.handleTakenOver(s)
+          if (s) void this.handleTakenOver(s, this.ambiguousDisplacedReason(s))
         }
       })
     }, interval)
@@ -1369,13 +1403,18 @@ export class CallManager implements CallController {
       if (this.session !== session) return
       recordCallLifecycleEvent({ kind })
     }
+    const suspendRecorder = (kind: CallLifecycleKind) => () => {
+      if (this.session !== session) return
+      session.suspendedSinceRenew = true
+      recordCallLifecycleEvent({ kind })
+    }
     const bindings: Array<[EventTarget, string, () => void]> = [
       [document, "visibilitychange", onVisibility],
-      [document, "freeze", recorder("freeze")],
+      [document, "freeze", suspendRecorder("freeze")],
       [document, "resume", recorder("resume")],
     ]
     if (typeof window !== "undefined") {
-      bindings.push([window, "pagehide", recorder("pagehide")], [window, "pageshow", recorder("pageshow")])
+      bindings.push([window, "pagehide", suspendRecorder("pagehide")], [window, "pageshow", recorder("pageshow")])
     }
     for (const [target, event, handler] of bindings) target.addEventListener(event, handler)
     session.onLifecycle = () => {
@@ -1599,14 +1638,11 @@ function resolveCallsUrl(workspaceId: string): string | null {
 
 /**
  * iOS/iPadOS Safari allows only one active `getUserMedia` at a time — a second
- * concurrent capture mutes the first. iPadOS reports as "MacIntel", so fall
- * through to the touch-point probe there.
+ * concurrent capture mutes the first. Kept as its own name because that is a
+ * capture rule, not a platform fact; the probe itself is shared (INV-35).
  */
 function detectSingleActiveCapture(): boolean {
-  if (typeof navigator === "undefined") return false
-  const ua = navigator.userAgent ?? ""
-  if (/iPad|iPhone|iPod/.test(ua)) return true
-  return navigator.platform === "MacIntel" && (navigator.maxTouchPoints ?? 0) > 1
+  return isIosWebKit()
 }
 
 export function defaultCallManagerDeps(): CallManagerDeps {

@@ -20,6 +20,7 @@ import { CallControls } from "./call-controls"
 import { CallTimer } from "./call-timer"
 import { CameraButton, LeaveButton, MuteButton } from "./call-control-buttons"
 import { CaptureErrorBanner } from "./call-capture-error"
+import { IosLockNotice } from "./ios-lock-notice"
 import { useCallCaptureError, useCallConnectedAt, useCallPhase, useCallRoster } from "./call-store-hooks"
 import {
   anchorSurfaceAtPointer,
@@ -168,6 +169,7 @@ function ConnectedBody({
   return (
     <>
       {captureError && <CaptureErrorBanner error={captureError} className="mx-3 mt-2" />}
+      <IosLockNotice className="mx-3 mt-2" />
       <div
         className={cn(
           "grid min-h-0 flex-1 gap-2 overflow-y-auto p-3",

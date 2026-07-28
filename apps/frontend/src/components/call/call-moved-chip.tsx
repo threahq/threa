@@ -1,20 +1,37 @@
-import { PhoneForwarded, X } from "lucide-react"
+import { PhoneForwarded, PhoneOff, X, type LucideIcon } from "lucide-react"
 import { Button } from "@/components/ui/button"
-import { setDisplacedCall } from "@/stores/call-store"
+import { setDisplacedCall, type DisplacedCallReason } from "@/stores/call-store"
 import { useCallLaunch } from "./call-launch-context"
 import { useDisplacedCall } from "./call-store-hooks"
 
+const DISPLACED_TEXT: Record<DisplacedCallReason, string> = {
+  taken_over: "Call moved to another device",
+  ended_while_away: "Call ended while your phone was locked",
+  connection_lost: "Call ended — this device lost its connection",
+}
+
+// The forwarded-call glyph asserts a takeover as loudly as the words do, and a
+// user reads it first. Only the reason that proves one keeps it.
+const DISPLACED_ICON: Record<DisplacedCallReason, LucideIcon> = {
+  taken_over: PhoneForwarded,
+  ended_while_away: PhoneOff,
+  connection_lost: PhoneOff,
+}
+
 /**
- * Shown after another of this user's devices took the call over ("Join on this
- * device" there). The server closed this endpoint, so the dock has already torn
- * down — without this the call surface would simply vanish mid-conversation.
+ * Shown after the call left this device without the user ending it: another
+ * device took it over ("Join on this device" there), or the endpoint's lease
+ * lapsed — because this page was suspended, or because the connection was gone
+ * longer than the lease TTL. The dock has already torn down — without this the
+ * call surface would simply vanish mid-conversation.
  *
  * A chip with actions rather than a toast (INV-63): it needs a decision, and a
  * toast would expire before a user who was looking at their other device sees it.
- * This chip exists BECAUSE the other device holds the call, so its action asks
- * for takeover directly — routing through a plain join would 409 and re-ask a
- * question the chip already answered. Harmless if that device has since left:
- * with no live endpoint, takeover mints a fresh one.
+ * The action asks for takeover on every reason, not only `taken_over`: a live
+ * endpoint still holding this call is the common case either way — the other
+ * device on a takeover, this device's own reaped-but-not-yet-swept endpoint
+ * otherwise — and a plain join would 409 and re-ask a question the chip already
+ * answered. Harmless with no live endpoint: takeover then mints a fresh one.
  *
  * The pill caps at the viewport so a phone truncates the message instead of
  * pushing the actions off the left edge (it is `fixed right-4` with no left
@@ -24,10 +41,11 @@ export function CallMovedChip() {
   const displaced = useDisplacedCall()
   const { launch } = useCallLaunch()
   if (!displaced) return null
+  const Icon = DISPLACED_ICON[displaced.reason]
   return (
     <div className="flex max-w-[calc(100vw-2rem)] items-center gap-1.5 rounded-full border bg-background py-1.5 pl-3 pr-1.5 text-xs shadow-lg">
-      <PhoneForwarded className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden />
-      <span className="min-w-0 truncate text-muted-foreground">Call moved to another device</span>
+      <Icon className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden />
+      <span className="min-w-0 truncate text-muted-foreground">{DISPLACED_TEXT[displaced.reason]}</span>
       <Button
         size="sm"
         variant="secondary"

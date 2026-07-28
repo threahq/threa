@@ -28,6 +28,7 @@ import { CallControls } from "./call-controls"
 import { CameraButton, LeaveButton, MuteButton } from "./call-control-buttons"
 import { CallTimer } from "./call-timer"
 import { CaptureErrorBanner } from "./call-capture-error"
+import { IosLockNotice } from "./ios-lock-notice"
 import { CallJoiningBody } from "./pre-join-gate"
 import { DesktopCallSurfacePicker } from "./desktop-call-surface-picker"
 import { useCallCaptureError, useCallConnectedAt, useCallRoster, useCallSurfaceMode } from "./call-store-hooks"
@@ -217,6 +218,7 @@ function SideTilesView({
         surfacePickerTriggerRef={surfacePickerTriggerRef}
       />
       {captureError && <CaptureErrorBanner error={captureError} className="mx-3 mt-2" />}
+      <IosLockNotice className="mx-3 mt-2" />
       <div className={cn("grid flex-1 gap-2 overflow-y-auto p-3", joined.length > 1 ? "grid-cols-2" : "grid-cols-1")}>
         {joined.map((p) => (
           <CallTile

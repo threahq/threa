@@ -156,6 +156,32 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
+describe("CallDock — opening surface mode", () => {
+  const REAL_UA = navigator.userAgent
+  function setUserAgent(value: string) {
+    Object.defineProperty(navigator, "userAgent", { configurable: true, get: () => value })
+  }
+  afterEach(() => setUserAgent(REAL_UA))
+
+  it("opens an audio call at compact", () => {
+    setUserAgent("Mozilla/5.0 (Linux; Android 15) AppleWebKit/537.36 Chrome/150")
+    renderDock(makeManager())
+    enterConnectedCall([participant({ userId: "usr_self", endpointId: "callep_self" })])
+
+    expect(getCallState().surfaceMode).toBe("compact")
+  })
+
+  it("opens an audio call at standard on iOS, the only mode that shows the lock warning", () => {
+    // `compact` is a fixed 72px pill with no room for the notice, so a warning
+    // gated to the taller modes would never reach the user it is written for.
+    setUserAgent("Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15")
+    renderDock(makeManager())
+    enterConnectedCall([participant({ userId: "usr_self", endpointId: "callep_self" })])
+
+    expect(getCallState().surfaceMode).toBe("standard")
+  })
+})
+
 describe("CallDock — idle", () => {
   it("renders nothing when idle with no launch or cross-tab call", () => {
     const { container } = renderDock(makeManager())
@@ -174,7 +200,15 @@ describe("CallDock — idle", () => {
     renderDock(manager)
     // The manager writes this after its teardown; the surface it was rendering is
     // already gone, so this chip is the only thing left that explains why.
-    act(() => setDisplacedCall({ callId: "call_1", workspaceId: WORKSPACE_ID, streamId: "stream_1", mode: "video" }))
+    act(() =>
+      setDisplacedCall({
+        callId: "call_1",
+        workspaceId: WORKSPACE_ID,
+        streamId: "stream_1",
+        mode: "video",
+        reason: "taken_over",
+      })
+    )
 
     expect(screen.getByText(/moved to another device/i)).toBeInTheDocument()
     await userEvent.click(screen.getByRole("button", { name: "Rejoin here" }))
@@ -187,9 +221,57 @@ describe("CallDock — idle", () => {
 
   it("dismisses the moved-call chip", async () => {
     renderDock(makeManager())
-    act(() => setDisplacedCall({ callId: "call_1", workspaceId: WORKSPACE_ID, streamId: "stream_1", mode: "video" }))
+    act(() =>
+      setDisplacedCall({
+        callId: "call_1",
+        workspaceId: WORKSPACE_ID,
+        streamId: "stream_1",
+        mode: "video",
+        reason: "taken_over",
+      })
+    )
     await userEvent.click(screen.getByRole("button", { name: "Dismiss" }))
     expect(screen.queryByText(/moved to another device/i)).toBeNull()
+  })
+
+  it("says the call ended while the phone was locked, with the same one-tap rejoin", async () => {
+    const manager = makeManager()
+    renderDock(manager)
+    act(() =>
+      setDisplacedCall({
+        callId: "call_1",
+        workspaceId: WORKSPACE_ID,
+        streamId: "stream_1",
+        mode: "video",
+        reason: "ended_while_away",
+      })
+    )
+
+    expect(screen.getByText(/ended while your phone was locked/i)).toBeInTheDocument()
+    expect(screen.queryByText(/moved to another device/i)).toBeNull()
+    expect(screen.getByRole("button", { name: "Dismiss" })).toBeInTheDocument()
+    await userEvent.click(screen.getByRole("button", { name: "Rejoin here" }))
+    // Still a takeover launch: this device's own stale endpoint may hold the lease.
+    expect(manager.startCall).toHaveBeenCalledWith(
+      expect.objectContaining({ streamId: "stream_1", expectedCallId: "call_1", takeover: true })
+    )
+  })
+
+  it("blames the connection, not another device, when there is no evidence of a takeover", () => {
+    renderDock(makeManager())
+    act(() =>
+      setDisplacedCall({
+        callId: "call_1",
+        workspaceId: WORKSPACE_ID,
+        streamId: "stream_1",
+        mode: "video",
+        reason: "connection_lost",
+      })
+    )
+
+    expect(screen.getByText(/lost its connection/i)).toBeInTheDocument()
+    expect(screen.queryByText(/moved to another device/i)).toBeNull()
+    expect(screen.getByRole("button", { name: "Rejoin here" })).toBeInTheDocument()
   })
 })
 

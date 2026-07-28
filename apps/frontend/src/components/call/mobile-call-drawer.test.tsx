@@ -25,6 +25,7 @@ import { CallManagerProvider } from "./call-manager-context"
 type CachedWorkspaceUser = Parameters<typeof seedWorkspaceCache>[1]["users"][number]
 
 const WORKSPACE_ID = "workspace_1"
+const IOS_UA_ORIGINAL = navigator.userAgent
 
 function user(overrides: Partial<CachedWorkspaceUser>): CachedWorkspaceUser {
   return {
@@ -289,6 +290,44 @@ describe("MobileCallDrawer — capture error visible in every mode", () => {
       expect(screen.getByTestId("call-capture-error")).toBeInTheDocument()
     })
   }
+})
+
+describe("MobileCallDrawer — iOS lock notice", () => {
+  function setUserAgent(value: string) {
+    Object.defineProperty(navigator, "userAgent", { configurable: true, get: () => value })
+  }
+
+  afterEach(() => {
+    setUserAgent(IOS_UA_ORIGINAL)
+  })
+
+  it("warns an iOS user that locking the phone ends the call, in the modes that have room", () => {
+    setUserAgent("Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15")
+    renderDrawer()
+    enterConnected([participant({ userId: "usr_self" })])
+
+    for (const m of ["standard", "full"] as CallSurfaceMode[]) {
+      setMode(m)
+      expect(screen.getByTestId("call-ios-lock-notice")).toBeInTheDocument()
+    }
+    // `min` and `compact` are fixed-height dark pills — 72px in compact, all of it
+    // taken by the control row. A banner there clips the controls it sits above.
+    // `CallDock` therefore opens an iOS call at `standard`, so the mode the user
+    // lands on is one that shows this (see the dock's own test).
+    for (const m of ["min", "compact"] as CallSurfaceMode[]) {
+      setMode(m)
+      expect(screen.queryByTestId("call-ios-lock-notice")).toBeNull()
+    }
+  })
+
+  it("never warns on a platform that keeps the call alive in the background", () => {
+    setUserAgent("Mozilla/5.0 (Linux; Android 15) AppleWebKit/537.36 Chrome/150")
+    renderDrawer()
+    enterConnected([participant({ userId: "usr_self" })])
+    setMode("full")
+
+    expect(screen.queryByTestId("call-ios-lock-notice")).toBeNull()
+  })
 })
 
 describe("MobileCallDrawer — global", () => {
