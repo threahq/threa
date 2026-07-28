@@ -1,10 +1,23 @@
-import { describe, expect, it } from "vitest"
+import { afterEach, describe, expect, it } from "vitest"
 import { Editor } from "@tiptap/core"
 import type { JSONContent } from "@tiptap/react"
 import { NodeSelection } from "@tiptap/pm/state"
 import { createEditorExtensions } from "./editor-extensions"
 import { parseMarkdown } from "./editor-markdown"
 import { serializeClipboardSlice } from "./clipboard-copy"
+
+/**
+ * Editors are torn down after each test: a live view keeps a DOMObserver
+ * timeout that fires after the test environment is gone, which vitest reports
+ * as an uncaught `document is not defined` and fails the run.
+ */
+const openEditors: Editor[] = []
+
+afterEach(() => {
+  while (openEditors.length > 0) {
+    openEditors.pop()?.destroy()
+  }
+})
 
 function createTestEditor(content: string | JSONContent) {
   const extensions = createEditorExtensions({
@@ -15,7 +28,7 @@ function createTestEditor(content: string | JSONContent) {
     },
   })
 
-  return new Editor({
+  const editor = new Editor({
     element: document.createElement("div"),
     extensions,
     content:
@@ -27,6 +40,8 @@ function createTestEditor(content: string | JSONContent) {
           )
         : content,
   })
+  openEditors.push(editor)
+  return editor
 }
 
 /** Absolute positions of a literal run of text inside the document. */
