@@ -9,6 +9,7 @@ import { existsSync } from "node:fs"
 import { pushBranchAndRemoveWorktree } from "./archive-wind-down"
 import { defaultClaudeDiskDeps, findLiveClaudeSessions } from "./claude-registry"
 import { canonicalOrRaw, listLocalTmuxPanes, resolveManagedAgentPane, type LocalTmuxPane } from "./discovery"
+import { processAlive } from "./lock"
 import { output } from "./shell"
 import { fetchScratchpadArchivedAt, fetchScratchpadStatus, type ScratchpadStatus } from "./resume"
 
@@ -42,6 +43,10 @@ import { fetchScratchpadArchivedAt, fetchScratchpadStatus, type ScratchpadStatus
  * and making it wait again would turn ordinary cleanup from 5 into 25 minutes.
  */
 export const REAP_AFTER_MS = WS_BACKSTOP_POLL_MS + ARCHIVE_RESTORE_GRACE_MS * 2
+
+/** Long enough for a SIGHUP'd Claude to finish flushing; short enough not to stall the sweep. */
+const KILL_GRACE_MS = 5_000
+const KILL_POLL_MS = 100
 
 export type ReapStatus =
   | "reaped"
@@ -77,6 +82,8 @@ export interface ReapDeps {
   pathExists: (path: string) => boolean
   windDown: (cwd: string, log: (message: string) => void) => { pushed: boolean; removed: boolean; reason?: string }
   killWindow: (windowId: string) => void
+  /** Resolves once the killed pane's process is gone, or after a bounded wait. */
+  awaitExit: (pid: number) => Promise<void>
   forgetLink: (runtimeSessionId: string) => void
   now: () => number
   log: (message: string) => void
@@ -95,6 +102,11 @@ export function defaultReapDeps(target: { baseUrl: string; workspaceId: string; 
     windDown: pushBranchAndRemoveWorktree,
     killWindow: (windowId) => {
       output(["tmux", "kill-window", "-t", windowId], { allowFailure: true })
+    },
+    awaitExit: async (pid) => {
+      for (let waited = 0; waited < KILL_GRACE_MS && processAlive(pid); waited += KILL_POLL_MS) {
+        await Bun.sleep(KILL_POLL_MS)
+      }
     },
     forgetLink: clearHarnessLink,
     now: Date.now,
@@ -223,7 +235,15 @@ export async function reapLink(link: HarnessLink, deps: ReapDeps, dryRun: boolea
   // branch). A refusal leaves the worktree on disk for a human — nothing is
   // lost. It goes FIRST because the wind-down now removes the directory
   // synchronously, and the pane's shell sits in it.
-  if (window.kind === "kill") deps.killWindow(window.pane.windowId)
+  //
+  // `tmux kill-window` returns once it has delivered the signal, not once the
+  // process is gone. Removing the directory in that gap deletes the cwd of a
+  // Claude still flushing its transcript, so wait for the pane to actually
+  // exit — the grace the old detached `sleep 5` provided by accident.
+  if (window.kind === "kill") {
+    deps.killWindow(window.pane.windowId)
+    await deps.awaitExit(window.pane.panePid)
+  }
   const report = deps.windDown(link.worktree, (message) => deps.log(`${link.worktree}: ${message}`))
   // Forgotten either way, matching the pre-existing contract for a refused
   // wind-down: the branch is the thing that had to survive, and a directory
