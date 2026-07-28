@@ -74,6 +74,7 @@ function deps(overrides: Partial<ReconnectDeps> = {}): ReconnectDeps & { calls: 
     piConfig: () => ({}),
     piLink: () => undefined,
     claudeConfig: () => ({ workspaceId: "ws", apiKey: "key" }),
+    links: () => [],
     claudeRegistry: {
       ...registry(),
       read: (path) =>

@@ -1,5 +1,7 @@
 import { statSync } from "node:fs"
+import { hostname } from "node:os"
 import { basename, resolve } from "node:path"
+import { readHarnessLinks, type HarnessLink } from "@threa/bot-runtime-client"
 import { acceptClaudeBootPrompts, defaultClaudeBootDeps, type ClaudeBootDeps } from "./claude-boot"
 import {
   defaultClaudeRegistryDeps,
@@ -62,6 +64,7 @@ export interface ReconnectDeps {
   respawn: (target: string, cwd: string, command: string) => void
   claudeConfig?: () => ThreaChannelConfig
   claudeRegistry?: ClaudeRegistryDeps
+  links?: () => HarnessLink[]
   mcpFile?: (path: string) => boolean
   sleep?: (ms: number) => Promise<void>
   claudeBoot?: Partial<ClaudeBootDeps>
@@ -211,7 +214,13 @@ function resolveClaudeTarget(options: ReconnectOptions, deps: ReconnectDeps): Cl
     if (matches.length !== 1) throw new Error(`managed Claude pane ${agent.tmuxPaneId} is missing or ambiguous`)
     pane = matches[0]
   } else {
-    pane = findLocalClaudeChannelPane(options.runtimeSessionId, deps.panes(), config)
+    pane = findLocalClaudeChannelPane(
+      options.runtimeSessionId,
+      deps.panes(),
+      config,
+      hostname(),
+      deps.links ?? readHarnessLinks
+    )
     if (!pane) throw new Error(`no live Claude pane matched ${options.runtimeSessionId}`)
   }
   const launch = parseClaudeLaunch(pane.startCommand)
@@ -381,7 +390,9 @@ export async function reconnectRuntime(
   const claudePane = findLocalClaudeChannelPane(
     options.runtimeSessionId,
     panes,
-    (deps.claudeConfig ?? readThreaChannelConfig)()
+    (deps.claudeConfig ?? readThreaChannelConfig)(),
+    hostname(),
+    deps.links ?? readHarnessLinks
   )
   if (piPane && claudePane) throw new Error(`multiple live runtimes match ${options.runtimeSessionId}`)
   if (piPane) return reconnectPi(options, deps)

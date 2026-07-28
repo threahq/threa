@@ -149,7 +149,8 @@ test("kick sends Enter to the managed tmux pane without discovery", () => {
       () => {
         throw new Error("managed kick must not run discovery")
       },
-      [claudePane()]
+      [claudePane()],
+      () => []
     )
     expect(sent).toEqual([{ target: "%8", keys: ["Enter"] }])
   } finally {
@@ -214,7 +215,8 @@ test("kick lookup leaves legacy inventory unchanged for managed and standalone a
         () => {
           throw new Error("exact managed match must take priority")
         },
-        [claudePane({ sessionName: "legacy", windowName: "managed", paneId: "%9", startCommand: "claude" })]
+        [claudePane({ sessionName: "legacy", windowName: "managed", paneId: "%9", startCommand: "claude" })],
+        () => []
       )
     ).toThrow("only a recycled tmux id")
     kickAgent(
@@ -248,9 +250,13 @@ test("kick lookup works with a read-only inventory file", () => {
     upsertAgent(agent({ worktree: "/repo/threa.repair", tmuxWindowId: "@7", tmuxPaneId: "%8" }))
     chmodSync(path, 0o444)
     const sent: Array<{ target: string; keys: string[] }> = []
-    kickAgent("claude-1", (target, keys) => sent.push({ target, keys }), findLocalClaudeChannelPane, [
-      claudePane({ cwd: "/repo/threa.repair", startCommand: "claude" }),
-    ])
+    kickAgent(
+      "claude-1",
+      (target, keys) => sent.push({ target, keys }),
+      findLocalClaudeChannelPane,
+      [claudePane({ cwd: "/repo/threa.repair", startCommand: "claude" })],
+      () => []
+    )
     expect(sent).toEqual([{ target: "%8", keys: ["Enter"] }])
   } finally {
     chmodSync(path, 0o644)

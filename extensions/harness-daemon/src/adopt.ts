@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto"
 import { readHarnessLinks, type HarnessLink } from "@threa/bot-runtime-client"
 import { existsSync, statSync } from "node:fs"
+import { hostname } from "node:os"
 import { basename, dirname, join } from "node:path"
 import { acceptClaudeBootPrompts } from "./claude-boot"
 import {
@@ -12,6 +13,7 @@ import {
 } from "./claude-registry"
 import { normalizeName, now } from "./cli"
 import {
+  canonicalOrRaw,
   findLocalClaudeChannelPane,
   listLocalTmuxPanes,
   parseClaudeChannelLaunch,
@@ -211,7 +213,7 @@ export async function adoptClaudeSessionUnlocked(options: AdoptOptions, deps: Ad
 
   let pane: LocalTmuxPane | undefined
   try {
-    pane = findLocalClaudeChannelPane(options.runtimeSessionId, deps.panes(), config)
+    pane = findLocalClaudeChannelPane(options.runtimeSessionId, deps.panes(), config, hostname(), deps.links)
   } catch (error) {
     return { status: "refused ambiguous", detail: error instanceof Error ? error.message : String(error) }
   }
@@ -234,7 +236,7 @@ export async function adoptClaudeSessionUnlocked(options: AdoptOptions, deps: Ad
       .panes()
       .filter(
         (candidate) =>
-          canonicalOrRaw(candidate.cwd, deps.disk) === cwd && parseClaudeChannelLaunch(candidate.startCommand)
+          canonicalOrRaw(candidate.cwd, deps.disk.canonical) === cwd && parseClaudeChannelLaunch(candidate.startCommand)
       )
     if (occupants.length > 1) {
       return {
@@ -564,7 +566,7 @@ function resolveCwd(
       detail: "no --cwd, live pane, harness link, or inventory row names a working directory",
     }
   }
-  const resolved = candidates.map(({ source, path }) => ({ source, path: canonicalOrRaw(path, deps.disk) }))
+  const resolved = candidates.map(({ source, path }) => ({ source, path: canonicalOrRaw(path, deps.disk.canonical) }))
   const distinct = [...new Set(resolved.map(({ path }) => path))]
   if (distinct.length > 1) {
     return {
@@ -573,14 +575,6 @@ function resolveCwd(
     }
   }
   return { cwd: distinct[0]!, source: resolved[0]!.source }
-}
-
-function canonicalOrRaw(path: string, disk: ClaudeDiskDeps): string {
-  try {
-    return disk.canonical(path)
-  } catch {
-    return path
-  }
 }
 
 /**

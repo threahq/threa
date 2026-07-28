@@ -1,5 +1,7 @@
 import { basename } from "node:path"
 import { hostname } from "node:os"
+import { realpathSync } from "node:fs"
+import { readHarnessLinks, type HarnessLink } from "@threa/bot-runtime-client"
 import { output } from "./shell"
 import { deriveClaudeRuntimeIdentity, readThreaChannelConfig, sanitizeId } from "./spawners"
 import type { ManagedAgent, ThreaChannelConfig } from "./types"
@@ -386,22 +388,26 @@ export type ManagedAgentPane =
  * tmux server restarts numbering at `@0`/`%0`, so a recorded `@169` routinely
  * resolves to an unrelated agent's window — acting on one has killed the wrong
  * worktree. Identity is the runtime session (from the pane's launch command,
- * or derived from its cwd for a Claude pane launched without the env vars),
+ * attested by the harness link ledger, or derived from its cwd),
  * with the worktree as the fallback key for rows predating it. The recorded
  * ids only break a tie between panes that already matched a real key.
+ *
+ * @param links the harness link ledger, read once per call: a per-pane read
+ * would re-scan the whole directory for every pane tmux reports.
  */
 export function resolveManagedAgentPane(
   agent: Pick<ManagedAgent, "runtime" | "runtimeSessionId" | "worktree" | "tmuxPaneId" | "tmuxWindowId">,
   panes: LocalTmuxPane[] = listLocalTmuxPanes(),
   config: ThreaChannelConfig = readThreaChannelConfig(),
-  host = hostname()
+  host = hostname(),
+  links: () => HarnessLink[] = readHarnessLinks
 ): ManagedAgentPane {
   if (agent.runtimeSessionId) {
     try {
       const pane =
         agent.runtime === "pi"
           ? findLocalPiPane(agent.runtimeSessionId, panes)
-          : findLocalClaudeChannelPane(agent.runtimeSessionId, panes, config, host)
+          : findLocalClaudeChannelPane(agent.runtimeSessionId, panes, config, host, links)
       return pane ? { status: "found", pane } : { status: "missing" }
     } catch (error) {
       return { status: "ambiguous", reason: error instanceof Error ? error.message : String(error) }
@@ -438,19 +444,68 @@ export function resolveManagedAgentPane(
       }
 }
 
-function runtimeSessionIdForPane(pane: LocalTmuxPane, config: ThreaChannelConfig, host: string): string | undefined {
+export function canonicalOrRaw(path: string, canonical: (path: string) => string = realpathSync): string {
+  try {
+    return canonical(path)
+  } catch {
+    return path
+  }
+}
+
+interface AttestedRuntime {
+  worktree: string
+  runtimeSessionId: string
+}
+
+/** Canonicalized once per resolution: a per-pane realpath is panes × records syscalls. */
+function attestedRuntimes(links: HarnessLink[]): AttestedRuntime[] {
+  return links
+    .filter((link) => link.runtimeKind === "claude-code-channel" || link.runtimeKind === "unknown")
+    .map((link) => ({ worktree: canonicalOrRaw(link.worktree), runtimeSessionId: link.runtimeSessionId }))
+}
+
+/**
+ * The attested identity of the runtime living in `cwd`, or nothing.
+ *
+ * Two or more records naming one worktree is a broken ledger, not a tie to
+ * break: guessing here binds a live pane to a stranger's session.
+ */
+function ledgerRuntimeSessionId(cwd: string, attested: AttestedRuntime[]): string | undefined {
+  const canonicalCwd = canonicalOrRaw(cwd)
+  const matches = attested.filter((entry) => entry.worktree === canonicalCwd)
+  return matches.length === 1 ? matches[0]!.runtimeSessionId : undefined
+}
+
+/**
+ * Identity by attestation before derivation: `deriveClaudeRuntimeIdentity`
+ * hashes `os.hostname()`, which is DHCP-supplied on a laptop and changes with
+ * the network, so a pane launched without `THREA_RUNTIME_SESSION_ID` derives a
+ * different id than the one recorded for it and `up` starts a duplicate.
+ */
+function runtimeSessionIdForPane(
+  pane: LocalTmuxPane,
+  config: ThreaChannelConfig,
+  host: string,
+  attested: AttestedRuntime[]
+): string | undefined {
   const launch = parseClaudeChannelLaunch(pane.startCommand)
   if (!launch) return undefined
-  return launch.runtimeSessionId ?? deriveClaudeRuntimeIdentity(pane.cwd, config, host).runtimeSessionId
+  return (
+    launch.runtimeSessionId ??
+    ledgerRuntimeSessionId(pane.cwd, attested) ??
+    deriveClaudeRuntimeIdentity(pane.cwd, config, host).runtimeSessionId
+  )
 }
 
 export function findLocalClaudeChannelPane(
   runtimeSessionId: string,
   panes: LocalTmuxPane[] = listLocalTmuxPanes(),
   config: ThreaChannelConfig = readThreaChannelConfig(),
-  host = hostname()
+  host = hostname(),
+  links: () => HarnessLink[] = readHarnessLinks
 ): LocalTmuxPane | undefined {
-  const matches = panes.filter((pane) => runtimeSessionIdForPane(pane, config, host) === runtimeSessionId)
+  const attested = attestedRuntimes(links())
+  const matches = panes.filter((pane) => runtimeSessionIdForPane(pane, config, host, attested) === runtimeSessionId)
   if (matches.length > 1) {
     throw new Error(
       `multiple live unmanaged Claude channel panes match ${runtimeSessionId}: ${matches.map((pane) => pane.paneId).join(", ")}`
