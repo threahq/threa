@@ -34,6 +34,7 @@ import {
   type MentionTypeLookup,
 } from "./editor-markdown"
 import { serializeClipboardSlice } from "./clipboard-copy"
+import { insertPlainText, isPlainTextPaste } from "./plain-text-paste"
 import { useMentionSuggestion, useChannelSuggestion, useEmojiSuggestion } from "./triggers"
 import { useMentionables } from "@/hooks/use-mentionables"
 import { useWorkspaceEmoji } from "@/hooks/use-workspace-emoji"
@@ -155,8 +156,12 @@ export function DocumentEditorModal({
         ),
       },
       clipboardTextSerializer: serializeClipboardSlice,
-      handlePaste: (_view, event) => {
-        if (isProseMirrorClipboardEvent(event)) {
+      handlePaste: (view, event) => {
+        // Paste-without-formatting renders the clipboard's markdown down to
+        // its text, so it preempts the internal-paste shortcut below.
+        const pasteAsPlainText = isPlainTextPaste(view)
+
+        if (!pasteAsPlainText && isProseMirrorClipboardEvent(event)) {
           return false
         }
 
@@ -165,7 +170,8 @@ export function DocumentEditorModal({
           return false
         }
 
-        const handled = insertPastedText(
+        const insert = pasteAsPlainText ? insertPlainText : insertPastedText
+        const handled = insert(
           editorRef.current,
           text,
           getMentionTypeRef.current,

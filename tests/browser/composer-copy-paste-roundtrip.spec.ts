@@ -321,6 +321,47 @@ test.describe("Composer copy/paste roundtrip", () => {
     expect(copied).toBe("quoted")
   })
 
+  /**
+   * Paste-without-formatting must land the text, not the markdown that carries
+   * its styling — the clipboard's `text/plain` flavour is markdown, and it used
+   * to be inserted literally.
+   */
+  test("pasting without formatting strips the styling instead of writing markdown", async ({ page }) => {
+    await pastePlainText(page, "**bold words** tail")
+    const editor = composerEditor(page)
+    await expect(editor.locator("strong")).toHaveText("bold words")
+
+    let copied = { html: "", text: "" }
+    await expect(async () => {
+      await selectEditorText(page, "bold words")
+      copied = await page.evaluate(() => {
+        const target = document.querySelector("main [contenteditable='true']")
+        if (!target) throw new Error("Editor not found")
+        const clipboardData = new DataTransfer()
+        target.dispatchEvent(new ClipboardEvent("copy", { bubbles: true, cancelable: true, clipboardData }))
+        return { html: clipboardData.getData("text/html"), text: clipboardData.getData("text/plain") }
+      })
+      expect(copied.text).toBe("**bold words**")
+    }).toPass({ timeout: 10000 })
+
+    await collapseSelectionToEnd(page)
+
+    // ProseMirror reads the shift key off the last keydown to decide a paste is
+    // plain; the composer's handler reads the same flag.
+    await page.evaluate((flavours) => {
+      const target = document.querySelector("main [contenteditable='true']")
+      if (!target) throw new Error("Editor not found")
+      target.dispatchEvent(new KeyboardEvent("keydown", { key: "v", shiftKey: true, bubbles: true, cancelable: true }))
+      const clipboardData = new DataTransfer()
+      clipboardData.setData("text/html", flavours.html)
+      clipboardData.setData("text/plain", flavours.text)
+      target.dispatchEvent(new ClipboardEvent("paste", { bubbles: true, cancelable: true, clipboardData }))
+    }, copied)
+
+    await expect(editor).toHaveText("bold wordsbold words tail")
+    await expect(editor.locator("strong")).toHaveCount(1)
+  })
+
   test("copying part of a mark run drops the mark, the whole run keeps it", async ({ page }) => {
     await pastePlainText(page, "**bold words** tail")
     await expect(composerEditor(page).locator("strong")).toHaveText("bold words")
