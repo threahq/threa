@@ -693,7 +693,17 @@ export class RemoteSession {
           if (isStop) break
           continue
         }
-        await this.handleClaimed(invocation)
+        const deferred = await this.startFoldedTurn(invocation)
+        // Session control queued behind the folded messages still runs, and
+        // still runs against the turn the fold just started — a queued /stop
+        // must stop it, not the turn after it.
+        for (const control of deferred) {
+          if (parseSessionControlCommand(control)?.name === "stop") {
+            await this.handleSessionControl(control)
+            return claimedAny
+          }
+          await this.handleSessionControl(control)
+        }
       }
     } catch (error) {
       this.log(`claim failed: ${this.summarize(error)}`)
@@ -774,9 +784,43 @@ export class RemoteSession {
     return true
   }
 
-  private async handleClaimed(invocation: ClaimedInvocation): Promise<void> {
-    const content = await this.buildTurnContent(invocation)
-    await this.deliverTurn(invocation, content)
+  /**
+   * Start one turn that sees every ordinary message already queued behind this
+   * one, and return any session-control commands the sweep pulled up with them.
+   *
+   * Without this, N messages sent while the session was busy became N
+   * sequential turns, each answering a question the user had already moved
+   * past — the reply to message 1 arriving after they had sent 4 more. `/steer`
+   * has always folded the backlog (`sweepQueuedForSteer`); an ordinary message
+   * got no such treatment, and that asymmetry is the whole of the lag.
+   *
+   * The primary invocation keeps the reply; the folded ones close without a
+   * response of their own, exactly as the steer sweep closes what it folds.
+   * Session control is never folded as text — a queued `/stop` has to stop the
+   * turn, not become a line in its prompt — so it is handed back to the caller.
+   */
+  private async startFoldedTurn(invocation: ClaimedInvocation): Promise<ClaimedInvocation[]> {
+    const parts = [await this.buildTurnContent(invocation)]
+    const folded: ClaimedInvocation[] = []
+    const control: ClaimedInvocation[] = []
+    for (let i = 1; i < STEER_DRAIN_LIMIT; i++) {
+      const extra = await this.claimNext(false).catch(() => null)
+      if (!extra) break
+      if (await this.interceptInvocation(extra)) continue
+      if (isSessionControlInvocation(extra)) {
+        control.push(extra)
+        // Stop folding at a control command: everything after it belongs to
+        // whatever that command decides.
+        break
+      }
+      folded.push(extra)
+      parts.push(await this.buildTurnContent(extra))
+    }
+    await this.deliverTurn(invocation, buildSteerContent(parts))
+    // Only after the turn is registered: a delivery that throws must leave the
+    // folded messages claimed-but-open rather than silently closed.
+    await Promise.all(folded.map((item) => this.completeNoResponse(item)))
+    return control
   }
 
   /** Register an invocation as the in-flight turn and push its content to the runtime. */

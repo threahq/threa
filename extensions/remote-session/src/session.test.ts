@@ -1683,3 +1683,85 @@ describe("no-socket poll backoff", () => {
     expect(session.nextPollDelay(false)).toBe(3000)
   })
 })
+
+describe("folding queued messages into one turn", () => {
+  const asInternal = (session: RemoteSession) => session as unknown as { claimDrain: () => Promise<boolean> }
+
+  function makeFoldSession(queue: ClaimedInvocation[]) {
+    const delivered: Array<{ invocationId: string; content: string }> = []
+    const completed: Array<{ id: string; body: Record<string, unknown> }> = []
+    const client = {
+      claim: async () => queue.shift() ?? null,
+      complete: async (id: string, body: Record<string, unknown>) => {
+        completed.push({ id, body })
+      },
+      fail: async () => {},
+      sendMessage: async () => {},
+    } as unknown as ThreaClient
+    const { transport } = makeFakeTransport()
+    const session = makeSession(client, transport, {
+      deliverTurn: async (turn: { invocationId: string; content: string }) => {
+        delivered.push({ invocationId: turn.invocationId, content: turn.content })
+      },
+    })
+    return { session, delivered, completed }
+  }
+
+  test("N messages queued behind one become a single turn that sees all of them", async () => {
+    // The lag this fixes: each queued message used to become its own turn, so
+    // the reply to the first arrived after the user had sent three more.
+    const { session, delivered, completed } = makeFoldSession([
+      makeInvocation({ id: "binv_1", promptMarkdown: "first" }),
+      makeInvocation({ id: "binv_2", promptMarkdown: "second" }),
+      makeInvocation({ id: "binv_3", promptMarkdown: "third" }),
+    ])
+
+    await asInternal(session).claimDrain()
+
+    expect(delivered).toHaveLength(1)
+    expect(delivered[0]?.invocationId).toBe("binv_1")
+    expect(delivered[0]?.content).toContain("Handle all of the following together (most recent last)")
+    for (const text of ["first", "second", "third"]) expect(delivered[0]?.content).toContain(text)
+    // The primary keeps the reply; the folded ones close without one, exactly
+    // as the steer sweep closes what it folds.
+    expect(completed.map((item) => item.id)).toEqual(["binv_2", "binv_3"])
+    await session.shutdown()
+  })
+
+  test("a lone message is delivered verbatim, with no fold wrapper", async () => {
+    const { session, delivered, completed } = makeFoldSession([
+      makeInvocation({ id: "binv_1", promptMarkdown: "just the one" }),
+    ])
+
+    await asInternal(session).claimDrain()
+
+    expect(delivered).toHaveLength(1)
+    expect(delivered[0]?.content).not.toContain("Handle all of the following together")
+    expect(delivered[0]?.content).toContain("just the one")
+    expect(completed).toEqual([])
+    await session.shutdown()
+  })
+
+  test("a queued /stop is never folded as text — it stops the turn the fold started", async () => {
+    const stop = makeInvocation({
+      id: "binv_stop",
+      promptMarkdown: "/stop",
+      trigger: "session-control",
+      requiredCapability: "session-control",
+      metadata: { command: { executionKind: "bot-runtime", id: "cmd_1", name: "stop", args: "" } },
+    })
+    const { session, delivered } = makeFoldSession([
+      makeInvocation({ id: "binv_1", promptMarkdown: "first" }),
+      makeInvocation({ id: "binv_2", promptMarkdown: "second" }),
+      stop,
+    ])
+
+    await asInternal(session).claimDrain()
+
+    expect(delivered).toHaveLength(1)
+    expect(delivered[0]?.content).toContain("first")
+    expect(delivered[0]?.content).toContain("second")
+    expect(delivered[0]?.content).not.toContain("/stop")
+    await session.shutdown()
+  })
+})
