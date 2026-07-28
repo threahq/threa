@@ -1,6 +1,10 @@
-import { useMemo, useRef } from "react"
+import { useCallback, useMemo, useRef } from "react"
+import type { VirtualizerHandle } from "virtua"
+import { toast } from "sonner"
 import { useStreamEvents } from "@/stores/stream-store"
 import { useStreamDelegations } from "@/hooks/use-stream-delegations"
+import { localStartOfDayMs } from "@/lib/dates"
+import { markerIndexForDate } from "@/lib/stream-context/grouping"
 import { deriveStreamContext } from "@/lib/stream-context/derive"
 import { delegationContextItems, withDelegations } from "@/lib/stream-context/delegations"
 import { StreamContextRow } from "./stream-context-row"
@@ -21,6 +25,8 @@ import {
  * Still the path for sealed streams (the server holds ciphertext, never an
  * index) and for workspaces with `streamContextIndex` off.
  */
+const DAY_MS = 24 * 60 * 60 * 1000
+
 export function StreamContextDerivedPanel({
   workspaceId,
   streamId,
@@ -62,6 +68,25 @@ export function StreamContextDerivedPanel({
   const isLoading = events === undefined || (delegationsPending && visible.length === 0)
 
   const scrollerRef = useRef<HTMLDivElement | null>(null)
+  const listRef = useRef<VirtualizerHandle | null>(null)
+
+  // Same jump affordance as the indexed panel, minus the paging: this path
+  // renders the loaded window only, so a date beyond it has nothing to land on
+  // and the jump is a no-op rather than a fetch.
+  const jumpToDate = useCallback(
+    (date: Date) => {
+      const index = markerIndexForDate(visible, localStartOfDayMs(date) + DAY_MS, new Date())
+      if (index === -1) {
+        // This path holds only the loaded window, so an older date has nothing
+        // to land on — say so rather than silently doing nothing.
+        toast.info("Nothing indexed on or before that date")
+        return
+      }
+      listRef.current?.scrollToIndex(index, { align: "start" })
+      scrollerRef.current?.focus({ preventScroll: true })
+    },
+    [visible]
+  )
 
   let body: React.ReactNode
   if (isLoading) {
@@ -72,6 +97,8 @@ export function StreamContextDerivedPanel({
     body = (
       <ContextTimeline
         scrollRef={scrollerRef}
+        listRef={listRef}
+        onJumpToDate={jumpToDate}
         items={visible}
         renderItem={(item) => (
           <StreamContextRow
@@ -97,6 +124,10 @@ export function StreamContextDerivedPanel({
       {note && <p className="shrink-0 border-b px-3 py-1.5 text-[11px] text-muted-foreground">{note}</p>}
       <div
         ref={scrollerRef}
+        // Focusable so a date jump can park focus here when the marker that
+        // opened the menu is windowed out (Radix would otherwise return focus to
+        // a removed node and drop it to <body>).
+        tabIndex={-1}
         className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-2 pt-2 pb-[max(0.5rem,env(safe-area-inset-bottom))]"
       >
         {body}

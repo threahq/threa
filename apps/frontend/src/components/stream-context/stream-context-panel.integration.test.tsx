@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
+import { toast } from "sonner"
 import { createElement, Fragment } from "react"
 import { render, screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
@@ -13,6 +14,7 @@ import * as connectionStatus from "@/components/layout/connection-status"
 import { workspaceKeys } from "@/hooks/use-workspaces"
 import { delegationKeys } from "@/hooks/use-stream-delegations"
 import * as streamContextListModule from "@/components/stream-context/stream-context-list"
+import * as storeModule from "@/stores/stream-context-store"
 import { streamContextItemKey, type ListStreamContextResponse, type StreamContextItem } from "@threa/types"
 import { StreamContextPanel } from "./stream-context-panel"
 
@@ -479,6 +481,114 @@ describe("StreamContextPanel — flag on", () => {
 
     await userEvent.click(await screen.findByRole("button", { name: /Go to delegation/ }))
     expect(onJumpToMessage).toHaveBeenCalledWith("event_delegation_1")
+  })
+
+  it("jumps the list to a picked date, landing on the nearest earlier day", async () => {
+    const scrollToIndex = vi.fn()
+    vi.spyOn(streamContextListModule, "StreamContextList").mockImplementation(({ children, listRef }) => {
+      if (listRef) (listRef as { current: unknown }).current = { scrollToIndex }
+      return createElement(Fragment, null, children)
+    })
+    // Newest-first: [marker 20th, row, marker 12th, row, marker 2nd, row].
+    await db.streamContextItems.bulkPut([
+      cachedRow(
+        serverItem({ category: "link", refId: "https://newest.example", occurredAt: "2026-07-20T10:00:00.000Z" })
+      ),
+      cachedRow(
+        serverItem({ category: "link", refId: "https://target.example", occurredAt: "2026-07-12T10:00:00.000Z" })
+      ),
+      cachedRow(
+        serverItem({ category: "link", refId: "https://oldest.example", occurredAt: "2026-07-02T10:00:00.000Z" })
+      ),
+    ])
+    vi.spyOn(streamContextApi, "list").mockResolvedValue(listResponse({ counts: null }))
+
+    renderPanel()
+    await userEvent.click((await screen.findAllByRole("button", { name: /Jump to a date/ }))[0]!)
+    await userEvent.click(await screen.findByText("Jump to a specific date…"))
+    await userEvent.click(await screen.findByText("12"))
+
+    // The 12th's marker sits at flat index 2 — past the 20th's marker and its
+    // one row. Landing on the marker, not the row, so the header reads the day.
+    expect(scrollToIndex).toHaveBeenCalledWith(2, { align: "start" })
+  })
+
+  it("pages into unloaded history to reach a jump target, then lands on it", async () => {
+    const scrollToIndex = vi.fn()
+    vi.spyOn(streamContextListModule, "StreamContextList").mockImplementation(({ children, listRef }) => {
+      if (listRef) (listRef as { current: unknown }).current = { scrollToIndex }
+      return createElement(Fragment, null, children)
+    })
+    // Only the newest day is cached; the 12th arrives with the jump's page.
+    const older = serverItem({
+      category: "link",
+      refId: "https://older.example",
+      occurredAt: "2026-07-12T10:00:00.000Z",
+    })
+    await db.streamContextItems.put(
+      cachedRow(
+        serverItem({ category: "link", refId: "https://newest.example", occurredAt: "2026-07-20T10:00:00.000Z" })
+      )
+    )
+    // The jump's page is held open, so the assertions below can distinguish
+    // "waited for the page" from "read IDB before it landed".
+    let releasePage: (value: ListStreamContextResponse) => void = () => {}
+    vi.spyOn(streamContextApi, "list")
+      .mockResolvedValueOnce(listResponse({ counts: null, nextCursor: "c1" }))
+      .mockImplementationOnce(
+        () =>
+          new Promise<ListStreamContextResponse>((resolve) => {
+            releasePage = resolve
+          })
+      )
+
+    renderPanel()
+    await userEvent.click((await screen.findAllByRole("button", { name: /Jump to a date/ }))[0]!)
+    await userEvent.click(await screen.findByText("Jump to a specific date…"))
+    await userEvent.click(await screen.findByText("12"))
+
+    // Still in flight: nothing to land on yet. If `fetchNextPage` resolved
+    // before the page landed, the loop would have burned its budget against
+    // stale IDB and given up here instead of waiting.
+    expect(scrollToIndex).not.toHaveBeenCalled()
+
+    releasePage(listResponse({ items: [older], counts: null }))
+
+    await waitFor(() => expect(scrollToIndex).toHaveBeenCalledWith(2, { align: "start" }))
+  })
+
+  it("stops paging for an unreachable date as soon as the server says history is exhausted", async () => {
+    vi.spyOn(streamContextListModule, "StreamContextList").mockImplementation(({ children, listRef }) => {
+      if (listRef) (listRef as { current: unknown }).current = { scrollToIndex: vi.fn() }
+      return createElement(Fragment, null, children)
+    })
+    await db.streamContextItems.put(
+      cachedRow(
+        serverItem({ category: "link", refId: "https://newest.example", occurredAt: "2026-07-20T10:00:00.000Z" })
+      )
+    )
+    // One page of history, then the end. `hasNextPage` on the render-time
+    // snapshot stays true for the whole loop, so only the fetch's own result
+    // can stop it before it burns all MAX_JUMP_PAGES iterations.
+    const readRows = vi.spyOn(storeModule, "readStreamContextRows")
+    const toastInfo = vi.spyOn(toast, "info").mockReturnValue("" as ReturnType<typeof toast.info>)
+    vi.spyOn(streamContextApi, "list")
+      .mockResolvedValueOnce(listResponse({ counts: null, nextCursor: "c1" }))
+      .mockResolvedValue(listResponse({ counts: null }))
+
+    renderPanel()
+    await screen.findAllByRole("button", { name: /Jump to a date/ })
+    readRows.mockClear()
+
+    await userEvent.click((await screen.findAllByRole("button", { name: /Jump to a date/ }))[0]!)
+    await userEvent.click(await screen.findByText("Jump to a specific date…"))
+    await userEvent.click(await screen.findByText("2"))
+
+    await waitFor(() => expect(toastInfo).toHaveBeenCalledWith("Nothing indexed on or before that date"))
+    // One page fetched, one re-read. The bound is MAX_JUMP_PAGES (10), so a
+    // loop trusting the stale snapshot re-reads ten times to reach the same
+    // dead end.
+    expect(readRows).toHaveBeenCalledTimes(1)
   })
 
   it("does not offer expansion on a locally derived row (no server groupKey yet)", async () => {

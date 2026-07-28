@@ -44,3 +44,23 @@ export function groupItemsByDay(items: ContextItem[], now: Date): TimelineGroup[
   }
   return groups
 }
+
+/**
+ * Index of the day marker to land on when jumping to a date, into the FLAT
+ * child list the timeline renders — which interleaves a marker before each
+ * group, so a row index lands a row or two off. `-1` when nothing is early
+ * enough.
+ *
+ * Rows are newest-first, so the first group at or before the day's end is the
+ * nearest-earlier landing spot; dates here are sparse and most days hold
+ * nothing. Lives beside the grouping it indexes so the paged and non-paged jump
+ * paths can't drift apart (INV-35).
+ */
+export function markerIndexForDate(items: ContextItem[], endOfDayMs: number, now: Date): number {
+  let flatIndex = 0
+  for (const group of groupItemsByDay(items, now)) {
+    if (Date.parse(group.items[0].createdAt) < endOfDayMs) return flatIndex
+    flatIndex += 1 + group.items.length
+  }
+  return -1
+}
