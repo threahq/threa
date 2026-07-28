@@ -5,6 +5,7 @@ export {
   useFloatingComposerAnchor,
   FLOATING_COMPOSER_HEIGHT_VAR,
 } from "./floating-composer-anchor"
+export { useFloatingComposerHeight } from "./use-floating-composer-height"
 export { StashedDraftsPicker } from "./stashed-drafts-picker"
 export { ScheduledMessagesPicker } from "./scheduled-messages-picker"
 export { ContextRefStrip } from "./context-ref-strip"

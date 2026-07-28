@@ -11,6 +11,7 @@ import {
   Link2,
   Check,
   CircleCheck,
+  ArrowDown,
   type LucideIcon,
 } from "lucide-react"
 import {
@@ -48,7 +49,9 @@ import { RelativeTime } from "@/components/relative-time"
 import { BoardReplyComposer, type ArmedReply } from "@/components/board/board-reply-composer"
 import {
   FloatingComposerAnchorProvider,
+  FloatingComposerShell,
   useFloatingComposerAnchor,
+  useFloatingComposerHeight,
   FLOATING_COMPOSER_HEIGHT_VAR,
 } from "@/components/composer"
 import { QuoteReplyProvider } from "@/components/timeline/quote-reply-context"
@@ -64,6 +67,7 @@ import { useStreamFromStore } from "@/stores/stream-store"
 import { consumeConversationReplyOpen, subscribeConversationReplyOpen } from "@/stores/conversation-reply-open-store"
 import { conversationKeys, useConversationBoardPost, useSplitThread } from "@/hooks/use-conversations"
 import { useBoardCardMessages } from "@/hooks/use-board-card-messages"
+import { useScrollBehavior } from "@/hooks/use-scroll-behavior"
 import { usePanelStreamSubscriptions } from "@/hooks/use-panel-stream-subscriptions"
 import { buildConversationLink } from "@/lib/stream-links"
 import type { BoardViewPost } from "@/hooks/use-stable-board-view"
@@ -569,11 +573,11 @@ function ConversationPanelBody({ workspaceId, post, hostStreamType, openReplySig
         conversationId={conversation.id}
         conversationRootStreamId={conversation.streamId}
         isHighlighted={message.id === highlightMessageId}
-        // Break the row out of the list's px-4 and re-pad it, so an actor accent
-        // fills to the panel edges (the stream-view look) with content aligned —
-        // matching the board card and timeline.
-        surfaceClassName="bg-background px-4"
-        rowInsetClassName="-mx-4"
+        // Break the row out of the column's padding and re-pad it, so an actor
+        // accent fills to the column edges (the stream-view look) with content
+        // aligned — matching the board card and timeline.
+        surfaceClassName="bg-background px-3 sm:px-6"
+        rowInsetClassName="-mx-3 sm:-mx-6"
         onNewSubtopic={canBranch ? () => inlineComposer.openNewSubtopic(rowStreamId, message.id) : undefined}
         onMoveToSubtopic={moveToSubtopic.moveHandlerFor(message.id, conversation.id)}
       />
@@ -626,7 +630,51 @@ function ConversationPanelBody({ workspaceId, post, hostStreamType, openReplySig
 
   // True while any of the panel's composers (footer reply, branch tail, new
   // sub-topic) floats in the mobile pill over this panel.
-  const floatingComposerOpen = useFloatingComposerAnchor()?.claimantId != null
+  const anchor = useFloatingComposerAnchor()
+  const anchorEl = anchor?.el ?? null
+  const floatingComposerOpen = anchor?.claimantId != null
+
+  const { scrollContainerRef, handleScroll, isScrolledFarFromBottom, scrollToBottom } = useScrollBehavior({
+    isLoading: loadingMore,
+    itemCount: rows.length,
+    resetKey: conversation.id,
+    // Only treat the user as "at the bottom" when they are essentially flush, so
+    // a small scroll-up to reference an older reply while typing is not snapped
+    // back when the composer grows (thread-path parity).
+    bottomThreshold: 4,
+    skipInitialScroll: highlightMessageId != null,
+  })
+  // Both consumers of `listRef` (text-selection quoting, viewport auto-read) are
+  // keyed to the scroller node, so the two refs name the same element.
+  const attachListRef = useCallback(
+    (node: HTMLDivElement | null) => {
+      listRef.current = node
+      scrollContainerRef.current = node
+    },
+    [scrollContainerRef]
+  )
+
+  // The pill is absolutely positioned, so its growth changes only the scroller's
+  // padding-bottom — the scroller's own ResizeObserver never sees it. Re-pin from
+  // the published height instead: forced pre-paint on the first measurement (the
+  // opening anchor correction), and follow-flag-respecting afterwards so a user
+  // scrolled up to read history is not yanked to the tail.
+  const scrollToBottomRef = useRef(scrollToBottom)
+  scrollToBottomRef.current = scrollToBottom
+  const handleComposerHeightChange = useCallback(
+    (_px: number, opts: { initial: boolean }) => {
+      if (highlightMessageId != null) return
+      if (opts.initial) scrollToBottomRef.current({ force: true })
+      else requestAnimationFrame(() => scrollToBottomRef.current())
+    },
+    [highlightMessageId]
+  )
+  const shellRef = useFloatingComposerHeight({
+    anchorEl,
+    ownerId: "panel-root",
+    active: !floatingComposerOpen && anchorEl != null,
+    onHeightChange: handleComposerHeightChange,
+  })
 
   // Viewport auto-read: every rendered row is eligible. While older replies are
   // still backfilling, the cutoff through a rendered row also covers the not-
@@ -651,45 +699,66 @@ function ConversationPanelBody({ workspaceId, post, hostStreamType, openReplySig
         <TextSelectionQuote streamId={conversation.streamId} containerRef={listRef} />
         {moveToSubtopic.moveDialog}
         <div
-          ref={listRef}
+          ref={attachListRef}
+          onScroll={handleScroll}
           // pt-4 reserves headroom for the first row's hover toolbar, which floats
           // ~14px above its row (MessageItem's float-above chip). Without it the
           // scroll container's top edge clips the first message's toolbar — the
           // stream timeline reserves the same room via its header spacer.
-          className="min-h-0 flex-1 overflow-y-auto px-4 pt-4"
-          // pb-3 baseline, plus room for the mobile floating composer while one
-          // is open so the conversation tail can scroll above the pill.
+          className="min-h-0 flex-1 overflow-y-auto pt-4"
+          // pb-3 baseline, plus room for the floating composer pill so the
+          // conversation tail can scroll above it.
           style={{ paddingBottom: `calc(var(${FLOATING_COMPOSER_HEIGHT_VAR}, 0px) + 0.75rem)` }}
         >
-          {provenance && (
-            <BranchProvenanceRow conversationId={provenance.parentConversationId} title={provenance.title} />
-          )}
-          <BranchedBoardRows
-            rows={rows}
-            workspaceId={workspaceId}
-            renderMessage={renderMessage}
-            continueThreadTo={(streamId) => getPanelUrl(streamId)}
-            onSplitThread={(threadStreamId) => splitThread.mutate({ conversationId: conversation.id, threadStreamId })}
-            renderBranchMessage={renderBranchMessage}
-            renderBranchTail={inlineComposer.renderBranchTail}
-            renderAfterMessage={inlineComposer.renderAfterMessage}
-          />
-          {loadingMore && <span className="mt-3 block text-xs text-muted-foreground">Loading messages…</span>}
-          {backfillFailed && (
-            <button
-              type="button"
-              onClick={() => void refetchMessages()}
-              className="mt-3 block w-fit text-xs text-destructive underline underline-offset-2"
-            >
-              Couldn't load the full conversation. Retry.
-            </button>
-          )}
+          <div className="mx-auto w-full min-w-0 max-w-[800px] px-3 sm:px-6">
+            {provenance && (
+              <BranchProvenanceRow conversationId={provenance.parentConversationId} title={provenance.title} />
+            )}
+            <BranchedBoardRows
+              rows={rows}
+              workspaceId={workspaceId}
+              renderMessage={renderMessage}
+              continueThreadTo={(streamId) => getPanelUrl(streamId)}
+              onSplitThread={(threadStreamId) =>
+                splitThread.mutate({ conversationId: conversation.id, threadStreamId })
+              }
+              renderBranchMessage={renderBranchMessage}
+              renderBranchTail={inlineComposer.renderBranchTail}
+              renderAfterMessage={inlineComposer.renderAfterMessage}
+            />
+            {loadingMore && <span className="mt-3 block text-xs text-muted-foreground">Loading messages…</span>}
+            {backfillFailed && (
+              <button
+                type="button"
+                onClick={() => void refetchMessages()}
+                className="mt-3 block w-fit text-xs text-destructive underline underline-offset-2"
+              >
+                Couldn't load the full conversation. Retry.
+              </button>
+            )}
+          </div>
         </div>
+        {isScrolledFarFromBottom && (
+          <div
+            className="pointer-events-none absolute left-1/2 z-10 -translate-x-1/2"
+            style={{ bottom: `calc(var(${FLOATING_COMPOSER_HEIGHT_VAR}, 0px) + 0.5rem)` }}
+          >
+            <Button
+              variant="secondary"
+              size="sm"
+              className="pointer-events-auto gap-1.5 shadow-lg"
+              onClick={() => scrollToBottom({ force: true })}
+            >
+              <ArrowDown className="h-3.5 w-3.5" />
+              Jump to latest
+            </Button>
+          </div>
+        )}
         {/* Hidden while a mobile composer floats over the panel (the pill replaces
             the footer's affordance; a second bottom bar under it would double up).
             `hidden`, not unmount — the reply composer inside must stay mounted to
             keep its portal, draft, and open state alive. */}
-        <div className={cn("border-t px-4 py-3", floatingComposerOpen && "hidden")}>
+        <FloatingComposerShell ref={shellRef} hidden={floatingComposerOpen}>
           <BoardReplyComposer
             workspaceId={workspaceId}
             post={post}
@@ -703,7 +772,7 @@ function ConversationPanelBody({ workspaceId, post, hostStreamType, openReplySig
             alwaysDocked
             armedReply={armedReply}
           />
-        </div>
+        </FloatingComposerShell>
       </QuoteReplyProvider>
     </ConversationReadProvider>
   )

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react"
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react"
 import { createPortal } from "react-dom"
 import { CornerDownRight, X } from "lucide-react"
 import { toast } from "sonner"
@@ -10,7 +10,7 @@ import {
   ScheduledMessagesPicker,
   StashedDraftsPicker,
   useFloatingComposerAnchor,
-  FLOATING_COMPOSER_HEIGHT_VAR,
+  useFloatingComposerHeight,
   type ComposerControlHandle,
 } from "@/components/composer"
 import { useIsMobileOrCoarse } from "@/hooks/use-pointer"
@@ -295,26 +295,11 @@ export function InlineComposerForm({
   // bottom space while the composer floats over it. Ownership-tagged: during a
   // slot hand-off the outgoing form unmounts after the incoming one has already
   // measured, and must not wipe the incoming form's value.
-  const shellRef = useRef<HTMLDivElement>(null)
-  useLayoutEffect(() => {
-    if (!holdsFloatingSlot || !anchorEl) return
-    const shell = shellRef.current
-    if (!shell) return
-    const write = () => {
-      anchorEl.style.setProperty(FLOATING_COMPOSER_HEIGHT_VAR, `${Math.ceil(shell.getBoundingClientRect().height)}px`)
-      anchorEl.dataset.floatingComposerOwner = formId
-    }
-    write()
-    const ro = new ResizeObserver(write)
-    ro.observe(shell)
-    return () => {
-      ro.disconnect()
-      if (anchorEl.dataset.floatingComposerOwner === formId) {
-        anchorEl.style.removeProperty(FLOATING_COMPOSER_HEIGHT_VAR)
-        delete anchorEl.dataset.floatingComposerOwner
-      }
-    }
-  }, [holdsFloatingSlot, anchorEl, formId])
+  const shellRef = useFloatingComposerHeight({
+    anchorEl,
+    ownerId: formId,
+    active: holdsFloatingSlot && anchorEl != null,
+  })
 
   // Keep the reply target visible: the marker sits where the form would render
   // in place, so scrolling it into view parks the tail of the conversation above
