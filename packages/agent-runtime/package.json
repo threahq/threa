@@ -11,7 +11,7 @@
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "bun test src/"
   },
   "dependencies": {
     "@langchain/core": "^1.1.5",

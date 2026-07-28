@@ -6,25 +6,18 @@ describe("ModelRegistry", () => {
 
   describe("getCapabilities", () => {
     test("returns capabilities for registered vision model", () => {
-      const caps = registry.getCapabilities("openrouter:anthropic/claude-sonnet-4.5")
+      const caps = registry.getCapabilities("openrouter:anthropic/claude-sonnet-5")
 
       expect(caps).toMatchObject({
-        name: "Claude Sonnet 4.5",
+        name: "Claude Sonnet 5",
         inputModalities: ["text", "image"],
         outputModalities: ["text"],
       })
     })
 
-    test("returns capabilities for text-only model", () => {
-      const caps = registry.getCapabilities("openrouter:openai/gpt-oss-120b")
-
-      expect(caps).toMatchObject({
-        name: "GPT-OSS 120B",
-        inputModalities: ["text"],
-        outputModalities: ["text"],
-      })
-    })
-
+    // No text-only *language* model is registered any more — every current
+    // generation accepts images. The embedding model below is the only
+    // text-input-only entry left, so it carries that coverage.
     test("returns capabilities for embedding model", () => {
       const caps = registry.getCapabilities("openrouter:openai/text-embedding-3-small")
 
@@ -44,16 +37,14 @@ describe("ModelRegistry", () => {
 
   describe("supportsVision", () => {
     test("returns true for models with image input modality", () => {
-      expect(registry.supportsVision("openrouter:anthropic/claude-sonnet-4.5")).toBe(true)
+      expect(registry.supportsVision("openrouter:anthropic/claude-sonnet-5")).toBe(true)
       expect(registry.supportsVision("openrouter:anthropic/claude-haiku-4.5")).toBe(true)
       expect(registry.supportsVision("openrouter:google/gemini-2.5-flash")).toBe(true)
-      expect(registry.supportsVision("openrouter:openai/gpt-5")).toBe(true)
-      expect(registry.supportsVision("openrouter:openai/gpt-5-mini")).toBe(true)
+      expect(registry.supportsVision("openrouter:openai/gpt-5.6-sol")).toBe(true)
+      expect(registry.supportsVision("openrouter:openai/gpt-5.4-mini")).toBe(true)
     })
 
-    test("returns false for text-only models", () => {
-      expect(registry.supportsVision("openrouter:openai/gpt-oss-120b")).toBe(false)
-      expect(registry.supportsVision("openrouter:openai/gpt-5-nano")).toBe(false)
+    test("returns false for models without image input", () => {
       expect(registry.supportsVision("openrouter:openai/text-embedding-3-small")).toBe(false)
     })
 
@@ -64,12 +55,12 @@ describe("ModelRegistry", () => {
 
   describe("supportsInputModality", () => {
     test("returns true when model supports the modality", () => {
-      expect(registry.supportsInputModality("openrouter:anthropic/claude-sonnet-4.5", "text")).toBe(true)
-      expect(registry.supportsInputModality("openrouter:anthropic/claude-sonnet-4.5", "image")).toBe(true)
+      expect(registry.supportsInputModality("openrouter:anthropic/claude-sonnet-5", "text")).toBe(true)
+      expect(registry.supportsInputModality("openrouter:anthropic/claude-sonnet-5", "image")).toBe(true)
     })
 
     test("returns false when model does not support the modality", () => {
-      expect(registry.supportsInputModality("openrouter:openai/gpt-oss-120b", "image")).toBe(false)
+      expect(registry.supportsInputModality("openrouter:openai/text-embedding-3-small", "image")).toBe(false)
     })
 
     test("returns false for unknown models", () => {
@@ -79,7 +70,7 @@ describe("ModelRegistry", () => {
 
   describe("supportsOutputModality", () => {
     test("returns true for text output on language models", () => {
-      expect(registry.supportsOutputModality("openrouter:anthropic/claude-sonnet-4.5", "text")).toBe(true)
+      expect(registry.supportsOutputModality("openrouter:anthropic/claude-sonnet-5", "text")).toBe(true)
     })
 
     test("returns true for embedding output on embedding models", () => {
@@ -87,7 +78,7 @@ describe("ModelRegistry", () => {
     })
 
     test("returns false for embedding output on language models", () => {
-      expect(registry.supportsOutputModality("openrouter:anthropic/claude-sonnet-4.5", "embedding")).toBe(false)
+      expect(registry.supportsOutputModality("openrouter:anthropic/claude-sonnet-5", "embedding")).toBe(false)
     })
 
     test("returns false for text output on embedding models", () => {
@@ -103,9 +94,8 @@ describe("ModelRegistry", () => {
     test("returns all registered model IDs", () => {
       const modelIds = registry.getModelIds()
 
-      expect(modelIds).toContain("openrouter:anthropic/claude-sonnet-4.5")
+      expect(modelIds).toContain("openrouter:anthropic/claude-sonnet-5")
       expect(modelIds).toContain("openrouter:anthropic/claude-haiku-4.5")
-      expect(modelIds).toContain("openrouter:openai/gpt-oss-120b")
       expect(modelIds).toContain("openrouter:openai/text-embedding-3-small")
       expect(modelIds.length).toBeGreaterThan(5)
     })
