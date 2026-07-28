@@ -2,7 +2,13 @@ import { afterEach, expect, test } from "bun:test"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
 import type { HarnessLink } from "@threa/bot-runtime-client"
-import { buildIdentityRows, identityConsistency, summarizeIdentityRows } from "./identity"
+import {
+  buildIdentityRows,
+  identityConsistency,
+  rowMatchesRef,
+  summarizeIdentityRows,
+  type IdentityRow,
+} from "./identity"
 import { deriveClaudeRuntimeIdentity } from "./spawners"
 import type { LocalTmuxPane } from "./discovery"
 import type { ManagedAgent } from "./types"
@@ -261,4 +267,25 @@ test("the consistency check counts drifted records and survives an absent links 
   expect(
     identityConsistency({ agents: [], panes: [], links: [link({ runtimeSessionId: "ccs-drifted" })], host: HOST })
   ).toEqual({ inventoryRows: 0, linkRecords: 1, livePanes: 0 })
+})
+
+test("a by-id lookup finds a pane whose identity only the ledger attests", () => {
+  // The pane worth looking up is exactly the one that declares nothing, so its
+  // `recorded` column is "-" and the id lives in `ledger`. Matching on
+  // `recorded` alone returned a definitive false negative for the drifted case
+  // and succeeded only for panes that were never broken.
+  const attested: IdentityRow = {
+    kind: "pane",
+    name: "claude-slopenv",
+    recorded: "-",
+    ledger: "ccs-attested",
+    derived: "ccs-derived",
+    pane: "%12",
+    verdict: "found",
+  }
+
+  expect(rowMatchesRef(attested, "ccs-attested")).toBe(true)
+  expect(rowMatchesRef(attested, "ccs-derived")).toBe(true)
+  expect(rowMatchesRef(attested, "ccs-somebody-else")).toBe(false)
+  expect(rowMatchesRef({ ...attested, recorded: "ccs-declared" }, "ccs-declared")).toBe(true)
 })

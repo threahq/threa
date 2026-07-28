@@ -121,6 +121,14 @@ export function buildIdentityRows(inputs: IdentityInputs): IdentityRow[] {
   return rows
 }
 
+/**
+ * A pane that declares no identity records `-`, and that is precisely the pane
+ * worth looking up by id — so any column that attests one counts as a match.
+ */
+export function rowMatchesRef(row: IdentityRow, ref: string): boolean {
+  return row.recorded === ref || row.ledger === ref || row.derived === ref
+}
+
 export function summarizeIdentityRows(rows: IdentityRow[]): IdentitySummary {
   const counts = new Map<string, number>()
   for (const row of rows) counts.set(row.verdict, (counts.get(row.verdict) ?? 0) + 1)
@@ -175,7 +183,7 @@ export function resolveIdentity(ref?: string): void {
     links: readHarnessLinks(),
     config: readThreaChannelConfig(),
     includeUnmanagedPanes: !managed,
-  }).filter((row) => !ref || managed || row.recorded === ref)
+  }).filter((row) => !ref || managed || rowMatchesRef(row, ref))
   if (ref && rows.length === 0) die(`no agent or live pane found for ${ref}`)
   console.log(["kind", "name", "recorded", "ledger", "derived", "pane", "verdict"].join("\t"))
   for (const row of rows) {
