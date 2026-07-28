@@ -138,17 +138,7 @@ describe("adoptClaudeSession live pane", () => {
         scratchpadUrl: `https://app.threa.io/w/ws_one/s/${ROOT}`,
         instanceId: IDENTITY.instanceId,
         runtimeSessionId: RUNTIME,
-        command: [
-          "threa-harnessd",
-          "adopt",
-          RUNTIME,
-          "--root-stream-id",
-          ROOT,
-          "--cwd",
-          CWD,
-          "--name",
-          "slopenv",
-        ],
+        command: ["threa-harnessd", "adopt", RUNTIME, "--root-stream-id", ROOT, "--cwd", CWD, "--name", "slopenv"],
         createdAt: dependencies.persisted[0]!.createdAt,
         updatedAt: dependencies.persisted[0]!.updatedAt,
       },
@@ -180,7 +170,12 @@ describe("adoptClaudeSession live pane", () => {
     // no THREA_* env either, so only the link record still binds the two.
     const drifted = "ccs-ac050fb309510f5c"
     const dependencies = deps({
-      panes: () => [pane({ startCommand: "/usr/bin/claude --name threa.leftie --dangerously-load-development-channels server:threa-channel --dangerously-skip-permissions" })],
+      panes: () => [
+        pane({
+          startCommand:
+            "/usr/bin/claude --name threa.leftie --dangerously-load-development-channels server:threa-channel --dangerously-skip-permissions",
+        }),
+      ],
       links: () => [link({ runtimeSessionId: drifted, instanceId: "cc-ac050fb309510f5c" })],
     })
     const outcome = await adoptClaudeSessionUnlocked(options({ runtimeSessionId: drifted }), dependencies)

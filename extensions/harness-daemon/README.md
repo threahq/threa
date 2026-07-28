@@ -21,23 +21,23 @@ Two paths, chosen by what is live:
 
 Everything is validated before anything changes. `--cwd`, the live pane, the harness link record (`~/.threa/harnessd/links/<session>.json`) and any inventory row must agree on the working directory; the link record and the row must agree with `--root-stream-id`; the instance id must be consistent across every source that names one; the scratchpad must read active. Only then does the bot-runtime preflight run (`ifArchived: "wait"`, `ifMissing: "error"`, returned root must equal the recorded one). A refusal writes no inventory, launches nothing, and never touches the scratchpad. `--dry-run` stops before the preflight, because that POST registers the session server-side.
 
-Identity must be *attested*, not merely derivable. The cwd derivation (`sha256("<host>:<cwd>")`) is the usual attestation, but a session started under a different hostname keeps its original id for life, so the link record or an existing row attests it instead. What is refused is a target nothing on this machine binds to that directory.
+Identity must be _attested_, not merely derivable. The cwd derivation (`sha256("<host>:<cwd>")`) is the usual attestation, but a session started under a different hostname keeps its original id for life, so the link record or an existing row attests it instead. What is refused is a target nothing on this machine binds to that directory.
 
 Idempotent: a second run against the same live pane reuses the row (`already managed`) rather than adding one, and a name already taken by a different session refuses with `--name` as the fix.
 
-| status | meaning |
-| --- | --- |
-| `adopted live` | unmanaged live pane, now recorded; nothing relaunched |
-| `already managed` | the row already tracks this live pane |
-| `taken over` | pane and process gone; the transcript was resumed in a new window |
-| `would adopt live` / `would take over` | `--dry-run` |
-| `refused live without pane` | a Claude process still runs in the cwd with no tmux pane — resuming would give two Claudes one conversation (`--force` overrides) |
-| `refused missing transcript` | no `~/.claude/projects` transcript for the cwd, or the pinned uuid has none |
-| `refused identity mismatch` | sources disagree on cwd, root stream, or instance id; or nothing binds the id to the directory |
-| `refused ambiguous` | two inventory rows, two panes, or a name collision |
-| `refused archived` / `refused inaccessible` / `refused unavailable` | scratchpad state, before or during the takeover (mid-takeover kills the new window) |
-| `refused missing cwd` / `refused missing credentials` | no directory or no Threa credentials |
-| `failed` | the launch or the post-launch inventory write errored; the window is killed rather than left untracked |
+| status                                                              | meaning                                                                                                                           |
+| ------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| `adopted live`                                                      | unmanaged live pane, now recorded; nothing relaunched                                                                             |
+| `already managed`                                                   | the row already tracks this live pane                                                                                             |
+| `taken over`                                                        | pane and process gone; the transcript was resumed in a new window                                                                 |
+| `would adopt live` / `would take over`                              | `--dry-run`                                                                                                                       |
+| `refused live without pane`                                         | a Claude process still runs in the cwd with no tmux pane — resuming would give two Claudes one conversation (`--force` overrides) |
+| `refused missing transcript`                                        | no `~/.claude/projects` transcript for the cwd, or the pinned uuid has none                                                       |
+| `refused identity mismatch`                                         | sources disagree on cwd, root stream, or instance id; or nothing binds the id to the directory                                    |
+| `refused ambiguous`                                                 | two inventory rows, two panes, or a name collision                                                                                |
+| `refused archived` / `refused inaccessible` / `refused unavailable` | scratchpad state, before or during the takeover (mid-takeover kills the new window)                                               |
+| `refused missing cwd` / `refused missing credentials`               | no directory or no Threa credentials                                                                                              |
+| `failed`                                                            | the launch or the post-launch inventory write errored; the window is killed rather than left untracked                            |
 
 An adopted session is an ordinary inventory row afterwards, so `up`, `kick`, `stop` and the watcher all apply — with one boundary: `up` relaunches Claude **without** `--resume`, so an automatic revival after adoption starts a fresh conversation. Conversation history survives `adopt`, not `up`.
 

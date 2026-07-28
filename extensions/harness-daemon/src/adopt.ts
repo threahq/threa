@@ -10,7 +10,12 @@ import {
   type ClaudeDiskDeps,
 } from "./claude-registry"
 import { normalizeName, now } from "./cli"
-import { findLocalClaudeChannelPane, listLocalTmuxPanes, parseClaudeChannelLaunch, type LocalTmuxPane } from "./discovery"
+import {
+  findLocalClaudeChannelPane,
+  listLocalTmuxPanes,
+  parseClaudeChannelLaunch,
+  type LocalTmuxPane,
+} from "./discovery"
 import { inventoryPath, readInventoryReadonly, upsertAgent } from "./inventory"
 import { acquireProcessLock } from "./lock"
 import {
@@ -186,7 +191,10 @@ export async function adoptClaudeSessionUnlocked(options: AdoptOptions, deps: Ad
     .filter((agent) => agent.runtimeSessionId === options.runtimeSessionId)
     .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))[0]
   if (existing && existing.runtime !== "claude") {
-    return { status: "refused identity mismatch", detail: `${existing.id} is recorded as a ${existing.runtime} session` }
+    return {
+      status: "refused identity mismatch",
+      detail: `${existing.id} is recorded as a ${existing.runtime} session`,
+    }
   }
 
   const link = deps.links().find((candidate) => candidate.runtimeSessionId === options.runtimeSessionId)
@@ -266,8 +274,8 @@ export async function adoptClaudeSessionUnlocked(options: AdoptOptions, deps: Ad
       detail: `nothing binds ${options.runtimeSessionId} to ${cwd}: no harness link, no inventory row, no live launch, and the directory derives ${derived.runtimeSessionId}`,
     }
   }
-  const claimed = attestations.filter(
-    (attestation): attestation is { source: string; instanceId: string } => Boolean(attestation.instanceId)
+  const claimed = attestations.filter((attestation): attestation is { source: string; instanceId: string } =>
+    Boolean(attestation.instanceId)
   )
   const conflict = claimed.find((attestation) => attestation.instanceId !== claimed[0]!.instanceId)
   if (conflict) {
@@ -286,14 +294,15 @@ export async function adoptClaudeSessionUnlocked(options: AdoptOptions, deps: Ad
       }
     }
     if (recorded.baseUrl !== baseUrl) {
-      return { status: "refused identity mismatch", detail: "recorded scratchpad origin differs from configured base URL" }
+      return {
+        status: "refused identity mismatch",
+        detail: "recorded scratchpad origin differs from configured base URL",
+      }
     }
   }
 
   const name = normalizeName(options.name ?? existing?.name ?? basename(cwd))
-  const clash = inventory.find(
-    (agent) => agent.name === name && agent.runtimeSessionId !== options.runtimeSessionId
-  )
+  const clash = inventory.find((agent) => agent.name === name && agent.runtimeSessionId !== options.runtimeSessionId)
   if (clash) {
     return {
       status: "refused ambiguous",
@@ -301,11 +310,13 @@ export async function adoptClaudeSessionUnlocked(options: AdoptOptions, deps: Ad
     }
   }
 
-  const liveSessions = findLiveClaudeSessions(cwd, deps.disk)
-  if (!pane && liveSessions.length > 0 && !options.force) {
-    return {
-      status: "refused live without pane",
-      detail: `Claude is still running in ${cwd} (pid ${liveSessions.map((session) => session.pid).join(", ")}) with no tmux pane; kill it or pass --force`,
+  if (!pane && !options.force) {
+    const liveSessions = findLiveClaudeSessions(cwd, deps.disk)
+    if (liveSessions.length > 0) {
+      return {
+        status: "refused live without pane",
+        detail: `Claude is still running in ${cwd} (pid ${liveSessions.map((session) => session.pid).join(", ")}) with no tmux pane; kill it or pass --force`,
+      }
     }
   }
 
@@ -404,7 +415,10 @@ export async function adoptClaudeSessionUnlocked(options: AdoptOptions, deps: Ad
     })
   } catch (error) {
     deps.persist({ ...record, status: "error", updatedAt: now(), lastOutput: String(error).slice(-4000) })
-    return { status: "failed", detail: `takeover launch failed: ${error instanceof Error ? error.message : String(error)}` }
+    return {
+      status: "failed",
+      detail: `takeover launch failed: ${error instanceof Error ? error.message : String(error)}`,
+    }
   }
 
   // Same archive-during-launch TOCTOU `up` guards: a window whose scratchpad
@@ -448,10 +462,7 @@ function paneSkipsPermissions(pane: LocalTmuxPane | undefined): boolean | undefi
   return parseClaudeChannelLaunch(pane.startCommand)?.skipPermissions
 }
 
-function adoptCommand(
-  options: AdoptOptions,
-  resolved: { name: string; cwd: string; noYolo: boolean }
-): string[] {
+function adoptCommand(options: AdoptOptions, resolved: { name: string; cwd: string; noYolo: boolean }): string[] {
   const command = [
     "threa-harnessd",
     "adopt",
@@ -483,10 +494,11 @@ function preflightParams(params: {
     runtimeKind: "claude-code-channel",
     instanceId: params.identity.instanceId,
     runtimeSessionId: params.identity.runtimeSessionId,
-    displayName: `${process.env.THREA_DISPLAY_NAME || params.config.displayName || "Claude Code"} - ${basename(params.cwd)}`.slice(
-      0,
-      100
-    ),
+    displayName:
+      `${process.env.THREA_DISPLAY_NAME || params.config.displayName || "Claude Code"} - ${basename(params.cwd)}`.slice(
+        0,
+        100
+      ),
     localCwd: params.cwd,
     expectedRootStreamId: params.rootStreamId,
     labelName: process.env.THREA_DEFAULT_LABEL || params.config.defaultLabel || "coding",
