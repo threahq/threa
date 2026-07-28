@@ -334,7 +334,8 @@ export function ScratchpadItem({
                   showHoverPreview && "group-hover:-translate-y-[0.3125rem]"
                 )}
               >
-                <div className="flex items-center gap-2 pr-8">
+                {/* Right reserve for the hover "…" menu only — see StreamItem. */}
+                <div className={cn("flex items-center gap-2", !isTouchInput && "pr-8")}>
                   {nameDecrypting ? (
                     <Skeleton className="h-4 w-28" />
                   ) : (

@@ -41,8 +41,22 @@ interface SidebarPersistedState {
 }
 
 export const MIN_SIDEBAR_WIDTH = 200
-export const MAX_SIDEBAR_WIDTH = 400
+export const MAX_SIDEBAR_WIDTH = 500
 export const SIDEBAR_COLLAPSE_THRESHOLD = MIN_SIDEBAR_WIDTH - 50
+
+/**
+ * The widest the sidebar may be right now: `min(500px, half the viewport)`. How
+ * wide is too wide is the user's call, but never more than half the window — on a
+ * small desktop window a flat 500px would swallow the content pane.
+ */
+export function sidebarWidthCap(viewportWidth?: number): number {
+  const viewport = viewportWidth ?? (typeof window === "undefined" ? MAX_SIDEBAR_WIDTH * 2 : window.innerWidth)
+  return Math.max(MIN_SIDEBAR_WIDTH, Math.min(MAX_SIDEBAR_WIDTH, Math.round(viewport / 2)))
+}
+
+export function clampSidebarWidth(width: number): number {
+  return Math.max(MIN_SIDEBAR_WIDTH, Math.min(sidebarWidthCap(), width))
+}
 const DEFAULT_SIDEBAR_WIDTH = 260
 const SIDEBAR_STATE_KEY = "threa-sidebar-state"
 
@@ -177,8 +191,8 @@ function getStoredState(key: string): SidebarPersistedState {
       return {
         openState: parsed.openState === "collapsed" ? "collapsed" : "open",
         width:
-          typeof parsed.width === "number" && parsed.width >= MIN_SIDEBAR_WIDTH && parsed.width <= MAX_SIDEBAR_WIDTH
-            ? parsed.width
+          typeof parsed.width === "number" && parsed.width >= MIN_SIDEBAR_WIDTH
+            ? clampSidebarWidth(parsed.width)
             : DEFAULT_PERSISTED_STATE.width,
         sectionStates: readSectionStates(parsed),
       }
@@ -373,8 +387,7 @@ export function SidebarProvider({ children }: SidebarProviderProps) {
       })
 
       if (newWidth >= SIDEBAR_COLLAPSE_THRESHOLD) {
-        const clampedWidth = Math.max(MIN_SIDEBAR_WIDTH, Math.min(MAX_SIDEBAR_WIDTH, newWidth))
-        updatePersistedState({ width: clampedWidth })
+        updatePersistedState({ width: clampSidebarWidth(newWidth) })
       }
     },
     [updatePersistedState]

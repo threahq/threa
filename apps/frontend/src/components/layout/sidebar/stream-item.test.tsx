@@ -356,6 +356,31 @@ describe("StreamItem", () => {
     expect(screen.queryByRole("img", { name: "Unsent draft" })).not.toBeInTheDocument()
   })
 
+  it("spends the title's hover-menu reserve on the name under touch input", () => {
+    const stream = createStream()
+    const row = () => screen.getByText(/general/).parentElement
+    const renderRow = () =>
+      renderWithRouter(
+        <StreamItem
+          workspaceId="workspace_1"
+          stream={stream}
+          isActive={false}
+          unreadCount={0}
+          mentionCount={0}
+          allStreams={[stream]}
+        />
+      )
+
+    touchState.inputMode = "mouse"
+    const mouse = renderRow()
+    expect(row()).toHaveClass("pr-8")
+    mouse.unmount()
+
+    touchState.inputMode = "touch"
+    renderRow()
+    expect(row()).not.toHaveClass("pr-8")
+  })
+
   it("renders a desktop context-menu trigger for DMs", () => {
     touchState.inputMode = "mouse"
     touchState.touchCapable = false

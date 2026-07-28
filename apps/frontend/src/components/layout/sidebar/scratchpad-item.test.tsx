@@ -186,6 +186,34 @@ describe("ScratchpadItem", () => {
     expect(screen.getByText("Labels…")).toBeInTheDocument()
   })
 
+  it("keeps the title's right reserve for the hover menu under mouse input, drops it under touch", () => {
+    const titleRow = () => screen.getByText("Notes").parentElement
+
+    const mouse = renderWithRouter(
+      <ScratchpadItem
+        workspaceId="workspace_1"
+        stream={createScratchpad()}
+        isActive={false}
+        unreadCount={0}
+        mentionCount={0}
+      />
+    )
+    expect(titleRow()).toHaveClass("pr-8")
+    mouse.unmount()
+
+    vi.spyOn(inputModeModule, "useInputMode").mockReturnValue("touch")
+    renderWithRouter(
+      <ScratchpadItem
+        workspaceId="workspace_1"
+        stream={createScratchpad()}
+        isActive={false}
+        unreadCount={0}
+        mentionCount={0}
+      />
+    )
+    expect(titleRow()).not.toHaveClass("pr-8")
+  })
+
   it("copies the scratchpad's link", async () => {
     const writeText = vi.fn(async () => {})
     Object.assign(navigator, { clipboard: { writeText } })
