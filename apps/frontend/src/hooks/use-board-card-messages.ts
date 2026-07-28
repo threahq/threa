@@ -95,13 +95,20 @@ const LOADING_RAIL: StreamRail = {
   resolved: false,
 }
 
-function buildRail(events: CachedEvent[]): StreamRail {
+function buildRail(events: CachedEvent[], overlay?: Map<string, CachedEvent>): StreamRail {
   const messages = new Map<string, RenderableMessage>()
   const seen = new Set<string>()
   const taggedByConversation = new Map<string, RenderableMessage[]>()
   const supersededClientIds = new Set<string>()
   const eventRows: CachedEvent[] = []
-  for (const event of events) {
+  // A just-sent row the IDB read can't see yet rides in the overlay; the persisted
+  // copy wins the moment it lands (same id), so a row is never built twice.
+  const persistedIds = overlay ? new Set(events.map((event) => event.id)) : null
+  const source =
+    overlay && persistedIds
+      ? [...events, ...[...overlay.values()].filter((event) => !persistedIds.has(event.id))]
+      : events
+  for (const event of source) {
     // The rail reads message_created + the board's non-message row types; anything
     // that isn't a message is a spec event row (a trace/memo/follow-up).
     if (event.eventType !== "message_created") {
@@ -134,6 +141,9 @@ function buildRail(events: CachedEvent[]): StreamRail {
 
 interface StreamRailEntry {
   rail: StreamRail
+  /** The last liveQuery emission, kept so an overlay publish can rebuild the rail
+   *  without re-reading IDB. */
+  events: CachedEvent[]
   listeners: Set<() => void>
   subscription: Subscription
   refCount: number
@@ -164,11 +174,82 @@ const RAIL_TEARDOWN_GRACE_MS = 5000
 // whole board subtree, draining it), so no explicit lock/clear wiring is needed.
 const railRegistry = new Map<string, StreamRailEntry>()
 
+/**
+ * Just-sent rows the rail shows before IDB has emitted them, by stream then id.
+ *
+ * The sender's own reply is written to `db.events` and reaches the card through
+ * Dexie's `liveQuery` — a write commit plus a full re-read of the stream, ~140ms
+ * on a desktop dev build and visibly worse on a phone, all of it AFTER the
+ * composer has already cleared, which is what made a board reply feel unsent.
+ * `publishOptimisticRailEvent` puts the row on the rail in the sending tick
+ * instead; the persisted copy takes over silently when the emission carrying it
+ * arrives (`buildRail` prefers it by id).
+ *
+ * An entry leaves when the stream's emission holds the row, when the echo swap's
+ * real row supersedes it (`clientMessageId`), or when the send is deleted. It
+ * never has to leave for correctness: an entry outliving its confirmation is
+ * filtered by the same `supersededClientIds` rule that already covers a stale
+ * merged-rail snapshot (the convert-to-thread swap moves the real row to another
+ * stream, so its rail never sees the temp id at all).
+ */
+const optimisticOverlay = new Map<string, Map<string, CachedEvent>>()
+
+/**
+ * Show a just-queued optimistic event on its stream's board rail now, without
+ * waiting for the IDB write to round-trip through `liveQuery`. Called by the
+ * send path (`useQueueDraftMessage`) immediately before the write it mirrors.
+ */
+export function publishOptimisticRailEvent(event: CachedEvent): void {
+  const entry = railRegistry.get(event.streamId)
+  // No rail means no board card is reading this stream — nothing to make eager,
+  // and no liveQuery would ever emit to prune the entry (the send paths that
+  // create a scratchpad or a thread out of view come through here too).
+  if (!entry) return
+  const overlay = optimisticOverlay.get(event.streamId) ?? new Map<string, CachedEvent>()
+  overlay.set(event.id, event)
+  optimisticOverlay.set(event.streamId, overlay)
+  // An unresolved rail is still doing its first read: rebuilding it here would
+  // publish `resolved: true` over an empty event set and flip cards off their
+  // projection with nothing to show. Its first emission picks the overlay up.
+  if (!entry.rail.resolved) return
+  entry.rail = buildRail(entry.events, overlay)
+  for (const notify of entry.listeners) notify()
+}
+
+/** Drop a published row — its send was deleted, or its write failed, so no
+ *  emission will ever confirm it. */
+export function revokeOptimisticRailEvent(id: string): void {
+  for (const [streamId, overlay] of optimisticOverlay) {
+    if (!overlay.delete(id)) continue
+    if (overlay.size === 0) optimisticOverlay.delete(streamId)
+    const entry = railRegistry.get(streamId)
+    if (!entry || !entry.rail.resolved) continue
+    entry.rail = buildRail(entry.events, optimisticOverlay.get(streamId))
+    for (const notify of entry.listeners) notify()
+  }
+}
+
+/** Forget overlay rows the emission now carries (or whose echo supersedes them),
+ *  so the persisted copy is the only one the rail builds from. */
+function pruneOverlay(streamId: string, events: CachedEvent[]): Map<string, CachedEvent> | undefined {
+  const overlay = optimisticOverlay.get(streamId)
+  if (!overlay) return undefined
+  for (const event of events) {
+    overlay.delete(event.id)
+    const clientMessageId = (event.payload as MessageCreatedPayloadShape | undefined)?.clientMessageId
+    if (clientMessageId) overlay.delete(clientMessageId)
+  }
+  if (overlay.size > 0) return overlay
+  optimisticOverlay.delete(streamId)
+  return undefined
+}
+
 function subscribeStreamRail(streamId: string, listener: () => void): () => void {
   let entry = railRegistry.get(streamId)
   if (!entry) {
     const created: StreamRailEntry = {
       rail: LOADING_RAIL,
+      events: [],
       listeners: new Set(),
       refCount: 0,
       subscription: { unsubscribe() {} } as Subscription,
@@ -186,7 +267,8 @@ function subscribeStreamRail(streamId: string, listener: () => void): () => void
     ).subscribe((events) => {
       const live = railRegistry.get(streamId)
       if (!live) return
-      live.rail = buildRail(events)
+      live.events = events
+      live.rail = buildRail(events, pruneOverlay(streamId, events))
       for (const notify of live.listeners) notify()
     })
     entry = created
@@ -435,6 +517,7 @@ export function __clearBoardRailRegistry(): void {
     entry.subscription.unsubscribe()
   }
   railRegistry.clear()
+  optimisticOverlay.clear()
   for (const entry of threadIndexRegistry.values()) entry.subscription.unsubscribe()
   threadIndexRegistry.clear()
 }

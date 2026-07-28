@@ -11,6 +11,7 @@ import { nextOptimisticSequence } from "@/lib/optimistic-sequence"
 import { sealOutgoingMessage, type SealOutgoingMessageResult } from "@/lib/crypto/seal-send"
 import { reviveStaleActorWraps } from "@/lib/crypto/stream-key-cache"
 import { generateClientId } from "./use-stream-or-draft"
+import { publishOptimisticRailEvent, revokeOptimisticRailEvent } from "./use-board-card-messages"
 import type { AttachmentSummary } from "./create-optimistic-bootstrap"
 
 export interface QueueDraftMessageInput {
@@ -147,40 +148,66 @@ export function useQueueDraftMessage(workspaceId: string) {
 
       markPending(clientId)
 
-      await db.transaction("rw", [db.pendingMessages, db.events], async () => {
-        const [anchorSequence, allocatedSequence] = await Promise.all([
-          getLatestPersistedSequence(params.streamId),
-          nextOptimisticSequence(params.streamId),
-        ])
-        await db.pendingMessages.add({
-          clientId,
-          workspaceId: params.workspaceId,
-          streamId: params.streamId,
-          content: contentMarkdown,
-          contentFormat: "markdown",
-          contentJson: input.contentJson,
-          attachmentIds: input.attachmentIds,
-          createdAt: Date.now(),
-          retryCount: 0,
-          streamCreation: params.streamCreation,
-          conversation: params.conversation,
-          draftId: params.draftId,
-          ...(e2eFields
-            ? { ciphertext: e2eFields.ciphertext, envelope: e2eFields.envelope, e2eVersion: e2eFields.e2eVersion }
-            : {}),
-        })
-
-        await db.events.add({
-          ...optimisticEvent,
-          workspaceId: params.workspaceId,
-          sequence: allocatedSequence,
-          _sequenceNum: sequenceToNum(allocatedSequence),
-          ...(anchorSequence != null && { _anchorSequenceNum: sequenceToNum(anchorSequence) }),
-          _clientId: clientId,
-          _status: "pending",
-          _cachedAt: Date.now(),
-        })
+      // Put the row on the board rail in THIS tick. The write below reaches a
+      // card only after its commit round-trips through Dexie's `liveQuery`
+      // (~180ms on a phone, all of it after the composer has already cleared),
+      // which is what made a board reply look unsent until it popped in. The
+      // sequence mirrors `nextOptimisticSequence`'s clock floor so the row sorts
+      // where its persisted twin will; that twin replaces it on the next
+      // emission, and a write that never lands is revoked below.
+      const publishedSequence = Date.now().toString()
+      publishOptimisticRailEvent({
+        ...optimisticEvent,
+        workspaceId: params.workspaceId,
+        sequence: publishedSequence,
+        _sequenceNum: sequenceToNum(publishedSequence),
+        _clientId: clientId,
+        _status: "pending",
+        _cachedAt: Date.now(),
       })
+
+      try {
+        await db.transaction("rw", [db.pendingMessages, db.events], async () => {
+          const [anchorSequence, allocatedSequence] = await Promise.all([
+            getLatestPersistedSequence(params.streamId),
+            nextOptimisticSequence(params.streamId),
+          ])
+          await db.pendingMessages.add({
+            clientId,
+            workspaceId: params.workspaceId,
+            streamId: params.streamId,
+            content: contentMarkdown,
+            contentFormat: "markdown",
+            contentJson: input.contentJson,
+            attachmentIds: input.attachmentIds,
+            createdAt: Date.now(),
+            retryCount: 0,
+            streamCreation: params.streamCreation,
+            conversation: params.conversation,
+            draftId: params.draftId,
+            ...(e2eFields
+              ? { ciphertext: e2eFields.ciphertext, envelope: e2eFields.envelope, e2eVersion: e2eFields.e2eVersion }
+              : {}),
+          })
+
+          await db.events.add({
+            ...optimisticEvent,
+            workspaceId: params.workspaceId,
+            sequence: allocatedSequence,
+            _sequenceNum: sequenceToNum(allocatedSequence),
+            ...(anchorSequence != null && { _anchorSequenceNum: sequenceToNum(anchorSequence) }),
+            _clientId: clientId,
+            _status: "pending",
+            _cachedAt: Date.now(),
+          })
+        })
+      } catch (err) {
+        // Nothing durable was written, so no emission will ever confirm the
+        // published row — take it back off the rail rather than leave a reply
+        // on screen that isn't queued anywhere.
+        revokeOptimisticRailEvent(clientId)
+        throw err
+      }
 
       // Surface the committed draft in the sidebar and quick switcher so the
       // user can navigate back to it even before the real stream exists. The
