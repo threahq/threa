@@ -20,6 +20,7 @@ import { acquireProcessLock } from "./lock"
 import {
   claudeLaunchArgs,
   claudeLaunchCommand,
+  deriveClaudeRuntimeIdentity,
   normalizeChannelMcpConfig,
   piLaunchArgs,
   piLaunchCommand,
@@ -987,5 +988,41 @@ test("reading a missing inventory creates nothing on disk", () => {
   } finally {
     if (previousPath === undefined) delete process.env.THREA_HARNESSD_INVENTORY
     else process.env.THREA_HARNESSD_INVENTORY = previousPath
+  }
+})
+
+test("a revival derives identity from the worktree, never from the caller's environment", async () => {
+  // Every Claude channel session exports THREA_INSTANCE_ID and
+  // THREA_RUNTIME_SESSION_ID in its launch env, so `harnessd` run from inside
+  // one used to mint that session's identity for a DIFFERENT worktree: the new
+  // session linked to the caller's scratchpad and overwrote its harness link.
+  // Observed live on 2026-07-28 by spawning `threa.test` from a channel session.
+  // The other tests scrub these keys before running, which is precisely what
+  // kept the bug invisible — this one sets them on purpose.
+  const saved = [process.env.THREA_INSTANCE_ID, process.env.THREA_RUNTIME_SESSION_ID] as const
+  process.env.THREA_INSTANCE_ID = "cc-someone-else"
+  process.env.THREA_RUNTIME_SESSION_ID = "ccs-someone-else"
+  const preflights: Array<{ instanceId: string; runtimeSessionId: string }> = []
+  try {
+    const deps = reviveDeps({
+      preflight: async (params) => {
+        preflights.push({ instanceId: params.instanceId, runtimeSessionId: params.runtimeSessionId })
+        return { status: "linked", rootStreamId: "stream_01ABCDEF" }
+      },
+    })
+    // No recorded identity, so it has to be derived from the worktree.
+    await reviveAgent(linkedAgent({ instanceId: undefined, runtimeSessionId: undefined }), {}, deps)
+
+    const derived = deriveClaudeRuntimeIdentity("/tmp/worktrees/repair")
+    expect(preflights).toEqual([{ instanceId: derived.instanceId, runtimeSessionId: derived.runtimeSessionId }])
+    expect(preflights[0]?.runtimeSessionId).not.toBe("ccs-someone-else")
+  } finally {
+    for (const [key, value] of [
+      ["THREA_INSTANCE_ID", saved[0]],
+      ["THREA_RUNTIME_SESSION_ID", saved[1]],
+    ] as const) {
+      if (value === undefined) delete process.env[key]
+      else process.env[key] = value
+    }
   }
 })

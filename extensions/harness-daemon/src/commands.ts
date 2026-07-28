@@ -21,7 +21,7 @@ import {
   ClaudeRuntimeSpawner,
   PiRuntimeSpawner,
   RuntimeSpawnError,
-  claudeRuntimeIdentity,
+  deriveClaudeRuntimeIdentity,
   configuredThreaBaseUrl,
   readPiRemoteConfig,
   readPiRemoteSession,
@@ -356,7 +356,7 @@ export async function reviveAgent(
     if (agent.runtime === "pi" && targetRuntimeSessionId) {
       targetInstanceId ??= deps.piLink(targetRuntimeSessionId)?.instanceId
     } else if (agent.runtime === "claude" && !targetInstanceId && !targetRuntimeSessionId && agent.worktree) {
-      const derived = claudeRuntimeIdentity(agent.worktree, deps.claudeConfig)
+      const derived = deriveClaudeRuntimeIdentity(agent.worktree, deps.claudeConfig)
       targetInstanceId = derived.instanceId
       targetRuntimeSessionId = derived.runtimeSessionId
     }
@@ -477,7 +477,7 @@ export async function reviveAgent(
     instanceId = piLink!.instanceId
     runtimeSessionId = agent.runtimeSessionId!
   } else {
-    const derived = claudeRuntimeIdentity(agent.worktree, deps.claudeConfig)
+    const derived = deriveClaudeRuntimeIdentity(agent.worktree, deps.claudeConfig)
     instanceId = agent.instanceId ?? derived.instanceId
     runtimeSessionId = agent.runtimeSessionId ?? derived.runtimeSessionId
   }

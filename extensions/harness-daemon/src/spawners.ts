@@ -297,7 +297,7 @@ export class ClaudeRuntimeSpawner extends RuntimeSpawner {
     ensureTmuxSession(session)
     const { worktree, branch } = this.createWorktree(options)
     const config = readThreaChannelConfig()
-    const identity = claudeRuntimeIdentity(worktree, config)
+    const identity = deriveClaudeRuntimeIdentity(worktree, config)
     const partial: Partial<SpawnResult> = {
       worktree,
       branch,
@@ -359,7 +359,7 @@ export class ClaudeRuntimeSpawner extends RuntimeSpawner {
     if (!existsSync(mcpConfig)) this.writeMcpConfig(agent.name, channel, channelEntry)
     normalizeChannelMcpConfig(mcpConfig, channel, channelEntry)
     const config = readThreaChannelConfig()
-    const derived = claudeRuntimeIdentity(agent.worktree, config)
+    const derived = deriveClaudeRuntimeIdentity(agent.worktree, config)
     const identity = {
       instanceId: agent.instanceId ?? derived.instanceId,
       runtimeSessionId: agent.runtimeSessionId ?? derived.runtimeSessionId,
@@ -505,18 +505,6 @@ export function deriveClaudeRuntimeIdentity(
   return {
     instanceId: sanitizeId(config.instanceId || stableId("cc", seed)).slice(0, 64),
     runtimeSessionId: sanitizeId(config.runtimeSessionId || stableId("ccs", seed)).slice(0, 64),
-  }
-}
-
-export function claudeRuntimeIdentity(
-  worktree: string,
-  config: ThreaChannelConfig = {},
-  host = hostname()
-): { instanceId: string; runtimeSessionId: string } {
-  const derived = deriveClaudeRuntimeIdentity(worktree, config, host)
-  return {
-    instanceId: sanitizeId(process.env.THREA_INSTANCE_ID || derived.instanceId).slice(0, 64),
-    runtimeSessionId: sanitizeId(process.env.THREA_RUNTIME_SESSION_ID || derived.runtimeSessionId).slice(0, 64),
   }
 }
 
