@@ -86,9 +86,11 @@ describe("scratchpad display names", () => {
 
   test("only a genuinely nameless scratchpad gets the placeholder", () => {
     expect(getEffectiveDisplayName(scratchpad())).toEqual({ displayName: "New scratchpad", source: "placeholder" })
-    expect(getEffectiveDisplayName(scratchpad({ displayName: "" }))).toEqual({
-      displayName: "New scratchpad",
-      source: "placeholder",
-    })
+    for (const blank of ["", "   "]) {
+      expect(getEffectiveDisplayName(scratchpad({ displayName: blank }))).toEqual({
+        displayName: "New scratchpad",
+        source: "placeholder",
+      })
+    }
   })
 })

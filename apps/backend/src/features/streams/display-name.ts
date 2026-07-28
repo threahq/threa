@@ -14,8 +14,12 @@ export type DisplayNameSource = "slug" | "generated" | "explicit" | "participant
  * ungenerated enough to be invisible.
  */
 function storedDisplayName(stream: Stream): EffectiveDisplayName | undefined {
-  if (!stream.displayName) return undefined
-  return { displayName: stream.displayName, source: stream.displayNameGeneratedAt ? "generated" : "explicit" }
+  // Whitespace is not a name: rendering it gives a blank row, and
+  // `needsAutoNaming` would still count the stream as named, so nothing would
+  // ever replace it.
+  const name = stream.displayName?.trim()
+  if (!name) return undefined
+  return { displayName: name, source: stream.displayNameGeneratedAt ? "generated" : "explicit" }
 }
 
 export interface DisplayNameContext {
