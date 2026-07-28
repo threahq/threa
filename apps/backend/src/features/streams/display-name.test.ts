@@ -44,4 +44,53 @@ describe("thread placeholder display names", () => {
     )
     expect(result).toEqual({ displayName: "API redesign", source: "generated" })
   })
+
+  test("a name set at creation wins too, without an auto-namer timestamp", () => {
+    const result = getEffectiveDisplayName(thread({ displayName: "Handover" }), {
+      parentStream: { slug: "general", displayName: null },
+    })
+    expect(result).toEqual({ displayName: "Handover", source: "explicit" })
+  })
+})
+
+function scratchpad(overrides: Partial<Stream> = {}): Stream {
+  return {
+    id: "stream_scratchpad",
+    workspaceId: "ws_1",
+    type: "scratchpad",
+    displayName: null,
+    displayNameGeneratedAt: null,
+    slug: null,
+    ...overrides,
+  } as Stream
+}
+
+describe("scratchpad display names", () => {
+  // The exact row `StreamRepository.insert` writes for a bot-created
+  // scratchpad: display_name set, display_name_generated_at NULL (insert has no
+  // such column). Requiring the timestamp to render made every harnessd
+  // scratchpad read "New scratchpad" forever while its real name sat in the
+  // database — and `needsAutoNaming` (displayName === null) skipped them, so
+  // nothing ever set the timestamp either.
+  test("a name set at creation renders instead of the placeholder", () => {
+    const result = getEffectiveDisplayName(scratchpad({ displayName: "CC - threa.conversations-match-timeline" }))
+    expect(result).toEqual({ displayName: "CC - threa.conversations-match-timeline", source: "explicit" })
+  })
+
+  test("an auto-generated name still reports itself as generated", () => {
+    const result = getEffectiveDisplayName(
+      scratchpad({ displayName: "Board rollup", displayNameGeneratedAt: new Date() })
+    )
+    expect(result).toEqual({ displayName: "Board rollup", source: "generated" })
+  })
+
+  test("only a genuinely nameless scratchpad gets the placeholder", () => {
+    expect(getEffectiveDisplayName(scratchpad())).toEqual({ displayName: "New scratchpad", source: "placeholder" })
+    for (const blank of ["", "   "]) {
+      expect(getEffectiveDisplayName(scratchpad({ displayName: blank }))).toEqual({
+        displayName: "New scratchpad",
+        source: "placeholder",
+      })
+    }
+  })
 })

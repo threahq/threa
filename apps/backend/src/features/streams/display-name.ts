@@ -1,6 +1,26 @@
 import type { Stream, StreamType } from "./repository"
 
-export type DisplayNameSource = "slug" | "generated" | "participants" | "placeholder"
+export type DisplayNameSource = "slug" | "generated" | "explicit" | "participants" | "placeholder"
+
+/**
+ * A stored name is authoritative however it got there.
+ *
+ * `display_name_generated_at` records that the auto-namer wrote the name; it is
+ * never set by `StreamRepository.insert`, so requiring it to render meant every
+ * scratchpad created WITH a name — which is what every bot runtime does — was
+ * displayed as "New scratchpad" forever. `needsAutoNaming` keys off
+ * `displayName === null`, so those streams were also skipped by the very
+ * namer that would have set the timestamp: named enough to be ineligible,
+ * ungenerated enough to be invisible.
+ */
+function storedDisplayName(stream: Stream): EffectiveDisplayName | undefined {
+  // Whitespace is not a name: rendering it gives a blank row, and
+  // `needsAutoNaming` would still count the stream as named, so nothing would
+  // ever replace it.
+  const name = stream.displayName?.trim()
+  if (!name) return undefined
+  return { displayName: name, source: stream.displayNameGeneratedAt ? "generated" : "explicit" }
+}
 
 export interface DisplayNameContext {
   parentStream?: { slug: string | null; displayName: string | null } | null
@@ -34,13 +54,9 @@ export function getEffectiveDisplayName(stream: Stream, context?: DisplayNameCon
         source: "placeholder",
       }
 
-    case "thread":
-      if (stream.displayName && stream.displayNameGeneratedAt) {
-        return {
-          displayName: stream.displayName,
-          source: "generated",
-        }
-      }
+    case "thread": {
+      const stored = storedDisplayName(stream)
+      if (stored) return stored
       if (context?.parentStream) {
         // The # sigil is a channel affordance — a slugless parent (scratchpad,
         // DM) must not render as a phantom "#channel".
@@ -56,18 +72,10 @@ export function getEffectiveDisplayName(stream: Stream, context?: DisplayNameCon
         displayName: "New thread",
         source: "placeholder",
       }
+    }
 
     case "scratchpad":
-      if (stream.displayName && stream.displayNameGeneratedAt) {
-        return {
-          displayName: stream.displayName,
-          source: "generated",
-        }
-      }
-      return {
-        displayName: "New scratchpad",
-        source: "placeholder",
-      }
+      return storedDisplayName(stream) ?? { displayName: "New scratchpad", source: "placeholder" }
 
     default:
       return {
