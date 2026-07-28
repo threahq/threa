@@ -38,7 +38,7 @@ import { SidebarSearchPanel, useSearchPanel } from "@/components/search"
 import { SidebarHeader } from "./sidebar-header"
 import { SidebarQuickLinks } from "./quick-links"
 import { BoardModeBlock } from "./board-mode-block"
-import { BoardLinkRow } from "./board-link-row"
+import { BoardLinkRow, ChatsLinkRow } from "./board-link-row"
 import { SidebarStreamList } from "./sidebar-stream-list"
 import { HeaderSkeleton, QuickLinksSkeleton, StreamListSkeleton } from "./skeletons"
 import { SidebarFooter } from "./sidebar-footer"
@@ -383,20 +383,18 @@ export function Sidebar({ workspaceId }: SidebarProps) {
       unreadActivityCount={unreadActivityCount}
     />
   ) : null
-  // Board mode keeps the board block (its filters/views/lenses) available even
-  // when the user drops the quick-links section, so the quick links sit above it
-  // only when present. Chats mode pairs the `Board` entry row with the quick
-  // links and stays hidden without the section, as it always has.
+  // The cross-mode entry row sits at the same spot in both modes — above the
+  // quick links — so it doesn't move as the viewer crosses between them. Board
+  // mode keeps the board block (its filters/views/lenses) available even when the
+  // user drops the quick-links section; chats mode stays hidden without it, as it
+  // always has.
   let quickLinksSlot: ReactNode
   if (isBoardPage) {
     quickLinksSlot = (
       <>
+        <ChatsLinkRow workspaceId={workspaceId} userId={user?.id ?? null} />
         {quickLinks}
-        <BoardModeBlock
-          workspaceId={workspaceId}
-          userId={user?.id ?? null}
-          lensTotals={boardMode?.lensTotals ?? null}
-        />
+        <BoardModeBlock workspaceId={workspaceId} lensTotals={boardMode?.lensTotals ?? null} />
       </>
     )
   } else if (hasQuickLinksSection) {
@@ -657,7 +655,7 @@ export function Sidebar({ workspaceId }: SidebarProps) {
           <SidebarHeader
             workspaceName={workspace?.name ?? ""}
             onEditLayout={() => setIsEditorOpen(true)}
-            hideViewToggle={!hasUserStreams}
+            hideViewToggle={!hasUserStreams || isBoardPage}
           />
         }
         body={
