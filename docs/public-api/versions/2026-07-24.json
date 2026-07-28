@@ -1734,7 +1734,8 @@
                     "type": "array",
                     "items": { "type": "string", "enum": ["mentionable", "active-scratchpad", "session-control"] }
                   },
-                  "claimTtlSeconds": { "default": 60, "type": "integer", "minimum": 15, "maximum": 300 }
+                  "claimTtlSeconds": { "default": 60, "type": "integer", "minimum": 15, "maximum": 300 },
+                  "responseStreamId": { "type": "string", "minLength": 1, "maxLength": 64 }
                 },
                 "required": ["runtimeKind", "instanceId", "supportedCapabilities", "claimTtlSeconds"],
                 "additionalProperties": false
