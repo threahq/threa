@@ -1,8 +1,14 @@
 # Calls in the background on a phone
 
-Status: **Planned, not built.** Nothing here is measured on real hardware yet.
-Every code claim below was checked against the source at `b6760411`; the
-`Verified` / `Unverified` notes say which is which.
+Status: **Built, not measured.** All three chunks shipped as PRs #1622, #1623 and
+#1625 (Stack #1624); nothing here has been run on real hardware yet, which is
+what the §Verification list is for.
+
+"What the code actually does today" and every line reference below describe the
+source **as of `b6760411`**, before this stack — that is what the chunks were
+planned against, and it is deliberately not rewritten, so the problem statement
+still reads as it did. Where the build diverged from the plan, the divergence is
+recorded in place, next to the deliverable it changed.
 
 ## The ceiling, stated up front
 
@@ -190,17 +196,38 @@ worth keeping alive.
   `setMicrophoneActive(active)`, `setCameraActive(active)`, `release()`.
   It owns **one long-lived `<audio>`** for the session's life: a self-contained
   silent-WAV `data:` URI (no network, CSP-safe), `loop = true`, not muted,
-  started inside the start gesture. Every `navigator.mediaSession.setActionHandler`
+  started inside the start gesture.
+
+  **Built at 8 seconds, generated at runtime.** Chromium classifies a player
+  whose `duration` is under `kMinimumContentDuration` (5s) as _transient_ and
+  builds no controllable media session for it, and `loop` does not raise
+  `duration` — so the short clip the plan implied would have shipped the whole
+  chunk as a no-op on Android with every unit test green. `SILENT_WAV_SECONDS` /
+  `SILENT_WAV_SAMPLE_RATE` are the source of truth; generating rather than
+  embedding keeps ~64KB of zeros out of the bundle.
+
+  Every `navigator.mediaSession.setActionHandler`
   call is individually `try`/`catch`ed — an unsupported action throws
   `TypeError` and must not take the supported ones down with it. `release()`
   pauses and removes the element, clears each handler, nulls `metadata`, and sets
   `playbackState = "none"`.
+
 - `call-manager.ts`: `CallManagerDeps.createMediaSession(): CallMediaSession | null`
   (production wires `createCallMediaSession()` when `navigator.mediaSession`
   exists, else null — INV-12/13, constructed once, injected, so no test touches a
-  real Media Session). `CallSession.mediaSession` holds the handle.
+  real Media Session). **Built on `CallManager` (`this.mediaSession`), not on
+  `CallSession`:** activation happens inside the start gesture, before the
+  session object exists, and `setCallTitle` can arrive at any point in the join
+  window — a session-owned field would silently drop the title pushed while
+  joining, which is the normal case.
   - `runStart` activates it **before** the transport connect and before the first
-    capture, so a call that is only ringing out already owns a session.
+    capture, so a call that is only ringing out already owns a session. Only the
+    hang-up action is registered there: `setMuted`/`setCameraOn` both early-return
+    without a session, and a null handler is what removes a control from the
+    notification, so no button is shown before it can act. `wireMediaSessionToggles`
+    adds mute — and camera only on a video call — after the capture, seeded from
+    the live state (the API's toggles default to inactive, so an unseeded
+    notification shows a live call as muted and the first tap mutes).
   - Handlers: `hangup → void this.leaveCall()`,
     `toggleMicrophone → this.setMuted(!muted)`,
     `toggleCamera → void this.setCameraOn(!cameraOn)` — the existing controller
@@ -363,12 +390,24 @@ when the truth is "your phone was locked and the lease lapsed".
   adjacent bug, found while reading this path. It needs its own copy and an
   action-less chip (Rejoin is wrong when access is gone), so it belongs with
   stream-access work, not here. Recorded so it is not lost.
-- Touching `detectSingleActiveCapture` (`call-manager.ts:1491`) or
-  `use-visual-viewport.ts`'s private `isIOS`. Both are iOS probes with slightly
-  different predicates; unifying them changes load-bearing capture behavior and a
-  545-line viewport suite from a chunk about copy. Three probes remain, one of
-  them new and shared — stated, not hidden.
+- `use-visual-viewport.ts`'s private `isIOS`. Folding it in changes a 545-line
+  viewport suite from a chunk about copy.
 - Lease tuning. Still gated on the §3 data.
+
+**Built beyond this section, deliberately:**
+
+- `detectSingleActiveCapture` now delegates to `isIosWebKit()`. The plan excluded
+  touching it, on the assumption the predicates differed; they were byte-identical
+  at `b6760411`, so the delegation preserves behaviour exactly and INV-35 is
+  better served by one probe than two. It keeps its own name and doc, because a
+  single-active-capture rule is a different claim from a platform fact.
+- `CallDock` opens an iOS call at `standard` rather than `compact`. The notice is
+  gated to the modes with room for it, and `compact` is what an audio call would
+  otherwise land on — a warning the user never sees is not a warning.
+- `IosLockNotice` also renders on the three desktop surfaces, beside their capture
+  banners (INV-35). `useIsMobile()` is viewport-based, so an iPad — and an iPhone
+  in landscape — never mounts `MobileCallDrawer`, and gating the warning there
+  would hide it from exactly the devices `isIosWebKit()` detects.
 
 **Why this boundary:** a reviewer sees one store field, one derived reason, three
 call sites that already tore down now saying why, and one banner. It is also the

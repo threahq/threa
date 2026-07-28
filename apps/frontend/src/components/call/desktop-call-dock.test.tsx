@@ -149,6 +149,35 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
+describe("DesktopCallDock — iOS lock notice", () => {
+  const REAL_UA = navigator.userAgent
+  function setUserAgent(value: string) {
+    Object.defineProperty(navigator, "userAgent", { configurable: true, get: () => value })
+  }
+  afterEach(() => setUserAgent(REAL_UA))
+
+  it("warns on an iPad, which is above the mobile breakpoint and never sees the drawer", () => {
+    // `useIsMobile()` is viewport-based, so an iPad — and an iPhone in landscape —
+    // gets the desktop surfaces. Gating the warning to the drawer would hide it
+    // from devices `isIosWebKit()` goes out of its way to detect.
+    setUserAgent("Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15")
+    renderDock()
+    enterConnected(TWO_PEERS)
+    setMode("standard") // what `CallDock` forces on iOS; `min` is the collapsed rail
+
+    expect(screen.getByTestId("call-ios-lock-notice")).toBeInTheDocument()
+  })
+
+  it("stays quiet where backgrounding does not end the call", () => {
+    setUserAgent("Mozilla/5.0 (Linux; Android 15) AppleWebKit/537.36 Chrome/150")
+    renderDock()
+    enterConnected(TWO_PEERS)
+    setMode("standard")
+
+    expect(screen.queryByTestId("call-ios-lock-notice")).toBeNull()
+  })
+})
+
 describe("DesktopCallDock — side dock presentations", () => {
   it("min renders the Rail: restore chevron + timer + collapsed controls", () => {
     renderDock()
