@@ -783,7 +783,13 @@ function buildRuntimeCapabilities(
     supportsMentionInvocations: true,
     supportsSessionControlCommands: true,
     sessionControlCommands: SESSION_CONTROL_COMMANDS.filter((command) => {
-      if (command === "reconnect") return Boolean(ctx && currentReconnectLink(ctx, reconnectAvailable))
+      // `kick` and `reconnect` both act through the harnessd entrypoint, which
+      // finds this session by its tmux pane and presses Enter into it. Neither
+      // can run without a pane and an installed daemon — everything else here
+      // actuates in-process through the extension API and needs no tmux at all.
+      if (command === "kick" || command === "reconnect") {
+        return Boolean(ctx && currentReconnectLink(ctx, reconnectAvailable))
+      }
       if (command === "key") return Boolean(ctx && currentSessionControlLink(ctx))
       return true
     }),

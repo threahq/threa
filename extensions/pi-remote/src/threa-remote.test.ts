@@ -120,20 +120,12 @@ describe("Pi remote trace safety", () => {
   })
 
   test("advertises session-control command capabilities", () => {
+    // No ctx: nothing is linked yet, so the three commands that need a live
+    // link (kick and reconnect via harnessd, key via the pane) are withheld.
+    // What remains is everything Pi actuates in-process.
     expect(__testing.buildRuntimeCapabilities()).toMatchObject({
       supportsSessionControlCommands: true,
-      sessionControlCommands: [
-        "compact",
-        "model",
-        "thinking",
-        "skill",
-        "reload",
-        "shell",
-        "steer",
-        "stop",
-        "kick",
-        "carry-on",
-      ],
+      sessionControlCommands: ["compact", "model", "thinking", "skill", "reload", "shell", "steer", "stop", "carry-on"],
     })
   })
 
@@ -1083,6 +1075,27 @@ describe("Pi reconnect session control", () => {
     expect(
       (__testing.buildRuntimeCapabilities(ctx, () => false).sessionControlCommands as string[]).includes("reconnect")
     ).toBe(false)
+  })
+
+  test("advertises kick only when harnessd can actually reach a tmux pane", async () => {
+    // `kick` asks harnessd to press Enter in this session's pane. Everything
+    // else Pi advertises actuates in-process, so kick is the one command that
+    // is unrunnable without tmux — offering it anyway is a dead button.
+    const ctx = context(true)
+    const commands = (available: boolean) =>
+      __testing.buildRuntimeCapabilities(ctx, () => available).sessionControlCommands as string[]
+
+    expect(commands(true)).toContain("kick")
+
+    delete process.env.TMUX_PANE
+    expect(commands(true)).not.toContain("kick")
+
+    process.env.TMUX_PANE = "%9"
+    expect(commands(false)).not.toContain("kick")
+
+    // The in-process commands stay available throughout — this gate must not
+    // take the whole session-control surface down with it.
+    expect(commands(false)).toEqual(expect.arrayContaining(["stop", "steer", "compact", "model", "thinking"]))
   })
 
   test("advertises and sends an allowed key only for the exact link using Pi's PID", async () => {

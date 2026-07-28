@@ -67,6 +67,20 @@ describe("createClaudeSessionControl", () => {
     })
   })
 
+  it("advertises kick only when the harness entrypoint exists", () => {
+    // kick shells out to the same harnessd entrypoint reconnect uses, so an
+    // uninstalled daemon makes it a dead button rather than a working command.
+    withTmuxEnv({ TMUX: "/tmp/tmux-1/default,1,0", TMUX_PANE: "%1" }, () => {
+      expect(createClaudeSessionControl(undefined, "runtime")!.commands).toContain("kick")
+      process.env.THREA_HARNESSD_ENTRYPOINT = "/definitely/missing/harnessd.ts"
+      const commands = createClaudeSessionControl(undefined, "runtime")!.commands
+      expect(commands).not.toContain("kick")
+      // The pane-driven commands are unaffected — this gate is about harnessd,
+      // not about tmux.
+      expect(commands).toEqual(expect.arrayContaining(["stop", "steer", "status", "model"]))
+    })
+  })
+
   it("advertises key only with exact runtime, root, and a nonempty TMUX_PANE self-target", () => {
     withTmuxEnv({ TMUX: "/tmp/tmux-1/default,1,0", TMUX_PANE: "%1" }, () => {
       expect(createClaudeSessionControl(undefined, "runtime", undefined, () => "root")!.commands).toContain("key")

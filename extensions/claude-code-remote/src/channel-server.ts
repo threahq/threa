@@ -329,6 +329,10 @@ export function createClaudeSessionControl(
       return runtimeSessionId
         ? SESSION_CONTROL_COMMANDS.filter((command) => {
             if (command === "reconnect") return Boolean(rootStreamId?.() && harnessReconnectAvailable())
+            // `kick` runs through the same harnessd entrypoint as `reconnect`,
+            // so an uninstalled daemon makes it unrunnable too. tmux is already
+            // covered by the tmuxAvailable() gate above.
+            if (command === "kick") return harnessReconnectAvailable()
             if (command === "key") return Boolean(rootStreamId?.() && process.env.TMUX_PANE?.trim())
             return true
           })
