@@ -922,8 +922,9 @@ describe("CallManager", () => {
       document.dispatchEvent(new Event("freeze"))
       document.dispatchEvent(new Event("resume"))
       window.dispatchEvent(new Event("pagehide"))
+      window.dispatchEvent(new Event("pageshow"))
 
-      expect(kinds()).toEqual(["hidden", "visible", "freeze", "resume", "pagehide"])
+      expect(kinds()).toEqual(["hidden", "visible", "freeze", "resume", "pagehide", "pageshow"])
     })
 
     it("records a socket drop and a rejoin onto the same endpoint", async () => {
