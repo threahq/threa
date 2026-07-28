@@ -14,6 +14,7 @@ import {
   type ComposerControlHandle,
 } from "@/components/composer"
 import { useIsMobileOrCoarse } from "@/hooks/use-pointer"
+import { useInputMode } from "@/hooks/use-input-mode"
 import { appendQuoteReplyNode, type QuoteReplyData } from "@/components/timeline/quote-reply-context"
 import { useDraftComposer, useScheduleMessage, useStashComposer } from "@/hooks"
 import { relocateLoadedDraft } from "@/hooks/use-draft-message"
@@ -112,8 +113,13 @@ interface InlineComposerFormProps {
   focusSignal?: number
   /** Perform the send. Throws to keep the composer open and restore the draft. */
   onSubmit: (input: InlineComposerSubmit) => Promise<void>
-  /** Collapse the composer (Escape / after-send / blur-when-empty). */
-  onClose: (opts?: { refocus?: boolean }) => void
+  /**
+   * Collapse the composer (Escape / after-send / blur-when-empty). `refocus`
+   * returns focus to the host's resting affordance; `quiet` asks it to restore
+   * that focus without painting a focus ring — for a close the user drove with
+   * a finger, where the ring would mark a control nobody navigated to.
+   */
+  onClose: (opts?: { refocus?: boolean; quiet?: boolean }) => void
 }
 
 /**
@@ -240,6 +246,12 @@ export function InlineComposerForm({
   // message. A docked host never floats: the footer is the dock, so it keeps the
   // in-place form on every device.
   const isMobileOrCoarse = useIsMobileOrCoarse()
+  // The resting bar is always refocused after a send — dropping focus on `<body>`
+  // strands a screen-reader or keyboard user. Only the ring's *paint* is
+  // conditional: the button inherits :focus-visible from the editor it was
+  // focused out of, so a finger-driven send would otherwise draw a ring nobody
+  // navigated to.
+  const quietFocusOnSend = useInputMode() === "touch"
   const anchor = useFloatingComposerAnchor()
   const floating = isMobileOrCoarse && anchor !== null && !docked
   const formId = useId()
@@ -378,7 +390,7 @@ export function InlineComposerForm({
       })
       await composer.resolveDraft()
       composer.clearAttachments()
-      onClose({ refocus: true })
+      onClose({ refocus: true, quiet: quietFocusOnSend })
     } catch {
       composer.setContent(normalizedContent)
       toast.error("Couldn't post. Please try again.")
@@ -418,7 +430,7 @@ export function InlineComposerForm({
       })
       await composer.resolveDraft()
       composer.clearAttachments()
-      onClose({ refocus: true })
+      onClose({ refocus: true, quiet: quietFocusOnSend })
     } catch {
       composer.setContent(normalizedContent)
       toast.error("Couldn't schedule. Please try again.")

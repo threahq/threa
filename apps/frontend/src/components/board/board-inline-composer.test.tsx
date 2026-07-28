@@ -7,6 +7,7 @@ import { FloatingComposerAnchorProvider, FLOATING_COMPOSER_HEIGHT_VAR } from "@/
 import { spyOnExport } from "@/test"
 import * as composerModule from "@/components/composer"
 import * as usePointerModule from "@/hooks/use-pointer"
+import * as inputModeModule from "@/hooks/use-input-mode"
 import * as hooksModule from "@/hooks"
 import * as contextsModule from "@/contexts"
 import * as mentionablesModule from "@/hooks/use-mentionables"
@@ -98,6 +99,9 @@ beforeEach(() => {
   // portal opt in per-test. The gate reads the shared `useIsMobileOrCoarse`
   // predicate (the panel full-screen breadth), so drive that boundary directly.
   vi.spyOn(usePointerModule, "useIsMobileOrCoarse").mockReturnValue(false)
+  // Pinned per-test: the live hook keeps module-level state, so a touch test
+  // would otherwise bleed into every case after it.
+  vi.spyOn(inputModeModule, "useInputMode").mockReturnValue("mouse")
   vi.spyOn(contextsModule, "usePreferences").mockReturnValue({ preferences: undefined } as never)
   vi.spyOn(mentionablesModule, "useMentionStreamContext").mockReturnValue(undefined as never)
   vi.spyOn(workspaceStoreModule, "useWorkspaceStreams").mockReturnValue([] as never)
@@ -322,6 +326,34 @@ describe("InlineComposerForm restore-on-mount", () => {
   })
 })
 
+describe("InlineComposerForm refocus-after-send", () => {
+  const lastComposerProps = (): MessageComposerProps => editorSpy.mock.calls.at(-1)![0] as MessageComposerProps
+
+  beforeEach(() => {
+    vi.spyOn(usePointerModule, "useIsMobileOrCoarse").mockReturnValue(false)
+    composerStub.canSend = true
+  })
+
+  it("returns focus to the resting bar with its ring when the user is driving with a mouse/keyboard", async () => {
+    const onClose = vi.fn()
+    render(<Anchored>{form({ onClose })}</Anchored>)
+
+    lastComposerProps().onSubmit()
+
+    await waitFor(() => expect(onClose).toHaveBeenCalledWith({ refocus: true, quiet: false }))
+  })
+
+  it("still restores focus on a touch send, quietly — dropping it would strand a screen-reader user on <body>, but the ring would mark a control no finger navigated to", async () => {
+    vi.spyOn(inputModeModule, "useInputMode").mockReturnValue("touch")
+    const onClose = vi.fn()
+    render(<Anchored>{form({ onClose })}</Anchored>)
+
+    lastComposerProps().onSubmit()
+
+    await waitFor(() => expect(onClose).toHaveBeenCalledWith({ refocus: true, quiet: true }))
+  })
+})
+
 describe("InlineComposerForm stash + schedule", () => {
   beforeEach(() => {
     vi.spyOn(usePointerModule, "useIsMobileOrCoarse").mockReturnValue(false)
@@ -358,7 +390,7 @@ describe("InlineComposerForm stash + schedule", () => {
       conversation: { intent: "existing", conversationId: "conv_1" },
     })
     expect(composerStub.resolveDraft).toHaveBeenCalled()
-    expect(onClose).toHaveBeenCalledWith({ refocus: true })
+    expect(onClose).toHaveBeenCalledWith({ refocus: true, quiet: false })
   })
 
   it("restores the content and stays open when scheduling fails", async () => {
