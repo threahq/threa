@@ -200,7 +200,11 @@ export async function adoptClaudeSessionUnlocked(options: AdoptOptions, deps: Ad
     }
   }
 
-  const link = deps.links().find((candidate) => candidate.runtimeSessionId === options.runtimeSessionId)
+  // One snapshot for both the guard and the pane lookup: a record written
+  // between two reads would attest a pane whose kind and root the guard never
+  // checked.
+  const links = deps.links()
+  const link = links.find((candidate) => candidate.runtimeSessionId === options.runtimeSessionId)
   if (link && link.runtimeKind !== "claude-code-channel" && link.runtimeKind !== "unknown") {
     return { status: "refused identity mismatch", detail: `harness link records runtime kind ${link.runtimeKind}` }
   }
@@ -213,7 +217,7 @@ export async function adoptClaudeSessionUnlocked(options: AdoptOptions, deps: Ad
 
   let pane: LocalTmuxPane | undefined
   try {
-    pane = findLocalClaudeChannelPane(options.runtimeSessionId, deps.panes(), config, hostname(), deps.links)
+    pane = findLocalClaudeChannelPane(options.runtimeSessionId, deps.panes(), config, hostname(), () => links)
   } catch (error) {
     return { status: "refused ambiguous", detail: error instanceof Error ? error.message : String(error) }
   }
