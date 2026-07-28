@@ -1,6 +1,14 @@
 import type { Tool } from "ai"
 import { z } from "zod"
-import type { AgentStepType, ToolPrivacyCategory, TraceSource, SourceItem } from "@threa/types"
+import {
+  ToolTiers,
+  tierOfTool,
+  type AgentStepType,
+  type ToolPrivacyCategory,
+  type ToolTier,
+  type TraceSource,
+  type SourceItem,
+} from "@threa/types"
 
 export interface AgentToolResult {
   /** What the LLM sees as the tool result */
@@ -39,6 +47,22 @@ export interface AgentToolConfig<TSchema extends z.ZodTypeAny = z.ZodTypeAny> {
    * sees) that no policy ever gates.
    */
   categories: readonly ToolPrivacyCategory[]
+  /**
+   * How much this call can cost the user if the model is wrong about wanting
+   * it. Tier 2+ is reviewed by the host's guardian before it executes; tier 1
+   * runs straight through.
+   *
+   * NOT written at definition sites — `defineAgentTool` resolves it from
+   * `TOOL_TIERS_BY_NAME`, so a registered tool cannot be given a tier that
+   * disagrees with the table. `categories` is passed per-site for historical
+   * reasons; deriving the tier centrally is the stronger arrangement, because
+   * the only way to change a tool's tier is to edit the table every reviewer
+   * already watches.
+   *
+   * Unregistered host-local tools (the enclave's in-process readers) resolve to
+   * tier 1: they read what the model already sees and write nothing.
+   */
+  tier?: ToolTier
   /**
    * System-prompt prose advertising this tool: a complete `## Section` block
    * (no leading/trailing blank lines). Hosts assemble the prompt's tool
@@ -90,7 +114,17 @@ export interface AgentTool {
 }
 
 export function defineAgentTool<TSchema extends z.ZodTypeAny>(config: AgentToolConfig<TSchema>): AgentTool {
-  return { name: config.name, config: config as AgentToolConfig }
+  if (config.tier !== undefined) {
+    throw new Error(
+      `Tool "${config.name}" sets \`tier\` at its definition site. The tier comes from TOOL_TIERS_BY_NAME; remove it.`
+    )
+  }
+  return { name: config.name, config: { ...config, tier: tierOfTool(config.name) } as AgentToolConfig }
+}
+
+/** The tier a built tool executes at, resolved when it was defined. */
+export function tierOfBuiltTool(tool: AgentTool): ToolTier {
+  return tool.config.tier ?? ToolTiers.UNCHECKED
 }
 
 /**
