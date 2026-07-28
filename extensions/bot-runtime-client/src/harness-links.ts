@@ -61,8 +61,15 @@ function linkPath(runtimeSessionId: string): string | undefined {
  * a reaper at that directory using the OLD session's root stream — archive
  * that stale root and the reaper would push and delete a worktree whose
  * current occupant is very much alive.
+ *
+ * `windDownRequestedAt` is omitted from the parameter rather than merely left
+ * unset: a caller spreading an existing record in here would smuggle the mark
+ * onto a link that was just revived, and `reapLink` skips every margin for a
+ * marked record. The type is what stops that, not the convention.
  */
-export function recordHarnessLink(link: Omit<HarnessLink, "updatedAt" | "pid"> & { pid?: number }): void {
+export function recordHarnessLink(
+  link: Omit<HarnessLink, "updatedAt" | "pid" | "windDownRequestedAt"> & { pid?: number }
+): void {
   const path = linkPath(link.runtimeSessionId)
   if (!path) return
   try {
