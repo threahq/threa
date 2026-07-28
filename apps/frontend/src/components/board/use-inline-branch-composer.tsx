@@ -327,18 +327,10 @@ export function useInlineBranchComposer(params: {
 
   const submitNewSubtopic = useCallback(
     async (streamId: string, messageId: string, input: InlineComposerSubmit) => {
-      // Register the branch BEFORE sending: the send publishes its optimistic row
-      // onto the draft-panel rail in the sending tick, but `derivePendingBranches`
-      // only renders rows for a registered entry — registering after the write
-      // would leave this one gesture on the old post-write pop-in while every
-      // other board composer paints immediately. An entry with no rows renders
-      // nothing, so a failed send shows no empty group; it's dropped below.
-      // Register the branch BEFORE sending: the send publishes its optimistic row
-      // onto the draft-panel rail in the sending tick, but `derivePendingBranches`
-      // only renders rows for a registered entry — registering after the write
-      // would leave this one gesture on the old post-write pop-in while every
-      // other board composer paints immediately. An entry with no rows renders
-      // nothing, so a failed send shows no empty group; it's dropped below.
+      // Register BEFORE sending: the send publishes its optimistic row in the
+      // sending tick, and `derivePendingBranches` renders rows only for a
+      // registered entry (one with no rows renders nothing, so the rollback below
+      // never flashes an empty group).
       setPendingSubtopics((prev) =>
         prev.some((p) => p.streamId === streamId && p.messageId === messageId)
           ? prev
