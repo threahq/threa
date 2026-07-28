@@ -4,8 +4,9 @@ import {
   useSidebar,
   useCoordinatedLoading,
   MIN_SIDEBAR_WIDTH,
-  MAX_SIDEBAR_WIDTH,
   SIDEBAR_COLLAPSE_THRESHOLD,
+  sidebarWidthCap,
+  clampSidebarWidth,
   type UrgencyBlock,
 } from "@/contexts"
 import { useResizeDrag, useVisualViewport, useSidebarSwipe, usePullToRefresh, useTouchCapable } from "@/hooks"
@@ -145,7 +146,7 @@ export function AppShell({ sidebar, children }: AppShellProps) {
   const handleSidebarWidthChange = useCallback(
     (nextWidth: number) => {
       const willCollapse = nextWidth < SIDEBAR_COLLAPSE_THRESHOLD
-      const clampedWidth = Math.max(MIN_SIDEBAR_WIDTH, Math.min(MAX_SIDEBAR_WIDTH, nextWidth))
+      const clampedWidth = clampSidebarWidth(nextWidth)
       const shellWidth = willCollapse ? "6px" : `${clampedWidth}px`
       shellRef.current?.style.setProperty("--nav-sidebar-width", `${clampedWidth}px`)
       shellRef.current?.style.setProperty("--nav-sidebar-shell-width", shellWidth)
@@ -446,7 +447,7 @@ export function AppShell({ sidebar, children }: AppShellProps) {
                   aria-orientation="vertical"
                   aria-valuenow={width}
                   aria-valuemin={MIN_SIDEBAR_WIDTH}
-                  aria-valuemax={MAX_SIDEBAR_WIDTH}
+                  aria-valuemax={sidebarWidthCap()}
                   aria-label="Resize sidebar"
                 />
               )}

@@ -49,8 +49,11 @@ describe("SidebarContext.togglePinned (desktop)", () => {
 })
 
 describe("SidebarContext.setWidth", () => {
+  const viewportWidth = window.innerWidth
+
   beforeEach(() => {
     localStorage.removeItem(SIDEBAR_STATE_KEY)
+    window.innerWidth = viewportWidth
   })
 
   it("clamps a non-collapsing resize to the minimum width", () => {
@@ -70,6 +73,24 @@ describe("SidebarContext.setWidth", () => {
     act(() => result.current.setWidth(149))
 
     expect(result.current.state).toBe("collapsed")
+  })
+
+  it("clamps to the 500px ceiling on a wide window", () => {
+    window.innerWidth = 1600
+    const { result } = renderHook(() => useSidebar(), { wrapper })
+
+    act(() => result.current.setWidth(900))
+
+    expect(result.current.width).toBe(500)
+  })
+
+  it("clamps to half the window when that is narrower than the ceiling", () => {
+    window.innerWidth = 800
+    const { result } = renderHook(() => useSidebar(), { wrapper })
+
+    act(() => result.current.setWidth(900))
+
+    expect(result.current.width).toBe(400)
   })
 })
 

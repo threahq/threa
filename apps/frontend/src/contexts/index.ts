@@ -62,6 +62,8 @@ export {
   MIN_SIDEBAR_WIDTH,
   MAX_SIDEBAR_WIDTH,
   SIDEBAR_COLLAPSE_THRESHOLD,
+  sidebarWidthCap,
+  clampSidebarWidth,
   type UrgencyBlock,
   type CollapseState,
 } from "./sidebar-context"
