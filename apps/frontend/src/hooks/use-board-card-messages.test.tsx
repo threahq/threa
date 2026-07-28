@@ -1,9 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
-import { renderHook, waitFor } from "@testing-library/react"
+import { act, renderHook, waitFor } from "@testing-library/react"
 import { db, type CachedEvent } from "@/db"
 import { createDraftPanelId } from "@/contexts/panel-context"
 import type { BoardViewPost } from "./use-stable-board-view"
 import {
+  publishOptimisticRailEvent,
+  revokeOptimisticRailEvent,
   useBoardCardMessages,
   useBoardRailsReady,
   useStableReplyWindow,
@@ -29,6 +31,17 @@ function msgEvent(messageId: string, contentMarkdown: string, seq: number, strea
     actorType: "user",
     createdAt: new Date(seq).toISOString(),
     _cachedAt: seq,
+  } as CachedEvent
+}
+
+/** An optimistic reply as the send path publishes it: tagged with its target
+ *  conversation, pending, and not yet a member of the conversation. */
+function pendingReply(id: string, contentMarkdown: string, streamId = STREAM): CachedEvent {
+  return {
+    ...msgEvent(id, contentMarkdown, 1700000000000, streamId),
+    id,
+    payload: { messageId: id, contentMarkdown, reactions: {}, conversationId: "conv_1" },
+    _status: "pending",
   } as CachedEvent
 }
 
@@ -807,6 +820,92 @@ describe("useBoardCardMessages stability (no flicker, no hiding)", () => {
       expect(frame.source).toBe("events")
       expect(frame.openingMessage?.contentMarkdown).toBe("the opening")
     }
+  })
+
+  it("shows a published row before its write lands, then hands over to the persisted copy", async () => {
+    await db.events.bulkPut([msgEvent("m1", "the opening", 1), msgEvent("r1", "first reply", 2)])
+    const post = makePost({ messageIds: ["m1", "r1"], openingId: "m1" })
+    const { result } = renderHook(() => useBoardCardMessages(post))
+    await waitFor(() => expect(result.current.source).toBe("events"))
+
+    // The send publishes to the rail before it writes to IDB — nothing is in
+    // db.events yet, and the reply must already be on the card.
+    act(() => publishOptimisticRailEvent(pendingReply("temp_x", "my pending reply")))
+    expect(result.current.pendingReplies.map((m) => m.id)).toEqual(["temp_x"])
+    expect(result.current.pendingReplies[0]?.contentMarkdown).toBe("my pending reply")
+
+    // The write lands. Distinct content so the wait can only be satisfied by the
+    // persisted copy — waiting on the id alone would resolve on the published row
+    // and assert nothing about the hand-over.
+    await db.events.put(pendingReply("temp_x", "the persisted copy"))
+    await waitFor(() => expect(result.current.pendingReplies[0]?.contentMarkdown).toBe("the persisted copy"))
+    expect(result.current.pendingReplies.map((m) => m.id)).toEqual(["temp_x"])
+    expect(result.current.replies.map((m) => m.id)).toEqual(["r1"])
+  })
+
+  it("drops a published row whose echo lands on another stream (convert-to-thread swap)", async () => {
+    const THREAD = "stream_thread_swap"
+    await db.events.bulkPut([msgEvent("m1", "the opening", 1)])
+    const post = makePost({ messageIds: ["m1"], openingId: "m1", streamIds: [STREAM, THREAD] })
+    const { result } = renderHook(() => useBoardCardMessages(post))
+    await waitFor(() => expect(result.current.source).toBe("events"))
+
+    act(() => publishOptimisticRailEvent(pendingReply("temp_y", "converted reply")))
+    expect(result.current.pendingReplies.map((m) => m.id)).toEqual(["temp_y"])
+
+    // The queue promoted a thread and the echo landed there under a real id,
+    // naming the client id it confirms. The published row must not double it.
+    await db.events.put({
+      ...msgEvent("msg_real", "converted reply", 3, THREAD),
+      payload: {
+        messageId: "msg_real",
+        contentMarkdown: "converted reply",
+        reactions: {},
+        conversationId: "conv_1",
+        clientMessageId: "temp_y",
+      },
+    } as CachedEvent)
+    await waitFor(() => expect(result.current.pendingReplies.map((m) => m.id)).toEqual(["msg_real"]))
+  })
+
+  it("drops published rows with the rail at teardown (no resurrection on re-subscribe)", async () => {
+    await db.events.bulkPut([msgEvent("m1", "the opening", 1)])
+    const post = makePost({ messageIds: ["m1"], openingId: "m1" })
+    const first = renderHook(() => useBoardCardMessages(post))
+    await waitFor(() => expect(first.result.current.source).toBe("events"))
+
+    // Published, then the card goes away before any emission confirms the row —
+    // the subscription that would prune it dies with the rail.
+    act(() => publishOptimisticRailEvent(pendingReply("temp_gone", "orphaned reply")))
+    expect(first.result.current.pendingReplies.map((m) => m.id)).toEqual(["temp_gone"])
+
+    vi.useFakeTimers()
+    try {
+      first.unmount()
+      vi.advanceTimersByTime(60_000)
+      expect(__boardRailRegistrySize()).toBe(0)
+    } finally {
+      vi.useRealTimers()
+    }
+
+    // A fresh card on the same stream must show what IDB holds — nothing of the
+    // orphaned row (whose write never landed).
+    const second = renderHook(() => useBoardCardMessages(post))
+    await waitFor(() => expect(second.result.current.source).toBe("events"))
+    expect(second.result.current.pendingReplies).toEqual([])
+  })
+
+  it("revokes a published row when its send is deleted", async () => {
+    await db.events.bulkPut([msgEvent("m1", "the opening", 1)])
+    const post = makePost({ messageIds: ["m1"], openingId: "m1" })
+    const { result } = renderHook(() => useBoardCardMessages(post))
+    await waitFor(() => expect(result.current.source).toBe("events"))
+
+    act(() => publishOptimisticRailEvent(pendingReply("temp_z", "doomed reply")))
+    expect(result.current.pendingReplies.map((m) => m.id)).toEqual(["temp_z"])
+
+    act(() => revokeOptimisticRailEvent("temp_z"))
+    expect(result.current.pendingReplies).toEqual([])
   })
 })
 

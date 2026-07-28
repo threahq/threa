@@ -8,7 +8,7 @@ import { BoardCard } from "./board-card"
 import type { BoardViewPost } from "@/hooks/use-stable-board-view"
 import { ServicesProvider, PanelProvider, TraceProvider, createDraftPanelId } from "@/contexts"
 import { TooltipProvider } from "@/components/ui/tooltip"
-import { __clearBoardRailRegistry } from "@/hooks/use-board-card-messages"
+import { __clearBoardRailRegistry, publishOptimisticRailEvent } from "@/hooks/use-board-card-messages"
 import { __clearConversationGraphRegistry } from "@/hooks/use-conversation-graph"
 import { spyOnExport } from "@/test/spy"
 // eslint-disable-next-line no-restricted-imports -- test seeds IDB directly to drive the real graph + structural index
@@ -261,6 +261,44 @@ describe("BoardCard — inline sub-topic + branch reply", () => {
         conversation: { intent: "newSubtopic" },
       }
     )
+  })
+
+  it("paints a new sub-topic's message while its write is still in flight", async () => {
+    await db.streams.bulkPut([cachedStream("stream_1", StreamTypes.CHANNEL)])
+    const post = makePost({
+      id: "conv_parent",
+      streamId: "stream_1",
+      messageIds: ["m_open"],
+      topicSummary: "Hardware refresh",
+      streamIds: ["stream_1"],
+    })
+    await db.conversations.bulkPut([post])
+
+    // Stand in for the real hook: publish the optimistic row onto the rail, then
+    // hang on the write. Nothing reaches IDB, so only the eager path can render.
+    let releaseWrite!: () => void
+    const writeLanded = new Promise<void>((resolve) => (releaseWrite = resolve))
+    queueDraftMessage.mockImplementation(async (_input: unknown, params: { streamId: string }) => {
+      publishOptimisticRailEvent({
+        ...messageEvent("temp_sub", params.streamId, 20, "eager sub-topic message"),
+        id: "temp_sub",
+        actorId: "usr_me",
+        _status: "pending",
+      } as CachedEvent)
+      await writeLanded
+      return { clientId: "temp_sub" }
+    })
+
+    const user = userEvent.setup()
+    mount(post)
+    await screen.findByText("Hardware refresh opening.")
+
+    await user.click(screen.getByRole("button", { name: "Message actions" }))
+    await user.click(screen.getByText("New sub-topic"))
+    await user.click(screen.getByRole("button", { name: "Send inline" }))
+
+    expect(await screen.findByText("eager sub-topic message")).toBeTruthy()
+    releaseWrite()
   })
 
   it("hides New sub-topic on a message that already has a thread (adjustment D)", async () => {

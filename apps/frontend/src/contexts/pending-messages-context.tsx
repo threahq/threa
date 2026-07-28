@@ -3,6 +3,7 @@ import { db } from "@/db"
 import { serializeToMarkdown } from "@threa/prosemirror"
 import { ConversationIntents, type JSONContent } from "@threa/types"
 import { deleteOptimisticBoardPost } from "@/stores/board-store"
+import { revokeOptimisticRailEvent } from "@/hooks/use-board-card-messages"
 import { extractSteerDirective } from "@/lib/commands"
 
 type MessageStatus = "pending" | "failed" | "editing"
@@ -318,6 +319,7 @@ export function PendingMessagesProvider({ children }: PendingMessagesProviderPro
       await db.pendingMessages.delete(id)
       await db.events.delete(id)
     })
+    revokeOptimisticRailEvent(id)
     if (pending?.conversation?.intent === ConversationIntents.NEW && pending.conversation.conversationId) {
       await deleteOptimisticBoardPost(pending.conversation.conversationId)
     }
