@@ -1818,6 +1818,58 @@ describe("folding queued messages into one turn", () => {
     await session.shutdown()
   })
 
+  test("a failed delivery does not leave the session falsely busy", async () => {
+    // No /stop in this queue on purpose: a queued stop clears `inflight` via
+    // completeInterruptedTurns, which would mask the leak this pins.
+    const { session, failed } = makeFoldSession(
+      [
+        makeInvocation({ id: "binv_1", promptMarkdown: "first" }),
+        makeInvocation({ id: "binv_2", promptMarkdown: "second" }),
+      ],
+      {
+        deliverTurn: async () => {
+          throw new Error("pane is gone")
+        },
+      }
+    )
+
+    await asInternal(session).claimDrain()
+
+    expect(failed.map((item) => item.id).sort()).toEqual(["binv_1", "binv_2"])
+    // Left registered, the session reports busy — claiming session control only
+    // — until the idle timeout fires on an already-terminal invocation.
+    expect((session as unknown as { inflight: Map<string, unknown> }).inflight.size).toBe(0)
+    await session.shutdown()
+  })
+
+  test("an archive landing mid-sweep leaves the folded messages claimed, not discarded", async () => {
+    // The primary is left claimed for the restore to re-run; closing the folded
+    // ones here would throw their content away for good.
+    const { session, delivered, completed, failed } = makeFoldSession([
+      makeInvocation({ id: "binv_1", promptMarkdown: "first" }),
+      makeInvocation({ id: "binv_2", promptMarkdown: "second" }),
+    ])
+    const internal = session as unknown as {
+      claimNext: (busy: boolean, scope?: string) => Promise<unknown>
+      stopped: boolean
+    }
+    const realClaim = internal.claimNext.bind(session)
+    internal.claimNext = async (busy: boolean, scope?: string) => {
+      const claimed = await realClaim(busy, scope)
+      // The session goes down while the sweep is awaiting its next claim —
+      // same guard the archive path trips.
+      internal.stopped = true
+      return claimed
+    }
+
+    await asInternal(session).claimDrain()
+
+    expect(delivered).toEqual([])
+    expect(completed).toEqual([])
+    expect(failed).toEqual([])
+    await session.shutdown()
+  })
+
   test("a delivery failure fails the messages loudly and still runs a swept /stop", async () => {
     const { session, failed, interrupts } = makeFoldSession(
       [

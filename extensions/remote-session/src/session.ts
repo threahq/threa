@@ -675,7 +675,7 @@ export class RemoteSession {
         // tool approval whose verdict arrives as an ordinary message) keeps
         // draining with full caps via `interceptHoldsClaims`. Without runtime
         // control there's nothing to claim while busy: strict one-at-a-time.
-        if (this.reconnectHandoff) break
+        if (this.reconnectHandoff || this.stopped || this.archive.detached) break
         const busy = this.inflight.size > 0 && !this.interceptHoldsClaims
         if (busy && !this.sessionControlEnabled) break
         const invocation = await this.claimNext(busy)
@@ -832,8 +832,10 @@ export class RemoteSession {
       // An archive can land while the sweep awaits; delivering into a detached
       // link publishes busy for a turn whose reply cannot arrive.
       if (this.stopped || this.archive.detached) {
-        await Promise.all(folded.map((item) => this.completeNoResponse(item)))
-        folded.length = 0
+        // Leave the folded messages claimed, exactly as the primary is left:
+        // closing them here would discard their content for good, while the
+        // primary comes back on the next drain. The drain's own guard says the
+        // restore re-runs the pass — that has to mean all of it.
         return control
       }
       await this.deliverTurn(invocation, buildSteerContent(parts))
@@ -846,6 +848,11 @@ export class RemoteSession {
       // interrupts an unrelated turn once its claim expires. The messages fail
       // loudly instead of vanishing into a silent close.
       const reason = `Could not start the turn: ${this.summarize(error)}`
+      // The primary was registered in `inflight` before the delegate ran, so a
+      // throw would otherwise leave the session reporting busy — claiming
+      // session-control only — until the idle timeout fired on an invocation
+      // that is already terminal.
+      this.clearInflight(invocation.id)
       await this.failInvocation(invocation, reason).catch(() => undefined)
       await Promise.all(folded.map((item) => this.failInvocation(item, reason).catch(() => undefined)))
     }
@@ -864,6 +871,12 @@ export class RemoteSession {
     this.activeTurnStream = invocation.responseStreamId
     await this.syncPresence()
     await this.recordForwardedStep(invocation).catch(() => undefined)
+    // `syncPresence` yields, and an archive landing in that window fails this
+    // invocation and clears it from `inflight`. Handing it to the runtime
+    // anyway would execute a turn whose reply the server has already closed.
+    if (this.stopped || this.archive.detached || !this.inflight.has(invocation.id)) {
+      throw new Error("session went offline before the turn could be delivered")
+    }
     await this.delegate.deliverTurn({
       invocationId: invocation.id,
       streamId: invocation.responseStreamId,
@@ -1127,15 +1140,25 @@ export class RemoteSession {
     await this.deliverTurn(invocation, buildSteerContent(parts))
   }
 
-  /** Claim messages queued while the runtime was busy and fold their text in (steer text last). */
+  /**
+   * Claim messages queued while the runtime was busy and fold their text in
+   * (steer text last).
+   *
+   * Scoped to the stream the steered turn answers into, for the same reason the
+   * fold's sweep is: a message belonging to another stream would be folded
+   * here, closed unanswered where it was asked, and answered somewhere else.
+   * Unscoped when nothing is in flight — there is no turn whose stream to
+   * inherit, and the steer itself is then the only thing being folded into.
+   */
   private async sweepQueuedForSteer(
     text: string
   ): Promise<{ parts: string[]; swept: ClaimedInvocation[]; interceptedCount: number }> {
     const parts: string[] = []
     const swept: ClaimedInvocation[] = []
     let interceptedCount = 0
+    const running = [...this.inflight.values()][0]?.invocation.responseStreamId
     for (let i = 0; i < STEER_DRAIN_LIMIT; i++) {
-      const extra = await this.claimNext(false).catch(() => null)
+      const extra = await this.claimNext(false, running).catch(() => null)
       if (!extra) break
       // A swept message the connector intercepts (e.g. a permission verdict) is
       // consumed and closed here, never folded into the steer text — and never
