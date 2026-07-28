@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { homedir, hostname } from "node:os"
 import { basename, dirname, join } from "node:path"
 import { acceptClaudeBootPrompts } from "./claude-boot"
+import { defaultClaudeDiskDeps, resumableClaudeTranscript } from "./claude-registry"
 import { die } from "./errors"
 import { commandExists, commandPath, run, shellQuote } from "./shell"
 import { capturePane, createWindow, ensureTmuxSession, pickTmuxWindow, sendKeys, tmuxSession } from "./tmux"
@@ -50,13 +51,50 @@ export function claudeLaunchArgs(params: {
   channel: string
   mcpConfig?: string
   noYolo?: boolean
+  /** Set only by a takeover: continue this native conversation instead of starting one. */
+  resumeSessionId?: string
 }): string[] {
-  const args = [params.claudeBin, "--name", `threa.${params.name}`]
+  const args = [params.claudeBin]
+  if (params.resumeSessionId) args.push("--resume", params.resumeSessionId)
+  args.push("--name", `threa.${params.name}`)
   if (params.mcpConfig) {
     args.push("--mcp-config", params.mcpConfig, "--dangerously-load-development-channels", `server:${params.channel}`)
   }
   if (!params.noYolo) args.push("--dangerously-skip-permissions")
   return args
+}
+
+/**
+ * Session-scoped MCP wiring via `--mcp-config` instead of `claude mcp add
+ * --scope local`: Claude Code resolves every worktree of a repo to the same
+ * project entry, so a persisted local-scope registration from worktree A
+ * silently repoints worktree B's channel at A's code the next time B starts
+ * (and stacks a duplicate channel on top of a user-scope registration). A
+ * config file passed at launch binds this session to the supervisor's current
+ * channel implementation and leaves global config untouched. This also keeps
+ * revived feature branches from loading an obsolete connector.
+ */
+export function writeChannelMcpConfig(name: string, channel: string, channelEntry: string): string {
+  const path = mcpConfigPath(name)
+  mkdirSync(dirname(path), { recursive: true })
+  writeFileSync(
+    path,
+    JSON.stringify(
+      {
+        mcpServers: {
+          [channel]: {
+            type: "stdio",
+            command: "bun",
+            args: [channelEntry],
+            env: { THREA_CHANNEL_SERVER_KEY: channel },
+          },
+        },
+      },
+      null,
+      2
+    )
+  )
+  return path
 }
 
 export function normalizeChannelMcpConfig(path: string, channel: string, channelEntry: string): void {
@@ -230,7 +268,7 @@ export class PiRuntimeSpawner extends RuntimeSpawner {
   }
 }
 
-function prepareClaudeChannel(): string {
+export function prepareClaudeChannel(): string {
   const channelDir = join(import.meta.dir, "..", "..", "claude-code-remote")
   const channelEntry = join(channelDir, "src", "index.ts")
   if (!existsSync(channelEntry)) die(`Claude channel entry not found: ${channelEntry}`)
@@ -329,13 +367,30 @@ export class ClaudeRuntimeSpawner extends RuntimeSpawner {
     const session = options.tmux ?? agent.tmuxSession ?? tmuxSession({ runtime: "claude", name: agent.name })
     ensureTmuxSession(session, true)
     const noYolo = recordedNoYolo(agent)
+    // "Bring it back up as it was" has to include the conversation. Without
+    // --resume a revival silently starts an empty session in the old worktree,
+    // still attached to the same scratchpad, and the history is only reachable
+    // by hand. A transcript a live process still holds is skipped, never shared.
+    const transcript = resumableClaudeTranscript(agent.worktree, defaultClaudeDiskDeps())
+    console.log(
+      transcript
+        ? `harnessd: resuming Claude conversation ${transcript.sessionId} for ${agent.name}`
+        : `harnessd: no resumable Claude transcript in ${agent.worktree}; starting a fresh conversation`
+    )
     const window = pickTmuxWindow(session, agent.name)
     const { windowId, paneId } = createWindow(
       session,
       window,
       agent.worktree,
       claudeLaunchCommand(
-        claudeLaunchArgs({ claudeBin, name: agent.name, channel, mcpConfig, noYolo }),
+        claudeLaunchArgs({
+          claudeBin,
+          name: agent.name,
+          channel,
+          mcpConfig,
+          noYolo,
+          resumeSessionId: transcript?.sessionId,
+        }),
         identity,
         config,
         "wait",
@@ -346,10 +401,16 @@ export class ClaudeRuntimeSpawner extends RuntimeSpawner {
     console.log(`harnessd: resumed Claude Code in tmux ${session}:${window} (${windowId})`)
     try {
       await acceptClaudeBootPrompts(paneId)
-      sendKeys(paneId, ["/remote-control", "Enter"])
-      await Bun.sleep(Number(process.env.THREA_HARNESSD_CLAUDE_REMOTE_WAIT_MS ?? 2000))
-      sendKeys(paneId, ["/rc", "Enter"])
-      await Bun.sleep(500)
+      // Claude's own /remote-control (claude.ai/code, the mobile app) is not
+      // how a session reaches Threa — the channel MCP server is, and it is
+      // already wired above. Sending it opened a MODAL dialog every revival
+      // then parked in ("waitingFor":"dialog open" in Claude's registry), and
+      // the /rc that followed was typed into that dialog as garbage. `spawn`
+      // never sent either. Opt-in for anyone who does want the mobile app.
+      if (process.env.THREA_HARNESSD_CLAUDE_REMOTE_CONTROL === "1") {
+        sendKeys(paneId, ["/remote-control", "Enter"])
+        await Bun.sleep(Number(process.env.THREA_HARNESSD_CLAUDE_REMOTE_WAIT_MS ?? 2000))
+      }
       const output = capturePane(paneId)
       return {
         worktree: agent.worktree,
@@ -369,37 +430,8 @@ export class ClaudeRuntimeSpawner extends RuntimeSpawner {
     }
   }
 
-  /**
-   * Session-scoped MCP wiring via `--mcp-config` instead of `claude mcp add
-   * --scope local`: Claude Code resolves every worktree of a repo to the same
-   * project entry, so a persisted local-scope registration from worktree A
-   * silently repoints worktree B's channel at A's code the next time B starts
-   * (and stacks a duplicate channel on top of a user-scope registration). A
-   * config file passed at launch binds this session to the supervisor's current
-   * channel implementation and leaves global config untouched. This also keeps
-   * revived feature branches from loading an obsolete connector.
-   */
   private writeMcpConfig(name: string, channel: string, channelEntry: string): string {
-    const path = mcpConfigPath(name)
-    mkdirSync(dirname(path), { recursive: true })
-    writeFileSync(
-      path,
-      JSON.stringify(
-        {
-          mcpServers: {
-            [channel]: {
-              type: "stdio",
-              command: "bun",
-              args: [channelEntry],
-              env: { THREA_CHANNEL_SERVER_KEY: channel },
-            },
-          },
-        },
-        null,
-        2
-      )
-    )
-    return path
+    return writeChannelMcpConfig(name, channel, channelEntry)
   }
 
   private async prelinkScratchpad(

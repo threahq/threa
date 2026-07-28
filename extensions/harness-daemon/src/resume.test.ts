@@ -538,6 +538,7 @@ function reviveDeps(overrides: Partial<ReviveDeps> = {}): ReviveDeps {
     claudeConfig: { workspaceId: "ws_1", apiKey: "key" },
     piConfig: { workspaceId: "ws_1", apiKey: "key" },
     windowExists: () => false,
+    claudeProcessesIn: () => [],
     pathExists: () => true,
     scratchpadStatus: async () => "active",
     preflight: async () => ({ status: "linked", rootStreamId: "stream_01ABCDEF" }),
@@ -738,6 +739,41 @@ test("up skips an already-running agent before touching the network", async () =
     },
   })
   expect(await runRevive(linkedAgent(), {}, deps)).toEqual({ status: "already running" })
+  expect(calls).toEqual([])
+})
+
+test("up refuses to launch into a worktree a live Claude already occupies", async () => {
+  // The 2026-07-28 duplicate storm: the pane lookup reported nothing nine
+  // passes running and each one started another Claude on the same runtime
+  // session. The process table is the second, tmux-independent opinion.
+  const launches: string[] = []
+  const deps = reviveDeps({
+    windowExists: () => false,
+    claudeProcessesIn: () => [18241, 22445],
+    resumeRuntime: async (agent) => {
+      launches.push(agent.name)
+      throw new Error("resumeRuntime must not be called")
+    },
+  })
+
+  expect(await runRevive(linkedAgent(), {}, deps)).toEqual({
+    status: "skipped occupied",
+    detail: "Claude already running in /tmp/worktrees/repair (pid 18241, 22445)",
+  })
+  expect(launches).toEqual([])
+})
+
+test("up refuses an occupied worktree before the preflight registers anything", async () => {
+  const calls: string[] = []
+  const deps = reviveDeps({
+    claudeProcessesIn: () => [18241],
+    preflight: async () => {
+      calls.push("preflight")
+      return { status: "linked", rootStreamId: "stream_01ABCDEF" }
+    },
+  })
+
+  expect((await runRevive(linkedAgent(), {}, deps))?.status).toBe("skipped occupied")
   expect(calls).toEqual([])
 })
 

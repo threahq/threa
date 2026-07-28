@@ -3,6 +3,7 @@ import { BotSupervisorTransport, type BotSessionRestoredPayload } from "@threa/b
 import { existsSync } from "node:fs"
 import { basename, dirname, join } from "node:path"
 import { installBootResume } from "./boot"
+import { defaultClaudeDiskDeps, findLiveClaudeSessions } from "./claude-registry"
 import { defaultRepo, inferBranch, normalizeName, now } from "./cli"
 import { findLocalClaudeChannelPane, resolveManagedAgentPane, type LocalTmuxPane } from "./discovery"
 import { die } from "./errors"
@@ -272,6 +273,7 @@ export type ReviveStatus =
   | "skipped missing credentials"
   | "skipped missing session id"
   | "skipped missing cwd"
+  | "skipped occupied"
   | "skipped identity mismatch"
   | "skipped archived"
   | "skipped inaccessible"
@@ -286,6 +288,8 @@ export interface ReviveDeps {
   claudeConfig: ThreaChannelConfig
   piConfig: PiRemoteConfig
   windowExists: (agent: ManagedAgent) => boolean
+  /** Live Claude pids already in this worktree, corroborated against the process table. */
+  claudeProcessesIn: (worktree: string) => number[]
   pathExists: (path: string) => boolean
   scratchpadStatus: (params: {
     baseUrl: string
@@ -307,6 +311,8 @@ export function defaultReviveDeps(): ReviveDeps {
     claudeConfig: readThreaChannelConfig(),
     piConfig: readPiRemoteConfig(),
     windowExists: (agent) => agentPaneLives(agent),
+    claudeProcessesIn: (worktree) =>
+      findLiveClaudeSessions(worktree, defaultClaudeDiskDeps()).map((session) => session.pid),
     pathExists: existsSync,
     scratchpadStatus: fetchScratchpadStatus,
     preflight: preflightRuntimeSession,
@@ -433,6 +439,21 @@ export async function reviveAgent(
   if (worktreeMissing) {
     const source = deps.restorableWorktree(agent)
     if ("reason" in source) return { status: "skipped missing cwd", detail: source.reason }
+  }
+  // Second, tmux-independent liveness source, checked only here because it
+  // costs a `ps` per registry entry and only a would-be launch needs it.
+  // On 2026-07-28 the pane check alone let nine passes each start another
+  // Claude in one worktree, all claiming the same runtime session; the process
+  // table would have said "occupied" on the second pass regardless of whatever
+  // the pane lookup was doing.
+  if (agent.runtime === "claude" && agent.worktree) {
+    const occupants = deps.claudeProcessesIn(agent.worktree)
+    if (occupants.length > 0) {
+      return {
+        status: "skipped occupied",
+        detail: `Claude already running in ${agent.worktree} (pid ${occupants.join(", ")})`,
+      }
+    }
   }
   // Dry-run exits before preflight: registering the bot-runtime session mutates server state.
   if (options.dryRun) {

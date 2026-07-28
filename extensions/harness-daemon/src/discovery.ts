@@ -14,8 +14,12 @@ export interface LocalTmuxPane {
   startCommand: string
 }
 
-interface ClaudeChannelLaunch {
+export interface ClaudeChannelLaunch {
   runtimeSessionId?: string
+  instanceId?: string
+  name?: string
+  mcpConfig?: string
+  skipPermissions: boolean
 }
 
 export interface ClaudeLaunch {
@@ -294,12 +298,14 @@ export function parseClaudeChannelLaunch(command: string): ClaudeChannelLaunch |
   if (basename(words[index]!) === "env") index += 1
 
   let runtimeSessionId: string | undefined
+  let instanceId: string | undefined
   while (index < words.length) {
     const assignment = parseAssignment(words[index]!)
     if (!assignment) break
     if (assignment.name === "THREA_RUNTIME_SESSION_ID") {
       runtimeSessionId = sanitizeId(assignment.value).slice(0, 64)
     }
+    if (assignment.name === "THREA_INSTANCE_ID") instanceId = sanitizeId(assignment.value).slice(0, 64)
     index += 1
   }
 
@@ -307,19 +313,26 @@ export function parseClaudeChannelLaunch(command: string): ClaudeChannelLaunch |
   index += 1
 
   let channel = false
+  let name: string | undefined
+  let mcpConfig: string | undefined
+  let skipPermissions = false
   for (; index < words.length; index += 1) {
     const word = words[index]!
     if (word === "--") break
-    if (word === "--dangerously-load-development-channels" && words[index + 1] === "server:threa-channel") {
-      channel = true
-      break
-    }
-    if (word === "--dangerously-load-development-channels=server:threa-channel") {
-      channel = true
-      break
-    }
+    const [option, inlineValue] = word.includes("=") ? splitOption(word) : [word, undefined]
+    const value = inlineValue ?? words[index + 1]
+    if (option === "--dangerously-load-development-channels" && value === "server:threa-channel") channel = true
+    else if (option === "--dangerously-skip-permissions") skipPermissions = true
+    else if (option === "--name" && value) name = value
+    else if (option === "--mcp-config" && value && !value.startsWith("-") && !/^[{[]/.test(value.trim()))
+      mcpConfig = value
   }
-  return channel ? { runtimeSessionId } : undefined
+  return channel ? { runtimeSessionId, instanceId, name, mcpConfig, skipPermissions } : undefined
+}
+
+function splitOption(word: string): [string, string] {
+  const separator = word.indexOf("=")
+  return [word.slice(0, separator), word.slice(separator + 1)]
 }
 
 export function parseTmuxPanes(text: string): LocalTmuxPane[] {

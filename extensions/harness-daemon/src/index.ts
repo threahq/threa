@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 
-import { parseReconnect, parseResume, parseSpawn, usage } from "./cli"
+import { adoptClaudeSession, adoptRefused } from "./adopt"
+import { parseAdopt, parseReconnect, parseResume, parseSpawn, usage } from "./cli"
 import {
   attachAgent,
   bootResume,
@@ -27,6 +28,12 @@ async function main(): Promise<void> {
   if (command === "spawn") return spawnAgent(parseSpawn(args))
   if (command === "list") return listAgents()
   if (command === "reconnect") return reconnectRuntime(parseReconnect(args))
+  if (command === "adopt" || command === "takeover") {
+    const outcome = await adoptClaudeSession(parseAdopt(args))
+    console.log(`${outcome.status}${outcome.detail ? `\t${outcome.detail}` : ""}`)
+    if (adoptRefused(outcome.status)) process.exit(1)
+    return
+  }
   if (
     command === "up" ||
     command === "revive-unarchived" ||

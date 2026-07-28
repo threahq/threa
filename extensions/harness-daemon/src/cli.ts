@@ -1,4 +1,5 @@
 import { resolve } from "node:path"
+import type { AdoptOptions } from "./adopt"
 import { die } from "./errors"
 import type { ReconnectOptions } from "./reconnect"
 import type { ResumeOptions, RuntimeKind, SpawnOptions } from "./types"
@@ -18,6 +19,9 @@ Usage:
   threa-harnessd install-watch [--tmux <session>]
   threa-harnessd install-boot-resume [--tmux <session>]
   threa-harnessd reconnect <runtime-session-id> --root-stream-id <stream-id> [--force]
+  threa-harnessd adopt <runtime-session-id> --root-stream-id <stream-id>
+      [--cwd <path>] [--name <name>] [--claude-session-id <uuid>] [--tmux <session>]
+      [--dry-run] [--force] [--no-yolo]
   threa-harnessd stop <agent-id-or-name>
   threa-harnessd kick <agent-id-or-name-or-runtime-session-id>
   threa-harnessd interrupt <agent-id-or-name>
@@ -37,6 +41,7 @@ Examples:
   threa-harnessd interrupt fix-sidebar
   threa-harnessd steer fix-sidebar "also update the tests"
   threa-harnessd keys fix-sidebar /compact Enter
+  threa-harnessd adopt ccs-3ea859c21682385b --root-stream-id stream_01KY... --dry-run
 `)
   process.exit(0)
 }
@@ -133,6 +138,38 @@ export function parseReconnect(args: string[]): ReconnectOptions {
   if (!rootStreamId) die("reconnect requires --root-stream-id <stream-id>")
   return { runtimeSessionId, rootStreamId, force }
 }
+
+export function parseAdopt(args: string[]): AdoptOptions {
+  const runtimeSessionId = args.shift()
+  if (!runtimeSessionId || runtimeSessionId.startsWith("--")) die("adopt requires a runtime session id")
+  const flags = parseFlags(args)
+  for (const key of Object.keys(flags)) {
+    if (!ADOPT_FLAGS.has(key)) die(`unexpected adopt argument: --${key}`)
+  }
+  const cwd = stringFlag(flags, "cwd")
+  return {
+    runtimeSessionId,
+    rootStreamId: stringFlag(flags, "root-stream-id") ?? die("adopt requires --root-stream-id <stream-id>"),
+    cwd: cwd ? resolve(cwd) : undefined,
+    name: stringFlag(flags, "name"),
+    claudeSessionId: stringFlag(flags, "claude-session-id"),
+    tmux: stringFlag(flags, "tmux"),
+    dryRun: boolFlag(flags, "dry-run"),
+    force: boolFlag(flags, "force"),
+    noYolo: boolFlag(flags, "no-yolo") || undefined,
+  }
+}
+
+const ADOPT_FLAGS = new Set([
+  "root-stream-id",
+  "cwd",
+  "name",
+  "claude-session-id",
+  "tmux",
+  "dry-run",
+  "force",
+  "no-yolo",
+])
 
 export function parseSpawn(args: string[]): SpawnOptions {
   const runtime = args.shift() as RuntimeKind | undefined

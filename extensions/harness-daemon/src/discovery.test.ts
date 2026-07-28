@@ -57,12 +57,33 @@ describe("parseClaudeChannelLaunch", () => {
       parseClaudeChannelLaunch(
         '"/Users/me/.local/bin/claude --name threa.feature --dangerously-load-development-channels server:threa-channel "'
       )
-    ).toEqual({ runtimeSessionId: undefined })
+    ).toEqual({
+      runtimeSessionId: undefined,
+      name: "threa.feature",
+      mcpConfig: undefined,
+      skipPermissions: false,
+    })
     expect(
       parseClaudeChannelLaunch(
         "env 'THREA_RUNTIME_SESSION_ID=ccs.explicit' /opt/bin/claude --dangerously-load-development-channels=server:threa-channel"
       )
-    ).toEqual({ runtimeSessionId: "ccs-explicit" })
+    ).toEqual({ runtimeSessionId: "ccs-explicit", name: undefined, mcpConfig: undefined, skipPermissions: false })
+  })
+
+  test("reports the bypass, name, and MCP wiring an adoption has to match", () => {
+    expect(
+      parseClaudeChannelLaunch(
+        "env THREA_RUNTIME_SESSION_ID=ccs-slop claude --name slopenv --mcp-config /tmp/threa.json --dangerously-load-development-channels server:threa-channel --dangerously-skip-permissions"
+      )
+    ).toEqual({
+      runtimeSessionId: "ccs-slop",
+      name: "slopenv",
+      mcpConfig: "/tmp/threa.json",
+      skipPermissions: true,
+    })
+    expect(
+      parseClaudeChannelLaunch("claude --name=slopenv --dangerously-load-development-channels=server:threa-channel")
+    ).toMatchObject({ name: "slopenv", skipPermissions: false })
   })
 
   test("retains parent-compatible tmux parsing for single-quoted literal expansions", () => {
@@ -70,7 +91,7 @@ describe("parseClaudeChannelLaunch", () => {
       parseClaudeChannelLaunch(
         "\"env 'THREA_DISPLAY_NAME=price $5 `literal`' THREA_RUNTIME_SESSION_ID=ccs.parent claude --dangerously-load-development-channels server:threa-channel\""
       )
-    ).toEqual({ runtimeSessionId: "ccs-parent" })
+    ).toEqual({ runtimeSessionId: "ccs-parent", name: undefined, mcpConfig: undefined, skipPermissions: false })
   })
 
   test("rejects commands that only contain Claude channel tokens", () => {
