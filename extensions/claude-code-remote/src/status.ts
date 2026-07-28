@@ -18,10 +18,13 @@ function inlineCode(value: string): string {
 }
 
 function codeBlock(value: string): string {
-  return (value || "(pane is blank)")
+  // Threa's markdown parser closes a fence on any line starting with ``` regardless
+  // of fence length, so an inner fence is indented out of the way, not lengthened.
+  const body = (value || "(pane is blank)")
     .split("\n")
-    .map((line) => `    ${line}`)
+    .map((line) => (line.startsWith("```") ? ` ${line}` : line))
     .join("\n")
+  return `\`\`\`\n${body}\n\`\`\``
 }
 
 function connectivityLabel(context: ClaudeChannelStatusContext): string {
