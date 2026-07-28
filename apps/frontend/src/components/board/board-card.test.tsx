@@ -700,3 +700,86 @@ describe("BoardCard day dividers", () => {
     expect(screen.queryByText(formatDayDivider(new Date(localStartOfDayMs(afterMidnight))))).toBeNull()
   })
 })
+
+describe("BoardCard deleted messages", () => {
+  it("shows no tombstone in the collapsed card's reply preview", async () => {
+    // The rail's `deletedMessages` map is for the always-expanded conversation
+    // panel only: a tombstone must never take one of the card's 3 preview slots
+    // (nor show up as a body), because the "N more" gap counts displayable rows.
+    await db.events.bulkPut([
+      messageEvent("m_open", "Opening body.", 10),
+      messageEvent("m_r1", "A live reply.", 20),
+      messageEvent("m_r2", "The deleted body.", 30, "2026-06-22T12:05:00.000Z"),
+    ])
+    mountCard(makePost({ messageIds: ["m_open", "m_r1", "m_r2"] }))
+
+    expect(await screen.findByText("A live reply.")).toBeTruthy()
+    expect(screen.queryByText("This message was deleted")).toBeNull()
+    expect(screen.queryByText("The deleted body.")).toBeNull()
+  })
+
+  it("renders a tombstone, not a blank row, for a deleted reply on the cached projection", async () => {
+    // No IDB events: the rail never sees the conversation, so the card falls back
+    // to the server projection, whose deleted rows arrive blanked but flagged.
+    const post = makePost({ messageIds: ["m_open", "m_r1"] })
+    ;(post as unknown as { recentMessages: unknown[] }).recentMessages = [
+      {
+        id: "m_r1",
+        streamId: STREAM,
+        authorId: "usr_other",
+        authorType: "user",
+        contentMarkdown: "",
+        reactions: {},
+        attachments: [],
+        linkPreviews: [],
+        createdAt: "2026-06-22T12:05:00.000Z",
+        editedAt: null,
+        deletedAt: "2026-06-22T12:06:00.000Z",
+      },
+    ]
+    ;(post as unknown as { totalReplies: number }).totalReplies = 1
+    const { container } = mountCard(post)
+
+    expect(await screen.findByText("This message was deleted")).toBeTruthy()
+    expect(container.querySelector('[data-message-id="m_r1"]')).toBeNull()
+  })
+
+  it("renders a tombstone, not a blank row, for a deleted reply from the expand backfill", async () => {
+    const getBoardMessages = vi.fn().mockResolvedValue([
+      openingMessage(),
+      {
+        id: "m_r2",
+        streamId: STREAM,
+        authorId: "usr_other",
+        authorType: "user",
+        contentMarkdown: "",
+        reactions: {},
+        attachments: [],
+        linkPreviews: [],
+        createdAt: "2026-06-22T12:10:00.000Z",
+        editedAt: null,
+        deletedAt: "2026-06-22T12:11:00.000Z",
+      },
+    ])
+    const post = makePost({ messageIds: ["m_open", "m_r2"] })
+    ;(post as unknown as { totalReplies: number }).totalReplies = 1
+    const { container } = mountCard(post, { getBoardMessages })
+
+    await userEvent.click(await screen.findByText(/1 more message/))
+
+    expect(await screen.findByText("This message was deleted")).toBeTruthy()
+    expect(container.querySelector('[data-message-id="m_r2"]')).toBeNull()
+  })
+})
+
+/** A `message_created` row on the card's stream, seeded into IDB so the card's
+ *  rail reads it like the timeline does. */
+function messageEvent(messageId: string, contentMarkdown: string, seconds: number, deletedAt?: string): CachedEvent {
+  return {
+    ...sessionEvent("agent_session:started", seconds, { messageId, contentMarkdown, reactions: {}, deletedAt }),
+    id: `evt_${messageId}`,
+    eventType: "message_created",
+    actorId: "usr_me",
+    actorType: "user",
+  }
+}

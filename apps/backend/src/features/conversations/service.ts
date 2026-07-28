@@ -72,6 +72,9 @@ export interface BoardPostMessage {
   linkPreviews: LinkPreviewSummary[]
   createdAt: Date
   editedAt: Date | null
+  /** Soft-delete stamp, or null when live. A deleted row is projected as a
+   * tombstone: `contentMarkdown` empty, no reactions/attachments/link previews. */
+  deletedAt: Date | null
 }
 
 /** A conversation surfaced as a feed post: the grouping, its origin message, and the latest replies. */
@@ -410,8 +413,13 @@ export class ConversationService {
    */
   private async hydrateBoardMessages(workspaceId: string, messages: Message[]): Promise<Map<string, BoardPostMessage>> {
     const byId = new Map<string, BoardPostMessage>()
-    const ids = messages.map((m) => m.id)
-    if (ids.length === 0) return byId
+    // A deleted row's rich content is discarded by the projection, so it is never
+    // hydrated — no presigned URL is ever minted for deleted content.
+    const ids = messages.filter((m) => m.deletedAt == null).map((m) => m.id)
+    if (ids.length === 0) {
+      for (const message of messages) byId.set(message.id, toBoardPostMessage(message, [], []))
+      return byId
+    }
     const attachmentsByMessage = await AttachmentRepository.findByMessageIds(this.pool, ids)
     const linkPreviewsByMessage = await LinkPreviewRepository.findByMessageIds(this.pool, workspaceId, ids)
     const summariesByMessage = await hydrateAttachmentSummaries(this.pool, workspaceId, attachmentsByMessage)
@@ -1488,16 +1496,21 @@ function toBoardPostMessage(
   attachments: AttachmentSummary[],
   linkPreviews: LinkPreviewSummary[]
 ): BoardPostMessage {
+  const deleted = message.deletedAt != null
   return {
     id: message.id,
     streamId: message.streamId,
     authorId: message.authorId,
     authorType: message.authorType,
-    contentMarkdown: message.contentMarkdown,
-    reactions: message.reactions,
-    attachments,
-    linkPreviews,
+    // `messages` retains the body on soft delete and `findByIds` returns
+    // tombstones (other callers depend on that), so the deleted body is dropped
+    // HERE — a flag alone would keep shipping it, just labelled.
+    contentMarkdown: deleted ? "" : message.contentMarkdown,
+    reactions: deleted ? {} : message.reactions,
+    attachments: deleted ? [] : attachments,
+    linkPreviews: deleted ? [] : linkPreviews,
     createdAt: message.createdAt,
     editedAt: message.editedAt,
+    deletedAt: message.deletedAt,
   }
 }

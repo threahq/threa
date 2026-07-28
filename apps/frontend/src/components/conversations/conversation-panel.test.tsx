@@ -42,6 +42,7 @@ import {
 } from "@/stores/conversation-reply-open-store"
 import type { BoardViewPost } from "@/hooks/use-stable-board-view"
 import { formatDayDivider, localStartOfDayMs } from "@/lib/dates"
+import * as autoReadModule from "@/components/message/use-conversation-auto-read"
 
 const WORKSPACE_ID = "ws_1"
 const CONVERSATION_ID = "conv_1"
@@ -1112,5 +1113,90 @@ describe("ConversationPanel event rows", () => {
     const before = openReplySignal ?? 0
     await user.click(redirect)
     await waitFor(() => expect(openReplySignal ?? 0).toBeGreaterThan(before))
+  })
+})
+
+/** A `message_created` row on the conversation's stream, seeded into IDB so the
+ *  panel reads it off the same rail the board card does. */
+function cachedMessageEvent(messageId: string, contentMarkdown: string, seconds: number, deletedAt?: string) {
+  const event = cachedStreamEvent("message_created", seconds, { messageId, contentMarkdown, reactions: {}, deletedAt })
+  return { ...event, id: `evt_${messageId}`, actorId: "usr_me", actorType: "user" as const }
+}
+
+function postWithDeletedReply(): BoardPost {
+  const post = makePost()
+  post.conversation.messageIds = ["msg_1", "msg_2", "msg_3"]
+  post.openingMessage = makeMessage({ id: "msg_1", createdAt: "2026-06-22T12:00:10.000Z" })
+  post.recentMessages = [
+    makeMessage({ id: "msg_2", contentMarkdown: "Reply two body.", createdAt: "2026-06-22T12:00:20.000Z" }),
+  ]
+  post.totalReplies = 1
+  return post
+}
+
+describe("ConversationPanel deleted messages", () => {
+  beforeEach(async () => {
+    __clearBoardRailRegistry()
+    await db.events.clear()
+  })
+  afterEach(async () => {
+    __clearBoardRailRegistry()
+    await db.events.clear()
+  })
+
+  it("shows a tombstone in the deleted message's chronological slot", async () => {
+    await db.events.bulkPut([
+      cachedMessageEvent("msg_1", "Opening message body.", 10),
+      cachedMessageEvent("msg_2", "Reply two body.", 20),
+      cachedMessageEvent("msg_3", "The deleted body.", 30, "2026-06-22T12:05:00.000Z"),
+    ])
+    mountPanel({ cached: asCached(postWithDeletedReply()) })
+
+    expect(await screen.findByText("This message was deleted")).toBeTruthy()
+    expect(screen.queryByText("The deleted body.")).toBeNull()
+    const bodies = screen.getAllByText(/Opening message body\.|Reply two body\.|This message was deleted/)
+    expect(bodies.map((el) => el.textContent)).toEqual([
+      "Opening message body.",
+      "Reply two body.",
+      "This message was deleted",
+    ])
+  })
+
+  it("shows a tombstone, not the pre-deletion body, when the conversation is backfilled from the server", async () => {
+    // No rail rows: the panel takes the server backfill path. The body is included
+    // on the wire row deliberately — the panel must render the tombstone off
+    // `deletedAt` alone, not trust the payload to be blank.
+    const post = postWithDeletedReply()
+    mountPanel({
+      cached: asCached({ ...post, totalReplies: 2 }),
+      getBoardMessages: async () => [
+        makeMessage({ id: "msg_2", contentMarkdown: "Reply two body.", createdAt: "2026-06-22T12:00:20.000Z" }),
+        makeMessage({
+          id: "msg_3",
+          contentMarkdown: "The deleted body.",
+          createdAt: "2026-06-22T12:00:30.000Z",
+          deletedAt: "2026-06-22T12:05:00.000Z",
+        }),
+      ],
+    })
+
+    expect(await screen.findByText("This message was deleted")).toBeTruthy()
+    expect(screen.queryByText("The deleted body.")).toBeNull()
+  })
+
+  it("keeps a tombstone out of the auto-read participants", async () => {
+    const seen: string[][] = []
+    vi.spyOn(autoReadModule, "useConversationAutoRead").mockImplementation((opts) => {
+      seen.push(opts.messages.map((m) => m.id))
+    })
+    await db.events.bulkPut([
+      cachedMessageEvent("msg_1", "Opening message body.", 10),
+      cachedMessageEvent("msg_2", "Reply two body.", 20),
+      cachedMessageEvent("msg_3", "The deleted body.", 30, "2026-06-22T12:05:00.000Z"),
+    ])
+    mountPanel({ cached: asCached(postWithDeletedReply()) })
+
+    await screen.findByText("This message was deleted")
+    expect(seen.at(-1)).toEqual(["msg_1", "msg_2"])
   })
 })

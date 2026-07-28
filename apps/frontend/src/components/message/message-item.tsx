@@ -94,9 +94,14 @@ export interface RenderableMessage {
   editedAt?: string | null
   attachments?: AttachmentSummary[]
   linkPreviews?: LinkPreviewSummary[]
+  /** Soft-delete stamp, or null/absent when live. A deleted row renders as a
+   * tombstone on the conversation surfaces — it carries no body, reactions,
+   * attachments or link previews. */
+  deletedAt?: string | null
 }
 
 export function isContinuation(prev: RenderableMessage, cur: RenderableMessage): boolean {
+  if (prev.deletedAt || cur.deletedAt) return false
   return (
     prev.authorId === cur.authorId &&
     prev.authorType === cur.authorType &&

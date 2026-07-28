@@ -28,6 +28,7 @@ import { ConversationReadProvider, useConversationReadController } from "@/compo
 import { useConversationAutoRead } from "@/components/message/use-conversation-auto-read"
 import { BoardReplyComposer } from "@/components/board/board-reply-composer"
 import { useMoveToSubtopic } from "@/components/board/use-move-to-subtopic"
+import { DeletedMessageEvent } from "@/components/timeline/deleted-message-event"
 import { QuoteReplyProvider } from "@/components/timeline/quote-reply-context"
 import { TextSelectionQuote } from "@/components/timeline/text-selection-quote"
 import { useActors, useVisibleStreams } from "@/hooks"
@@ -389,7 +390,11 @@ export function BoardCard({
   // its visible tail reads the conversation up to there, exactly like invoking
   // "Mark as read up to here" on that row (Kris's dogfood ruling on PR #1174 —
   // having the conversation open is enough to mark it).
-  const autoReadRows = openingMessage ? [openingMessage, ...displayedReplies] : displayedReplies
+  // A tombstone renders no `data-message-id` row, so it can never be observed —
+  // keep it out of the auto-read set entirely.
+  const autoReadRows = (openingMessage ? [openingMessage, ...displayedReplies] : displayedReplies).filter(
+    (m) => !m.deletedAt
+  )
   useConversationAutoRead({
     containerRef: cardRef,
     messages: autoReadRows,
@@ -442,6 +447,9 @@ export function BoardCard({
   }, [])
 
   const renderMessage = (message: RenderableMessage, continuation: boolean) => {
+    // Mirrors the panel: a deleted row is a tombstone, never a blank MessageItem
+    // carrying an author, a timestamp and an action menu.
+    if (message.deletedAt) return <DeletedMessageEvent key={message.id} />
     // A conversation can span its root + threads (one root); render each row
     // against its own stream so reactions and the permalink target where the
     // message actually lives, falling back to the card's anchor stream.
