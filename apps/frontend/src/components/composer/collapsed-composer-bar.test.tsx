@@ -22,6 +22,15 @@ describe("CollapsedComposerBar", () => {
     expect(onClick).toHaveBeenCalledTimes(1)
   })
 
+  it("styles its own focus ring so the UA's default (a black rectangle on Chrome Android) never paints", () => {
+    render(<CollapsedComposerBar placeholder="Write a reply…" onClick={vi.fn()} />)
+
+    const bar = screen.getByRole("button", { name: "Write a reply…" })
+    expect(bar.className).toContain("focus-visible:outline-none")
+    expect(bar.className).toContain("focus-visible:ring-2")
+    expect(bar.className).toContain("focus-visible:ring-ring")
+  })
+
   it("shows the draft's first line with the pencil marker instead of the placeholder", () => {
     const draft: ScopeDraftPreview = {
       draftId: "draft_1",

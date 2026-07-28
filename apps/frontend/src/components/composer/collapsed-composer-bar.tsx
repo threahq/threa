@@ -13,6 +13,11 @@ export const COLLAPSED_COMPOSER_SHADOW =
 
 const CARD_CLASS = cn(
   "flex w-full min-w-0 rounded-[16px] border border-input bg-card px-3 py-2 text-left text-sm text-muted-foreground transition-colors hover:text-foreground",
+  // Without this the raw <button> keeps the UA focus ring — a thick black
+  // rectangle on Chrome Android, which reads as a border on a card-shaped
+  // control. Same ring as Button/Input so a focused resting bar looks focused,
+  // not broken.
+  "ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
   COLLAPSED_COMPOSER_SHADOW
 )
 

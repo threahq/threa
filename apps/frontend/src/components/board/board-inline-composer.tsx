@@ -14,6 +14,7 @@ import {
   type ComposerControlHandle,
 } from "@/components/composer"
 import { useIsMobileOrCoarse } from "@/hooks/use-pointer"
+import { useInputMode } from "@/hooks/use-input-mode"
 import { appendQuoteReplyNode, type QuoteReplyData } from "@/components/timeline/quote-reply-context"
 import { useDraftComposer, useScheduleMessage, useStashComposer } from "@/hooks"
 import { relocateLoadedDraft } from "@/hooks/use-draft-message"
@@ -240,6 +241,11 @@ export function InlineComposerForm({
   // message. A docked host never floats: the footer is the dock, so it keeps the
   // in-place form on every device.
   const isMobileOrCoarse = useIsMobileOrCoarse()
+  // Refocusing the resting bar after a send restores keyboard position, but the
+  // button it lands on inherits :focus-visible from the editor it was focused
+  // out of — so on a finger-driven send it paints a focus ring nobody navigated
+  // to. Same rule as `handleFloatingClose` below.
+  const refocusOnClose = useInputMode() !== "touch"
   const anchor = useFloatingComposerAnchor()
   const floating = isMobileOrCoarse && anchor !== null && !docked
   const formId = useId()
@@ -378,7 +384,7 @@ export function InlineComposerForm({
       })
       await composer.resolveDraft()
       composer.clearAttachments()
-      onClose({ refocus: true })
+      onClose({ refocus: refocusOnClose })
     } catch {
       composer.setContent(normalizedContent)
       toast.error("Couldn't post. Please try again.")
@@ -418,7 +424,7 @@ export function InlineComposerForm({
       })
       await composer.resolveDraft()
       composer.clearAttachments()
-      onClose({ refocus: true })
+      onClose({ refocus: refocusOnClose })
     } catch {
       composer.setContent(normalizedContent)
       toast.error("Couldn't schedule. Please try again.")
