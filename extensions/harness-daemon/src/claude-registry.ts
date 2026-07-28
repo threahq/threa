@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, readdirSync, realpathSync, statSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
+import { processAlive } from "./lock"
 import { output } from "./shell"
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
@@ -47,6 +48,7 @@ export function projectDirectory(cwd: string): string {
 export interface ClaudeDiskDeps extends ClaudeRegistryDeps {
   list(path: string): string[]
   modified(path: string): number
+  alive(pid: number): boolean
 }
 
 export function defaultClaudeDiskDeps(run: typeof output = output): ClaudeDiskDeps {
@@ -60,6 +62,7 @@ export function defaultClaudeDiskDeps(run: typeof output = output): ClaudeDiskDe
       }
     },
     modified: (path) => statSync(path).mtimeMs,
+    alive: processAlive,
   }
 }
 
@@ -108,8 +111,17 @@ export function findLiveClaudeSessions(cwd: string, deps: ClaudeDiskDeps): Claud
       continue
     }
     if (registryCwd !== target) continue
-    // pids are recycled; the start instant is what makes the entry this process.
-    if (deps.processStart(pid) !== row.procStart) continue
+    // Liveness first, and it must be decided by something that cannot fail
+    // ambiguously: `ps` exits nonzero both for "no such pid" and for "ps itself
+    // failed", so reading undefined as "dead" would let one bad `ps` hide a
+    // live Claude — defeating the occupied guard and the held-transcript filter
+    // in the same instant. kill(pid, 0) answers only the question asked.
+    if (!deps.alive(pid)) continue
+    // pids are recycled; the start instant is what makes the entry this
+    // process. Indeterminate (undefined) keeps it: a live pid the registry
+    // claims is Claude is not something to launch a second Claude next to.
+    const started = deps.processStart(pid)
+    if (started !== undefined && started !== row.procStart) continue
     live.push({
       pid,
       sessionId: row.sessionId,

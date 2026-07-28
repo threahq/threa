@@ -7,6 +7,7 @@ import {
   defaultClaudeDiskDeps,
   findLiveClaudeSessions,
   resolveClaudeTranscript,
+  resumableClaudeTranscript,
   type ClaudeDiskDeps,
 } from "./claude-registry"
 import { normalizeName, now } from "./cli"
@@ -299,6 +300,14 @@ export async function adoptClaudeSessionUnlocked(options: AdoptOptions, deps: Ad
         detail: "recorded scratchpad origin differs from configured base URL",
       }
     }
+    // Preserving a URL whose workspace is not the one being preflighted would
+    // mint a row `up` then refuses forever as workspace-mismatched.
+    if (recorded.workspaceId && recorded.workspaceId !== workspaceId) {
+      return {
+        status: "refused identity mismatch",
+        detail: `inventory records workspace ${recorded.workspaceId}, configured ${workspaceId}`,
+      }
+    }
   }
 
   const name = normalizeName(options.name ?? existing?.name ?? basename(cwd))
@@ -330,7 +339,9 @@ export async function adoptClaudeSessionUnlocked(options: AdoptOptions, deps: Ad
   // Bypass follows the session being adopted, not harnessd's spawn default: the
   // live pane's own launch first, then what the row recorded.
   const observed = paneSkipsPermissions(pane)
-  const noYolo = options.noYolo ?? (observed !== undefined ? !observed : existing ? recordedNoYolo(existing) : false)
+  // Nothing to follow means nothing is known about how the original ran, and a
+  // takeover is not the place to assume it had its guardrails off.
+  const noYolo = options.noYolo ?? (observed !== undefined ? !observed : existing ? recordedNoYolo(existing) : true)
   const command = adoptCommand(options, { name, cwd, noYolo })
 
   if (pane) {
@@ -369,11 +380,25 @@ export async function adoptClaudeSessionUnlocked(options: AdoptOptions, deps: Ad
     }
   }
 
+  // An explicit --claude-session-id is the operator naming a conversation, so
+  // it is taken as given. Without one, a transcript a surviving process still
+  // holds must never be picked: --force waives the refusal to launch, not the
+  // rule that two Claudes never share one conversation.
   let transcript
-  try {
-    transcript = resolveClaudeTranscript(cwd, options.claudeSessionId, deps.disk)
-  } catch (error) {
-    return { status: "refused missing transcript", detail: error instanceof Error ? error.message : String(error) }
+  if (options.claudeSessionId) {
+    try {
+      transcript = resolveClaudeTranscript(cwd, options.claudeSessionId, deps.disk)
+    } catch (error) {
+      return { status: "refused missing transcript", detail: error instanceof Error ? error.message : String(error) }
+    }
+  } else {
+    transcript = resumableClaudeTranscript(cwd, deps.disk)
+    if (!transcript) {
+      return {
+        status: "refused missing transcript",
+        detail: `no Claude transcript in ${cwd} that a live process is not already holding; pass --claude-session-id to name one`,
+      }
+    }
   }
 
   // Dry-run stops before the preflight for the same reason `up --dry-run` does:
@@ -474,6 +499,9 @@ function adoptCommand(options: AdoptOptions, resolved: { name: string; cwd: stri
     "--name",
     resolved.name,
   ]
+  // The pin is part of the target, not a preference: without it a re-run of the
+  // recorded command adopts the newest transcript instead of the named one.
+  if (options.claudeSessionId) command.push("--claude-session-id", options.claudeSessionId)
   if (resolved.noYolo) command.push("--no-yolo")
   return command
 }

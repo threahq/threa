@@ -51,8 +51,12 @@ export async function acquireProcessLock(path: string, options: LockOptions = {}
       continue
     }
     if (holder !== undefined && holder !== pid && !isAlive(holder)) {
+      // Re-read immediately before removing: two waiters can observe the same
+      // dead holder, and an unconditional unlink lets the second delete the
+      // FIRST one's freshly taken lock, leaving both convinced they hold it.
+      // Only the file still naming the dead pid may be removed.
       try {
-        unlinkSync(path)
+        if (Number(readFileSync(path, "utf8")) === holder) unlinkSync(path)
       } catch {}
       continue
     }

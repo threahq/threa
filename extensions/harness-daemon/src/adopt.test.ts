@@ -72,6 +72,7 @@ function disk(overrides: Partial<ClaudeDiskDeps> = {}): ClaudeDiskDeps {
     exists: (path) => path.endsWith(`${NATIVE}.jsonl`),
     read: () => "{}",
     processStart: () => undefined,
+    alive: () => false,
     list: (path) => (path.endsWith("projects/-Users-me-dev-slopenv") ? [`${NATIVE}.jsonl`] : []),
     modified: () => 1_000,
     ...overrides,
@@ -210,7 +211,7 @@ describe("adoptClaudeSession cold takeover", () => {
 
     expect(outcome).toEqual({
       status: "taken over",
-      detail: `1:slopenv resuming ${NATIVE}, bypass enabled`,
+      detail: `1:slopenv resuming ${NATIVE}, bypass disabled`,
     })
     expect(dependencies.launches).toEqual([
       {
@@ -220,7 +221,7 @@ describe("adoptClaudeSession cold takeover", () => {
         resumeSessionId: NATIVE,
         rootStreamId: ROOT,
         identity: IDENTITY,
-        noYolo: false,
+        noYolo: true,
       },
     ])
     expect(dependencies.persisted.at(-1)).toMatchObject({
@@ -233,7 +234,9 @@ describe("adoptClaudeSession cold takeover", () => {
     })
   })
 
-  test("preflights with the wait/error cold-start semantics against the exact root", async () => {
+  // The wait/error cold-start semantics live in `preflightRuntimeSession` and
+  // in the launch command, not in these params — see the launch-command test.
+  test("preflights the exact root with the adopted identity and cwd", async () => {
     const dependencies = deps()
     await adoptClaudeSessionUnlocked(options(), dependencies)
 
@@ -286,6 +289,16 @@ describe("adoptClaudeSession cold takeover", () => {
     await adoptClaudeSessionUnlocked(options(), dependencies)
 
     expect(dependencies.launches).toMatchObject([{ noYolo: true }])
+  })
+
+  test("records the pinned conversation in the provenance command", async () => {
+    const dependencies = deps({ disk: disk({ exists: () => true }) })
+    await adoptClaudeSessionUnlocked(options({ claudeSessionId: NATIVE }), dependencies)
+
+    // Without the pin, re-running the recorded command adopts the newest
+    // transcript rather than the one the operator named.
+    expect(dependencies.persisted.at(-1)?.command).toContain("--claude-session-id")
+    expect(dependencies.persisted.at(-1)?.command).toContain(NATIVE)
   })
 
   test("dry run names the transcript it would resume without registering the session", async () => {
@@ -361,7 +374,7 @@ describe("adoptClaudeSession refusals", () => {
     const outcome = await adoptClaudeSessionUnlocked(options(), deps({ disk: disk({ list: () => [] }) }))
 
     expect(outcome.status).toBe("refused missing transcript")
-    expect(outcome.detail).toContain("no Claude transcript under")
+    expect(outcome.detail).toContain("that a live process is not already holding")
   })
 
   test("refuses a pinned transcript that does not exist", async () => {
@@ -379,6 +392,7 @@ describe("adoptClaudeSession refusals", () => {
       read: () =>
         JSON.stringify({ pid: 34341, sessionId: NATIVE, cwd: CWD, procStart: START, name: "slopenv", status: "idle" }),
       processStart: () => START,
+      alive: () => true,
     })
     const dependencies = deps({ disk: live })
     const outcome = await adoptClaudeSessionUnlocked(options(), dependencies)
@@ -387,8 +401,34 @@ describe("adoptClaudeSession refusals", () => {
     expect(outcome.detail).toContain("34341")
     expect(dependencies.launches).toEqual([])
 
+    // --force waives the refusal to launch, NOT the rule that two Claudes never
+    // share one conversation: the survivor holds the only transcript here.
     const forced = deps({ disk: live })
-    expect((await adoptClaudeSessionUnlocked(options({ force: true }), forced)).status).toBe("taken over")
+    const forcedOutcome = await adoptClaudeSessionUnlocked(options({ force: true }), forced)
+    expect(forcedOutcome.status).toBe("refused missing transcript")
+    expect(forced.launches).toEqual([])
+
+    // With an unheld transcript to fall back to, --force takes over that one.
+    const OTHER = "123e4567-e89b-42d3-a456-426614174000"
+    const spare = deps({
+      disk: disk({
+        list: (path) => (path.endsWith("sessions") ? ["34341.json"] : [`${NATIVE}.jsonl`, `${OTHER}.jsonl`]),
+        read: () =>
+          JSON.stringify({
+            pid: 34341,
+            sessionId: NATIVE,
+            cwd: CWD,
+            procStart: START,
+            name: "slopenv",
+            status: "idle",
+          }),
+        processStart: () => START,
+        alive: () => true,
+        modified: (path) => (path.includes(NATIVE) ? 9_000 : 2_000),
+      }),
+    })
+    expect((await adoptClaudeSessionUnlocked(options({ force: true }), spare)).status).toBe("taken over")
+    expect(spare.launches).toMatchObject([{ resumeSessionId: OTHER }])
   })
 
   test("refuses an archived scratchpad before writing or launching anything", async () => {
@@ -425,6 +465,16 @@ describe("adoptClaudeSession refusals", () => {
 
     expect(outcome.status).toBe("refused identity mismatch")
     expect(outcome.detail).toContain("stream_elsewhere")
+  })
+
+  test("refuses an inventory row whose scratchpad names another workspace", async () => {
+    const outcome = await adoptClaudeSessionUnlocked(
+      options(),
+      deps({ inventory: () => [agent({ scratchpadUrl: `https://app.threa.io/w/ws_wrong/s/${ROOT}` })] })
+    )
+
+    expect(outcome.status).toBe("refused identity mismatch")
+    expect(outcome.detail).toContain("ws_wrong")
   })
 
   test("refuses without Threa credentials", async () => {
@@ -575,6 +625,7 @@ describe("claude disk discovery", () => {
         list: (path) => (path.endsWith("sessions") ? ["34341.json"] : [`${NATIVE}.jsonl`, `${OTHER}.jsonl`]),
         read: () => held,
         processStart: () => (live ? START : undefined),
+        alive: () => live,
         modified: (path) => (path.includes(NATIVE) ? 9_000 : 2_000),
       })
 
@@ -607,12 +658,22 @@ describe("claude disk discovery", () => {
       name: "slopenv",
       status: "idle",
     })
-    const base = { list: (path: string) => (path.endsWith("sessions") ? ["34341.json"] : []), read: () => row }
+    const base = {
+      list: (path: string) => (path.endsWith("sessions") ? ["34341.json"] : []),
+      read: () => row,
+      alive: () => true,
+    }
 
     expect(findLiveClaudeSessions(CWD, disk({ ...base, processStart: () => START }))).toHaveLength(1)
     expect(findLiveClaudeSessions(CWD, disk({ ...base, processStart: () => "Wed Jul 29 10:00:00 2026" }))).toEqual([])
-    expect(findLiveClaudeSessions(CWD, disk({ ...base, processStart: () => undefined }))).toEqual([])
     expect(findLiveClaudeSessions("/Users/me/dev/other", disk({ ...base, processStart: () => START }))).toEqual([])
+    // A dead pid is dead whatever the registry says.
+    expect(findLiveClaudeSessions(CWD, disk({ ...base, alive: () => false, processStart: () => START }))).toEqual([])
+    // `ps` cannot distinguish "no such pid" from "ps failed", so an
+    // indeterminate start time must NOT read as dead — one bad `ps` would
+    // otherwise hide a live Claude from the occupied guard and the held-
+    // transcript filter at the same instant.
+    expect(findLiveClaudeSessions(CWD, disk({ ...base, processStart: () => undefined }))).toHaveLength(1)
   })
 })
 
