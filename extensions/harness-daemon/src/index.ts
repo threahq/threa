@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 
 import { adoptClaudeSession, adoptRefused } from "./adopt"
-import { parseAdopt, parseReconnect, parseResume, parseSpawn, usage } from "./cli"
+import { parseAdopt, parseReconnect, parseResolve, parseResume, parseSpawn, usage } from "./cli"
 import {
   attachAgent,
   bootResume,
@@ -20,6 +20,7 @@ import {
   watchUnarchived,
 } from "./commands"
 import { die } from "./errors"
+import { resolveIdentity } from "./identity"
 import { reconnectRuntime } from "./reconnect"
 
 async function main(): Promise<void> {
@@ -56,6 +57,7 @@ async function main(): Promise<void> {
     return steerAgent(args[0] ?? die("steer requires an agent id or name"), args.slice(1).join(" "))
   if (command === "keys") return sendKeysToAgent(args[0] ?? die("keys requires an agent id or name"), args.slice(1))
   if (command === "attach") return attachAgent(args[0] ?? die("attach requires an agent id or name"))
+  if (command === "resolve") return resolveIdentity(parseResolve(args))
   if (command === "doctor") return doctor()
   if (command === "do") return inferAndRun(args.join(" "))
   die(`unknown command: ${command}`)

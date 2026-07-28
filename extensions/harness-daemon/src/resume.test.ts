@@ -544,7 +544,7 @@ function reviveDeps(overrides: Partial<ReviveDeps> = {}): ReviveDeps {
   return {
     claudeConfig: { workspaceId: "ws_1", apiKey: "key" },
     piConfig: { workspaceId: "ws_1", apiKey: "key" },
-    windowExists: () => false,
+    paneStatus: () => "missing",
     claudeProcessesIn: () => [],
     pathExists: () => true,
     scratchpadStatus: async () => "active",
@@ -739,7 +739,7 @@ test("inaccessible probes back off for hours where unavailable ones cap at minut
 test("up skips an already-running agent before touching the network", async () => {
   const calls: string[] = []
   const deps = reviveDeps({
-    windowExists: () => true,
+    paneStatus: () => "found",
     scratchpadStatus: async () => {
       calls.push("status")
       return "active"
@@ -755,7 +755,7 @@ test("up refuses to launch into a worktree a live Claude already occupies", asyn
   // session. The process table is the second, tmux-independent opinion.
   const launches: string[] = []
   const deps = reviveDeps({
-    windowExists: () => false,
+    paneStatus: () => "missing",
     claudeProcessesIn: () => [18241, 22445],
     resumeRuntime: async (agent) => {
       launches.push(agent.name)
