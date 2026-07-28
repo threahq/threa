@@ -4,7 +4,7 @@ import {
   ArchiveGraceController,
   BikKeystore,
   WS_BACKSTOP_POLL_MS,
-  clearHarnessLink,
+  markHarnessLinkWoundDown,
   recordHarnessLink,
   BotRuntimeTransport,
   mintStreamKeyWraps,
@@ -1563,9 +1563,12 @@ export class RemoteSession {
   /** The grace expired with the scratchpad still archived: hand the connector its terminal wind-down. */
   private async windDownForArchive(rootStreamId: string): Promise<void> {
     await this.shutdown()
-    // Only here, never on an ordinary shutdown: a runtime that exits normally
-    // and is archived afterwards is precisely what the reaper is for.
-    clearHarnessLink(this.config.runtimeSessionId)
+    // Marked, not cleared, and only here: harnessd preserves the branch and
+    // removes the worktree under `resume-active.lock`, and it can only find
+    // this worktree while the record is still there. Clearing it would strand
+    // the worktree exactly as an ordinary shutdown-then-archive does — which
+    // is the other case the reaper exists for.
+    markHarnessLinkWoundDown(this.config.runtimeSessionId)
     await this.delegate.onArchived?.({ rootStreamId })
   }
 

@@ -33,12 +33,12 @@ import {
   sendAllowedTmuxKey,
   ArchiveGraceController,
   WS_BACKSTOP_POLL_MS,
-  clearHarnessLink,
+  killOwnWindow,
+  markHarnessLinkWoundDown,
   recordHarnessLink,
   scrubSealedError,
   sealReply,
   sealStep,
-  windDownArchivedWorktree,
   type AttachmentRef,
   type BotRuntimeHello,
   type DecryptedHistoryItem,
@@ -320,9 +320,9 @@ let archive: ArchiveGraceController | undefined
 // reattach probes inside a 5-minute grace.
 let rearmPoll: ((delayMs: number) => void) | undefined
 // Overridable so a test can watch the grace expire and the wind-down run
-// instead of waiting five minutes and destroying a real worktree.
+// instead of waiting five minutes and killing the tmux window it runs in.
 let archiveGraceMs: number | undefined
-let archiveWindDown: typeof windDownArchivedWorktree = windDownArchivedWorktree
+let archiveKillWindow: typeof killOwnWindow = killOwnWindow
 // Owns the /bot socket + routes presence/renew/steps over it (HTTP fallback
 // when the socket is down). Built lazily once the session ctx is known; torn
 // down + rebuilt on a workspace/auth change so it never reuses a stale target.
@@ -783,7 +783,13 @@ function buildRuntimeCapabilities(
     supportsMentionInvocations: true,
     supportsSessionControlCommands: true,
     sessionControlCommands: SESSION_CONTROL_COMMANDS.filter((command) => {
-      if (command === "reconnect") return Boolean(ctx && currentReconnectLink(ctx, reconnectAvailable))
+      // `kick` and `reconnect` both act through the harnessd entrypoint, which
+      // finds this session by its tmux pane and presses Enter into it. Neither
+      // can run without a pane and an installed daemon — everything else here
+      // actuates in-process through the extension API and needs no tmux at all.
+      if (command === "kick" || command === "reconnect") {
+        return Boolean(ctx && currentReconnectLink(ctx, reconnectAvailable))
+      }
       if (command === "key") return Boolean(ctx && currentSessionControlLink(ctx))
       return true
     }),
@@ -1875,17 +1881,17 @@ function ensureArchiveController(ctx: ExtensionContext): ArchiveGraceController 
         await heartbeat("available", undefined, ctx).catch(() => undefined)
       },
       onWindDown: () => {
-        clearHarnessLink(getRuntimeSessionId(ctx))
+        // Marked, not cleared: harnessd preserves the branch and removes the
+        // worktree under `resume-active.lock`, and it can only find this
+        // worktree while the record is still there.
+        markHarnessLinkWoundDown(getRuntimeSessionId(ctx))
         stopPolling()
         stopClaimRenewTimer()
-        const report = archiveWindDown(ctx.cwd, (message) => emitPollDebug(ctx, message))
         teardownTransport()
-        if (report.windowKilled) return
+        if (archiveKillWindow()) return
         ctx.ui.notify(
-          report.pushed
-            ? "Threa scratchpad archived; branch pushed. This worktree is finished — close the window."
-            : `Threa scratchpad archived, but the wind-down could not preserve the work: ${report.reason ?? "unknown"}`,
-          report.pushed ? "warning" : "error"
+          "Threa scratchpad archived. This worktree is finished — close the window and harnessd will push the branch and remove it.",
+          "warning"
         )
       },
       log: (message) => emitPollDebug(ctx, message),
@@ -4132,15 +4138,15 @@ export const __testing = {
   archivePendingRootStreamId: () => archive?.pendingRootStreamId,
   setArchivePendingForTesting: (ctx: ExtensionContext, rootStreamId: string) =>
     ensureArchiveController(ctx).archived(rootStreamId),
-  setArchiveWindDownForTesting: (graceMs: number, windDown: typeof windDownArchivedWorktree) => {
+  setArchiveWindDownForTesting: (graceMs: number, killWindow: typeof killOwnWindow) => {
     archiveGraceMs = graceMs
-    archiveWindDown = windDown
+    archiveKillWindow = killWindow
   },
   clearArchivePendingForTesting: () => {
     archive?.stop()
     archive = undefined
     archiveGraceMs = undefined
-    archiveWindDown = windDownArchivedWorktree
+    archiveKillWindow = killOwnWindow
   },
   setRateLimitWaitForTesting: (value: boolean) => {
     isWaitingForRetry = value

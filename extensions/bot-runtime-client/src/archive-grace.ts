@@ -1,4 +1,19 @@
-import { ARCHIVE_RESTORE_GRACE_MS, ARCHIVE_RESTORE_PROBE_MS } from "./archive-wind-down"
+/**
+ * How long a runtime survives its scratchpad being archived before winding
+ * down. An unarchive inside this window reattaches the live agent in place.
+ * Shared: Claude (`@threa/remote-session`) and Pi run separate session
+ * implementations, and a grace tuned on one must not diverge from the other.
+ */
+export const ARCHIVE_RESTORE_GRACE_MS = 5 * 60 * 1000
+/** Reattach-probe cadence while detached. Bounded by the grace window, so it cannot become a quota burn. */
+export const ARCHIVE_RESTORE_PROBE_MS = 45_000
+/**
+ * Poll cadence while the `/bot` socket is up: pushes deliver work within a
+ * frame, so the poll is only a backstop for a dropped one. Shared because it
+ * is also the worst case for a runtime to notice an archive it was not pushed,
+ * which is what any external reaper has to wait out.
+ */
+export const WS_BACKSTOP_POLL_MS = 15 * 60 * 1000
 
 /**
  * The archive → grace → wind-down state machine, shared by every harness
@@ -6,8 +21,8 @@ import { ARCHIVE_RESTORE_GRACE_MS, ARCHIVE_RESTORE_PROBE_MS } from "./archive-wi
  *
  * Archiving a scratchpad ends its session server-side, so the worktree behind
  * it is finished — but archiving is also how a mis-click gets undone, so the
- * destructive wind-down (push the branch, remove the worktree, kill the tmux
- * window) waits out a grace window that an unarchive can cancel.
+ * wind-down (hand the worktree to harnessd, kill the tmux window) waits out a
+ * grace window that an unarchive can cancel.
  *
  * This is deliberately one implementation rather than one per runtime. Every
  * bug this machine has produced came from the same shape: state read before an
@@ -34,7 +49,12 @@ export interface ArchiveGraceHooks {
   onDetached(rootStreamId: string, graceMs: number): Promise<void> | void
   /** Reattach effects: back to available, resume claiming. */
   onReattached(rootStreamId: string): Promise<void> | void
-  /** Terminal. Preserve the work, then take the window down; the runtime usually dies here. */
+  /**
+   * Terminal. Hand the worktree to harnessd ({@link markHarnessLinkWoundDown})
+   * and take the window down; the runtime usually dies here. Preserving the
+   * branch and removing the worktree is harnessd's job, never a runtime's —
+   * only harnessd holds the lock a concurrent revive also takes.
+   */
   onWindDown(rootStreamId: string): Promise<void> | void
   log(message: string): void
 }

@@ -1,3 +1,4 @@
+import { readHarnessLinks } from "@threa/bot-runtime-client"
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test"
 import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs"
 import { homedir, tmpdir } from "node:os"
@@ -119,20 +120,12 @@ describe("Pi remote trace safety", () => {
   })
 
   test("advertises session-control command capabilities", () => {
+    // No ctx: nothing is linked yet, so the three commands that need a live
+    // link (kick and reconnect via harnessd, key via the pane) are withheld.
+    // What remains is everything Pi actuates in-process.
     expect(__testing.buildRuntimeCapabilities()).toMatchObject({
       supportsSessionControlCommands: true,
-      sessionControlCommands: [
-        "compact",
-        "model",
-        "thinking",
-        "skill",
-        "reload",
-        "shell",
-        "steer",
-        "stop",
-        "kick",
-        "carry-on",
-      ],
+      sessionControlCommands: ["compact", "model", "thinking", "skill", "reload", "shell", "steer", "stop", "carry-on"],
     })
   })
 
@@ -1082,6 +1075,27 @@ describe("Pi reconnect session control", () => {
     expect(
       (__testing.buildRuntimeCapabilities(ctx, () => false).sessionControlCommands as string[]).includes("reconnect")
     ).toBe(false)
+  })
+
+  test("advertises kick only when harnessd can actually reach a tmux pane", async () => {
+    // `kick` asks harnessd to press Enter in this session's pane. Everything
+    // else Pi advertises actuates in-process, so kick is the one command that
+    // is unrunnable without tmux — offering it anyway is a dead button.
+    const ctx = context(true)
+    const commands = (available: boolean) =>
+      __testing.buildRuntimeCapabilities(ctx, () => available).sessionControlCommands as string[]
+
+    expect(commands(true)).toContain("kick")
+
+    delete process.env.TMUX_PANE
+    expect(commands(true)).not.toContain("kick")
+
+    process.env.TMUX_PANE = "%9"
+    expect(commands(false)).not.toContain("kick")
+
+    // The in-process commands stay available throughout — this gate must not
+    // take the whole session-control surface down with it.
+    expect(commands(false)).toEqual(expect.arrayContaining(["stop", "steer", "compact", "model", "thinking"]))
   })
 
   test("advertises and sends an allowed key only for the exact link using Pi's PID", async () => {
@@ -2069,12 +2083,12 @@ describe("archived-scratchpad wind-down", () => {
     }
   })
 
-  test("the grace expiring while still archived runs the worktree wind-down", async () => {
+  test("the grace expiring while still archived hands the worktree to harnessd and takes the window down", async () => {
     linkConfig()
-    const windDowns: string[] = []
-    __testing.setArchiveWindDownForTesting(50, (cwd) => {
-      windDowns.push(cwd)
-      return { committed: false, pushed: true, removalScheduled: true, windowKilled: true }
+    let windowsKilled = 0
+    __testing.setArchiveWindDownForTesting(50, () => {
+      windowsKilled += 1
+      return true
     })
     const fetchSpy = spyOn(globalThis, "fetch").mockImplementation(
       async (input) =>
@@ -2090,13 +2104,22 @@ describe("archived-scratchpad wind-down", () => {
     try {
       await __testing.probeArchiveState(ctx)
       expect(__testing.archivePendingRootStreamId()).toBe("stream_root")
-      expect(windDowns).toEqual([])
+      expect(windowsKilled).toBe(0)
 
       await Bun.sleep(120)
 
-      expect({ windDowns, pending: __testing.archivePendingRootStreamId() }).toEqual({
-        windDowns: ["/tmp"],
+      // The record must survive, carrying the mark: harnessd does the pushing
+      // and the removal, and it can only find this worktree through the record.
+      expect({
+        windowsKilled,
+        pending: __testing.archivePendingRootStreamId(),
+        marked: readHarnessLinks()
+          .filter((link) => link.runtimeSessionId === "runtime")
+          .map((link) => ({ worktree: link.worktree, requested: typeof link.windDownRequestedAt === "string" })),
+      }).toEqual({
+        windowsKilled: 1,
         pending: undefined,
+        marked: [{ worktree: "/tmp", requested: true }],
       })
     } finally {
       fetchSpy.mockRestore()
@@ -2107,12 +2130,7 @@ describe("archived-scratchpad wind-down", () => {
     linkConfig()
     let releaseReattach!: () => void
     const reattachGate = new Promise<void>((resolve) => (releaseReattach = resolve))
-    __testing.setArchiveWindDownForTesting(50, () => ({
-      committed: false,
-      pushed: true,
-      removalScheduled: true,
-      windowKilled: false,
-    }))
+    __testing.setArchiveWindDownForTesting(50, () => false)
     const fetchSpy = spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = String(input)
       if (url.endsWith("/streams/stream_root")) {

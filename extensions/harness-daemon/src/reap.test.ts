@@ -219,6 +219,71 @@ describe("reapArchivedWorktrees", () => {
     expect(recorded.woundDown).toEqual([WORKTREE])
   })
 
+  test("a runtime that served its own grace is reaped on the next pass, not after the margin again", async () => {
+    // The runtime watched the 5-minute grace expire and handed the worktree
+    // over before exiting. Re-serving the 25-minute margin here would turn
+    // ordinary cleanup from 5 minutes into 25.
+    const { deps, recorded } = makeDeps({
+      links: () => [link({ windDownRequestedAt: new Date(NOW - 1_000).toISOString() })],
+      archivedAt: async () => new Date(NOW - 60_000).toISOString(),
+      panes: () => [],
+    })
+
+    const [outcome] = await reapArchivedWorktrees(deps)
+
+    expect(outcome).toMatchObject({ status: "reaped" })
+    expect(recorded.woundDown).toEqual([WORKTREE])
+  })
+
+  test("a marked record needs no archivedAt at all", async () => {
+    // The decision is the runtime's, already made; a Threa read that fails or
+    // returns no archivedAt must not strand the worktree.
+    const { deps, recorded } = makeDeps({
+      links: () => [link({ windDownRequestedAt: new Date(NOW - 1_000).toISOString() })],
+      archivedAt: async () => {
+        throw new Error("archivedAt must not be consulted for a marked record")
+      },
+      panes: () => [],
+    })
+
+    const [outcome] = await reapArchivedWorktrees(deps)
+
+    expect(outcome.status).toBe("reaped")
+    expect(recorded.woundDown).toEqual([WORKTREE])
+  })
+
+  test("a marked record still defers to a scratchpad that came back", async () => {
+    // Marked, then unarchived and revived before this pass ran. The mark is
+    // stale; live server state wins.
+    const { deps, recorded } = makeDeps({
+      links: () => [link({ windDownRequestedAt: new Date(NOW - 1_000).toISOString() })],
+      scratchpadStatus: async () => "active",
+    })
+
+    const [outcome] = await reapArchivedWorktrees(deps)
+
+    expect(outcome.status).toBe("skipped active")
+    expect(recorded).toEqual({ woundDown: [], killed: [], forgotten: [] })
+  })
+
+  test("the observer warmup holds back unmarked records only", async () => {
+    // Warmup protects a runtime whose detection clock restarted on wake. A
+    // runtime that already decided is not that runtime.
+    const { deps, recorded } = makeDeps({
+      observingSinceMs: NOW - OBSERVER_WARMUP_MS + 60_000,
+      links: () => [
+        link({ runtimeSessionId: "unmarked" }),
+        link({ runtimeSessionId: "marked", windDownRequestedAt: new Date(NOW - 1_000).toISOString() }),
+      ],
+      panes: () => [],
+    })
+
+    const outcomes = await reapArchivedWorktrees(deps)
+
+    expect(outcomes.map((o) => o.status)).toEqual(["skipped observer too young", "reaped"])
+    expect(recorded.forgotten).toEqual(["marked"])
+  })
+
   test("the margin outlasts a runtime's own detection plus grace", () => {
     // 15-min socket backstop + 2x the 5-min grace.
     expect(REAP_AFTER_MS).toBe(25 * 60 * 1000)

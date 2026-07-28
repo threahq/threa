@@ -32,7 +32,7 @@ const VENDOR_FILES = [
   "harness-kick.ts",
   "harness-reconnect.ts",
   "tmux-key.ts",
-  "archive-wind-down.ts",
+  "tmux-window.ts",
   "archive-grace.ts",
   "harness-links.ts",
 ]
