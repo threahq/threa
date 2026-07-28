@@ -1687,24 +1687,50 @@ describe("no-socket poll backoff", () => {
 describe("folding queued messages into one turn", () => {
   const asInternal = (session: RemoteSession) => session as unknown as { claimDrain: () => Promise<boolean> }
 
-  function makeFoldSession(queue: ClaimedInvocation[]) {
+  function makeFoldSession(queue: ClaimedInvocation[], overrides: { deliverTurn?: () => Promise<void> } = {}) {
     const delivered: Array<{ invocationId: string; content: string }> = []
     const completed: Array<{ id: string; body: Record<string, unknown> }> = []
+    const failed: Array<{ id: string; body: Record<string, unknown> }> = []
+    const claims: Array<Record<string, unknown>> = []
+    const interrupts: number[] = []
     const client = {
-      claim: async () => queue.shift() ?? null,
+      claim: async (body: Record<string, unknown>) => {
+        claims.push(body)
+        const scope = body.responseStreamId
+        const caps = (body.supportedCapabilities ?? []) as string[]
+        // The server-side predicates, modelled: a claim only returns work whose
+        // required capability was offered, and a scoped claim only returns an
+        // invocation answering into that stream.
+        const index = queue.findIndex(
+          (item) => caps.includes(item.requiredCapability) && (!scope || item.responseStreamId === scope)
+        )
+        return index === -1 ? null : queue.splice(index, 1)[0]
+      },
       complete: async (id: string, body: Record<string, unknown>) => {
         completed.push({ id, body })
       },
-      fail: async () => {},
+      fail: async (id: string, body: Record<string, unknown>) => {
+        failed.push({ id, body })
+      },
       sendMessage: async () => {},
     } as unknown as ThreaClient
     const { transport } = makeFakeTransport()
     const session = makeSession(client, transport, {
-      deliverTurn: async (turn: { invocationId: string; content: string }) => {
-        delivered.push({ invocationId: turn.invocationId, content: turn.content })
+      deliverTurn:
+        overrides.deliverTurn ??
+        (async (turn: { invocationId: string; content: string }) => {
+          delivered.push({ invocationId: turn.invocationId, content: turn.content })
+        }),
+      sessionControl: {
+        commands: ["stop", "steer"],
+        interrupt: () => {
+          interrupts.push(Date.now())
+          return true
+        },
+        runCommand: async () => ({ ok: true, message: "ok" }),
       },
     })
-    return { session, delivered, completed }
+    return { session, delivered, completed, failed, claims, interrupts }
   }
 
   test("N messages queued behind one become a single turn that sees all of them", async () => {
@@ -1750,7 +1776,7 @@ describe("folding queued messages into one turn", () => {
       requiredCapability: "session-control",
       metadata: { command: { executionKind: "bot-runtime", id: "cmd_1", name: "stop", args: "" } },
     })
-    const { session, delivered } = makeFoldSession([
+    const { session, delivered, interrupts } = makeFoldSession([
       makeInvocation({ id: "binv_1", promptMarkdown: "first" }),
       makeInvocation({ id: "binv_2", promptMarkdown: "second" }),
       stop,
@@ -1762,6 +1788,63 @@ describe("folding queued messages into one turn", () => {
     expect(delivered[0]?.content).toContain("first")
     expect(delivered[0]?.content).toContain("second")
     expect(delivered[0]?.content).not.toContain("/stop")
+    // The point of not folding it: it has to actually stop the turn the fold
+    // just started. Asserting only on the prompt text proved nothing.
+    expect(interrupts).toHaveLength(1)
+    await session.shutdown()
+  })
+
+  test("the sweep is scoped to the primary's stream, so a thread message is never folded in", async () => {
+    // `claimOne` is FIFO per bot and has no stream predicate of its own; without
+    // the scope the sweep would fold a message belonging to another stream and
+    // answer it in the primary's, closing it unanswered where it was asked.
+    const { session, delivered, completed, claims } = makeFoldSession([
+      makeInvocation({ id: "binv_root", promptMarkdown: "root question", responseStreamId: "stream_root" }),
+      makeInvocation({ id: "binv_thread", promptMarkdown: "thread question", responseStreamId: "stream_thread" }),
+    ])
+
+    await asInternal(session).claimDrain()
+
+    expect(delivered).toHaveLength(1)
+    expect(delivered[0]?.content).toContain("root question")
+    expect(delivered[0]?.content).not.toContain("thread question")
+    // Untouched: still queued, still answerable in its own stream.
+    expect(completed).toEqual([])
+    // First claim is the unscoped primary; the sweep that follows is scoped.
+    // (The later busy claim stays unscoped on purpose — a /stop from any stream
+    // still has to reach the session.)
+    expect(claims[0]?.responseStreamId).toBeUndefined()
+    expect(claims[1]?.responseStreamId).toBe("stream_root")
+    await session.shutdown()
+  })
+
+  test("a delivery failure fails the messages loudly and still runs a swept /stop", async () => {
+    const { session, failed, interrupts } = makeFoldSession(
+      [
+        makeInvocation({ id: "binv_1", promptMarkdown: "first" }),
+        makeInvocation({ id: "binv_2", promptMarkdown: "second" }),
+        makeInvocation({
+          id: "binv_stop",
+          promptMarkdown: "/stop",
+          trigger: "session-control",
+          requiredCapability: "session-control",
+          metadata: { command: { executionKind: "bot-runtime", id: "cmd_1", name: "stop", args: "" } },
+        }),
+      ],
+      {
+        deliverTurn: async () => {
+          throw new Error("pane is gone")
+        },
+      }
+    )
+
+    await asInternal(session).claimDrain()
+
+    // Claimed but undeliverable must not vanish into a silent close.
+    expect(failed.map((item) => item.id).sort()).toEqual(["binv_1", "binv_2"])
+    expect(failed[0]?.body.errorMessage).toContain("pane is gone")
+    // And the swept /stop still runs rather than hanging to its claim TTL.
+    expect(interrupts).toHaveLength(1)
     await session.shutdown()
   })
 })

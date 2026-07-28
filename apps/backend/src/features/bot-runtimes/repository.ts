@@ -843,6 +843,20 @@ export const BotInvocationRepository = {
       supportedCapabilities: BotInvocationCapability[]
       claimTtlSeconds: number
       maxAttempts: number
+      /**
+       * Restrict the claim to invocations answering into this stream.
+       *
+       * A connector that folds several queued messages into one turn can only
+       * do so for messages sharing a response stream — the turn is delivered
+       * with one stream id, so folding across streams answers one question in
+       * another's stream and closes the rest unanswered. Sealing needs no
+       * separate predicate: sealing is a property of the stream, so one
+       * response stream is uniformly sealed or uniformly plaintext.
+       *
+       * Without this the connector would have to claim first and inspect
+       * after, and there is no way to release a claim it should not have taken.
+       */
+      responseStreamId?: string
     }
   ): Promise<BotInvocation | null> {
     // A composite message + steer shares one transaction timestamp; put the
@@ -863,6 +877,7 @@ export const BotInvocationRepository = {
           AND (i.target_instance_id IS NULL OR i.target_instance_id = ${params.instanceId})
           AND (i.target_runtime_session_id IS NULL OR i.target_runtime_session_id = ${params.runtimeSessionId ?? null})
           AND (i.status = 'pending' OR (i.status = 'claimed' AND i.claim_expires_at < NOW()))
+          AND (${params.responseStreamId ?? null}::text IS NULL OR i.response_stream_id = ${params.responseStreamId ?? null})
           AND i.attempts < ${params.maxAttempts}
           AND ${sealedStreamClaimGateSql(params.instanceId)}
         ORDER BY i.created_at ASC, CASE WHEN i.trigger = 'session-control' THEN 1 ELSE 0 END ASC, i.id ASC

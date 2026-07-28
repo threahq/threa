@@ -222,6 +222,11 @@ export const claimInvocationSchema = z.object({
   runtimeSessionId: z.string().min(1).max(256).optional(),
   supportedCapabilities: z.array(z.enum(BOT_INVOCATION_CAPABILITIES)).min(1),
   claimTtlSeconds: z.number().int().min(15).max(300).optional().default(60),
+  // Restrict the claim to invocations answering into this stream. A connector
+  // folding several queued messages into one turn can only fold messages that
+  // share a response stream; without the filter it would have to claim first
+  // and inspect after, and a claim it should not have taken cannot be released.
+  responseStreamId: z.string().min(1).max(64).optional(),
 })
 
 export const renewInvocationClaimSchema = z.object({

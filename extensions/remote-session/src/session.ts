@@ -729,8 +729,11 @@ export class RemoteSession {
    * loudly (scrubbed reason) and reports "nothing claimed" rather than throwing
    * the drain into a TTL-recycle loop.
    */
-  private async claimNext(busy: boolean): Promise<ClaimedInvocation | null> {
-    const invocation = await this.client.claim(this.claimBody(busy))
+  private async claimNext(busy: boolean, responseStreamId?: string): Promise<ClaimedInvocation | null> {
+    const invocation = await this.client.claim({
+      ...this.claimBody(busy),
+      ...(responseStreamId ? { responseStreamId } : {}),
+    })
     if (!invocation || invocation.sealedContext === undefined) return invocation
     const fail = async (reason: string): Promise<null> => {
       this.log(`sealed claim ${invocation.id} unusable: ${reason}`)
@@ -803,23 +806,49 @@ export class RemoteSession {
     const parts = [await this.buildTurnContent(invocation)]
     const folded: ClaimedInvocation[] = []
     const control: ClaimedInvocation[] = []
-    for (let i = 1; i < STEER_DRAIN_LIMIT; i++) {
-      const extra = await this.claimNext(false).catch(() => null)
-      if (!extra) break
-      if (await this.interceptInvocation(extra)) continue
-      if (isSessionControlInvocation(extra)) {
-        control.push(extra)
-        // Stop folding at a control command: everything after it belongs to
-        // whatever that command decides.
-        break
+    try {
+      for (let i = 1; i < STEER_DRAIN_LIMIT; i++) {
+        // Scoped to the primary's response stream, server-side. Folding across
+        // streams would answer one stream's question in another and close the
+        // rest unanswered, and a claim taken by mistake cannot be released —
+        // so the filter has to keep it from being claimed at all. Sealing rides
+        // along: a stream is uniformly sealed or uniformly plaintext.
+        const extra = await this.claimNext(false, invocation.responseStreamId).catch(() => null)
+        if (!extra) break
+        if (await this.interceptInvocation(extra)) continue
+        if (isSessionControlInvocation(extra)) {
+          control.push(extra)
+          // Stop folding at a control command: everything after it belongs to
+          // whatever that command decides.
+          break
+        }
+        folded.push(extra)
+        // formatInvocationContent, not buildTurnContent: the latter downloads
+        // attachments, and nothing claimed during the sweep is renewed yet, so
+        // a slow queue would expire every claim it is holding. The steer sweep
+        // folds prompt text only for the same reason.
+        parts.push(formatInvocationContent(extra))
       }
-      folded.push(extra)
-      parts.push(await this.buildTurnContent(extra))
+      // An archive can land while the sweep awaits; delivering into a detached
+      // link publishes busy for a turn whose reply cannot arrive.
+      if (this.stopped || this.archive.detached) {
+        await Promise.all(folded.map((item) => this.completeNoResponse(item)))
+        folded.length = 0
+        return control
+      }
+      await this.deliverTurn(invocation, buildSteerContent(parts))
+      // Only after the turn is registered: a delivery that throws must leave the
+      // folded messages claimed-but-open rather than silently closed.
+      await Promise.all(folded.map((item) => this.completeNoResponse(item)))
+    } catch (error) {
+      // Never throw past here. Control claimed by the sweep has to run even when
+      // delivery failed — otherwise a swept /stop is claimed, never handled, and
+      // interrupts an unrelated turn once its claim expires. The messages fail
+      // loudly instead of vanishing into a silent close.
+      const reason = `Could not start the turn: ${this.summarize(error)}`
+      await this.failInvocation(invocation, reason).catch(() => undefined)
+      await Promise.all(folded.map((item) => this.failInvocation(item, reason).catch(() => undefined)))
     }
-    await this.deliverTurn(invocation, buildSteerContent(parts))
-    // Only after the turn is registered: a delivery that throws must leave the
-    // folded messages claimed-but-open rather than silently closed.
-    await Promise.all(folded.map((item) => this.completeNoResponse(item)))
     return control
   }
 

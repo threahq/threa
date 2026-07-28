@@ -742,6 +742,8 @@ export class BotRuntimeService {
     claimToken: string
     supportedCapabilities: BotInvocationCapability[]
     claimTtlSeconds: number
+    /** Only claim invocations answering into this stream (see `claimOne`). */
+    responseStreamId?: string
   }): Promise<BotInvocation | null> {
     return withTransaction(this.pool, async (db) => {
       // Reap invocations this bot has re-claimed to exhaustion before handing
