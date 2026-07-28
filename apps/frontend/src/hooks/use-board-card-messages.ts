@@ -9,12 +9,22 @@ import type { BoardViewPost } from "./use-stable-board-view"
 
 /**
  * Event types the board rail reads alongside `message_created`: the non-message
- * rows the board draws (agent sessions, memo captures, follow-ups — derived from
- * the shared STREAM_ROW_SPEC) plus the follow-up *cancel* patch, which carries no
- * row of its own but flips a scheduled card to "Cancelled". Registering a new
- * conversation-scoped row kind in the spec adds it here automatically.
+ * rows the board draws (agent sessions, memo captures, follow-ups, delegations —
+ * derived from the shared STREAM_ROW_SPEC) plus the two patches that carry no row
+ * of their own: `agent:follow_up_cancelled` flips a scheduled card to "Cancelled",
+ * `delegation:status_changed` advances a delegation card's status. Registering a
+ * new conversation-scoped row kind in the spec adds it here automatically; a
+ * PATCH-classed type never derives, so it is listed by hand. Adding a row type
+ * whose live updates arrive as a patch means adding that patch HERE too —
+ * `board-event-rows.test.ts` ("BOARD_RAIL_EVENT_TYPES covers every patch
+ * belonging to a board row type") holds this list to it.
  */
-const BOARD_RAIL_EVENT_TYPES: EventType[] = [...BOARD_EVENT_ROW_TYPES, "agent:follow_up_cancelled", "message_created"]
+export const BOARD_RAIL_EVENT_TYPES: EventType[] = [
+  ...BOARD_EVENT_ROW_TYPES,
+  "agent:follow_up_cancelled",
+  "delegation:status_changed",
+  "message_created",
+]
 
 interface MessageCreatedPayloadShape {
   messageId?: string

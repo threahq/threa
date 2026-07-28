@@ -831,6 +831,7 @@ function ConversationPanelBody({ workspaceId, post, hostStreamType, openReplySig
               renderBranchMessage={renderBranchMessage}
               renderBranchTail={inlineComposer.renderBranchTail}
               renderAfterMessage={inlineComposer.renderAfterMessage}
+              onRedirectSession={() => setFocusSeq((n) => n + 1)}
             />
             {loadingMore && <span className="mt-3 block text-xs text-muted-foreground">Loading messages…</span>}
             {backfillFailed && (
