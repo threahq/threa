@@ -5,6 +5,8 @@ import { fireEvent, render, screen, userEvent } from "@/test"
 import { StreamTypes } from "@threa/types"
 import * as useMobileModule from "@/hooks/use-mobile"
 import * as workspaceStore from "@/stores/workspace-store"
+import * as sonner from "sonner"
+import { clearCallLifecycleLog, recordCallLifecycleEvent } from "@/calls/lifecycle-log"
 import {
   clearCallState,
   getCallState,
@@ -308,6 +310,52 @@ describe("CallControls — mobile flip", () => {
     enterVideoCall({ cameras: [device("c1", "Front", "videoinput")] })
 
     expect(screen.queryByLabelText("Flip camera")).toBeNull()
+  })
+})
+
+describe("ConnectionDiagnostics — lifecycle log", () => {
+  beforeEach(() => {
+    clearCallLifecycleLog()
+  })
+  afterEach(() => {
+    clearCallLifecycleLog()
+  })
+
+  async function openDiagnostics() {
+    renderControls(makeManager())
+    enterVideoCall()
+    await userEvent.click(screen.getByLabelText("Connection diagnostics"))
+  }
+
+  it("renders the recorded entries newest-first", async () => {
+    act(() => {
+      recordCallLifecycleEvent({ kind: "freeze" })
+      recordCallLifecycleEvent({ kind: "lease_renew_failed", detail: "CALL_LEASE_SUPERSEDED" })
+    })
+    await openDiagnostics()
+
+    const rows = (await screen.findByRole("list")).querySelectorAll("li")
+    expect([...rows].map((li) => li.textContent?.replace(/^\d\d:\d\d:\d\d\.\d\d\d/, ""))).toEqual([
+      "lease_renew_failed CALL_LEASE_SUPERSEDED",
+      "freeze",
+    ])
+  })
+
+  it("copies the log and confirms in place, with no toast", async () => {
+    const writeText = vi.fn(async () => {})
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } })
+    const toastSuccess = vi.spyOn(sonner.toast, "success")
+    act(() => {
+      recordCallLifecycleEvent({ kind: "pagehide" })
+    })
+    await openDiagnostics()
+
+    await userEvent.click(screen.getByLabelText("Copy lifecycle log"))
+
+    expect(writeText).toHaveBeenCalledWith(expect.stringContaining("pagehide"))
+    // In-place confirmation in the same footprint — never a success toast (INV-63).
+    expect(await screen.findByLabelText("Copied")).toBeInTheDocument()
+    expect(toastSuccess).not.toHaveBeenCalled()
   })
 })
 

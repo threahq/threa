@@ -17,6 +17,7 @@ import { resetSnippetRequestStoreCache } from "@/stores/snippet-request-store"
 import { resetConversationReplyOpenStoreCache } from "@/stores/conversation-reply-open-store"
 import { resetE2eSessionStoreCache } from "@/stores/e2e-session-store"
 import { resetCallStoreCache } from "@/stores/call-store"
+import { clearCallLifecycleLog } from "@/calls/lifecycle-log"
 import { resetIncomingCallStoreCache } from "@/stores/incoming-call-store"
 import { resetFloatingSurfaceGeometryStoreCache } from "@/stores/floating-surface-geometry-store"
 import { resetRevealGate } from "@/sync/reveal-gate"
@@ -84,6 +85,7 @@ function flushModuleStoreCaches(): void {
   // the transport, and stops tracks (the CallManager's registered hangup) so an
   // account switch with a live call never leaves the prior account's mic hot.
   resetCallStoreCache()
+  clearCallLifecycleLog()
   resetIncomingCallStoreCache()
   resetFloatingSurfaceGeometryStoreCache()
   resetRevealGate()
