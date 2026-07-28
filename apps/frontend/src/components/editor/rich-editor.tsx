@@ -12,10 +12,10 @@ import { EditorToolbar } from "./editor-toolbar"
 import {
   serializeToMarkdown,
   parseMarkdown,
-  serializeClipboardSlice,
   isProseMirrorClipboardEvent,
   type MentionTypeLookup,
 } from "./editor-markdown"
+import { serializeClipboardSlice } from "./clipboard-copy"
 import {
   useMentionSuggestion,
   useChannelSuggestion,

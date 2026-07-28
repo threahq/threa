@@ -30,10 +30,10 @@ import { EditorBehaviors, handleLinkToolbarAction, isSuggestionActive } from "./
 import {
   serializeToMarkdown,
   parseMarkdown,
-  serializeClipboardSlice,
   isProseMirrorClipboardEvent,
   type MentionTypeLookup,
 } from "./editor-markdown"
+import { serializeClipboardSlice } from "./clipboard-copy"
 import { useMentionSuggestion, useChannelSuggestion, useEmojiSuggestion } from "./triggers"
 import { useMentionables } from "@/hooks/use-mentionables"
 import { useWorkspaceEmoji } from "@/hooks/use-workspace-emoji"
