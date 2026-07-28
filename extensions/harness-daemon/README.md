@@ -39,7 +39,7 @@ Idempotent: a second run against the same live pane reuses the row (`already man
 | `refused missing cwd` / `refused missing credentials`               | no directory or no Threa credentials                                                                                              |
 | `failed`                                                            | the launch or the post-launch inventory write errored; the window is killed rather than left untracked                            |
 
-An adopted session is an ordinary inventory row afterwards, so `up`, `kick`, `stop` and the watcher all apply — with one boundary: `up` relaunches Claude **without** `--resume`, so an automatic revival after adoption starts a fresh conversation. Conversation history survives `adopt`, not `up`.
+An adopted session is an ordinary inventory row afterwards, so `up`, `kick`, `stop` and the watcher all apply — and since `up` now resumes the worktree's conversation too, the history survives an automatic revival as well.
 
 ## `up` (alias `resume-active`)
 
@@ -61,6 +61,7 @@ A session starts only when ALL of these hold; otherwise it is reported with a sk
 | `skipped unavailable`         | Threa unreachable (5xx/timeout, or 429 after retries) — pass stops early                                                           |
 | `skipped missing session id`  | Pi without its original `--session-id` / remote link, or half-recorded Claude identity                                             |
 | `skipped missing cwd`         | worktree dir gone (see `--recreate-worktree`)                                                                                      |
+| `skipped occupied`            | a live Claude process already sits in the worktree (process table, not tmux) — never launch a second one on one conversation       |
 | `skipped identity mismatch`   | scratchpad origin/workspace differs from config, Pi link bound to another stream, or preflight returned a different `rootStreamId` |
 
 Flags:
@@ -74,6 +75,9 @@ Hard guarantees, regardless of flags:
 - Eligibility is checked against `GET /api/v1/workspaces/:ws/streams/:id`; archived, deleted, and inaccessible scratchpads never start.
 - Revival preflights `POST /api/v1/workspaces/:ws/bot-runtime/sessions` with `ifArchived: "wait"` and `ifMissing: "error"`, and requires the returned `rootStreamId` to equal the recorded stream — it never creates a replacement scratchpad; a would-be different stream is refused as `skipped identity mismatch`.
 - Claude sessions launch against the `threa-channel` MCP server (stale `threa` registrations are rewritten, `THREA_CHANNEL_SERVER_KEY=threa-channel` enforced) with `--dangerously-skip-permissions` unless the original launch recorded `--no-yolo`.
+- A Claude revival **resumes the worktree's conversation** (`--resume <newest transcript>`), so "back up" includes the history rather than an empty session on the same scratchpad. A transcript a live process still holds is skipped, never shared; a worktree with no transcript starts fresh.
+- Liveness has two independent sources: the tmux pane, and the Claude process table (`~/.claude/sessions/<pid>.json` corroborated against `ps -o lstart`). Either one saying "alive" refuses the launch. The pane check alone let nine consecutive passes each start another Claude in one worktree on 2026-07-28.
+- Nothing is typed into a revived session beyond the boot dialogs. Claude's own `/remote-control` (the mobile app / claude.ai/code) is **not** how a session reaches Threa — the channel MCP server is — and sending it parked every revival in a modal dialog (`"waitingFor":"dialog open"`). Set `THREA_HARNESSD_CLAUDE_REMOTE_CONTROL=1` to opt back in.
 - Pi sessions only reattach with their exact recorded `--session-id` and an enabled remote link bound to the same root stream.
 - After a launch, the scratchpad is re-checked: archived/inaccessible mid-launch → the new window is killed and the agent recorded `error`, never `online` (a wedged runtime would otherwise read as `already running` forever). If the post-launch inventory write fails, the window is killed rather than left running untracked under stale inventory fields.
 - Passes serialize through a pid-owned file lock (`resume-active.lock` beside the inventory) with stale-holder recovery — a crashed pass's lock is stolen on the next run instead of wedging every future revival (the old tmux `wait-for` lock survived its owner until the tmux server restarted).

@@ -152,6 +152,13 @@ export function resolveClaudeTranscript(
     if (!deps.exists(path)) throw new Error(`Claude transcript is missing: ${path}`)
     return { sessionId: pinned, path, modifiedMs: readModified(path, deps) }
   }
+  const candidates = listClaudeTranscripts(directory, deps)
+  if (candidates.length === 0) throw new Error(`no Claude transcript under ${directory}`)
+  return candidates[0]!
+}
+
+/** Newest first. */
+function listClaudeTranscripts(directory: string, deps: ClaudeDiskDeps): ClaudeTranscript[] {
   const candidates: ClaudeTranscript[] = []
   for (const entry of deps.list(directory)) {
     const sessionId = entry.match(/^(.+)\.jsonl$/)?.[1]
@@ -159,8 +166,28 @@ export function resolveClaudeTranscript(
     const path = join(directory, entry)
     candidates.push({ sessionId, path, modifiedMs: readModified(path, deps) })
   }
-  if (candidates.length === 0) throw new Error(`no Claude transcript under ${directory}`)
-  return candidates.sort((left, right) => right.modifiedMs - left.modifiedMs)[0]!
+  return candidates.sort((left, right) => right.modifiedMs - left.modifiedMs)
+}
+
+/**
+ * The conversation a revival should continue: the newest transcript in the
+ * worktree that no live process is already holding.
+ *
+ * Skipping held transcripts is the whole point of the filter — resuming one a
+ * surviving Claude still owns puts two processes on one conversation, which is
+ * how the 2026-07-28 duplicate storm compounded. Undefined when the directory
+ * has no usable transcript, so the caller starts fresh rather than failing.
+ */
+export function resumableClaudeTranscript(cwd: string, deps: ClaudeDiskDeps): ClaudeTranscript | undefined {
+  let canonicalCwd: string
+  try {
+    canonicalCwd = deps.canonical(cwd)
+  } catch {
+    return undefined
+  }
+  const held = new Set(findLiveClaudeSessions(canonicalCwd, deps).map((session) => session.sessionId))
+  const directory = join(deps.home, ".claude", "projects", projectDirectory(canonicalCwd))
+  return listClaudeTranscripts(directory, deps).find((transcript) => !held.has(transcript.sessionId))
 }
 
 function readModified(path: string, deps: ClaudeDiskDeps): number {

@@ -2,7 +2,12 @@ import { describe, expect, test } from "bun:test"
 import type { HarnessLink } from "@threa/bot-runtime-client"
 import { adoptClaudeSessionUnlocked, type AdoptDeps, type AdoptOptions } from "./adopt"
 import { acceptClaudeBootPrompts } from "./claude-boot"
-import { findLiveClaudeSessions, resolveClaudeTranscript, type ClaudeDiskDeps } from "./claude-registry"
+import {
+  findLiveClaudeSessions,
+  resolveClaudeTranscript,
+  resumableClaudeTranscript,
+  type ClaudeDiskDeps,
+} from "./claude-registry"
 import { parseAdopt } from "./cli"
 import { parseClaudeLaunch, type LocalTmuxPane } from "./discovery"
 import { claudeLaunchArgs, claudeLaunchCommand, deriveClaudeRuntimeIdentity } from "./spawners"
@@ -553,6 +558,44 @@ describe("claude disk discovery", () => {
     expect(resolveClaudeTranscript(CWD, undefined, files).sessionId).toBe("123e4567-e89b-42d3-a456-426614174000")
     expect(resolveClaudeTranscript(CWD, NATIVE, files).sessionId).toBe(NATIVE)
     expect(() => resolveClaudeTranscript(CWD, "not-a-uuid", files)).toThrow("not a Claude session UUID")
+  })
+
+  test("a revival resumes the newest transcript no live process is holding", () => {
+    const OTHER = "123e4567-e89b-42d3-a456-426614174000"
+    const held = JSON.stringify({
+      pid: 34341,
+      sessionId: NATIVE,
+      cwd: CWD,
+      procStart: START,
+      name: "slopenv",
+      status: "idle",
+    })
+    const files = (live: boolean) =>
+      disk({
+        list: (path) => (path.endsWith("sessions") ? ["34341.json"] : [`${NATIVE}.jsonl`, `${OTHER}.jsonl`]),
+        read: () => held,
+        processStart: () => (live ? START : undefined),
+        modified: (path) => (path.includes(NATIVE) ? 9_000 : 2_000),
+      })
+
+    // Nothing alive: the newest transcript wins.
+    expect(resumableClaudeTranscript(CWD, files(false))?.sessionId).toBe(NATIVE)
+    // Its owner survived: fall through rather than put two Claudes on it.
+    expect(resumableClaudeTranscript(CWD, files(true))?.sessionId).toBe(OTHER)
+  })
+
+  test("a worktree with no transcript resumes nothing instead of failing", () => {
+    expect(resumableClaudeTranscript(CWD, disk({ list: () => [] }))).toBeUndefined()
+    expect(
+      resumableClaudeTranscript(
+        CWD,
+        disk({
+          canonical: () => {
+            throw new Error("gone")
+          },
+        })
+      )
+    ).toBeUndefined()
   })
 
   test("a registry entry whose process generation moved on is not live", () => {

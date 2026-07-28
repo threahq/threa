@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { homedir, hostname } from "node:os"
 import { basename, dirname, join } from "node:path"
 import { acceptClaudeBootPrompts } from "./claude-boot"
+import { defaultClaudeDiskDeps, resumableClaudeTranscript } from "./claude-registry"
 import { die } from "./errors"
 import { commandExists, commandPath, run, shellQuote } from "./shell"
 import { capturePane, createWindow, ensureTmuxSession, pickTmuxWindow, sendKeys, tmuxSession } from "./tmux"
@@ -366,13 +367,30 @@ export class ClaudeRuntimeSpawner extends RuntimeSpawner {
     const session = options.tmux ?? agent.tmuxSession ?? tmuxSession({ runtime: "claude", name: agent.name })
     ensureTmuxSession(session, true)
     const noYolo = recordedNoYolo(agent)
+    // "Bring it back up as it was" has to include the conversation. Without
+    // --resume a revival silently starts an empty session in the old worktree,
+    // still attached to the same scratchpad, and the history is only reachable
+    // by hand. A transcript a live process still holds is skipped, never shared.
+    const transcript = resumableClaudeTranscript(agent.worktree, defaultClaudeDiskDeps())
+    console.log(
+      transcript
+        ? `harnessd: resuming Claude conversation ${transcript.sessionId} for ${agent.name}`
+        : `harnessd: no resumable Claude transcript in ${agent.worktree}; starting a fresh conversation`
+    )
     const window = pickTmuxWindow(session, agent.name)
     const { windowId, paneId } = createWindow(
       session,
       window,
       agent.worktree,
       claudeLaunchCommand(
-        claudeLaunchArgs({ claudeBin, name: agent.name, channel, mcpConfig, noYolo }),
+        claudeLaunchArgs({
+          claudeBin,
+          name: agent.name,
+          channel,
+          mcpConfig,
+          noYolo,
+          resumeSessionId: transcript?.sessionId,
+        }),
         identity,
         config,
         "wait",
@@ -383,10 +401,16 @@ export class ClaudeRuntimeSpawner extends RuntimeSpawner {
     console.log(`harnessd: resumed Claude Code in tmux ${session}:${window} (${windowId})`)
     try {
       await acceptClaudeBootPrompts(paneId)
-      sendKeys(paneId, ["/remote-control", "Enter"])
-      await Bun.sleep(Number(process.env.THREA_HARNESSD_CLAUDE_REMOTE_WAIT_MS ?? 2000))
-      sendKeys(paneId, ["/rc", "Enter"])
-      await Bun.sleep(500)
+      // Claude's own /remote-control (claude.ai/code, the mobile app) is not
+      // how a session reaches Threa — the channel MCP server is, and it is
+      // already wired above. Sending it opened a MODAL dialog every revival
+      // then parked in ("waitingFor":"dialog open" in Claude's registry), and
+      // the /rc that followed was typed into that dialog as garbage. `spawn`
+      // never sent either. Opt-in for anyone who does want the mobile app.
+      if (process.env.THREA_HARNESSD_CLAUDE_REMOTE_CONTROL === "1") {
+        sendKeys(paneId, ["/remote-control", "Enter"])
+        await Bun.sleep(Number(process.env.THREA_HARNESSD_CLAUDE_REMOTE_WAIT_MS ?? 2000))
+      }
       const output = capturePane(paneId)
       return {
         worktree: agent.worktree,
