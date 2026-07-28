@@ -61,11 +61,14 @@ function agent(overrides: Partial<ManagedAgent> = {}): ManagedAgent {
   }
 }
 
-function deps(overrides: Partial<ReconnectDeps> = {}): ReconnectDeps & { calls: string[][] } {
+function deps(overrides: Partial<ReconnectDeps> = {}): ReconnectDeps & { calls: string[][]; bootKeys: string[][] } {
   const calls: string[][] = []
+  const bootKeys: string[][] = []
   let paneReads = 0
   return {
     calls,
+    bootKeys,
+    claudeBoot: { capture: () => "❯ ", keys: (_pane, keys) => void bootKeys.push(keys) },
     inventory: () => [agent()],
     panes: () => (++paneReads < 3 ? [pane()] : [pane({ panePid: 5678, startCommand: "claude --resume native" })]),
     piConfig: () => ({}),
@@ -173,6 +176,49 @@ describe("reconnectClaude", () => {
       CWD,
       `'env' 'THREA_DISPLAY_NAME=Claude' 'THREA_INSTANCE_ID=cc-one' 'THREA_RUNTIME_SESSION_ID=${RUNTIME}' 'THREA_COLD_START_IF_ARCHIVED=wait' 'THREA_COLD_START_IF_MISSING=error' 'THREA_EXPECTED_ROOT_STREAM_ID=stream_one' '/opt/claude' '--resume' '${NATIVE}' '--name' 'threa.feature' '--mcp-config' '/tmp/threa.json' '--dangerously-load-development-channels' 'server:threa-channel' '--dangerously-skip-permissions'`,
     ])
+  })
+
+  test("clears the development-channel warning before verifying the native session", async () => {
+    const events: string[] = []
+    let captures = 0
+    const d = deps({
+      claudeRegistry: {
+        ...registry(),
+        read: (path) => {
+          const pid = Number(path.match(/(\d+)\.json$/)?.[1])
+          events.push(`registry:${pid}`)
+          return JSON.stringify({
+            pid,
+            sessionId: NATIVE,
+            cwd: CWD,
+            procStart: START,
+            name: "threa.feature",
+            status: "idle",
+          })
+        },
+      },
+      claudeBoot: {
+        capture: () => {
+          events.push("capture")
+          return ++captures <= 2
+            ? "WARNING: Loading development channels from unverified sources\n\nPress Enter to continue"
+            : "❯ "
+        },
+        keys: (paneId, keys) => void events.push(`keys:${paneId}:${keys.join(" ")}`),
+      },
+    })
+
+    await reconnectClaude({ runtimeSessionId: RUNTIME, rootStreamId: "stream_one" }, d)
+
+    expect(events.filter((event) => event.startsWith("keys:"))).toEqual(["keys:%8:Enter", "keys:%8:Enter"])
+    expect(events.lastIndexOf("keys:%8:Enter")).toBeLessThan(events.lastIndexOf("registry:5678"))
+    expect(d.calls).toHaveLength(1)
+  })
+
+  test("an already-idle boot presses nothing", async () => {
+    const d = deps()
+    await reconnectClaude({ runtimeSessionId: RUNTIME, rootStreamId: "stream_one" }, d)
+    expect({ bootKeys: d.bootKeys, respawns: d.calls.length }).toEqual({ bootKeys: [], respawns: 1 })
   })
 
   test("reconnects a generated launch again with exactly the same native UUID", async () => {

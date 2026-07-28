@@ -1,5 +1,6 @@
 import { statSync } from "node:fs"
 import { basename, resolve } from "node:path"
+import { acceptClaudeBootPrompts, defaultClaudeBootDeps, type ClaudeBootDeps } from "./claude-boot"
 import {
   defaultClaudeRegistryDeps,
   resolveClaudeNativeSession,
@@ -63,6 +64,7 @@ export interface ReconnectDeps {
   claudeRegistry?: ClaudeRegistryDeps
   mcpFile?: (path: string) => boolean
   sleep?: (ms: number) => Promise<void>
+  claudeBoot?: Partial<ClaudeBootDeps>
 }
 
 export function defaultReconnectDeps(): ReconnectDeps {
@@ -335,10 +337,20 @@ export async function reconnectClaude(
     reconstructClaudeCommand(target, options.runtimeSessionId, result.rootStreamId)
   )
   const sleep = deps.sleep ?? Bun.sleep
+  const boot = { ...defaultClaudeBootDeps(), sleep, ...deps.claudeBoot }
+  let booted = false
   for (let attempt = 0; attempt < 20; attempt += 1) {
     await sleep(250)
     const replacement = deps.panes().find((pane) => pane.paneId === target.pane.paneId)
     if (!replacement || replacement.panePid === target.pane.panePid || replacement.cwd !== target.pane.cwd) continue
+    // The respawn faces the same boot dialogs a spawn does (the
+    // development-channel warning above all), and clearing them can outlast
+    // this loop's 20x250ms budget, so it happens before the native-session
+    // check rather than after it.
+    if (!booted) {
+      await acceptClaudeBootPrompts(target.pane.paneId, boot)
+      booted = true
+    }
     try {
       const replacementNative = resolveClaudeNativeSession(
         replacement.panePid,
