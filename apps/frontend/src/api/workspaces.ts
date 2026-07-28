@@ -38,8 +38,19 @@ export const workspacesApi = {
     return res.workspace
   },
 
-  async bootstrap(workspaceId: string): Promise<WorkspaceBootstrap> {
-    const res = await api.get<{ data: WorkspaceBootstrap }>(`/api/workspaces/${workspaceId}/bootstrap`)
+  /**
+   * `fresh` forbids the service worker's lock-time bootstrap snapshot from
+   * answering this request (sw.ts honours `cache: "no-store"` by dropping the
+   * entry). Set it whenever the caller is about to treat the response as the
+   * authority for everything at or below a separately-read sync head — a
+   * snapshot captured before the device went away would silently be older than
+   * that head.
+   */
+  async bootstrap(workspaceId: string, opts?: { fresh?: boolean }): Promise<WorkspaceBootstrap> {
+    const res = await api.get<{ data: WorkspaceBootstrap }>(
+      `/api/workspaces/${workspaceId}/bootstrap`,
+      opts?.fresh ? { cache: "no-store" } : undefined
+    )
     return res.data
   },
 

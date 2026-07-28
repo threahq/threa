@@ -36,7 +36,9 @@ interface SyncEngineDeps {
   workspaceId: string
   syncStatus: SyncStatusStore
   queryClient: QueryClient
-  workspaceService: { bootstrap: (workspaceId: string) => Promise<WorkspaceBootstrap> }
+  workspaceService: {
+    bootstrap: (workspaceId: string, opts?: { fresh?: boolean }) => Promise<WorkspaceBootstrap>
+  }
   streamService: {
     bootstrap: (
       workspaceId: string,
@@ -334,7 +336,15 @@ export class SyncEngine {
       // duplicate side (entry also present in the snapshot — idempotent),
       // never the gap side (entry stamped below a position read after the
       // snapshot — permanent loss).
-      await this.initializeActiveCursor()
+      //
+      // A cold boot skips the client-side head read entirely: its bootstrap
+      // stamps the cursor from the snapshot's own server-read `syncHead`
+      // instead, which is the same guarantee taken from the one party that can
+      // actually pair it with the snapshot it hands back. Reading head here
+      // would be strictly worse, because the service worker can answer the
+      // bootstrap with a snapshot captured before this device went away —
+      // leaving the cursor above the snapshot and stranding everything between.
+      await this.initializeActiveCursor({ seedFromHead: isReconnect })
       if (this.isDestroyed) return
     }
 
@@ -682,7 +692,9 @@ export class SyncEngine {
         )
 
         const [workspaceBootstrap, streamResults] = await Promise.all([
-          workspaceService.bootstrap(workspaceId),
+          // A forceFull reconnect with visible streams lands here rather than in
+          // the single-fetch branch below, so it needs the same cache bypass.
+          workspaceService.bootstrap(workspaceId, { fresh: forceFull }),
           Promise.all(
             visibleStreamIds.map(async (streamId) => {
               try {
@@ -761,7 +773,10 @@ export class SyncEngine {
         }
       } else {
         // Fire the fetch immediately — freshness is never deferred over the wire.
-        bootstrap = await workspaceService.bootstrap(workspaceId)
+        // forceFull runs from the catch-up fallbacks, which stamp the cursor at
+        // a head they read themselves — so this snapshot must not be the
+        // service worker's lock-time copy (see workspaceService.bootstrap).
+        bootstrap = await workspaceService.bootstrap(workspaceId, { fresh: forceFull })
 
         // On the very first connect of a warm start, hold the IndexedDB write
         // until the cached reveal has painted. applyWorkspaceBootstrap writes the
@@ -1302,12 +1317,24 @@ export class SyncEngine {
    * position is a lower bound of the snapshot (read-before-stamp). Errors are
    * non-fatal: catch-up retries seeding later, and the bootstrap healing this
    * phase keeps (INV-53) covers the rare first-run-plus-network-failure gap.
+   *
+   * `seedFromHead: false` (cold boot) loads the cursor but leaves an unset one
+   * unset, because that connect's bootstrap stamps it from the snapshot's own
+   * `syncHead`. Client-read head and server-stamped snapshot head are only
+   * interchangeable while the snapshot is guaranteed to come off the network;
+   * the service worker's lock-time bootstrap copy breaks that, and `advance` is
+   * a monotonic max, so a head seeded here would win and mask the real one.
    */
-  private async initializeActiveCursor(): Promise<void> {
+  private async initializeActiveCursor(opts?: { seedFromHead?: boolean }): Promise<void> {
+    const seedFromHead = opts?.seedFromHead ?? true
     const cursorStore = (this.syncLogCursor ??= new SyncLogCursor(this.workspaceId))
     try {
       await cursorStore.load()
       if (cursorStore.get() !== null || this.isDestroyed) return
+      // Cold boot: leave the position unset so the bootstrap can stamp it from
+      // the snapshot it actually applied. Seeding here would win the monotonic
+      // max in `advance` and silently no-op that stamp.
+      if (!seedFromHead) return
       const abort = (this.catchUpAbort ??= new AbortController())
       const { head } = await this.deps.syncService!.catchUp(this.workspaceId, { after: "0", limit: 1 }, abort.signal)
       if (this.isDestroyed) return

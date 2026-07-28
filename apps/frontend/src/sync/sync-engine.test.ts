@@ -1284,25 +1284,66 @@ describe("SyncEngine sync cursor (active mode)", () => {
     }
   }
 
-  it("seeds the cursor from head BEFORE the workspace bootstrap data fetch on first run", async () => {
+  it("stamps the first-run cursor from the bootstrap's own sync head, without reading head first", async () => {
+    // A client-read head and the snapshot are only interchangeable while the
+    // snapshot is guaranteed to come off the network. The service worker can
+    // answer the bootstrap with a copy captured when the tab last hid, so the
+    // head the server stamped INTO the snapshot is the only one known to
+    // describe it. Reading head separately first would win `advance`'s
+    // monotonic max and mask the real one.
     const order: string[] = []
     const catchUp = vi.fn(async () => {
       order.push("catchUp")
       return emptyPage("42")
     })
     const deps = makeActiveDeps(catchUp)
-    const innerBootstrap = deps.workspaceService.bootstrap
     deps.workspaceService.bootstrap = vi.fn(async () => {
       order.push("bootstrap")
-      return innerBootstrap()
+      return { ...makeWorkspaceBootstrap(), syncHead: "37" }
     })
     const engine = new SyncEngine(deps)
 
     await engine.onConnect(asSocket(new MockSocket()))
 
-    expect(order[0]).toBe("catchUp")
-    expect(order).toContain("bootstrap")
-    expect(catchUp).toHaveBeenNthCalledWith(1, "ws_1", { after: "0", limit: 1 }, expect.any(AbortSignal))
+    expect(order[0]).toBe("bootstrap")
+    await vi.waitFor(() => expect(engine.getSyncCursor()).toBe("37"))
+    // The pre-bootstrap probe is gone: catch-up reads real pages from the
+    // stamped position, never an `after: "0", limit: 1` head probe.
+    expect(catchUp).not.toHaveBeenCalledWith("ws_1", { after: "0", limit: 1 }, expect.any(AbortSignal))
+    engine.destroy()
+  })
+
+  it("does not strand entries when a cache-served bootstrap is older than the log head", async () => {
+    // Regression: the service worker's lock-time bootstrap copy declares an
+    // older syncHead than the log's true head. The cursor must land on the
+    // SNAPSHOT's head so catch-up replays the entries the snapshot predates —
+    // stamping the newer network head here loses them permanently.
+    const catchUp = vi.fn(async () => ({
+      entries: [userAddedEntry("6", "user_missed")],
+      head: "6",
+    }))
+    const deps = makeActiveDeps(catchUp)
+    deps.workspaceService.bootstrap = vi.fn(async () => ({ ...makeWorkspaceBootstrap(), syncHead: "5" }))
+    const engine = new SyncEngine(deps)
+
+    await engine.onConnect(asSocket(new MockSocket()))
+
+    await vi.waitFor(() => expect(catchUp).toHaveBeenCalled())
+    expect(catchUp).toHaveBeenNthCalledWith(1, "ws_1", expect.objectContaining({ after: "5" }), expect.any(AbortSignal))
+    await vi.waitFor(async () => expect(await db.workspaceUsers.get("user_missed")).toBeDefined())
+    engine.destroy()
+  })
+
+  it("falls back to a post-bootstrap seed when the snapshot declares no sync head", async () => {
+    // Payloads cached before `syncHead` shipped omit it. Nothing stamps the
+    // cursor, so catch-up's own retry seeds it — deliberately without bounding
+    // the splice, since that head is read after the snapshot.
+    const catchUp = vi.fn(async () => emptyPage("42"))
+    const deps = makeActiveDeps(catchUp)
+    const engine = new SyncEngine(deps)
+
+    await engine.onConnect(asSocket(new MockSocket()))
+
     await vi.waitFor(() => expect(engine.getSyncCursor()).toBe("42"))
     engine.destroy()
   })
@@ -1853,10 +1894,9 @@ describe("SyncEngine sync cursor (active mode)", () => {
       let resolveRetrySeed: ((value: SyncCatchUpResponse) => void) | undefined
       const catchUp = vi
         .fn()
-        // Pre-bootstrap seed fails (offline first run)...
-        .mockRejectedValueOnce(new Error("offline"))
-        // ...the catch-up run's fallback retry succeeds with a head read
-        // AFTER the bootstrap snapshot.
+        // The snapshot declares no syncHead, so nothing stamps the cursor
+        // during bootstrap and catch-up's own fallback seed runs instead —
+        // reading head AFTER the snapshot.
         .mockImplementationOnce(() => new Promise<SyncCatchUpResponse>((resolve) => (resolveRetrySeed = resolve)))
         .mockResolvedValue(emptyPage("42"))
       const engine = new SyncEngine(makeActiveDeps(catchUp))

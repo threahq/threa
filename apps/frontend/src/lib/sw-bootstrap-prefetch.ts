@@ -22,6 +22,35 @@ export const PENDING_SYNC_KEY = `/_sync/${BOOTSTRAP_SYNC_TAG}`
 /** Regex matching workspace bootstrap API paths. */
 export const WORKSPACE_BOOTSTRAP_PATH_RE = /^\/api\/workspaces\/[^/]+\/bootstrap$/
 
+/**
+ * Answer a workspace-bootstrap request, consuming the pre-fetched copy when
+ * there is one. Split out of the sw.ts fetch listener so it can be driven with
+ * a fake Cache — jsdom has no CacheStorage.
+ *
+ * `no-store` means the caller is about to treat the snapshot as the authority
+ * for everything at or below a sync head it read separately. This entry was
+ * captured when the tab last hid, so it can predate that head; serving it would
+ * strand every entry in between. Delete rather than skip, so a later request
+ * carrying the same expectation can't be handed the same stale copy.
+ */
+export async function respondToBootstrapRequest(
+  request: Request,
+  cache: Cache,
+  fetchImpl: (request: Request) => Promise<Response>
+): Promise<Response> {
+  if (request.cache === "no-store") {
+    await cache.delete(request.url)
+    return fetchImpl(request)
+  }
+  const cached = await cache.match(request.url)
+  if (cached) {
+    // One-shot: serve and delete so the next fetch gets fresh data.
+    void cache.delete(request.url)
+    return cached
+  }
+  return fetchImpl(request)
+}
+
 export interface BootstrapSyncTarget {
   workspaceId: string
   streamId: string | null
