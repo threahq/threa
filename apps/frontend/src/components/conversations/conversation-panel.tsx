@@ -26,7 +26,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { Skeleton } from "@/components/ui/skeleton"
 import { Empty, EmptyHeader, EmptyMedia, EmptyTitle, EmptyDescription } from "@/components/ui/empty"
 import { MessageItem, type RenderableMessage } from "@/components/message/message-item"
-import { buildBranchedBoardRows } from "@/components/board/board-row-item"
+import { buildBranchedBoardRows, injectBoardDayDividers } from "@/components/board/board-row-item"
 import { BranchedBoardRows, BranchProvenanceRow } from "@/components/board/branch-rows"
 import { resolveBoardEventRows } from "@/lib/board/board-event-rows"
 import { groupBranches, type BranchConversationView } from "@/lib/board/branch-grouping"
@@ -543,11 +543,13 @@ function ConversationPanelBody({ workspaceId, post, hostStreamType, openReplySig
       }),
     [conversation.id, conversation.streamId, structuralIndex, conversationGraph]
   )
-  const rows = buildBranchedBoardRows(
-    groupBranches(all, { streams: structuralIndex.streamsById, conversation: { streamId: conversation.streamId } }),
-    eventRows,
-    branchesByForkMessageId,
-    openingMessage?.id
+  const rows = injectBoardDayDividers(
+    buildBranchedBoardRows(
+      groupBranches(all, { streams: structuralIndex.streamsById, conversation: { streamId: conversation.streamId } }),
+      eventRows,
+      branchesByForkMessageId,
+      openingMessage?.id
+    )
   )
   // "Move to sub-topic" re-file — same gesture as the board card (membership move
   // within one root; the hook hides the action when a row has nowhere to go).

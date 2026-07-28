@@ -37,6 +37,7 @@ import {
   resetConversationReplyOpenStoreCache,
 } from "@/stores/conversation-reply-open-store"
 import type { BoardViewPost } from "@/hooks/use-stable-board-view"
+import { formatDayDivider, localStartOfDayMs } from "@/lib/dates"
 
 const WORKSPACE_ID = "ws_1"
 const CONVERSATION_ID = "conv_1"
@@ -248,6 +249,25 @@ describe("ConversationPanel", () => {
     expect(await screen.findByText("Reply two body.")).toBeTruthy()
     // A card already on the board never round-trips for its projection.
     expect(getBoardPost).not.toHaveBeenCalled()
+  })
+
+  it("shows a day divider between messages from different days", async () => {
+    // Local-clock times straddling midnight, so the bucket is the device day (INV-42).
+    const lateNight = new Date(2026, 5, 21, 23, 0, 0)
+    const afterMidnight = new Date(2026, 5, 22, 0, 30, 0)
+    const post = makePost()
+    const cached = asCached({
+      ...post,
+      openingMessage: makeMessage({ id: "msg_1", createdAt: lateNight.toISOString() }),
+      recentMessages: [
+        makeMessage({ id: "msg_2", contentMarkdown: "Reply two body.", createdAt: afterMidnight.toISOString() }),
+      ],
+    })
+    mountPanel({ cached })
+    await screen.findByText("Opening message body.")
+    expect(screen.getByText(formatDayDivider(new Date(localStartOfDayMs(afterMidnight))))).toBeTruthy()
+    // Never above the first row.
+    expect(screen.queryByText(formatDayDivider(new Date(localStartOfDayMs(lateNight))))).toBeNull()
   })
 
   it("docks the scoped reply composer (alwaysDocked — no resting button)", async () => {
