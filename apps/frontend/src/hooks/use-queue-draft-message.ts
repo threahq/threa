@@ -150,11 +150,13 @@ export function useQueueDraftMessage(workspaceId: string) {
 
       // Put the row on the board rail in THIS tick. The write below reaches a
       // card only after its commit round-trips through Dexie's `liveQuery`
-      // (~180ms on a phone, all of it after the composer has already cleared),
-      // which is what made a board reply look unsent until it popped in. The
-      // sequence mirrors `nextOptimisticSequence`'s clock floor so the row sorts
-      // where its persisted twin will; that twin replaces it on the next
-      // emission, and a write that never lands is revoked below.
+      // (~140ms on a desktop dev build, worse on a phone, all of it after the
+      // composer has already cleared), which is what made a board reply look
+      // unsent until it popped in. The persisted twin replaces this copy on the
+      // next emission, and a write that never lands is revoked below. Board
+      // order comes from `createdAt` (shared with the twin), so the sequence only
+      // has to be sane for the per-row read-state gate — the same `Date.now()`
+      // floor `nextOptimisticSequence` allocates from.
       const publishedSequence = Date.now().toString()
       publishOptimisticRailEvent({
         ...optimisticEvent,

@@ -101,13 +101,11 @@ function buildRail(events: CachedEvent[], overlay?: Map<string, CachedEvent>): S
   const taggedByConversation = new Map<string, RenderableMessage[]>()
   const supersededClientIds = new Set<string>()
   const eventRows: CachedEvent[] = []
-  // A just-sent row the IDB read can't see yet rides in the overlay; the persisted
-  // copy wins the moment it lands (same id), so a row is never built twice.
-  const persistedIds = overlay ? new Set(events.map((event) => event.id)) : null
-  const source =
-    overlay && persistedIds
-      ? [...events, ...[...overlay.values()].filter((event) => !persistedIds.has(event.id))]
-      : events
+  // A just-sent row the IDB read can't see yet rides in the overlay, merged under
+  // the emission: once the persisted copy lands it wins by id, so a reply is never
+  // built twice. Order is irrelevant — messages key by id and the tagged lists sort
+  // by `createdAt` below.
+  const source = overlay ? [...new Map([...overlay, ...events.map((e) => [e.id, e] as const)]).values()] : events
   for (const event of source) {
     // The rail reads message_created + the board's non-message row types; anything
     // that isn't a message is a spec event row (a trace/memo/follow-up).
@@ -186,11 +184,12 @@ const railRegistry = new Map<string, StreamRailEntry>()
  * arrives (`buildRail` prefers it by id).
  *
  * An entry leaves when the stream's emission holds the row, when the echo swap's
- * real row supersedes it (`clientMessageId`), or when the send is deleted. It
- * never has to leave for correctness: an entry outliving its confirmation is
- * filtered by the same `supersededClientIds` rule that already covers a stale
- * merged-rail snapshot (the convert-to-thread swap moves the real row to another
- * stream, so its rail never sees the temp id at all).
+ * real row supersedes it (`clientMessageId`), when the send is deleted, or with
+ * the rail itself at teardown — the last one matters because the emission that
+ * would prune it dies with the subscription. A row that outlives its confirmation
+ * inside a live rail is still harmless: the same `supersededClientIds` rule that
+ * covers a stale merged-rail snapshot filters it (the convert-to-thread swap
+ * moves the real row to another stream, so its rail never sees the temp id).
  */
 const optimisticOverlay = new Map<string, Map<string, CachedEvent>>()
 
@@ -290,6 +289,11 @@ function subscribeStreamRail(streamId: string, listener: () => void): () => void
         if (!live || live.refCount > 0) return
         live.subscription.unsubscribe()
         railRegistry.delete(streamId)
+        // The emission that would have pruned this stream's published rows dies
+        // with the subscription, so drop them here: nobody is rendering them, and
+        // on a later re-subscribe the persisted copy is what should appear — a
+        // surviving entry would resurrect a row IDB may no longer have.
+        optimisticOverlay.delete(streamId)
       }, RAIL_TEARDOWN_GRACE_MS)
     }
   }

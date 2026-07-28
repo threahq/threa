@@ -834,9 +834,12 @@ describe("useBoardCardMessages stability (no flicker, no hiding)", () => {
     expect(result.current.pendingReplies.map((m) => m.id)).toEqual(["temp_x"])
     expect(result.current.pendingReplies[0]?.contentMarkdown).toBe("my pending reply")
 
-    // The write lands: the persisted row takes over, still exactly one reply.
-    await db.events.put(pendingReply("temp_x", "my pending reply"))
-    await waitFor(() => expect(result.current.pendingReplies.map((m) => m.id)).toEqual(["temp_x"]))
+    // The write lands. Distinct content so the wait can only be satisfied by the
+    // persisted copy — waiting on the id alone would resolve on the published row
+    // and assert nothing about the hand-over.
+    await db.events.put(pendingReply("temp_x", "the persisted copy"))
+    await waitFor(() => expect(result.current.pendingReplies[0]?.contentMarkdown).toBe("the persisted copy"))
+    expect(result.current.pendingReplies.map((m) => m.id)).toEqual(["temp_x"])
     expect(result.current.replies.map((m) => m.id)).toEqual(["r1"])
   })
 
@@ -863,6 +866,33 @@ describe("useBoardCardMessages stability (no flicker, no hiding)", () => {
       },
     } as CachedEvent)
     await waitFor(() => expect(result.current.pendingReplies.map((m) => m.id)).toEqual(["msg_real"]))
+  })
+
+  it("drops published rows with the rail at teardown (no resurrection on re-subscribe)", async () => {
+    await db.events.bulkPut([msgEvent("m1", "the opening", 1)])
+    const post = makePost({ messageIds: ["m1"], openingId: "m1" })
+    const first = renderHook(() => useBoardCardMessages(post))
+    await waitFor(() => expect(first.result.current.source).toBe("events"))
+
+    // Published, then the card goes away before any emission confirms the row —
+    // the subscription that would prune it dies with the rail.
+    act(() => publishOptimisticRailEvent(pendingReply("temp_gone", "orphaned reply")))
+    expect(first.result.current.pendingReplies.map((m) => m.id)).toEqual(["temp_gone"])
+
+    vi.useFakeTimers()
+    try {
+      first.unmount()
+      vi.advanceTimersByTime(60_000)
+      expect(__boardRailRegistrySize()).toBe(0)
+    } finally {
+      vi.useRealTimers()
+    }
+
+    // A fresh card on the same stream must show what IDB holds — nothing of the
+    // orphaned row (whose write never landed).
+    const second = renderHook(() => useBoardCardMessages(post))
+    await waitFor(() => expect(second.result.current.source).toBe("events"))
+    expect(second.result.current.pendingReplies).toEqual([])
   })
 
   it("revokes a published row when its send is deleted", async () => {
