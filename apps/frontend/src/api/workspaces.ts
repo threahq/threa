@@ -1,4 +1,5 @@
 import { api, API_BASE, parseApiError } from "./client"
+import { BOOTSTRAP_FRESH_PARAM } from "@/lib/sw-bootstrap-prefetch"
 import type {
   Workspace,
   WorkspaceBootstrap,
@@ -38,8 +39,19 @@ export const workspacesApi = {
     return res.workspace
   },
 
-  async bootstrap(workspaceId: string): Promise<WorkspaceBootstrap> {
-    const res = await api.get<{ data: WorkspaceBootstrap }>(`/api/workspaces/${workspaceId}/bootstrap`)
+  /**
+   * `fresh` forbids the service worker's lock-time bootstrap snapshot from
+   * answering this request — it drops the entry and goes to the network. Set it
+   * whenever the caller is about to treat the response as the authority for
+   * everything at or below a separately-read sync head: a snapshot captured
+   * before the device went away would silently be older than that head, and
+   * every entry between the two would be stranded.
+   */
+  async bootstrap(workspaceId: string, opts?: { fresh?: boolean }): Promise<WorkspaceBootstrap> {
+    // Both signals: the query flag survives every engine's request handling,
+    // `no-store` also keeps the HTTP cache out of it.
+    const path = `/api/workspaces/${workspaceId}/bootstrap${opts?.fresh ? `?${BOOTSTRAP_FRESH_PARAM}=1` : ""}`
+    const res = await api.get<{ data: WorkspaceBootstrap }>(path, opts?.fresh ? { cache: "no-store" } : undefined)
     return res.data
   },
 

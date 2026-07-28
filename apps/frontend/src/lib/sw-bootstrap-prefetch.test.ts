@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest"
 import { sharedMessageSlotKey, type StreamEvent } from "@threa/types"
 import { ThreaDatabase, accountDbName, db } from "@/db"
-import { parsePersistedSyncTarget, runBootstrapSync } from "./sw-bootstrap-prefetch"
+import { parsePersistedSyncTarget, respondToBootstrapRequest, runBootstrapSync } from "./sw-bootstrap-prefetch"
 
 const missingSlot = (messageId: string) => ({ type: "sharedMessage", state: "missing", messageId }) as const
 
@@ -253,5 +253,67 @@ describe("parsePersistedSyncTarget", () => {
     expect(parsePersistedSyncTarget({ workspaceId: "ws_1", streamId: 42 })).toBeNull()
     expect(parsePersistedSyncTarget({ workspaceId: "ws_1", messageId: {} })).toBeNull()
     expect(parsePersistedSyncTarget({ workspaceId: "ws_1", workosUserId: ["user_1"] })).toBeNull()
+  })
+})
+
+describe("respondToBootstrapRequest", () => {
+  const URL_ = "https://app.threa.io/api/workspaces/ws_1/bootstrap"
+
+  /** Minimal Cache stand-in — jsdom has no CacheStorage. */
+  function fakeCache(seed?: Response) {
+    const store = new Map<string, Response>()
+    if (seed) store.set(URL_, seed)
+    return {
+      store,
+      match: vi.fn(async (key: string) => store.get(key)),
+      delete: vi.fn(async (key: string) => store.delete(key)),
+    } as unknown as Cache & { store: Map<string, Response> }
+  }
+
+  it("serves the pre-fetched copy once, then drops it", async () => {
+    const cache = fakeCache(new Response("cached"))
+    const fetchImpl = vi.fn(async () => new Response("network"))
+
+    const res = await respondToBootstrapRequest(new Request(URL_), cache, fetchImpl)
+
+    expect(await res.text()).toBe("cached")
+    expect(fetchImpl).not.toHaveBeenCalled()
+    expect(cache.delete).toHaveBeenCalledWith(URL_)
+  })
+
+  it("goes to the network when nothing is pre-fetched", async () => {
+    const cache = fakeCache()
+    const fetchImpl = vi.fn(async () => new Response("network"))
+
+    expect(await (await respondToBootstrapRequest(new Request(URL_), cache, fetchImpl)).text()).toBe("network")
+    expect(fetchImpl).toHaveBeenCalled()
+  })
+
+  it("refuses the pre-fetched copy for a fresh-flagged request, matching the unflagged cache key", async () => {
+    // The flag rides in the URL because `Request.cache` fidelity inside a
+    // service worker varies by engine, and the uncertain engines are phones —
+    // the devices this protects. The entry is stored under the plain URL, so
+    // the lookup must strip the flag before deleting.
+    const cache = fakeCache(new Response("cached"))
+    const fetchImpl = vi.fn(async () => new Response("network"))
+
+    const res = await respondToBootstrapRequest(new Request(`${URL_}?fresh=1`), cache, fetchImpl)
+
+    expect(await res.text()).toBe("network")
+    expect(cache.store.has(URL_)).toBe(false)
+  })
+
+  it("refuses the pre-fetched copy for a no-store request and discards it", async () => {
+    // The caller is about to stamp a sync cursor against this snapshot, so a
+    // copy captured when the tab last hid would strand every entry since. It
+    // must also be deleted, not merely skipped — otherwise the next request
+    // with the same expectation is handed the same stale copy.
+    const cache = fakeCache(new Response("cached"))
+    const fetchImpl = vi.fn(async () => new Response("network"))
+
+    const res = await respondToBootstrapRequest(new Request(URL_, { cache: "no-store" }), cache, fetchImpl)
+
+    expect(await res.text()).toBe("network")
+    expect(cache.store.has(URL_)).toBe(false)
   })
 })

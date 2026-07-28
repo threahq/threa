@@ -12,6 +12,7 @@ import {
   WORKSPACE_BOOTSTRAP_PATH_RE,
   parsePersistedSyncTarget,
   queueBootstrapSync,
+  respondToBootstrapRequest,
   runBootstrapSync,
 } from "./lib/sw-bootstrap-prefetch"
 import {
@@ -314,13 +315,7 @@ self.addEventListener("fetch", (event) => {
   event.respondWith(
     (async () => {
       const cache = await caches.open(PUSH_BOOTSTRAP_CACHE)
-      const cached = await cache.match(event.request.url)
-      if (cached) {
-        // One-shot: serve and delete so the next fetch gets fresh data
-        void cache.delete(event.request.url)
-        return cached
-      }
-      return fetch(event.request)
+      return respondToBootstrapRequest(event.request, cache, (req) => fetch(req))
     })()
   )
 })
