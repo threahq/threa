@@ -430,7 +430,6 @@ export class CallManager implements CallController {
         onDeviceChange: null,
       }
       this.session = session
-      this.wireMediaSessionToggles(session)
 
       // Composer dictation off for the call's life — one active capture only.
       setDictationExternalHold(true)
@@ -455,6 +454,12 @@ export class CallManager implements CallController {
       if (joinWithCamera) patchCallLocal({ cameraOn: true })
       await this.captureAndPublish(session, { camera: joinWithCamera })
       this.assertStartLive(gen)
+      // After the capture, not before: the toggles are seeded from `local`, and a
+      // camera join sets `cameraOn` on the line above rather than through
+      // `setCameraOn` (the only site that mirrors it). Seeding earlier published a
+      // camera-off notification for a call whose camera is live — and the first
+      // lock-screen tap, read as "turn on", would have turned it off.
+      this.wireMediaSessionToggles(session)
 
       this.applyRoster(session, join.rosterVersion, join.roster)
       this.startLeaseTimer(session)

@@ -995,6 +995,21 @@ describe("CallManager", () => {
       expect(mediaSession.setCameraActive).toHaveBeenCalledWith(false)
     })
 
+    it("seeds the camera toggle from a camera-on join, not from the pre-call default", async () => {
+      const socket = makeSocket()
+      const transport = makeTransport()
+      const mediaSession = makeMediaSession(transport._events)
+      const manager = newManager(makeDeps(socket, transport, mediaSession), null)
+
+      await manager.startCall({ workspaceId: "ws_1", streamId: "stream_1", mode: "video", cameraOn: true })
+
+      // `runStart` sets `local.cameraOn` directly for a "Start with camera" join —
+      // it never goes through `setCameraOn`, the only other mirror — so seeding
+      // before that lands would claim camera-off on a call publishing video.
+      expect(mediaSession.setCameraActive).toHaveBeenCalledWith(true)
+      expect(mediaSession.setCameraActive).not.toHaveBeenCalledWith(false)
+    })
+
     it("mirrors mute and camera state onto the notification toggles", async () => {
       const { manager, mediaSession } = await startedWithMediaSession({ mode: "video" })
 
