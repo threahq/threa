@@ -165,19 +165,23 @@ export function identityConsistency(
 
 export function resolveIdentity(ref?: string): void {
   const inventory = readInventoryReadonly()
-  const agents = ref ? [findAgentOrUndefined(ref, inventory) ?? die(`no agent found for ${ref}`)] : inventory
+  // A ref that names no inventory row may still name a live unmanaged pane —
+  // the usage string advertises a runtime session id, and `resolve` is how you
+  // find a cold-takeover candidate in the first place.
+  const managed = ref ? findAgentOrUndefined(ref, inventory) : undefined
   const rows = buildIdentityRows({
-    agents,
+    agents: ref ? (managed ? [managed] : []) : inventory,
     panes: listLocalTmuxPanes(),
     links: readHarnessLinks(),
     config: readThreaChannelConfig(),
-    includeUnmanagedPanes: !ref,
-  })
+    includeUnmanagedPanes: !managed,
+  }).filter((row) => !ref || managed || row.recorded === ref)
+  if (ref && rows.length === 0) die(`no agent or live pane found for ${ref}`)
   console.log(["kind", "name", "recorded", "ledger", "derived", "pane", "verdict"].join("\t"))
   for (const row of rows) {
     console.log([row.kind, row.name, row.recorded, row.ledger, row.derived, row.pane, row.verdict].join("\t"))
   }
   const summary = summarizeIdentityRows(rows)
   const counts = summary.counts.map(([verdict, count]) => `${count} ${verdict}`).join(", ")
-  console.log(`harnessd: ${summary.total} subjects${counts ? `, ${counts}` : ""}`)
+  console.log(`harnessd: ${summary.total} subject${summary.total === 1 ? "" : "s"}${counts ? `, ${counts}` : ""}`)
 }
