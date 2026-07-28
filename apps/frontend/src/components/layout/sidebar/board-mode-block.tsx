@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react"
 import { Link, useLocation, useSearchParams } from "react-router-dom"
-import { Archive, ArrowLeft, Bookmark, Check, CircleDot, MoreHorizontal, Pencil, Pin, Trash2 } from "lucide-react"
+import { Archive, Bookmark, Check, CircleDot, MoreHorizontal, Pencil, Pin, Trash2 } from "lucide-react"
 import { BOARD_LENSES, DEFAULT_BOARD_LENS, type BoardLens, type BoardScopeStreamType } from "@threa/types"
 import { useSidebar, usePreferencesOptional } from "@/contexts"
 import { cn } from "@/lib/utils"
@@ -35,14 +35,11 @@ import {
   BOARD_UNREAD_PARAM,
 } from "@/components/board/board-filter-params"
 import { BOARD_LENS_DEFS } from "@/lib/board/lens-defs"
-import { getLastLocation } from "@/lib/last-location"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { BoardFilterChips } from "./board-filter-chips"
 
 interface BoardModeBlockProps {
   workspaceId: string
-  /** The viewer's auth id — keys the last-location record for the "← Chats" target. */
-  userId: string | null
   /** Per-lens workspace topic totals for the Lenses row counts, from the sidebar's
    *  single stats pass; `null`/absent while it resolves (render no count). */
   lensTotals?: Record<BoardLens, number> | null
@@ -55,14 +52,14 @@ const SECTION_LABEL_CLASS =
 /**
  * The board block sits below the quick links in the sidebar while on `/board`
  * (board-centered-sidebar-exploration.md § V2 top blocks). Top-to-
- * bottom: a "← Chats" back link, the Filters group (the stream/type/label
+ * bottom: the Filters group (the stream/type/label
  * pickers + the unread/archived toggles the deleted filter header used to host),
  * the active-filter chips, the viewer's saved Views, and the board Lenses. Every
  * navigational entry is a `<Link>` — the board's whole state is URL
  * (INV-40/INV-59) — built with the same helpers the pickers use
  * (`lensHref`, `savedViewHref`) so the surfaces can't drift (INV-35).
  */
-export function BoardModeBlock({ workspaceId, userId, lensTotals }: BoardModeBlockProps) {
+export function BoardModeBlock({ workspaceId, lensTotals }: BoardModeBlockProps) {
   const { collapseOnMobile } = useSidebar()
   const location = useLocation()
   const prefs = usePreferencesOptional()
@@ -84,9 +81,6 @@ export function BoardModeBlock({ workspaceId, userId, lensTotals }: BoardModeBlo
 
   const sortedViews = useMemo(() => (views ? [...views].sort((a, b) => a.sortOrder - b.sortOrder) : []), [views])
 
-  const lastLocation = userId ? getLastLocation(userId, workspaceId) : null
-  const chatsHref = lastLocation?.streamId ? `/w/${workspaceId}/s/${lastLocation.streamId}` : `/w/${workspaceId}`
-
   const hasActiveFilters =
     selection.scopeStreamIds.length > 0 ||
     selection.scopeStreamTypes.length > 0 ||
@@ -101,15 +95,6 @@ export function BoardModeBlock({ workspaceId, userId, lensTotals }: BoardModeBlo
 
   return (
     <div className="mb-2 space-y-1">
-      <Link
-        to={chatsHref}
-        onClick={collapseOnMobile}
-        className={cn(ROW_CLASS, "text-muted-foreground hover:bg-muted/50")}
-      >
-        <ArrowLeft className="h-4 w-4" />
-        Chats
-      </Link>
-
       <BoardModeFilters workspaceId={workspaceId} />
 
       {hasActiveFilters && <BoardFilterChips workspaceId={workspaceId} />}

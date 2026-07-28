@@ -8,11 +8,9 @@ import * as ConversationsHooks from "@/hooks/use-conversations"
 import * as WorkspaceStore from "@/stores/workspace-store"
 import * as BoardExclusions from "@/stores/board-exclusions-store"
 import * as InputMode from "@/hooks/use-input-mode"
-import { setLastLocation } from "@/lib/last-location"
 import { BoardModeBlock } from "./board-mode-block"
 
 const WS = "workspace_1"
-const USER = "user_1"
 
 function view(over: Partial<BoardView> = {}): BoardView {
   return {
@@ -98,7 +96,7 @@ function mountAt(path: string, props: Partial<Parameters<typeof BoardModeBlock>[
   return render(
     <MemoryRouter initialEntries={[path]}>
       <LocationProbe />
-      <BoardModeBlock workspaceId={WS} userId={USER} {...props} />
+      <BoardModeBlock workspaceId={WS} {...props} />
     </MemoryRouter>
   )
 }
@@ -118,11 +116,10 @@ beforeEach(() => {
 afterEach(() => vi.restoreAllMocks())
 
 describe("BoardModeBlock", () => {
-  it("renders the ← Chats link, the Lenses section, and every lens", () => {
+  it("renders the Lenses section and every lens", () => {
     stub()
     mountAt(`/w/${WS}/board`)
 
-    expect(screen.getByText("Chats")).toBeInTheDocument()
     expect(screen.getByText("Lenses")).toBeInTheDocument()
     for (const label of ["All", "Active", "Needs resolution", "Decisions", "Mine"]) {
       expect(screen.getByRole("link", { name: label })).toBeInTheDocument()
@@ -134,19 +131,6 @@ describe("BoardModeBlock", () => {
     mountAt(`/w/${WS}/board`)
 
     expect(screen.queryByText("Views")).not.toBeInTheDocument()
-  })
-
-  it("points ← Chats at the retained last stream", () => {
-    stub()
-    setLastLocation(USER, WS, { surface: "board", streamId: "stream_9", board: { search: "" } })
-    mountAt(`/w/${WS}/board`)
-    expect(hrefOf("Chats")).toBe(`/w/${WS}/s/stream_9`)
-  })
-
-  it("falls back to the workspace home when no stream was retained", () => {
-    stub()
-    mountAt(`/w/${WS}/board`)
-    expect(hrefOf("Chats")).toBe(`/w/${WS}`)
   })
 
   it("carries the current filters across every lens link", () => {
