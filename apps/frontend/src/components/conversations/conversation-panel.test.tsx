@@ -640,12 +640,22 @@ describe("ConversationPanel", () => {
     }
   }
 
-  function dividerIsRightBefore(messageId: string) {
+  /**
+   * True adjacency, not just ordering: the divider must follow `afterMessageId`
+   * and precede `messageId`. Asserting only "the divider comes before the row"
+   * passes for a divider misplaced any number of rows earlier, which is the
+   * failure this helper exists to catch.
+   */
+  function dividerIsRightBefore(messageId: string, afterMessageId: string | null) {
     const divider = screen.getByText("New")
     const row = document.querySelector(`[data-message-id="${messageId}"]`)
     if (!row) throw new Error(`row ${messageId} not rendered`)
-    // DOCUMENT_POSITION_FOLLOWING: the row comes after the divider.
-    return (divider.compareDocumentPosition(row) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0
+    const followsTarget = (divider.compareDocumentPosition(row) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0
+    if (!followsTarget) return false
+    if (afterMessageId === null) return true
+    const previous = document.querySelector(`[data-message-id="${afterMessageId}"]`)
+    if (!previous) throw new Error(`row ${afterMessageId} not rendered`)
+    return (divider.compareDocumentPosition(previous) & Node.DOCUMENT_POSITION_PRECEDING) !== 0
   }
 
   it("opens at the unread divider instead of the tail when unread rows exist", async () => {
@@ -657,7 +667,7 @@ describe("ConversationPanel", () => {
       await screen.findByText("Reply two body.")
 
       await waitFor(() => expect(scrolls.hitRow("msg_2")).toBe(true))
-      expect(dividerIsRightBefore("msg_2")).toBe(true)
+      expect(dividerIsRightBefore("msg_2", "msg_1")).toBe(true)
       // The tail scroll never ran — the marker owns the opening position.
       expect(scroller().scrollTop).toBe(0)
     } finally {
@@ -693,7 +703,7 @@ describe("ConversationPanel", () => {
       await waitFor(() => expect(scrolls.hitRow("msg_1")).toBe(true))
       expect(scrolls.hitRow("msg_2")).toBe(false)
       // The divider still draws — the marker is a landmark, not a scroll claim.
-      expect(dividerIsRightBefore("msg_2")).toBe(true)
+      expect(dividerIsRightBefore("msg_2", "msg_1")).toBe(true)
     } finally {
       scrolls.restore()
       restore()
@@ -837,14 +847,14 @@ describe("ConversationPanel", () => {
     try {
       mountPanel(unreadFixture())
       await screen.findByText("Reply two body.")
-      expect(dividerIsRightBefore("msg_2")).toBe(true)
+      expect(dividerIsRightBefore("msg_2", "msg_1")).toBe(true)
 
       // Everything is read now; force a re-render through an unrelated signal.
       frontier.lastReadAt = "2026-06-22T23:00:00.000Z"
       act(() => requestConversationReplyOpen(CONVERSATION_ID))
 
       await waitFor(() => expect(screen.getByText("New")).toBeTruthy())
-      expect(dividerIsRightBefore("msg_2")).toBe(true)
+      expect(dividerIsRightBefore("msg_2", "msg_1")).toBe(true)
     } finally {
       restore()
     }
