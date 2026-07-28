@@ -33,6 +33,12 @@ export function serializeTraceStep(step: AgentSessionStep) {
     sources: step.sources ?? undefined,
     messageId: step.messageId ?? undefined,
     tokensUsed: step.tokensUsed ?? undefined,
+    // Carried for the same reason session-handlers.ts carries it: a
+    // field-by-field serializer silently drops a new step field, and the
+    // symptom is a badge that renders live and vanishes on reload. Bot/enclave
+    // sessions have no guarded tools today, so this is always absent — which is
+    // exactly why it would go unnoticed if the next surface does grow one.
+    verification: step.verification,
     duration: step.completedAt && step.startedAt ? step.completedAt.getTime() - step.startedAt.getTime() : undefined,
     startedAt: step.startedAt.toISOString(),
     completedAt: step.completedAt?.toISOString(),
@@ -196,6 +202,19 @@ export class BotInvocationTraceSink implements TraceStepSink<BotOpenStep> {
     })
   }
 
+  /**
+   * Guarded (tier 2+) tools are never offered on this surface — bot invocation
+   * frames are normalized from an external bot's own reported steps, not
+   * executed here — so a verdict cannot arrive. Required by `TraceStepSink` all
+   * the same: the interface makes every surface decide what it does with one,
+   * which is the only guard available (a runtime throw is swallowed by
+   * `AgentRuntime.emit`).
+   */
+  async verify(): Promise<void> {
+    throw new Error(
+      "BotInvocationTraceSink cannot record a guardian verdict; guarded tools must not run on this surface"
+    )
+  }
   async substep(params: { stepType: AgentStepType; text: string; snapshot: TraceSubstepEntry[] }): Promise<void> {
     // Mirrors SessionTrace.emitSubstep's fan-out: ephemeral phase text to the
     // stream room (inline indicator) and the session room (trace dialog).
@@ -233,6 +252,17 @@ export function createBotInvocationTraceProjector(deps: BotInvocationTraceSinkDe
  */
 class SynthesizedTraceSink implements TraceStepSink<BotOpenStep> {
   readonly steps: AgentSessionStep[] = []
+
+  /**
+   * Guarded (tier 2+) tools are never offered on this surface — these steps are
+   * reconstructed from a bot's own reported frames, not executed here — so a
+   * verdict cannot arrive. Required by `TraceStepSink` all the same: the
+   * interface makes every surface decide what it does with one, which is the
+   * only guard available (a runtime throw is swallowed by `AgentRuntime.emit`).
+   */
+  async verify(): Promise<void> {
+    throw new Error("SynthesizedTraceSink cannot record a guardian verdict; guarded tools must not run on this surface")
+  }
 
   constructor(
     private readonly db: Querier,

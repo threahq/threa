@@ -2,6 +2,7 @@ import type { Tool } from "ai"
 import { z } from "zod"
 import {
   ToolTiers,
+  TOOL_TIERS_BY_NAME,
   tierOfTool,
   type AgentStepType,
   type ToolPrivacyCategory,
@@ -122,8 +123,25 @@ export function defineAgentTool<TSchema extends z.ZodTypeAny>(config: AgentToolC
   return { name: config.name, config: { ...config, tier: tierOfTool(config.name) } as AgentToolConfig }
 }
 
-/** The tier a built tool executes at, resolved when it was defined. */
+/**
+ * The tier a built tool executes at.
+ *
+ * Falls back to the name-keyed table, NOT to tier 1. `defineAgentTool` stamps
+ * `tier` on everything it builds, but an `AgentTool` is a plain structural type
+ * — a host that assembles the literal itself, or one compiled against a
+ * pre-tier `@threa/types`, produces a registered tool with no `tier`. Defaulting
+ * that to `UNCHECKED` would silently hand a guarded tool an unguarded path;
+ * re-reading the table by name makes the table the answer either way. An
+ * unregistered name is genuinely host-local and tier 1.
+ */
 export function tierOfBuiltTool(tool: AgentTool): ToolTier {
+  // The TABLE WINS for a registered name — `config.tier` is only consulted for
+  // names the table does not know. `defineAgentTool` refuses to build a tool
+  // that declares its own tier, but `AgentTool` is a structural type: a host
+  // assembling the literal directly can set `name: "delegate_task", tier: 1`
+  // and, if `config.tier` were preferred, hand a guarded tool an unguarded
+  // path. Preferring the table makes that literal's claim inert.
+  if (tool.name in TOOL_TIERS_BY_NAME) return tierOfTool(tool.name)
   return tool.config.tier ?? ToolTiers.UNCHECKED
 }
 

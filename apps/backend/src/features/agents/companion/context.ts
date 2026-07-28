@@ -2,7 +2,7 @@ import type { Pool } from "pg"
 import type { ModelMessage } from "ai"
 import type { AgentTool } from "@threa/agent-runtime"
 import type { UserPreferences } from "@threa/types"
-import { AuthorTypes, StreamTypes } from "@threa/types"
+import { AgentToolNames, AuthorTypes, StreamTypes } from "@threa/types"
 import type { UserPreferencesService } from "../../user-preferences"
 import { MessageRepository, SharedMessageRepository, collectSharedMessageIds, type Message } from "../../messaging"
 import { UserRepository, type User } from "../../workspaces"
@@ -453,6 +453,13 @@ export async function buildAgentContext(deps: ContextDeps, params: ContextParams
       spawnedFromContext,
       followUp,
       previousSessions: previousSessionsBlock,
+      // Only when the tool that can act on them is actually in this turn's
+      // toolset. Elsewhere these values are tokens the model can neither use
+      // nor was asked about — and `composeSystemPrompt` receives the built
+      // tools, so this cannot drift from availability.
+      currentSettings: tools.some((tool) => tool.name === AgentToolNames.UPDATE_USER_SETTINGS)
+        ? (preferences ?? null)
+        : null,
       streamBrief: streamBrief?.content ?? null,
       styleSlots: resolvePersonaStyleSlots(persona),
       personaKnowledge,

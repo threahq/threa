@@ -40,7 +40,12 @@ import { deriveTurnFlags, type TurnPurpose } from "./turn-purpose"
 import { resolveTurnModel } from "./turn-model"
 import { resolveContextWindowPolicy } from "./context-window-policy"
 import { resolveBagForStream, persistSnapshot, appendBagToSystemPrompt, type ResolvedBag } from "./context-bag"
-import { createMemoizedGithubClient, createMemoizedLinearClient, type RunGeneralResearchOptions } from "./tools"
+import {
+  canOfferUserSettings,
+  createMemoizedGithubClient,
+  createMemoizedLinearClient,
+  type RunGeneralResearchOptions,
+} from "./tools"
 import { createSessionTraceProjector, type AgentRuntimeConfig, type NewMessageInfo } from "./runtime"
 import { ToolGuardianService } from "./guardian/service"
 import type { ConfigResolver } from "../../lib/ai/config-resolver"
@@ -384,6 +389,15 @@ export class PersonaAgent {
       const policyStreamId = stream.type === StreamTypes.THREAD ? (stream.rootStreamId ?? streamId) : streamId
       const streamToolPolicy = await StreamPoliciesRepository.getToolPolicy(client, workspaceId, policyStreamId)
 
+      // The surface a thread actually belongs to. `update_user_settings` is
+      // offered on scratchpads and on threads rooted in one, so it needs the
+      // ROOT's type, not the thread's — read here, in the transaction that is
+      // already resolving the root for the policy, rather than as a second
+      // query later.
+      const rootStream = policyStreamId === streamId ? stream : await StreamRepository.findById(client, policyStreamId)
+      const rootStreamType = rootStream?.type ?? null
+      const rootStreamCreatedBy = rootStream?.createdBy ?? null
+
       return {
         skip: false as const,
         persona,
@@ -391,6 +405,8 @@ export class PersonaAgent {
         initialSequence: latestSequence ?? BigInt(0),
         triggerMessageRevision,
         streamToolPolicy,
+        rootStreamType,
+        rootStreamCreatedBy,
       }
     })
 
@@ -404,7 +420,15 @@ export class PersonaAgent {
       }
     }
 
-    const { persona, stream, initialSequence, triggerMessageRevision, streamToolPolicy } = precheck
+    const {
+      persona,
+      stream,
+      initialSequence,
+      triggerMessageRevision,
+      streamToolPolicy,
+      rootStreamType,
+      rootStreamCreatedBy,
+    } = precheck
 
     // A fired follow-up has no trigger message (synthetic `messageId`); load its
     // row so the turn can be told it IS the scheduled check-in firing (roadmap
@@ -845,6 +869,31 @@ export class PersonaAgent {
               }
             : undefined
 
+        // Settings changes for the update_user_settings tool, bound to the
+        // INVOKING USER — never a tool parameter, so a cross-user write cannot
+        // be expressed. Three independent conditions, each for its own reason:
+        // the effective root must be a scratchpad (settings are personal; a
+        // channel or DM is shared context), a human must have triggered the turn
+        // (otherwise there is no user whose settings these are), and the stream
+        // must not be sealed (the enclave runs its own loop and cannot reach
+        // this service). Absent deps mean the tool is never built, so the model
+        // is not told about a capability it would only be refused.
+        const settingsUserId = agentContext.invokingUserId
+        const settingsDeps: import("./tools/tool-deps").UpdateUserSettingsToolDeps | undefined =
+          settingsUserId &&
+          canOfferUserSettings({
+            rootStreamType,
+            rootStreamCreatedBy,
+            invokingUserId: settingsUserId,
+            rerunCause: rerunContext?.cause,
+            e2eEnabled: stream.e2eEnabled === true,
+          })
+            ? {
+                updateSettings: (patch) =>
+                  this.deps.userPreferencesService.updatePreferences(workspaceId, settingsUserId, patch),
+              }
+            : undefined
+
         // Memo saving for the save_memo tool (roadmap 6.2), bound to this
         // persona's stream + session. The write scopes dedup and the capture
         // event to the addressed stream, and records the session as provenance.
@@ -951,6 +1000,7 @@ export class PersonaAgent {
             briefVersion: agentContext.streamBrief?.version ?? 0,
             delegation: delegateDeps,
             saveMemo: saveMemoDeps,
+            settings: settingsDeps,
             github: githubDeps,
             linear: linearDeps,
             supportsVision: modelRegistry.supportsVision(turnModel.model),
@@ -1024,6 +1074,11 @@ export class PersonaAgent {
               streamId: session.streamId,
               personaId: persona.id,
               sessionId: session.id,
+              // The principal every guarded tool on this turn acts as — the
+              // same id their deps are bound to. Without it the guardian
+              // cannot tell the bound user's request from another
+              // participant's message in the same stream.
+              invokingUserId: agentContext.invokingUserId,
               costContext: {
                 workspaceId,
                 userId: agentContext.invokingUserId,

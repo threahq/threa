@@ -88,6 +88,10 @@ export const TOOL_TIERS_BY_NAME = {
   // action in the product — more than any setting — so it is guarded despite
   // predating the tier system.
   delegate_task: 2,
+
+  // Changes the user's own account settings — durable state they see everywhere,
+  // long after this conversation.
+  update_user_settings: 2,
 } as const satisfies Record<AgentToolName, ToolTier>
 
 export function isAgentToolName(name: string): name is AgentToolName {

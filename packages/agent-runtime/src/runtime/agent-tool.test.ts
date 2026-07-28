@@ -64,3 +64,43 @@ describe("tier resolution", () => {
     ).toThrow(/TOOL_TIERS_BY_NAME/)
   })
 })
+
+describe("tier precedence", () => {
+  // `defineAgentTool` refuses a site-declared tier, but AgentTool is a
+  // structural type — a host can assemble the literal directly. If config.tier
+  // were preferred, `{ name: "delegate_task", tier: 1 }` would hand a guarded
+  // tool an unguarded path.
+  test("ignores a literal's own tier for a registered name", () => {
+    const literal: AgentTool = {
+      name: AgentToolNames.DELEGATE_TASK,
+      config: {
+        name: AgentToolNames.DELEGATE_TASK,
+        description: "d",
+        categories: [],
+        tier: ToolTiers.UNCHECKED,
+        inputSchema: z.object({}),
+        execute: async () => ({ output: "" }),
+        trace: { stepType: AgentStepTypes.TOOL_CALL, formatContent: () => "" },
+      },
+    }
+
+    expect(tierOfBuiltTool(literal)).toBe(ToolTiers.GUARDED)
+  })
+
+  test("still honours a declared tier for a name the table does not know", () => {
+    const literal: AgentTool = {
+      name: "host_local_reader",
+      config: {
+        name: "host_local_reader",
+        description: "d",
+        categories: [],
+        tier: ToolTiers.GUARDED,
+        inputSchema: z.object({}),
+        execute: async () => ({ output: "" }),
+        trace: { stepType: AgentStepTypes.TOOL_CALL, formatContent: () => "" },
+      },
+    }
+
+    expect(tierOfBuiltTool(literal)).toBe(ToolTiers.GUARDED)
+  })
+})

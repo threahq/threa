@@ -505,18 +505,14 @@ describe("TraceProjector guardian verdicts", () => {
     expect(verified).toHaveLength(0)
   })
 
-  // A sink that cannot show approval state must not silently swallow the
-  // verdict — that would render a guarded call as an ordinary unverified one,
-  // which is the exact confusion this layer exists to prevent.
-  it("throws when the sink cannot record a verdict", async () => {
+  it("requires every sink to handle a verdict", async () => {
     const { sink } = createSinkStub()
-    const { verify: _dropped, ...withoutVerify } = sink
-    const projector = new TraceProjector(withoutVerify)
-
-    await projector.handle(toolStart("call_1"))
-
-    await expect(projector.handle(verification("call_1", "approved", "ok"))).rejects.toThrow(
-      /cannot record a guardian verdict/
-    )
+    // `verify` is required on TraceStepSink, so "a sink that cannot record a
+    // verdict" no longer type-checks — the compiler is the guard. A runtime
+    // check could not be: AgentRuntime.emit swallows per-observer exceptions by
+    // design, so a throw here would degrade into a silently unverified-looking
+    // step. Asserted structurally instead.
+    const required: keyof typeof sink = "verify"
+    expect(typeof sink[required]).toBe("function")
   })
 })

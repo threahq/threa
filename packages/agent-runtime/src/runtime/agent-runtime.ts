@@ -818,6 +818,39 @@ export class AgentRuntime {
         continue
       }
 
+      // Validate against the tool's OWN schema before anything else runs.
+      //
+      // `generateTextWithTools` hands back whatever the provider produced as the
+      // call's arguments (`input: tc.input`, typed `unknown`); nothing between
+      // the model and here re-checks it. Every tool was therefore trusting an
+      // upstream validator it cannot see — and for a guarded tool that means
+      // the guardian reviews one object while `execute` receives another, and a
+      // write tool's allowlist is enforced by hope. Doing it here fixes every
+      // tool at once instead of leaving each one to remember.
+      const validated = agentTool.config.inputSchema.safeParse(tc.input)
+      if (!validated.success) {
+        const detail = validated.error.issues
+          .map((issue) => `${issue.path.join(".") || "(root)"}: ${issue.message}`)
+          .join("; ")
+        await this.emit({
+          type: "tool:error",
+          toolCallId: tc.toolCallId,
+          toolName: tc.toolName,
+          error: `Invalid arguments: ${detail}`,
+          durationMs: 0,
+        })
+        resultParts.push(
+          makeToolResult(
+            tc,
+            JSON.stringify({
+              error: `Those arguments don't match ${tc.toolName}'s schema: ${detail}. Fix them and call it again.`,
+            })
+          )
+        )
+        continue
+      }
+      const toolInput = validated.data
+
       const stepType = agentTool.config.trace.stepType
       await this.emit({
         type: "tool:start",
@@ -830,7 +863,7 @@ export class AgentRuntime {
       const startTime = Date.now()
 
       if (requiresGuardianReview(tierOfBuiltTool(agentTool))) {
-        const verdict = await this.reviewGuardedCall(agentTool, tc, conversation)
+        const verdict = await this.reviewGuardedCall(agentTool, { ...tc, input: toolInput }, conversation)
         if (!verdict.allowed) {
           resultParts.push(makeToolResult(tc, JSON.stringify(denialResult(tc.toolName, verdict.reason))))
           continue
@@ -850,7 +883,7 @@ export class AgentRuntime {
         }
         const signal = this.config.toolSignalProvider?.(tc.toolCallId, tc.toolName)
 
-        const toolResult = await agentTool.config.execute(tc.input as any, {
+        const toolResult = await agentTool.config.execute(toolInput as any, {
           toolCallId: tc.toolCallId,
           onProgress,
           signal,
@@ -866,8 +899,8 @@ export class AgentRuntime {
           retrievedContext = retrievedContext ? `${retrievedContext}\n\n${newCtx}` : newCtx
         }
 
-        const traceContent = agentTool.config.trace.formatContent(tc.input, toolResult)
-        const traceSources = agentTool.config.trace.extractSources?.(tc.input, toolResult)
+        const traceContent = agentTool.config.trace.formatContent(toolInput, toolResult)
+        const traceSources = agentTool.config.trace.extractSources?.(toolInput, toolResult)
 
         await this.emit({
           type: "tool:complete",

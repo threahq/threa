@@ -1,4 +1,5 @@
 import { describe, expect, test, mock } from "bun:test"
+import { z } from "zod"
 import { runGeneralResearch, type GeneralResearchRunInput, type RunGeneralResearchDeps } from "./general-researcher"
 import type { AgentRuntimeAI } from "../runtime/agent-runtime"
 
@@ -111,7 +112,7 @@ describe("runGeneralResearch", () => {
         name: "web_search",
         description: "stub",
         categories: [],
-        inputSchema: { parse: (v: unknown) => v } as never,
+        inputSchema: z.object({ query: z.string() }),
         execute: async (_input: unknown, opts: { onProgress?: (s: string) => void }) => {
           opts.onProgress?.("inner: found 3 results")
           return {

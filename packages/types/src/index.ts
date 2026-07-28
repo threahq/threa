@@ -853,6 +853,10 @@ export {
   DEFAULT_USER_PREFERENCES,
   // API types
   type UpdateUserPreferencesInput,
+  // What an agent may change on the user's behalf
+  AGENT_SETTABLE_PREFERENCE_KEYS,
+  type AgentSettablePreferenceKey,
+  type AgentSettablePreferences,
 } from "./preferences"
 
 // Work schedule (working week + working hours)

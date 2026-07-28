@@ -73,16 +73,20 @@ export interface TraceStepSink<OpenStep> {
   /**
    * Attach a guardian verdict to an open tool step.
    *
-   * Optional because only surfaces that can run a guarded tool need it, and
-   * today that is the in-process companion alone: `delegate_task` is withheld
-   * on sealed streams, and bot invocation frames are normalized from an
-   * external bot's own reported steps rather than executed here. The projector
-   * THROWS rather than skipping when a verdict arrives at a sink without it —
-   * a guarded call running on a surface that cannot show its approval state is
-   * the failure this whole layer exists to make impossible, so it must not
-   * degrade into a silently unverified-looking step.
+   * REQUIRED, though only the in-process companion can currently receive one
+   * (`delegate_task` and `update_user_settings` are withheld on sealed streams,
+   * and bot invocation frames are normalized from an external bot's own
+   * reported steps rather than executed here).
+   *
+   * It is required because the compiler is the only guard available. A runtime
+   * throw is not: `AgentRuntime.emit` catches per-observer exceptions and logs
+   * a warning, by design — an observer must not be able to kill a turn. So a
+   * projector that threw on a sink without `verify` would silently render a
+   * guarded call as an ordinary unverified one, which is the failure this layer
+   * exists to prevent. Making the method mandatory forces every surface to
+   * decide, at build time, what it does with a verdict.
    */
-  verify?(params: { step: OpenStep; status: ToolVerificationStatus; reason: string }): Promise<void>
+  verify(params: { step: OpenStep; status: ToolVerificationStatus; reason: string }): Promise<void>
 }
 
 /**
@@ -176,17 +180,10 @@ export class TraceProjector<OpenStep = unknown> implements AgentObserver {
 
       case "tool:verification": {
         const step = this.openByToolCallId.get(event.toolCallId)
-        // Hidden tools open no step. Nothing hidden is guarded today, and the
-        // runtime's constructor check is what keeps that true; if it ever
-        // changes, the verdict has nowhere to render and skipping is correct
-        // — the call itself is recorded nowhere either.
+        // Hidden tools open no step. Nothing hidden is guarded today; if that
+        // ever changes, the verdict has nowhere to render and skipping is
+        // correct — the call itself is recorded nowhere either.
         if (!step) break
-        if (!this.sink.verify) {
-          throw new Error(
-            `Trace sink cannot record a guardian verdict, but ${event.toolName} is guarded. ` +
-              `A guarded tool must not run on a surface that cannot show its approval state.`
-          )
-        }
         await this.sink.verify({ step, status: event.status, reason: event.reason })
         break
       }
