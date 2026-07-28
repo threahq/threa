@@ -152,9 +152,6 @@ jobs:
       - name: Run cli tests
         run: bun run --cwd packages/cli test
 
-      # These four ran nowhere before: three had no `test` script at all and
-      # agent-runtime's pointed at vitest while every file imports bun:test, so
-      # it failed 20/20 on load. 47 test files, none of them gating a merge.
       - name: Run shared package tests
         run: |
           bun run --cwd packages/types test
