@@ -45,8 +45,9 @@ describe("formatClaudeStatusReport", () => {
     expect(report).toContain("Work: **Working — 1 active invocation**")
     expect(report).toContain("Tmux: `1:feature` · pane `%8` · 180×48")
     expect(report).toContain("Branch: `feat/status`")
-    expect(report).toContain("Waiting for 1 workflow to finish.")
-    expect(report).toContain("    ``` nested fence")
+    // Fenced, not indented: Threa's markdown parser has no indented-code-block rule.
+    // An inner fence is indented so it can't close the block early.
+    expect(report).toEndWith("```\nWaiting for 1 workflow to finish.\n ``` nested fence\n```")
   })
 
   it("surfaces degraded connectivity and blockers", () => {
