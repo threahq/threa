@@ -1,4 +1,5 @@
 import type { AgentSessionStatus, AgentStepType, AuthoredByKind, ToolVerificationStatus } from "./constants"
+import type { AgentToolEffect } from "./tool-effects"
 
 export const TRACE_SOURCE_TYPES = ["web", "workspace", "workspace_message", "workspace_memo", "github"] as const
 export type TraceSourceType = (typeof TRACE_SOURCE_TYPES)[number]
@@ -83,6 +84,13 @@ export interface AgentSessionStep {
    * rather than one nullable flag.
    */
   verification?: { status: ToolVerificationStatus; reason?: string }
+  /**
+   * What this step wrote (see `MUTATING_TOOLS`). Absent on every read-only step,
+   * on steps written before effects existed, and on sealed (enclave) streams,
+   * where the labels and values would otherwise sit in plaintext next to content
+   * that is sealed at rest — those fall back to the bare mutation count.
+   */
+  effects?: AgentToolEffect[]
   startedAt: string
   completedAt?: string
 }

@@ -486,6 +486,16 @@ export {
   requiresGuardianReview,
 } from "./tool-tiers"
 export type { ToolTier } from "./tool-tiers"
+export {
+  TOOL_EFFECT_KINDS,
+  MUTATING_TOOLS,
+  MUTATING_TOOL_NAMES,
+  toolMutates,
+  resolveToolEffects,
+  EFFECT_LABEL_MAX_CHARS,
+  EFFECTS_PER_SESSION_MAX,
+} from "./tool-effects"
+export type { ToolEffectKind, AgentToolEffect } from "./tool-effects"
 
 // API types
 export type {

@@ -39,6 +39,7 @@ export function serializeTraceStep(step: AgentSessionStep) {
     // sessions have no guarded tools today, so this is always absent — which is
     // exactly why it would go unnoticed if the next surface does grow one.
     verification: step.verification,
+    effects: step.effects,
     duration: step.completedAt && step.startedAt ? step.completedAt.getTime() - step.startedAt.getTime() : undefined,
     startedAt: step.startedAt.toISOString(),
     completedAt: step.completedAt?.toISOString(),

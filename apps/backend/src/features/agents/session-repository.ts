@@ -1,4 +1,10 @@
-import type { AgentSessionStatus, AgentStepType, ToolVerificationStatus, TraceSource } from "@threa/types"
+import type {
+  AgentSessionStatus,
+  AgentStepType,
+  AgentToolEffect,
+  ToolVerificationStatus,
+  TraceSource,
+} from "@threa/types"
 import { AgentSessionStatuses, AgentStepTypes } from "@threa/types"
 import { isUniqueViolation } from "@threa/backend-common"
 import type { Querier } from "../../db"
@@ -51,6 +57,7 @@ interface StepRow {
   tokens_used: number | null
   verification_status: string | null
   verification_reason: string | null
+  effects: AgentToolEffect[] | null
   started_at: Date
   completed_at: Date | null
 }
@@ -137,6 +144,8 @@ export interface AgentSessionStep {
   tokensUsed: number | null
   /** Guardian state for a guarded (tier 2+) tool call; absent on every other step. */
   verification?: { status: ToolVerificationStatus; reason?: string }
+  /** What the call wrote (`MUTATING_TOOLS`); absent on read-only steps and on sealed streams. */
+  effects?: AgentToolEffect[]
   startedAt: Date
   completedAt: Date | null
 }
@@ -259,6 +268,7 @@ function mapRowToStep(row: StepRow): AgentSessionStep {
           ...(row.verification_reason ? { reason: row.verification_reason } : {}),
         }
       : undefined,
+    effects: row.effects ?? undefined,
     startedAt: row.started_at,
     completedAt: row.completed_at,
   }
@@ -275,7 +285,7 @@ const SESSION_SELECT_FIELDS = `
 const STEP_SELECT_FIELDS = `
   id, session_id, step_number, step_type,
   content, content_ciphertext, content_envelope,
-  sources, message_id, tokens_used, verification_status, verification_reason,
+  sources, message_id, tokens_used, verification_status, verification_reason, effects,
   started_at, completed_at
 `
 
@@ -915,7 +925,10 @@ export const AgentSessionRepository = {
           -- from step N of attempt 1 — often a tier-1 one. COALESCE-ing here
           -- would show the earlier attempt's approval badge on it.
           verification_status = NULL,
-          verification_reason = NULL
+          verification_reason = NULL,
+          -- Same reason: attempt 2's step N is a different call, and inheriting
+          -- attempt 1's effects would claim writes this attempt never made.
+          effects = NULL
         RETURNING ${sql.raw(STEP_SELECT_FIELDS)}
       `
     )
@@ -952,6 +965,11 @@ export const AgentSessionRepository = {
        * review resolving before the action does.
        */
       verification?: { status: ToolVerificationStatus; reason?: string }
+      /**
+       * What the call wrote, patched in when the tool returns. Omitted for
+       * sealed streams — see `AgentSessionStep.effects`.
+       */
+      effects?: AgentToolEffect[]
       completedAt?: Date
       /**
        * Scope the update to one session so a caller-controlled `stepId` can only
@@ -981,6 +999,7 @@ export const AgentSessionRepository = {
           message_id = COALESCE(${params.messageId ?? null}, message_id),
           verification_status = COALESCE(${params.verification?.status ?? null}, verification_status),
           verification_reason = COALESCE(${params.verification?.reason ?? null}, verification_reason),
+          effects = COALESCE(${params.effects ? JSON.stringify(params.effects) : null}, effects),
           completed_at = COALESCE(${params.completedAt ?? null}, completed_at)
         WHERE id = ${stepId}
           AND (${params.sessionId ?? null}::text IS NULL OR session_id = ${params.sessionId ?? null})
