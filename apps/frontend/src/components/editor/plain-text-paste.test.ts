@@ -1,11 +1,24 @@
-import { describe, expect, it } from "vitest"
+import { afterEach, describe, expect, it } from "vitest"
 import { Editor } from "@tiptap/core"
 import { createEditorExtensions } from "./editor-extensions"
 import { parseMarkdown } from "./editor-markdown"
 import { insertPlainText, isPlainTextPaste, markdownToPlainText } from "./plain-text-paste"
 
+/**
+ * Editors are torn down after each test: a live view keeps a DOMObserver
+ * timeout that fires after the test environment is gone, which vitest reports
+ * as an uncaught `document is not defined` and fails the run.
+ */
+const openEditors: Editor[] = []
+
+afterEach(() => {
+  while (openEditors.length > 0) {
+    openEditors.pop()?.destroy()
+  }
+})
+
 function createTestEditor(markdown = "") {
-  return new Editor({
+  const editor = new Editor({
     element: document.createElement("div"),
     extensions: createEditorExtensions({
       placeholder: "Type a message...",
@@ -20,6 +33,8 @@ function createTestEditor(markdown = "") {
       () => null
     ),
   })
+  openEditors.push(editor)
+  return editor
 }
 
 /** Paste `markdown` without formatting into an empty editor and read back what landed. */
