@@ -155,6 +155,17 @@ export class SyncEngine {
    *  drained into one follow-up backfill when the active one settles. */
   private queuedGapCursors = new Map<string, string>()
   private hasEverConnected = false
+  /**
+   * False until this session's cold-boot workspace snapshot has been applied
+   * (or definitively failed). While it is false a snapshot is still pending
+   * that will stamp the sync cursor from its own `syncHead`, so nothing may
+   * seed the cursor from a separately-read network head — `advance` is a
+   * monotonic max, so the higher network head would win and silently mask the
+   * snapshot's, stranding every entry between the two. The service worker can
+   * answer that bootstrap with a copy captured when the tab last hid, which is
+   * exactly when the two heads diverge.
+   */
+  private coldSnapshotSettled = false
   /** Whether the engine has been destroyed. Public for ref-check re-creation. */
   isDestroyed = false
 
@@ -344,7 +355,7 @@ export class SyncEngine {
       // would be strictly worse, because the service worker can answer the
       // bootstrap with a snapshot captured before this device went away —
       // leaving the cursor above the snapshot and stranding everything between.
-      await this.initializeActiveCursor({ seedFromHead: isReconnect })
+      await this.initializeActiveCursor()
       if (this.isDestroyed) return
     }
 
@@ -831,6 +842,9 @@ export class SyncEngine {
           this.syncLogCursor?.advance(bootstrap.syncHead)
           this.noteSeenHead(bootstrap.syncHead)
         }
+        // Snapshot applied: no pending cold snapshot can be masked any more, so
+        // catch-up's fallback seed may read head again from here on.
+        if (!_isReconnect) this.coldSnapshotSettled = true
       }
 
       this.lastWorkspaceError = null
@@ -842,6 +856,10 @@ export class SyncEngine {
       await this.subscribeMemberStreams(bootstrap.streamMemberships.map((sm) => sm.streamId))
     } catch (error) {
       this.lastWorkspaceError = error
+      // No snapshot landed, so none can be masked: release the seed guard or a
+      // failed cold bootstrap would leave the cursor unseedable for the whole
+      // session and catch-up would never gain a position.
+      if (!_isReconnect) this.coldSnapshotSettled = true
       const hasCachedData = (await db.workspaces.get(workspaceId)) !== undefined
       syncStatus.set(`workspace:${workspaceId}`, hasCachedData ? "stale" : "error")
       for (const streamId of visibleStreamIds) {
@@ -1325,16 +1343,17 @@ export class SyncEngine {
    * the service worker's lock-time bootstrap copy breaks that, and `advance` is
    * a monotonic max, so a head seeded here would win and mask the real one.
    */
-  private async initializeActiveCursor(opts?: { seedFromHead?: boolean }): Promise<void> {
-    const seedFromHead = opts?.seedFromHead ?? true
+  private async initializeActiveCursor(): Promise<void> {
     const cursorStore = (this.syncLogCursor ??= new SyncLogCursor(this.workspaceId))
     try {
       await cursorStore.load()
       if (cursorStore.get() !== null || this.isDestroyed) return
-      // Cold boot: leave the position unset so the bootstrap can stamp it from
-      // the snapshot it actually applied. Seeding here would win the monotonic
-      // max in `advance` and silently no-op that stamp.
-      if (!seedFromHead) return
+      // A cold snapshot is still pending: leave the position unset so that
+      // bootstrap stamps it from the snapshot it actually applied. Every caller
+      // funnels through this one guard, so a resume that fires before the first
+      // connect, or a reconnect racing the cold bootstrap, cannot seed a head
+      // the pending snapshot may predate. See `coldSnapshotSettled`.
+      if (!this.coldSnapshotSettled) return
       const abort = (this.catchUpAbort ??= new AbortController())
       const { head } = await this.deps.syncService!.catchUp(this.workspaceId, { after: "0", limit: 1 }, abort.signal)
       if (this.isDestroyed) return

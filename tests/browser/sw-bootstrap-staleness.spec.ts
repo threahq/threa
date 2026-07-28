@@ -104,9 +104,30 @@ test.describe("Service worker bootstrap staleness", () => {
       "flip the preference from the other device"
     )
 
-    // Come back and cold-start, which is what an evicted locked PWA does. This
-    // is the first bootstrap GET since the change, so it is the one the
-    // lock-time snapshot would answer.
+    // Come back and cold-start, which is what an evicted locked PWA does. Clear
+    // the persisted sync cursor to pin that precondition rather than leave it to
+    // however the harness happens to treat IDB across a reload: an evicted app
+    // re-seeds its cursor, and that re-seed is the step under test. Without this
+    // the reload could resume from a surviving cursor and heal through ordinary
+    // catch-up, which would make the assertion below pass either way.
+    await page.evaluate(async () => {
+      for (const { name } of await indexedDB.databases()) {
+        if (!name) continue
+        await new Promise<void>((resolve) => {
+          const req = indexedDB.open(name)
+          req.onerror = () => resolve()
+          req.onsuccess = () => {
+            const db = req.result
+            if (!db.objectStoreNames.contains("syncCursors")) return resolve()
+            const tx = db.transaction("syncCursors", "readwrite")
+            tx.objectStore("syncCursors").clear()
+            tx.oncomplete = () => resolve()
+            tx.onerror = () => resolve()
+          }
+        })
+      }
+    })
+
     await context.setOffline(false)
     await page.reload()
     await expect(page.locator('[contenteditable="true"]').first()).toBeVisible({ timeout: 20000 })

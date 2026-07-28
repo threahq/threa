@@ -23,29 +23,47 @@ export const PENDING_SYNC_KEY = `/_sync/${BOOTSTRAP_SYNC_TAG}`
 export const WORKSPACE_BOOTSTRAP_PATH_RE = /^\/api\/workspaces\/[^/]+\/bootstrap$/
 
 /**
+ * Query flag marking a bootstrap request that must not be answered from the
+ * pre-fetched copy. Carried in the URL rather than only as `cache: "no-store"`
+ * because how faithfully `Request.cache` reaches a service worker's fetch
+ * handler varies by engine — and the browsers where it is least certain are
+ * phones, which are exactly the devices this protects. A query flag cannot be
+ * normalised away.
+ */
+export const BOOTSTRAP_FRESH_PARAM = "fresh"
+
+/** The cache is keyed on the plain URL; strip the flag before looking up. */
+function bootstrapCacheKey(url: string): string {
+  const parsed = new URL(url)
+  parsed.searchParams.delete(BOOTSTRAP_FRESH_PARAM)
+  return parsed.toString()
+}
+
+/**
  * Answer a workspace-bootstrap request, consuming the pre-fetched copy when
  * there is one. Split out of the sw.ts fetch listener so it can be driven with
  * a fake Cache — jsdom has no CacheStorage.
  *
- * `no-store` means the caller is about to treat the snapshot as the authority
- * for everything at or below a sync head it read separately. This entry was
- * captured when the tab last hid, so it can predate that head; serving it would
- * strand every entry in between. Delete rather than skip, so a later request
- * carrying the same expectation can't be handed the same stale copy.
+ * A fresh request means the caller is about to treat the snapshot as the
+ * authority for everything at or below a sync head it read separately. This
+ * entry was captured when the tab last hid, so it can predate that head;
+ * serving it would strand every entry in between. Delete rather than skip, so a
+ * later request carrying the same expectation can't be handed the same copy.
  */
 export async function respondToBootstrapRequest(
   request: Request,
   cache: Cache,
   fetchImpl: (request: Request) => Promise<Response>
 ): Promise<Response> {
-  if (request.cache === "no-store") {
-    await cache.delete(request.url)
+  const key = bootstrapCacheKey(request.url)
+  if (request.cache === "no-store" || new URL(request.url).searchParams.has(BOOTSTRAP_FRESH_PARAM)) {
+    await cache.delete(key)
     return fetchImpl(request)
   }
-  const cached = await cache.match(request.url)
+  const cached = await cache.match(key)
   if (cached) {
     // One-shot: serve and delete so the next fetch gets fresh data.
-    void cache.delete(request.url)
+    void cache.delete(key)
     return cached
   }
   return fetchImpl(request)

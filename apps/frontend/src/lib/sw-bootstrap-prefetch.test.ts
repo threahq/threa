@@ -289,6 +289,20 @@ describe("respondToBootstrapRequest", () => {
     expect(fetchImpl).toHaveBeenCalled()
   })
 
+  it("refuses the pre-fetched copy for a fresh-flagged request, matching the unflagged cache key", async () => {
+    // The flag rides in the URL because `Request.cache` fidelity inside a
+    // service worker varies by engine, and the uncertain engines are phones —
+    // the devices this protects. The entry is stored under the plain URL, so
+    // the lookup must strip the flag before deleting.
+    const cache = fakeCache(new Response("cached"))
+    const fetchImpl = vi.fn(async () => new Response("network"))
+
+    const res = await respondToBootstrapRequest(new Request(`${URL_}?fresh=1`), cache, fetchImpl)
+
+    expect(await res.text()).toBe("network")
+    expect(cache.store.has(URL_)).toBe(false)
+  })
+
   it("refuses the pre-fetched copy for a no-store request and discards it", async () => {
     // The caller is about to stamp a sync cursor against this snapshot, so a
     // copy captured when the tab last hid would strand every entry since. It
