@@ -452,16 +452,21 @@ export function canonicalOrRaw(path: string, canonical: (path: string) => string
   }
 }
 
-interface AttestedRuntime {
+export interface AttestedRuntime {
   worktree: string
   runtimeSessionId: string
+  instanceId: string
 }
 
 /** Canonicalized once per resolution: a per-pane realpath is panes × records syscalls. */
-function attestedRuntimes(links: HarnessLink[]): AttestedRuntime[] {
+export function attestedRuntimes(links: HarnessLink[]): AttestedRuntime[] {
   return links
     .filter((link) => link.runtimeKind === "claude-code-channel" || link.runtimeKind === "unknown")
-    .map((link) => ({ worktree: canonicalOrRaw(link.worktree), runtimeSessionId: link.runtimeSessionId }))
+    .map((link) => ({
+      worktree: canonicalOrRaw(link.worktree),
+      runtimeSessionId: link.runtimeSessionId,
+      instanceId: link.instanceId,
+    }))
 }
 
 /**
@@ -470,10 +475,14 @@ function attestedRuntimes(links: HarnessLink[]): AttestedRuntime[] {
  * Two or more records naming one worktree is a broken ledger, not a tie to
  * break: guessing here binds a live pane to a stranger's session.
  */
-function ledgerRuntimeSessionId(cwd: string, attested: AttestedRuntime[]): string | undefined {
+export function ledgerIdentity(cwd: string, attested: AttestedRuntime[]): AttestedRuntime | undefined {
   const canonicalCwd = canonicalOrRaw(cwd)
   const matches = attested.filter((entry) => entry.worktree === canonicalCwd)
-  return matches.length === 1 ? matches[0]!.runtimeSessionId : undefined
+  return matches.length === 1 ? matches[0] : undefined
+}
+
+function ledgerRuntimeSessionId(cwd: string, attested: AttestedRuntime[]): string | undefined {
+  return ledgerIdentity(cwd, attested)?.runtimeSessionId
 }
 
 /**

@@ -168,6 +168,37 @@ describe("resolveClaudeNativeSession", () => {
 })
 
 describe("reconnectClaude", () => {
+  test("reconnects a pane whose identity only the ledger attests", async () => {
+    // The pane this whole stack is about: launched without THREA_* env, so the
+    // hostname derivation yields an id that is not the one recorded for it.
+    // Finding the pane through the ledger and then re-deriving to check it
+    // rejected the very session the ledger had just identified.
+    const attested = "ccs-attested"
+    const bare = `/opt/claude --name threa.feature --mcp-config /tmp/threa.json --dangerously-load-development-channels server:threa-channel`
+    let paneReads = 0
+    const d = deps({
+      inventory: () => [],
+      panes: () => (++paneReads < 3 ? [pane({ startCommand: bare })] : [pane({ panePid: 5678, startCommand: bare })]),
+      links: () => [
+        {
+          runtimeKind: "claude-code-channel",
+          runtimeSessionId: attested,
+          instanceId: "cc-attested",
+          rootStreamId: "stream_one",
+          worktree: CWD,
+          pid: 1234,
+          updatedAt: "2026-07-28T00:00:00.000Z",
+        },
+      ],
+    })
+
+    await reconnectClaude({ runtimeSessionId: attested, rootStreamId: "stream_one" }, d)
+
+    expect(d.calls).toHaveLength(1)
+    expect(d.calls[0]![2]).toContain(`THREA_RUNTIME_SESSION_ID=${attested}`)
+    expect(d.calls[0]![2]).toContain("THREA_INSTANCE_ID=cc-attested")
+  })
+
   test("preflights and resumes exact native UUID with supported policy", async () => {
     const d = deps()
     await reconnectClaude({ runtimeSessionId: RUNTIME, rootStreamId: "stream_one" }, d)
