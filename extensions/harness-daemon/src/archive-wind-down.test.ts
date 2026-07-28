@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { pushBranchAndScheduleRemoval } from "./archive-wind-down"
+import { pushBranchAndRemoveWorktree } from "./archive-wind-down"
 
 const noLog = () => undefined
 
@@ -40,64 +40,59 @@ function originHasBranch(origin: string, branch: string): boolean {
   return result.exitCode === 0
 }
 
-describe("pushBranchAndScheduleRemoval", () => {
-  test("commits dirty work, pushes the branch, and schedules removal of a linked worktree", async () => {
+describe("pushBranchAndRemoveWorktree", () => {
+  test("commits dirty work, pushes the branch, and removes the linked worktree before returning", () => {
+    // Synchronous by contract: the caller holds `resume-active.lock`, so a
+    // removal that outlived the return could delete a worktree a revive had
+    // already recreated under the lock.
     const { worktree, origin } = makeFixture()
     writeFileSync(join(worktree, "wip.txt"), "unsaved work\n")
 
-    const report = pushBranchAndScheduleRemoval(worktree, noLog)
+    const report = pushBranchAndRemoveWorktree(worktree, noLog)
 
-    expect(report).toMatchObject({ committed: true, pushed: true, removalScheduled: true })
+    expect(report).toMatchObject({ committed: true, pushed: true, removed: true })
+    expect(existsSync(worktree)).toBe(false)
     expect(originHasBranch(origin, "feature/archive-test")).toBe(true)
     const pushedMessage = sh(origin, `git log -1 --format=%s feature/archive-test`)
     expect(pushedMessage).toBe("wip: auto-commit — scratchpad archived")
-    // The detached remover fires after its 5s grace; poll briefly for it.
-    const { existsSync } = await import("node:fs")
-    const deadline = Date.now() + 10_000
-    while (existsSync(worktree) && Date.now() < deadline) {
-      await new Promise((resolve) => setTimeout(resolve, 500))
-    }
-    expect(existsSync(worktree)).toBe(false)
-  }, 20_000)
+  })
 
   test("pushes a clean worktree without inventing a commit", () => {
     const { worktree, origin } = makeFixture()
-    const report = pushBranchAndScheduleRemoval(worktree, noLog)
+    const report = pushBranchAndRemoveWorktree(worktree, noLog)
     expect(report.committed).toBe(false)
     expect(report.pushed).toBe(true)
     expect(originHasBranch(origin, "feature/archive-test")).toBe(true)
   })
 
-  test("leaves the worktree when the push fails (no remote)", async () => {
+  test("leaves the worktree when the push fails (no remote)", () => {
     const { main, worktree } = makeFixture()
     sh(main, `git remote remove origin`)
     writeFileSync(join(worktree, "wip.txt"), "unsaved work\n")
 
-    const report = pushBranchAndScheduleRemoval(worktree, noLog)
+    const report = pushBranchAndRemoveWorktree(worktree, noLog)
 
     expect(report.pushed).toBe(false)
-    expect(report.removalScheduled).toBe(false)
+    expect(report.removed).toBe(false)
     expect(report.reason).toContain("push failed")
-    // Committed (preserving the work) but still on disk well past any grace delay.
-    await new Promise((resolve) => setTimeout(resolve, 100))
-    const { existsSync } = await import("node:fs")
+    // Committed (preserving the work) but still on disk.
     expect(existsSync(join(worktree, "wip.txt"))).toBe(true)
   })
 
   test("refuses to touch main and never removes the main checkout", () => {
     const { main } = makeFixture()
-    const report = pushBranchAndScheduleRemoval(main, noLog)
+    const report = pushBranchAndRemoveWorktree(main, noLog)
     expect(report.pushed).toBe(false)
-    expect(report.removalScheduled).toBe(false)
+    expect(report.removed).toBe(false)
     expect(report.reason).toContain("protected")
   })
 
   test("pushes from the main checkout on a feature branch but does not remove it", () => {
     const { main, origin } = makeFixture()
     sh(main, `git checkout -b feature/from-main`)
-    const report = pushBranchAndScheduleRemoval(main, noLog)
+    const report = pushBranchAndRemoveWorktree(main, noLog)
     expect(report.pushed).toBe(true)
-    expect(report.removalScheduled).toBe(false)
+    expect(report.removed).toBe(false)
     expect(report.reason).toContain("main repository checkout")
     expect(originHasBranch(origin, "feature/from-main")).toBe(true)
   })
@@ -117,7 +112,7 @@ describe("pushBranchAndScheduleRemoval", () => {
     writeFileSync(hook, "#!/bin/sh\necho 'lint failed' >&2\nexit 1\n")
     chmodSync(hook, 0o755)
 
-    const report = pushBranchAndScheduleRemoval(worktree, noLog)
+    const report = pushBranchAndRemoveWorktree(worktree, noLog)
 
     expect(report).toMatchObject({ committed: true, pushed: true })
     expect(sh(origin, `git log -1 --format=%s feature/archive-test`)).toBe("wip: auto-commit — scratchpad archived")
@@ -132,9 +127,9 @@ describe("pushBranchAndScheduleRemoval", () => {
     const gitDir = sh(worktree, "git rev-parse --path-format=absolute --git-dir")
     writeFileSync(join(gitDir, "index"), "not an index\n")
 
-    const report = pushBranchAndScheduleRemoval(worktree, noLog)
+    const report = pushBranchAndRemoveWorktree(worktree, noLog)
 
-    expect(report).toMatchObject({ committed: false, pushed: false, removalScheduled: false })
+    expect(report).toMatchObject({ committed: false, pushed: false, removed: false })
     expect(report.reason).toContain("could not read worktree status")
     expect(originHasBranch(origin, "feature/archive-test")).toBe(false)
     expect(existsSync(join(worktree, "wip.txt"))).toBe(true)
@@ -142,8 +137,8 @@ describe("pushBranchAndScheduleRemoval", () => {
 
   test("reports a non-repo directory without doing anything", () => {
     const dir = mkdtempSync(join(tmpdir(), "not-a-repo-"))
-    const report = pushBranchAndScheduleRemoval(dir, noLog)
-    expect(report).toMatchObject({ committed: false, pushed: false, removalScheduled: false })
+    const report = pushBranchAndRemoveWorktree(dir, noLog)
+    expect(report).toMatchObject({ committed: false, pushed: false, removed: false })
     expect(report.reason).toContain("not a git worktree")
   })
 })

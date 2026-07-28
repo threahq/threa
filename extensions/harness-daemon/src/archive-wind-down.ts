@@ -1,4 +1,4 @@
-import { spawn, spawnSync } from "node:child_process"
+import { spawnSync } from "node:child_process"
 import { dirname, resolve } from "node:path"
 
 /**
@@ -10,9 +10,8 @@ import { dirname, resolve } from "node:path"
  *   1. dirty tree → `git add -A` + a wip commit (uncommitted work must never
  *      die with the worktree)
  *   2. `git push origin HEAD:<branch>`
- *   3. push succeeded AND this is a linked worktree → schedule removal via a
- *      detached shell (the caller may die moments later, so the removal must
- *      outlive it)
+ *   3. push succeeded AND this is a linked worktree → `git worktree remove
+ *      --force`, synchronously
  *
  * Never touches `main`/`master`/detached HEAD, and never removes the main
  * repository checkout — only linked worktrees.
@@ -22,13 +21,17 @@ import { dirname, resolve } from "node:path"
  * revive can be recreating the very worktree this would force-remove, and the
  * two race the server independently — so the destructive half of the wind-down
  * belongs where that lock is held. A runtime that decides to wind down marks
- * its link record (`windDownRequestedAt`) and exits instead.
+ * its link record (`windDownRequestedAt`) and exits instead. That is also why
+ * the removal is synchronous: deferring it past the return deferred it past the
+ * lock too, so a revive that acquired the lock inside the delay could recreate
+ * the worktree and then watch it disappear. The caller kills the occupying tmux
+ * window BEFORE calling this, so nothing is left holding the directory.
  */
 
 export interface ArchiveCleanupReport {
   committed: boolean
   pushed: boolean
-  removalScheduled: boolean
+  removed: boolean
   reason?: string
 }
 
@@ -38,6 +41,9 @@ const GIT_TIMEOUT_MS = 30_000
 // query, and this one must not be the thing that loses the work.
 const COMMIT_TIMEOUT_MS = 120_000
 const PUSH_TIMEOUT_MS = 120_000
+// Removing a large worktree is filesystem-bound, and this runs while
+// `resume-active.lock` is held — a hang here blocks every revive.
+const REMOVE_TIMEOUT_MS = 120_000
 
 function git(cwd: string, args: string[], timeoutMs = GIT_TIMEOUT_MS): { ok: boolean; stdout: string } {
   try {
@@ -48,8 +54,8 @@ function git(cwd: string, args: string[], timeoutMs = GIT_TIMEOUT_MS): { ok: boo
   }
 }
 
-export function pushBranchAndScheduleRemoval(cwd: string, log: (message: string) => void): ArchiveCleanupReport {
-  const report: ArchiveCleanupReport = { committed: false, pushed: false, removalScheduled: false }
+export function pushBranchAndRemoveWorktree(cwd: string, log: (message: string) => void): ArchiveCleanupReport {
+  const report: ArchiveCleanupReport = { committed: false, pushed: false, removed: false }
 
   if (!git(cwd, ["rev-parse", "--is-inside-work-tree"]).ok) {
     report.reason = "not a git worktree"
@@ -104,23 +110,11 @@ export function pushBranchAndScheduleRemoval(cwd: string, log: (message: string)
   }
 
   const mainRepo = dirname(resolve(commonDir))
-  try {
-    // Detached with a grace delay: this process dies with its tmux window
-    // moments after returning, and a directory can't be removed out from under
-    // the processes still holding it.
-    const child = spawn(
-      "sh",
-      ["-c", `sleep 5; git -C ${shellQuote(mainRepo)} worktree remove --force ${shellQuote(cwd)}`],
-      { detached: true, stdio: "ignore" }
-    )
-    child.unref()
-    report.removalScheduled = true
-  } catch {
-    report.reason = "could not schedule worktree removal (branch is pushed; remove manually)"
+  const removal = git(mainRepo, ["worktree", "remove", "--force", cwd], REMOVE_TIMEOUT_MS)
+  if (!removal.ok) {
+    report.reason = "could not remove the worktree (branch is pushed; remove manually)"
+    return report
   }
+  report.removed = true
   return report
-}
-
-function shellQuote(value: string): string {
-  return `'${value.replaceAll("'", `'\\''`)}'`
 }
