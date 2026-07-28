@@ -36,8 +36,12 @@ export interface AgentToolEffect {
 /** Per-string cap. These are trace chips, and a tool can pass in a whole document. */
 export const EFFECT_LABEL_MAX_CHARS = 120
 
-/** Per-step cap, for the same reason: a loop of writes must not unbound the row. */
-export const EFFECTS_PER_SESSION_MAX = 20
+/**
+ * Cap on one CALL's declared effects. Named for the call, not the session: a
+ * session aggregates many calls and needs its own bound, and reusing this one
+ * there would silently cap a whole turn at a single call's budget.
+ */
+export const EFFECTS_PER_CALL_MAX = 20
 
 /**
  * Which tools write state the conversation does not already show.
@@ -121,9 +125,12 @@ function truncate(value: string): string {
  */
 export function resolveToolEffects(toolName: string, declared: AgentToolEffect[] | undefined): AgentToolEffect[] {
   if (declared !== undefined) {
-    return declared.slice(0, EFFECTS_PER_SESSION_MAX).map((effect) => ({
+    return declared.slice(0, EFFECTS_PER_CALL_MAX).map((effect) => ({
       ...effect,
       ...(effect.label !== undefined ? { label: truncate(effect.label) } : {}),
+      // `target` is bounded too: it is tool-supplied like the rest, and one
+      // uncapped string defeats the per-row bound the other three enforce.
+      ...(effect.target !== undefined ? { target: truncate(effect.target) } : {}),
       ...(effect.before !== undefined ? { before: truncate(effect.before) } : {}),
       ...(effect.after !== undefined ? { after: truncate(effect.after) } : {}),
     }))
@@ -132,17 +139,19 @@ export function resolveToolEffects(toolName: string, declared: AgentToolEffect[]
 }
 
 /**
- * Guarded implies mutating.
+ * Guarded tools that this table says write nothing — always empty.
  *
  * Tier 2 means "writes durable state outside the stream, or acts with the
- * user's authority" — which is a strictly stronger claim than mutating. The two
- * tables are maintained by hand and can drift apart silently, so this asserts
- * the containment at module load rather than waiting for a test to notice.
+ * user's authority", a strictly stronger claim than mutating, so the guarded
+ * set is contained in the mutating set. Both tables are hand-maintained and can
+ * drift apart silently, hence the check.
+ *
+ * A predicate rather than a module-load `throw`: the throw made its own guard
+ * test incapable of failing (a broken table takes the import down before any
+ * assertion runs), and it would have turned a mistiered tool into a crash at
+ * boot for every process importing this package — backend, frontend and
+ * enclave alike — instead of a red test.
  */
-for (const name of AGENT_TOOL_NAMES) {
-  if (TOOL_TIERS_BY_NAME[name] >= ToolTiers.GUARDED && !MUTATING_TOOLS[name]) {
-    throw new Error(
-      `Tool "${name}" is tier ${TOOL_TIERS_BY_NAME[name]} but not in MUTATING_TOOLS. A guarded tool writes something by definition; one of the two tables is wrong.`
-    )
-  }
+export function guardedToolsMissingFromMutating(): AgentToolName[] {
+  return AGENT_TOOL_NAMES.filter((name) => TOOL_TIERS_BY_NAME[name] >= ToolTiers.GUARDED && !MUTATING_TOOLS[name])
 }

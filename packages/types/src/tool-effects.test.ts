@@ -1,11 +1,11 @@
 import { describe, test, expect } from "bun:test"
 import { AGENT_TOOL_NAMES } from "./constants"
-import { TOOL_TIERS_BY_NAME, ToolTiers } from "./tool-tiers"
 import {
   MUTATING_TOOLS,
+  guardedToolsMissingFromMutating,
   resolveToolEffects,
   EFFECT_LABEL_MAX_CHARS,
-  EFFECTS_PER_SESSION_MAX,
+  EFFECTS_PER_CALL_MAX,
   type AgentToolEffect,
 } from "./tool-effects"
 
@@ -15,11 +15,11 @@ describe("MUTATING_TOOLS", () => {
     expect(unanswered).toEqual([])
   })
 
+  // Tier 2 is a strictly stronger claim than mutating, so the guarded set must
+  // be contained in the mutating set. This can genuinely fail: flip
+  // `delegate_task` to false and it reports that name.
   test("every guarded tool is mutating", () => {
-    const guardedButInert = AGENT_TOOL_NAMES.filter(
-      (name) => TOOL_TIERS_BY_NAME[name] >= ToolTiers.GUARDED && !MUTATING_TOOLS[name]
-    )
-    expect(guardedButInert).toEqual([])
+    expect(guardedToolsMissingFromMutating()).toEqual([])
   })
 })
 
@@ -47,23 +47,19 @@ describe("resolveToolEffects", () => {
     expect(resolveToolEffects("enclave_read_local_thing", undefined)).toEqual([])
   })
 
-  test("truncates label, before and after", () => {
+  test("truncates every tool-supplied string, target included", () => {
     const long = "x".repeat(EFFECT_LABEL_MAX_CHARS + 40)
-    expect(resolveToolEffects("save_memo", [{ kind: "memo", label: long, before: long, after: long }])).toEqual([
-      {
-        kind: "memo",
-        label: "x".repeat(EFFECT_LABEL_MAX_CHARS),
-        before: "x".repeat(EFFECT_LABEL_MAX_CHARS),
-        after: "x".repeat(EFFECT_LABEL_MAX_CHARS),
-      },
-    ])
+    const capped = "x".repeat(EFFECT_LABEL_MAX_CHARS)
+    expect(
+      resolveToolEffects("save_memo", [{ kind: "memo", label: long, target: long, before: long, after: long }])
+    ).toEqual([{ kind: "memo", label: capped, target: capped, before: capped, after: capped }])
   })
 
   test("caps the array", () => {
-    const declared: AgentToolEffect[] = Array.from({ length: EFFECTS_PER_SESSION_MAX + 5 }, (_, i) => ({
+    const declared: AgentToolEffect[] = Array.from({ length: EFFECTS_PER_CALL_MAX + 5 }, (_, i) => ({
       kind: "memo" as const,
       label: `memo ${i}`,
     }))
-    expect(resolveToolEffects("save_memo", declared)).toEqual(declared.slice(0, EFFECTS_PER_SESSION_MAX))
+    expect(resolveToolEffects("save_memo", declared)).toEqual(declared.slice(0, EFFECTS_PER_CALL_MAX))
   })
 })

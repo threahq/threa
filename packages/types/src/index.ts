@@ -493,7 +493,8 @@ export {
   toolMutates,
   resolveToolEffects,
   EFFECT_LABEL_MAX_CHARS,
-  EFFECTS_PER_SESSION_MAX,
+  EFFECTS_PER_CALL_MAX,
+  guardedToolsMissingFromMutating,
 } from "./tool-effects"
 export type { ToolEffectKind, AgentToolEffect } from "./tool-effects"
 
