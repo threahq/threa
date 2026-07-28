@@ -1,10 +1,45 @@
 # harness-daemon
 
-Local supervisor for Threa-linked agent sessions (Claude Code channel + Pi remote). `spawn` creates worktree + tmux window + harness and records the launch in `~/.threa/harnessd/inventory.sqlite`; `up` and the `watch-unarchived` LaunchAgent revive recorded sessions safely. `kick <ref>` sends Enter to a managed session (the same nudge exposed as `/kick` in its linked scratchpad). If a Claude channel session was launched by the standalone worktree helper and has no inventory row, `kick` can still resolve its exact runtime session ID from a live `server:threa-channel` tmux pane and nudge it without adopting or reviving it. Run `threa-harnessd help` for the full command list.
+Local supervisor for Threa-linked agent sessions (Claude Code channel + Pi remote). `spawn` creates worktree + tmux window + harness and records the launch in `~/.threa/harnessd/inventory.sqlite`; `up` and the `watch-unarchived` LaunchAgent revive recorded sessions safely; `adopt` brings a hand-started Claude session into inventory, live or cold. `kick <ref>` sends Enter to a managed session (the same nudge exposed as `/kick` in its linked scratchpad). If a Claude channel session was launched by the standalone worktree helper and has no inventory row, `kick` can still resolve its exact runtime session ID from a live `server:threa-channel` tmux pane and nudge it without adopting or reviving it. Run `threa-harnessd help` for the full command list.
 
 ## Live reconnect
 
 `threa-harnessd reconnect <runtime-session-id> --root-stream-id <stream-id> [--force]` replaces a live Pi or Claude process in its existing tmux pane and resumes the same native session. It accepts only the narrow Threa launch shapes, preflights the exact linked root with create/replace disabled, then revalidates the pane generation before `tmux respawn-pane`. Claude reconnect additionally requires an idle, exact live registry entry and transcript, and verifies the replacement kept the same native UUID and cwd; `--force` permits replacing a busy Claude session. Managed inventory is preferred; a matching standalone pane may be used without writing or adopting it. Missing, ambiguous, stale, unsupported, or mismatched targets fail without launching a fresh session.
+
+## Adoption and cold takeover
+
+`threa-harnessd adopt <runtime-session-id> --root-stream-id <stream-id> [--cwd <path>] [--name <name>] [--claude-session-id <uuid>] [--tmux <session>] [--dry-run] [--force] [--no-yolo]`
+
+Brings a Claude channel session harnessd never launched under management. A hand-started session can have a valid deterministic identity, a live scratchpad and a full transcript and still be invisible: `reconnect` needs a live pane, `up` needs an inventory row, and a session with neither falls between them the moment its process exits.
+
+One explicit target per invocation, identified by runtime session id **and** root stream id. Nothing here sweeps: a local Claude directory has never been evidence that a session should run.
+
+Two paths, chosen by what is live:
+
+- **live pane** — the session is running. It is recorded in inventory and left alone; no relaunch, no keystrokes.
+- **cold takeover** — the pane and process are gone. The newest transcript under the cwd's `~/.claude/projects` directory is resumed (`--claude-session-id` pins a specific one) in a new tmux window, with harnessd's Claude command and `--mcp-config` wiring, `THREA_COLD_START_IF_ARCHIVED=wait` / `IF_MISSING=error` pinned to the given root, and the boot dialogs cleared by the same polling loop `spawn` and `reconnect` use. Bypass follows the adopted session — the live pane's own launch first, then what the row recorded — and `--no-yolo` overrides.
+
+Everything is validated before anything changes. `--cwd`, the live pane, the harness link record (`~/.threa/harnessd/links/<session>.json`) and any inventory row must agree on the working directory; the link record and the row must agree with `--root-stream-id`; the instance id must be consistent across every source that names one; the scratchpad must read active. Only then does the bot-runtime preflight run (`ifArchived: "wait"`, `ifMissing: "error"`, returned root must equal the recorded one). A refusal writes no inventory, launches nothing, and never touches the scratchpad. `--dry-run` stops before the preflight, because that POST registers the session server-side.
+
+Identity must be *attested*, not merely derivable. The cwd derivation (`sha256("<host>:<cwd>")`) is the usual attestation, but a session started under a different hostname keeps its original id for life, so the link record or an existing row attests it instead. What is refused is a target nothing on this machine binds to that directory.
+
+Idempotent: a second run against the same live pane reuses the row (`already managed`) rather than adding one, and a name already taken by a different session refuses with `--name` as the fix.
+
+| status | meaning |
+| --- | --- |
+| `adopted live` | unmanaged live pane, now recorded; nothing relaunched |
+| `already managed` | the row already tracks this live pane |
+| `taken over` | pane and process gone; the transcript was resumed in a new window |
+| `would adopt live` / `would take over` | `--dry-run` |
+| `refused live without pane` | a Claude process still runs in the cwd with no tmux pane — resuming would give two Claudes one conversation (`--force` overrides) |
+| `refused missing transcript` | no `~/.claude/projects` transcript for the cwd, or the pinned uuid has none |
+| `refused identity mismatch` | sources disagree on cwd, root stream, or instance id; or nothing binds the id to the directory |
+| `refused ambiguous` | two inventory rows, two panes, or a name collision |
+| `refused archived` / `refused inaccessible` / `refused unavailable` | scratchpad state, before or during the takeover (mid-takeover kills the new window) |
+| `refused missing cwd` / `refused missing credentials` | no directory or no Threa credentials |
+| `failed` | the launch or the post-launch inventory write errored; the window is killed rather than left untracked |
+
+An adopted session is an ordinary inventory row afterwards, so `up`, `kick`, `stop` and the watcher all apply — with one boundary: `up` relaunches Claude **without** `--resume`, so an automatic revival after adoption starts a fresh conversation. Conversation history survives `adopt`, not `up`.
 
 ## `up` (alias `resume-active`)
 

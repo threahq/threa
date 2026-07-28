@@ -50,13 +50,50 @@ export function claudeLaunchArgs(params: {
   channel: string
   mcpConfig?: string
   noYolo?: boolean
+  /** Set only by a takeover: continue this native conversation instead of starting one. */
+  resumeSessionId?: string
 }): string[] {
-  const args = [params.claudeBin, "--name", `threa.${params.name}`]
+  const args = [params.claudeBin]
+  if (params.resumeSessionId) args.push("--resume", params.resumeSessionId)
+  args.push("--name", `threa.${params.name}`)
   if (params.mcpConfig) {
     args.push("--mcp-config", params.mcpConfig, "--dangerously-load-development-channels", `server:${params.channel}`)
   }
   if (!params.noYolo) args.push("--dangerously-skip-permissions")
   return args
+}
+
+/**
+ * Session-scoped MCP wiring via `--mcp-config` instead of `claude mcp add
+ * --scope local`: Claude Code resolves every worktree of a repo to the same
+ * project entry, so a persisted local-scope registration from worktree A
+ * silently repoints worktree B's channel at A's code the next time B starts
+ * (and stacks a duplicate channel on top of a user-scope registration). A
+ * config file passed at launch binds this session to the supervisor's current
+ * channel implementation and leaves global config untouched. This also keeps
+ * revived feature branches from loading an obsolete connector.
+ */
+export function writeChannelMcpConfig(name: string, channel: string, channelEntry: string): string {
+  const path = mcpConfigPath(name)
+  mkdirSync(dirname(path), { recursive: true })
+  writeFileSync(
+    path,
+    JSON.stringify(
+      {
+        mcpServers: {
+          [channel]: {
+            type: "stdio",
+            command: "bun",
+            args: [channelEntry],
+            env: { THREA_CHANNEL_SERVER_KEY: channel },
+          },
+        },
+      },
+      null,
+      2
+    )
+  )
+  return path
 }
 
 export function normalizeChannelMcpConfig(path: string, channel: string, channelEntry: string): void {
@@ -230,7 +267,7 @@ export class PiRuntimeSpawner extends RuntimeSpawner {
   }
 }
 
-function prepareClaudeChannel(): string {
+export function prepareClaudeChannel(): string {
   const channelDir = join(import.meta.dir, "..", "..", "claude-code-remote")
   const channelEntry = join(channelDir, "src", "index.ts")
   if (!existsSync(channelEntry)) die(`Claude channel entry not found: ${channelEntry}`)
@@ -369,37 +406,8 @@ export class ClaudeRuntimeSpawner extends RuntimeSpawner {
     }
   }
 
-  /**
-   * Session-scoped MCP wiring via `--mcp-config` instead of `claude mcp add
-   * --scope local`: Claude Code resolves every worktree of a repo to the same
-   * project entry, so a persisted local-scope registration from worktree A
-   * silently repoints worktree B's channel at A's code the next time B starts
-   * (and stacks a duplicate channel on top of a user-scope registration). A
-   * config file passed at launch binds this session to the supervisor's current
-   * channel implementation and leaves global config untouched. This also keeps
-   * revived feature branches from loading an obsolete connector.
-   */
   private writeMcpConfig(name: string, channel: string, channelEntry: string): string {
-    const path = mcpConfigPath(name)
-    mkdirSync(dirname(path), { recursive: true })
-    writeFileSync(
-      path,
-      JSON.stringify(
-        {
-          mcpServers: {
-            [channel]: {
-              type: "stdio",
-              command: "bun",
-              args: [channelEntry],
-              env: { THREA_CHANNEL_SERVER_KEY: channel },
-            },
-          },
-        },
-        null,
-        2
-      )
-    )
-    return path
+    return writeChannelMcpConfig(name, channel, channelEntry)
   }
 
   private async prelinkScratchpad(
