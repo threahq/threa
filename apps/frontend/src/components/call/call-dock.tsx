@@ -1,6 +1,7 @@
 import { useCallback, useLayoutEffect, useRef } from "react"
 import { useIsMobile } from "@/hooks/use-mobile"
 import { cn } from "@/lib/utils"
+import { isIosWebKit } from "@/lib/platform"
 import { getCallState, setCallSurfaceMode, setDesktopSurfaceOverride } from "@/stores/call-store"
 import {
   resolveDesktopSurface,
@@ -96,9 +97,14 @@ export function CallDock() {
   // (standard/gallery) when joining with the camera on, so a video join lands on
   // tiles. Guarded on the initial `min` so it runs once and later drags win;
   // `surfaceMode` is read only by the sidebar dock (the square uses its own state).
+  //
+  // iOS opens at `standard` regardless: `compact` is a fixed 72px pill with no
+  // room for the lock-ends-the-call notice, and a warning the user never sees on
+  // the surface an audio call lands on is not a warning. Drag down still works.
   useLayoutEffect(() => {
     if (inCall && getCallState().surfaceMode === "min") {
-      setCallSurfaceMode(getCallState().local.cameraOn ? "standard" : "compact")
+      const open = getCallState().local.cameraOn || isIosWebKit()
+      setCallSurfaceMode(open ? "standard" : "compact")
     }
   }, [inCall])
 

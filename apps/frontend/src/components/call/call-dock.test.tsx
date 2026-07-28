@@ -156,6 +156,32 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
+describe("CallDock — opening surface mode", () => {
+  const REAL_UA = navigator.userAgent
+  function setUserAgent(value: string) {
+    Object.defineProperty(navigator, "userAgent", { configurable: true, get: () => value })
+  }
+  afterEach(() => setUserAgent(REAL_UA))
+
+  it("opens an audio call at compact", () => {
+    setUserAgent("Mozilla/5.0 (Linux; Android 15) AppleWebKit/537.36 Chrome/150")
+    renderDock(makeManager())
+    enterConnectedCall([participant({ userId: "usr_self", endpointId: "callep_self" })])
+
+    expect(getCallState().surfaceMode).toBe("compact")
+  })
+
+  it("opens an audio call at standard on iOS, the only mode that shows the lock warning", () => {
+    // `compact` is a fixed 72px pill with no room for the notice, so a warning
+    // gated to the taller modes would never reach the user it is written for.
+    setUserAgent("Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15")
+    renderDock(makeManager())
+    enterConnectedCall([participant({ userId: "usr_self", endpointId: "callep_self" })])
+
+    expect(getCallState().surfaceMode).toBe("standard")
+  })
+})
+
 describe("CallDock — idle", () => {
   it("renders nothing when idle with no launch or cross-tab call", () => {
     const { container } = renderDock(makeManager())

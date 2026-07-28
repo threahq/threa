@@ -3,6 +3,7 @@ import { io } from "socket.io-client"
 import { api } from "@/api/client"
 import { getCachedWsConfig } from "@/lib/cached-ws-config"
 import { setDictationExternalHold } from "@/contexts/dictation-coordinator-context"
+import { isIosWebKit } from "@/lib/platform"
 import {
   setCallSession,
   setCallPhase,
@@ -1637,14 +1638,11 @@ function resolveCallsUrl(workspaceId: string): string | null {
 
 /**
  * iOS/iPadOS Safari allows only one active `getUserMedia` at a time — a second
- * concurrent capture mutes the first. iPadOS reports as "MacIntel", so fall
- * through to the touch-point probe there.
+ * concurrent capture mutes the first. Kept as its own name because that is a
+ * capture rule, not a platform fact; the probe itself is shared (INV-35).
  */
 function detectSingleActiveCapture(): boolean {
-  if (typeof navigator === "undefined") return false
-  const ua = navigator.userAgent ?? ""
-  if (/iPad|iPhone|iPod/.test(ua)) return true
-  return navigator.platform === "MacIntel" && (navigator.maxTouchPoints ?? 0) > 1
+  return isIosWebKit()
 }
 
 export function defaultCallManagerDeps(): CallManagerDeps {

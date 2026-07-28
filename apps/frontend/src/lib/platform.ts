@@ -5,6 +5,6 @@
  */
 export function isIosWebKit(): boolean {
   if (typeof navigator === "undefined") return false
-  if (/iPhone|iPad|iPod/.test(navigator.userAgent)) return true
-  return navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1
+  if (/iPad|iPhone|iPod/.test(navigator.userAgent ?? "")) return true
+  return navigator.platform === "MacIntel" && (navigator.maxTouchPoints ?? 0) > 1
 }

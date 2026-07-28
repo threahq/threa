@@ -312,6 +312,8 @@ describe("MobileCallDrawer — iOS lock notice", () => {
     }
     // `min` and `compact` are fixed-height dark pills — 72px in compact, all of it
     // taken by the control row. A banner there clips the controls it sits above.
+    // `CallDock` therefore opens an iOS call at `standard`, so the mode the user
+    // lands on is one that shows this (see the dock's own test).
     for (const m of ["min", "compact"] as CallSurfaceMode[]) {
       setMode(m)
       expect(screen.queryByTestId("call-ios-lock-notice")).toBeNull()
