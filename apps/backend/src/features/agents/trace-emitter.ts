@@ -319,6 +319,7 @@ export class ActiveStep {
             sources: updated.sources,
             messageId: updated.messageId,
             verification: updated.verification,
+            effects: updated.effects,
             startedAt: updated.startedAt.toISOString(),
             completedAt: updated.completedAt?.toISOString(),
           }
