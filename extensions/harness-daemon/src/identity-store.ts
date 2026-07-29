@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
 import { isSafeSessionFileName } from "@threa/bot-runtime-client"
@@ -107,6 +107,32 @@ export function identityRecordsFor(
 ): MintedIdentity[] {
   const target = canonical(worktree)
   return records.filter((record) => canonical(record.worktree) === target)
+}
+
+/**
+ * Retire every identity recorded for a directory that no longer exists.
+ *
+ * Symmetric with `clearHarnessLink`, which the reaper already calls on the same
+ * transition and whose own contract is that records for departed worktrees are
+ * pruned here. Without it the binding outlives the directory: the planned path
+ * is deterministic from repo and agent name, so the next `spawn` of that name
+ * resolves to the same path, finds the dead session's record, and launches under
+ * a `runtimeSessionId` the server already knows as wound down.
+ */
+export function forgetMintedIdentitiesFor(worktree: string): string[] {
+  const retired: string[] = []
+  for (const record of identityRecordsFor(worktree)) {
+    const path = identityPath(record.runtimeSessionId)
+    if (!path) continue
+    try {
+      rmSync(path, { force: true })
+      retired.push(record.runtimeSessionId)
+    } catch {
+      // A leftover record only costs the next spawn a stale reuse, which the
+      // caller reports; it must never abort the reap that is already underway.
+    }
+  }
+  return retired
 }
 
 /**

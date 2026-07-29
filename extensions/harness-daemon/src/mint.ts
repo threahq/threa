@@ -35,6 +35,7 @@ export interface MintDeps {
   write: (record: MintedIdentity) => WriteMintedIdentityResult
   newSuffix: () => string
   now: () => Date
+  warn: (message: string) => void
 }
 
 export type MintOutcome =
@@ -52,6 +53,7 @@ export function defaultMintDeps(): MintDeps {
     write: writeMintedIdentity,
     newSuffix: () => randomBytes(8).toString("hex"),
     now: () => new Date(),
+    warn: (message) => console.warn(message),
   }
 }
 
@@ -62,16 +64,35 @@ export function defaultMintDeps(): MintDeps {
  */
 function occupancyVeto(worktree: string, deps: MintDeps, identifiedSessionIds: Set<string>): string | undefined {
   const pids = deps.claudeProcessesIn(worktree)
-  const panes = deps
-    .panes()
-    .filter((pane) => deps.canonicalPath(pane.cwd) === worktree)
-    .filter((pane) => {
-      const launch = parseClaudeChannelLaunch(pane.startCommand)
-      if (!launch) return false
-      return !launch.runtimeSessionId || !identifiedSessionIds.has(launch.runtimeSessionId)
-    })
-  if (pids.length === 0 && panes.length === 0) return undefined
+  let panes: LocalTmuxPane[] = []
+  let panesRead = true
+  try {
+    panes = deps
+      .panes()
+      .filter((pane) => deps.canonicalPath(pane.cwd) === worktree)
+      .filter((pane) => {
+        const launch = parseClaudeChannelLaunch(pane.startCommand)
+        if (!launch) return false
+        return !launch.runtimeSessionId || !identifiedSessionIds.has(launch.runtimeSessionId)
+      })
+  } catch {
+    // `listLocalTmuxPanes` throws when there is no tmux server, which is the
+    // ordinary state before the first spawn of a boot — and the mint now runs
+    // before the session is created. Refusing there would block every cold
+    // start; pretending the list was empty would be the silent no-op this whole
+    // effort exists to remove. So the pid arm still decides, and the degraded
+    // check is reported either way. It is the stronger arm regardless: it sees
+    // a detached Claude that has no pane at all.
+    panesRead = false
+  }
+  if (pids.length === 0 && panes.length === 0) {
+    if (!panesRead) {
+      deps.warn(`harnessd: could not list tmux panes; occupancy of ${worktree} checked by process table only`)
+    }
+    return undefined
+  }
   const parts: string[] = []
+  if (!panesRead) parts.push("tmux panes unreadable")
   if (pids.length > 0) parts.push(`pid ${pids.join(", ")}`)
   if (panes.length > 0) parts.push(`pane ${panes.map((pane) => pane.paneId).join(", ")}`)
   return `an unidentified live Claude occupies ${worktree} (${parts.join("; ")})`

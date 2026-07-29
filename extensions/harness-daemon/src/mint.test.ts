@@ -88,6 +88,7 @@ function deps(overrides: Partial<MintDeps> = {}): { deps: MintDeps; written: Min
       },
       newSuffix: () => "abcdef0123456789",
       now: () => new Date("2026-07-29T00:00:00.000Z"),
+      warn: () => {},
       ...overrides,
     },
   }
@@ -280,4 +281,38 @@ test("a declared id already recorded for another worktree is refused, never rebo
     status: "refused",
     reason: `ccs-fixed is already recorded for /repo/threa.other, not ${WORKTREE}`,
   })
+})
+
+test("a mint whose pane listing fails still refuses on the process table", async () => {
+  const warnings: string[] = []
+  const { deps: mintDeps, written } = deps({
+    panes: () => {
+      throw new Error("no server running on /private/tmp/tmux-501/default")
+    },
+    claudeProcessesIn: () => [4242],
+    warn: (message) => void warnings.push(message),
+  })
+
+  const outcome = await mintRuntimeIdentity({ worktree: WORKTREE, runtimeKind: "claude-code-channel" }, mintDeps)
+
+  expect(outcome.status).toBe("refused")
+  expect(outcome.status === "refused" && outcome.reason).toContain("4242")
+  expect(written).toEqual([])
+})
+
+test("no tmux server does not block a cold-start mint, but is reported", async () => {
+  const warnings: string[] = []
+  const { deps: mintDeps, written } = deps({
+    panes: () => {
+      throw new Error("no server running on /private/tmp/tmux-501/default")
+    },
+    warn: (message) => void warnings.push(message),
+  })
+
+  const outcome = await mintRuntimeIdentity({ worktree: WORKTREE, runtimeKind: "claude-code-channel" }, mintDeps)
+
+  expect(outcome.status).toBe("minted")
+  expect(written).toHaveLength(1)
+  expect(warnings).toHaveLength(1)
+  expect(warnings[0]).toContain("process table only")
 })

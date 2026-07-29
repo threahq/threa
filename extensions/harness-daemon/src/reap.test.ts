@@ -39,10 +39,11 @@ interface Recorded {
   killed: string[]
   forgotten: string[]
   awaited: number[]
+  retired: string[]
 }
 
 function makeDeps(overrides: Partial<ReapDeps> = {}): { deps: ReapDeps; recorded: Recorded } {
-  const recorded: Recorded = { woundDown: [], killed: [], forgotten: [], awaited: [] }
+  const recorded: Recorded = { woundDown: [], killed: [], forgotten: [], awaited: [], retired: [] }
   const deps: ReapDeps = {
     links: () => [link()],
     panes: () => [pane()],
@@ -59,6 +60,10 @@ function makeDeps(overrides: Partial<ReapDeps> = {}): { deps: ReapDeps; recorded
     killWindow: (windowId) => void recorded.killed.push(windowId),
     awaitExit: async (pid) => void recorded.awaited.push(pid),
     forgetLink: (id) => void recorded.forgotten.push(id),
+    forgetIdentities: (worktree) => {
+      recorded.retired.push(worktree)
+      return ["ccs-abc"]
+    },
     now: () => NOW,
     log: () => {},
     ...overrides,
@@ -73,7 +78,13 @@ describe("reapArchivedWorktrees", () => {
     const [outcome] = await reapArchivedWorktrees(deps)
 
     expect(outcome).toMatchObject({ status: "reaped", worktree: WORKTREE })
-    expect(recorded).toEqual({ woundDown: [WORKTREE], killed: ["@7"], forgotten: ["ccs-abc"], awaited: [4242] })
+    expect(recorded).toEqual({
+      woundDown: [WORKTREE],
+      killed: ["@7"],
+      forgotten: ["ccs-abc"],
+      awaited: [4242],
+      retired: [WORKTREE],
+    })
   })
 
   test("leaves the owning runtime its full detection window plus grace", async () => {
@@ -95,7 +106,7 @@ describe("reapArchivedWorktrees", () => {
     const [outcome] = await reapArchivedWorktrees(deps)
 
     expect(outcome.status).toBe("skipped active")
-    expect(recorded).toEqual({ woundDown: [], killed: [], forgotten: [], awaited: [] })
+    expect(recorded).toEqual({ woundDown: [], killed: [], forgotten: [], awaited: [], retired: [] })
   })
 
   test("an unreadable scratchpad is never grounds to delete", async () => {
@@ -118,7 +129,7 @@ describe("reapArchivedWorktrees", () => {
     const [outcome] = await reapArchivedWorktrees(deps)
 
     expect(["skipped ambiguous", "skipped occupied"]).toContain(outcome.status)
-    expect(recorded).toEqual({ woundDown: [], killed: [], forgotten: [], awaited: [] })
+    expect(recorded).toEqual({ woundDown: [], killed: [], forgotten: [], awaited: [], retired: [] })
   })
 
   test("refuses a worktree now occupied by a session the record does not own", async () => {
@@ -138,7 +149,7 @@ describe("reapArchivedWorktrees", () => {
     const [outcome] = await reapArchivedWorktrees(deps)
 
     expect(outcome.status).toBe("skipped occupied")
-    expect(recorded).toEqual({ woundDown: [], killed: [], forgotten: [], awaited: [] })
+    expect(recorded).toEqual({ woundDown: [], killed: [], forgotten: [], awaited: [], retired: [] })
   })
 
   test("refuses a worktree where a paneless Claude is still running", async () => {
@@ -152,7 +163,7 @@ describe("reapArchivedWorktrees", () => {
 
     expect(outcome.status).toBe("skipped occupied")
     expect(outcome.detail).toContain("9911")
-    expect(recorded).toEqual({ woundDown: [], killed: [], forgotten: [], awaited: [] })
+    expect(recorded).toEqual({ woundDown: [], killed: [], forgotten: [], awaited: [], retired: [] })
   })
 
   test("still reaps a live Claude the record's own pane accounts for", async () => {
@@ -163,7 +174,13 @@ describe("reapArchivedWorktrees", () => {
     const [outcome] = await reapArchivedWorktrees(deps)
 
     expect(outcome.status).toBe("reaped")
-    expect(recorded).toEqual({ woundDown: [WORKTREE], killed: ["@7"], forgotten: ["ccs-abc"], awaited: [4242] })
+    expect(recorded).toEqual({
+      woundDown: [WORKTREE],
+      killed: ["@7"],
+      forgotten: ["ccs-abc"],
+      awaited: [4242],
+      retired: [WORKTREE],
+    })
   })
 
   test("refuses when a second, paneless Claude shares the record's worktree", async () => {
@@ -174,7 +191,7 @@ describe("reapArchivedWorktrees", () => {
 
     expect(outcome.status).toBe("skipped occupied")
     expect(outcome.detail).toContain("5150")
-    expect(recorded).toEqual({ woundDown: [], killed: [], forgotten: [], awaited: [] })
+    expect(recorded).toEqual({ woundDown: [], killed: [], forgotten: [], awaited: [], retired: [] })
   })
 
   test("an occupying pane is still found when the record stored a non-canonical path", async () => {
@@ -195,7 +212,7 @@ describe("reapArchivedWorktrees", () => {
     const [outcome] = await reapArchivedWorktrees(deps)
 
     expect(outcome.status).toBe("skipped occupied")
-    expect(recorded).toEqual({ woundDown: [], killed: [], forgotten: [], awaited: [] })
+    expect(recorded).toEqual({ woundDown: [], killed: [], forgotten: [], awaited: [], retired: [] })
   })
 
   test("the window is closed before the wind-down removes the directory under it", async () => {
@@ -228,7 +245,7 @@ describe("reapArchivedWorktrees", () => {
     const [outcome] = await reapArchivedWorktrees(deps)
 
     expect(outcome.status).toBe("skipped observer too young")
-    expect(recorded).toEqual({ woundDown: [], killed: [], forgotten: [], awaited: [] })
+    expect(recorded).toEqual({ woundDown: [], killed: [], forgotten: [], awaited: [], retired: [] })
   })
 
   test("an explicit run has no warmup gate — a human asking is the signal", async () => {
@@ -246,7 +263,7 @@ describe("reapArchivedWorktrees", () => {
     const [outcome] = await reapArchivedWorktrees(deps)
 
     expect(outcome.status).toBe("skipped worktree missing")
-    expect(recorded).toEqual({ woundDown: [], killed: [], forgotten: ["ccs-abc"], awaited: [] })
+    expect(recorded).toEqual({ woundDown: [], killed: [], forgotten: ["ccs-abc"], awaited: [], retired: [WORKTREE] })
   })
 
   test("a link with no live pane is still reaped — that is the offline case", async () => {
@@ -257,7 +274,13 @@ describe("reapArchivedWorktrees", () => {
     const [outcome] = await reapArchivedWorktrees(deps)
 
     expect(outcome.status).toBe("reaped")
-    expect(recorded).toEqual({ woundDown: [WORKTREE], killed: [], forgotten: ["ccs-abc"], awaited: [] })
+    expect(recorded).toEqual({
+      woundDown: [WORKTREE],
+      killed: [],
+      forgotten: ["ccs-abc"],
+      awaited: [],
+      retired: [WORKTREE],
+    })
   })
 
   test("the window closes even when the cleanup refuses, and the worktree is left behind", async () => {
@@ -285,7 +308,7 @@ describe("reapArchivedWorktrees", () => {
     const [outcome] = await reapArchivedWorktrees(deps, true)
 
     expect(outcome.status).toBe("would reap")
-    expect(recorded).toEqual({ woundDown: [], killed: [], forgotten: [], awaited: [] })
+    expect(recorded).toEqual({ woundDown: [], killed: [], forgotten: [], awaited: [], retired: [] })
   })
 
   test("one failing link does not abort the sweep", async () => {
@@ -348,7 +371,7 @@ describe("reapArchivedWorktrees", () => {
     const [outcome] = await reapArchivedWorktrees(deps)
 
     expect(outcome.status).toBe("skipped active")
-    expect(recorded).toEqual({ woundDown: [], killed: [], forgotten: [], awaited: [] })
+    expect(recorded).toEqual({ woundDown: [], killed: [], forgotten: [], awaited: [], retired: [] })
   })
 
   test("the observer warmup holds back unmarked records only", async () => {
@@ -373,4 +396,18 @@ describe("reapArchivedWorktrees", () => {
     // 15-min socket backstop + 2x the 5-min grace.
     expect(REAP_AFTER_MS).toBe(25 * 60 * 1000)
   })
+})
+
+test("a wind-down that could not remove the directory keeps the identity record", async () => {
+  const { deps, recorded } = makeDeps({
+    windDown: () => ({ pushed: true, removed: false, reason: "detached HEAD" }),
+  })
+
+  const outcomes = await reapArchivedWorktrees(deps, false)
+
+  expect(outcomes[0]?.status).toBe("reaped, worktree left")
+  // The directory is still there and the identity is still its own. Retiring it
+  // would let the next mint hand that live directory a second id.
+  expect(recorded.retired).toEqual([])
+  expect(recorded.forgotten).toEqual(["ccs-abc"])
 })
