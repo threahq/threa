@@ -484,33 +484,36 @@ export function applyCacheBreakpoints(params: {
 /**
  * Put exactly ONE cache breakpoint on a message.
  *
- * A message-level breakpoint is not always one wire block. The provider expands
- * a `tool` message into one wire message per tool result, and a multi-part
- * `user` message into one block per part, copying the message-level
- * `cache_control` onto every one of them. A turn that calls four tools in a
- * single iteration therefore ends with four blocks on its tool message, and
- * Anthropic rejects the request outright at five (system + four):
+ * A message-level breakpoint is not always one wire block. `@openrouter/ai-sdk-provider`
+ * expands a `tool` message into one wire message PER RESULT and copies the
+ * message-level `cache_control` onto every one of them. A turn that calls four
+ * tools in a single iteration therefore ends with four blocks on its tool
+ * message, and Anthropic rejects the request outright at five (system + four):
  *
  *   AI_APICallError: A maximum of 4 blocks with cache_control may be provided.
  *
  * That is a hard 400 that kills the turn after the tools have already run and
  * written their state — the user sees a failed session that did everything.
  *
- * Marking the last content part instead yields one block for those roles, and
- * still caches the whole message: the provider reads a part's own
- * `providerOptions` when the message carries none. `assistant` and `system`
- * accumulate into a single wire message, so they stay marked at message level —
- * a part-level mark there would be read by nothing.
+ * Marking the last tool result instead yields one block and still caches the
+ * whole message: the provider reads a result's own `providerOptions` when the
+ * message carries none.
+ *
+ * `tool` is the ONLY role that needs this. `assistant` and `system` accumulate
+ * into a single wire message; a multi-part `user` message looks like it would
+ * fan out but does not — the provider applies the message-level mark to the
+ * last TEXT part only. Marking a part by hand for those roles would either be
+ * read by nothing or move the breakpoint off the block the provider chose.
  */
 function markOneCacheBlock(message: ModelMessage): ModelMessage {
-  const fansOut = message.role === "tool" || (message.role === "user" && Array.isArray(message.content))
-  if (!fansOut || !Array.isArray(message.content) || message.content.length === 0) {
+  const parts = message.content
+  if (message.role !== "tool" || !Array.isArray(parts) || parts.length === 0) {
     return { ...message, providerOptions: withCacheControl(message.providerOptions) } as ModelMessage
   }
 
-  const parts = message.content as Array<{ providerOptions?: ModelMessage["providerOptions"] }>
-  const marked = parts.map((part, index) =>
-    index === parts.length - 1 ? { ...part, providerOptions: withCacheControl(part.providerOptions) } : part
+  const results = parts as Array<{ providerOptions?: ModelMessage["providerOptions"] }>
+  const marked = results.map((part, index) =>
+    index === results.length - 1 ? { ...part, providerOptions: withCacheControl(part.providerOptions) } : part
   )
   return { ...message, content: marked } as ModelMessage
 }

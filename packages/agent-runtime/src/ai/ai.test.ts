@@ -271,13 +271,17 @@ describe("applyCacheBreakpoints", () => {
   const ANTHROPIC = "openrouter:anthropic/claude-sonnet-5"
   const EPHEMERAL = { openrouter: { cacheControl: { type: "ephemeral" } } }
 
-  /** Wire blocks Anthropic would count: message-level marks fan out per part. */
+  /**
+   * Wire blocks Anthropic would count. Only a `tool` message fans a
+   * message-level mark out per part — the provider gives a multi-part `user`
+   * message's mark to its last text part, and accumulates assistant/system into
+   * one wire message.
+   */
   const countCacheBlocks = (messages: unknown[]): number =>
     messages.reduce<number>((n, m) => {
       const msg = m as { role: string; content: unknown; providerOptions?: unknown }
       const parts = Array.isArray(msg.content) ? (msg.content as Array<{ providerOptions?: unknown }>) : null
-      const fansOut = msg.role === "tool" || (msg.role === "user" && parts !== null)
-      if (msg.providerOptions) return n + (fansOut && parts ? parts.length : 1)
+      if (msg.providerOptions) return n + (msg.role === "tool" && parts ? parts.length : 1)
       if (!parts) return n
       return n + parts.filter((p) => p.providerOptions).length
     }, 0)
@@ -307,7 +311,7 @@ describe("applyCacheBreakpoints", () => {
   // called in one iteration meant 4 blocks + system = 5, and Anthropic rejects
   // the request at 5 — a hard 400 that killed the turn after the tools had
   // already run and written their state.
-  it("marks one part, not the message, when a tool message would fan out", () => {
+  it("marks one tool result, not the message, when a tool message fans out", () => {
     const toolResults = [
       {
         type: "tool-result",
@@ -336,7 +340,11 @@ describe("applyCacheBreakpoints", () => {
     expect(countCacheBlocks(result.messages)).toBe(2)
   })
 
-  it("marks one part when a multi-part user message would fan out", () => {
+  // A multi-part user message looks like it would fan out and does not: the
+  // provider gives the message-level mark to the last TEXT part only. So it
+  // keeps the message-level mark, and marking a part by hand would move the
+  // breakpoint off the block the provider picked.
+  it("leaves a multi-part user message marked at message level", () => {
     const result = applyCacheBreakpoints({
       system: "You are Ariadne.",
       messages: [
@@ -351,6 +359,8 @@ describe("applyCacheBreakpoints", () => {
       modelString: ANTHROPIC,
     })
 
+    const user = result.messages.at(-1) as { providerOptions?: unknown }
+    expect(user.providerOptions).toEqual(EPHEMERAL)
     expect(countCacheBlocks(result.messages)).toBe(2)
   })
 
