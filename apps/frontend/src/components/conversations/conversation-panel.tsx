@@ -608,9 +608,16 @@ function ConversationPanelBody({
   // and the rail wins every id it holds (it carries live edits, reactions and
   // tombstones the snapshot predates). An either/or here let a stale snapshot
   // hide a message the browser already had in IDB.
+  // Union, but only while the rail is still incomplete: `useQuery` keeps serving
+  // cached `data` after `enabled` flips false, and an inactive query can't be
+  // refetched (v5 `refetchType: "active"`), so a completed rail merged with a
+  // frozen snapshot would keep rendering messages that left the conversation.
   let replies: RenderableMessage[]
-  if (allMessages) {
-    const railById = new Map(railReplies.map((m) => [m.id, m]))
+  if (allMessages && incompleteLocally) {
+    // Only a live rail wins an id. On `source === "projection"` `railReplies` is the
+    // cached board projection, which is never patched on edit or soft-delete — letting
+    // it win would render a deleted message's body over the fresh backfill row.
+    const railById = new Map(source === "events" ? railReplies.map((m) => [m.id, m] as const) : [])
     const merged = (allMessages as RenderableMessage[])
       .filter((m) => m.id !== openingMessage?.id)
       .map((m) => railById.get(m.id) ?? m)
@@ -890,7 +897,10 @@ function ConversationPanelBody({
 
   const { scrollContainerRef, handleScroll, isScrolledFarFromBottom, scrollToBottom, disableAutoScroll } =
     useScrollBehavior({
-      isLoading: loadingMore,
+      // The rows are gated on `revealed`, not on `loadingMore`: on the reveal-timeout
+      // path `loadingMore` is already false while only the skeleton is mounted, and
+      // the hook would spend its one initial pin against an empty container.
+      isLoading: loadingMore || !revealed,
       itemCount: rows.length,
       resetKey: conversation.id,
       // Only treat the user as "at the bottom" when they are essentially flush, so

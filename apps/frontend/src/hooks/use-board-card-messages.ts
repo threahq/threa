@@ -834,7 +834,10 @@ export function useBoardCardMessages(
     // rendered yet, keep showing the retained copy in its place. `bridgeCount`
     // shrinks to zero as the live rows render, so the retained copy never
     // double-renders alongside its confirmed twin, and is forgotten once covered.
-    const bridgeCount = pendingReplies === NO_PENDING ? Math.max(0, retained.length - liveReplies.length) : 0
+    // Tombstones are render-only rows: they can't cover a retained copy, so they
+    // must not count against the bridge either.
+    const liveUndeletedCount = liveReplies.reduce((n, m) => (m.deletedAt ? n : n + 1), 0)
+    const bridgeCount = pendingReplies === NO_PENDING ? Math.max(0, retained.length - liveUndeletedCount) : 0
     const replies =
       bridgeCount > 0
         ? [...liveReplies, ...retained.slice(retained.length - bridgeCount)].sort(
@@ -864,9 +867,7 @@ export function useBoardCardMessages(
     if (baseline) for (const id of replyIds) if (!rail.seen.has(id) && !baseline.has(id)) episodeArrivals++
     const covered = Math.min(pendingReplies.length, episodeArrivals)
     const undeletedReplyCount = replies.reduce((n, m) => (m.deletedAt ? n : n + 1), 0)
-    const totalReplies = fullySynced
-      ? liveReplies.reduce((n, m) => (m.deletedAt ? n : n + 1), 0)
-      : Math.max(serverTotal - covered, undeletedReplyCount)
+    const totalReplies = fullySynced ? liveUndeletedCount : Math.max(serverTotal - covered, undeletedReplyCount)
 
     // Retain a fresh pending row; keep the retained copy while it's still bridging;
     // forget it once the live rows cover it.

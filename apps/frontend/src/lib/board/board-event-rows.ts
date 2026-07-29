@@ -1,4 +1,4 @@
-import { STREAM_ROW_SPEC, type DelegationStatusChangedEventPayload } from "@threa/types"
+import { STREAM_ROW_SPEC, type DelegationStatusChangedEventPayload, type MemosCapturedEventPayload } from "@threa/types"
 import type { CachedEvent } from "@/db"
 import { getSessionId, getSessionSlotKey, getTriggerMessageId } from "@/components/timeline/session-grouping"
 
@@ -90,6 +90,19 @@ export function resolveBoardEventRows(events: CachedEvent[], ctx: ResolveBoardEv
     } else if (ref === "source-conversation") {
       const payload = event.payload as { conversationId?: string; sourceConversationId?: string }
       const target = payload?.conversationId ?? payload?.sourceConversationId ?? null
+      if (event.eventType === "memos:captured" && target === null) {
+        // A memo saved before its source message was assigned to a conversation
+        // carries no conversation id, and the event payload is immutable — placing
+        // it by provenance is the only way it ever lands. Same rule the session rows
+        // use, so it stays a single membership test.
+        const memos = (event.payload as MemosCapturedEventPayload | undefined)?.memos ?? []
+        const belongs = memos.some((memo) =>
+          memo.sourceMessageIds.some((messageId) => ctx.memberMessageIds.has(messageId))
+        )
+        if (!belongs) continue
+        rows.push({ kind: "memo", key: event.id, sortMs: timeMs(event), streamId: event.streamId, event })
+        continue
+      }
       if (target !== ctx.conversationId) continue
       if (event.eventType === "memos:captured") {
         rows.push({ kind: "memo", key: event.id, sortMs: timeMs(event), streamId: event.streamId, event })

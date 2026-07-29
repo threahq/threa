@@ -252,6 +252,33 @@ describe("useBoardCardMessages", () => {
     expect(result.current.totalReplies).toBe(1)
   })
 
+  it("bridges the convert-to-thread reply even when the conversation's other replies are tombstones", async () => {
+    // A tombstone is a render-only row: it can't cover the retained optimistic copy,
+    // so counting it against the bridge blinks the reply out during the hand-off.
+    await db.events.bulkPut([
+      msgEvent("m1", "the opening", 1, STREAM),
+      {
+        ...msgEvent("d1", "deleted reply", 2, STREAM),
+        payload: { messageId: "d1", contentMarkdown: "", reactions: {}, deletedAt: new Date(2).toISOString() },
+      } as CachedEvent,
+    ])
+    const base = makePost({ messageIds: ["m1", "d1"], openingId: "m1", streamIds: [STREAM] })
+    const { result, rerender } = renderHook((p: BoardViewPost) => useBoardCardMessages(p, "channel"), {
+      initialProps: base,
+    })
+    await waitFor(() => expect(result.current.source).toBe("events"))
+
+    await db.events.put(pendingReply("temp_d", "my convert reply"))
+    rerender({ ...base } as BoardViewPost)
+    await waitFor(() =>
+      expect([...result.current.replies, ...result.current.pendingReplies].map((m) => m.id)).toContain("temp_d")
+    )
+
+    await db.events.delete("temp_d")
+    rerender(makePost({ messageIds: ["m1", "d1", "msg_real_d"], openingId: "m1", streamIds: [STREAM] }))
+    await waitFor(() => expect(result.current.replies.map((m) => m.contentMarkdown)).toContain("my convert reply"))
+  })
+
   it("keeps a reply continuously visible across the optimistic→echo→messageIds hand-off (no blink-out)", async () => {
     await db.events.bulkPut([msgEvent("m1", "the opening", 1), msgEvent("r1", "first reply", 2)])
     const post = makePost({ messageIds: ["m1", "r1"], openingId: "m1" })

@@ -134,6 +134,42 @@ function installScrollMetrics({ scrollHeight = 1000, clientHeight = 300 } = {}) 
   }
 }
 
+/**
+ * Like `installScrollMetrics`, but `scrollHeight` FOLLOWS what is painted: the
+ * skeleton box while no message row exists, the tall list once one does. The
+ * constant-height helper above cannot see a pin taken against an empty container
+ * — it reports the full height either way — so the reveal-gate regression is
+ * untestable without this.
+ */
+function installContentAwareScrollMetrics({ skeletonHeight = 300, contentHeight = 3000, clientHeight = 300 } = {}) {
+  const tops = new WeakMap<HTMLElement, number>()
+  const descriptors = {
+    scrollHeight: Object.getOwnPropertyDescriptor(HTMLElement.prototype, "scrollHeight"),
+    clientHeight: Object.getOwnPropertyDescriptor(HTMLElement.prototype, "clientHeight"),
+    scrollTop: Object.getOwnPropertyDescriptor(HTMLElement.prototype, "scrollTop"),
+  }
+  Object.defineProperty(HTMLElement.prototype, "scrollHeight", {
+    configurable: true,
+    get: () => (document.querySelector("[data-message-id]") ? contentHeight : skeletonHeight),
+  })
+  Object.defineProperty(HTMLElement.prototype, "clientHeight", { configurable: true, get: () => clientHeight })
+  Object.defineProperty(HTMLElement.prototype, "scrollTop", {
+    configurable: true,
+    get(this: HTMLElement) {
+      return tops.get(this) ?? 0
+    },
+    set(this: HTMLElement, value: number) {
+      tops.set(this, value)
+    },
+  })
+  return () => {
+    for (const [name, descriptor] of Object.entries(descriptors)) {
+      if (descriptor) Object.defineProperty(HTMLElement.prototype, name, descriptor)
+      else delete (HTMLElement.prototype as unknown as Record<string, unknown>)[name]
+    }
+  }
+}
+
 function scroller(): HTMLElement {
   const el = document.querySelector<HTMLElement>(".overflow-y-auto")
   if (!el) throw new Error("panel scroller not found")
@@ -762,6 +798,29 @@ describe("ConversationPanel", () => {
     }
   })
 
+  it("opens at the tail even when the reveal comes from the 1500ms escape", async () => {
+    // INV-62 undecidable read state: the rows stay behind the skeleton for the whole
+    // reveal timeout while the backfill is already done. A scroll pin taken on that
+    // window measures the skeleton, and the hook only pins once — the conversation
+    // then opens at its OLDEST message.
+    vi.spyOn(workspaceStoreModule, "useWorkspaceUnreadState").mockReturnValue({
+      workspaceId: WORKSPACE_ID,
+      readMessageIds: {},
+      unreadCounts: {},
+      _cachedAt: 0,
+    } as never)
+    vi.spyOn(workspaceStoreModule, "useWorkspaceStreamReadStates").mockReturnValue([] as never)
+    const restore = installContentAwareScrollMetrics()
+    try {
+      mountPanel({ cached: asCached(makePost()) })
+      await screen.findByText("Reply two body.", undefined, { timeout: 5000 })
+
+      await waitFor(() => expect(scroller().scrollTop).toBe(3000), { timeout: 5000 })
+    } finally {
+      restore()
+    }
+  })
+
   it("lets the ?m= deep link win over the unread marker", async () => {
     installReadState({ lastReadAt: "2026-06-22T11:30:00.000Z" })
     const restore = installScrollMetrics()
@@ -1235,6 +1294,62 @@ describe("ConversationPanel backfill merge", () => {
 
     expect(await screen.findByText("Live reply the snapshot predates.")).toBeTruthy()
     expect(screen.getByText("Reply two body.")).toBeTruthy()
+  })
+
+  it("drops the cached snapshot once the rail is complete", async () => {
+    // `useQuery` keeps serving `data` after `enabled` flips false, and an inactive
+    // query can't be refetched — so a snapshot unioned in forever keeps rendering a
+    // message that has since left the conversation.
+    const post = makePost()
+    post.conversation.messageIds = ["msg_1", "msg_2", "msg_3"]
+    post.totalReplies = 2
+    await db.events.bulkPut([
+      cachedMessageEvent("msg_1", "Opening message body.", 10),
+      cachedMessageEvent("msg_2", "Reply two body.", 20),
+    ])
+    mountPanel({
+      cached: asCached(post),
+      getBoardMessages: async () => [
+        makeMessage({ id: "msg_2", contentMarkdown: "Reply two body.", createdAt: "2026-06-22T12:00:20.000Z" }),
+        makeMessage({ id: "msg_9", contentMarkdown: "Moved away.", createdAt: "2026-06-22T12:00:40.000Z" }),
+      ],
+    })
+    expect(await screen.findByText("Moved away.")).toBeTruthy()
+
+    // The rail catches up: every member is local, so the snapshot has nothing left
+    // to fill and its stale extra must stop rendering.
+    await act(async () => {
+      await db.events.bulkPut([cachedMessageEvent("msg_3", "Reply three body.", 30)])
+    })
+    expect(await screen.findByText("Reply three body.")).toBeTruthy()
+    await waitFor(() => expect(screen.queryByText("Moved away.")).toBeNull())
+  })
+
+  it("does not let the cached board projection shadow the backfill's tombstone", async () => {
+    // No rail rows at all: `source` is "projection", so `railReplies` IS the board
+    // store's frozen `recentMessages` — never patched on edit or soft-delete. It
+    // must not win an id over the freshly fetched row, or the panel renders a
+    // deleted message's body (the leak #1650 closes).
+    const post = postWithDeletedReply()
+    post.recentMessages = [
+      makeMessage({ id: "msg_2", contentMarkdown: "Reply two body.", createdAt: "2026-06-22T12:00:20.000Z" }),
+      makeMessage({ id: "msg_3", contentMarkdown: "The deleted body.", createdAt: "2026-06-22T12:00:30.000Z" }),
+    ]
+    mountPanel({
+      cached: asCached({ ...post, totalReplies: 2 }),
+      getBoardMessages: async () => [
+        makeMessage({ id: "msg_2", contentMarkdown: "Reply two body.", createdAt: "2026-06-22T12:00:20.000Z" }),
+        makeMessage({
+          id: "msg_3",
+          contentMarkdown: "",
+          createdAt: "2026-06-22T12:00:30.000Z",
+          deletedAt: "2026-06-22T12:05:00.000Z",
+        }),
+      ],
+    })
+
+    expect(await screen.findByText("This message was deleted")).toBeTruthy()
+    expect(screen.queryByText("The deleted body.")).toBeNull()
   })
 })
 
