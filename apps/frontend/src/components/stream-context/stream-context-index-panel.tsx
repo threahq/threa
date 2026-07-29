@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import type { VirtualizerHandle } from "virtua"
 import { ChevronDown, ChevronRight, Search, WifiOff, X } from "lucide-react"
-import { toast } from "sonner"
 import { streamContextApi } from "@/api"
 import { useIsOnline } from "@/components/layout/connection-status"
 import { extractSearchTerms } from "@/components/search/highlight"
@@ -16,7 +15,7 @@ import { contextItemFromCached } from "@/lib/stream-context/from-cached"
 import { collapseContextRows, countByCategory, filterContextRows } from "@/lib/stream-context/filter"
 import type { ContextCategory, ContextItem } from "@/lib/stream-context/types"
 import { localStartOfDayMs } from "@/lib/dates"
-import { markerIndexForDate } from "@/lib/stream-context/grouping"
+import { markerIndexForDate, oldestMarkerIndex } from "@/lib/stream-context/grouping"
 import { cn } from "@/lib/utils"
 import {
   contextGroupRef,
@@ -179,7 +178,9 @@ export function StreamContextIndexPanel(props: StreamContextPanelProps) {
   const jumpToDate = useCallback(
     async (date: Date) => {
       const endOfDayMs = localStartOfDayMs(date) + DAY_MS
-      let index = markerIndexForDate(items, endOfDayMs, new Date())
+      const now = new Date()
+      let candidates = items
+      let index = markerIndexForDate(candidates, endOfDayMs, now)
       // Paging to an unloaded date is several round trips; without this the
       // panel just sits there. Only set it when a fetch is actually needed, so
       // the common in-window jump stays instant and flicker-free.
@@ -202,20 +203,17 @@ export function StreamContextIndexPanel(props: StreamContextPanelProps) {
             after,
           })
         )
-        index = markerIndexForDate(
-          rebuilt.map(contextItemFromCached).filter((item): item is ContextItem => item !== null),
-          endOfDayMs,
-          new Date()
-        )
+        candidates = rebuilt.map(contextItemFromCached).filter((item): item is ContextItem => item !== null)
+        index = markerIndexForDate(candidates, endOfDayMs, now)
       }
       setJumping(false)
-      if (index === -1) {
-        // Same wording the timeline's date jump uses for the same dead end, so
-        // the two surfaces fail identically (INV-63: this needs attention and
-        // has no on-screen anchor of its own).
-        toast.info("Nothing indexed on or before that date")
-        return
-      }
+      // Past the start of history — either the stream's, or as far as the page
+      // bound reached. Travel to the oldest thing there is: asking for a year
+      // ago means "as far back as you can go", not "refuse unless you find that
+      // exact day". Only a genuinely empty list has nowhere to go, and its
+      // empty state already says so.
+      if (index === -1) index = oldestMarkerIndex(candidates, now)
+      if (index === -1) return
       listRef.current?.scrollToIndex(index, { align: "start" })
       // The marker that opened the menu is usually windowed out by the jump, so
       // Radix's focus-return lands on a removed node and focus falls to <body>.

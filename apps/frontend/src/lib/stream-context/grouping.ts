@@ -64,3 +64,20 @@ export function markerIndexForDate(items: ContextItem[], endOfDayMs: number, now
   }
   return -1
 }
+
+/**
+ * Flat index of the OLDEST day marker, or `-1` when there are no items.
+ *
+ * Where a jump lands once it runs past the start of history: asking for a year
+ * ago means "as far back as you can go", so the list travels to its own
+ * beginning rather than refusing to move.
+ */
+export function oldestMarkerIndex(items: ContextItem[], now: Date): number {
+  let markerIndex = -1
+  let flatIndex = 0
+  for (const group of groupItemsByDay(items, now)) {
+    markerIndex = flatIndex
+    flatIndex += 1 + group.items.length
+  }
+  return markerIndex
+}
