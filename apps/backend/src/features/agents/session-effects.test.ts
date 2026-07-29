@@ -55,6 +55,19 @@ describe("collectSessionEffects", () => {
     ).toHaveLength(2)
   })
 
+  // Three writes to the same key where the middle pair cancels: the session
+  // still went from light to system, and folding the drop into the loop would
+  // have erased the starting value before the third write merged.
+  test("keeps the true starting value across an intermediate round-trip", () => {
+    expect(
+      collectSessionEffects([
+        step({ kind: "settings", target: "theme", before: "light", after: "dark" }),
+        step({ kind: "settings", target: "theme", before: "dark", after: "light" }),
+        step({ kind: "settings", target: "theme", before: "light", after: "system" }),
+      ])
+    ).toEqual([{ kind: "settings", target: "theme", before: "light", after: "system" }])
+  })
+
   test("caps the aggregate", () => {
     const many = Array.from({ length: EFFECTS_PER_SESSION_MAX + 10 }, (_, i) =>
       step({ kind: "memo" as const, target: `memo_${i}` })
@@ -66,7 +79,7 @@ describe("collectSessionEffects", () => {
   // A later write to something already collected must still merge once the cap
   // is reached — otherwise the cap would freeze a stale `after`.
   test("still merges into an existing entry after the cap is reached", () => {
-    const filler = Array.from({ length: EFFECTS_PER_SESSION_MAX, ...{} }, (_, i) =>
+    const filler = Array.from({ length: EFFECTS_PER_SESSION_MAX }, (_, i) =>
       step({ kind: "memo" as const, target: `memo_${i}` })
     )
     const result = collectSessionEffects([

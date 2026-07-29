@@ -36,13 +36,18 @@ export function collectSessionEffects(steps: StepWithEffects[]): AgentToolEffect
       const first = collected[existingIndex]!
       const merged: AgentToolEffect = { ...first }
       if (effect.after !== undefined) merged.after = effect.after
-      if (merged.before !== undefined && merged.before === merged.after) {
-        delete merged.before
-        delete merged.after
-      }
       collected[existingIndex] = merged
     }
   }
 
-  return collected
+  // Dropping a cancelled-out diff has to wait until every write is folded in.
+  // Doing it during the fold deletes `before` on an intermediate round-trip, and
+  // a later write to the same key then merges against an entry with no starting
+  // value: light→dark, dark→light, light→system would end as "→ system" instead
+  // of "light → system".
+  return collected.map((effect) => {
+    if (effect.before === undefined || effect.before !== effect.after) return effect
+    const { before: _b, after: _a, ...rest } = effect
+    return rest
+  })
 }
