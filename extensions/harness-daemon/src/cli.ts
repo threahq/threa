@@ -21,7 +21,7 @@ Usage:
   threa-harnessd reconnect <runtime-session-id> --root-stream-id <stream-id> [--force]
   threa-harnessd adopt <runtime-session-id> --root-stream-id <stream-id>
       [--cwd <path>] [--name <name>] [--claude-session-id <uuid>] [--tmux <session>]
-      [--dry-run] [--force] [--no-yolo]
+      [--dry-run] [--force] [--no-yolo | --yolo]
   threa-harnessd stop <agent-id-or-name>
   threa-harnessd kick <agent-id-or-name-or-runtime-session-id>
   threa-harnessd interrupt <agent-id-or-name>
@@ -148,6 +148,9 @@ export function parseAdopt(args: string[]): AdoptOptions {
     if (!ADOPT_FLAGS.has(key)) die(`unexpected adopt argument: --${key}`)
   }
   const cwd = stringFlag(flags, "cwd")
+  const yolo = boolFlag(flags, "yolo")
+  const noYolo = boolFlag(flags, "no-yolo")
+  if (yolo && noYolo) die("adopt accepts --yolo or --no-yolo, not both")
   return {
     runtimeSessionId,
     rootStreamId: stringFlag(flags, "root-stream-id") ?? die("adopt requires --root-stream-id <stream-id>"),
@@ -157,7 +160,8 @@ export function parseAdopt(args: string[]): AdoptOptions {
     tmux: stringFlag(flags, "tmux"),
     dryRun: boolFlag(flags, "dry-run"),
     force: boolFlag(flags, "force"),
-    noYolo: boolFlag(flags, "no-yolo") || undefined,
+    noYolo: noYolo || undefined,
+    yolo: yolo || undefined,
   }
 }
 
@@ -170,6 +174,7 @@ const ADOPT_FLAGS = new Set([
   "dry-run",
   "force",
   "no-yolo",
+  "yolo",
 ])
 
 export function parseResolve(args: string[]): string | undefined {
