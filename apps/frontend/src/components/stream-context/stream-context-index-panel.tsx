@@ -15,7 +15,7 @@ import { contextItemFromCached } from "@/lib/stream-context/from-cached"
 import { collapseContextRows, countByCategory, filterContextRows } from "@/lib/stream-context/filter"
 import type { ContextCategory, ContextItem } from "@/lib/stream-context/types"
 import { localStartOfDayMs } from "@/lib/dates"
-import { markerIndexForDate, oldestMarkerIndex } from "@/lib/stream-context/grouping"
+import { markerIndexForDate, oldestItemIndex } from "@/lib/stream-context/grouping"
 import { cn } from "@/lib/utils"
 import {
   contextGroupRef,
@@ -212,7 +212,7 @@ export function StreamContextIndexPanel(props: StreamContextPanelProps) {
       // ago means "as far back as you can go", not "refuse unless you find that
       // exact day". Only a genuinely empty list has nowhere to go, and its
       // empty state already says so.
-      if (index === -1) index = oldestMarkerIndex(candidates, now)
+      if (index === -1) index = oldestItemIndex(candidates, now)
       if (index === -1) return
       listRef.current?.scrollToIndex(index, { align: "start" })
       // The marker that opened the menu is usually windowed out by the jump, so

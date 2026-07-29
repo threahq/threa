@@ -556,7 +556,7 @@ describe("StreamContextPanel — flag on", () => {
     await waitFor(() => expect(scrollToIndex).toHaveBeenCalledWith(2, { align: "start" }))
   })
 
-  it("lands on the oldest day when the picked date is older than the whole stream", async () => {
+  it("lands on the oldest artifact when the picked date is older than the whole stream", async () => {
     const scrollToIndex = vi.fn()
     vi.spyOn(streamContextListModule, "StreamContextList").mockImplementation(({ children, listRef }) => {
       if (listRef) (listRef as { current: unknown }).current = { scrollToIndex }
@@ -588,9 +588,11 @@ describe("StreamContextPanel — flag on", () => {
     // By label, not text: with two rows a count chip also renders "2".
     await userEvent.click(await screen.findByRole("button", { name: /July 2nd/ }))
 
-    // Travels as far back as the stream goes — the 18th's marker at flat index
-    // 2 — instead of refusing because the 2nd itself holds nothing.
-    await waitFor(() => expect(scrollToIndex).toHaveBeenCalledWith(2, { align: "start" }))
+    // Travels as far back as the stream goes — the OLDEST ROW, flat index 3 of
+    // [marker, row, marker, row] — instead of refusing because the 2nd holds
+    // nothing, and instead of that day's marker, which on a busy day leaves the
+    // user hundreds of rows above what they asked for.
+    await waitFor(() => expect(scrollToIndex).toHaveBeenCalledWith(3, { align: "start" }))
     // One page fetched, one re-read. The bound is MAX_JUMP_PAGES (10), so a
     // loop trusting the stale snapshot re-reads ten times to reach the same
     // end of history.

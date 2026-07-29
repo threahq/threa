@@ -3,7 +3,7 @@ import type { VirtualizerHandle } from "virtua"
 import { useStreamEvents } from "@/stores/stream-store"
 import { useStreamDelegations } from "@/hooks/use-stream-delegations"
 import { localStartOfDayMs } from "@/lib/dates"
-import { markerIndexForDate, oldestMarkerIndex } from "@/lib/stream-context/grouping"
+import { markerIndexForDate, oldestItemIndex } from "@/lib/stream-context/grouping"
 import { deriveStreamContext } from "@/lib/stream-context/derive"
 import { delegationContextItems, withDelegations } from "@/lib/stream-context/delegations"
 import { StreamContextRow } from "./stream-context-row"
@@ -79,7 +79,7 @@ export function StreamContextDerivedPanel({
       // rather than refusing (this path never pages, so its start of history is
       // the window's).
       let index = markerIndexForDate(visible, localStartOfDayMs(date) + DAY_MS, now)
-      if (index === -1) index = oldestMarkerIndex(visible, now)
+      if (index === -1) index = oldestItemIndex(visible, now)
       if (index === -1) return
       listRef.current?.scrollToIndex(index, { align: "start" })
       scrollerRef.current?.focus({ preventScroll: true })
