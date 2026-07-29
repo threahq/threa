@@ -157,10 +157,30 @@ function decideWindow(link: HarnessLink, panes: LocalTmuxPane[], deps: ReapDeps)
   const occupants = panes.filter((pane) => deps.canonicalPath(pane.cwd) === worktree)
   const livePids = deps.claudeProcessesIn(link.worktree)
 
-  // Ranking the rungs is right for a read and wrong here: a minted record that
-  // outranks an ambiguous ledger would resolve a pane declaring nothing to THIS
-  // record's session, and the branch below would then kill that window and
-  // force-remove the directory a live, differently-identified Claude is using.
+  if (occupants.length === 0) {
+    // Nobody is in the worktree: the offline case this reaper exists for —
+    // unless a paneless Claude is still running there.
+    if (livePids.length === 0) return { kind: "none" }
+    return {
+      kind: "refuse",
+      status: "skipped occupied",
+      reason: `Claude is still running in ${link.worktree} with no pane (pid ${livePids.join(", ")})`,
+    }
+  }
+
+  // Something is alive in there, so identity now decides whether killing it is
+  // this record's business. Ranking the rungs is right for a read and wrong
+  // here: a minted record that outranks an ambiguous ledger would resolve a pane
+  // declaring nothing to THIS record's session, and the branch below would kill
+  // that window and force-remove the directory a live, differently-identified
+  // Claude is using.
+  //
+  // Deliberately BELOW the empty branch. Duplicate records come from
+  // `recordHarnessLink` superseding by raw string compare while every reader
+  // canonicalizes, so one trailing slash creates this state — and refusing an
+  // EMPTY worktree would wedge it out of reaping forever, because `reapLink` is
+  // the only thing that clears a record. Nothing is at risk when nothing is
+  // there, and reaping one record per pass is what resolves the duplication.
   const conflict = conflictingAttestations(
     link.worktree,
     attestedRuntimes(deps.links(), deps.canonicalPath),
@@ -172,17 +192,6 @@ function decideWindow(link: HarnessLink, panes: LocalTmuxPane[], deps: ReapDeps)
       kind: "refuse",
       status: "skipped ambiguous",
       reason: `identity evidence for ${link.worktree} disagrees: ${conflict.join(", ")}`,
-    }
-  }
-
-  if (occupants.length === 0) {
-    // Nobody is in the worktree: the offline case this reaper exists for —
-    // unless a paneless Claude is still running there.
-    if (livePids.length === 0) return { kind: "none" }
-    return {
-      kind: "refuse",
-      status: "skipped occupied",
-      reason: `Claude is still running in ${link.worktree} with no pane (pid ${livePids.join(", ")})`,
     }
   }
 

@@ -280,7 +280,7 @@ export async function adoptClaudeSessionUnlocked(options: AdoptOptions, deps: Ad
   // target NOTHING on this machine binds to this directory.
   const derived = resolveRuntimeIdentity(cwd, {}, config)
   const launch = pane ? parseClaudeChannelLaunch(pane.startCommand) : undefined
-  const minted = identityRecordsFor(cwd, identities, deps.disk.canonical).filter(
+  const minted = identityRecordsFor(cwd, identities, (path) => canonicalOrRaw(path, deps.disk.canonical)).filter(
     (record) => record.runtimeSessionId === options.runtimeSessionId
   )
   const attestations: Array<{ source: string; instanceId?: string }> = []

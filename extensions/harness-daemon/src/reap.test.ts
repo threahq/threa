@@ -471,13 +471,12 @@ test("the window decision uses the injected ledger and canonicalizer", async () 
   expect(canonicalized).toContain(`/raw${WORKTREE}`)
 })
 
-test("a worktree two link records disagree about is never reaped", async () => {
+test("an occupied worktree two link records disagree about is never reaped", async () => {
   // recordHarnessLink supersedes by a RAW string compare while every reader
   // canonicalizes, so a trailing slash leaves both records alive. The mint
   // refuses on this state; so must the one pass that removes a directory.
   const { deps, recorded } = makeDeps({
     links: () => [link({ runtimeSessionId: "ccs-abc" }), link({ runtimeSessionId: "ccs-xyz" })],
-    panes: () => [],
   })
 
   const outcomes = await reapArchivedWorktrees(deps)
@@ -485,6 +484,20 @@ test("a worktree two link records disagree about is never reaped", async () => {
   expect(outcomes.map((outcome) => outcome.status)).toEqual(["skipped ambiguous", "skipped ambiguous"])
   expect(outcomes[0]?.detail).toContain("disagrees")
   expect(recorded).toEqual({ woundDown: [], killed: [], forgotten: [], awaited: [], retired: [] })
+})
+
+test("disagreeing records do not wedge an EMPTY worktree out of reaping", async () => {
+  // reapLink is the only thing that clears a record, so refusing here would
+  // strand the directory forever — and nothing is at risk when nothing is in it.
+  const { deps, recorded } = makeDeps({
+    links: () => [link({ runtimeSessionId: "ccs-abc" }), link({ runtimeSessionId: "ccs-xyz" })],
+    panes: () => [],
+  })
+
+  const outcomes = await reapArchivedWorktrees(deps)
+
+  expect(outcomes.map((outcome) => outcome.status)).toEqual(["reaped", "reaped"])
+  expect(recorded.forgotten).toEqual(["ccs-abc", "ccs-xyz"])
 })
 
 test("a minted record naming the worktree a different session claims blocks the reap", async () => {
