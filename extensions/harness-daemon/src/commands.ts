@@ -1,5 +1,10 @@
 import { randomUUID } from "node:crypto"
-import { BotSupervisorTransport, type BotSessionRestoredPayload } from "@threa/bot-runtime-client"
+import {
+  BotSupervisorTransport,
+  readHarnessLinks,
+  type BotSessionRestoredPayload,
+  type HarnessLink,
+} from "@threa/bot-runtime-client"
 import { existsSync } from "node:fs"
 import { basename, dirname, join } from "node:path"
 import { installBootResume } from "./boot"
@@ -625,8 +630,12 @@ function agentPaneLives(agent: ManagedAgent): boolean {
  * stored ids are a tie-breaker, never the answer, so there is nothing to
  * repair.
  */
-function resolveAgentTarget(agent: ManagedAgent, panes?: LocalTmuxPane[]): LocalTmuxPane {
-  const resolved = panes ? resolveManagedAgentPane(agent, panes) : resolveManagedAgentPane(agent)
+function resolveAgentTarget(
+  agent: ManagedAgent,
+  panes?: LocalTmuxPane[],
+  links: () => HarnessLink[] = readHarnessLinks
+): LocalTmuxPane {
+  const resolved = resolveManagedAgentPane(agent, panes, undefined, undefined, links)
   if (resolved.status === "ambiguous") die(`${agent.name}: ${resolved.reason}`)
   if (resolved.status === "missing") die(`${agent.name} has no live tmux pane`)
   // Killing or typing into the wrong window is the failure this resolver
@@ -640,11 +649,12 @@ export function kickAgent(
   ref: string,
   send: typeof sendKeys = sendKeys,
   discover: (runtimeSessionId: string) => LocalTmuxPane | undefined = findLocalClaudeChannelPane,
-  panes?: LocalTmuxPane[]
+  panes?: LocalTmuxPane[],
+  links: () => HarnessLink[] = readHarnessLinks
 ): void {
   const managed = findAgentOrUndefined(ref, readInventoryReadonly())
   if (managed) {
-    const target = resolveAgentTarget(managed, panes).paneId
+    const target = resolveAgentTarget(managed, panes, links).paneId
     send(target, ["Enter"])
     console.log(`harnessd: kicked ${target}`)
     return

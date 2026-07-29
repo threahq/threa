@@ -1,4 +1,8 @@
 import { describe, expect, test } from "bun:test"
+import { mkdirSync, mkdtempSync, realpathSync, symlinkSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
+import type { HarnessLink } from "@threa/bot-runtime-client"
 import { deriveClaudeRuntimeIdentity } from "./spawners"
 import {
   findLocalClaudeChannelPane,
@@ -22,6 +26,21 @@ function pane(overrides: Partial<LocalTmuxPane> = {}): LocalTmuxPane {
     ...overrides,
   }
 }
+
+function link(overrides: Partial<HarnessLink> = {}): HarnessLink {
+  return {
+    runtimeKind: "claude-code-channel",
+    runtimeSessionId: "ccs-real",
+    instanceId: "cc-real",
+    rootStreamId: "stream_real",
+    worktree: "/Users/me/dev/threa.feature",
+    pid: 33336,
+    updatedAt: "2026-07-28T00:00:00.000Z",
+    ...overrides,
+  }
+}
+
+const noLinks = () => []
 
 describe("parseTmuxPanes", () => {
   test("keeps live panes and their start command", () => {
@@ -112,7 +131,7 @@ describe("findLocalClaudeChannelPane", () => {
     const candidate = pane()
 
     expect(deriveClaudeRuntimeIdentity(candidate.cwd, {}, "host-a").runtimeSessionId).toBe("ccs-4dca54f22ee90414")
-    expect(findLocalClaudeChannelPane("ccs-4dca54f22ee90414", [candidate], {}, "host-a")).toEqual(candidate)
+    expect(findLocalClaudeChannelPane("ccs-4dca54f22ee90414", [candidate], {}, "host-a", noLinks)).toEqual(candidate)
   })
 
   test("prefers and normalizes the runtime session id explicitly recorded in the launch command", () => {
@@ -121,7 +140,7 @@ describe("findLocalClaudeChannelPane", () => {
         '"env THREA_INSTANCE_ID=cc-one THREA_RUNTIME_SESSION_ID=ccs.explicit claude --dangerously-load-development-channels server:threa-channel"',
     })
 
-    expect(findLocalClaudeChannelPane("ccs-explicit", [candidate], {}, "other-host")).toEqual(candidate)
+    expect(findLocalClaudeChannelPane("ccs-explicit", [candidate], {}, "other-host", noLinks)).toEqual(candidate)
   })
 
   test("rejects non-channel, renamed legacy-channel, and non-Claude panes", () => {
@@ -135,7 +154,7 @@ describe("findLocalClaudeChannelPane", () => {
     ]
 
     expect(
-      findLocalClaudeChannelPane("ccs-target", candidates, { runtimeSessionId: "ccs-target" }, "host-a")
+      findLocalClaudeChannelPane("ccs-target", candidates, { runtimeSessionId: "ccs-target" }, "host-a", noLinks)
     ).toBeUndefined()
   })
 
@@ -145,7 +164,8 @@ describe("findLocalClaudeChannelPane", () => {
         "ccs-shared",
         [pane(), pane({ paneId: "%9", panePid: 44444, cwd: "/Users/me/dev/threa.other" })],
         { runtimeSessionId: "ccs-shared" },
-        "host-a"
+        "host-a",
+        noLinks
       )
     ).toThrow("multiple live unmanaged Claude channel panes match ccs-shared: %8, %9")
   })
@@ -179,7 +199,8 @@ describe("resolveManagedAgentPane", () => {
       },
       [pane({ cwd: "/Users/me/dev/threa.other", windowId: "@7", paneId: "%8" }), live],
       config,
-      host
+      host,
+      noLinks
     )
     expect(resolved).toEqual({ status: "found", pane: live })
   })
@@ -215,5 +236,78 @@ describe("resolveManagedAgentPane", () => {
     expect(resolveManagedAgentPane({ runtime: "claude", tmuxPaneId: "%404" }, [live], config, host)).toEqual({
       status: "missing",
     })
+  })
+})
+
+describe("findLocalClaudeChannelPane ledger attestation", () => {
+  test("a pane launched without THREA_ env is identified by its harness link record", () => {
+    const candidate = pane()
+
+    expect(deriveClaudeRuntimeIdentity(candidate.cwd, {}, "host-a").runtimeSessionId).not.toBe("ccs-real")
+    expect(findLocalClaudeChannelPane("ccs-real", [candidate], {}, "host-a", () => [link()])).toEqual(candidate)
+  })
+
+  test("a declared runtime session id wins over the ledger", () => {
+    const candidate = pane({
+      startCommand:
+        '"env THREA_RUNTIME_SESSION_ID=ccs-declared claude --dangerously-load-development-channels server:threa-channel"',
+    })
+    const links = () => [link({ runtimeSessionId: "ccs-other", worktree: candidate.cwd })]
+
+    expect(findLocalClaudeChannelPane("ccs-declared", [candidate], {}, "host-a", links)).toEqual(candidate)
+    expect(findLocalClaudeChannelPane("ccs-other", [candidate], {}, "host-a", links)).toBeUndefined()
+  })
+
+  test("falls back to the derived identity when no record names the cwd", () => {
+    const candidate = pane()
+    const links = () => [link({ worktree: "/Users/me/dev/threa.somebody-else" })]
+
+    expect(findLocalClaudeChannelPane("ccs-real", [candidate], {}, "host-a", links)).toBeUndefined()
+    expect(findLocalClaudeChannelPane("ccs-4dca54f22ee90414", [candidate], {}, "host-a", links)).toEqual(candidate)
+  })
+
+  test("two records naming one worktree fall through to derivation rather than guessing", () => {
+    const candidate = pane()
+    const links = () => [link(), link({ runtimeSessionId: "ccs-rival", instanceId: "cc-rival" })]
+
+    expect(findLocalClaudeChannelPane("ccs-real", [candidate], {}, "host-a", links)).toBeUndefined()
+    expect(findLocalClaudeChannelPane("ccs-rival", [candidate], {}, "host-a", links)).toBeUndefined()
+    expect(findLocalClaudeChannelPane("ccs-4dca54f22ee90414", [candidate], {}, "host-a", links)).toEqual(candidate)
+  })
+
+  test("a pi-local record never identifies a Claude pane", () => {
+    const candidate = pane()
+    const links = () => [link({ runtimeKind: "pi-local", runtimeSessionId: "ccs-pi" })]
+
+    expect(findLocalClaudeChannelPane("ccs-pi", [candidate], {}, "host-a", links)).toBeUndefined()
+    expect(findLocalClaudeChannelPane("ccs-4dca54f22ee90414", [candidate], {}, "host-a", links)).toEqual(candidate)
+  })
+
+  test("an un-canonicalized worktree in the record still matches the pane's real cwd", () => {
+    const root = mkdtempSync(join(realpathSync(tmpdir()), "discovery-links-"))
+    const real = join(root, "worktree")
+    mkdirSync(real)
+    const linked = join(root, "alias")
+    symlinkSync(real, linked)
+
+    const candidate = pane({ cwd: real })
+
+    expect(
+      findLocalClaudeChannelPane("ccs-real", [candidate], {}, "host-a", () => [link({ worktree: linked })])
+    ).toEqual(candidate)
+  })
+
+  test("a symlinked pane cwd still matches the record's canonical worktree", () => {
+    const root = mkdtempSync(join(realpathSync(tmpdir()), "discovery-panecwd-"))
+    const real = join(root, "worktree")
+    mkdirSync(real)
+    const linked = join(root, "alias")
+    symlinkSync(real, linked)
+
+    const candidate = pane({ cwd: linked })
+
+    expect(findLocalClaudeChannelPane("ccs-real", [candidate], {}, "host-a", () => [link({ worktree: real })])).toEqual(
+      candidate
+    )
   })
 })
