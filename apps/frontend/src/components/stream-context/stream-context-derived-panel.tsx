@@ -3,7 +3,7 @@ import type { VirtualizerHandle } from "virtua"
 import { useStreamEvents } from "@/stores/stream-store"
 import { useStreamDelegations } from "@/hooks/use-stream-delegations"
 import { localStartOfDayMs } from "@/lib/dates"
-import { markerIndexForDate, oldestMarkerIndex } from "@/lib/stream-context/grouping"
+import { markerIndexForDate, oldestItemIndex } from "@/lib/stream-context/grouping"
 import { deriveStreamContext } from "@/lib/stream-context/derive"
 import { delegationContextItems, withDelegations } from "@/lib/stream-context/delegations"
 import { StreamContextRow } from "./stream-context-row"
@@ -70,16 +70,13 @@ export function StreamContextDerivedPanel({
   const listRef = useRef<VirtualizerHandle | null>(null)
 
   // Same jump affordance as the indexed panel, minus the paging: this path
-  // renders the loaded window only, so a date beyond it has nothing to land on
-  // and the jump is a no-op rather than a fetch.
+  // renders the loaded window only, so that window's oldest row is as far back
+  // as a date beyond it can land.
   const jumpToDate = useCallback(
     (date: Date) => {
       const now = new Date()
-      // Nothing that old in the loaded window: travel as far back as it goes
-      // rather than refusing (this path never pages, so its start of history is
-      // the window's).
       let index = markerIndexForDate(visible, localStartOfDayMs(date) + DAY_MS, now)
-      if (index === -1) index = oldestMarkerIndex(visible, now)
+      if (index === -1) index = oldestItemIndex(visible, now)
       if (index === -1) return
       listRef.current?.scrollToIndex(index, { align: "start" })
       scrollerRef.current?.focus({ preventScroll: true })

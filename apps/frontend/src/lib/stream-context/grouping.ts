@@ -66,18 +66,18 @@ export function markerIndexForDate(items: ContextItem[], endOfDayMs: number, now
 }
 
 /**
- * Flat index of the OLDEST day marker, or `-1` when there are no items.
+ * Flat index of the OLDEST ITEM, or `-1` when there are no items.
  *
  * Where a jump lands once it runs past the start of history: asking for a year
- * ago means "as far back as you can go", so the list travels to its own
- * beginning rather than refusing to move.
+ * ago means "show me the oldest thing there is". Deliberately the last row and
+ * not the last day's marker — a stream having a busy day puts hundreds of rows
+ * under one marker, and landing on that marker leaves the user near the top of
+ * the list, looking at the newest of those rows and no closer to what they
+ * asked for.
  */
-export function oldestMarkerIndex(items: ContextItem[], now: Date): number {
-  let markerIndex = -1
-  let flatIndex = 0
-  for (const group of groupItemsByDay(items, now)) {
-    markerIndex = flatIndex
-    flatIndex += 1 + group.items.length
-  }
-  return markerIndex
+export function oldestItemIndex(items: ContextItem[], now: Date): number {
+  if (items.length === 0) return -1
+  // Markers are interleaved one per group, so the last row sits at
+  // (rows + groups - 1) in the flat child list.
+  return items.length + groupItemsByDay(items, now).length - 1
 }
