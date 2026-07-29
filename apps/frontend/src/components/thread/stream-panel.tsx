@@ -190,7 +190,9 @@ export function StreamPanel({ workspaceId, onClose }: StreamPanelProps) {
     externalThreadId,
     flushDraft: composer.flushDraft,
     setIsSending: composer.setIsSending,
-    onPromoted: openPanel,
+    // Replaces the draft panel rather than stacking on it — back must not return
+    // to a draft id that no longer resolves.
+    onPromoted: (realStreamId: string) => openPanel(realStreamId, { replace: true }),
   })
 
   // Stashed drafts for this thread. `draftKey` is "" until the panel resolves
@@ -380,7 +382,7 @@ export function StreamPanel({ workspaceId, onClose }: StreamPanelProps) {
     if (!isDraft || !panelId) return
     return onDraftPromoted((promotion) => {
       if (promotion.draftId === panelId && promotion.workspaceId === workspaceId) {
-        openPanel(promotion.realStreamId)
+        openPanel(promotion.realStreamId, { replace: true })
       }
     })
   }, [isDraft, panelId, workspaceId, openPanel])
