@@ -18,7 +18,17 @@ export function buildStreamLink(workspaceId: string, streamId: string): string {
  * (mirrors {@link buildConversationLink}). Copy surfaces write this string.
  */
 export function buildDelegationLink(workspaceId: string, delegationId: string): string {
-  return `${window.location.origin}/w/${workspaceId}/delegations/${delegationId}`
+  return `${window.location.origin}${buildDelegationPath(workspaceId, delegationId)}`
+}
+
+/**
+ * Relative router path (no origin) for a delegation — the form React-Router
+ * `<Link to>` consumes. {@link buildDelegationLink} prepends the origin for
+ * clipboard use; both keep the route shape in this one place (mirrors
+ * {@link buildConversationPanelPath}).
+ */
+export function buildDelegationPath(workspaceId: string, delegationId: string): string {
+  return `/w/${workspaceId}/delegations/${delegationId}`
 }
 
 /**

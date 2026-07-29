@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react"
 import { Link } from "react-router-dom"
 import { Check, X, Loader2 } from "lucide-react"
 import type {
+  AgentToolEffect,
   StreamEvent,
   AgentSessionRerunContext,
   AgentSessionStartedPayload,
@@ -16,6 +17,8 @@ import { formatDuration } from "@/lib/dates"
 import { focusAtEnd } from "@/hooks"
 import { StopSessionButton, RedirectSessionButton } from "@/components/trace/session-action-buttons"
 import { findVisibleZoneEditor } from "./message-event"
+import { SessionEffectGrid } from "./session-effect-grid"
+import { unionSessionEffects } from "@/lib/effect-links"
 
 /** How long the Redirect hint replaces the subtitle line after a click. */
 const REDIRECT_HINT_MS = 5000
@@ -63,12 +66,20 @@ function deriveStatus(events: StreamEvent[]): {
   completedPayload: AgentSessionCompletedPayload | null
   failedPayload: AgentSessionFailedPayload | null
   interruptedPayload: AgentSessionInterruptedPayload | null
+  /**
+   * EVERY interrupted payload, oldest first. The status line only needs the
+   * latest, but a retry resets its step rows' effects, so each attempt's
+   * interrupted event is the only surviving record of what THAT attempt wrote.
+   * Keeping just the last one loses every write before the final retry.
+   */
+  interruptedPayloads: AgentSessionInterruptedPayload[]
   deletedPayload: AgentSessionDeletedPayload | null
 } {
   let startedPayload: AgentSessionStartedPayload | null = null
   let completedPayload: AgentSessionCompletedPayload | null = null
   let failedPayload: AgentSessionFailedPayload | null = null
   let interruptedPayload: AgentSessionInterruptedPayload | null = null
+  const interruptedPayloads: AgentSessionInterruptedPayload[] = []
   let deletedPayload: AgentSessionDeletedPayload | null = null
   let sessionId = ""
 
@@ -89,6 +100,7 @@ function deriveStatus(events: StreamEvent[]): {
       case "agent_session:interrupted":
         // Last one wins — a later attempt's interrupt supersedes the prior.
         interruptedPayload = event.payload as AgentSessionInterruptedPayload
+        interruptedPayloads.push(interruptedPayload)
         break
       case "agent_session:deleted":
         deletedPayload = event.payload as AgentSessionDeletedPayload
@@ -114,7 +126,16 @@ function deriveStatus(events: StreamEvent[]): {
     status = "running"
   }
 
-  return { status, sessionId, startedPayload, completedPayload, failedPayload, interruptedPayload, deletedPayload }
+  return {
+    status,
+    sessionId,
+    startedPayload,
+    completedPayload,
+    failedPayload,
+    interruptedPayload,
+    interruptedPayloads,
+    deletedPayload,
+  }
 }
 
 function buildStatusConfig(
@@ -124,7 +145,14 @@ function buildStatusConfig(
   failedPayload: AgentSessionFailedPayload | null,
   interruptedPayload: AgentSessionInterruptedPayload | null,
   deletedPayload: AgentSessionDeletedPayload | null,
-  liveCounts: { stepCount: number; messageCount: number } | undefined
+  liveCounts: { stepCount: number; messageCount: number } | undefined,
+  /**
+   * Layer-0 markers: a mutating tool declared nothing, so the effect is a bare
+   * `{ kind }` with nothing to name, diff or link. They ride the meta line as a
+   * count rather than the grid, and the meta line is a single truncating line,
+   * so this costs no height (INV-21).
+   */
+  markerEffectCount: number
 ): StatusConfig {
   const rerunReasonLabel = formatRerunReasonLabel(startedPayload?.rerunContext)
   const rerunReasonDetail = formatRerunReasonDetail(startedPayload?.rerunContext)
@@ -160,6 +188,10 @@ function buildStatusConfig(
           `${completedPayload.messageCount} ${completedPayload.messageCount === 1 ? "message" : "messages"} sent`
         )
       }
+      const completedChanges = formatMarkerEffectCount(markerEffectCount)
+      if (completedChanges) {
+        parts.push(completedChanges)
+      }
       return {
         title: "Session complete",
         subtitle: parts.join(" • "),
@@ -186,6 +218,10 @@ function buildStatusConfig(
         parts.push(`${failedPayload.stepCount} ${failedPayload.stepCount === 1 ? "step" : "steps"}`)
       }
       parts.push("Error during execution")
+      const failedChanges = formatMarkerEffectCount(markerEffectCount)
+      if (failedChanges) {
+        parts.push(failedChanges)
+      }
       return {
         title: "Session failed",
         subtitle: parts.join(" • "),
@@ -221,6 +257,10 @@ function buildStatusConfig(
         parts.push(rerunReasonDetail)
       }
       parts.push(`${steps} ${steps === 1 ? "step" : "steps"}`)
+      const retryingChanges = formatMarkerEffectCount(markerEffectCount)
+      if (retryingChanges) {
+        parts.push(retryingChanges)
+      }
       return {
         title: "Interrupted, retrying…",
         subtitle: parts.join(" • "),
@@ -270,6 +310,11 @@ function buildStatusConfig(
   }
 }
 
+function formatMarkerEffectCount(count: number): string | null {
+  if (count <= 0) return null
+  return `${count} ${count === 1 ? "change" : "changes"}`
+}
+
 function formatRerunReasonLabel(rerunContext?: AgentSessionRerunContext | null): string | null {
   if (!rerunContext) return null
   switch (rerunContext.cause) {
@@ -300,8 +345,46 @@ export function AgentSessionEvent({
   onSteerSession,
 }: AgentSessionEventProps) {
   const { getTraceUrl } = useTrace()
-  const { status, sessionId, startedPayload, completedPayload, failedPayload, interruptedPayload, deletedPayload } =
-    deriveStatus(events)
+  const {
+    status,
+    sessionId,
+    startedPayload,
+    completedPayload,
+    failedPayload,
+    interruptedPayload,
+    interruptedPayloads,
+    deletedPayload,
+  } = deriveStatus(events)
+
+  // A RUNNING card never grows a grid: the effects arrive as part of a status
+  // transition that already swaps the card's title, icon and colours, so
+  // nothing pops in mid-turn (INV-21).
+  //
+  // `retrying` is included deliberately, and it is not terminal. An attempt
+  // that wrote something before it was interrupted has already changed the
+  // user's state, and the retry can take minutes; hiding that until the turn
+  // finally settles would leave a real write invisible for the whole window.
+  // The grid can gain rows again at the terminal transition, which is the same
+  // kind of shift as the transition itself rather than a spontaneous one.
+  const sessionEffects: AgentToolEffect[] =
+    status === "completed" || status === "failed" || status === "retrying"
+      ? unionSessionEffects(...interruptedPayloads, completedPayload, failedPayload)
+      : []
+  // What goes in the grid is decided by shape, not by whether a label happens
+  // to be set. A layer-0 marker is a bare `{ kind }` — a tool declared nothing,
+  // so there is nothing to name, diff or link and it only earns a counter.
+  // Anything carrying a target or a diff is a real declaration and renders as a
+  // row, named from its kind when the tool gave no label: `update_user_settings`,
+  // `update_stream_brief` and `cancel_follow_up` all describe themselves through
+  // `target`/`before`/`after` and set no label at all, and the settings write is
+  // the case this whole feature exists for.
+  const describedEffects = sessionEffects.filter(
+    (effect) =>
+      effect.label !== undefined ||
+      effect.target !== undefined ||
+      effect.before !== undefined ||
+      effect.after !== undefined
+  )
 
   const config = buildStatusConfig(
     status,
@@ -310,7 +393,8 @@ export function AgentSessionEvent({
     failedPayload,
     interruptedPayload,
     deletedPayload,
-    liveCounts
+    liveCounts,
+    sessionEffects.length - describedEffects.length
   )
 
   const [redirectHintVisible, setRedirectHintVisible] = useState(false)
@@ -462,6 +546,8 @@ export function AgentSessionEvent({
           </div>
         )}
       </Link>
+      {/* Sibling of the card link, never a child: the card is an <a>. */}
+      <SessionEffectGrid effects={describedEffects} />
     </div>
   )
 }

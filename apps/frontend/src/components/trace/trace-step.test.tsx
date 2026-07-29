@@ -752,3 +752,91 @@ describe("TraceStep guardian verification", () => {
     expect(screen.queryByText("Not taken")).not.toBeInTheDocument()
   })
 })
+
+describe("TraceStep effects", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks()
+    vi.spyOn(relativeTimeModule, "RelativeTime").mockImplementation((() => (
+      <span>just now</span>
+    )) as unknown as typeof relativeTimeModule.RelativeTime)
+  })
+
+  function renderStep(step: AgentSessionStep) {
+    return render(
+      <MemoryRouter>
+        <TraceStep step={step} workspaceId="ws_1" streamId="stream_1" />
+      </MemoryRouter>
+    )
+  }
+
+  it("shows the WROTE badge on a step that wrote something", () => {
+    renderStep(
+      createStep({
+        stepType: "tool_call",
+        content: "",
+        effects: [{ kind: "memo", label: "Saved a memo", target: "memo_1" }],
+      })
+    )
+
+    expect(screen.getByText("Wrote")).toBeInTheDocument()
+    expect(screen.getByText("Saved a memo")).toBeInTheDocument()
+  })
+
+  it("never claims a write on a denied step", () => {
+    renderStep(
+      createStep({
+        stepType: "tool_call",
+        content: "",
+        verification: { status: "denied", reason: "Not asked for" },
+        effects: [{ kind: "memo", label: "Saved a memo", target: "memo_1" }],
+      })
+    )
+
+    expect(screen.getByText("Not taken")).toBeInTheDocument()
+    expect(screen.queryByText("Wrote")).not.toBeInTheDocument()
+    expect(screen.queryByText("Saved a memo")).not.toBeInTheDocument()
+  })
+
+  it("renders a replaced value as a before → after diff", () => {
+    renderStep(
+      createStep({
+        stepType: "tool_call",
+        content: "",
+        effects: [{ kind: "settings", label: "Theme", target: "theme", before: "dark", after: "light" }],
+      })
+    )
+
+    expect(screen.getByText("dark → light")).toBeInTheDocument()
+  })
+
+  it("links an effect whose target resolves to a route", () => {
+    renderStep(
+      createStep({
+        stepType: "tool_call",
+        content: "",
+        effects: [{ kind: "memo", label: "Saved a memo", target: "memo_1" }],
+      })
+    )
+
+    expect(screen.getByRole("link", { name: /Saved a memo/ })).toHaveAttribute("href", "/w/ws_1/memory?memo=memo_1")
+  })
+
+  it("renders a routeless follow-up effect as text, never a link", () => {
+    renderStep(
+      createStep({
+        stepType: "tool_call",
+        content: "",
+        effects: [{ kind: "follow_up", label: "Reminder on Friday", target: "fu_1" }],
+      })
+    )
+
+    expect(screen.getByText("Reminder on Friday")).toBeInTheDocument()
+    expect(screen.queryByRole("link", { name: /Reminder on Friday/ })).not.toBeInTheDocument()
+  })
+
+  it("names a label-less effect from its kind", () => {
+    renderStep(createStep({ stepType: "tool_call", content: "", effects: [{ kind: "other" }] }))
+
+    expect(screen.getByText("Change")).toBeInTheDocument()
+  })
+})

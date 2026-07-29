@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import { fireEvent, render, screen, waitFor } from "@testing-library/react"
-import { MemoryRouter } from "react-router-dom"
+import { MemoryRouter, Route, Routes } from "react-router-dom"
 import type { StreamEvent } from "@threa/types"
 import * as contextsModule from "@/contexts"
 import * as hooksModule from "@/hooks"
@@ -321,5 +321,195 @@ describe("AgentSessionEvent", () => {
       expect(focusAtEnd).not.toHaveBeenCalled()
       expect(screen.queryByText("Ariadne will fold your message into the current work")).not.toBeInTheDocument()
     })
+  })
+})
+
+describe("AgentSessionEvent effects", () => {
+  function startedEvent(sessionId = "session_fx") {
+    return createSessionEvent("agent_session:started", {
+      sessionId,
+      personaId: "persona_1",
+      personaName: "Ariadne",
+      triggerMessageId: "msg_1",
+      startedAt: "2026-02-19T18:00:00.000Z",
+    })
+  }
+
+  function completedEvent(effects: unknown[], sessionId = "session_fx") {
+    return createSessionEvent("agent_session:completed", {
+      sessionId,
+      stepCount: 3,
+      messageCount: 1,
+      duration: 1000,
+      effects,
+      completedAt: "2026-02-19T18:00:01.000Z",
+    })
+  }
+
+  function renderInWorkspace(events: StreamEvent[]) {
+    return render(
+      <MemoryRouter initialEntries={["/w/ws_1/s/stream_1"]}>
+        <Routes>
+          <Route path="/w/:workspaceId/s/:streamId" element={<AgentSessionEvent events={events} />} />
+        </Routes>
+      </MemoryRouter>
+    )
+  }
+
+  it("renders one row per labelled effect", () => {
+    renderInWorkspace([
+      startedEvent(),
+      completedEvent([
+        { kind: "memo", label: "Saved a memo", target: "memo_1" },
+        { kind: "delegation", label: "Delegated the audit", target: "dlg_1" },
+      ]),
+    ])
+
+    expect(screen.getByText("Saved a memo")).toBeInTheDocument()
+    expect(screen.getByText("Delegated the audit")).toBeInTheDocument()
+  })
+
+  it("never nests an anchor inside the card link", () => {
+    const { container } = renderInWorkspace([
+      startedEvent(),
+      completedEvent([{ kind: "memo", label: "Saved a memo", target: "memo_1" }]),
+    ])
+
+    const cardLink = container.querySelector('a[href="/trace/session_fx"]')!
+    expect(cardLink.querySelectorAll("a")).toHaveLength(0)
+    // ...and the effect link is still a real link, just outside the card.
+    expect(screen.getByRole("link", { name: /Saved a memo/ })).toHaveAttribute("href", "/w/ws_1/memory?memo=memo_1")
+  })
+
+  it("spans the last line across both columns on an odd count", () => {
+    renderInWorkspace([
+      startedEvent(),
+      completedEvent([
+        { kind: "memo", label: "Memo A", target: "memo_1" },
+        { kind: "memo", label: "Memo B", target: "memo_2" },
+        { kind: "memo", label: "Memo C", target: "memo_3" },
+      ]),
+    ])
+
+    expect(screen.getByRole("link", { name: /Memo C/ }).className).toContain("effect-grid-span")
+    expect(screen.getByRole("link", { name: /Memo A/ }).className).not.toContain("effect-grid-span")
+  })
+
+  it("renders a routeless effect as inert text that cannot be focused", () => {
+    renderInWorkspace([
+      startedEvent(),
+      completedEvent([{ kind: "follow_up", label: "Reminder on Friday", target: "fu_1" }]),
+    ])
+
+    const text = screen.getByText("Reminder on Friday")
+    expect(text.closest("a")).toBeNull()
+    expect(text.closest("[tabindex]")).toBeNull()
+    expect(screen.queryByRole("link", { name: /Reminder on Friday/ })).not.toBeInTheDocument()
+  })
+
+  it("renders no grid while the session is still running", () => {
+    renderInWorkspace([startedEvent()])
+
+    expect(screen.queryByText("Saved a memo")).not.toBeInTheDocument()
+    expect(screen.getByText(/is working/)).toBeInTheDocument()
+  })
+
+  // Only a bare `{ kind }` is a layer-0 marker — a mutating tool that declared
+  // nothing. There is no label, target or diff to render, so it earns a count
+  // and no row.
+  it("counts bare layer-0 markers on the meta line instead of adding grid rows", () => {
+    renderInWorkspace([startedEvent(), completedEvent([{ kind: "other" }, { kind: "brief" }])])
+
+    expect(screen.getByText(/3 steps • 1\.0s • 1 message sent • 2 changes/)).toBeInTheDocument()
+    expect(screen.queryByRole("link", { name: /Change/ })).not.toBeInTheDocument()
+  })
+
+  // The shape `update_user_settings` actually declares: no label at all, named
+  // from its kind, described by target + diff. Filtering the grid on `label`
+  // would have dropped the write this whole feature exists to surface.
+  it("renders a label-less settings write as a row, not a bare count", () => {
+    renderInWorkspace([
+      startedEvent(),
+      completedEvent([{ kind: "settings", target: "theme", before: "light", after: "dark" }]),
+    ])
+
+    expect(screen.getByText(/light/)).toBeInTheDocument()
+    expect(screen.getByText(/dark/)).toBeInTheDocument()
+    expect(screen.queryByText(/1 change/)).not.toBeInTheDocument()
+  })
+
+  // Same shape for the other two tools that describe themselves without a label.
+  it("renders a label-less brief version bump as a row", () => {
+    renderInWorkspace([startedEvent(), completedEvent([{ kind: "brief", before: "1", after: "2" }])])
+
+    expect(screen.queryByText(/1 change/)).not.toBeInTheDocument()
+  })
+
+  it("unions effects across the interrupted and completed payloads, deduped", () => {
+    const shared = { kind: "memo", label: "Saved a memo", target: "memo_1" }
+    renderInWorkspace([
+      startedEvent(),
+      createSessionEvent("agent_session:interrupted", {
+        sessionId: "session_fx",
+        stepCount: 2,
+        attempt: 0,
+        maxAttempts: 3,
+        error: "boom",
+        effects: [shared, { kind: "settings", target: "theme", before: "light", after: "dark" }],
+        interruptedAt: "2026-02-19T18:00:00.500Z",
+      }),
+      completedEvent([shared]),
+    ])
+
+    expect(screen.getAllByText("Saved a memo")).toHaveLength(1)
+    expect(screen.getByText(/dark/)).toBeInTheDocument()
+  })
+
+  // The columns are decided by the CONTAINER, not the viewport: a board card is
+  // a narrow column inside a wide window, and a viewport breakpoint gave it two
+  // 145px columns that clipped every value. jsdom cannot evaluate a container
+  // query, so this pins the wiring; the layout itself is checked by screenshot.
+  it("sizes its columns from the container, not the viewport", () => {
+    const { container } = renderInWorkspace([
+      startedEvent(),
+      completedEvent([{ kind: "settings", target: "theme", before: "light", after: "dark" }]),
+    ])
+
+    expect(container.querySelector(".effect-grid-host")).not.toBeNull()
+    expect(container.querySelector(".effect-grid")).not.toBeNull()
+    expect(container.querySelector('[class*="sm:grid-cols"]')).toBeNull()
+  })
+
+  // A session keeps its id across retries, so a turn that is retried twice
+  // emits several interrupted events onto the same card. Each attempt's
+  // upsertStep wipes the previous attempt's step effects, so that attempt's
+  // interrupted payload is the ONLY surviving record of what it wrote — keeping
+  // just the newest one loses every write before the final retry.
+  it("keeps effects from every interrupted attempt, not just the last", () => {
+    const interrupted = (attempt: number, effects: unknown[], at: string) =>
+      createSessionEvent("agent_session:interrupted", {
+        sessionId: "session_fx",
+        stepCount: 2,
+        attempt,
+        maxAttempts: 5,
+        error: "timeout",
+        effects,
+        interruptedAt: at,
+      })
+
+    renderInWorkspace([
+      startedEvent(),
+      interrupted(
+        0,
+        [{ kind: "settings", target: "theme", before: "light", after: "dark" }],
+        "2026-02-19T18:00:00.500Z"
+      ),
+      interrupted(1, [], "2026-02-19T18:00:10.500Z"),
+      completedEvent([]),
+    ])
+
+    // Attempt 0's write is invisible everywhere else by this point.
+    expect(screen.getByText(/light/)).toBeInTheDocument()
+    expect(screen.getByText(/dark/)).toBeInTheDocument()
   })
 })

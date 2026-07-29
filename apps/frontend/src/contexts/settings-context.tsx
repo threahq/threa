@@ -75,6 +75,15 @@ export function SettingsProvider({ children }: SettingsProviderProps) {
   return <SettingsContext.Provider value={value}>{children}</SettingsContext.Provider>
 }
 
+/**
+ * The settings context when there is one, `null` otherwise. For surfaces that
+ * render both inside and outside the workspace shell (the timeline/board effect
+ * lines) and degrade to a non-link rather than failing to render.
+ */
+export function useOptionalSettings(): SettingsContextValue | null {
+  return useContext(SettingsContext)
+}
+
 export function useSettings(): SettingsContextValue {
   const context = useContext(SettingsContext)
   if (!context) {
