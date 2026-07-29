@@ -3,6 +3,7 @@ import type { Pool } from "pg"
 import type { AgentSessionRerunContext } from "@threa/types"
 import { withTransaction } from "../../../db"
 import { AgentSessionRepository, SessionStatuses, type AgentSession } from "../session-repository"
+import { collectSessionEffects } from "../session-effects"
 import { OutboxRepository } from "../../../lib/outbox"
 import { StreamEventRepository } from "../../streams"
 import { eventId, sessionId } from "../../../lib/id"
@@ -187,6 +188,7 @@ export async function withCompanionSession(
             stepCount: steps.length,
             messageCount: messagesSent,
             duration,
+            effects: collectSessionEffects(steps),
             completedAt: completedAt.toISOString(),
           },
           actorId: personaId,
@@ -274,6 +276,7 @@ export async function withCompanionSession(
               attempt: attempt!,
               maxAttempts: maxAttempts!,
               error: String(err),
+              effects: collectSessionEffects(steps),
               interruptedAt: new Date().toISOString(),
             },
             actorId: personaId,
@@ -295,6 +298,7 @@ export async function withCompanionSession(
               stepCount: steps.length,
               error: String(err),
               traceId: session.id,
+              effects: collectSessionEffects(steps),
               failedAt: new Date().toISOString(),
             },
             actorId: personaId,
