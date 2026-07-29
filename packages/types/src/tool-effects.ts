@@ -44,6 +44,14 @@ export const EFFECT_LABEL_MAX_CHARS = 120
 export const EFFECTS_PER_CALL_MAX = 20
 
 /**
+ * Cap on the effects a whole SESSION's lifecycle payload carries. Separate from
+ * the per-call bound because a session aggregates many calls: reusing the call
+ * cap here would silently truncate a busy turn at one call's budget, and this
+ * one also bounds a `stream_events` JSONB payload rather than one step row.
+ */
+export const EFFECTS_PER_SESSION_MAX = 40
+
+/**
  * Which tools write state the conversation does not already show.
  *
  * The rule, checkable by reading one line of a diff: **if the effect is

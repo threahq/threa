@@ -2,6 +2,7 @@ import type { Pool } from "pg"
 import type { Server } from "socket.io"
 import type { Querier } from "../../db"
 import { AgentSessionRepository, SessionStatuses } from "./session-repository"
+import { collectSessionEffects } from "./session-effects"
 import { StreamRepository, StreamEventRepository } from "../streams"
 import { OutboxRepository } from "../../lib/outbox"
 import { withTransaction } from "../../db"
@@ -61,6 +62,10 @@ export async function failSessionWithLifecycle(
         payload: {
           sessionId,
           stepCount: steps.length,
+          // This path is where a crashed turn's writes would otherwise vanish:
+          // the steps committed during the turn, the in-process emitter never
+          // ran, and a settings write has no bespoke card to fall back on.
+          effects: collectSessionEffects(steps),
           error,
           traceId: sessionId,
           failedAt: new Date().toISOString(),

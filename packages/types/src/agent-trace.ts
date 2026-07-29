@@ -171,6 +171,12 @@ export interface AgentSessionCompletedPayload {
   stepCount: number
   messageCount: number
   duration: number
+  /**
+   * What the turn wrote, aggregated across its steps. Carried on the lifecycle
+   * payload rather than fetched per card: the timeline card derives everything
+   * from `StreamEvent` payloads and never holds an `AgentSessionStep`.
+   */
+  effects?: AgentToolEffect[]
   completedAt: string
 }
 
@@ -179,6 +185,7 @@ export interface AgentSessionFailedPayload {
   stepCount: number
   error: string
   traceId: string
+  effects?: AgentToolEffect[]
   failedAt: string
 }
 
@@ -198,6 +205,12 @@ export interface AgentSessionInterruptedPayload {
   /** Retry budget; the terminal `failed` fires when `attempt + 1 >= maxAttempts`. */
   maxAttempts: number
   error: string
+  /**
+   * What the failed attempt wrote. Load-bearing beyond display: `upsertStep`'s
+   * ON CONFLICT resets `effects` to NULL when the retry reuses a step number, so
+   * this durable payload is the only surviving record of attempt 1's writes.
+   */
+  effects?: AgentToolEffect[]
   interruptedAt: string
 }
 
