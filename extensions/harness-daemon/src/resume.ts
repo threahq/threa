@@ -1,3 +1,4 @@
+import { canonicalOrRaw, defaultAgentIdentityResolver, type AgentIdentityResolver } from "./discovery"
 import type { ManagedAgent } from "./types"
 import { inaccessibleBackoffMs } from "./watch"
 
@@ -22,14 +23,44 @@ export function parseScratchpadUrl(value: string): ScratchpadRef | undefined {
   }
 }
 
-/** An inventory row is immutable per launch, so resume only the newest launch for each name. */
-export function latestAgents(agents: ManagedAgent[]): ManagedAgent[] {
-  const byName = new Map<string, ManagedAgent>()
+/**
+ * An inventory row is immutable per launch, so resume only the newest launch of
+ * each session — grouped by identity, because a name is neither unique nor
+ * stable: two rows called `feature` are two sessions, and a renamed session is
+ * still one.
+ *
+ * Tombstoned rows are never candidates: their worktree is gone and their
+ * scratchpad archived, and the watcher recreates worktrees.
+ */
+export function latestAgentsByIdentity(
+  agents: ManagedAgent[],
+  resolve: AgentIdentityResolver = defaultAgentIdentityResolver(),
+  includeTombstoned = false
+): ManagedAgent[] {
+  const byIdentity = new Map<string, ManagedAgent>()
   for (const agent of agents) {
-    const existing = byName.get(agent.name)
-    if (!existing || agent.updatedAt > existing.updatedAt) byName.set(agent.name, agent)
+    // A tombstone says "provably dead", and only the caller knows whether the
+    // server has since said otherwise: an unarchive is an explicit revive
+    // request, and dropping the row here would make it unrevivable with nothing
+    // reported. The count goes back to the caller so the exclusion is visible
+    // either way (INV-11).
+    if (agent.tombstonedAt && !includeTombstoned) continue
+    // Identity AND worktree, never identity alone. Two rows can record one
+    // runtime session id for DIFFERENT directories — the live inventory still
+    // carries a pair left by the identity-inheritance bug fixed in 647a99978 —
+    // and collapsing those silently drops one worktree from every sweep, which
+    // is the opposite of what un-collapsing set out to do.
+    const identity = resolve(agent)
+    const worktree = agent.worktree ? canonicalOrRaw(agent.worktree) : undefined
+    const key = identity
+      ? `identity:${identity}${worktree ? `@${worktree}` : ""}`
+      : worktree
+        ? `worktree:${worktree}`
+        : `name:${agent.name}`
+    const existing = byIdentity.get(key)
+    if (!existing || agent.updatedAt > existing.updatedAt) byIdentity.set(key, agent)
   }
-  return [...byName.values()].sort((a, b) => a.name.localeCompare(b.name))
+  return [...byIdentity.values()].sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id))
 }
 
 export function recordedNoYolo(agent: ManagedAgent): boolean {

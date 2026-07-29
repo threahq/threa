@@ -2,6 +2,7 @@ import { Database } from "bun:sqlite"
 import { existsSync, mkdirSync } from "node:fs"
 import { homedir } from "node:os"
 import { dirname } from "node:path"
+import { canonicalOrRaw, defaultAgentIdentityResolver, type AgentIdentityResolver } from "./discovery"
 import { die } from "./errors"
 import type { AgentStatus, ManagedAgent, RuntimeKind } from "./types"
 
@@ -27,6 +28,7 @@ interface ManagedAgentRow {
   last_output: string | null
   probe_failures: number | null
   probe_backoff_until: string | null
+  tombstoned_at: string | null
 }
 
 export function inventoryPath(): string {
@@ -57,7 +59,8 @@ function openInventory(): Database {
       updated_at TEXT NOT NULL,
       last_output TEXT,
       probe_failures INTEGER,
-      probe_backoff_until TEXT
+      probe_backoff_until TEXT,
+      tombstoned_at TEXT
     )
   `)
   // CREATE TABLE IF NOT EXISTS won't extend an existing inventory, so add new columns in place.
@@ -69,6 +72,7 @@ function openInventory(): Database {
     ["runtime_session_id", "TEXT"],
     ["probe_failures", "INTEGER"],
     ["probe_backoff_until", "TEXT"],
+    ["tombstoned_at", "TEXT"],
   ]
   for (const [column, type] of added) {
     if (!columns.some((existing) => existing.name === column)) {
@@ -99,6 +103,7 @@ function rowToAgent(row: ManagedAgentRow): ManagedAgent {
     lastOutput: row.last_output ?? undefined,
     probeFailures: row.probe_failures ?? undefined,
     probeBackoffUntil: row.probe_backoff_until ?? undefined,
+    tombstonedAt: row.tombstoned_at ?? undefined,
   }
 }
 
@@ -136,6 +141,7 @@ export function readInventoryReadonly(): ManagedAgent[] {
       "last_output",
       "probe_failures",
       "probe_backoff_until",
+      "tombstoned_at",
     ]
     const projection = optional.map((name) => (columns.has(name) ? name : `NULL AS ${name}`))
     const rows = db
@@ -157,8 +163,8 @@ export function upsertAgent(agent: ManagedAgent): void {
       INSERT INTO managed_agents (
         id, name, runtime, status, worktree, branch, tmux_session, tmux_window,
         tmux_window_id, tmux_pane_id, scratchpad_url, instance_id, runtime_session_id, command_json,
-        created_at, updated_at, last_output, probe_failures, probe_backoff_until
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        created_at, updated_at, last_output, probe_failures, probe_backoff_until, tombstoned_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         name = excluded.name,
         runtime = excluded.runtime,
@@ -176,7 +182,8 @@ export function upsertAgent(agent: ManagedAgent): void {
         updated_at = excluded.updated_at,
         last_output = excluded.last_output,
         probe_failures = excluded.probe_failures,
-        probe_backoff_until = excluded.probe_backoff_until
+        probe_backoff_until = excluded.probe_backoff_until,
+        tombstoned_at = excluded.tombstoned_at
     `
     ).run(
       agent.id,
@@ -197,24 +204,65 @@ export function upsertAgent(agent: ManagedAgent): void {
       agent.updatedAt,
       agent.lastOutput ?? null,
       agent.probeFailures ?? null,
-      agent.probeBackoffUntil ?? null
+      agent.probeBackoffUntil ?? null,
+      agent.tombstonedAt ?? null
     )
   } finally {
     db.close()
   }
 }
 
-export function findAgentOrUndefined(ref: string, agents: ManagedAgent[] = readInventory()): ManagedAgent | undefined {
+function newest(agents: ManagedAgent[]): ManagedAgent | undefined {
+  return [...agents].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0]
+}
+
+/**
+ * Selection is by identity, not by name: two rows called `feature` are two
+ * sessions, and a renamed session is still one.
+ *
+ * A tombstoned row matches by explicit id only, so `list` and `resolve` keep
+ * showing history while nothing selects it for revival.
+ */
+export function findAgentOrUndefined(
+  ref: string,
+  agents: ManagedAgent[] = readInventory(),
+  resolve?: AgentIdentityResolver
+): ManagedAgent | undefined {
   const byId = agents.find((agent) => agent.id === ref)
   if (byId) return byId
 
-  const byRuntimeSession = agents
-    .filter((agent) => agent.runtimeSessionId === ref)
-    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
-  if (byRuntimeSession[0]) return byRuntimeSession[0]
+  const live = agents.filter((agent) => !agent.tombstonedAt)
+  const byRecordedSession = newest(live.filter((agent) => agent.runtimeSessionId === ref))
+  if (byRecordedSession) return byRecordedSession
 
-  const matches = agents.filter((agent) => agent.name === ref)
-  if (matches.length > 1) die(`multiple agents match ${ref}; use id`)
+  // Built once, and only when a rung actually needs it: it reads the identity
+  // and link stores.
+  let resolver: AgentIdentityResolver | undefined = resolve
+  const identityOf = (agent: ManagedAgent) => (resolver ??= defaultAgentIdentityResolver())(agent)
+
+  if (live.some((agent) => agent.worktree)) {
+    const byResolvedSession = live.filter((agent) => identityOf(agent) === ref)
+    // One identity can name two directories — the live inventory carries such a
+    // pair from the identity-inheritance bug fixed in 647a99978. Picking the
+    // newest would point `stop` and `kick` at a pane in a directory the operator
+    // never named, so the worktrees have to be told apart or refused.
+    const claimed = [...new Set(byResolvedSession.map((agent) => canonicalOrRaw(agent.worktree ?? agent.id)))].sort()
+    if (claimed.length > 1) die(`${ref} names ${claimed.length} worktrees: ${claimed.join(", ")}; use id`)
+    if (byResolvedSession.length > 0) return newest(byResolvedSession)
+
+    const target = canonicalOrRaw(ref)
+    const byWorktree = newest(live.filter((agent) => agent.worktree && canonicalOrRaw(agent.worktree) === target))
+    if (byWorktree) return byWorktree
+  }
+
+  const matches = live.filter((agent) => agent.name === ref)
+  if (matches.length > 1) {
+    const competing = [...new Set(matches.map((agent) => identityOf(agent) ?? agent.id))].sort()
+    if (competing.length > 1) die(`multiple agents match ${ref}: ${competing.join(", ")}; use id`)
+    const directories = [...new Set(matches.map((agent) => canonicalOrRaw(agent.worktree ?? agent.id)))].sort()
+    if (directories.length > 1) die(`${ref} names ${directories.length} worktrees: ${directories.join(", ")}; use id`)
+    return newest(matches)
+  }
   return matches[0]
 }
 

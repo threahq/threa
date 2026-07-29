@@ -30,6 +30,7 @@ Usage:
   threa-harnessd attach <agent-id-or-name>
   threa-harnessd resolve [<agent-id-or-name-or-runtime-session-id>]
   threa-harnessd backfill-identities [--dry-run]  (record the identity two sources already agree on)
+  threa-harnessd tombstone [--dry-run]           (retire rows whose worktree is gone and whose scratchpad is archived)
   threa-harnessd doctor
 
 Examples:
@@ -182,6 +183,14 @@ export function parseBackfill(args: string[]): { dryRun: boolean } {
   const flags = parseFlags(args)
   for (const key of Object.keys(flags)) {
     if (key !== "dry-run") die(`unexpected backfill-identities argument: --${key}`)
+  }
+  return { dryRun: boolFlag(flags, "dry-run") }
+}
+
+export function parseTombstone(args: string[]): { dryRun: boolean } {
+  const flags = parseFlags(args)
+  for (const key of Object.keys(flags)) {
+    if (key !== "dry-run") die(`unexpected tombstone argument: --${key}`)
   }
   return { dryRun: boolFlag(flags, "dry-run") }
 }
