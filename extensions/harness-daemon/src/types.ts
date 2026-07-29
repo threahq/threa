@@ -25,6 +25,11 @@ export interface ManagedAgent {
   probeFailures?: number
   /** ISO instant before which the revival probe is suppressed for this row. */
   probeBackoffUntil?: string
+  /**
+   * ISO instant at which this row stopped being a revival candidate: its worktree
+   * is gone AND its scratchpad is archived. History, never deleted.
+   */
+  tombstonedAt?: string
 }
 
 export interface SpawnOptions {

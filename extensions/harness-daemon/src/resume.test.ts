@@ -5,7 +5,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import {
   fetchScratchpadStatus,
-  latestAgents,
+  latestAgentsByIdentity,
   parseScratchpadUrl,
   preflightRuntimeSession,
   probeSuppressed,
@@ -78,7 +78,10 @@ test("parses a stream id from a scratchpad URL", () => {
 
 test("selects only the latest inventory row for an agent name", () => {
   const newest = agent({ id: "claude-2", updatedAt: "2026-07-02T00:00:00.000Z" })
-  expect(latestAgents([agent(), newest, agent({ name: "other" })])).toEqual([agent({ name: "other" }), newest])
+  expect(latestAgentsByIdentity([agent(), newest, agent({ name: "other" })], () => undefined)).toEqual([
+    agent({ name: "other" }),
+    newest,
+  ])
 })
 
 test("migrates legacy inventory and persists runtime identity", () => {

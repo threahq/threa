@@ -1,7 +1,16 @@
 #!/usr/bin/env bun
 
 import { adoptClaudeSession, adoptRefused } from "./adopt"
-import { parseAdopt, parseBackfill, parseReconnect, parseResolve, parseResume, parseSpawn, usage } from "./cli"
+import {
+  parseAdopt,
+  parseBackfill,
+  parseReconnect,
+  parseResolve,
+  parseResume,
+  parseSpawn,
+  parseTombstone,
+  usage,
+} from "./cli"
 import {
   attachAgent,
   backfillIdentitiesCommand,
@@ -17,6 +26,7 @@ import {
   spawnAgent,
   steerAgent,
   stopAgent,
+  tombstoneCommand,
   reapArchived,
   watchUnarchived,
 } from "./commands"
@@ -60,6 +70,7 @@ async function main(): Promise<void> {
   if (command === "attach") return attachAgent(args[0] ?? die("attach requires an agent id or name"))
   if (command === "resolve") return resolveIdentity(parseResolve(args))
   if (command === "backfill-identities") return backfillIdentitiesCommand(parseBackfill(args))
+  if (command === "tombstone") return tombstoneCommand(parseTombstone(args))
   if (command === "doctor") return doctor()
   if (command === "do") return inferAndRun(args.join(" "))
   die(`unknown command: ${command}`)

@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import type { BackfillOutcome } from "./backfill"
+import type { TombstoneOutcome } from "./tombstone"
 import { STARTUP_LOCK_WAIT_MS, defaultStartupReconciliationDeps, startupReconciliation } from "./commands"
 import { resumeActiveLockPath } from "./lock"
 
@@ -30,8 +31,13 @@ afterEach(() => {
 })
 
 const recorded: BackfillOutcome[] = [{ subject: "/repo/a", disposition: "recorded" }]
+const tombstoned: TombstoneOutcome[] = [{ subject: "claude-1", disposition: "tombstoned" }]
 
-test("startupReconciliation backfills before the first revive sweep", async () => {
+test("startupReconciliation backfills, then sweeps, then tombstones", async () => {
+  // The tombstone pass is the only half that talks to the network, and nothing
+  // the sweep does depends on it — ahead of the sweep it delayed every boot
+  // revival by one request per worktree-gone row. The lock is held across each
+  // half and released before the sweep either way.
   const calls: string[] = []
 
   await startupReconciliation({
@@ -39,14 +45,55 @@ test("startupReconciliation backfills before the first revive sweep", async () =
       calls.push("backfill")
       return recorded
     },
-    lock: async () => () => {},
+    tombstone: async () => {
+      calls.push("tombstone")
+      return tombstoned
+    },
+    lock: async () => {
+      calls.push("lock")
+      return () => calls.push("release")
+    },
     sweep: () => {
       calls.push("sweep")
     },
     log: (message) => calls.push(`log:${message}`),
   })
 
-  expect(calls).toEqual(["backfill", "log:harnessd: identity backfill: 1 subject(s), 1 recorded", "sweep"])
+  expect(calls).toEqual([
+    "lock",
+    "backfill",
+    "log:harnessd: identity backfill: 1 subject(s), 1 recorded",
+    "release",
+    "sweep",
+    "lock",
+    "tombstone",
+    "log:harnessd: tombstone: 1 row(s), 1 tombstoned",
+    "release",
+  ])
+})
+
+test("a failing tombstone logs and does not abort the startup pass", async () => {
+  // It is the half that does network I/O, so it is by far the likelier to throw
+  // — and `threaTarget` throws outright when no credentials are readable.
+  const calls: string[] = []
+
+  await startupReconciliation({
+    backfill: () => [],
+    tombstone: async () => {
+      throw new Error("threa unreachable")
+    },
+    lock: async () => () => calls.push("release"),
+    sweep: () => void calls.push("sweep"),
+    log: (message) => calls.push(`log:${message}`),
+  })
+
+  expect(calls).toEqual([
+    "log:harnessd: identity backfill: 0 subject(s)",
+    "release",
+    "sweep",
+    "release",
+    "log:harnessd: tombstone pass failed: threa unreachable",
+  ])
 })
 
 test("a failing backfill logs and does not abort the startup pass", async () => {
@@ -56,6 +103,7 @@ test("a failing backfill logs and does not abort the startup pass", async () => 
     backfill: () => {
       throw new Error("inventory unreadable")
     },
+    tombstone: async () => [],
     lock: async () => () => {},
     sweep: () => {
       calls.push("sweep")
@@ -63,7 +111,11 @@ test("a failing backfill logs and does not abort the startup pass", async () => 
     log: (message) => calls.push(`log:${message}`),
   })
 
-  expect(calls).toEqual(["log:harnessd: identity backfill failed: inventory unreadable", "sweep"])
+  expect(calls).toEqual([
+    "log:harnessd: identity backfill failed: inventory unreadable",
+    "sweep",
+    "log:harnessd: tombstone: 0 row(s)",
+  ])
 })
 
 test("a lock the startup pass cannot take is logged, and the sweep still runs", async () => {
@@ -75,6 +127,7 @@ test("a lock the startup pass cannot take is logged, and the sweep still runs", 
 
   await startupReconciliation({
     backfill: () => [],
+    tombstone: async () => [],
     lock: async () => {
       throw new Error("lock /tmp/resume-active.lock held by pid 4242 for over 600s")
     },
@@ -117,6 +170,7 @@ test("a held lock delays startup by a bounded wait, not the default ten minutes"
   await startupReconciliation({
     ...defaultStartupReconciliationDeps(() => void swept.push("sweep"), false, 60),
     backfill: () => [],
+    tombstone: async () => [],
     log: (message) => void logged.push(message),
   })
 

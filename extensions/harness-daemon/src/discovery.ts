@@ -632,6 +632,28 @@ export function runtimeIdentityFor(params: {
   )
 }
 
+/** The identity a row is selected and grouped by, or undefined when nothing attests one. */
+export type AgentIdentityResolver = (agent: ManagedAgent) => string | undefined
+
+/**
+ * Resolve each row's identity through {@link runtimeIdentityFor} (INV-35), reading
+ * the stores once for the whole batch.
+ *
+ * A `derived` answer is not an identity: it hashes `os.hostname()`, so it renames
+ * itself with the wifi network. Such a row falls back to whatever it recorded,
+ * and to no identity at all when it recorded nothing.
+ */
+export function defaultAgentIdentityResolver(
+  identities: MintedIdentity[] = readMintedIdentities(),
+  attested: AttestedRuntime[] = attestedRuntimes(readHarnessLinks(), canonicalOrRaw)
+): AgentIdentityResolver {
+  return (agent) => {
+    if (!agent.worktree) return agent.runtimeSessionId
+    const resolved = runtimeIdentityFor({ cwd: agent.worktree, agent, identities, attested, canonical: canonicalOrRaw })
+    return resolved.source === "derived" ? agent.runtimeSessionId : resolved.runtimeSessionId
+  }
+}
+
 function runtimeSessionIdForPane(
   pane: LocalTmuxPane,
   config: ThreaChannelConfig,

@@ -46,7 +46,7 @@ import {
 } from "./spawners"
 import {
   fetchScratchpadStatus,
-  latestAgents,
+  latestAgentsByIdentity,
   parseScratchpadUrl,
   preflightRuntimeSession,
   probeSuppressed,
@@ -59,6 +59,7 @@ import {
 import { attachedTmuxSession, ensureTmuxSession, sendKeys } from "./tmux"
 import type { ManagedAgent, ResumeOptions, SpawnOptions, SpawnResult, ThreaChannelConfig } from "./types"
 import { defaultReapDeps, reapArchivedWorktrees } from "./reap"
+import { defaultTombstoneDeps, summarizeTombstones, tombstoneAbandonedRows, type TombstoneOutcome } from "./tombstone"
 import { restorableWorktreeSource, restoreManagedWorktree } from "./worktree"
 import { runWatchLoop, unavailableBackoffMs, uniqueSupervisorTargets, watchIntervalMs } from "./watch"
 
@@ -137,11 +138,26 @@ export async function spawnAgent(options: SpawnOptions): Promise<void> {
   }
 }
 
+/** The first Threa target the local configs and environment agree on, for a pass that must talk to the server. */
+function threaTarget(purpose: string): { baseUrl: string; workspaceId: string; apiKey: string } {
+  const targetFor = (config: { baseUrl?: string; workspaceId?: string; apiKey?: string }) => {
+    const workspaceId = process.env.THREA_WORKSPACE_ID || config.workspaceId
+    const apiKey = process.env.THREA_API_KEY || config.apiKey
+    if (!workspaceId || !apiKey) return undefined
+    return { baseUrl: configuredThreaBaseUrl(config), workspaceId, apiKey }
+  }
+  const [target] = uniqueSupervisorTargets([targetFor(readThreaChannelConfig()), targetFor(readPiRemoteConfig())])
+  if (!target) throw new Error(`harnessd: no Threa credentials found for ${purpose}`)
+  return target
+}
+
 /** Long enough for an ordinary revive or reap to finish, short enough that a wedged holder cannot delay startup. */
 export const STARTUP_LOCK_WAIT_MS = 30_000
 
 export interface StartupReconciliationDeps {
   backfill: () => BackfillOutcome[]
+  /** Runs after the backfill on the same pass: the backfill records identity, tombstoning uses it. */
+  tombstone: () => Promise<TombstoneOutcome[]>
   /** Resolves to the release. A dry run resolves to a no-op, as every other dry-run path does. */
   lock: () => Promise<() => void>
   sweep: () => void | Promise<void>
@@ -155,6 +171,7 @@ export function defaultStartupReconciliationDeps(
 ): StartupReconciliationDeps {
   return {
     backfill: () => backfillIdentities(defaultBackfillDeps(), dryRun),
+    tombstone: () => tombstoneAbandonedRows(defaultTombstoneDeps(threaTarget("the tombstone pass")), dryRun),
     // Bounded: the default deadline is ten minutes, and until this resolves no
     // transport exists and no reap runs. The backfill is an optimisation of what
     // the resolver already computes, so losing a pass costs nothing — the next
@@ -193,7 +210,28 @@ export async function startupReconciliation(deps: StartupReconciliationDeps): Pr
   } finally {
     release?.()
   }
+
   await deps.sweep()
+
+  // AFTER the sweep, deliberately. Tombstoning is the only half that talks to
+  // the network — one request per worktree-gone row, serially — and nothing the
+  // sweep does depends on its result, since a row a tombstone could retire is
+  // already refused by the revive path's own status gate. Ahead of the sweep it
+  // delayed every boot revival by the length of that round trip.
+  try {
+    const release = await deps.lock()
+    try {
+      const tombstones = await deps.tombstone()
+      const counts = summarizeTombstones(tombstones)
+        .map(([disposition, count]) => `${count} ${disposition}`)
+        .join(", ")
+      deps.log(`harnessd: tombstone: ${tombstones.length} row(s)${counts ? `, ${counts}` : ""}`)
+    } finally {
+      release()
+    }
+  } catch (error) {
+    deps.log(`harnessd: tombstone pass failed: ${error instanceof Error ? error.message : String(error)}`)
+  }
 }
 
 export async function backfillIdentitiesCommand(options: { dryRun: boolean }): Promise<void> {
@@ -214,6 +252,26 @@ export async function backfillIdentitiesCommand(options: { dryRun: boolean }): P
     .map(([disposition, count]) => `${count} ${disposition}`)
     .join(", ")
   console.log(`harnessd: ${outcomes.length} subject${outcomes.length === 1 ? "" : "s"}${counts ? `, ${counts}` : ""}`)
+}
+
+export async function tombstoneCommand(options: { dryRun: boolean }): Promise<void> {
+  const deps = defaultTombstoneDeps(threaTarget("the tombstone pass"))
+  // Same lock as the revive, reap and backfill passes, and skipped for a dry run
+  // exactly as they skip it.
+  const release = options.dryRun ? () => {} : await acquireProcessLock(resumeActiveLockPath())
+  let outcomes
+  try {
+    outcomes = await tombstoneAbandonedRows(deps, options.dryRun)
+  } finally {
+    release()
+  }
+  for (const outcome of outcomes) {
+    console.log(`${outcome.disposition}\t${outcome.subject}${outcome.detail ? `\t${outcome.detail}` : ""}`)
+  }
+  const counts = summarizeTombstones(outcomes)
+    .map(([disposition, count]) => `${count} ${disposition}`)
+    .join(", ")
+  console.log(`harnessd: ${outcomes.length} row${outcomes.length === 1 ? "" : "s"}${counts ? `, ${counts}` : ""}`)
 }
 
 export async function watchUnarchived(options: ResumeOptions): Promise<void> {
@@ -305,16 +363,7 @@ export async function watchUnarchived(options: ResumeOptions): Promise<void> {
  * reboots, so the backstop lives here.
  */
 export async function reapArchived(options: { dryRun?: boolean; observingSinceMs?: number } = {}): Promise<void> {
-  const claudeConfig = readThreaChannelConfig()
-  const piConfig = readPiRemoteConfig()
-  const targetFor = (config: { baseUrl?: string; workspaceId?: string; apiKey?: string }) => {
-    const workspaceId = process.env.THREA_WORKSPACE_ID || config.workspaceId
-    const apiKey = process.env.THREA_API_KEY || config.apiKey
-    if (!workspaceId || !apiKey) return undefined
-    return { baseUrl: configuredThreaBaseUrl(config), workspaceId, apiKey }
-  }
-  const [target] = uniqueSupervisorTargets([targetFor(claudeConfig), targetFor(piConfig)])
-  if (!target) throw new Error("harnessd: no Threa credentials found for the reap pass")
+  const target = threaTarget("the reap pass")
 
   // Same lock as resumeActive: a revive can be recreating the very worktree
   // this pass would force-remove, and they race the server independently.
@@ -676,7 +725,7 @@ export async function reviveAgent(
 
 async function resumeActiveUnlocked(options: ResumeOptions, target?: BotSessionRestoredPayload): Promise<boolean> {
   const deps = defaultReviveDeps()
-  const agents = latestAgents(readInventory())
+  const agents = latestAgentsByIdentity(readInventory())
   if (agents.length === 0) {
     console.log("No managed agents.")
     return false
@@ -711,7 +760,10 @@ export function listAgents(): void {
   }
   for (const agent of agents) {
     const tmux = agent.tmuxSession && agent.tmuxWindow ? `${agent.tmuxSession}:${agent.tmuxWindow}` : "-"
-    console.log(`${agent.id}\t${agent.status}\t${agent.runtime}\t${agent.name}\t${tmux}\t${agent.scratchpadUrl ?? "-"}`)
+    const marker = agent.tombstonedAt ? "\ttombstoned" : ""
+    console.log(
+      `${agent.id}\t${agent.status}\t${agent.runtime}\t${agent.name}\t${tmux}\t${agent.scratchpadUrl ?? "-"}${marker}`
+    )
   }
 }
 
