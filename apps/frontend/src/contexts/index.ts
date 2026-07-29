@@ -46,7 +46,7 @@ export {
 } from "./panel-context"
 export { QuickSwitcherProvider, useQuickSwitcher } from "./quick-switcher-context"
 export { PreferencesProvider, usePreferences, usePreferencesOptional, useResolvedTheme } from "./preferences-context"
-export { SettingsProvider, useSettings } from "./settings-context"
+export { SettingsProvider, useSettings, useOptionalSettings } from "./settings-context"
 export {
   CoordinatedLoadingProvider,
   CoordinatedLoadingGate,

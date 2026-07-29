@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react"
 import { Link } from "react-router-dom"
 import { Check, X, Loader2 } from "lucide-react"
 import type {
+  AgentToolEffect,
   StreamEvent,
   AgentSessionRerunContext,
   AgentSessionStartedPayload,
@@ -16,6 +17,8 @@ import { formatDuration } from "@/lib/dates"
 import { focusAtEnd } from "@/hooks"
 import { StopSessionButton, RedirectSessionButton } from "@/components/trace/session-action-buttons"
 import { findVisibleZoneEditor } from "./message-event"
+import { SessionEffectGrid } from "./session-effect-grid"
+import { unionSessionEffects } from "@/lib/effect-links"
 
 /** How long the Redirect hint replaces the subtitle line after a click. */
 const REDIRECT_HINT_MS = 5000
@@ -124,7 +127,14 @@ function buildStatusConfig(
   failedPayload: AgentSessionFailedPayload | null,
   interruptedPayload: AgentSessionInterruptedPayload | null,
   deletedPayload: AgentSessionDeletedPayload | null,
-  liveCounts: { stepCount: number; messageCount: number } | undefined
+  liveCounts: { stepCount: number; messageCount: number } | undefined,
+  /**
+   * Layer-0 markers: a mutating tool declared nothing, so the effect is a bare
+   * `{ kind }` with nothing to name, diff or link. They ride the meta line as a
+   * count rather than the grid, and the meta line is a single truncating line,
+   * so this costs no height (INV-21).
+   */
+  markerEffectCount: number
 ): StatusConfig {
   const rerunReasonLabel = formatRerunReasonLabel(startedPayload?.rerunContext)
   const rerunReasonDetail = formatRerunReasonDetail(startedPayload?.rerunContext)
@@ -160,6 +170,10 @@ function buildStatusConfig(
           `${completedPayload.messageCount} ${completedPayload.messageCount === 1 ? "message" : "messages"} sent`
         )
       }
+      const completedChanges = formatMarkerEffectCount(markerEffectCount)
+      if (completedChanges) {
+        parts.push(completedChanges)
+      }
       return {
         title: "Session complete",
         subtitle: parts.join(" • "),
@@ -186,6 +200,10 @@ function buildStatusConfig(
         parts.push(`${failedPayload.stepCount} ${failedPayload.stepCount === 1 ? "step" : "steps"}`)
       }
       parts.push("Error during execution")
+      const failedChanges = formatMarkerEffectCount(markerEffectCount)
+      if (failedChanges) {
+        parts.push(failedChanges)
+      }
       return {
         title: "Session failed",
         subtitle: parts.join(" • "),
@@ -221,6 +239,10 @@ function buildStatusConfig(
         parts.push(rerunReasonDetail)
       }
       parts.push(`${steps} ${steps === 1 ? "step" : "steps"}`)
+      const retryingChanges = formatMarkerEffectCount(markerEffectCount)
+      if (retryingChanges) {
+        parts.push(retryingChanges)
+      }
       return {
         title: "Interrupted, retrying…",
         subtitle: parts.join(" • "),
@@ -270,6 +292,11 @@ function buildStatusConfig(
   }
 }
 
+function formatMarkerEffectCount(count: number): string | null {
+  if (count <= 0) return null
+  return `${count} ${count === 1 ? "change" : "changes"}`
+}
+
 function formatRerunReasonLabel(rerunContext?: AgentSessionRerunContext | null): string | null {
   if (!rerunContext) return null
   switch (rerunContext.cause) {
@@ -303,6 +330,29 @@ export function AgentSessionEvent({
   const { status, sessionId, startedPayload, completedPayload, failedPayload, interruptedPayload, deletedPayload } =
     deriveStatus(events)
 
+  // Only a terminal turn has a settled account of what it wrote. A running card
+  // never grows a grid, so the effects appear as part of the same status
+  // transition that already swaps the card's title, icon and colours (INV-21).
+  const sessionEffects: AgentToolEffect[] =
+    status === "completed" || status === "failed" || status === "retrying"
+      ? unionSessionEffects(interruptedPayload, completedPayload, failedPayload)
+      : []
+  // What goes in the grid is decided by shape, not by whether a label happens
+  // to be set. A layer-0 marker is a bare `{ kind }` — a tool declared nothing,
+  // so there is nothing to name, diff or link and it only earns a counter.
+  // Anything carrying a target or a diff is a real declaration and renders as a
+  // row, named from its kind when the tool gave no label: `update_user_settings`,
+  // `update_stream_brief` and `cancel_follow_up` all describe themselves through
+  // `target`/`before`/`after` and set no label at all, and the settings write is
+  // the case this whole feature exists for.
+  const describedEffects = sessionEffects.filter(
+    (effect) =>
+      effect.label !== undefined ||
+      effect.target !== undefined ||
+      effect.before !== undefined ||
+      effect.after !== undefined
+  )
+
   const config = buildStatusConfig(
     status,
     startedPayload,
@@ -310,7 +360,8 @@ export function AgentSessionEvent({
     failedPayload,
     interruptedPayload,
     deletedPayload,
-    liveCounts
+    liveCounts,
+    sessionEffects.length - describedEffects.length
   )
 
   const [redirectHintVisible, setRedirectHintVisible] = useState(false)
@@ -462,6 +513,8 @@ export function AgentSessionEvent({
           </div>
         )}
       </Link>
+      {/* Sibling of the card link, never a child: the card is an <a>. */}
+      <SessionEffectGrid effects={describedEffects} />
     </div>
   )
 }

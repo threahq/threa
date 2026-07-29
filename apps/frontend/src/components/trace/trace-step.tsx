@@ -9,6 +9,7 @@ import {
   type PiToolTraceSectionLabel,
   ToolVerificationStatuses,
   type ToolVerificationStatus,
+  type AgentToolEffect,
   type TraceSource,
 } from "@threa/types"
 import { cn } from "@/lib/utils"
@@ -25,6 +26,7 @@ import {
   EyeOff,
   Loader2,
   MessageSquareReply,
+  PenLine,
   X,
   type LucideIcon,
 } from "lucide-react"
@@ -35,6 +37,8 @@ import { formatContextRefLabel } from "@/lib/context-bag/format-label"
 import { buildContextRefSourceHref } from "@/lib/context-bag/source-link"
 import { stripMarkdownToInline } from "@/lib/markdown/strip"
 import { useDecryptedStepContent } from "@/hooks/use-decrypted-step-content"
+import { useOptionalSettings } from "@/contexts"
+import { effectDiff, effectLabel, resolveEffectPath } from "@/lib/effect-links"
 import { RedirectSessionButton, StopSessionButton } from "./session-action-buttons"
 
 interface TraceStepProps {
@@ -97,6 +101,11 @@ export function TraceStep({
   // session controls.
   const awaitingVerdict = step.verification?.status === ToolVerificationStatuses.PENDING
 
+  // "Approved" means reviewed; "Wrote" means something changed. A denied call
+  // changed nothing, so it never claims a write here even if a sink stamped one.
+  const effects = step.verification?.status === ToolVerificationStatuses.DENIED ? [] : (step.effects ?? [])
+  const hasEffects = effects.length > 0
+
   // In-progress steps replace the default timestamp + duration right-slot with
   // a spinning loader + "Running…" label + available session controls.
   const rightSlot = isInProgress ? (
@@ -113,10 +122,13 @@ export function TraceStep({
   ) : undefined
 
   return (
+    // The left gutter is always present and transparent until the step has
+    // effects, so colouring it when a write lands costs no layout (INV-21).
     <div
-      className="px-6 py-5 border-b border-border"
+      className="px-6 py-5 border-b border-border border-l-[3px]"
       style={{
         background: `hsl(${config.hue} ${config.saturation}% ${config.lightness}% / 0.03)`,
+        borderLeftColor: hasEffects ? hueColor : "transparent",
       }}
     >
       <StepHeader
@@ -126,6 +138,7 @@ export function TraceStep({
         duration={duration}
         rightSlot={rightSlot}
         verification={step.verification}
+        hasEffects={hasEffects}
       />
 
       {/*
@@ -150,6 +163,8 @@ export function TraceStep({
           />
         )
       )}
+
+      {hasEffects && <StepEffectList effects={effects} workspaceId={workspaceId} />}
 
       {hasSources && <SourceList sources={effectiveSources!} config={config} workspaceId={workspaceId} />}
     </div>
@@ -206,6 +221,66 @@ function VerificationBadge({ verification }: { verification: NonNullable<AgentSe
   )
 }
 
+/**
+ * "This call changed something." A separate claim from the guardian badge: a
+ * tier-1 tool writes durable state without ever being reviewed, and a reviewed
+ * call that was denied wrote nothing. Fixed footprint, same shape as
+ * {@link VerificationBadge}, so the header cannot reflow when it appears.
+ */
+function WroteBadge() {
+  return (
+    <span className="px-2 py-1 rounded-md text-[11px] font-semibold uppercase tracking-wide inline-flex items-center gap-1.5 bg-primary/10 text-primary">
+      <PenLine className="w-3.5 h-3.5" />
+      Wrote
+    </span>
+  )
+}
+
+/**
+ * What the call wrote: one row per effect, a `before → after` diff when the
+ * effect replaced a value, and a link when the resource has somewhere to open.
+ * A routeless effect renders as plain text rather than a dead link.
+ */
+function StepEffectList({ effects, workspaceId }: { effects: AgentToolEffect[]; workspaceId: string }) {
+  const settings = useOptionalSettings()
+
+  return (
+    <div className="mt-3 space-y-1 text-[12px]">
+      {effects.map((effect, index) => {
+        const path = resolveEffectPath(effect, { workspaceId, getSettingsUrl: settings?.getSettingsUrl })
+        const body = <StepEffectBody effect={effect} />
+        const key = `${effect.kind}-${effect.target ?? ""}-${index}`
+        return path ? (
+          <Link key={key} to={path} className="flex min-w-0 items-center gap-1.5 text-primary hover:underline">
+            {body}
+            <span aria-hidden className="shrink-0 text-muted-foreground/60">
+              ›
+            </span>
+          </Link>
+        ) : (
+          <div key={key} className="flex min-w-0 items-center gap-1.5 text-muted-foreground">
+            {body}
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+function StepEffectBody({ effect }: { effect: AgentToolEffect }) {
+  const diff = effectDiff(effect)
+  return (
+    <>
+      <span className="min-w-0 truncate">{effectLabel(effect)}</span>
+      {diff && (
+        <span className="min-w-0 shrink truncate text-muted-foreground/70">
+          {diff.before} → {diff.after}
+        </span>
+      )}
+    </>
+  )
+}
+
 interface StepHeaderProps {
   config: { label: string; hue: number; saturation: number; lightness: number }
   Icon: LucideIcon
@@ -219,9 +294,11 @@ interface StepHeaderProps {
   rightSlot?: React.ReactNode
   /** Guardian state for a guarded tool call; absent on every unguarded step. */
   verification?: AgentSessionStep["verification"]
+  /** Whether this step wrote durable state — drives the WROTE badge. */
+  hasEffects?: boolean
 }
 
-function StepHeader({ config, Icon, startedAt, duration, rightSlot, verification }: StepHeaderProps) {
+function StepHeader({ config, Icon, startedAt, duration, rightSlot, verification, hasEffects }: StepHeaderProps) {
   return (
     // Wraps because this row can now carry three groups at once — the step-type
     // chip, the verification badge, and the in-flight controls — and its scroll
@@ -241,6 +318,7 @@ function StepHeader({ config, Icon, startedAt, duration, rightSlot, verification
         {config.label}
       </div>
       {verification && <VerificationBadge verification={verification} />}
+      {hasEffects && <WroteBadge />}
       <div className="flex items-center gap-2 ml-auto text-[11px] text-muted-foreground">
         {rightSlot ??
           (startedAt && (
