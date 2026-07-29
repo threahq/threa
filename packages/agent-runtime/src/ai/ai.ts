@@ -475,10 +475,47 @@ export function applyCacheBreakpoints(params: {
   // turn, so caching it would pay a write premium for a span nothing can reuse.
   const last = messages.length > 0 ? out.at(-1) : undefined
   if (last) {
-    out[out.length - 1] = { ...last, providerOptions: withCacheControl(last.providerOptions) } as ModelMessage
+    out[out.length - 1] = markOneCacheBlock(last)
   }
 
   return { system: undefined, messages: out }
+}
+
+/**
+ * Put exactly ONE cache breakpoint on a message.
+ *
+ * A message-level breakpoint is not always one wire block. `@openrouter/ai-sdk-provider`
+ * expands a `tool` message into one wire message PER RESULT and copies the
+ * message-level `cache_control` onto every one of them. A turn that calls four
+ * tools in a single iteration therefore ends with four blocks on its tool
+ * message, and Anthropic rejects the request outright at five (system + four):
+ *
+ *   AI_APICallError: A maximum of 4 blocks with cache_control may be provided.
+ *
+ * That is a hard 400 that kills the turn after the tools have already run and
+ * written their state — the user sees a failed session that did everything.
+ *
+ * Marking the last tool result instead yields one block and still caches the
+ * whole message: the provider reads a result's own `providerOptions` when the
+ * message carries none.
+ *
+ * `tool` is the ONLY role that needs this. `assistant` and `system` accumulate
+ * into a single wire message; a multi-part `user` message looks like it would
+ * fan out but does not — the provider applies the message-level mark to the
+ * last TEXT part only. Marking a part by hand for those roles would either be
+ * read by nothing or move the breakpoint off the block the provider chose.
+ */
+function markOneCacheBlock(message: ModelMessage): ModelMessage {
+  const parts = message.content
+  if (message.role !== "tool" || !Array.isArray(parts) || parts.length === 0) {
+    return { ...message, providerOptions: withCacheControl(message.providerOptions) } as ModelMessage
+  }
+
+  const results = parts as Array<{ providerOptions?: ModelMessage["providerOptions"] }>
+  const marked = results.map((part, index) =>
+    index === results.length - 1 ? { ...part, providerOptions: withCacheControl(part.providerOptions) } : part
+  )
+  return { ...message, content: marked } as ModelMessage
 }
 
 /**
