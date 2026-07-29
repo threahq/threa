@@ -1,5 +1,5 @@
 import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react"
-import { useQuery } from "@tanstack/react-query"
+import { useQuery, useQueryClient } from "@tanstack/react-query"
 import type { StreamBootstrap, StreamMember } from "@threa/types"
 import type { VirtualizerHandle } from "virtua"
 import { ChevronDown, ChevronRight, Search, WifiOff, X } from "lucide-react"
@@ -449,9 +449,14 @@ function useCachedStreamMembers(
 }
 
 function useCachedBootstrapMembers(workspaceId: string, streamId: string): StreamMember[] | undefined {
+  const queryClient = useQueryClient()
+  const key = streamKeys.bootstrap(workspaceId, streamId)
   const { data } = useQuery({
-    queryKey: streamKeys.bootstrap(workspaceId, streamId),
-    queryFn: () => null,
+    queryKey: key,
+    // Returns what the cache already holds rather than a constant: this shares a
+    // key with the stream page's real bootstrap, and a `queryFn` that resolved
+    // to anything else would overwrite it if this observer were ever fetched.
+    queryFn: () => queryClient.getQueryData<StreamBootstrap>(key) ?? null,
     enabled: false,
     staleTime: Infinity,
     select: (bootstrap: StreamBootstrap | null) => bootstrap?.members,
