@@ -6,9 +6,9 @@ import {
   type HarnessLink,
 } from "@threa/bot-runtime-client"
 import { existsSync } from "node:fs"
-import { basename, dirname, join } from "node:path"
+import { basename, join } from "node:path"
 import { installBootResume } from "./boot"
-import { defaultClaudeDiskDeps, findLiveClaudeSessions } from "./claude-registry"
+import { liveClaudePidsIn } from "./claude-registry"
 import { defaultRepo, inferBranch, normalizeName, now } from "./cli"
 import {
   findLocalClaudeChannelPane,
@@ -27,7 +27,7 @@ import {
   readInventoryReadonly,
   upsertAgent,
 } from "./inventory"
-import { acquireProcessLock } from "./lock"
+import { acquireProcessLock, resumeActiveLockPath } from "./lock"
 import { commandExists, commandPath, output } from "./shell"
 import {
   ClaudeRuntimeSpawner,
@@ -236,9 +236,7 @@ export async function reapArchived(options: { dryRun?: boolean; observingSinceMs
   // this pass would force-remove, and they race the server independently.
   const deps = defaultReapDeps(target)
   if (options.observingSinceMs !== undefined) deps.observingSinceMs = options.observingSinceMs
-  const release = options.dryRun
-    ? () => {}
-    : await acquireProcessLock(join(dirname(inventoryPath()), "resume-active.lock"))
+  const release = options.dryRun ? () => {} : await acquireProcessLock(resumeActiveLockPath())
   let outcomes
   try {
     outcomes = await reapArchivedWorktrees(deps, options.dryRun ?? false)
@@ -267,7 +265,7 @@ export function installBootResumeAgent(options: ResumeOptions): void {
 
 export async function resumeActive(options: ResumeOptions, target?: BotSessionRestoredPayload): Promise<boolean> {
   if (options.dryRun) return resumeActiveUnlocked(options, target)
-  const release = await acquireProcessLock(join(dirname(inventoryPath()), "resume-active.lock"))
+  const release = await acquireProcessLock(resumeActiveLockPath())
   try {
     return await resumeActiveUnlocked(options, target)
   } finally {
@@ -323,8 +321,7 @@ export function defaultReviveDeps(): ReviveDeps {
     claudeConfig: readThreaChannelConfig(),
     piConfig: readPiRemoteConfig(),
     paneStatus: (agent) => resolveManagedAgentPane(agent).status,
-    claudeProcessesIn: (worktree) =>
-      findLiveClaudeSessions(worktree, defaultClaudeDiskDeps()).map((session) => session.pid),
+    claudeProcessesIn: liveClaudePidsIn,
     pathExists: existsSync,
     scratchpadStatus: fetchScratchpadStatus,
     preflight: preflightRuntimeSession,

@@ -7,7 +7,8 @@ import {
 } from "@threa/bot-runtime-client"
 import { existsSync } from "node:fs"
 import { pushBranchAndRemoveWorktree } from "./archive-wind-down"
-import { defaultClaudeDiskDeps, findLiveClaudeSessions } from "./claude-registry"
+import { liveClaudePidsIn } from "./claude-registry"
+import { forgetMintedIdentitiesFor } from "./identity-store"
 import { canonicalOrRaw, listLocalTmuxPanes, resolveManagedAgentPane, type LocalTmuxPane } from "./discovery"
 import { processAlive } from "./lock"
 import { output } from "./shell"
@@ -85,6 +86,8 @@ export interface ReapDeps {
   /** Resolves once the killed pane's process is gone, or after a bounded wait. */
   awaitExit: (pid: number) => Promise<void>
   forgetLink: (runtimeSessionId: string) => void
+  /** Retires identity records for a worktree that is gone, and names what it retired. */
+  forgetIdentities: (worktree: string) => string[]
   now: () => number
   log: (message: string) => void
 }
@@ -93,8 +96,7 @@ export function defaultReapDeps(target: { baseUrl: string; workspaceId: string; 
   return {
     links: readHarnessLinks,
     panes: listLocalTmuxPanes,
-    claudeProcessesIn: (worktree) =>
-      findLiveClaudeSessions(worktree, defaultClaudeDiskDeps()).map((session) => session.pid),
+    claudeProcessesIn: liveClaudePidsIn,
     canonicalPath: canonicalOrRaw,
     scratchpadStatus: (streamId) => fetchScratchpadStatus({ ...target, streamId }),
     archivedAt: (streamId) => fetchScratchpadArchivedAt({ ...target, streamId }),
@@ -109,6 +111,7 @@ export function defaultReapDeps(target: { baseUrl: string; workspaceId: string; 
       }
     },
     forgetLink: clearHarnessLink,
+    forgetIdentities: forgetMintedIdentitiesFor,
     now: Date.now,
     log: (message) => console.log(`reap\t${message}`),
   }
@@ -223,8 +226,11 @@ export async function reapLink(link: HarnessLink, deps: ReapDeps, dryRun: boolea
   if (window.kind === "refuse") return { ...base, status: window.status, detail: window.reason }
 
   if (!deps.pathExists(link.worktree)) {
-    // Already gone — the record is the only leftover.
-    if (!dryRun) deps.forgetLink(link.runtimeSessionId)
+    // Already gone — the records are the only leftover.
+    if (!dryRun) {
+      deps.forgetLink(link.runtimeSessionId)
+      retireIdentities(link.worktree, deps)
+    }
     return { ...base, status: "skipped worktree missing" }
   }
 
@@ -249,11 +255,21 @@ export async function reapLink(link: HarnessLink, deps: ReapDeps, dryRun: boolea
   // wind-down: the branch is the thing that had to survive, and a directory
   // left behind is for a human. What must not happen is reporting it gone.
   deps.forgetLink(link.runtimeSessionId)
+  // The identity record is retired only when the directory actually went away.
+  // A wind-down that refused left the worktree on disk, and the identity is
+  // still that directory's — retiring it would let the next mint hand the same
+  // live directory a second id.
+  if (report.removed) retireIdentities(link.worktree, deps)
   return {
     ...base,
     status: report.removed ? "reaped" : "reaped, worktree left",
     detail: `pushed=${report.pushed}${report.reason ? ` (${report.reason})` : ""}${window.kind === "kill" ? ` window=${window.pane.windowId}` : ""}`,
   }
+}
+
+function retireIdentities(worktree: string, deps: ReapDeps): void {
+  const retired = deps.forgetIdentities(worktree)
+  if (retired.length > 0) deps.log(`${worktree}: retired identity ${retired.join(", ")}`)
 }
 
 /**

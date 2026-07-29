@@ -9,7 +9,8 @@ import { commandExists, commandPath, run, shellQuote } from "./shell"
 import { capturePane, createWindow, ensureTmuxSession, pickTmuxWindow, sendKeys, tmuxSession } from "./tmux"
 import type { ManagedAgent, ResumeOptions, SpawnOptions, SpawnResult, ThreaChannelConfig } from "./types"
 import { recordedNoYolo } from "./resume"
-import { ensureWorktree } from "./worktree"
+import { mintRuntimeIdentity } from "./mint"
+import { ensureWorktree, plannedWorktreePath } from "./worktree"
 
 export function mcpConfigPath(name: string): string {
   return join(homedir(), ".threa", "harnessd", "mcp", `${name}.json`)
@@ -293,11 +294,24 @@ export class ClaudeRuntimeSpawner extends RuntimeSpawner {
     const claudeBin = process.env.THREA_HARNESSD_CLAUDE_BIN || commandPath("claude")
     if (!claudeBin) die("claude binary not found; set THREA_HARNESSD_CLAUDE_BIN or put claude on PATH")
 
+    const config = readThreaChannelConfig()
+    // Minted against the path the worktree WILL occupy, before anything exists.
+    // Minting after `git worktree add` meant a refusal — or the lock timing out
+    // behind a long revival sweep — stranded a directory and a branch that no
+    // inventory row points at, and the next spawn of that name died on the
+    // leftover. It is also the only ordering under which the occupancy veto can
+    // see a live Claude already squatting the target.
+    const minted = await mintRuntimeIdentity({
+      worktree: plannedWorktreePath(options),
+      runtimeKind: "claude-code-channel",
+      declared: { instanceId: config.instanceId, runtimeSessionId: config.runtimeSessionId },
+    })
+    if (minted.status === "refused") die(`harnessd: refusing to spawn — ${minted.reason}`)
+    const identity = { instanceId: minted.instanceId, runtimeSessionId: minted.runtimeSessionId }
+
     const session = tmuxSession(options)
     ensureTmuxSession(session)
     const { worktree, branch } = this.createWorktree(options)
-    const config = readThreaChannelConfig()
-    const identity = deriveClaudeRuntimeIdentity(worktree, config)
     const partial: Partial<SpawnResult> = {
       worktree,
       branch,
@@ -496,6 +510,9 @@ export function readThreaChannelConfig(): ThreaChannelConfig {
   }
 }
 
+export const CLAUDE_INSTANCE_ID_PREFIX = "cc"
+export const CLAUDE_RUNTIME_SESSION_ID_PREFIX = "ccs"
+
 export function deriveClaudeRuntimeIdentity(
   worktree: string,
   config: ThreaChannelConfig = {},
@@ -503,8 +520,11 @@ export function deriveClaudeRuntimeIdentity(
 ): { instanceId: string; runtimeSessionId: string } {
   const seed = `${host}:${worktree}`
   return {
-    instanceId: sanitizeId(config.instanceId || stableId("cc", seed)).slice(0, 64),
-    runtimeSessionId: sanitizeId(config.runtimeSessionId || stableId("ccs", seed)).slice(0, 64),
+    instanceId: sanitizeId(config.instanceId || stableId(CLAUDE_INSTANCE_ID_PREFIX, seed)).slice(0, 64),
+    runtimeSessionId: sanitizeId(config.runtimeSessionId || stableId(CLAUDE_RUNTIME_SESSION_ID_PREFIX, seed)).slice(
+      0,
+      64
+    ),
   }
 }
 

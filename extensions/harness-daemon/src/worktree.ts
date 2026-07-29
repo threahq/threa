@@ -1,11 +1,23 @@
 import { existsSync } from "node:fs"
-import { dirname, resolve } from "node:path"
+import { dirname, join, resolve } from "node:path"
+import { canonicalOrRaw } from "./discovery"
 import { die } from "./errors"
 import { output, run } from "./shell"
 import type { ManagedAgent, SpawnOptions } from "./types"
 
-function repoWorktreeDir(repo: string, name: string): string {
-  return resolve(dirname(resolve(repo)), `threa.${name}`)
+/**
+ * Where {@link ensureWorktree} will put this agent, without creating anything —
+ * and the single definition of that path, so a caller that has to name the
+ * directory before it exists cannot drift from the one that creates it.
+ *
+ * The parent is canonicalized and the leaf appended, rather than canonicalizing
+ * the whole path: the leaf does not exist yet, so `realpathSync` would throw and
+ * fall back to the raw path — which then fails to match the resolved path every
+ * later reader sees once the directory does exist.
+ */
+export function plannedWorktreePath(options: SpawnOptions): string {
+  const repo = resolve(options.repo ?? process.cwd())
+  return join(canonicalOrRaw(dirname(repo)), `threa.${options.name}`)
 }
 
 function branchFor(options: SpawnOptions): string {
@@ -20,7 +32,7 @@ export function ensureWorktree(options: SpawnOptions): { worktree: string; branc
   const repo = resolve(options.repo ?? process.cwd())
   const branch = branchFor(options)
   const base = baseFor(options)
-  const worktree = repoWorktreeDir(repo, options.name)
+  const worktree = plannedWorktreePath(options)
   if (!existsSync(repo)) die(`repo not found: ${repo}`)
   if (existsSync(worktree)) die(`worktree dir already exists: ${worktree}`)
 

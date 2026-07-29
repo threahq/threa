@@ -1,5 +1,11 @@
 import { mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs"
-import { dirname } from "node:path"
+import { dirname, join } from "node:path"
+import { inventoryPath } from "./inventory"
+
+/** One lock serializes spawn/mint, revive and reap: they all race for the same worktrees. */
+export function resumeActiveLockPath(): string {
+  return join(dirname(inventoryPath()), "resume-active.lock")
+}
 
 export interface LockOptions {
   pid?: number

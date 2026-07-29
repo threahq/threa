@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto"
 import { readHarnessLinks, type HarnessLink } from "@threa/bot-runtime-client"
 import { existsSync, statSync } from "node:fs"
 import { hostname } from "node:os"
-import { basename, dirname, join } from "node:path"
+import { basename, join } from "node:path"
 import { acceptClaudeBootPrompts } from "./claude-boot"
 import {
   defaultClaudeDiskDeps,
@@ -20,7 +20,7 @@ import {
   type LocalTmuxPane,
 } from "./discovery"
 import { inventoryPath, readInventoryReadonly, upsertAgent } from "./inventory"
-import { acquireProcessLock } from "./lock"
+import { acquireProcessLock, resumeActiveLockPath } from "./lock"
 import {
   fetchScratchpadStatus,
   parseScratchpadUrl,
@@ -168,7 +168,7 @@ export async function adoptClaudeSession(
   deps: AdoptDeps = defaultAdoptDeps()
 ): Promise<AdoptOutcome> {
   if (options.dryRun) return adoptClaudeSessionUnlocked(options, deps)
-  const release = await acquireProcessLock(join(dirname(inventoryPath()), "resume-active.lock"))
+  const release = await acquireProcessLock(resumeActiveLockPath())
   try {
     return await adoptClaudeSessionUnlocked(options, deps)
   } finally {
@@ -350,7 +350,8 @@ export async function adoptClaudeSessionUnlocked(options: AdoptOptions, deps: Ad
   // A live pane is adopted in place, never relaunched, so the mode that applies
   // to it is the one it is already running under. Reporting or recording this
   // invocation's resolution there would describe a restart that never happened.
-  const bypass: AdoptBypassDecision = pane && observed !== undefined ? { noYolo: !observed, source: "live launch" } : resolved
+  const bypass: AdoptBypassDecision =
+    pane && observed !== undefined ? { noYolo: !observed, source: "live launch" } : resolved
   const noYolo = bypass.noYolo
   if (pane && observed !== undefined && resolved.noYolo !== bypass.noYolo) {
     deps.warn(

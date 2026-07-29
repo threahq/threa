@@ -75,6 +75,10 @@ export function defaultClaudeDiskDeps(run: typeof output = output): ClaudeDiskDe
  * is not enough to rule that out: a process detached from tmux (or whose window
  * was killed while it kept running) leaves no pane but is very much alive.
  */
+export function liveClaudePidsIn(cwd: string, deps: ClaudeDiskDeps = defaultClaudeDiskDeps()): number[] {
+  return findLiveClaudeSessions(cwd, deps).map((session) => session.pid)
+}
+
 export function findLiveClaudeSessions(cwd: string, deps: ClaudeDiskDeps): ClaudeNativeSession[] {
   let target: string
   try {
