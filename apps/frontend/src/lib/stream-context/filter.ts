@@ -3,6 +3,8 @@ import type { CachedStreamContextItem } from "@/db"
 
 export interface ContextRowFilters {
   category?: ContextCategory
+  /** Multi-category narrowing, mirroring the endpoint's `categories`. */
+  categories?: ContextCategory[]
   /** Free-text terms; a row must contain every one (case-insensitive). */
   terms?: string[]
   /** Author id. */
@@ -26,7 +28,17 @@ export interface ContextRowFilters {
 export function contextRowText(row: CachedStreamContextItem): string {
   const detail = row.detail as unknown as Record<string, unknown>
   const parts = [row.refId]
-  for (const field of ["url", "title", "siteName", "description", "filename", "giphyTitle", "name", "statusNote"]) {
+  for (const field of [
+    "url",
+    "title",
+    "siteName",
+    "description",
+    "filename",
+    "giphyTitle",
+    "name",
+    "note",
+    "statusNote",
+  ]) {
     const value = detail?.[field]
     if (typeof value === "string") parts.push(value)
   }
@@ -45,6 +57,7 @@ export function filterContextRows(
   const terms = (filters.terms ?? []).map((t) => t.toLowerCase()).filter(Boolean)
   return rows.filter((row) => {
     if (filters.category && row.category !== filters.category) return false
+    if (filters.categories && !filters.categories.includes(row.category)) return false
     if (filters.authorId && row.authorId !== filters.authorId) return false
     if (filters.before && row.occurredAt >= filters.before) return false
     if (filters.after && row.occurredAt < filters.after) return false

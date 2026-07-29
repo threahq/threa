@@ -10,8 +10,10 @@ import { delegationContextItems, withDelegations } from "@/lib/stream-context/de
 import { followUpContextItems, withFollowUps } from "@/lib/stream-context/follow-ups"
 import { StreamContextRow } from "./stream-context-row"
 import {
+  AGENT_FILTER_CATEGORIES,
   chipsFromCounts,
   ContextChipRow,
+  filterCount,
   ContextEmpty,
   ContextPanelHeader,
   ContextSkeleton,
@@ -72,15 +74,25 @@ export function StreamContextDerivedPanel({
   // "all" so the body never strands the user on an empty filter. The delegation
   // count isn't known until its query settles, so a `?context=delegation` deep
   // link holds the requested view instead of flickering All → Delegations.
+  // The Agent chip stands for both agent categories, so it only settles once
+  // both of their queries have.
+  const agentPending = delegationsPending || outcomesQuery.isPending
   const filterSettled =
-    (filter !== "delegation" || !delegationsPending) && (filter !== "follow_up" || !outcomesQuery.isPending)
-  const effectiveFilter: Filter = filter !== "all" && filterSettled && counts[filter] === 0 ? "all" : filter
+    (filter !== "delegation" || !delegationsPending) &&
+    (filter !== "follow_up" || !outcomesQuery.isPending) &&
+    (filter !== "agent" || !agentPending)
+  const effectiveFilter: Filter =
+    filter !== "all" && filterSettled && filterCount(counts, filter, total) === 0 ? "all" : filter
   // Memoized for its identity as much as its cost: the timeline's day grouping
   // is keyed on this array, and a fresh one per render would miss that memo.
-  const visible = useMemo(
-    () => (effectiveFilter === "all" ? items : items.filter((i) => i.category === effectiveFilter)),
-    [items, effectiveFilter]
-  )
+  const visible = useMemo(() => {
+    if (effectiveFilter === "agent") {
+      const agentCategories: readonly string[] = AGENT_FILTER_CATEGORIES
+      return items.filter((i) => agentCategories.includes(i.category))
+    }
+    if (effectiveFilter !== "all") return items.filter((i) => i.category === effectiveFilter)
+    return items
+  }, [items, effectiveFilter])
   const isLoading = events === undefined || ((delegationsPending || outcomesQuery.isPending) && visible.length === 0)
 
   const scrollerRef = useRef<HTMLDivElement | null>(null)

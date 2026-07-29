@@ -1,6 +1,6 @@
 import type { Pool, PoolClient } from "pg"
 import { withTransaction } from "../../db"
-import { agentFollowUpId, agentFollowUpQueueId, queueId, eventId } from "../../lib/id"
+import { agentFollowUpId, agentFollowUpQueueId, queueId, eventId, streamContextItemId } from "../../lib/id"
 import { JobQueues, QueueRepository, enqueueQueuedJob, type PersonaAgentJobData } from "../../lib/queue"
 import { OutboxRepository } from "../../lib/outbox"
 import { logger } from "../../lib/logger"
@@ -11,7 +11,8 @@ import {
   type AgentFollowUpScheduledEventPayload,
   type AgentFollowUpCancelledEventPayload,
 } from "@threa/types"
-import { StreamEventRepository } from "../streams"
+import { StreamEventRepository, StreamRepository } from "../streams"
+import { StreamContextRepository, contextSnippet } from "../stream-context"
 import { AgentFollowUpRepository, type AgentFollowUp } from "./follow-up-repository"
 
 /** The outbox event type that carries each follow-up timeline event to the stream room. */
@@ -145,6 +146,37 @@ export class AgentFollowUpService {
         actorId: params.personaId,
         actorType: AuthorTypes.PERSONA,
       })
+
+      // "In this stream" landmark. Sealed streams are never indexed. Status and
+      // `scheduledFor` are mutable, so they stay out of `detail` and are joined
+      // live on read — a stored copy would show a cancelled follow-up as pending.
+      const stream = await StreamRepository.findById(client, params.streamId)
+      if (!stream) {
+        logger.warn(
+          { workspaceId: params.workspaceId, streamId: params.streamId, followUpId: inserted.id },
+          "Follow-up scheduled against a missing stream row, skipping context landmark"
+        )
+      }
+      if (stream && stream.e2eEnabled !== true) {
+        await StreamContextRepository.insertMany(client, [
+          {
+            id: streamContextItemId(),
+            workspaceId: params.workspaceId,
+            streamId: params.streamId,
+            rootStreamId: stream.rootStreamId ?? stream.id,
+            category: "follow_up",
+            refKind: "follow_up",
+            refId: inserted.id,
+            groupKey: inserted.id,
+            sourceMessageId: null,
+            authorId: null,
+            occurredAt: inserted.createdAt,
+            sequence: null,
+            snippet: contextSnippet(inserted.note),
+            detail: { note: inserted.note },
+          },
+        ])
+      }
 
       const pendingCount = await AgentFollowUpRepository.countPending(client, params.workspaceId, params.streamId)
       return { ok: true, followUp: { ...inserted, queueMessageId }, pendingCount, limit }

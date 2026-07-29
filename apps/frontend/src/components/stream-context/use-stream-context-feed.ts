@@ -12,6 +12,8 @@ export const streamContextKeys = {
 export interface UseStreamContextFeedOptions {
   scope?: StreamContextScope
   category?: ContextCategory
+  /** Two-or-more-category narrowing (the Agent chip). */
+  categories?: ContextCategory[]
   /** Free text; already debounced by the caller. */
   q?: string
   /** Author **id** (the panel resolves `from:@slug` before calling). */
@@ -53,10 +55,19 @@ export function useStreamContextFeed(
   rootStreamId: string,
   options: UseStreamContextFeedOptions = {}
 ): StreamContextFeed {
-  const { scope = "tree", category, q, from, before, after, enabled = true } = options
+  const { scope = "tree", category, categories, q, from, before, after, enabled = true } = options
+  const categoriesKey = categories?.join(",")
 
   const query = useInfiniteQuery({
-    queryKey: streamContextKeys.feed(workspaceId, streamId, { scope, category, q, from, before, after }),
+    queryKey: streamContextKeys.feed(workspaceId, streamId, {
+      scope,
+      category,
+      categories: categoriesKey,
+      q,
+      from,
+      before,
+      after,
+    }),
     // Seeding here, not in an effect, is what makes "the page is in IDB by the
     // time the fetch resolves" structural: `fetchNextPage` awaits this, so the
     // date jump's paging loop can read IDB straight after. Once per page, too —
@@ -65,7 +76,16 @@ export function useStreamContextFeed(
     // from. A reconnect refetch re-runs this per page, so INV-53 catch-up still
     // rewrites the whole window.
     queryFn: async ({ pageParam }) => {
-      const request: ListStreamContextRequest = { scope, category, q, from, before, after, cursor: pageParam }
+      const request: ListStreamContextRequest = {
+        scope,
+        category,
+        categories,
+        q,
+        from,
+        before,
+        after,
+        cursor: pageParam,
+      }
       const page = await streamContextApi.list(workspaceId, streamId, request)
       await seedStreamContextItems(workspaceId, rootStreamId, page.items)
       return page

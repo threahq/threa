@@ -39,6 +39,22 @@ describe("filterContextRows date bounds", () => {
   })
 })
 
+describe("filterContextRows free text", () => {
+  // A follow-up's display text is `detail.note`, and the endpoint searches
+  // `afu.note`. Phase 1 dropping what phase 2 returns leaves the chip row
+  // claiming a match the list cannot show.
+  it("matches a follow-up on its note, the term a user actually types", () => {
+    const followUp = row({
+      category: "follow_up",
+      groupKey: "agfu_1",
+      refKind: "follow_up",
+      detail: { note: "check back on the deploy", status: "pending", scheduledFor: null },
+    })
+
+    expect(filterContextRows([followUp], { terms: ["deploy"] })).toEqual([followUp])
+  })
+})
+
 describe("collapseContextRows", () => {
   it("keeps one row per group, represented by its newest occurrence", () => {
     const older = row({ sourceMessageId: "msg_a", occurredAt: "2026-06-20T10:00:00.000Z", snippet: "first" })

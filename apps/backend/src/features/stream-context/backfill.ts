@@ -23,6 +23,7 @@ export type StreamContextChunk =
   | ({ kind: "messages"; ids: string[] } & StreamRef)
   | ({ kind: "memos" } & StreamRef)
   | ({ kind: "delegations" } & StreamRef)
+  | ({ kind: "follow_ups" } & StreamRef)
   | ({ kind: "threads" } & StreamRef)
 
 interface MessageRow {
@@ -54,6 +55,12 @@ interface DelegationRow {
   title: string
   created_by_kind: string
   created_by_id: string
+  created_at: Date
+}
+
+interface FollowUpRow {
+  id: string
+  note: string
   created_at: Date
 }
 
@@ -131,6 +138,10 @@ export async function plan(ctx: BackfillContext, workspaceId: string): Promise<S
     SELECT DISTINCT stream_id FROM delegated_tasks
     WHERE workspace_id = ${workspaceId} AND stream_id = ANY(${streamIds})
   `)
+  const followUpStreams = await ctx.pool.query<{ stream_id: string }>(sql`
+    SELECT DISTINCT stream_id FROM agent_follow_ups
+    WHERE workspace_id = ${workspaceId} AND stream_id = ANY(${streamIds})
+  `)
   const threadParents = await ctx.pool.query<{ parent_stream_id: string }>(sql`
     SELECT DISTINCT parent_stream_id FROM streams
     WHERE workspace_id = ${workspaceId}
@@ -152,6 +163,9 @@ export async function plan(ctx: BackfillContext, workspaceId: string): Promise<S
   }
   for (const row of delegationStreams.rows) {
     chunks.push({ kind: "delegations", streamId: row.stream_id, rootStreamId: rootByStream.get(row.stream_id)! })
+  }
+  for (const row of followUpStreams.rows) {
+    chunks.push({ kind: "follow_ups", streamId: row.stream_id, rootStreamId: rootByStream.get(row.stream_id)! })
   }
   for (const row of threadParents.rows) {
     chunks.push({
@@ -258,6 +272,35 @@ function delegationChunkRows(
     sequence: null,
     snippet: contextSnippet(task.title),
     detail: { title: task.title },
+  }))
+}
+
+/**
+ * Same identity key `AgentFollowUpService.schedule` writes — same category,
+ * `ref_id` and null `source_message_id` — so a re-run collides on
+ * `stream_context_items_identity` instead of duplicating. Status and
+ * `scheduled_for` are joined live on read, never stored.
+ */
+function followUpChunkRows(
+  chunk: StreamContextChunk & { kind: "follow_ups" },
+  workspaceId: string,
+  followUps: FollowUpRow[]
+): NewStreamContextItem[] {
+  return followUps.map((followUp) => ({
+    id: streamContextItemId(),
+    workspaceId,
+    streamId: chunk.streamId,
+    rootStreamId: chunk.rootStreamId,
+    category: "follow_up" as const,
+    refKind: "follow_up" as const,
+    refId: followUp.id,
+    groupKey: followUp.id,
+    sourceMessageId: null,
+    authorId: null,
+    occurredAt: followUp.created_at,
+    sequence: null,
+    snippet: contextSnippet(followUp.note),
+    detail: { note: followUp.note },
   }))
 }
 
@@ -455,6 +498,20 @@ async function processDelegationsChunk(
   return delegationChunkRows(chunk, workspaceId, delegations.rows)
 }
 
+async function processFollowUpsChunk(
+  ctx: BackfillContext,
+  workspaceId: string,
+  chunk: StreamContextChunk & { kind: "follow_ups" }
+): Promise<NewStreamContextItem[]> {
+  const followUps = await ctx.pool.query<FollowUpRow>(sql`
+    SELECT id, note, created_at
+    FROM agent_follow_ups
+    WHERE workspace_id = ${workspaceId} AND stream_id = ${chunk.streamId}
+    ORDER BY id
+  `)
+  return followUpChunkRows(chunk, workspaceId, followUps.rows)
+}
+
 async function processThreadsChunk(
   ctx: BackfillContext,
   workspaceId: string,
@@ -500,6 +557,9 @@ export async function processChunk(
       break
     case "delegations":
       rows = await processDelegationsChunk(ctx, workspaceId, chunk)
+      break
+    case "follow_ups":
+      rows = await processFollowUpsChunk(ctx, workspaceId, chunk)
       break
     case "threads":
       rows = await processThreadsChunk(ctx, workspaceId, chunk)

@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest"
 import { createElement, Fragment, createRef } from "react"
 import { render, screen } from "@testing-library/react"
 import * as streamContextListModule from "./stream-context-list"
-import { ContextTimeline } from "./stream-context-chrome"
+import { chipsFromCounts, ContextTimeline, filterCategories, filterCount, parseFilter } from "./stream-context-chrome"
 import type { ContextItem } from "@/lib/stream-context/types"
 
 /**
@@ -79,5 +79,41 @@ describe("ContextTimeline virtualization wiring", () => {
 
     expect(seam).not.toHaveBeenCalled()
     expect(screen.getByText("a")).toBeInTheDocument()
+  })
+})
+
+describe("the Agent chip", () => {
+  const counts = { link: 3, media: 0, file: 0, memo: 0, delegation: 2, follow_up: 4, thread: 0 }
+
+  it("stands for both agent categories: one chip, their summed count, ahead of the per-category chips", () => {
+    expect(chipsFromCounts(counts, 9)).toEqual([
+      { value: "all", label: "All", count: 9 },
+      { value: "agent", label: "Agent", count: 6 },
+      { value: "link", label: "Links", count: 3 },
+      { value: "delegation", label: "Delegations", count: 2 },
+      { value: "follow_up", label: "Follow-ups", count: 4 },
+    ])
+  })
+
+  it("is absent when neither agent category has rows", () => {
+    const empty = { ...counts, delegation: 0, follow_up: 0 }
+
+    expect(chipsFromCounts(empty, 3).map((chip) => chip.value)).toEqual(["all", "link"])
+  })
+
+  it("is addressable as ?context=agent and narrows to both categories", () => {
+    expect({
+      parsed: parseFilter("agent"),
+      categories: filterCategories("agent"),
+      singleCategory: filterCategories("follow_up"),
+      all: filterCategories("all"),
+      count: filterCount(counts, "agent", 9),
+    }).toEqual({
+      parsed: "agent",
+      categories: ["follow_up", "delegation"],
+      singleCategory: ["follow_up"],
+      all: undefined,
+      count: 6,
+    })
   })
 })

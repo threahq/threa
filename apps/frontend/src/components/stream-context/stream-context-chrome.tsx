@@ -12,7 +12,25 @@ import { groupItemsByDay } from "@/lib/stream-context/grouping"
 import { CONTEXT_CATEGORIES, type ContextCategory, type ContextItem } from "@/lib/stream-context/types"
 import { cn } from "@/lib/utils"
 
-export type Filter = "all" | ContextCategory
+/** `agent` stands for both agent-outcome categories at once — see {@link AGENT_FILTER_CATEGORIES}. */
+export type Filter = "all" | ContextCategory | "agent"
+
+/** The two categories the Agent chip selects, and whose counts it sums. */
+export const AGENT_FILTER_CATEGORIES = ["follow_up", "delegation"] as const satisfies readonly ContextCategory[]
+
+/** The categories a filter narrows to, or `undefined` for the whole scope. */
+export function filterCategories(filter: Filter): ContextCategory[] | undefined {
+  if (filter === "all") return undefined
+  if (filter === "agent") return [...AGENT_FILTER_CATEGORIES]
+  return [filter]
+}
+
+/** The count a chip shows — the Agent chip sums the categories it stands for. */
+export function filterCount(counts: Record<ContextCategory, number>, filter: Filter, total: number): number {
+  if (filter === "all") return total
+  if (filter === "agent") return AGENT_FILTER_CATEGORIES.reduce((sum, c) => sum + counts[c], 0)
+  return counts[filter]
+}
 
 /** The props both panel implementations take; the index panel owns the choice. */
 export interface StreamContextPanelProps {
@@ -37,6 +55,7 @@ export const CATEGORY_LABELS: Record<ContextCategory, string> = {
 
 export function parseFilter(raw: string | null): Filter {
   if (raw === "all") return "all"
+  if (raw === "agent") return "agent"
   if (raw && (CONTEXT_CATEGORIES as string[]).includes(raw)) return raw as ContextCategory
   return "all"
 }
@@ -74,8 +93,10 @@ export interface ContextChip {
 
 /** Build the chip row from per-category counts, dropping empty categories. */
 export function chipsFromCounts(counts: Record<ContextCategory, number>, total: number): ContextChip[] {
+  const agentCount = filterCount(counts, "agent", total)
   return [
     { value: "all", label: "All", count: total },
+    ...(agentCount > 0 ? [{ value: "agent" as Filter, label: "Agent", count: agentCount }] : []),
     ...CONTEXT_CATEGORIES.filter((c) => counts[c] > 0).map((c) => ({
       value: c as Filter,
       label: CATEGORY_LABELS[c],
