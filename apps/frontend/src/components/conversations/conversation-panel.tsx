@@ -49,6 +49,7 @@ import { actorRowTheme } from "@/components/message/actor-row-theme"
 import { ConversationReadProvider, useConversationReadController } from "@/components/message/conversation-read-context"
 import { useConversationAutoRead } from "@/components/message/use-conversation-auto-read"
 import { DeletedMessageEvent } from "@/components/timeline/deleted-message-event"
+import { MESSAGE_ROW_CONTINUATION_PADDING, MESSAGE_ROW_HEAD_PADDING } from "@/components/message/message-row-layout"
 import { useConversationUnreadMarker } from "@/components/conversations/use-conversation-unread-marker"
 import { RelativeTime } from "@/components/relative-time"
 import { BoardReplyComposer, type ArmedReply } from "@/components/board/board-reply-composer"
@@ -67,7 +68,14 @@ import { useStashedDrafts } from "@/hooks/use-stashed-drafts"
 import { boardReplyDraftKey, boardBranchReplyDraftKey } from "@/lib/board/draft-keys"
 import { useWorkspaceUserId } from "@/hooks/use-workspaces"
 import { useStreamName } from "@/hooks/use-stream-name"
-import { useConversationService, usePanel, parseConversationPanel, useSidebar } from "@/contexts"
+import {
+  useConversationService,
+  usePanel,
+  parseConversationPanel,
+  useSidebar,
+  useCoordinatedPhase,
+  type CoordinatedPhase,
+} from "@/contexts"
 import { useStreamFromStore } from "@/stores/stream-store"
 import { consumeConversationReplyOpen, subscribeConversationReplyOpen } from "@/stores/conversation-reply-open-store"
 import { conversationKeys, useConversationBoardPost, useSplitThread } from "@/hooks/use-conversations"
@@ -88,27 +96,164 @@ interface ConversationPanelProps {
   onClose: () => void
 }
 
-/** How long the reveal waits on an undecidable read state before painting rows
- *  without a "New" divider. A conversation spanning a never-read thread leg is
- *  never decidable at all (INV-62: no membership row, so neither bootstrap map
- *  carries it), so this is a real ceiling, not just a slow-network cushion. */
-const READ_STATE_REVEAL_TIMEOUT_MS = 1500
+/** How long the reveal waits on an unsettled input before painting rows without
+ *  a "New" divider. A conversation spanning a never-read thread leg is never
+ *  decidable at all (INV-62: no membership row, so neither bootstrap map carries
+ *  it), so this is a real ceiling, not just a slow-network cushion. */
+const REVEAL_TIMEOUT_MS = 1500
 
-/** The panel's one loading shape — held until every source the first paint reads
- *  has landed, so the column reveals once instead of in three visible phases. */
+/** Head/continuation shape of the placeholder run, so the skeleton has the same
+ *  grouped rhythm as a real conversation instead of four identical blocks. */
+const SKELETON_ROWS: { continuation: boolean; width: string }[] = [
+  { continuation: false, width: "w-11/12" },
+  { continuation: true, width: "w-4/5" },
+  { continuation: false, width: "w-3/4" },
+  { continuation: true, width: "w-10/12" },
+  { continuation: true, width: "w-2/3" },
+]
+
+/**
+ * The panel's loading shape, rendered by the same component that renders the
+ * rows and built from the same layout constants `MessageItem` uses
+ * (`MESSAGE_ROW_*_PADDING`, the `md` avatar box, `gap-3`, and the column's own
+ * `px-3 sm:px-6` break-out). Same geometry means the swap to real rows moves
+ * nothing (INV-21) — the previous `p-4`/`gap-2` shape pushed the first row down
+ * 16px and in 28px.
+ */
 function ConversationRowsSkeleton() {
   return (
-    <div className="flex flex-col gap-3 p-4">
-      {Array.from({ length: 4 }).map((_, i) => (
-        <div key={i} className="flex items-start gap-2">
-          <Skeleton className="h-8 w-8 shrink-0 rounded-[8px]" />
-          <div className="min-w-0 flex-1 space-y-2">
-            <Skeleton className="h-3.5 w-1/4" />
-            <Skeleton className="h-3 w-4/5" />
+    <div aria-hidden>
+      {SKELETON_ROWS.map((row, i) => (
+        <div key={i} className="-mx-3 sm:-mx-6">
+          <div
+            className={cn(
+              "flex items-start gap-3 px-3 sm:px-6",
+              row.continuation ? MESSAGE_ROW_CONTINUATION_PADDING : MESSAGE_ROW_HEAD_PADDING
+            )}
+          >
+            {row.continuation ? (
+              <div className="h-8 w-8 shrink-0" />
+            ) : (
+              <Skeleton className="h-8 w-8 shrink-0 rounded-[8px]" />
+            )}
+            <div className="min-w-0 flex-1">
+              {!row.continuation && (
+                <div className="mb-0.5 flex items-baseline gap-2">
+                  <Skeleton className="h-5 w-28" />
+                </div>
+              )}
+              <Skeleton className={cn("h-[22px]", row.width)} />
+            </div>
           </div>
         </div>
       ))}
     </div>
+  )
+}
+
+interface ConversationPanelHeaderProps {
+  workspaceId: string
+  conversationId: string | null
+  post: BoardViewPost | null
+  /** The panel's coordinated phase — the header lands with the rows, never before. */
+  phase: CoordinatedPhase
+  isMobile: boolean
+  hostStreamType: string | undefined
+  locator: string
+  isHidden: boolean
+  copyDone: boolean
+  onCopyLink: () => void
+  onClose: () => void
+}
+
+/**
+ * The panel header. Rendered by the body once a conversation is open, so its
+ * title/glyph/actions flip on the exact same `phase` value as the message
+ * column — one commit, no stepped reveal. Until then the row holds its footprint
+ * at a fixed height (INV-21).
+ */
+function ConversationPanelHeader({
+  workspaceId,
+  conversationId,
+  post,
+  phase,
+  isMobile,
+  hostStreamType,
+  locator,
+  isHidden,
+  copyDone,
+  onCopyLink,
+  onClose,
+}: ConversationPanelHeaderProps) {
+  const ContextGlyph = (hostStreamType && TYPE_GLYPH[hostStreamType]) || MessageSquareText
+  const revealed = phase === "ready" && post !== null
+  return (
+    <SidePanelHeader>
+      {isMobile && <SidebarToggle location="page" />}
+      <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" onClick={onClose}>
+        <ChevronLeft className="h-4 w-4" />
+        <span className="sr-only">Back</span>
+      </Button>
+      {/* Nothing here paints before the column does: the glyph, the topic and the
+          stream locator all resolve with the rows, and rendering their fallbacks
+          first made the header show a generic icon over the literal word
+          "Conversation" and then swap. */}
+      <SidePanelTitle className="flex min-w-0 flex-1 items-center gap-1.5">
+        {revealed ? (
+          <>
+            <ContextGlyph className="h-4 w-4 shrink-0 text-muted-foreground" />
+            {post.conversation.status === "resolved" && (
+              <CircleCheck className="h-4 w-4 shrink-0 text-muted-foreground" aria-label="Resolved" />
+            )}
+            {/* The topic is the conversation's identity — show it when set, falling
+                back to the stream locator (the pre-topic behavior). */}
+            <span className={cn("truncate", post.conversation.status === "resolved" && "text-muted-foreground")}>
+              {post.conversation.topicSummary ?? locator}
+            </span>
+            <RelativeTime
+              date={post.conversation.lastActivityAt}
+              terse
+              className="ml-1 shrink-0 text-xs font-normal text-muted-foreground"
+            />
+          </>
+        ) : (
+          <>
+            <div className="h-4 w-4 shrink-0" />
+            {phase === "skeleton" && <Skeleton className="h-4 w-40 max-w-full" />}
+          </>
+        )}
+      </SidePanelTitle>
+      {revealed ? (
+        <ConversationActionsMenu
+          workspaceId={workspaceId}
+          conversationId={post.conversation.id}
+          streamId={post.conversation.streamId}
+          topicSummary={post.conversation.topicSummary}
+          status={post.conversation.status}
+          isHidden={isHidden}
+          triggerClassName="shrink-0"
+        />
+      ) : (
+        <div className="h-8 w-8 shrink-0" />
+      )}
+      {conversationId && (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8 shrink-0 text-muted-foreground hover:text-foreground"
+              aria-label={copyDone ? "Link copied" : "Copy link to conversation"}
+              onClick={onCopyLink}
+            >
+              {copyDone ? <Check className="h-4 w-4" /> : <Link2 className="h-4 w-4" />}
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent side="bottom">{copyDone ? "Copied" : "Copy link"}</TooltipContent>
+        </Tooltip>
+      )}
+      {!isMobile && <SidePanelClose onClose={onClose} />}
+    </SidePanelHeader>
   )
 }
 
@@ -123,10 +268,13 @@ function ConversationRowsSkeleton() {
  */
 export function ConversationPanel({ workspaceId, onClose }: ConversationPanelProps) {
   const { isMobile } = useSidebar()
+  // The composer anchor lives here, above the body, because the body itself
+  // reads the anchor context (`useFloatingComposerAnchor`) — it can host the
+  // element but not the provider.
   const [floatingAnchorEl, setFloatingAnchorEl] = useState<HTMLElement | null>(null)
   const { panelId } = usePanel()
   const conversationId = panelId ? parseConversationPanel(panelId) : null
-  const { post, isLoading, notFound, refetch } = useConversationBoardPost(workspaceId, conversationId)
+  const { post, notFound, refetch } = useConversationBoardPost(workspaceId, conversationId)
   // Hidden set — the panel is reachable for a hidden conversation (deep-link,
   // search, Saved), so it offers "Unhide" when the open one is hidden.
   const hiddenConversations = useBoardHiddenConversations(workspaceId)
@@ -231,21 +379,50 @@ export function ConversationPanel({ workspaceId, onClose }: ConversationPanelPro
   const hostStream = useStreamFromStore(anchorStreamId)
   const hostStreamType = hostStream?.type
   const locator = useStreamName(workspaceId, anchorStreamId ?? "", "generic") ?? "Conversation"
-  const ContextGlyph = (hostStreamType && TYPE_GLYPH[hostStreamType]) || MessageSquareText
 
-  let body: React.ReactNode
+  // The pre-`post` half of the same machine: blank while the fetch is young, the
+  // panel's own skeleton once it is genuinely slow. The latch is what lets the
+  // body pick the skeleton up where this left it — without it, the body mounting
+  // at its own "loading" phase would blank a skeleton the user is already
+  // looking at.
+  const shellPhase = useCoordinatedPhase({ isLoading: !post, isReady: !!post })
+  const skeletonShownRef = useRef<{ conversationId: string | null; shown: boolean }>({ conversationId, shown: false })
+  if (skeletonShownRef.current.conversationId !== conversationId) {
+    skeletonShownRef.current = { conversationId, shown: false }
+  }
+  if (shellPhase === "skeleton") skeletonShownRef.current.shown = true
+
+  const headerProps = {
+    workspaceId,
+    conversationId,
+    hostStreamType,
+    locator,
+    isMobile,
+    copyDone,
+    onCopyLink: () => void handleCopyLink(),
+    onClose,
+  }
+
   if (post) {
-    body = (
-      <ConversationPanelBody
-        workspaceId={workspaceId}
-        post={post}
-        hostStreamType={hostStreamType}
-        openReplySignal={openReplySignal}
-      />
+    return (
+      <SidePanel data-editor-zone="panel">
+        <FloatingComposerAnchorProvider el={floatingAnchorEl}>
+          <ConversationPanelBody
+            workspaceId={workspaceId}
+            post={post}
+            hostStreamType={hostStreamType}
+            openReplySignal={openReplySignal}
+            contentRef={setFloatingAnchorEl}
+            skeletonAlreadyVisible={skeletonShownRef.current.shown}
+            header={{ ...headerProps, post, isHidden: hiddenConversations.has(post.conversation.id) }}
+          />
+        </FloatingComposerAnchorProvider>
+      </SidePanel>
     )
-  } else if (isLoading) {
-    body = <ConversationRowsSkeleton />
-  } else if (notFound) {
+  }
+
+  let body: React.ReactNode = shellPhase === "skeleton" ? <ConversationRowsSkeleton /> : null
+  if (notFound) {
     body = (
       <Empty className="min-h-[16rem] border-0">
         <EmptyHeader>
@@ -265,80 +442,17 @@ export function ConversationPanel({ workspaceId, onClose }: ConversationPanelPro
         </Button>
       </Empty>
     )
-  } else {
-    // Resolved to no post and not an error — transient; show nothing rather than flash.
-    body = null
   }
 
   return (
     <SidePanel data-editor-zone="panel">
-      <SidePanelHeader>
-        {isMobile && <SidebarToggle location="page" />}
-        <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" onClick={onClose}>
-          <ChevronLeft className="h-4 w-4" />
-          <span className="sr-only">Back</span>
-        </Button>
-        {/* Nothing here paints before `post`: the glyph, the topic and the stream
-            locator all resolve with it, and rendering their fallbacks first made
-            the header show a generic icon over the literal word "Conversation"
-            and then swap. One fixed-height placeholder holds the row instead
-            (INV-21 — same footprint, no shift). */}
-        <SidePanelTitle className="flex min-w-0 flex-1 items-center gap-1.5">
-          {post ? (
-            <>
-              <ContextGlyph className="h-4 w-4 shrink-0 text-muted-foreground" />
-              {post.conversation.status === "resolved" && (
-                <CircleCheck className="h-4 w-4 shrink-0 text-muted-foreground" aria-label="Resolved" />
-              )}
-              {/* The topic is the conversation's identity — show it when set, falling
-                back to the stream locator (the pre-topic behavior). */}
-              <span className={cn("truncate", post.conversation.status === "resolved" && "text-muted-foreground")}>
-                {post.conversation.topicSummary ?? locator}
-              </span>
-              <RelativeTime
-                date={post.conversation.lastActivityAt}
-                terse
-                className="ml-1 shrink-0 text-xs font-normal text-muted-foreground"
-              />
-            </>
-          ) : (
-            <Skeleton className="h-4 w-40 max-w-full" />
-          )}
-        </SidePanelTitle>
-        {post && (
-          <ConversationActionsMenu
-            workspaceId={workspaceId}
-            conversationId={post.conversation.id}
-            streamId={post.conversation.streamId}
-            topicSummary={post.conversation.topicSummary}
-            status={post.conversation.status}
-            isHidden={hiddenConversations.has(post.conversation.id)}
-            triggerClassName="shrink-0"
-          />
-        )}
-        {conversationId && (
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                variant="ghost"
-                size="icon"
-                className="h-8 w-8 shrink-0 text-muted-foreground hover:text-foreground"
-                aria-label={copyDone ? "Link copied" : "Copy link to conversation"}
-                onClick={() => void handleCopyLink()}
-              >
-                {copyDone ? <Check className="h-4 w-4" /> : <Link2 className="h-4 w-4" />}
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent side="bottom">{copyDone ? "Copied" : "Copy link"}</TooltipContent>
-          </Tooltip>
-        )}
-        {!isMobile && <SidePanelClose onClose={onClose} />}
-      </SidePanelHeader>
-      {/* `relative` + the anchor: on mobile an open reply/branch composer portals
-          to this container's bottom as the shared floating pill (same as the
-          stream page) instead of sitting in the scrolled flow. */}
-      <SidePanelContent ref={setFloatingAnchorEl} className="relative flex flex-col">
-        <FloatingComposerAnchorProvider el={floatingAnchorEl}>{body}</FloatingComposerAnchorProvider>
+      <ConversationPanelHeader {...headerProps} post={null} isHidden={false} phase={shellPhase} />
+      <SidePanelContent className="relative flex flex-col">
+        {/* The column's padding, so the placeholder rows sit exactly where the
+            real ones will. */}
+        <div className="min-h-0 flex-1 overflow-y-auto pt-4">
+          <div className="mx-auto w-full min-w-0 max-w-[800px] px-3 sm:px-6">{body}</div>
+        </div>
       </SidePanelContent>
     </SidePanel>
   )
@@ -350,16 +464,30 @@ interface ConversationPanelBodyProps {
   hostStreamType: string | undefined
   /** Bumped each time the panel is opened via "Reply in conversation" — opens the composer. */
   openReplySignal: number
+  /** Rendered here, not by the parent, so it flips on the same `phase` the rows do. */
+  header: Omit<ConversationPanelHeaderProps, "phase">
+  /** Publishes the scroll container as the mobile floating-composer anchor. */
+  contentRef: (el: HTMLElement | null) => void
+  /** The shell already painted the skeleton — pick it up rather than blanking. */
+  skeletonAlreadyVisible: boolean
 }
 
 /**
- * The panel's message column + scoped composer. Always renders the FULL
- * conversation (the panel is permanently "expanded"): the live rail from
+ * The panel's header, message column and scoped composer. Always renders the
+ * FULL conversation (the panel is permanently "expanded"): the live rail from
  * {@link useBoardCardMessages} for opening + recent + the viewer's pending
  * replies, backfilled with the complete ordered list when the local rail is
  * incomplete — the same merge the board card runs on expand.
  */
-function ConversationPanelBody({ workspaceId, post, hostStreamType, openReplySignal }: ConversationPanelBodyProps) {
+function ConversationPanelBody({
+  workspaceId,
+  post,
+  hostStreamType,
+  openReplySignal,
+  header,
+  contentRef,
+  skeletonAlreadyVisible,
+}: ConversationPanelBodyProps) {
   const { getActorName } = useActors(workspaceId)
   const currentUserId = useWorkspaceUserId(workspaceId)
   const conversationService = useConversationService()
@@ -611,10 +739,27 @@ function ConversationPanelBody({ workspaceId, post, hostStreamType, openReplySig
   }, [unreadState, streamReadStates, readableRows, conversation.streamId])
   // One reveal, not three: the header, the rail, the server backfill and the read
   // state each used to paint as they landed (`post.recentMessages` under a
-  // "Loading messages…" line, then the rest, then the divider). Hold the column at
-  // the skeleton until all of them are in. A latch, so later background loads —
-  // a refetched backfill, a read-state update — never blank rows the user is
-  // already reading.
+  // "Loading messages…" line, then the rest, then the divider). Hold the whole
+  // panel — header included — until all of them are in.
+  //
+  // Any of these can also fail to settle. `readStateResolved` is the known one:
+  // the bootstrap builds BOTH `unreadCounts` and `streamReadState` from stream
+  // MEMBERSHIPS, and a thread gets no `stream_members` row (INV-62), so a
+  // conversation spanning a never-read thread leg holds a row decidable by
+  // neither map, and no read event ever writes one. Gating on it unbounded would
+  // hold a blank panel forever, so the wait is bounded across every input: the
+  // divider (or a still-syncing leg) is worth a beat, never the whole panel.
+  const panelLoading = loadingMore || !readStateResolved
+  const [revealTimedOut, setRevealTimedOut] = useState(false)
+  useEffect(() => {
+    setRevealTimedOut(false)
+    if (!panelLoading) return
+    const timer = setTimeout(() => setRevealTimedOut(true), REVEAL_TIMEOUT_MS)
+    return () => clearTimeout(timer)
+  }, [conversation.id, panelLoading])
+  // Latched in render, not in an effect: a latch that flips a commit later is
+  // what made the header and the rows land on separate frames. Reset on a
+  // conversation switch so the next one gets its own gate.
   const revealedRef = useRef<{ conversationId: string; revealed: boolean }>({
     conversationId: conversation.id,
     revealed: false,
@@ -622,22 +767,13 @@ function ConversationPanelBody({ workspaceId, post, hostStreamType, openReplySig
   if (revealedRef.current.conversationId !== conversation.id) {
     revealedRef.current = { conversationId: conversation.id, revealed: false }
   }
-  // …but `readStateResolved` can be permanently false. The bootstrap builds BOTH
-  // `unreadCounts` and `streamReadState` from stream MEMBERSHIPS, and a thread
-  // gets no `stream_members` row (INV-62), so a conversation spanning a
-  // never-read thread leg holds a row decidable by neither map, and no read event
-  // ever writes one. Before the gate that cost a missing divider; gating the
-  // column on it would hold the skeleton forever. So bound the wait: the divider
-  // is worth a beat, never the whole panel.
-  const [readStateWaitElapsed, setReadStateWaitElapsed] = useState(false)
-  useEffect(() => {
-    setReadStateWaitElapsed(false)
-    if (readStateResolved) return
-    const timer = setTimeout(() => setReadStateWaitElapsed(true), READ_STATE_REVEAL_TIMEOUT_MS)
-    return () => clearTimeout(timer)
-  }, [conversation.id, readStateResolved])
-  if (!loadingMore && (readStateResolved || readStateWaitElapsed)) revealedRef.current.revealed = true
+  if (!panelLoading || revealTimedOut) revealedRef.current.revealed = true
   const revealed = revealedRef.current.revealed
+  // The shared coordinated-loading machine (INV-35): blank while the open is
+  // young, a skeleton only once it is genuinely slow, content when revealed.
+  const ownPhase = useCoordinatedPhase({ isLoading: !revealed, isReady: revealed })
+  const stillLoadingPhase: CoordinatedPhase = ownPhase === "skeleton" || skeletonAlreadyVisible ? "skeleton" : "loading"
+  const phase: CoordinatedPhase = revealed ? "ready" : stillLoadingPhase
 
   // Rows first, marker second: the marker may only anchor on a message that
   // actually gets a row (a message inside a depth-collapsed spanning subtree has
@@ -875,125 +1011,131 @@ function ConversationPanelBody({ workspaceId, post, hostStreamType, openReplySig
   return (
     // Quote reply from a row routes into this conversation's reply composer.
     <ConversationReadProvider value={conversationReadValue}>
-      <QuoteReplyProvider>
-        {/* Desktop text-selection → floating "Quote" button, scoped to this list. */}
-        <TextSelectionQuote streamId={conversation.streamId} containerRef={listRef} />
-        {moveToSubtopic.moveDialog}
-        <div
-          ref={attachListRef}
-          onScroll={handleListScroll}
-          // pt-4 reserves headroom for the first row's hover toolbar, which floats
-          // ~14px above its row (MessageItem's float-above chip). Without it the
-          // scroll container's top edge clips the first message's toolbar — the
-          // stream timeline reserves the same room via its header spacer.
-          className="min-h-0 flex-1 overflow-y-auto pt-4"
-          // pb-3 baseline, plus room for the floating composer pill so the
-          // conversation tail can scroll above it.
-          style={{ paddingBottom: `calc(var(${FLOATING_COMPOSER_HEIGHT_VAR}, 0px) + 0.75rem)` }}
-        >
-          <div className="mx-auto w-full min-w-0 max-w-[800px] px-3 sm:px-6">
-            {!revealed && <ConversationRowsSkeleton />}
-            {revealed && provenance && (
-              <BranchProvenanceRow conversationId={provenance.parentConversationId} title={provenance.title} />
-            )}
-            {revealed && (
-              <BranchedBoardRows
-                rows={rows}
-                workspaceId={workspaceId}
-                renderMessage={renderMessage}
-                continueThreadTo={(streamId) => getPanelUrl(streamId)}
-                onSplitThread={(threadStreamId) =>
-                  splitThread.mutate({ conversationId: conversation.id, threadStreamId })
-                }
-                renderBranchMessage={renderBranchMessage}
-                renderBranchTail={inlineComposer.renderBranchTail}
-                renderAfterMessage={inlineComposer.renderAfterMessage}
-                onRedirectSession={() => setFocusSeq((n) => n + 1)}
-              />
-            )}
-            {revealed && loadingMore && (
-              <span className="mt-3 block text-xs text-muted-foreground">Loading messages…</span>
-            )}
-            {backfillFailed && (
-              <button
-                type="button"
-                onClick={() => void refetchMessages()}
-                className="mt-3 block w-fit text-xs text-destructive underline underline-offset-2"
-              >
-                Couldn't load the full conversation. Retry.
-              </button>
-            )}
-          </div>
-        </div>
-        {markerMessageId != null && markerAboveViewport && unreadCount > 0 && (
-          // Same affordance as the timeline's, in the same place: below the
-          // header, clear of the top-center chrome.
+      <ConversationPanelHeader {...header} phase={phase} />
+      {/* `relative` + the anchor: on mobile an open reply/branch composer portals
+          to this container's bottom as the shared floating pill (same as the
+          stream page) instead of sitting in the scrolled flow. */}
+      <SidePanelContent ref={contentRef} className="relative flex flex-col">
+        <QuoteReplyProvider>
+          {/* Desktop text-selection → floating "Quote" button, scoped to this list. */}
+          <TextSelectionQuote streamId={conversation.streamId} containerRef={listRef} />
+          {moveToSubtopic.moveDialog}
           <div
-            className="pointer-events-none absolute left-1/2 z-10 flex -translate-x-1/2 items-center gap-1.5"
-            style={{ top: "3.5rem" }}
+            ref={attachListRef}
+            onScroll={handleListScroll}
+            // pt-4 reserves headroom for the first row's hover toolbar, which floats
+            // ~14px above its row (MessageItem's float-above chip). Without it the
+            // scroll container's top edge clips the first message's toolbar — the
+            // stream timeline reserves the same room via its header spacer.
+            className="min-h-0 flex-1 overflow-y-auto pt-4"
+            // pb-3 baseline, plus room for the floating composer pill so the
+            // conversation tail can scroll above it.
+            style={{ paddingBottom: `calc(var(${FLOATING_COMPOSER_HEIGHT_VAR}, 0px) + 0.75rem)` }}
           >
-            <Button
-              variant="secondary"
-              size="sm"
-              className="pointer-events-auto gap-1.5 shadow-lg"
-              onClick={() => scrollToMarker()}
+            <div className="mx-auto w-full min-w-0 max-w-[800px] px-3 sm:px-6">
+              {phase === "skeleton" && <ConversationRowsSkeleton />}
+              {revealed && provenance && (
+                <BranchProvenanceRow conversationId={provenance.parentConversationId} title={provenance.title} />
+              )}
+              {revealed && (
+                <BranchedBoardRows
+                  rows={rows}
+                  workspaceId={workspaceId}
+                  renderMessage={renderMessage}
+                  continueThreadTo={(streamId) => getPanelUrl(streamId)}
+                  onSplitThread={(threadStreamId) =>
+                    splitThread.mutate({ conversationId: conversation.id, threadStreamId })
+                  }
+                  renderBranchMessage={renderBranchMessage}
+                  renderBranchTail={inlineComposer.renderBranchTail}
+                  renderAfterMessage={inlineComposer.renderAfterMessage}
+                  onRedirectSession={() => setFocusSeq((n) => n + 1)}
+                />
+              )}
+              {revealed && loadingMore && (
+                <span className="mt-3 block text-xs text-muted-foreground">Loading messages…</span>
+              )}
+              {backfillFailed && (
+                <button
+                  type="button"
+                  onClick={() => void refetchMessages()}
+                  className="mt-3 block w-fit text-xs text-destructive underline underline-offset-2"
+                >
+                  Couldn't load the full conversation. Retry.
+                </button>
+              )}
+            </div>
+          </div>
+          {markerMessageId != null && markerAboveViewport && unreadCount > 0 && (
+            // Same affordance as the timeline's, in the same place: below the
+            // header, clear of the top-center chrome.
+            <div
+              className="pointer-events-none absolute left-1/2 z-10 flex -translate-x-1/2 items-center gap-1.5"
+              style={{ top: "3.5rem" }}
             >
-              <ArrowUp className="h-3.5 w-3.5" />
-              {unreadCount} new message{unreadCount === 1 ? "" : "s"}
-            </Button>
-            {/* Drop the marker and tail the live bottom without scrolling up.
+              <Button
+                variant="secondary"
+                size="sm"
+                className="pointer-events-auto gap-1.5 shadow-lg"
+                onClick={() => scrollToMarker()}
+              >
+                <ArrowUp className="h-3.5 w-3.5" />
+                {unreadCount} new message{unreadCount === 1 ? "" : "s"}
+              </Button>
+              {/* Drop the marker and tail the live bottom without scrolling up.
                 Read state is not written here — the panel is read-only over it
                 (INV-62); auto-read handles rows as they enter the viewport. */}
-            <Button
-              variant="secondary"
-              size="icon"
-              className="pointer-events-auto h-9 w-9 shadow-lg"
-              onClick={() => {
-                dismiss()
-                scrollToBottom({ force: true })
-              }}
-              aria-label="Dismiss unread marker"
+              <Button
+                variant="secondary"
+                size="icon"
+                className="pointer-events-auto h-9 w-9 shadow-lg"
+                onClick={() => {
+                  dismiss()
+                  scrollToBottom({ force: true })
+                }}
+                aria-label="Dismiss unread marker"
+              >
+                <X className="h-4 w-4" />
+              </Button>
+            </div>
+          )}
+          {isScrolledFarFromBottom && (
+            <div
+              className="pointer-events-none absolute left-1/2 z-10 -translate-x-1/2"
+              style={{ bottom: `calc(var(${FLOATING_COMPOSER_HEIGHT_VAR}, 0px) + 0.5rem)` }}
             >
-              <X className="h-4 w-4" />
-            </Button>
-          </div>
-        )}
-        {isScrolledFarFromBottom && (
-          <div
-            className="pointer-events-none absolute left-1/2 z-10 -translate-x-1/2"
-            style={{ bottom: `calc(var(${FLOATING_COMPOSER_HEIGHT_VAR}, 0px) + 0.5rem)` }}
-          >
-            <Button
-              variant="secondary"
-              size="sm"
-              className="pointer-events-auto gap-1.5 shadow-lg"
-              onClick={() => scrollToBottom({ force: true })}
-            >
-              <ArrowDown className="h-3.5 w-3.5" />
-              Jump to latest
-            </Button>
-          </div>
-        )}
-        {/* Hidden while a mobile composer floats over the panel (the pill replaces
+              <Button
+                variant="secondary"
+                size="sm"
+                className="pointer-events-auto gap-1.5 shadow-lg"
+                onClick={() => scrollToBottom({ force: true })}
+              >
+                <ArrowDown className="h-3.5 w-3.5" />
+                Jump to latest
+              </Button>
+            </div>
+          )}
+          {/* Hidden while a mobile composer floats over the panel (the pill replaces
             the footer's affordance; a second bottom bar under it would double up).
             `hidden`, not unmount — the reply composer inside must stay mounted to
             keep its portal, draft, and open state alive. */}
-        <FloatingComposerShell ref={shellRef} hidden={floatingComposerOpen}>
-          <BoardReplyComposer
-            workspaceId={workspaceId}
-            post={post}
-            hostStreamType={hostStreamType}
-            lastActiveStreamId={lastActiveStreamId}
-            openReplySignal={focusSeq}
-            // The panel is a dedicated conversation view — the composer is docked
-            // at the footer on both platforms (mobile shows MessageComposer's own
-            // collapsed bar), never a resting button. `armedReply` retargets it to
-            // a sub-conversation when a branch reply is armed.
-            alwaysDocked
-            armedReply={armedReply}
-          />
-        </FloatingComposerShell>
-      </QuoteReplyProvider>
+          <FloatingComposerShell ref={shellRef} hidden={floatingComposerOpen}>
+            <BoardReplyComposer
+              workspaceId={workspaceId}
+              post={post}
+              hostStreamType={hostStreamType}
+              lastActiveStreamId={lastActiveStreamId}
+              openReplySignal={focusSeq}
+              // The panel is a dedicated conversation view — the composer is docked
+              // at the footer on both platforms (mobile shows MessageComposer's own
+              // collapsed bar), never a resting button. `armedReply` retargets it to
+              // a sub-conversation when a branch reply is armed.
+              alwaysDocked
+              armedReply={armedReply}
+            />
+          </FloatingComposerShell>
+        </QuoteReplyProvider>
+      </SidePanelContent>
     </ConversationReadProvider>
   )
 }

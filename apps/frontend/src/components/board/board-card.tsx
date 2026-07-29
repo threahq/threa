@@ -41,6 +41,8 @@ import { useBoardCardMessages, useStableReplyWindow } from "@/hooks/use-board-ca
 import { useInlineBranchComposer } from "@/components/board/use-inline-branch-composer"
 import { useBoardCardRevealAnchor } from "@/hooks/use-board-card-reveal-anchor"
 import type { BoardViewPost } from "@/hooks/use-stable-board-view"
+import { Skeleton } from "@/components/ui/skeleton"
+import { MESSAGE_ROW_CONTINUATION_PADDING, MESSAGE_ROW_HEAD_PADDING } from "@/components/message/message-row-layout"
 
 interface BoardCardProps {
   workspaceId: string
@@ -806,5 +808,57 @@ export function BoardCard({
         </div>
       </QuoteReplyProvider>
     </ConversationReadProvider>
+  )
+}
+
+/** Head/continuation shape of a placeholder card's message run. */
+const CARD_SKELETON_ROWS: { continuation: boolean; width: string }[] = [
+  { continuation: false, width: "w-11/12" },
+  { continuation: true, width: "w-3/4" },
+]
+
+/**
+ * The board's loading shape, defined beside the card it stands in for and built
+ * from the card's own chrome (`rounded-xl border bg-card p-3 sm:p-4`, the
+ * `-mx-3 sm:-mx-4` row break-out, `MESSAGE_ROW_*_PADDING`, the `md` avatar box)
+ * so the swap to a real card moves nothing (INV-21).
+ */
+export function BoardCardSkeleton() {
+  return (
+    <div aria-hidden className="rounded-xl border bg-card p-3 sm:p-4">
+      <div className="-mx-3 -mt-3 px-3 pt-3 pb-2 sm:-mx-4 sm:-mt-4 sm:px-4 sm:pt-4">
+        <div className="flex items-center gap-1.5">
+          <div className="h-4 w-4 shrink-0" />
+          <Skeleton className="h-[18px] w-3/5" />
+        </div>
+        <div className="mt-1 flex items-center gap-1.5">
+          <Skeleton className="h-4 w-24" />
+        </div>
+      </div>
+      {CARD_SKELETON_ROWS.map((row, i) => (
+        <div key={i} className="-mx-3 sm:-mx-4">
+          <div
+            className={cn(
+              "flex items-start gap-3 px-3 sm:px-4",
+              row.continuation ? MESSAGE_ROW_CONTINUATION_PADDING : MESSAGE_ROW_HEAD_PADDING
+            )}
+          >
+            {row.continuation ? (
+              <div className="h-8 w-8 shrink-0" />
+            ) : (
+              <Skeleton className="h-8 w-8 shrink-0 rounded-[8px]" />
+            )}
+            <div className="min-w-0 flex-1">
+              {!row.continuation && (
+                <div className="mb-0.5 flex items-baseline gap-2">
+                  <Skeleton className="h-5 w-28" />
+                </div>
+              )}
+              <Skeleton className={cn("h-[22px]", row.width)} />
+            </div>
+          </div>
+        </div>
+      ))}
+    </div>
   )
 }

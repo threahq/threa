@@ -257,6 +257,15 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
+// 43 cases, each mounting the real panel tree (INV-39) with IDB seeding and a
+// user-event session. In isolation the file is comfortably inside the 5s
+// default and passes repeatedly; in a full-suite run on a loaded machine
+// individual cases starve past it — a different one each time, which is
+// contention, not a hang. This raise reduces that but does not eliminate it, so
+// a failure here still deserves a look rather than a re-run. Every assertion is
+// unchanged.
+vi.setConfig({ testTimeout: 20_000 })
+
 describe("ConversationPanel", () => {
   let restoreRect: (() => void) | null = null
   afterEach(() => {
@@ -291,6 +300,19 @@ describe("ConversationPanel", () => {
 
     await waitFor(() => expect(document.querySelector(".animate-pulse")).toBeTruthy())
     expect(await screen.findByText("Opening message body.", undefined, { timeout: 5000 })).toBeTruthy()
+  })
+
+  it("holds the header on the same gate as the column, so the two land together", async () => {
+    // The header used to paint its topic/glyph/actions the moment `post` arrived
+    // while the column was still gated — the stepped reveal. Both now flip on the
+    // panel's one coordinated phase.
+    const post = makePost()
+    vi.spyOn(workspaceStoreModule, "useWorkspaceUnreadState").mockReturnValue(undefined as never)
+    mountPanel({ cached: asCached(post) })
+
+    await waitFor(() => expect(document.querySelector(".animate-pulse")).toBeTruthy())
+    expect(screen.queryByText(post.conversation.topicSummary!)).toBeNull()
+    expect(screen.queryByRole("button", { name: "Conversation actions" })).toBeNull()
   })
 
   it("renders the conversation from the reactive store row without a by-id fetch", async () => {

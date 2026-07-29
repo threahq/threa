@@ -95,8 +95,40 @@ export const LOADING_DELAY_MS = 300
  */
 export const SKELETON_DELAY_MS = 600
 
-export function CoordinatedLoadingProvider({ workspaceId, streamIds, children }: CoordinatedLoadingProviderProps) {
+/**
+ * The coordinated-loading phase machine, on its own so every surface that wants
+ * this behaviour runs the SAME one (INV-35): blank while a load is young, a
+ * skeleton only once it is genuinely slow, and content when the caller says it
+ * is ready. `isReady` is the caller's readiness (the app gate latches it
+ * one-way; a per-surface caller can simply derive it), and the skeleton is
+ * sticky — it is never dropped back to blank between skeleton and content,
+ * because that reads as a flicker.
+ */
+export function useCoordinatedPhase({
+  isLoading,
+  isReady,
+}: {
+  isLoading: boolean
+  isReady: boolean
+}): CoordinatedPhase {
   const [showSkeleton, setShowSkeleton] = useState(false)
+
+  useEffect(() => {
+    if (isReady) {
+      setShowSkeleton(false)
+      return
+    }
+    if (!isLoading) return
+
+    const timer = setTimeout(() => setShowSkeleton(true), SKELETON_DELAY_MS)
+    return () => clearTimeout(timer)
+  }, [isLoading, isReady])
+
+  if (isReady) return "ready"
+  return showSkeleton ? "skeleton" : "loading"
+}
+
+export function CoordinatedLoadingProvider({ workspaceId, streamIds, children }: CoordinatedLoadingProviderProps) {
   const [showLoadingIndicator, setShowLoadingIndicator] = useState(false)
   const [isReady, setIsReady] = useState(false)
   // Track which workspace has IDB cache primed. When true, the gate bypasses
@@ -274,6 +306,8 @@ export function CoordinatedLoadingProvider({ workspaceId, streamIds, children }:
     (!isReady && sealedNamesPending) ||
     (isReady && hasSettledInitialSyncRef.current && isAnySyncing)
 
+  const phase = useCoordinatedPhase({ isLoading, isReady })
+
   if (isBootstrapDebugEnabled()) {
     debugBootstrap("Coordinated loading state", {
       workspaceId,
@@ -308,7 +342,7 @@ export function CoordinatedLoadingProvider({ workspaceId, streamIds, children }:
       isAnySyncing,
       isLoading,
       isReady,
-      showSkeleton,
+      phase,
       showLoadingIndicator,
     })
   }
@@ -327,12 +361,6 @@ export function CoordinatedLoadingProvider({ workspaceId, streamIds, children }:
       )
     }
   }, [suppressedStreamErrors, workspaceId])
-
-  const phase = useMemo<CoordinatedPhase>(() => {
-    if (isReady) return "ready"
-    if (showSkeleton) return "skeleton"
-    return "loading"
-  }, [isReady, showSkeleton])
 
   // Mark initial load as complete once data is ready (and, on a cold load,
   // avatars preloaded — see `revealReady`).
@@ -358,32 +386,6 @@ export function CoordinatedLoadingProvider({ workspaceId, streamIds, children }:
   useEffect(() => {
     if (isReady && !isAnySyncing) hasSettledInitialSyncRef.current = true
   }, [isReady, isAnySyncing])
-
-  // Show the skeleton only if the initial load is still going after
-  // SKELETON_DELAY_MS. Once shown, it stays up until the content is ready — we
-  // deliberately do NOT drop back to blank when `isLoading` flips false ahead of
-  // `isReady` (a common race online, where the network query resolves a beat
-  // before the cached reveal settles). Blanking there produced a
-  // skeleton → blank → content flicker.
-  useEffect(() => {
-    // Once ready, the content shows and the skeleton is no longer needed.
-    if (isReady) {
-      setShowSkeleton(false)
-      return
-    }
-
-    // Loading finished but the reveal hasn't settled yet: hold whatever we're
-    // showing (sticky) rather than blanking between skeleton and content. The
-    // cleanup below already cleared any armed timer, so a fast load that
-    // finishes before the delay never flips the skeleton on.
-    if (!isLoading) return
-
-    const timer = setTimeout(() => {
-      setShowSkeleton(true)
-    }, SKELETON_DELAY_MS)
-
-    return () => clearTimeout(timer)
-  }, [isLoading, isReady])
 
   // Show loading indicator after delay (for slow loads)
   // This shows for both initial loads AND reconnect loads

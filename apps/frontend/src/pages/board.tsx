@@ -3,7 +3,6 @@ import type { VirtualizerHandle } from "virtua"
 import { AlertCircle, ArrowLeft, LayoutGrid, PenLine } from "lucide-react"
 import { Link, Navigate, useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom"
 import { Button, buttonVariants } from "@/components/ui/button"
-import { Skeleton } from "@/components/ui/skeleton"
 import { ThreadPanelSlot } from "@/components/layout"
 import { PanelHost } from "@/components/layout/panel-host"
 import { SidebarToggle } from "@/components/layout/sidebar-toggle"
@@ -32,9 +31,9 @@ import {
   collectBranchThreadStreamIds,
 } from "@/hooks/use-conversation-graph"
 import { useBoardDraftsReady } from "@/hooks/use-scope-draft-preview"
-import { SKELETON_DELAY_MS } from "@/contexts/coordinated-loading-context"
+import { useCoordinatedPhase } from "@/contexts/coordinated-loading-context"
 import { FloatingComposerAnchorProvider, FLOATING_COMPOSER_HEIGHT_VAR } from "@/components/composer"
-import { BoardCard } from "@/components/board/board-card"
+import { BoardCard, BoardCardSkeleton } from "@/components/board/board-card"
 import { BoardFeedList } from "@/components/board/board-feed-list"
 import { BoardNewPostsPill } from "@/components/board/board-new-posts-pill"
 import { openCompose, registerComposeOnPosted } from "@/stores/compose-overlay-store"
@@ -403,15 +402,11 @@ function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: Boar
   const revealReady = useBoardRevealLatch(railsReady && graphReady && draftsReady, workspaceId)
   const holding = posts.length > 0 && !revealReady
   const loading = isLoading || viewLoading || seedPending || holding
-  const [skeletonVisible, setSkeletonVisible] = useState(false)
-  useEffect(() => {
-    if (!loading) {
-      setSkeletonVisible(false)
-      return
-    }
-    const timer = setTimeout(() => setSkeletonVisible(true), SKELETON_DELAY_MS)
-    return () => clearTimeout(timer)
-  }, [loading])
+  // The shared coordinated-loading machine (INV-35), not a second copy of its
+  // timer: blank while the feed load is young, skeleton only once it is
+  // genuinely slow. The board's readiness is derived rather than latched, so a
+  // later filter change earns its own skeleton.
+  const skeletonVisible = useCoordinatedPhase({ isLoading: loading, isReady: !loading }) === "skeleton"
   const streams = useWorkspaceStreams(workspaceId)
   const users = useWorkspaceUsers(workspaceId)
   const dmPeers = useWorkspaceDmPeers(workspaceId)
@@ -659,16 +654,7 @@ function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: Boar
       stateContent = skeletonVisible ? (
         <div className="flex flex-col gap-3 pt-3">
           {Array.from({ length: 5 }).map((_, i) => (
-            <div key={i} className="rounded-xl border bg-card p-4">
-              <Skeleton className="h-3 w-1/3" />
-              <div className="mt-3 flex items-start gap-2">
-                <Skeleton className="h-8 w-8 shrink-0 rounded-[8px]" />
-                <div className="min-w-0 flex-1 space-y-2">
-                  <Skeleton className="h-3.5 w-1/4" />
-                  <Skeleton className="h-3 w-4/5" />
-                </div>
-              </div>
-            </div>
+            <BoardCardSkeleton key={i} />
           ))}
         </div>
       ) : null

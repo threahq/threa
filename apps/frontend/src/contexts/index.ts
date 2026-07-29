@@ -52,6 +52,7 @@ export {
   CoordinatedLoadingGate,
   MainContentGate,
   useCoordinatedLoading,
+  useCoordinatedPhase,
   LOADING_DELAY_MS,
   type CoordinatedPhase,
   type StreamState,
