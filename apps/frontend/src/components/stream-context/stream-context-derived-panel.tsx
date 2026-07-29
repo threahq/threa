@@ -1,10 +1,9 @@
 import { useCallback, useMemo, useRef } from "react"
 import type { VirtualizerHandle } from "virtua"
-import { toast } from "sonner"
 import { useStreamEvents } from "@/stores/stream-store"
 import { useStreamDelegations } from "@/hooks/use-stream-delegations"
 import { localStartOfDayMs } from "@/lib/dates"
-import { markerIndexForDate } from "@/lib/stream-context/grouping"
+import { markerIndexForDate, oldestMarkerIndex } from "@/lib/stream-context/grouping"
 import { deriveStreamContext } from "@/lib/stream-context/derive"
 import { delegationContextItems, withDelegations } from "@/lib/stream-context/delegations"
 import { StreamContextRow } from "./stream-context-row"
@@ -75,13 +74,13 @@ export function StreamContextDerivedPanel({
   // and the jump is a no-op rather than a fetch.
   const jumpToDate = useCallback(
     (date: Date) => {
-      const index = markerIndexForDate(visible, localStartOfDayMs(date) + DAY_MS, new Date())
-      if (index === -1) {
-        // This path holds only the loaded window, so an older date has nothing
-        // to land on — say so rather than silently doing nothing.
-        toast.info("Nothing indexed on or before that date")
-        return
-      }
+      const now = new Date()
+      // Nothing that old in the loaded window: travel as far back as it goes
+      // rather than refusing (this path never pages, so its start of history is
+      // the window's).
+      let index = markerIndexForDate(visible, localStartOfDayMs(date) + DAY_MS, now)
+      if (index === -1) index = oldestMarkerIndex(visible, now)
+      if (index === -1) return
       listRef.current?.scrollToIndex(index, { align: "start" })
       scrollerRef.current?.focus({ preventScroll: true })
     },

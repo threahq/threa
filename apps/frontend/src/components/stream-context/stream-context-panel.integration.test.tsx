@@ -1,5 +1,4 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
-import { toast } from "sonner"
 import { createElement, Fragment } from "react"
 import { render, screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
@@ -557,21 +556,25 @@ describe("StreamContextPanel — flag on", () => {
     await waitFor(() => expect(scrollToIndex).toHaveBeenCalledWith(2, { align: "start" }))
   })
 
-  it("stops paging for an unreachable date as soon as the server says history is exhausted", async () => {
+  it("lands on the oldest day when the picked date is older than the whole stream", async () => {
+    const scrollToIndex = vi.fn()
     vi.spyOn(streamContextListModule, "StreamContextList").mockImplementation(({ children, listRef }) => {
-      if (listRef) (listRef as { current: unknown }).current = { scrollToIndex: vi.fn() }
+      if (listRef) (listRef as { current: unknown }).current = { scrollToIndex }
       return createElement(Fragment, null, children)
     })
-    await db.streamContextItems.put(
+    // [marker 20th, row, marker 18th, row] — nothing anywhere near the 2nd.
+    await db.streamContextItems.bulkPut([
       cachedRow(
         serverItem({ category: "link", refId: "https://newest.example", occurredAt: "2026-07-20T10:00:00.000Z" })
-      )
-    )
+      ),
+      cachedRow(
+        serverItem({ category: "link", refId: "https://oldest.example", occurredAt: "2026-07-18T10:00:00.000Z" })
+      ),
+    ])
     // One page of history, then the end. `hasNextPage` on the render-time
     // snapshot stays true for the whole loop, so only the fetch's own result
     // can stop it before it burns all MAX_JUMP_PAGES iterations.
     const readRows = vi.spyOn(storeModule, "readStreamContextRows")
-    const toastInfo = vi.spyOn(toast, "info").mockReturnValue("" as ReturnType<typeof toast.info>)
     vi.spyOn(streamContextApi, "list")
       .mockResolvedValueOnce(listResponse({ counts: null, nextCursor: "c1" }))
       .mockResolvedValue(listResponse({ counts: null }))
@@ -582,12 +585,15 @@ describe("StreamContextPanel — flag on", () => {
 
     await userEvent.click((await screen.findAllByRole("button", { name: /Jump to a date/ }))[0]!)
     await userEvent.click(await screen.findByText("Jump to a specific date…"))
-    await userEvent.click(await screen.findByText("2"))
+    // By label, not text: with two rows a count chip also renders "2".
+    await userEvent.click(await screen.findByRole("button", { name: /July 2nd/ }))
 
-    await waitFor(() => expect(toastInfo).toHaveBeenCalledWith("Nothing indexed on or before that date"))
+    // Travels as far back as the stream goes — the 18th's marker at flat index
+    // 2 — instead of refusing because the 2nd itself holds nothing.
+    await waitFor(() => expect(scrollToIndex).toHaveBeenCalledWith(2, { align: "start" }))
     // One page fetched, one re-read. The bound is MAX_JUMP_PAGES (10), so a
     // loop trusting the stale snapshot re-reads ten times to reach the same
-    // dead end.
+    // end of history.
     expect(readRows).toHaveBeenCalledTimes(1)
   })
 

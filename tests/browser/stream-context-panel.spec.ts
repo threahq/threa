@@ -112,4 +112,17 @@ test("windows its rows and jumps to a date from a day marker", async ({ page }) 
   await page.getByRole("button", { name: "Last week", exact: true }).click()
 
   await expect.poll(async () => scroller.evaluate((el) => el.scrollTop), { timeout: 10_000 }).toBeGreaterThan(300)
+
+  // ── Past the start of history: "Last year" matches no day here, and the
+  // useful answer is to travel as far back as the list goes rather than refuse.
+  await scroller.evaluate((el) => el.scrollTo({ top: 0 }))
+  await expect.poll(async () => scroller.evaluate((el) => el.scrollTop)).toBeLessThan(50)
+
+  await page
+    .getByRole("button", { name: /Jump to a date/ })
+    .first()
+    .click()
+  await page.getByRole("button", { name: "Last year", exact: true }).click()
+
+  await expect.poll(async () => scroller.evaluate((el) => el.scrollTop), { timeout: 10_000 }).toBeGreaterThan(300)
 })
