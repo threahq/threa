@@ -67,6 +67,14 @@ interface SearchFilterMenuProps {
    * narrow the menu rather than forking it. Defaults to every kind.
    */
   kinds?: readonly FilterKind[]
+  /**
+   * Restrict the `from:`/`with:`/`in:@` user picker to these workspace user ids.
+   * A stream-scoped surface offers only the people whose messages that scope can
+   * contain — a DM's context feed can never hold anything from a third party, so
+   * offering them is a filter that always returns nothing. Omit to offer every
+   * workspace user (the global search's scope).
+   */
+  userIds?: ReadonlySet<string>
 }
 
 /**
@@ -80,7 +88,14 @@ interface SearchFilterMenuProps {
  * `SearchableSelect`) — typing filter syntax on a touch keyboard is exactly
  * the flow this menu replaces. A mouse on a touchscreen laptop gets the popover.
  */
-export function SearchFilterMenu({ workspaceId, query, onQueryChange, className, kinds }: SearchFilterMenuProps) {
+export function SearchFilterMenu({
+  workspaceId,
+  query,
+  onQueryChange,
+  className,
+  kinds,
+  userIds,
+}: SearchFilterMenuProps) {
   const isTouch = useInputMode() === "touch"
   const [open, setOpen] = useState(false)
   const [step, setStep] = useState<FilterKind | null>(null)
@@ -123,7 +138,7 @@ export function SearchFilterMenu({ workspaceId, query, onQueryChange, className,
             <span className="text-xs font-medium">{activeKind.label}</span>
             <code className="ml-auto rounded bg-muted px-1 text-[10px] text-muted-foreground">{activeKind.syntax}</code>
           </div>
-          <FilterValuePicker workspaceId={workspaceId} kind={step} onCommit={commitFilter} />
+          <FilterValuePicker workspaceId={workspaceId} kind={step} onCommit={commitFilter} userIds={userIds} />
         </>
       )}
     </div>
@@ -201,18 +216,20 @@ function FilterValuePicker({
   workspaceId,
   kind,
   onCommit,
+  userIds,
 }: {
   workspaceId: string
   kind: FilterKind
   onCommit: (type: FilterType, value: string) => void
+  userIds?: ReadonlySet<string>
 }) {
   switch (kind) {
     case "from":
-      return <UserPicker onSelect={(slug) => onCommit("from", slug)} />
+      return <UserPicker userIds={userIds} onSelect={(slug) => onCommit("from", slug)} />
     case "with":
-      return <UserPicker onSelect={(slug) => onCommit("with", slug)} />
+      return <UserPicker userIds={userIds} onSelect={(slug) => onCommit("with", slug)} />
     case "in-dm":
-      return <UserPicker onSelect={(slug) => onCommit("in", slug)} />
+      return <UserPicker userIds={userIds} onSelect={(slug) => onCommit("in", slug)} />
     case "in-channel":
       return <ChannelPicker workspaceId={workspaceId} onSelect={(slug) => onCommit("in", `#${slug}`)} />
     case "type":
@@ -231,11 +248,14 @@ function FilterValuePicker({
  * personas/bots here would commit a chip whose filter silently never applies.
  * Keeps the "me" shortcut matching the current user.
  */
-function UserPicker({ onSelect }: { onSelect: (slug: string) => void }) {
+function UserPicker({ onSelect, userIds }: { onSelect: (slug: string) => void; userIds?: ReadonlySet<string> }) {
   const { mentionables } = useMentionables()
   const [search, setSearch] = useState("")
 
-  const filtered = useMemo(() => filterUsersOnly(mentionables, search), [mentionables, search])
+  const filtered = useMemo(() => {
+    const scoped = userIds ? mentionables.filter((item) => userIds.has(item.id)) : mentionables
+    return filterUsersOnly(scoped, search)
+  }, [mentionables, search, userIds])
 
   return (
     <Command shouldFilter={false}>

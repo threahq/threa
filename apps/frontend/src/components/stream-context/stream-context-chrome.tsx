@@ -1,4 +1,4 @@
-import { useState } from "react"
+import { useMemo, useState } from "react"
 import type { VirtualizerHandle } from "virtua"
 import { useSearchParams } from "react-router-dom"
 import { ChevronDown, PanelRight, Sparkles } from "lucide-react"
@@ -7,6 +7,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { DateJumpMenu } from "@/components/timeline/date-jump-menu"
 import { StreamContextList } from "./stream-context-list"
+import { localStartOfDayMs } from "@/lib/dates"
 import { groupItemsByDay } from "@/lib/stream-context/grouping"
 import { CONTEXT_CATEGORIES, type ContextCategory, type ContextItem } from "@/lib/stream-context/types"
 import { cn } from "@/lib/utils"
@@ -49,6 +50,9 @@ export function useContextFilter(): [Filter, (value: Filter) => void] {
   const [searchParams, setSearchParams] = useSearchParams()
   const filter = parseFilter(searchParams.get("context"))
   const setFilter = (value: Filter) => {
+    // Re-tapping the active chip used to write the same param back, and the
+    // param lives on the route — so a no-op re-rendered the whole stream page.
+    if (value === filter) return
     setSearchParams(
       (prev) => {
         const next = new URLSearchParams(prev)
@@ -243,7 +247,14 @@ export function ContextTimeline({
   // virtua wraps every child in its own item element, so `:first-child` would
   // match every marker and collapse the gap between all day groups. The board's
   // feed carries the same `row.first` flag for the same reason.
-  const rows = groupItemsByDay(items, new Date()).flatMap((group, index) => [
+  // Memoized because grouping labels every item, and this component re-renders
+  // for reasons that never touch the list (a chip's active state, a fetch flag).
+  // Keyed on the local day rather than a captured `Date`: every label is a
+  // function of the calendar day alone, so this is the coarsest key that still
+  // lets a panel left open past midnight relabel "Today".
+  const today = localStartOfDayMs(new Date())
+  const groups = useMemo(() => groupItemsByDay(items, new Date(today)), [items, today])
+  const rows = groups.flatMap((group, index) => [
     <div key={`day:${group.items[0].key}`} className={index === 0 ? "pt-0" : "pt-3"}>
       {onJumpToDate ? (
         <DayMarkerJump label={group.label} day={new Date(group.items[0].createdAt)} onJumpToDate={onJumpToDate} />

@@ -1,15 +1,17 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
-import { createElement, Fragment } from "react"
+import { createElement, Fragment, useRef } from "react"
 import { render, screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
-import { MemoryRouter } from "react-router-dom"
+import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
+import { AuthContext } from "@/auth"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { streamContextApi } from "@/api"
 // eslint-disable-next-line no-restricted-imports -- test seeds IDB directly to drive the real panel read path
 import { db, type CachedStreamContextItem } from "@/db"
 import * as hooks from "@/hooks"
 import * as connectionStatus from "@/components/layout/connection-status"
+import { streamKeys } from "@/hooks/use-streams"
 import { workspaceKeys } from "@/hooks/use-workspaces"
 import { delegationKeys } from "@/hooks/use-stream-delegations"
 import * as streamContextListModule from "@/components/stream-context/stream-context-list"
@@ -20,6 +22,7 @@ import { StreamContextPanel } from "./stream-context-panel"
 const WS = "ws_1"
 const STREAM = "stream_root"
 const THREAD = "stream_thread"
+const WORKOS_ME = "workos_me"
 
 const EMPTY_COUNTS = { link: 0, media: 0, file: 0, memo: 0, delegation: 0, thread: 0 }
 
@@ -67,29 +70,55 @@ function listResponse(overrides: Partial<ListStreamContextResponse> = {}): ListS
   return { items: [], counts: { ...EMPTY_COUNTS }, nextCursor: null, mode: "index", ...overrides }
 }
 
-function renderPanel(options: { flag?: "on" | "off"; entry?: string } = {}) {
+/** The panel's filter lives on the route, so history writes are observable. */
+function LocationProbe() {
+  const location = useLocation()
+  const seen = useRef(0)
+  seen.current += 1
+  return <span data-testid="location">{`${location.search}|${seen.current}`}</span>
+}
+
+function renderPanel(options: { flag?: "on" | "off"; entry?: string; memberIds?: string[] } = {}) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   queryClient.setQueryData(workspaceKeys.bootstrap(WS), {
     featureFlags: { workspace: { streamContextIndex: options.flag ?? "on" }, user: {} },
   })
+  if (options.memberIds) {
+    queryClient.setQueryData(streamKeys.bootstrap(WS, STREAM), {
+      members: options.memberIds.map((memberId) => ({ streamId: STREAM, memberId })),
+    })
+  }
   queryClient.setQueryData(delegationKeys.stream(WS, STREAM), { delegations: [] })
   const onJumpToMessage = vi.fn()
   const onOpenThread = vi.fn()
+  const panel = (
+    <>
+      <LocationProbe />
+      <StreamContextPanel
+        workspaceId={WS}
+        streamId={STREAM}
+        onClose={vi.fn()}
+        onJumpToMessage={onJumpToMessage}
+        onOpenThread={onOpenThread}
+        onOpenMemo={vi.fn()}
+        onOpenGallery={vi.fn()}
+      />
+    </>
+  )
   render(
-    <MemoryRouter initialEntries={[options.entry ?? "/s"]}>
-      <QueryClientProvider client={queryClient}>
-        <TooltipProvider>
-          <StreamContextPanel
-            workspaceId={WS}
-            streamId={STREAM}
-            onClose={vi.fn()}
-            onJumpToMessage={onJumpToMessage}
-            onOpenThread={onOpenThread}
-            onOpenMemo={vi.fn()}
-            onOpenGallery={vi.fn()}
-          />
-        </TooltipProvider>
-      </QueryClientProvider>
+    // A `:workspaceId` route segment, not a bare path: the filter menu's user
+    // picker reads the workspace off the route (`useMentionables`), so a
+    // param-less router silently offers nobody and makes a scoping test vacuous.
+    <MemoryRouter initialEntries={[`/w/${WS}${options.entry ?? "/s"}`]}>
+      <AuthContext.Provider value={{ user: { id: WORKOS_ME }, loading: false } as never}>
+        <QueryClientProvider client={queryClient}>
+          <TooltipProvider>
+            <Routes>
+              <Route path="/w/:workspaceId/*" element={panel} />
+            </Routes>
+          </TooltipProvider>
+        </QueryClientProvider>
+      </AuthContext.Provider>
     </MemoryRouter>
   )
   return { onJumpToMessage, onOpenThread }
@@ -331,6 +360,58 @@ describe("StreamContextPanel — flag on", () => {
     expect(await screen.findByLabelText("Remove filter @mara")).toBeInTheDocument()
     await waitFor(() => expect(screen.queryByText("Mine")).not.toBeInTheDocument())
     expect(screen.getByText("Hers")).toBeInTheDocument()
+  })
+
+  it("does not touch the route when the already-active chip is tapped", async () => {
+    await db.streamContextItems.put(
+      cachedRow(
+        serverItem({ category: "link", refId: "https://a.example", detail: { url: "https://a.example", title: "A" } })
+      )
+    )
+    vi.spyOn(streamContextApi, "list").mockResolvedValue(listResponse({ counts: { ...EMPTY_COUNTS, link: 1 } }))
+
+    renderPanel({ entry: "/s?context=all" })
+    expect(await screen.findByText("A")).toBeInTheDocument()
+    const before = screen.getByTestId("location").textContent
+
+    await userEvent.click(screen.getByRole("button", { name: /^All/ }))
+
+    // The filter is a route param, so writing it back unchanged re-renders the
+    // whole stream page — the timeline and composer included — for nothing.
+    expect(screen.getByTestId("location").textContent).toBe(before)
+  })
+
+  it("offers from: only this stream's members, plus the viewer", async () => {
+    await db.workspaceUsers.bulkPut([
+      { id: "usr_me", workspaceId: WS, workosUserId: WORKOS_ME, slug: "me", name: "Me" },
+      { id: "usr_2", workspaceId: WS, slug: "mara", name: "Mara" },
+      { id: "usr_3", workspaceId: WS, slug: "simon", name: "Simon" },
+    ] as never[])
+    await db.streamContextItems.put(
+      cachedRow(
+        serverItem({
+          category: "link",
+          refId: "https://hers.example",
+          authorId: "usr_2",
+          detail: { url: "https://hers.example", title: "Hers" },
+        })
+      )
+    )
+    vi.spyOn(streamContextApi, "list").mockResolvedValue(listResponse())
+
+    renderPanel({ memberIds: ["usr_2"] })
+    expect(await screen.findByText("Hers")).toBeInTheDocument()
+
+    await userEvent.click(screen.getByLabelText("Add search filter"))
+    await userEvent.click(await screen.findByText("From user"))
+
+    expect(await screen.findByText("Mara")).toBeInTheDocument()
+    // The viewer reads this stream without a membership row (INV-62 grants read
+    // through a public root), and must still be able to find their own things.
+    expect(screen.getByText("Me")).toBeInTheDocument()
+    // Simon is in the workspace but not in this stream — nothing of his can ever
+    // be in this feed, so filtering by him could only ever return nothing.
+    expect(screen.queryByText("Simon")).not.toBeInTheDocument()
   })
 
   it("expands a multi-occurrence row into its occurrences, each with its own jump", async () => {

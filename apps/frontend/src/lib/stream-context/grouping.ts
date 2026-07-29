@@ -4,6 +4,15 @@ function startOfDay(d: Date): Date {
   return new Date(d.getFullYear(), d.getMonth(), d.getDate())
 }
 
+// `date.toLocaleDateString(undefined, opts)` builds a fresh `Intl.DateTimeFormat`
+// on every call — 0.024 ms in V8 against 0.0005 ms for a reused one. Labelling is
+// per item, so at 500 rows that was ~12 ms a pass, and this runs on every render
+// of both panels plus twice per date jump. Same locale resolution as the
+// `undefined` argument it replaces, so device-local (INV-42) is unchanged.
+const WEEKDAY = new Intl.DateTimeFormat(undefined, { weekday: "long" })
+const MONTH_DAY = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" })
+const MONTH_DAY_YEAR = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", year: "numeric" })
+
 /**
  * A timeline milestone label for a date, relative to `now`, in device-local
  * time (INV-42): "Today", "Yesterday", a weekday within the last week, then a
@@ -13,12 +22,9 @@ export function dayBucketLabel(date: Date, now: Date): string {
   const diffDays = Math.round((startOfDay(now).getTime() - startOfDay(date).getTime()) / 86_400_000)
   if (diffDays <= 0) return "Today"
   if (diffDays === 1) return "Yesterday"
-  if (diffDays < 7) return date.toLocaleDateString(undefined, { weekday: "long" })
+  if (diffDays < 7) return WEEKDAY.format(date)
   const sameYear = date.getFullYear() === now.getFullYear()
-  return date.toLocaleDateString(
-    undefined,
-    sameYear ? { month: "short", day: "numeric" } : { month: "short", day: "numeric", year: "numeric" }
-  )
+  return (sameYear ? MONTH_DAY : MONTH_DAY_YEAR).format(date)
 }
 
 export interface TimelineGroup {
