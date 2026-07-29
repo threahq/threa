@@ -386,8 +386,10 @@ describe("useBoardCardMessages", () => {
 
     await waitFor(() => expect(result.current.source).toBe("events"))
     // The rail has seen r1 (as a tombstone), so the deleted body is gone, not
-    // resurrected from the projection.
-    expect(result.current.replies).toEqual([])
+    // resurrected from the projection — the row survives, its content does not.
+    expect(result.current.replies.map((m) => ({ id: m.id, content: m.contentMarkdown }))).toEqual([
+      { id: "r1", content: "" },
+    ])
     expect(result.current.openingMessage?.contentMarkdown).toBe("opening")
   })
 
@@ -417,9 +419,10 @@ describe("useBoardCardMessages", () => {
   })
 
   it("does not count a tombstoned reply toward the total once the conversation is fully synced", async () => {
-    // r1 deleted, r2 live; the whole conversation is in the rail. The deleted
-    // reply is "seen" but not displayable, so totalReplies must be 1 (not 2) —
-    // otherwise the card shows a phantom "1 more message" gap for nothing hidden.
+    // r1 deleted, r2 live; the whole conversation is in the rail. The tombstone is
+    // shown but counts as ZERO — a message added and deleted before you look at it
+    // is no new message — so totalReplies must be 1 (not 2), or the card shows a
+    // phantom "1 more message" gap for nothing hidden.
     const del = msgEvent("r1", "gone", 2)
     ;(del.payload as { deletedAt?: string }).deletedAt = new Date().toISOString()
     await db.events.bulkPut([msgEvent("m1", "opening", 1), del, msgEvent("r2", "here", 3)])
@@ -427,7 +430,7 @@ describe("useBoardCardMessages", () => {
     const { result } = renderHook(() => useBoardCardMessages(post))
 
     await waitFor(() => expect(result.current.source).toBe("events"))
-    expect(result.current.replies.map((m) => m.id)).toEqual(["r2"])
+    expect(result.current.replies.map((m) => m.id)).toEqual(["r1", "r2"])
     expect(result.current.totalReplies).toBe(1)
   })
 
@@ -463,7 +466,7 @@ describe("useBoardCardMessages", () => {
     })
   })
 
-  it("keeps a soft-deleted reply out of `replies`, `messagesById`, and `totalReplies`", async () => {
+  it("keeps a soft-deleted reply out of `messagesById` and `totalReplies`, shown as a tombstone row", async () => {
     const deleted = msgEvent("r1", "gone", 2)
     ;(deleted.payload as { deletedAt?: string }).deletedAt = new Date().toISOString()
     await db.events.bulkPut([msgEvent("m1", "opening", 1), deleted, msgEvent("r2", "here", 3)])
@@ -475,10 +478,10 @@ describe("useBoardCardMessages", () => {
       replies: result.current.replies.map((m) => m.id),
       hasInMessagesById: result.current.messagesById.has("r1"),
       totalReplies: result.current.totalReplies,
-    }).toEqual({ replies: ["r2"], hasInMessagesById: false, totalReplies: 1 })
+    }).toEqual({ replies: ["r1", "r2"], hasInMessagesById: false, totalReplies: 1 })
   })
 
-  it("excludes soft-deleted messages from the rail", async () => {
+  it("ships no body with a soft-deleted reply's row", async () => {
     const deleted = msgEvent("r1", "gone", 2)
     ;(deleted.payload as { deletedAt?: string }).deletedAt = new Date().toISOString()
     await db.events.bulkPut([msgEvent("m1", "opening", 1), deleted, msgEvent("r2", "here", 3)])
@@ -486,7 +489,11 @@ describe("useBoardCardMessages", () => {
     const { result } = renderHook(() => useBoardCardMessages(post))
 
     await waitFor(() => expect(result.current.source).toBe("events"))
-    expect(result.current.replies.map((m) => m.id)).toEqual(["r2"])
+    const tombstone = result.current.replies.find((m) => m.id === "r1")
+    expect({ deletedAt: !!tombstone?.deletedAt, content: tombstone?.contentMarkdown }).toEqual({
+      deletedAt: true,
+      content: "",
+    })
   })
 })
 

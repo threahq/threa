@@ -212,6 +212,20 @@ beforeEach(() => {
   vi.spyOn(workspaceStoreModule, "useWorkspacePersonas").mockReturnValue([] as never)
   vi.spyOn(workspaceStoreModule, "useWorkspaceBots").mockReturnValue([] as never)
   vi.spyOn(workspaceStoreModule, "useWorkspaceMetadata").mockReturnValue(undefined as never)
+  // The panel holds its first paint until read state is decidable for every
+  // stream it spans (the reveal gate). In production the workspace unread
+  // bootstrap is already in IDB before the panel can mount (CoordinatedLoading
+  // gates the app on `idbUnreadState !== undefined`), so the harness seeds the
+  // same baseline: the conversation's stream, fully read. Per-STREAM decidability
+  // is not guaranteed by that gate — see the "reveals anyway" test above. Tests
+  // about the divider install their own frontier over this (installReadState).
+  vi.spyOn(workspaceStoreModule, "useWorkspaceUnreadState").mockReturnValue({
+    workspaceId: WORKSPACE_ID,
+    readMessageIds: {},
+    unreadCounts: { stream_1: 0 },
+    _cachedAt: 0,
+  } as never)
+  vi.spyOn(workspaceStoreModule, "useWorkspaceStreamReadStates").mockReturnValue([] as never)
   // The panel resolves its host stream type from the synced IDB row.
   vi.spyOn(streamStoreModule, "useStreamFromStore").mockReturnValue({ id: "stream_1", type: "channel" } as never)
   vi.spyOn(useWorkspacesModule, "useWorkspaceUserId").mockReturnValue("usr_me")
@@ -248,6 +262,35 @@ describe("ConversationPanel", () => {
   afterEach(() => {
     restoreRect?.()
     restoreRect = null
+  })
+
+  it("holds the column at the skeleton until read state is decidable (one reveal, not three)", async () => {
+    // The workspace unread bootstrap hasn't landed: the divider can't be placed
+    // yet, so painting rows now would show them once and then re-paint with the
+    // marker. Nothing from the conversation renders until it resolves.
+    vi.spyOn(workspaceStoreModule, "useWorkspaceUnreadState").mockReturnValue(undefined as never)
+    mountPanel({ cached: asCached(makePost()) })
+
+    await waitFor(() => expect(document.querySelector(".animate-pulse")).toBeTruthy())
+    expect(screen.queryByText("Opening message body.")).toBeNull()
+  })
+
+  it("reveals anyway when read state can never resolve (a spanned thread leg has no membership)", async () => {
+    // INV-62: a thread carries no `stream_members` row, and the bootstrap builds
+    // both `unreadCounts` and `streamReadState` from memberships — so a row in a
+    // never-read thread leg is decidable by neither map, forever. The gate must
+    // give up on the divider rather than hold a blank panel.
+    vi.spyOn(workspaceStoreModule, "useWorkspaceUnreadState").mockReturnValue({
+      workspaceId: WORKSPACE_ID,
+      readMessageIds: {},
+      unreadCounts: {},
+      _cachedAt: 0,
+    } as never)
+    vi.spyOn(workspaceStoreModule, "useWorkspaceStreamReadStates").mockReturnValue([] as never)
+    mountPanel({ cached: asCached(makePost()) })
+
+    await waitFor(() => expect(document.querySelector(".animate-pulse")).toBeTruthy())
+    expect(await screen.findByText("Opening message body.", undefined, { timeout: 5000 })).toBeTruthy()
   })
 
   it("renders the conversation from the reactive store row without a by-id fetch", async () => {
@@ -993,6 +1036,11 @@ describe("ConversationPanel", () => {
       post.totalReplies = post.recentMessages.length
       mountPanel({ cached: asCached(post), getBoardMessages: async () => post.recentMessages })
       await screen.findByText(`Reply ${post.recentMessages.length + 1} body.`)
+      // Rows now reveal on a state flip rather than in the mount commit, so the
+      // opening bottom-pin lands an effect later. Assert absence only once the
+      // pin has settled — before it, the scroller is legitimately far from the
+      // bottom and the button is correctly showing.
+      await waitFor(() => expect(scroller().scrollTop).toBe(1000))
       expect(screen.queryByRole("button", { name: "Jump to latest" })).toBeNull()
 
       // The browser emits a scroll event once the opening bottom-pin settles;
@@ -1133,6 +1181,40 @@ function postWithDeletedReply(): BoardPost {
   post.totalReplies = 1
   return post
 }
+
+describe("ConversationPanel backfill merge", () => {
+  beforeEach(async () => {
+    __clearBoardRailRegistry()
+    await db.events.clear()
+  })
+  afterEach(async () => {
+    __clearBoardRailRegistry()
+    await db.events.clear()
+  })
+
+  it("unions the server backfill with the live rail instead of letting a stale snapshot win", async () => {
+    // The rail can never complete here (msg_9 is a member the snapshot lists and
+    // no rail carries), so the backfill stays enabled — the shape that used to pin
+    // the panel to a 60s-stale snapshot and hide a reply the browser already had.
+    const post = makePost()
+    post.conversation.messageIds = ["msg_1", "msg_2", "msg_3", "msg_9"]
+    post.totalReplies = 3
+    await db.events.bulkPut([
+      cachedMessageEvent("msg_1", "Opening message body.", 10),
+      cachedMessageEvent("msg_2", "Reply two body.", 20),
+      cachedMessageEvent("msg_3", "Live reply the snapshot predates.", 30),
+    ])
+    mountPanel({
+      cached: asCached(post),
+      getBoardMessages: async () => [
+        makeMessage({ id: "msg_2", contentMarkdown: "Reply two body.", createdAt: "2026-06-22T12:00:20.000Z" }),
+      ],
+    })
+
+    expect(await screen.findByText("Live reply the snapshot predates.")).toBeTruthy()
+    expect(screen.getByText("Reply two body.")).toBeTruthy()
+  })
+})
 
 describe("ConversationPanel deleted messages", () => {
   beforeEach(async () => {

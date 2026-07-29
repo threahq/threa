@@ -59,6 +59,7 @@ import {
 import { useDecryptStreamNames } from "@/hooks/use-decrypt-stream-names"
 import { usePageResume } from "@/hooks/use-page-resume"
 import { setLastWorkspaceId } from "@/lib/last-workspace"
+import { isServerStreamId } from "@/lib/stream-ids"
 import { useAuth } from "@/auth"
 import { useWorkspaceStreams } from "@/stores/workspace-store"
 import { SyncEngine, SyncEngineContext, isSyncEngineCurrent } from "@/sync/sync-engine"
@@ -353,7 +354,7 @@ function NotificationSweeper({ workspaceId }: { workspaceId: string }) {
  * their post loads, so the conversation panel registers those itself.
  */
 function VisibleStreamPresence({ streamIds }: { streamIds: string[] }) {
-  useVisibleStreams(streamIds.filter((id) => id.startsWith("stream_")))
+  useVisibleStreams(streamIds.filter(isServerStreamId))
   return null
 }
 
@@ -419,6 +420,11 @@ export function WorkspaceLayout() {
     const panelIds = searchParams.getAll("panel")
     return [streamId, ...panelIds].filter((id): id is string => Boolean(id))
   }, [streamId, searchParams])
+  // A `conv:<id>` panel is not a stream: fetching its bootstrap 404s and joining
+  // its room is rejected, and both delayed the coordinated reveal on every cold
+  // open with a conversation panel in the URL. Same rule the SyncEngine and the
+  // presence registration above already apply (INV-35).
+  const coordinatedStreamIds = useMemo(() => streamIds.filter(isServerStreamId), [streamIds])
 
   const { mentionables } = useMentionables()
   const streams = useWorkspaceStreams(workspaceId ?? "")
@@ -466,7 +472,7 @@ export function WorkspaceLayout() {
           <FreshnessWatchers />
           <MessageQueueHandler />
           <StreamNameDecryptor workspaceId={workspaceId} />
-          <CoordinatedLoadingProvider workspaceId={workspaceId} streamIds={streamIds}>
+          <CoordinatedLoadingProvider workspaceId={workspaceId} streamIds={coordinatedStreamIds}>
             <ChannelLinkProvider workspaceId={workspaceId} streams={streams}>
               <CallLaunchProvider>
                 <UserProfileProvider>

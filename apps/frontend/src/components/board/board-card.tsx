@@ -137,7 +137,6 @@ export function BoardCard({
     events: railEvents,
     messagesById,
     taggedByConversation,
-    deletedById,
   } = useBoardCardMessages(post, streamType, {
     branchStreamIds: inlineComposer.branchStreamIds,
     extraDraftPanelIds: inlineComposer.extraDraftPanelIds,
@@ -208,10 +207,11 @@ export function BoardCard({
     getReadTruth,
   } = useConversationReadController(workspaceId, conversation.id, streamId, currentUserId)
   // Over the card's known local messages (opening + the full local reply rail);
-  // own-authored rows are excluded inside `hasUnread`. A tombstone renders no
-  // observable row, so auto-read could never clear a dot it lit — it is excluded
-  // here exactly as it is from `autoReadRows` below, keeping "what lights the dot"
-  // and "what can clear it" the same set.
+  // own-authored rows are excluded inside `hasUnread`. A tombstone is visible but
+  // counts as zero: a message added and deleted before you look at it is no new
+  // message, so it never lights the dot — excluded here exactly as it is from
+  // `autoReadRows` below, keeping "what lights the dot" and "what can clear it"
+  // the same set.
   const knownMessages = useMemo(
     () => (openingMessage ? [openingMessage, ...railReplies] : railReplies).filter((m) => !m.deletedAt),
     [openingMessage, railReplies]
@@ -359,7 +359,9 @@ export function BoardCard({
 
   // Collapsed cards preview an append-only window over the local rail: trailing
   // replies at first reveal, growing (never sliding) as new ones land, so a
-  // visible reply is never evicted back under the "N more" gap.
+  // visible reply is never evicted back under the "N more" gap. Tombstones ride
+  // the rail like any other row, so a deleted reply spends a preview slot and is
+  // counted in `totalReplies` — the collapsed card reads "deleted", not "gone".
   const collapsedReplies = useStableReplyWindow(conversation.id, railReplies)
 
   // Expanded: the full conversation minus the opening (server backfill when the
@@ -372,18 +374,7 @@ export function BoardCard({
   // backfill's `data` lingers after `enabled` goes false).
   else if (incompleteLocally && allMessages)
     replies = (allMessages as RenderableMessage[]).filter((m) => m.id !== openingMessage?.id)
-  else {
-    // The rail excludes deleted rows, so without this the tombstone the collapsed
-    // window and the backfill both draw would vanish here — and every row below it
-    // would shift up — the moment the rail caught up. Same merge as the panel
-    // (conversation-panel.tsx): the conversation's own deleted members, deduped.
-    // Expanded-only, so no count changes (`hiddenCount` is 0 here).
-    const railIds = new Set(railReplies.map((m) => m.id))
-    const tombstones = [...deletedById.values()].filter(
-      (m) => conversation.messageIds.includes(m.id) && m.id !== openingMessage?.id && !railIds.has(m.id)
-    )
-    replies = tombstones.length > 0 ? [...railReplies, ...tombstones] : railReplies
-  }
+  else replies = railReplies
   // Merge this card's own just-sent replies with the confirmed set, skipping any
   // the rail or a backfill already carries, then sort by time: a pending reply
   // can be OLDER than a confirmed one (someone else's reply lands while yours is
@@ -392,7 +383,9 @@ export function BoardCard({
   const displayedReplies = [...replies, ...pendingReplies.filter((m) => !seenReplyIds.has(m.id))].sort(
     (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
   )
-  const hiddenCount = expanded ? 0 : Math.max(0, totalReplies - replies.length)
+  // `totalReplies` counts tombstones as zero, so the visible rows must be counted
+  // the same way or a drawn tombstone would subtract from the gap it isn't in.
+  const hiddenCount = expanded ? 0 : Math.max(0, totalReplies - replies.filter((m) => !m.deletedAt).length)
   const loadingMore = expanded && incompleteLocally && !allMessages && !expandFailed
   // No middle is hidden, so opening + replies form one uninterrupted run that
   // groups across the boundary. Otherwise a gap row sits between them.
@@ -405,8 +398,8 @@ export function BoardCard({
   // its visible tail reads the conversation up to there, exactly like invoking
   // "Mark as read up to here" on that row (Kris's dogfood ruling on PR #1174 —
   // having the conversation open is enough to mark it).
-  // A tombstone renders no `data-message-id` row, so it can never be observed —
-  // keep it out of the auto-read set entirely.
+  // A tombstone counts as zero for unread, so it must not carry read state either
+  // way — keep it out of the auto-read set entirely.
   const autoReadRows = (openingMessage ? [openingMessage, ...displayedReplies] : displayedReplies).filter(
     (m) => !m.deletedAt
   )

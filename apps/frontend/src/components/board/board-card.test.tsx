@@ -702,10 +702,10 @@ describe("BoardCard day dividers", () => {
 })
 
 describe("BoardCard deleted messages", () => {
-  it("shows no tombstone in the collapsed card's reply preview", async () => {
-    // The rail's `deletedMessages` map is for the always-expanded conversation
-    // panel only: a tombstone must never take one of the card's 3 preview slots
-    // (nor show up as a body), because the "N more" gap counts displayable rows.
+  it("draws a tombstone in the collapsed card's reply preview, without its body", async () => {
+    // Same data, different view: a deleted reply reads as deleted on the collapsed
+    // card too, spending a preview slot rather than vanishing and silently pulling
+    // every row below it up. It counts zero toward the "N more" gap either way.
     await db.events.bulkPut([
       messageEvent("m_open", "Opening body.", 10),
       messageEvent("m_r1", "A live reply.", 20),
@@ -714,7 +714,7 @@ describe("BoardCard deleted messages", () => {
     mountCard(makePost({ messageIds: ["m_open", "m_r1", "m_r2"] }))
 
     expect(await screen.findByText("A live reply.")).toBeTruthy()
-    expect(screen.queryByText("This message was deleted")).toBeNull()
+    expect(await screen.findByText("This message was deleted")).toBeTruthy()
     expect(screen.queryByText("The deleted body.")).toBeNull()
   })
 
@@ -773,9 +773,9 @@ describe("BoardCard deleted messages", () => {
 
   it("renders a tombstone for a deleted reply once the rail is complete", async () => {
     // The rail path: every reply is local, so the card falls through to
-    // `railReplies` — which excludes deleted rows. Without the tombstone merge the
-    // deleted middle reply simply disappears here (and it IS drawn on the other two
-    // paths), so the card reflows as sync completes.
+    // `railReplies`, which carries the tombstone in its own chronological slot —
+    // the same row the projection and backfill paths draw, so nothing reflows as
+    // sync completes. It is shown but counts as zero, so it never moves the gap.
     await db.events.bulkPut([
       messageEvent("m_open", "Opening body.", 10),
       messageEvent("m_r1", "First reply.", 11),

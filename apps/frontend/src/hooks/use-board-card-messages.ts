@@ -612,9 +612,10 @@ export interface BoardCardMessages {
    *  shows in its branch through its echo window before the branch's server
    *  `messageIds` lists it, the same union the card does for its own replies. */
   taggedByConversation: Map<string, RenderableMessage[]>
-  /** The merged rail's soft-deleted rows as content-free tombstones, by id. Absent
-   *  from every other field here (and from every count), so only the always-expanded
-   *  conversation panel draws them. */
+  /** The merged rail's soft-deleted rows as content-free tombstones, by id. The
+   *  conversation's own deleted members already ride `replies` (counting zero toward
+   *  `totalReplies`); this exposes the rest of the rail's tombstones for surfaces
+   *  that resolve rows outside the conversation (nested branches). */
   deletedById: Map<string, RenderableMessage>
 }
 
@@ -817,9 +818,13 @@ export function useBoardCardMessages(
       }
     }
 
+    // A soft-deleted member joins the rail's rows as its content-free tombstone:
+    // "same data, different view" — a deleted reply reads as deleted on every
+    // surface (collapsed card, expanded card, panel) instead of vanishing and
+    // silently shifting every row below it up.
     const liveReplies: RenderableMessage[] = []
     for (const id of replyIds) {
-      const message = rail.messages.get(id)
+      const message = rail.messages.get(id) ?? rail.deletedMessages.get(id)
       if (message) liveReplies.push(message)
     }
     liveReplies.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime())
@@ -838,8 +843,8 @@ export function useBoardCardMessages(
         : liveReplies
 
     // When the rail holds every one of this conversation's replies, its displayable
-    // (non-deleted) count IS the total — a tombstone is "seen" but not shown, so it
-    // must not inflate the "N more" gap. Otherwise trust the server count, but never
+    // (non-deleted) count IS the total — a tombstone is shown but counts as zero, so
+    // it must not inflate the "N more" gap. Otherwise trust the server count, but never
     // below what's already on screen (a bridged reply fills its own slot, so it
     // mustn't also leave a phantom "1 more").
     const fullySynced = replyIds.every((id) => rail.seen.has(id))
@@ -858,7 +863,10 @@ export function useBoardCardMessages(
     let episodeArrivals = 0
     if (baseline) for (const id of replyIds) if (!rail.seen.has(id) && !baseline.has(id)) episodeArrivals++
     const covered = Math.min(pendingReplies.length, episodeArrivals)
-    const totalReplies = fullySynced ? liveReplies.length : Math.max(serverTotal - covered, replies.length)
+    const undeletedReplyCount = replies.reduce((n, m) => (m.deletedAt ? n : n + 1), 0)
+    const totalReplies = fullySynced
+      ? liveReplies.reduce((n, m) => (m.deletedAt ? n : n + 1), 0)
+      : Math.max(serverTotal - covered, undeletedReplyCount)
 
     // Retain a fresh pending row; keep the retained copy while it's still bridging;
     // forget it once the live rows cover it.

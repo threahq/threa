@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useSearchParams } from "react-router-dom"
-import { useQuery } from "@tanstack/react-query"
+import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { toast } from "sonner"
 import {
   ChevronLeft,
@@ -86,6 +86,30 @@ const TYPE_GLYPH: Record<string, LucideIcon> = {
 interface ConversationPanelProps {
   workspaceId: string
   onClose: () => void
+}
+
+/** How long the reveal waits on an undecidable read state before painting rows
+ *  without a "New" divider. A conversation spanning a never-read thread leg is
+ *  never decidable at all (INV-62: no membership row, so neither bootstrap map
+ *  carries it), so this is a real ceiling, not just a slow-network cushion. */
+const READ_STATE_REVEAL_TIMEOUT_MS = 1500
+
+/** The panel's one loading shape — held until every source the first paint reads
+ *  has landed, so the column reveals once instead of in three visible phases. */
+function ConversationRowsSkeleton() {
+  return (
+    <div className="flex flex-col gap-3 p-4">
+      {Array.from({ length: 4 }).map((_, i) => (
+        <div key={i} className="flex items-start gap-2">
+          <Skeleton className="h-8 w-8 shrink-0 rounded-[8px]" />
+          <div className="min-w-0 flex-1 space-y-2">
+            <Skeleton className="h-3.5 w-1/4" />
+            <Skeleton className="h-3 w-4/5" />
+          </div>
+        </div>
+      ))}
+    </div>
+  )
 }
 
 /**
@@ -220,19 +244,7 @@ export function ConversationPanel({ workspaceId, onClose }: ConversationPanelPro
       />
     )
   } else if (isLoading) {
-    body = (
-      <div className="flex flex-col gap-3 p-4">
-        {Array.from({ length: 4 }).map((_, i) => (
-          <div key={i} className="flex items-start gap-2">
-            <Skeleton className="h-8 w-8 shrink-0 rounded-[8px]" />
-            <div className="min-w-0 flex-1 space-y-2">
-              <Skeleton className="h-3.5 w-1/4" />
-              <Skeleton className="h-3 w-4/5" />
-            </div>
-          </div>
-        ))}
-      </div>
-    )
+    body = <ConversationRowsSkeleton />
   } else if (notFound) {
     body = (
       <Empty className="min-h-[16rem] border-0">
@@ -266,22 +278,31 @@ export function ConversationPanel({ workspaceId, onClose }: ConversationPanelPro
           <ChevronLeft className="h-4 w-4" />
           <span className="sr-only">Back</span>
         </Button>
+        {/* Nothing here paints before `post`: the glyph, the topic and the stream
+            locator all resolve with it, and rendering their fallbacks first made
+            the header show a generic icon over the literal word "Conversation"
+            and then swap. One fixed-height placeholder holds the row instead
+            (INV-21 — same footprint, no shift). */}
         <SidePanelTitle className="flex min-w-0 flex-1 items-center gap-1.5">
-          <ContextGlyph className="h-4 w-4 shrink-0 text-muted-foreground" />
-          {post?.conversation.status === "resolved" && (
-            <CircleCheck className="h-4 w-4 shrink-0 text-muted-foreground" aria-label="Resolved" />
-          )}
-          {/* The topic is the conversation's identity — show it when set, falling
-            back to the stream locator (the pre-topic behavior). */}
-          <span className={cn("truncate", post?.conversation.status === "resolved" && "text-muted-foreground")}>
-            {post?.conversation.topicSummary ?? locator}
-          </span>
-          {post && (
-            <RelativeTime
-              date={post.conversation.lastActivityAt}
-              terse
-              className="ml-1 shrink-0 text-xs font-normal text-muted-foreground"
-            />
+          {post ? (
+            <>
+              <ContextGlyph className="h-4 w-4 shrink-0 text-muted-foreground" />
+              {post.conversation.status === "resolved" && (
+                <CircleCheck className="h-4 w-4 shrink-0 text-muted-foreground" aria-label="Resolved" />
+              )}
+              {/* The topic is the conversation's identity — show it when set, falling
+                back to the stream locator (the pre-topic behavior). */}
+              <span className={cn("truncate", post.conversation.status === "resolved" && "text-muted-foreground")}>
+                {post.conversation.topicSummary ?? locator}
+              </span>
+              <RelativeTime
+                date={post.conversation.lastActivityAt}
+                terse
+                className="ml-1 shrink-0 text-xs font-normal text-muted-foreground"
+              />
+            </>
+          ) : (
+            <Skeleton className="h-4 w-40 max-w-full" />
           )}
         </SidePanelTitle>
         {post && (
@@ -424,7 +445,6 @@ function ConversationPanelBody({ workspaceId, post, hostStreamType, openReplySig
     events: railEvents,
     messagesById,
     taggedByConversation,
-    deletedById,
   } = useBoardCardMessages(post, hostStreamType, {
     branchStreamIds: inlineComposer.branchStreamIds,
     extraDraftPanelIds: inlineComposer.extraDraftPanelIds,
@@ -444,28 +464,37 @@ function ConversationPanelBody({ workspaceId, post, hostStreamType, openReplySig
     enabled: incompleteLocally,
     staleTime: 60_000,
   })
+  // The backfill is a 60s-stale snapshot of a growing conversation: without this
+  // a reply that arrives while the panel is open is never in it, and a rail the
+  // union below can't complete (an unsynced member latches `incompleteLocally`
+  // forever) would pin the panel to that snapshot. Follow membership instead —
+  // every change to the member set marks the snapshot stale, so the open panel
+  // refetches it.
+  const queryClient = useQueryClient()
+  const memberCount = conversation.messageIds.length
+  useEffect(() => {
+    void queryClient.invalidateQueries({ queryKey: conversationKeys.boardMessages(conversation.id) })
+  }, [queryClient, conversation.id, memberCount])
 
-  // Prefer the server backfill only while the local rail is still incomplete; once
-  // it catches up, fall through to the rail so live edits keep flowing.
+  // Union, not either/or: the snapshot only FILLS GAPS the rail hasn't synced,
+  // and the rail wins every id it holds (it carries live edits, reactions and
+  // tombstones the snapshot predates). An either/or here let a stale snapshot
+  // hide a message the browser already had in IDB.
   let replies: RenderableMessage[]
-  if (incompleteLocally && allMessages)
-    replies = (allMessages as RenderableMessage[]).filter((m) => m.id !== openingMessage?.id)
-  else replies = railReplies
+  if (allMessages) {
+    const railById = new Map(railReplies.map((m) => [m.id, m]))
+    const merged = (allMessages as RenderableMessage[])
+      .filter((m) => m.id !== openingMessage?.id)
+      .map((m) => railById.get(m.id) ?? m)
+    const backfilledIds = new Set(merged.map((m) => m.id))
+    replies = [...merged, ...railReplies.filter((m) => !backfilledIds.has(m.id))]
+  } else replies = railReplies
   // Merge the viewer's own just-sent replies (deduped), then sort by time — a
   // pending reply can be older than a confirmed one.
   const seenReplyIds = new Set(replies.map((m) => m.id))
-  // Tombstones for the conversation's deleted members. The backfill rows already
-  // carry theirs (the server projects them), so this fills the RAIL path — the
-  // panel is the always-expanded surface and shows "was deleted" rather than
-  // letting a message silently vanish. Deduped, then sorted in with the rest.
-  const deletedReplies = [...deletedById.values()].filter(
-    (m) => conversation.messageIds.includes(m.id) && m.id !== openingMessage?.id && !seenReplyIds.has(m.id)
+  const displayedReplies = [...replies, ...pendingReplies.filter((m) => !seenReplyIds.has(m.id))].sort(
+    (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
   )
-  const displayedReplies = [
-    ...replies,
-    ...pendingReplies.filter((m) => !seenReplyIds.has(m.id)),
-    ...deletedReplies,
-  ].sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime())
   const loadingMore = incompleteLocally && !allMessages && !backfillFailed
 
   const all = openingMessage ? [openingMessage, ...displayedReplies] : displayedReplies
@@ -580,6 +609,36 @@ function ConversationPanelBody({ workspaceId, post, hostStreamType, openReplySig
     }
     return true
   }, [unreadState, streamReadStates, readableRows, conversation.streamId])
+  // One reveal, not three: the header, the rail, the server backfill and the read
+  // state each used to paint as they landed (`post.recentMessages` under a
+  // "Loading messages…" line, then the rest, then the divider). Hold the column at
+  // the skeleton until all of them are in. A latch, so later background loads —
+  // a refetched backfill, a read-state update — never blank rows the user is
+  // already reading.
+  const revealedRef = useRef<{ conversationId: string; revealed: boolean }>({
+    conversationId: conversation.id,
+    revealed: false,
+  })
+  if (revealedRef.current.conversationId !== conversation.id) {
+    revealedRef.current = { conversationId: conversation.id, revealed: false }
+  }
+  // …but `readStateResolved` can be permanently false. The bootstrap builds BOTH
+  // `unreadCounts` and `streamReadState` from stream MEMBERSHIPS, and a thread
+  // gets no `stream_members` row (INV-62), so a conversation spanning a
+  // never-read thread leg holds a row decidable by neither map, and no read event
+  // ever writes one. Before the gate that cost a missing divider; gating the
+  // column on it would hold the skeleton forever. So bound the wait: the divider
+  // is worth a beat, never the whole panel.
+  const [readStateWaitElapsed, setReadStateWaitElapsed] = useState(false)
+  useEffect(() => {
+    setReadStateWaitElapsed(false)
+    if (readStateResolved) return
+    const timer = setTimeout(() => setReadStateWaitElapsed(true), READ_STATE_REVEAL_TIMEOUT_MS)
+    return () => clearTimeout(timer)
+  }, [conversation.id, readStateResolved])
+  if (!loadingMore && (readStateResolved || readStateWaitElapsed)) revealedRef.current.revealed = true
+  const revealed = revealedRef.current.revealed
+
   // Rows first, marker second: the marker may only anchor on a message that
   // actually gets a row (a message inside a depth-collapsed spanning subtree has
   // none, so a divider there would draw nothing and scroll nowhere).
@@ -833,23 +892,28 @@ function ConversationPanelBody({ workspaceId, post, hostStreamType, openReplySig
           style={{ paddingBottom: `calc(var(${FLOATING_COMPOSER_HEIGHT_VAR}, 0px) + 0.75rem)` }}
         >
           <div className="mx-auto w-full min-w-0 max-w-[800px] px-3 sm:px-6">
-            {provenance && (
+            {!revealed && <ConversationRowsSkeleton />}
+            {revealed && provenance && (
               <BranchProvenanceRow conversationId={provenance.parentConversationId} title={provenance.title} />
             )}
-            <BranchedBoardRows
-              rows={rows}
-              workspaceId={workspaceId}
-              renderMessage={renderMessage}
-              continueThreadTo={(streamId) => getPanelUrl(streamId)}
-              onSplitThread={(threadStreamId) =>
-                splitThread.mutate({ conversationId: conversation.id, threadStreamId })
-              }
-              renderBranchMessage={renderBranchMessage}
-              renderBranchTail={inlineComposer.renderBranchTail}
-              renderAfterMessage={inlineComposer.renderAfterMessage}
-              onRedirectSession={() => setFocusSeq((n) => n + 1)}
-            />
-            {loadingMore && <span className="mt-3 block text-xs text-muted-foreground">Loading messages…</span>}
+            {revealed && (
+              <BranchedBoardRows
+                rows={rows}
+                workspaceId={workspaceId}
+                renderMessage={renderMessage}
+                continueThreadTo={(streamId) => getPanelUrl(streamId)}
+                onSplitThread={(threadStreamId) =>
+                  splitThread.mutate({ conversationId: conversation.id, threadStreamId })
+                }
+                renderBranchMessage={renderBranchMessage}
+                renderBranchTail={inlineComposer.renderBranchTail}
+                renderAfterMessage={inlineComposer.renderAfterMessage}
+                onRedirectSession={() => setFocusSeq((n) => n + 1)}
+              />
+            )}
+            {revealed && loadingMore && (
+              <span className="mt-3 block text-xs text-muted-foreground">Loading messages…</span>
+            )}
             {backfillFailed && (
               <button
                 type="button"
