@@ -464,4 +464,37 @@ describe("AgentSessionEvent effects", () => {
     expect(screen.getAllByText("Saved a memo")).toHaveLength(1)
     expect(screen.getByText(/dark/)).toBeInTheDocument()
   })
+
+  // A session keeps its id across retries, so a turn that is retried twice
+  // emits several interrupted events onto the same card. Each attempt's
+  // upsertStep wipes the previous attempt's step effects, so that attempt's
+  // interrupted payload is the ONLY surviving record of what it wrote — keeping
+  // just the newest one loses every write before the final retry.
+  it("keeps effects from every interrupted attempt, not just the last", () => {
+    const interrupted = (attempt: number, effects: unknown[], at: string) =>
+      createSessionEvent("agent_session:interrupted", {
+        sessionId: "session_fx",
+        stepCount: 2,
+        attempt,
+        maxAttempts: 5,
+        error: "timeout",
+        effects,
+        interruptedAt: at,
+      })
+
+    renderInWorkspace([
+      startedEvent(),
+      interrupted(
+        0,
+        [{ kind: "settings", target: "theme", before: "light", after: "dark" }],
+        "2026-02-19T18:00:00.500Z"
+      ),
+      interrupted(1, [], "2026-02-19T18:00:10.500Z"),
+      completedEvent([]),
+    ])
+
+    // Attempt 0's write is invisible everywhere else by this point.
+    expect(screen.getByText(/light/)).toBeInTheDocument()
+    expect(screen.getByText(/dark/)).toBeInTheDocument()
+  })
 })

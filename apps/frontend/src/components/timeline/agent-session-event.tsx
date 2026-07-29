@@ -66,12 +66,20 @@ function deriveStatus(events: StreamEvent[]): {
   completedPayload: AgentSessionCompletedPayload | null
   failedPayload: AgentSessionFailedPayload | null
   interruptedPayload: AgentSessionInterruptedPayload | null
+  /**
+   * EVERY interrupted payload, oldest first. The status line only needs the
+   * latest, but a retry resets its step rows' effects, so each attempt's
+   * interrupted event is the only surviving record of what THAT attempt wrote.
+   * Keeping just the last one loses every write before the final retry.
+   */
+  interruptedPayloads: AgentSessionInterruptedPayload[]
   deletedPayload: AgentSessionDeletedPayload | null
 } {
   let startedPayload: AgentSessionStartedPayload | null = null
   let completedPayload: AgentSessionCompletedPayload | null = null
   let failedPayload: AgentSessionFailedPayload | null = null
   let interruptedPayload: AgentSessionInterruptedPayload | null = null
+  const interruptedPayloads: AgentSessionInterruptedPayload[] = []
   let deletedPayload: AgentSessionDeletedPayload | null = null
   let sessionId = ""
 
@@ -92,6 +100,7 @@ function deriveStatus(events: StreamEvent[]): {
       case "agent_session:interrupted":
         // Last one wins — a later attempt's interrupt supersedes the prior.
         interruptedPayload = event.payload as AgentSessionInterruptedPayload
+        interruptedPayloads.push(interruptedPayload)
         break
       case "agent_session:deleted":
         deletedPayload = event.payload as AgentSessionDeletedPayload
@@ -117,7 +126,16 @@ function deriveStatus(events: StreamEvent[]): {
     status = "running"
   }
 
-  return { status, sessionId, startedPayload, completedPayload, failedPayload, interruptedPayload, deletedPayload }
+  return {
+    status,
+    sessionId,
+    startedPayload,
+    completedPayload,
+    failedPayload,
+    interruptedPayload,
+    interruptedPayloads,
+    deletedPayload,
+  }
 }
 
 function buildStatusConfig(
@@ -327,15 +345,23 @@ export function AgentSessionEvent({
   onSteerSession,
 }: AgentSessionEventProps) {
   const { getTraceUrl } = useTrace()
-  const { status, sessionId, startedPayload, completedPayload, failedPayload, interruptedPayload, deletedPayload } =
-    deriveStatus(events)
+  const {
+    status,
+    sessionId,
+    startedPayload,
+    completedPayload,
+    failedPayload,
+    interruptedPayload,
+    interruptedPayloads,
+    deletedPayload,
+  } = deriveStatus(events)
 
   // Only a terminal turn has a settled account of what it wrote. A running card
   // never grows a grid, so the effects appear as part of the same status
   // transition that already swaps the card's title, icon and colours (INV-21).
   const sessionEffects: AgentToolEffect[] =
     status === "completed" || status === "failed" || status === "retrying"
-      ? unionSessionEffects(interruptedPayload, completedPayload, failedPayload)
+      ? unionSessionEffects(...interruptedPayloads, completedPayload, failedPayload)
       : []
   // What goes in the grid is decided by shape, not by whether a label happens
   // to be set. A layer-0 marker is a bare `{ kind }` — a tool declared nothing,

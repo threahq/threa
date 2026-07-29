@@ -1,5 +1,6 @@
 import {
   AGENT_SETTABLE_PREFERENCE_KEYS,
+  EFFECTS_PER_SESSION_MAX,
   type AgentSettablePreferenceKey,
   type AgentToolEffect,
   type SettingsTab,
@@ -114,9 +115,13 @@ export function effectDiff(effect: AgentToolEffect): { before: string; after: st
 
 /**
  * Union of a session's effects across its payloads, deduped and in emission
- * order. A retry's `upsertStep` resets the step row's effects, so the
- * `interrupted` payload is the only surviving record of the failed attempt's
- * writes — dropping it would make a real write invisible.
+ * order. A retry's `upsertStep` resets the step row's effects, so each
+ * attempt's `interrupted` payload is the only surviving record of what that
+ * attempt wrote — dropping any of them would make a real write invisible.
+ *
+ * Capped because the caller spreads one payload per retry attempt: the backend
+ * bounds each payload on its own, but their union is not bounded by anything
+ * else.
  */
 export function unionSessionEffects(
   ...payloads: Array<{ effects?: AgentToolEffect[] } | null | undefined>
@@ -135,5 +140,5 @@ export function unionSessionEffects(
     }
     for (const key of added) seen.add(key)
   }
-  return out
+  return out.slice(0, EFFECTS_PER_SESSION_MAX)
 }
