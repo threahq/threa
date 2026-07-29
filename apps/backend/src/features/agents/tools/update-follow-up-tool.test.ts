@@ -74,3 +74,44 @@ describe("update_follow_up tool", () => {
     expect(parsed.success).toBe(false)
   })
 })
+
+describe("update_follow_up effects", () => {
+  it("declares the follow-up it moved, with the new time", async () => {
+    const tool = createUpdateFollowUpTool({ updateFollowUp: mock(async () => okResult()) }, { timezone: "UTC" })
+    const input = {
+      followUpId: "agfu_01",
+      note: "new note",
+      scheduledFor: new Date(Date.now() + 3 * 86_400_000).toISOString(),
+    }
+    const out = await tool.config.execute(input, EXEC_OPTS)
+    const body = parse(out.output)
+
+    expect(tool.config.trace.effects?.(input, out)).toEqual([
+      { kind: "follow_up", label: "new note", target: "agfu_01", after: body.scheduledForLocal as string },
+    ])
+  })
+
+  // A note-only edit has no new time to report, and the callback returns no
+  // pre-write value, so there is nothing to put in `before`/`after`.
+  it("declares no time when only the note changed", async () => {
+    const tool = createUpdateFollowUpTool({ updateFollowUp: mock(async () => okResult()) })
+    const input = { followUpId: "agfu_01", note: "new note" }
+    const out = await tool.config.execute(input, EXEC_OPTS)
+
+    expect(tool.config.trace.effects?.(input, out)).toEqual([
+      { kind: "follow_up", label: "new note", target: "agfu_01" },
+    ])
+  })
+
+  for (const reason of ["not_found", "not_pending"] as const) {
+    it(`declares nothing on ${reason}`, async () => {
+      const tool = createUpdateFollowUpTool({
+        updateFollowUp: mock(async (): Promise<UpdateFollowUpToolResult> => ({ ok: false, reason })),
+      })
+      const input = { followUpId: "agfu_01", note: "n" }
+      const out = await tool.config.execute(input, EXEC_OPTS)
+
+      expect(tool.config.trace.effects?.(input, out)).toEqual([])
+    })
+  }
+})

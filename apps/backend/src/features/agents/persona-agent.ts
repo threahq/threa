@@ -889,8 +889,15 @@ export class PersonaAgent {
             e2eEnabled: stream.e2eEnabled === true,
           })
             ? {
-                updateSettings: (patch) =>
-                  this.deps.userPreferencesService.updatePreferences(workspaceId, settingsUserId, patch),
+                updateSettings: async (patch) => {
+                  const before = await this.deps.userPreferencesService.getPreferences(workspaceId, settingsUserId)
+                  const after = await this.deps.userPreferencesService.updatePreferences(
+                    workspaceId,
+                    settingsUserId,
+                    patch
+                  )
+                  return { before, after }
+                },
               }
             : undefined
 

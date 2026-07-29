@@ -108,6 +108,11 @@ Use this instead of attempting long-horizon work in one turn: "check back tomorr
       stepType: AgentStepTypes.TOOL_CALL,
       formatContent: (input) =>
         JSON.stringify({ tool: "schedule_follow_up", note: input.note, scheduledFor: input.scheduledFor }),
+      effects: (input, result) => {
+        const parsed = JSON.parse(result.output) as { ok: boolean; followUpId?: string }
+        if (!parsed.ok || !parsed.followUpId) return []
+        return [{ kind: "follow_up", label: input.note, target: parsed.followUpId }]
+      },
     },
   })
 }

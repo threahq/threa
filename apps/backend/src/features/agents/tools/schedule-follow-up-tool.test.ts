@@ -106,3 +106,28 @@ describe("schedule_follow_up tool", () => {
     expect(body).toMatchObject({ ok: false, pendingCount: 10, limit: 10 })
   })
 })
+
+describe("schedule_follow_up effects", () => {
+  const effectsOf = async (result: ScheduleFollowUpToolResult) => {
+    const tool = createScheduleFollowUpTool({ scheduleFollowUp: mock(async () => result) })
+    const input = { note: "check the deploy", scheduledFor: new Date(Date.now() + 86_400_000).toISOString() }
+    const out = await tool.config.execute(input, EXEC_OPTS)
+    return tool.config.trace.effects?.(input, out)
+  }
+
+  it("declares the follow-up it scheduled", async () => {
+    expect(await effectsOf(okResult())).toEqual([{ kind: "follow_up", label: "check the deploy", target: "agfu_01" }])
+  })
+
+  it("declares nothing when the pending cap refused the write", async () => {
+    expect(await effectsOf({ ok: false, reason: "cap_reached", pendingCount: 10, limit: 10 })).toEqual([])
+  })
+
+  it("declares nothing when validation rejected the date before any write", async () => {
+    const tool = createScheduleFollowUpTool({ scheduleFollowUp: mock(async () => okResult()) })
+    const input = { note: "n", scheduledFor: new Date(Date.now() - 3_600_000).toISOString() }
+    const out = await tool.config.execute(input, EXEC_OPTS)
+
+    expect(tool.config.trace.effects?.(input, out)).toEqual([])
+  })
+})

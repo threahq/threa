@@ -80,3 +80,51 @@ describe("update_stream_brief tool", () => {
     expect(parse(result.output).ok).toBe(false)
   })
 })
+
+describe("update_stream_brief effects", () => {
+  const INPUT = { content: "Goal: ship weekly", reason: "recorded the decision" }
+
+  // Target-less on purpose: the write lands on the stream the trace sits in.
+  it("declares the version it moved the brief from and to", async () => {
+    const tool = createUpdateStreamBriefTool(
+      { updateBrief: mock(async (): Promise<UpdateStreamBriefToolResult> => ({ ok: true, version: 4 })) },
+      { currentVersion: 3 }
+    )
+    const out = await tool.config.execute(INPUT, EXEC_OPTS)
+
+    expect(tool.config.trace.effects?.(INPUT, out)).toEqual([{ kind: "brief", before: "3", after: "4" }])
+  })
+
+  it("declares nothing on a version conflict", async () => {
+    const tool = createUpdateStreamBriefTool(
+      {
+        updateBrief: mock(
+          async (): Promise<UpdateStreamBriefToolResult> => ({
+            ok: false,
+            reason: "version_conflict",
+            currentContent: "theirs",
+            currentVersion: 5,
+          })
+        ),
+      },
+      { currentVersion: 3 }
+    )
+    const out = await tool.config.execute(INPUT, EXEC_OPTS)
+
+    expect(tool.config.trace.effects?.(INPUT, out)).toEqual([])
+  })
+
+  it("declares nothing when the write threw", async () => {
+    const tool = createUpdateStreamBriefTool(
+      {
+        updateBrief: mock(async (): Promise<UpdateStreamBriefToolResult> => {
+          throw new Error("db down")
+        }),
+      },
+      { currentVersion: 3 }
+    )
+    const out = await tool.config.execute(INPUT, EXEC_OPTS)
+
+    expect(tool.config.trace.effects?.(INPUT, out)).toEqual([])
+  })
+})

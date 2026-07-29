@@ -102,6 +102,25 @@ export function createUpdateFollowUpTool(
           note: input.note,
           scheduledFor: input.scheduledFor,
         }),
+      // No `before`: the callback returns the stored row after the write and
+      // nothing from before it, so only the new time is declarable.
+      effects: (input, result) => {
+        const parsed = JSON.parse(result.output) as {
+          ok: boolean
+          followUpId?: string
+          note?: string
+          scheduledForLocal?: string
+        }
+        if (!parsed.ok || !parsed.followUpId) return []
+        return [
+          {
+            kind: "follow_up",
+            label: parsed.note,
+            target: parsed.followUpId,
+            ...(input.scheduledFor !== undefined ? { after: parsed.scheduledForLocal } : {}),
+          },
+        ]
+      },
     },
   })
 }

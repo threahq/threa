@@ -22,7 +22,7 @@ function toolNames(config: Partial<ToolSetConfig>): string[] {
  * it would only be refused.
  */
 describe("update_user_settings availability", () => {
-  const settings = { updateSettings: async () => preferences }
+  const settings = { updateSettings: async () => ({ before: preferences, after: preferences }) }
 
   test("is built when the caller supplied settings deps", () => {
     expect(toolNames({ settings })).toContain(AgentToolNames.UPDATE_USER_SETTINGS)

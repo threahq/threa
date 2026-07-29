@@ -117,6 +117,13 @@ Use when the user asks you to remember something, or when something clearly wort
       stepType: AgentStepTypes.TOOL_CALL,
       formatContent: (input) =>
         JSON.stringify({ tool: AgentToolNames.SAVE_MEMO, title: input.title, knowledgeType: input.knowledgeType }),
+      // A deduped save wrote nothing — it returned the memo that was already
+      // there — so it declares no effect rather than claiming a capture.
+      effects: (_input, result) => {
+        const parsed = JSON.parse(result.output) as { ok: boolean; memoId?: string; title?: string; deduped?: boolean }
+        if (!parsed.ok || parsed.deduped || !parsed.memoId) return []
+        return [{ kind: "memo", label: parsed.title, target: parsed.memoId }]
+      },
     },
   })
 }

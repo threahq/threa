@@ -30,3 +30,20 @@ describe("cancel_follow_up tool", () => {
     expect(body.followUpId).toBe("agfu_gone")
   })
 })
+
+describe("cancel_follow_up effects", () => {
+  const effectsOf = async (result: CancelFollowUpToolResult) => {
+    const tool = createCancelFollowUpTool({ cancelFollowUp: mock(async () => result) })
+    const input = { followUpId: "agfu_01" }
+    const out = await tool.config.execute(input, EXEC_OPTS)
+    return tool.config.trace.effects?.(input, out)
+  }
+
+  it("declares the follow-up it cancelled", async () => {
+    expect(await effectsOf({ ok: true, followUpId: "agfu_01" })).toEqual([{ kind: "follow_up", target: "agfu_01" }])
+  })
+
+  it("declares nothing when there was no pending follow-up to cancel", async () => {
+    expect(await effectsOf({ ok: false })).toEqual([])
+  })
+})

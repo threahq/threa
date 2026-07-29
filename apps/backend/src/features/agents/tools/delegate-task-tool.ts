@@ -93,6 +93,11 @@ Use for work that is long-horizon, code-heavy, or needs the user's machine — n
       stepType: AgentStepTypes.TOOL_CALL,
       formatContent: (input) =>
         JSON.stringify({ tool: "delegate_task", title: input.title, contextRefs: input.contextRefs ?? [] }),
+      effects: (input, result) => {
+        const parsed = JSON.parse(result.output) as { ok: boolean; delegationId?: string }
+        if (!parsed.ok || !parsed.delegationId) return []
+        return [{ kind: "delegation", label: input.title, target: parsed.delegationId }]
+      },
     },
   })
 }

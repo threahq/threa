@@ -87,6 +87,15 @@ export function createUpdateStreamBriefTool(deps: UpdateStreamBriefToolDeps, opt
     trace: {
       stepType: AgentStepTypes.TOOL_CALL,
       formatContent: (input) => JSON.stringify({ tool: "update_stream_brief", reason: input.reason }),
+      // Target-less: the write lands on the stream the trace is already in.
+      // `before` is the version written against — the repo advances the brief by
+      // exactly one per accepted write (`version = version + 1`, creation at 1
+      // from an expected 0), so it is derivable from the result alone.
+      effects: (_input, result) => {
+        const parsed = JSON.parse(result.output) as { ok: boolean; version?: number }
+        if (!parsed.ok || parsed.version === undefined) return []
+        return [{ kind: "brief", before: String(parsed.version - 1), after: String(parsed.version) }]
+      },
     },
   })
 }

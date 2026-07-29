@@ -22,8 +22,16 @@ const preferences: UserPreferences = {
   updatedAt: "2026-01-01T00:00:00.000Z",
 }
 
+/** The write, against the stored defaults as `before`. */
 function toolWith(updateSettings: (patch: unknown) => Promise<UserPreferences>) {
-  return createUpdateUserSettingsTool({ updateSettings: updateSettings as never })
+  return createUpdateUserSettingsTool({
+    updateSettings: async (patch) => ({ before: preferences, after: await updateSettings(patch) }),
+  })
+}
+
+/** The write plus an explicit pre-write snapshot, for the before/after tests. */
+function toolWithBefore(before: UserPreferences, after: UserPreferences) {
+  return createUpdateUserSettingsTool({ updateSettings: async () => ({ before, after }) })
 }
 
 describe("update_user_settings schema", () => {
@@ -98,7 +106,11 @@ describe("update_user_settings tool", () => {
     const result = await tool.config.execute({ timezone: "Europe/Stockholm" }, { toolCallId: "call_1" })
 
     expect(updateSettings).toHaveBeenCalledWith({ timezone: "Europe/Stockholm" })
-    expect(JSON.parse(result.output)).toEqual({ ok: true, applied: { timezone: "Europe/Stockholm" } })
+    expect(JSON.parse(result.output)).toEqual({
+      ok: true,
+      applied: { timezone: "Europe/Stockholm" },
+      previous: { timezone: preferences.timezone },
+    })
   })
 
   // The runtime hands `execute` whatever the provider returned as arguments
@@ -200,5 +212,90 @@ describe("canOfferUserSettings", () => {
 
   test("withholds it when the root's owner is unknown", () => {
     expect(canOfferUserSettings({ ...allowed, rootStreamCreatedBy: null })).toBe(false)
+  })
+})
+
+describe("update_user_settings effects", () => {
+  const effectsOf = async (tool: ReturnType<typeof toolWith>, input: Record<string, unknown>) => {
+    const result = await tool.config.execute(input as never, { toolCallId: "call_1" })
+    return tool.config.trace.effects?.(input as never, result)
+  }
+
+  test("declares one effect per key it actually changed, with before and after", async () => {
+    const tool = toolWithBefore(
+      { ...preferences, theme: "light", timezone: "UTC" },
+      { ...preferences, theme: "dark", timezone: "Europe/Stockholm" }
+    )
+
+    expect(await effectsOf(tool, { theme: "dark", timezone: "Europe/Stockholm" })).toEqual([
+      { kind: "settings", target: "theme", before: "light", after: "dark" },
+      { kind: "settings", target: "timezone", before: "UTC", after: "Europe/Stockholm" },
+    ])
+  })
+
+  // The user asked for something already true. The write happened, but nothing
+  // moved, and reporting it as a change would be wrong.
+  test("declares nothing for a key whose value was already what was asked for", async () => {
+    const tool = toolWithBefore(
+      { ...preferences, theme: "dark", timezone: "UTC" },
+      { ...preferences, theme: "dark", timezone: "Europe/Stockholm" }
+    )
+
+    expect(await effectsOf(tool, { theme: "dark", timezone: "Europe/Stockholm" })).toEqual([
+      { kind: "settings", target: "timezone", before: "UTC", after: "Europe/Stockholm" },
+    ])
+  })
+
+  // The real shape, not a hand-rolled stand-in: a full week of shifts
+  // serializes past 200 characters, and both sides of the diff would truncate
+  // to the same 120-char prefix — a change that renders as no change. So a
+  // structured value declares the key it touched and no diff at all.
+  const FULL_WEEK = {
+    days: {
+      0: [],
+      1: [{ start: "09:00", end: "17:00" }],
+      2: [{ start: "09:00", end: "17:00" }],
+      3: [{ start: "09:00", end: "17:00" }],
+      4: [{ start: "09:00", end: "17:00" }],
+      5: [{ start: "09:00", end: "17:00" }],
+      6: [],
+    },
+  }
+
+  test("declares a structured value's key without a misleading diff", async () => {
+    const shortenedFriday = {
+      days: { ...FULL_WEEK.days, 5: [{ start: "09:00", end: "15:00" }] },
+    }
+    const tool = toolWithBefore(
+      { ...preferences, workSchedule: FULL_WEEK as never },
+      { ...preferences, workSchedule: shortenedFriday as never }
+    )
+
+    expect(await effectsOf(tool, { workSchedule: shortenedFriday as never })).toEqual([
+      { kind: "settings", target: "workSchedule" },
+    ])
+  })
+
+  test("still declares the change when a structured override is cleared", async () => {
+    const tool = toolWithBefore(
+      { ...preferences, workSchedule: FULL_WEEK as never },
+      { ...preferences, workSchedule: null as never }
+    )
+
+    expect(await effectsOf(tool, { workSchedule: null })).toEqual([{ kind: "settings", target: "workSchedule" }])
+  })
+
+  test("declares nothing when the patch never passed the schema", async () => {
+    const tool = toolWith(async () => preferences)
+
+    expect(await effectsOf(tool, { theme: 42 })).toEqual([])
+  })
+
+  test("declares nothing when the write threw", async () => {
+    const tool = toolWith(async () => {
+      throw new Error("Invalid timezone")
+    })
+
+    expect(await effectsOf(tool, { timezone: "Mars/Olympus" })).toEqual([])
   })
 })
