@@ -356,9 +356,16 @@ export function AgentSessionEvent({
     deletedPayload,
   } = deriveStatus(events)
 
-  // Only a terminal turn has a settled account of what it wrote. A running card
-  // never grows a grid, so the effects appear as part of the same status
-  // transition that already swaps the card's title, icon and colours (INV-21).
+  // A RUNNING card never grows a grid: the effects arrive as part of a status
+  // transition that already swaps the card's title, icon and colours, so
+  // nothing pops in mid-turn (INV-21).
+  //
+  // `retrying` is included deliberately, and it is not terminal. An attempt
+  // that wrote something before it was interrupted has already changed the
+  // user's state, and the retry can take minutes; hiding that until the turn
+  // finally settles would leave a real write invisible for the whole window.
+  // The grid can gain rows again at the terminal transition, which is the same
+  // kind of shift as the transition itself rather than a spontaneous one.
   const sessionEffects: AgentToolEffect[] =
     status === "completed" || status === "failed" || status === "retrying"
       ? unionSessionEffects(...interruptedPayloads, completedPayload, failedPayload)

@@ -1,7 +1,7 @@
 import { Link, useParams } from "react-router-dom"
 import type { AgentToolEffect } from "@threa/types"
 import { useOptionalSettings } from "@/contexts"
-import { effectDiff, effectLabel, kindIcon, resolveEffectPath } from "@/lib/effect-links"
+import { EffectRowContent, resolveEffectPath } from "@/lib/effect-links"
 import { cn } from "@/lib/utils"
 
 /**
@@ -44,7 +44,18 @@ export function SessionEffectGrid({ effects }: { effects: AgentToolEffect[] }) {
 }
 
 function EffectLine({ effect, path, className }: { effect: AgentToolEffect; path: string | null; className?: string }) {
-  const body = <EffectLineBody effect={effect} hasRoute={path !== null} />
+  const body = (
+    <EffectRowContent
+      effect={effect}
+      trailing={
+        path ? (
+          <span aria-hidden className="ml-auto shrink-0 text-muted-foreground/50">
+            ›
+          </span>
+        ) : null
+      }
+    />
+  )
 
   // No route means no destination — a greyed, non-focusable span, never a link
   // with nowhere to go. Follow-ups and briefs have no route anywhere in the app.
@@ -66,30 +77,5 @@ function EffectLine({ effect, path, className }: { effect: AgentToolEffect; path
     >
       {body}
     </Link>
-  )
-}
-
-function EffectLineBody({ effect, hasRoute }: { effect: AgentToolEffect; hasRoute: boolean }) {
-  const diff = effectDiff(effect)
-  const Icon = kindIcon(effect.kind)
-  return (
-    <>
-      <Icon aria-hidden className="h-3 w-3 shrink-0 opacity-70" />
-      {/* The label names the row, so it does not give up width to the diff:
-          a proportional shrink still clipped "Setting" to "Setti…" at phone
-          width, because a few pixels is all it takes. It is capped instead, so
-          a short label never truncates and a long one still does. */}
-      <span className="max-w-[55%] shrink-0 truncate">{effectLabel(effect)}</span>
-      {diff && (
-        <span className="min-w-0 truncate text-muted-foreground/70">
-          {diff.before} → {diff.after}
-        </span>
-      )}
-      {hasRoute && (
-        <span aria-hidden className="ml-auto shrink-0 text-muted-foreground/50">
-          ›
-        </span>
-      )}
-    </>
   )
 }

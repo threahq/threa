@@ -76,12 +76,14 @@ describe("labels and diffs", () => {
     expect(effectLabel(effect({ kind: "memo", label: "Saved a memo" }))).toBe("Saved a memo")
   })
 
-  it("returns a diff only when both sides exist", () => {
+  it("returns a diff whenever there is an `after` to show", () => {
     expect(effectDiff(effect({ kind: "settings", before: "dark", after: "light" }))).toEqual({
       before: "dark",
       after: "light",
     })
-    expect(effectDiff(effect({ kind: "settings", after: "light" }))).toBeNull()
+    // A reschedule knows where it landed, not where it started.
+    expect(effectDiff(effect({ kind: "follow_up", after: "Thu 9:00 AM" }))).toEqual({ after: "Thu 9:00 AM" })
+    expect(effectDiff(effect({ kind: "settings", before: "dark" }))).toBeNull()
   })
 })
 

@@ -1,3 +1,4 @@
+import type { ReactNode } from "react"
 import {
   AGENT_SETTABLE_PREFERENCE_KEYS,
   EFFECTS_PER_SESSION_MAX,
@@ -8,6 +9,7 @@ import {
 } from "@threa/types"
 import { Clock, FileText, PenLine, SlidersHorizontal, Sparkles, TerminalSquare, type LucideIcon } from "lucide-react"
 import { buildDelegationPath } from "@/lib/stream-links"
+import { cn } from "@/lib/utils"
 
 /** How a label-less effect names itself. The backend sends no display text (INV-46). */
 const EFFECT_KIND_NOUNS = {
@@ -88,7 +90,7 @@ type EffectResolver = (target: string, workspaceId: string, ctx: EffectRouteCont
  */
 const EFFECT_ROUTE_RESOLVERS = {
   memo: (target, workspaceId) => `/w/${workspaceId}/memory?memo=${encodeURIComponent(target)}`,
-  delegation: (target, workspaceId) => buildDelegationPath(workspaceId, target),
+  delegation: (target, workspaceId) => buildDelegationPath(workspaceId, encodeURIComponent(target)),
   settings: (target, _workspaceId, ctx) => {
     const tab = settingsTabFor(target)
     if (!tab || !ctx.getSettingsUrl) return null
@@ -107,10 +109,15 @@ export function resolveEffectPath(effect: AgentToolEffect, ctx: EffectRouteConte
   return resolver(effect.target, ctx.workspaceId, ctx)
 }
 
-/** Both sides of a replacement, when the effect carries both. */
-export function effectDiff(effect: AgentToolEffect): { before: string; after: string } | null {
-  if (effect.before === undefined || effect.after === undefined) return null
-  return { before: effect.before, after: effect.after }
+/**
+ * The change to draw, when there is one. `before` is optional: a reschedule
+ * knows where it landed but not where it started, and `→ Thu 9:00` still tells
+ * the user the thing moved. Dropping it would render a moved reminder exactly
+ * like an untouched one.
+ */
+export function effectDiff(effect: AgentToolEffect): { before?: string; after: string } | null {
+  if (effect.after === undefined) return null
+  return { ...(effect.before !== undefined ? { before: effect.before } : {}), after: effect.after }
 }
 
 /**
@@ -141,4 +148,30 @@ export function unionSessionEffects(
     for (const key of added) seen.add(key)
   }
   return out.slice(0, EFFECTS_PER_SESSION_MAX)
+}
+
+/**
+ * One effect's row content, shared by the trace step list and the in-stream
+ * grid so the two cannot drift (INV-35) — they had drifted into byte-identical
+ * copies once already.
+ *
+ * The label is capped ONLY when a diff shares the row. Capping unconditionally
+ * left a label-only row truncated at 55% with the rest of the row empty, which
+ * is how a rescheduled follow-up lost its own note.
+ */
+export function EffectRowContent({ effect, trailing }: { effect: AgentToolEffect; trailing?: ReactNode }) {
+  const diff = effectDiff(effect)
+  const Icon = kindIcon(effect.kind)
+  return (
+    <>
+      <Icon aria-hidden className="h-3 w-3 shrink-0 opacity-70" />
+      <span className={cn("truncate", diff ? "max-w-[55%] shrink-0" : "min-w-0")}>{effectLabel(effect)}</span>
+      {diff && (
+        <span className="min-w-0 truncate text-muted-foreground/70">
+          {diff.before !== undefined && `${diff.before} `}→ {diff.after}
+        </span>
+      )}
+      {trailing}
+    </>
+  )
 }

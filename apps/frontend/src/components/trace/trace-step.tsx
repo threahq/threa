@@ -38,7 +38,7 @@ import { buildContextRefSourceHref } from "@/lib/context-bag/source-link"
 import { stripMarkdownToInline } from "@/lib/markdown/strip"
 import { useDecryptedStepContent } from "@/hooks/use-decrypted-step-content"
 import { useOptionalSettings } from "@/contexts"
-import { effectDiff, effectLabel, kindIcon, resolveEffectPath } from "@/lib/effect-links"
+import { EffectRowContent, resolveEffectPath } from "@/lib/effect-links"
 import { RedirectSessionButton, StopSessionButton } from "./session-action-buttons"
 
 interface TraceStepProps {
@@ -248,7 +248,7 @@ function StepEffectList({ effects, workspaceId }: { effects: AgentToolEffect[]; 
     <div className="mt-3 space-y-1 text-[12px]">
       {effects.map((effect, index) => {
         const path = resolveEffectPath(effect, { workspaceId, getSettingsUrl: settings?.getSettingsUrl })
-        const body = <StepEffectBody effect={effect} />
+        const body = <EffectRowContent effect={effect} />
         const key = `${effect.kind}-${effect.target ?? ""}-${index}`
         return path ? (
           <Link key={key} to={path} className="flex min-w-0 items-center gap-1.5 text-primary hover:underline">
@@ -264,26 +264,6 @@ function StepEffectList({ effects, workspaceId }: { effects: AgentToolEffect[]; 
         )
       })}
     </div>
-  )
-}
-
-function StepEffectBody({ effect }: { effect: AgentToolEffect }) {
-  const diff = effectDiff(effect)
-  const Icon = kindIcon(effect.kind)
-  return (
-    <>
-      <Icon aria-hidden className="h-3 w-3 shrink-0 opacity-70" />
-      {/* The label names the row, so it does not give up width to the diff:
-          a proportional shrink still clipped "Setting" to "Setti…" at phone
-          width, because a few pixels is all it takes. It is capped instead, so
-          a short label never truncates and a long one still does. */}
-      <span className="max-w-[55%] shrink-0 truncate">{effectLabel(effect)}</span>
-      {diff && (
-        <span className="min-w-0 truncate text-muted-foreground/70">
-          {diff.before} → {diff.after}
-        </span>
-      )}
-    </>
   )
 }
 
