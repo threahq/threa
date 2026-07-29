@@ -1,4 +1,3 @@
-import { useEffect } from "react"
 import { useInfiniteQuery } from "@tanstack/react-query"
 import { streamContextApi, type ListStreamContextRequest } from "@/api"
 import { seedStreamContextItems } from "@/stores/stream-context-store"
@@ -27,10 +26,10 @@ export interface StreamContextFeed {
   /** `client` = sealed stream; the panel derives locally instead. */
   mode: ListStreamContextResponse["mode"] | null
   hasNextPage: boolean
-  /** Resolves when the page has landed and been seeded — a date jump pages in a
-   *  loop and must not re-read IDB before the rows are there. Its `hasNextPage`
-   *  is the post-fetch truth; the field above is a render-time snapshot and
-   *  stays stale inside such a loop. */
+  /** Resolves when the page has landed and been seeded (the query fn seeds
+   *  before it resolves) — a date jump pages in a loop and must not re-read IDB
+   *  before the rows are there. Its `hasNextPage` is the post-fetch truth; the
+   *  field above is a render-time snapshot and stays stale inside such a loop. */
   fetchNextPage: () => Promise<{ hasNextPage: boolean }>
   isFetchingNextPage: boolean
   isLoading: boolean
@@ -58,9 +57,18 @@ export function useStreamContextFeed(
 
   const query = useInfiniteQuery({
     queryKey: streamContextKeys.feed(workspaceId, streamId, { scope, category, q, from, before, after }),
-    queryFn: ({ pageParam }) => {
+    // Seeding here, not in an effect, is what makes "the page is in IDB by the
+    // time the fetch resolves" structural: `fetchNextPage` awaits this, so the
+    // date jump's paging loop can read IDB straight after. Once per page, too —
+    // the effect this replaces re-put every accumulated page on every change,
+    // costing O(pages²) writes, each waking the live query the panel renders
+    // from. A reconnect refetch re-runs this per page, so INV-53 catch-up still
+    // rewrites the whole window.
+    queryFn: async ({ pageParam }) => {
       const request: ListStreamContextRequest = { scope, category, q, from, before, after, cursor: pageParam }
-      return streamContextApi.list(workspaceId, streamId, request)
+      const page = await streamContextApi.list(workspaceId, streamId, request)
+      await seedStreamContextItems(workspaceId, rootStreamId, page.items)
+      return page
     },
     initialPageParam: undefined as string | undefined,
     getNextPageParam: (lastPage) => lastPage.nextCursor ?? undefined,
@@ -71,33 +79,12 @@ export function useStreamContextFeed(
     enabled: enabled && !!workspaceId && !!streamId,
   })
 
-  const { data } = query
-  useEffect(() => {
-    if (!data) return
-    void seedStreamContextItems(
-      workspaceId,
-      rootStreamId,
-      data.pages.flatMap((page) => page.items)
-    )
-  }, [data, workspaceId, rootStreamId])
-
-  const firstPage = data?.pages[0]
+  const firstPage = query.data?.pages[0]
   return {
     counts: firstPage?.counts ?? null,
     mode: firstPage?.mode ?? null,
     hasNextPage: query.hasNextPage,
-    // Seed before resolving. The effect above also seeds, but it runs a render
-    // later — a caller that awaits this and then reads IDB (the date jump) would
-    // race it and see the page missing.
-    fetchNextPage: async () => {
-      const result = await query.fetchNextPage()
-      await seedStreamContextItems(
-        workspaceId,
-        rootStreamId,
-        (result.data?.pages ?? []).flatMap((page) => page.items)
-      )
-      return { hasNextPage: result.hasNextPage }
-    },
+    fetchNextPage: async () => ({ hasNextPage: (await query.fetchNextPage()).hasNextPage }),
     isFetchingNextPage: query.isFetchingNextPage,
     isLoading: query.isLoading,
     isError: query.isError,

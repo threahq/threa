@@ -1,4 +1,6 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react"
+import { useQuery } from "@tanstack/react-query"
+import type { StreamBootstrap, StreamMember } from "@threa/types"
 import type { VirtualizerHandle } from "virtua"
 import { ChevronDown, ChevronRight, Search, WifiOff, X } from "lucide-react"
 import { streamContextApi } from "@/api"
@@ -9,7 +11,9 @@ import { SearchFilterMenu } from "@/components/search/search-filter-menu"
 import { SEARCH_DEBOUNCE_MS } from "@/components/search/use-message-search"
 import { Input } from "@/components/ui/input"
 import { useFormattedDate } from "@/hooks"
+import { useCurrentWorkspaceUserId } from "@/hooks/use-current-workspace-user-id"
 import { useStreamName } from "@/hooks/use-stream-name"
+import { streamKeys } from "@/hooks/use-streams"
 import { parseSearchQuery, type ParsedFilter } from "@/lib/search-query-parser"
 import { contextItemFromCached } from "@/lib/stream-context/from-cached"
 import { collapseContextRows, countByCategory, filterContextRows } from "@/lib/stream-context/filter"
@@ -129,6 +133,24 @@ export function StreamContextIndexPanel(props: StreamContextPanelProps) {
 
   const rows = useStreamContextRows(workspaceId, streamId, rootStreamId, "tree")
 
+  // Who `from:` can meaningfully name here: this stream's members, plus the
+  // viewer (a public root grants read without a membership row — INV-62 — so
+  // "things I shared" must stay reachable). A workspace-wide picker offers
+  // people this stream can hold nothing from — in a DM, everyone except the two
+  // participants — and every such choice is a filter that returns nothing.
+  //
+  // Threads inherit membership from their root (INV-62), so the root's roster is
+  // the answer for a thread too. `undefined` while no roster is cached: unscoped
+  // is honest about not knowing, where a roster of one would not be.
+  const currentUserId = useCurrentWorkspaceUserId(workspaceId)
+  const members = useCachedStreamMembers(workspaceId, rootStreamId, streamId)
+  const authorIds = useMemo(() => {
+    if (!members) return undefined
+    const ids = new Set(members.map((member) => member.memberId))
+    if (currentUserId) ids.add(currentUserId)
+    return ids
+  }, [members, currentUserId])
+
   // Phase 1 — narrow the cached window locally and render before the endpoint
   // answers. The server phase widens the same set through IDB, so there is no
   // second list to reconcile.
@@ -172,7 +194,17 @@ export function StreamContextIndexPanel(props: StreamContextPanelProps) {
   // Jump the LIST to a date — navigation, not filtering: the feed stays one
   // continuous list and the view moves. The target is usually not mounted,
   // hence virtua's `scrollToIndex` over a DOM scroll.
-  const items = visibleRows.map(contextItemFromCached).filter((item): item is ContextItem => item !== null)
+  // The chip, the search box and the counts repaint on the tap; the list itself
+  // is allowed to arrive a frame later. Rebuilding and re-rendering a long list
+  // is the one part of this panel that can't be made free, so it yields instead
+  // of blocking the input that asked for it. Everything the list needs hangs off
+  // this one deferred value — the rows, their keys, and the jump's index into
+  // them — so nothing can index a list the user isn't looking at.
+  const renderedRows = useDeferredValue(visibleRows)
+  const items = useMemo(
+    () => renderedRows.map(contextItemFromCached).filter((item): item is ContextItem => item !== null),
+    [renderedRows]
+  )
 
   // Which jump is paging, not merely whether one is: an abandoned run must not
   // clear a skeleton the run that replaced it is still showing, and must not
@@ -268,8 +300,8 @@ export function StreamContextIndexPanel(props: StreamContextPanelProps) {
     )
   }
 
-  const isLoading = rows === undefined || (feed.isLoading && visibleRows.length === 0)
-  const itemsByKey = new Map(visibleRows.map((row) => [row.key, row]))
+  const isLoading = rows === undefined || (feed.isLoading && renderedRows.length === 0)
+  const itemsByKey = new Map(renderedRows.map((row) => [row.key, row]))
 
   // The cached window ends here and the next page can't be fetched — say so
   // rather than presenting a truncated list as the whole of it (INV-11).
@@ -367,6 +399,7 @@ export function StreamContextIndexPanel(props: StreamContextPanelProps) {
             query={query}
             onQueryChange={setQuery}
             kinds={["from", "after", "before"]}
+            userIds={authorIds}
           />
         </div>
         {unsupported.length > 0 && (
@@ -396,6 +429,34 @@ export function StreamContextIndexPanel(props: StreamContextPanelProps) {
       </div>
     </div>
   )
+}
+
+/**
+ * The stream's member roster as the app already holds it. A cache-only observer
+ * (see `CLAUDE.md`): the stream page's own bootstrap owns this key, and a side
+ * panel must not open a second subscription just to populate a menu. Prefers the
+ * root's roster — a thread inherits its members (INV-62) — and falls back to the
+ * stream's own for a thread opened before its root was fetched.
+ */
+function useCachedStreamMembers(
+  workspaceId: string,
+  rootStreamId: string,
+  streamId: string
+): StreamMember[] | undefined {
+  const root = useCachedBootstrapMembers(workspaceId, rootStreamId)
+  const own = useCachedBootstrapMembers(workspaceId, streamId)
+  return root ?? own
+}
+
+function useCachedBootstrapMembers(workspaceId: string, streamId: string): StreamMember[] | undefined {
+  const { data } = useQuery({
+    queryKey: streamKeys.bootstrap(workspaceId, streamId),
+    queryFn: () => null,
+    enabled: false,
+    staleTime: Infinity,
+    select: (bootstrap: StreamBootstrap | null) => bootstrap?.members,
+  })
+  return data ?? undefined
 }
 
 /**

@@ -63,7 +63,12 @@ export function StreamContextDerivedPanel({
   // link holds the requested view instead of flickering All → Delegations.
   const filterSettled = filter !== "delegation" || !delegationsPending
   const effectiveFilter: Filter = filter !== "all" && filterSettled && counts[filter] === 0 ? "all" : filter
-  const visible = effectiveFilter === "all" ? items : items.filter((i) => i.category === effectiveFilter)
+  // Memoized for its identity as much as its cost: the timeline's day grouping
+  // is keyed on this array, and a fresh one per render would miss that memo.
+  const visible = useMemo(
+    () => (effectiveFilter === "all" ? items : items.filter((i) => i.category === effectiveFilter)),
+    [items, effectiveFilter]
+  )
   const isLoading = events === undefined || (delegationsPending && visible.length === 0)
 
   const scrollerRef = useRef<HTMLDivElement | null>(null)
