@@ -69,13 +69,12 @@ export function occupancyVeto(
   deps: OccupancyDeps,
   identifiedSessionIds: Set<string>,
   /**
-   * Pids a caller has already tied to the identity it is about to record. The
-   * pid arm cannot identify anyone by itself — `~/.claude/sessions` keys on
-   * Claude's own session id, not a Threa runtime session id — so a caller that
-   * DOES know which pane owns the directory supplies its `panePid` here. That is
-   * the same pane-pid equivalence the reaper uses to tell its own session from a
-   * stranger. A mint supplies nothing: it has no candidate id yet, so every live
-   * pid is a stranger to it.
+   * Pids a caller has already tied to the identity it is about to record. The pid
+   * arm cannot identify anyone by itself — `~/.claude/sessions` keys on Claude's
+   * own session id, not a Threa one — so a caller that knows which pane owns the
+   * directory supplies its `panePid`, the same equivalence the reaper uses. A
+   * mint supplies none: it has no candidate id yet, so every live pid is a
+   * stranger to it.
    */
   accountedPids: Set<number> = new Set()
 ): string | undefined {

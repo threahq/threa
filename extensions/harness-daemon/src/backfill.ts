@@ -27,6 +27,7 @@ export type BackfillDisposition =
   | "refused occupied"
   | "refused conflicting"
   | "refused worktree missing"
+  | "refused no instance id"
   | "refused unsafe id"
 
 export interface BackfillOutcome {
@@ -76,6 +77,25 @@ interface Evidence {
 
 /** ledger over launch over inventory: the inventory row is immutable per launch and stale by construction. */
 const ATTESTOR_RANK: Attestor[] = ["ledger", "launch", "inventory"]
+
+/** Memoized including the throw: `listLocalTmuxPanes` raises when there is no tmux server, and every subject must see that same answer. */
+function once<T>(read: () => T): () => T {
+  let value: T
+  let thrown: unknown
+  let done = false
+  return () => {
+    if (!done) {
+      try {
+        value = read()
+      } catch (error) {
+        thrown = error
+      }
+      done = true
+    }
+    if (thrown !== undefined) throw thrown
+    return value
+  }
+}
 
 function subjectsOf(agents: ManagedAgent[], canonical: (path: string) => string): Map<string, ManagedAgent[]> {
   const subjects = new Map<string, ManagedAgent[]>()
@@ -182,7 +202,7 @@ function decide(
   const winner = evidence.sort((a, b) => ATTESTOR_RANK.indexOf(a.attestor) - ATTESTOR_RANK.indexOf(b.attestor))[0]!
   const instanceId = winner.instanceId ?? evidence.find((item) => item.instanceId)?.instanceId
   if (!instanceId) {
-    return { subject: worktree, disposition: "refused single source", detail: "no source attests an instance id" }
+    return { subject: worktree, disposition: "refused no instance id", detail: winner.runtimeSessionId }
   }
   if (!isSafeSessionFileName(winner.runtimeSessionId)) {
     return {
@@ -194,8 +214,7 @@ function decide(
 
   // Decided BEFORE the write, and against ids claimed earlier in this same pass,
   // so a dry run reaches the identical branch. Leaving it to the write's EEXIST
-  // made the mandatory operator preview promise `recorded` for exactly the
-  // ambiguous subjects an operator runs it to scrutinise.
+  // reports `recorded` in a preview that then refuses.
   const priorWorktree =
     claimed.get(winner.runtimeSessionId) ??
     records.find((record) => record.runtimeSessionId === winner.runtimeSessionId)?.worktree
@@ -250,12 +269,17 @@ function decide(
  * link record minted here is how a backfill bug becomes a deleted worktree.
  */
 export function backfillIdentities(deps: BackfillDeps, dryRun: boolean): BackfillOutcome[] {
+  // Read once per pass, not once per subject. Nothing in this pass writes a link
+  // record or a pane, and at fleet scale the per-subject reads meant one `tmux
+  // list-panes` per subject in `launchEvidence` and a second inside the veto —
+  // all of it while the startup path holds the shared lock. `identities` stays
+  // per-subject: the wet run's own writes have to be visible to later subjects.
+  const passDeps: BackfillDeps = { ...deps, links: once(deps.links), panes: once(deps.panes) }
   const subjects = subjectsOf(deps.inventory(), deps.canonicalPath)
-  // Ids claimed earlier in THIS pass. Without it a dry run and a wet run diverge
-  // whenever two subjects resolve to one id: the wet run sees the first write on
-  // disk and refuses, the dry run writes nothing and reports both as recorded.
+  // Ids claimed earlier in THIS pass: without it a dry run and a wet run diverge
+  // whenever two subjects resolve to one id.
   const claimed = new Map<string, string>()
-  return [...subjects].map(([worktree, rows]) => decide(worktree, rows, deps, dryRun, claimed))
+  return [...subjects].map(([worktree, rows]) => decide(worktree, rows, passDeps, dryRun, claimed))
 }
 
 export function summarizeBackfill(outcomes: BackfillOutcome[]): Array<[BackfillDisposition, number]> {

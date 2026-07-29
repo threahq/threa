@@ -262,3 +262,37 @@ test("every subject appears in the disposition list exactly once", () => {
     { subject: "/repo/f", disposition: "recorded" },
   ])
 })
+
+test("each source is read once per pass, not once per subject", () => {
+  // Two tmux subprocesses and two full directory scans per subject, all while
+  // the startup path holds the shared lock.
+  let paneReads = 0
+  let linkReads = 0
+  const context = deps({
+    inventory: () => [agent(), agent({ id: "claude-2", name: "other", worktree: "/repo/threa.other" })],
+    links: () => {
+      linkReads += 1
+      return [link()]
+    },
+    panes: () => {
+      paneReads += 1
+      return []
+    },
+  })
+
+  backfillIdentities(context.deps, true)
+
+  expect({ paneReads, linkReads }).toEqual({ paneReads: 1, linkReads: 1 })
+})
+
+test("a corroborated subject with no instance id is not counted as a single source", () => {
+  const context = deps({
+    inventory: () => [agent({ instanceId: undefined })],
+    links: () => [link({ instanceId: "" })],
+  })
+
+  const outcomes = backfillIdentities(context.deps, false)
+
+  expect(pairs(outcomes)).toEqual([{ subject: WORKTREE, disposition: "refused no instance id" }])
+  expect(context.written).toEqual([])
+})

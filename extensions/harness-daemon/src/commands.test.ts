@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import type { BackfillOutcome } from "./backfill"
-import { defaultStartupReconciliationDeps, startupReconciliation } from "./commands"
+import { STARTUP_LOCK_WAIT_MS, defaultStartupReconciliationDeps, startupReconciliation } from "./commands"
 import { resumeActiveLockPath } from "./lock"
 
 let root: string
@@ -100,4 +100,27 @@ test("a dry-run startup pass does not take the lock the live daemon holds", asyn
 
   expect(existsSync(path)).toBe(true)
   expect(readFileSync(path, "utf8")).toBe(String(process.pid))
+})
+
+test("a held lock delays startup by a bounded wait, not the default ten minutes", async () => {
+  // Until this resolves no transport is built and no reap runs, so an unbounded
+  // wait turns one wedged holder into a silent outage for as long as it lives.
+  expect(STARTUP_LOCK_WAIT_MS).toBeLessThanOrEqual(60_000)
+
+  const path = resumeActiveLockPath()
+  mkdirSync(join(path, ".."), { recursive: true })
+  writeFileSync(path, String(process.pid))
+  const swept: string[] = []
+  const logged: string[] = []
+
+  const startedAt = Date.now()
+  await startupReconciliation({
+    ...defaultStartupReconciliationDeps(() => void swept.push("sweep"), false, 60),
+    backfill: () => [],
+    log: (message) => void logged.push(message),
+  })
+
+  expect(Date.now() - startedAt).toBeLessThan(2_000)
+  expect(swept).toEqual(["sweep"])
+  expect(logged.join("\n")).toContain("backfill failed")
 })

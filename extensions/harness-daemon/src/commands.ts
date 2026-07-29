@@ -137,6 +137,9 @@ export async function spawnAgent(options: SpawnOptions): Promise<void> {
   }
 }
 
+/** Long enough for an ordinary revive or reap to finish, short enough that a wedged holder cannot delay startup. */
+export const STARTUP_LOCK_WAIT_MS = 30_000
+
 export interface StartupReconciliationDeps {
   backfill: () => BackfillOutcome[]
   /** Resolves to the release. A dry run resolves to a no-op, as every other dry-run path does. */
@@ -147,14 +150,16 @@ export interface StartupReconciliationDeps {
 
 export function defaultStartupReconciliationDeps(
   sweep: () => void | Promise<void>,
-  dryRun: boolean
+  dryRun: boolean,
+  lockWaitMs = STARTUP_LOCK_WAIT_MS
 ): StartupReconciliationDeps {
   return {
     backfill: () => backfillIdentities(defaultBackfillDeps(), dryRun),
-    // A preview must not block the live daemon's revive and reap for its
-    // duration, nor hang behind them — `resumeActive` and `reapArchived` both
-    // skip the lock for a dry run, and so does this.
-    lock: async () => (dryRun ? () => {} : await acquireProcessLock(resumeActiveLockPath())),
+    // Bounded: the default deadline is ten minutes, and until this resolves no
+    // transport exists and no reap runs. The backfill is an optimisation of what
+    // the resolver already computes, so losing a pass costs nothing — the next
+    // restart runs it again.
+    lock: async () => (dryRun ? () => {} : await acquireProcessLock(resumeActiveLockPath(), { timeoutMs: lockWaitMs })),
     sweep,
     log: (message) => console.warn(message),
   }
@@ -174,11 +179,9 @@ export function defaultStartupReconciliationDeps(
 export async function startupReconciliation(deps: StartupReconciliationDeps): Promise<void> {
   let release: (() => void) | undefined
   try {
-    // Inside the try: acquireProcessLock does not steal a lock whose holder is
-    // ALIVE, it spins to a 10-minute deadline and throws. Outside, that throw
-    // propagated out of watchUnarchived and exited the process — which launchd
-    // restarts, which takes the lock again, so a single wedged holder turned the
-    // daemon into a crash loop with no transports and no reap backstop at all.
+    // Inside the try: a lock whose holder is alive is neither stolen nor
+    // rejected, it is waited on and then throws, and this runs on a path whose
+    // failure must not stop the daemon starting.
     release = await deps.lock()
     const outcomes = deps.backfill()
     const counts = summarizeBackfill(outcomes)
@@ -195,9 +198,8 @@ export async function startupReconciliation(deps: StartupReconciliationDeps): Pr
 
 export async function backfillIdentitiesCommand(options: { dryRun: boolean }): Promise<void> {
   // Same lock as the revive and reap passes, and skipped for a dry run exactly
-  // as they skip it. Writing unlocked let the reaper retire an identity while
-  // this pass was recording it, leaving a record bound to a removed worktree
-  // that the next spawn of that name would reuse.
+  // as they skip it: unlocked, the reaper can retire an identity while this pass
+  // is recording it.
   const release = options.dryRun ? () => {} : await acquireProcessLock(resumeActiveLockPath())
   let outcomes
   try {
