@@ -28,6 +28,7 @@ Usage:
   threa-harnessd steer <agent-id-or-name> [follow-up text]
   threa-harnessd keys <agent-id-or-name> <tmux send-keys tokens...>
   threa-harnessd attach <agent-id-or-name>
+  threa-harnessd resolve [<agent-id-or-name-or-runtime-session-id>]
   threa-harnessd doctor
 
 Examples:
@@ -170,6 +171,13 @@ const ADOPT_FLAGS = new Set([
   "force",
   "no-yolo",
 ])
+
+export function parseResolve(args: string[]): string | undefined {
+  const ref = args.shift()
+  if (ref?.startsWith("--")) die(`unexpected resolve argument: ${ref}`)
+  if (args.length > 0) die(`unexpected resolve argument: ${args[0]}`)
+  return ref
+}
 
 export function parseSpawn(args: string[]): SpawnOptions {
   const runtime = args.shift() as RuntimeKind | undefined

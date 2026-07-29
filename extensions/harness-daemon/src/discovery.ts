@@ -481,7 +481,7 @@ export function ledgerIdentity(cwd: string, attested: AttestedRuntime[]): Attest
   return matches.length === 1 ? matches[0] : undefined
 }
 
-function ledgerRuntimeSessionId(cwd: string, attested: AttestedRuntime[]): string | undefined {
+export function ledgerRuntimeSessionId(cwd: string, attested: AttestedRuntime[]): string | undefined {
   return ledgerIdentity(cwd, attested)?.runtimeSessionId
 }
 

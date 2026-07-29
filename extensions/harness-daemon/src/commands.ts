@@ -10,8 +10,15 @@ import { basename, dirname, join } from "node:path"
 import { installBootResume } from "./boot"
 import { defaultClaudeDiskDeps, findLiveClaudeSessions } from "./claude-registry"
 import { defaultRepo, inferBranch, normalizeName, now } from "./cli"
-import { findLocalClaudeChannelPane, resolveManagedAgentPane, type LocalTmuxPane } from "./discovery"
+import {
+  findLocalClaudeChannelPane,
+  listLocalTmuxPanes,
+  resolveManagedAgentPane,
+  type LocalTmuxPane,
+  type ManagedAgentPane,
+} from "./discovery"
 import { die } from "./errors"
+import { identityConsistency, identityVerdict } from "./identity"
 import {
   findAgent,
   findAgentOrUndefined,
@@ -292,7 +299,7 @@ export interface ReviveOutcome {
 export interface ReviveDeps {
   claudeConfig: ThreaChannelConfig
   piConfig: PiRemoteConfig
-  windowExists: (agent: ManagedAgent) => boolean
+  paneStatus: (agent: ManagedAgent) => ManagedAgentPane["status"]
   /** Live Claude pids already in this worktree, corroborated against the process table. */
   claudeProcessesIn: (worktree: string) => number[]
   pathExists: (path: string) => boolean
@@ -315,7 +322,7 @@ export function defaultReviveDeps(): ReviveDeps {
   return {
     claudeConfig: readThreaChannelConfig(),
     piConfig: readPiRemoteConfig(),
-    windowExists: (agent) => agentPaneLives(agent),
+    paneStatus: (agent) => resolveManagedAgentPane(agent).status,
     claudeProcessesIn: (worktree) =>
       findLiveClaudeSessions(worktree, defaultClaudeDiskDeps()).map((session) => session.pid),
     pathExists: existsSync,
@@ -349,10 +356,23 @@ export async function reviveAgent(
       console.log(`repair-inventory\t${agent.name}\tPi remote link recovered`)
     }
   }
-  if (deps.windowExists(agent)) return { status: "already running" }
+  const scratchpad = agent.scratchpadUrl ? parseScratchpadUrl(agent.scratchpadUrl) : undefined
+  const paneStatus = deps.paneStatus(agent)
+  // A targeted restore event decides one agent, so logging the whole inventory
+  // would bury the line this exists to surface.
+  if (!target || scratchpad?.streamId === target.rootStreamId) {
+    const recorded = agent.runtimeSessionId ?? "-"
+    const derived =
+      agent.runtime === "claude" && agent.worktree
+        ? deriveClaudeRuntimeIdentity(agent.worktree, deps.claudeConfig).runtimeSessionId
+        : "-"
+    console.log(`resolve\t${agent.name}\t${identityVerdict(paneStatus, recorded, derived)}\t${recorded}\t${derived}`)
+  }
+  // Ambiguity counts as alive: the next move is spawning a replacement, and a
+  // duplicate agent is worse than a missed revival.
+  if (paneStatus !== "missing") return { status: "already running" }
   if (agent.status === "stopped") return { status: "skipped stopped" }
   if (!agent.scratchpadUrl) return { status: "skipped missing link", detail: "no scratchpad URL recorded" }
-  const scratchpad = parseScratchpadUrl(agent.scratchpadUrl)
   if (!scratchpad) return { status: "skipped missing link", detail: `invalid scratchpad URL: ${agent.scratchpadUrl}` }
   if (target && scratchpad.streamId !== target.rootStreamId) return undefined
   if (target) {
@@ -616,15 +636,6 @@ export function stopAgent(ref: string): void {
 }
 
 /**
- * Whether the agent still occupies a live pane. Ambiguity counts as alive: the
- * caller's next move is spawning a replacement, and a duplicate agent is worse
- * than a missed revival.
- */
-function agentPaneLives(agent: ManagedAgent): boolean {
-  return resolveManagedAgentPane(agent).status !== "missing"
-}
-
-/**
  * The pane to act on, resolved by runtime identity rather than the recorded
  * tmux id — which a new tmux server hands to somebody else. Read-only: the
  * stored ids are a tie-breaker, never the answer, so there is nothing to
@@ -744,6 +755,31 @@ export function doctor(): void {
   ]
   for (const [name, ok, note] of checks) {
     console.log(`${ok ? "ok" : "missing"}\t${name}\t${note}`)
+  }
+  // A pane scan that never ran must not report zero drift: "0 of nothing" is
+  // indistinguishable from a clean fleet, which is the shape of miss this
+  // command exists to catch (INV-11).
+  let panes: LocalTmuxPane[] | undefined
+  let paneError: string | undefined
+  try {
+    panes = listLocalTmuxPanes()
+  } catch (error) {
+    paneError = error instanceof Error ? error.message : String(error)
+  }
+  const drift = identityConsistency({ panes: panes ?? [], config: readThreaChannelConfig() })
+  const driftChecks: Array<[string, number | undefined]> = [
+    ["identity drift (inventory rows)", drift.inventoryRows],
+    ["identity drift (link records)", drift.linkRecords],
+    ["identity drift (live panes)", panes ? drift.livePanes : undefined],
+  ]
+  for (const [name, count] of driftChecks) {
+    if (count === undefined) {
+      console.log(`unknown\t${name}\tcould not inspect local tmux panes: ${paneError}`)
+      continue
+    }
+    console.log(
+      `${count === 0 ? "ok" : "drift"}\t${name}\t${count} carry an identity today's derivation cannot reproduce`
+    )
   }
   console.log(`inventory\t${inventoryPath()}`)
   console.log(`repo\t${defaultRepo()}`)
