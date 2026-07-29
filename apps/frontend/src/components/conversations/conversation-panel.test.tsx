@@ -4,11 +4,15 @@ import { act, render, screen, waitFor, fireEvent } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { MemoryRouter, useNavigate } from "react-router-dom"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
-import type { BoardPost, BoardPostMessage, ConversationWithStaleness } from "@threa/types"
+import type { Socket } from "socket.io-client"
+import type { BoardPost, BoardPostMessage, ConversationWithStaleness, EventType } from "@threa/types"
 import { ConversationPanel } from "./conversation-panel"
-import { ServicesProvider, SidebarProvider, PanelProvider } from "@/contexts"
+import { ServicesProvider, SidebarProvider, PanelProvider, TraceProvider } from "@/contexts"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { spyOnExport } from "@/test/spy"
+// eslint-disable-next-line no-restricted-imports -- test seeds IDB directly to drive the real rail read path
+import { db, type CachedEvent } from "@/db"
+import { __clearBoardRailRegistry } from "@/hooks/use-board-card-messages"
 import * as editorModule from "@/components/editor"
 import * as messageEditFormModule from "@/components/timeline/message-edit-form"
 import * as messageHistoryDialogModule from "@/components/timeline/message-history-dialog"
@@ -179,10 +183,12 @@ function mountPanel(opts: {
         <ServicesProvider services={{ conversations: { getBoardPost, getBoardMessages } as never }}>
           <SidebarProvider>
             <MemoryRouter initialEntries={[`/w/${WORKSPACE_ID}/board?panel=conv:${startId}${mParam}`]}>
-              <PanelProvider>
-                <Navigator />
-                <ConversationPanel workspaceId={WORKSPACE_ID} onClose={vi.fn()} />
-              </PanelProvider>
+              <TraceProvider>
+                <PanelProvider>
+                  <Navigator />
+                  <ConversationPanel workspaceId={WORKSPACE_ID} onClose={vi.fn()} />
+                </PanelProvider>
+              </TraceProvider>
             </MemoryRouter>
           </SidebarProvider>
         </ServicesProvider>
@@ -1029,5 +1035,82 @@ describe("ConversationPanel", () => {
     // Clicking the indicator opens the revisions dialog.
     await user.click(edited)
     expect(await screen.findByText("stub-history")).toBeTruthy()
+  })
+})
+
+/** A non-message event on the conversation's stream, seeded into IDB so the panel
+ *  reads it off the same rail the board card does. */
+function cachedStreamEvent(eventType: EventType, seconds: number, payload: Record<string, unknown>): CachedEvent {
+  return {
+    id: `${eventType}_${seconds}`,
+    workspaceId: WORKSPACE_ID,
+    streamId: "stream_1",
+    sequence: String(seconds),
+    _sequenceNum: seconds,
+    eventType,
+    payload,
+    actorId: "persona_1",
+    actorType: "persona",
+    createdAt: `2026-06-22T12:00:${String(seconds).padStart(2, "0")}.000Z`,
+    _cachedAt: seconds,
+  }
+}
+
+describe("ConversationPanel event rows", () => {
+  beforeEach(async () => {
+    __clearBoardRailRegistry()
+    await db.events.clear()
+  })
+  afterEach(async () => {
+    __clearBoardRailRegistry()
+    await db.events.clear()
+  })
+
+  it("shows a delegation card for its conversation's delegation, and not another's", async () => {
+    await db.events.bulkPut([
+      cachedStreamEvent("delegation:created", 30, {
+        delegationId: "dlg_1",
+        title: "Add rate limiting",
+        brief: "Token bucket.",
+        contextRefs: [],
+        sourceConversationId: CONVERSATION_ID,
+      }),
+      cachedStreamEvent("delegation:status_changed", 40, { delegationId: "dlg_1", status: "running" }),
+      cachedStreamEvent("delegation:created", 50, {
+        delegationId: "dlg_2",
+        title: "Somebody else's task",
+        brief: "Not here.",
+        contextRefs: [],
+        sourceConversationId: "conv_other",
+      }),
+    ])
+    mountPanel({ cached: asCached(makePost()) })
+    expect(await screen.findByText("Add rate limiting")).toBeTruthy()
+    expect(screen.getByText(/· Running$/)).toBeTruthy()
+    expect(screen.queryByText("Somebody else's task")).toBeNull()
+  })
+
+  it("offers Redirect on a running agent trace, which bumps the panel composer's open signal", async () => {
+    const user = userEvent.setup()
+    const socket = { on: () => socket, off: () => socket } as unknown as Socket
+    vi.spyOn(contextsModule, "useSocket").mockReturnValue(socket)
+    let openReplySignal: number | undefined
+    vi.spyOn(boardReplyComposerModule, "BoardReplyComposer").mockImplementation((props) => {
+      openReplySignal = props.openReplySignal
+      return <div data-testid="panel-composer" />
+    })
+    await db.events.bulkPut([
+      cachedStreamEvent("agent_session:started", 30, {
+        sessionId: "sess_run",
+        triggerMessageId: "msg_1",
+        personaName: "Ariadne",
+      }),
+    ])
+    mountPanel({ cached: asCached(makePost()) })
+
+    const redirect = await screen.findByRole("button", { name: "Redirect" })
+    const before = openReplySignal ?? 0
+    await user.click(redirect)
+    await waitFor(() => expect(openReplySignal ?? 0).toBeGreaterThan(before))
   })
 })

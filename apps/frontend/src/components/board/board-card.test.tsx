@@ -379,6 +379,80 @@ describe("BoardCard agent activity", () => {
   })
 })
 
+/** A delegation event on the card's stream, seeded into IDB like the session ones. */
+function delegationEvent(
+  eventType: "delegation:created" | "delegation:status_changed",
+  seconds: number,
+  payload: Record<string, unknown>
+): CachedEvent {
+  return {
+    id: `${eventType}_${seconds}`,
+    workspaceId: WS,
+    streamId: STREAM,
+    sequence: String(seconds),
+    _sequenceNum: seconds,
+    eventType,
+    payload,
+    actorId: "persona_1",
+    actorType: "persona",
+    createdAt: `2026-06-22T12:00:${String(seconds).padStart(2, "0")}.000Z`,
+    _cachedAt: seconds,
+  }
+}
+
+describe("BoardCard delegations", () => {
+  beforeEach(() => {
+    vi.spyOn(conversationReadModule, "useConversationReadController").mockReturnValue({
+      value: readValue,
+      hasUnread: () => false,
+      markReadSilently: () => Promise.resolve(),
+      setExplicitUnreadListener: () => {},
+      getReadTruth: () => ({ lastReadSequence: null, readMessageIds: [] }),
+    })
+  })
+
+  it("shows a delegation card for a delegation created from its conversation", async () => {
+    await db.events.bulkPut([
+      delegationEvent("delegation:created", 30, {
+        delegationId: "dlg_1",
+        title: "Add rate limiting",
+        brief: "Token bucket.",
+        contextRefs: [],
+        sourceConversationId: "conv_1",
+      }),
+      // Another conversation's delegation must stay off this card.
+      delegationEvent("delegation:created", 40, {
+        delegationId: "dlg_2",
+        title: "Somebody else's task",
+        brief: "Not here.",
+        contextRefs: [],
+        sourceConversationId: "conv_other",
+      }),
+    ])
+    mountCard()
+    expect(await screen.findByText("Add rate limiting")).toBeTruthy()
+    expect(screen.queryByText("Somebody else's task")).toBeNull()
+  })
+
+  it("reflects the latest status patch on the delegation card", async () => {
+    await db.events.bulkPut([
+      delegationEvent("delegation:created", 30, {
+        delegationId: "dlg_1",
+        title: "Add rate limiting",
+        brief: "Token bucket.",
+        contextRefs: [],
+        sourceConversationId: "conv_1",
+      }),
+      delegationEvent("delegation:status_changed", 40, { delegationId: "dlg_1", status: "claimed" }),
+      delegationEvent("delegation:status_changed", 50, { delegationId: "dlg_1", status: "completed" }),
+    ])
+    mountCard()
+    await screen.findByText("Add rate limiting")
+    expect(screen.getByText(/· Completed$/)).toBeTruthy()
+    expect(screen.queryByText(/· Claimed$/)).toBeNull()
+  })
+})
+
 describe("BoardCard conversation actions", () => {
   beforeEach(() => {
     vi.spyOn(conversationReadModule, "useConversationReadController").mockReturnValue({

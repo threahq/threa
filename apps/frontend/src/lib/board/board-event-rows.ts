@@ -1,4 +1,4 @@
-import { STREAM_ROW_SPEC } from "@threa/types"
+import { STREAM_ROW_SPEC, type DelegationStatusChangedEventPayload } from "@threa/types"
 import type { CachedEvent } from "@/db"
 import { getSessionId, getSessionSlotKey, getTriggerMessageId } from "@/components/timeline/session-grouping"
 
@@ -6,7 +6,7 @@ import { getSessionId, getSessionSlotKey, getTriggerMessageId } from "@/componen
  * A non-message stream event, resolved to the conversation it should draw on for
  * the board card / conversation panel. Agent-session lifecycle events are grouped
  * into one `session` row (start + complete/failed/deleted), matching the timeline;
- * memo captures and scheduled follow-ups are single rows. Every kind is
+ * memo captures, scheduled follow-ups and delegations are single rows. Every kind is
  * render-only — none is a conversation member and none bumps activity (INV: the
  * `bumps: false` contract in STREAM_ROW_SPEC).
  */
@@ -14,6 +14,14 @@ export type BoardEventRow =
   | { kind: "session"; key: string; sortMs: number; streamId: string; events: CachedEvent[] }
   | { kind: "memo"; key: string; sortMs: number; streamId: string; event: CachedEvent }
   | { kind: "followUp"; key: string; sortMs: number; streamId: string; event: CachedEvent; cancelled: boolean }
+  | {
+      kind: "delegation"
+      key: string
+      sortMs: number
+      streamId: string
+      event: CachedEvent
+      statusPatch?: DelegationStatusChangedEventPayload
+    }
 
 export interface ResolveBoardEventRowsCtx {
   /** The conversation the card renders. */
@@ -36,19 +44,31 @@ function timeMs(event: CachedEvent): number {
  * ordered, conversation-scoped rows the board draws. Pure over its inputs so the
  * placement rules are unit-testable in isolation.
  *
- * - `source-conversation` rows (memos:captured, follow-ups) match on the
- *   conversation id their payload names.
+ * - `source-conversation` rows (memos:captured, follow-ups, delegations) match on
+ *   the conversation id their payload names.
  * - `trigger-message` rows (agent sessions) are grouped by session id; the group
  *   shows iff the session's `started` event names a trigger that is a member.
  * - `agent:follow_up_cancelled` is a patch, not a row: it flips the matching
  *   scheduled card's `cancelled` flag (mirrors the timeline's cancel handling).
+ * - `delegation:status_changed` is likewise a patch: the latest one per
+ *   delegation rides on the delegation row as `statusPatch`.
  */
 export function resolveBoardEventRows(events: CachedEvent[], ctx: ResolveBoardEventRowsCtx): BoardEventRow[] {
   const cancelledFollowUpIds = new Set<string>()
+  const delegationStatusPatches = new Map<string, { payload: DelegationStatusChangedEventPayload; atMs: number }>()
   for (const event of events) {
-    if (event.eventType !== "agent:follow_up_cancelled") continue
-    const followUpId = (event.payload as { followUpId?: string })?.followUpId
-    if (followUpId) cancelledFollowUpIds.add(followUpId)
+    if (event.eventType === "agent:follow_up_cancelled") {
+      const followUpId = (event.payload as { followUpId?: string })?.followUpId
+      if (followUpId) cancelledFollowUpIds.add(followUpId)
+      continue
+    }
+    if (event.eventType === "delegation:status_changed") {
+      const payload = event.payload as DelegationStatusChangedEventPayload | undefined
+      if (!payload?.delegationId) continue
+      const atMs = timeMs(event)
+      const existing = delegationStatusPatches.get(payload.delegationId)
+      if (!existing || atMs >= existing.atMs) delegationStatusPatches.set(payload.delegationId, { payload, atMs })
+    }
   }
 
   const sessions = new Map<string, { events: CachedEvent[]; trigger: string | null }>()
@@ -82,6 +102,16 @@ export function resolveBoardEventRows(events: CachedEvent[], ctx: ResolveBoardEv
           streamId: event.streamId,
           event,
           cancelled: followUpId ? cancelledFollowUpIds.has(followUpId) : false,
+        })
+      } else if (event.eventType === "delegation:created") {
+        const delegationId = (event.payload as { delegationId?: string })?.delegationId
+        rows.push({
+          kind: "delegation",
+          key: event.id,
+          sortMs: timeMs(event),
+          streamId: event.streamId,
+          event,
+          statusPatch: delegationId ? delegationStatusPatches.get(delegationId)?.payload : undefined,
         })
       }
     }

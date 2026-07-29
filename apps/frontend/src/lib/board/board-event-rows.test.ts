@@ -1,5 +1,7 @@
 import { describe, it, expect } from "vitest"
+import { BOARD_EVENT_ROW_TYPES, EVENT_TYPES, STREAM_ROW_SPEC, type EventType } from "@threa/types"
 import type { CachedEvent } from "@/db"
+import { BOARD_RAIL_EVENT_TYPES } from "@/hooks/use-board-card-messages"
 import { resolveBoardEventRows } from "./board-event-rows"
 
 let seq = 0
@@ -150,5 +152,197 @@ describe("resolveBoardEventRows", () => {
     ]
     const rows = resolveBoardEventRows(events, { conversationId: CONV, memberMessageIds: new Set(["msg_member"]) })
     expect(rows.map((r) => r.kind)).toEqual(["session", "memo"])
+  })
+
+  it("resolves a delegation created from this conversation into a row, dropping one from another", () => {
+    const events = [
+      cachedEvent({
+        id: "d_here",
+        eventType: "delegation:created",
+        createdAt: "2026-07-04T10:00:00Z",
+        payload: { delegationId: "dlg_1", title: "Ship it", sourceConversationId: CONV },
+      }),
+      cachedEvent({
+        id: "d_other",
+        eventType: "delegation:created",
+        createdAt: "2026-07-04T10:01:00Z",
+        payload: { delegationId: "dlg_2", title: "Elsewhere", sourceConversationId: "conv_other" },
+      }),
+    ]
+    const rows = resolveBoardEventRows(events, { conversationId: CONV, memberMessageIds: new Set() })
+    expect(rows).toHaveLength(1)
+    expect(rows[0]).toMatchObject({ kind: "delegation", key: "d_here", statusPatch: undefined })
+  })
+
+  it("carries the latest delegation:status_changed payload onto its delegation row", () => {
+    const events = [
+      cachedEvent({
+        id: "d1",
+        eventType: "delegation:created",
+        createdAt: "2026-07-04T10:00:00Z",
+        payload: { delegationId: "dlg_1", title: "Ship it", sourceConversationId: CONV },
+      }),
+      cachedEvent({
+        eventType: "delegation:status_changed",
+        createdAt: "2026-07-04T10:01:00Z",
+        payload: { delegationId: "dlg_1", status: "claimed", claimedByLabel: "Kris's MacBook" },
+      }),
+      cachedEvent({
+        eventType: "delegation:status_changed",
+        createdAt: "2026-07-04T10:02:00Z",
+        payload: { delegationId: "dlg_1", status: "completed", resultMessageId: "msg_result" },
+      }),
+      // Another delegation's patch must not leak onto this row.
+      cachedEvent({
+        eventType: "delegation:status_changed",
+        createdAt: "2026-07-04T10:03:00Z",
+        payload: { delegationId: "dlg_2", status: "failed" },
+      }),
+    ]
+    const rows = resolveBoardEventRows(events, { conversationId: CONV, memberMessageIds: new Set() })
+    expect(rows).toEqual([
+      {
+        kind: "delegation",
+        key: "d1",
+        sortMs: new Date("2026-07-04T10:00:00Z").getTime(),
+        streamId: "stream_1",
+        event: events[0],
+        statusPatch: { delegationId: "dlg_1", status: "completed", resultMessageId: "msg_result" },
+      },
+    ])
+  })
+
+  it("keeps the max-createdAt status patch when the patches arrive out of array order", () => {
+    // The board picks the latest patch by createdAt, deliberately unlike the
+    // timeline's collector, which takes last-in-array. Only a reversed feed
+    // distinguishes the two — every other patch case seeds ascending time.
+    const created = cachedEvent({
+      id: "d1",
+      eventType: "delegation:created",
+      createdAt: "2026-07-04T10:00:00Z",
+      payload: { delegationId: "dlg_1", title: "Ship it", sourceConversationId: CONV },
+    })
+    const later = cachedEvent({
+      eventType: "delegation:status_changed",
+      createdAt: "2026-07-04T10:02:00Z",
+      payload: { delegationId: "dlg_1", status: "completed", resultMessageId: "msg_result" },
+    })
+    const earlier = cachedEvent({
+      eventType: "delegation:status_changed",
+      createdAt: "2026-07-04T10:01:00Z",
+      payload: { delegationId: "dlg_1", status: "claimed", claimedByLabel: "Kris's MacBook" },
+    })
+    const rows = resolveBoardEventRows([created, later, earlier], {
+      conversationId: CONV,
+      memberMessageIds: new Set(),
+    })
+    expect(rows).toEqual([
+      {
+        kind: "delegation",
+        key: "d1",
+        sortMs: new Date("2026-07-04T10:00:00Z").getTime(),
+        streamId: "stream_1",
+        event: created,
+        statusPatch: { delegationId: "dlg_1", status: "completed", resultMessageId: "msg_result" },
+      },
+    ])
+  })
+})
+
+const MEMBER_MESSAGE = "msg_member"
+
+/**
+ * The minimal event set that must produce a row for each spec-declared
+ * conversation-scoped type. Session lifecycle types share one fixture whose
+ * `started` names a member trigger — the group is one row.
+ */
+const SESSION_FIXTURE: CachedEvent[] = [
+  cachedEvent({
+    eventType: "agent_session:started",
+    createdAt: "2026-07-04T10:00:00Z",
+    payload: { sessionId: "sess_fixture", triggerMessageId: MEMBER_MESSAGE },
+  }),
+]
+
+const ROW_FIXTURES: Partial<Record<EventType, CachedEvent[]>> = {
+  "agent_session:started": SESSION_FIXTURE,
+  "agent_session:completed": SESSION_FIXTURE,
+  "agent_session:failed": SESSION_FIXTURE,
+  "agent_session:interrupted": SESSION_FIXTURE,
+  "agent_session:deleted": SESSION_FIXTURE,
+  "memos:captured": [
+    cachedEvent({ eventType: "memos:captured", createdAt: "2026-07-04T10:00:00Z", payload: { conversationId: CONV } }),
+  ],
+  "agent:follow_up_scheduled": [
+    cachedEvent({
+      eventType: "agent:follow_up_scheduled",
+      createdAt: "2026-07-04T10:00:00Z",
+      payload: { followUpId: "fup_fixture", sourceConversationId: CONV },
+    }),
+  ],
+  "delegation:created": [
+    cachedEvent({
+      eventType: "delegation:created",
+      createdAt: "2026-07-04T10:00:00Z",
+      payload: { delegationId: "dlg_fixture", title: "Fixture", sourceConversationId: CONV },
+    }),
+  ],
+}
+
+describe("resolveBoardEventRows covers every spec-declared board row type", () => {
+  it("has a fixture for exactly the BOARD_EVENT_ROW_TYPES set", () => {
+    expect(new Set(Object.keys(ROW_FIXTURES))).toEqual(new Set(BOARD_EVENT_ROW_TYPES))
+  })
+
+  it("produces a row for each fixture", () => {
+    const resolved: Record<string, string[]> = {}
+    for (const [type, events] of Object.entries(ROW_FIXTURES)) {
+      resolved[type] = resolveBoardEventRows(events, {
+        conversationId: CONV,
+        memberMessageIds: new Set([MEMBER_MESSAGE]),
+      }).map((row) => row.kind)
+    }
+    expect(resolved).toEqual({
+      "agent_session:started": ["session"],
+      "agent_session:completed": ["session"],
+      "agent_session:failed": ["session"],
+      "agent_session:interrupted": ["session"],
+      "agent_session:deleted": ["session"],
+      "memos:captured": ["memo"],
+      "agent:follow_up_scheduled": ["followUp"],
+      "delegation:created": ["delegation"],
+    })
+    // The object comparison above pins WHICH kind each type resolves to, but it
+    // stays satisfiable by pasting the produced diff back in — a type whose
+    // resolver case is missing yields `[]`, and `[]` can be written into the
+    // expectation. This half names the offender and cannot be edited green.
+    expect(Object.entries(resolved).filter(([, kinds]) => kinds.length === 0)).toEqual([])
+  })
+})
+
+/**
+ * The second wiring a new board row type needs: the Dexie rail filter. A row type
+ * that ships with a companion PATCH (the `delegation:created` /
+ * `delegation:status_changed` shape) gets its resolver and renderer forced by the
+ * guards above, but its patch is hand-listed in `BOARD_RAIL_EVENT_TYPES` and
+ * nothing above can observe it missing — both guards feed `resolveBoardEventRows`
+ * a caller-supplied array, bypassing the Dexie filter entirely.
+ *
+ * Derivation: a patch belongs to a row type when it shares that type's `prefix:`
+ * namespace (`delegation:status_changed` ↔ `delegation:created`,
+ * `agent:follow_up_cancelled` ↔ `agent:follow_up_scheduled`). That is the only
+ * relation the spec exposes today — `patchesRow` is a bare boolean with no
+ * pointer at the row it patches — and it reproduces today's hand-list exactly.
+ */
+describe("BOARD_RAIL_EVENT_TYPES covers every patch belonging to a board row type", () => {
+  it("subscribes to the patch types in each board row type's namespace", () => {
+    const rowNamespaces = new Set(
+      BOARD_EVENT_ROW_TYPES.filter((type) => type.includes(":")).map((type) => type.split(":")[0])
+    )
+    const requiredPatches = EVENT_TYPES.filter(
+      (type) => type.includes(":") && rowNamespaces.has(type.split(":")[0]) && STREAM_ROW_SPEC[type].patchesRow
+    )
+    const subscribed = new Set<EventType>(BOARD_RAIL_EVENT_TYPES)
+    expect(requiredPatches.filter((type) => !subscribed.has(type))).toEqual([])
   })
 })

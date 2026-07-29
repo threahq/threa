@@ -4,6 +4,7 @@ import { isContinuation, type RenderableMessage } from "@/components/message/mes
 import { AgentSessionEvent } from "@/components/timeline/agent-session-event"
 import { MemoCapturedEvent } from "@/components/timeline/memo-captured-event"
 import { FollowUpScheduledEvent } from "@/components/timeline/follow-up-event"
+import { DelegationEvent } from "@/components/timeline/delegation-event"
 import { getSessionId } from "@/components/timeline/session-grouping"
 import { useSocket } from "@/contexts"
 import { useWorkspaceUserId } from "@/hooks/use-workspaces"
@@ -401,6 +402,19 @@ export function BoardEventRowItem({
           cancelledByEvent={row.cancelled}
         />
       )
+    case "delegation":
+      return (
+        <DelegationEvent
+          event={row.event as StreamEvent}
+          workspaceId={workspaceId}
+          streamId={row.streamId}
+          statusPatch={row.statusPatch}
+        />
+      )
+    default: {
+      const exhaustive: never = row
+      return exhaustive
+    }
   }
 }
 
