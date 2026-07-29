@@ -133,22 +133,28 @@ export function PanelProvider({ children }: PanelProviderProps) {
   // `<Link to={getPanelUrl(...)}>` (INV-40) and never call it. Popping a deep link
   // or a reload would navigate the user off the page — possibly out of the app —
   // so anything but a same-view PUSH closes by rewriting the URL instead.
+  //
+  // The entry below must carry NO panel, not merely a different one. Closing means
+  // "no panel open" — the affordance is labelled "Return to #channel" on a nested
+  // thread — so opening a second panel from inside the first has to close by
+  // rewriting the URL, or that control reveals the parent thread instead of the
+  // stream. Back still steps through them one at a time; only close is absolute.
   const canPopToClose = useRef(false)
-  const viewRef = useRef<string | null>(null)
+  const locationRef = useRef<string | null>(null)
   const locationKeyRef = useRef<string | null>(null)
   useEffect(() => {
     if (location.key === locationKeyRef.current) return
     locationKeyRef.current = location.key
     const params = new URLSearchParams(location.search)
+    const here = `${location.pathname}?${params.toString()}`
     params.delete("panel")
-    const previousView = viewRef.current
-    // Panel-agnostic, so switching panels in place still counts as the same view:
-    // closing then behaves like back, which is what the affordance reads as.
-    const view = `${location.pathname}?${params.toString()}`
-    viewRef.current = view
+    const hereWithoutPanel = `${location.pathname}?${params.toString()}`
+    const previousLocation = locationRef.current
+    locationRef.current = here
     if (panelId === null) canPopToClose.current = false
     // A replace leaves the entry below untouched, so the claim carries over.
-    else if (navigationType !== "REPLACE") canPopToClose.current = navigationType === "PUSH" && previousView === view
+    else if (navigationType !== "REPLACE")
+      canPopToClose.current = navigationType === "PUSH" && previousLocation === hereWithoutPanel
   }, [location.key, location.pathname, location.search, navigationType, panelId])
 
   const closePanel = useCallback(() => {

@@ -118,6 +118,20 @@ describe("panel history", () => {
     expect(loc()).toBe(STREAM)
   })
 
+  it("clears the panel when closing one opened from inside another, rather than revealing it", async () => {
+    const user = userEvent.setup()
+    const { loc } = mount([STREAM, BOARD])
+
+    await user.click(screen.getByRole("button", { name: "open a" }))
+    await user.click(screen.getByRole("link", { name: "link to c" }))
+    expect(loc()).toBe("/board?lens=all&panel=conv%3Ac")
+
+    // Close means no panel. The affordance reads "Return to #channel" on a nested
+    // thread, so popping to the parent panel would land somewhere it doesn't say.
+    await user.click(screen.getByRole("button", { name: "close" }))
+    expect(loc()).toBe(BOARD)
+  })
+
   it("closes a superseding panel by popping — the replaced entry was still ours", async () => {
     const user = userEvent.setup()
     const { back, loc } = mount([STREAM, BOARD])
