@@ -7,6 +7,7 @@ import {
   ConversationIntents,
   StreamTypes,
   type AgentSessionRerunContext,
+  type AgentToolEffect,
   type AuthorType,
   type ConversationDirective,
   type SourceItem,
@@ -67,6 +68,22 @@ import {
 } from "./config"
 
 export type { WithSessionResult }
+
+/**
+ * What the stub companion claims to have written (`USE_STUB_COMPANION=true`,
+ * browser suite only). Deliberately mixed: two settings rows with a diff, one
+ * labelled delegation that resolves to a route, and one follow-up that resolves
+ * to none — enough for a real browser to check column count, truncation and
+ * the inert-vs-link split.
+ */
+const STUB_EFFECTS: AgentToolEffect[] = [
+  { kind: "settings", target: "theme", before: "light", after: "dark" },
+  { kind: "settings", target: "timezone", before: "Europe/Stockholm", after: "Europe/Copenhagen" },
+  { kind: "delegation", label: "Plan out how to set up and use Threa", target: "dlg_stub" },
+  { kind: "follow_up", label: "Check in on how things are going", target: "fu_stub" },
+]
+
+const STUB_EFFECTS_CONTENT = "update_user_settings, delegate_task, schedule_follow_up"
 
 export interface PersonaAgentDeps {
   pool: Pool
@@ -1015,6 +1032,16 @@ export class PersonaAgent {
         })
 
         if (stubResponse) {
+          // The stub also writes one tool step carrying effects, so the browser
+          // suite can exercise the real effect surfaces — the trace step's
+          // WROTE badge and diff, and the session card's grid — through the
+          // real data path (step column → collectSessionEffects → lifecycle
+          // payload) without a model call. Layout is the part jsdom cannot
+          // judge, so it has to be asserted in a real browser somewhere.
+          const step = await trace.startStep({ stepType: AgentStepTypes.TOOL_CALL, content: STUB_EFFECTS_CONTENT })
+          await step.effects(STUB_EFFECTS)
+          await step.complete({ content: STUB_EFFECTS_CONTENT })
+
           const msg = await doSendMessage({ content: stubResponse, sources: [] })
           return {
             messagesSent: 1,
