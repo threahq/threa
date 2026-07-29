@@ -3,10 +3,12 @@ import { runTestSql } from "./global-setup"
 import { loginAndCreateWorkspace, createChannel, expectApiOk } from "./helpers"
 
 /**
- * The date jump on the INDEXED path — the one production runs, and the one no
- * other test covers. It differs from the derive path in the part that broke:
- * it pages the feed toward the requested date before scrolling, so the rows it
- * indexes arrive from the server mid-jump rather than being on screen already.
+ * The date jump when the feed has to PAGE to reach the date — the part that
+ * broke, and the part no component test can reach: the rows the jump indexes
+ * arrive from the server mid-jump rather than being on screen already.
+ *
+ * The other browser spec covers the same panel when everything is already
+ * loaded; the derive path (sealed streams only) has component coverage alone.
  */
 
 test.describe.configure({ timeout: 600_000 })
@@ -50,16 +52,6 @@ test("jumps past the start of history on the indexed path", async ({ page }) => 
   const streamId = url.match(/\/s\/([^/?]+)/)?.[1]
   expect(workspaceId && streamId, `ids in URL: ${url}`).toBeTruthy()
 
-  // The indexed panel is behind a workspace flag. The control plane owns the
-  // data but bootstrap resolves it from the region's mirrored copy, which the
-  // control plane pushes to on write — so the row goes in the regional table
-  // directly, and the page reloads to pick it up.
-  runTestSql(
-    `INSERT INTO feature_flag_overrides (workspace_id, subject_type, subject_id, flag_key, value)
-     VALUES ('${workspaceId}', 'workspace', '${workspaceId}', 'streamContextIndex', 'on')
-     ON CONFLICT (workspace_id, subject_type, subject_id, flag_key) DO UPDATE SET value = EXCLUDED.value`
-  )
-
   await seedLinkMessages(page, workspaceId!, streamId!)
   // Deepen the feed without driving hundreds more API calls into the send rate
   // limit — these go straight into the projection the indexed panel reads.
@@ -85,7 +77,8 @@ test("jumps past the start of history on the indexed path", async ({ page }) => 
   await page.getByRole("button", { name: "In this stream" }).click()
   const scroller = panelScroller(page)
   await expect(scroller).toBeVisible()
-  // The search box only exists on the indexed path — proves the flag took.
+  // The search box exists only on the indexed path — proves this stream is indexed
+  // rather than having quietly fallen through to the sealed-stream panel.
   await expect(page.getByPlaceholder(/Search this stream/)).toBeVisible()
   await expect(page.locator('[role="dialog"]').getByText("example.com").first()).toBeVisible()
 

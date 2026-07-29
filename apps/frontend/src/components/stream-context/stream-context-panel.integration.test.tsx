@@ -12,12 +12,11 @@ import { db, type CachedStreamContextItem } from "@/db"
 import * as hooks from "@/hooks"
 import * as connectionStatus from "@/components/layout/connection-status"
 import { streamKeys } from "@/hooks/use-streams"
-import { workspaceKeys } from "@/hooks/use-workspaces"
 import { delegationKeys } from "@/hooks/use-stream-delegations"
 import * as streamContextListModule from "@/components/stream-context/stream-context-list"
 import * as storeModule from "@/stores/stream-context-store"
 import { streamContextItemKey, type ListStreamContextResponse, type StreamContextItem } from "@threa/types"
-import { StreamContextPanel } from "./stream-context-panel"
+import { StreamContextIndexPanel } from "./stream-context-index-panel"
 
 const WS = "ws_1"
 const STREAM = "stream_root"
@@ -78,11 +77,8 @@ function LocationProbe() {
   return <span data-testid="location">{`${location.search}|${seen.current}`}</span>
 }
 
-function renderPanel(options: { flag?: "on" | "off"; entry?: string; memberIds?: string[] } = {}) {
+function renderPanel(options: { entry?: string; memberIds?: string[] } = {}) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-  queryClient.setQueryData(workspaceKeys.bootstrap(WS), {
-    featureFlags: { workspace: { streamContextIndex: options.flag ?? "on" }, user: {} },
-  })
   if (options.memberIds) {
     queryClient.setQueryData(streamKeys.bootstrap(WS, STREAM), {
       members: options.memberIds.map((memberId) => ({ streamId: STREAM, memberId })),
@@ -94,7 +90,7 @@ function renderPanel(options: { flag?: "on" | "off"; entry?: string; memberIds?:
   const panel = (
     <>
       <LocationProbe />
-      <StreamContextPanel
+      <StreamContextIndexPanel
         workspaceId={WS}
         streamId={STREAM}
         onClose={vi.fn()}
@@ -169,35 +165,7 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
-describe("StreamContextPanel — flag off", () => {
-  it("renders the derive path (no index search box)", async () => {
-    await db.events.put({
-      id: "evt_1",
-      streamId: STREAM,
-      eventType: "message_created",
-      sequence: "1",
-      _sequenceNum: 1,
-      actorId: "usr_1",
-      actorType: "user",
-      createdAt: "2026-06-24T10:00:00.000Z",
-      payload: {
-        messageId: "msg_1",
-        contentMarkdown: "see it",
-        attachments: [{ id: "att_1", filename: "notes.pdf", mimeType: "application/pdf", sizeBytes: 10 }],
-      },
-      _cachedAt: Date.now(),
-    } as never)
-    const list = vi.spyOn(streamContextApi, "list")
-
-    renderPanel({ flag: "off" })
-
-    expect(await screen.findByText("notes.pdf")).toBeInTheDocument()
-    expect(screen.queryByLabelText("Search in this stream")).not.toBeInTheDocument()
-    expect(list).not.toHaveBeenCalled()
-  })
-})
-
-describe("StreamContextPanel — flag on", () => {
+describe("StreamContextPanel", () => {
   it("renders rows from IDB and appends the next page when the sentinel intersects", async () => {
     await db.streamContextItems.bulkPut([
       cachedRow(

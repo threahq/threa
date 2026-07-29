@@ -63,10 +63,10 @@ function isSupported(filter: ParsedFilter): filter is ParsedFilter & { type: Sup
 const NEXT_PAGE_PREFETCH_MARGIN = "300px"
 
 /**
- * The indexed "In this stream" panel: rows come from IDB (`useStreamContextRows`),
- * kept fresh by the live sync appliers and widened by
- * {@link useStreamContextFeed}'s paged seeds. Sealed streams get `mode: "client"`
- * back from the endpoint and fall through to the derive path.
+ * "In this stream": rows come from IDB (`useStreamContextRows`), kept fresh by
+ * the live sync appliers and widened by {@link useStreamContextFeed}'s paged
+ * seeds. The panel every stream gets, except sealed ones — those have no server
+ * index (`mode: "client"`) and fall through to {@link StreamContextDerivedPanel}.
  */
 const DAY_MS = 24 * 60 * 60 * 1000
 // A jump into unloaded history pages until it reaches the day. Bounded so a date

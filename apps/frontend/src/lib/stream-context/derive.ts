@@ -126,9 +126,10 @@ export function linkPreviewBadge(
  * threads by threadId), keeping the most recent occurrence; the whole list is
  * returned newest-first.
  *
- * Scope is the loaded window only (what's in IDB), which is what a frontend-only
- * overview can see without a backend index — fine for the recency-biased view
- * the panel presents.
+ * Scope is the loaded window only (what's in IDB). This is the sealed-stream
+ * path and only that: an E2E stream reaches the server as ciphertext, so
+ * `stream_context_items` has nothing for it and deriving on-device is the only
+ * way to see its artifacts at all. Every other stream reads the server index.
  */
 export function deriveStreamContext(events: readonly CachedEvent[] | undefined): DerivedStreamContext {
   const links = new Map<string, LinkContextItem>()

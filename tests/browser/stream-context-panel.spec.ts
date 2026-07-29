@@ -12,9 +12,8 @@ import { loginAndCreateWorkspace, createChannel, expectApiOk } from "./helpers"
  * "are rows actually windowed" and "does `scrollToIndex` actually move the list"
  * unverified everywhere else.
  *
- * Runs on the derive path (the `streamContextIndex` flag is off by default), which
- * shares `ContextTimeline`, the virtualizer seam and the day-marker jump with the
- * indexed path — so it exercises the same rendering and scrolling code.
+ * Runs on an ordinary (indexed) channel, with everything the jump needs already
+ * loaded. The sibling spec covers the jump that has to page for it.
  */
 
 test.describe.configure({ timeout: 120_000 })
@@ -41,20 +40,38 @@ async function seedLinkMessages(page: Page, workspaceId: string, streamId: strin
   }
 }
 
+/** Rows left dated today. Everything older is backdated — see below for why so few. */
+const TODAY_ROWS = 10
+
 /**
- * Backdate half the stream's events so the panel renders more than one day
- * group. Without this every seeded row lands today, and "jump to today" is
- * indistinguishable from the browser restoring focus to the trigger at the top —
- * a jump that moves DOWN to an older day is the assertion focus cannot fake.
+ * Backdate all but the newest {@link TODAY_ROWS} rows, 10 days back so the
+ * "Last week" preset (7 days) lands on them under the nearest-earlier rule.
+ * Without a second day group there is nothing for a jump to travel to.
  *
- * 10 days back, so the "Last week" preset (7 days) lands on it under the
- * nearest-earlier rule.
+ * Two things here are load-bearing and both were got wrong first:
+ *
+ * `stream_context_items` is the table the panel reads. It groups by `occurredAt`
+ * from the projection and never touches `stream_events`, so backdating only the
+ * events leaves one day group and every assertion below passes for the wrong
+ * reason. The events move too, so the timeline behind the panel agrees.
+ *
+ * Backdated rows sort to the BOTTOM, so the group's marker has to sit far enough
+ * above the end that scrolling it to the top (`align: "start"`) isn't the same
+ * scroll position as hitting the bottom. Backdating half put the marker ~10 rows
+ * from the end, where the jump and the past-the-start clamp land identically and
+ * neither assertion can tell them apart. The endpoint serves 40 rows a page, so
+ * leaving 10 today puts the marker around a quarter of the way down.
  */
-function backdateOlderHalf(streamId: string): void {
+function backdateAllButNewest(streamId: string): void {
+  const older = MESSAGE_COUNT - TODAY_ROWS
   runTestSql(
     `UPDATE stream_events SET created_at = NOW() - INTERVAL '10 days'
        WHERE stream_id = '${streamId}'
-         AND id IN (SELECT id FROM stream_events WHERE stream_id = '${streamId}' ORDER BY sequence LIMIT ${MESSAGE_COUNT / 2})`
+         AND id IN (SELECT id FROM stream_events WHERE stream_id = '${streamId}' ORDER BY sequence LIMIT ${older});
+     UPDATE stream_context_items SET occurred_at = NOW() - INTERVAL '10 days'
+       WHERE stream_id = '${streamId}'
+         AND id IN (SELECT id FROM stream_context_items WHERE stream_id = '${streamId}'
+                     ORDER BY occurred_at, id LIMIT ${older})`
   )
 }
 
@@ -75,7 +92,7 @@ test("windows its rows and jumps to a date from a day marker", async ({ page }) 
   expect(workspaceId && streamId, `ids in URL: ${url}`).toBeTruthy()
 
   await seedLinkMessages(page, workspaceId!, streamId!)
-  backdateOlderHalf(streamId!)
+  backdateAllButNewest(streamId!)
   await page.reload()
 
   await page.getByRole("button", { name: "In this stream" }).click()
@@ -111,7 +128,17 @@ test("windows its rows and jumps to a date from a day marker", async ({ page }) 
     .click()
   await page.getByRole("button", { name: "Last week", exact: true }).click()
 
-  await expect.poll(async () => scroller.evaluate((el) => el.scrollTop), { timeout: 10_000 }).toBeGreaterThan(300)
+  // Landed ON the backdated day, not merely somewhere below. The bound at the
+  // top is what makes this test mean anything: a date the list cannot match
+  // clamps to the oldest row (the branch exercised below), which also moves the
+  // list down — so a bare "scrolled down" assertion passes whether the jump
+  // found the day or gave up on it. The older half starts around the middle.
+  await expect
+    .poll(async () => scroller.evaluate((el) => el.scrollTop / (el.scrollHeight - el.clientHeight)), {
+      timeout: 10_000,
+    })
+    .toBeGreaterThan(0.15)
+  expect(await scroller.evaluate((el) => el.scrollTop / (el.scrollHeight - el.clientHeight))).toBeLessThan(0.9)
 
   // ── Past the start of history: "Last year" matches no day here, and the
   // useful answer is to travel as far back as the list goes rather than refuse.
@@ -124,5 +151,10 @@ test("windows its rows and jumps to a date from a day marker", async ({ page }) 
     .click()
   await page.getByRole("button", { name: "Last year", exact: true }).click()
 
-  await expect.poll(async () => scroller.evaluate((el) => el.scrollTop), { timeout: 10_000 }).toBeGreaterThan(300)
+  // All the way to the oldest row this time — the clamp, not a near miss.
+  await expect
+    .poll(async () => scroller.evaluate((el) => el.scrollTop / (el.scrollHeight - el.clientHeight)), {
+      timeout: 10_000,
+    })
+    .toBeGreaterThan(0.99)
 })

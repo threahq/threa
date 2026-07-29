@@ -20,9 +20,14 @@ import {
 } from "./stream-context-chrome"
 
 /**
- * The pre-index panel: context derived from the loaded timeline window only.
- * Still the path for sealed streams (the server holds ciphertext, never an
- * index) and for workspaces with `streamContextIndex` off.
+ * The sealed-stream panel: context derived from the loaded timeline window on
+ * this device. The only reason this path still exists — the server holds
+ * ciphertext for an E2E stream and can never index it, so there is nothing for
+ * {@link StreamContextIndexPanel} to read. Every other stream is indexed.
+ *
+ * The consequences follow from having no index: this window is whatever the
+ * timeline has loaded, so it neither pages nor searches, and its date jump can
+ * only reach as far back as that window.
  */
 const DAY_MS = 24 * 60 * 60 * 1000
 

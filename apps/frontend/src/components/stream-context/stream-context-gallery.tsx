@@ -1,6 +1,5 @@
 import { useMemo } from "react"
 import { MediaGallery } from "@/components/image-gallery"
-import { useFeatureFlag } from "@/hooks"
 import { useStreamEvents, useStreamFromStore } from "@/stores/stream-store"
 import { useStreamContextRows } from "@/stores/stream-context-store"
 import { deriveStreamContext } from "@/lib/stream-context/derive"
@@ -40,7 +39,7 @@ export function StreamContextGallery({
   // a thread). Deriving here would leave those rows opening nothing, so the
   // gallery reads the same set the panel rendered. Sealed streams have no index
   // rows and stay on the derive path, as the panel does.
-  const indexed = useFeatureFlag(workspaceId, "streamContextIndex") === "on" && !stream?.e2eEnabled
+  const indexed = !stream?.e2eEnabled
   const rows = useStreamContextRows(workspaceId, streamId, rootStreamId, "tree")
   // Derive only while the gallery is open — this mount lives for the whole
   // stream view. Gate on the boolean, not `selectedKey`: the key changes on

@@ -2,7 +2,7 @@ import * as DialogPrimitive from "@radix-ui/react-dialog"
 import { Drawer, DrawerContent, DrawerDescription, DrawerTitle } from "@/components/ui/drawer"
 import { useSidebar } from "@/contexts"
 import { cn } from "@/lib/utils"
-import { StreamContextPanel } from "./stream-context-panel"
+import { StreamContextIndexPanel } from "./stream-context-index-panel"
 
 interface StreamContextSurfaceProps {
   workspaceId: string
@@ -17,7 +17,7 @@ interface StreamContextSurfaceProps {
 
 /**
  * Hosts the "In this stream" overview: a right-side slide-out on desktop and a
- * bottom drawer on mobile. The same {@link StreamContextPanel} renders inside
+ * bottom drawer on mobile. The same {@link StreamContextIndexPanel} renders inside
  * both. Desktop uses the Radix Dialog primitive (not a hand-rolled overlay) so
  * focus is trapped while open, returned to the trigger on close, and the closed
  * panel leaves the tab order entirely instead of lingering off-screen.
@@ -27,7 +27,7 @@ export function StreamContextSurface(props: StreamContextSurfaceProps) {
   const { open, onClose } = props
 
   const panel = (
-    <StreamContextPanel
+    <StreamContextIndexPanel
       workspaceId={props.workspaceId}
       streamId={props.streamId}
       onClose={onClose}
