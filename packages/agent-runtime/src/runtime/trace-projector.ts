@@ -2,6 +2,7 @@ import {
   AgentReconsiderationDecisions,
   AgentStepTypes,
   type AgentStepType,
+  type AgentToolEffect,
   type ToolVerificationStatus,
   type TraceSource,
 } from "@threa/types"
@@ -87,6 +88,18 @@ export interface TraceStepSink<OpenStep> {
    * decide, at build time, what it does with a verdict.
    */
   verify(params: { step: OpenStep; status: ToolVerificationStatus; reason: string }): Promise<void>
+  /**
+   * Attach what a completed tool call wrote to its open step.
+   *
+   * REQUIRED for the same reason `verify` is: `AgentRuntime.emit` swallows
+   * per-observer exceptions, so a projector that threw on a sink without this
+   * method would silently drop the write signal instead of failing. Mandatory
+   * makes every surface decide at build time.
+   *
+   * Called only with a non-empty array, and only from `tool:complete` for a
+   * call that actually executed.
+   */
+  effects(params: { step: OpenStep; effects: AgentToolEffect[] }): Promise<void>
 }
 
 /**
@@ -195,12 +208,27 @@ export class TraceProjector<OpenStep = unknown> implements AgentObserver {
         this.substepsByToolCallId.delete(event.toolCallId)
         this.hiddenToolCallIds.delete(event.toolCallId)
         if (!step) break // hidden tool — no step was opened
+        // Effects go first so the finalize's RETURNING row already carries them
+        // and the step:completed frame needs no companion event. But the
+        // finalize outranks them: a step that never completes spins forever in
+        // the trace, on reload too, because this state was already cleared
+        // above and nothing retries it. So an effects failure is held and
+        // rethrown after the finalize rather than replacing it.
+        let effectsError: unknown
+        if (event.trace.effects && event.trace.effects.length > 0) {
+          try {
+            await this.sink.effects({ step, effects: event.trace.effects })
+          } catch (error) {
+            effectsError = error
+          }
+        }
         await this.sink.complete(step, {
           stepType: event.trace.stepType,
           content: event.trace.content,
           sources: event.trace.sources,
           durationMs: event.durationMs,
         })
+        if (effectsError) throw effectsError
         break
       }
 

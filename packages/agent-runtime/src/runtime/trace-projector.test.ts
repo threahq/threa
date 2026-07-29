@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test"
-import { AgentStepTypes, type TraceSource } from "@threa/types"
+import { AgentStepTypes, type AgentToolEffect, type TraceSource } from "@threa/types"
 import type { NewMessageInfo } from "./agent-events"
 import {
   TraceProjector,
@@ -28,6 +28,9 @@ function createSinkStub() {
     toolName: string
   }> = []
   const verified: Array<{ id: number; status: string; reason: string }> = []
+  const effected: Array<{ id: number; effects: AgentToolEffect[] }> = []
+  /** Sink calls in the order they arrived — effects must land before the finalize. */
+  const order: string[] = []
 
   const sink: TraceStepSink<{ id: number }> = {
     async record(step) {
@@ -39,6 +42,7 @@ function createSinkStub() {
       return handle
     },
     async complete(step, final) {
+      order.push("complete")
       completed.push({ id: step.id, final })
     },
     async substep(params) {
@@ -54,9 +58,13 @@ function createSinkStub() {
     async verify(params) {
       verified.push({ id: params.step.id, status: params.status, reason: params.reason })
     },
+    async effects(params) {
+      order.push("effects")
+      effected.push({ id: params.step.id, effects: params.effects })
+    },
   }
 
-  return { sink, records, opened, completed, substeps, verified }
+  return { sink, records, opened, completed, substeps, verified, effected, order }
 }
 
 const toolStart = (toolCallId: string, hidden?: boolean) =>
@@ -514,5 +522,121 @@ describe("TraceProjector guardian verdicts", () => {
     // step. Asserted structurally instead.
     const required: keyof typeof sink = "verify"
     expect(typeof sink[required]).toBe("function")
+  })
+})
+
+describe("TraceProjector tool effects", () => {
+  const complete = (overrides: { effects?: AgentToolEffect[]; content?: string }) =>
+    ({
+      type: "tool:complete",
+      toolCallId: "tc_1",
+      toolName: "save_memo",
+      input: {},
+      output: "{}",
+      durationMs: 20,
+      trace: {
+        stepType: AgentStepTypes.WORKSPACE_SEARCH,
+        content: overrides.content ?? "{}",
+        ...(overrides.effects !== undefined ? { effects: overrides.effects } : {}),
+      },
+    }) as const
+
+  it("stamps effects on the open step before finalizing it", async () => {
+    const { sink, effected, order } = createSinkStub()
+    const projector = new TraceProjector(sink)
+    const effects: AgentToolEffect[] = [{ kind: "memo", label: "Tide notes", target: "memo_1" }]
+
+    await projector.handle(toolStart("tc_1"))
+    await projector.handle(complete({ effects }))
+
+    // Order is load-bearing: the finalize's RETURNING row is what the
+    // step:completed frame carries, so effects must be durable before it runs.
+    expect(order).toEqual(["effects", "complete"])
+    expect(effected).toEqual([{ id: 1, effects }])
+  })
+
+  it("does not stamp an empty array", async () => {
+    const { sink, effected, completed } = createSinkStub()
+    const projector = new TraceProjector(sink)
+
+    await projector.handle(toolStart("tc_1"))
+    await projector.handle(complete({ effects: [] }))
+
+    expect(effected).toHaveLength(0)
+    expect(completed).toHaveLength(1)
+  })
+
+  it("does not stamp a completion that carries none", async () => {
+    const { sink, effected } = createSinkStub()
+    const projector = new TraceProjector(sink)
+
+    await projector.handle(toolStart("tc_1"))
+    await projector.handle(complete({}))
+
+    expect(effected).toHaveLength(0)
+  })
+
+  // The finalize outranks the effects write. Per-tool-call state is cleared
+  // before either runs, so a step that misses its finalize spins in the trace
+  // forever — including after a reload. Losing the effects of a completed step
+  // is a smaller loss than never completing it.
+  it("still finalizes the step when the effects write fails, and surfaces the failure", async () => {
+    const { sink, completed } = createSinkStub()
+    const boom = new Error("pool exhausted")
+    sink.effects = async () => {
+      throw boom
+    }
+    const projector = new TraceProjector(sink)
+
+    await projector.handle(toolStart("tc_1"))
+    await expect(projector.handle(complete({ effects: [{ kind: "memo", label: "Tide notes" }] }))).rejects.toThrow(boom)
+
+    expect(completed).toHaveLength(1)
+  })
+
+  it("stamps nothing for a guardian-denied call, which wrote nothing", async () => {
+    const { sink, effected, completed } = createSinkStub()
+    const projector = new TraceProjector(sink)
+
+    await projector.handle(toolStart("tc_1"))
+    await projector.handle({
+      type: "tool:verification",
+      toolCallId: "tc_1",
+      toolName: "delegate_task",
+      status: "denied",
+      reason: "Not what you asked for.",
+      durationMs: 5,
+    })
+    // The denial path emits its own tool:complete, effect-free by construction.
+    await projector.handle(complete({ content: "Not taken — waiting for your approval." }))
+
+    expect(effected).toHaveLength(0)
+    expect(completed).toHaveLength(1)
+  })
+
+  it("stamps nothing when the tool threw", async () => {
+    const { sink, effected } = createSinkStub()
+    const projector = new TraceProjector(sink)
+
+    await projector.handle(toolStart("tc_1"))
+    await projector.handle({
+      type: "tool:error",
+      toolCallId: "tc_1",
+      toolName: "save_memo",
+      error: "boom",
+      durationMs: 5,
+    })
+
+    expect(effected).toHaveLength(0)
+  })
+
+  it("stamps nothing for a hidden tool, which opened no step", async () => {
+    const { sink, effected } = createSinkStub()
+    const projector = new TraceProjector(sink)
+
+    await projector.handle(toolStart("tc_1", true))
+    await projector.handle(complete({ effects: [{ kind: "memo" }] }))
+
+    expect(effected).toHaveLength(0)
   })
 })

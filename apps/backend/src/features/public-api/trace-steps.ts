@@ -216,6 +216,15 @@ export class BotInvocationTraceSink implements TraceStepSink<BotOpenStep> {
       "BotInvocationTraceSink cannot record a guardian verdict; guarded tools must not run on this surface"
     )
   }
+
+  /**
+   * Same reasoning as `verify`: our mutating tools are built only in the
+   * companion's tool set, never on this surface, so an effect cannot arrive.
+   * Required all the same — the compiler is the only guard.
+   */
+  async effects(): Promise<void> {
+    throw new Error("BotInvocationTraceSink cannot record tool effects; mutating tools must not run on this surface")
+  }
   async substep(params: { stepType: AgentStepType; text: string; snapshot: TraceSubstepEntry[] }): Promise<void> {
     // Mirrors SessionTrace.emitSubstep's fan-out: ephemeral phase text to the
     // stream room (inline indicator) and the session room (trace dialog).
@@ -263,6 +272,15 @@ class SynthesizedTraceSink implements TraceStepSink<BotOpenStep> {
    */
   async verify(): Promise<void> {
     throw new Error("SynthesizedTraceSink cannot record a guardian verdict; guarded tools must not run on this surface")
+  }
+
+  /**
+   * Same reasoning as `verify`: these steps are reconstructed from a bot's own
+   * reported frames, not executed here, so an effect cannot arrive. Required
+   * all the same — the compiler is the only guard.
+   */
+  async effects(): Promise<void> {
+    throw new Error("SynthesizedTraceSink cannot record tool effects; mutating tools must not run on this surface")
   }
 
   constructor(

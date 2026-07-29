@@ -152,6 +152,12 @@ describe("guardian gating", () => {
     const completion = events.find((e) => e.type === "tool:complete") as any
     expect(completion.toolName).toBe(AgentToolNames.DELEGATE_TASK)
     expect(completion.trace.content).toContain("The user never asked for a delegation.")
+
+    // Asserted at the emit site, not on a hand-built event: delegate_task is
+    // mutating, so anything that routed this denial through the normal effects
+    // resolution would stamp the layer-0 fallback and the trace would claim a
+    // write the guardian blocked. Nothing executed, so nothing was written.
+    expect(completion.trace.effects).toBeUndefined()
   })
 
   it("denies when the guardian throws, rather than letting the call through", async () => {

@@ -1,6 +1,6 @@
 import { describe, expect, it, mock } from "bun:test"
 import { z } from "zod"
-import { AgentToolNames, AgentStepTypes, type SourceItem } from "@threa/types"
+import { AgentToolNames, AgentStepTypes, type AgentToolEffect, type SourceItem } from "@threa/types"
 import type { AgentEvent } from "./agent-events"
 import { AgentRuntime } from "./agent-runtime"
 import { defineAgentTool } from "./agent-tool"
@@ -1143,5 +1143,74 @@ describe("AgentRuntime thinking steps", () => {
     const thinking = events.find((e) => e.type === "thinking") as { content: string }
     expect(thinking.content).toBe("'s theme is already dark, so no change was made.")
     expect(thinking.content).not.toContain("[msg:")
+  })
+})
+
+describe("AgentRuntime tool effects", () => {
+  const runToolOnce = async (tool: ReturnType<typeof defineAgentTool>) => {
+    const events: AgentEvent[] = []
+    let firstCall = true
+    const generateTextWithTools = async () => {
+      if (firstCall) {
+        firstCall = false
+        return {
+          text: "",
+          toolCalls: [{ toolCallId: "tc_1", toolName: tool.name, input: {} }],
+          response: { messages: [{ role: "assistant" as const, content: "calling tool" } as any] },
+        }
+      }
+      return {
+        text: "Done.",
+        toolCalls: [],
+        response: { messages: [{ role: "assistant" as const, content: "Done." } as any] },
+      }
+    }
+
+    const runtime = new AgentRuntime({
+      ai: { generateTextWithTools } as any,
+      model: {} as any,
+      systemPrompt: "You are helpful.",
+      messages: [{ role: "user", content: "do it" }],
+      tools: [tool],
+      sendMessage: async () => ({ messageId: "msg_1", operation: "created" }),
+      observers: [{ handle: async (event: AgentEvent) => void events.push(event) }],
+    })
+
+    await runtime.run()
+    const complete = events.find((e) => e.type === "tool:complete") as Extract<AgentEvent, { type: "tool:complete" }>
+    return complete.trace.effects
+  }
+
+  const buildTool = (name: string, effects?: () => AgentToolEffect[]) =>
+    defineAgentTool({
+      name,
+      description: "test",
+      categories: [],
+      inputSchema: z.object({}),
+      execute: async () => ({ output: "{}" }),
+      trace: {
+        stepType: AgentStepTypes.WORKSPACE_SEARCH,
+        formatContent: () => "{}",
+        ...(effects ? { effects } : {}),
+      },
+    })
+
+  it("falls back to a shapeless marker for a mutating tool that declares nothing", async () => {
+    expect(await runToolOnce(buildTool(AgentToolNames.SAVE_MEMO))).toEqual([{ kind: "other" }])
+  })
+
+  it("emits nothing for a read-only tool", async () => {
+    expect(await runToolOnce(buildTool(AgentToolNames.SEARCH_MESSAGES))).toBeUndefined()
+  })
+
+  it("passes a declaring tool's array through verbatim", async () => {
+    const declared: AgentToolEffect[] = [{ kind: "memo", label: "Tide notes", target: "memo_1" }]
+    expect(await runToolOnce(buildTool(AgentToolNames.SAVE_MEMO, () => declared))).toEqual(declared)
+  })
+
+  it("emits nothing when a mutating tool declares an empty array", async () => {
+    // The declarer is authoritative: save_memo returns a successful result on a
+    // dedupe, and the fallback would turn that into a claimed write.
+    expect(await runToolOnce(buildTool(AgentToolNames.SAVE_MEMO, () => []))).toBeUndefined()
   })
 })
