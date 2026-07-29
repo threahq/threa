@@ -14,7 +14,7 @@ import { cn } from "@/lib/utils"
 
 export type Filter = "all" | ContextCategory
 
-/** The props both panel implementations take; `StreamContextPanel` picks one. */
+/** The props both panel implementations take; the index panel owns the choice. */
 export interface StreamContextPanelProps {
   workspaceId: string
   streamId: string
