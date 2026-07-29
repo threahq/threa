@@ -431,6 +431,21 @@ describe("useBoardCardMessages", () => {
     expect(result.current.totalReplies).toBe(1)
   })
 
+  it("keeps a soft-deleted opening message as a tombstone once the rail has synced it", async () => {
+    const deletedOpening = msgEvent("m1", "the opening body", 1)
+    const deletedAt = new Date().toISOString()
+    ;(deletedOpening.payload as { deletedAt?: string }).deletedAt = deletedAt
+    await db.events.bulkPut([deletedOpening, msgEvent("r1", "a reply", 2)])
+    const post = makePost({ messageIds: ["m1", "r1"], openingId: "m1" })
+    const { result } = renderHook(() => useBoardCardMessages(post))
+
+    // `seen` covers the opener but `messages` does not, so resolving only through
+    // `messages` drops the row entirely the moment the rail syncs — the opener
+    // shows a tombstone before sync and nothing after.
+    await waitFor(() => expect(result.current.source).toBe("events"))
+    expect(result.current.openingMessage).toMatchObject({ id: "m1", contentMarkdown: "", deletedAt })
+  })
+
   it("exposes a soft-deleted reply on `deletedById` with blank content", async () => {
     const deleted = msgEvent("r1", "gone", 2)
     const deletedAt = new Date().toISOString()

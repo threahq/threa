@@ -797,7 +797,11 @@ export function useBoardCardMessages(
     const conversationSeen = rail.resolved && (openingSeen || replyIds.some((id) => rail.seen.has(id)))
 
     let openingMessage = (post.openingMessage as RenderableMessage | null) ?? null
-    if (openingId !== null && rail.seen.has(openingId)) openingMessage = rail.messages.get(openingId) ?? null
+    // A deleted opener is in `seen` but not in `messages`; falling through to
+    // null would show its tombstone from the projection and then drop the row
+    // entirely once the rail syncs it.
+    if (openingId !== null && rail.seen.has(openingId))
+      openingMessage = rail.messages.get(openingId) ?? rail.deletedMessages.get(openingId) ?? null
 
     if (!conversationSeen) {
       // Cold/unsynced: capture a fresh pending row but never drop a live bridge.
