@@ -73,6 +73,12 @@ interface StreamRail {
   /** Every message id the stream has synced — INCLUDING soft-deleted tombstones,
    *  which are absent from `messages`. Lets a card tell "deleted" from "unsynced". */
   seen: Set<string>
+  /** Soft-deleted `message_created` rows as content-free tombstone rows, by id.
+   *  Deliberately SEPARATE from `messages`: the collapsed card's reply window and
+   *  its "N more" arithmetic count displayable replies only, so a tombstone must
+   *  not take a slot there. Only the always-expanded conversation panel reads
+   *  this, and renders each as "This message was deleted". */
+  deletedMessages: Map<string, RenderableMessage>
   /** Renderable rows that carry a `conversationId`, grouped by it, chronological.
    *  A board reply tags its optimistic event with the conversation it attaches to,
    *  and the swap carries that tag onto the real event (stream-sync), so this holds
@@ -99,6 +105,7 @@ interface StreamRail {
 const LOADING_RAIL: StreamRail = {
   messages: new Map(),
   seen: new Set(),
+  deletedMessages: new Map(),
   taggedByConversation: new Map(),
   supersededClientIds: new Set(),
   events: [],
@@ -108,6 +115,7 @@ const LOADING_RAIL: StreamRail = {
 function buildRail(events: CachedEvent[], overlay?: Map<string, CachedEvent>): StreamRail {
   const messages = new Map<string, RenderableMessage>()
   const seen = new Set<string>()
+  const deletedMessages = new Map<string, RenderableMessage>()
   const taggedByConversation = new Map<string, RenderableMessage[]>()
   const supersededClientIds = new Set<string>()
   const eventRows: CachedEvent[] = []
@@ -129,7 +137,22 @@ function buildRail(events: CachedEvent[], overlay?: Map<string, CachedEvent>): S
     // clientMessageId, so a pending row can never suppress anything.
     if (payload.clientMessageId && !event._status) supersededClientIds.add(payload.clientMessageId)
     const message = eventToRenderable(event)
-    if (!message) continue
+    if (!message) {
+      if (payload.messageId && payload.deletedAt) {
+        deletedMessages.set(payload.messageId, {
+          id: payload.messageId,
+          streamId: event.streamId,
+          sequence: event.sequence,
+          authorId: event.actorId ?? "",
+          authorType: (event.actorType ?? "user") as AuthorType,
+          contentMarkdown: "",
+          reactions: {},
+          createdAt: event.createdAt,
+          deletedAt: payload.deletedAt,
+        })
+      }
+      continue
+    }
     messages.set(message.id, message)
     // Group every conversation-tagged row (optimistic OR the swapped real one,
     // any `_status`) so the card can show the reply continuously across the echo
@@ -144,7 +167,15 @@ function buildRail(events: CachedEvent[], overlay?: Map<string, CachedEvent>): S
   for (const list of taggedByConversation.values()) {
     list.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime())
   }
-  return { messages, seen, taggedByConversation, supersededClientIds, events: eventRows, resolved: true }
+  return {
+    messages,
+    seen,
+    deletedMessages,
+    taggedByConversation,
+    supersededClientIds,
+    events: eventRows,
+    resolved: true,
+  }
 }
 
 interface StreamRailEntry {
@@ -328,6 +359,7 @@ function mergeRails(rails: StreamRail[], gatingCount: number): MergedRail {
   if (rails.length === 1) return { ...rails[0], allResolved: rails[0].resolved }
   const messages = new Map<string, RenderableMessage>()
   const seen = new Set<string>()
+  const deletedMessages = new Map<string, RenderableMessage>()
   const taggedByConversation = new Map<string, RenderableMessage[]>()
   const supersededClientIds = new Set<string>()
   const eventsById = new Map<string, CachedEvent>()
@@ -343,6 +375,7 @@ function mergeRails(rails: StreamRail[], gatingCount: number): MergedRail {
     }
     for (const [id, message] of rail.messages) messages.set(id, message)
     for (const id of rail.seen) seen.add(id)
+    for (const [id, message] of rail.deletedMessages) deletedMessages.set(id, message)
     for (const id of rail.supersededClientIds) supersededClientIds.add(id)
     for (const event of rail.events) eventsById.set(event.id, event)
     for (const [conversationId, list] of rail.taggedByConversation) {
@@ -357,7 +390,16 @@ function mergeRails(rails: StreamRail[], gatingCount: number): MergedRail {
   const events = [...eventsById.values()].sort(
     (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
   )
-  return { messages, seen, taggedByConversation, supersededClientIds, events, resolved, allResolved }
+  return {
+    messages,
+    seen,
+    deletedMessages,
+    taggedByConversation,
+    supersededClientIds,
+    events,
+    resolved,
+    allResolved,
+  }
 }
 
 /**
@@ -570,6 +612,10 @@ export interface BoardCardMessages {
    *  shows in its branch through its echo window before the branch's server
    *  `messageIds` lists it, the same union the card does for its own replies. */
   taggedByConversation: Map<string, RenderableMessage[]>
+  /** The merged rail's soft-deleted rows as content-free tombstones, by id. Absent
+   *  from every other field here (and from every count), so only the always-expanded
+   *  conversation panel draws them. */
+  deletedById: Map<string, RenderableMessage>
 }
 
 /** Extra rails a board card subscribes to beyond its conversation's own streams:
@@ -590,7 +636,7 @@ const NO_PENDING: RenderableMessage[] = []
 
 // The memoized per-render derivation below; the rail's message maps are appended
 // at the return boundary (they come straight off the merged rail, not the view).
-type BoardCardView = Omit<BoardCardMessages, "messagesById" | "taggedByConversation"> & {
+type BoardCardView = Omit<BoardCardMessages, "messagesById" | "taggedByConversation" | "deletedById"> & {
   nextRetained: RenderableMessage[]
 }
 
@@ -751,7 +797,11 @@ export function useBoardCardMessages(
     const conversationSeen = rail.resolved && (openingSeen || replyIds.some((id) => rail.seen.has(id)))
 
     let openingMessage = (post.openingMessage as RenderableMessage | null) ?? null
-    if (openingId !== null && rail.seen.has(openingId)) openingMessage = rail.messages.get(openingId) ?? null
+    // A deleted opener is in `seen` but not in `messages`; falling through to
+    // null would show its tombstone from the projection and then drop the row
+    // entirely once the rail syncs it.
+    if (openingId !== null && rail.seen.has(openingId))
+      openingMessage = rail.messages.get(openingId) ?? rail.deletedMessages.get(openingId) ?? null
 
     if (!conversationSeen) {
       // Cold/unsynced: capture a fresh pending row but never drop a live bridge.
@@ -849,8 +899,13 @@ export function useBoardCardMessages(
   // above, whose branches build the card's OWN messages — the rail identity is
   // stable per snapshot, so the branch derivation memoizes on it downstream).
   return useMemo(
-    () => ({ ...view, messagesById: rail.messages, taggedByConversation: rail.taggedByConversation }),
-    [view, rail.messages, rail.taggedByConversation]
+    () => ({
+      ...view,
+      messagesById: rail.messages,
+      taggedByConversation: rail.taggedByConversation,
+      deletedById: rail.deletedMessages,
+    }),
+    [view, rail.messages, rail.taggedByConversation, rail.deletedMessages]
   )
 }
 

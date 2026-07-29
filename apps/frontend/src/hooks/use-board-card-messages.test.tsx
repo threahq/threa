@@ -431,6 +431,53 @@ describe("useBoardCardMessages", () => {
     expect(result.current.totalReplies).toBe(1)
   })
 
+  it("keeps a soft-deleted opening message as a tombstone once the rail has synced it", async () => {
+    const deletedOpening = msgEvent("m1", "the opening body", 1)
+    const deletedAt = new Date().toISOString()
+    ;(deletedOpening.payload as { deletedAt?: string }).deletedAt = deletedAt
+    await db.events.bulkPut([deletedOpening, msgEvent("r1", "a reply", 2)])
+    const post = makePost({ messageIds: ["m1", "r1"], openingId: "m1" })
+    const { result } = renderHook(() => useBoardCardMessages(post))
+
+    // `seen` covers the opener but `messages` does not, so resolving only through
+    // `messages` drops the row entirely the moment the rail syncs — the opener
+    // shows a tombstone before sync and nothing after.
+    await waitFor(() => expect(result.current.source).toBe("events"))
+    expect(result.current.openingMessage).toMatchObject({ id: "m1", contentMarkdown: "", deletedAt })
+  })
+
+  it("exposes a soft-deleted reply on `deletedById` with blank content", async () => {
+    const deleted = msgEvent("r1", "gone", 2)
+    const deletedAt = new Date().toISOString()
+    ;(deleted.payload as { deletedAt?: string }).deletedAt = deletedAt
+    await db.events.bulkPut([msgEvent("m1", "opening", 1), deleted, msgEvent("r2", "here", 3)])
+    const post = makePost({ messageIds: ["m1", "r1", "r2"], openingId: "m1" })
+    const { result } = renderHook(() => useBoardCardMessages(post))
+
+    await waitFor(() => expect(result.current.deletedById.get("r1")).toBeDefined())
+    expect(result.current.deletedById.get("r1")).toMatchObject({
+      id: "r1",
+      contentMarkdown: "",
+      reactions: {},
+      deletedAt,
+    })
+  })
+
+  it("keeps a soft-deleted reply out of `replies`, `messagesById`, and `totalReplies`", async () => {
+    const deleted = msgEvent("r1", "gone", 2)
+    ;(deleted.payload as { deletedAt?: string }).deletedAt = new Date().toISOString()
+    await db.events.bulkPut([msgEvent("m1", "opening", 1), deleted, msgEvent("r2", "here", 3)])
+    const post = makePost({ messageIds: ["m1", "r1", "r2"], openingId: "m1" })
+    const { result } = renderHook(() => useBoardCardMessages(post))
+
+    await waitFor(() => expect(result.current.source).toBe("events"))
+    expect({
+      replies: result.current.replies.map((m) => m.id),
+      hasInMessagesById: result.current.messagesById.has("r1"),
+      totalReplies: result.current.totalReplies,
+    }).toEqual({ replies: ["r2"], hasInMessagesById: false, totalReplies: 1 })
+  })
+
   it("excludes soft-deleted messages from the rail", async () => {
     const deleted = msgEvent("r1", "gone", 2)
     ;(deleted.payload as { deletedAt?: string }).deletedAt = new Date().toISOString()

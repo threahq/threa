@@ -48,6 +48,7 @@ import { cn } from "@/lib/utils"
 import { actorRowTheme } from "@/components/message/actor-row-theme"
 import { ConversationReadProvider, useConversationReadController } from "@/components/message/conversation-read-context"
 import { useConversationAutoRead } from "@/components/message/use-conversation-auto-read"
+import { DeletedMessageEvent } from "@/components/timeline/deleted-message-event"
 import { useConversationUnreadMarker } from "@/components/conversations/use-conversation-unread-marker"
 import { RelativeTime } from "@/components/relative-time"
 import { BoardReplyComposer, type ArmedReply } from "@/components/board/board-reply-composer"
@@ -423,6 +424,7 @@ function ConversationPanelBody({ workspaceId, post, hostStreamType, openReplySig
     events: railEvents,
     messagesById,
     taggedByConversation,
+    deletedById,
   } = useBoardCardMessages(post, hostStreamType, {
     branchStreamIds: inlineComposer.branchStreamIds,
     extraDraftPanelIds: inlineComposer.extraDraftPanelIds,
@@ -452,12 +454,25 @@ function ConversationPanelBody({ workspaceId, post, hostStreamType, openReplySig
   // Merge the viewer's own just-sent replies (deduped), then sort by time — a
   // pending reply can be older than a confirmed one.
   const seenReplyIds = new Set(replies.map((m) => m.id))
-  const displayedReplies = [...replies, ...pendingReplies.filter((m) => !seenReplyIds.has(m.id))].sort(
-    (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
+  // Tombstones for the conversation's deleted members. The backfill rows already
+  // carry theirs (the server projects them), so this fills the RAIL path — the
+  // panel is the always-expanded surface and shows "was deleted" rather than
+  // letting a message silently vanish. Deduped, then sorted in with the rest.
+  const deletedReplies = [...deletedById.values()].filter(
+    (m) => conversation.messageIds.includes(m.id) && m.id !== openingMessage?.id && !seenReplyIds.has(m.id)
   )
+  const displayedReplies = [
+    ...replies,
+    ...pendingReplies.filter((m) => !seenReplyIds.has(m.id)),
+    ...deletedReplies,
+  ].sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime())
   const loadingMore = incompleteLocally && !allMessages && !backfillFailed
 
   const all = openingMessage ? [openingMessage, ...displayedReplies] : displayedReplies
+  // A tombstone is render-only: it never participates in read state (auto-read or
+  // the unread marker). It has no `data-message-id` row to scroll to, so anchoring
+  // the marker on one would draw a divider that never scrolls (R6).
+  const readableRows = all.filter((m) => !m.deletedAt)
 
   // Agent traces / memo captures / follow-ups on this conversation, interleaved
   // into the message rows. Render-only (STREAM_ROW_SPEC `bumps: false`) — kept out
@@ -560,11 +575,11 @@ function ConversationPanelBody({ workspaceId, post, hostStreamType, openReplySig
     for (const [streamId, count] of Object.entries(unreadState.unreadCounts ?? {})) {
       if (count === 0) decidable.add(streamId)
     }
-    for (const message of all) {
+    for (const message of readableRows) {
       if (!decidable.has(message.streamId ?? conversation.streamId)) return false
     }
     return true
-  }, [unreadState, streamReadStates, all, conversation.streamId])
+  }, [unreadState, streamReadStates, readableRows, conversation.streamId])
   // Rows first, marker second: the marker may only anchor on a message that
   // actually gets a row (a message inside a depth-collapsed spanning subtree has
   // none, so a divider there would draw nothing and scroll nowhere).
@@ -580,7 +595,7 @@ function ConversationPanelBody({ workspaceId, post, hostStreamType, openReplySig
   for (const row of baseRows) if (row.kind === "message") renderedMessageIds.add(row.message.id)
   const { markerMessageId, unreadCount, isDimmed, dismiss } = useConversationUnreadMarker({
     conversationId: conversation.id,
-    rows: all,
+    rows: readableRows,
     rootStreamId: conversation.streamId,
     rowState: conversationReadValue.state,
     currentUserId,
@@ -603,6 +618,7 @@ function ConversationPanelBody({ workspaceId, post, hostStreamType, openReplySig
     // Hide "New sub-topic" once a thread already exists under the message (a
     // populated thread would mix membership — "Split this thread" is the gesture
     // there, adjustment D).
+    if (message.deletedAt) return <DeletedMessageEvent key={message.id} />
     const canBranch = !structuralIndex.threadsByAnchorId.has(message.id)
     return (
       <MessageItem
@@ -734,7 +750,7 @@ function ConversationPanelBody({ workspaceId, post, hostStreamType, openReplySig
   // still backfilling, the cutoff through a rendered row also covers the not-
   // yet-fetched middle — deliberate, same as the board card: reading the
   // conversation's visible tail reads it up to there.
-  const autoReadRows = all
+  const autoReadRows = readableRows
   useConversationAutoRead({
     containerRef: listRef,
     messages: autoReadRows,

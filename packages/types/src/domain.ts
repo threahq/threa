@@ -779,6 +779,11 @@ export interface BoardPostMessage {
   /** When the message was last edited, or null if never — drives the "(edited)"
    * affordance and the revisions dialog on the row (parity with the timeline). */
   editedAt: string | null
+  /** When the message was soft-deleted, or null if live. A deleted row is
+   * projected as a tombstone — it carries no content, reactions, attachments or
+   * link previews — so a conversation can show "was deleted" without shipping
+   * the deleted body. */
+  deletedAt?: string | null
 }
 
 /**

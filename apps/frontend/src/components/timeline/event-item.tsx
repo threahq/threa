@@ -18,6 +18,7 @@ import { BriefUpdatedEvent } from "./brief-updated-event"
 import { DescriptionSetEvent } from "./description-set-event"
 import { CallCard } from "./call-card"
 import { SystemEvent } from "./system-event"
+import { DeletedMessageEvent } from "./deleted-message-event"
 
 interface EventItemProps {
   event: StreamEvent
@@ -97,7 +98,7 @@ export function EventItem({
       if (payload.deletedAt) {
         return (
           <div data-event-id={event.id}>
-            <DeletedMessageEvent event={event} />
+            <DeletedMessageEvent />
           </div>
         )
       }
@@ -124,7 +125,7 @@ export function EventItem({
     case "message_deleted":
       return (
         <div data-event-id={event.id}>
-          <DeletedMessageEvent event={event} />
+          <DeletedMessageEvent />
         </div>
       )
 
@@ -288,12 +289,4 @@ export function EventItem({
         </div>
       )
   }
-}
-
-function DeletedMessageEvent(_props: { event: StreamEvent }) {
-  return (
-    <div className="py-0.5 px-3 sm:px-6 text-center">
-      <p className="text-xs italic text-muted-foreground">This message was deleted</p>
-    </div>
-  )
 }
