@@ -62,8 +62,24 @@ export function defaultMintDeps(): MintDeps {
  * so nothing else can see it. Minting a new identity over it would hand the
  * reaper a worktree it believes is free and let it kill a live session.
  */
-function occupancyVeto(worktree: string, deps: MintDeps, identifiedSessionIds: Set<string>): string | undefined {
-  const pids = deps.claudeProcessesIn(worktree)
+export type OccupancyDeps = Pick<MintDeps, "panes" | "claudeProcessesIn" | "canonicalPath" | "warn">
+
+export function occupancyVeto(
+  worktree: string,
+  deps: OccupancyDeps,
+  identifiedSessionIds: Set<string>,
+  /**
+   * Pids a caller has already tied to the identity it is about to record. The
+   * pid arm cannot identify anyone by itself — `~/.claude/sessions` keys on
+   * Claude's own session id, not a Threa runtime session id — so a caller that
+   * DOES know which pane owns the directory supplies its `panePid` here. That is
+   * the same pane-pid equivalence the reaper uses to tell its own session from a
+   * stranger. A mint supplies nothing: it has no candidate id yet, so every live
+   * pid is a stranger to it.
+   */
+  accountedPids: Set<number> = new Set()
+): string | undefined {
+  const pids = deps.claudeProcessesIn(worktree).filter((pid) => !accountedPids.has(pid))
   let panes: LocalTmuxPane[] = []
   let panesRead = true
   try {
