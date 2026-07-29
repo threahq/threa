@@ -214,6 +214,24 @@ describe("agent outcomes read path", () => {
     })
   })
 
+  test("state=outstanding reads as an agenda — the running delegation leads, not trails", async () => {
+    // The failure this pins: a delegation's occurs_at is its last transition
+    // (past) and a follow-up's is when it fires (future), so newest-first buries
+    // every running delegation behind every scheduled follow-up — off the first
+    // page entirely once a workspace has a page's worth of them.
+    const outstanding = await service().list({ workspaceId: wsId, userId: memberId, state: "outstanding", limit: 50 })
+    const settled = await service().list({ workspaceId: wsId, userId: memberId, state: "all", limit: 50 })
+
+    const outstandingRanked = outstanding.items.map((i) => i.id)
+    const settledRanked = settled.items.map((i) => i.id)
+
+    expect({
+      delegationBeforeFollowUp:
+        outstandingRanked.indexOf(channelDelegationId) < outstandingRanked.indexOf(threadFollowUpId),
+      allStillNewestFirst: settledRanked.indexOf(threadFollowUpId) < settledRanked.indexOf(channelDelegationId),
+    }).toEqual({ delegationBeforeFollowUp: true, allStillNewestFirst: true })
+  })
+
   test("resolves the anchor event a follow-up row deep-links to", async () => {
     const response = await service().list({ workspaceId: wsId, userId: memberId, state: "all", limit: 50 })
 
@@ -352,22 +370,26 @@ describe("agent outcomes keyset paging over a shared instant", () => {
     `)
   })
 
-  test("every row is reachable across pages when they share a microsecond", async () => {
+  async function pageThrough(state: "all" | "outstanding"): Promise<string[]> {
     const seen: string[] = []
     let cursor: string | undefined
     for (let page = 0; page < 10; page++) {
-      const response = await service().list({
-        workspaceId: wsId,
-        userId: memberId,
-        state: "all",
-        limit: 2,
-        cursor,
-      })
+      const response = await service().list({ workspaceId: wsId, userId: memberId, state, limit: 2, cursor })
       seen.push(...response.items.map((i) => i.id))
       if (!response.nextCursor) break
       cursor = response.nextCursor
     }
+    return seen
+  }
 
-    expect(seen.slice().sort()).toEqual(seededIds.slice().sort())
+  test("every row is reachable across pages when they share a microsecond", async () => {
+    expect((await pageThrough("all")).sort()).toEqual(seededIds.slice().sort())
+  })
+
+  // Outstanding pages ascending, so its cursor predicate is the mirror image of
+  // the descending one. A direction added without flipping the comparison walks
+  // the same page forever or skips the rest of the set outright.
+  test("the ascending keyset pages the same set exactly once", async () => {
+    expect((await pageThrough("outstanding")).sort()).toEqual(seededIds.slice().sort())
   })
 })

@@ -54,6 +54,18 @@ export function statusesForState(state: AgentOutcomeState): {
   }
 }
 
+/**
+ * Outstanding reads as an agenda — soonest first — and everything else reads as
+ * history, newest first. A delegation's `occurs_at` is its last transition
+ * (always past) and a follow-up's is when it fires (usually future), so paging
+ * outstanding work newest-first puts every scheduled follow-up ahead of every
+ * running delegation: with a page of 50, a workspace with 50 future follow-ups
+ * shows no delegation at all until the last page.
+ */
+export function isAgendaOrder(state: AgentOutcomeState): boolean {
+  return state === "outstanding"
+}
+
 function toSummary(row: AgentOutcomeRow): AgentOutcomeSummary {
   const base = {
     id: row.id,
@@ -95,7 +107,12 @@ export function createAgentOutcomeService({ pool }: Dependencies) {
         ...statusesForState(params.state),
       }
 
-      const rows = await AgentOutcomeReadRepository.list(pool, { ...filters, cursor, limit: params.limit + 1 })
+      const rows = await AgentOutcomeReadRepository.list(pool, {
+        ...filters,
+        cursor,
+        limit: params.limit + 1,
+        ascending: isAgendaOrder(params.state),
+      })
       const hasMore = rows.length > params.limit
       const visible = hasMore ? rows.slice(0, params.limit) : rows
       const last = visible[visible.length - 1]

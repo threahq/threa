@@ -20,7 +20,17 @@ export interface AgentOutcomeFilters {
 export interface ListAgentOutcomesParams extends AgentOutcomeFilters {
   cursor?: KeysetCursor
   limit: number
+  /** Soonest-first. See {@link AgentOutcomeReadRepository.list}. */
+  ascending: boolean
 }
+
+// Direction is chosen from a closed set, never from caller input, so these
+// fragments are literal text rather than bound parameters — Postgres will not
+// accept a parameter in an ORDER BY direction or a row-comparison operator.
+const SQL_ASC = { text: "ASC", values: [] }
+const SQL_DESC = { text: "DESC", values: [] }
+const SQL_GT = { text: ">", values: [] }
+const SQL_LT = { text: "<", values: [] }
 
 export interface AgentOutcomeRow {
   id: string
@@ -168,15 +178,24 @@ function scopedSql(filters: AgentOutcomeFilters) {
 
 export const AgentOutcomeReadRepository = {
   /**
-   * One interleaved page, newest `occurs_at` first. Access runs through
-   * `streamAccessPredicateSql` (INV-62), so a thread inside a readable root is
-   * included without a `stream_members` row of its own. The anchor joins key on
-   * constants and sit above the page cut, so they resolve for the rows on the
-   * page rather than for every accessible outcome — and the outer ORDER BY is
-   * load-bearing, a join does not preserve the inner order.
+   * One interleaved page. Access runs through `streamAccessPredicateSql`
+   * (INV-62), so a thread inside a readable root is included without a
+   * `stream_members` row of its own. The anchor joins key on constants and sit
+   * above the page cut, so they resolve for the rows on the page rather than
+   * for every accessible outcome — and the outer ORDER BY is load-bearing, a
+   * join does not preserve the inner order.
+   *
+   * Direction is the caller's, and it is not cosmetic. A delegation's
+   * `occurs_at` is always in the past and a follow-up's is usually in the
+   * future, so paging outstanding work newest-first fills page 1 with scheduled
+   * follow-ups and leaves every running delegation on the last page — invisible
+   * on the view whose whole purpose is to show it. Outstanding therefore reads
+   * as an agenda: soonest first, so overdue and running work heads page 1.
    */
   async list(db: Querier, params: ListAgentOutcomesParams): Promise<AgentOutcomeRow[]> {
     const cursor = params.cursor
+    const order = params.ascending ? SQL_ASC : SQL_DESC
+    const comparison = params.ascending ? SQL_GT : SQL_LT
     const result = await db.query<DbRow>(composeSql`
       ${scopedSql(params)},
       page AS (
@@ -186,9 +205,9 @@ export const AgentOutcomeReadRepository = {
         FROM outcomes o
         WHERE (
           ${cursor === undefined}
-          OR (o.occurs_at, o.id) < (${cursor?.at ?? KEYSET_EPOCH}::timestamptz, ${cursor?.id ?? ""}::text)
+          OR (o.occurs_at, o.id) ${comparison} (${cursor?.at ?? KEYSET_EPOCH}::timestamptz, ${cursor?.id ?? ""}::text)
         )
-        ORDER BY o.occurs_at DESC, o.id DESC
+        ORDER BY o.occurs_at ${order}, o.id ${order}
         LIMIT ${params.limit}
       )
       SELECT
@@ -205,7 +224,7 @@ export const AgentOutcomeReadRepository = {
        AND fe.stream_id = p.stream_id
        AND fe.event_type = 'agent:follow_up_scheduled'
        AND fe.payload->>'followUpId' = p.id
-      ORDER BY p.occurs_at DESC, p.id DESC
+      ORDER BY p.occurs_at ${order}, p.id ${order}
     `)
     return result.rows.map(mapRow)
   },
