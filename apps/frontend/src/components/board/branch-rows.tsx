@@ -15,6 +15,7 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog"
 import { BoardEventRowItem, type BoardRow } from "@/components/board/board-row-item"
+import { DayDivider } from "@/components/timeline/day-divider"
 import { isContinuation, type RenderableMessage } from "@/components/message/message-item"
 import type { BranchConversationView } from "@/lib/board/branch-grouping"
 
@@ -288,6 +289,8 @@ function renderRowContent(row: BoardRow, props: BranchedBoardRowsProps): ReactNo
       )
     case "continue-thread":
       return <ContinueThreadRow key={row.key} to={continueThreadTo(row.streamId)} hiddenCount={row.hiddenCount} />
+    case "day":
+      return <DayDivider key={row.key} dayStartMs={row.dayStartMs} />
   }
 }
 

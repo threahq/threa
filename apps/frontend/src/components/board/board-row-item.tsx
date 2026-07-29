@@ -10,6 +10,7 @@ import { useWorkspaceUserId } from "@/hooks/use-workspaces"
 import { useAgentActivity, type MessageAgentActivity } from "@/hooks/use-agent-activity"
 import type { BoardEventRow } from "@/lib/board/board-event-rows"
 import type { BranchGrouping, BranchNode, BranchConversationView } from "@/lib/board/branch-grouping"
+import { localStartOfDayMs } from "@/lib/dates"
 
 /**
  * One row in a board card / conversation panel: a member message (with its
@@ -29,6 +30,48 @@ export type BoardRow =
   | { kind: "seam"; key: string; streamId: string; direction: "down" | "up"; displayDepth?: number }
   | { kind: "branch-group"; key: string; branch: BranchConversationView; displayDepth?: number }
   | { kind: "continue-thread"; key: string; streamId: string; hiddenCount: number; displayDepth?: number }
+  | { kind: "day"; key: string; dayStartMs: number; displayDepth?: number }
+
+function rowDayStartMs(row: BoardRow): number | null {
+  // Only depth-0 rows are globally time-sorted; indented thread runs are spliced
+  // in beside their fork point, so letting them open a day would emit
+  // out-of-order and duplicate-keyed dividers.
+  if ((row.displayDepth ?? 0) !== 0) return null
+  switch (row.kind) {
+    case "message":
+      return localStartOfDayMs(new Date(row.message.createdAt))
+    case "event":
+      return localStartOfDayMs(new Date(row.row.sortMs))
+    case "day":
+      return row.dayStartMs
+    default:
+      return null
+  }
+}
+
+/**
+ * Insert a `day` row before the first row of each local calendar day (INV-42),
+ * the same rule `injectDayDividers` applies to the timeline: rows carrying no
+ * timestamp (`seam`, `branch-group`, `continue-thread`) pass through without
+ * opening or resetting the current day, and no divider is ever emitted above
+ * the first timestamped row. Pure, and injected at the conversation-panel call
+ * site only — a collapsed board card is a digest, not a timeline.
+ */
+export function injectBoardDayDividers(rows: BoardRow[]): BoardRow[] {
+  const result: BoardRow[] = []
+  let currentDayMs: number | null = null
+  for (const row of rows) {
+    const dayMs = rowDayStartMs(row)
+    if (dayMs !== null) {
+      if (currentDayMs !== null && dayMs !== currentDayMs) {
+        result.push({ kind: "day", key: `day:${dayMs}`, dayStartMs: dayMs })
+      }
+      currentDayMs = dayMs
+    }
+    result.push(row)
+  }
+  return result
+}
 
 /**
  * Interleave a chronological message list with the conversation's event rows by

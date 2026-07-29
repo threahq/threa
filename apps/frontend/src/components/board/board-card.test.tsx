@@ -27,6 +27,7 @@ import * as inputModeModule from "@/hooks/use-input-mode"
 import { setBoardFlash, resetBoardFlashStoreCache } from "@/stores/board-flash-store"
 import { spyOnExport } from "@/test/spy"
 import { MESSAGE_ROW_HEAD_PADDING } from "@/components/message/message-row-layout"
+import { formatDayDivider, localStartOfDayMs } from "@/lib/dates"
 
 const WS = "ws_1"
 const STREAM = "stream_1"
@@ -593,5 +594,35 @@ describe("BoardCard row layout", () => {
     const rows = document.querySelectorAll("[data-message-row]")
     expect(rows.length).toBe(2)
     for (const row of rows) expect(row.className).not.toContain("select-none")
+  })
+})
+
+describe("BoardCard day dividers", () => {
+  it("shows no day divider even when its messages straddle a calendar day", async () => {
+    // The injector lives at the conversation-panel call site; a collapsed card is
+    // a digest, not a timeline.
+    const lateNight = new Date(2026, 5, 21, 23, 0, 0)
+    const afterMidnight = new Date(2026, 5, 22, 0, 30, 0)
+    const post = makePost({ messageIds: ["m_open", "m_reply"] }, { createdAt: lateNight.toISOString() })
+    mountCard({
+      ...post,
+      recentMessages: [
+        {
+          id: "m_reply",
+          streamId: STREAM,
+          authorId: "usr_other",
+          authorType: "user",
+          contentMarkdown: "Reply body.",
+          reactions: {},
+          attachments: [],
+          linkPreviews: [],
+          createdAt: afterMidnight.toISOString(),
+          editedAt: null,
+        },
+      ],
+      totalReplies: 1,
+    } as unknown as BoardViewPost)
+    await screen.findByText("Reply body.")
+    expect(screen.queryByText(formatDayDivider(new Date(localStartOfDayMs(afterMidnight))))).toBeNull()
   })
 })

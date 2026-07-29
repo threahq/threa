@@ -1,7 +1,8 @@
 import { describe, it, expect } from "vitest"
 import type { RenderableMessage } from "@/components/message/message-item"
 import type { BoardEventRow } from "@/lib/board/board-event-rows"
-import { buildBoardRows, buildBranchedBoardRows } from "./board-row-item"
+import { buildBoardRows, buildBranchedBoardRows, injectBoardDayDividers, type BoardRow } from "./board-row-item"
+import { localStartOfDayMs } from "@/lib/dates"
 import { groupBranches, type BranchStreamNode, type BranchConversationView } from "@/lib/board/branch-grouping"
 
 function msg(id: string, authorId: string, minute: number, streamId?: string): RenderableMessage {
@@ -258,5 +259,102 @@ describe("buildBranchedBoardRows continuation", () => {
       "message",
       "late",
     ])
+  })
+})
+
+function msgAt(id: string, at: Date): RenderableMessage {
+  return {
+    id,
+    authorId: "u1",
+    authorType: "user",
+    contentMarkdown: id,
+    reactions: {},
+    createdAt: at.toISOString(),
+  }
+}
+
+function messageRow(id: string, at: Date): BoardRow {
+  return { kind: "message", key: id, message: msgAt(id, at), continuation: false }
+}
+
+// Local-clock dates so the bucketing is asserted in the device timezone (INV-42),
+// which is what the divider renders.
+const day1Morning = new Date(2026, 6, 4, 9, 0, 0)
+const day1Evening = new Date(2026, 6, 4, 23, 30, 0)
+const day2Morning = new Date(2026, 6, 5, 0, 30, 0)
+
+describe("injectBoardDayDividers", () => {
+  it("inserts a divider between two calendar days, never above the first row", () => {
+    const rows = injectBoardDayDividers([messageRow("a", day1Evening), messageRow("b", day2Morning)])
+    expect(rows.map((r) => r.key)).toEqual(["a", `day:${localStartOfDayMs(day2Morning)}`, "b"])
+  })
+
+  it("inserts no divider for rows inside one day", () => {
+    const input = [messageRow("a", day1Morning), messageRow("b", day1Evening)]
+    expect(injectBoardDayDividers(input)).toEqual(input)
+  })
+
+  it("a timestampless chrome row neither opens nor closes a day", () => {
+    const seam: BoardRow = { kind: "seam", key: "seam:thread", streamId: "thread", direction: "down" }
+    const sameDay = injectBoardDayDividers([messageRow("a", day1Morning), seam, messageRow("b", day1Evening)])
+    expect(sameDay.map((r) => r.key)).toEqual(["a", "seam:thread", "b"])
+
+    const acrossDays = injectBoardDayDividers([messageRow("a", day1Evening), seam, messageRow("b", day2Morning)])
+    expect(acrossDays.map((r) => r.key)).toEqual(["a", "seam:thread", `day:${localStartOfDayMs(day2Morning)}`, "b"])
+  })
+
+  it("a day-2 divider keeps its key when an older page is prepended", () => {
+    // The key must be derived from the day itself, not from position: an
+    // older-page prepend renumbers every index-based key and remounts the
+    // dividers. Fresh row objects on both passes, so nothing can be shared.
+    const beforePrepend = injectBoardDayDividers([messageRow("b", day2Morning)])
+    const afterPrepend = injectBoardDayDividers([messageRow("a", day1Evening), messageRow("b", day2Morning)])
+    const dividerKey = (rows: BoardRow[]) => rows.filter((r) => r.kind === "day").map((r) => r.key)
+    expect(afterPrepend.filter((r) => r.kind === "day")).toHaveLength(1)
+    expect(dividerKey(afterPrepend)).toEqual([`day:${localStartOfDayMs(day2Morning)}`])
+    // Injecting over a day-2-only list emits no divider (nothing precedes it),
+    // so the stability claim is pinned against a third list that does.
+    expect(beforePrepend.filter((r) => r.kind === "day")).toHaveLength(0)
+    const withEarlierDay2 = injectBoardDayDividers([
+      messageRow("a0", day1Morning),
+      messageRow("a", day1Evening),
+      messageRow("b", day2Morning),
+    ])
+    expect(dividerKey(withEarlierDay2)).toEqual(dividerKey(afterPrepend))
+  })
+
+  it("an indented row between two same-day base rows produces no divider", () => {
+    const indented: BoardRow = { ...messageRow("t1", day2Morning), displayDepth: 1 }
+    const rows = injectBoardDayDividers([messageRow("a", day1Morning), indented, messageRow("b", day1Evening)])
+    expect(rows.map((r) => r.key)).toEqual(["a", "t1", "b"])
+  })
+
+  it("a spanning grouping yields unique divider keys in non-decreasing day order", () => {
+    // Base rows are globally time-sorted, thread runs are spliced in beside
+    // their fork message — so a later-dated thread run sits between two earlier
+    // base rows and must not open a day.
+    const streams = new Map<string, BranchStreamNode>([
+      ["root", { parentStreamId: null, rootStreamId: null, parentAnchorId: null }],
+      ["tx", { parentStreamId: "root", rootStreamId: "root", parentAnchorId: "a" }],
+      ["ty", { parentStreamId: "root", rootStreamId: "root", parentAnchorId: "b" }],
+    ])
+    const at = (id: string, streamId: string, date: Date): RenderableMessage => ({
+      ...msgAt(id, date),
+      streamId,
+    })
+    const grouping = groupBranches(
+      [
+        at("a", "root", day1Morning),
+        at("b", "root", day1Evening),
+        at("tx1", "tx", day2Morning),
+        at("ty1", "ty", new Date(2026, 6, 5, 1, 0, 0)),
+      ],
+      { streams, conversation: { streamId: "root" } }
+    )
+    const rows = injectBoardDayDividers(buildBranchedBoardRows(grouping, [], new Map(), "a"))
+    const keys = rows.map((r) => r.key)
+    expect(new Set(keys).size).toBe(keys.length)
+    const dayMs = rows.filter((r) => r.kind === "day").map((r) => r.dayStartMs)
+    expect(dayMs).toEqual([...dayMs].sort((x, y) => x - y))
   })
 })
