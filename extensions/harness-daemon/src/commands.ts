@@ -292,7 +292,10 @@ export async function watchUnarchived(options: ResumeOptions): Promise<void> {
   let reconcileChain = Promise.resolve()
   let unavailablePasses = 0
   let retryTimer: ReturnType<typeof setTimeout> | undefined
-  const reconcile = (target?: BotSessionRestoredPayload) => {
+  // Returns the chain, not void: `startupReconciliation` runs the tombstone pass
+  // after the sweep specifically so it does not hold the lock while boot revival
+  // waits, and a fire-and-forget sweep would put them back in a race for it.
+  const reconcile = (target?: BotSessionRestoredPayload): Promise<void> => {
     reconcileChain = reconcileChain
       .then(async () => {
         if (!options.dryRun) ensureTmuxSession(session, true)
@@ -331,6 +334,7 @@ export async function watchUnarchived(options: ResumeOptions): Promise<void> {
       .catch((error) => {
         console.error(`harnessd: reconciliation failed: ${error instanceof Error ? error.message : String(error)}`)
       })
+    return reconcileChain
   }
 
   await startupReconciliation(defaultStartupReconciliationDeps(() => reconcile(), options.dryRun ?? false))
@@ -725,7 +729,12 @@ export async function reviveAgent(
 
 async function resumeActiveUnlocked(options: ResumeOptions, target?: BotSessionRestoredPayload): Promise<boolean> {
   const deps = defaultReviveDeps()
-  const agents = latestAgentsByIdentity(readInventory())
+  const rows = readInventory()
+  // A targeted restore is the server saying this scratchpad came back, which is
+  // exactly the evidence a tombstone lacks.
+  const agents = latestAgentsByIdentity(rows, undefined, Boolean(target))
+  const excluded = target ? 0 : rows.filter((agent) => agent.tombstonedAt).length
+  if (excluded > 0) console.log(`harnessd: ${excluded} tombstoned row(s) not evaluated`)
   if (agents.length === 0) {
     console.log("No managed agents.")
     return false

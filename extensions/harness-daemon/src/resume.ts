@@ -34,11 +34,17 @@ export function parseScratchpadUrl(value: string): ScratchpadRef | undefined {
  */
 export function latestAgentsByIdentity(
   agents: ManagedAgent[],
-  resolve: AgentIdentityResolver = defaultAgentIdentityResolver()
+  resolve: AgentIdentityResolver = defaultAgentIdentityResolver(),
+  includeTombstoned = false
 ): ManagedAgent[] {
   const byIdentity = new Map<string, ManagedAgent>()
   for (const agent of agents) {
-    if (agent.tombstonedAt) continue
+    // A tombstone says "provably dead", and only the caller knows whether the
+    // server has since said otherwise: an unarchive is an explicit revive
+    // request, and dropping the row here would make it unrevivable with nothing
+    // reported. The count goes back to the caller so the exclusion is visible
+    // either way (INV-11).
+    if (agent.tombstonedAt && !includeTombstoned) continue
     // Identity AND worktree, never identity alone. Two rows can record one
     // runtime session id for DIFFERENT directories — the live inventory still
     // carries a pair left by the identity-inheritance bug fixed in 647a99978 —

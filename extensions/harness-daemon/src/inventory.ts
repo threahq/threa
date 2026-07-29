@@ -241,8 +241,14 @@ export function findAgentOrUndefined(
   const identityOf = (agent: ManagedAgent) => (resolver ??= defaultAgentIdentityResolver())(agent)
 
   if (live.some((agent) => agent.worktree)) {
-    const byResolvedSession = newest(live.filter((agent) => identityOf(agent) === ref))
-    if (byResolvedSession) return byResolvedSession
+    const byResolvedSession = live.filter((agent) => identityOf(agent) === ref)
+    // One identity can name two directories — the live inventory carries such a
+    // pair from the identity-inheritance bug fixed in 647a99978. Picking the
+    // newest would point `stop` and `kick` at a pane in a directory the operator
+    // never named, so the worktrees have to be told apart or refused.
+    const claimed = [...new Set(byResolvedSession.map((agent) => canonicalOrRaw(agent.worktree ?? agent.id)))].sort()
+    if (claimed.length > 1) die(`${ref} names ${claimed.length} worktrees: ${claimed.join(", ")}; use id`)
+    if (byResolvedSession.length > 0) return newest(byResolvedSession)
 
     const target = canonicalOrRaw(ref)
     const byWorktree = newest(live.filter((agent) => agent.worktree && canonicalOrRaw(agent.worktree) === target))
@@ -253,6 +259,8 @@ export function findAgentOrUndefined(
   if (matches.length > 1) {
     const competing = [...new Set(matches.map((agent) => identityOf(agent) ?? agent.id))].sort()
     if (competing.length > 1) die(`multiple agents match ${ref}: ${competing.join(", ")}; use id`)
+    const directories = [...new Set(matches.map((agent) => canonicalOrRaw(agent.worktree ?? agent.id)))].sort()
+    if (directories.length > 1) die(`${ref} names ${directories.length} worktrees: ${directories.join(", ")}; use id`)
     return newest(matches)
   }
   return matches[0]

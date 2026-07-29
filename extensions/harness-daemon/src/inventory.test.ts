@@ -194,3 +194,19 @@ test("a ref names a row by the identity a store attests, not only the one it rec
 
   expect(found?.id).toBe("claude-1")
 })
+
+test("a ref whose identity names two worktrees is refused, not resolved to the newest", () => {
+  // stopAgent kills the pane the ref resolves to. Picking the newest here points
+  // it at a directory the operator never named.
+  const other = agent({ id: "claude-2", name: "other", worktree: "/repo/threa.other" })
+  const resolver = resolverFor({ "/repo/threa.feature": "ccs-one", "/repo/threa.other": "ccs-one" })
+
+  expect(() => findAgentOrUndefined("ccs-one", [agent(), other], resolver)).toThrow(/two worktrees|2 worktrees/)
+})
+
+test("a targeted restore considers a tombstoned row; an untargeted sweep does not", () => {
+  const dead = agent({ tombstonedAt: "2026-07-29T00:00:00.000Z" })
+
+  expect(latestAgentsByIdentity([dead], resolverFor({}))).toEqual([])
+  expect(latestAgentsByIdentity([dead], resolverFor({}), true)).toEqual([dead])
+})
