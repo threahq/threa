@@ -329,6 +329,7 @@ export class ClaudeRuntimeSpawner extends RuntimeSpawner {
     const minted = await mintRuntimeIdentity({
       worktree: plannedWorktreePath(options, profile),
       runtimeKind: "claude-code-channel",
+      requireVacant: true,
       declared: { instanceId: config.instanceId, runtimeSessionId: config.runtimeSessionId },
       profile,
     })

@@ -316,3 +316,35 @@ test("no tmux server does not block a cold-start mint, but is reported", async (
   expect(warnings).toHaveLength(1)
   expect(warnings[0]).toContain("process table only")
 })
+
+test("a spawn refuses a directory a live Claude already occupies, even an identified one", async () => {
+  // The reuse rungs answer "what identity does this directory have", which is
+  // right for a backfill and wrong for a launch: reusing an identified live
+  // session's id starts a SECOND runtime under it.
+  const { deps: mintDeps, written } = deps({
+    identities: () => [identity()],
+    claudeProcessesIn: () => [4242],
+  })
+
+  const outcome = await mintRuntimeIdentity(
+    { worktree: WORKTREE, runtimeKind: "claude-code-channel", requireVacant: true },
+    mintDeps
+  )
+
+  expect(outcome.status).toBe("refused")
+  expect(outcome.status === "refused" && outcome.reason).toContain("4242")
+  expect(written).toEqual([])
+})
+
+test("a record for another runtime is never reused as this one's identity", async () => {
+  const { deps: mintDeps } = deps({
+    identities: () => [identity({ runtimeSessionId: "pi-uuid", instanceId: "pi-uuid", runtimeKind: "pi-local" })],
+  })
+
+  const outcome = await mintRuntimeIdentity({ worktree: WORKTREE, runtimeKind: "claude-code-channel" }, mintDeps)
+
+  expect(outcome).toEqual({
+    status: "refused",
+    reason: `${WORKTREE} is recorded for pi-uuid (pi-local), not claude-code-channel`,
+  })
+})

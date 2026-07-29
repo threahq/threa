@@ -147,8 +147,11 @@ export function readHarnessLinks(): HarnessLink[] {
   let entries: string[]
   try {
     entries = readdirSync(dir).filter((name) => name.endsWith(".json"))
-  } catch {
-    return []
+  } catch (error) {
+    // A scan that could not run must not read as a scan that found nothing:
+    // `doctor` prints the count, and "0 drift" from an unreadable directory is
+    // the unfalsifiable clean result this whole effort exists to remove.
+    throw new Error(`harnessd: could not read the harness link directory ${dir}: ${error}`)
   }
   for (const entry of entries) {
     try {

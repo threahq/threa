@@ -72,6 +72,8 @@ export type ReapStatus =
   | "skipped grace"
   | "skipped worktree missing"
   | "skipped ambiguous"
+  /** Record forgotten, directory untouched: two records name it and one may still be live. */
+  | "drained contested record"
   | "skipped occupied"
   | "skipped observer too young"
   | "skipped inaccessible"
@@ -145,8 +147,14 @@ export function defaultReapDeps(target: { baseUrl: string; workspaceId: string; 
   }
 }
 
+function conflictReason(link: HarnessLink, conflict: string[]): string {
+  return `identity evidence for ${link.worktree} disagrees: ${conflict.join(", ")}`
+}
+
 type WindowDecision =
   | { kind: "none" }
+  /** Forget the record, destroy nothing: the directory's ownership is in doubt. */
+  | { kind: "drain"; reason: string }
   | { kind: "kill"; pane: LocalTmuxPane }
   | { kind: "refuse"; status: ReapStatus; reason: string }
 
@@ -176,10 +184,26 @@ function decideWindow(link: HarnessLink, panes: LocalTmuxPane[], deps: ReapDeps)
   const occupants = panes.filter((pane) => deps.canonicalPath(pane.cwd) === worktree)
   const livePids = deps.claudeProcessesIn(link.worktree)
 
+  const conflict = conflictingAttestations(
+    link.worktree,
+    attestedRuntimes(deps.links(), deps.canonicalPath),
+    deps.identities(),
+    deps.canonicalPath
+  )
+
   if (occupants.length === 0) {
     // Nobody is in the worktree: the offline case this reaper exists for —
     // unless a paneless Claude is still running there.
-    if (livePids.length === 0) return { kind: "none" }
+    //
+    // Empty means no PROCESS, not no owner. When two records name this directory
+    // the other one may belong to a scratchpad that is still active, and its
+    // worktree is merely dormant — pushing and force-removing it on THIS
+    // record's archived word destroys a live session's work. So the record is
+    // still drained (or the duplication wedges the directory forever), but
+    // nothing is destroyed while it is in doubt.
+    if (livePids.length === 0) {
+      return conflict.length > 0 ? { kind: "drain", reason: conflictReason(link, conflict) } : { kind: "none" }
+    }
     return {
       kind: "refuse",
       status: "skipped occupied",
@@ -200,18 +224,8 @@ function decideWindow(link: HarnessLink, panes: LocalTmuxPane[], deps: ReapDeps)
   // EMPTY worktree would wedge it out of reaping forever, because `reapLink` is
   // the only thing that clears a record. Nothing is at risk when nothing is
   // there, and reaping one record per pass is what resolves the duplication.
-  const conflict = conflictingAttestations(
-    link.worktree,
-    attestedRuntimes(deps.links(), deps.canonicalPath),
-    deps.identities(),
-    deps.canonicalPath
-  )
   if (conflict.length > 0) {
-    return {
-      kind: "refuse",
-      status: "skipped ambiguous",
-      reason: `identity evidence for ${link.worktree} disagrees: ${conflict.join(", ")}`,
-    }
+    return { kind: "refuse", status: "skipped ambiguous", reason: conflictReason(link, conflict) }
   }
 
   const resolved = resolveManagedAgentPane(
@@ -284,6 +298,13 @@ export async function reapLink(link: HarnessLink, deps: ReapDeps, dryRun: boolea
 
   const window = decideWindow(link, deps.panes(), deps)
   if (window.kind === "refuse") return { ...base, status: window.status, detail: window.reason }
+
+  // Drop the record, touch nothing else. Leaving it would wedge the directory
+  // out of reaping forever, since this is the only pass that clears a record.
+  if (window.kind === "drain") {
+    if (!dryRun) deps.forgetLink(link.runtimeSessionId)
+    return { ...base, status: "drained contested record", detail: window.reason }
+  }
 
   if (!deps.pathExists(link.worktree)) {
     // Already gone — the records are the only leftover.

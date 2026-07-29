@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test"
-import { existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs"
+import { chmodSync, existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import {
@@ -153,4 +153,18 @@ describe("harness link registry", () => {
 
     expect(existsSync(join(harnessLinksDir(), "ccs-never-linked.json"))).toBe(false)
   })
+})
+
+test("an unreadable links directory throws rather than reading as no links", () => {
+  // `doctor` prints this count. "0 drift" from a scan that never ran is the
+  // unfalsifiable clean result the whole identity effort exists to remove.
+  const dir = mkdtempSync(join(tmpdir(), "harness-links-locked-"))
+  process.env.THREA_HARNESS_LINKS_DIR = dir
+  chmodSync(dir, 0o000)
+  try {
+    expect(() => readHarnessLinks()).toThrow(/could not read the harness link directory/)
+  } finally {
+    chmodSync(dir, 0o700)
+    rmSync(dir, { recursive: true, force: true })
+  }
 })

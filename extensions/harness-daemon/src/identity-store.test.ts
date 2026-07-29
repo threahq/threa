@@ -8,7 +8,11 @@ import {
   readMintedIdentity,
   writeMintedIdentity,
   type MintedIdentity,
+  identityRecordsFor,
+  profileForWorktree,
+  recordProfileSnapshot,
 } from "./identity-store"
+import { DEFAULT_PROFILE, UNKNOWN_PROFILE, type Profile } from "./profiles"
 
 let dir: string
 const previous = process.env.THREA_HARNESSD_IDENTITIES_DIR
@@ -79,4 +83,53 @@ test("the store honours THREA_HARNESSD_IDENTITIES_DIR and defaults under ~/.thre
   delete process.env.THREA_HARNESSD_IDENTITIES_DIR
   expect(identityStoreDir()).toBe(join(homedir(), ".threa", "harnessd", "identities"))
   process.env.THREA_HARNESSD_IDENTITIES_DIR = dir
+})
+
+test("an ambiguous or unreadable profile resolves to nothing-destructive, never to the default", () => {
+  // The default commits, pushes and reclaims, so failing open to it escalates
+  // "I do not know" into the most destructive policy there is.
+  const base = {
+    instanceId: "cc-a",
+    worktree: "/repo/threa.x",
+    runtimeKind: "claude-code-channel",
+    mintedAt: "2026-07-29T00:00:00.000Z",
+    source: "mint" as const,
+  }
+  const quiet: Profile = { name: "quiet", provision: "existing", preserve: "none", setup: [], teardown: [] }
+
+  expect(profileForWorktree("/repo/threa.x", [], (path) => path)).toEqual(DEFAULT_PROFILE)
+  expect(
+    profileForWorktree("/repo/threa.x", [{ ...base, runtimeSessionId: "ccs-a", profile: quiet }], (p) => p)
+  ).toEqual(quiet)
+  expect(
+    profileForWorktree(
+      "/repo/threa.x",
+      [
+        { ...base, runtimeSessionId: "ccs-a", profile: quiet },
+        { ...base, runtimeSessionId: "ccs-b", profile: quiet },
+      ],
+      (path) => path
+    )
+  ).toEqual(UNKNOWN_PROFILE)
+  expect(
+    profileForWorktree("/repo/threa.x", [{ ...base, runtimeSessionId: "ccs-a", profileUnreadable: true }], (p) => p)
+  ).toEqual(UNKNOWN_PROFILE)
+})
+
+test("a respawn supersedes the directory's record instead of adding a second", () => {
+  recordProfileSnapshot({
+    worktree: "/repo/threa.y",
+    runtimeSessionId: "pi-one",
+    runtimeKind: "pi-local",
+    profile: { name: "q", provision: "existing", preserve: "none", setup: [], teardown: [] },
+  })
+  recordProfileSnapshot({
+    worktree: "/repo/threa.y",
+    runtimeSessionId: "pi-two",
+    runtimeKind: "pi-local",
+    profile: { name: "q", provision: "existing", preserve: "none", setup: [], teardown: [] },
+  })
+
+  expect(identityRecordsFor("/repo/threa.y").map((record) => record.runtimeSessionId)).toEqual(["pi-two"])
+  expect(profileForWorktree("/repo/threa.y").preserve).toBe("none")
 })

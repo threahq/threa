@@ -36,6 +36,22 @@ export const DEFAULT_PROFILE: Profile = {
 }
 
 /**
+ * What a directory is cleaned up under when the evidence does not say.
+ *
+ * Deliberately NOT the built-in default: the default commits, pushes and
+ * reclaims, so failing open to it escalates an unreadable or contradictory
+ * snapshot into the most destructive policy there is. Nothing is the only safe
+ * answer to "I do not know".
+ */
+export const UNKNOWN_PROFILE: Profile = {
+  name: "unknown",
+  provision: "existing",
+  preserve: "none",
+  setup: [],
+  teardown: [],
+}
+
+/**
  * `--cwd` with no named profile: use the folder and touch nothing.
  *
  * `commit+push` here would `git add -A`, wip-commit and push a checkout harnessd

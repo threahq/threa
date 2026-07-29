@@ -490,9 +490,12 @@ test("an occupied worktree two link records disagree about is never reaped", asy
   expect(recorded).toEqual({ woundDown: [], killed: [], forgotten: [], awaited: [], retired: [] })
 })
 
-test("disagreeing records do not wedge an EMPTY worktree out of reaping", async () => {
-  // reapLink is the only thing that clears a record, so refusing here would
-  // strand the directory forever — and nothing is at risk when nothing is in it.
+test("disagreeing records on an EMPTY worktree are drained, and the directory is left alone", async () => {
+  // Empty means no PROCESS, not no owner: the other record may belong to a
+  // scratchpad that is still active and a worktree that is merely dormant, so
+  // pushing and force-removing it on THIS record's archived word destroys a live
+  // session's work. The record is still dropped — reapLink is the only thing
+  // that clears one — but nothing is destroyed while ownership is in doubt.
   const { deps, recorded } = makeDeps({
     links: () => [link({ runtimeSessionId: "ccs-abc" }), link({ runtimeSessionId: "ccs-xyz" })],
     panes: () => [],
@@ -500,8 +503,10 @@ test("disagreeing records do not wedge an EMPTY worktree out of reaping", async 
 
   const outcomes = await reapArchivedWorktrees(deps)
 
-  expect(outcomes.map((outcome) => outcome.status)).toEqual(["reaped", "reaped"])
+  expect(outcomes.map((outcome) => outcome.status)).toEqual(["drained contested record", "drained contested record"])
   expect(recorded.forgotten).toEqual(["ccs-abc", "ccs-xyz"])
+  expect(recorded.woundDown).toEqual([])
+  expect(recorded.retired).toEqual([])
 })
 
 test("a minted record naming the worktree a different session claims blocks the reap", async () => {

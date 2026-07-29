@@ -3,7 +3,7 @@ import { homedir } from "node:os"
 import { join } from "node:path"
 import { isSafeSessionFileName } from "@threa/bot-runtime-client"
 import { canonicalOrRaw } from "./discovery"
-import { DEFAULT_PROFILE, parseProfileSnapshot, type Profile } from "./profiles"
+import { DEFAULT_PROFILE, parseProfileSnapshot, type Profile, UNKNOWN_PROFILE } from "./profiles"
 
 /**
  * Where a runtime session's identity is RECORDED, so nothing has to recompute
@@ -21,6 +21,8 @@ export interface MintedIdentity {
   runtimeKind: string
   mintedAt: string
   source: "mint" | "backfill"
+  /** Set when a snapshot was present but would not re-read: the caller must not guess. */
+  profileUnreadable?: boolean
   attestedBy?: "ledger" | "inventory" | "launch"
   /**
    * The RESOLVED profile this workspace was provisioned under, snapshotted — not
@@ -59,12 +61,14 @@ function parseRecord(text: string): MintedIdentity | undefined {
   ) {
     return undefined
   }
-  // A snapshot that cannot be re-read is not a record with no snapshot: reading
-  // it as "no profile" would silently wind the directory down under the default,
-  // which reclaims. An unreadable record is skipped instead, and the reaper's
-  // own default-profile fallback then applies knowingly.
+  // A snapshot that cannot be re-read is NOT a record with no snapshot. Dropping
+  // the whole record made it invisible to `identityRecordsFor`, so the reaper
+  // found nothing and applied the default — escalating a corrupt `preserve:
+  // "none"` into commit+push+reclaim. The record is kept and the unreadable
+  // snapshot is marked, so the caller can tell "never had one" from "cannot
+  // read it" and refuse to guess.
   const profile = parsed.profile === undefined ? undefined : parseProfileSnapshot(parsed.profile)
-  if (parsed.profile !== undefined && !profile) return undefined
+  const profileUnreadable = parsed.profile !== undefined && !profile
   return {
     runtimeSessionId: parsed.runtimeSessionId,
     instanceId: parsed.instanceId,
@@ -76,13 +80,18 @@ function parseRecord(text: string): MintedIdentity | undefined {
       ? { attestedBy: parsed.attestedBy }
       : {}),
     ...(profile ? { profile } : {}),
+    ...(profileUnreadable ? { profileUnreadable: true } : {}),
   }
 }
 
 /**
- * The profile a worktree is cleaned up under. No mint record — or more than one,
- * which is already refused elsewhere — means the pre-profile fleet, so the
- * built-in default applies and nothing about today's behaviour changes.
+ * The profile a worktree is cleaned up under.
+ *
+ * NO record means the pre-profile fleet: the built-in default applies and
+ * nothing about today's behaviour changes. Anything else that leaves the answer
+ * in doubt — two records naming one directory, or a snapshot that will not
+ * re-read — resolves to {@link UNKNOWN_PROFILE}, never to the default. Failing
+ * open here escalates "I do not know" into commit, push and reclaim.
  */
 export function profileForWorktree(
   worktree: string,
@@ -90,7 +99,9 @@ export function profileForWorktree(
   canonical: (path: string) => string = canonicalOrRaw
 ): Profile {
   const found = identityRecordsFor(worktree, records, canonical)
-  return found.length === 1 ? (found[0]!.profile ?? DEFAULT_PROFILE) : DEFAULT_PROFILE
+  if (found.length === 0) return DEFAULT_PROFILE
+  if (found.length > 1 || found[0]!.profileUnreadable) return UNKNOWN_PROFILE
+  return found[0]!.profile ?? DEFAULT_PROFILE
 }
 
 /**
@@ -107,7 +118,22 @@ export function recordProfileSnapshot(params: {
   profile: Profile
   instanceId?: string
 }): void {
-  writeMintedIdentity({
+  const worktree = canonicalOrRaw(params.worktree)
+  const existing = identityRecordsFor(worktree)
+  // Never a SECOND record for one directory. `profileForWorktree` cannot honour
+  // an ambiguous answer, so a respawn that simply appended would turn a
+  // `preserve: "none"` directory into one the reaper treats as unknown — and
+  // before that fallback was made safe, into one it committed, pushed and
+  // reclaimed. Supersede by worktree, exactly as `recordHarnessLink` does.
+  const foreign = existing.filter((record) => record.runtimeKind !== params.runtimeKind)
+  if (foreign.length > 0) {
+    console.warn(
+      `harnessd: not recording a ${params.runtimeKind} profile for ${worktree}: ${foreign.map((record) => `${record.runtimeSessionId} (${record.runtimeKind})`).join(", ")} already claims it`
+    )
+    return
+  }
+  for (const record of existing) clearMintedIdentity(record.runtimeSessionId)
+  const written = writeMintedIdentity({
     runtimeSessionId: params.runtimeSessionId,
     instanceId: params.instanceId ?? params.runtimeSessionId,
     worktree: canonicalOrRaw(params.worktree),
@@ -116,6 +142,12 @@ export function recordProfileSnapshot(params: {
     source: "mint",
     profile: params.profile,
   })
+  // Reported, not discarded: without the snapshot the reaper falls back, and the
+  // operator should learn that here rather than from a directory that was
+  // cleaned up under a policy they did not declare.
+  if (written.status !== "created") {
+    console.warn(`harnessd: could not record the profile for ${worktree}: ${JSON.stringify(written)}`)
+  }
 }
 
 /** Every recorded identity. Unreadable or malformed files are skipped, not fatal. */
@@ -174,6 +206,17 @@ export function identityRecordsFor(
  * resolves to the same path, finds the dead session's record, and launches under
  * a `runtimeSessionId` the server already knows as wound down.
  */
+export function clearMintedIdentity(runtimeSessionId: string): void {
+  const path = identityPath(runtimeSessionId)
+  if (!path) return
+  try {
+    rmSync(path, { force: true })
+  } catch {
+    // A leftover record only costs the next lookup its precision; it must never
+    // abort the caller.
+  }
+}
+
 export function forgetMintedIdentitiesFor(worktree: string): string[] {
   const retired: string[] = []
   for (const record of identityRecordsFor(worktree)) {
