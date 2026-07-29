@@ -5,6 +5,7 @@ import {
   type SettingsTab,
   type ToolEffectKind,
 } from "@threa/types"
+import { Clock, FileText, PenLine, SlidersHorizontal, Sparkles, TerminalSquare, type LucideIcon } from "lucide-react"
 import { buildDelegationPath } from "@/lib/stream-links"
 
 /** How a label-less effect names itself. The backend sends no display text (INV-46). */
@@ -19,6 +20,24 @@ const EFFECT_KIND_NOUNS = {
 
 export function kindNoun(kind: ToolEffectKind): string {
   return EFFECT_KIND_NOUNS[kind] ?? EFFECT_KIND_NOUNS.other
+}
+
+/**
+ * The glyph that tells one kind of write from another at a glance. Without it
+ * every row reads as the same sort of thing, which is most of what makes a
+ * dense list scannable rather than a wall of grey text.
+ */
+const EFFECT_KIND_ICONS = {
+  settings: SlidersHorizontal,
+  delegation: TerminalSquare,
+  memo: Sparkles,
+  follow_up: Clock,
+  brief: FileText,
+  other: PenLine,
+} as const satisfies Record<ToolEffectKind, LucideIcon>
+
+export function kindIcon(kind: ToolEffectKind): LucideIcon {
+  return EFFECT_KIND_ICONS[kind] ?? EFFECT_KIND_ICONS.other
 }
 
 export function effectLabel(effect: AgentToolEffect): string {

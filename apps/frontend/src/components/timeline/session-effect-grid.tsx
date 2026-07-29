@@ -1,7 +1,7 @@
 import { Link, useParams } from "react-router-dom"
 import type { AgentToolEffect } from "@threa/types"
 import { useOptionalSettings } from "@/contexts"
-import { effectDiff, effectLabel, resolveEffectPath } from "@/lib/effect-links"
+import { effectDiff, effectLabel, kindIcon, resolveEffectPath } from "@/lib/effect-links"
 import { cn } from "@/lib/utils"
 
 /**
@@ -71,8 +71,10 @@ function EffectLine({ effect, path, className }: { effect: AgentToolEffect; path
 
 function EffectLineBody({ effect, hasRoute }: { effect: AgentToolEffect; hasRoute: boolean }) {
   const diff = effectDiff(effect)
+  const Icon = kindIcon(effect.kind)
   return (
     <>
+      <Icon aria-hidden className="h-3 w-3 shrink-0 opacity-70" />
       <span className="min-w-0 truncate">{effectLabel(effect)}</span>
       {diff && (
         <span className="min-w-0 shrink truncate text-muted-foreground/70">

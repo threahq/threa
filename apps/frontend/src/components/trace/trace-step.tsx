@@ -38,7 +38,7 @@ import { buildContextRefSourceHref } from "@/lib/context-bag/source-link"
 import { stripMarkdownToInline } from "@/lib/markdown/strip"
 import { useDecryptedStepContent } from "@/hooks/use-decrypted-step-content"
 import { useOptionalSettings } from "@/contexts"
-import { effectDiff, effectLabel, resolveEffectPath } from "@/lib/effect-links"
+import { effectDiff, effectLabel, kindIcon, resolveEffectPath } from "@/lib/effect-links"
 import { RedirectSessionButton, StopSessionButton } from "./session-action-buttons"
 
 interface TraceStepProps {
@@ -269,8 +269,10 @@ function StepEffectList({ effects, workspaceId }: { effects: AgentToolEffect[]; 
 
 function StepEffectBody({ effect }: { effect: AgentToolEffect }) {
   const diff = effectDiff(effect)
+  const Icon = kindIcon(effect.kind)
   return (
     <>
+      <Icon aria-hidden className="h-3 w-3 shrink-0 opacity-70" />
       <span className="min-w-0 truncate">{effectLabel(effect)}</span>
       {diff && (
         <span className="min-w-0 shrink truncate text-muted-foreground/70">
