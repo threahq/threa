@@ -1,7 +1,8 @@
+import { useEffect } from "react"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { act, render, screen, waitFor, fireEvent } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
-import { MemoryRouter } from "react-router-dom"
+import { MemoryRouter, useNavigate } from "react-router-dom"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import type { BoardPost, BoardPostMessage, ConversationWithStaleness } from "@threa/types"
 import { ConversationPanel } from "./conversation-panel"
@@ -26,6 +27,11 @@ import * as boardReplyComposerModule from "@/components/board/board-reply-compos
 import * as queueDraftModule from "@/hooks/use-queue-draft-message"
 import * as stashedDraftsModule from "@/hooks/use-stashed-drafts"
 import { boardReplyDraftKey } from "@/lib/board/draft-keys"
+import {
+  FLOATING_COMPOSER_HEIGHT_VAR,
+  useFloatingComposerAnchor,
+  useFloatingComposerHeight,
+} from "@/components/composer"
 import {
   requestConversationReplyOpen,
   resetConversationReplyOpenStoreCache,
@@ -91,32 +97,89 @@ function asCached(post: BoardPost): BoardViewPost {
   return { ...post, id: post.conversation.id, workspaceId: WORKSPACE_ID, _lastActivityMs: 0, _cachedAt: 0 }
 }
 
+/**
+ * jsdom has no layout: give every element a scrollable box and a real scrollTop
+ * so the panel's scroll wiring (which reads/writes exactly those three) is
+ * observable. Restored per test.
+ */
+function installScrollMetrics({ scrollHeight = 1000, clientHeight = 300 } = {}) {
+  const tops = new WeakMap<HTMLElement, number>()
+  const descriptors = {
+    scrollHeight: Object.getOwnPropertyDescriptor(HTMLElement.prototype, "scrollHeight"),
+    clientHeight: Object.getOwnPropertyDescriptor(HTMLElement.prototype, "clientHeight"),
+    scrollTop: Object.getOwnPropertyDescriptor(HTMLElement.prototype, "scrollTop"),
+  }
+  Object.defineProperty(HTMLElement.prototype, "scrollHeight", { configurable: true, get: () => scrollHeight })
+  Object.defineProperty(HTMLElement.prototype, "clientHeight", { configurable: true, get: () => clientHeight })
+  Object.defineProperty(HTMLElement.prototype, "scrollTop", {
+    configurable: true,
+    get(this: HTMLElement) {
+      return tops.get(this) ?? 0
+    },
+    set(this: HTMLElement, value: number) {
+      tops.set(this, value)
+    },
+  })
+  return () => {
+    for (const [name, descriptor] of Object.entries(descriptors)) {
+      if (descriptor) Object.defineProperty(HTMLElement.prototype, name, descriptor)
+      else delete (HTMLElement.prototype as unknown as Record<string, unknown>)[name]
+    }
+  }
+}
+
+function scroller(): HTMLElement {
+  const el = document.querySelector<HTMLElement>(".overflow-y-auto")
+  if (!el) throw new Error("panel scroller not found")
+  return el
+}
+
 function mountPanel(opts: {
   cached?: BoardViewPost | null
+  /** Per-conversation store rows, for a switch between two open conversations. */
+  cachedById?: Record<string, BoardViewPost>
   getBoardPost?: () => Promise<BoardPost>
   getBoardMessages?: () => Promise<BoardPostMessage[]>
   /** `?m=` deep-link target appended to the panel URL. */
   highlightMessageId?: string
   /** `?stash=` drafts-explorer restore param appended to the panel URL. */
   stashParam?: string
+  /** Conversation the panel opens on (defaults to the shared fixture id). */
+  conversationId?: string
 }) {
   const getBoardPost = vi.fn(opts.getBoardPost ?? (async () => makePost()))
   const getBoardMessages = vi.fn(
     opts.getBoardMessages ?? (async () => [makeMessage({ id: "msg_2", contentMarkdown: "Reply two body." })])
   )
-  vi.spyOn(boardStoreModule, "useBoardPost").mockReturnValue(opts.cached as never)
+  if (opts.cachedById) {
+    const byId = opts.cachedById
+    vi.spyOn(boardStoreModule, "useBoardPost").mockImplementation(((id: string | null) =>
+      id ? (byId[id] ?? null) : null) as never)
+  } else {
+    vi.spyOn(boardStoreModule, "useBoardPost").mockReturnValue(opts.cached as never)
+  }
 
   const mParam =
     (opts.highlightMessageId ? `&m=${opts.highlightMessageId}` : "") +
     (opts.stashParam ? `&stash=${opts.stashParam}` : "")
+  const startId = opts.conversationId ?? CONVERSATION_ID
+  // Captures the router's navigate so a test can switch the panel to another
+  // conversation in place (initialEntries only apply at mount).
+  const nav: { openConversation: (id: string) => void } = { openConversation: () => {} }
+  function Navigator() {
+    const navigate = useNavigate()
+    nav.openConversation = (id) => navigate(`/w/${WORKSPACE_ID}/board?panel=conv:${id}`)
+    return null
+  }
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   render(
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>
         <ServicesProvider services={{ conversations: { getBoardPost, getBoardMessages } as never }}>
           <SidebarProvider>
-            <MemoryRouter initialEntries={[`/w/${WORKSPACE_ID}/board?panel=conv:${CONVERSATION_ID}${mParam}`]}>
+            <MemoryRouter initialEntries={[`/w/${WORKSPACE_ID}/board?panel=conv:${startId}${mParam}`]}>
               <PanelProvider>
+                <Navigator />
                 <ConversationPanel workspaceId={WORKSPACE_ID} onClose={vi.fn()} />
               </PanelProvider>
             </MemoryRouter>
@@ -125,7 +188,7 @@ function mountPanel(opts: {
       </TooltipProvider>
     </QueryClientProvider>
   )
-  return { getBoardPost, getBoardMessages }
+  return { getBoardPost, getBoardMessages, nav }
 }
 
 beforeEach(() => {
@@ -173,6 +236,12 @@ afterEach(() => {
 })
 
 describe("ConversationPanel", () => {
+  let restoreRect: (() => void) | null = null
+  afterEach(() => {
+    restoreRect?.()
+    restoreRect = null
+  })
+
   it("renders the conversation from the reactive store row without a by-id fetch", async () => {
     const { getBoardPost } = mountPanel({ cached: asCached(makePost()) })
     expect(await screen.findByText("Opening message body.")).toBeTruthy()
@@ -474,6 +543,151 @@ describe("ConversationPanel", () => {
       rootStreamId: "stream_1",
       sourceMessageId: "msg_1",
     })
+  })
+
+  it("opens at the tail of the conversation", async () => {
+    const restore = installScrollMetrics()
+    try {
+      mountPanel({ cached: asCached(makePost()) })
+      await screen.findByText("Reply two body.")
+      await waitFor(() => expect(scroller().scrollTop).toBe(1000))
+    } finally {
+      restore()
+    }
+  })
+
+  it("re-anchors to the tail when the panel switches to another conversation", async () => {
+    const restore = installScrollMetrics()
+    try {
+      const second = makePost()
+      second.conversation = { ...second.conversation, id: "conv_2" }
+      second.openingMessage = makeMessage({ id: "msg_9", contentMarkdown: "Second conversation opener." })
+      second.recentMessages = []
+      second.totalReplies = 0
+      const { nav } = mountPanel({
+        cachedById: { [CONVERSATION_ID]: asCached(makePost()), conv_2: asCached(second) },
+      })
+      await screen.findByText("Reply two body.")
+
+      // Park the user mid-list, then switch conversations: without resetKey the
+      // new conversation would inherit this scroll state and open mid-list.
+      // The wait outlasts the hook's 150ms post-programmatic-scroll grace, in
+      // which a scroll event does not clear the follow flag.
+      const el = scroller()
+      await new Promise((r) => setTimeout(r, 200))
+      el.scrollTop = 0
+      act(() => fireEvent.scroll(el))
+
+      act(() => nav.openConversation("conv_2"))
+      await screen.findByText("Second conversation opener.")
+      await waitFor(() => expect(scroller().scrollTop).toBe(1000))
+    } finally {
+      restore()
+    }
+  })
+
+  it("keeps the deep-linked row when the backfill lands", async () => {
+    const restore = installScrollMetrics()
+    try {
+      const post = makePost()
+      // Rail is short of the server's count → the panel backfills, growing the
+      // row list after first paint.
+      post.totalReplies = 3
+      mountPanel({
+        cached: asCached(post),
+        highlightMessageId: "msg_2",
+        getBoardMessages: async () => [
+          makeMessage({ id: "msg_2", contentMarkdown: "Reply two body." }),
+          makeMessage({ id: "msg_3", contentMarkdown: "Backfilled reply three." }),
+          makeMessage({ id: "msg_4", contentMarkdown: "Backfilled reply four." }),
+        ],
+      })
+      await screen.findByText("Backfilled reply four.")
+
+      expect(scroller().scrollTop).toBe(0)
+    } finally {
+      restore()
+    }
+  })
+
+  it("renders the reply composer in the shared floating shell, not a bordered footer", async () => {
+    vi.spyOn(boardReplyComposerModule, "BoardReplyComposer").mockImplementation(() => (
+      <div data-testid="docked-composer" />
+    ))
+    mountPanel({ cached: asCached(makePost()) })
+    await screen.findByText("Opening message body.")
+
+    const composer = screen.getByTestId("docked-composer")
+    expect(composer.closest(".absolute.inset-x-0.bottom-0")).toBeTruthy()
+    expect(composer.closest(".border-t")).toBeNull()
+  })
+
+  it("hides the root pill and keeps a non-zero bottom reservation while a branch composer holds the anchor", async () => {
+    // The stub stands in for a branch composer that claims the floating slot and
+    // publishes its own height through the shared hook — the hand-off R2 is about.
+    const originalRect = HTMLElement.prototype.getBoundingClientRect
+    HTMLElement.prototype.getBoundingClientRect = () => ({ height: 64 }) as DOMRect
+    restoreRect = () => {
+      HTMLElement.prototype.getBoundingClientRect = originalRect
+    }
+    function BranchClaimant() {
+      const anchor = useFloatingComposerAnchor()
+      const anchorEl = anchor?.el ?? null
+      const claim = anchor?.claim
+      useEffect(() => {
+        claim?.("branch")
+      }, [claim])
+      const shellRef = useFloatingComposerHeight({
+        anchorEl,
+        ownerId: "branch",
+        active: anchor?.claimantId === "branch",
+      })
+      return <div ref={shellRef} data-testid="branch-pill" />
+    }
+    vi.spyOn(boardReplyComposerModule, "BoardReplyComposer").mockImplementation(() => <BranchClaimant />)
+
+    mountPanel({ cached: asCached(makePost()) })
+    const pill = await screen.findByTestId("branch-pill")
+
+    await waitFor(() => {
+      const anchorEl = document.querySelector<HTMLElement>("[data-floating-composer-owner]")
+      expect(anchorEl?.style.getPropertyValue(FLOATING_COMPOSER_HEIGHT_VAR)).toBe("64px")
+    })
+    // The root pill is display:none while the branch owns the slot.
+    expect(pill.closest("div.hidden")).toBeTruthy()
+  })
+
+  it("shows Jump to latest only when scrolled far from the bottom, and returns to the tail on click", async () => {
+    const restore = installScrollMetrics()
+    try {
+      const user = userEvent.setup()
+      // Enough rows that 10 rows' worth of scroll is inside the 1000px box —
+      // the button's threshold is item-count relative.
+      const post = makePost()
+      post.recentMessages = Array.from({ length: 40 }, (_, i) =>
+        makeMessage({ id: `msg_${i + 2}`, contentMarkdown: `Reply ${i + 2} body.` })
+      )
+      post.conversation = { ...post.conversation, messageIds: ["msg_1", ...post.recentMessages.map((m) => m.id)] }
+      post.totalReplies = post.recentMessages.length
+      mountPanel({ cached: asCached(post), getBoardMessages: async () => post.recentMessages })
+      await screen.findByText(`Reply ${post.recentMessages.length + 1} body.`)
+      expect(screen.queryByRole("button", { name: "Jump to latest" })).toBeNull()
+
+      // The browser emits a scroll event once the opening bottom-pin settles;
+      // jsdom does not, and that event is what releases the force-scroll guard.
+      const el = scroller()
+      act(() => fireEvent.scroll(el))
+      el.scrollTop = 0
+      act(() => fireEvent.scroll(el))
+
+      const jump = await screen.findByRole("button", { name: "Jump to latest" })
+      await user.click(jump)
+
+      expect(el.scrollTop).toBe(1000)
+      await waitFor(() => expect(screen.queryByRole("button", { name: "Jump to latest" })).toBeNull())
+    } finally {
+      restore()
+    }
   })
 
   it("shows an (edited) indicator and a See revisions action on an edited row", async () => {

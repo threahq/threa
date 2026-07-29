@@ -26,6 +26,13 @@ interface UseScrollBehaviorOptions {
   triggerItemCount?: number
   /** When this key changes, all scroll state resets (e.g. streamId). */
   resetKey?: string
+  /**
+   * Start (and re-start on every `resetKey` change) with auto-scroll off, so
+   * neither the initial scroll nor an append steals the viewport — for surfaces
+   * opened on a specific row (a `?m=` deep link) whose own scroll must win.
+   * A forced `scrollToBottom` still works.
+   */
+  skipInitialScroll?: boolean
 }
 
 interface UseScrollBehaviorReturn {
@@ -61,6 +68,7 @@ export function useScrollBehavior({
   bottomThreshold = 100,
   triggerItemCount = Math.floor(EVENT_PAGE_SIZE * SCROLL_FETCH_RATIO),
   resetKey,
+  skipInitialScroll = false,
 }: UseScrollBehaviorOptions): UseScrollBehaviorReturn {
   const scrollContainerRef = useRef<HTMLDivElement>(null)
   const shouldAutoScroll = useRef(true)
@@ -81,13 +89,18 @@ export function useScrollBehavior({
   // from falsely clearing shouldAutoScroll when content grows rapidly (the native
   // scroll event fires before the new scrollTop settles).
   const lastProgrammaticScrollAt = useRef(0)
+  // Read through a ref so the reset below keys on `resetKey` alone: the option is
+  // derived from live URL state (`?m=`), which other surfaces strip while the
+  // panel is open — a dep on it would re-reset scroll mid-conversation.
+  const skipInitialScrollRef = useRef(skipInitialScroll)
+  skipInitialScrollRef.current = skipInitialScroll
 
   // Reset all scroll state when the content source changes (e.g. stream switch).
   // Must be useLayoutEffect (not useEffect) so the reset runs synchronously
   // BEFORE the scroll-adjustment useLayoutEffect below — otherwise the scroll
   // logic reads stale prevItemCount from the old stream.
   useLayoutEffect(() => {
-    shouldAutoScroll.current = true
+    shouldAutoScroll.current = !skipInitialScrollRef.current
     prevItemCount.current = 0
     prevScrollHeight.current = 0
     prevIsFetchingOlder.current = false
@@ -160,7 +173,10 @@ export function useScrollBehavior({
         scrollToBottom()
       }
     }
-  }, [isLoading, itemCount, scrollToBottom, isFetchingOlder])
+    // `resetKey` is a dep so a conversation switch re-anchors even when the new
+    // content has the same itemCount: the reset effect above just set
+    // prevItemCount to 0, and only a run of this effect consumes that.
+  }, [isLoading, itemCount, scrollToBottom, isFetchingOlder, resetKey])
 
   // Capture previous-render values AFTER the adjustment effect has read them.
   // No dep array → runs every render, defined after adjustment so it runs second.

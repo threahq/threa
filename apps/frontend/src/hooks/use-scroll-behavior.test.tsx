@@ -28,7 +28,7 @@ function makeScrollableDiv(initial: { scrollHeight: number; clientHeight: number
   const el = document.createElement("div")
   let scrollTop = initial.scrollTop ?? 0
   let clientHeight = initial.clientHeight
-  const scrollHeight = initial.scrollHeight
+  let scrollHeight = initial.scrollHeight
   Object.defineProperty(el, "scrollHeight", { configurable: true, get: () => scrollHeight })
   Object.defineProperty(el, "clientHeight", {
     configurable: true,
@@ -48,6 +48,9 @@ function makeScrollableDiv(initial: { scrollHeight: number; clientHeight: number
     },
     setClientHeight: (h: number) => {
       clientHeight = h
+    },
+    setScrollHeight: (h: number) => {
+      scrollHeight = h
     },
   }
 }
@@ -159,6 +162,86 @@ describe("useScrollBehavior", () => {
     } finally {
       restore()
     }
+  })
+
+  it("skipInitialScroll leaves the list at the top on first content", () => {
+    const scrollable = makeScrollableDiv({ scrollHeight: 5000, clientHeight: 800 })
+    const options = { isLoading: false, itemCount: 0, skipInitialScroll: true }
+    const ref: { current: HookApi | undefined } = { current: undefined }
+    function Probe({ itemCount }: { itemCount: number }) {
+      const api = useScrollBehavior({ ...options, itemCount })
+      api.scrollContainerRef.current = scrollable.el
+      ref.current = api
+      return null
+    }
+    const { rerender } = render(<Probe itemCount={0} />)
+    rerender(<Probe itemCount={5} />)
+
+    expect(scrollable.scrollTop).toBe(0)
+  })
+
+  it("skipInitialScroll does not disable a later forced scrollToBottom", () => {
+    const scrollable = makeScrollableDiv({ scrollHeight: 5000, clientHeight: 800 })
+    const apiRef = renderHookWithElement({ isLoading: false, itemCount: 5, skipInitialScroll: true }, scrollable.el)
+    expect(scrollable.scrollTop).toBe(0)
+
+    act(() => apiRef.current.scrollToBottom({ force: true }))
+    expect(scrollable.scrollTop).toBe(5000)
+  })
+
+  it("scrolls to the bottom on first content when the option is omitted (thread path)", () => {
+    const scrollable = makeScrollableDiv({ scrollHeight: 5000, clientHeight: 800 })
+    const ref: { current: HookApi | undefined } = { current: undefined }
+    function Probe({ itemCount }: { itemCount: number }) {
+      const api = useScrollBehavior({ isLoading: false, itemCount })
+      api.scrollContainerRef.current = scrollable.el
+      ref.current = api
+      return null
+    }
+    const { rerender } = render(<Probe itemCount={0} />)
+    rerender(<Probe itemCount={5} />)
+
+    expect(scrollable.scrollTop).toBe(5000)
+  })
+
+  it("re-anchors to the bottom when resetKey changes with an unchanged itemCount", () => {
+    const scrollable = makeScrollableDiv({ scrollHeight: 4000, clientHeight: 800 })
+    const ref: { current: HookApi | undefined } = { current: undefined }
+    function Probe({ resetKey, itemCount }: { resetKey: string; itemCount: number }) {
+      const api = useScrollBehavior({ isLoading: false, itemCount, resetKey })
+      api.scrollContainerRef.current = scrollable.el
+      ref.current = api
+      return null
+    }
+    const { rerender } = render(<Probe resetKey="conv_a" itemCount={0} />)
+    rerender(<Probe resetKey="conv_a" itemCount={12} />)
+    expect(scrollable.scrollTop).toBe(4000)
+
+    // Conversation B is taller but happens to have the same row count.
+    scrollable.setScrollHeight(9000)
+    rerender(<Probe resetKey="conv_b" itemCount={12} />)
+
+    expect(scrollable.scrollTop).toBe(9000)
+  })
+
+  it("flipping skipInitialScroll true→false does not reset scroll state", () => {
+    const scrollable = makeScrollableDiv({ scrollHeight: 5000, clientHeight: 800 })
+    const ref: { current: HookApi | undefined } = { current: undefined }
+    function Probe({ skipInitialScroll, itemCount }: { skipInitialScroll: boolean; itemCount: number }) {
+      const api = useScrollBehavior({ isLoading: false, itemCount, resetKey: "conv_a", skipInitialScroll })
+      api.scrollContainerRef.current = scrollable.el
+      ref.current = api
+      return null
+    }
+    const { rerender } = render(<Probe skipInitialScroll itemCount={5} />)
+    scrollable.el.scrollTop = 1000
+
+    // `?m=` is stripped from the URL 3s after a deep link lands; the panel is
+    // still parked on the deep-linked row and must stay there.
+    rerender(<Probe skipInitialScroll={false} itemCount={5} />)
+    rerender(<Probe skipInitialScroll={false} itemCount={6} />)
+
+    expect(scrollable.scrollTop).toBe(1000)
   })
 
   it("anchors to the bottom on resize when shouldAutoScroll is true", () => {
