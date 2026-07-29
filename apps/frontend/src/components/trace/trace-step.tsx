@@ -273,9 +273,13 @@ function StepEffectBody({ effect }: { effect: AgentToolEffect }) {
   return (
     <>
       <Icon aria-hidden className="h-3 w-3 shrink-0 opacity-70" />
-      <span className="min-w-0 truncate">{effectLabel(effect)}</span>
+      {/* The label names the row, so it does not give up width to the diff:
+          a proportional shrink still clipped "Setting" to "Setti…" at phone
+          width, because a few pixels is all it takes. It is capped instead, so
+          a short label never truncates and a long one still does. */}
+      <span className="max-w-[55%] shrink-0 truncate">{effectLabel(effect)}</span>
       {diff && (
-        <span className="min-w-0 shrink truncate text-muted-foreground/70">
+        <span className="min-w-0 truncate text-muted-foreground/70">
           {diff.before} → {diff.after}
         </span>
       )}
