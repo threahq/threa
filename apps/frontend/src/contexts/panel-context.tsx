@@ -1,5 +1,5 @@
 import { createContext, useContext, useCallback, useEffect, useMemo, useRef, type ReactNode } from "react"
-import { useSearchParams, useLocation, useNavigate } from "react-router-dom"
+import { useSearchParams, useLocation, useNavigate, useNavigationType } from "react-router-dom"
 
 /** Which pane the user most recently interacted with — drives "copy current link" (mod+L). */
 export type FocusedPane = "main" | "panel"
@@ -90,6 +90,7 @@ export function PanelProvider({ children }: PanelProviderProps) {
   const [searchParams, setSearchParams] = useSearchParams()
   const location = useLocation()
   const navigate = useNavigate()
+  const navigationType = useNavigationType()
 
   // Parse panel ID from URL - single panel only
   const panelId = useMemo(() => {
@@ -107,36 +108,52 @@ export function PanelProvider({ children }: PanelProviderProps) {
     [searchParams, location.pathname]
   )
 
-  // The panel id riding a history entry this provider pushed. Closing that panel
-  // pops the entry instead of stacking a second one, so the platform back gesture
-  // and the panel's own close button land in the same place at the same depth.
-  // Null for a deep link or a reload — those entries aren't ours to pop.
-  const pushedPanelIdRef = useRef<string | null>(null)
-
   // Opening a panel PUSHES: on mobile it takes over the whole screen, so back has
   // to close it rather than leave the page. `<Link to={getPanelUrl(...)}>` (branch
   // rows, thread anchors) already pushed; this makes the imperative path match.
   const openPanel = useCallback(
     (streamId: string, options?: OpenPanelOptions) => {
-      const replace = options?.replace ?? false
-      // A replace keeps whichever entry is current, so it stays ours only if it
-      // already was.
-      if (!replace || pushedPanelIdRef.current !== null) pushedPanelIdRef.current = streamId
       setSearchParams(
         (prev) => {
           const next = new URLSearchParams(prev)
           next.set("panel", streamId)
           return next
         },
-        { replace }
+        { replace: options?.replace ?? false }
       )
     },
     [setSearchParams]
   )
 
+  // True when the history entry underneath the current one is THIS view without a
+  // panel — the only case where closing may pop rather than rewrite the URL.
+  //
+  // Derived from the navigation that produced the current entry rather than
+  // recorded by `openPanel`, because most panels open through
+  // `<Link to={getPanelUrl(...)}>` (INV-40) and never call it. Popping a deep link
+  // or a reload would navigate the user off the page — possibly out of the app —
+  // so anything but a same-view PUSH closes by rewriting the URL instead.
+  const canPopToClose = useRef(false)
+  const viewRef = useRef<string | null>(null)
+  const locationKeyRef = useRef<string | null>(null)
+  useEffect(() => {
+    if (location.key === locationKeyRef.current) return
+    locationKeyRef.current = location.key
+    const params = new URLSearchParams(location.search)
+    params.delete("panel")
+    const previousView = viewRef.current
+    // Panel-agnostic, so switching panels in place still counts as the same view:
+    // closing then behaves like back, which is what the affordance reads as.
+    const view = `${location.pathname}?${params.toString()}`
+    viewRef.current = view
+    if (panelId === null) canPopToClose.current = false
+    // A replace leaves the entry below untouched, so the claim carries over.
+    else if (navigationType !== "REPLACE") canPopToClose.current = navigationType === "PUSH" && previousView === view
+  }, [location.key, location.pathname, location.search, navigationType, panelId])
+
   const closePanel = useCallback(() => {
-    if (pushedPanelIdRef.current !== null && pushedPanelIdRef.current === panelId) {
-      pushedPanelIdRef.current = null
+    if (canPopToClose.current) {
+      canPopToClose.current = false
       navigate(-1)
       return
     }
@@ -148,7 +165,7 @@ export function PanelProvider({ children }: PanelProviderProps) {
       },
       { replace: true }
     )
-  }, [navigate, panelId, setSearchParams])
+  }, [navigate, setSearchParams])
 
   // Tracked via a ref, not state: only the copy-link shortcut reads it (on
   // keypress), so updating it on every click/focus must not re-render panel
@@ -160,13 +177,9 @@ export function PanelProvider({ children }: PanelProviderProps) {
   }, [])
   const getFocusedPane = useCallback(() => focusedPaneRef.current, [])
 
-  // When the panel closes, focus belongs to the main pane again — and whichever
-  // route closed it (back gesture included) retires our pushed-entry claim.
+  // When the panel closes, focus belongs to the main pane again.
   useEffect(() => {
-    if (panelId === null) {
-      focusedPaneRef.current = "main"
-      pushedPanelIdRef.current = null
-    }
+    if (panelId === null) focusedPaneRef.current = "main"
   }, [panelId])
 
   const value = useMemo<PanelContextValue>(

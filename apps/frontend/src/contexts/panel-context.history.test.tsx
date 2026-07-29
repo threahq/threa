@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest"
 import { render, screen, act } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
-import { createMemoryRouter, RouterProvider, useLocation } from "react-router-dom"
+import { createMemoryRouter, Link, RouterProvider, useLocation } from "react-router-dom"
 import { PanelProvider, usePanel } from "./panel-context"
 
 /**
@@ -12,13 +12,15 @@ import { PanelProvider, usePanel } from "./panel-context"
  */
 
 function Probe() {
-  const { openPanel, closePanel } = usePanel()
+  const { openPanel, closePanel, getPanelUrl } = usePanel()
   const location = useLocation()
   return (
     <div>
       <span data-testid="loc">{`${location.pathname}${location.search}`}</span>
       <button onClick={() => openPanel("conv:a")}>open a</button>
       <button onClick={() => openPanel("conv:b", { replace: true })}>supersede with b</button>
+      {/* How most panels actually open — branch rows, thread anchors (INV-40). */}
+      <Link to={getPanelUrl("conv:c")}>link to c</Link>
       <button onClick={closePanel}>close</button>
     </div>
   )
@@ -99,6 +101,21 @@ describe("panel history", () => {
     // A promoted draft's old id no longer resolves — back must reach the board.
     await back()
     expect(loc()).toBe(BOARD)
+  })
+
+  it("pops a panel opened by a <Link>, which never calls openPanel at all", async () => {
+    const user = userEvent.setup()
+    const { back, loc } = mount([STREAM, BOARD])
+
+    await user.click(screen.getByRole("link", { name: "link to c" }))
+    expect(loc()).toBe("/board?lens=all&panel=conv%3Ac")
+
+    await user.click(screen.getByRole("button", { name: "close" }))
+    expect(loc()).toBe(BOARD)
+    // One press reaches the stream: closing consumed the Link's entry instead of
+    // overwriting it and stranding a board entry that reads as a dead back press.
+    await back()
+    expect(loc()).toBe(STREAM)
   })
 
   it("closes a superseding panel by popping — the replaced entry was still ours", async () => {
