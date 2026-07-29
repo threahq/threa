@@ -17,6 +17,8 @@ import * as syncEngineModule from "@/sync/sync-engine"
 import * as userProfileModule from "@/components/user-profile"
 import * as contextsModule from "@/contexts"
 import * as queueDraftModule from "@/hooks/use-queue-draft-message"
+import * as pointerModule from "@/hooks/use-pointer"
+import * as panelHostModule from "@/components/layout/panel-host"
 
 const WORKSPACE_ID = "ws_1"
 
@@ -443,5 +445,24 @@ describe("BoardPage", () => {
 
     // The DM peer's name is the header locator (where the post lives).
     expect(await screen.findByText("Pierre")).toBeTruthy()
+  })
+
+  it("keeps the board column mounted, hidden and inert behind a fullscreen mobile panel", async () => {
+    vi.spyOn(pointerModule, "useIsMobileOrCoarse").mockReturnValue(true)
+    // The panel's own content is covered by its own suites and needs providers
+    // this harness doesn't mount; what's under test here is what happens to the
+    // board column beside it.
+    vi.spyOn(panelHostModule, "PanelHost").mockImplementation(() => createElement("div", null, "panel content"))
+    mountBoard([makePost({}, { contentMarkdown: "Rotate the tokens before Friday." })], {
+      entry: `/w/${WORKSPACE_ID}/board?lens=all&panel=stream_panel`,
+    })
+
+    expect(await screen.findByText("panel content")).toBeTruthy()
+    // Unmounting the column destroys the scroller's box along with its offset, so
+    // closing the panel would re-enter the virtualized feed at the top.
+    const body = await screen.findByText("Rotate the tokens before Friday.")
+    const hidden = body.closest("[inert]")
+    expect(hidden).not.toBeNull()
+    expect(hidden?.className).toContain("invisible")
   })
 })

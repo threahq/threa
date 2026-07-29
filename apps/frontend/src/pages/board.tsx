@@ -431,11 +431,9 @@ function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: Boar
   // virtua must know how much space it occupies (`startMargin`) or its item
   // offsets are off by the composer's height. Measured live — the composer grows
   // when opened/typed — via a ResizeObserver on its wrapper. A callback ref into
-  // state (not a plain ref + mount-once effect) re-attaches the observer when the
-  // wrapper node changes: on mobile, opening a conversation panel unmounts the
-  // whole board column and closing it mounts a fresh composer node, and a
-  // mount-once effect would leave the observer bound to the dead node — freezing
-  // `startMargin` so virtua's offsets drift once the new composer resizes.
+  // state (not a plain ref + mount-once effect) re-attaches the observer whenever
+  // the wrapper node changes, so a remount can't leave it bound to a dead node —
+  // which would freeze `startMargin` and drift virtua's offsets.
   const [composerEl, setComposerEl] = useState<HTMLDivElement | null>(null)
   const [startMargin, setStartMargin] = useState(0)
   useLayoutEffect(() => {
@@ -788,34 +786,44 @@ function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: Boar
   )
 
   // Mobile: an open conversation panel takes over the full screen (mirrors the
-  // stream page), so the narrow board feed isn't crushed beside it.
-  if (isMobile && isPanelOpen) {
-    return (
-      <div className="flex h-full flex-col">
-        <PanelHost workspaceId={workspaceId} onClose={closePanel} />
-      </div>
-    )
-  }
+  // stream page), so the narrow board feed isn't crushed beside it. The column
+  // stays MOUNTED behind it — `invisible` keeps the scroller's box and its offset
+  // alive, so closing the panel lands exactly where the viewer left the feed.
+  // Unmounting it (or `display: none`) destroys the box, and the virtualized feed
+  // re-enters at the top. One return, not a second branch: the column has to keep
+  // its position in the tree or React remounts it and the offset is gone anyway.
+  const mobileTakeover = isMobile && isPanelOpen
 
   return (
-    <div ref={containerRef} className="flex h-full">
-      <div className="min-w-0 flex-1 overflow-hidden">{boardColumn}</div>
-      <ThreadPanelSlot
-        displayWidth={displayWidth}
-        panelWidth={panelWidth}
-        shouldAnimate={shouldAnimate}
-        showContent={showContent}
-        isResizing={isResizing}
-        maxWidth={maxWidth}
-        minWidth={minWidth}
-        onTransitionEnd={handleTransitionEnd}
-        onResizeStart={handleResizeStart}
-        onResizeMove={handleResizeMove}
-        onResizeEnd={handleResizeEnd}
-        onResizeKeyDown={handleResizeKeyDown}
+    <div ref={containerRef} className={cn("h-full", mobileTakeover ? "relative" : "flex")}>
+      <div
+        className={cn("min-w-0 overflow-hidden", mobileTakeover ? "invisible absolute inset-0" : "flex-1")}
+        inert={mobileTakeover || undefined}
       >
-        <PanelHost workspaceId={workspaceId} onClose={closePanel} />
-      </ThreadPanelSlot>
+        {boardColumn}
+      </div>
+      {mobileTakeover ? (
+        <div className="absolute inset-0 flex flex-col bg-background">
+          <PanelHost workspaceId={workspaceId} onClose={closePanel} />
+        </div>
+      ) : (
+        <ThreadPanelSlot
+          displayWidth={displayWidth}
+          panelWidth={panelWidth}
+          shouldAnimate={shouldAnimate}
+          showContent={showContent}
+          isResizing={isResizing}
+          maxWidth={maxWidth}
+          minWidth={minWidth}
+          onTransitionEnd={handleTransitionEnd}
+          onResizeStart={handleResizeStart}
+          onResizeMove={handleResizeMove}
+          onResizeEnd={handleResizeEnd}
+          onResizeKeyDown={handleResizeKeyDown}
+        >
+          <PanelHost workspaceId={workspaceId} onClose={closePanel} />
+        </ThreadPanelSlot>
+      )}
     </div>
   )
 }
