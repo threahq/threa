@@ -375,7 +375,6 @@
       "devDependencies": {
         "bun-types": "latest",
         "typescript": "^5",
-        "vitest": "^4.0.16",
       },
     },
     "packages/backend-common": {

@@ -152,6 +152,13 @@ jobs:
       - name: Run cli tests
         run: bun run --cwd packages/cli test
 
+      - name: Run shared package tests
+        run: |
+          bun run --cwd packages/types test
+          bun run --cwd packages/backend-common test
+          bun run --cwd packages/prosemirror test
+          bun run --cwd packages/agent-runtime test
+
   frontend-tests:
     name: Frontend Tests (${{ matrix.shard_index }}/${{ strategy.job-total }})
     runs-on: ubuntu-latest
