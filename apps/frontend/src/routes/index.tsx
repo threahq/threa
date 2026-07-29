@@ -129,6 +129,11 @@ export const router = createBrowserRouter([
             lazy: async () => ({ Component: (await import("@/pages/files")).FilesPage }),
           },
           {
+            path: "agenda",
+            HydrateFallback: FallbackLoader,
+            lazy: async () => ({ Component: (await import("@/pages/outcomes")).OutcomesPage }),
+          },
+          {
             path: "memos/:memoId",
             element: <LegacyMemoRedirect />,
           },
