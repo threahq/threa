@@ -68,6 +68,7 @@ export interface AdoptOptions {
   /** Take over even though a Claude process is still running in the cwd without a pane. */
   force?: boolean
   noYolo?: boolean
+  yolo?: boolean
 }
 
 export type AdoptStatus =
@@ -130,6 +131,7 @@ export interface AdoptDeps {
   persist: (agent: ManagedAgent) => void
   killWindow: (windowId: string) => void
   newId: () => string
+  warn: (message: string) => void
 }
 
 export function defaultAdoptDeps(): AdoptDeps {
@@ -154,6 +156,7 @@ export function defaultAdoptDeps(): AdoptDeps {
       output(["tmux", "kill-window", "-t", windowId], { allowFailure: true })
     },
     newId: () => `claude-${Date.now()}-${randomUUID().slice(0, 8)}`,
+    warn: (message) => console.warn(message),
   }
 }
 
@@ -342,20 +345,28 @@ export async function adoptClaudeSessionUnlocked(options: AdoptOptions, deps: Ad
 
   const scratchpadUrl = existing?.scratchpadUrl ?? `${baseUrl}/w/${workspaceId}/s/${options.rootStreamId}`
   const identity = { instanceId, runtimeSessionId: options.runtimeSessionId }
-  // Bypass follows the session being adopted, not harnessd's spawn default: the
-  // live pane's own launch first, then what the row recorded.
   const observed = paneSkipsPermissions(pane)
-  // Nothing to follow means nothing is known about how the original ran, and a
-  // takeover is not the place to assume it had its guardrails off.
-  const noYolo = options.noYolo ?? (observed !== undefined ? !observed : existing ? recordedNoYolo(existing) : true)
-  const command = adoptCommand(options, { name, cwd, noYolo })
+  const resolved = resolveAdoptBypass({ yolo: options.yolo, noYolo: options.noYolo, observed, existing })
+  // A live pane is adopted in place, never relaunched, so the mode that applies
+  // to it is the one it is already running under. Reporting or recording this
+  // invocation's resolution there would describe a restart that never happened.
+  const bypass: AdoptBypassDecision = pane && observed !== undefined ? { noYolo: !observed, source: "live launch" } : resolved
+  const noYolo = bypass.noYolo
+  if (pane && observed !== undefined && resolved.noYolo !== bypass.noYolo) {
+    deps.warn(
+      `harnessd: ${options.runtimeSessionId} is already running with bypass ${observed ? "enabled" : "disabled"}; ` +
+        `${resolved.source} does not change a session that is not being restarted — stop it and adopt again to apply.`
+    )
+  }
+  const command = adoptCommand(options, { name, cwd, bypass })
+  const bypassDetail = `bypass ${noYolo ? "disabled" : "enabled"} (${bypass.source})`
 
   if (pane) {
     const alreadyManaged = Boolean(existing) && existing?.tmuxPaneId === pane.paneId && existing?.status === "online"
     if (options.dryRun) {
       return {
         status: alreadyManaged ? "already managed" : "would adopt live",
-        detail: `${pane.sessionName}:${pane.windowName} (${pane.paneId}, pid ${pane.panePid})`,
+        detail: `${pane.sessionName}:${pane.windowName} (${pane.paneId}, pid ${pane.panePid}), ${bypassDetail}`,
       }
     }
     const preflight = await deps.preflight(
@@ -382,7 +393,7 @@ export async function adoptClaudeSessionUnlocked(options: AdoptOptions, deps: Ad
     })
     return {
       status: alreadyManaged ? "already managed" : "adopted live",
-      detail: `${pane.sessionName}:${pane.windowName} (${pane.paneId}, pid ${pane.panePid})`,
+      detail: `${pane.sessionName}:${pane.windowName} (${pane.paneId}, pid ${pane.panePid}), ${bypassDetail}`,
     }
   }
 
@@ -410,7 +421,7 @@ export async function adoptClaudeSessionUnlocked(options: AdoptOptions, deps: Ad
   // Dry-run stops before the preflight for the same reason `up --dry-run` does:
   // that POST registers the session server-side.
   if (options.dryRun) {
-    return { status: "would take over", detail: `${cwd} resuming ${transcript.sessionId}` }
+    return { status: "would take over", detail: `${cwd} resuming ${transcript.sessionId}, ${bypassDetail}` }
   }
 
   const preflight = await deps.preflight(
@@ -431,6 +442,15 @@ export async function adoptClaudeSessionUnlocked(options: AdoptOptions, deps: Ad
     command,
     createdAt: existing?.createdAt ?? now(),
     updatedAt: now(),
+  }
+
+  // Announced where it takes effect, and nowhere else: a refusal or a dry run
+  // that claimed a session had started degraded would be the same unfalsifiable
+  // report this announcement exists to replace.
+  if (bypass.source === "default" && noYolo) {
+    deps.warn(
+      `harnessd: could not observe how ${options.runtimeSessionId} was originally launched; starting it WITHOUT --dangerously-skip-permissions. Pass --yolo to state the opposite.`
+    )
   }
 
   let launched: TakeoverLaunch
@@ -484,8 +504,34 @@ export async function adoptClaudeSessionUnlocked(options: AdoptOptions, deps: Ad
   }
   return {
     status: "taken over",
-    detail: `${launched.tmuxSession}:${launched.tmuxWindow} resuming ${transcript.sessionId}, bypass ${noYolo ? "disabled" : "enabled"}`,
+    detail: `${launched.tmuxSession}:${launched.tmuxWindow} resuming ${transcript.sessionId}, ${bypassDetail}`,
   }
+}
+
+export type AdoptBypassSource = "--yolo" | "--no-yolo" | "live launch" | "inventory row" | "default"
+
+export interface AdoptBypassDecision {
+  noYolo: boolean
+  source: AdoptBypassSource
+}
+
+/**
+ * Bypass follows the session being adopted, not harnessd's spawn default: the
+ * operator's stated intent first, then the live pane's own launch, then what the
+ * row recorded. Nothing to follow means nothing is known about how the original
+ * ran, and a takeover is not the place to assume it had its guardrails off.
+ */
+export function resolveAdoptBypass(params: {
+  yolo?: boolean
+  noYolo?: boolean
+  observed?: boolean
+  existing?: ManagedAgent
+}): AdoptBypassDecision {
+  if (params.noYolo !== undefined) return { noYolo: params.noYolo, source: "--no-yolo" }
+  if (params.yolo) return { noYolo: false, source: "--yolo" }
+  if (params.observed !== undefined) return { noYolo: !params.observed, source: "live launch" }
+  if (params.existing) return { noYolo: recordedNoYolo(params.existing), source: "inventory row" }
+  return { noYolo: true, source: "default" }
 }
 
 function paneSkipsPermissions(pane: LocalTmuxPane | undefined): boolean | undefined {
@@ -493,7 +539,10 @@ function paneSkipsPermissions(pane: LocalTmuxPane | undefined): boolean | undefi
   return parseClaudeChannelLaunch(pane.startCommand)?.skipPermissions
 }
 
-function adoptCommand(options: AdoptOptions, resolved: { name: string; cwd: string; noYolo: boolean }): string[] {
+function adoptCommand(
+  options: AdoptOptions,
+  resolved: { name: string; cwd: string; bypass: AdoptBypassDecision }
+): string[] {
   const command = [
     "threa-harnessd",
     "adopt",
@@ -508,7 +557,11 @@ function adoptCommand(options: AdoptOptions, resolved: { name: string; cwd: stri
   // The pin is part of the target, not a preference: without it a re-run of the
   // recorded command adopts the newest transcript instead of the named one.
   if (options.claudeSessionId) command.push("--claude-session-id", options.claudeSessionId)
-  if (resolved.noYolo) command.push("--no-yolo")
+  if (resolved.bypass.noYolo) command.push("--no-yolo")
+  // Only a stated intent is recorded as one. Deriving this from `options.yolo`
+  // instead would emit both flags for a caller that passed both, and would
+  // launder an inference into a decision on a re-run.
+  else if (resolved.bypass.source === "--yolo") command.push("--yolo")
   return command
 }
 

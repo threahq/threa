@@ -84,10 +84,11 @@ interface Recorded {
   launches: unknown[]
   killed: string[]
   preflights: unknown[]
+  warnings: string[]
 }
 
 function deps(overrides: Partial<AdoptDeps> = {}): AdoptDeps & Recorded {
-  const recorded: Recorded = { persisted: [], launches: [], killed: [], preflights: [] }
+  const recorded: Recorded = { persisted: [], launches: [], killed: [], preflights: [], warnings: [] }
   return {
     ...recorded,
     claudeConfig: () => ({ baseUrl: "https://app.threa.io", workspaceId: "ws_one", apiKey: "key" }),
@@ -114,6 +115,7 @@ function deps(overrides: Partial<AdoptDeps> = {}): AdoptDeps & Recorded {
     persist: (record) => void recorded.persisted.push(record),
     killWindow: (windowId) => void recorded.killed.push(windowId),
     newId: () => "claude-new",
+    warn: (message) => void recorded.warnings.push(message),
     ...overrides,
   }
 }
@@ -127,7 +129,10 @@ describe("adoptClaudeSession live pane", () => {
     const dependencies = deps({ panes: () => [pane()] })
     const outcome = await adoptClaudeSessionUnlocked(options(), dependencies)
 
-    expect(outcome).toEqual({ status: "adopted live", detail: "1:claude-slopenv (%211, pid 34341)" })
+    expect(outcome).toEqual({
+      status: "adopted live",
+      detail: "1:claude-slopenv (%211, pid 34341), bypass enabled (live launch)",
+    })
     expect(dependencies.launches).toEqual([])
     expect(dependencies.persisted).toEqual([
       {
@@ -211,7 +216,7 @@ describe("adoptClaudeSession cold takeover", () => {
 
     expect(outcome).toEqual({
       status: "taken over",
-      detail: `1:slopenv resuming ${NATIVE}, bypass disabled`,
+      detail: `1:slopenv resuming ${NATIVE}, bypass disabled (default)`,
     })
     expect(dependencies.launches).toEqual([
       {
@@ -305,7 +310,10 @@ describe("adoptClaudeSession cold takeover", () => {
     const dependencies = deps()
     const outcome = await adoptClaudeSessionUnlocked(options({ dryRun: true }), dependencies)
 
-    expect(outcome).toEqual({ status: "would take over", detail: `${CWD} resuming ${NATIVE}` })
+    expect(outcome).toEqual({
+      status: "would take over",
+      detail: `${CWD} resuming ${NATIVE}, bypass disabled (default)`,
+    })
     expect(dependencies.preflights).toEqual([])
     expect(dependencies.persisted).toEqual([])
     expect(dependencies.launches).toEqual([])
@@ -319,6 +327,135 @@ describe("adoptClaudeSession cold takeover", () => {
     expect(outcome.status).toBe("refused archived")
     expect(dependencies.killed).toEqual(["@300"])
     expect(dependencies.persisted.at(-1)).toMatchObject({ status: "error" })
+  })
+})
+
+describe("adoptClaudeSession permission mode", () => {
+  test("a takeover that cannot observe the original permission mode announces the downgrade", async () => {
+    const dependencies = deps()
+    const outcome = await adoptClaudeSessionUnlocked(options(), dependencies)
+
+    expect(dependencies.launches).toMatchObject([{ noYolo: true }])
+    expect(dependencies.warnings).toHaveLength(1)
+    expect(dependencies.warnings[0]).toContain("--yolo")
+    expect(outcome.detail).toContain("bypass disabled (default)")
+  })
+
+  test("--yolo keeps bypass on when nothing attests the original mode", async () => {
+    const dependencies = deps()
+    const outcome = await adoptClaudeSessionUnlocked(options({ yolo: true }), dependencies)
+
+    expect(dependencies.launches).toMatchObject([{ noYolo: false }])
+    expect(outcome.detail).toContain("bypass enabled (--yolo)")
+    expect(dependencies.warnings).toEqual([])
+  })
+
+  test("a live pane's own bypass flag still wins over the default", async () => {
+    const dependencies = deps({ panes: () => [pane()] })
+    const outcome = await adoptClaudeSessionUnlocked(options(), dependencies)
+
+    expect(outcome.detail).toContain("bypass enabled (live launch)")
+    expect(dependencies.persisted[0]?.command).not.toContain("--no-yolo")
+    expect(dependencies.warnings).toEqual([])
+  })
+
+  test("a live pane launched without bypass is followed, and that is not a downgrade", async () => {
+    const dependencies = deps({
+      panes: () => [pane({ startCommand: COMMAND.replace(" --dangerously-skip-permissions", "") })],
+    })
+    const outcome = await adoptClaudeSessionUnlocked(options(), dependencies)
+
+    expect(outcome.detail).toContain("bypass disabled (live launch)")
+    expect(dependencies.warnings).toEqual([])
+  })
+
+  test("an inventory row's recorded mode is followed when no pane is live", async () => {
+    const dependencies = deps({
+      inventory: () => [agent({ command: ["threa-harnessd", "spawn", "claude", "--no-yolo"] })],
+    })
+    const outcome = await adoptClaudeSessionUnlocked(options(), dependencies)
+
+    expect(outcome.detail).toContain("bypass disabled (inventory row)")
+    expect(dependencies.launches).toMatchObject([{ noYolo: true }])
+    expect(dependencies.warnings).toEqual([])
+  })
+
+  test("an inventory row spawned with bypass keeps it", async () => {
+    const dependencies = deps({ inventory: () => [agent()] })
+    const outcome = await adoptClaudeSessionUnlocked(options(), dependencies)
+
+    expect(outcome.detail).toContain("bypass enabled (inventory row)")
+    expect(dependencies.launches).toMatchObject([{ noYolo: false }])
+    expect(dependencies.warnings).toEqual([])
+  })
+
+  test("a refusal does not announce a downgrade it never applied", async () => {
+    const dependencies = deps({ disk: disk({ list: () => [] }) })
+    const outcome = await adoptClaudeSessionUnlocked(options(), dependencies)
+
+    expect(outcome.status).toBe("refused missing transcript")
+    expect(dependencies.launches).toEqual([])
+    expect(dependencies.warnings).toEqual([])
+  })
+
+  test("a dry run previews the downgrade without announcing one", async () => {
+    const dependencies = deps()
+    const outcome = await adoptClaudeSessionUnlocked(options({ dryRun: true }), dependencies)
+
+    expect(outcome.detail).toContain("bypass disabled (default)")
+    expect(dependencies.warnings).toEqual([])
+  })
+
+  test("a flag that disagrees with the live pane is reported as not applied", async () => {
+    const dependencies = deps({ panes: () => [pane()] })
+    const outcome = await adoptClaudeSessionUnlocked(options({ noYolo: true }), dependencies)
+
+    expect(outcome.detail).toContain("bypass enabled (live launch)")
+    expect(dependencies.launches).toEqual([])
+    expect(dependencies.warnings).toHaveLength(1)
+    expect(dependencies.warnings[0]).toContain("not being restarted")
+  })
+
+  test("a live pane records the mode it is running, not the flag it was adopted with", async () => {
+    const dependencies = deps({ panes: () => [pane()] })
+    await adoptClaudeSessionUnlocked(options({ yolo: true }), dependencies)
+
+    expect(dependencies.persisted.at(-1)?.command).not.toContain("--yolo")
+    expect(dependencies.persisted.at(-1)?.command).not.toContain("--no-yolo")
+  })
+
+  test("a contradictory programmatic decision never records both flags", async () => {
+    const dependencies = deps()
+    await adoptClaudeSessionUnlocked(options({ yolo: true, noYolo: true }), dependencies)
+
+    const command = dependencies.persisted.at(-1)?.command ?? []
+    expect(command).toContain("--no-yolo")
+    expect(command).not.toContain("--yolo")
+  })
+
+  test("--yolo and --no-yolo together are refused at parse time", () => {
+    expect(() => parseAdopt([RUNTIME, "--root-stream-id", ROOT, "--yolo", "--no-yolo"])).toThrow(/--yolo/)
+    expect(parseAdopt([RUNTIME, "--root-stream-id", ROOT, "--yolo"])).toMatchObject({ yolo: true, noYolo: undefined })
+  })
+
+  test("a dry run reports the permission decision it would apply", async () => {
+    const outcome = await adoptClaudeSessionUnlocked(options({ dryRun: true }), deps())
+
+    expect(outcome.status).toBe("would take over")
+    expect(outcome.detail).toContain("bypass disabled (default)")
+  })
+
+  test("the recorded adopt command carries --yolo", async () => {
+    const stated = deps()
+    await adoptClaudeSessionUnlocked(options({ yolo: true }), stated)
+
+    expect(stated.persisted.at(-1)?.command).toContain("--yolo")
+    expect(stated.persisted.at(-1)?.command).not.toContain("--no-yolo")
+
+    const safe = deps()
+    await adoptClaudeSessionUnlocked(options(), safe)
+    expect(safe.persisted.at(-1)?.command).toContain("--no-yolo")
+    expect(safe.persisted.at(-1)?.command).not.toContain("--yolo")
   })
 })
 
@@ -697,6 +834,7 @@ describe("parseAdopt", () => {
       dryRun: true,
       force: true,
       noYolo: undefined,
+      yolo: undefined,
     })
     expect(parseAdopt([RUNTIME, "--root-stream-id", ROOT, "--no-yolo"])).toMatchObject({ noYolo: true })
   })
