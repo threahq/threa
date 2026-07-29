@@ -6,8 +6,10 @@ import {
   type HarnessLink,
 } from "@threa/bot-runtime-client"
 import { existsSync } from "node:fs"
-import { pushBranchAndScheduleRemoval } from "./archive-wind-down"
-import { listLocalTmuxPanes, resolveManagedAgentPane, type LocalTmuxPane } from "./discovery"
+import { pushBranchAndRemoveWorktree } from "./archive-wind-down"
+import { defaultClaudeDiskDeps, findLiveClaudeSessions } from "./claude-registry"
+import { canonicalOrRaw, listLocalTmuxPanes, resolveManagedAgentPane, type LocalTmuxPane } from "./discovery"
+import { processAlive } from "./lock"
 import { output } from "./shell"
 import { fetchScratchpadArchivedAt, fetchScratchpadStatus, type ScratchpadStatus } from "./resume"
 
@@ -42,8 +44,14 @@ import { fetchScratchpadArchivedAt, fetchScratchpadStatus, type ScratchpadStatus
  */
 export const REAP_AFTER_MS = WS_BACKSTOP_POLL_MS + ARCHIVE_RESTORE_GRACE_MS * 2
 
+/** Long enough for a SIGHUP'd Claude to finish flushing; short enough not to stall the sweep. */
+const KILL_GRACE_MS = 5_000
+const KILL_POLL_MS = 100
+
 export type ReapStatus =
   | "reaped"
+  /** Branch preserved, directory still on disk: the removal failed and nothing will retry it. */
+  | "reaped, worktree left"
   | "would reap"
   | "skipped active"
   | "skipped grace"
@@ -66,11 +74,16 @@ export interface ReapDeps {
   observingSinceMs?: number
   links: () => HarnessLink[]
   panes: () => LocalTmuxPane[]
+  /** Live Claude pids in this worktree, corroborated against the process table. */
+  claudeProcessesIn: (worktree: string) => number[]
+  canonicalPath: (path: string) => string
   scratchpadStatus: (streamId: string) => Promise<ScratchpadStatus>
   archivedAt: (streamId: string) => Promise<string | undefined>
   pathExists: (path: string) => boolean
-  windDown: (cwd: string, log: (message: string) => void) => { pushed: boolean; reason?: string }
+  windDown: (cwd: string, log: (message: string) => void) => { pushed: boolean; removed: boolean; reason?: string }
   killWindow: (windowId: string) => void
+  /** Resolves once the killed pane's process is gone, or after a bounded wait. */
+  awaitExit: (pid: number) => Promise<void>
   forgetLink: (runtimeSessionId: string) => void
   now: () => number
   log: (message: string) => void
@@ -80,12 +93,20 @@ export function defaultReapDeps(target: { baseUrl: string; workspaceId: string; 
   return {
     links: readHarnessLinks,
     panes: listLocalTmuxPanes,
+    claudeProcessesIn: (worktree) =>
+      findLiveClaudeSessions(worktree, defaultClaudeDiskDeps()).map((session) => session.pid),
+    canonicalPath: canonicalOrRaw,
     scratchpadStatus: (streamId) => fetchScratchpadStatus({ ...target, streamId }),
     archivedAt: (streamId) => fetchScratchpadArchivedAt({ ...target, streamId }),
     pathExists: existsSync,
-    windDown: pushBranchAndScheduleRemoval,
+    windDown: pushBranchAndRemoveWorktree,
     killWindow: (windowId) => {
       output(["tmux", "kill-window", "-t", windowId], { allowFailure: true })
+    },
+    awaitExit: async (pid) => {
+      for (let waited = 0; waited < KILL_GRACE_MS && processAlive(pid); waited += KILL_POLL_MS) {
+        await Bun.sleep(KILL_POLL_MS)
+      }
     },
     forgetLink: clearHarnessLink,
     now: Date.now,
@@ -107,11 +128,33 @@ type WindowDecision =
  * would push and delete the live session's work under the label "scratchpad
  * archived". Identity comes from `resolveManagedAgentPane`, the resolver built
  * for exactly this failure; occupancy is then the veto.
+ *
+ * Panes alone cannot answer occupancy. A Claude detached from tmux, or whose
+ * window was killed while it kept running, leaves no pane and is very much
+ * alive — and the empty-pane branch below is precisely the one that authorises
+ * a force-remove. So the process table is a second, independent veto, the same
+ * one `up` grew after the pane check alone let it launch duplicates. It is not
+ * gated on `runtimeKind`: what is being destroyed is a directory, and a live
+ * Claude in it is fatal whichever runtime the record names.
  */
-function decideWindow(link: HarnessLink, panes: LocalTmuxPane[]): WindowDecision {
-  const occupants = panes.filter((pane) => pane.cwd === link.worktree)
-  // Nobody is in the worktree: the offline case this reaper exists for.
-  if (occupants.length === 0) return { kind: "none" }
+function decideWindow(link: HarnessLink, panes: LocalTmuxPane[], deps: ReapDeps): WindowDecision {
+  // Link records store a raw `process.cwd()` while tmux reports a resolved
+  // path; on macOS /tmp vs /private/tmp alone is enough to read an occupied
+  // worktree as empty, which is the one misreading that ends in a removal.
+  const worktree = deps.canonicalPath(link.worktree)
+  const occupants = panes.filter((pane) => deps.canonicalPath(pane.cwd) === worktree)
+  const livePids = deps.claudeProcessesIn(link.worktree)
+
+  if (occupants.length === 0) {
+    // Nobody is in the worktree: the offline case this reaper exists for —
+    // unless a paneless Claude is still running there.
+    if (livePids.length === 0) return { kind: "none" }
+    return {
+      kind: "refuse",
+      status: "skipped occupied",
+      reason: `Claude is still running in ${link.worktree} with no pane (pid ${livePids.join(", ")})`,
+    }
+  }
 
   const resolved = resolveManagedAgentPane(
     {
@@ -122,7 +165,16 @@ function decideWindow(link: HarnessLink, panes: LocalTmuxPane[]): WindowDecision
     panes
   )
   if (resolved.status === "found" && occupants.length === 1 && resolved.pane.paneId === occupants[0]!.paneId) {
-    return { kind: "kill", pane: resolved.pane }
+    // The pane's own Claude is `panePid` (the same equivalence `reconnect`
+    // relies on). Any other live pid in the directory is a session killing this
+    // window would not stop.
+    const strangers = livePids.filter((pid) => pid !== resolved.pane.panePid)
+    if (strangers.length === 0) return { kind: "kill", pane: resolved.pane }
+    return {
+      kind: "refuse",
+      status: "skipped occupied",
+      reason: `${link.worktree} also holds a Claude this record's pane does not account for (pid ${strangers.join(", ")})`,
+    }
   }
   return {
     kind: "refuse",
@@ -167,7 +219,7 @@ export async function reapLink(link: HarnessLink, deps: ReapDeps, dryRun: boolea
     why = `archived ${Math.round(age / 60_000)}m ago`
   }
 
-  const window = decideWindow(link, deps.panes())
+  const window = decideWindow(link, deps.panes(), deps)
   if (window.kind === "refuse") return { ...base, status: window.status, detail: window.reason }
 
   if (!deps.pathExists(link.worktree)) {
@@ -178,15 +230,28 @@ export async function reapLink(link: HarnessLink, deps: ReapDeps, dryRun: boolea
 
   if (dryRun) return { ...base, status: "would reap", detail: why }
 
-  const report = deps.windDown(link.worktree, (message) => deps.log(`${link.worktree}: ${message}`))
   // The window goes either way: the scratchpad is archived, so the session is
-  // over even when the cleanup refused (detached HEAD, unpushable branch). A
-  // refusal leaves the worktree on disk for a human — nothing is lost.
-  if (window.kind === "kill") deps.killWindow(window.pane.windowId)
+  // over even when the cleanup refuses below (detached HEAD, unpushable
+  // branch). A refusal leaves the worktree on disk for a human — nothing is
+  // lost. It goes FIRST because the wind-down now removes the directory
+  // synchronously, and the pane's shell sits in it.
+  //
+  // `tmux kill-window` returns once it has delivered the signal, not once the
+  // process is gone. Removing the directory in that gap deletes the cwd of a
+  // Claude still flushing its transcript, so wait for the pane to actually
+  // exit — the grace the old detached `sleep 5` provided by accident.
+  if (window.kind === "kill") {
+    deps.killWindow(window.pane.windowId)
+    await deps.awaitExit(window.pane.panePid)
+  }
+  const report = deps.windDown(link.worktree, (message) => deps.log(`${link.worktree}: ${message}`))
+  // Forgotten either way, matching the pre-existing contract for a refused
+  // wind-down: the branch is the thing that had to survive, and a directory
+  // left behind is for a human. What must not happen is reporting it gone.
   deps.forgetLink(link.runtimeSessionId)
   return {
     ...base,
-    status: "reaped",
+    status: report.removed ? "reaped" : "reaped, worktree left",
     detail: `pushed=${report.pushed}${report.reason ? ` (${report.reason})` : ""}${window.kind === "kill" ? ` window=${window.pane.windowId}` : ""}`,
   }
 }
