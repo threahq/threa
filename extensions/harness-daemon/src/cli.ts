@@ -29,6 +29,7 @@ Usage:
   threa-harnessd keys <agent-id-or-name> <tmux send-keys tokens...>
   threa-harnessd attach <agent-id-or-name>
   threa-harnessd resolve [<agent-id-or-name-or-runtime-session-id>]
+  threa-harnessd backfill-identities [--dry-run]  (record the identity two sources already agree on)
   threa-harnessd doctor
 
 Examples:
@@ -176,6 +177,14 @@ const ADOPT_FLAGS = new Set([
   "no-yolo",
   "yolo",
 ])
+
+export function parseBackfill(args: string[]): { dryRun: boolean } {
+  const flags = parseFlags(args)
+  for (const key of Object.keys(flags)) {
+    if (key !== "dry-run") die(`unexpected backfill-identities argument: --${key}`)
+  }
+  return { dryRun: boolFlag(flags, "dry-run") }
+}
 
 export function parseResolve(args: string[]): string | undefined {
   const ref = args.shift()

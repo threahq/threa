@@ -7,6 +7,7 @@ import {
 } from "@threa/bot-runtime-client"
 import { existsSync } from "node:fs"
 import { basename, join } from "node:path"
+import { backfillIdentities, defaultBackfillDeps, summarizeBackfill, type BackfillOutcome } from "./backfill"
 import { installBootResume } from "./boot"
 import { liveClaudePidsIn } from "./claude-registry"
 import { defaultRepo, inferBranch, normalizeName, now } from "./cli"
@@ -136,6 +137,85 @@ export async function spawnAgent(options: SpawnOptions): Promise<void> {
   }
 }
 
+/** Long enough for an ordinary revive or reap to finish, short enough that a wedged holder cannot delay startup. */
+export const STARTUP_LOCK_WAIT_MS = 30_000
+
+export interface StartupReconciliationDeps {
+  backfill: () => BackfillOutcome[]
+  /** Resolves to the release. A dry run resolves to a no-op, as every other dry-run path does. */
+  lock: () => Promise<() => void>
+  sweep: () => void | Promise<void>
+  log: (message: string) => void
+}
+
+export function defaultStartupReconciliationDeps(
+  sweep: () => void | Promise<void>,
+  dryRun: boolean,
+  lockWaitMs = STARTUP_LOCK_WAIT_MS
+): StartupReconciliationDeps {
+  return {
+    backfill: () => backfillIdentities(defaultBackfillDeps(), dryRun),
+    // Bounded: the default deadline is ten minutes, and until this resolves no
+    // transport exists and no reap runs. The backfill is an optimisation of what
+    // the resolver already computes, so losing a pass costs nothing — the next
+    // restart runs it again.
+    lock: async () => (dryRun ? () => {} : await acquireProcessLock(resumeActiveLockPath(), { timeoutMs: lockWaitMs })),
+    sweep,
+    log: (message) => console.warn(message),
+  }
+}
+
+/**
+ * Record the identities the stores already agree on, then sweep.
+ *
+ * The lock is released before the sweep: `acquireProcessLock` is not reentrant —
+ * a lock file naming the current pid is neither stolen nor rejected, it is
+ * waited on until the 10-minute timeout — and the sweep takes the same lock.
+ *
+ * A failing backfill is logged and the sweep still runs: the backfill is an
+ * optimisation of what the resolver already computes, never a precondition for
+ * reviving a session.
+ */
+export async function startupReconciliation(deps: StartupReconciliationDeps): Promise<void> {
+  let release: (() => void) | undefined
+  try {
+    // Inside the try: a lock whose holder is alive is neither stolen nor
+    // rejected, it is waited on and then throws, and this runs on a path whose
+    // failure must not stop the daemon starting.
+    release = await deps.lock()
+    const outcomes = deps.backfill()
+    const counts = summarizeBackfill(outcomes)
+      .map(([disposition, count]) => `${count} ${disposition}`)
+      .join(", ")
+    deps.log(`harnessd: identity backfill: ${outcomes.length} subject(s)${counts ? `, ${counts}` : ""}`)
+  } catch (error) {
+    deps.log(`harnessd: identity backfill failed: ${error instanceof Error ? error.message : String(error)}`)
+  } finally {
+    release?.()
+  }
+  await deps.sweep()
+}
+
+export async function backfillIdentitiesCommand(options: { dryRun: boolean }): Promise<void> {
+  // Same lock as the revive and reap passes, and skipped for a dry run exactly
+  // as they skip it: unlocked, the reaper can retire an identity while this pass
+  // is recording it.
+  const release = options.dryRun ? () => {} : await acquireProcessLock(resumeActiveLockPath())
+  let outcomes
+  try {
+    outcomes = backfillIdentities(defaultBackfillDeps(), options.dryRun)
+  } finally {
+    release()
+  }
+  for (const outcome of outcomes) {
+    console.log(`${outcome.disposition}\t${outcome.subject}${outcome.detail ? `\t${outcome.detail}` : ""}`)
+  }
+  const counts = summarizeBackfill(outcomes)
+    .map(([disposition, count]) => `${count} ${disposition}`)
+    .join(", ")
+  console.log(`harnessd: ${outcomes.length} subject${outcomes.length === 1 ? "" : "s"}${counts ? `, ${counts}` : ""}`)
+}
+
 export async function watchUnarchived(options: ResumeOptions): Promise<void> {
   const watchStartedAtMs = Date.now()
   const session = options.tmux ?? "threa-agents"
@@ -194,6 +274,8 @@ export async function watchUnarchived(options: ResumeOptions): Promise<void> {
         console.error(`harnessd: reconciliation failed: ${error instanceof Error ? error.message : String(error)}`)
       })
   }
+
+  await startupReconciliation(defaultStartupReconciliationDeps(() => reconcile(), options.dryRun ?? false))
 
   const transports = targets.map(
     (target) =>
