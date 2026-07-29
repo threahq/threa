@@ -1042,16 +1042,23 @@ export class MemoService implements MemoServiceLike {
       })
 
       // Visible in situ (INV-62): one broadcast timeline event on the stream the
-      // agent saved from, same transaction as the memo row. Message-sourced, so
-      // no conversationId — the row links back through sourceMessageIds. Skipped
-      // for a private save into a shared stream (would leak the title, see above).
+      // agent saved from, same transaction as the memo row. Carries the source
+      // message's own conversation so the board card and the conversation panel
+      // can place the row (both match on `conversationId`). Skipped for a private
+      // save into a shared stream (would leak the title, see above).
       if (!captureLeaksToStream) {
+        const sourceConversation = await ConversationRepository.findPrimaryByMessageId(
+          client,
+          workspaceId,
+          resolvedSourceIds[0]
+        )
         const [captureEvent] = await StreamEventRepository.insertMany(client, [
           {
             id: eventId(),
             streamId,
             eventType: "memos:captured" as const,
             payload: {
+              ...(sourceConversation ? { conversationId: sourceConversation.id } : {}),
               memos: [{ memoId: newMemoId, title, knowledgeType, sourceMessageIds: resolvedSourceIds }],
             } satisfies MemosCapturedEventPayload,
             actorType: AuthorTypes.SYSTEM,
@@ -1239,13 +1246,22 @@ export class MemoService implements MemoServiceLike {
 
       if (capturedMemos.length > 0) {
         // Visible in situ (INV-62): one broadcast timeline event on the session's
-        // stream. Message-sourced, so no conversationId — links via sourceMessageIds.
+        // stream, carrying the anchor message's conversation so the row can be
+        // placed on the board card and in the conversation panel.
+        const anchorConversation = await ConversationRepository.findPrimaryByMessageId(
+          client,
+          workspaceId,
+          anchorMessageId
+        )
         const [captureEvent] = await StreamEventRepository.insertMany(client, [
           {
             id: eventId(),
             streamId,
             eventType: "memos:captured" as const,
-            payload: { memos: capturedMemos } satisfies MemosCapturedEventPayload,
+            payload: {
+              ...(anchorConversation ? { conversationId: anchorConversation.id } : {}),
+              memos: capturedMemos,
+            } satisfies MemosCapturedEventPayload,
             actorType: AuthorTypes.SYSTEM,
           },
         ])

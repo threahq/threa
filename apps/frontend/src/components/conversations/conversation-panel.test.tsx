@@ -7,7 +7,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import type { Socket } from "socket.io-client"
 import type { BoardPost, BoardPostMessage, ConversationWithStaleness, EventType } from "@threa/types"
 import { ConversationPanel } from "./conversation-panel"
-import { ServicesProvider, SidebarProvider, PanelProvider, TraceProvider } from "@/contexts"
+import { ServicesProvider, SidebarProvider, PanelProvider, TraceProvider, SKELETON_DELAY_MS } from "@/contexts"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { spyOnExport } from "@/test/spy"
 // eslint-disable-next-line no-restricted-imports -- test seeds IDB directly to drive the real rail read path
@@ -134,6 +134,42 @@ function installScrollMetrics({ scrollHeight = 1000, clientHeight = 300 } = {}) 
   }
 }
 
+/**
+ * Like `installScrollMetrics`, but `scrollHeight` FOLLOWS what is painted: the
+ * skeleton box while no message row exists, the tall list once one does. The
+ * constant-height helper above cannot see a pin taken against an empty container
+ * — it reports the full height either way — so the reveal-gate regression is
+ * untestable without this.
+ */
+function installContentAwareScrollMetrics({ skeletonHeight = 300, contentHeight = 3000, clientHeight = 300 } = {}) {
+  const tops = new WeakMap<HTMLElement, number>()
+  const descriptors = {
+    scrollHeight: Object.getOwnPropertyDescriptor(HTMLElement.prototype, "scrollHeight"),
+    clientHeight: Object.getOwnPropertyDescriptor(HTMLElement.prototype, "clientHeight"),
+    scrollTop: Object.getOwnPropertyDescriptor(HTMLElement.prototype, "scrollTop"),
+  }
+  Object.defineProperty(HTMLElement.prototype, "scrollHeight", {
+    configurable: true,
+    get: () => (document.querySelector("[data-message-id]") ? contentHeight : skeletonHeight),
+  })
+  Object.defineProperty(HTMLElement.prototype, "clientHeight", { configurable: true, get: () => clientHeight })
+  Object.defineProperty(HTMLElement.prototype, "scrollTop", {
+    configurable: true,
+    get(this: HTMLElement) {
+      return tops.get(this) ?? 0
+    },
+    set(this: HTMLElement, value: number) {
+      tops.set(this, value)
+    },
+  })
+  return () => {
+    for (const [name, descriptor] of Object.entries(descriptors)) {
+      if (descriptor) Object.defineProperty(HTMLElement.prototype, name, descriptor)
+      else delete (HTMLElement.prototype as unknown as Record<string, unknown>)[name]
+    }
+  }
+}
+
 function scroller(): HTMLElement {
   const el = document.querySelector<HTMLElement>(".overflow-y-auto")
   if (!el) throw new Error("panel scroller not found")
@@ -212,6 +248,20 @@ beforeEach(() => {
   vi.spyOn(workspaceStoreModule, "useWorkspacePersonas").mockReturnValue([] as never)
   vi.spyOn(workspaceStoreModule, "useWorkspaceBots").mockReturnValue([] as never)
   vi.spyOn(workspaceStoreModule, "useWorkspaceMetadata").mockReturnValue(undefined as never)
+  // The panel holds its first paint until read state is decidable for every
+  // stream it spans (the reveal gate). In production the workspace unread
+  // bootstrap is already in IDB before the panel can mount (CoordinatedLoading
+  // gates the app on `idbUnreadState !== undefined`), so the harness seeds the
+  // same baseline: the conversation's stream, fully read. Per-STREAM decidability
+  // is not guaranteed by that gate — see the "reveals anyway" test above. Tests
+  // about the divider install their own frontier over this (installReadState).
+  vi.spyOn(workspaceStoreModule, "useWorkspaceUnreadState").mockReturnValue({
+    workspaceId: WORKSPACE_ID,
+    readMessageIds: {},
+    unreadCounts: { stream_1: 0 },
+    _cachedAt: 0,
+  } as never)
+  vi.spyOn(workspaceStoreModule, "useWorkspaceStreamReadStates").mockReturnValue([] as never)
   // The panel resolves its host stream type from the synced IDB row.
   vi.spyOn(streamStoreModule, "useStreamFromStore").mockReturnValue({ id: "stream_1", type: "channel" } as never)
   vi.spyOn(useWorkspacesModule, "useWorkspaceUserId").mockReturnValue("usr_me")
@@ -243,11 +293,62 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
+// 43 cases, each mounting the real panel tree (INV-39) with IDB seeding and a
+// user-event session. In isolation the file is comfortably inside the 5s
+// default and passes repeatedly; in a full-suite run on a loaded machine
+// individual cases starve past it — a different one each time, which is
+// contention, not a hang. This raise reduces that but does not eliminate it, so
+// a failure here still deserves a look rather than a re-run. Every assertion is
+// unchanged.
+vi.setConfig({ testTimeout: 20_000 })
+
 describe("ConversationPanel", () => {
   let restoreRect: (() => void) | null = null
   afterEach(() => {
     restoreRect?.()
     restoreRect = null
+  })
+
+  it("holds the column at the skeleton until read state is decidable (one reveal, not three)", async () => {
+    // The workspace unread bootstrap hasn't landed: the divider can't be placed
+    // yet, so painting rows now would show them once and then re-paint with the
+    // marker. Nothing from the conversation renders until it resolves.
+    vi.spyOn(workspaceStoreModule, "useWorkspaceUnreadState").mockReturnValue(undefined as never)
+    mountPanel({ cached: asCached(makePost()) })
+
+    await waitFor(() => expect(document.querySelector(".animate-pulse")).toBeTruthy())
+    expect(screen.queryByText("Opening message body.")).toBeNull()
+  })
+
+  it("reveals anyway when read state can never resolve (a spanned thread leg has no membership)", async () => {
+    // INV-62: a thread carries no `stream_members` row, and the bootstrap builds
+    // both `unreadCounts` and `streamReadState` from memberships — so a row in a
+    // never-read thread leg is decidable by neither map, forever. The gate must
+    // give up on the divider rather than hold a blank panel.
+    vi.spyOn(workspaceStoreModule, "useWorkspaceUnreadState").mockReturnValue({
+      workspaceId: WORKSPACE_ID,
+      readMessageIds: {},
+      unreadCounts: {},
+      _cachedAt: 0,
+    } as never)
+    vi.spyOn(workspaceStoreModule, "useWorkspaceStreamReadStates").mockReturnValue([] as never)
+    mountPanel({ cached: asCached(makePost()) })
+
+    await waitFor(() => expect(document.querySelector(".animate-pulse")).toBeTruthy())
+    expect(await screen.findByText("Opening message body.", undefined, { timeout: 5000 })).toBeTruthy()
+  })
+
+  it("holds the header on the same gate as the column, so the two land together", async () => {
+    // The header used to paint its topic/glyph/actions the moment `post` arrived
+    // while the column was still gated — the stepped reveal. Both now flip on the
+    // panel's one coordinated phase.
+    const post = makePost()
+    vi.spyOn(workspaceStoreModule, "useWorkspaceUnreadState").mockReturnValue(undefined as never)
+    mountPanel({ cached: asCached(post) })
+
+    await waitFor(() => expect(document.querySelector(".animate-pulse")).toBeTruthy())
+    expect(screen.queryByText(post.conversation.topicSummary!)).toBeNull()
+    expect(screen.queryByRole("button", { name: "Conversation actions" })).toBeNull()
   })
 
   it("renders the conversation from the reactive store row without a by-id fetch", async () => {
@@ -448,6 +549,13 @@ describe("ConversationPanel", () => {
       },
     })
     expect(await screen.findByText("Couldn't open this conversation")).toBeTruthy()
+    // `notFound` is terminal with `post` null, so a readiness signal keyed only on
+    // `post` latches the phase at "skeleton" and shimmers the header forever above
+    // a state that has already resolved. The skeleton only appears once
+    // SKELETON_DELAY_MS has elapsed, so the assertion has to outlive that timer to
+    // mean anything.
+    await new Promise((resolve) => setTimeout(resolve, SKELETON_DELAY_MS + 150))
+    expect(document.querySelectorAll(".animate-pulse").length).toBe(0)
   })
 
   it("lets the author edit their own row in place, swapping the body for the editor", async () => {
@@ -692,6 +800,29 @@ describe("ConversationPanel", () => {
 
       expect(screen.queryByText("New")).toBeNull()
       await waitFor(() => expect(scroller().scrollTop).toBe(1000))
+    } finally {
+      restore()
+    }
+  })
+
+  it("opens at the tail even when the reveal comes from the 1500ms escape", async () => {
+    // INV-62 undecidable read state: the rows stay behind the skeleton for the whole
+    // reveal timeout while the backfill is already done. A scroll pin taken on that
+    // window measures the skeleton, and the hook only pins once — the conversation
+    // then opens at its OLDEST message.
+    vi.spyOn(workspaceStoreModule, "useWorkspaceUnreadState").mockReturnValue({
+      workspaceId: WORKSPACE_ID,
+      readMessageIds: {},
+      unreadCounts: {},
+      _cachedAt: 0,
+    } as never)
+    vi.spyOn(workspaceStoreModule, "useWorkspaceStreamReadStates").mockReturnValue([] as never)
+    const restore = installContentAwareScrollMetrics()
+    try {
+      mountPanel({ cached: asCached(makePost()) })
+      await screen.findByText("Reply two body.", undefined, { timeout: 5000 })
+
+      await waitFor(() => expect(scroller().scrollTop).toBe(3000), { timeout: 5000 })
     } finally {
       restore()
     }
@@ -993,6 +1124,11 @@ describe("ConversationPanel", () => {
       post.totalReplies = post.recentMessages.length
       mountPanel({ cached: asCached(post), getBoardMessages: async () => post.recentMessages })
       await screen.findByText(`Reply ${post.recentMessages.length + 1} body.`)
+      // Rows now reveal on a state flip rather than in the mount commit, so the
+      // opening bottom-pin lands an effect later. Assert absence only once the
+      // pin has settled — before it, the scroller is legitimately far from the
+      // bottom and the button is correctly showing.
+      await waitFor(() => expect(scroller().scrollTop).toBe(1000))
       expect(screen.queryByRole("button", { name: "Jump to latest" })).toBeNull()
 
       // The browser emits a scroll event once the opening bottom-pin settles;
@@ -1133,6 +1269,96 @@ function postWithDeletedReply(): BoardPost {
   post.totalReplies = 1
   return post
 }
+
+describe("ConversationPanel backfill merge", () => {
+  beforeEach(async () => {
+    __clearBoardRailRegistry()
+    await db.events.clear()
+  })
+  afterEach(async () => {
+    __clearBoardRailRegistry()
+    await db.events.clear()
+  })
+
+  it("unions the server backfill with the live rail instead of letting a stale snapshot win", async () => {
+    // The rail can never complete here (msg_9 is a member the snapshot lists and
+    // no rail carries), so the backfill stays enabled — the shape that used to pin
+    // the panel to a 60s-stale snapshot and hide a reply the browser already had.
+    const post = makePost()
+    post.conversation.messageIds = ["msg_1", "msg_2", "msg_3", "msg_9"]
+    post.totalReplies = 3
+    await db.events.bulkPut([
+      cachedMessageEvent("msg_1", "Opening message body.", 10),
+      cachedMessageEvent("msg_2", "Reply two body.", 20),
+      cachedMessageEvent("msg_3", "Live reply the snapshot predates.", 30),
+    ])
+    mountPanel({
+      cached: asCached(post),
+      getBoardMessages: async () => [
+        makeMessage({ id: "msg_2", contentMarkdown: "Reply two body.", createdAt: "2026-06-22T12:00:20.000Z" }),
+      ],
+    })
+
+    expect(await screen.findByText("Live reply the snapshot predates.")).toBeTruthy()
+    expect(screen.getByText("Reply two body.")).toBeTruthy()
+  })
+
+  it("drops the cached snapshot once the rail is complete", async () => {
+    // `useQuery` keeps serving `data` after `enabled` flips false, and an inactive
+    // query can't be refetched — so a snapshot unioned in forever keeps rendering a
+    // message that has since left the conversation.
+    const post = makePost()
+    post.conversation.messageIds = ["msg_1", "msg_2", "msg_3"]
+    post.totalReplies = 2
+    await db.events.bulkPut([
+      cachedMessageEvent("msg_1", "Opening message body.", 10),
+      cachedMessageEvent("msg_2", "Reply two body.", 20),
+    ])
+    mountPanel({
+      cached: asCached(post),
+      getBoardMessages: async () => [
+        makeMessage({ id: "msg_2", contentMarkdown: "Reply two body.", createdAt: "2026-06-22T12:00:20.000Z" }),
+        makeMessage({ id: "msg_9", contentMarkdown: "Moved away.", createdAt: "2026-06-22T12:00:40.000Z" }),
+      ],
+    })
+    expect(await screen.findByText("Moved away.")).toBeTruthy()
+
+    // The rail catches up: every member is local, so the snapshot has nothing left
+    // to fill and its stale extra must stop rendering.
+    await act(async () => {
+      await db.events.bulkPut([cachedMessageEvent("msg_3", "Reply three body.", 30)])
+    })
+    expect(await screen.findByText("Reply three body.")).toBeTruthy()
+    await waitFor(() => expect(screen.queryByText("Moved away.")).toBeNull())
+  })
+
+  it("does not let the cached board projection shadow the backfill's tombstone", async () => {
+    // No rail rows at all: `source` is "projection", so `railReplies` IS the board
+    // store's frozen `recentMessages` — never patched on edit or soft-delete. It
+    // must not win an id over the freshly fetched row, or the panel renders a
+    // deleted message's body (the leak #1650 closes).
+    const post = postWithDeletedReply()
+    post.recentMessages = [
+      makeMessage({ id: "msg_2", contentMarkdown: "Reply two body.", createdAt: "2026-06-22T12:00:20.000Z" }),
+      makeMessage({ id: "msg_3", contentMarkdown: "The deleted body.", createdAt: "2026-06-22T12:00:30.000Z" }),
+    ]
+    mountPanel({
+      cached: asCached({ ...post, totalReplies: 2 }),
+      getBoardMessages: async () => [
+        makeMessage({ id: "msg_2", contentMarkdown: "Reply two body.", createdAt: "2026-06-22T12:00:20.000Z" }),
+        makeMessage({
+          id: "msg_3",
+          contentMarkdown: "",
+          createdAt: "2026-06-22T12:00:30.000Z",
+          deletedAt: "2026-06-22T12:05:00.000Z",
+        }),
+      ],
+    })
+
+    expect(await screen.findByText("This message was deleted")).toBeTruthy()
+    expect(screen.queryByText("The deleted body.")).toBeNull()
+  })
+})
 
 describe("ConversationPanel deleted messages", () => {
   beforeEach(async () => {

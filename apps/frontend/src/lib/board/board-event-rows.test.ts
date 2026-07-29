@@ -47,6 +47,32 @@ describe("resolveBoardEventRows", () => {
     expect(rows[0]).toMatchObject({ kind: "memo", key: "m_here" })
   })
 
+  it("places a memo with no conversation id by its source messages, and nowhere else", () => {
+    // A memo saved before boundary extraction assigned its source message carries
+    // `conversationId: undefined`, and the payload is immutable — provenance is the
+    // only way it ever lands on a board surface.
+    const events = [
+      cachedEvent({
+        id: "m_unassigned",
+        eventType: "memos:captured",
+        createdAt: "2026-07-04T10:00:00Z",
+        payload: { memos: [{ memoId: "memo_1", title: "T", knowledgeType: "fact", sourceMessageIds: ["msg_2"] }] },
+      }),
+      cachedEvent({
+        id: "m_elsewhere",
+        eventType: "memos:captured",
+        createdAt: "2026-07-04T10:01:00Z",
+        payload: { memos: [{ memoId: "memo_2", title: "T", knowledgeType: "fact", sourceMessageIds: ["msg_9"] }] },
+      }),
+    ]
+    const rows = resolveBoardEventRows(events, {
+      conversationId: CONV,
+      memberMessageIds: new Set(["msg_1", "msg_2"]),
+    })
+    expect(rows).toHaveLength(1)
+    expect(rows[0]).toMatchObject({ kind: "memo", key: "m_unassigned" })
+  })
+
   it("marks a scheduled follow-up cancelled when a matching cancel event is present", () => {
     const events = [
       cachedEvent({

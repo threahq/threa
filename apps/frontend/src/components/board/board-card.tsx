@@ -41,6 +41,8 @@ import { useBoardCardMessages, useStableReplyWindow } from "@/hooks/use-board-ca
 import { useInlineBranchComposer } from "@/components/board/use-inline-branch-composer"
 import { useBoardCardRevealAnchor } from "@/hooks/use-board-card-reveal-anchor"
 import type { BoardViewPost } from "@/hooks/use-stable-board-view"
+import { Skeleton } from "@/components/ui/skeleton"
+import { MESSAGE_ROW_CONTINUATION_PADDING, MESSAGE_ROW_HEAD_PADDING } from "@/components/message/message-row-layout"
 
 interface BoardCardProps {
   workspaceId: string
@@ -137,7 +139,6 @@ export function BoardCard({
     events: railEvents,
     messagesById,
     taggedByConversation,
-    deletedById,
   } = useBoardCardMessages(post, streamType, {
     branchStreamIds: inlineComposer.branchStreamIds,
     extraDraftPanelIds: inlineComposer.extraDraftPanelIds,
@@ -208,10 +209,11 @@ export function BoardCard({
     getReadTruth,
   } = useConversationReadController(workspaceId, conversation.id, streamId, currentUserId)
   // Over the card's known local messages (opening + the full local reply rail);
-  // own-authored rows are excluded inside `hasUnread`. A tombstone renders no
-  // observable row, so auto-read could never clear a dot it lit — it is excluded
-  // here exactly as it is from `autoReadRows` below, keeping "what lights the dot"
-  // and "what can clear it" the same set.
+  // own-authored rows are excluded inside `hasUnread`. A tombstone is visible but
+  // counts as zero: a message added and deleted before you look at it is no new
+  // message, so it never lights the dot — excluded here exactly as it is from
+  // `autoReadRows` below, keeping "what lights the dot" and "what can clear it"
+  // the same set.
   const knownMessages = useMemo(
     () => (openingMessage ? [openingMessage, ...railReplies] : railReplies).filter((m) => !m.deletedAt),
     [openingMessage, railReplies]
@@ -359,7 +361,9 @@ export function BoardCard({
 
   // Collapsed cards preview an append-only window over the local rail: trailing
   // replies at first reveal, growing (never sliding) as new ones land, so a
-  // visible reply is never evicted back under the "N more" gap.
+  // visible reply is never evicted back under the "N more" gap. Tombstones ride
+  // the rail like any other row, so a deleted reply spends a preview slot and is
+  // counted in `totalReplies` — the collapsed card reads "deleted", not "gone".
   const collapsedReplies = useStableReplyWindow(conversation.id, railReplies)
 
   // Expanded: the full conversation minus the opening (server backfill when the
@@ -372,18 +376,7 @@ export function BoardCard({
   // backfill's `data` lingers after `enabled` goes false).
   else if (incompleteLocally && allMessages)
     replies = (allMessages as RenderableMessage[]).filter((m) => m.id !== openingMessage?.id)
-  else {
-    // The rail excludes deleted rows, so without this the tombstone the collapsed
-    // window and the backfill both draw would vanish here — and every row below it
-    // would shift up — the moment the rail caught up. Same merge as the panel
-    // (conversation-panel.tsx): the conversation's own deleted members, deduped.
-    // Expanded-only, so no count changes (`hiddenCount` is 0 here).
-    const railIds = new Set(railReplies.map((m) => m.id))
-    const tombstones = [...deletedById.values()].filter(
-      (m) => conversation.messageIds.includes(m.id) && m.id !== openingMessage?.id && !railIds.has(m.id)
-    )
-    replies = tombstones.length > 0 ? [...railReplies, ...tombstones] : railReplies
-  }
+  else replies = railReplies
   // Merge this card's own just-sent replies with the confirmed set, skipping any
   // the rail or a backfill already carries, then sort by time: a pending reply
   // can be OLDER than a confirmed one (someone else's reply lands while yours is
@@ -392,7 +385,9 @@ export function BoardCard({
   const displayedReplies = [...replies, ...pendingReplies.filter((m) => !seenReplyIds.has(m.id))].sort(
     (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
   )
-  const hiddenCount = expanded ? 0 : Math.max(0, totalReplies - replies.length)
+  // `totalReplies` counts tombstones as zero, so the visible rows must be counted
+  // the same way or a drawn tombstone would subtract from the gap it isn't in.
+  const hiddenCount = expanded ? 0 : Math.max(0, totalReplies - replies.filter((m) => !m.deletedAt).length)
   const loadingMore = expanded && incompleteLocally && !allMessages && !expandFailed
   // No middle is hidden, so opening + replies form one uninterrupted run that
   // groups across the boundary. Otherwise a gap row sits between them.
@@ -405,8 +400,8 @@ export function BoardCard({
   // its visible tail reads the conversation up to there, exactly like invoking
   // "Mark as read up to here" on that row (Kris's dogfood ruling on PR #1174 —
   // having the conversation open is enough to mark it).
-  // A tombstone renders no `data-message-id` row, so it can never be observed —
-  // keep it out of the auto-read set entirely.
+  // A tombstone counts as zero for unread, so it must not carry read state either
+  // way — keep it out of the auto-read set entirely.
   const autoReadRows = (openingMessage ? [openingMessage, ...displayedReplies] : displayedReplies).filter(
     (m) => !m.deletedAt
   )
@@ -813,5 +808,57 @@ export function BoardCard({
         </div>
       </QuoteReplyProvider>
     </ConversationReadProvider>
+  )
+}
+
+/** Head/continuation shape of a placeholder card's message run. */
+const CARD_SKELETON_ROWS: { continuation: boolean; width: string }[] = [
+  { continuation: false, width: "w-11/12" },
+  { continuation: true, width: "w-3/4" },
+]
+
+/**
+ * The board's loading shape, defined beside the card it stands in for and built
+ * from the card's own chrome (`rounded-xl border bg-card p-3 sm:p-4`, the
+ * `-mx-3 sm:-mx-4` row break-out, `MESSAGE_ROW_*_PADDING`, the `md` avatar box)
+ * so the swap to a real card moves nothing (INV-21).
+ */
+export function BoardCardSkeleton() {
+  return (
+    <div aria-hidden className="rounded-xl border bg-card p-3 sm:p-4">
+      <div className="-mx-3 -mt-3 px-3 pt-3 pb-2 sm:-mx-4 sm:-mt-4 sm:px-4 sm:pt-4">
+        <div className="flex items-center gap-1.5">
+          <div className="h-4 w-4 shrink-0" />
+          <Skeleton className="h-[18px] w-3/5" />
+        </div>
+        <div className="mt-1 flex items-center gap-1.5">
+          <Skeleton className="h-4 w-24" />
+        </div>
+      </div>
+      {CARD_SKELETON_ROWS.map((row, i) => (
+        <div key={i} className="-mx-3 sm:-mx-4">
+          <div
+            className={cn(
+              "flex items-start gap-3 px-3 sm:px-4",
+              row.continuation ? MESSAGE_ROW_CONTINUATION_PADDING : MESSAGE_ROW_HEAD_PADDING
+            )}
+          >
+            {row.continuation ? (
+              <div className="h-8 w-8 shrink-0" />
+            ) : (
+              <Skeleton className="h-8 w-8 shrink-0 rounded-[8px]" />
+            )}
+            <div className="min-w-0 flex-1">
+              {!row.continuation && (
+                <div className="mb-0.5 flex items-baseline gap-2">
+                  <Skeleton className="h-5 w-28" />
+                </div>
+              )}
+              <Skeleton className={cn("h-[22px]", row.width)} />
+            </div>
+          </div>
+        </div>
+      ))}
+    </div>
   )
 }

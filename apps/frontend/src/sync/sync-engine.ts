@@ -30,6 +30,7 @@ import { workspaceKeys } from "@/hooks/use-workspaces"
 import { savedKeys } from "@/hooks/use-saved"
 import { scheduledKeys } from "@/hooks/use-scheduled"
 import { activityKeys } from "@/hooks/use-activity"
+import { isServerStreamId } from "@/lib/stream-ids"
 import type { WorkspaceBootstrap } from "@threa/types"
 
 interface SyncEngineDeps {
@@ -88,12 +89,6 @@ const CATCHUP_PAGE_LIMIT = 500
 /** Max in-flight board card stream catch-ups. Bounds the bootstrap-fetch burst
  *  when the board opens onto many unsynced thread/public streams at once. */
 const BOARD_SYNC_CONCURRENCY = 6
-
-const NON_SERVER_STREAM_ID_PREFIXES = ["draft_", "draft:", "conv:"] as const
-
-function isServerStreamId(streamId: string): boolean {
-  return !NON_SERVER_STREAM_ID_PREFIXES.some((prefix) => streamId.startsWith(prefix))
-}
 
 /**
  * Above this many missed entries on the first catch-up page, heal the whole
