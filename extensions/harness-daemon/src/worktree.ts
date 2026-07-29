@@ -1,38 +1,73 @@
-import { existsSync } from "node:fs"
-import { dirname, join, resolve } from "node:path"
+import { spawnSync } from "node:child_process"
+import { existsSync, statSync } from "node:fs"
+import { basename, dirname, resolve, sep } from "node:path"
 import { canonicalOrRaw } from "./discovery"
 import { die } from "./errors"
+import { DEFAULT_PROFILE, expandLayout, type Profile } from "./profiles"
 import { output, run } from "./shell"
 import type { ManagedAgent, SpawnOptions } from "./types"
 
 /**
- * Where {@link ensureWorktree} will put this agent, without creating anything —
- * and the single definition of that path, so a caller that has to name the
- * directory before it exists cannot drift from the one that creates it.
+ * Setup can be a full monorepo install; teardown runs while `resume-active.lock`
+ * is held, so a hang there blocks every revive — the same reasoning as
+ * `REMOVE_TIMEOUT_MS` in `archive-wind-down.ts`.
+ */
+const SETUP_TIMEOUT_MS = 600_000
+const TEARDOWN_TIMEOUT_MS = 120_000
+
+/**
+ * Where {@link provisionWorkspace} will put this agent, without creating
+ * anything — and the single definition of that path, so a caller that has to
+ * name the directory before it exists cannot drift from the one that creates it.
  *
  * The parent is canonicalized and the leaf appended, rather than canonicalizing
  * the whole path: the leaf does not exist yet, so `realpathSync` would throw and
  * fall back to the raw path — which then fails to match the resolved path every
  * later reader sees once the directory does exist.
  */
-export function plannedWorktreePath(options: SpawnOptions): string {
+export function plannedWorktreePath(options: SpawnOptions, profile: Profile = DEFAULT_PROFILE): string {
+  if (profile.provision === "existing") {
+    return canonicalOrRaw(resolve(options.cwd ?? die("this profile provisions no directory; pass --cwd")))
+  }
   const repo = resolve(options.repo ?? process.cwd())
-  return join(canonicalOrRaw(dirname(repo)), `threa.${options.name}`)
+  const parent = canonicalOrRaw(dirname(repo))
+  const leaf = expandLayout(profile.layout, { name: options.name, repo: basename(repo) })
+  const path = resolve(parent, leaf)
+  if (path !== parent && !path.startsWith(parent + sep)) {
+    die(`profile '${profile.name}': layout '${profile.layout}' resolves outside ${parent}`)
+  }
+  return path
 }
 
 function branchFor(options: SpawnOptions): string {
   return options.branch ?? options.name
 }
 
-function baseFor(options: SpawnOptions): string {
-  return options.base ?? "origin/main"
+export function provisionWorkspace(
+  options: SpawnOptions,
+  profile: Profile = DEFAULT_PROFILE
+): { worktree: string; branch: string } {
+  return profile.provision === "existing" ? useExistingDirectory(options, profile) : createWorktree(options, profile)
 }
 
-export function ensureWorktree(options: SpawnOptions): { worktree: string; branch: string } {
+function useExistingDirectory(options: SpawnOptions, profile: Profile): { worktree: string; branch: string } {
+  if (options.cwd === undefined) die(`profile '${profile.name}' provisions nothing; pass --cwd <path>`)
+  const dir = plannedWorktreePath(options, profile)
+  if (!existsSync(dir) || !statSync(dir).isDirectory()) die(`directory not found: ${dir}`)
+  console.log(`harnessd: using existing directory ${dir} (profile '${profile.name}')`)
+  runSetupCommands(dir, profile.setup, options.skipSetup === true)
+  return { worktree: dir, branch: options.branch ?? currentBranch(dir) ?? options.name }
+}
+
+function createWorktree(
+  options: SpawnOptions,
+  profile: Profile & { provision: "worktree" }
+): { worktree: string; branch: string } {
+  if (options.cwd !== undefined) die(`profile '${profile.name}' creates a worktree; --cwd cannot apply to it`)
   const repo = resolve(options.repo ?? process.cwd())
   const branch = branchFor(options)
-  const base = baseFor(options)
-  const worktree = plannedWorktreePath(options)
+  const base = options.base ?? profile.base
+  const worktree = plannedWorktreePath(options, profile)
   if (!existsSync(repo)) die(`repo not found: ${repo}`)
   if (existsSync(worktree)) die(`worktree dir already exists: ${worktree}`)
 
@@ -40,8 +75,16 @@ export function ensureWorktree(options: SpawnOptions): { worktree: string; branc
   run(["git", "-C", repo, "fetch", "origin", base.replace(/^origin\//, "")])
   console.log(`harnessd: creating worktree ${worktree} (${branch} off ${base})`)
   run(["git", "-C", repo, "worktree", "add", "-b", branch, worktree, base])
-  maybeSetupWorktree(worktree, options.skipSetup === true)
+  runSetupCommands(worktree, profile.setup, options.skipSetup === true)
   return { worktree, branch }
+}
+
+/** The Pi orchestrator directory is not a repo, and `SpawnResult.branch` is required. */
+function currentBranch(dir: string): string | undefined {
+  const result = output(["git", "-C", dir, "rev-parse", "--abbrev-ref", "HEAD"], { allowFailure: true })
+  if (result.exitCode !== 0) return undefined
+  const branch = result.stdout.trim()
+  return branch && branch !== "HEAD" ? branch : undefined
 }
 
 export function restorableWorktreeSource(
@@ -56,7 +99,10 @@ export function restorableWorktreeSource(
   return { repo, worktree: agent.worktree, branch: agent.branch }
 }
 
-export function restoreManagedWorktree(agent: ManagedAgent): { restored: boolean; reason?: string } {
+export function restoreManagedWorktree(
+  agent: ManagedAgent,
+  profile: Profile = DEFAULT_PROFILE
+): { restored: boolean; reason?: string } {
   if (agent.worktree && existsSync(agent.worktree)) return { restored: false }
   const source = restorableWorktreeSource(agent)
   if ("reason" in source) return { restored: false, reason: source.reason }
@@ -68,21 +114,58 @@ export function restoreManagedWorktree(agent: ManagedAgent): { restored: boolean
   if (result.exitCode !== 0) {
     return { restored: false, reason: result.stderr.trim() || `could not restore ${source.branch}` }
   }
-  maybeSetupWorktree(source.worktree, agent.command.includes("--skip-setup"))
+  runSetupCommands(source.worktree, profile.setup, agent.command.includes("--skip-setup"))
   return { restored: true }
 }
 
-function maybeSetupWorktree(worktree: string, skipSetup: boolean): void {
-  if (skipSetup) {
-    console.warn("harnessd: --skip-setup: skipping bun run setup:worktree")
-    return
+function runProfileCommands(
+  cwd: string,
+  commands: string[],
+  label: string,
+  timeoutMs: number,
+  skip = false
+): { ok: boolean; reason?: string } {
+  if (commands.length === 0) return { ok: true }
+  if (skip) {
+    console.warn(`harnessd: --skip-setup: skipping ${commands.length} ${label} command(s)`)
+    return { ok: true }
   }
-  const docker = output(["docker", "ps", "--format", "{{.Names}}"], { allowFailure: true })
-  if (docker.exitCode !== 0 || !docker.stdout.split("\n").includes("threa-postgres")) {
-    console.warn("harnessd: threa-postgres container not running; skipping setup:worktree")
-    return
+  for (const command of commands) {
+    console.log(`harnessd: running ${label}: ${command}`)
+    // killSignal: spawnSync's timeout signals but never escalates, so a command
+    // that traps SIGTERM blocks the reap sweep — and everything waiting on the
+    // lock it holds — for as long as it likes.
+    const result = spawnSync("sh", ["-c", command], {
+      cwd,
+      encoding: "utf8",
+      timeout: timeoutMs,
+      killSignal: "SIGKILL",
+      stdio: "inherit",
+    })
+    if (result.error || result.signal !== null || result.status !== 0) {
+      const detail = result.signal
+        ? `timed out or was killed (${result.signal}) after ${timeoutMs}ms`
+        : (result.error?.message ?? `exit code ${result.status}`)
+      return { ok: false, reason: `${label} command '${command}' ${detail}` }
+    }
   }
-  console.log("harnessd: running bun run setup:worktree")
-  const result = run(["bun", "run", "setup:worktree"], { cwd: worktree, allowFailure: true })
-  if (result.exitCode !== 0) console.warn("harnessd: setup:worktree reported errors; continuing")
+  return { ok: true }
+}
+
+/**
+ * Setup failures warn and continue, as they always have. Teardown failures do
+ * not: {@link reapLink} is about to destroy the directory, and a teardown that
+ * did not run is not a teardown that had nothing to do.
+ */
+export function runSetupCommands(cwd: string, commands: string[], skip = false): void {
+  const result = runProfileCommands(cwd, commands, "setup", SETUP_TIMEOUT_MS, skip)
+  if (!result.ok) console.warn(`harnessd: ${result.reason}; continuing`)
+}
+
+export function runTeardownCommands(
+  cwd: string,
+  commands: string[],
+  timeoutMs = TEARDOWN_TIMEOUT_MS
+): { ok: boolean; reason?: string } {
+  return runProfileCommands(cwd, commands, "teardown", timeoutMs)
 }

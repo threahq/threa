@@ -17,13 +17,25 @@ import {
   type WriteMintedIdentityResult,
 } from "./identity-store"
 import { acquireProcessLock, resumeActiveLockPath } from "./lock"
+import { DEFAULT_PROFILE, type Profile } from "./profiles"
 import { CLAUDE_INSTANCE_ID_PREFIX, CLAUDE_RUNTIME_SESSION_ID_PREFIX } from "./spawners"
 
 export interface MintRequest {
   worktree: string
   runtimeKind: string
+  /**
+   * Set by a spawn: refuse ANY live occupant, identified or not.
+   *
+   * The reuse rungs answer "what identity does this directory have", which is
+   * right for a backfill and wrong for a launch — reusing an identified live
+   * session's id starts a SECOND runtime under it, which is the duplicate-session
+   * failure this whole effort exists to remove.
+   */
+  requireVacant?: boolean
   /** Ids declared in ~/.claude/threa-channel/config.json: recorded as the mint rather than generated. */
   declared?: { instanceId?: string; runtimeSessionId?: string }
+  /** Snapshotted onto the record: a later edit to the profiles file must not change how this directory is reaped. */
+  profile?: Profile
 }
 
 export interface MintDeps {
@@ -121,9 +133,21 @@ function mintRuntimeIdentityUnlocked(request: MintRequest, deps: MintDeps): Mint
   const worktree = deps.canonicalPath(request.worktree)
 
   const records = deps.identities()
+  if (request.requireVacant) {
+    const occupied = occupancyVeto(worktree, deps, new Set())
+    if (occupied) return { status: "refused", reason: occupied }
+  }
   const recorded = identityRecordsFor(worktree, records, deps.canonicalPath)
   if (recorded.length === 1) {
     const record = recorded[0]!
+    // Reusing across runtimes hands a Claude the live Pi's session id, and both
+    // pane finders then match it.
+    if (record.runtimeKind !== request.runtimeKind) {
+      return {
+        status: "refused",
+        reason: `${worktree} is recorded for ${record.runtimeSessionId} (${record.runtimeKind}), not ${request.runtimeKind}`,
+      }
+    }
     return {
       status: "reused",
       runtimeSessionId: record.runtimeSessionId,
@@ -171,6 +195,7 @@ function mintRuntimeIdentityUnlocked(request: MintRequest, deps: MintDeps): Mint
     runtimeKind: request.runtimeKind,
     mintedAt: deps.now().toISOString(),
     source: "mint",
+    profile: request.profile ?? DEFAULT_PROFILE,
   }
   const written = deps.write(record)
   if (written.status === "exists") {

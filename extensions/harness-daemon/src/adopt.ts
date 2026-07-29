@@ -280,9 +280,19 @@ export async function adoptClaudeSessionUnlocked(options: AdoptOptions, deps: Ad
   // target NOTHING on this machine binds to this directory.
   const derived = resolveRuntimeIdentity(cwd, {}, config)
   const launch = pane ? parseClaudeChannelLaunch(pane.startCommand) : undefined
-  const minted = identityRecordsFor(cwd, identities, (path) => canonicalOrRaw(path, deps.disk.canonical)).filter(
-    (record) => record.runtimeSessionId === options.runtimeSessionId
-  )
+  const recorded = identityRecordsFor(cwd, identities, (path) => canonicalOrRaw(path, deps.disk.canonical))
+  // Filtering to the requested id BEFORE looking makes a record that binds this
+  // directory to a DIFFERENT session invisible, and a link record is then enough
+  // to take over: the takeover resumes the newest transcript in a directory the
+  // store says belongs to someone else, under this scratchpad.
+  const opposing = recorded.filter((record) => record.runtimeSessionId !== options.runtimeSessionId)
+  if (opposing.length > 0) {
+    return {
+      status: "refused identity mismatch",
+      detail: `${cwd} is recorded for ${opposing.map((record) => record.runtimeSessionId).join(", ")}, not ${options.runtimeSessionId}`,
+    }
+  }
+  const minted = recorded.filter((record) => record.runtimeSessionId === options.runtimeSessionId)
   const attestations: Array<{ source: string; instanceId?: string }> = []
   if (minted.length === 1) attestations.push({ source: "identity record", instanceId: minted[0]!.instanceId })
   if (link) attestations.push({ source: "harness link", instanceId: link.instanceId || undefined })
@@ -667,8 +677,8 @@ async function launchTakeover(params: {
   if (!claudeBin) throw new Error("claude binary not found; set THREA_HARNESSD_CLAUDE_BIN or put claude on PATH")
   const channel = process.env.THREA_HARNESSD_CLAUDE_CHANNEL || "threa-channel"
   const channelEntry = prepareClaudeChannel()
-  const mcpConfig = mcpConfigPath(params.name)
-  if (!existsSync(mcpConfig)) writeChannelMcpConfig(params.name, channel, channelEntry)
+  const mcpConfig = mcpConfigPath(params.identity.runtimeSessionId)
+  if (!existsSync(mcpConfig)) writeChannelMcpConfig(params.identity.runtimeSessionId, channel, channelEntry)
   normalizeChannelMcpConfig(mcpConfig, channel, channelEntry)
 
   const session = params.tmux ?? tmuxSession({ runtime: "claude", name: params.name })

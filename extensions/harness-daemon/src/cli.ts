@@ -9,6 +9,7 @@ export function usage(): never {
 
 Usage:
   threa-harnessd spawn <pi|claude> --name <name> [--branch <ref>] [--repo <path>] [--tmux <session>] [--skip-setup]
+      [--cwd <path>] [--profile <name>]   (--cwd uses an existing folder and provisions nothing)
   threa-harnessd do <natural language command>
   threa-harnessd list
   threa-harnessd up [--tmux <session>] [--dry-run] [--recreate-worktree]
@@ -208,12 +209,22 @@ export function parseSpawn(args: string[]): SpawnOptions {
   const flags = parseFlags(args)
   const name = stringFlag(flags, "name")
   if (!name) die("spawn requires --name")
+  const cwd = stringFlag(flags, "cwd")
+  if (cwd !== undefined) {
+    // --cwd means "use this folder": there is nothing to create a branch off,
+    // and nothing to create it in. Accepting both would silently ignore one.
+    const conflicting = (["repo", "branch", "base"] as const).filter((flag) => flags[flag] !== undefined)
+    if (conflicting.length > 0) {
+      die(`--cwd provisions nothing, so it cannot be combined with ${conflicting.map((f) => `--${f}`).join(", ")}`)
+    }
+  }
   return {
     runtime,
     name: normalizeName(name),
     branch: stringFlag(flags, "branch"),
     base: stringFlag(flags, "base"),
-    repo: resolve(stringFlag(flags, "repo") ?? defaultRepo()),
+    ...(cwd !== undefined ? { cwd: resolve(cwd) } : { repo: resolve(stringFlag(flags, "repo") ?? defaultRepo()) }),
+    profile: stringFlag(flags, "profile"),
     tmux: stringFlag(flags, "tmux"),
     skipSetup: boolFlag(flags, "skip-setup"),
     noRemote: boolFlag(flags, "no-remote"),

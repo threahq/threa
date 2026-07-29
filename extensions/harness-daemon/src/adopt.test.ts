@@ -840,3 +840,30 @@ describe("parseAdopt", () => {
     expect(parseAdopt([RUNTIME, "--root-stream-id", ROOT, "--no-yolo"])).toMatchObject({ noYolo: true })
   })
 })
+
+describe("adoptClaudeSession opposing evidence", () => {
+  test("a directory the identity store binds to another session is refused", async () => {
+    // Filtering identity records to the requested id before looking made the
+    // opposing one invisible, and the link record was then enough: the takeover
+    // resumed the newest transcript in a directory the store says is someone
+    // else's, under this scratchpad.
+    const dependencies = deps({
+      identities: () => [
+        {
+          runtimeSessionId: "ccs-someone-else",
+          instanceId: "cc-someone-else",
+          worktree: CWD,
+          runtimeKind: "claude-code-channel",
+          mintedAt: "2026-07-29T00:00:00.000Z",
+          source: "mint",
+        },
+      ],
+    })
+
+    const outcome = await adoptClaudeSessionUnlocked(options(), dependencies)
+
+    expect(outcome.status).toBe("refused identity mismatch")
+    expect(outcome.detail).toContain("ccs-someone-else")
+    expect(dependencies.launches).toEqual([])
+  })
+})

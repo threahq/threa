@@ -5,6 +5,8 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import type { LocalTmuxPane } from "./discovery"
+import { DEFAULT_PROFILE, type Profile, type WindDownPolicy } from "./profiles"
+import { profileForWorktree, type MintedIdentity } from "./identity-store"
 
 // Every dep is injected, but a defaulted one would silently read the developer's
 // real stores — which is how a green test can depend on what happens to be in
@@ -82,6 +84,8 @@ function makeDeps(overrides: Partial<ReapDeps> = {}): { deps: ReapDeps; recorded
       recorded.woundDown.push(cwd)
       return { pushed: true, removed: true }
     },
+    profileFor: () => DEFAULT_PROFILE,
+    teardown: () => ({ ok: true }),
     killWindow: (windowId) => void recorded.killed.push(windowId),
     awaitExit: async (pid) => void recorded.awaited.push(pid),
     forgetLink: (id) => void recorded.forgotten.push(id),
@@ -486,9 +490,12 @@ test("an occupied worktree two link records disagree about is never reaped", asy
   expect(recorded).toEqual({ woundDown: [], killed: [], forgotten: [], awaited: [], retired: [] })
 })
 
-test("disagreeing records do not wedge an EMPTY worktree out of reaping", async () => {
-  // reapLink is the only thing that clears a record, so refusing here would
-  // strand the directory forever — and nothing is at risk when nothing is in it.
+test("disagreeing records on an EMPTY worktree are drained, and the directory is left alone", async () => {
+  // Empty means no PROCESS, not no owner: the other record may belong to a
+  // scratchpad that is still active and a worktree that is merely dormant, so
+  // pushing and force-removing it on THIS record's archived word destroys a live
+  // session's work. The record is still dropped — reapLink is the only thing
+  // that clears one — but nothing is destroyed while ownership is in doubt.
   const { deps, recorded } = makeDeps({
     links: () => [link({ runtimeSessionId: "ccs-abc" }), link({ runtimeSessionId: "ccs-xyz" })],
     panes: () => [],
@@ -496,8 +503,10 @@ test("disagreeing records do not wedge an EMPTY worktree out of reaping", async 
 
   const outcomes = await reapArchivedWorktrees(deps)
 
-  expect(outcomes.map((outcome) => outcome.status)).toEqual(["reaped", "reaped"])
+  expect(outcomes.map((outcome) => outcome.status)).toEqual(["drained contested record", "drained contested record"])
   expect(recorded.forgotten).toEqual(["ccs-abc", "ccs-xyz"])
+  expect(recorded.woundDown).toEqual([])
+  expect(recorded.retired).toEqual([])
 })
 
 test("a minted record naming the worktree a different session claims blocks the reap", async () => {
@@ -555,4 +564,130 @@ test("only the injected identity store reaches the destructive decision", async 
   } finally {
     rmSync(join(dir, "ccs-ondisk.json"), { force: true })
   }
+})
+
+describe("profile teardown and wind-down policy", () => {
+  function existingProfile(overrides: Partial<Profile> = {}): Profile {
+    return {
+      name: "pi",
+      provision: "existing",
+      preserve: "commit+push",
+      setup: [],
+      teardown: [],
+      ...overrides,
+    } as Profile
+  }
+
+  test("teardown runs before the window is killed and before the wind-down", async () => {
+    const order: string[] = []
+    const { deps } = makeDeps({
+      profileFor: () => existingProfile({ teardown: ["docker compose down"] }),
+      teardown: (_cwd, commands) => {
+        order.push(`teardown:${commands.join("|")}`)
+        return { ok: true }
+      },
+      killWindow: () => void order.push("kill"),
+      windDown: () => {
+        order.push("windDown")
+        return { pushed: true, removed: false }
+      },
+    })
+
+    await reapArchivedWorktrees(deps)
+
+    expect(order).toEqual(["teardown:docker compose down", "kill", "windDown"])
+  })
+
+  test("a failing teardown refuses the wind-down and leaves everything on disk", async () => {
+    const { deps, recorded } = makeDeps({
+      profileFor: () => existingProfile({ teardown: ["false"] }),
+      teardown: () => ({ ok: false, reason: "teardown command 'false' exit code 1" }),
+    })
+
+    const [outcome] = await reapArchivedWorktrees(deps)
+
+    expect(outcome).toMatchObject({ status: "skipped teardown failed" })
+    expect(outcome!.detail).toContain("exit code 1")
+    expect(recorded).toEqual({ woundDown: [], killed: [], forgotten: [], awaited: [], retired: [] })
+  })
+
+  test("a hanging teardown is bounded and reported, not a wedge", async () => {
+    const { deps, recorded } = makeDeps({
+      profileFor: () => existingProfile({ teardown: ["sleep 999"] }),
+      teardown: () => ({ ok: false, reason: "teardown command 'sleep 999' timed out or was killed (SIGTERM)" }),
+    })
+
+    const [outcome] = await reapArchivedWorktrees(deps)
+
+    expect(outcome!.status).toBe("skipped teardown failed")
+    expect(outcome!.detail).toContain("timed out")
+    expect(recorded.killed).toEqual([])
+  })
+
+  test("a worktree with no mint record is wound down under the default profile", async () => {
+    // Today's fleet carries no profile snapshot; nothing about its cleanup changes.
+    const policies: WindDownPolicy[] = []
+    const { deps } = makeDeps({
+      identities: () => [],
+      profileFor: (worktree) => profileForWorktree(worktree, []),
+      windDown: (_cwd, _log, policy) => {
+        policies.push(policy)
+        return { pushed: true, removed: true }
+      },
+    })
+
+    await reapArchivedWorktrees(deps)
+
+    expect(policies).toEqual([{ preserve: "commit+push", reclaim: true }])
+  })
+
+  test("a worktree whose mint record pins preserve: commit is not removed", async () => {
+    const record: MintedIdentity = {
+      runtimeSessionId: "ccs-abc",
+      instanceId: "cc-abc",
+      worktree: WORKTREE,
+      runtimeKind: "claude-code-channel",
+      mintedAt: "2026-07-27T09:00:00.000Z",
+      source: "mint",
+      profile: {
+        name: "keep",
+        provision: "worktree",
+        layout: "threa.${name}",
+        base: "origin/main",
+        setup: [],
+        teardown: [],
+        preserve: "commit",
+      },
+    }
+    const policies: WindDownPolicy[] = []
+    const { deps, recorded } = makeDeps({
+      identities: () => [record],
+      profileFor: (worktree) => profileForWorktree(worktree, [record], (path) => path),
+      windDown: (_cwd, _log, policy) => {
+        policies.push(policy)
+        return { pushed: false, removed: false, reason: "preserve 'commit'" }
+      },
+    })
+
+    const [outcome] = await reapArchivedWorktrees(deps)
+
+    expect(policies).toEqual([{ preserve: "commit", reclaim: false }])
+    expect(outcome!.status).toBe("reaped, worktree left")
+    // The directory survived, so the identity binding must survive with it.
+    expect(recorded.retired).toEqual([])
+  })
+
+  test("a dry run neither tears down nor winds down", async () => {
+    const { deps, recorded } = makeDeps({
+      profileFor: () => existingProfile({ teardown: ["docker compose down"] }),
+      teardown: () => {
+        throw new Error("teardown must not run in a dry run")
+      },
+    })
+
+    const [outcome] = await reapArchivedWorktrees(deps, true)
+
+    expect(outcome!.status).toBe("would reap")
+    expect(recorded.woundDown).toEqual([])
+  })
 })

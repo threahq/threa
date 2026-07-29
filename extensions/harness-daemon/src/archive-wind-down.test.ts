@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { pushBranchAndRemoveWorktree } from "./archive-wind-down"
+import { DEFAULT_WIND_DOWN_POLICY, pushBranchAndRemoveWorktree } from "./archive-wind-down"
 
 const noLog = () => undefined
 
@@ -140,5 +140,94 @@ describe("pushBranchAndRemoveWorktree", () => {
     const report = pushBranchAndRemoveWorktree(dir, noLog)
     expect(report).toMatchObject({ committed: false, pushed: false, removed: false })
     expect(report.reason).toContain("not a git worktree")
+  })
+})
+
+/**
+ * The rung is an ordinal CEILING on the one fixed sequence, so a policy can only
+ * stop earlier. Every test above runs with no third argument — that is the
+ * regression guard proving the default is byte-identical to the pre-profile
+ * behaviour, and it is deliberately not restated here.
+ */
+describe("pushBranchAndRemoveWorktree under a preserve ceiling", () => {
+  test("the default policy is byte-identical to the pre-profile behaviour", () => {
+    const defaulted = makeFixture()
+    writeFileSync(join(defaulted.worktree, "wip.txt"), "unsaved work\n")
+    const explicit = makeFixture()
+    writeFileSync(join(explicit.worktree, "wip.txt"), "unsaved work\n")
+
+    expect(pushBranchAndRemoveWorktree(defaulted.worktree, noLog)).toEqual(
+      pushBranchAndRemoveWorktree(explicit.worktree, noLog, DEFAULT_WIND_DOWN_POLICY)
+    )
+    expect(existsSync(defaulted.worktree)).toBe(false)
+    expect(existsSync(explicit.worktree)).toBe(false)
+  })
+
+  test("preserve: none leaves the branch unpushed and the worktree on disk, with a reason", () => {
+    const { worktree, origin } = makeFixture()
+    writeFileSync(join(worktree, "wip.txt"), "unsaved work\n")
+
+    const report = pushBranchAndRemoveWorktree(worktree, noLog, { preserve: "none", reclaim: false })
+
+    expect(report).toMatchObject({ committed: false, pushed: false, removed: false })
+    expect(report.reason).toContain("preserve 'none'")
+    expect(originHasBranch(origin, "feature/archive-test")).toBe(false)
+    expect(existsSync(join(worktree, "wip.txt"))).toBe(true)
+  })
+
+  test("preserve: commit saves the dirty tree and stops before the push", () => {
+    const { worktree, origin } = makeFixture()
+    writeFileSync(join(worktree, "wip.txt"), "unsaved work\n")
+
+    const report = pushBranchAndRemoveWorktree(worktree, noLog, { preserve: "commit", reclaim: false })
+
+    expect(report).toMatchObject({ committed: true, pushed: false, removed: false })
+    expect(sh(worktree, "git log -1 --format=%s")).toBe("wip: auto-commit — scratchpad archived")
+    expect(originHasBranch(origin, "feature/archive-test")).toBe(false)
+    expect(existsSync(worktree)).toBe(true)
+  })
+
+  test("reclaim never runs without a successful push, whatever the rung", () => {
+    // {preserve: "commit", reclaim: true} is unrepresentable in a Profile and
+    // rejected at config time; the ladder is the second line of defence, and it
+    // returns before `push` ever runs, so the removal block is unreachable.
+    const { worktree, origin } = makeFixture()
+    writeFileSync(join(worktree, "wip.txt"), "unsaved work\n")
+
+    const report = pushBranchAndRemoveWorktree(worktree, noLog, { preserve: "commit", reclaim: true })
+
+    expect(report).toMatchObject({ committed: true, pushed: false, removed: false })
+    expect(existsSync(join(worktree, "wip.txt"))).toBe(true)
+    expect(originHasBranch(origin, "feature/archive-test")).toBe(false)
+  })
+
+  test("reclaim: false pushes and keeps the directory", () => {
+    const { worktree, origin } = makeFixture()
+    writeFileSync(join(worktree, "wip.txt"), "unsaved work\n")
+
+    const report = pushBranchAndRemoveWorktree(worktree, noLog, { preserve: "commit+push", reclaim: false })
+
+    expect(report).toMatchObject({ committed: true, pushed: true, removed: false })
+    expect(report.reason).toContain("reclaim is off")
+    expect(originHasBranch(origin, "feature/archive-test")).toBe(true)
+    expect(existsSync(worktree)).toBe(true)
+  })
+
+  test("a protected branch still refuses at the highest rung — the floor is not a policy input", () => {
+    const { main } = makeFixture()
+    const report = pushBranchAndRemoveWorktree(main, noLog, { preserve: "commit+push", reclaim: true })
+    expect(report).toMatchObject({ committed: false, pushed: false, removed: false })
+    expect(report.reason).toContain("protected")
+    expect(existsSync(main)).toBe(true)
+  })
+
+  test("the main checkout is never removed, whatever the policy", () => {
+    const { main, origin } = makeFixture()
+    sh(main, `git checkout -b feature/from-main`)
+    const report = pushBranchAndRemoveWorktree(main, noLog, { preserve: "commit+push", reclaim: true })
+    expect(report).toMatchObject({ pushed: true, removed: false })
+    expect(report.reason).toContain("main repository checkout")
+    expect(originHasBranch(origin, "feature/from-main")).toBe(true)
+    expect(existsSync(main)).toBe(true)
   })
 })

@@ -8,7 +8,14 @@ import {
 import { existsSync } from "node:fs"
 import { pushBranchAndRemoveWorktree } from "./archive-wind-down"
 import { liveClaudePidsIn } from "./claude-registry"
-import { forgetMintedIdentitiesFor, readMintedIdentities, type MintedIdentity } from "./identity-store"
+import {
+  forgetMintedIdentitiesFor,
+  profileForWorktree,
+  readMintedIdentities,
+  type MintedIdentity,
+} from "./identity-store"
+import { windDownPolicyFor, type Profile, type WindDownPolicy } from "./profiles"
+import { runTeardownCommands } from "./worktree"
 import {
   attestedRuntimes,
   canonicalOrRaw,
@@ -65,10 +72,14 @@ export type ReapStatus =
   | "skipped grace"
   | "skipped worktree missing"
   | "skipped ambiguous"
+  /** Record forgotten, directory untouched: two records name it and one may still be live. */
+  | "drained contested record"
   | "skipped occupied"
   | "skipped observer too young"
   | "skipped inaccessible"
   | "skipped unavailable"
+  /** The profile's teardown commands failed or timed out; nothing destructive ran. */
+  | "skipped teardown failed"
 
 export interface ReapOutcome {
   runtimeSessionId: string
@@ -89,7 +100,15 @@ export interface ReapDeps {
   scratchpadStatus: (streamId: string) => Promise<ScratchpadStatus>
   archivedAt: (streamId: string) => Promise<string | undefined>
   pathExists: (path: string) => boolean
-  windDown: (cwd: string, log: (message: string) => void) => { pushed: boolean; removed: boolean; reason?: string }
+  windDown: (
+    cwd: string,
+    log: (message: string) => void,
+    policy: WindDownPolicy
+  ) => { pushed: boolean; removed: boolean; reason?: string }
+  /** The profile this worktree was provisioned under; no mint record ⇒ the built-in default profile. */
+  profileFor: (worktree: string) => Profile
+  /** The profile's teardown commands, bounded. Runs before anything destructive. */
+  teardown: (cwd: string, commands: string[]) => { ok: boolean; reason?: string }
   killWindow: (windowId: string) => void
   /** Resolves once the killed pane's process is gone, or after a bounded wait. */
   awaitExit: (pid: number) => Promise<void>
@@ -111,6 +130,8 @@ export function defaultReapDeps(target: { baseUrl: string; workspaceId: string; 
     archivedAt: (streamId) => fetchScratchpadArchivedAt({ ...target, streamId }),
     pathExists: existsSync,
     windDown: pushBranchAndRemoveWorktree,
+    profileFor: (worktree) => profileForWorktree(worktree),
+    teardown: runTeardownCommands,
     killWindow: (windowId) => {
       output(["tmux", "kill-window", "-t", windowId], { allowFailure: true })
     },
@@ -126,8 +147,14 @@ export function defaultReapDeps(target: { baseUrl: string; workspaceId: string; 
   }
 }
 
+function conflictReason(link: HarnessLink, conflict: string[]): string {
+  return `identity evidence for ${link.worktree} disagrees: ${conflict.join(", ")}`
+}
+
 type WindowDecision =
   | { kind: "none" }
+  /** Forget the record, destroy nothing: the directory's ownership is in doubt. */
+  | { kind: "drain"; reason: string }
   | { kind: "kill"; pane: LocalTmuxPane }
   | { kind: "refuse"; status: ReapStatus; reason: string }
 
@@ -157,10 +184,26 @@ function decideWindow(link: HarnessLink, panes: LocalTmuxPane[], deps: ReapDeps)
   const occupants = panes.filter((pane) => deps.canonicalPath(pane.cwd) === worktree)
   const livePids = deps.claudeProcessesIn(link.worktree)
 
+  const conflict = conflictingAttestations(
+    link.worktree,
+    attestedRuntimes(deps.links(), deps.canonicalPath),
+    deps.identities(),
+    deps.canonicalPath
+  )
+
   if (occupants.length === 0) {
     // Nobody is in the worktree: the offline case this reaper exists for —
     // unless a paneless Claude is still running there.
-    if (livePids.length === 0) return { kind: "none" }
+    //
+    // Empty means no PROCESS, not no owner. When two records name this directory
+    // the other one may belong to a scratchpad that is still active, and its
+    // worktree is merely dormant — pushing and force-removing it on THIS
+    // record's archived word destroys a live session's work. So the record is
+    // still drained (or the duplication wedges the directory forever), but
+    // nothing is destroyed while it is in doubt.
+    if (livePids.length === 0) {
+      return conflict.length > 0 ? { kind: "drain", reason: conflictReason(link, conflict) } : { kind: "none" }
+    }
     return {
       kind: "refuse",
       status: "skipped occupied",
@@ -181,18 +224,8 @@ function decideWindow(link: HarnessLink, panes: LocalTmuxPane[], deps: ReapDeps)
   // EMPTY worktree would wedge it out of reaping forever, because `reapLink` is
   // the only thing that clears a record. Nothing is at risk when nothing is
   // there, and reaping one record per pass is what resolves the duplication.
-  const conflict = conflictingAttestations(
-    link.worktree,
-    attestedRuntimes(deps.links(), deps.canonicalPath),
-    deps.identities(),
-    deps.canonicalPath
-  )
   if (conflict.length > 0) {
-    return {
-      kind: "refuse",
-      status: "skipped ambiguous",
-      reason: `identity evidence for ${link.worktree} disagrees: ${conflict.join(", ")}`,
-    }
+    return { kind: "refuse", status: "skipped ambiguous", reason: conflictReason(link, conflict) }
   }
 
   const resolved = resolveManagedAgentPane(
@@ -266,6 +299,13 @@ export async function reapLink(link: HarnessLink, deps: ReapDeps, dryRun: boolea
   const window = decideWindow(link, deps.panes(), deps)
   if (window.kind === "refuse") return { ...base, status: window.status, detail: window.reason }
 
+  // Drop the record, touch nothing else. Leaving it would wedge the directory
+  // out of reaping forever, since this is the only pass that clears a record.
+  if (window.kind === "drain") {
+    if (!dryRun) deps.forgetLink(link.runtimeSessionId)
+    return { ...base, status: "drained contested record", detail: window.reason }
+  }
+
   if (!deps.pathExists(link.worktree)) {
     // Already gone — the records are the only leftover.
     if (!dryRun) {
@@ -287,11 +327,25 @@ export async function reapLink(link: HarnessLink, deps: ReapDeps, dryRun: boolea
   // process is gone. Removing the directory in that gap deletes the cwd of a
   // Claude still flushing its transcript, so wait for the pane to actually
   // exit — the grace the old detached `sleep 5` provided by accident.
+  // Teardown is arbitrary user commands, so it is NOT a rung on the ladder — it
+  // runs one level up, before the window is killed and before anything is
+  // pushed or removed. A failure refuses the whole wind-down: a teardown that
+  // did not run is not a teardown with nothing to do.
+  const profile = deps.profileFor(link.worktree)
+  const teardown = deps.teardown(link.worktree, profile.teardown)
+  if (!teardown.ok) {
+    return { ...base, status: "skipped teardown failed", detail: teardown.reason ?? "teardown failed" }
+  }
+
   if (window.kind === "kill") {
     deps.killWindow(window.pane.windowId)
     await deps.awaitExit(window.pane.panePid)
   }
-  const report = deps.windDown(link.worktree, (message) => deps.log(`${link.worktree}: ${message}`))
+  const report = deps.windDown(
+    link.worktree,
+    (message) => deps.log(`${link.worktree}: ${message}`),
+    windDownPolicyFor(profile)
+  )
   // Forgotten either way, matching the pre-existing contract for a refused
   // wind-down: the branch is the thing that had to survive, and a directory
   // left behind is for a human. What must not happen is reporting it gone.

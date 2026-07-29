@@ -3,7 +3,8 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync } from "node:fs
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import type { HarnessLink } from "@threa/bot-runtime-client"
-import { backfillIdentities, type BackfillDeps, type BackfillOutcome } from "./backfill"
+import { backfillIdentities, recordedProfile, type BackfillDeps, type BackfillOutcome } from "./backfill"
+import type { Profile } from "./profiles"
 import type { LocalTmuxPane } from "./discovery"
 import { writeMintedIdentity, type MintedIdentity, type WriteMintedIdentityResult } from "./identity-store"
 import type { ManagedAgent } from "./types"
@@ -94,6 +95,7 @@ function deps(overrides: Partial<BackfillDeps> = {}): { deps: BackfillDeps; writ
       },
       now: () => new Date("2026-07-29T00:00:00.000Z"),
       log: () => {},
+      profileFor: () => undefined,
       ...overrides,
     },
   }
@@ -295,4 +297,25 @@ test("a corroborated subject with no instance id is not counted as a single sour
 
   expect(pairs(outcomes)).toEqual([{ subject: WORKTREE, disposition: "refused no instance id" }])
   expect(context.written).toEqual([])
+})
+
+test("a row's recorded profile is carried onto the record the backfill writes", () => {
+  // A reap deletes the snapshot with the worktree, so a directory that comes
+  // back through an unarchive is re-recorded here. Without this it is
+  // re-recorded with NO profile, which resolves to the built-in default and
+  // silently stops running the teardown the operator declared.
+  const quiet: Profile = { name: "quiet", provision: "existing", preserve: "none", setup: [], teardown: [] }
+  const context = deps({ links: () => [link()], profileFor: () => quiet })
+
+  const outcomes = backfillIdentities(context.deps, false)
+
+  expect(pairs(outcomes)).toEqual([{ subject: WORKTREE, disposition: "recorded" }])
+  expect(context.written[0]?.profile).toEqual(quiet)
+})
+
+test("recordedProfile reads the profile off the row's own spawn command", () => {
+  expect(recordedProfile([agent({ command: ["threa-harnessd", "spawn", "claude", "--name", "x"] })])).toBeUndefined()
+  expect(
+    recordedProfile([agent({ command: ["threa-harnessd", "spawn", "claude", "--cwd", "/repo/x"] })])
+  ).toMatchObject({ provision: "existing", preserve: "none" })
 })
