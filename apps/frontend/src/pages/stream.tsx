@@ -895,12 +895,7 @@ export function StreamPage() {
     </>
   )
 
-  // Kept out of the tree entirely during a takeover, not just closed: the effect
-  // that clears `?context` when a panel opens is a plain effect, so it runs after
-  // paint — an already-open surface would flash over the fullscreen panel for a
-  // frame. The old early-return branch excluded it structurally; this preserves
-  // that. Desktop still renders it beside an open panel.
-  const streamContextSurface = stream && !isThread && !isDraft && !(isMobile && isPanelOpen) && (
+  const streamContextSurface = stream && !isThread && !isDraft && (
     <>
       <StreamContextSurface
         workspaceId={workspaceId}
@@ -964,8 +959,14 @@ export function StreamPage() {
           </ThreadPanelSlot>
         )}
       </div>
-      {conversationPanel}
-      {streamContextSurface}
+      {/* Both are `fixed` overlays that would paint over a fullscreen panel, so a
+          takeover keeps them out of the tree entirely rather than merely closed —
+          the effect that clears `?context` runs after paint, so an already-open
+          surface would flash for a frame. The old early-return branch excluded the
+          context surface structurally; this preserves that. Their `?convView` /
+          `?context` state survives in the URL and returns when the panel closes. */}
+      {!mobileTakeover && conversationPanel}
+      {!mobileTakeover && streamContextSurface}
     </>
   )
 }
