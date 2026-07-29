@@ -7,7 +7,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import type { Socket } from "socket.io-client"
 import type { BoardPost, BoardPostMessage, ConversationWithStaleness, EventType } from "@threa/types"
 import { ConversationPanel } from "./conversation-panel"
-import { ServicesProvider, SidebarProvider, PanelProvider, TraceProvider } from "@/contexts"
+import { ServicesProvider, SidebarProvider, PanelProvider, TraceProvider, SKELETON_DELAY_MS } from "@/contexts"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { spyOnExport } from "@/test/spy"
 // eslint-disable-next-line no-restricted-imports -- test seeds IDB directly to drive the real rail read path
@@ -549,6 +549,13 @@ describe("ConversationPanel", () => {
       },
     })
     expect(await screen.findByText("Couldn't open this conversation")).toBeTruthy()
+    // `notFound` is terminal with `post` null, so a readiness signal keyed only on
+    // `post` latches the phase at "skeleton" and shimmers the header forever above
+    // a state that has already resolved. The skeleton only appears once
+    // SKELETON_DELAY_MS has elapsed, so the assertion has to outlive that timer to
+    // mean anything.
+    await new Promise((resolve) => setTimeout(resolve, SKELETON_DELAY_MS + 150))
+    expect(document.querySelectorAll(".animate-pulse").length).toBe(0)
   })
 
   it("lets the author edit their own row in place, swapping the body for the editor", async () => {

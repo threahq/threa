@@ -385,7 +385,10 @@ export function ConversationPanel({ workspaceId, onClose }: ConversationPanelPro
   // body pick the skeleton up where this left it — without it, the body mounting
   // at its own "loading" phase would blank a skeleton the user is already
   // looking at.
-  const shellPhase = useCoordinatedPhase({ isLoading: !post, isReady: !!post })
+  // `notFound` is terminal with `post` still null, so readiness has to include it —
+  // otherwise the phase latches at "skeleton" and the header shimmers forever above
+  // a resolved empty state.
+  const shellPhase = useCoordinatedPhase({ isLoading: !post && !notFound, isReady: !!post || notFound })
   const skeletonShownRef = useRef<{ conversationId: string | null; shown: boolean }>({ conversationId, shown: false })
   if (skeletonShownRef.current.conversationId !== conversationId) {
     skeletonShownRef.current = { conversationId, shown: false }

@@ -53,6 +53,7 @@ export {
   MainContentGate,
   useCoordinatedLoading,
   useCoordinatedPhase,
+  SKELETON_DELAY_MS,
   LOADING_DELAY_MS,
   type CoordinatedPhase,
   type StreamState,
