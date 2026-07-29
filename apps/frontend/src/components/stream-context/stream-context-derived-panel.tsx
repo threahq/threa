@@ -70,14 +70,11 @@ export function StreamContextDerivedPanel({
   const listRef = useRef<VirtualizerHandle | null>(null)
 
   // Same jump affordance as the indexed panel, minus the paging: this path
-  // renders the loaded window only, so a date beyond it has nothing to land on
-  // and the jump is a no-op rather than a fetch.
+  // renders the loaded window only, so that window's oldest row is as far back
+  // as a date beyond it can land.
   const jumpToDate = useCallback(
     (date: Date) => {
       const now = new Date()
-      // Nothing that old in the loaded window: travel as far back as it goes
-      // rather than refusing (this path never pages, so its start of history is
-      // the window's).
       let index = markerIndexForDate(visible, localStartOfDayMs(date) + DAY_MS, now)
       if (index === -1) index = oldestItemIndex(visible, now)
       if (index === -1) return

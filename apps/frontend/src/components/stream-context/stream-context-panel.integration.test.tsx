@@ -556,6 +556,54 @@ describe("StreamContextPanel — flag on", () => {
     await waitFor(() => expect(scrollToIndex).toHaveBeenCalledWith(2, { align: "start" }))
   })
 
+  it("ignores a superseded jump whose pages land after a newer one", async () => {
+    const scrollToIndex = vi.fn()
+    vi.spyOn(streamContextListModule, "StreamContextList").mockImplementation(({ children, listRef }) => {
+      if (listRef) (listRef as { current: unknown }).current = { scrollToIndex }
+      return createElement(Fragment, null, children)
+    })
+    // [marker 20th, row, marker 12th, row] — the 12th is loaded, so a jump to it
+    // needs no paging and resolves immediately.
+    await db.streamContextItems.bulkPut([
+      cachedRow(
+        serverItem({ category: "link", refId: "https://newest.example", occurredAt: "2026-07-20T10:00:00.000Z" })
+      ),
+      cachedRow(serverItem({ category: "link", refId: "https://mid.example", occurredAt: "2026-07-12T10:00:00.000Z" })),
+    ])
+    // The first jump's page is held open, so it finishes AFTER the second one.
+    let releasePage: (value: ListStreamContextResponse) => void = () => {}
+    vi.spyOn(streamContextApi, "list")
+      .mockResolvedValueOnce(listResponse({ counts: null, nextCursor: "c1" }))
+      .mockImplementationOnce(
+        () =>
+          new Promise<ListStreamContextResponse>((resolve) => {
+            releasePage = resolve
+          })
+      )
+      .mockResolvedValue(listResponse({ counts: null }))
+
+    renderPanel()
+    await screen.findAllByRole("button", { name: /Jump to a date/ })
+
+    // Jump 1: the 2nd — older than everything, so it pages and blocks.
+    await userEvent.click((await screen.findAllByRole("button", { name: /Jump to a date/ }))[0]!)
+    await userEvent.click(await screen.findByText("Jump to a specific date…"))
+    await userEvent.click(await screen.findByRole("button", { name: /July 2nd/ }))
+
+    // Jump 2: the 12th — in the loaded window, lands right away on flat index 2.
+    await userEvent.click((await screen.findAllByRole("button", { name: /Jump to a date/ }))[0]!)
+    await userEvent.click(await screen.findByText("Jump to a specific date…"))
+    await userEvent.click(await screen.findByRole("button", { name: /July 12th/ }))
+    await waitFor(() => expect(scrollToIndex).toHaveBeenCalledWith(2, { align: "start" }))
+
+    // Now let the abandoned first jump finish. It must not move the list: the
+    // user asked for the 12th last, and it would drag them to the oldest row.
+    releasePage(listResponse({ counts: null }))
+    await waitFor(() => expect(streamContextApi.list).toHaveBeenCalledTimes(2))
+
+    expect(scrollToIndex.mock.calls.at(-1)).toEqual([2, { align: "start" }])
+  })
+
   it("lands on the oldest artifact when the picked date is older than the whole stream", async () => {
     const scrollToIndex = vi.fn()
     vi.spyOn(streamContextListModule, "StreamContextList").mockImplementation(({ children, listRef }) => {

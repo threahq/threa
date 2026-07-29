@@ -64,8 +64,8 @@ function getContainerNames(): { postgres: string; minio: string } {
  * over TCP on the runner but carrying a generated docker name, while the local
  * one is a compose container on a port the dev stack doesn't use.
  */
-export function runTestSql(sql: string, target: "region" | "control-plane" = "region"): void {
-  const db = target === "control-plane" ? `${deriveTestDatabaseName()}_cp` : deriveTestDatabaseName()
+export function runTestSql(sql: string): void {
+  const db = deriveTestDatabaseName()
   // argv, never a shell string: multi-line SQL through a shell reaches psql
   // with its newlines still escaped, and psql reads `\n` as a meta-command.
   const psql = ["psql", "-U", "threa", "-d", db, "-v", "ON_ERROR_STOP=1", "-c", sql]

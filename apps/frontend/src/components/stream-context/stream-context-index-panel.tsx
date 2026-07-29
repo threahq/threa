@@ -174,9 +174,26 @@ export function StreamContextIndexPanel(props: StreamContextPanelProps) {
   // hence virtua's `scrollToIndex` over a DOM scroll.
   const items = visibleRows.map(contextItemFromCached).filter((item): item is ContextItem => item !== null)
 
-  const [jumping, setJumping] = useState(false)
+  // Which jump is paging, not merely whether one is: an abandoned run must not
+  // clear a skeleton the run that replaced it is still showing, and must not
+  // leave its own showing forever when it bails.
+  const [pagingFor, setPagingFor] = useState<number | null>(null)
+  const jumping = pagingFor !== null
+  const finishPaging = useCallback((generation: number) => {
+    setPagingFor((current) => (current === generation ? null : current))
+  }, [])
+  // A jump can take ten round trips, and everything it decides with — the date,
+  // the filters it re-filters each page against — is captured when it starts.
+  // Anything that supersedes it (a second jump, a changed chip or query) bumps
+  // this, and the older run stops instead of scrolling the list somewhere the
+  // user has since navigated away from.
+  const jumpGeneration = useRef(0)
+  useEffect(() => {
+    jumpGeneration.current += 1
+  }, [category, searchTerms, authorId, before, after])
   const jumpToDate = useCallback(
     async (date: Date) => {
+      const generation = (jumpGeneration.current += 1)
       const endOfDayMs = localStartOfDayMs(date) + DAY_MS
       const now = new Date()
       let candidates = items
@@ -184,7 +201,7 @@ export function StreamContextIndexPanel(props: StreamContextPanelProps) {
       // Paging to an unloaded date is several round trips; without this the
       // panel just sits there. Only set it when a fetch is actually needed, so
       // the common in-window jump stays instant and flicker-free.
-      if (index === -1 && feed.hasNextPage) setJumping(true)
+      if (index === -1 && feed.hasNextPage) setPagingFor(generation)
       // Not loaded that far back yet: page until it is, bounded so a date older
       // than the whole stream can't spin. Each page widens the IDB-backed list.
       // `more` tracks the FETCH's own result — `feed.hasNextPage` is captured at
@@ -205,8 +222,10 @@ export function StreamContextIndexPanel(props: StreamContextPanelProps) {
         )
         candidates = rebuilt.map(contextItemFromCached).filter((item): item is ContextItem => item !== null)
         index = markerIndexForDate(candidates, endOfDayMs, now)
+        if (jumpGeneration.current !== generation) return finishPaging(generation)
       }
-      setJumping(false)
+      if (jumpGeneration.current !== generation) return finishPaging(generation)
+      finishPaging(generation)
       // Past the start of history — either the stream's, or as far as the page
       // bound reached. Travel to the oldest thing there is: asking for a year
       // ago means "as far back as you can go", not "refuse unless you find that
