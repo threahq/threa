@@ -8,9 +8,9 @@ import {
   type StreamContextScope,
 } from "@threa/types"
 import { HttpError } from "../../lib/errors"
+import { decodeKeysetCursor, encodeKeysetCursor } from "../../lib/keyset-cursor"
 import { E2eStreamsRepository } from "../e2e-streams"
 import { checkStreamAccess } from "../streams"
-import { encodeContextCursor, decodeContextCursor } from "./cursor"
 import { StreamContextReadRepository, type StreamContextFeedRow } from "./read-repository"
 
 interface Dependencies {
@@ -50,7 +50,7 @@ const ZERO_COUNTS = (): Record<ContextCategory, number> =>
   Object.fromEntries(CONTEXT_CATEGORIES.map((c) => [c, 0])) as Record<ContextCategory, number>
 
 function toItem(row: StreamContextFeedRow): StreamContextItem {
-  const { cursorOccurredAt: _cursorOccurredAt, id: _id, ...item } = row
+  const { cursorOccurredAtKey: _cursorOccurredAtKey, id: _id, ...item } = row
   return item
 }
 
@@ -60,7 +60,7 @@ function page(rows: StreamContextFeedRow[], limit: number): { items: StreamConte
   const last = visible[visible.length - 1]
   return {
     items: visible.map(toItem),
-    nextCursor: hasMore && last ? encodeContextCursor({ occurredAt: last.cursorOccurredAt, id: last.id }) : null,
+    nextCursor: hasMore && last ? encodeKeysetCursor({ at: last.cursorOccurredAtKey, id: last.id }) : null,
   }
 }
 
@@ -84,7 +84,7 @@ export function createStreamContextService({ pool }: Dependencies) {
   return {
     async list(params: ListStreamContextParams): Promise<ListStreamContextResponse> {
       const { rootStreamId, sealed } = await resolveScope(params)
-      const cursor = decodeContextCursor(params.cursor)
+      const cursor = decodeKeysetCursor(params.cursor)
 
       // A sealed stream holds only ciphertext, so the index is empty by
       // construction — the panel derives locally instead of paging nothing.
@@ -115,7 +115,7 @@ export function createStreamContextService({ pool }: Dependencies) {
 
     async listOccurrences(params: ListStreamContextOccurrencesParams): Promise<ListStreamContextOccurrencesResponse> {
       const { rootStreamId, sealed } = await resolveScope(params)
-      const cursor = decodeContextCursor(params.cursor)
+      const cursor = decodeKeysetCursor(params.cursor)
 
       if (sealed) {
         return { items: [], nextCursor: null }

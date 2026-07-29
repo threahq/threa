@@ -31,6 +31,7 @@ export const CATEGORY_LABELS: Record<ContextCategory, string> = {
   file: "Files",
   memo: "Memories",
   delegation: "Delegations",
+  follow_up: "Follow-ups",
   thread: "Threads",
 }
 

@@ -98,6 +98,7 @@ import type { SavedSuggestionsService } from "./features/saved-suggestions"
 import type { ScheduledMessagesService } from "./features/scheduled-messages"
 import type { AgentFollowUpService, PersonaConfigService } from "./features/agents"
 import { createDelegationHandlers, type DelegationService } from "./features/delegations"
+import { createAgentOutcomeHandlers, createAgentOutcomeService } from "./features/agent-outcomes"
 import { createStreamContextHandlers, createStreamContextService } from "./features/stream-context"
 import { BotAccessRequestService, createBotAccessRequestHandlers } from "./features/bot-access-requests"
 import type { DraftsService } from "./features/drafts"
@@ -357,6 +358,9 @@ export function registerRoutes(app: Express, deps: Dependencies) {
   const agentSession = createAgentSessionHandlers({ pool })
   const agentFollowUps = createAgentFollowUpHandlers({ pool, agentFollowUpService })
   const delegations = createDelegationHandlers({ pool, delegationService })
+  const agentOutcomes = createAgentOutcomeHandlers({
+    agentOutcomeService: createAgentOutcomeService({ pool }),
+  })
   const streamContext = createStreamContextHandlers({
     streamContextService: createStreamContextService({ pool }),
   })
@@ -1413,6 +1417,13 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     audit("delegations.cancel", "write"),
     delegations.cancel
   )
+  app.get(
+    "/api/workspaces/:workspaceId/agent-outcomes",
+    ...authed,
+    audit("agent_outcomes.list", "read"),
+    agentOutcomes.list
+  )
+
   app.post(
     "/api/workspaces/:workspaceId/delegations/:id/done",
     ...authed,

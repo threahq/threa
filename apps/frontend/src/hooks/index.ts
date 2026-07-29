@@ -105,6 +105,7 @@ export {
   memoKeys,
 } from "./use-memos"
 export { useStreamDelegations, delegationKeys } from "./use-stream-delegations"
+export { useAgentOutcomes, useStreamAgentOutcomes, agentOutcomeKeys } from "./use-agent-outcomes"
 
 export {
   createOptimisticBootstrap,

@@ -137,6 +137,7 @@ export {
   AgentTriggers,
   // Agent follow-ups
   FOLLOW_UP_STATUSES,
+  FOLLOW_UP_TERMINAL_STATUSES,
   type FollowUpStatus,
   FollowUpStatuses,
   // Delegated tasks
@@ -1125,6 +1126,20 @@ export {
   type AgentActivityEndedPayload,
 } from "./agent-trace"
 
+// Agent outcomes (follow-ups + delegations)
+export {
+  AGENT_OUTCOME_KINDS,
+  AGENT_OUTCOME_STATES,
+  AGENT_OUTCOME_SCOPES,
+  type AgentOutcomeKind,
+  type AgentOutcomeState,
+  type AgentOutcomeScope,
+  type AgentOutcomeSummary,
+  type FollowUpOutcomeSummary,
+  type DelegationOutcomeSummary,
+  type ListAgentOutcomesResponse,
+} from "./agent-outcomes"
+
 // "In this stream" context index
 export {
   CONTEXT_CATEGORIES,
@@ -1141,6 +1156,7 @@ export {
   type StreamContextAttachmentDetail,
   type StreamContextMemoDetail,
   type StreamContextDelegationDetail,
+  type StreamContextFollowUpDetail,
   type StreamContextThreadDetail,
   type ListStreamContextResponse,
   type ListStreamContextOccurrencesResponse,

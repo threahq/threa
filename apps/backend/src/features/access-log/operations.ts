@@ -206,6 +206,7 @@ export const ACCESS_LOG_OPERATIONS = [
   "scheduled_messages.send_now",
   // Agent follow-ups / delegations / bot-access
   "agent_follow_ups.cancel",
+  "agent_outcomes.list",
   "delegations.list",
   "delegations.get",
   "delegations.cancel",

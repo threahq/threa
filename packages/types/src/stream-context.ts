@@ -3,9 +3,9 @@
 // for sealed streams and reconciles the two sets by `key`, so the literals and
 // the key derivation live here rather than in either app (INV-33).
 
-import type { LinkPreviewContentType, LinkPreviewStatus, RichLinkPreviewType } from "./constants"
+import type { FollowUpStatus, LinkPreviewContentType, LinkPreviewStatus, RichLinkPreviewType } from "./constants"
 
-export const CONTEXT_CATEGORIES = ["link", "media", "file", "memo", "delegation", "thread"] as const
+export const CONTEXT_CATEGORIES = ["link", "media", "file", "memo", "delegation", "follow_up", "thread"] as const
 export type ContextCategory = (typeof CONTEXT_CATEGORIES)[number]
 
 /**
@@ -16,7 +16,15 @@ export type ContextCategory = (typeof CONTEXT_CATEGORIES)[number]
  */
 export const MESSAGE_BODY_CONTEXT_CATEGORIES = ["link", "media", "file"] as const
 
-export const STREAM_CONTEXT_REF_KINDS = ["url", "attachment", "giphy", "memo", "delegation", "thread"] as const
+export const STREAM_CONTEXT_REF_KINDS = [
+  "url",
+  "attachment",
+  "giphy",
+  "memo",
+  "delegation",
+  "follow_up",
+  "thread",
+] as const
 export type StreamContextRefKind = (typeof STREAM_CONTEXT_REF_KINDS)[number]
 
 export const STREAM_CONTEXT_SCOPES = ["stream", "tree"] as const
@@ -72,6 +80,13 @@ export interface StreamContextDelegationDetail {
   resultMessageId: string | null
 }
 
+/** Joined live from `agent_follow_ups`; the stored detail carries nothing status-shaped. */
+export interface StreamContextFollowUpDetail {
+  note: string
+  status: FollowUpStatus
+  scheduledFor: string | null
+}
+
 export interface StreamContextThreadDetail {
   name: string | null
   replyCount: number
@@ -84,6 +99,7 @@ export type StreamContextItemDetail =
   | StreamContextAttachmentDetail
   | StreamContextMemoDetail
   | StreamContextDelegationDetail
+  | StreamContextFollowUpDetail
   | StreamContextThreadDetail
 
 export interface StreamContextItem {

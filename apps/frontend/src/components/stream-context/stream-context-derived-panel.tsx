@@ -2,10 +2,12 @@ import { useCallback, useMemo, useRef } from "react"
 import type { VirtualizerHandle } from "virtua"
 import { useStreamEvents } from "@/stores/stream-store"
 import { useStreamDelegations } from "@/hooks/use-stream-delegations"
+import { useStreamAgentOutcomes } from "@/hooks/use-agent-outcomes"
 import { localStartOfDayMs } from "@/lib/dates"
 import { markerIndexForDate, oldestItemIndex } from "@/lib/stream-context/grouping"
 import { deriveStreamContext } from "@/lib/stream-context/derive"
 import { delegationContextItems, withDelegations } from "@/lib/stream-context/delegations"
+import { followUpContextItems, withFollowUps } from "@/lib/stream-context/follow-ups"
 import { StreamContextRow } from "./stream-context-row"
 import {
   chipsFromCounts,
@@ -54,9 +56,13 @@ export function StreamContextDerivedPanel({
     () => delegationContextItems(delegationsQuery.data?.delegations ?? []),
     [delegationsQuery.data]
   )
+  // Follow-ups come from the same kind of authoritative read: firing emits no
+  // event at all, so a window-derived row would sit on `pending` forever.
+  const outcomesQuery = useStreamAgentOutcomes(workspaceId, streamId)
+  const followUpItems = useMemo(() => followUpContextItems(outcomesQuery.data?.items ?? []), [outcomesQuery.data])
   const { items, counts, total } = useMemo(
-    () => withDelegations(deriveStreamContext(events), delegationItems),
-    [events, delegationItems]
+    () => withFollowUps(withDelegations(deriveStreamContext(events), delegationItems), followUpItems),
+    [events, delegationItems, followUpItems]
   )
 
   const [filter, setFilter] = useContextFilter()
@@ -66,7 +72,8 @@ export function StreamContextDerivedPanel({
   // "all" so the body never strands the user on an empty filter. The delegation
   // count isn't known until its query settles, so a `?context=delegation` deep
   // link holds the requested view instead of flickering All → Delegations.
-  const filterSettled = filter !== "delegation" || !delegationsPending
+  const filterSettled =
+    (filter !== "delegation" || !delegationsPending) && (filter !== "follow_up" || !outcomesQuery.isPending)
   const effectiveFilter: Filter = filter !== "all" && filterSettled && counts[filter] === 0 ? "all" : filter
   // Memoized for its identity as much as its cost: the timeline's day grouping
   // is keyed on this array, and a fresh one per render would miss that memo.
@@ -74,7 +81,7 @@ export function StreamContextDerivedPanel({
     () => (effectiveFilter === "all" ? items : items.filter((i) => i.category === effectiveFilter)),
     [items, effectiveFilter]
   )
-  const isLoading = events === undefined || (delegationsPending && visible.length === 0)
+  const isLoading = events === undefined || ((delegationsPending || outcomesQuery.isPending) && visible.length === 0)
 
   const scrollerRef = useRef<HTMLDivElement | null>(null)
   const listRef = useRef<VirtualizerHandle | null>(null)
