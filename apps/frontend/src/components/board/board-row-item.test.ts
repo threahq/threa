@@ -1,7 +1,13 @@
 import { describe, it, expect } from "vitest"
 import type { RenderableMessage } from "@/components/message/message-item"
 import type { BoardEventRow } from "@/lib/board/board-event-rows"
-import { buildBoardRows, buildBranchedBoardRows, injectBoardDayDividers, type BoardRow } from "./board-row-item"
+import {
+  buildBoardRows,
+  buildBranchedBoardRows,
+  injectBoardDayDividers,
+  injectUnreadDivider,
+  type BoardRow,
+} from "./board-row-item"
 import { localStartOfDayMs } from "@/lib/dates"
 import { groupBranches, type BranchStreamNode, type BranchConversationView } from "@/lib/board/branch-grouping"
 
@@ -356,5 +362,22 @@ describe("injectBoardDayDividers", () => {
     expect(new Set(keys).size).toBe(keys.length)
     const dayMs = rows.filter((r) => r.kind === "day").map((r) => r.dayStartMs)
     expect(dayMs).toEqual([...dayMs].sort((x, y) => x - y))
+  })
+})
+
+describe("injectUnreadDivider", () => {
+  it("inserts exactly one unread row immediately before the marker's message row", () => {
+    const rows = injectUnreadDivider(
+      [messageRow("a", day1Morning), messageRow("b", day1Evening), messageRow("c", day2Morning)],
+      "b"
+    )
+    expect(rows.map((r) => r.key)).toEqual(["a", "unread", "b", "c"])
+    expect(rows.filter((r) => r.kind === "unread")).toHaveLength(1)
+  })
+
+  it("inserts nothing when the marker's message is not in the row list", () => {
+    const input = [messageRow("a", day1Morning), messageRow("b", day1Evening)]
+    expect(injectUnreadDivider(input, "missing")).toEqual(input)
+    expect(injectUnreadDivider(input, null)).toEqual(input)
   })
 })

@@ -12,6 +12,8 @@ import {
   Check,
   CircleCheck,
   ArrowDown,
+  ArrowUp,
+  X,
   type LucideIcon,
 } from "lucide-react"
 import {
@@ -26,7 +28,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { Skeleton } from "@/components/ui/skeleton"
 import { Empty, EmptyHeader, EmptyMedia, EmptyTitle, EmptyDescription } from "@/components/ui/empty"
 import { MessageItem, type RenderableMessage } from "@/components/message/message-item"
-import { buildBranchedBoardRows, injectBoardDayDividers } from "@/components/board/board-row-item"
+import { buildBranchedBoardRows, injectBoardDayDividers, injectUnreadDivider } from "@/components/board/board-row-item"
 import { BranchedBoardRows, BranchProvenanceRow } from "@/components/board/branch-rows"
 import { resolveBoardEventRows } from "@/lib/board/board-event-rows"
 import { groupBranches, type BranchConversationView } from "@/lib/board/branch-grouping"
@@ -41,10 +43,12 @@ import { useInlineBranchComposer, type ArmBranchTarget } from "@/components/boar
 import { useMoveToSubtopic } from "@/components/board/use-move-to-subtopic"
 import { ConversationActionsMenu } from "@/components/conversations/conversation-actions-menu"
 import { useBoardHiddenConversations } from "@/stores/board-exclusions-store"
+import { useWorkspaceStreamReadStates, useWorkspaceUnreadState } from "@/stores/workspace-store"
 import { cn } from "@/lib/utils"
 import { actorRowTheme } from "@/components/message/actor-row-theme"
 import { ConversationReadProvider, useConversationReadController } from "@/components/message/conversation-read-context"
 import { useConversationAutoRead } from "@/components/message/use-conversation-auto-read"
+import { useConversationUnreadMarker } from "@/components/conversations/use-conversation-unread-marker"
 import { RelativeTime } from "@/components/relative-time"
 import { BoardReplyComposer, type ArmedReply } from "@/components/board/board-reply-composer"
 import {
@@ -543,7 +547,28 @@ function ConversationPanelBody({ workspaceId, post, hostStreamType, openReplySig
       }),
     [conversation.id, conversation.streamId, structuralIndex, conversationGraph]
   )
-  const rows = injectBoardDayDividers(
+  // The panel's read state resolves with the workspace unread bootstrap AND the
+  // per-stream frontiers the derivation actually consumes: a row whose leg has
+  // no frontier yet derives as `ungated`, so latching before every spanned
+  // stream can be decided would anchor the marker below the true first unread —
+  // and the latch is one-way, so it would never correct.
+  const unreadState = useWorkspaceUnreadState(workspaceId)
+  const streamReadStates = useWorkspaceStreamReadStates(workspaceId)
+  const readStateResolved = useMemo(() => {
+    if (unreadState === undefined) return false
+    const decidable = new Set(streamReadStates.map((row) => row.streamId))
+    for (const [streamId, count] of Object.entries(unreadState.unreadCounts ?? {})) {
+      if (count === 0) decidable.add(streamId)
+    }
+    for (const message of all) {
+      if (!decidable.has(message.streamId ?? conversation.streamId)) return false
+    }
+    return true
+  }, [unreadState, streamReadStates, all, conversation.streamId])
+  // Rows first, marker second: the marker may only anchor on a message that
+  // actually gets a row (a message inside a depth-collapsed spanning subtree has
+  // none, so a divider there would draw nothing and scroll nowhere).
+  const baseRows = injectBoardDayDividers(
     buildBranchedBoardRows(
       groupBranches(all, { streams: structuralIndex.streamsById, conversation: { streamId: conversation.streamId } }),
       eventRows,
@@ -551,6 +576,22 @@ function ConversationPanelBody({ workspaceId, post, hostStreamType, openReplySig
       openingMessage?.id
     )
   )
+  const renderedMessageIds = new Set<string>()
+  for (const row of baseRows) if (row.kind === "message") renderedMessageIds.add(row.message.id)
+  const { markerMessageId, unreadCount, isDimmed, dismiss } = useConversationUnreadMarker({
+    conversationId: conversation.id,
+    rows: all,
+    rootStreamId: conversation.streamId,
+    rowState: conversationReadValue.state,
+    currentUserId,
+    readStateResolved,
+    renderedMessageIds,
+  })
+  // Set while this conversation holds an unread marker: the composer's opening
+  // re-pin must not force the tail out from under the marker's scroll (which
+  // lands first, so a "pending" flag would already be clear by then).
+  const markerHeldRef = useRef(false)
+  const rows = injectUnreadDivider(baseRows, markerMessageId, isDimmed)
   // "Move to sub-topic" re-file — same gesture as the board card (membership move
   // within one root; the hook hides the action when a row has nowhere to go).
   const moveToSubtopic = useMoveToSubtopic({ workspaceId, conversation, branchesByForkMessageId })
@@ -636,16 +677,17 @@ function ConversationPanelBody({ workspaceId, post, hostStreamType, openReplySig
   const anchorEl = anchor?.el ?? null
   const floatingComposerOpen = anchor?.claimantId != null
 
-  const { scrollContainerRef, handleScroll, isScrolledFarFromBottom, scrollToBottom } = useScrollBehavior({
-    isLoading: loadingMore,
-    itemCount: rows.length,
-    resetKey: conversation.id,
-    // Only treat the user as "at the bottom" when they are essentially flush, so
-    // a small scroll-up to reference an older reply while typing is not snapped
-    // back when the composer grows (thread-path parity).
-    bottomThreshold: 4,
-    skipInitialScroll: highlightMessageId != null,
-  })
+  const { scrollContainerRef, handleScroll, isScrolledFarFromBottom, scrollToBottom, disableAutoScroll } =
+    useScrollBehavior({
+      isLoading: loadingMore,
+      itemCount: rows.length,
+      resetKey: conversation.id,
+      // Only treat the user as "at the bottom" when they are essentially flush, so
+      // a small scroll-up to reference an older reply while typing is not snapped
+      // back when the composer grows (thread-path parity).
+      bottomThreshold: 4,
+      skipInitialScroll: highlightMessageId != null || markerMessageId != null,
+    })
   // Both consumers of `listRef` (text-selection quoting, viewport auto-read) are
   // keyed to the scroller node, so the two refs name the same element.
   const attachListRef = useCallback(
@@ -665,9 +707,19 @@ function ConversationPanelBody({ workspaceId, post, hostStreamType, openReplySig
   scrollToBottomRef.current = scrollToBottom
   const handleComposerHeightChange = useCallback(
     (_px: number, opts: { initial: boolean }) => {
-      if (highlightMessageId != null) return
-      if (opts.initial) scrollToBottomRef.current({ force: true })
-      else requestAnimationFrame(() => scrollToBottomRef.current())
+      // Only the OPENING force-scroll defers to the panel's opening anchor (a
+      // `?m=` row, or an unread marker held until dismissed): a child layout
+      // effect runs before the parent's marker effect, so on a first-commit
+      // latch this fires first and the guard is what saves the marker's scroll.
+      // The runtime re-pin is unconditional — it is the un-forced call, which
+      // no-ops unless the user is already at the bottom, so the tail can't slide
+      // behind a growing composer.
+      if (opts.initial) {
+        if (highlightMessageId != null || markerHeldRef.current) return
+        scrollToBottomRef.current({ force: true })
+      } else {
+        requestAnimationFrame(() => scrollToBottomRef.current())
+      }
     },
     [highlightMessageId]
   )
@@ -693,6 +745,58 @@ function ConversationPanelBody({ workspaceId, post, hostStreamType, openReplySig
     getReadTruth,
   })
 
+  const findMarkerRow = useCallback(() => {
+    const container = listRef.current
+    if (!container || !markerMessageId) return null
+    return container.querySelector<HTMLElement>(`[data-message-id="${markerMessageId}"]`)
+  }, [markerMessageId])
+  const scrollToMarker = useCallback(() => {
+    const row = findMarkerRow()
+    if (!row) return false
+    disableAutoScroll()
+    row.scrollIntoView({ block: "start" })
+    return true
+  }, [findMarkerRow, disableAutoScroll])
+
+  // Open at the first unread instead of the tail. Runs on every render until it
+  // lands: the one-shot is consumed ONLY once a scroll actually happened, so a
+  // render where the marker's row is not in the DOM yet (rows still loading)
+  // leaves it armed rather than parking the panel at the bottom with a divider
+  // the user was never taken to. `?m=` wins — its own row scroll is the intent.
+  // The body is not keyed on the conversation, so it survives a switch: the
+  // one-shot is reset here in render on conversation change, never inferred from
+  // the key differing — a switch away and back re-latches the same message id,
+  // and a ref still holding it would leave the revisit scrolling nowhere at all.
+  const scrolledMarkerRef = useRef<{ conversationId: string; key: string | null }>({
+    conversationId: conversation.id,
+    key: null,
+  })
+  if (scrolledMarkerRef.current.conversationId !== conversation.id) {
+    scrolledMarkerRef.current = { conversationId: conversation.id, key: null }
+  }
+  markerHeldRef.current = markerMessageId != null
+  const markerScrollKey = markerMessageId
+  useEffect(() => {
+    if (highlightMessageId != null || markerScrollKey == null) return
+    if (scrolledMarkerRef.current.key === markerScrollKey) return
+    if (scrollToMarker()) scrolledMarkerRef.current.key = markerScrollKey
+  })
+
+  // The banner shows only while the divider has left the top of the viewport.
+  const [markerAboveViewport, setMarkerAboveViewport] = useState(false)
+  const syncMarkerPosition = useCallback(() => {
+    const container = listRef.current
+    const row = findMarkerRow()
+    setMarkerAboveViewport(
+      container != null && row != null && row.getBoundingClientRect().top < container.getBoundingClientRect().top
+    )
+  }, [findMarkerRow])
+  useEffect(syncMarkerPosition)
+  const handleListScroll = useCallback(() => {
+    handleScroll()
+    syncMarkerPosition()
+  }, [handleScroll, syncMarkerPosition])
+
   return (
     // Quote reply from a row routes into this conversation's reply composer.
     <ConversationReadProvider value={conversationReadValue}>
@@ -702,7 +806,7 @@ function ConversationPanelBody({ workspaceId, post, hostStreamType, openReplySig
         {moveToSubtopic.moveDialog}
         <div
           ref={attachListRef}
-          onScroll={handleScroll}
+          onScroll={handleListScroll}
           // pt-4 reserves headroom for the first row's hover toolbar, which floats
           // ~14px above its row (MessageItem's float-above chip). Without it the
           // scroll container's top edge clips the first message's toolbar — the
@@ -740,6 +844,39 @@ function ConversationPanelBody({ workspaceId, post, hostStreamType, openReplySig
             )}
           </div>
         </div>
+        {markerMessageId != null && markerAboveViewport && unreadCount > 0 && (
+          // Same affordance as the timeline's, in the same place: below the
+          // header, clear of the top-center chrome.
+          <div
+            className="pointer-events-none absolute left-1/2 z-10 flex -translate-x-1/2 items-center gap-1.5"
+            style={{ top: "3.5rem" }}
+          >
+            <Button
+              variant="secondary"
+              size="sm"
+              className="pointer-events-auto gap-1.5 shadow-lg"
+              onClick={() => scrollToMarker()}
+            >
+              <ArrowUp className="h-3.5 w-3.5" />
+              {unreadCount} new message{unreadCount === 1 ? "" : "s"}
+            </Button>
+            {/* Drop the marker and tail the live bottom without scrolling up.
+                Read state is not written here — the panel is read-only over it
+                (INV-62); auto-read handles rows as they enter the viewport. */}
+            <Button
+              variant="secondary"
+              size="icon"
+              className="pointer-events-auto h-9 w-9 shadow-lg"
+              onClick={() => {
+                dismiss()
+                scrollToBottom({ force: true })
+              }}
+              aria-label="Dismiss unread marker"
+            >
+              <X className="h-4 w-4" />
+            </Button>
+          </div>
+        )}
         {isScrolledFarFromBottom && (
           <div
             className="pointer-events-none absolute left-1/2 z-10 -translate-x-1/2"
