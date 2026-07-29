@@ -6,7 +6,6 @@ import { TooltipProvider } from "@/components/ui/tooltip"
 // eslint-disable-next-line no-restricted-imports -- test seeds IDB directly to drive the real read path
 import { db } from "@/db"
 import * as imageGallery from "@/components/image-gallery"
-import { workspaceKeys } from "@/hooks/use-workspaces"
 import { StreamContextGallery } from "./stream-context-gallery"
 
 const WS = "ws_1"
@@ -24,11 +23,8 @@ function GalleryProbe({ isOpen, items }: { isOpen: boolean; items: { attachmentI
   )
 }
 
-function renderGallery(selectedKey: string, flag: "on" | "off" = "on") {
+function renderGallery(selectedKey: string) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-  queryClient.setQueryData(workspaceKeys.bootstrap(WS), {
-    featureFlags: { workspace: { streamContextIndex: flag }, user: {} },
-  })
   render(
     <MemoryRouter initialEntries={["/s"]}>
       <QueryClientProvider client={queryClient}>
@@ -85,7 +81,10 @@ describe("StreamContextGallery — indexed", () => {
     expect(screen.getByText("att_old")).toBeInTheDocument()
   })
 
-  it("stays on the derive path when the flag is off", async () => {
+  it("stays on the derive path when the stream is sealed", async () => {
+    // No server index exists for an E2E stream, so its index rows must be ignored
+    // even when some are cached — the gallery derives from the loaded window.
+    await db.streams.put({ id: STREAM, workspaceId: WS, rootStreamId: null, e2eEnabled: true } as never)
     await db.streamContextItems.put({
       key: "media:att_old:msg_old",
       workspaceId: WS,
@@ -106,7 +105,7 @@ describe("StreamContextGallery — indexed", () => {
       _cachedAt: Date.now(),
     } as never)
 
-    renderGallery("att_old", "off")
+    renderGallery("att_old")
 
     await waitFor(() => expect(screen.getByTestId("gallery")).toHaveAttribute("data-open", "false"))
   })
