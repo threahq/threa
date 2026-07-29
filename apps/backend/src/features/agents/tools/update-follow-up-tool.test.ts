@@ -76,10 +76,11 @@ describe("update_follow_up tool", () => {
 })
 
 describe("update_follow_up effects", () => {
-  // The new time rides the LABEL, not a one-sided `after`: both surfaces render
-  // `before → after` or nothing, so an `after` alone would be dropped at render
-  // and a moved reminder would look identical to a note-only edit.
-  it("declares the follow-up it moved, with the new time in the label", async () => {
+  // The time rides `after`, which the renderers draw as `→ <time>`. It is NOT
+  // in the label: a 2000-char note against a 120-char cap would truncate the
+  // time away, and the label is part of the session merge key, so two
+  // reschedules of one follow-up would stop collapsing.
+  it("declares the follow-up it moved, with the new time in after", async () => {
     const tool = createUpdateFollowUpTool({ updateFollowUp: mock(async () => okResult()) }, { timezone: "UTC" })
     const input = {
       followUpId: "agfu_01",
@@ -90,7 +91,7 @@ describe("update_follow_up effects", () => {
     const body = parse(out.output)
 
     expect(tool.config.trace.effects?.(input, out)).toEqual([
-      { kind: "follow_up", label: `new note — moved to ${body.scheduledForLocal as string}`, target: "agfu_01" },
+      { kind: "follow_up", label: "new note", target: "agfu_01", after: body.scheduledForLocal as string },
     ])
   })
 

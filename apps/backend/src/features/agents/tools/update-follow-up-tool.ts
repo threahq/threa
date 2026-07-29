@@ -102,12 +102,15 @@ export function createUpdateFollowUpTool(
           note: input.note,
           scheduledFor: input.scheduledFor,
         }),
-      // A reschedule has no `before` — the callback returns the row as written
-      // and nothing from before it — and a one-sided diff is not renderable:
-      // both surfaces draw `before → after` or nothing, so an `after` on its own
-      // would ride the payload and be dropped at render, leaving a moved
-      // reminder looking identical to a note-only edit. The new time goes in the
-      // label instead, where it is actually shown.
+      // The new time rides `after`, not the label. There is no `before` — the
+      // callback returns the row as written and nothing from before it — so the
+      // renderers draw this as `→ <time>`.
+      //
+      // It was in the label briefly and that was wrong twice over: a note runs
+      // to 2000 characters against a 120-character label cap, so the time was
+      // the part truncation ate; and the label is part of the session-level
+      // merge key, so two reschedules of the same follow-up stopped collapsing
+      // and the card showed the superseded time next to the current one.
       effects: (input, result) => {
         const parsed = JSON.parse(result.output) as {
           ok: boolean
@@ -116,14 +119,13 @@ export function createUpdateFollowUpTool(
           scheduledForLocal?: string
         }
         if (!parsed.ok || !parsed.followUpId) return []
-        const rescheduled = input.scheduledFor !== undefined && parsed.scheduledForLocal
+        const rescheduledTo = input.scheduledFor !== undefined ? parsed.scheduledForLocal : undefined
         return [
           {
             kind: "follow_up",
-            ...(rescheduled
-              ? { label: `${parsed.note ?? "Follow-up"} — moved to ${parsed.scheduledForLocal}` }
-              : { label: parsed.note }),
+            label: parsed.note,
             target: parsed.followUpId,
+            ...(rescheduledTo ? { after: rescheduledTo } : {}),
           },
         ]
       },
