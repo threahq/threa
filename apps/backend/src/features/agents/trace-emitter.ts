@@ -1,6 +1,6 @@
 import type { Pool } from "pg"
 import type { Server } from "socket.io"
-import type { AgentStepType, ToolVerificationStatus, TraceSource } from "@threa/types"
+import type { AgentStepType, AgentToolEffect, ToolVerificationStatus, TraceSource } from "@threa/types"
 import { AgentSessionRepository } from "./session-repository"
 import { stepId as generateStepId } from "../../lib/id"
 
@@ -285,6 +285,17 @@ export class ActiveStep {
       stepId: this.params.stepId,
       verification: { status: params.status, reason: params.reason },
     })
+  }
+
+  /**
+   * Record what this tool call wrote.
+   *
+   * Awaited, and with no socket emit of its own: the projector calls this
+   * before the finalize, so `complete`'s RETURNING row carries the effects into
+   * the `agent_session:step:completed` frame the live trace already consumes.
+   */
+  async effects(effects: AgentToolEffect[]): Promise<void> {
+    await AgentSessionRepository.updateStep(this.deps.pool, this.params.stepId, { effects })
   }
 
   /** Complete the step. Persists to DB + emits to socket. */

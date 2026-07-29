@@ -1,4 +1,4 @@
-import type { AgentStepType, TraceSource, AuthorType, ToolVerificationStatus } from "@threa/types"
+import type { AgentStepType, AgentToolEffect, TraceSource, AuthorType, ToolVerificationStatus } from "@threa/types"
 
 export interface NewMessageInfo {
   sequence: bigint
@@ -73,7 +73,17 @@ export type AgentEvent =
       input: unknown
       output: string
       durationMs: number
-      trace: { stepType: AgentStepType; content: string; sources?: TraceSource[] }
+      trace: {
+        stepType: AgentStepType
+        content: string
+        sources?: TraceSource[]
+        /**
+         * What the call wrote. Absent on the guardian-denial completion and on
+         * every tool:error: neither ran to a write, and claiming one there is
+         * the failure this whole layer exists to prevent.
+         */
+        effects?: AgentToolEffect[]
+      }
     }
   | { type: "tool:error"; toolCallId: string; toolName: string; error: string; durationMs: number }
   | { type: "message:sent"; messageId: string; content: string; sources?: TraceSource[] }

@@ -5,6 +5,7 @@ import {
   TOOL_TIERS_BY_NAME,
   tierOfTool,
   type AgentStepType,
+  type AgentToolEffect,
   type ToolPrivacyCategory,
   type ToolTier,
   type TraceSource,
@@ -106,6 +107,15 @@ export interface AgentToolConfig<TSchema extends z.ZodTypeAny = z.ZodTypeAny> {
     hidden?: boolean
     formatContent: (input: z.infer<TSchema>, result: AgentToolResult) => string
     extractSources?: (input: z.infer<TSchema>, result: AgentToolResult) => TraceSource[]
+    /**
+     * What this call wrote that the conversation does not already show.
+     *
+     * Authoritative when present, `[]` included: tools catch their own failures
+     * and still return a successful result, so a declaring tool is the only
+     * thing that knows whether the write happened. Absent means the name-keyed
+     * MUTATING_TOOLS fallback decides.
+     */
+    effects?: (input: z.infer<TSchema>, result: AgentToolResult) => AgentToolEffect[]
   }
 }
 

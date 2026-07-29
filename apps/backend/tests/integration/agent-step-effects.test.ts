@@ -8,12 +8,13 @@ import {
   TraceEmitter,
   createAgentSessionHandlers,
   PersonaRepository,
+  createSessionTraceProjector,
 } from "../../src/features/agents"
 import { BotRepository, serializeTraceStep } from "../../src/features/public-api"
 import { StreamEventRepository } from "../../src/features/streams"
 import * as streamsModule from "../../src/features/streams"
 import { streamId, sessionId, personaId, messageId, stepId } from "../../src/lib/id"
-import { AgentStepTypes, type AgentToolEffect } from "@threa/types"
+import { AgentStepTypes, AgentToolNames, type AgentToolEffect } from "@threa/types"
 
 const SETTINGS_EFFECTS: AgentToolEffect[] = [
   { kind: "settings", label: "Theme", target: "theme", before: "light", after: "dark" },
@@ -299,6 +300,85 @@ describe("agent step effects", () => {
           completedAt: reloaded!.completedAt!.toISOString(),
         },
       })
+    })
+  })
+  describe("driven through the projector", () => {
+    test("a tool:complete carrying effects persists them and ships them in the completed frame", async () => {
+      const testSessionId = sessionId()
+      await seedSession(pool, testSessionId)
+
+      const emits: Array<{ event: string; payload: Record<string, unknown> }> = []
+      const io = {
+        to: () => io,
+        emit: (event: string, payload: Record<string, unknown>) => {
+          emits.push({ event, payload })
+        },
+      } as unknown as Server
+
+      const trace = new TraceEmitter({ io, pool }).forSession({
+        sessionId: testSessionId,
+        workspaceId: "ws_1",
+        streamId: "stream_1",
+        triggerMessageId: "msg_1",
+        personaName: "Ariadne",
+      })
+      const projector = createSessionTraceProjector(trace)
+
+      await projector.handle({
+        type: "tool:start",
+        toolCallId: "tc_1",
+        toolName: AgentToolNames.UPDATE_USER_SETTINGS,
+        stepType: AgentStepTypes.TOOL_CALL,
+        input: {},
+      })
+      await projector.handle({
+        type: "tool:complete",
+        toolCallId: "tc_1",
+        toolName: AgentToolNames.UPDATE_USER_SETTINGS,
+        input: {},
+        output: "{}",
+        durationMs: 1000,
+        trace: { stepType: AgentStepTypes.TOOL_CALL, content: "done", effects: SETTINGS_EFFECTS },
+      })
+
+      const [persisted] = await AgentSessionRepository.findStepsBySession(pool, testSessionId)
+      expect(persisted!.effects).toEqual(SETTINGS_EFFECTS)
+
+      const completed = emits.find((e) => e.event === "agent_session:step:completed")
+      expect((completed?.payload as { step: { effects?: AgentToolEffect[] } }).step.effects).toEqual(SETTINGS_EFFECTS)
+    })
+
+    test("a tool that threw persists none", async () => {
+      const testSessionId = sessionId()
+      await seedSession(pool, testSessionId)
+
+      const io = { to: () => io, emit: () => {} } as unknown as Server
+      const trace = new TraceEmitter({ io, pool }).forSession({
+        sessionId: testSessionId,
+        workspaceId: "ws_1",
+        streamId: "stream_1",
+        triggerMessageId: "msg_1",
+        personaName: "Ariadne",
+      })
+      const projector = createSessionTraceProjector(trace)
+
+      await projector.handle({
+        type: "tool:start",
+        toolCallId: "tc_1",
+        toolName: AgentToolNames.UPDATE_USER_SETTINGS,
+        stepType: AgentStepTypes.TOOL_CALL,
+        input: {},
+      })
+      await projector.handle({
+        type: "tool:error",
+        toolCallId: "tc_1",
+        toolName: AgentToolNames.UPDATE_USER_SETTINGS,
+        error: "boom",
+        durationMs: 10,
+      })
+
+      const [persisted] = await AgentSessionRepository.findStepsBySession(pool, testSessionId)
+      expect(persisted!.effects).toBeUndefined()
     })
   })
 })

@@ -1,6 +1,6 @@
 import type { LanguageModel, ModelMessage, Tool, ToolResultPart } from "ai"
 import type { SourceItem, TraceSource } from "@threa/types"
-import { AgentToolNames, ToolVerificationStatuses, requiresGuardianReview } from "@threa/types"
+import { AgentToolNames, ToolVerificationStatuses, requiresGuardianReview, resolveToolEffects } from "@threa/types"
 import type { AI, CostContext, TelemetryMetadataValue } from "../ai/ai"
 import { logger } from "../logger"
 import { protectToolOutputText } from "./tool-trust-boundary"
@@ -901,6 +901,7 @@ export class AgentRuntime {
 
         const traceContent = agentTool.config.trace.formatContent(toolInput, toolResult)
         const traceSources = agentTool.config.trace.extractSources?.(toolInput, toolResult)
+        const traceEffects = resolveToolEffects(tc.toolName, agentTool.config.trace.effects?.(toolInput, toolResult))
 
         await this.emit({
           type: "tool:complete",
@@ -909,7 +910,12 @@ export class AgentRuntime {
           input: tc.input,
           output: toolResult.output,
           durationMs,
-          trace: { stepType: agentTool.config.trace.stepType, content: traceContent, sources: traceSources },
+          trace: {
+            stepType: agentTool.config.trace.stepType,
+            content: traceContent,
+            sources: traceSources,
+            ...(traceEffects.length > 0 ? { effects: traceEffects } : {}),
+          },
         })
 
         resultParts.push(makeToolResult(tc, protectToolOutputText(toolResult.output)))

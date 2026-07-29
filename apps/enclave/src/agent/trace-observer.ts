@@ -133,6 +133,17 @@ class EnclaveSealingSink implements TraceStepSink<EnclaveOpenStep> {
   async verify(): Promise<void> {
     throw new Error("EnclaveSealingSink cannot record a guardian verdict; guarded tools must not run on this surface")
   }
+
+  /**
+   * Every mutating tool is constructed only in the companion's tool set, which
+   * the enclave never builds, so an effect cannot arrive here. Required all the
+   * same — the compiler is the only guard. Sealing effect descriptors is
+   * deliberately deferred: a sealed stream surfaces no effects at all rather
+   * than a cleartext label beside sealed content.
+   */
+  async effects(): Promise<void> {
+    throw new Error("EnclaveSealingSink cannot record tool effects; mutating tools must not run on this surface")
+  }
   async substep(params: {
     stepType: AgentStepType
     step: EnclaveOpenStep
