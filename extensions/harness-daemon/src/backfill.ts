@@ -19,6 +19,7 @@ import {
 import { readInventoryReadonly } from "./inventory"
 import { occupancyVeto } from "./mint"
 import type { ManagedAgent } from "./types"
+import { readProfiles, selectProfile, type Profile } from "./profiles"
 
 export type BackfillDisposition =
   | "recorded"
@@ -48,6 +49,8 @@ export interface BackfillDeps {
   write: (record: MintedIdentity) => WriteMintedIdentityResult
   now: () => Date
   log: (message: string) => void
+  /** The profile these rows were spawned under, from their recorded command. */
+  profileFor: (rows: ManagedAgent[]) => Profile | undefined
 }
 
 export function defaultBackfillDeps(): BackfillDeps {
@@ -62,6 +65,7 @@ export function defaultBackfillDeps(): BackfillDeps {
     write: writeMintedIdentity,
     now: () => new Date(),
     log: (message) => console.warn(message),
+    profileFor: recordedProfile,
   }
 }
 
@@ -95,6 +99,28 @@ function once<T>(read: () => T): () => T {
     if (thrown !== undefined) throw thrown
     return value
   }
+}
+
+/**
+ * The profile a row was spawned under, read back off its recorded command.
+ *
+ * Best-effort by design: a profile that has since been renamed away must not
+ * make the backfill die, and no profile is a truthful answer — it resolves to
+ * the built-in default, which is what a row with no `--profile` had anyway.
+ */
+export function recordedProfile(rows: ManagedAgent[]): Profile | undefined {
+  for (const row of rows) {
+    const at = row.command.indexOf("--profile")
+    const named = at >= 0 ? row.command[at + 1] : undefined
+    const cwd = row.command.includes("--cwd") ? "recorded" : undefined
+    if (!named && !cwd) continue
+    try {
+      return selectProfile({ profile: named, cwd }, readProfiles())
+    } catch {
+      return undefined
+    }
+  }
+  return undefined
 }
 
 function subjectsOf(agents: ManagedAgent[], canonical: (path: string) => string): Map<string, ManagedAgent[]> {
@@ -227,6 +253,13 @@ function decide(
   }
   claimed.set(winner.runtimeSessionId, worktree)
 
+  // Carried forward from the row's own spawn command. A reap deletes the
+  // snapshot with the worktree, so a directory that comes back through an
+  // unarchive is re-recorded here — and without this it is re-recorded with NO
+  // profile, which resolves to the built-in default and silently stops running
+  // the teardown the operator declared.
+  const profile = deps.profileFor(rows)
+
   if (dryRun) {
     return { subject: worktree, disposition: "recorded", detail: `${winner.runtimeSessionId} via ${winner.attestor}` }
   }
@@ -238,6 +271,7 @@ function decide(
     mintedAt: deps.now().toISOString(),
     source: "backfill",
     attestedBy: winner.attestor,
+    ...(profile ? { profile } : {}),
   })
   if (written.status === "created") {
     return { subject: worktree, disposition: "recorded", detail: `${winner.runtimeSessionId} via ${winner.attestor}` }

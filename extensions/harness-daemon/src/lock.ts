@@ -25,6 +25,51 @@ export function processAlive(pid: number): boolean {
 }
 
 /**
+ * Remove a lock whose owner is gone — but only one waiter at a time.
+ *
+ * Re-reading the file immediately before unlinking is NOT enough, and the
+ * comment that used to claim it was is why this looked safe. Two waiters can
+ * both read the dead holder and both be authorised; the first unlinks and takes
+ * the lock, and the second's already-authorised `unlink` then deletes that fresh
+ * lock and takes its own. Both return believing they hold it, and a revive runs
+ * concurrently with a reap that force-removes worktrees.
+ *
+ * The steal marker closes it: a waiter can only reach the unlink while holding
+ * an exclusive marker, so by the time the second waiter gets there its re-read
+ * shows the NEW owner rather than the dead one, and it declines. The marker is
+ * itself stale-recoverable, or a stealer dying mid-steal would wedge everyone.
+ */
+function stealStaleLock(path: string, holder: number, pid: number, isAlive: (pid: number) => boolean): boolean {
+  const markerPath = `${path}.steal`
+  try {
+    writeFileSync(markerPath, String(pid), { flag: "wx" })
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error
+    try {
+      const owner = Number(readFileSync(markerPath, "utf8")) || undefined
+      if (owner !== undefined && owner !== pid && !isAlive(owner)) unlinkSync(markerPath)
+    } catch {
+      // The marker went away on its own; the next pass re-reads the lock.
+    }
+    return false
+  }
+  try {
+    if (Number(readFileSync(path, "utf8")) !== holder || isAlive(holder)) return false
+    unlinkSync(path)
+    return true
+  } catch {
+    // Already gone, or taken by the waiter that stole it before us.
+    return false
+  } finally {
+    try {
+      unlinkSync(markerPath)
+    } catch {
+      // Losing the marker only costs the next stealer one poll.
+    }
+  }
+}
+
+/**
  * Cross-process mutex with owner-pid staleness recovery: a crashed holder's
  * lock is stolen instead of wedging every later pass (the previous tmux
  * wait-for lock survived its owner until the tmux server restarted).
@@ -56,19 +101,24 @@ export async function acquireProcessLock(path: string, options: LockOptions = {}
     } catch {
       continue
     }
+    // Retry at once only when the steal actually freed the lock. Falling through
+    // otherwise is what keeps a contested steal — another waiter holding the
+    // marker — from spinning past the deadline instead of timing out.
     if (holder !== undefined && holder !== pid && !isAlive(holder)) {
-      // Re-read immediately before removing: two waiters can observe the same
-      // dead holder, and an unconditional unlink lets the second delete the
-      // FIRST one's freshly taken lock, leaving both convinced they hold it.
-      // Only the file still naming the dead pid may be removed.
-      try {
-        if (Number(readFileSync(path, "utf8")) === holder) unlinkSync(path)
-      } catch {}
-      continue
+      if (stealStaleLock(path, holder, pid, isAlive)) continue
     }
     if (Date.now() >= deadline) {
+      // Re-read: `holder` was captured before the steal attempt, and naming the
+      // pid we gave up on rather than the one actually holding it sends whoever
+      // reads this at a process that is already gone.
+      let current: number | undefined
+      try {
+        current = Number(readFileSync(path, "utf8")) || undefined
+      } catch {
+        current = holder
+      }
       throw new Error(
-        `lock ${path} held by pid ${holder ?? "unknown"} for over ${Math.round(timeoutMs / 1000)}s; ` +
+        `lock ${path} held by pid ${current ?? holder ?? "unknown"} for over ${Math.round(timeoutMs / 1000)}s; ` +
           "another revival pass appears stuck"
       )
     }
