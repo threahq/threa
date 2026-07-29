@@ -5,3 +5,4 @@ export { StreamTitlePreview, useStreamTitlePreview } from "./stream-title-previe
 export { PageHeaderTabs, type PageHeaderTab } from "./page-header-tabs"
 export { ThreadPanelSlot } from "./thread-panel-slot"
 export { PanelResizeHandle } from "./panel-resize-handle"
+export { panelTakeoverClasses } from "./panel-takeover"

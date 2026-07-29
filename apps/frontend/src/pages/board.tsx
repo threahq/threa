@@ -3,7 +3,7 @@ import type { VirtualizerHandle } from "virtua"
 import { AlertCircle, ArrowLeft, LayoutGrid, PenLine } from "lucide-react"
 import { Link, Navigate, useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom"
 import { Button, buttonVariants } from "@/components/ui/button"
-import { ThreadPanelSlot } from "@/components/layout"
+import { ThreadPanelSlot, panelTakeoverClasses } from "@/components/layout"
 import { PanelHost } from "@/components/layout/panel-host"
 import { SidebarToggle } from "@/components/layout/sidebar-toggle"
 import { usePanel, usePreferencesOptional, useSidebar } from "@/contexts"
@@ -787,23 +787,18 @@ function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: Boar
 
   // Mobile: an open conversation panel takes over the full screen (mirrors the
   // stream page), so the narrow board feed isn't crushed beside it. The column
-  // stays MOUNTED behind it — `invisible` keeps the scroller's box and its offset
-  // alive, so closing the panel lands exactly where the viewer left the feed.
-  // Unmounting it (or `display: none`) destroys the box, and the virtualized feed
-  // re-enters at the top. One return, not a second branch: the column has to keep
-  // its position in the tree or React remounts it and the offset is gone anyway.
+  // stays mounted behind it, and must keep its position in this tree to do so —
+  // see `panelTakeoverClasses`.
   const mobileTakeover = isMobile && isPanelOpen
+  const layout = panelTakeoverClasses(mobileTakeover)
 
   return (
-    <div ref={containerRef} className={cn("h-full", mobileTakeover ? "relative" : "flex")}>
-      <div
-        className={cn("min-w-0 overflow-hidden", mobileTakeover ? "invisible absolute inset-0" : "flex-1")}
-        inert={mobileTakeover || undefined}
-      >
+    <div ref={containerRef} className={layout.container}>
+      <div className={layout.main} inert={layout.mainInert}>
         {boardColumn}
       </div>
       {mobileTakeover ? (
-        <div className="absolute inset-0 flex flex-col bg-background">
+        <div className={layout.panel}>
           <PanelHost workspaceId={workspaceId} onClose={closePanel} />
         </div>
       ) : (

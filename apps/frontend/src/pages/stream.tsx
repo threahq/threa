@@ -55,7 +55,7 @@ import { useFeatureFlag } from "@/hooks/use-feature-flags"
 import { CallStartMenu, RejoinBar } from "@/components/call"
 import { useE2eSession } from "@/stores/e2e-session-store"
 import { ThreadHeader } from "@/components/thread"
-import { ThreadPanelSlot, SidebarToggle, StreamTitlePreview } from "@/components/layout"
+import { ThreadPanelSlot, SidebarToggle, StreamTitlePreview, panelTakeoverClasses } from "@/components/layout"
 import { PanelHost } from "@/components/layout/panel-host"
 import { useInputMode } from "@/hooks/use-input-mode"
 import { ConversationList } from "@/components/conversations"
@@ -917,45 +917,47 @@ export function StreamPage() {
     </>
   )
 
-  // On mobile, thread panel takes over the full screen
-  if (isMobile && isPanelOpen) {
-    return (
-      <>
-        <div className="flex h-full flex-col">
-          <PanelHost key={panelId} workspaceId={workspaceId} onClose={closePanel} />
-        </div>
-        {conversationPanel}
-      </>
-    )
-  }
+  // On mobile the panel takes over the full screen, but the timeline stays mounted
+  // behind it so closing a thread lands back where the reader was rather than
+  // re-running the opening scroll. It must keep its position in this tree to do so
+  // — see `panelTakeoverClasses`.
+  const mobileTakeover = isMobile && isPanelOpen
+  const layout = panelTakeoverClasses(mobileTakeover)
 
   return (
     <>
-      <div ref={containerRef} className="flex h-full">
+      <div ref={containerRef} className={layout.container}>
         <div
-          className="flex-1 min-w-0 overflow-hidden"
+          className={layout.main}
+          inert={layout.mainInert}
           onPointerDownCapture={() => setFocusedPane("main")}
           onFocusCapture={() => setFocusedPane("main")}
         >
           {mainStreamContent}
         </div>
 
-        <ThreadPanelSlot
-          displayWidth={displayWidth}
-          panelWidth={panelWidth}
-          shouldAnimate={shouldAnimate}
-          showContent={showContent}
-          isResizing={isResizing}
-          maxWidth={maxWidth}
-          minWidth={minWidth}
-          onTransitionEnd={handleTransitionEnd}
-          onResizeStart={handleResizeStart}
-          onResizeMove={handleResizeMove}
-          onResizeEnd={handleResizeEnd}
-          onResizeKeyDown={handleResizeKeyDown}
-        >
-          <PanelHost key={panelId} workspaceId={workspaceId} onClose={closePanel} />
-        </ThreadPanelSlot>
+        {mobileTakeover ? (
+          <div className={layout.panel}>
+            <PanelHost key={panelId} workspaceId={workspaceId} onClose={closePanel} />
+          </div>
+        ) : (
+          <ThreadPanelSlot
+            displayWidth={displayWidth}
+            panelWidth={panelWidth}
+            shouldAnimate={shouldAnimate}
+            showContent={showContent}
+            isResizing={isResizing}
+            maxWidth={maxWidth}
+            minWidth={minWidth}
+            onTransitionEnd={handleTransitionEnd}
+            onResizeStart={handleResizeStart}
+            onResizeMove={handleResizeMove}
+            onResizeEnd={handleResizeEnd}
+            onResizeKeyDown={handleResizeKeyDown}
+          >
+            <PanelHost key={panelId} workspaceId={workspaceId} onClose={closePanel} />
+          </ThreadPanelSlot>
+        )}
       </div>
       {conversationPanel}
       {streamContextSurface}
