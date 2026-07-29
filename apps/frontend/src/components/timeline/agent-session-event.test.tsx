@@ -391,8 +391,8 @@ describe("AgentSessionEvent effects", () => {
       ]),
     ])
 
-    expect(screen.getByRole("link", { name: /Memo C/ }).className).toContain("sm:col-span-2")
-    expect(screen.getByRole("link", { name: /Memo A/ }).className).not.toContain("col-span-2")
+    expect(screen.getByRole("link", { name: /Memo C/ }).className).toContain("effect-grid-span")
+    expect(screen.getByRole("link", { name: /Memo A/ }).className).not.toContain("effect-grid-span")
   })
 
   it("renders a routeless effect as inert text that cannot be focused", () => {
@@ -463,6 +463,21 @@ describe("AgentSessionEvent effects", () => {
 
     expect(screen.getAllByText("Saved a memo")).toHaveLength(1)
     expect(screen.getByText(/dark/)).toBeInTheDocument()
+  })
+
+  // The columns are decided by the CONTAINER, not the viewport: a board card is
+  // a narrow column inside a wide window, and a viewport breakpoint gave it two
+  // 145px columns that clipped every value. jsdom cannot evaluate a container
+  // query, so this pins the wiring; the layout itself is checked by screenshot.
+  it("sizes its columns from the container, not the viewport", () => {
+    const { container } = renderInWorkspace([
+      startedEvent(),
+      completedEvent([{ kind: "settings", target: "theme", before: "light", after: "dark" }]),
+    ])
+
+    expect(container.querySelector(".effect-grid-host")).not.toBeNull()
+    expect(container.querySelector(".effect-grid")).not.toBeNull()
+    expect(container.querySelector('[class*="sm:grid-cols"]')).toBeNull()
   })
 
   // A session keeps its id across retries, so a turn that is retried twice

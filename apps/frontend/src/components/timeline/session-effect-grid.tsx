@@ -24,21 +24,23 @@ export function SessionEffectGrid({ effects }: { effects: AgentToolEffect[] }) {
   const lastSpansBoth = effects.length % 2 === 1
 
   return (
-    <div className="mt-1 grid grid-cols-1 gap-x-4 px-3.5 text-[11px] sm:grid-cols-2">
-      {effects.map((effect, index) => {
-        const path = resolveEffectPath(effect, { workspaceId, getSettingsUrl: settings?.getSettingsUrl })
-        // An odd count would otherwise leave a hole in the last row that reads
-        // as a missing item; the tail spans instead.
-        const spanClass = lastSpansBoth && index === effects.length - 1 ? "sm:col-span-2" : undefined
-        return (
-          <EffectLine
-            key={`${effect.kind}-${effect.target ?? ""}-${index}`}
-            effect={effect}
-            path={path}
-            className={spanClass}
-          />
-        )
-      })}
+    <div className="effect-grid-host mt-1 px-3.5 text-[11px]">
+      <div className="effect-grid gap-x-4">
+        {effects.map((effect, index) => {
+          const path = resolveEffectPath(effect, { workspaceId, getSettingsUrl: settings?.getSettingsUrl })
+          // An odd count would otherwise leave a hole in the last row that reads
+          // as a missing item; the tail spans instead.
+          const spanClass = lastSpansBoth && index === effects.length - 1 ? "effect-grid-span" : undefined
+          return (
+            <EffectLine
+              key={`${effect.kind}-${effect.target ?? ""}-${index}`}
+              effect={effect}
+              path={path}
+              className={spanClass}
+            />
+          )
+        })}
+      </div>
     </div>
   )
 }
