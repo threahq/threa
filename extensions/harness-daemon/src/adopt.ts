@@ -17,8 +17,10 @@ import {
   findLocalClaudeChannelPane,
   listLocalTmuxPanes,
   parseClaudeChannelLaunch,
+  resolveRuntimeIdentity,
   type LocalTmuxPane,
 } from "./discovery"
+import { identityRecordsFor, readMintedIdentities, type MintedIdentity } from "./identity-store"
 import { inventoryPath, readInventoryReadonly, upsertAgent } from "./inventory"
 import { acquireProcessLock, resumeActiveLockPath } from "./lock"
 import {
@@ -34,7 +36,6 @@ import {
   claudeLaunchArgs,
   claudeLaunchCommand,
   configuredThreaBaseUrl,
-  deriveClaudeRuntimeIdentity,
   mcpConfigPath,
   normalizeChannelMcpConfig,
   prepareClaudeChannel,
@@ -110,6 +111,7 @@ export interface AdoptDeps {
   inventory: () => ManagedAgent[]
   panes: () => LocalTmuxPane[]
   links: () => HarnessLink[]
+  identities: () => MintedIdentity[]
   disk: ClaudeDiskDeps
   isDirectory: (path: string) => boolean
   scratchpadStatus: (params: {
@@ -140,6 +142,7 @@ export function defaultAdoptDeps(): AdoptDeps {
     inventory: readInventoryReadonly,
     panes: listLocalTmuxPanes,
     links: readHarnessLinks,
+    identities: readMintedIdentities,
     disk: defaultClaudeDiskDeps(),
     isDirectory: (path) => {
       try {
@@ -207,6 +210,7 @@ export async function adoptClaudeSessionUnlocked(options: AdoptOptions, deps: Ad
   // between two reads would attest a pane whose kind and root the guard never
   // checked.
   const links = deps.links()
+  const identities = deps.identities()
   const link = links.find((candidate) => candidate.runtimeSessionId === options.runtimeSessionId)
   if (link && link.runtimeKind !== "claude-code-channel" && link.runtimeKind !== "unknown") {
     return { status: "refused identity mismatch", detail: `harness link records runtime kind ${link.runtimeKind}` }
@@ -220,7 +224,14 @@ export async function adoptClaudeSessionUnlocked(options: AdoptOptions, deps: Ad
 
   let pane: LocalTmuxPane | undefined
   try {
-    pane = findLocalClaudeChannelPane(options.runtimeSessionId, deps.panes(), config, hostname(), () => links)
+    pane = findLocalClaudeChannelPane(
+      options.runtimeSessionId,
+      deps.panes(),
+      config,
+      hostname(),
+      () => links,
+      () => identities
+    )
   } catch (error) {
     return { status: "refused ambiguous", detail: error instanceof Error ? error.message : String(error) }
   }
@@ -267,9 +278,13 @@ export async function adoptClaudeSessionUnlocked(options: AdoptOptions, deps: Ad
   // different hostname keeps its original id for life, and the link record the
   // runtime wrote is the stronger evidence in that case. What is refused is a
   // target NOTHING on this machine binds to this directory.
-  const derived = deriveClaudeRuntimeIdentity(cwd, config)
+  const derived = resolveRuntimeIdentity(cwd, {}, config)
   const launch = pane ? parseClaudeChannelLaunch(pane.startCommand) : undefined
+  const minted = identityRecordsFor(cwd, identities, (path) => canonicalOrRaw(path, deps.disk.canonical)).filter(
+    (record) => record.runtimeSessionId === options.runtimeSessionId
+  )
   const attestations: Array<{ source: string; instanceId?: string }> = []
+  if (minted.length === 1) attestations.push({ source: "identity record", instanceId: minted[0]!.instanceId })
   if (link) attestations.push({ source: "harness link", instanceId: link.instanceId || undefined })
   if (existing) attestations.push({ source: "inventory", instanceId: existing.instanceId })
   if (launch?.runtimeSessionId === options.runtimeSessionId) {
@@ -281,7 +296,7 @@ export async function adoptClaudeSessionUnlocked(options: AdoptOptions, deps: Ad
   if (attestations.length === 0) {
     return {
       status: "refused identity mismatch",
-      detail: `nothing binds ${options.runtimeSessionId} to ${cwd}: no harness link, no inventory row, no live launch, and the directory derives ${derived.runtimeSessionId}`,
+      detail: `nothing binds ${options.runtimeSessionId} to ${cwd}: no identity record, no harness link, no inventory row, no live launch, and the directory derives ${derived.runtimeSessionId}`,
     }
   }
   const claimed = attestations.filter((attestation): attestation is { source: string; instanceId: string } =>

@@ -11,6 +11,7 @@ import type { ManagedAgent, ResumeOptions, SpawnOptions, SpawnResult, ThreaChann
 import { recordedNoYolo } from "./resume"
 import { mintRuntimeIdentity } from "./mint"
 import { ensureWorktree, plannedWorktreePath } from "./worktree"
+import { runtimeIdentityFor, type ResolvedRuntimeIdentity } from "./discovery"
 
 export function mcpConfigPath(name: string): string {
   return join(homedir(), ".threa", "harnessd", "mcp", `${name}.json`)
@@ -373,11 +374,7 @@ export class ClaudeRuntimeSpawner extends RuntimeSpawner {
     if (!existsSync(mcpConfig)) this.writeMcpConfig(agent.name, channel, channelEntry)
     normalizeChannelMcpConfig(mcpConfig, channel, channelEntry)
     const config = readThreaChannelConfig()
-    const derived = deriveClaudeRuntimeIdentity(agent.worktree, config)
-    const identity = {
-      instanceId: agent.instanceId ?? derived.instanceId,
-      runtimeSessionId: agent.runtimeSessionId ?? derived.runtimeSessionId,
-    }
+    const identity = claudeAgentIdentity(agent, config)
     const session = options.tmux ?? agent.tmuxSession ?? tmuxSession({ runtime: "claude", name: agent.name })
     ensureTmuxSession(session, true)
     const noYolo = recordedNoYolo(agent)
@@ -526,6 +523,22 @@ export function deriveClaudeRuntimeIdentity(
       64
     ),
   }
+}
+
+/**
+ * The identity a managed Claude row runs under, through the one resolver: a
+ * revival reuses the recorded identity instead of computing a new one from a
+ * hostname that has since changed.
+ */
+export function claudeAgentIdentity(
+  agent: Pick<ManagedAgent, "worktree" | "instanceId" | "runtimeSessionId">,
+  config: ThreaChannelConfig = readThreaChannelConfig()
+): ResolvedRuntimeIdentity {
+  return runtimeIdentityFor({
+    cwd: agent.worktree ?? "",
+    agent: { instanceId: agent.instanceId, runtimeSessionId: agent.runtimeSessionId },
+    config,
+  })
 }
 
 export function claudeLaunchCommand(

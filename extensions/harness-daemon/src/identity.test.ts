@@ -1,4 +1,5 @@
-import { afterEach, expect, test } from "bun:test"
+import { afterEach, beforeEach, expect, test } from "bun:test"
+import { mkdtempSync, rmSync } from "node:fs"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
 import type { HarnessLink } from "@threa/bot-runtime-client"
@@ -11,6 +12,7 @@ import {
 } from "./identity"
 import { deriveClaudeRuntimeIdentity } from "./spawners"
 import type { LocalTmuxPane } from "./discovery"
+import type { MintedIdentity } from "./identity-store"
 import type { ManagedAgent } from "./types"
 
 const HOST = "identity-test-host"
@@ -69,10 +71,20 @@ function link(overrides: Partial<HarnessLink> = {}): HarnessLink {
 }
 
 const originalLinksDir = process.env.THREA_HARNESS_LINKS_DIR
+const originalIdentitiesDir = process.env.THREA_HARNESSD_IDENTITIES_DIR
+let storeRoot: string
+
+beforeEach(() => {
+  storeRoot = mkdtempSync(join(tmpdir(), "harnessd-identity-"))
+  process.env.THREA_HARNESSD_IDENTITIES_DIR = join(storeRoot, "identities")
+})
 
 afterEach(() => {
+  rmSync(storeRoot, { recursive: true, force: true })
   if (originalLinksDir === undefined) delete process.env.THREA_HARNESS_LINKS_DIR
   else process.env.THREA_HARNESS_LINKS_DIR = originalLinksDir
+  if (originalIdentitiesDir === undefined) delete process.env.THREA_HARNESSD_IDENTITIES_DIR
+  else process.env.THREA_HARNESSD_IDENTITIES_DIR = originalIdentitiesDir
 })
 
 test("a recorded identity today's derivation no longer reproduces reports drifted", () => {
@@ -88,8 +100,10 @@ test("a recorded identity today's derivation no longer reproduces reports drifte
       kind: "row",
       name: "feature",
       recorded: "ccs-recorded",
+      minted: "-",
       ledger: "-",
       derived: derived(),
+      source: "inventory",
       pane: "-",
       verdict: "missing,drifted",
     },
@@ -109,8 +123,10 @@ test("a drifted row that still resolves reports both statuses", () => {
       kind: "row",
       name: "feature",
       recorded: "ccs-recorded",
+      minted: "-",
       ledger: "-",
       derived: derived(),
+      source: "inventory",
       pane: "%8",
       verdict: "found,drifted",
     },
@@ -130,8 +146,10 @@ test("a row identified through the ledger shows recorded, ledger and derived sep
       kind: "row",
       name: "feature",
       recorded: "ccs-ledger",
+      minted: "-",
       ledger: "ccs-ledger",
       derived: derived(),
+      source: "ledger",
       pane: "%8",
       verdict: "found,drifted",
     },
@@ -152,8 +170,10 @@ test("a live unmanaged pane with no inventory row is covered under its own ident
       kind: "pane",
       name: "slopenv",
       recorded: "ccs-unmanaged",
+      minted: "-",
       ledger: "-",
       derived: derived("/tmp/worktrees/slopenv"),
+      source: "declared",
       pane: "%12",
       verdict: "found,drifted",
     },
@@ -173,8 +193,10 @@ test("a row whose recorded identity matches today's derivation is not reported a
       kind: "row",
       name: "feature",
       recorded: derived(),
+      minted: "-",
       ledger: "-",
       derived: derived(),
+      source: "inventory",
       pane: "%8",
       verdict: "found",
     },
@@ -194,8 +216,10 @@ test("an unmanaged pane identified only by the ledger reports the attested ident
       kind: "pane",
       name: "slopenv",
       recorded: "-",
+      minted: "-",
       ledger: "ccs-attested",
       derived: derived("/tmp/worktrees/slopenv"),
+      source: "ledger",
       pane: "%12",
       verdict: "found",
     },
@@ -222,8 +246,10 @@ test("a live unmanaged Pi pane is covered under its session id", () => {
       kind: "pane",
       name: "pi-sol",
       recorded: "3f9a1c2e-4b5d-4e6f-8a9b-0c1d2e3f4a5b",
+      minted: "-",
       ledger: "-",
       derived: "-",
+      source: "-",
       pane: "%14",
       verdict: "found",
     },
@@ -262,11 +288,11 @@ test("the consistency check counts drifted records and survives an absent links 
       panes: [declaring("ccs-recorded"), declaring(derived(), { paneId: "%12" })],
       host: HOST,
     })
-  ).toEqual({ inventoryRows: 1, linkRecords: 0, livePanes: 1 })
+  ).toEqual({ inventoryRows: 1, linkRecords: 0, livePanes: 1, identityless: 0 })
 
   expect(
     identityConsistency({ agents: [], panes: [], links: [link({ runtimeSessionId: "ccs-drifted" })], host: HOST })
-  ).toEqual({ inventoryRows: 0, linkRecords: 1, livePanes: 0 })
+  ).toEqual({ inventoryRows: 0, linkRecords: 1, livePanes: 0, identityless: 0 })
 })
 
 test("a by-id lookup finds a pane whose identity only the ledger attests", () => {
@@ -278,14 +304,70 @@ test("a by-id lookup finds a pane whose identity only the ledger attests", () =>
     kind: "pane",
     name: "claude-slopenv",
     recorded: "-",
+    minted: "ccs-minted",
     ledger: "ccs-attested",
     derived: "ccs-derived",
+    source: "ledger",
     pane: "%12",
     verdict: "found",
   }
 
+  expect(rowMatchesRef(attested, "ccs-minted")).toBe(true)
   expect(rowMatchesRef(attested, "ccs-attested")).toBe(true)
   expect(rowMatchesRef(attested, "ccs-derived")).toBe(true)
   expect(rowMatchesRef(attested, "ccs-somebody-else")).toBe(false)
   expect(rowMatchesRef({ ...attested, recorded: "ccs-declared" }, "ccs-declared")).toBe(true)
+})
+
+function minted(overrides: Partial<MintedIdentity> = {}): MintedIdentity {
+  return {
+    runtimeSessionId: "ccs-minted",
+    instanceId: "cc-minted",
+    worktree: WORKTREE,
+    runtimeKind: "claude-code-channel",
+    mintedAt: "2026-07-29T00:00:00.000Z",
+    source: "mint",
+    ...overrides,
+  }
+}
+
+test("resolve prints the minted column and the winning source", () => {
+  const rows = buildIdentityRows({
+    agents: [agent({ runtimeSessionId: "ccs-minted" })],
+    panes: [pane()],
+    links: [link()],
+    identities: [minted()],
+    host: HOST,
+  })
+
+  expect(rows).toEqual([
+    {
+      kind: "row",
+      name: "feature",
+      recorded: "ccs-minted",
+      minted: "ccs-minted",
+      ledger: "ccs-ledger",
+      derived: derived(),
+      source: "minted",
+      pane: "%8",
+      verdict: "found,drifted",
+    },
+  ])
+  expect(rowMatchesRef(rows[0]!, "ccs-minted")).toBe(true)
+})
+
+test("doctor counts rows that carry no identity from any source", () => {
+  // The number that has to fall before the hostname derivation can go: these
+  // rows resolve only by hashing a name the wifi network supplies.
+  const identityless = agent({ id: "claude-2", worktree: "/tmp/worktrees/nameless", instanceId: undefined })
+
+  expect(
+    identityConsistency({
+      agents: [agent({ runtimeSessionId: "ccs-minted" }), identityless],
+      panes: [],
+      links: [],
+      identities: [minted()],
+      host: HOST,
+    })
+  ).toEqual({ inventoryRows: 1, linkRecords: 0, livePanes: 0, identityless: 1 })
 })
