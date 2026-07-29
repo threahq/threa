@@ -67,3 +67,21 @@ describe("delegate_task tool", () => {
     expect(body).toEqual({ ok: false, error: "Failed to create delegation" })
   })
 })
+
+describe("delegate_task effects", () => {
+  const effectsOf = async (result: DelegateTaskToolResult) => {
+    const tool = createDelegateTaskTool({ delegateTask: mock(async () => result) })
+    const out = await tool.config.execute(INPUT, EXEC_OPTS)
+    return tool.config.trace.effects?.(INPUT, out)
+  }
+
+  it("declares the delegation it created", async () => {
+    expect(await effectsOf({ ok: true, delegationId: "dlg_1", droppedRefs: [] })).toEqual([
+      { kind: "delegation", label: INPUT.title, target: "dlg_1" },
+    ])
+  })
+
+  it("declares nothing when the callback refused", async () => {
+    expect(await effectsOf({ ok: false, error: "delegations unavailable" })).toEqual([])
+  })
+})

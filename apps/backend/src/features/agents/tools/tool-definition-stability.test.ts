@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { z } from "zod"
+import { MUTATING_TOOL_NAMES } from "@threa/types"
 import { buildToolSet } from "../companion/tool-set"
 
 /**
@@ -70,6 +71,45 @@ describe("tool definition cache stability", () => {
   for (const name of [...new Set([...a.keys()])]) {
     test(`\`${name}\` is byte-identical across differing per-request values`, () => {
       expect(a.get(name)).toBe(b.get(name))
+    })
+  }
+})
+
+/**
+ * Layer-0 ratchet. A mutating tool with no `trace.effects` still gets an effect
+ * — one shapeless `other` descriptor — so the regression is invisible at
+ * runtime: the card keeps saying "wrote something" and stops saying what.
+ */
+describe("mutating tools declare their own effects", () => {
+  const built = new Map(
+    buildToolSet({
+      enabledTools: null,
+      tavilyApiKey: "test-key",
+      currentTime: "2026-07-26T10:00:00.000Z",
+      timezone: "Europe/Stockholm",
+      briefVersion: 1,
+      runWorkspaceAgent: stub,
+      runGeneralResearch: stub,
+      workspace: stub,
+      reactions: stub,
+      followUps: stub,
+      brief: stub,
+      delegation: stub,
+      saveMemo: stub,
+      settings: stub,
+      github: stub,
+      linear: stub,
+      supportsVision: true,
+    }).map((t) => [t.name, t])
+  )
+
+  test("every mutating tool this build constructs is present, so the loop can't pass vacuously", () => {
+    expect(MUTATING_TOOL_NAMES.filter((name) => built.has(name))).toEqual([...MUTATING_TOOL_NAMES])
+  })
+
+  for (const name of MUTATING_TOOL_NAMES) {
+    test(`\`${name}\` declares effects rather than falling back to layer 0`, () => {
+      expect(typeof built.get(name)?.config.trace.effects).toBe("function")
     })
   }
 })

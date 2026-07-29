@@ -54,6 +54,11 @@ export function createCancelFollowUpTool(deps: CancelFollowUpToolDeps) {
     trace: {
       stepType: AgentStepTypes.TOOL_CALL,
       formatContent: (input) => JSON.stringify({ tool: "cancel_follow_up", followUpId: input.followUpId }),
+      effects: (_input, result) => {
+        const parsed = JSON.parse(result.output) as { ok: boolean; followUpId?: string }
+        if (!parsed.ok || !parsed.followUpId) return []
+        return [{ kind: "follow_up", target: parsed.followUpId }]
+      },
     },
   })
 }

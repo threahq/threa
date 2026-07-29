@@ -102,6 +102,33 @@ export function createUpdateFollowUpTool(
           note: input.note,
           scheduledFor: input.scheduledFor,
         }),
+      // The new time rides `after`, not the label. There is no `before` — the
+      // callback returns the row as written and nothing from before it — so the
+      // renderers draw this as `→ <time>`.
+      //
+      // It was in the label briefly and that was wrong twice over: a note runs
+      // to 2000 characters against a 120-character label cap, so the time was
+      // the part truncation ate; and the label is part of the session-level
+      // merge key, so two reschedules of the same follow-up stopped collapsing
+      // and the card showed the superseded time next to the current one.
+      effects: (input, result) => {
+        const parsed = JSON.parse(result.output) as {
+          ok: boolean
+          followUpId?: string
+          note?: string
+          scheduledForLocal?: string
+        }
+        if (!parsed.ok || !parsed.followUpId) return []
+        const rescheduledTo = input.scheduledFor !== undefined ? parsed.scheduledForLocal : undefined
+        return [
+          {
+            kind: "follow_up",
+            label: parsed.note,
+            target: parsed.followUpId,
+            ...(rescheduledTo ? { after: rescheduledTo } : {}),
+          },
+        ]
+      },
     },
   })
 }

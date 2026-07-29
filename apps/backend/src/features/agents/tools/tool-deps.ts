@@ -126,9 +126,13 @@ export interface UpdateStreamBriefToolDeps {
  * cross-user write cannot be expressed by the model at all. Returns the
  * preferences as stored, which is what the tool reports back (the stored value
  * can differ from the requested one, e.g. a cleared override).
+ *
+ * `before` is the snapshot read immediately ahead of the write: a key present in
+ * the patch whose value already matched changed nothing, and the tool can only
+ * tell the difference by comparing.
  */
 export interface UpdateUserSettingsToolDeps {
-  updateSettings: (patch: AgentSettablePreferences) => Promise<UserPreferences>
+  updateSettings: (patch: AgentSettablePreferences) => Promise<{ before: UserPreferences; after: UserPreferences }>
 }
 
 /**

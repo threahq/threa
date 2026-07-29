@@ -92,6 +92,26 @@ export function canOfferUserSettings(params: {
 }
 
 /**
+ * A scalar preference rendered for the trace's `before → after` diff, or null
+ * when the value has no honest one-line form.
+ *
+ * `workSchedule` is the one structured agent-settable key: serialized it runs
+ * past 200 characters, so both sides truncate to the same prefix and a real
+ * change renders as no change at all. A diff that says nothing moved is worse
+ * than no diff, so a structured value declares its key and stops there.
+ */
+function displayValue(value: unknown): string | null {
+  if (value === null || value === undefined) return null
+  if (typeof value === "string") return value
+  if (typeof value === "number" || typeof value === "boolean") return String(value)
+  return null
+}
+
+function sameValue(a: unknown, b: unknown): boolean {
+  return JSON.stringify(a ?? null) === JSON.stringify(b ?? null)
+}
+
+/**
  * Change the invoking user's own preferences.
  *
  * The target user is bound at construction, never a tool parameter: a model
@@ -138,11 +158,14 @@ export function createUpdateUserSettingsTool(deps: UpdateUserSettingsToolDeps) {
       const changedKeys = Object.keys(patch).filter((key) => (patch as Record<string, unknown>)[key] !== undefined)
 
       try {
-        const preferences = await deps.updateSettings(patch)
+        const { before, after } = await deps.updateSettings(patch)
         const applied = Object.fromEntries(
-          changedKeys.map((key) => [key, (preferences as unknown as Record<string, unknown>)[key]])
+          changedKeys.map((key) => [key, (after as unknown as Record<string, unknown>)[key]])
         )
-        return { output: JSON.stringify({ ok: true, applied }) }
+        const previous = Object.fromEntries(
+          changedKeys.map((key) => [key, (before as unknown as Record<string, unknown>)[key]])
+        )
+        return { output: JSON.stringify({ ok: true, applied, previous }) }
       } catch (error) {
         logger.error({ err: error, changedKeys }, "update_user_settings failed")
         return {
@@ -162,6 +185,28 @@ export function createUpdateUserSettingsTool(deps: UpdateUserSettingsToolDeps) {
         const applied = parsed.applied ?? (input as Record<string, unknown>)
         const pairs = Object.entries(applied).map(([key, value]) => `${key} → ${JSON.stringify(value)}`)
         return `Changed ${pairs.join(", ")}`
+      },
+      effects: (_input, result) => {
+        const parsed = JSON.parse(result.output) as {
+          ok: boolean
+          applied?: Record<string, unknown>
+          previous?: Record<string, unknown>
+        }
+        if (!parsed.ok || !parsed.applied) return []
+        const previous = parsed.previous ?? {}
+        return Object.entries(parsed.applied)
+          .filter(([key, value]) => !sameValue(previous[key], value))
+          .map(([key, value]) => {
+            const before = displayValue(previous[key])
+            const after = displayValue(value)
+            return {
+              kind: "settings" as const,
+              target: key,
+              // Both or neither: a one-sided diff reads as "was empty, now X",
+              // which is a different claim from "changed, shown elsewhere".
+              ...(before !== null && after !== null ? { before, after } : {}),
+            }
+          })
       },
     },
   })
