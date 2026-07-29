@@ -13,25 +13,24 @@ import {
   attestedRuntimes,
   findLocalClaudeChannelPane,
   findLocalPiPane,
-  ledgerIdentity,
   listLocalTmuxPanes,
+  resolveRuntimeIdentity,
   parseClaudeLaunch,
   parsePiLaunch,
   type ClaudeLaunch,
   type LocalTmuxPane,
   type PiLaunch,
 } from "./discovery"
+import { readMintedIdentities, type MintedIdentity } from "./identity-store"
 import { readInventoryReadonly } from "./inventory"
 import { preflightRuntimeSession, type RuntimePreflightResult } from "./resume"
 import { shellQuote } from "./shell"
 import {
   configuredThreaBaseUrl,
-  deriveClaudeRuntimeIdentity,
   readPiRemoteConfig,
   readPiRemoteSession,
   type PiRemoteConfig,
   readThreaChannelConfig,
-  sanitizeId,
   type PiRemoteSession,
 } from "./spawners"
 import type { ThreaChannelConfig } from "./types"
@@ -67,6 +66,7 @@ export interface ReconnectDeps {
   claudeConfig?: () => ThreaChannelConfig
   claudeRegistry?: ClaudeRegistryDeps
   links?: () => HarnessLink[]
+  identities?: () => MintedIdentity[]
   mcpFile?: (path: string) => boolean
   sleep?: (ms: number) => Promise<void>
   claudeBoot?: Partial<ClaudeBootDeps>
@@ -221,7 +221,8 @@ function resolveClaudeTarget(options: ReconnectOptions, deps: ReconnectDeps): Cl
       deps.panes(),
       config,
       hostname(),
-      deps.links ?? readHarnessLinks
+      deps.links ?? readHarnessLinks,
+      deps.identities ?? readMintedIdentities
     )
     if (!pane) throw new Error(`no live Claude pane matched ${options.runtimeSessionId}`)
   }
@@ -239,17 +240,21 @@ function resolveClaudeTarget(options: ReconnectOptions, deps: ReconnectDeps): Cl
     }
     if (paneCwd !== managedCwd) throw new Error("managed Claude cwd does not match pane")
   }
-  const derived = deriveClaudeRuntimeIdentity(pane.cwd, config)
-  // Same attestation order the pane lookup just used. Re-deriving here would
-  // reject the very pane the ledger identified: a session launched under a
-  // different hostname derives a different id for life.
-  const attested = ledgerIdentity(pane.cwd, attestedRuntimes((deps.links ?? readHarnessLinks)()))
-  const explicitInstanceId = launch.environment.find(({ name }) => name === "THREA_INSTANCE_ID")?.value
-  const explicitRuntimeSessionId = launch.environment.find(({ name }) => name === "THREA_RUNTIME_SESSION_ID")?.value
-  const instanceId = sanitizeId(explicitInstanceId || attested?.instanceId || derived.instanceId).slice(0, 64)
-  const runtimeSessionId = sanitizeId(
-    explicitRuntimeSessionId || attested?.runtimeSessionId || derived.runtimeSessionId
-  ).slice(0, 64)
+  // Same rungs, in the same order, the pane lookup just used. Re-deriving here
+  // would reject the very pane the ledger identified: a session launched under
+  // a different hostname derives a different id for life.
+  const { instanceId, runtimeSessionId } = resolveRuntimeIdentity(
+    pane.cwd,
+    {
+      declared: {
+        instanceId: launch.environment.find(({ name }) => name === "THREA_INSTANCE_ID")?.value,
+        runtimeSessionId: launch.environment.find(({ name }) => name === "THREA_RUNTIME_SESSION_ID")?.value,
+      },
+      identities: (deps.identities ?? readMintedIdentities)(),
+      attested: attestedRuntimes((deps.links ?? readHarnessLinks)()),
+    },
+    config
+  )
   if (!instanceId || !runtimeSessionId) throw new Error("Claude launch identity is empty after normalization")
   if (runtimeSessionId !== options.runtimeSessionId) throw new Error("Claude runtime identity mismatch")
   if (agent && (agent.runtimeSessionId !== runtimeSessionId || agent.instanceId !== instanceId)) {
@@ -398,7 +403,8 @@ export async function reconnectRuntime(
     panes,
     (deps.claudeConfig ?? readThreaChannelConfig)(),
     hostname(),
-    deps.links ?? readHarnessLinks
+    deps.links ?? readHarnessLinks,
+    deps.identities ?? readMintedIdentities
   )
   if (piPane && claudePane) throw new Error(`multiple live runtimes match ${options.runtimeSessionId}`)
   if (piPane) return reconnectPi(options, deps)

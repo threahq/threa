@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, realpathSync, symlinkSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import type { HarnessLink } from "@threa/bot-runtime-client"
+import type { MintedIdentity } from "./identity-store"
 import { deriveClaudeRuntimeIdentity } from "./spawners"
 import {
   findLocalClaudeChannelPane,
@@ -41,6 +42,18 @@ function link(overrides: Partial<HarnessLink> = {}): HarnessLink {
 }
 
 const noLinks = () => []
+
+function identity(overrides: Partial<MintedIdentity> = {}): MintedIdentity {
+  return {
+    runtimeSessionId: "ccs-minted",
+    instanceId: "cc-minted",
+    worktree: "/Users/me/dev/threa.feature",
+    runtimeKind: "claude-code-channel",
+    mintedAt: "2026-07-29T00:00:00.000Z",
+    source: "mint",
+    ...overrides,
+  }
+}
 
 describe("parseTmuxPanes", () => {
   test("keeps live panes and their start command", () => {
@@ -273,6 +286,21 @@ describe("findLocalClaudeChannelPane ledger attestation", () => {
     expect(findLocalClaudeChannelPane("ccs-real", [candidate], {}, "host-a", links)).toBeUndefined()
     expect(findLocalClaudeChannelPane("ccs-rival", [candidate], {}, "host-a", links)).toBeUndefined()
     expect(findLocalClaudeChannelPane("ccs-4dca54f22ee90414", [candidate], {}, "host-a", links)).toEqual(candidate)
+  })
+
+  test("a pane launched without THREA_ environment resolves to its minted identity", () => {
+    // The minted record is what the hostname derivation cannot reproduce, and
+    // it outranks the ledger for the same directory.
+    const candidate = pane()
+    const identities = () => [identity()]
+
+    expect(findLocalClaudeChannelPane("ccs-minted", [candidate], {}, "host-a", noLinks, identities)).toEqual(candidate)
+    expect(
+      findLocalClaudeChannelPane("ccs-real", [candidate], {}, "host-a", () => [link()], identities)
+    ).toBeUndefined()
+    expect(
+      findLocalClaudeChannelPane("ccs-4dca54f22ee90414", [candidate], {}, "host-a", noLinks, identities)
+    ).toBeUndefined()
   })
 
   test("a pi-local record never identifies a Claude pane", () => {

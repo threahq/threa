@@ -1,7 +1,31 @@
-import { describe, expect, test } from "bun:test"
+import { afterAll, beforeAll, describe, expect, test } from "bun:test"
 import type { HarnessLink } from "@threa/bot-runtime-client"
 import { OBSERVER_WARMUP_MS, REAP_AFTER_MS, reapArchivedWorktrees, type ReapDeps } from "./reap"
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
 import type { LocalTmuxPane } from "./discovery"
+
+// Every dep is injected, but a defaulted one would silently read the developer's
+// real stores — which is how a green test can depend on what happens to be in
+// ~/.threa/harnessd. Point them at an empty directory so a leak fails loudly.
+const ISOLATED = ["THREA_HARNESSD_IDENTITIES_DIR", "THREA_HARNESS_LINKS_DIR", "THREA_HARNESSD_INVENTORY"] as const
+const saved = new Map<string, string | undefined>()
+
+beforeAll(() => {
+  const root = mkdtempSync(join(tmpdir(), "harnessd-reap-"))
+  for (const name of ISOLATED) {
+    saved.set(name, process.env[name])
+    process.env[name] = join(root, name.toLowerCase())
+  }
+})
+
+afterAll(() => {
+  for (const [name, value] of saved) {
+    if (value === undefined) delete process.env[name]
+    else process.env[name] = value
+  }
+})
 
 const NOW = Date.parse("2026-07-27T12:00:00.000Z")
 const WORKTREE = "/repo/threa.feature"
@@ -46,6 +70,7 @@ function makeDeps(overrides: Partial<ReapDeps> = {}): { deps: ReapDeps; recorded
   const recorded: Recorded = { woundDown: [], killed: [], forgotten: [], awaited: [], retired: [] }
   const deps: ReapDeps = {
     links: () => [link()],
+    identities: () => [],
     panes: () => [pane()],
     claudeProcessesIn: () => [],
     canonicalPath: (path) => path,
@@ -313,7 +338,10 @@ describe("reapArchivedWorktrees", () => {
 
   test("one failing link does not abort the sweep", async () => {
     const { deps, recorded } = makeDeps({
-      links: () => [link({ runtimeSessionId: "boom", rootStreamId: "stream_boom" }), link({ runtimeSessionId: "ok" })],
+      links: () => [
+        link({ runtimeSessionId: "boom", rootStreamId: "stream_boom", worktree: "/repo/threa.boom" }),
+        link({ runtimeSessionId: "ok" }),
+      ],
       panes: () => [],
       archivedAt: async (streamId) => {
         if (streamId === "stream_boom") throw new Error("threa unreachable")
@@ -380,7 +408,7 @@ describe("reapArchivedWorktrees", () => {
     const { deps, recorded } = makeDeps({
       observingSinceMs: NOW - OBSERVER_WARMUP_MS + 60_000,
       links: () => [
-        link({ runtimeSessionId: "unmarked" }),
+        link({ runtimeSessionId: "unmarked", worktree: "/repo/threa.unmarked" }),
         link({ runtimeSessionId: "marked", windDownRequestedAt: new Date(NOW - 1_000).toISOString() }),
       ],
       panes: () => [],
@@ -410,4 +438,108 @@ test("a wind-down that could not remove the directory keeps the identity record"
   // would let the next mint hand that live directory a second id.
   expect(recorded.retired).toEqual([])
   expect(recorded.forgotten).toEqual(["ccs-abc"])
+})
+
+test("the window decision uses the injected ledger and canonicalizer", async () => {
+  // `decideWindow` used to call the resolver with two arguments, so the
+  // ledger-attested branch was unreachable and a second canonicalizer
+  // (realpathSync) decided the one destructive call in the daemon.
+  const canonicalized: string[] = []
+  const { deps, recorded } = makeDeps({
+    // No THREA_ env: only the ledger can tie this pane to the record.
+    panes: () => [
+      pane({
+        cwd: `/raw${WORKTREE}`,
+        startCommand: "claude --dangerously-load-development-channels server:threa-channel",
+      }),
+    ],
+    // The pane's cwd and the record's worktree differ as RAW strings, so ONLY a
+    // canonicalizer applied inside the resolver can tie them together. Passing
+    // the raw path on both sides made the assertion pass either way, because
+    // canonicalOrRaw falls back to the raw string when realpathSync throws.
+    links: () => [link({ worktree: WORKTREE })],
+    canonicalPath: (path) => {
+      canonicalized.push(path)
+      return path.startsWith("/raw") ? path.slice("/raw".length) : path
+    },
+  })
+
+  const [outcome] = await reapArchivedWorktrees(deps)
+
+  expect(outcome).toMatchObject({ status: "reaped" })
+  expect(recorded.killed).toEqual(["@7"])
+  expect(canonicalized).toContain(`/raw${WORKTREE}`)
+})
+
+test("a worktree two link records disagree about is never reaped", async () => {
+  // recordHarnessLink supersedes by a RAW string compare while every reader
+  // canonicalizes, so a trailing slash leaves both records alive. The mint
+  // refuses on this state; so must the one pass that removes a directory.
+  const { deps, recorded } = makeDeps({
+    links: () => [link({ runtimeSessionId: "ccs-abc" }), link({ runtimeSessionId: "ccs-xyz" })],
+    panes: () => [],
+  })
+
+  const outcomes = await reapArchivedWorktrees(deps)
+
+  expect(outcomes.map((outcome) => outcome.status)).toEqual(["skipped ambiguous", "skipped ambiguous"])
+  expect(outcomes[0]?.detail).toContain("disagrees")
+  expect(recorded).toEqual({ woundDown: [], killed: [], forgotten: [], awaited: [], retired: [] })
+})
+
+test("a minted record naming the worktree a different session claims blocks the reap", async () => {
+  // The promotion that made this necessary: the minted rung outranks an
+  // ambiguous ledger, so a pane declaring nothing resolved to THIS record and
+  // the branch below killed a live, differently-identified session's window.
+  const { deps, recorded } = makeDeps({
+    identities: () => [
+      {
+        runtimeSessionId: "ccs-stranger",
+        instanceId: "cc-stranger",
+        worktree: WORKTREE,
+        runtimeKind: "claude-code-channel",
+        mintedAt: "2026-07-29T00:00:00.000Z",
+        source: "mint",
+      },
+    ],
+  })
+
+  const [outcome] = await reapArchivedWorktrees(deps)
+
+  expect(outcome?.status).toBe("skipped ambiguous")
+  expect(outcome?.detail).toContain("ccs-stranger")
+  expect(recorded.killed).toEqual([])
+  expect(recorded.woundDown).toEqual([])
+})
+
+test("only the injected identity store reaches the destructive decision", async () => {
+  // A record on disk that the deps do not expose must not influence which pane
+  // the reaper believes owns the worktree. Reading the ambient store here is how
+  // a green test comes to depend on whatever sits in ~/.threa/harnessd.
+  const dir = process.env.THREA_HARNESSD_IDENTITIES_DIR!
+  mkdirSync(dir, { recursive: true })
+  writeFileSync(
+    join(dir, "ccs-ondisk.json"),
+    JSON.stringify({
+      runtimeSessionId: "ccs-ondisk",
+      instanceId: "cc-ondisk",
+      worktree: WORKTREE,
+      runtimeKind: "claude-code-channel",
+      mintedAt: "2026-07-29T00:00:00.000Z",
+      source: "mint",
+    })
+  )
+  try {
+    const { deps, recorded } = makeDeps({
+      identities: () => [],
+      panes: () => [pane({ startCommand: "claude --dangerously-load-development-channels server:threa-channel" })],
+    })
+
+    const [outcome] = await reapArchivedWorktrees(deps)
+
+    expect(outcome?.status).toBe("reaped")
+    expect(recorded.killed).toEqual(["@7"])
+  } finally {
+    rmSync(join(dir, "ccs-ondisk.json"), { force: true })
+  }
 })

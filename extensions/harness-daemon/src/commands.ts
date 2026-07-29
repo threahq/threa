@@ -16,6 +16,7 @@ import {
   resolveManagedAgentPane,
   type LocalTmuxPane,
   type ManagedAgentPane,
+  type ResolvedRuntimeIdentity,
 } from "./discovery"
 import { die } from "./errors"
 import { identityConsistency, identityVerdict } from "./identity"
@@ -33,8 +34,9 @@ import {
   ClaudeRuntimeSpawner,
   PiRuntimeSpawner,
   RuntimeSpawnError,
-  deriveClaudeRuntimeIdentity,
+  claudeAgentIdentity,
   configuredThreaBaseUrl,
+  deriveClaudeRuntimeIdentity,
   readPiRemoteConfig,
   readPiRemoteSession,
   readThreaChannelConfig,
@@ -311,6 +313,8 @@ export interface ReviveDeps {
   restoreWorktree: (agent: ManagedAgent) => { restored: boolean; reason?: string }
   restorableWorktree: (agent: ManagedAgent) => { repo: string } | { reason: string }
   piLink: (runtimeSessionId: string) => PiRemoteSession | undefined
+  /** The one identity resolver, injected so a revival decision is testable without the local stores. */
+  claudeIdentity: (agent: ManagedAgent, config: ThreaChannelConfig) => ResolvedRuntimeIdentity
   resumeRuntime: (agent: ManagedAgent, options: ResumeOptions) => Promise<SpawnResult>
   persist: (agent: ManagedAgent) => void
   killWindow: (windowId: string) => void
@@ -328,6 +332,7 @@ export function defaultReviveDeps(): ReviveDeps {
     restoreWorktree: restoreManagedWorktree,
     restorableWorktree: restorableWorktreeSource,
     piLink: readPiRemoteSession,
+    claudeIdentity: claudeAgentIdentity,
     resumeRuntime: (agent, options) =>
       (agent.runtime === "pi" ? new PiRuntimeSpawner() : new ClaudeRuntimeSpawner()).resume(agent, options),
     persist: upsertAgent,
@@ -359,11 +364,16 @@ export async function reviveAgent(
   // would bury the line this exists to surface.
   if (!target || scratchpad?.streamId === target.rootStreamId) {
     const recorded = agent.runtimeSessionId ?? "-"
-    const derived =
-      agent.runtime === "claude" && agent.worktree
-        ? deriveClaudeRuntimeIdentity(agent.worktree, deps.claudeConfig).runtimeSessionId
-        : "-"
-    console.log(`resolve\t${agent.name}\t${identityVerdict(paneStatus, recorded, derived)}\t${recorded}\t${derived}`)
+    const claude = agent.runtime === "claude" && Boolean(agent.worktree)
+    const identity = claude ? deps.claudeIdentity(agent, deps.claudeConfig) : undefined
+    // `drifted` is measured against the DERIVATION, not the resolution. Scoring
+    // it against the resolved id makes it structurally unreachable — the
+    // inventory rung returns the recorded id, so the two always agree — and
+    // this is the line that surfaced the 2026-07-28 duplicate-session storm.
+    const derived = claude ? deriveClaudeRuntimeIdentity(agent.worktree!, deps.claudeConfig).runtimeSessionId : "-"
+    console.log(
+      `resolve\t${agent.name}\t${identityVerdict(paneStatus, recorded, derived)}\t${recorded}\t${derived}\t${identity?.runtimeSessionId ?? "-"}\t${identity?.source ?? "-"}`
+    )
   }
   // Ambiguity counts as alive: the next move is spawning a replacement, and a
   // duplicate agent is worse than a missed revival.
@@ -378,9 +388,9 @@ export async function reviveAgent(
     if (agent.runtime === "pi" && targetRuntimeSessionId) {
       targetInstanceId ??= deps.piLink(targetRuntimeSessionId)?.instanceId
     } else if (agent.runtime === "claude" && !targetInstanceId && !targetRuntimeSessionId && agent.worktree) {
-      const derived = deriveClaudeRuntimeIdentity(agent.worktree, deps.claudeConfig)
-      targetInstanceId = derived.instanceId
-      targetRuntimeSessionId = derived.runtimeSessionId
+      const identity = deps.claudeIdentity(agent, deps.claudeConfig)
+      targetInstanceId = identity.instanceId
+      targetRuntimeSessionId = identity.runtimeSessionId
     }
     if (
       !restoredSessionMatches(
@@ -499,9 +509,9 @@ export async function reviveAgent(
     instanceId = piLink!.instanceId
     runtimeSessionId = agent.runtimeSessionId!
   } else {
-    const derived = deriveClaudeRuntimeIdentity(agent.worktree, deps.claudeConfig)
-    instanceId = agent.instanceId ?? derived.instanceId
-    runtimeSessionId = agent.runtimeSessionId ?? derived.runtimeSessionId
+    const identity = deps.claudeIdentity(agent, deps.claudeConfig)
+    instanceId = identity.instanceId
+    runtimeSessionId = identity.runtimeSessionId
   }
 
   const configuredDisplayName =
@@ -769,6 +779,9 @@ export function doctor(): void {
     ["identity drift (link records)", drift.linkRecords],
     ["identity drift (live panes)", panes ? drift.livePanes : undefined],
   ]
+  console.log(
+    `${drift.identityless === 0 ? "ok" : "drift"}\tidentity (rows with no recorded identity)\t${drift.identityless} resolve only by deriving from the hostname`
+  )
   for (const [name, count] of driftChecks) {
     if (count === undefined) {
       console.log(`unknown\t${name}\tcould not inspect local tmux panes: ${paneError}`)

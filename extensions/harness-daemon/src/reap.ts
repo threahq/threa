@@ -8,8 +8,15 @@ import {
 import { existsSync } from "node:fs"
 import { pushBranchAndRemoveWorktree } from "./archive-wind-down"
 import { liveClaudePidsIn } from "./claude-registry"
-import { forgetMintedIdentitiesFor } from "./identity-store"
-import { canonicalOrRaw, listLocalTmuxPanes, resolveManagedAgentPane, type LocalTmuxPane } from "./discovery"
+import { forgetMintedIdentitiesFor, readMintedIdentities, type MintedIdentity } from "./identity-store"
+import {
+  attestedRuntimes,
+  canonicalOrRaw,
+  conflictingAttestations,
+  listLocalTmuxPanes,
+  resolveManagedAgentPane,
+  type LocalTmuxPane,
+} from "./discovery"
 import { processAlive } from "./lock"
 import { output } from "./shell"
 import { fetchScratchpadArchivedAt, fetchScratchpadStatus, type ScratchpadStatus } from "./resume"
@@ -74,6 +81,7 @@ export interface ReapDeps {
   /** Undefined for an explicit CLI run; set by the daemon so a just-woken pass waits out {@link OBSERVER_WARMUP_MS}. */
   observingSinceMs?: number
   links: () => HarnessLink[]
+  identities: () => MintedIdentity[]
   panes: () => LocalTmuxPane[]
   /** Live Claude pids in this worktree, corroborated against the process table. */
   claudeProcessesIn: (worktree: string) => number[]
@@ -95,6 +103,7 @@ export interface ReapDeps {
 export function defaultReapDeps(target: { baseUrl: string; workspaceId: string; apiKey: string }): ReapDeps {
   return {
     links: readHarnessLinks,
+    identities: readMintedIdentities,
     panes: listLocalTmuxPanes,
     claudeProcessesIn: liveClaudePidsIn,
     canonicalPath: canonicalOrRaw,
@@ -148,6 +157,24 @@ function decideWindow(link: HarnessLink, panes: LocalTmuxPane[], deps: ReapDeps)
   const occupants = panes.filter((pane) => deps.canonicalPath(pane.cwd) === worktree)
   const livePids = deps.claudeProcessesIn(link.worktree)
 
+  // Ranking the rungs is right for a read and wrong here: a minted record that
+  // outranks an ambiguous ledger would resolve a pane declaring nothing to THIS
+  // record's session, and the branch below would then kill that window and
+  // force-remove the directory a live, differently-identified Claude is using.
+  const conflict = conflictingAttestations(
+    link.worktree,
+    attestedRuntimes(deps.links(), deps.canonicalPath),
+    deps.identities(),
+    deps.canonicalPath
+  )
+  if (conflict.length > 0) {
+    return {
+      kind: "refuse",
+      status: "skipped ambiguous",
+      reason: `identity evidence for ${link.worktree} disagrees: ${conflict.join(", ")}`,
+    }
+  }
+
   if (occupants.length === 0) {
     // Nobody is in the worktree: the offline case this reaper exists for —
     // unless a paneless Claude is still running there.
@@ -165,7 +192,12 @@ function decideWindow(link: HarnessLink, panes: LocalTmuxPane[], deps: ReapDeps)
       runtimeSessionId: link.runtimeSessionId,
       worktree: link.worktree,
     },
-    panes
+    panes,
+    undefined,
+    undefined,
+    deps.links,
+    deps.identities,
+    deps.canonicalPath
   )
   if (resolved.status === "found" && occupants.length === 1 && resolved.pane.paneId === occupants[0]!.paneId) {
     // The pane's own Claude is `panePid` (the same equivalence `reconnect`

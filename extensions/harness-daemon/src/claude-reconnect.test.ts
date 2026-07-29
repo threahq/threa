@@ -392,6 +392,33 @@ describe("reconnectClaude", () => {
     expect(d.calls[0]?.[2]).toContain(`'THREA_INSTANCE_ID=${identity.instanceId}'`)
   })
 
+  test("reconnect accepts a pane whose identity only the mint record attests", async () => {
+    // No THREA_ env, no link record: without the minted rung the pane derives a
+    // different id under this hostname and reconnect rejects its own session.
+    const launch = "claude --name threa.feature --dangerously-load-development-channels server:threa-channel"
+    const d = deps({
+      inventory: () => [agent({ instanceId: "cc-minted", runtimeSessionId: "ccs-minted" })],
+      identities: () => [
+        {
+          runtimeSessionId: "ccs-minted",
+          instanceId: "cc-minted",
+          worktree: CWD,
+          runtimeKind: "claude-code-channel",
+          mintedAt: "2026-07-29T00:00:00.000Z",
+          source: "mint",
+        },
+      ],
+      panes: (() => {
+        let reads = 0
+        return () => (++reads < 3 ? [pane({ startCommand: launch })] : [pane({ panePid: 5678 })])
+      })(),
+    })
+
+    await reconnectClaude({ runtimeSessionId: "ccs-minted", rootStreamId: "stream_one" }, d)
+
+    expect(d.calls[0]?.[2]).toContain("'THREA_INSTANCE_ID=cc-minted' 'THREA_RUNTIME_SESSION_ID=ccs-minted'")
+  })
+
   test("standalone dispatch rejects cross-runtime identity collisions", async () => {
     const claude = pane({
       startCommand: COMMAND.replaceAll(RUNTIME, NATIVE),

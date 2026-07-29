@@ -1,6 +1,6 @@
 import { Database } from "bun:sqlite"
 import { afterEach, expect, mock, spyOn, test } from "bun:test"
-import { chmodSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs"
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import {
@@ -12,12 +12,14 @@ import {
   recordedNoYolo,
 } from "./resume"
 import { launchAgentPlist } from "./boot"
-import { findLocalClaudeChannelPane, type LocalTmuxPane } from "./discovery"
+import { findLocalClaudeChannelPane, runtimeIdentityFor, type LocalTmuxPane } from "./discovery"
 import { parseResume, parseSpawn } from "./cli"
 import { kickAgent, restoredSessionMatches, reviveAgent, type ReviveDeps, type ReviveOutcome } from "./commands"
 import { findAgent, readInventory, readInventoryReadonly, upsertAgent } from "./inventory"
+import { writeMintedIdentity } from "./identity-store"
 import { acquireProcessLock } from "./lock"
 import {
+  claudeAgentIdentity,
   claudeLaunchArgs,
   claudeLaunchCommand,
   deriveClaudeRuntimeIdentity,
@@ -554,6 +556,8 @@ function reviveDeps(overrides: Partial<ReviveDeps> = {}): ReviveDeps {
     },
     restorableWorktree: () => ({ repo: "/tmp/repo" }),
     piLink: () => undefined,
+    claudeIdentity: (managed, config) =>
+      runtimeIdentityFor({ cwd: managed.worktree ?? "", agent: managed, identities: [], attested: [], config }),
     resumeRuntime: async () => {
       throw new Error("resumeRuntime must not be called")
     },
@@ -1031,4 +1035,61 @@ test("a revival derives identity from the worktree, never from the caller's envi
       else process.env[key] = value
     }
   }
+})
+
+test("revival reuses the minted identity instead of deriving a new one", () => {
+  // `ClaudeRuntimeSpawner.resume` used to derive from the current hostname, so
+  // a laptop that changed wifi revived its own session under an id the server
+  // had never seen and the harness started a duplicate.
+  const worktree = "/tmp/worktrees/minted-revival"
+  const root = mkdtempSync(join(tmpdir(), "harnessd-revive-identity-"))
+  const saved = ["THREA_HARNESSD_IDENTITIES_DIR", "THREA_HARNESS_LINKS_DIR"].map(
+    (name) => [name, process.env[name]] as const
+  )
+  process.env.THREA_HARNESSD_IDENTITIES_DIR = join(root, "identities")
+  process.env.THREA_HARNESS_LINKS_DIR = join(root, "links")
+  try {
+    const written = writeMintedIdentity({
+      runtimeSessionId: "ccs-revived",
+      instanceId: "cc-revived",
+      worktree,
+      runtimeKind: "claude-code-channel",
+      mintedAt: "2026-07-29T00:00:00.000Z",
+      source: "mint",
+    })
+    expect(written.status).toBe("created")
+
+    expect(claudeAgentIdentity({ worktree }, {})).toEqual({
+      instanceId: "cc-revived",
+      runtimeSessionId: "ccs-revived",
+      source: "minted",
+    })
+    expect(deriveClaudeRuntimeIdentity(worktree).runtimeSessionId).not.toBe("ccs-revived")
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+    for (const [name, value] of saved) {
+      if (value === undefined) delete process.env[name]
+      else process.env[name] = value
+    }
+  }
+})
+
+test("the revival log scores drift against the derivation, not against its own resolution", async () => {
+  // The inventory rung returns the recorded id, so scoring `drifted` against the
+  // resolved id makes it structurally unreachable — and this is the line that
+  // surfaced the 2026-07-28 duplicate-session storm.
+  const lines: string[] = []
+  const log = spyOn(console, "log").mockImplementation((message: string) => void lines.push(message))
+  try {
+    await runRevive(linkedAgent({ runtimeSessionId: "ccs-recorded", instanceId: "cc-recorded" }), {}, reviveDeps())
+  } finally {
+    log.mockRestore()
+  }
+
+  const resolve = lines.find((line) => line.startsWith("resolve\t"))!
+  const [, , verdict, recorded, derived, , source] = resolve.split("\t")
+  expect(verdict).toContain("drifted")
+  expect(recorded).toBe("ccs-recorded")
+  expect(derived).not.toBe("ccs-recorded")
+  expect(source).toBe("inventory")
 })

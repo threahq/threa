@@ -95,6 +95,7 @@ function deps(overrides: Partial<AdoptDeps> = {}): AdoptDeps & Recorded {
     inventory: () => [],
     panes: () => [],
     links: () => [link()],
+    identities: () => [],
     disk: disk(),
     isDirectory: () => true,
     scratchpadStatus: async () => "active",

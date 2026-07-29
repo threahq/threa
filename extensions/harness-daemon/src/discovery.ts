@@ -2,6 +2,7 @@ import { basename } from "node:path"
 import { hostname } from "node:os"
 import { realpathSync } from "node:fs"
 import { readHarnessLinks, type HarnessLink } from "@threa/bot-runtime-client"
+import { identityRecordsFor, readMintedIdentities, type MintedIdentity } from "./identity-store"
 import { output } from "./shell"
 import { deriveClaudeRuntimeIdentity, readThreaChannelConfig, sanitizeId } from "./spawners"
 import type { ManagedAgent, ThreaChannelConfig } from "./types"
@@ -400,14 +401,16 @@ export function resolveManagedAgentPane(
   panes: LocalTmuxPane[] = listLocalTmuxPanes(),
   config: ThreaChannelConfig = readThreaChannelConfig(),
   host = hostname(),
-  links: () => HarnessLink[] = readHarnessLinks
+  links: () => HarnessLink[] = readHarnessLinks,
+  identities: () => MintedIdentity[] = readMintedIdentities,
+  canonical: (path: string) => string = canonicalOrRaw
 ): ManagedAgentPane {
   if (agent.runtimeSessionId) {
     try {
       const pane =
         agent.runtime === "pi"
           ? findLocalPiPane(agent.runtimeSessionId, panes)
-          : findLocalClaudeChannelPane(agent.runtimeSessionId, panes, config, host, links)
+          : findLocalClaudeChannelPane(agent.runtimeSessionId, panes, config, host, links, identities, canonical)
       return pane ? { status: "found", pane } : { status: "missing" }
     } catch (error) {
       return { status: "ambiguous", reason: error instanceof Error ? error.message : String(error) }
@@ -428,7 +431,8 @@ export function resolveManagedAgentPane(
         }
       : { status: "missing" }
   }
-  const inWorktree = panes.filter((pane) => pane.cwd === agent.worktree)
+  const canonicalWorktree = canonical(agent.worktree)
+  const inWorktree = panes.filter((pane) => canonical(pane.cwd) === canonicalWorktree)
   if (inWorktree.length === 1) return { status: "found", pane: inWorktree[0]! }
   if (inWorktree.length === 0) return { status: "missing" }
   const recorded = inWorktree.find(
@@ -459,11 +463,14 @@ export interface AttestedRuntime {
 }
 
 /** Canonicalized once per resolution: a per-pane realpath is panes × records syscalls. */
-export function attestedRuntimes(links: HarnessLink[]): AttestedRuntime[] {
+export function attestedRuntimes(
+  links: HarnessLink[],
+  canonical: (path: string) => string = canonicalOrRaw
+): AttestedRuntime[] {
   return links
     .filter((link) => link.runtimeKind === "claude-code-channel" || link.runtimeKind === "unknown")
     .map((link) => ({
-      worktree: canonicalOrRaw(link.worktree),
+      worktree: canonical(link.worktree),
       runtimeSessionId: link.runtimeSessionId,
       instanceId: link.instanceId,
     }))
@@ -475,8 +482,12 @@ export function attestedRuntimes(links: HarnessLink[]): AttestedRuntime[] {
  * Two or more records naming one worktree is a broken ledger, not a tie to
  * break: guessing here binds a live pane to a stranger's session.
  */
-export function ledgerIdentity(cwd: string, attested: AttestedRuntime[]): AttestedRuntime | undefined {
-  const canonicalCwd = canonicalOrRaw(cwd)
+export function ledgerIdentity(
+  cwd: string,
+  attested: AttestedRuntime[],
+  canonical: (path: string) => string = canonicalOrRaw
+): AttestedRuntime | undefined {
+  const canonicalCwd = canonical(cwd)
   const matches = attested.filter((entry) => entry.worktree === canonicalCwd)
   return matches.length === 1 ? matches[0] : undefined
 }
@@ -485,25 +496,152 @@ export function ledgerRuntimeSessionId(cwd: string, attested: AttestedRuntime[])
   return ledgerIdentity(cwd, attested)?.runtimeSessionId
 }
 
+export type IdentitySource = "declared" | "minted" | "ledger" | "inventory" | "derived"
+
+export interface ResolvedRuntimeIdentity {
+  instanceId: string
+  runtimeSessionId: string
+  /** The rung the runtime session id came from. */
+  source: IdentitySource
+}
+
 /**
- * Identity by attestation before derivation: `deriveClaudeRuntimeIdentity`
- * hashes `os.hostname()`, which is DHCP-supplied on a laptop and changes with
- * the network, so a pane launched without `THREA_RUNTIME_SESSION_ID` derives a
- * different id than the one recorded for it and `up` starts a duplicate.
+ * What each rung of the resolver knows. An absent field is an absent rung, not
+ * an empty answer: `identities: []` means "the store was read and holds
+ * nothing", `identities: undefined` means "not consulted".
  */
+export interface IdentityEvidence {
+  /** The launch environment of the process itself. */
+  declared?: { instanceId?: string; runtimeSessionId?: string }
+  identities?: MintedIdentity[]
+  attested?: AttestedRuntime[]
+  /** The inventory row, immutable per launch and therefore stale by construction. */
+  inventory?: { instanceId?: string; runtimeSessionId?: string }
+  canonical?: (path: string) => string
+}
+
+function soleMintedIdentity(
+  cwd: string,
+  identities: MintedIdentity[],
+  canonical: (path: string) => string
+): MintedIdentity | undefined {
+  const records = identityRecordsFor(cwd, identities, canonical)
+  return records.length === 1 ? records[0] : undefined
+}
+
+function normalizedId(value: string): string {
+  return sanitizeId(value).slice(0, 64)
+}
+
+/**
+ * The one answer to "what identity does this directory have".
+ *
+ * Order: what the process itself declares, then the minted record, then the
+ * ledger's attestation, then the inventory row, and only then the derivation —
+ * which hashes `os.hostname()` and so changes with the wifi network, making a
+ * session unrecognisable to its own harness. Two records naming one worktree
+ * fall through rather than pick a winner: guessing binds a live pane to a
+ * stranger's session.
+ *
+ * This never answers "may a new process start here". Occupancy is the mint's
+ * veto and belongs to the write side; a read path that could refuse would make
+ * every lookup a policy decision.
+ */
+export function resolveRuntimeIdentity(
+  cwd: string,
+  evidence: IdentityEvidence = {},
+  config: ThreaChannelConfig = {},
+  host = hostname()
+): ResolvedRuntimeIdentity {
+  const canonical = evidence.canonical ?? canonicalOrRaw
+  const minted = evidence.identities && soleMintedIdentity(cwd, evidence.identities, canonical)
+  const ledger = evidence.attested && ledgerIdentity(cwd, evidence.attested, canonical)
+  // Only text this daemon did not write is normalized. A recorded id IS the
+  // primary key of a file in the link or identity store, and those stores allow
+  // characters `sanitizeId` rewrites (dots) with no length cap — normalizing one
+  // on the way out maps two distinct sessions onto one id, the exact failure
+  // `isSafeSessionFileName` refuses by design.
+  const rungs: Array<[IdentitySource, { instanceId?: string; runtimeSessionId?: string }, boolean]> = [
+    ["declared", evidence.declared ?? {}, true],
+    ["minted", minted ?? {}, false],
+    ["ledger", ledger ?? {}, false],
+    ["inventory", evidence.inventory ?? {}, false],
+    ["derived", deriveClaudeRuntimeIdentity(cwd, config, host), true],
+  ]
+  const winner = (field: "instanceId" | "runtimeSessionId") => rungs.find(([, value]) => Boolean(value[field]))!
+  const [source, session, normalizeSession] = winner("runtimeSessionId")
+  const [, instance, normalizeInstance] = winner("instanceId")
+  return {
+    instanceId: normalizeInstance ? normalizedId(instance.instanceId!) : instance.instanceId!,
+    runtimeSessionId: normalizeSession ? normalizedId(session.runtimeSessionId!) : session.runtimeSessionId!,
+    source,
+  }
+}
+
+/**
+ * Every distinct identity any store attests for `cwd`, when they disagree.
+ *
+ * The resolver ranks its rungs, which is right for a read: one answer, most
+ * trustworthy source first. A destructive caller needs the opposite question —
+ * *is the evidence consistent* — because ranking silently resolves a conflict
+ * the writer refused to create. `recordHarnessLink` supersedes by RAW string
+ * compare while every reader canonicalizes, so `/repo/x` and `/repo/x/` leave
+ * two live records; the mint refuses on that state, and so must anything that
+ * kills a window or removes a directory.
+ */
+export function conflictingAttestations(
+  cwd: string,
+  attested: AttestedRuntime[],
+  identities: MintedIdentity[],
+  canonical: (path: string) => string = canonicalOrRaw
+): string[] {
+  const target = canonical(cwd)
+  const ids = new Set<string>()
+  for (const entry of attested) if (entry.worktree === target) ids.add(entry.runtimeSessionId)
+  for (const record of identityRecordsFor(cwd, identities, canonical)) ids.add(record.runtimeSessionId)
+  return ids.size > 1 ? [...ids] : []
+}
+
+/**
+ * {@link resolveRuntimeIdentity} for the evidence a caller usually has to hand:
+ * a live pane, an inventory row, or neither. Unsupplied stores are read here,
+ * so every caller sees the same rungs.
+ */
+export function runtimeIdentityFor(params: {
+  cwd: string
+  pane?: LocalTmuxPane
+  agent?: { instanceId?: string; runtimeSessionId?: string }
+  identities?: MintedIdentity[]
+  attested?: AttestedRuntime[]
+  config?: ThreaChannelConfig
+  host?: string
+  canonical?: (path: string) => string
+}): ResolvedRuntimeIdentity {
+  const launch = params.pane ? parseClaudeChannelLaunch(params.pane.startCommand) : undefined
+  return resolveRuntimeIdentity(
+    params.cwd,
+    {
+      declared: launch ? { instanceId: launch.instanceId, runtimeSessionId: launch.runtimeSessionId } : undefined,
+      identities: params.identities ?? readMintedIdentities(),
+      attested: params.attested ?? attestedRuntimes(readHarnessLinks(), params.canonical),
+      inventory: params.agent,
+      canonical: params.canonical,
+    },
+    params.config,
+    params.host
+  )
+}
+
 function runtimeSessionIdForPane(
   pane: LocalTmuxPane,
   config: ThreaChannelConfig,
   host: string,
-  attested: AttestedRuntime[]
+  attested: AttestedRuntime[],
+  identities: MintedIdentity[],
+  canonical: (path: string) => string
 ): string | undefined {
-  const launch = parseClaudeChannelLaunch(pane.startCommand)
-  if (!launch) return undefined
-  return (
-    launch.runtimeSessionId ??
-    ledgerRuntimeSessionId(pane.cwd, attested) ??
-    deriveClaudeRuntimeIdentity(pane.cwd, config, host).runtimeSessionId
-  )
+  if (!parseClaudeChannelLaunch(pane.startCommand)) return undefined
+  return runtimeIdentityFor({ cwd: pane.cwd, pane, identities, attested, config, host, canonical }).runtimeSessionId
 }
 
 export function findLocalClaudeChannelPane(
@@ -511,10 +649,15 @@ export function findLocalClaudeChannelPane(
   panes: LocalTmuxPane[] = listLocalTmuxPanes(),
   config: ThreaChannelConfig = readThreaChannelConfig(),
   host = hostname(),
-  links: () => HarnessLink[] = readHarnessLinks
+  links: () => HarnessLink[] = readHarnessLinks,
+  identities: () => MintedIdentity[] = readMintedIdentities,
+  canonical: (path: string) => string = canonicalOrRaw
 ): LocalTmuxPane | undefined {
-  const attested = attestedRuntimes(links())
-  const matches = panes.filter((pane) => runtimeSessionIdForPane(pane, config, host, attested) === runtimeSessionId)
+  const attested = attestedRuntimes(links(), canonical)
+  const records = identities()
+  const matches = panes.filter(
+    (pane) => runtimeSessionIdForPane(pane, config, host, attested, records, canonical) === runtimeSessionId
+  )
   if (matches.length > 1) {
     throw new Error(
       `multiple live unmanaged Claude channel panes match ${runtimeSessionId}: ${matches.map((pane) => pane.paneId).join(", ")}`
