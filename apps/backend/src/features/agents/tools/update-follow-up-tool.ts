@@ -102,8 +102,12 @@ export function createUpdateFollowUpTool(
           note: input.note,
           scheduledFor: input.scheduledFor,
         }),
-      // No `before`: the callback returns the stored row after the write and
-      // nothing from before it, so only the new time is declarable.
+      // A reschedule has no `before` — the callback returns the row as written
+      // and nothing from before it — and a one-sided diff is not renderable:
+      // both surfaces draw `before → after` or nothing, so an `after` on its own
+      // would ride the payload and be dropped at render, leaving a moved
+      // reminder looking identical to a note-only edit. The new time goes in the
+      // label instead, where it is actually shown.
       effects: (input, result) => {
         const parsed = JSON.parse(result.output) as {
           ok: boolean
@@ -112,12 +116,14 @@ export function createUpdateFollowUpTool(
           scheduledForLocal?: string
         }
         if (!parsed.ok || !parsed.followUpId) return []
+        const rescheduled = input.scheduledFor !== undefined && parsed.scheduledForLocal
         return [
           {
             kind: "follow_up",
-            label: parsed.note,
+            ...(rescheduled
+              ? { label: `${parsed.note ?? "Follow-up"} — moved to ${parsed.scheduledForLocal}` }
+              : { label: parsed.note }),
             target: parsed.followUpId,
-            ...(input.scheduledFor !== undefined ? { after: parsed.scheduledForLocal } : {}),
           },
         ]
       },
