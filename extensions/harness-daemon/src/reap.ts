@@ -7,7 +7,7 @@ import {
 } from "@threa/bot-runtime-client"
 import { existsSync } from "node:fs"
 import { pushBranchAndRemoveWorktree } from "./archive-wind-down"
-import { defaultClaudeDiskDeps, findLiveClaudeSessions } from "./claude-registry"
+import { liveClaudePidsIn } from "./claude-registry"
 import { canonicalOrRaw, listLocalTmuxPanes, resolveManagedAgentPane, type LocalTmuxPane } from "./discovery"
 import { processAlive } from "./lock"
 import { output } from "./shell"
@@ -93,8 +93,7 @@ export function defaultReapDeps(target: { baseUrl: string; workspaceId: string; 
   return {
     links: readHarnessLinks,
     panes: listLocalTmuxPanes,
-    claudeProcessesIn: (worktree) =>
-      findLiveClaudeSessions(worktree, defaultClaudeDiskDeps()).map((session) => session.pid),
+    claudeProcessesIn: liveClaudePidsIn,
     canonicalPath: canonicalOrRaw,
     scratchpadStatus: (streamId) => fetchScratchpadStatus({ ...target, streamId }),
     archivedAt: (streamId) => fetchScratchpadArchivedAt({ ...target, streamId }),

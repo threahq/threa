@@ -46,9 +46,13 @@ export function harnessLinksDir(): string {
  * would silently map two distinct session ids onto one file. Real ids
  * (`ccs-<hex>`, UUIDs) pass unchanged.
  */
+export function isSafeSessionFileName(runtimeSessionId: string): boolean {
+  if (!/^[A-Za-z0-9_-][A-Za-z0-9_.-]*$/.test(runtimeSessionId)) return false
+  return runtimeSessionId !== "." && runtimeSessionId !== ".."
+}
+
 function linkPath(runtimeSessionId: string): string | undefined {
-  if (!/^[A-Za-z0-9_-][A-Za-z0-9_.-]*$/.test(runtimeSessionId)) return undefined
-  if (runtimeSessionId === "." || runtimeSessionId === "..") return undefined
+  if (!isSafeSessionFileName(runtimeSessionId)) return undefined
   return join(harnessLinksDir(), `${runtimeSessionId}.json`)
 }
 

@@ -19,6 +19,7 @@ export { killOwnWindow } from "./tmux-window"
 export {
   clearHarnessLink,
   harnessLinksDir,
+  isSafeSessionFileName,
   markHarnessLinkWoundDown,
   readHarnessLinks,
   recordHarnessLink,

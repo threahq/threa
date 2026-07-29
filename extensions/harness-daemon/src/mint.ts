@@ -1,0 +1,179 @@
+import { randomBytes } from "node:crypto"
+import { readHarnessLinks, type HarnessLink } from "@threa/bot-runtime-client"
+import { liveClaudePidsIn } from "./claude-registry"
+import {
+  attestedRuntimes,
+  canonicalOrRaw,
+  ledgerIdentity,
+  listLocalTmuxPanes,
+  parseClaudeChannelLaunch,
+  type LocalTmuxPane,
+} from "./discovery"
+import {
+  identityRecordsFor,
+  readMintedIdentities,
+  writeMintedIdentity,
+  type MintedIdentity,
+  type WriteMintedIdentityResult,
+} from "./identity-store"
+import { acquireProcessLock, resumeActiveLockPath } from "./lock"
+import { CLAUDE_INSTANCE_ID_PREFIX, CLAUDE_RUNTIME_SESSION_ID_PREFIX } from "./spawners"
+
+export interface MintRequest {
+  worktree: string
+  runtimeKind: string
+  /** Ids declared in ~/.claude/threa-channel/config.json: recorded as the mint rather than generated. */
+  declared?: { instanceId?: string; runtimeSessionId?: string }
+}
+
+export interface MintDeps {
+  identities: () => MintedIdentity[]
+  links: () => HarnessLink[]
+  panes: () => LocalTmuxPane[]
+  claudeProcessesIn: (worktree: string) => number[]
+  canonicalPath: (path: string) => string
+  write: (record: MintedIdentity) => WriteMintedIdentityResult
+  newSuffix: () => string
+  now: () => Date
+}
+
+export type MintOutcome =
+  | { status: "minted"; runtimeSessionId: string; instanceId: string; worktree: string }
+  | { status: "reused"; runtimeSessionId: string; instanceId: string; worktree: string; source: string }
+  | { status: "refused"; reason: string }
+
+export function defaultMintDeps(): MintDeps {
+  return {
+    identities: readMintedIdentities,
+    links: readHarnessLinks,
+    panes: listLocalTmuxPanes,
+    claudeProcessesIn: liveClaudePidsIn,
+    canonicalPath: canonicalOrRaw,
+    write: writeMintedIdentity,
+    newSuffix: () => randomBytes(8).toString("hex"),
+    now: () => new Date(),
+  }
+}
+
+/**
+ * An unidentified live Claude in the directory has no evidence in any store,
+ * so nothing else can see it. Minting a new identity over it would hand the
+ * reaper a worktree it believes is free and let it kill a live session.
+ */
+function occupancyVeto(worktree: string, deps: MintDeps, identifiedSessionIds: Set<string>): string | undefined {
+  const pids = deps.claudeProcessesIn(worktree)
+  const panes = deps
+    .panes()
+    .filter((pane) => deps.canonicalPath(pane.cwd) === worktree)
+    .filter((pane) => {
+      const launch = parseClaudeChannelLaunch(pane.startCommand)
+      if (!launch) return false
+      return !launch.runtimeSessionId || !identifiedSessionIds.has(launch.runtimeSessionId)
+    })
+  if (pids.length === 0 && panes.length === 0) return undefined
+  const parts: string[] = []
+  if (pids.length > 0) parts.push(`pid ${pids.join(", ")}`)
+  if (panes.length > 0) parts.push(`pane ${panes.map((pane) => pane.paneId).join(", ")}`)
+  return `an unidentified live Claude occupies ${worktree} (${parts.join("; ")})`
+}
+
+function ambiguity(kind: string, worktree: string, claimants: Array<{ runtimeSessionId: string }>): string {
+  return `${claimants.length} ${kind} name ${worktree}: ${claimants.map((c) => c.runtimeSessionId).join(", ")}`
+}
+
+function mintRuntimeIdentityUnlocked(request: MintRequest, deps: MintDeps): MintOutcome {
+  const worktree = deps.canonicalPath(request.worktree)
+
+  const records = deps.identities()
+  const recorded = identityRecordsFor(worktree, records, deps.canonicalPath)
+  if (recorded.length === 1) {
+    const record = recorded[0]!
+    return {
+      status: "reused",
+      runtimeSessionId: record.runtimeSessionId,
+      instanceId: record.instanceId,
+      worktree,
+      source: "store",
+    }
+  }
+  // Minting a third id for a doubly-claimed directory is how it stops resolving
+  // at all: every later lookup sees an ambiguous set, gives up, and falls back
+  // to the hostname derivation this store exists to retire. The write side has
+  // to refuse louder than the read side, not quieter.
+  if (recorded.length > 1) {
+    return { status: "refused", reason: ambiguity("identity records", worktree, recorded) }
+  }
+
+  const attested = attestedRuntimes(deps.links())
+  const claimants = attested.filter((entry) => deps.canonicalPath(entry.worktree) === worktree)
+  if (claimants.length > 1) {
+    return { status: "refused", reason: ambiguity("harness link records", worktree, claimants) }
+  }
+  const ledger = ledgerIdentity(worktree, attested)
+  if (ledger) {
+    return {
+      status: "reused",
+      runtimeSessionId: ledger.runtimeSessionId,
+      instanceId: ledger.instanceId,
+      worktree,
+      source: "ledger",
+    }
+  }
+
+  const identified = new Set([
+    ...records.map((record) => record.runtimeSessionId),
+    ...attested.map((entry) => entry.runtimeSessionId),
+  ])
+  const veto = occupancyVeto(worktree, deps, identified)
+  if (veto) return { status: "refused", reason: veto }
+
+  const suffix = deps.newSuffix()
+  const record: MintedIdentity = {
+    runtimeSessionId: request.declared?.runtimeSessionId || `${CLAUDE_RUNTIME_SESSION_ID_PREFIX}-${suffix}`,
+    instanceId: request.declared?.instanceId || `${CLAUDE_INSTANCE_ID_PREFIX}-${suffix}`,
+    worktree,
+    runtimeKind: request.runtimeKind,
+    mintedAt: deps.now().toISOString(),
+    source: "mint",
+  }
+  const written = deps.write(record)
+  if (written.status === "exists") {
+    // A lost race is only a race when both writers meant the same directory.
+    // A declared id in ~/.claude/threa-channel/config.json is reused by every
+    // spawn, so without this the second worktree adopts an identity the store
+    // records as living in the first one.
+    if (deps.canonicalPath(written.existing.worktree) !== worktree) {
+      return {
+        status: "refused",
+        reason: `${written.existing.runtimeSessionId} is already recorded for ${written.existing.worktree}, not ${worktree}`,
+      }
+    }
+    return {
+      status: "reused",
+      runtimeSessionId: written.existing.runtimeSessionId,
+      instanceId: written.existing.instanceId,
+      worktree: written.existing.worktree,
+      source: "store",
+    }
+  }
+  if (written.status === "refused") return { status: "refused", reason: written.reason }
+  return {
+    status: "minted",
+    runtimeSessionId: written.record.runtimeSessionId,
+    instanceId: written.record.instanceId,
+    worktree,
+  }
+}
+
+/** Serialized against revive and reap: a mint must not race either. */
+export async function mintRuntimeIdentity(
+  request: MintRequest,
+  deps: MintDeps = defaultMintDeps()
+): Promise<MintOutcome> {
+  const release = await acquireProcessLock(resumeActiveLockPath())
+  try {
+    return mintRuntimeIdentityUnlocked(request, deps)
+  } finally {
+    release()
+  }
+}
