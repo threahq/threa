@@ -271,6 +271,17 @@ describe("applyCacheBreakpoints", () => {
   const ANTHROPIC = "openrouter:anthropic/claude-sonnet-5"
   const EPHEMERAL = { openrouter: { cacheControl: { type: "ephemeral" } } }
 
+  /** Wire blocks Anthropic would count: message-level marks fan out per part. */
+  const countCacheBlocks = (messages: unknown[]): number =>
+    messages.reduce<number>((n, m) => {
+      const msg = m as { role: string; content: unknown; providerOptions?: unknown }
+      const parts = Array.isArray(msg.content) ? (msg.content as Array<{ providerOptions?: unknown }>) : null
+      const fansOut = msg.role === "tool" || (msg.role === "user" && parts !== null)
+      if (msg.providerOptions) return n + (fansOut && parts ? parts.length : 1)
+      if (!parts) return n
+      return n + parts.filter((p) => p.providerOptions).length
+    }, 0)
+
   it("moves the system prompt into messages and breaks on it plus the newest message", () => {
     const result = applyCacheBreakpoints({
       system: "You are Ariadne.",
@@ -289,6 +300,69 @@ describe("applyCacheBreakpoints", () => {
         { role: "assistant", content: "hello", providerOptions: EPHEMERAL },
       ],
     })
+  })
+
+  // The provider expands a tool message into one wire message PER RESULT and
+  // copies the message-level cache_control onto every one of them. Four tools
+  // called in one iteration meant 4 blocks + system = 5, and Anthropic rejects
+  // the request at 5 — a hard 400 that killed the turn after the tools had
+  // already run and written their state.
+  it("marks one part, not the message, when a tool message would fan out", () => {
+    const toolResults = [
+      {
+        type: "tool-result",
+        toolCallId: "c1",
+        toolName: "update_user_settings",
+        output: { type: "text", value: "ok" },
+      },
+      { type: "tool-result", toolCallId: "c2", toolName: "delegate_task", output: { type: "text", value: "ok" } },
+      { type: "tool-result", toolCallId: "c3", toolName: "schedule_follow_up", output: { type: "text", value: "ok" } },
+      { type: "tool-result", toolCallId: "c4", toolName: "save_memo", output: { type: "text", value: "ok" } },
+    ]
+
+    const result = applyCacheBreakpoints({
+      system: "You are Ariadne.",
+      messages: [{ role: "tool", content: toolResults } as never],
+      modelString: ANTHROPIC,
+    })
+
+    const tool = result.messages.at(-1) as unknown as {
+      providerOptions?: unknown
+      content: Array<{ providerOptions?: unknown }>
+    }
+    // Message level would fan out to one block per result.
+    expect(tool.providerOptions).toBeUndefined()
+    expect(tool.content.map((p) => p.providerOptions)).toEqual([undefined, undefined, undefined, EPHEMERAL])
+    expect(countCacheBlocks(result.messages)).toBe(2)
+  })
+
+  it("marks one part when a multi-part user message would fan out", () => {
+    const result = applyCacheBreakpoints({
+      system: "You are Ariadne.",
+      messages: [
+        {
+          role: "user",
+          content: [
+            { type: "text", text: "look at this" },
+            { type: "text", text: "and this" },
+          ],
+        } as never,
+      ],
+      modelString: ANTHROPIC,
+    })
+
+    expect(countCacheBlocks(result.messages)).toBe(2)
+  })
+
+  // assistant and system accumulate into a single wire message, so a part-level
+  // mark there would be read by nothing.
+  it("keeps the message-level mark for roles that do not fan out", () => {
+    const result = applyCacheBreakpoints({
+      messages: [{ role: "assistant", content: [{ type: "text", text: "done" }] } as never],
+      modelString: ANTHROPIC,
+    })
+
+    expect((result.messages.at(-1) as { providerOptions?: unknown }).providerOptions).toEqual(EPHEMERAL)
   })
 
   it("places a single breakpoint when the system prompt is the only message", () => {
