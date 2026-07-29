@@ -9,12 +9,24 @@ import { commandExists, commandPath, run, shellQuote } from "./shell"
 import { capturePane, createWindow, ensureTmuxSession, pickTmuxWindow, sendKeys, tmuxSession } from "./tmux"
 import type { ManagedAgent, ResumeOptions, SpawnOptions, SpawnResult, ThreaChannelConfig } from "./types"
 import { recordedNoYolo } from "./resume"
+import { recordProfileSnapshot } from "./identity-store"
 import { mintRuntimeIdentity } from "./mint"
-import { ensureWorktree, plannedWorktreePath } from "./worktree"
+import { plannedWorktreePath, provisionWorkspace } from "./worktree"
+import { selectProfile, type Profile } from "./profiles"
 import { runtimeIdentityFor, type ResolvedRuntimeIdentity } from "./discovery"
 
-export function mcpConfigPath(name: string): string {
-  return join(homedir(), ".threa", "harnessd", "mcp", `${name}.json`)
+/**
+ * Keyed by runtime session id, not the agent name: two agents that share a name
+ * shared one config file, so the second silently repointed the first's channel.
+ * Old name-keyed files are written past, never deleted — a live pane's recorded
+ * launch command still names one, and `reconnect` validates that it exists.
+ */
+export function mcpConfigDir(): string {
+  return process.env.THREA_HARNESSD_MCP_DIR || join(homedir(), ".threa", "harnessd", "mcp")
+}
+
+export function mcpConfigPath(runtimeSessionId: string): string {
+  return join(mcpConfigDir(), `${runtimeSessionId}.json`)
 }
 
 export function configuredThreaBaseUrl(config: ThreaChannelConfig): string {
@@ -76,8 +88,8 @@ export function claudeLaunchArgs(params: {
  * channel implementation and leaves global config untouched. This also keeps
  * revived feature branches from loading an obsolete connector.
  */
-export function writeChannelMcpConfig(name: string, channel: string, channelEntry: string): string {
-  const path = mcpConfigPath(name)
+export function writeChannelMcpConfig(runtimeSessionId: string, channel: string, channelEntry: string): string {
+  const path = mcpConfigPath(runtimeSessionId)
   mkdirSync(dirname(path), { recursive: true })
   writeFileSync(
     path,
@@ -183,8 +195,12 @@ export class RuntimeSpawnError extends Error {
 abstract class RuntimeSpawner {
   abstract spawn(options: SpawnOptions): Promise<SpawnResult>
 
-  protected createWorktree(options: SpawnOptions): { worktree: string; branch: string } {
-    return ensureWorktree(options)
+  protected profileFor(options: SpawnOptions): Profile {
+    return selectProfile(options)
+  }
+
+  protected createWorktree(options: SpawnOptions, profile: Profile): { worktree: string; branch: string } {
+    return provisionWorkspace(options, profile)
   }
 }
 
@@ -199,8 +215,15 @@ export class PiRuntimeSpawner extends RuntimeSpawner {
     const session = tmuxSession(options)
     ensureTmuxSession(session)
     ensurePiDefaultLabel()
-    const { worktree, branch } = this.createWorktree(options)
+    const profile = this.profileFor(options)
+    const { worktree, branch } = this.createWorktree(options, profile)
     const runtimeSessionId = randomUUID()
+    // Pi does not mint, but the mint record is where the profile snapshot lives
+    // and the reaper reads it by worktree — `pi-local` links are reaped too. With
+    // no snapshot the reaper falls back to the built-in default, which commits,
+    // pushes and reclaims: exactly the wrong answer for a `--cwd` directory the
+    // operator owns, and it would drop the declared teardown silently.
+    recordProfileSnapshot({ worktree, runtimeSessionId, runtimeKind: "pi-local", profile })
     const partial: Partial<SpawnResult> = { worktree, branch, tmuxSession: session, runtimeSessionId }
     try {
       const window = pickTmuxWindow(session, options.name)
@@ -296,6 +319,7 @@ export class ClaudeRuntimeSpawner extends RuntimeSpawner {
     if (!claudeBin) die("claude binary not found; set THREA_HARNESSD_CLAUDE_BIN or put claude on PATH")
 
     const config = readThreaChannelConfig()
+    const profile = this.profileFor(options)
     // Minted against the path the worktree WILL occupy, before anything exists.
     // Minting after `git worktree add` meant a refusal — or the lock timing out
     // behind a long revival sweep — stranded a directory and a branch that no
@@ -303,16 +327,17 @@ export class ClaudeRuntimeSpawner extends RuntimeSpawner {
     // leftover. It is also the only ordering under which the occupancy veto can
     // see a live Claude already squatting the target.
     const minted = await mintRuntimeIdentity({
-      worktree: plannedWorktreePath(options),
+      worktree: plannedWorktreePath(options, profile),
       runtimeKind: "claude-code-channel",
       declared: { instanceId: config.instanceId, runtimeSessionId: config.runtimeSessionId },
+      profile,
     })
     if (minted.status === "refused") die(`harnessd: refusing to spawn — ${minted.reason}`)
     const identity = { instanceId: minted.instanceId, runtimeSessionId: minted.runtimeSessionId }
 
     const session = tmuxSession(options)
     ensureTmuxSession(session)
-    const { worktree, branch } = this.createWorktree(options)
+    const { worktree, branch } = this.createWorktree(options, profile)
     const partial: Partial<SpawnResult> = {
       worktree,
       branch,
@@ -333,7 +358,9 @@ export class ClaudeRuntimeSpawner extends RuntimeSpawner {
         claudeBin,
         name: options.name,
         channel,
-        mcpConfig: options.noRegister ? undefined : this.writeMcpConfig(options.name, channel, channelEntry),
+        mcpConfig: options.noRegister
+          ? undefined
+          : this.writeMcpConfig(identity.runtimeSessionId, channel, channelEntry),
         noYolo: options.noYolo,
       })
 
@@ -370,11 +397,11 @@ export class ClaudeRuntimeSpawner extends RuntimeSpawner {
 
     const channel = process.env.THREA_HARNESSD_CLAUDE_CHANNEL || "threa-channel"
     const channelEntry = prepareClaudeChannel()
-    const mcpConfig = mcpConfigPath(agent.name)
-    if (!existsSync(mcpConfig)) this.writeMcpConfig(agent.name, channel, channelEntry)
-    normalizeChannelMcpConfig(mcpConfig, channel, channelEntry)
     const config = readThreaChannelConfig()
     const identity = claudeAgentIdentity(agent, config)
+    const mcpConfig = mcpConfigPath(identity.runtimeSessionId)
+    if (!existsSync(mcpConfig)) this.writeMcpConfig(identity.runtimeSessionId, channel, channelEntry)
+    normalizeChannelMcpConfig(mcpConfig, channel, channelEntry)
     const session = options.tmux ?? agent.tmuxSession ?? tmuxSession({ runtime: "claude", name: agent.name })
     ensureTmuxSession(session, true)
     const noYolo = recordedNoYolo(agent)
@@ -441,8 +468,8 @@ export class ClaudeRuntimeSpawner extends RuntimeSpawner {
     }
   }
 
-  private writeMcpConfig(name: string, channel: string, channelEntry: string): string {
-    return writeChannelMcpConfig(name, channel, channelEntry)
+  private writeMcpConfig(runtimeSessionId: string, channel: string, channelEntry: string): string {
+    return writeChannelMcpConfig(runtimeSessionId, channel, channelEntry)
   }
 
   private async prelinkScratchpad(

@@ -667,8 +667,8 @@ async function launchTakeover(params: {
   if (!claudeBin) throw new Error("claude binary not found; set THREA_HARNESSD_CLAUDE_BIN or put claude on PATH")
   const channel = process.env.THREA_HARNESSD_CLAUDE_CHANNEL || "threa-channel"
   const channelEntry = prepareClaudeChannel()
-  const mcpConfig = mcpConfigPath(params.name)
-  if (!existsSync(mcpConfig)) writeChannelMcpConfig(params.name, channel, channelEntry)
+  const mcpConfig = mcpConfigPath(params.identity.runtimeSessionId)
+  if (!existsSync(mcpConfig)) writeChannelMcpConfig(params.identity.runtimeSessionId, channel, channelEntry)
   normalizeChannelMcpConfig(mcpConfig, channel, channelEntry)
 
   const session = params.tmux ?? tmuxSession({ runtime: "claude", name: params.name })

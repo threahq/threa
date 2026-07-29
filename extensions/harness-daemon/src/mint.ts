@@ -17,6 +17,7 @@ import {
   type WriteMintedIdentityResult,
 } from "./identity-store"
 import { acquireProcessLock, resumeActiveLockPath } from "./lock"
+import { DEFAULT_PROFILE, type Profile } from "./profiles"
 import { CLAUDE_INSTANCE_ID_PREFIX, CLAUDE_RUNTIME_SESSION_ID_PREFIX } from "./spawners"
 
 export interface MintRequest {
@@ -24,6 +25,8 @@ export interface MintRequest {
   runtimeKind: string
   /** Ids declared in ~/.claude/threa-channel/config.json: recorded as the mint rather than generated. */
   declared?: { instanceId?: string; runtimeSessionId?: string }
+  /** Snapshotted onto the record: a later edit to the profiles file must not change how this directory is reaped. */
+  profile?: Profile
 }
 
 export interface MintDeps {
@@ -171,6 +174,7 @@ function mintRuntimeIdentityUnlocked(request: MintRequest, deps: MintDeps): Mint
     runtimeKind: request.runtimeKind,
     mintedAt: deps.now().toISOString(),
     source: "mint",
+    profile: request.profile ?? DEFAULT_PROFILE,
   }
   const written = deps.write(record)
   if (written.status === "exists") {

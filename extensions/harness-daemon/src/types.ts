@@ -38,6 +38,10 @@ export interface SpawnOptions {
   branch?: string
   base?: string
   repo?: string
+  /** Use this directory as-is; provisions nothing, and cleanup may reclaim nothing. */
+  cwd?: string
+  /** Name of a profile in the profiles file; missing names die rather than falling back. */
+  profile?: string
   tmux?: string
   skipSetup?: boolean
   noRemote?: boolean

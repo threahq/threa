@@ -35,6 +35,27 @@ export interface ArchiveCleanupReport {
   reason?: string
 }
 
+/**
+ * The ladder's rungs, in the only order they may run. A policy is an ordinal
+ * CEILING on this sequence, never a set of per-step toggles: a caller can stop
+ * earlier, and has no way to reorder, skip, or raise. The floors below —
+ * protected/detached branch, unreadable status, main-checkout-never-removed —
+ * live inside the function and are not policy inputs.
+ */
+export const PRESERVE_RUNGS = ["none", "commit", "commit+push"] as const
+export type PreserveRung = (typeof PRESERVE_RUNGS)[number]
+
+export interface WindDownPolicy {
+  preserve: PreserveRung
+  reclaim: boolean
+}
+
+export const DEFAULT_WIND_DOWN_POLICY: WindDownPolicy = { preserve: "commit+push", reclaim: true }
+
+function rung(preserve: PreserveRung): number {
+  return PRESERVE_RUNGS.indexOf(preserve)
+}
+
 const PROTECTED_BRANCHES = new Set(["main", "master", "HEAD"])
 const GIT_TIMEOUT_MS = 30_000
 // Staging + writing a commit for a large dirty tree is slower than a plain
@@ -54,7 +75,11 @@ function git(cwd: string, args: string[], timeoutMs = GIT_TIMEOUT_MS): { ok: boo
   }
 }
 
-export function pushBranchAndRemoveWorktree(cwd: string, log: (message: string) => void): ArchiveCleanupReport {
+export function pushBranchAndRemoveWorktree(
+  cwd: string,
+  log: (message: string) => void,
+  policy: WindDownPolicy = DEFAULT_WIND_DOWN_POLICY
+): ArchiveCleanupReport {
   const report: ArchiveCleanupReport = { committed: false, pushed: false, removed: false }
 
   if (!git(cwd, ["rev-parse", "--is-inside-work-tree"]).ok) {
@@ -64,6 +89,11 @@ export function pushBranchAndRemoveWorktree(cwd: string, log: (message: string) 
   const branch = git(cwd, ["rev-parse", "--abbrev-ref", "HEAD"]).stdout
   if (!branch || PROTECTED_BRANCHES.has(branch)) {
     report.reason = `branch '${branch || "?"}' is protected or detached — leaving everything as is`
+    return report
+  }
+
+  if (rung(policy.preserve) < rung("commit")) {
+    report.reason = `preserve '${policy.preserve}' — leaving the branch and the worktree exactly as they are`
     return report
   }
 
@@ -92,6 +122,11 @@ export function pushBranchAndRemoveWorktree(cwd: string, log: (message: string) 
     report.committed = true
   }
 
+  if (rung(policy.preserve) < rung("commit+push")) {
+    report.reason = `preserve '${policy.preserve}' — the work is committed locally and nothing is pushed or removed`
+    return report
+  }
+
   const push = git(cwd, ["push", "-u", "origin", `HEAD:${branch}`], PUSH_TIMEOUT_MS)
   if (!push.ok) {
     report.reason = "push failed — leaving the worktree so nothing is lost"
@@ -99,6 +134,11 @@ export function pushBranchAndRemoveWorktree(cwd: string, log: (message: string) 
   }
   report.pushed = true
   log(`pushed ${branch} to origin`)
+
+  if (!policy.reclaim) {
+    report.reason = "reclaim is off for this profile — the branch is pushed and the directory stays"
+    return report
+  }
 
   // Linked worktree ⇔ its .git dir differs from the repo's common dir. The
   // main checkout's dir IS the common dir, so this can never remove it.

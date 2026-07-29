@@ -19,6 +19,7 @@ import {
   type ManagedAgentPane,
   type ResolvedRuntimeIdentity,
 } from "./discovery"
+import { profileForWorktree } from "./identity-store"
 import { die } from "./errors"
 import { identityConsistency, identityVerdict } from "./identity"
 import {
@@ -30,6 +31,7 @@ import {
   upsertAgent,
 } from "./inventory"
 import { acquireProcessLock, resumeActiveLockPath } from "./lock"
+import { inspectProfiles, DEFAULT_PROFILE } from "./profiles"
 import { commandExists, commandPath, output } from "./shell"
 import {
   ClaudeRuntimeSpawner,
@@ -79,6 +81,8 @@ function spawnCommand(options: SpawnOptions): string[] {
   if (options.branch) command.push("--branch", options.branch)
   if (options.base) command.push("--base", options.base)
   if (options.repo) command.push("--repo", options.repo)
+  if (options.cwd) command.push("--cwd", options.cwd)
+  if (options.profile) command.push("--profile", options.profile)
   if (options.tmux) command.push("--tmux", options.tmux)
   if (options.skipSetup) command.push("--skip-setup")
   if (options.noRemote) command.push("--no-remote")
@@ -464,7 +468,11 @@ export function defaultReviveDeps(): ReviveDeps {
     pathExists: existsSync,
     scratchpadStatus: fetchScratchpadStatus,
     preflight: preflightRuntimeSession,
-    restoreWorktree: restoreManagedWorktree,
+    // The profile the worktree was provisioned under, not the built-in default:
+    // a row whose profile declares its own setup would otherwise silently run
+    // `bun run setup:worktree` on revival instead.
+    restoreWorktree: (agent) =>
+      restoreManagedWorktree(agent, agent.worktree ? profileForWorktree(agent.worktree) : DEFAULT_PROFILE),
     restorableWorktree: restorableWorktreeSource,
     piLink: readPiRemoteSession,
     claudeIdentity: claudeAgentIdentity,
@@ -932,6 +940,15 @@ export function doctor(): void {
     }
     console.log(
       `${count === 0 ? "ok" : "drift"}\t${name}\t${count} carry an identity today's derivation cannot reproduce`
+    )
+  }
+  const profiles = inspectProfiles()
+  if (profiles.status === "invalid") {
+    console.log(`broken\tprofiles\t${profiles.path}: ${profiles.errors.join("; ")}`)
+  } else {
+    const names = Object.keys(profiles.profiles)
+    console.log(
+      `ok\tprofiles\t${profiles.path}${profiles.present ? ` parses; ${names.length} defined${names.length > 0 ? ` (${names.join(", ")})` : ""}` : " (absent; the built-in default applies)"}`
     )
   }
   console.log(`inventory\t${inventoryPath()}`)

@@ -8,7 +8,14 @@ import {
 import { existsSync } from "node:fs"
 import { pushBranchAndRemoveWorktree } from "./archive-wind-down"
 import { liveClaudePidsIn } from "./claude-registry"
-import { forgetMintedIdentitiesFor, readMintedIdentities, type MintedIdentity } from "./identity-store"
+import {
+  forgetMintedIdentitiesFor,
+  profileForWorktree,
+  readMintedIdentities,
+  type MintedIdentity,
+} from "./identity-store"
+import { windDownPolicyFor, type Profile, type WindDownPolicy } from "./profiles"
+import { runTeardownCommands } from "./worktree"
 import {
   attestedRuntimes,
   canonicalOrRaw,
@@ -69,6 +76,8 @@ export type ReapStatus =
   | "skipped observer too young"
   | "skipped inaccessible"
   | "skipped unavailable"
+  /** The profile's teardown commands failed or timed out; nothing destructive ran. */
+  | "skipped teardown failed"
 
 export interface ReapOutcome {
   runtimeSessionId: string
@@ -89,7 +98,15 @@ export interface ReapDeps {
   scratchpadStatus: (streamId: string) => Promise<ScratchpadStatus>
   archivedAt: (streamId: string) => Promise<string | undefined>
   pathExists: (path: string) => boolean
-  windDown: (cwd: string, log: (message: string) => void) => { pushed: boolean; removed: boolean; reason?: string }
+  windDown: (
+    cwd: string,
+    log: (message: string) => void,
+    policy: WindDownPolicy
+  ) => { pushed: boolean; removed: boolean; reason?: string }
+  /** The profile this worktree was provisioned under; no mint record ⇒ the built-in default profile. */
+  profileFor: (worktree: string) => Profile
+  /** The profile's teardown commands, bounded. Runs before anything destructive. */
+  teardown: (cwd: string, commands: string[]) => { ok: boolean; reason?: string }
   killWindow: (windowId: string) => void
   /** Resolves once the killed pane's process is gone, or after a bounded wait. */
   awaitExit: (pid: number) => Promise<void>
@@ -111,6 +128,8 @@ export function defaultReapDeps(target: { baseUrl: string; workspaceId: string; 
     archivedAt: (streamId) => fetchScratchpadArchivedAt({ ...target, streamId }),
     pathExists: existsSync,
     windDown: pushBranchAndRemoveWorktree,
+    profileFor: (worktree) => profileForWorktree(worktree),
+    teardown: runTeardownCommands,
     killWindow: (windowId) => {
       output(["tmux", "kill-window", "-t", windowId], { allowFailure: true })
     },
@@ -287,11 +306,25 @@ export async function reapLink(link: HarnessLink, deps: ReapDeps, dryRun: boolea
   // process is gone. Removing the directory in that gap deletes the cwd of a
   // Claude still flushing its transcript, so wait for the pane to actually
   // exit — the grace the old detached `sleep 5` provided by accident.
+  // Teardown is arbitrary user commands, so it is NOT a rung on the ladder — it
+  // runs one level up, before the window is killed and before anything is
+  // pushed or removed. A failure refuses the whole wind-down: a teardown that
+  // did not run is not a teardown with nothing to do.
+  const profile = deps.profileFor(link.worktree)
+  const teardown = deps.teardown(link.worktree, profile.teardown)
+  if (!teardown.ok) {
+    return { ...base, status: "skipped teardown failed", detail: teardown.reason ?? "teardown failed" }
+  }
+
   if (window.kind === "kill") {
     deps.killWindow(window.pane.windowId)
     await deps.awaitExit(window.pane.panePid)
   }
-  const report = deps.windDown(link.worktree, (message) => deps.log(`${link.worktree}: ${message}`))
+  const report = deps.windDown(
+    link.worktree,
+    (message) => deps.log(`${link.worktree}: ${message}`),
+    windDownPolicyFor(profile)
+  )
   // Forgotten either way, matching the pre-existing contract for a refused
   // wind-down: the branch is the thing that had to survive, and a directory
   // left behind is for a human. What must not happen is reporting it gone.

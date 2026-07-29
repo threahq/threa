@@ -3,6 +3,7 @@ import { homedir } from "node:os"
 import { join } from "node:path"
 import { isSafeSessionFileName } from "@threa/bot-runtime-client"
 import { canonicalOrRaw } from "./discovery"
+import { DEFAULT_PROFILE, parseProfileSnapshot, type Profile } from "./profiles"
 
 /**
  * Where a runtime session's identity is RECORDED, so nothing has to recompute
@@ -21,6 +22,14 @@ export interface MintedIdentity {
   mintedAt: string
   source: "mint" | "backfill"
   attestedBy?: "ledger" | "inventory" | "launch"
+  /**
+   * The RESOLVED profile this workspace was provisioned under, snapshotted — not
+   * a name. Editing a profile later must not retroactively change how a
+   * directory created under the old one is cleaned up. Absent on every record
+   * written before profiles existed, which is why the reader falls back to
+   * {@link DEFAULT_PROFILE}: today's fleet is wound down exactly as it is now.
+   */
+  profile?: Profile
 }
 
 export type WriteMintedIdentityResult =
@@ -50,6 +59,12 @@ function parseRecord(text: string): MintedIdentity | undefined {
   ) {
     return undefined
   }
+  // A snapshot that cannot be re-read is not a record with no snapshot: reading
+  // it as "no profile" would silently wind the directory down under the default,
+  // which reclaims. An unreadable record is skipped instead, and the reaper's
+  // own default-profile fallback then applies knowingly.
+  const profile = parsed.profile === undefined ? undefined : parseProfileSnapshot(parsed.profile)
+  if (parsed.profile !== undefined && !profile) return undefined
   return {
     runtimeSessionId: parsed.runtimeSessionId,
     instanceId: parsed.instanceId,
@@ -60,7 +75,47 @@ function parseRecord(text: string): MintedIdentity | undefined {
     ...(parsed.attestedBy === "ledger" || parsed.attestedBy === "inventory" || parsed.attestedBy === "launch"
       ? { attestedBy: parsed.attestedBy }
       : {}),
+    ...(profile ? { profile } : {}),
   }
+}
+
+/**
+ * The profile a worktree is cleaned up under. No mint record — or more than one,
+ * which is already refused elsewhere — means the pre-profile fleet, so the
+ * built-in default applies and nothing about today's behaviour changes.
+ */
+export function profileForWorktree(
+  worktree: string,
+  records: MintedIdentity[] = readMintedIdentities(),
+  canonical: (path: string) => string = canonicalOrRaw
+): Profile {
+  const found = identityRecordsFor(worktree, records, canonical)
+  return found.length === 1 ? (found[0]!.profile ?? DEFAULT_PROFILE) : DEFAULT_PROFILE
+}
+
+/**
+ * Bind a profile to a directory for a runtime that does not mint.
+ *
+ * Best-effort: a spawn must not fail because bookkeeping could not be written.
+ * A missing snapshot only costs the reaper its declared policy — which is why
+ * the caller records it BEFORE the session starts, not after.
+ */
+export function recordProfileSnapshot(params: {
+  worktree: string
+  runtimeSessionId: string
+  runtimeKind: string
+  profile: Profile
+  instanceId?: string
+}): void {
+  writeMintedIdentity({
+    runtimeSessionId: params.runtimeSessionId,
+    instanceId: params.instanceId ?? params.runtimeSessionId,
+    worktree: canonicalOrRaw(params.worktree),
+    runtimeKind: params.runtimeKind,
+    mintedAt: new Date().toISOString(),
+    source: "mint",
+    profile: params.profile,
+  })
 }
 
 /** Every recorded identity. Unreadable or malformed files are skipped, not fatal. */
