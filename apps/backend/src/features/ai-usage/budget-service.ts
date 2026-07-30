@@ -14,27 +14,21 @@ const SOFT_LIMIT_THRESHOLD = 0.8 // 80% - start degrading models
  * Where an over-budget workspace's model requests land. Full model IDs with
  * provider prefix to match the format used in AI calls.
  *
- * Every target is `gpt-5.4-mini` — the cheapest current-generation model that
- * still holds up on the agentic tool use a degraded persona turn has to keep
- * doing. The previous targets were picked against the price table in
- * `docs/model-reference.md`, which listed `claude-haiku-4.5` at $0.25/$1.25;
- * it bills $1.00/$5.00, so the valve that fires when a workspace has just blown
- * its budget was switching to a model 33% dearer per input token than mini. The
- * OpenAI targets were worse: `gpt-4o-mini` and `gpt-5-mini` are both deprecated
- * (INV-16).
+ * Every target is Luna: the cheapest current-generation model that still
+ * holds up on the agentic tool use a degraded persona turn must retain (INV-16).
  */
 const MODEL_DEGRADATION_MAP: Record<string, string> = {
-  "openrouter:anthropic/claude-opus-4.8": "openrouter:openai/gpt-5.4-mini",
-  "openrouter:anthropic/claude-sonnet-5": "openrouter:openai/gpt-5.4-mini",
-  "openrouter:anthropic/claude-sonnet-4.6": "openrouter:openai/gpt-5.4-mini",
-  "openrouter:anthropic/claude-sonnet-4-20250514": "openrouter:openai/gpt-5.4-mini",
-  "openrouter:anthropic/claude-sonnet-4.5": "openrouter:openai/gpt-5.4-mini",
-  "openrouter:anthropic/claude-sonnet-4": "openrouter:openai/gpt-5.4-mini",
-  "openrouter:anthropic/claude-haiku-4.5": "openrouter:openai/gpt-5.4-mini",
+  "openrouter:anthropic/claude-opus-4.8": "openrouter:openai/gpt-5.6-luna",
+  "openrouter:anthropic/claude-sonnet-5": "openrouter:openai/gpt-5.6-luna",
+  "openrouter:anthropic/claude-sonnet-4.6": "openrouter:openai/gpt-5.6-luna",
+  "openrouter:anthropic/claude-sonnet-4-20250514": "openrouter:openai/gpt-5.6-luna",
+  "openrouter:anthropic/claude-sonnet-4.5": "openrouter:openai/gpt-5.6-luna",
+  "openrouter:anthropic/claude-sonnet-4": "openrouter:openai/gpt-5.6-luna",
+  "openrouter:anthropic/claude-haiku-4.5": "openrouter:openai/gpt-5.6-luna",
 
-  "openrouter:openai/gpt-4o": "openrouter:openai/gpt-5.4-mini",
-  "openrouter:openai/gpt-5": "openrouter:openai/gpt-5.4-mini",
-  "openrouter:openai/gpt-5-turbo": "openrouter:openai/gpt-5.4-mini",
+  "openrouter:openai/gpt-4o": "openrouter:openai/gpt-5.6-luna",
+  "openrouter:openai/gpt-5": "openrouter:openai/gpt-5.6-luna",
+  "openrouter:openai/gpt-5-turbo": "openrouter:openai/gpt-5.6-luna",
 }
 
 export interface BudgetStatus {

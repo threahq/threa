@@ -17,7 +17,7 @@
  * the highest-volume component we run (boundary extraction, ~1k calls/month) at
  * ~2s per call.
  */
-export const WORKSPACE_AGENT_MODEL_ID = "openrouter:openai/gpt-5.4-mini"
+export const WORKSPACE_AGENT_MODEL_ID = "openrouter:openai/gpt-5.6-luna"
 /** Lower temperature to reduce decision variance in retrieval planning */
 export const WORKSPACE_AGENT_TEMPERATURE = 0.1
 

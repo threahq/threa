@@ -3,18 +3,6 @@
 import { z } from "zod"
 import { DELEGATION_BRIEF_MAX_CHARS } from "@threa/types"
 
-/**
- * Luna, not `gpt-5.4-mini`, and the reasoning is the same trade the memorizer
- * already makes: Luna costs ~33% more and runs ~40% slower, which is why mini
- * keeps the per-message components (boundary extraction, memo classifier). The
- * guardian is the opposite shape — it fires only on a tier-2 tool call, so a
- * turn either pays nothing or pays once. With volume that low, the quality
- * difference is the only term that matters, and the failure this component
- * exists to prevent is an unwanted write.
- *
- * `gpt-5.4-nano` was re-tested against the classification suites in July 2026
- * and rejected for systematically confident wrong answers.
- */
 export const TOOL_GUARDIAN_MODEL_ID = "openrouter:openai/gpt-5.6-luna"
 
 /** Low temperature: this is a classification, not a composition. */

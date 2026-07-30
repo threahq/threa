@@ -7,12 +7,7 @@
 import { z } from "zod"
 import { formatDate } from "../../lib/temporal"
 
-/**
- * Model for to-do extraction. Same nano-class model as the memo pipeline the
- * extractor rides on — extraction is structured-output classification work,
- * which is exactly what this tier is priced for.
- */
-export const SUGGESTION_EXTRACTOR_MODEL_ID = "openrouter:openai/gpt-5.4-nano"
+export const SUGGESTION_EXTRACTOR_MODEL_ID = "openrouter:openai/gpt-5.6-luna"
 
 export const SUGGESTION_EXTRACTOR_TEMPERATURE = 0.1
 

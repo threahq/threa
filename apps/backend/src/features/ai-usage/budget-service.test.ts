@@ -126,7 +126,7 @@ describe("AIBudgetService.checkBudget enforcement window", () => {
       reason: "soft_limit",
       currentUsageUsd: 60,
       budgetUsd: 50,
-      recommendedModel: "openrouter:openai/gpt-5.4-mini",
+      recommendedModel: "openrouter:openai/gpt-5.6-luna",
     })
     expect(captured.usagePeriod).toEqual(monthRangeInTimezone("Asia/Tokyo"))
   })

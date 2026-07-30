@@ -6,7 +6,7 @@ import { MessageRepository } from "../messaging"
 import { AgentSessionRepository, SessionStatuses, type AgentSession } from "./session-repository"
 import { EpisodeSummaryService } from "./episode-summary-service"
 
-const MODEL_ID = "openrouter:openai/gpt-5.4-mini"
+const MODEL_ID = "openrouter:openai/gpt-5.6-luna"
 
 function makeSession(overrides?: Partial<AgentSession>): AgentSession {
   return {

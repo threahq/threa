@@ -1,6 +1,6 @@
 // Co-located config (INV-43): both production and evals import from here.
 
-export const STREAM_NAMING_MODEL_ID = "openrouter:openai/gpt-5.4-nano"
+export const STREAM_NAMING_MODEL_ID = "openrouter:openai/gpt-5.6-luna"
 
 // Low for consistent naming across runs
 export const STREAM_NAMING_TEMPERATURE = 0.3
