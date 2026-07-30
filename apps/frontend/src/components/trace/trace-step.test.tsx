@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest"
 import { render, screen } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { MemoryRouter } from "react-router-dom"
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import {
   AgentReconsiderationDecisions,
   PI_TOOL_TRACE_FORMAT,
@@ -761,11 +762,14 @@ describe("TraceStep effects", () => {
     )) as unknown as typeof relativeTimeModule.RelativeTime)
   })
 
+  // A memo row mounts a `MemoPreviewDialog`, which reads the memo cache.
   function renderStep(step: AgentSessionStep) {
     return render(
-      <MemoryRouter>
-        <TraceStep step={step} workspaceId="ws_1" streamId="stream_1" />
-      </MemoryRouter>
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <MemoryRouter>
+          <TraceStep step={step} workspaceId="ws_1" streamId="stream_1" />
+        </MemoryRouter>
+      </QueryClientProvider>
     )
   }
 
@@ -814,11 +818,29 @@ describe("TraceStep effects", () => {
       createStep({
         stepType: "tool_call",
         content: "",
+        effects: [{ kind: "delegation", label: "Delegated the audit", target: "dlg_1" }],
+      })
+    )
+
+    expect(screen.getByRole("link", { name: /Delegated the audit/ })).toHaveAttribute(
+      "href",
+      "/w/ws_1/delegations/dlg_1"
+    )
+  })
+
+  // A memo opens in place rather than navigating to the memory explorer, so its
+  // row is a dialog button on this surface too.
+  it("opens a memo effect in place instead of linking to the explorer", () => {
+    renderStep(
+      createStep({
+        stepType: "tool_call",
+        content: "",
         effects: [{ kind: "memo", label: "Saved a memo", target: "memo_1" }],
       })
     )
 
-    expect(screen.getByRole("link", { name: /Saved a memo/ })).toHaveAttribute("href", "/w/ws_1/memory?memo=memo_1")
+    expect(screen.queryByRole("link", { name: /Saved a memo/ })).not.toBeInTheDocument()
+    expect(screen.getByRole("button", { name: /Saved a memo/ })).toBeInTheDocument()
   })
 
   it("renders a routeless follow-up effect as text, never a link", () => {

@@ -1,4 +1,9 @@
-import { describe, expect, it } from "vitest"
+import { describe, expect, it, vi } from "vitest"
+import { render, screen } from "@testing-library/react"
+import userEvent from "@testing-library/user-event"
+import { MemoryRouter } from "react-router-dom"
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
+import * as memosModule from "@/hooks/use-memos"
 import { AGENT_SETTABLE_PREFERENCE_KEYS, TOOL_EFFECT_KINDS, type AgentToolEffect } from "@threa/types"
 import {
   SETTINGS_TAB_BY_PREFERENCE_KEY,
@@ -7,6 +12,7 @@ import {
   kindNoun,
   resolveEffectPath,
   unionSessionEffects,
+  EffectRow,
 } from "./effect-links"
 
 const ctx = {
@@ -26,7 +32,8 @@ describe("resolveEffectPath", () => {
     expect(Object.fromEntries(TOOL_EFFECT_KINDS.map((kind, i) => [kind, resolved[i]]))).toEqual({
       settings: "?settings=appearance",
       delegation: "/w/ws_1/delegations/id_1",
-      memo: "/w/ws_1/memory?memo=id_1",
+      // A memo opens in place, so it has no route at all.
+      memo: null,
       follow_up: null,
       brief: null,
       other: null,
@@ -34,11 +41,11 @@ describe("resolveEffectPath", () => {
   })
 
   it("is inert without a target", () => {
-    expect(resolveEffectPath(effect({ kind: "memo" }), ctx)).toBeNull()
+    expect(resolveEffectPath(effect({ kind: "delegation" }), ctx)).toBeNull()
   })
 
   it("is inert without a workspace id", () => {
-    expect(resolveEffectPath(effect({ kind: "memo", target: "memo_1" }), { ...ctx, workspaceId: null })).toBeNull()
+    expect(resolveEffectPath(effect({ kind: "delegation", target: "dlg_1" }), { ...ctx, workspaceId: null })).toBeNull()
   })
 
   it("is inert for a settings key no tab renders", () => {
@@ -100,5 +107,62 @@ describe("unionSessionEffects", () => {
       effect({ kind: "settings", label: "Theme", target: "theme" }),
       effect({ kind: "delegation", label: "Task", target: "dlg_1" }),
     ])
+  })
+})
+
+describe("EffectRow", () => {
+  function renderRow(e: AgentToolEffect, workspaceId: string | null = "ws_1") {
+    return render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <MemoryRouter>
+          <EffectRow effect={e} workspaceId={workspaceId} getSettingsUrl={ctx.getSettingsUrl} variant="grid" />
+        </MemoryRouter>
+      </QueryClientProvider>
+    )
+  }
+
+  it("opens a memo in place rather than navigating to the explorer", async () => {
+    const detail = vi.spyOn(memosModule, "useMemoDetail").mockReturnValue({
+      data: undefined,
+      isLoading: true,
+    } as ReturnType<typeof memosModule.useMemoDetail>)
+
+    renderRow(effect({ kind: "memo", label: "Saved a memo", target: "memo_1" }))
+
+    const trigger = screen.getByRole("button", { name: /Saved a memo/ })
+    expect(screen.queryByRole("link", { name: /Saved a memo/ })).not.toBeInTheDocument()
+    // Closed: the memo is not fetched until the row is clicked.
+    expect(detail).toHaveBeenCalledWith("ws_1", null)
+
+    await userEvent.click(trigger)
+
+    expect(await screen.findByRole("dialog")).toBeInTheDocument()
+    expect(detail).toHaveBeenLastCalledWith("ws_1", "memo_1")
+    // The row's own label carries the dialog until the memo resolves.
+    expect(screen.getByRole("dialog")).toHaveTextContent("Saved a memo")
+  })
+
+  it("renders a delegation as a link", () => {
+    renderRow(effect({ kind: "delegation", label: "Delegated the audit", target: "dlg_1" }))
+
+    expect(screen.getByRole("link", { name: /Delegated the audit/ })).toHaveAttribute(
+      "href",
+      "/w/ws_1/delegations/dlg_1"
+    )
+  })
+
+  it("renders a routeless effect as inert text", () => {
+    renderRow(effect({ kind: "follow_up", label: "Reminder on Friday", target: "fu_1" }))
+
+    const text = screen.getByText("Reminder on Friday")
+    expect(text.closest("a")).toBeNull()
+    expect(text.closest("button")).toBeNull()
+  })
+
+  it("renders a memo with no workspace as inert text", () => {
+    renderRow(effect({ kind: "memo", label: "Saved a memo", target: "memo_1" }), null)
+
+    expect(screen.queryByRole("button", { name: /Saved a memo/ })).not.toBeInTheDocument()
+    expect(screen.getByText("Saved a memo")).toBeInTheDocument()
   })
 })

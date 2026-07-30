@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest"
 import { render, screen } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { MemoryRouter, Route, Routes } from "react-router-dom"
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import type { StreamEvent } from "@threa/types"
 import type { BoardEventRow } from "@/lib/board/board-event-rows"
 import * as contextsModule from "@/contexts"
@@ -40,7 +41,7 @@ describe("BoardEventRowItem session effects", () => {
     vi.spyOn(relativeTimeModule, "RelativeTime").mockImplementation(() => <span>just now</span>)
   })
 
-  it("renders the effect grid without nesting an anchor in the card link", () => {
+  it("renders the effect grid without nesting an interactive element in the card link", () => {
     const row = {
       kind: "session",
       key: "session:session_fx",
@@ -66,16 +67,21 @@ describe("BoardEventRowItem session effects", () => {
     } as unknown as BoardEventRow
 
     const { container } = render(
-      <MemoryRouter initialEntries={["/w/ws_1/board"]}>
-        <Routes>
-          <Route path="/w/:workspaceId/board" element={<BoardEventRowItem row={row} workspaceId="ws_1" />} />
-        </Routes>
-      </MemoryRouter>
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <MemoryRouter initialEntries={["/w/ws_1/board"]}>
+          <Routes>
+            <Route path="/w/:workspaceId/board" element={<BoardEventRowItem row={row} workspaceId="ws_1" />} />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>
     )
 
     const cardLink = container.querySelector('a[href="/trace/session_fx"]')!
     expect(cardLink.querySelectorAll("a")).toHaveLength(0)
-    expect(screen.getByRole("link", { name: /Saved a memo/ })).toHaveAttribute("href", "/w/ws_1/memory?memo=memo_1")
+    // The memo row is a dialog button, and it must not be nested in the card
+    // link either.
+    expect(cardLink.querySelectorAll("button")).toHaveLength(0)
+    expect(screen.getByRole("button", { name: /Saved a memo/ })).toBeInTheDocument()
   })
 })
 
@@ -112,14 +118,19 @@ describe("BoardEventRowItem running session", () => {
 
   function mount(onRedirectSession?: () => void) {
     return render(
-      <MemoryRouter initialEntries={["/w/ws_1/board"]}>
-        <Routes>
-          <Route
-            path="/w/:workspaceId/board"
-            element={<BoardEventRowItem row={row} workspaceId="ws_1" onRedirectSession={onRedirectSession} />}
-          />
-        </Routes>
-      </MemoryRouter>
+      // A running card mounts the live effect grid, which subscribes through
+      // `useAgentTrace` — so this harness needs the query client the board sits
+      // under in the app.
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <MemoryRouter initialEntries={["/w/ws_1/board"]}>
+          <Routes>
+            <Route
+              path="/w/:workspaceId/board"
+              element={<BoardEventRowItem row={row} workspaceId="ws_1" onRedirectSession={onRedirectSession} />}
+            />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>
     )
   }
 

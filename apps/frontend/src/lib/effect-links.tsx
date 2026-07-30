@@ -1,4 +1,5 @@
-import type { ReactNode } from "react"
+import { useState, type ReactNode } from "react"
+import { Link } from "react-router-dom"
 import {
   AGENT_SETTABLE_PREFERENCE_KEYS,
   EFFECTS_PER_SESSION_MAX,
@@ -10,6 +11,7 @@ import {
 import { Clock, FileText, PenLine, SlidersHorizontal, Sparkles, TerminalSquare, type LucideIcon } from "lucide-react"
 import { buildDelegationPath } from "@/lib/stream-links"
 import { cn } from "@/lib/utils"
+import { MemoPreviewDialog } from "@/components/memo/memo-preview-dialog"
 
 /** How a label-less effect names itself. The backend sends no display text (INV-46). */
 const EFFECT_KIND_NOUNS = {
@@ -87,9 +89,12 @@ type EffectResolver = (target: string, workspaceId: string, ctx: EffectRouteCont
  * Exhaustive over `ToolEffectKind` so a new kind cannot ship without an answer.
  * `null` is a legitimate answer — a routeless effect renders inert rather than
  * as a dead link. Follow-ups and briefs have no route anywhere in the app.
+ *
+ * A memo has no route either: it opens in place, in `MemoPreviewDialog`, so
+ * reading it never navigates away from the conversation that produced it.
  */
 const EFFECT_ROUTE_RESOLVERS = {
-  memo: (target, workspaceId) => `/w/${workspaceId}/memory?memo=${encodeURIComponent(target)}`,
+  memo: () => null,
   delegation: (target, workspaceId) => buildDelegationPath(workspaceId, encodeURIComponent(target)),
   settings: (target, _workspaceId, ctx) => {
     const tab = settingsTabFor(target)
@@ -118,6 +123,20 @@ export function resolveEffectPath(effect: AgentToolEffect, ctx: EffectRouteConte
 export function effectDiff(effect: AgentToolEffect): { before?: string; after: string } | null {
   if (effect.after === undefined) return null
   return { ...(effect.before !== undefined ? { before: effect.before } : {}), after: effect.after }
+}
+
+/**
+ * Whether an effect has anything to say. A layer-0 marker is a bare `{ kind }`
+ * — a mutating tool declared nothing, so there is nothing to name, diff or
+ * link and it only earns a counter on the meta line.
+ */
+export function isDescribedEffect(effect: AgentToolEffect): boolean {
+  return (
+    effect.label !== undefined ||
+    effect.target !== undefined ||
+    effect.before !== undefined ||
+    effect.after !== undefined
+  )
 }
 
 /**
@@ -173,5 +192,95 @@ export function EffectRowContent({ effect, trailing }: { effect: AgentToolEffect
       )}
       {trailing}
     </>
+  )
+}
+
+/**
+ * Per-surface styling for a row. The affordance logic below is shared; only
+ * these class names differ between the in-stream grid and the trace step list,
+ * so the two cannot drift again (INV-29, INV-35).
+ */
+const EFFECT_ROW_VARIANTS = {
+  grid: {
+    interactive:
+      "flex min-w-0 items-center gap-1.5 py-[3px] text-left text-muted-foreground no-underline transition-colors hover:text-primary",
+    inert: "flex min-w-0 items-center gap-1.5 py-[3px] text-muted-foreground/60",
+    chevron: "ml-auto shrink-0 text-muted-foreground/50",
+  },
+  list: {
+    interactive: "flex min-w-0 items-center gap-1.5 text-left text-primary hover:underline",
+    inert: "flex min-w-0 items-center gap-1.5 text-muted-foreground",
+    chevron: "shrink-0 text-muted-foreground/60",
+  },
+} as const
+
+export type EffectRowVariant = keyof typeof EFFECT_ROW_VARIANTS
+
+/**
+ * One effect's row, affordance included — the single place that decides
+ * between a dialog button, a link, and inert text.
+ *
+ * A memo opens IN PLACE (`MemoPreviewDialog`), never as navigation to the
+ * memory explorer: the same rule `memo-captured-event.tsx` follows, because
+ * being thrown out of the conversation to read what was just saved is what
+ * made the explorer route wrong. Everything with a resolvable path is a
+ * `<Link>` (INV-40); everything else is a non-focusable span.
+ */
+export function EffectRow({
+  effect,
+  workspaceId,
+  getSettingsUrl,
+  variant,
+  className,
+}: {
+  effect: AgentToolEffect
+  workspaceId: string | null | undefined
+  getSettingsUrl?: (tab?: SettingsTab) => string
+  variant: EffectRowVariant
+  className?: string
+}) {
+  const [memoOpen, setMemoOpen] = useState(false)
+  const styles = EFFECT_ROW_VARIANTS[variant]
+  const chevron = (
+    <span aria-hidden className={styles.chevron}>
+      ›
+    </span>
+  )
+
+  if (effect.kind === "memo" && effect.target && workspaceId) {
+    return (
+      <>
+        <button
+          type="button"
+          onClick={() => setMemoOpen(true)}
+          aria-haspopup="dialog"
+          className={cn(styles.interactive, className)}
+        >
+          <EffectRowContent effect={effect} trailing={chevron} />
+        </button>
+        <MemoPreviewDialog
+          open={memoOpen}
+          onOpenChange={setMemoOpen}
+          workspaceId={workspaceId}
+          memoId={effect.target}
+          fallbackTitle={effectLabel(effect)}
+        />
+      </>
+    )
+  }
+
+  const path = resolveEffectPath(effect, { workspaceId, getSettingsUrl })
+  if (!path) {
+    return (
+      <span className={cn(styles.inert, className)}>
+        <EffectRowContent effect={effect} />
+      </span>
+    )
+  }
+
+  return (
+    <Link to={path} className={cn(styles.interactive, className)}>
+      <EffectRowContent effect={effect} trailing={chevron} />
+    </Link>
   )
 }

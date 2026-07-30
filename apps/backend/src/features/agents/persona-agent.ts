@@ -81,9 +81,12 @@ const STUB_EFFECTS: AgentToolEffect[] = [
   { kind: "settings", target: "timezone", before: "Europe/Stockholm", after: "Europe/Copenhagen" },
   { kind: "delegation", label: "Plan out how to set up and use Threa", target: "dlg_stub" },
   { kind: "follow_up", label: "Check in on how things are going", target: "fu_stub" },
+  // A memo opens a dialog rather than navigating, so the browser suite needs one
+  // to check that the overlay actually lands on top of the stream.
+  { kind: "memo", label: "User test run: settings, delegation, follow-up", target: "memo_stub" },
 ]
 
-const STUB_EFFECTS_CONTENT = "update_user_settings, delegate_task, schedule_follow_up"
+const STUB_EFFECTS_CONTENT = "update_user_settings, delegate_task, schedule_follow_up, save_memo"
 
 export interface PersonaAgentDeps {
   pool: Pool

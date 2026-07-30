@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react"
-import { Link } from "react-router-dom"
+import { Link, useParams } from "react-router-dom"
 import { Check, X, Loader2 } from "lucide-react"
 import type {
   AgentToolEffect,
@@ -17,7 +17,8 @@ import { formatDuration } from "@/lib/dates"
 import { findVisibleZoneEditor, focusAtEnd } from "@/hooks"
 import { StopSessionButton, RedirectSessionButton } from "@/components/trace/session-action-buttons"
 import { SessionEffectGrid } from "./session-effect-grid"
-import { unionSessionEffects } from "@/lib/effect-links"
+import { LiveSessionEffectGrid } from "./live-session-effect-grid"
+import { isDescribedEffect, unionSessionEffects } from "@/lib/effect-links"
 
 /** How long the Redirect hint replaces the subtitle line after a click. */
 const REDIRECT_HINT_MS = 5000
@@ -344,6 +345,7 @@ export function AgentSessionEvent({
   onSteerSession,
 }: AgentSessionEventProps) {
   const { getTraceUrl } = useTrace()
+  const { workspaceId } = useParams<{ workspaceId: string }>()
   const {
     status,
     sessionId,
@@ -355,16 +357,14 @@ export function AgentSessionEvent({
     deletedPayload,
   } = deriveStatus(events)
 
-  // A RUNNING card never grows a grid: the effects arrive as part of a status
-  // transition that already swaps the card's title, icon and colours, so
-  // nothing pops in mid-turn (INV-21).
+  // A running turn streams its writes onto the card as each tool returns
+  // (`LiveSessionEffectGrid` below) — rows only ever append, so nothing already
+  // on screen moves (INV-21).
   //
-  // `retrying` is included deliberately, and it is not terminal. An attempt
-  // that wrote something before it was interrupted has already changed the
-  // user's state, and the retry can take minutes; hiding that until the turn
-  // finally settles would leave a real write invisible for the whole window.
-  // The grid can gain rows again at the terminal transition, which is the same
-  // kind of shift as the transition itself rather than a spontaneous one.
+  // Once the session is terminal — and while `retrying`, which is not — the
+  // lifecycle payloads take over as the authority: they survive a reload, and
+  // they carry each retry attempt's writes, which the step rows do not
+  // (`upsertStep`'s ON CONFLICT resets `effects` on a retry).
   const sessionEffects: AgentToolEffect[] =
     status === "completed" || status === "failed" || status === "retrying"
       ? unionSessionEffects(...interruptedPayloads, completedPayload, failedPayload)
@@ -377,13 +377,7 @@ export function AgentSessionEvent({
   // `update_stream_brief` and `cancel_follow_up` all describe themselves through
   // `target`/`before`/`after` and set no label at all, and the settings write is
   // the case this whole feature exists for.
-  const describedEffects = sessionEffects.filter(
-    (effect) =>
-      effect.label !== undefined ||
-      effect.target !== undefined ||
-      effect.before !== undefined ||
-      effect.after !== undefined
-  )
+  const describedEffects = sessionEffects.filter(isDescribedEffect)
 
   const config = buildStatusConfig(
     status,
@@ -433,6 +427,15 @@ export function AgentSessionEvent({
   // active — the backend aborts the whole session gracefully regardless
   // (roadmap 2.1), so the buttons stay stable for the entire run (INV-21).
   const showSessionActions = status === "running"
+  // Live rows need a session room to subscribe to, which needs the workspace the
+  // route is on. Outside a workspace route there is nothing to subscribe with.
+  //
+  // `retrying` counts: it means started + interrupted with no terminal event, so
+  // an attempt is running right now. Its earlier attempts' writes ride the
+  // `interrupted` payloads (a retry's `upsertStep` resets the step's effects),
+  // and go in as `priorEffects` so the grid keeps them while the new attempt
+  // streams onto the end. Same reason the live substep shows while retrying.
+  const inFlight = status === "running" || status === "retrying"
   const showRedirectHint = showSessionActions && redirectHintVisible
   // Substep also shows while retrying — a resumed attempt streams its live phase
   // text, which is what keeps the amber "Interrupted, retrying…" card from reading
@@ -546,7 +549,16 @@ export function AgentSessionEvent({
         )}
       </Link>
       {/* Sibling of the card link, never a child: the card is an <a>. */}
-      <SessionEffectGrid effects={describedEffects} />
+      {inFlight && workspaceId ? (
+        <LiveSessionEffectGrid
+          key={sessionId}
+          workspaceId={workspaceId}
+          sessionId={sessionId}
+          priorEffects={describedEffects}
+        />
+      ) : (
+        <SessionEffectGrid effects={describedEffects} />
+      )}
     </div>
   )
 }

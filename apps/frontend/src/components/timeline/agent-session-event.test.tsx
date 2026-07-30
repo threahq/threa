@@ -5,6 +5,9 @@ import type { StreamEvent } from "@threa/types"
 import * as contextsModule from "@/contexts"
 import * as hooksModule from "@/hooks"
 import * as relativeTimeModule from "@/components/relative-time"
+import * as agentTraceModule from "@/hooks/use-agent-trace"
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
+import type { AgentSessionStep } from "@threa/types"
 import { AgentSessionEvent } from "./agent-session-event"
 
 beforeEach(() => {
@@ -358,15 +361,52 @@ describe("AgentSessionEvent effects", () => {
     })
   }
 
+  // The memo row mounts a `MemoPreviewDialog`, which reads the memo cache, and
+  // a running card subscribes through `useAgentTrace` — both need a client.
   function renderInWorkspace(events: StreamEvent[]) {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
     return render(
-      <MemoryRouter initialEntries={["/w/ws_1/s/stream_1"]}>
-        <Routes>
-          <Route path="/w/:workspaceId/s/:streamId" element={<AgentSessionEvent events={events} />} />
-        </Routes>
-      </MemoryRouter>
+      <QueryClientProvider client={queryClient}>
+        <MemoryRouter initialEntries={["/w/ws_1/s/stream_1"]}>
+          <Routes>
+            <Route path="/w/:workspaceId/s/:streamId" element={<AgentSessionEvent events={events} />} />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>
     )
   }
+
+  function traceResult(steps: AgentSessionStep[]): ReturnType<typeof agentTraceModule.useAgentTrace> {
+    return {
+      steps,
+      streamingContent: {},
+      streamingSubsteps: {},
+      session: null,
+      relatedSessions: [],
+      persona: null,
+      status: "running",
+      isLoading: false,
+      error: null,
+    }
+  }
+
+  function toolStep(
+    stepNumber: number,
+    step: Partial<AgentSessionStep> & Pick<AgentSessionStep, "effects">
+  ): AgentSessionStep {
+    return {
+      id: `step_${stepNumber}`,
+      sessionId: "session_fx",
+      stepNumber,
+      stepType: "tool_call",
+      startedAt: "2026-02-19T18:00:00.000Z",
+      ...step,
+    } as AgentSessionStep
+  }
+
+  beforeEach(() => {
+    vi.spyOn(agentTraceModule, "useAgentTrace").mockReturnValue(traceResult([]))
+  })
 
   it("renders one row per labelled effect", () => {
     renderInWorkspace([
@@ -389,8 +429,10 @@ describe("AgentSessionEvent effects", () => {
 
     const cardLink = container.querySelector('a[href="/trace/session_fx"]')!
     expect(cardLink.querySelectorAll("a")).toHaveLength(0)
-    // ...and the effect link is still a real link, just outside the card.
-    expect(screen.getByRole("link", { name: /Saved a memo/ })).toHaveAttribute("href", "/w/ws_1/memory?memo=memo_1")
+    // A memo opens in place, so its row is a button — which must not be nested
+    // in the card's <a> either.
+    expect(cardLink.querySelectorAll("button")).toHaveLength(0)
+    expect(screen.getByRole("button", { name: /Saved a memo/ })).toBeInTheDocument()
   })
 
   it("spans the last line across both columns on an odd count", () => {
@@ -403,8 +445,8 @@ describe("AgentSessionEvent effects", () => {
       ]),
     ])
 
-    expect(screen.getByRole("link", { name: /Memo C/ }).className).toContain("effect-grid-span")
-    expect(screen.getByRole("link", { name: /Memo A/ }).className).not.toContain("effect-grid-span")
+    expect(screen.getByRole("button", { name: /Memo C/ }).className).toContain("effect-grid-span")
+    expect(screen.getByRole("button", { name: /Memo A/ }).className).not.toContain("effect-grid-span")
   })
 
   it("renders a routeless effect as inert text that cannot be focused", () => {
@@ -419,11 +461,120 @@ describe("AgentSessionEvent effects", () => {
     expect(screen.queryByRole("link", { name: /Reminder on Friday/ })).not.toBeInTheDocument()
   })
 
-  it("renders no grid while the session is still running", () => {
+  it("renders no grid while a running session has written nothing yet", () => {
     renderInWorkspace([startedEvent()])
 
     expect(screen.queryByText("Saved a memo")).not.toBeInTheDocument()
     expect(screen.getByText(/is working/)).toBeInTheDocument()
+  })
+
+  it("renders a running turn's write as soon as its step carries it", async () => {
+    vi.spyOn(agentTraceModule, "useAgentTrace").mockReturnValue(
+      traceResult([toolStep(1, { effects: [{ kind: "settings", target: "theme", before: "light", after: "dark" }] })])
+    )
+
+    renderInWorkspace([startedEvent()])
+
+    expect(await screen.findByText(/dark/)).toBeInTheDocument()
+    expect(screen.getByText(/is working/)).toBeInTheDocument()
+  })
+
+  it("drops the effects of a step the guardian denied", async () => {
+    vi.spyOn(agentTraceModule, "useAgentTrace").mockReturnValue(
+      traceResult([
+        toolStep(1, { effects: [{ kind: "memo", label: "Allowed memo", target: "memo_1" }] }),
+        toolStep(2, {
+          effects: [{ kind: "memo", label: "Denied memo", target: "memo_2" }],
+          verification: { status: "denied", reason: "no" },
+        } as Partial<AgentSessionStep> & Pick<AgentSessionStep, "effects">),
+      ])
+    )
+
+    renderInWorkspace([startedEvent()])
+
+    expect(await screen.findByText("Allowed memo")).toBeInTheDocument()
+    expect(screen.queryByText("Denied memo")).not.toBeInTheDocument()
+  })
+
+  // The row on screen may not move when the next one lands (INV-21), and it may
+  // not survive into the terminal grid twice.
+  it("appends live rows without reordering or dropping the ones already shown", async () => {
+    const first = toolStep(1, { effects: [{ kind: "memo", label: "Memo A", target: "memo_1" }] })
+    const second = toolStep(2, { effects: [{ kind: "memo", label: "Memo B", target: "memo_2" }] })
+    const trace = vi.spyOn(agentTraceModule, "useAgentTrace").mockReturnValue(traceResult([first]))
+
+    const { rerender } = renderInWorkspace([startedEvent()])
+    const rowA = await screen.findByRole("button", { name: /Memo A/ })
+
+    // A reconnect empties the realtime map before the refetch lands; the rendered
+    // rows must not follow it out.
+    trace.mockReturnValue(traceResult([]))
+    rerender(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <MemoryRouter initialEntries={["/w/ws_1/s/stream_1"]}>
+          <Routes>
+            <Route path="/w/:workspaceId/s/:streamId" element={<AgentSessionEvent events={[startedEvent()]} />} />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>
+    )
+    expect(screen.getByRole("button", { name: /Memo A/ })).toBe(rowA)
+
+    trace.mockReturnValue(traceResult([first, second]))
+    rerender(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <MemoryRouter initialEntries={["/w/ws_1/s/stream_1"]}>
+          <Routes>
+            <Route path="/w/:workspaceId/s/:streamId" element={<AgentSessionEvent events={[startedEvent()]} />} />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>
+    )
+
+    const rows = await screen.findAllByRole("button", { name: /Memo [AB]/ })
+    expect(rows.map((r) => r.textContent)).toEqual(["Memo A›", "Memo B›"])
+    expect(rows[0]).toBe(rowA)
+  })
+
+  // `retrying` is started + interrupted with no terminal event — an attempt is
+  // running RIGHT NOW, so it has to stream too. The earlier attempt's writes only
+  // survive on the interrupted payload (the retry's `upsertStep` resets the step's
+  // effects), so they seed the grid and the new attempt appends to them.
+  it("keeps an interrupted attempt's writes and streams the retry's onto the end", async () => {
+    const interrupted = createSessionEvent("agent_session:interrupted", {
+      sessionId: "session_fx",
+      stepCount: 2,
+      attempt: 0,
+      maxAttempts: 5,
+      error: "Error: boom",
+      interruptedAt: "2026-02-19T18:00:05.000Z",
+      effects: [{ kind: "memo", label: "Memo A", target: "memo_1" }],
+    })
+    // The retry re-runs the same tool (same descriptor, so it must NOT double) and
+    // then writes something new.
+    vi.spyOn(agentTraceModule, "useAgentTrace").mockReturnValue(
+      traceResult([
+        toolStep(1, { effects: [{ kind: "memo", label: "Memo A", target: "memo_1" }] }),
+        toolStep(2, { effects: [{ kind: "memo", label: "Memo B", target: "memo_2" }] }),
+      ])
+    )
+
+    renderInWorkspace([startedEvent(), interrupted])
+
+    const rows = await screen.findAllByRole("button", { name: /Memo [AB]/ })
+    expect(rows.map((r) => r.textContent)).toEqual(["Memo A›", "Memo B›"])
+  })
+
+  // The live path is for the in-flight turn only: once the session is terminal
+  // the lifecycle payloads take over, and the row must not appear twice.
+  it("hands over to the payload union on completion without duplicating a row", async () => {
+    vi.spyOn(agentTraceModule, "useAgentTrace").mockReturnValue(
+      traceResult([toolStep(1, { effects: [{ kind: "memo", label: "Saved a memo", target: "memo_1" }] })])
+    )
+
+    renderInWorkspace([startedEvent(), completedEvent([{ kind: "memo", label: "Saved a memo", target: "memo_1" }])])
+
+    expect(await screen.findAllByRole("button", { name: /Saved a memo/ })).toHaveLength(1)
   })
 
   // Only a bare `{ kind }` is a layer-0 marker — a mutating tool that declared

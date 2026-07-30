@@ -1,19 +1,18 @@
-import { Link, useParams } from "react-router-dom"
+import { useParams } from "react-router-dom"
 import type { AgentToolEffect } from "@threa/types"
 import { useOptionalSettings } from "@/contexts"
-import { EffectRowContent, resolveEffectPath } from "@/lib/effect-links"
-import { cn } from "@/lib/utils"
+import { EffectRow } from "@/lib/effect-links"
 
 /**
- * What a finished turn wrote, one line per effect, under the session card.
+ * What a turn wrote, one line per effect, under the session card.
  *
  * Rendered as a SIBLING of the card's `<Link>`, never inside it: the card is an
- * `<a>`, and a nested `<a>` is invalid HTML and a screen-reader trap. That
- * placement is the whole reason the lines can be links at all.
+ * `<a>`, and a nested interactive element inside it is invalid HTML and a
+ * screen-reader trap. That placement is the whole reason the lines can be links
+ * and dialog buttons at all.
  *
- * The caller only passes effects for terminal sessions, so the grid appears as
- * part of the same status transition that already swaps the card's title, icon
- * and colours — nothing pops in mid-turn (INV-21).
+ * Rows only ever append while a turn is in flight (INV-21) — see
+ * `live-session-effect-grid.tsx`, which owns that guarantee.
  */
 export function SessionEffectGrid({ effects }: { effects: AgentToolEffect[] }) {
   const { workspaceId } = useParams<{ workspaceId: string }>()
@@ -26,58 +25,19 @@ export function SessionEffectGrid({ effects }: { effects: AgentToolEffect[] }) {
   return (
     <div className="effect-grid-host mt-1 px-3.5 text-[11px]">
       <div className="effect-grid gap-x-4">
-        {effects.map((effect, index) => {
-          const path = resolveEffectPath(effect, { workspaceId, getSettingsUrl: settings?.getSettingsUrl })
-          // An odd count would otherwise leave a hole in the last row that reads
-          // as a missing item; the tail spans instead.
-          const spanClass = lastSpansBoth && index === effects.length - 1 ? "effect-grid-span" : undefined
-          return (
-            <EffectLine
-              key={`${effect.kind}-${effect.target ?? ""}-${index}`}
-              effect={effect}
-              path={path}
-              className={spanClass}
-            />
-          )
-        })}
+        {effects.map((effect, index) => (
+          <EffectRow
+            key={`${effect.kind}-${effect.target ?? ""}-${index}`}
+            effect={effect}
+            workspaceId={workspaceId}
+            getSettingsUrl={settings?.getSettingsUrl}
+            variant="grid"
+            // An odd count would otherwise leave a hole in the last row that
+            // reads as a missing item; the tail spans instead.
+            className={lastSpansBoth && index === effects.length - 1 ? "effect-grid-span" : undefined}
+          />
+        ))}
       </div>
     </div>
-  )
-}
-
-function EffectLine({ effect, path, className }: { effect: AgentToolEffect; path: string | null; className?: string }) {
-  const body = (
-    <EffectRowContent
-      effect={effect}
-      trailing={
-        path ? (
-          <span aria-hidden className="ml-auto shrink-0 text-muted-foreground/50">
-            ›
-          </span>
-        ) : null
-      }
-    />
-  )
-
-  // No route means no destination — a greyed, non-focusable span, never a link
-  // with nowhere to go. Follow-ups and briefs have no route anywhere in the app.
-  if (!path) {
-    return (
-      <span className={cn("flex min-w-0 items-center gap-1.5 py-[3px] text-muted-foreground/60", className)}>
-        {body}
-      </span>
-    )
-  }
-
-  return (
-    <Link
-      to={path}
-      className={cn(
-        "flex min-w-0 items-center gap-1.5 py-[3px] text-muted-foreground no-underline transition-colors hover:text-primary",
-        className
-      )}
-    >
-      {body}
-    </Link>
   )
 }
