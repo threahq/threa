@@ -365,9 +365,7 @@ export function useStableBoardView(
   // whose parent survives the same filters is suppressed and bumps the parent's
   // effective activity; a child whose parent is filtered out stays standalone). The
   // fold runs BEFORE reconcile, so the committed-view machinery only ever sees the
-  // projected list. Recomputed when the feed or filter changes; `Date.now()` is
-  // sampled then (the staleness signal for `needs-resolution` only needs to be
-  // fresh at feed-change granularity, which is frequent on a live board).
+  // projected list. Recomputed when the feed or filter changes.
   const live = useMemo(
     () =>
       rawLive === undefined || graph === null
@@ -375,7 +373,7 @@ export function useStableBoardView(
         : projectNestedBoardView(
             rawLive.filter(
               (post) =>
-                matchesBoardLens(post, lens, Date.now()) &&
+                matchesBoardLens(post, lens) &&
                 matchesScope(post, scope) &&
                 matchesTypeScope(post, types) &&
                 matchesExcludedStreams(post, excludeStreams) &&

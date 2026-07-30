@@ -95,8 +95,8 @@ function makePost(
 function makeBoardView(overrides: Partial<BoardView> = {}): BoardView {
   return {
     id: "boardview_1",
-    name: "Channels, active",
-    baseLens: "active",
+    name: "Channels, mine",
+    baseLens: "mine",
     scopeStreamIds: [],
     scopeStreamTypes: ["channel"],
     scopeLabelIds: [],
@@ -265,7 +265,7 @@ describe("BoardPage", () => {
     } as unknown as ReturnType<typeof contextsModule.usePreferencesOptional>)
     mountBoard([], { boardViews: [makeBoardView()] })
     const probe = await screen.findByTestId("location")
-    await vi.waitFor(() => expect(probe.textContent).toBe(`/w/${WORKSPACE_ID}/board?lens=active&is=channel`))
+    await vi.waitFor(() => expect(probe.textContent).toBe(`/w/${WORKSPACE_ID}/board?lens=mine&is=channel`))
   })
 
   it("offers 'Show everything' on the viewer's own empty saved-view home (its filters are clearable)", async () => {
@@ -279,7 +279,7 @@ describe("BoardPage", () => {
       preferences: { boardDefaultLens: "all", boardDefaultViewId: "boardview_1" },
     } as unknown as ReturnType<typeof contextsModule.usePreferencesOptional>)
     // The saved view's own URL (`makeBoardView` → active + `?is=channel`).
-    mountBoard([], { boardViews: [makeBoardView()], entry: `/w/${WORKSPACE_ID}/board?lens=active&is=channel` })
+    mountBoard([], { boardViews: [makeBoardView()], entry: `/w/${WORKSPACE_ID}/board?lens=mine&is=channel` })
     expect(await screen.findByText("Nothing here right now")).toBeTruthy()
     const cta = await screen.findByRole("link", { name: "Show everything" })
     expect(cta.getAttribute("href")).toBe(`/w/${WORKSPACE_ID}/board?lens=all`)

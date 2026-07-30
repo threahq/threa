@@ -156,12 +156,8 @@ describe("Conversation Handlers", () => {
     })
 
     test("threads the validated lens through to the service", async () => {
-      await handlers.listByWorkspace(mockReq({ query: { lens: "needs-resolution" } }), mockRes())
-      expect(mockListByWorkspace).toHaveBeenCalledWith(
-        "ws_1",
-        "usr_1",
-        expect.objectContaining({ lens: "needs-resolution" })
-      )
+      await handlers.listByWorkspace(mockReq({ query: { lens: "decisions" } }), mockRes())
+      expect(mockListByWorkspace).toHaveBeenCalledWith("ws_1", "usr_1", expect.objectContaining({ lens: "decisions" }))
     })
 
     test("accepts the all lens as an explicit no-op filter", async () => {
@@ -169,10 +165,9 @@ describe("Conversation Handlers", () => {
       expect(mockListByWorkspace).toHaveBeenCalledWith("ws_1", "usr_1", expect.objectContaining({ lens: "all" }))
     })
 
-    test("rejects an unknown lens with a 400", async () => {
-      await expect(handlers.listByWorkspace(mockReq({ query: { lens: "bogus" } }), mockRes())).rejects.toMatchObject({
-        status: 400,
-      })
+    test("degrades a retired lens to no lens condition instead of a 400", async () => {
+      await handlers.listByWorkspace(mockReq({ query: { lens: "needs-resolution" } }), mockRes())
+      expect(mockListByWorkspace).toHaveBeenCalledWith("ws_1", "usr_1", expect.objectContaining({ lens: undefined }))
     })
 
     test("splits the comma-separated streams scope into scopeStreamIds", async () => {

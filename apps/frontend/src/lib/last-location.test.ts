@@ -21,10 +21,10 @@ describe("sanitizeBoardSearch", () => {
     // percent-encodes the comma, matching savedViewHref's own output), so
     // compare by parsed params rather than raw string.
     const search =
-      "?lens=active&in=stream_a,stream_b&not-in=stream_c&is=dm&not-is=channel&label=lbl_1&not-label=lbl_2&archived=true"
+      "?lens=mine&in=stream_a,stream_b&not-in=stream_c&is=dm&not-is=channel&label=lbl_1&not-label=lbl_2&archived=true"
     const out = new URLSearchParams(sanitizeBoardSearch(search))
     expect(Object.fromEntries(out)).toEqual({
-      lens: "active",
+      lens: "mine",
       in: "stream_a,stream_b",
       "not-in": "stream_c",
       is: "dm",
@@ -39,6 +39,10 @@ describe("sanitizeBoardSearch", () => {
     expect(sanitizeBoardSearch("?lens=bogus&in=stream_a")).toBe("?lens=all&in=stream_a")
   })
 
+  it("degrades a retired lens value in a persisted last-location to `all`", () => {
+    expect(sanitizeBoardSearch("?lens=needs-resolution&in=stream_a")).toBe("?lens=all&in=stream_a")
+  })
+
   it("strips panel, m, and unrelated params", () => {
     expect(sanitizeBoardSearch("?in=stream_a&panel=stream_z&m=evt_1&q=hi")).toBe("?in=stream_a")
   })
@@ -51,7 +55,7 @@ describe("sanitizeBoardSearch", () => {
 
 describe("buildBoardHref", () => {
   it("carries the lens in the query", () => {
-    expect(buildBoardHref(WS, { search: "?lens=active" }, [])).toBe("/w/ws_1/board?lens=active")
+    expect(buildBoardHref(WS, { search: "?lens=mine" }, [])).toBe("/w/ws_1/board?lens=mine")
   })
 
   it("restores the bare entry alias for a record captured there", () => {
@@ -95,12 +99,12 @@ describe("getLastLocation / setLastLocation round-trip", () => {
     setLastLocation(USER, WS, {
       surface: "board",
       streamId: "stream_a",
-      board: { search: "?lens=active&in=stream_a&panel=stream_z" },
+      board: { search: "?lens=mine&in=stream_a&panel=stream_z" },
     })
     expect(getLastLocation(USER, WS)).toEqual({
       surface: "board",
       streamId: "stream_a",
-      board: { search: "?lens=active&in=stream_a" },
+      board: { search: "?lens=mine&in=stream_a" },
     })
   })
 

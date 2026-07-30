@@ -6,21 +6,16 @@ import {
   LabelableResourceTypes,
   type ConversationStatus,
   type BoardLens,
-  BOARD_LENS_STALE_HOURS,
-  BOARD_LENS_MAX_COMPLETENESS,
 } from "@threa/types"
 
 /**
  * The board-lens WHERE fragment — the SQL half of the seed/pagination filter,
  * kept in lockstep with `matchesBoardLens` (the client's read-side predicate) so
- * a page can't return rows the client then hides. Reads the same signals and the
- * same `BOARD_LENS_*` thresholds. `all` (and absent) adds nothing — the default
- * home shows everything.
+ * a page can't return rows the client then hides. `all`, absent, and any retired
+ * lens value still stored on a saved view add nothing — the fragment degrades to
+ * the default home, which shows everything.
  */
 function boardLensCondSql(lens: BoardLens | undefined, userId: string) {
-  if (lens === "active") {
-    return composeSql`AND status = ${ConversationStatuses.ACTIVE}`
-  }
   if (lens === "mine") {
     // The viewer's own conversations: authored/participating (`participant_ids`,
     // GIN-indexed) OR `@`-mentioned on a primary message (`user_activity`,
@@ -36,19 +31,6 @@ function boardLensCondSql(lens: BoardLens | undefined, userId: string) {
           AND ua.user_id = ${userId}
           AND ua.activity_type = ${ActivityTypes.MENTION}
           AND ua.message_id = ANY(conversations.message_ids)
-      )
-    )`
-  }
-  if (lens === "needs-resolution") {
-    // A `resolved` conversation is done — never a loose end — even if its LLM
-    // completeness score was never bumped up on resolution, so exclude it from the
-    // idle branch (the `stalled` branch can't match a resolved row anyway).
-    return composeSql`AND (
-      status = ${ConversationStatuses.STALLED}
-      OR (
-        status <> ${ConversationStatuses.RESOLVED}
-        AND last_activity_at < NOW() - make_interval(hours => ${BOARD_LENS_STALE_HOURS})
-        AND completeness_score < ${BOARD_LENS_MAX_COMPLETENESS}
       )
     )`
   }
