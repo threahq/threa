@@ -55,6 +55,7 @@ export function defineFlag<
  */
 export const FEATURE_FLAGS = {
   calls: defineFlag({ values: ["off", "on"], scopes: ["workspace"], default: "on" }),
+  composeTraces: defineFlag({ values: ["off", "capture"], scopes: ["workspace"], default: "off" }),
 } as const satisfies FeatureFlagRegistry
 
 export type FeatureFlagKey = keyof typeof FEATURE_FLAGS

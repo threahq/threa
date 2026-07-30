@@ -10,6 +10,7 @@ import { OutboxRepository } from "../../lib/outbox"
 import type { CommandRegistry } from "../commands"
 import {
   type CommandDispatchedPayload,
+  type ComposeTrace,
   type ConversationDirective,
   E2E_PLACEHOLDER_CONTENT_MARKDOWN,
 } from "@threa/types"
@@ -52,12 +53,33 @@ const _directiveTypeToSchema = (d: ConversationDirective): z.infer<typeof conver
 void _directiveSchemaToType
 void _directiveTypeToSchema
 
+// Compose-session provenance (see `ComposeTrace`). Strict: an unrecognized key
+// means a client is sending a shape this build cannot interpret, and silently
+// dropping it would store a trace that means something else (INV-11).
+export const composeTraceSchema = z
+  .object({
+    horizonStreamId: z.string().min(1),
+    openedAt: z.string().datetime(),
+    openedAtSequence: z.number().int().nonnegative().nullable(),
+    sentAtSequence: z.number().int().nonnegative().nullable(),
+    resumedDraft: z.boolean(),
+  })
+  .strict()
+
+// INV-31 lock, same shape as the directive lock above: these fail the typecheck
+// if the wire schema and the published `ComposeTrace` type drift apart.
+const _composeTraceSchemaToType = (t: z.infer<typeof composeTraceSchema>): ComposeTrace => t
+const _composeTraceTypeToSchema = (t: ComposeTrace): z.infer<typeof composeTraceSchema> => t
+void _composeTraceSchemaToType
+void _composeTraceTypeToSchema
+
 const commonMessageOptionsSchema = {
   attachmentIds: z.array(z.string()).optional(),
   clientMessageId: z.string().min(1).optional(),
   metadata: messageMetadataSchema.optional(),
   conversation: conversationDirectiveSchema.optional(),
   confirmedPrivacyWarning: z.boolean().optional(),
+  composeTrace: composeTraceSchema.optional(),
 }
 
 const contentJsonSchema = z.object({
@@ -159,6 +181,7 @@ const createMessageE2eToStreamSchema = z.object({
   attachmentIds: z.array(z.string()).optional(),
   clientMessageId: z.string().min(1).optional(),
   steer: z.literal(true).optional(),
+  composeTrace: composeTraceSchema.optional(),
 })
 
 // Plaintext-only union (used by `normalizeContent` and the post-E2E-gate
@@ -352,6 +375,7 @@ export function createMessageHandlers({
             e2eVersion: data.e2eVersion,
             attachmentIds: data.attachmentIds && data.attachmentIds.length > 0 ? data.attachmentIds : undefined,
             clientMessageId: data.clientMessageId,
+            composeTrace: data.composeTrace,
           },
           insertSteeredInvocations
         )
@@ -433,6 +457,7 @@ export function createMessageHandlers({
           clientMessageId: data.clientMessageId,
           metadata: data.metadata,
           conversation: data.conversation,
+          composeTrace: data.composeTrace,
           confirmedPrivacyWarning: data.confirmedPrivacyWarning,
         },
         insertSteeredInvocations

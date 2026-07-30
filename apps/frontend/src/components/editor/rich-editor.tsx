@@ -143,6 +143,8 @@ interface RichEditorProps {
   blurOnEscape?: boolean
   /** Called after Escape blurs the editor */
   onEscapeBlur?: () => void
+  /** Called when the editor gains focus. Fires on every focus, not only the first. */
+  onFocus?: () => void
   /** Stream context for filtering which broadcast mentions (@channel, @here) are available */
   streamContext?: MentionStreamContext
   /**
@@ -239,6 +241,7 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
     ariaDescribedBy,
     blurOnEscape = false,
     onEscapeBlur,
+    onFocus: onFocusProp,
     streamContext,
     memoAnchorStreamId,
     enableMentions = true,
@@ -413,6 +416,7 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
 
   // Ref to access editor instance from callbacks defined before useEditor returns
   const editorRef = useRef<ReturnType<typeof useEditor>>(null)
+  const onFocusRef = useRef(onFocusProp)
 
   // Argument option picker (e.g. `/model` → choose a model). Opens after a
   // command with advertised `args[].suggestions` is inserted; its keys are
@@ -596,7 +600,12 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
       if (isInternalUpdate.current) return
       onChange(editor.getJSON())
     },
-    onFocus: () => setIsFocused(true),
+    onFocus: () => {
+      setIsFocused(true)
+      // Through a ref: `useEditor` captures these options once, so calling the
+      // prop directly would pin the first render's callback forever.
+      onFocusRef.current?.()
+    },
     onBlur: () => {
       setIsFocused(false)
       // Safety net: reset any stuck dropdown state when editor loses focus.
@@ -846,6 +855,7 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
 
   // Store editor in ref so callbacks defined inside useEditor options can access it
   editorRef.current = editor
+  onFocusRef.current = onFocusProp
 
   // Track whether the editor has a non-empty selection (drives toolbar visibility)
   // and whether the cursor is inside a table (keeps the table controls reachable

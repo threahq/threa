@@ -16,7 +16,8 @@ import {
 import { useIsMobileOrCoarse } from "@/hooks/use-pointer"
 import { useInputMode } from "@/hooks/use-input-mode"
 import { appendQuoteReplyNode, type QuoteReplyData } from "@/components/timeline/quote-reply-context"
-import { useDraftComposer, useScheduleMessage, useStashComposer } from "@/hooks"
+import { useDraftComposer, useScheduleMessage, useStashComposer, hasDocContent } from "@/hooks"
+import { useComposeTrace } from "@/lib/compose-trace"
 import { relocateLoadedDraft } from "@/hooks/use-draft-message"
 import { useOptionalSyncEngine } from "@/sync/sync-engine"
 import { usePreferences } from "@/contexts"
@@ -28,7 +29,7 @@ import { STREAM_ICONS } from "@/lib/streams"
 import { EMPTY_DOC, isEmptyContent } from "@/lib/prosemirror-utils"
 import { extractUploadedAttachments, materializePendingAttachmentReferences } from "@/components/timeline/message-input"
 import type { AttachmentSummary } from "@/hooks/create-optimistic-bootstrap"
-import type { JSONContent } from "@threa/types"
+import type { ComposeTrace, JSONContent } from "@threa/types"
 
 // Focus moving into one of these means a composer popover is open (inline
 // suggestion lists are `[role="listbox"]`; emoji/format/link popovers are Radix
@@ -41,6 +42,13 @@ export interface InlineComposerSubmit {
   contentJson: JSONContent
   attachmentIds?: string[]
   attachments?: AttachmentSummary[]
+  /**
+   * Compose-session provenance for this send (see {@link ComposeTrace}).
+   * Captured here rather than per call site so every inline surface this core
+   * backs — board card reply, branch tail reply, new sub-topic, panel footer —
+   * reports the same thing. Absent unless the workspace is capturing.
+   */
+  composeTrace?: ComposeTrace
 }
 
 interface InlineComposerFormProps {
@@ -163,6 +171,19 @@ export function InlineComposerForm({
   const hostIsE2e = hostStream?.e2eEnabled === true || idbHostStream?.e2eEnabled === true
 
   const composer = useDraftComposer({ workspaceId, draftKey, scopeId: draftKey })
+  const composerContentRef = useRef(composer.content)
+  composerContentRef.current = composer.content
+  // The host stream — the surface the author is reading — is what the horizon is
+  // measured against, whatever stream `onSubmit` ends up routing the send into.
+  // The prop is the authority: a thread host is absent from the workspace cache,
+  // so resolving it there would leave branch and panel replies unmeasured.
+  const { onComposerFocus, takeComposeTrace } = useComposeTrace({
+    workspaceId,
+    scopeId: draftKey,
+    horizonStreamId: streamId,
+    hasDraftContent: () => hasDocContent(composerContentRef.current),
+    draftReady: composer.isLoaded,
+  })
   const syncEngine = useOptionalSyncEngine()
   // "Save for later" pile scoped to this reply target — the same pointer-move
   // stash the timeline composer has, so a half-written inline reply survives
@@ -363,6 +384,8 @@ export function InlineComposerForm({
     const attachments = extractUploadedAttachments(normalizedContent)
     const attachmentIds = attachments.map((a) => a.id)
 
+    const composeTrace = await takeComposeTrace()
+
     composer.setIsSending(true)
     // Clear the editor up front so it empties in the same frame the optimistic
     // row appears; restored on failure so nothing typed is lost.
@@ -372,6 +395,7 @@ export function InlineComposerForm({
         contentJson: normalizedContent,
         attachmentIds: attachmentIds.length > 0 ? attachmentIds : undefined,
         attachments: attachments.length > 0 ? attachments : undefined,
+        composeTrace,
       })
       await composer.resolveDraft()
       composer.clearAttachments()
@@ -496,6 +520,7 @@ export function InlineComposerForm({
     onFileUpload: composer.uploadFile,
     imageCount: composer.imageCount,
     onSubmit: handleSubmit,
+    onComposerFocus,
     canSubmit,
     isSubmitting: composer.isSending,
     hasFailed: composer.hasFailed,

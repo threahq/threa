@@ -27,6 +27,7 @@ import type {
   BoardPost,
   BoardScopeStreamType,
   CompanionMode,
+  ComposeTrace,
   ConversationWithStaleness,
   ConversationStatus,
   JSONContent,
@@ -368,6 +369,8 @@ export interface ReplyToBoardPostInput {
   attachmentIds?: string[]
   /** Full attachment info for the optimistic event so files render in place. */
   attachments?: AttachmentSummary[]
+  /** Compose-session provenance for this send (see {@link ComposeTrace}). */
+  composeTrace?: ComposeTrace
 }
 
 /**
@@ -427,11 +430,13 @@ export function useReplyToBoardPost(workspaceId: string) {
       contentJson,
       attachmentIds,
       attachments,
+      composeTrace,
     }: ReplyToBoardPostInput): Promise<{ plan: BoardReplyPlan }> => {
       const input = {
         contentJson,
         attachmentIds: attachmentIds && attachmentIds.length > 0 ? attachmentIds : undefined,
         attachments: attachments && attachments.length > 0 ? attachments : undefined,
+        composeTrace,
       }
 
       const plan = planBoardReply({ hostStreamType, messageCount, openingMessageId })

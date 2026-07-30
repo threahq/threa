@@ -300,7 +300,10 @@ export async function startServer(): Promise<ServerInstance> {
   const storage = createS3Storage(config.s3)
   const avatarService = new AvatarService(storage)
   const streamService = new StreamService(pool)
-  const eventService = new EventService(pool, conversationAssigner)
+  const featureFlagService = new FeatureFlagService(pool)
+  const eventService = new EventService(pool, conversationAssigner, (workspaceId) =>
+    featureFlagService.getWorkspaceFlag(workspaceId, "composeTraces")
+  )
   const authService = config.useStubAuth ? new StubAuthService() : new WorkosAuthService(config.workos)
 
   const malwareScanner = createMalwareScanner(storage, config.attachments)
@@ -326,7 +329,6 @@ export async function startServer(): Promise<ServerInstance> {
   const conversationService = new ConversationService(pool)
   const userPreferencesService = new UserPreferencesService(pool)
   const workspaceSettingsService = new WorkspaceSettingsService(pool)
-  const featureFlagService = new FeatureFlagService(pool)
   const platformAdminService = new PlatformAdminService(pool)
   const sidebarConfigService = new SidebarConfigService(pool)
   const userE2eKeysService = new UserE2eKeysService(pool)

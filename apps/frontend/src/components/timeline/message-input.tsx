@@ -2,6 +2,7 @@ import { memo, useState, useCallback, useEffect, useMemo, useRef } from "react"
 import { toast } from "sonner"
 import { useNavigate } from "react-router-dom"
 import {
+  hasDocContent,
   useDraftComposer,
   getDraftMessageKey,
   useStreamOrDraft,
@@ -11,6 +12,7 @@ import {
   useMentionStreamContext,
 } from "@/hooks"
 import { useIsMobile } from "@/hooks/use-mobile"
+import { useComposeTrace } from "@/lib/compose-trace"
 import { usePreferences } from "@/contexts"
 import { useConnectionState } from "@/components/layout/connection-status"
 import {
@@ -294,6 +296,14 @@ function MessageInputComponent({
   // Imperative handle for programmatic focus from outside (e.g. quote reply insertion)
   const composerFocusRef = useRef<ComposerControlHandle | null>(null)
 
+  const { onComposerFocus, takeComposeTrace } = useComposeTrace({
+    workspaceId,
+    scopeId: streamId,
+    horizonStreamId: streamId,
+    hasDraftContent: () => hasDocContent(composerRef.current.content),
+    draftReady: composer.isLoaded,
+  })
+
   // Register with QuoteReplyContext to insert quote reply nodes into the composer.
   // Stable deps: quoteReplyCtx is from context, composerRef is a ref.
   useEffect(() => {
@@ -545,6 +555,12 @@ function MessageInputComponent({
       composer.setIsSending(true)
       setError(null)
 
+      // Ends the compose session for EVERY submit, not just the flat send below:
+      // a command dispatch or a hand-off to the panel finishes what the author
+      // was writing here, so the next send must start from a fresh horizon
+      // rather than inherit this one's `openedAt`.
+      const composeTrace = await takeComposeTrace()
+
       const pendingAttachments = composer.getPendingAttachmentsSnapshot()
       const liveContent = editorContent ?? composer.content
       const normalizedContent = materializePendingAttachmentReferences(liveContent, pendingAttachments)
@@ -656,6 +672,7 @@ function MessageInputComponent({
           attachmentIds: attachmentIds.length > 0 ? attachmentIds : undefined,
           attachments: attachments.length > 0 ? attachments : undefined,
           ...(steerDirective && { steer: true as const }),
+          composeTrace,
           // Armed by "Reply in conversation": file this send into the
           // conversation synchronously (Mechanism C). Cleared only on success —
           // a failed send keeps the filing armed alongside the restored content.
@@ -692,6 +709,7 @@ function MessageInputComponent({
       conversationReply,
       conversationReplyLastActiveStreamId,
       redirectReplyToPanel,
+      takeComposeTrace,
     ]
   )
 
@@ -801,6 +819,7 @@ function MessageInputComponent({
     hasFailed: composer.hasFailed,
     placeholder: composerPlaceholder,
     messageSendMode,
+    onComposerFocus,
     scopeId: streamId,
     onEditLastMessage: triggerEditLast
       ? () => {

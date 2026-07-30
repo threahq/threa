@@ -26,6 +26,7 @@ import type {
   StreamMember,
   StreamType,
   CompanionMode,
+  ComposeTrace,
   ConversationDirective,
   StreamEvent,
   JSONContent,
@@ -148,6 +149,12 @@ export interface SendMessageInput {
    * a stream that doesn't exist yet has no conversations to reply into.
    */
   conversation?: ConversationDirective
+  /**
+   * Compose-session provenance for this send (see {@link ComposeTrace}).
+   * Omitted when the workspace isn't capturing, and by every send the author
+   * didn't compose live (scheduled sends, retries, slash-command dispatch).
+   */
+  composeTrace?: ComposeTrace
 }
 
 export interface UseStreamOrDraftReturn {
@@ -670,6 +677,7 @@ function useRealStream(workspaceId: string, streamId: string, enabled: boolean):
           contentJson: input.contentJson,
           attachmentIds: input.attachmentIds,
           conversation: input.conversation,
+          composeTrace: input.composeTrace,
           steer: input.steer,
           createdAt: Date.now(),
           retryCount: 0,

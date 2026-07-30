@@ -542,6 +542,7 @@ export type {
   SyncCatchUpResponse,
   SyncHeartbeatPayload,
   // Messages
+  ComposeTrace,
   ConversationDirective,
   CreateMessageInput,
   CreateMessageInputJson,
