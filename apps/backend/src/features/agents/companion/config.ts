@@ -10,12 +10,7 @@ if (ariadneTemperature == null) {
 }
 export const COMPANION_TEMPERATURE = ariadneTemperature
 
-// Model for rolling long-context summaries of dropped history. Same tier as the
-// episode summary below and for the same reason — this is structured
-// condensation, and mini is both more capable and genuinely cheaper than
-// haiku-4.5 ($0.75/$4.50 against $1.00/$5.00; the $0.25/$1.25 that once made
-// haiku look like the cost-effective tier was a documentation error).
-export const COMPANION_SUMMARY_MODEL_ID = "openrouter:openai/gpt-5.4-mini"
+export const COMPANION_SUMMARY_MODEL_ID = "openrouter:openai/gpt-5.6-luna"
 
 // Lower temperature for deterministic summary updates
 export const COMPANION_SUMMARY_TEMPERATURE = 0.1
@@ -24,7 +19,7 @@ export const COMPANION_SUMMARY_TEMPERATURE = 0.1
 // the persona did and concluded in a session, stored on the session row and
 // replayed into later turns as "Previous sessions". Same small model the memo
 // classifier/memorizer runs (`MEMO_CLASSIFIER_MODEL_ID`).
-export const EPISODE_SUMMARY_MODEL_ID = "openrouter:openai/gpt-5.4-mini"
+export const EPISODE_SUMMARY_MODEL_ID = "openrouter:openai/gpt-5.6-luna"
 export const EPISODE_SUMMARY_TEMPERATURE = 0.1
 export const EPISODE_SUMMARY_MAX_TOKENS = 256
 

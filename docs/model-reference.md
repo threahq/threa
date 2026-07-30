@@ -1,12 +1,12 @@
 # AI Model Reference
 
-**Last updated:** 2026-07-27
+**Last updated:** 2026-07-30
 
 This document provides a comprehensive reference for AI models including capabilities, pricing, and usage guidelines. Always verify against this file when working with AI integration.
 
 ## Price table
 
-All figures per 1M tokens, verified against the live OpenRouter models endpoint on 2026-07-27. **Verify before making a model-choice argument** — this table was wrong about `claude-haiku-4.5` by 4× for months, and five components were pinned to it on the strength of that number:
+All figures per 1M tokens, verified on 2026-07-30. Temporary OpenRouter discounts are excluded; Luna's listed discounted rates were normalized to its standard rates. **Verify before making a model-choice argument** — this table was wrong about `claude-haiku-4.5` by 4× for months, and five components were pinned to it on the strength of that number:
 
 ```bash
 curl -s https://openrouter.ai/api/v1/models -H "Authorization: Bearer $OPENROUTER_API_KEY" \
@@ -17,7 +17,7 @@ curl -s https://openrouter.ai/api/v1/models -H "Authorization: Bearer $OPENROUTE
 | ------------------------------- | ----- | ------ | ---------- | ----------- | ------- |
 | `openai/gpt-5.4-nano`           | $0.20 | $1.25  | $0.02      | free        | 400K    |
 | `openai/gpt-5.4-mini`           | $0.75 | $4.50  | $0.075     | free        | 400K    |
-| `openai/gpt-5.6-luna`           | $1.00 | $6.00  | $0.107     | **$1.25**   | 1.05M   |
+| `openai/gpt-5.6-luna`           | $0.20 | $1.20  | $0.02      | **$0.25**   | 1.05M   |
 | `openai/gpt-5.6-terra`          | $2.50 | $15.00 | $0.25      | $3.125      | 1.05M   |
 | `openai/gpt-5.6-sol`            | $5.00 | $30.00 | $0.50      | $6.25       | 1.05M   |
 | `anthropic/claude-haiku-4.5`    | $1.00 | $5.00  | $0.10      | $1.25       | 200K    |
@@ -36,7 +36,7 @@ Anthropic, Google and OpenAI only. That is a deliberate constraint, not an accid
 **Cache columns are not a footnote — they change which model is cheapest.**
 
 - **Free writes (OpenAI family).** Caching is automatic and costs nothing to attempt, so a stable ≥1024-token prefix is pure upside. A cache miss bills the normal input rate.
-- **Paid writes (Anthropic, Google, and `gpt-5.6-luna`).** A miss on a cacheable-size prompt bills the **write** rate, not the input rate. This is a bet that the prefix will be read back; below roughly 1.4 reads per write it loses money. `gpt-5.6-luna`'s listed $1.00 input is therefore the rate that never applies — in production it bills $1.25 on a miss or $0.107 on a hit.
+- **Paid writes (Anthropic, Google, and `gpt-5.6-luna`).** A miss on a cacheable-size prompt bills the **write** rate, not the input rate. Luna bills $0.25 on a miss or $0.02 on a hit; its $0.20 headline input rate applies below the cache floor. Prompts above 272K tokens use the long-context rate ($0.40 input, $1.80 output, $0.04 cache read, $0.50 cache write).
 - **Anthropic and Google need an explicit breakpoint** (`applyCacheBreakpoints`, `packages/agent-runtime/src/ai/ai.ts`); the OpenAI family needs only prefix stability.
 - **A prefix only caches if it is genuinely a prefix.** Interpolating a date, a language rule, or a message list _above_ the static block truncates the cacheable span to whatever precedes the first variable — commonly a few dozen tokens, under the 1024-token floor, so nothing caches at all.
 
@@ -127,9 +127,9 @@ model picker. The two lists are meant to stay identical — an entry is an offer
 
 **When to use:** nothing. No production component selects it.
 
-This entry read `$0.25/$1.25` until 2026-07-27 — 4× under the real price. On the strength of that number five components were pinned to haiku "for cost" (companion summary, workspace-agent plan/eval, turn digest, supersede validator, the Empty Agent shell) and the over-budget degradation map degraded Sonnet _to_ it, buying 2× where `gpt-5.4-mini` buys 2.7× and `gpt-5.4-nano` buys 10×. All six now target mini. Left in the registry so a persona deliberately pinned to it keeps resolving.
+This entry read `$0.25/$1.25` until 2026-07-27 — 4× under the real price. On the strength of that number five components were pinned to haiku "for cost" (companion summary, workspace-agent plan/eval, turn digest, supersede validator, the Empty Agent shell) and the over-budget degradation map degraded Sonnet _to_ it, buying 2× where `gpt-5.4-mini` buys 2.7× and `gpt-5.4-nano` buys 10×. All six now target Luna. Left in the registry so a persona deliberately pinned to it keeps resolving.
 
-**Use instead:** `gpt-5.4-mini` for structured condensation and extraction, `gpt-5.4-nano` for classification and ranking.
+**Use instead:** `gpt-5.6-luna`.
 
 ---
 
@@ -141,10 +141,7 @@ This entry read `$0.25/$1.25` until 2026-07-27 — 4× under the real price. On 
 
 **Typical cost:** ~$0.20 / ~$1.25 per 1M (cache read $0.02, writes free)
 
-**When to use:**
-
-- Saved-suggestion extraction and voice-transcript polish (production choices)
-- High-volume classification and ranking
+**When to use:** nothing new. Luna is cheaper at its undiscounted price and stronger on the evaluated classification suites.
 
 **Caution:** re-tested July 2026 on the memo-classifier and boundary-extraction suites and rejected for both — it classified real knowledge as not-worthy 6/9 with the same three misses every round (silent knowledge loss) and failed sandwich-split/gap-resume every round (30–33/35 against mini's 33–35/35). Cheap, but not for anything where a miss is invisible.
 
@@ -158,12 +155,7 @@ This entry read `$0.25/$1.25` until 2026-07-27 — 4× under the real price. On 
 
 **Typical cost:** ~$0.75 / ~$4.50 per 1M (cache read $0.075, writes free)
 
-**When to use:**
-
-- Boundary extraction and memo classification (highest-volume components we run)
-- Companion summary, workspace-agent plan/eval, turn digest, supersede validation, episode summaries
-- The over-budget degradation target
-- Default choice when a component needs structured output and has no eval suite to justify anything more specific
+**When to use:** nothing new. Production text components moved to Luna after its July 2026 price cut.
 
 ---
 
@@ -173,14 +165,15 @@ This entry read `$0.25/$1.25` until 2026-07-27 — 4× under the real price. On 
 
 **Description:** Fast, high-volume tier of the GPT-5.6 series. 1.05M context. Available EU-pinned. A `gpt-5.6-luna-pro` variant (same price) serves the same weights with `reasoning.mode: pro`.
 
-**Typical cost:** ~$1.25 / ~$6.00 per 1M **on a cache miss**, ~$0.107 per 1M on a hit. The $1.00 headline input rate applies only below the 1024-token cache floor — every real prompt is a write or a read.
+**Typical cost:** ~$0.25 / ~$1.20 per 1M **on a cache miss**, ~$0.02 per 1M on a hit. The $0.20 headline input rate applies below the 1024-token cache floor. Long-context pricing begins at 272K tokens ($0.40/$1.80). Prices exclude temporary OpenRouter discounts.
 
 **When to use:**
 
-- Memo memorization (production choice since July 2026)
-- Extraction and summarization where a small model's conclusion errors are costly
+- Classification, extraction, ranking, naming, transcript polish, and summarization
+- Memo memorization and tool-call guarding
+- Over-budget model degradation
 
-**Eval history (July 2026, 6-run tallies vs `gpt-5.4-mini`):** memorizer 10/10 cases perfect against mini's 8/10 — Luna never leaked the anti-gossip residuals and never inverted a decision direction; boundary-extraction effectively tied (0.996 vs 0.992); memo-classifier tied (11/11 both). ~40% slower per call, so mini keeps the high-volume per-message components and Luna runs the memorizer, where quality dominates and the settle gate keeps volume low.
+**Eval history (July 2026, 6-run tallies vs `gpt-5.4-mini`):** memorizer 10/10 cases perfect against mini's 8/10 — Luna never leaked the anti-gossip residuals and never inverted a decision direction; boundary-extraction effectively tied (0.996 vs 0.992); memo-classifier tied (11/11 both). Luna was ~40% slower per call, but the price cut makes it cheaper than both 5.4 tiers, so every production task previously on a GPT-5.4 tier now uses Luna.
 
 ---
 

@@ -7,7 +7,7 @@
 
 // Default model for the per-ref thread summarizer. Cheap + fast — the output
 // goes into the stable region of the prompt and is cached by inputs manifest.
-export const SUMMARIZER_MODEL_ID = "openrouter:openai/gpt-5.4-nano"
+export const SUMMARIZER_MODEL_ID = "openrouter:openai/gpt-5.6-luna"
 
 // Lower temperature: summaries should be deterministic so the same thread
 // produces the same summary text, otherwise downstream cache thrash.

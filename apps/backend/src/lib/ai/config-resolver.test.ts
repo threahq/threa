@@ -7,16 +7,16 @@ describe("StaticConfigResolver", () => {
     const resolver = createStaticConfigResolver()
 
     const boundaryConfig = await resolver.resolve(COMPONENT_PATHS.BOUNDARY_EXTRACTION)
-    expect(boundaryConfig.modelId).toBe("openrouter:openai/gpt-5.4-mini")
+    expect(boundaryConfig.modelId).toBe("openrouter:openai/gpt-5.6-luna")
     expect(boundaryConfig.temperature).toBe(0.2)
     expect(boundaryConfig.systemPrompt).toBeDefined()
 
     const streamNamingConfig = await resolver.resolve(COMPONENT_PATHS.STREAM_NAMING)
-    expect(streamNamingConfig.modelId).toBe("openrouter:openai/gpt-5.4-nano")
+    expect(streamNamingConfig.modelId).toBe("openrouter:openai/gpt-5.6-luna")
     expect(streamNamingConfig.temperature).toBe(0.3)
 
     const memoClassifierConfig = await resolver.resolve(COMPONENT_PATHS.MEMO_CLASSIFIER)
-    expect(memoClassifierConfig.modelId).toBe("openrouter:openai/gpt-5.4-mini")
+    expect(memoClassifierConfig.modelId).toBe("openrouter:openai/gpt-5.6-luna")
     expect(memoClassifierConfig.temperature).toBe(0.1)
 
     const memoMemorizerConfig = await resolver.resolve(COMPONENT_PATHS.MEMO_MEMORIZER)
@@ -28,7 +28,7 @@ describe("StaticConfigResolver", () => {
     expect(companionConfig.temperature).toBe(0.7)
 
     const researcherConfig = await resolver.resolve(COMPONENT_PATHS.COMPANION_RESEARCHER)
-    expect(researcherConfig.modelId).toBe("openrouter:openai/gpt-5.4-mini")
+    expect(researcherConfig.modelId).toBe("openrouter:openai/gpt-5.6-luna")
     expect(researcherConfig.temperature).toBe(0.1)
 
     const embeddingConfig = await resolver.resolve(COMPONENT_PATHS.EMBEDDING)
@@ -71,6 +71,6 @@ describe("StaticConfigResolver", () => {
 
     // Non-overridden path should have default
     const streamNamingConfig = await resolver.resolve(COMPONENT_PATHS.STREAM_NAMING)
-    expect(streamNamingConfig.modelId).toBe("openrouter:openai/gpt-5.4-nano")
+    expect(streamNamingConfig.modelId).toBe("openrouter:openai/gpt-5.6-luna")
   })
 })

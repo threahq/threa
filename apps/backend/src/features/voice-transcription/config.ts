@@ -67,7 +67,7 @@ export const voiceConfig = {
 
 // Voice-transcript polish config (INV-44: colocated with the feature, shared
 // by production and evals).
-export const POLISH_MODEL = "openrouter:openai/gpt-5.4-nano"
+export const POLISH_MODEL = "openrouter:openai/gpt-5.6-luna"
 export const POLISH_TIMEOUT_MS = 4500
 export const POLISH_MAX_TOKENS = 2048
 

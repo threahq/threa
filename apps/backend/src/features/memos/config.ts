@@ -20,17 +20,7 @@ import { formatDate } from "../../lib/temporal"
 // handlers import (source of truth is @threa/types — INV-33).
 export { MEMO_ABSTRACT_MAX_CHARS, MEMO_KEY_POINTS_MAX, MEMO_TAGS_MAX, MEMO_TITLE_MAX_CHARS }
 
-// Mini over nano is deliberate: the July 2026 re-test (after -m eval wiring
-// was fixed) showed nano classifying real knowledge as not-worthy in every
-// round (6/9 with the same three misses) — silent knowledge loss, the worst
-// GAM failure mode. See docs/model-reference.md.
-export const MEMO_CLASSIFIER_MODEL_ID = "openrouter:openai/gpt-5.4-mini"
-
-// Luna over mini for memorization (July 2026, 6-run tallies): Luna passed all
-// 10 memorizer cases every round where mini still leaked the anti-gossip
-// residuals (news-facts 1/6, transient-status 2/6) and had inverted a decision
-// direction in prod. +33% price on the lowest-volume component (settle-gated,
-// one capture per settled conversation). See docs/model-reference.md.
+export const MEMO_CLASSIFIER_MODEL_ID = "openrouter:openai/gpt-5.6-luna"
 export const MEMO_MEMORIZER_MODEL_ID = "openrouter:openai/gpt-5.6-luna"
 
 export const MEMO_TEMPERATURES = {
@@ -171,7 +161,7 @@ export const MEMO_BOOST_DEFAULT = 1.0
  * ranking (INV-16); rerank is a best-effort enhancer only — fixed
  * timeout, fail-open on every failure reason, never a dependency.
  */
-export const MEMO_RERANKER_MODEL_ID = "openrouter:openai/gpt-5.4-nano"
+export const MEMO_RERANKER_MODEL_ID = "openrouter:openai/gpt-5.6-luna"
 export const MEMO_RERANKER_TEMPERATURE = 0
 export const MEMO_RERANKER_TIMEOUT_MS = 4000
 /** Top-K window handed to the reranker; the un-reranked tail is appended (recall protection). */
