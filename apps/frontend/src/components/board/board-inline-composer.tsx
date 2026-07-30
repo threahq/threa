@@ -384,12 +384,14 @@ export function InlineComposerForm({
     const attachments = extractUploadedAttachments(normalizedContent)
     const attachmentIds = attachments.map((a) => a.id)
 
-    const composeTrace = await takeComposeTrace()
-
+    // Close the send window and clear BEFORE the trace's IDB read: a second
+    // Enter during that await must see canSend false, and the optimistic clear
+    // must not wait on a Dexie round-trip (#1640's dominant-latency path).
     composer.setIsSending(true)
     // Clear the editor up front so it empties in the same frame the optimistic
     // row appears; restored on failure so nothing typed is lost.
     composer.setContent(EMPTY_DOC)
+    const composeTrace = await takeComposeTrace()
     try {
       await onSubmit({
         contentJson: normalizedContent,
@@ -429,6 +431,10 @@ export function InlineComposerForm({
 
     composer.setIsSending(true)
     composer.setContent(EMPTY_DOC)
+    // A schedule finishes the composition like a send does — end the session so
+    // the next one can't inherit this one's openedAt/horizon. Trace discarded:
+    // scheduled sends carry none by design.
+    void takeComposeTrace()
     try {
       await scheduleMessage.mutateAsync({
         streamId: scheduleTarget.streamId,
@@ -453,7 +459,12 @@ export function InlineComposerForm({
   const stashPickerProps = {
     drafts: stash.drafts,
     canStashCurrent: composer.canSend,
-    onStashCurrent: stash.handleStashDraft,
+    // Stashing disposes of the current composition — end the compose session so
+    // the next one can't inherit its openedAt/horizon (trace discarded).
+    onStashCurrent: () => {
+      void takeComposeTrace()
+      return stash.handleStashDraft()
+    },
     onRestore: stash.handleRestoreStashed,
     onDelete: stash.handleDeleteStashed,
     controlsDisabled: composer.isSending,
