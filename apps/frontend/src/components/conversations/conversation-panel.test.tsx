@@ -1059,6 +1059,7 @@ describe("ConversationPanel", () => {
       const post = makePost()
       // Rail is short of the server's count → the panel backfills, growing the
       // row list after first paint.
+      post.conversation.messageIds = ["msg_1", "msg_2", "msg_3", "msg_4"]
       post.totalReplies = 3
       mountPanel({
         cached: asCached(post),
@@ -1294,33 +1295,32 @@ describe("ConversationPanel backfill merge", () => {
     await db.events.clear()
   })
 
-  it("unions the server backfill with the live rail instead of letting a stale snapshot win", async () => {
-    // The rail can never complete here (msg_9 is a member the snapshot lists and
-    // no rail carries), so the backfill stays enabled — the shape that used to pin
-    // the panel to a 60s-stale snapshot and hide a reply the browser already had.
+  it("renders every member, whichever cache holds its body", async () => {
+    // Membership comes from the conversation; bodies come from whichever layer has
+    // them. msg_3 rides the rail, msg_2 and msg_9 come off the backfill.
     const post = makePost()
     post.conversation.messageIds = ["msg_1", "msg_2", "msg_3", "msg_9"]
     post.totalReplies = 3
     await db.events.bulkPut([
       cachedMessageEvent("msg_1", "Opening message body.", 10),
-      cachedMessageEvent("msg_2", "Reply two body.", 20),
       cachedMessageEvent("msg_3", "Live reply the snapshot predates.", 30),
     ])
     mountPanel({
       cached: asCached(post),
       getBoardMessages: async () => [
         makeMessage({ id: "msg_2", contentMarkdown: "Reply two body.", createdAt: "2026-06-22T12:00:20.000Z" }),
+        makeMessage({ id: "msg_9", contentMarkdown: "Backfilled member.", createdAt: "2026-06-22T12:00:40.000Z" }),
       ],
     })
 
-    expect(await screen.findByText("Live reply the snapshot predates.")).toBeTruthy()
+    expect(await screen.findByText("Backfilled member.")).toBeTruthy()
+    expect(screen.getByText("Live reply the snapshot predates.")).toBeTruthy()
     expect(screen.getByText("Reply two body.")).toBeTruthy()
   })
 
-  it("drops the cached snapshot once the rail is complete", async () => {
-    // `useQuery` keeps serving `data` after `enabled` flips false, and an inactive
-    // query can't be refetched — so a snapshot unioned in forever keeps rendering a
-    // message that has since left the conversation.
+  it("never renders a backfilled row the membership doesn't list", async () => {
+    // Membership is the rendering authority: a fetched snapshot supplies bodies,
+    // never members, so a row the conversation no longer lists stays invisible.
     const post = makePost()
     post.conversation.messageIds = ["msg_1", "msg_2", "msg_3"]
     post.totalReplies = 2
@@ -1335,15 +1335,35 @@ describe("ConversationPanel backfill merge", () => {
         makeMessage({ id: "msg_9", contentMarkdown: "Moved away.", createdAt: "2026-06-22T12:00:40.000Z" }),
       ],
     })
-    expect(await screen.findByText("Moved away.")).toBeTruthy()
+    expect(await screen.findByText("Reply two body.")).toBeTruthy()
 
-    // The rail catches up: every member is local, so the snapshot has nothing left
-    // to fill and its stale extra must stop rendering.
     await act(async () => {
       await db.events.bulkPut([cachedMessageEvent("msg_3", "Reply three body.", 30)])
     })
     expect(await screen.findByText("Reply three body.")).toBeTruthy()
-    await waitFor(() => expect(screen.queryByText("Moved away.")).toBeNull())
+    expect(screen.queryByText("Moved away.")).toBeNull()
+  })
+
+  it("a response that predates a re-file cannot resurrect the moved row, and does not loop", async () => {
+    // The race: the fetch left the server BEFORE `msg_9` was re-filed elsewhere,
+    // so its rows name a non-member. It must not render, and because
+    // `hasUnknownMembers` reads membership (all local) there is no refetch loop.
+    const post = makePost()
+    post.conversation.messageIds = ["msg_1", "msg_2"]
+    post.totalReplies = 1
+    const { getBoardMessages } = mountPanel({
+      cached: asCached(post),
+      getBoardMessages: async () => [
+        makeMessage({ id: "msg_1", contentMarkdown: "Opening message body." }),
+        makeMessage({ id: "msg_2", contentMarkdown: "Reply two body.", createdAt: "2026-06-22T12:00:20.000Z" }),
+        makeMessage({ id: "msg_9", contentMarkdown: "Re-filed elsewhere.", createdAt: "2026-06-22T12:00:40.000Z" }),
+      ],
+    })
+
+    expect(await screen.findByText("Reply two body.")).toBeTruthy()
+    await new Promise((resolve) => setTimeout(resolve, 200))
+    expect(screen.queryByText("Re-filed elsewhere.")).toBeNull()
+    expect(getBoardMessages).toHaveBeenCalledTimes(1)
   })
 
   it("does not let the cached board projection shadow the backfill's tombstone", async () => {
@@ -1565,6 +1585,19 @@ describe("backfill invalidation — mounted panel", () => {
     await new Promise((resolve) => setTimeout(resolve, 200))
     return spy.mock.calls.length
   }
+
+  it("fetches exactly once on a cold open", async () => {
+    // The baseline the other cases build on: keeping `conversation.messageIds` (a
+    // fresh array per render) in the invalidation effect's deps re-ran it every
+    // render, so the mount-time invalidation refetched the query the mount had
+    // just started. Asserting the absolute count is what makes that visible.
+    const { getBoardMessages } = mountPanel({
+      cached: withMembers(["msg_1", "msg_2"]),
+      getBoardMessages: bothMessages,
+    })
+    await settledCallCount(getBoardMessages)
+    expect(getBoardMessages).toHaveBeenCalledTimes(1)
+  })
 
   it("does not refetch when a membership change names only locally-present ids", async () => {
     const { getBoardMessages, setCached } = mountPanel({

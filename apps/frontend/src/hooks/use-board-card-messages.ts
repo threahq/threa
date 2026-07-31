@@ -865,15 +865,13 @@ export function useBoardCardMessages(
     // but a merged rail can pair one rail's fresh snapshot (echo present) with
     // another's stale one (temp still there) — without this the reply renders
     // doubled for that frame.
-    // The backfill fetch is the server's own member list, so it can name replies
-    // a stale `messageIds` snapshot doesn't — the panel used to render its rows
-    // wholesale for exactly that reason. Union the two so a fresher fetch still
-    // widens the conversation; the rail keeps precedence on every shared id.
-    const memberReplyIds =
-      backfillById === null
-        ? replyIds
-        : [...new Set([...replyIds, ...[...backfillById.keys()].filter((id) => id !== openingId)])]
-    const replyIdSet = new Set(memberReplyIds)
+    // Caches (rail, backfill store) supply BODIES; membership events supply
+    // MEMBERSHIP. A fetched snapshot can never widen the conversation — it may
+    // have left the server before a re-file and would replace-write a moved row
+    // back with no self-correction. Membership arrives through the event flow
+    // (or the panel's own fresh `getBoardPost`), so a backfill row renders only
+    // when `messageIds` lists it.
+    const replyIdSet = new Set(replyIds)
     const tagged = rail.taggedByConversation.get(conversationId)
     const unconfirmed = tagged
       ? tagged.filter((m) => !replyIdSet.has(m.id) && !rail.supersededClientIds.has(m.id))
@@ -927,7 +925,7 @@ export function useBoardCardMessages(
     // surface (collapsed card, expanded card, panel) instead of vanishing and
     // silently shifting every row below it up.
     const liveReplies: RenderableMessage[] = []
-    for (const id of memberReplyIds) {
+    for (const id of replyIds) {
       // Precedence: rail (authoritative by id) > backfill store > nothing. The
       // projection never reaches here — it is the whole-card fallback above.
       const message = rail.seen.has(id)
@@ -958,7 +956,7 @@ export function useBoardCardMessages(
     // it must not inflate the "N more" gap. Otherwise trust the server count, but never
     // below what's already on screen (a bridged reply fills its own slot, so it
     // mustn't also leave a phantom "1 more").
-    const fullySynced = memberReplyIds.every((id) => rail.seen.has(id) || backfillById?.has(id) === true)
+    const fullySynced = replyIds.every((id) => rail.seen.has(id) || backfillById?.has(id) === true)
     // `conversation:updated` can land BEFORE the message echo swaps the optimistic
     // row: `messageIds` then lists a real id the rail hasn't seen while the same
     // message is still on screen as a pending row under its client id. Counting

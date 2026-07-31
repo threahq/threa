@@ -630,11 +630,25 @@ function ConversationPanelBody({
   // arriving message, including the ones the rail had already delivered.
   const queryClient = useQueryClient()
   const memberKey = conversation.messageIds.join(",")
+  // What the browser can already answer with: the hook's local set, plus the
+  // landed response itself — its rows reach `knownMessageIds` only after an async
+  // IDB seed, and treating that window as "unknown" refetched the very response
+  // being seeded.
+  const backfillKey = allMessages?.map((m) => m.id).join(",") ?? ""
+  const coveredMessageIds = useMemo<ReadonlySet<string>>(
+    () => new Set([...knownMessageIds, ...(allMessages?.map((m) => m.id) ?? [])]),
+    [knownMessageIds, backfillKey]
+  )
   useEffect(() => {
-    if (!hasUnknownMembers(conversation.messageIds, knownMessageIds)) return
+    // Before the first response lands, the fetch the mount already started IS the
+    // answer to every unknown member — invalidating here refetches it (the cold
+    // open's double fetch).
+    if (!allMessages) return
+    if (!hasUnknownMembers(conversation.messageIds, coveredMessageIds)) return
     void queryClient.invalidateQueries({ queryKey: conversationKeys.boardMessages(conversation.id) })
-    // `memberKey` proxies `conversation.messageIds` (a fresh array per render).
-  }, [queryClient, conversation.id, conversation.messageIds, memberKey, knownMessageIds])
+    // `memberKey` proxies `conversation.messageIds` (a fresh array per render) —
+    // keeping the array itself here re-ran the effect on EVERY render.
+  }, [queryClient, conversation.id, memberKey, coveredMessageIds, allMessages])
 
   const replies: RenderableMessage[] = railReplies
   // Merge the viewer's own just-sent replies (deduped), then sort by time — a
