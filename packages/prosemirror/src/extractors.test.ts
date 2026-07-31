@@ -5,6 +5,7 @@ import {
   collectChannelStreamIds,
   collectGiphyEmbeds,
   collectLinkUrls,
+  collectMemoEmbedIds,
   collectMentionActorRefs,
   collectQuoteReplyMessageIds,
   collectUnresolvedChannelLinkSlugs,
@@ -775,5 +776,49 @@ describe("collectGiphyEmbeds", () => {
     expect(collectGiphyEmbeds(doc)).toEqual([
       { giphyUrl: "https://media.giphy.com/real.gif", title: "", width: undefined, height: undefined },
     ])
+  })
+})
+
+const memoEmbed = (memoId: string, title = "Memo"): JSONContent => ({
+  type: "memoEmbed",
+  attrs: { memoId, title },
+})
+
+describe("collectMemoEmbedIds", () => {
+  it("collects nested memo ids in document order", () => {
+    const doc: JSONContent = {
+      type: "doc",
+      content: [
+        { type: "paragraph", content: [{ type: "text", text: "see " }, memoEmbed("memo_a", "Auth rewrite")] },
+        {
+          type: "blockquote",
+          content: [{ type: "paragraph", content: [memoEmbed("memo_b")] }],
+        },
+      ],
+    }
+
+    expect(collectMemoEmbedIds(doc)).toEqual(["memo_a", "memo_b"])
+  })
+
+  it("dedupes repeated references to the same memo", () => {
+    const doc: JSONContent = {
+      type: "doc",
+      content: [{ type: "paragraph", content: [memoEmbed("memo_a"), memoEmbed("memo_a")] }],
+    }
+
+    expect(collectMemoEmbedIds(doc)).toEqual(["memo_a"])
+  })
+
+  it("ignores nodes without a usable memo id", () => {
+    const doc: JSONContent = {
+      type: "doc",
+      content: [
+        { type: "paragraph", content: [{ type: "memoEmbed", attrs: { memoId: "" } }] },
+        { type: "paragraph", content: [{ type: "memoEmbed", attrs: {} }] },
+        { type: "paragraph", content: [{ type: "text", text: "[Auth](memo:memo_z)" }] },
+      ],
+    }
+
+    expect(collectMemoEmbedIds(doc)).toEqual([])
   })
 })

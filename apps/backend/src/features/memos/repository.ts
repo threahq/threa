@@ -1,5 +1,5 @@
 import { sql, type Querier } from "../../db"
-import type { MemoType, KnowledgeType, MemoStatus, AuthoredByKind, MemoScope } from "@threa/types"
+import type { MemoType, KnowledgeType, MemoStatus, AuthoredByKind, MemoScope, MemoEmbedSummary } from "@threa/types"
 import {
   MEMO_KNOWLEDGE_TYPE_BOOST,
   MEMO_STREAM_TYPE_BOOST,
@@ -314,6 +314,72 @@ export const MemoRepository = {
       WHERE id = ANY(${ids}) AND workspace_id = ${workspaceId}
     `)
     return new Map(result.rows.map((row) => [row.id, mapRowToMemo(row)]))
+  },
+
+  /**
+   * Card content for memos referenced by a message in `citingRootStreamId`,
+   * for the payload that message ships on (INV-56: one batch, never per card).
+   *
+   * The access predicate is ROOM-UNIFORM, not per-viewer, because the payload
+   * is delivered to a room: a summary is emitted only when every viewer of the
+   * citing stream can open the memo. That means the memo's source stream
+   * RESOLVED TO ITS ROOT is the citing root, or that root is public.
+   *
+   * Resolving to the root is the load-bearing part. A thread copies its root's
+   * `visibility` at creation and is never re-synced, so a thread of a channel
+   * that was later privatized still reads `public` on its own row —
+   * `messaging/sharing/access-check.ts` documents that trap and closes it the
+   * same way. Checking `s.visibility` here instead would leak exactly those
+   * memos.
+   *
+   * `scope <> 'user'` keeps the private tier (roadmap 6.4) off the wire
+   * unconditionally: a user-scoped memo is visible to its owner alone, and no
+   * room is uniformly its owner.
+   *
+   * No status filter — an archived or superseded memo resolves on the detail
+   * path today, so summarising it preserves behaviour rather than changing it.
+   */
+  async findEmbedSummaries(
+    db: Querier,
+    workspaceId: string,
+    memoIds: string[],
+    citingRootStreamId: string
+  ): Promise<Map<string, MemoEmbedSummary>> {
+    if (memoIds.length === 0) return new Map()
+    const result = await db.query<{
+      id: string
+      title: string
+      knowledge_type: string
+      memo_type: string
+      tags: string[]
+      updated_at: Date
+    }>(sql`
+      SELECT m.id, m.title, m.knowledge_type, m.memo_type, m.tags, m.updated_at
+      FROM memos m
+      LEFT JOIN messages src_msg ON src_msg.id = m.source_message_id
+      LEFT JOIN conversations src_conv ON src_conv.id = m.source_conversation_id
+      LEFT JOIN messages first_msg ON first_msg.id = m.source_message_ids[1]
+      LEFT JOIN streams s ON s.id = COALESCE(src_msg.stream_id, src_conv.stream_id, first_msg.stream_id)
+      LEFT JOIN streams root ON root.id = COALESCE(s.root_stream_id, s.id)
+      WHERE m.id = ANY(${memoIds})
+        AND m.workspace_id = ${workspaceId}
+        AND m.scope <> 'user'
+        AND root.id IS NOT NULL
+        AND (root.id = ${citingRootStreamId} OR root.visibility = 'public')
+    `)
+    return new Map(
+      result.rows.map((row) => [
+        row.id,
+        {
+          memoId: row.id,
+          title: row.title,
+          knowledgeType: row.knowledge_type as KnowledgeType,
+          memoType: row.memo_type as MemoType,
+          tags: row.tags,
+          updatedAt: row.updated_at.toISOString(),
+        },
+      ])
+    )
   },
 
   async findByWorkspace(
