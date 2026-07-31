@@ -207,6 +207,19 @@ async function main() {
     )
   }
 
+  // Both sources must agree on the whole set before anything is built. An emoji
+  // Unicode lists but emojibase does not would otherwise pick up no aliases and
+  // no keywords at all, and — already holding a shortcode from the previous run
+  // or an override — sail past the nameless check below as a silently degraded
+  // entry.
+  const unresolved = unicodeEmojis.filter(({ emoji }) => !bySource.has(normalizeEmoji(emoji)))
+  if (unresolved.length > 0) {
+    throw new Error(
+      `${unresolved.length} emoji are absent from emojibase ${EMOJIBASE_VERSION}: ` +
+        unresolved.map(({ emoji }) => emoji).join(" ")
+    )
+  }
+
   const orderInGroup = new Map<string, number>()
   const entries: EmojiEntry[] = []
   const added: EmojiEntry[] = []
@@ -236,22 +249,32 @@ async function main() {
   }
 
   for (const [emoji, shortcode] of Object.entries(SHORTCODE_OVERRIDES)) {
-    const entry = added.find((candidate) => normalizeEmoji(candidate.emoji) === normalizeEmoji(emoji))
-    if (!entry) throw new Error(`SHORTCODE_OVERRIDES has ${emoji}, which is not a new emoji — drop the entry`)
-    if (owner.has(shortcode))
-      throw new Error(`SHORTCODE_OVERRIDES gives ${emoji} "${shortcode}", owned by ${owner.get(shortcode)}`)
+    const entry = entries.find((candidate) => normalizeEmoji(candidate.emoji) === normalizeEmoji(emoji))
+    if (!entry) {
+      throw new Error(`SHORTCODE_OVERRIDES names ${emoji}, which Emoji ${EXPECTED_EMOJI_VERSION} does not list`)
+    }
+    // Already applied by an earlier run and read back from the file — the seed
+    // loop above put it in `owner`, so re-claiming it would throw on itself.
+    if (entry.shortcodes.includes(shortcode)) continue
+    const existingOwner = owner.get(shortcode)
+    if (existingOwner !== undefined) {
+      throw new Error(`SHORTCODE_OVERRIDES gives ${emoji} "${shortcode}", owned by ${existingOwner}`)
+    }
     owner.set(shortcode, entry.emoji)
     entry.shortcodes.push(shortcode)
   }
 
-  const claimOrder = [...entries.filter((entry) => entry.shortcodes.length > 0), ...added]
+  // Partition by whether the emoji was already in the file, not by whether it
+  // currently holds a shortcode: an override runs before this and would put its
+  // emoji in both halves.
+  const preexisting = entries.filter((entry) => previous.has(normalizeEmoji(entry.emoji)))
+  const claimOrder = [...preexisting, ...added]
   const claimed: Record<string, number> = {}
   const contested: string[] = []
   for (const [index, set] of shortcodeSets.entries()) {
     const setName = SHORTCODE_SETS[index]
     for (const entry of claimOrder) {
-      const source = bySource.get(normalizeEmoji(entry.emoji))
-      if (!source) continue
+      const source = bySource.get(normalizeEmoji(entry.emoji))!
       for (const shortcode of toList(set[source.hexcode])) {
         if (!SHORTCODE_BODY.test(shortcode)) continue
         const existingOwner = owner.get(shortcode)
@@ -268,8 +291,7 @@ async function main() {
 
   let keywordCount = 0
   for (const entry of entries) {
-    const source = bySource.get(normalizeEmoji(entry.emoji))
-    if (!source) continue
+    const source = bySource.get(normalizeEmoji(entry.emoji))!
     const covered = new Set(entry.shortcodes.map(fold))
     for (const raw of [...(source.tags ?? []), source.label]) {
       const keyword = sanitizeKeyword(raw)
