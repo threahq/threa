@@ -133,16 +133,20 @@ const NO_EXCLUSIONS: BoardExclusionState = { hidden: new Map(), muted: new Set()
 
 /**
  * The network seed's state, as the board page knows it. `settled` is "the query
- * is no longer loading (or the escape-hatch timeout fired)"; `newestId` is the
- * newest conversation id the settled query returned, or null when there is
- * nothing to wait for (timeout, error, empty). The hook holds its first commit
- * until the seed has SETTLED *and* `newestId` is actually visible in the IDB
- * feed — the query settling only means the response arrived, while the rows land
- * one or more renders later through an un-awaited bulkPut + liveQuery re-emission.
+ * is no longer loading (or the escape-hatch timeout fired)"; `newest` is the
+ * newest conversation the settled query returned (id + its `lastActivityAt` in
+ * ms), or null when there is nothing to wait for (timeout, error, empty). The
+ * hook holds its first commit until the seed has SETTLED *and* that SNAPSHOT —
+ * not merely the id — is visible in the IDB feed: when the newest activity is a
+ * reply to an old conversation the id is already cached at its stale activity,
+ * so an id-presence check opens the gate before the bulkPut lands and commits
+ * the stale order. Matching the activity proves the seeded rows arrived (they
+ * land one or more renders later through an un-awaited bulkPut + liveQuery
+ * re-emission).
  */
 export interface BoardSeedState {
   settled: boolean
-  newestId: string | null
+  newest: { id: string; activityMs: number } | null
 }
 
 function matchesScope(post: CachedBoardPost, scope: BoardScope | null): boolean {
@@ -461,10 +465,13 @@ export function useStableBoardView(
   // Persisted IDB resolves in milliseconds, long before the network seed page
   // lands: committing then would freeze last session's feed and classify
   // everything created since as buffered ("N new" on a cold load).
+  const seedNewest = seed?.newest ?? null
   const seedLanded =
     seed !== undefined &&
     seed.settled &&
-    (seed.newestId === null || (rawLive?.some((post) => post.conversation.id === seed.newestId) ?? false))
+    (seedNewest === null ||
+      (rawLive?.some((post) => post.conversation.id === seedNewest.id && postMs(post) >= seedNewest.activityMs) ??
+        false))
   const holdingForSeed = seed !== undefined && !seedLanded && !hasCommittedForWorkspaceRef.current
   if (live && !holdingForSeed) {
     liveRef.current = live

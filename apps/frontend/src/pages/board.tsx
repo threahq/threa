@@ -338,7 +338,7 @@ function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: Boar
   // The seed gate: hold the board's first commit until the seeded rows are
   // actually in IDB, so a cold load doesn't freeze last session's order and
   // strand everything since behind an "N new" pill. The timeout is the offline
-  // escape hatch — `newestId: null` then means "commit whatever you have".
+  // escape hatch — `newest: null` then means "commit whatever you have".
   const [seedTimedOut, setSeedTimedOut] = useState(false)
   const seedWorkspaceRef = useRef(workspaceId)
   // A render-phase `setState` doesn't update this render's binding, so the
@@ -353,10 +353,20 @@ function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: Boar
     const timer = setTimeout(() => setSeedTimedOut(true), SEED_COMMIT_TIMEOUT_MS)
     return () => clearTimeout(timer)
   }, [workspaceId])
-  const newestSeedId = data?.pages[0]?.posts[0]?.conversation.id ?? null
+  const newestSeedPost = data?.pages[0]?.posts[0]
+  const newestSeedId = newestSeedPost?.conversation.id ?? null
+  const newestSeedActivityMs = newestSeedPost ? Date.parse(newestSeedPost.conversation.lastActivityAt) : null
   const seedSettled = !isLoading || timedOut
-  const seedNewestId = timedOut ? null : newestSeedId
-  const seed = useMemo(() => ({ settled: seedSettled, newestId: seedNewestId }), [seedSettled, seedNewestId])
+  const seed = useMemo(
+    () => ({
+      settled: seedSettled,
+      newest:
+        timedOut || newestSeedId === null || newestSeedActivityMs === null
+          ? null
+          : { id: newestSeedId, activityMs: newestSeedActivityMs },
+    }),
+    [seedSettled, timedOut, newestSeedId, newestSeedActivityMs]
+  )
   const {
     posts,
     activityById,
