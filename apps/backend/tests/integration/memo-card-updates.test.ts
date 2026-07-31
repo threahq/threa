@@ -262,4 +262,64 @@ describe("memo:updated", () => {
     const summary = events.rows[0]?.payload.summary as Record<string, unknown>
     expect(Object.keys(summary).sort()).toEqual(["knowledgeType", "memoId", "memoType", "tags", "title", "updatedAt"])
   })
+
+  // findCitingStreamIds scans content_markdown with LIKE '%(memo:<id>)%' — a
+  // string tie to the wire format. This canary routes a memoEmbed node through
+  // the REAL serializer and the real create path, so if the serialized shape
+  // ever drifts from the pattern, this reddens instead of memo:updated silently
+  // reaching no one. The other tests hand-write their markdown and cannot see
+  // that drift.
+  test("the citation scan matches what the real serializer stores", async () => {
+    const { serializeToMarkdown } = await import("@threa/prosemirror")
+    const canary = memoId()
+    const sourceMsg = messageId()
+    await withTransaction(pool, async (client) => {
+      const { MessageRepository } = await import("../../src/features/messaging")
+      await MessageRepository.insert(client, {
+        id: sourceMsg,
+        streamId: publicChannel,
+        sequence: sequence++,
+        authorId: testUserId,
+        authorType: "user",
+        ...testMessageContent("source"),
+      })
+      await MemoRepository.insert(client, {
+        id: canary,
+        workspaceId: testWorkspaceId,
+        memoType: "message",
+        sourceMessageId: sourceMsg,
+        title: "Serializer canary",
+        abstract: "abstract",
+        keyPoints: [],
+        sourceMessageIds: [sourceMsg],
+        participantIds: [testUserId],
+        knowledgeType: "decision",
+        tags: [],
+        status: "active",
+      })
+    })
+
+    const contentJson: JSONContent = {
+      type: "doc",
+      content: [
+        {
+          type: "paragraph",
+          content: [
+            { type: "text", text: "canary " },
+            { type: "memoEmbed", attrs: { memoId: canary, title: "Serializer canary" } },
+          ],
+        },
+      ],
+    }
+    await eventService.createMessage({
+      workspaceId: testWorkspaceId,
+      streamId: publicChannel,
+      authorId: testUserId,
+      authorType: "user",
+      contentJson,
+      contentMarkdown: serializeToMarkdown(contentJson),
+    })
+
+    expect(await MemoRepository.findCitingStreamIds(pool, testWorkspaceId, canary)).toEqual([publicChannel])
+  })
 })
