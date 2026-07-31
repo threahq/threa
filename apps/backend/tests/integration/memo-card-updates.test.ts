@@ -260,7 +260,15 @@ describe("memo:updated", () => {
       `SELECT payload FROM outbox WHERE event_type = 'memo:updated' LIMIT 1`
     )
     const summary = events.rows[0]?.payload.summary as Record<string, unknown>
-    expect(Object.keys(summary).sort()).toEqual(["knowledgeType", "memoId", "memoType", "tags", "title", "updatedAt"])
+    expect(Object.keys(summary).sort()).toEqual([
+      "knowledgeType",
+      "memoId",
+      "memoType",
+      "tags",
+      "title",
+      "updatedAt",
+      "version",
+    ])
   })
 
   // The destination side of a move bulkPuts server payloads over the client's
@@ -338,6 +346,28 @@ describe("memo:updated", () => {
     )
     const embeds = (movedCreated?.payload as { memoEmbeds?: Array<{ title: string }> }).memoEmbeds
     expect(embeds?.map((s) => s.title)).toEqual(["Retitled before the move"])
+  })
+
+  // The card version is what lets the client order a raced edit payload
+  // against a memo:updated patch absolutely — ms updatedAt can tie.
+  test("every card-field update bumps the card version monotonically", async () => {
+    await explorer.update(
+      testWorkspaceId,
+      memo,
+      { accessibleStreamIds: [sourceChannel, publicChannel, otherPrivateChannel], userId: testUserId },
+      { title: "Launch in July" }
+    )
+
+    const result = await pool.query<{ payload: { summary: { version: number } } }>(
+      `SELECT payload FROM outbox WHERE event_type = 'memo:updated' AND payload->>'memoId' = $1 ORDER BY id ASC`,
+      [memo]
+    )
+    // Two updates so far (test 1's retitle, this one); each fans out to two
+    // citing streams with the SAME version — monotone across updates, equal
+    // within one.
+    const versions = result.rows.map((r) => r.payload.summary.version)
+    expect([...versions].sort((a, b) => a - b)).toEqual(versions)
+    expect(versions.at(-1)).toBeGreaterThan(versions[0])
   })
 
   // findCitingStreamIds scans content_markdown with LIKE '%(memo:<id>)%' — a

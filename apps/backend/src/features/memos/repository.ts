@@ -353,8 +353,9 @@ export const MemoRepository = {
       memo_type: string
       tags: string[]
       updated_at: Date
+      card_version: number
     }>(sql`
-      SELECT m.id, m.title, m.knowledge_type, m.memo_type, m.tags, m.updated_at
+      SELECT m.id, m.title, m.knowledge_type, m.memo_type, m.tags, m.updated_at, m.card_version
       FROM memos m
       LEFT JOIN messages src_msg ON src_msg.id = m.source_message_id
       LEFT JOIN conversations src_conv ON src_conv.id = m.source_conversation_id
@@ -377,6 +378,7 @@ export const MemoRepository = {
           memoType: row.memo_type as MemoType,
           tags: row.tags,
           updatedAt: row.updated_at.toISOString(),
+          version: row.card_version,
         },
       ])
     )
@@ -723,6 +725,10 @@ export const MemoRepository = {
       return this.findById(db, id)
     }
 
+    // Card ordering: every field update bumps the card version so a
+    // memo:updated patch can never be repainted backwards by a raced,
+    // pre-update edit payload (ms `updatedAt` ties; this cannot).
+    updates.push(`card_version = card_version + 1`)
     updates.push(`updated_at = NOW()`)
     values.push(id)
 

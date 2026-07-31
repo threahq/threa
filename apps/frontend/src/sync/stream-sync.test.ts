@@ -3156,6 +3156,52 @@ describe("registerStreamSocketHandlers — shared-message slot ingestion (Amendm
     expect((row?.payload as { memoEmbeds: Array<{ title: string }> }).memoEmbeds).toEqual([patched])
   })
 
+  // Two memo edits inside the same millisecond tie on updatedAt — the card
+  // version is what still orders them. Same-timestamp fixtures on purpose:
+  // an updatedAt comparison alone would let the older edit win here.
+  it("message:edited defers to the card version when updatedAt ties", async () => {
+    const streamId = "stream_memo_version_tie"
+    const queryClient = new QueryClient()
+    const base = {
+      memoId: "memo_tied",
+      knowledgeType: "decision" as const,
+      memoType: "conversation" as const,
+      tags: [],
+      updatedAt: "2026-07-31T12:00:00.000Z",
+    }
+    const patched = { ...base, title: "Second edit", version: 3 }
+    const preUpdate = { ...base, title: "First edit", version: 2 }
+    await db.events.put({
+      ...makeEvent({
+        id: "evt_tied",
+        streamId,
+        sequence: "50",
+        payload: { messageId: "msg_tied", contentMarkdown: "old", memoEmbeds: [patched] },
+      }),
+      workspaceId: "ws_1",
+      _sequenceNum: 50,
+      _cachedAt: Date.now(),
+    })
+
+    const { socket, emit } = createTestSocket()
+    const cleanup = registerStreamSocketHandlers(socket, "ws_1", streamId, queryClient)
+    await emit("message:edited", {
+      workspaceId: "ws_1",
+      streamId,
+      event: makeEvent({
+        id: "evt_tied_edit",
+        streamId,
+        sequence: "101",
+        eventType: "message_edited",
+        payload: { messageId: "msg_tied", contentJson: {}, contentMarkdown: "edited", memoEmbeds: [preUpdate] },
+      }),
+    })
+    cleanup()
+
+    const row = await db.events.get("evt_tied")
+    expect((row?.payload as { memoEmbeds: Array<{ title: string }> }).memoEmbeds).toEqual([patched])
+  })
+
   // Label pages render from their own query, not db.events; the backend
   // resolves their summaries fresh at read, so invalidation IS their repaint.
   it("memo:updated invalidates label message queries but not the label list", async () => {

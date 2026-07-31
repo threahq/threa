@@ -1362,10 +1362,18 @@ export function registerStreamSocketHandlers(
         // carried, empty included, so a removed reference loses its card).
         // Per memo, though, a `memo:updated` patch may have landed while this
         // edit event was in flight carrying the pre-update summary — the
-        // strictly newer updatedAt wins so the card never repaints backwards.
+        // strictly newer one wins so the card never repaints backwards.
+        // `card_version` orders absolutely; ms `updatedAt` (which can tie on
+        // two same-millisecond edits) is the fallback for summaries stored
+        // before the version shipped.
         memoEmbeds: (editPayload.memoEmbeds ?? []).map((entry) => {
           const prior = (p.memoEmbeds as MemoEmbedSummary[] | undefined)?.find((x) => x.memoId === entry.memoId)
-          return prior && Date.parse(prior.updatedAt) > Date.parse(entry.updatedAt) ? prior : entry
+          if (!prior) return entry
+          const priorIsNewer =
+            prior.version !== undefined && entry.version !== undefined
+              ? prior.version > entry.version
+              : Date.parse(prior.updatedAt) > Date.parse(entry.updatedAt)
+          return priorIsNewer ? prior : entry
         }),
         editedAt: editEvent.createdAt,
       }))
