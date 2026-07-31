@@ -263,6 +263,83 @@ describe("memo:updated", () => {
     expect(Object.keys(summary).sort()).toEqual(["knowledgeType", "memoId", "memoType", "tags", "title", "updatedAt"])
   })
 
+  // The destination side of a move bulkPuts server payloads over the client's
+  // cache — a memo:updated patch the client applied would be repainted
+  // backwards by the stored snapshot. The move re-resolves at move time.
+  test("a move ships current summaries, not the stored snapshot", async () => {
+    const moved = memoId()
+    const srcMsg = messageId()
+    await withTransaction(pool, async (client) => {
+      const { MessageRepository } = await import("../../src/features/messaging")
+      await MessageRepository.insert(client, {
+        id: srcMsg,
+        streamId: publicChannel,
+        sequence: sequence++,
+        authorId: testUserId,
+        authorType: "user",
+        ...testMessageContent("source"),
+      })
+      await MemoRepository.insert(client, {
+        id: moved,
+        workspaceId: testWorkspaceId,
+        memoType: "message",
+        sourceMessageId: srcMsg,
+        title: "Before the move",
+        abstract: "abstract",
+        keyPoints: [],
+        sourceMessageIds: [srcMsg],
+        participantIds: [testUserId],
+        knowledgeType: "decision",
+        tags: [],
+        status: "active",
+      })
+    })
+
+    const { StreamMemberRepository } = await import("../../src/features/streams")
+    await StreamMemberRepository.insert(pool, publicChannel, testUserId)
+
+    const target = await eventService.createMessage({
+      workspaceId: testWorkspaceId,
+      streamId: publicChannel,
+      authorId: testUserId,
+      authorType: "user",
+      ...testMessageContent("thread anchor"),
+    })
+    const citing = await eventService.createMessage({
+      workspaceId: testWorkspaceId,
+      streamId: publicChannel,
+      authorId: testUserId,
+      authorType: "user",
+      ...bodyCiting("citing, about to move", moved),
+    })
+    await pool.query(`UPDATE memos SET title = 'Retitled before the move' WHERE id = $1`, [moved])
+
+    const validation = await eventService.validateMoveMessagesToThread({
+      workspaceId: testWorkspaceId,
+      sourceStreamId: publicChannel,
+      targetMessageId: target.id,
+      messageIds: [citing.id],
+      actorId: testUserId,
+    })
+    await eventService.moveMessagesToThread({
+      workspaceId: testWorkspaceId,
+      sourceStreamId: publicChannel,
+      targetMessageId: target.id,
+      messageIds: [citing.id],
+      actorId: testUserId,
+      leaseKey: validation.leaseKey,
+    })
+
+    const movedOutbox = await pool.query<{ payload: { events: Array<{ eventType: string; payload: unknown }> } }>(
+      `SELECT payload FROM outbox WHERE event_type = 'messages:moved' ORDER BY id DESC LIMIT 1`
+    )
+    const movedCreated = movedOutbox.rows[0].payload.events.find(
+      (e) => e.eventType === "message_created" && (e.payload as { messageId?: string }).messageId === citing.id
+    )
+    const embeds = (movedCreated?.payload as { memoEmbeds?: Array<{ title: string }> }).memoEmbeds
+    expect(embeds?.map((s) => s.title)).toEqual(["Retitled before the move"])
+  })
+
   // findCitingStreamIds scans content_markdown with LIKE '%(memo:<id>)%' — a
   // string tie to the wire format. This canary routes a memoEmbed node through
   // the REAL serializer and the real create path, so if the serialized shape
