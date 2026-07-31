@@ -4,10 +4,10 @@ description: |
 metadata:
     author: github
     github-path: skills/gh-stack
-    github-ref: refs/tags/v0.0.8
+    github-ref: refs/tags/v0.1.0
     github-repo: https://github.com/github/gh-stack
-    github-tree-sha: 26320e8be554b0cc1d122c353e8897f0c69739cd
-    version: 0.0.8
+    github-tree-sha: c95c8b5b4dd850f3fef007b304428f5684f2fb87
+    version: 0.1.0
 name: gh-stack
 ---
 # gh-stack
@@ -35,10 +35,11 @@ Use this skill when the user wants to:
 
 ## Prerequisites
 
-The GitHub CLI (`gh`) v2.0+ must be installed and authenticated. Install the extension with:
+The GitHub CLI (`gh`) v2.0+ must be installed and authenticated, plus `gh-stack` **v0.1.0 or newer** — that is the release that added `gh stack merge`. Install or upgrade with:
 
 ```bash
-gh extension install github/gh-stack
+gh extension install github/gh-stack   # or: gh extension upgrade stack
+gh stack --version
 ```
 
 Before using `gh stack`, configure git to prevent interactive prompts:
@@ -55,13 +56,13 @@ git config remote.pushDefault origin     # if multiple remotes exist (skips remo
 1. **Always supply branch names as positional arguments** to `init`, `add`, and `checkout`. Running these commands without arguments triggers interactive prompts. Branch names are used exactly as given — a name is never prefixed or transformed, so `gh stack add refactor/foo` creates a branch named `refactor/foo`.
 2. **Always use `--auto` with `gh stack submit`** to auto-generate PR titles. Without `--auto`, `submit` prompts for a title for each new PR.
 3. **Always use `--json` with `gh stack view`.** Without `--json`, the command launches an interactive TUI that cannot be operated by agents. There is no other appropriate flag — always pass `--json`.
-4. **Use `--remote <name>` when multiple remotes are configured**, or pre-configure `git config remote.pushDefault origin`. Without this, `push`, `submit`, `sync`, `link`, and `checkout` trigger an interactive remote picker.
+4. **Handle multiple remotes.** Pre-configure `git config remote.pushDefault origin`, or pass `--remote <name>` to the commands that accept it: `push`, `submit`, `sync`, `rebase`, `link`. `checkout`, `modify`, and `trunk` resolve a remote but have **no `--remote` flag** — they rely on `remote.pushDefault`, and error out non-interactively when multiple remotes exist with no configured default.
 5. **Avoid branches shared across multiple stacks.** If a branch belongs to multiple stacks, commands exit with code 6. Check out a non-shared branch first.
 6. **Plan your stack layers by dependency order before writing code.** Foundational changes (models, APIs, shared utilities) go in lower branches; dependent changes (UI, consumers) go in higher branches. Think through the dependency chain before running `gh stack init`.
 7. **Use standard `git add` and `git commit` for staging and committing.** This gives you full control over which changes go into each branch. The `-Am` shortcut is available but should not be the default approach—stacked PRs are most effective when each branch contains a deliberate, logical set of changes.
 8. **Navigate down the stack when you need to change a lower layer.** If you're working on a frontend branch and realize you need API changes, don't hack around it at the current layer. Navigate to the appropriate branch (`gh stack down`, `gh stack checkout`, or `gh stack bottom`), make and commit the changes there, run `gh stack rebase --upstack`, then navigate back up to continue.
 9. **Use `gh stack link` for external tool workflows.** When branches are managed by an external tool (jj, Sapling, etc.), use `gh stack link branch-a branch-b`. `link` does not rely on local tracking state and is intended for API-driven PR and stack management. Provide at least two branches/PRs to create or update a stack, or a stack number followed by the new branches/PRs to append them to the top of an existing stack (e.g. `gh stack link 7 branch-c`).
-10. **Merge with the guarded wrapper, never the raw website route.** GitHub's preview API has no token-authenticated stack merge endpoint. Run `bun .agents/skills/gh-stack/scripts/merge-stack.ts <target-pr> --yes`; the explicit target determines how much of the stack lands. The wrapper validates stack membership, every selected PR's browser mergeability, and unchanged head SHAs before using an isolated copy of the logged-in Chrome session. Never extract, print, or persist Chrome cookies or `X-Fetch-Nonce` values.
+10. **Merge with `gh stack merge <target-pr> --yes --squash`.** The explicit target determines how much of the stack lands: everything up to and including that PR merges atomically — if any one PR can't merge, none do. Always pass an explicit target, `--yes`, and a method. **With no target, a non-interactive terminal merges the entire stack without prompting** (an interactive one opens a wizard), and with no method flag the last-used method is silently reused. Never `gh pr merge` a PR in a linked Stack — GitHub refuses it.
 11. **`gh stack submit` is what makes a Stack — creating the PRs is not.** Opening the layer PRs with `gh pr create --base <parent>` (or the `create-pr` skill) chains their bases but does **not** register a GitHub Stack: no stack nav block, and `gh stack` merge/sync won't drive them. After the PRs exist, run `gh stack submit --auto` once — it adopts them ("… is up to date") and links the stack. If you built a stack with `init`/`add`/`sync` but skipped `submit`, you have unlinked PRs; `gh stack submit --auto --open` retrofits the linkage in place with no new PRs. Confirm with `gh stack view --json` (a `Stack #NNNN` exists).
 
 **Never do any of the following — each triggers an interactive prompt or TUI that will hang:**
@@ -69,8 +70,12 @@ git config remote.pushDefault origin     # if multiple remotes exist (skips remo
 - ❌ `gh stack submit` without `--auto` — always use `gh stack submit --auto`
 - ❌ `gh stack init` without branch arguments — always provide branch names
 - ❌ `gh stack add` without a branch name — always provide a branch name
-- ❌ `gh stack checkout` without an argument — always provide a PR number or branch name
-- ❌ `gh stack checkout <pr-number>` when a different local stack already exists on those branches — this triggers an unbypassable conflict resolution prompt; use `gh stack unstack` first to remove the local stack, then retry the checkout
+- ❌ `gh stack add -A` / `-u` without `-m` — opens an editor for the commit message; always pair with `-m`
+- ❌ `gh stack checkout` without an argument — always provide a stack number, PR number, PR URL, or branch name
+- ❌ `gh stack checkout <pr-number>` when a different local stack already exists on those branches — this triggers an unbypassable conflict resolution prompt; use `gh stack unstack --local` first to drop only the local tracking state (the stack on GitHub stays intact), then retry the checkout
+- ❌ `gh stack merge` without a target and `--yes` — always `gh stack merge <pr> --yes --squash`
+- ❌ `gh stack modify` — restructuring is a TUI with no non-interactive equivalent; use `unstack` + `init` instead (see [Restructure a stack](#restructure-a-stack-remove-a-branch-reorder-or-rename))
+- ❌ `gh stack switch` — an interactive branch picker; use `up`/`down`/`top`/`bottom`/`checkout <branch>`
 
 ## Thinking about stack structure
 
@@ -161,13 +166,15 @@ Small, incidental fixes (e.g., fixing a typo you noticed) can go in the current 
 | View stack details (JSON) | `gh stack view --json` |
 | Switch branches up/down in stack | `gh stack up [n]` / `gh stack down [n]` |
 | Switch to top/bottom branch | `gh stack top` / `gh stack bottom` |
+| Jump to trunk | `gh stack trunk` |
 | Check out by stack number | `gh stack checkout 7` |
 | Check out by PR | `gh stack checkout 42` |
+| Check out by PR URL | `gh stack checkout https://github.com/owner/repo/pull/42` |
 | Check out by branch (local only) | `gh stack checkout feature-auth` |
 | Tear down the current stack to restructure it | `gh stack unstack` |
 | Tear down a specific stack by number | `gh stack unstack 7` |
-| Validate a stack merge | `bun .agents/skills/gh-stack/scripts/merge-stack.ts 42 --dry-run` |
-| Merge through PR #42 | `bun .agents/skills/gh-stack/scripts/merge-stack.ts 42 --yes` |
+| Merge the stack through PR #42 | `gh stack merge 42 --yes --squash` |
+| Merge a whole stack by stack number | `gh stack merge 7 --yes --squash` |
 
 ---
 
@@ -322,32 +329,25 @@ gh stack sync --prune
 
 ### Merge a stack from an agent
 
-GitHub's private-preview web UI can merge stacked PRs server-side, but `gh stack` v0.0.8 and the documented REST API have no merge operation. This repository includes a guarded browser-session wrapper:
+`gh stack merge` (v0.1.0+) drives GitHub's atomic stack merge. Every PR up to and including the target lands in one all-or-nothing operation — if any one of them can't merge, none do.
 
 ```bash
-# Optional: validate the selected PRs without sending a merge request
-bun .agents/skills/gh-stack/scripts/merge-stack.ts 42 --dry-run
-
 # Squash-merge PR #42 and every unmerged PR below it
-bun .agents/skills/gh-stack/scripts/merge-stack.ts 42 --yes
+gh stack merge 42 --yes --squash
+
+# Merge an entire stack you don't have checked out, by stack number
+gh stack merge 7 --yes --squash
 ```
 
-The target PR selects the intended range: target the top PR to land the whole stack or a lower PR for a partial stack merge. The wrapper treats any merged or closed PR above that target as an over-merge and fails loudly. `--method squash` is the default; `merge` and `rebase` are also accepted.
+**Always pass an explicit target and `--yes`.** With no target, the current branch's stack is used; in an interactive terminal that opens a wizard for range, method, and confirmation. In a non-interactive terminal, or with `--yes`, it merges without prompting using your last-used merge method — so pass `--squash` (or `--merge` / `--rebase`) explicitly rather than inheriting whatever ran last.
 
-The wrapper:
+A bare number is resolved as a **stack number first, then a PR number**. In a repo where stack numbers and PR numbers overlap, that is a real ambiguity: `gh stack merge 42` may target stack #42 rather than PR #42. Confirm the intended target with `gh stack view --json` first, and prefer a stack number only when you mean the whole stack.
 
-1. Resolves the target PR's GitHub stack through the preview REST API.
-2. Rejects closed or draft entries in the selected range.
-3. Takes a consistent SQLite snapshot inside a mode-`0700` temporary directory, deletes every non-GitHub cookie, and vacuums the copy.
-4. Starts isolated headless Chrome over private DevTools pipes and verifies every selected entry is `MERGEABLE/READY`.
-5. Re-reads the stack and aborts if its base, ordered selected entries, states, or head SHAs changed.
-6. Sends GitHub's internal `page_data/enqueue_stack` request, then polls until every selected PR is merged with the expected head and every PR above the target remains unmerged.
-7. Treats a lost/timeout response as ambiguous and watches the stack before allowing a retry.
-8. Kills the isolated browser and deletes the copied browser state on success, failure, repeated `SIGINT`, `SIGTERM`, or `SIGHUP`.
+**Before merging:** `gh stack merge` checks only that each PR is open and not a draft. Branch protection, required checks, and repository rules are evaluated by GitHub when the merge runs, and any failure comes back as a merge error — so verify CI is green yourself before calling it. Bypassing merge requirements is not supported for stacks.
 
-Requirements: Bun, `gh` authentication for REST reads, Google Chrome with an active github.com session, and a repository enrolled in the Stacked PRs preview. Override profile detection with `GH_STACK_CHROME_PROFILE` or `--chrome-profile`; override Chrome with `GH_STACK_CHROME_BIN` or `--chrome-bin`.
+**Merge queues:** if the base branch uses a merge queue, the stack is enqueued rather than merged immediately. The queue picks the merge method (your `--squash` is ignored with a warning), and the PRs land as the queue processes them — possibly in separate groups, so "enqueued" is not "merged". Poll `gh stack view --json` for `isQueued` / `state: "QUEUED"`.
 
-This is private website behavior and may change without notice. The route exposes no expected-head compare-and-swap field: the wrapper verifies topology and heads immediately before enqueue and checks the merged heads afterward, but cannot eliminate the narrow race between those operations. A failure must stop loudly; do not fall back to unstacking automatically. If browser merging stops working, try `gh pr merge <bottom-pr>` first, then use the documented per-layer recovery only after observing the actual error.
+**On failure, stop and report.** Do NOT fall back to `gh stack unstack` and merging per layer: unstacking deletes base branches on merge, which auto-closes every PR above, and GitHub then refuses both reopen and base change — each PR has to be recreated by hand. `gh pr merge` on a PR in a linked Stack is refused by GitHub outright ("must be merged sequentially using the stack merge API").
 
 ### Squash-merge recovery
 
@@ -433,6 +433,8 @@ git branch -m old-branch-1 new-branch-1
 gh stack init --base main new-branch-1 new-branch-2 new-branch-3
 ```
 
+`gh stack modify` does the same thing (drop, fold, reorder, insert, rename) in one interactive TUI committed with Ctrl+S, but it is **TTY-only with no non-interactive equivalent** — agents must use `unstack` + `init`. If a `modify` session was started by hand and left the stack mid-flight (exit code 10), `gh stack modify --abort` restores the pre-modify state.
+
 ---
 
 ## Commands
@@ -515,7 +517,7 @@ gh stack add -um "Fix auth bug" auth-fix
 
 **Behavior notes:**
 
-- `-A` and `-u` are mutually exclusive.
+- `-A` and `-u` are mutually exclusive. Passing either **without** `-m` opens an editor for the commit message — always pair them with `-m`.
 - When the current branch has no commits (e.g., right after `init`), `add -Am` commits directly on the current branch instead of creating a new one.
 - **Branch names are used verbatim.** `gh stack add refactor/foo` creates a branch named `refactor/foo` — names are never prefixed or transformed. When `-m` is given without a branch name, the name is auto-generated from the commit message in date+slug format (e.g., `03-24-add_api_routes`).
 - If called from a branch that is not the topmost in the stack, exits with code 5: `"can only add branches on top of the stack"`. Use `gh stack top` to switch first.
@@ -525,7 +527,7 @@ gh stack add -um "Fix auth bug" auth-fix
 
 ### Push branches to remote — `gh stack push`
 
-Push all stack branches to the remote.
+Push active stack branches to the remote.
 
 ```
 gh stack push [flags]
@@ -545,7 +547,8 @@ gh stack push --remote upstream
 
 **Behavior:**
 
-- Pushes all active (non-merged) branches atomically (`--force-with-lease --atomic`)
+- Pushes all active (non-merged, non-queued) branches in **one non-atomic multi-ref push** with explicit per-branch `--force-with-lease` checks
+- **Not atomic:** some branches may update even when another is rejected. Fix the rejected branch and rerun
 - Does **not** create or update pull requests — use `gh stack submit` for that
 
 **Output (stderr):**
@@ -556,7 +559,7 @@ gh stack push --remote upstream
 
 ### Submit branches and create PRs — `gh stack submit`
 
-Push all stack branches and create PRs on GitHub. **Always pass `--auto`** — without it, `submit` prompts for a PR title for each new branch.
+Push all stack branches and create PRs on GitHub. **Always pass `--auto`** — without it, `submit` opens a full-screen editor for PR titles in an interactive terminal.
 
 ```bash
 # Submit and auto-title new PRs (required for non-interactive use)
@@ -568,13 +571,13 @@ gh stack submit --auto --open
 
 | Flag | Description |
 |------|-------------|
-| `--auto` | Auto-generate PR titles without prompting (**required** for non-interactive use) |
+| `--auto` | Skip the editor and use auto-generated PR titles (**required** for non-interactive use) |
 | `--open` | Mark new and existing PRs as ready for review |
 | `--remote <name>` | Remote to push to (use if multiple remotes exist) |
 
 **Behavior:**
 
-- Pushes all active (non-merged) branches atomically (`--force-with-lease --atomic`)
+- Pushes each active (non-merged, non-queued) branch **sequentially** with per-branch `--force-with-lease` checks; the overall submit is **not atomic**. If a later push is rejected, earlier pushes and PR updates remain — fix the rejection and rerun the same command
 - Creates a new PR for each branch that doesn't have one (base set to the first non-merged ancestor branch)
 - After creating PRs, links them together as a **Stack** on GitHub (requires the repository to have stacks enabled)
 - If every PR in the stack has already been merged, the stack is complete and can't be extended. `submit` automatically forks your unmerged branches into a **new** stack rooted at the trunk and creates it on GitHub, leaving the merged stack untouched.
@@ -624,7 +627,7 @@ When the first argument is a stack number, the remaining arguments are appended 
 
 | Flag | Description |
 |------|---------|
-| `--base <branch>` | Base branch for the bottom of the stack (default: `main`) |
+| `--base <branch>` | Base branch for the bottom of the stack (defaults to the repository's default branch); ignored when appending to an existing stack |
 | `--open` | Mark new and existing PRs as ready for review |
 | `--remote <name>` | Remote to push to (use if multiple remotes exist) |
 
@@ -648,6 +651,43 @@ When the first argument is a stack number, the remaining arguments are appended 
 
 ---
 
+### Merge a stack — `gh stack merge`
+
+Merge every PR in the stack up to and including the target, using GitHub's atomic stack merge. **Always provide a target and `--yes`** — a bare `gh stack merge` in an interactive terminal opens a wizard.
+
+```
+gh stack merge [<stack-number> | <pr-number>] [flags]
+```
+
+```bash
+# Squash-merge PR #42 and everything below it in the stack
+gh stack merge 42 --yes --squash
+
+# Merge an entire stack you don't have checked out
+gh stack merge 7 --yes --squash
+```
+
+| Flag | Description |
+|------|-------------|
+| `--merge-method <method>` | Merge method: `merge`, `squash`, or `rebase` |
+| `--merge` / `--squash` / `--rebase` | Shorthands for the corresponding merge method |
+| `-y, --yes` | Merge without prompting for confirmation |
+
+| Argument | Description |
+|----------|-------------|
+| `[<stack-number> \| <pr-number>]` | How far to merge. Defaults to the current branch's stack (the whole stack) |
+
+**Behavior:**
+
+- **All-or-nothing.** Every selected PR merges in a single operation; if any one cannot be merged, none are.
+- A bare number is tried as a **stack number first, then a PR number**. Verify the intended target with `gh stack view --json` before merging where the ranges could overlap.
+- Pre-merge validation is minimal: each PR must be **open and not a draft**. Branch protection, required status checks, and repository rules are evaluated by GitHub at merge time and surface as merge errors — check CI yourself first. Bypassing merge requirements is not supported for stacks.
+- With `--yes` (or in a non-interactive terminal) and no method flag, the **last-used merge method** is reused. Always pass the method explicitly.
+- If the base branch has a **merge queue**, the stack is enqueued instead of merged immediately. The queue chooses the merge method — any method flag you pass is ignored with a warning — and the PRs are enqueued together but land as the queue processes them, so they may merge in separate groups rather than all at once.
+- On failure, stop and report. Never `gh stack unstack` and merge per layer — see [Merge a stack from an agent](#merge-a-stack-from-an-agent).
+
+---
+
 ### Sync the stack — `gh stack sync`
 
 Fetch, rebase, push, and sync PR state in a single command. This is the recommended command for routine synchronization.
@@ -667,7 +707,7 @@ gh stack sync [flags]
 2. **Reconcile the remote stack** — mirror the GitHub stack locally. If PRs were added to the stack on GitHub, pull their branches down and append them to the local stack. If the local and remote stacks have diverged, aborts the sync in a non-interactive terminal. In an interactive terminal, offers prompts to resolve any divergence (replace local stack with remote version, delete stack on GitHub so it can be recreated, or cancel).
 3. **Fast-forward trunk** to match remote (skips if already up to date, warns if diverged)
 4. **Cascade rebase** all stack branches onto their updated parents (only if trunk moved). Handles merged PRs automatically. If a conflict is detected, **all branches are restored** to their pre-rebase state and the command exits with code 3 — see [Handle rebase conflicts](#handle-rebase-conflicts-agent-workflow) for the resolution workflow
-5. **Push** all active branches atomically
+5. **Push** all active branches (per-branch `--force-with-lease`, not atomic — a rejection can leave other branches pushed)
 6. **Sync PR state** from GitHub and report the status of each PR
 7. **Sync the stack object** — link the open PRs into a stack on GitHub. If the PRs are not yet in a stack, a new stack is created; if some PRs are already in a stack, it is updated (additive only). This only happens when two or more PRs exist. Sync **never opens PRs** — use `gh stack submit` for that
 8. **Prune** — in interactive terminals, prompts to delete local branches for merged PRs. Use `--prune` to skip the prompt. In non-interactive environments, pruning only happens when `--prune` is passed explicitly
@@ -725,6 +765,7 @@ gh stack rebase --abort
 | `--continue` | Continue after resolving conflicts |
 | `--abort` | Abort and restore all branches |
 | `--remote <name>` | Remote to fetch from (use if multiple remotes exist) |
+| `--committer-date-is-author-date` | Keep the original author dates as committer dates (alias: `--preserve-dates`) |
 
 | Argument | Description |
 |----------|-------------|
@@ -766,6 +807,7 @@ gh stack view --json
       "base": "def5678...",
       "isCurrent": false,
       "isMerged": true,
+      "isQueued": false,
       "needsRebase": false,
       "pr": {
         "number": 42,
@@ -779,6 +821,7 @@ gh stack view --json
       "base": "abc1234...",
       "isCurrent": true,
       "isMerged": false,
+      "isQueued": false,
       "needsRebase": false,
       "pr": {
         "number": 43,
@@ -796,8 +839,9 @@ Fields per branch:
 - `base` — parent branch's HEAD SHA at last sync
 - `isCurrent` — whether this is the checked-out branch
 - `isMerged` — whether the PR has been merged
+- `isQueued` — whether the PR is queued for merge (in a merge queue)
 - `needsRebase` — whether the base branch is not an ancestor (non-linear history)
-- `pr` — PR metadata (omitted if no PR exists). `state` is `"OPEN"` or `"MERGED"`.
+- `pr` — PR metadata (omitted if no PR exists). `state` is `"OPEN"`, `"MERGED"`, or `"QUEUED"`.
 
 ---
 
@@ -812,29 +856,40 @@ gh stack down        # Move down one branch (closer to trunk)
 gh stack down 2      # Move down two branches
 gh stack top         # Jump to the top of the stack (furthest from trunk)
 gh stack bottom      # Jump to the bottom (first non-merged branch above trunk)
+gh stack trunk       # Jump to the stack's trunk branch (must be on a stack branch)
 ```
 
 Navigation clamps to stack bounds. Merged branches are skipped when navigating from active branches.
+
+`gh stack switch` also exists but opens an **interactive branch picker** and requires a TTY — agents must not use it.
 
 ---
 
 ### Check out a stack — `gh stack checkout`
 
-Check out a stack from a pull request number or branch name. **Always provide an argument** — running `gh stack checkout` without arguments triggers an interactive selection menu.
+Check out a stack by stack number, pull request number, pull request URL, or branch name. **Always provide an argument** — running `gh stack checkout` without arguments opens an interactive picker of all local and remote stacks.
 
 ```
-gh stack checkout <pr-number | branch>
+gh stack checkout <stack-number | pr-number | pr-url | branch>
 ```
 
 ```bash
+# By stack number (pulls from GitHub)
+gh stack checkout 7
+
 # By PR number (pulls from GitHub)
 gh stack checkout 42
+
+# By PR URL — unambiguous, prefer this when a bare number could be either
+gh stack checkout https://github.com/owner/repo/pull/42
 
 # By branch name (local only)
 gh stack checkout feature-auth
 ```
 
-When a PR number is provided (e.g. `123`), the command fetches the stack on GitHub, pulls the branches, and sets up the stack locally. If the stack already exists locally and matches, it switches to the branch.
+A bare number is resolved as a **stack number first, then a PR number**. Where the two ranges overlap, pass a PR URL to be unambiguous.
+
+When a stack or PR number is provided, the command fetches the stack on GitHub, pulls the branches, and sets up the stack locally. If the stack already exists locally and matches, it switches to the branch.
 
 > **⚠️ Agent warning:** If the local and remote stacks have different branch compositions, this command triggers an interactive conflict-resolution prompt that cannot be bypassed with a flag. To avoid this: run `gh stack unstack` first to remove the conflicting local stack, then retry `gh stack checkout <pr-number>`.
 
@@ -845,6 +900,8 @@ When a branch name is provided, the command resolves it against locally tracked 
 ### Remove a stack — `gh stack unstack`
 
 Tear down a stack so you can restructure it — remove a branch, reorder branches, rename branches, or make other large changes. After unstacking, use `gh stack init` to re-create the stack with the desired structure.
+
+Unstacking removes only the stack **grouping** (on GitHub and/or locally); it never deletes the underlying pull requests or branches.
 
 With no argument, the command targets the active stack — the one containing the currently checked out branch — unstacking it on GitHub and removing local tracking.
 
@@ -870,6 +927,8 @@ gh stack unstack --local
 |------|-------------|
 | `--local` | Only remove the stack locally (keep it on GitHub); never contacts GitHub |
 
+`gh stack delete` is an alias for `unstack`.
+
 > **Note for agents:** `gh stack unstack <number>` is a remote-first API wrapper — it unstacks on GitHub by number from anywhere in the repo, tracked locally or not, and is safe for non-interactive use. `--local` never contacts GitHub; combining `--local` with a number that isn't tracked locally is an error. An unknown stack number returns a "not found on GitHub" error (exit code 2).
 
 ---
@@ -894,12 +953,14 @@ gh stack unstack --local
 | 7 | Rebase already in progress | Run `gh stack rebase --continue` (after resolving conflicts) or `gh stack rebase --abort` to start over |
 | 8 | Stack is locked | Another `gh stack` process is writing the stack file. Wait and retry — the lock times out after 5 seconds |
 | 9 | Stacked PRs unavailable | The repository does not have stacked PRs enabled. `submit` will offer to create regular (unstacked) PRs in interactive mode |
+| 10 | Modify recovery required | A `gh stack modify` session was interrupted. Agents never run `modify`, so this should not appear; if the repo is left in this state, run `gh stack modify --abort` to restore the pre-modify stack |
 
 ## Known limitations
 
 1. **Stacks are strictly linear.** Branching stacks (multiple children on a single parent) are not supported. Each branch has exactly one parent and at most one child. If you need parallel workstreams, use separate stacks.
 2. **Stack disambiguation cannot be bypassed.** If the current branch is the trunk of multiple stacks, commands error with code 6. Check out a non-shared branch first.
-3. **Multiple remotes require `--remote` or config.** If more than one remote is configured, pass `--remote <name>` or set `remote.pushDefault` in git config before running `push`, `sync`, or `rebase`.
-4. **Merging PRs:** `gh stack` itself has no merge command. This repository's guarded `merge-stack.ts` wrapper drives the private website operation through an isolated logged-in Chrome session. It is not a public or stable GitHub API and requires local browser authentication.
-5. **Remote stack checkout requires a PR number.** `checkout` with a branch name only works with locally tracked stacks. Use a PR number (e.g. `gh stack checkout 123`) to pull stacks from GitHub.
+3. **Multiple remotes require `--remote` or config.** Set `remote.pushDefault` in git config, or pass `--remote <name>` to the commands that accept it (`push`, `submit`, `sync`, `rebase`, `link`). `checkout`, `modify`, and `trunk` have **no** `--remote` flag and rely on `remote.pushDefault`.
+4. **Merging is all-or-nothing and can't bypass merge requirements.** `gh stack merge` merges every PR up to the target in one operation, or none. Branch protection and required checks are enforced by GitHub at merge time and cannot be bypassed for stacks — get CI green before merging.
+5. **Remote stack checkout requires a stack or PR number/URL.** `checkout` with a branch name only works with locally tracked stacks. Use a stack number, PR number, or PR URL to pull a stack from GitHub.
 6. **PR title and body are auto-generated.** There is no flag to set a custom PR title or body during `submit`. The title and body are generated from commit messages plus a footer. Use `gh pr edit` to modify PR title and body after creation.
+7. **Restructuring has no non-interactive command.** `gh stack modify` is a TUI only. Agents restructure with `gh stack unstack` + `gh stack init`.
