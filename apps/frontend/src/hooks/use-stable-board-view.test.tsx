@@ -230,17 +230,69 @@ describe("useStableBoardView", () => {
     expect(result.current.newCount).toBe(2)
   })
 
-  it("keeps a vanished committed card rendering in place until the next commit", () => {
+  it("marks a committed card that left the raw feed as removed, keeping its slot until the next commit", () => {
     mockLive(feed(post("a", 300), post("b", 200)))
     const { result, rerender } = renderHook(() => useStableBoardView("ws_1", ALL))
-    // "b" loses access / is deleted — it drops out of the live feed.
+    // "b" is merged away / emptied — its IDB row is gone.
     act(() => mockLive(feed(post("a", 300))))
     rerender()
-    // Still rendered (last-known content), so nothing below it shifts.
+    // Still occupying its slot, so nothing below it shifts, but marked so the
+    // feed draws a stub instead of an interactive card.
     expect(result.current.posts.map((p) => p.id)).toEqual(["a", "b"])
+    expect([...result.current.removedIds]).toEqual(["b"])
     // A commit drops it.
     act(() => result.current.commit())
     expect(result.current.posts.map((p) => p.id)).toEqual(["a"])
+    expect([...result.current.removedIds]).toEqual([])
+  })
+
+  it("resolves the successor holding a removed card's opening message", () => {
+    const ghost = {
+      ...post("b", 200),
+      openingMessage: { id: "m_open" },
+    } as unknown as CachedBoardPost
+    mockLive(feed(post("a", 300), ghost))
+    const { result, rerender } = renderHook(() => useStableBoardView("ws_1", ALL))
+    // "b" merged into "c", which now carries its opening message.
+    const successor = {
+      ...post("c", 400),
+      conversation: {
+        id: "c",
+        lastActivityAt: new Date(400).toISOString(),
+        messageIds: ["m_open"],
+        topicSummary: "Deploy plan",
+      },
+    } as unknown as CachedBoardPost
+    act(() => mockLive(feed(post("a", 300), successor)))
+    rerender()
+    expect([...result.current.removedIds]).toEqual(["b"])
+    expect(result.current.removedSuccessorById.get("b")).toEqual({
+      conversationId: "c",
+      topicSummary: "Deploy plan",
+    })
+  })
+
+  it("reports no successor when nothing holds the removed card's opening message", () => {
+    const ghost = { ...post("b", 200), openingMessage: { id: "m_open" } } as unknown as CachedBoardPost
+    mockLive(feed(post("a", 300), ghost))
+    const { result, rerender } = renderHook(() => useStableBoardView("ws_1", ALL))
+    act(() => mockLive(feed(post("a", 300))))
+    rerender()
+    expect([...result.current.removedIds]).toEqual(["b"])
+    expect(result.current.removedSuccessorById.get("b")).toBeNull()
+  })
+
+  it("does not mark a committed card that is merely filtered out of the live subset", () => {
+    const withMemo = { ...post("m", 300), hasCapturedMemo: true } as CachedBoardPost
+    const plain = { ...post("a", 200), hasCapturedMemo: true } as CachedBoardPost
+    mockLive(feed(withMemo, plain))
+    const { result, rerender } = renderHook(() => useStableBoardView("ws_1", lensFilter("decisions")))
+    expect(result.current.posts.map((p) => p.id)).toEqual(["m", "a"])
+    // "a" stops matching the lens but its row is still in the raw feed.
+    act(() => mockLive(feed(withMemo, { ...plain, hasCapturedMemo: false } as CachedBoardPost)))
+    rerender()
+    expect(result.current.posts.map((p) => p.id)).toEqual(["m", "a"])
+    expect([...result.current.removedIds]).toEqual([])
   })
 
   it("resets the committed view when the workspace changes", () => {

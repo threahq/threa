@@ -298,6 +298,12 @@ export function reconcileStableView(
   }
 }
 
+/** The conversation a merged-away card's opening message now belongs to. */
+export interface RemovedSuccessor {
+  conversationId: string
+  topicSummary: string | null
+}
+
 export interface StableBoardView {
   /** Frozen-order posts to render — position is the committed snapshot's, content is live. */
   posts: CachedBoardPost[]
@@ -317,6 +323,21 @@ export interface StableBoardView {
    * perpetual skeleton when the viewer filters down to zero.
    */
   hasRawPosts: boolean
+  /**
+   * Committed ids whose row is gone from the RAW feed — merged away or emptied,
+   * so the conversation no longer exists rather than merely falling out of the
+   * active filters. They keep their slot: the retained copy still renders, inert,
+   * at its full height under an overlay, so nothing below it shifts.
+   * Empty while the feed is still loading.
+   */
+  removedIds: ReadonlySet<string>
+  /**
+   * Per removed id, the conversation that now holds its opening message (a merge
+   * target), or null when nothing does. Resolved once here off the same raw feed
+   * the removal verdict comes from — never per card, which would put a full-feed
+   * subscription behind every stub.
+   */
+  removedSuccessorById: ReadonlyMap<string, RemovedSuccessor | null>
 }
 
 /**
@@ -495,9 +516,14 @@ export function useStableBoardView(
     for (const id of [...retainedRef.current.keys()]) if (!keep.has(id)) retainedRef.current.delete(id)
   }, [])
 
-  const posts = useMemo(() => {
+  const { posts, removedIds, removedSuccessorById } = useMemo(() => {
     const liveById = new Map((live ?? []).map((post) => [postId(post), post]))
+    // Raw membership, not the filtered subset: a card the filters (or the
+    // nested-view fold) dropped is still a real conversation, while one absent
+    // from the raw feed was deleted out of IDB.
+    const rawIds = rawLive ? new Set(rawLive.map(postId)) : null
     const out: CachedBoardPost[] = []
+    const removed = new Set<string>()
     for (const id of committed.order) {
       const post = liveById.get(id) ?? retainedRef.current.get(id)
       if (!post) continue
@@ -511,10 +537,33 @@ export function useStableBoardView(
       // view, so it must vanish immediately rather than linger until commit.
       if (isExcluded(post)) continue
       if (!matchesUnread(post, unread)) continue
+      if (rawIds !== null && !rawIds.has(id)) removed.add(id)
       out.push(post)
     }
-    return out
-  }, [committed, live, unread, isExcluded])
+    // Successor resolution runs here, once, off the same raw feed — and only when
+    // something was actually removed (the common case scans nothing).
+    const successorById = new Map<string, RemovedSuccessor | null>()
+    if (removed.size > 0 && rawLive) {
+      const removedPosts = out.filter((post) => removed.has(postId(post)))
+      for (const post of removedPosts) {
+        const openingId = post.openingMessage?.id ?? null
+        const successor = openingId
+          ? (rawLive.find((row) => row.conversation.messageIds?.includes(openingId)) ?? null)
+          : null
+        successorById.set(
+          postId(post),
+          successor
+            ? { conversationId: successor.conversation.id, topicSummary: successor.conversation.topicSummary ?? null }
+            : null
+        )
+      }
+    }
+    return {
+      posts: out,
+      removedIds: removed as ReadonlySet<string>,
+      removedSuccessorById: successorById as ReadonlyMap<string, RemovedSuccessor | null>,
+    }
+  }, [committed, live, rawLive, unread, isExcluded])
 
   return {
     posts,
@@ -523,5 +572,7 @@ export function useStableBoardView(
     commit,
     isLoading: live === undefined || holdingForSeed,
     hasRawPosts: (rawLive?.length ?? 0) > 0,
+    removedIds,
+    removedSuccessorById,
   }
 }

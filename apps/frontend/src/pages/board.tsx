@@ -36,6 +36,7 @@ import { FloatingComposerAnchorProvider, FLOATING_COMPOSER_HEIGHT_VAR } from "@/
 import { BoardCard, BoardCardSkeleton } from "@/components/board/board-card"
 import { BoardFeedList } from "@/components/board/board-feed-list"
 import { BoardNewPostsPill } from "@/components/board/board-new-posts-pill"
+import { BoardRemovedCard } from "@/components/board/board-removed-card"
 import { openCompose, registerComposeOnPosted } from "@/stores/compose-overlay-store"
 import { setBoardFlash } from "@/stores/board-flash-store"
 import { boardHomeHref } from "@/components/board/board-saved-views"
@@ -374,6 +375,8 @@ function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: Boar
     commit,
     isLoading: viewLoading,
     hasRawPosts,
+    removedIds,
+    removedSuccessorById,
   } = useStableBoardView(workspaceId, filter, exclusions, seed)
   // After a refetch settles, `isLoading` is already false but the seed effect
   // writes IDB on the next tick, so the IDB feed can be momentarily empty while
@@ -638,6 +641,20 @@ function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: Boar
           )
         }
         const { contextLabel, streamType, dmPeerUserId } = labelsFor(row.post.conversation)
+        if (removedIds.has(row.post.conversation.id)) {
+          return (
+            <div key={row.key} className="pb-3">
+              <BoardRemovedCard
+                workspaceId={workspaceId}
+                post={row.post}
+                contextLabel={contextLabel}
+                streamType={streamType}
+                dmPeerUserId={dmPeerUserId}
+                successor={removedSuccessorById.get(row.post.conversation.id) ?? null}
+              />
+            </div>
+          )
+        }
         return (
           <div key={row.key} className="pb-3">
             <BoardCard
@@ -652,7 +669,17 @@ function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: Boar
           </div>
         )
       }),
-    [feedRows, labelsFor, isFetchNextPageError, isFetchingNextPage, fetchNextPage, loadMoreLabel, workspaceId]
+    [
+      feedRows,
+      labelsFor,
+      removedIds,
+      removedSuccessorById,
+      isFetchNextPageError,
+      isFetchingNextPage,
+      fetchNextPage,
+      loadMoreLabel,
+      workspaceId,
+    ]
   )
 
   // Non-feed states (error / skeleton / empty) render as a single centered block

@@ -312,3 +312,39 @@ export async function mergeBoardConversation(
     return !openingMoved
   })
 }
+
+/** Rows of this workspace whose anchor OR effective root is `streamId` — the
+ *  anchor-or-root rule the board's own scope filters use. */
+async function boardRowsForStream(workspaceId: string, streamId: string): Promise<CachedBoardPost[]> {
+  const rows = await db.conversations.where("workspaceId").equals(workspaceId).toArray()
+  return rows.filter(
+    (row) => (row.rootStreamId ?? row.conversation.streamId) === streamId || row.conversation.streamId === streamId
+  )
+}
+
+/**
+ * Carry a stream's archive state onto the board rows it covers, so archiving a
+ * channel drops its cards from the feed (and unarchiving restores them) without
+ * waiting for a board refetch. `rootArchived` is the server's per-card verdict
+ * the read-side filter gates on.
+ */
+export async function setBoardRootArchived(workspaceId: string, streamId: string, archived: boolean): Promise<void> {
+  await db.transaction("rw", db.conversations, async () => {
+    const rows = await boardRowsForStream(workspaceId, streamId)
+    const changed = rows.filter((row) => (row.rootArchived === true) !== archived)
+    if (changed.length === 0) return
+    await db.conversations.bulkPut(changed.map((row) => ({ ...row, rootArchived: archived })))
+  })
+}
+
+/**
+ * Drop the board rows a stream contributes — the viewer lost read access to it,
+ * so its cards must not keep rendering off the cache.
+ */
+export async function removeBoardConversationsForStream(workspaceId: string, streamId: string): Promise<void> {
+  await db.transaction("rw", db.conversations, async () => {
+    const rows = await boardRowsForStream(workspaceId, streamId)
+    if (rows.length === 0) return
+    await db.conversations.bulkDelete(rows.map((row) => row.id))
+  })
+}

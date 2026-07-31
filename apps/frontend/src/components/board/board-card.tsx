@@ -65,6 +65,14 @@ interface BoardCardProps {
   scrollerRef?: RefObject<HTMLDivElement | null>
   /** virtua's imperative handle for the board feed, paired with `scrollerRef`. */
   listRef?: RefObject<VirtualizerHandle | null>
+  /**
+   * Render the card inert: the conversation it stands for is gone (merged away
+   * or emptied), so the content stays — the row keeps its exact footprint — but
+   * nothing in it is interactive, no composer opens, and auto-read never fires a
+   * read POST at a dead conversation. `BoardRemovedCard` owns the overlay that
+   * explains the state; this only makes the card underneath dead weight.
+   */
+  removed?: boolean
 }
 
 /** How many trailing messages a nested branch previews on a collapsed card; the
@@ -94,6 +102,7 @@ export function BoardCard({
   dmPeerUserId,
   scrollerRef,
   listRef,
+  removed = false,
 }: BoardCardProps) {
   const { conversation } = post
   const flash = useBoardFlash(conversation.id)
@@ -430,6 +439,7 @@ export function BoardCard({
     markRead: markReadSilently,
     registerExplicitUnread: setExplicitUnreadListener,
     getReadTruth,
+    disabled: removed,
   })
 
   // The card is a first-class reading surface (live message bodies, viewport
@@ -654,13 +664,18 @@ export function BoardCard({
         {/* Rest shadow lifts the card off the page — the light-mode card/bg
             lightness delta is ~1%, so the border alone left cards reading flat.
             Board-scoped; global tokens untouched. Dark leans on a deeper shadow
-            since the fill delta reads weakly on the charcoal canvas. */}
+            since the fill delta reads weakly on the charcoal canvas.
+            Removed cards use `inert`, not pointer-events-none + aria-hidden: only
+            inert also removes the card's buttons and composer from the tab order —
+            a keyboard user could otherwise focus into the dead conversation. */}
         <div
           ref={cardRef}
           className={cn(
             "board-card-hover rounded-xl border bg-card p-3 shadow-[0_1px_2px_rgb(0_0_0/0.04),0_4px_14px_-8px_rgb(0_0_0/0.10)] sm:p-4 dark:shadow-[0_1px_2px_rgb(0_0_0/0.4),0_6px_16px_-8px_rgb(0_0_0/0.5)]",
-            flash && "board-post-flash"
+            flash && "board-post-flash",
+            removed && "opacity-60"
           )}
+          inert={removed || undefined}
         >
           {/* Zero-height marker at the card top: drives the header's stuck state
               (see the observer above). In flow but h-0, so it shifts nothing. */}
@@ -807,6 +822,9 @@ export function BoardCard({
               )}
             </div>
 
+            {/* Rendered even when `removed`: the inert layer above kills interaction,
+                and dropping the composer would shrink the row — the live→removed swap
+                must hold the card's exact footprint. */}
             {!bodyCollapsed && (
               <BoardReplyComposer
                 workspaceId={workspaceId}

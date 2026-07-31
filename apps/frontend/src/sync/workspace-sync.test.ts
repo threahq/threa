@@ -2823,6 +2823,37 @@ describe("registerWorkspaceSocketHandlers", () => {
     cleanup()
   })
 
+  it("carries stream:archived / stream:unarchived onto the board rows the stream covers", async () => {
+    await db.conversations.clear()
+    await seedBoardRow("conv_arch", "ws_1", "thread_1", "stream_arch_board")
+    await seedBoardRow("conv_elsewhere", "ws_1", "chan_other", "chan_other")
+
+    const queryClient = new QueryClient()
+    const { socket, emit } = createTestSocket()
+    const cleanup = registerWorkspaceSocketHandlers(socket, "ws_1", queryClient, handlerRefs)
+
+    emit("stream:archived", {
+      workspaceId: "ws_1",
+      streamId: "stream_arch_board",
+      stream: makeStream("stream_arch_board", { archivedAt: "2026-01-01T00:00:00Z" }),
+    })
+    await vi.waitFor(async () => {
+      expect(await db.conversations.get("conv_arch")).toMatchObject({ rootArchived: true })
+    })
+    expect((await db.conversations.get("conv_elsewhere"))?.rootArchived).toBeUndefined()
+
+    emit("stream:unarchived", {
+      workspaceId: "ws_1",
+      streamId: "stream_arch_board",
+      stream: makeStream("stream_arch_board", { archivedAt: null }),
+    })
+    await vi.waitFor(async () => {
+      expect(await db.conversations.get("conv_arch")).toMatchObject({ rootArchived: false })
+    })
+
+    cleanup()
+  })
+
   it("preserves an existing row's lastMessagePreview on stream:unarchived", async () => {
     await db.streams.put({
       ...makeStream("stream_unarch2", { archivedAt: "2026-01-01T00:00:00Z" }),
@@ -3567,6 +3598,87 @@ describe("agent-activity sidebar socket handlers", () => {
     })
     expect(getAgentActivityForStream("ws_1", "stream_ch").map((s) => s.sessionId)).toEqual(["sess_p"])
 
+    cleanup()
+  })
+})
+
+/** A board row anchored in `streamId` under `rootStreamId`, as the board store writes it. */
+async function seedBoardRow(id: string, workspaceId: string, streamId: string, rootStreamId: string) {
+  await db.conversations.put({
+    id,
+    workspaceId,
+    rootStreamId,
+    conversation: { id, streamId, lastActivityAt: "2026-06-20T12:00:00.000Z" },
+    openingMessage: null,
+    recentMessages: [],
+    totalReplies: 0,
+    _lastActivityMs: Date.parse("2026-06-20T12:00:00.000Z"),
+    _cachedAt: Date.now(),
+  } as never)
+}
+
+describe("stream:member_removed board cleanup", () => {
+  const handlerRefs = {
+    getCurrentStreamId: () => undefined,
+    getCurrentUser: () => ({ id: "workos_1" }),
+    subscribeStream: vi.fn(),
+  }
+
+  function seededClient(visibility: "public" | "private") {
+    const queryClient = new QueryClient()
+    queryClient.setQueryData(
+      workspaceKeys.bootstrap("ws_1"),
+      makeBootstrap({
+        users: [makeWorkspaceUser()] as never,
+        streams: [{ ...makeStream("chan_x", { visibility }), lastMessagePreview: null }] as StreamWithPreview[],
+        streamMemberships: [
+          { streamId: "chan_x", memberId: "member_1", notificationLevel: null, joinedAt: new Date().toISOString() },
+        ] as StreamMember[],
+      })
+    )
+    return queryClient
+  }
+
+  beforeEach(async () => {
+    await db.conversations.clear()
+  })
+
+  it("drops the stream's board rows when the viewer loses access to a private stream", async () => {
+    await seedBoardRow("conv_x", "ws_1", "thread_x", "chan_x")
+    await seedBoardRow("conv_keep", "ws_1", "chan_y", "chan_y")
+    const { socket, emit } = createTestSocket()
+    const cleanup = registerWorkspaceSocketHandlers(socket, "ws_1", seededClient("private"), handlerRefs)
+
+    emit("stream:member_removed", { workspaceId: "ws_1", streamId: "chan_x", memberId: "member_1" })
+
+    await vi.waitFor(async () => {
+      expect(await db.conversations.get("conv_x")).toBeUndefined()
+    })
+    expect(await db.conversations.get("conv_keep")).toBeDefined()
+    cleanup()
+  })
+
+  it("keeps the board rows of a PUBLIC stream — a public root grants read without membership (INV-62)", async () => {
+    await seedBoardRow("conv_x", "ws_1", "thread_x", "chan_x")
+    const { socket, emit } = createTestSocket()
+    const cleanup = registerWorkspaceSocketHandlers(socket, "ws_1", seededClient("public"), handlerRefs)
+
+    emit("stream:member_removed", { workspaceId: "ws_1", streamId: "chan_x", memberId: "member_1" })
+
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(await db.conversations.get("conv_x")).toBeDefined()
+    cleanup()
+  })
+
+  it("leaves the board alone when someone else is removed", async () => {
+    await seedBoardRow("conv_x", "ws_1", "thread_x", "chan_x")
+    const { socket, emit } = createTestSocket()
+    const cleanup = registerWorkspaceSocketHandlers(socket, "ws_1", seededClient("private"), handlerRefs)
+
+    emit("stream:member_removed", { workspaceId: "ws_1", streamId: "chan_x", memberId: "member_2" })
+
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(await db.conversations.get("conv_x")).toBeDefined()
     cleanup()
   })
 })

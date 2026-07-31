@@ -67,8 +67,10 @@ export function boardPostLastActiveStreamId(post: Pick<BoardPost, "recentMessage
   return post.recentMessages?.at(-1)?.streamId ?? post.conversation.streamId
 }
 
+const conversationKeysRoot = ["conversations"] as const
+
 export const conversationKeys = {
-  all: ["conversations"] as const,
+  all: conversationKeysRoot,
   list: (workspaceId: string, streamId: string, options?: { status?: string; limit?: number }) =>
     [...conversationKeys.all, "list", workspaceId, streamId, options ?? {}] as const,
   workspaceList: (
@@ -86,6 +88,8 @@ export const conversationKeys = {
       limit?: number
     }
   ) => [...conversationKeys.all, "workspaceList", workspaceId, options ?? {}] as const,
+  /** One workspace's board feed lists, whatever filters — the invalidation prefix. */
+  workspaceLists: (workspaceId: string) => [...conversationKeysRoot, "workspaceList", workspaceId] as const,
   byId: (workspaceId: string, conversationId: string) =>
     [...conversationKeys.all, "detail", workspaceId, conversationId] as const,
   messages: (conversationId: string) => ["conversations", conversationId, "messages"] as const,

@@ -30,6 +30,7 @@ import { workspaceKeys } from "@/hooks/use-workspaces"
 import { savedKeys } from "@/hooks/use-saved"
 import { scheduledKeys } from "@/hooks/use-scheduled"
 import { activityKeys } from "@/hooks/use-activity"
+import { conversationKeys } from "@/hooks/use-conversations"
 import { isServerStreamId } from "@/lib/stream-ids"
 import type { WorkspaceBootstrap } from "@threa/types"
 
@@ -1419,10 +1420,13 @@ export class SyncEngine {
    * own. Saved and scheduled lists aren't carried by the workspace bootstrap and
    * gate off `refetchOnReconnect` in sync mode (use-saved / use-scheduled), so
    * they are healed only by catch-up replaying their sync-log entries; the
-   * activity feed list is likewise handler-invalidated, not bootstrapped. When a
+   * activity feed list is likewise handler-invalidated, not bootstrapped; the
+   * board's workspace conversation list is seeded by its own query, not the
+   * workspace bootstrap. When a
    * large gap (or the below-floor case) collapses to a bootstrap, replay is
    * skipped — without this an already-open Saved / Scheduled / Activity view
-   * would sit stale until it remounts. Invalidation is a no-op for unmounted
+   * would sit stale until it remounts (and the board feed would keep last
+   * session's cards). Invalidation is a no-op for unmounted
    * queries (they refetch on next mount) and refetches the open ones.
    */
   private invalidateReplayHealedQueries(): void {
@@ -1430,6 +1434,7 @@ export class SyncEngine {
     queryClient.invalidateQueries({ queryKey: savedKeys.all })
     queryClient.invalidateQueries({ queryKey: scheduledKeys.all })
     queryClient.invalidateQueries({ queryKey: activityKeys.all })
+    queryClient.invalidateQueries({ queryKey: conversationKeys.workspaceLists(this.workspaceId) })
   }
 
   /**
