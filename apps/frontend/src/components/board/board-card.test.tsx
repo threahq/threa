@@ -74,7 +74,15 @@ function makePost(
 
 function mountCard(post: BoardViewPost = makePost(), conversations: Record<string, unknown> = {}) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-  return render(
+  const tree = (current: BoardViewPost) => cardTree(current, conversations, queryClient)
+  const result = render(tree(post))
+  // Re-render the SAME card with a fresh post — the shape a live board update
+  // takes (the Dexie liveQuery hands the card a new post object in place).
+  return { ...result, rerenderPost: (next: BoardViewPost) => result.rerender(tree(next)) }
+}
+
+function cardTree(post: BoardViewPost, conversations: Record<string, unknown>, queryClient: QueryClient) {
+  return (
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>
         <ServicesProvider services={{ conversations: conversations as never }}>
@@ -832,3 +840,100 @@ function messageEvent(messageId: string, contentMarkdown: string, seconds: numbe
     actorType: "user",
   }
 }
+
+/** The settling mark's own elements on a rendered row: the dashed rail overlay
+ *  and the content block whose opacity the texture mutes. */
+function settlingParts(container: HTMLElement, messageId: string) {
+  const row = container.querySelector(`[data-message-id="${messageId}"]`) as HTMLElement | null
+  if (!row) throw new Error(`no row for ${messageId}`)
+  const rail = row.querySelector(".border-dashed") as HTMLElement | null
+  const content = row.querySelector(".message-content") as HTMLElement | null
+  return { row, rail, content }
+}
+
+describe("BoardCard settling mark", () => {
+  function settlingPost(ids: string[], conversation: Record<string, unknown> = {}) {
+    const post = makePost(conversation)
+    ;(post as unknown as { settlingMessageIds: string[] }).settlingMessageIds = ids
+    return post
+  }
+
+  it("wears the dashed rail and muted content when the row is in settlingMessageIds", async () => {
+    const { container } = mountCard(settlingPost(["m_open"]))
+    await screen.findByText("Opening body.")
+
+    const { row, rail, content } = settlingParts(container, "m_open")
+    expect(row.hasAttribute("data-settling")).toBe(true)
+    expect(rail?.className).toContain("border-muted-foreground/40")
+    expect(content?.className).toContain("opacity-70")
+    expect(screen.getByText("Still settling — this message may move to another topic")).toBeTruthy()
+  })
+
+  it("leaves a settled row unmarked — no rail color, no opacity, no hint", async () => {
+    const { container } = mountCard(settlingPost([]))
+    await screen.findByText("Opening body.")
+
+    const { row, rail, content } = settlingParts(container, "m_open")
+    expect(row.hasAttribute("data-settling")).toBe(false)
+    expect(rail?.className).toContain("border-transparent")
+    expect(rail?.className).not.toContain("border-muted-foreground")
+    expect(content?.className).not.toContain("opacity-")
+    expect(screen.queryByText("Still settling — this message may move to another topic")).toBeNull()
+  })
+
+  it("adds no box metrics to a row: the mark is an absolute overlay and the row's own classes are identical", async () => {
+    // INV-21: toggling settling must move nothing. The row container's classes
+    // (padding, borders, insets) are byte-identical settled vs settling, and the
+    // rail overlay is absolutely positioned at zero width — it can only paint.
+    const settled = mountCard(settlingPost([]))
+    await screen.findByText("Opening body.")
+    const settledRow = settlingParts(settled.container, "m_open")
+    const settledClasses = settledRow.row.querySelector(".message-hover-wash")?.className
+    settled.unmount()
+
+    __clearBoardRailRegistry()
+    const marked = mountCard(settlingPost(["m_open"]))
+    await screen.findByText("Opening body.")
+    const markedRow = settlingParts(marked.container, "m_open")
+    expect(markedRow.row.querySelector(".message-hover-wash")?.className).toBe(settledClasses)
+    expect(markedRow.rail?.className).toContain("absolute")
+    expect(markedRow.rail?.className).toContain("w-0")
+    expect(markedRow.rail?.className).toContain("pointer-events-none")
+  })
+
+  it("fades rather than pops: the mark's properties carry a transition on every row", async () => {
+    const { container } = mountCard(settlingPost(["m_open"]))
+    await screen.findByText("Opening body.")
+    const { rail, content } = settlingParts(container, "m_open")
+    expect(rail?.className).toContain("transition-colors")
+    expect(rail?.className).toContain("duration-300")
+    expect(content?.className).toContain("transition-opacity")
+    expect(content?.className).toContain("duration-300")
+  })
+
+  it("drops the mark in place when the settle echo updates the post", async () => {
+    // The live path: `conversation:updated` → `mergeBoardConversation` → the
+    // Dexie liveQuery hands the card a post with a smaller settling set. Driven
+    // here as the re-render that produces, with the same row identity.
+    const { container, rerenderPost } = mountCard(settlingPost(["m_open"]))
+    await screen.findByText("Opening body.")
+    expect(settlingParts(container, "m_open").row.hasAttribute("data-settling")).toBe(true)
+
+    rerenderPost(settlingPost([]))
+    await waitFor(() => expect(settlingParts(container, "m_open").row.hasAttribute("data-settling")).toBe(false))
+    expect(settlingParts(container, "m_open").content?.className).not.toContain("opacity-")
+  })
+
+  it("never marks a tombstone: a deleted settling row renders as deleted only", async () => {
+    await db.events.bulkPut([
+      messageEvent("m_open", "Opening body.", 10),
+      messageEvent("m_r1", "The deleted body.", 20, "2026-06-22T12:05:00.000Z"),
+    ])
+    const { container } = mountCard(settlingPost(["m_open", "m_r1"], { messageIds: ["m_open", "m_r1"] }))
+
+    expect(await screen.findByText("This message was deleted")).toBeTruthy()
+    expect(container.querySelector('[data-message-id="m_r1"]')).toBeNull()
+    // The settling id names a row the card doesn't render — it must not conjure one.
+    expect(container.querySelectorAll("[data-settling]").length).toBe(1)
+  })
+})

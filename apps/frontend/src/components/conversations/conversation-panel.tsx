@@ -29,7 +29,12 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { Empty, EmptyHeader, EmptyMedia, EmptyTitle, EmptyDescription } from "@/components/ui/empty"
 import { MessageItem, type RenderableMessage } from "@/components/message/message-item"
 import { buildBranchedBoardRows, injectBoardDayDividers, injectUnreadDivider } from "@/components/board/board-row-item"
-import { BranchedBoardRows, BranchProvenanceRow } from "@/components/board/branch-rows"
+import {
+  BranchedBoardRows,
+  BranchProvenanceRow,
+  BRANCH_SETTLING_RAIL_CLASS,
+  BRANCH_ACCENTED_SETTLING_RAIL_CLASS,
+} from "@/components/board/branch-rows"
 import { resolveBoardEventRows } from "@/lib/board/board-event-rows"
 import { groupBranches, type BranchConversationView } from "@/lib/board/branch-grouping"
 import {
@@ -79,7 +84,7 @@ import {
 import { useStreamFromStore } from "@/stores/stream-store"
 import { consumeConversationReplyOpen, subscribeConversationReplyOpen } from "@/stores/conversation-reply-open-store"
 import { conversationKeys, useConversationBoardPost, useSplitThread } from "@/hooks/use-conversations"
-import { useBoardCardMessages } from "@/hooks/use-board-card-messages"
+import { applySettlingAll, useBoardCardMessages } from "@/hooks/use-board-card-messages"
 import { useScrollBehavior } from "@/hooks/use-scroll-behavior"
 import { usePanelStreamSubscriptions } from "@/hooks/use-panel-stream-subscriptions"
 import { buildConversationLink } from "@/lib/stream-links"
@@ -576,6 +581,7 @@ function ConversationPanelBody({
     events: railEvents,
     messagesById,
     taggedByConversation,
+    settlingIds,
   } = useBoardCardMessages(post, hostStreamType, {
     branchStreamIds: inlineComposer.branchStreamIds,
     extraDraftPanelIds: inlineComposer.extraDraftPanelIds,
@@ -630,8 +636,14 @@ function ConversationPanelBody({
   // Merge the viewer's own just-sent replies (deduped), then sort by time — a
   // pending reply can be older than a confirmed one.
   const seenReplyIds = new Set(replies.map((m) => m.id))
-  const displayedReplies = [...replies, ...pendingReplies.filter((m) => !seenReplyIds.has(m.id))].sort(
-    (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
+  // Same as the board card: the backfill bypasses the hook's settling stamp, so
+  // the merged list goes through the shared helper (already-marked rows return
+  // by identity).
+  const displayedReplies = applySettlingAll(
+    [...replies, ...pendingReplies.filter((m) => !seenReplyIds.has(m.id))].sort(
+      (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
+    ),
+    settlingIds
   )
   const loadingMore = incompleteLocally && !allMessages && !backfillFailed
 
@@ -869,6 +881,7 @@ function ConversationPanelBody({
           conversationRootStreamId={branch.threadStreamId}
           surfaceClassName={rail ? cn("bg-background border-l-2 px-2 sm:px-3", rail) : "bg-background"}
           rowInsetClassName={rail ? "-mx-2.5 sm:-mx-3.5" : undefined}
+          settlingRailClassName={rail ? BRANCH_ACCENTED_SETTLING_RAIL_CLASS : BRANCH_SETTLING_RAIL_CLASS}
           suppressRowAccent
           onNewSubtopic={
             canBranch

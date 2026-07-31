@@ -98,6 +98,12 @@ export interface RenderableMessage {
    * tombstone on the conversation surfaces — it carries no body, reactions,
    * attachments or link previews. */
   deletedAt?: string | null
+  /** The extractor placed this message in its conversation with low confidence,
+   * so the placement is provisional — the row wears a calm "still settling"
+   * texture until a human engages with it or the extraction window moves past.
+   * Resolved per row against the board post's `settlingMessageIds`; a tombstone
+   * never carries it (deleted trumps settling). */
+  settling?: boolean
 }
 
 export function isContinuation(prev: RenderableMessage, cur: RenderableMessage): boolean {
@@ -146,6 +152,12 @@ interface MessageItemProps {
    * on `surfaceClassName` so content stays aligned (board: `-mx-3 sm:-mx-4` +
    * `px-3 sm:px-4`; panel: `-mx-4` + `px-4`). Omit on the label page (no accent). */
   rowInsetClassName?: string
+  /** Horizontal placement of the settling rail, when the row's own left edge is
+   *  not a free gutter. Default `left-0` sits in the surface's left padding; a
+   *  nested branch row has none (its padding lives on the group), so the branch
+   *  surfaces shift the rail onto the group's spine. Position only — the rail is
+   *  an absolute overlay, so this never changes the row's box (INV-21). */
+  settlingRailClassName?: string
   /** Suppress the per-row actor accent (tint + inset stripe). Set inside a nested
    *  sub-conversation, where the branch's own spine carries the actor color at a
    *  single 2px width — a per-message stripe there would double the bar. */
@@ -186,6 +198,7 @@ export function MessageItem({
   isHighlighted,
   surfaceClassName,
   rowInsetClassName,
+  settlingRailClassName,
   suppressRowAccent,
   onNewSubtopic,
   onMoveToSubtopic,
@@ -669,6 +682,30 @@ export function MessageItem({
 
   // The quote-reveal icon behind the row (right edge), shown only during a swipe;
   // it fills the strip the row uncovers as it slides left.
+  // Provisional-placement texture: a dashed rail in the muted token plus slightly
+  // muted content. The rail is an absolutely-positioned overlay and is ALWAYS
+  // mounted (transparent when settled), so settling toggles color only — the row
+  // occupies the same box either way (INV-21) and the change fades rather than
+  // pops when the settle echo lands.
+  const settling = Boolean(message.settling) && !message.deletedAt
+  const settlingRail = (
+    <div
+      aria-hidden
+      className={cn(
+        "pointer-events-none absolute inset-y-0 w-0 border-l-[2px] border-dashed transition-colors duration-300",
+        settlingRailClassName ?? "left-0",
+        settling ? "border-muted-foreground/40" : "border-transparent"
+      )}
+    />
+  )
+  const settlingHint = settling ? (
+    <span className="sr-only">Still settling — this message may move to another topic</span>
+  ) : null
+  const contentClassName = cn(
+    "message-content min-w-0 flex-1 transition-opacity duration-300",
+    settling && "opacity-70"
+  )
+
   const swipeReveal = hasSwipe ? (
     <div className="absolute inset-y-0 right-0 flex items-center pr-4">
       <Quote className={cn("h-5 w-5 transition-colors", swipe.isLocked ? "text-primary" : "text-muted-foreground")} />
@@ -682,6 +719,7 @@ export function MessageItem({
         ref={containerRef}
         tabIndex={-1}
         data-message-row=""
+        data-settling={settling ? "" : undefined}
         data-message-id={message.id}
         data-stream-id={streamId}
         data-author-name={authorName}
@@ -716,6 +754,7 @@ export function MessageItem({
           )}
           style={swipeStyle}
         >
+          {settlingRail}
           {/* Gutter reveals the message time on hover (desktop), mirroring the
               timeline's grouped-continuation micro-time. */}
           <div
@@ -724,7 +763,8 @@ export function MessageItem({
           >
             {formatTime(sentAt)}
           </div>
-          <div className="message-content min-w-0 flex-1">
+          <div className={contentClassName}>
+            {settlingHint}
             {inlineEditing ? (
               editForm
             ) : (
@@ -746,6 +786,7 @@ export function MessageItem({
       ref={containerRef}
       tabIndex={-1}
       data-message-row=""
+      data-settling={settling ? "" : undefined}
       data-message-id={message.id}
       data-stream-id={streamId}
       data-author-name={authorName}
@@ -780,6 +821,7 @@ export function MessageItem({
         )}
         style={swipeStyle}
       >
+        {settlingRail}
         <ActorAvatar
           actorId={message.authorId}
           actorType={message.authorType}
@@ -788,7 +830,8 @@ export function MessageItem({
           alt={authorName}
           showStatus={false}
         />
-        <div className="message-content min-w-0 flex-1">
+        <div className={contentClassName}>
+          {settlingHint}
           <div className="mb-0.5 flex items-baseline gap-2">
             {interactiveName ? (
               <button
