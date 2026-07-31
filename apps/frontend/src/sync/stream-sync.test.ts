@@ -11,6 +11,7 @@ import {
   registerStreamSocketHandlers,
   toCachedStreamBootstrap,
   updateMessageEvent,
+  updateMemoEmbedSummary,
   type CachedStreamBootstrap,
 } from "./stream-sync"
 import { streamKeys } from "@/hooks/use-streams"
@@ -1120,6 +1121,74 @@ describe("applyStreamBootstrap — read-state freshness (stale response guard)",
       lastReadSequence: "50",
       lastReadAt: "2026-01-01T00:00:05.000Z",
     })
+  })
+})
+
+describe("updateMemoEmbedSummary", () => {
+  const SUMMARY = {
+    memoId: "memo_a",
+    title: "Launch in June",
+    knowledgeType: "decision" as const,
+    memoType: "conversation" as const,
+    tags: ["launch"],
+    updatedAt: "2026-07-31T10:00:00.000Z",
+  }
+
+  async function seed(streamId: string, id: string, memoEmbeds: unknown) {
+    await db.events.put({
+      ...makeEvent({
+        id,
+        streamId,
+        sequence: "100",
+        payload: { messageId: `msg_${id}`, contentMarkdown: "cites a memo", memoEmbeds },
+      }),
+      workspaceId: "ws_1",
+      _sequenceNum: 100,
+      _cachedAt: Date.now(),
+    })
+  }
+
+  beforeEach(async () => {
+    await db.events.clear()
+  })
+
+  it("replaces the summary on every message citing that memo", async () => {
+    const streamId = "stream_memo_patch"
+    await seed(streamId, "evt_1", [{ ...SUMMARY, title: "Launch in May" }])
+    await seed(streamId, "evt_2", [
+      { memoId: "memo_other", title: "Untouched" },
+      { ...SUMMARY, title: "Launch in May" },
+    ])
+
+    await updateMemoEmbedSummary(streamId, SUMMARY)
+
+    const first = await db.events.get("evt_1")
+    expect((first?.payload as { memoEmbeds: Array<{ title: string }> }).memoEmbeds[0].title).toBe("Launch in June")
+    const second = await db.events.get("evt_2")
+    const embeds = (second?.payload as { memoEmbeds: Array<{ memoId: string; title: string }> }).memoEmbeds
+    expect(embeds.map((e) => e.title)).toEqual(["Untouched", "Launch in June"])
+  })
+
+  // The event says a memo changed, not that this reader may see it. The server
+  // already decided per room which messages carry a summary; adding one here
+  // would put a card in front of someone the write path withheld it from.
+  it("does not add a summary to a message that never carried one", async () => {
+    const streamId = "stream_memo_absent"
+    await seed(streamId, "evt_bare", undefined)
+
+    await updateMemoEmbedSummary(streamId, SUMMARY)
+
+    expect((await db.events.get("evt_bare"))?.payload).not.toHaveProperty("memoEmbeds.0")
+  })
+
+  it("leaves other streams alone", async () => {
+    await seed("stream_a", "evt_a", [{ ...SUMMARY, title: "Launch in May" }])
+    await seed("stream_b", "evt_b", [{ ...SUMMARY, title: "Launch in May" }])
+
+    await updateMemoEmbedSummary("stream_a", SUMMARY)
+
+    const untouched = await db.events.get("evt_b")
+    expect((untouched?.payload as { memoEmbeds: Array<{ title: string }> }).memoEmbeds[0].title).toBe("Launch in May")
   })
 })
 

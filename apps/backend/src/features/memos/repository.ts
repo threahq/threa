@@ -382,6 +382,30 @@ export const MemoRepository = {
     )
   },
 
+  /**
+   * Streams whose live messages cite `memoId`, so an update to the memo can be
+   * pushed to exactly those rooms.
+   *
+   * Matches on the markdown pointer (`(memo:<id>)`), which every authored form
+   * serializes to — the picker's node, a pasted link, an API-written body. The
+   * id is a prefixed ULID, so the pattern cannot collide with a longer id, and
+   * it is passed as a parameter rather than interpolated.
+   *
+   * Workspace scoping goes through `streams`: `messages` carries no
+   * `workspace_id` (INV-8's exemption is the join, not the column).
+   */
+  async findCitingStreamIds(db: Querier, workspaceId: string, memoId: string): Promise<string[]> {
+    const result = await db.query<{ stream_id: string }>(sql`
+      SELECT DISTINCT m.stream_id
+      FROM messages m
+      JOIN streams s ON s.id = m.stream_id
+      WHERE s.workspace_id = ${workspaceId}
+        AND m.deleted_at IS NULL
+        AND m.content_markdown LIKE ${"%(memo:" + memoId + ")%"}
+    `)
+    return result.rows.map((row) => row.stream_id)
+  },
+
   async findByWorkspace(
     db: Querier,
     workspaceId: string,

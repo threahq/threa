@@ -907,6 +907,36 @@ export function preserveBakedInAppData(
 // Helper: find and update a message_created event in IndexedDB
 // ============================================================================
 
+/**
+ * Replace one memo's card content across every cached message in a stream that
+ * cites it — the client half of `memo:updated`.
+ *
+ * A memo card renders from the message payload and never fetches, so this is the
+ * only path by which a retitle reaches a reader who already has the message on
+ * screen. It patches ONLY messages that already carry a summary for this memo:
+ * the server decided per room what may be shown, and an event arriving for a
+ * stream is not permission to add a card to a message that never had one.
+ */
+export async function updateMemoEmbedSummary(streamId: string, summary: MemoEmbedSummary): Promise<void> {
+  await db.events
+    .where("[streamId+eventType]")
+    .equals([streamId, "message_created"])
+    .filter((e) => {
+      const embeds = (e.payload as { memoEmbeds?: MemoEmbedSummary[] })?.memoEmbeds
+      return Array.isArray(embeds) && embeds.some((entry) => entry.memoId === summary.memoId)
+    })
+    .modify((event) => {
+      const payload = event.payload as { memoEmbeds?: MemoEmbedSummary[] }
+      event.payload = {
+        ...payload,
+        memoEmbeds: (payload.memoEmbeds ?? []).map((entry) => (entry.memoId === summary.memoId ? summary : entry)),
+      }
+      const now = Date.now()
+      event._cachedAt = now
+      event._patchedAt = now
+    })
+}
+
 export async function updateMessageEvent(
   streamId: string,
   messageId: string,
@@ -1295,6 +1325,17 @@ export function registerStreamSocketHandlers(
     }
   }
 
+  /**
+   * A memo's card content changed. The server sends this only to streams whose
+   * room may see the memo, and only for a real edit — it is the one thing that
+   * may redraw a card, since nothing here loads late.
+   */
+  const handleMemoUpdated = async (payload: { streamId: string; memoId: string; summary: MemoEmbedSummary }) => {
+    if (payload.streamId !== streamId) return
+    await updateMemoEmbedSummary(streamId, payload.summary)
+    await queryClient.invalidateQueries({ queryKey: streamKeys.events(workspaceId, streamId) })
+  }
+
   const handleMessageEdited = async (payload: MessageEventPayload) => {
     if (payload.streamId !== streamId) return
     const editEvent = payload.event
@@ -1314,8 +1355,8 @@ export function registerStreamSocketHandlers(
         // REPLACED, not merged: the edit payload always carries this array,
         // empty included, so a reference the edit removed loses its card rather
         // than keeping the pre-edit one. Without this the cached row holds the
-        // old summaries for the life of the session — and since this PR deletes
-        // the per-card fetch, nothing else would ever correct it.
+        // old summaries for the life of the session — and since the card no
+        // longer fetches, nothing else would ever correct it.
         memoEmbeds: editPayload.memoEmbeds ?? [],
         editedAt: editEvent.createdAt,
       }))
@@ -1755,6 +1796,7 @@ export function registerStreamSocketHandlers(
 
   socket.on("message:created", handleMessageCreated)
   socket.on("message:edited", handleMessageEdited)
+  socket.on("memo:updated", handleMemoUpdated)
   socket.on("message:deleted", handleMessageDeleted)
   socket.on("messages:moved", handleMessagesMoved)
   socket.on("reaction:added", handleReactionAdded)
@@ -1797,6 +1839,7 @@ export function registerStreamSocketHandlers(
   return () => {
     socket.off("message:created", handleMessageCreated)
     socket.off("message:edited", handleMessageEdited)
+    socket.off("memo:updated", handleMemoUpdated)
     socket.off("message:deleted", handleMessageDeleted)
     socket.off("messages:moved", handleMessagesMoved)
     socket.off("reaction:added", handleReactionAdded)
