@@ -2121,12 +2121,20 @@ export function registerWorkspaceSocketHandlers(
         // appear or fade. Patch the by-id cache in place when it holds the row
         // (no refetch, panel stays live); otherwise mark it stale.
         const boardPostKey = conversationKeys.boardPost(payload.conversation.id)
-        if (queryClient.getQueryData(boardPostKey)) {
+        const cached = queryClient.getQueryData<BoardPost>(boardPostKey)
+        // A patched post must stay internally consistent, like
+        // mergeBoardConversation: prune rendered rows to the new membership, and
+        // if the OPENER left the membership the post's shape can't be patched —
+        // refetch instead of rendering a non-member opening.
+        const memberIds =
+          cached && new Set([...payload.conversation.messageIds, ...payload.conversation.secondaryMessageIds])
+        if (cached && memberIds && (!cached.openingMessage || memberIds.has(cached.openingMessage.id))) {
           queryClient.setQueryData<BoardPost>(boardPostKey, (prev) =>
             prev
               ? {
                   ...prev,
                   conversation: payload.conversation,
+                  recentMessages: prev.recentMessages.filter((m) => memberIds.has(m.id)),
                   settlingMessageIds: payload.settlingMessageIds ?? prev.settlingMessageIds,
                 }
               : prev
