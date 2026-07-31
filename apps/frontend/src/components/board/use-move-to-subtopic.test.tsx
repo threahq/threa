@@ -24,19 +24,48 @@ function branch(overrides: Partial<BranchConversationView>): BranchConversationV
   }
 }
 
+/** A board-store row as `useBoardPosts` returns it — only the fields the sibling
+ *  target list reads. */
+function post(
+  id: string,
+  overrides: {
+    streamId?: string
+    topicSummary?: string | null
+    messageIds?: string[]
+    status?: "pending"
+    lastActivityMs?: number
+  } = {}
+) {
+  return {
+    id,
+    workspaceId: WS,
+    conversation: {
+      id,
+      streamId: overrides.streamId ?? "chan_1",
+      topicSummary: overrides.topicSummary === undefined ? `Topic ${id}` : overrides.topicSummary,
+      messageIds: overrides.messageIds ?? ["m_x"],
+    },
+    _status: overrides.status,
+    _lastActivityMs: overrides.lastActivityMs ?? 0,
+  } as never
+}
+
 function MoveSurface({
   branches,
   currentConversationId,
+  settling,
 }: {
   branches: BranchConversationView[]
   currentConversationId: string
+  settling?: boolean
 }) {
   const move = useMoveToSubtopic({
     workspaceId: WS,
     conversation: { id: "conv_main", streamId: "chan_1", topicSummary: "Main thing" },
     branchesByForkMessageId: new Map([["m1", branches]]),
+    hasSettlingRows: settling ?? false,
   })
-  const handler = move.moveHandlerFor("m_target", currentConversationId)
+  const handler = move.moveHandlerFor("m_target", currentConversationId, settling)
   return (
     <>
       {handler ? (
@@ -55,15 +84,17 @@ function Harness({
   branches,
   currentConversationId,
   reassignMessage,
+  settling,
 }: {
   branches: BranchConversationView[]
   currentConversationId: string
   reassignMessage: (...args: unknown[]) => Promise<unknown>
+  settling?: boolean
 }) {
   return (
     <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
       <ServicesProvider services={{ conversations: { reassignMessage } as never }}>
-        <MoveSurface branches={branches} currentConversationId={currentConversationId} />
+        <MoveSurface branches={branches} currentConversationId={currentConversationId} settling={settling} />
       </ServicesProvider>
     </QueryClientProvider>
   )
@@ -144,5 +175,69 @@ describe("useMoveToSubtopic", () => {
     await userEvent.click(screen.getByRole("button", { name: /Main thing/ }))
 
     await waitFor(() => expect(reassignMessage).toHaveBeenCalledWith(WS, "conv_main", "m_target"))
+  })
+})
+
+describe("useMoveToSubtopic on a settling row", () => {
+  function stubBoard(posts: unknown[]) {
+    return vi.spyOn(boardStoreModule, "useBoardPosts").mockReturnValue(posts as never)
+  }
+
+  it("offers the stream's other conversations when the row has no sub-topics, and re-files into the picked sibling", async () => {
+    const spy = stubBoard([post("conv_main"), post("conv_sibling", { topicSummary: "Deploy plan" })])
+    const reassignMessage = vi
+      .fn()
+      .mockResolvedValue({ conversation: { id: "conv_sibling" }, previousConversation: null })
+    render(<Harness branches={[]} currentConversationId="conv_main" reassignMessage={reassignMessage} settling />)
+
+    await userEvent.click(screen.getByRole("button", { name: "Move to sub-topic" }))
+    await userEvent.click(screen.getByRole("button", { name: /Deploy plan/ }))
+
+    await waitFor(() => expect(reassignMessage).toHaveBeenCalledWith(WS, "conv_sibling", "m_target"))
+    spy.mockRestore()
+  })
+
+  it("skips other streams, the row's own conversation, and pending or empty rows", () => {
+    const spy = stubBoard([
+      post("conv_main"),
+      post("conv_other_stream", { streamId: "chan_2", topicSummary: "Elsewhere" }),
+      post("conv_pending", { topicSummary: "Pending", status: "pending" }),
+      post("conv_empty", { topicSummary: "Empty", messageIds: [] }),
+    ])
+    render(<Harness branches={[]} currentConversationId="conv_main" reassignMessage={vi.fn()} settling />)
+
+    expect(screen.getByText("no action")).toBeDefined()
+    spy.mockRestore()
+  })
+
+  it("caps the sibling list at eight, newest activity first", async () => {
+    const spy = stubBoard([
+      post("conv_main"),
+      ...Array.from({ length: 12 }, (_, i) => post(`conv_s${i}`, { topicSummary: `Sibling ${i}`, lastActivityMs: i })),
+    ])
+    render(<Harness branches={[]} currentConversationId="conv_main" reassignMessage={vi.fn()} settling />)
+
+    await userEvent.click(screen.getByRole("button", { name: "Move to sub-topic" }))
+
+    const titles = screen.getAllByRole("button").map((b) => b.textContent)
+    expect(titles.filter((t) => t?.startsWith("Sibling"))).toEqual([
+      "Sibling 11",
+      "Sibling 10",
+      "Sibling 9",
+      "Sibling 8",
+      "Sibling 7",
+      "Sibling 6",
+      "Sibling 5",
+      "Sibling 4",
+    ])
+    spy.mockRestore()
+  })
+
+  it("leaves a settled row's targets untouched — siblings are a settling-only widening", () => {
+    const spy = stubBoard([post("conv_main"), post("conv_sibling", { topicSummary: "Deploy plan" })])
+    render(<Harness branches={[]} currentConversationId="conv_main" reassignMessage={vi.fn()} />)
+
+    expect(screen.getByText("no action")).toBeDefined()
+    spy.mockRestore()
   })
 })

@@ -73,6 +73,7 @@ export interface ConversationService {
   markRead: typeof conversationsApi.markRead
   markUnread: typeof conversationsApi.markUnread
   reassignMessage: typeof conversationsApi.reassignMessage
+  settleMessage: typeof conversationsApi.settleMessage
   reassignMessages: typeof conversationsApi.reassignMessages
   proposeSplit: typeof conversationsApi.proposeSplit
   applySplit: typeof conversationsApi.applySplit

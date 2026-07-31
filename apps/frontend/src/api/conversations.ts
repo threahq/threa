@@ -194,6 +194,24 @@ export const conversationsApi = {
   },
 
   /**
+   * "Keep here": confirm a provisionally-placed message belongs in
+   * `conversationId`. Settles the row and records the confirmation as
+   * extraction feedback; the response carries the conversation's remaining
+   * settling set so the mark can fade without waiting for the socket echo.
+   */
+  async settleMessage(
+    workspaceId: string,
+    conversationId: string,
+    messageId: string
+  ): Promise<{
+    conversation: ConversationWithStaleness
+    previousConversation: null
+    settlingMessageIds: string[]
+  }> {
+    return api.post(`/api/workspaces/${workspaceId}/conversations/${conversationId}/messages/${messageId}/settle`)
+  },
+
+  /**
    * User correction: reassign a set of selected messages to another conversation.
    * A `targetConversationId` reassigns into that existing conversation; omit it to
    * mint a new one (the split gesture). The backend applies every move in one

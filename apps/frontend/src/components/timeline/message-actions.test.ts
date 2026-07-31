@@ -636,3 +636,66 @@ describe("groupVisibleActions", () => {
     expect(linkRow).toBeDefined()
   })
 })
+
+describe("the settling pair", () => {
+  const settlingCtx = createContext({
+    viewInStream: { href: "/w/ws_1/s/stream_1?m=msg_1", label: "View in channel" },
+    onKeepInConversation: vi.fn(),
+    onNotThisTopic: vi.fn(),
+  })
+
+  it("puts both entries ahead of View in channel, so they head the drawer and the overflow menu", () => {
+    const ids = getVisibleActions(settlingCtx).map((a) => a.id)
+
+    expect(ids.slice(0, 3)).toEqual(["keep-in-conversation", "not-this-topic", "view-in-stream"])
+  })
+
+  it("shows exactly one picker entry on a settling row with a move target — the conversation surfaces suppress 'Move to sub-topic…' in favour of 'Not this topic…' (same icon, same dialog)", () => {
+    // The full list, not a prefix: a duplicate would appear anywhere in it.
+    const ids = getVisibleActions(settlingCtx).map((a) => a.id)
+
+    expect(ids).toEqual([
+      "keep-in-conversation",
+      "not-this-topic",
+      "view-in-stream",
+      "reply-in-thread",
+      "copy-as-markdown",
+      "copy-as-plain-text",
+    ])
+  })
+
+  it("reads exactly 'Keep here' / 'Not this topic…'", () => {
+    const byId = new Map(getVisibleActions(settlingCtx).map((a) => [a.id, resolveActionLabel(a, settlingCtx)]))
+
+    expect([byId.get("keep-in-conversation"), byId.get("not-this-topic")]).toEqual(["Keep here", "Not this topic…"])
+  })
+
+  it("hides both on a settled row, and hides 'Not this topic' on its own when the row has nowhere to go", () => {
+    const settled = getVisibleActions(createContext()).map((a) => a.id)
+    const noTarget = getVisibleActions(createContext({ onKeepInConversation: vi.fn() })).map((a) => a.id)
+
+    expect({
+      settled: settled.filter((id) => id === "keep-in-conversation" || id === "not-this-topic"),
+      noTarget: noTarget.filter((id) => id === "keep-in-conversation" || id === "not-this-topic"),
+    }).toEqual({ settled: [], noTarget: ["keep-in-conversation"] })
+  })
+
+  it("survives the drawer's grouping pass as the first two entries (message-action-drawer renders groupVisibleActions)", () => {
+    const items = groupVisibleActions(getVisibleActions(settlingCtx))
+
+    expect(items.slice(0, 2)).toEqual([
+      { kind: "single", action: expect.objectContaining({ id: "keep-in-conversation" }) },
+      { kind: "single", action: expect.objectContaining({ id: "not-this-topic" }) },
+    ])
+  })
+
+  it("invokes its handler (the drawer/menu action path)", () => {
+    const onKeepInConversation = vi.fn()
+    const ctx = createContext({ onKeepInConversation })
+    const action = messageActions.find((a) => a.id === "keep-in-conversation")!
+
+    action.action?.(ctx)
+
+    expect(onKeepInConversation).toHaveBeenCalledTimes(1)
+  })
+})

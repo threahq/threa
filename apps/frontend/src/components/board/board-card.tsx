@@ -340,7 +340,12 @@ export function BoardCard({
   // "Move to sub-topic" re-file: membership move between this conversation and
   // its nested sub-topics (one root). The hook hides the action when a row has
   // nowhere to go.
-  const moveToSubtopic = useMoveToSubtopic({ workspaceId, conversation, branchesByForkMessageId })
+  const moveToSubtopic = useMoveToSubtopic({
+    workspaceId,
+    conversation,
+    branchesByForkMessageId,
+    hasSettlingRows: settlingIds.size > 0,
+  })
   // A spanning-overflow row from a card opens the whole conversation in the panel.
   const continueThreadTo = () => getPanelUrl(createConversationPanelId(conversation.id))
   // Heal a soft-thread seam into its own topic (the card re-forms as a nested
@@ -496,7 +501,7 @@ export function BoardCard({
         surfaceClassName="bg-card px-3 sm:px-4"
         rowInsetClassName="-mx-3 sm:-mx-4"
         onNewSubtopic={canBranch ? () => inlineComposer.openNewSubtopic(rowStreamId, message.id) : undefined}
-        onMoveToSubtopic={moveToSubtopic.moveHandlerFor(message.id, conversation.id)}
+        onMoveToSubtopic={moveToSubtopic.moveHandlerFor(message.id, conversation.id, message.settling)}
       />
     )
   }
@@ -536,7 +541,9 @@ export function BoardCard({
               : undefined
           }
           onMoveToSubtopic={
-            branch.pending ? undefined : moveToSubtopic.moveHandlerFor(message.id, branch.conversationId)
+            branch.pending
+              ? undefined
+              : moveToSubtopic.moveHandlerFor(message.id, branch.conversationId, message.settling)
           }
         />
       </ConversationReadProvider>

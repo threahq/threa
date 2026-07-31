@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { Link } from "react-router-dom"
 import { toast } from "sonner"
-import { Quote } from "lucide-react"
+import { Quote, Check, FolderInput } from "lucide-react"
 import {
   LabelableResourceTypes,
   type AttachmentSummary,
@@ -45,6 +45,7 @@ import { useFormattedDate } from "@/hooks/use-formatted-date"
 import { useInputMode } from "@/hooks/use-input-mode"
 import { useDeleteMessage } from "@/hooks/use-delete-message"
 import { useDiscussWithAriadne } from "@/hooks/use-discuss-with-ariadne"
+import { useSettleConversationMessage } from "@/hooks/use-conversations"
 import { useSavedForMessage, useSaveMessage, useDeleteSaved } from "@/hooks/use-saved"
 import { parseMarkdown } from "@threa/prosemirror"
 import { useTouchCapable } from "@/hooks/use-touch-capable"
@@ -312,6 +313,23 @@ export function MessageItem({
     })
   }, [startDiscussWithAriadne, conversationId, conversationRootStreamId, message.id])
 
+  // The settling pair. Both are wired only while the row is still settling and
+  // the surface knows the conversation, so a settled row's menus and toolbar are
+  // exactly what they were before this existed. "Not this topic" reuses the
+  // existing move-to-sub-topic picker (INV-35) — undefined when the row has
+  // nowhere to go, so the entry hides rather than dead-ending.
+  const settleMessage = useSettleConversationMessage(workspaceId, conversationRootStreamId ?? streamId)
+  const isSettling = Boolean(message.settling && conversationId)
+  const handleKeepInConversation = useCallback(() => {
+    if (!conversationId || settleMessage.isPending) return
+    settleMessage.mutate(
+      { messageId: message.id, conversationId },
+      { onError: () => toast.error("Couldn't confirm the message. Please try again.") }
+    )
+  }, [settleMessage, conversationId, message.id])
+  const onKeepInConversation = isSettling ? handleKeepInConversation : undefined
+  const onNotThisTopic = isSettling ? onMoveToSubtopic : undefined
+
   // Save / Set reminder — the same shared registry actions the in-stream row
   // exposes (`MessageEvent`). A save from a conversation surface passes
   // `conversationId` so the saved row (and its reminder) deep-links back into
@@ -455,7 +473,11 @@ export function MessageItem({
     },
     onLabelMessage: () => setLabelPickerOpen(true),
     onNewSubtopic,
-    onMoveToSubtopic,
+    // A settling row surfaces the same picker as "Not this topic…"; showing
+    // "Move to sub-topic…" too would be a second entry, same icon, same dialog.
+    onMoveToSubtopic: isSettling ? undefined : onMoveToSubtopic,
+    onKeepInConversation,
+    onNotThisTopic,
     onMarkReadUpToHere:
       conversationRead && rowRead !== "read" ? () => conversationRead.markReadUpToHere(message.id) : undefined,
     onMarkUnread: conversationRead && rowRead !== "unread" ? () => conversationRead.markUnread(message.id) : undefined,
@@ -475,6 +497,41 @@ export function MessageItem({
   const overflowMenu = (
     <div className="reveal-actions-hover-only absolute right-4 bottom-[calc(100%-20px)] z-10 hidden sm:block">
       <div className="flex items-center gap-0.5 rounded-md border border-border/60 bg-popover/95 px-1 py-1 shadow-md backdrop-blur-sm">
+        {/* The settling pair, leftmost. The toolbar is right-anchored, so this
+            grows leftward and displaces nothing (INV-21); a settled row renders
+            the toolbar exactly as it did before. */}
+        {onKeepInConversation && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-6 w-6 shrink-0 text-muted-foreground hover:text-foreground"
+                aria-label="Keep here"
+                onClick={onKeepInConversation}
+              >
+                <Check className="h-3.5 w-3.5" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Keep here</TooltipContent>
+          </Tooltip>
+        )}
+        {onNotThisTopic && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-6 w-6 shrink-0 text-muted-foreground hover:text-foreground"
+                aria-label="Not this topic…"
+                onClick={onNotThisTopic}
+              >
+                <FolderInput className="h-3.5 w-3.5" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Not this topic…</TooltipContent>
+          </Tooltip>
+        )}
         <ReactionEmojiPicker
           workspaceId={workspaceId}
           onSelect={handleAddReaction}

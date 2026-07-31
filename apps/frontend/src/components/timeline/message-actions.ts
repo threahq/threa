@@ -23,6 +23,7 @@ import {
   PanelRight,
   GitBranch,
   FolderInput,
+  Check,
 } from "lucide-react"
 import { toast } from "sonner"
 import { stripMarkdown } from "@/lib/markdown"
@@ -119,6 +120,18 @@ export interface MessageActionContext {
    * conversation panel), and only when the row has somewhere to go.
    */
   onMoveToSubtopic?: () => void
+  /**
+   * Confirm the extractor's provisional placement — the message stays put and
+   * the settling mark fades. Set only by conversation surfaces for rows still
+   * settling.
+   */
+  onKeepInConversation?: () => void
+  /**
+   * Reject the provisional placement: opens the same re-file picker as
+   * `onMoveToSubtopic`. Set only by conversation surfaces for rows still
+   * settling, and only when the row has somewhere to go.
+   */
+  onNotThisTopic?: () => void
   /**
    * Share-to-root fast path: queue a pointer share into the top-level non-thread
    * ancestor (channel/dm/scratchpad) and navigate there. Always preferred over
@@ -311,6 +324,23 @@ async function copyToClipboard(text: string): Promise<void> {
 }
 
 export const messageActions: MessageAction[] = [
+  {
+    // The settling pair, first so they land at the top of the long-press drawer
+    // and the overflow menu — a provisional placement is the one thing the row
+    // is asking about. Both handlers are set only on a still-settling row.
+    id: "keep-in-conversation",
+    label: "Keep here",
+    icon: Check,
+    when: (ctx) => !!ctx.onKeepInConversation,
+    action: (ctx) => ctx.onKeepInConversation?.(),
+  },
+  {
+    id: "not-this-topic",
+    label: "Not this topic…",
+    icon: FolderInput,
+    when: (ctx) => !!ctx.onNotThisTopic,
+    action: (ctx) => ctx.onNotThisTopic?.(),
+  },
   {
     // Board card / conversation panel / label page → the message's home
     // stream. Gated on `viewInStream`, which only those out-of-stream surfaces
