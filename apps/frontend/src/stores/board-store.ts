@@ -4,14 +4,6 @@ import { db, type CachedBoardPost } from "@/db"
 import { deleteConversationMessages, pruneConversationMessagesToMembership } from "./conversation-messages-store"
 import type { AttachmentSummary, BoardPost, BoardScopeStreamType, ConversationWithStaleness } from "@threa/types"
 
-/**
- * How many trailing replies a board card previews. Mirrors the backend's
- * `listByWorkspace` projection (service.ts), so an optimistic append caps the
- * same way a refetch would. The single source for this cap — the board card's
- * collapsed slice imports it too.
- */
-export const RECENT_PREVIEW_CAP = 3
-
 function lastActivityMs(conversation: { lastActivityAt: string }): number {
   const ms = Date.parse(conversation.lastActivityAt)
   return Number.isNaN(ms) ? 0 : ms

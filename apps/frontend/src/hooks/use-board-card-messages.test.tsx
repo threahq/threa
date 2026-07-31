@@ -14,6 +14,7 @@ import {
   type BoardCardMessages,
 } from "./use-board-card-messages"
 import type { RenderableMessage } from "@/components/message/message-item"
+import { AUTHOR_RUN_WINDOW_MS } from "@/lib/message-grouping"
 import { seedConversationMessages } from "@/stores/conversation-messages-store"
 
 const WS = "ws_1"
@@ -993,17 +994,28 @@ describe("useBoardCardMessages stability (no flicker, no hiding)", () => {
 })
 
 describe("useStableReplyWindow", () => {
+  let clock = 0
+  /** Each call advances past the author-run window, so consecutive `reply()`
+   * rows are separate runs unless `run()` is used. */
   function reply(id: string): RenderableMessage {
+    clock += AUTHOR_RUN_WINDOW_MS + 1
+    return row(id, "usr_1", clock)
+  }
+  function row(id: string, authorId: string, createdAtMs: number): RenderableMessage {
     return {
       id,
       streamId: STREAM,
-      authorId: "usr_1",
+      authorId,
       authorType: "user",
       contentMarkdown: id,
       reactions: {},
-      createdAt: new Date(0).toISOString(),
+      createdAt: new Date(createdAtMs).toISOString(),
       editedAt: null,
     } as RenderableMessage
+  }
+  /** `n` same-author rows one second apart, starting at `startMs`. */
+  function run(prefix: string, authorId: string, startMs: number, n: number): RenderableMessage[] {
+    return Array.from({ length: n }, (_, i) => row(`${prefix}${i + 1}`, authorId, startMs + i * 1_000))
   }
   const ids = (messages: RenderableMessage[]) => messages.map((m) => m.id)
 
@@ -1016,9 +1028,31 @@ describe("useStableReplyWindow", () => {
     )
   }
 
-  it("previews the trailing cap at first reveal", () => {
+  it("floors the trailing-runs preview at BOARD_TAIL_MIN_ROWS rows when every reply is its own run", () => {
     const { result } = renderWindow("conv_1", ["r1", "r2", "r3", "r4", "r5"].map(reply))
     expect(ids(result.current)).toEqual(["r3", "r4", "r5"])
+  })
+
+  it("shows both replies of a two-row conversation without padding past its length", () => {
+    const { result } = renderWindow("conv_1", ["r1", "r2"].map(reply))
+    expect(ids(result.current)).toEqual(["r1", "r2"])
+  })
+
+  it("shows a whole 4-message spew as one run", () => {
+    const { result } = renderWindow("conv_1", run("s", "usr_1", 0, 4))
+    expect(ids(result.current)).toEqual(["s1", "s2", "s3", "s4"])
+  })
+
+  it("shows both runs when two runs fit under the row cap", () => {
+    const replies = [...run("a", "usr_1", 0, 2), ...run("b", "usr_2", 5_000, 3)]
+    const { result } = renderWindow("conv_1", replies)
+    expect(ids(result.current)).toEqual(["a1", "a2", "b1", "b2", "b3"])
+  })
+
+  it("takes the trailing rows when the last two runs exceed the cap, starting mid-run", () => {
+    const replies = [...run("a", "usr_1", 0, 4), ...run("b", "usr_2", 10_000, 4)]
+    const { result } = renderWindow("conv_1", replies)
+    expect(ids(result.current)).toEqual(["a4", "b1", "b2", "b3", "b4"])
   })
 
   it("grows on a new arrival instead of evicting the oldest visible reply", () => {
@@ -1049,14 +1083,16 @@ describe("useStableReplyWindow", () => {
   })
 
   it("keeps a late-syncing mid-window reply under the gap instead of inserting between shown rows", () => {
-    const { result, rerender } = renderWindow("conv_1", ["r3", "r5", "r6"].map(reply))
-    expect(ids(result.current)).toEqual(["r3", "r5", "r6"])
+    const shownRows = ["r3", "r5", "r7"].map((id, i) => row(id, "usr_1", i * (AUTHOR_RUN_WINDOW_MS + 1)))
+    const { result, rerender } = renderWindow("conv_1", shownRows)
+    expect(ids(result.current)).toEqual(["r3", "r5", "r7"])
 
-    // r4 syncs late, landing BETWEEN shown rows — revealing it would push r5/r6
+    // r6 syncs late, landing BETWEEN shown rows — revealing it would push r7
     // down. It stays under the "N more" gap; only rows after the last shown
     // reply may append.
-    rerender({ convId: "conv_1", replies: ["r3", "r4", "r5", "r6"].map(reply) })
-    expect(ids(result.current)).toEqual(["r3", "r5", "r6"])
+    const withLate = [shownRows[0], shownRows[1], row("r6", "usr_1", 1.5 * (AUTHOR_RUN_WINDOW_MS + 1)), shownRows[2]]
+    rerender({ convId: "conv_1", replies: withLate })
+    expect(ids(result.current)).toEqual(["r3", "r5", "r7"])
   })
 
   it("resets the shown window when recycled onto another conversation", () => {

@@ -17,7 +17,8 @@ import {
 import { BoardEventRowItem, type BoardRow } from "@/components/board/board-row-item"
 import { DayDivider } from "@/components/timeline/day-divider"
 import { UnreadDivider } from "@/components/timeline/unread-divider"
-import { isContinuation, type RenderableMessage } from "@/components/message/message-item"
+import { isContinuation } from "@/lib/message-grouping"
+import { type RenderableMessage } from "@/components/message/message-item"
 import type { BranchConversationView } from "@/lib/board/branch-grouping"
 
 /** Indent per thread boundary (spanning), applied on a wrapper so the shared

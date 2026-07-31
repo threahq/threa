@@ -18,6 +18,7 @@ import { conversationFeedbackId, conversationId as generateConversationId } from
 import { HttpError } from "../../lib/errors"
 import { logger } from "../../lib/logger"
 import {
+  BOARD_TAIL_MAX_ROWS,
   ConversationStatuses,
   StreamTypes,
   type AttachmentSummary,
@@ -353,7 +354,7 @@ export class ConversationService {
         (a, b) =>
           (messageById.get(a)?.createdAt.getTime() ?? Infinity) - (messageById.get(b)?.createdAt.getTime() ?? Infinity)
       )
-      const recentIds = orderedReplyIds.slice(Math.max(0, orderedReplyIds.length - 3))
+      const recentIds = orderedReplyIds.slice(Math.max(0, orderedReplyIds.length - BOARD_TAIL_MAX_ROWS))
       planByConversation.set(conversation.id, { originId, recentIds, totalReplies: replyIds.length })
       if (originId) hydrateIds.add(originId)
       for (const id of recentIds) hydrateIds.add(id)

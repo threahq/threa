@@ -63,10 +63,6 @@ function viewInStreamLabel(type: StreamType | undefined): string {
   return type ? `View in ${streamFallbackLabel(type, "noun")}` : "Go to message"
 }
 
-/** Same-author messages within this window collapse into a continuation (no
- * repeated header) — matches the timeline's grouping. */
-export const GROUP_WINDOW_MS = 5 * 60_000
-
 /**
  * The fields {@link MessageItem} reads. A lean rendering shape satisfied by the
  * board feed payload (`BoardPostMessage`), a labeled message (`LabeledMessage`),
@@ -105,15 +101,6 @@ export interface RenderableMessage {
    * Resolved per row against the board post's `settlingMessageIds`; a tombstone
    * never carries it (deleted trumps settling). */
   settling?: boolean
-}
-
-export function isContinuation(prev: RenderableMessage, cur: RenderableMessage): boolean {
-  if (prev.deletedAt || cur.deletedAt) return false
-  return (
-    prev.authorId === cur.authorId &&
-    prev.authorType === cur.authorType &&
-    Math.abs(new Date(cur.createdAt).getTime() - new Date(prev.createdAt).getTime()) < GROUP_WINDOW_MS
-  )
 }
 
 interface MessageItemProps {

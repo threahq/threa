@@ -2,10 +2,18 @@ import { useCallback, useEffect, useMemo, useRef, useSyncExternalStore } from "r
 import { liveQuery, type Subscription } from "dexie"
 import { db, type CachedEvent } from "@/db"
 import { createDraftPanelId } from "@/contexts/panel-context"
-import { RECENT_PREVIEW_CAP } from "@/stores/board-store"
 import { useConversationBackfillMessages } from "@/stores/conversation-messages-store"
+import { isContinuation } from "@/lib/message-grouping"
 import type { RenderableMessage } from "@/components/message/message-item"
-import { StreamTypes, BOARD_EVENT_ROW_TYPES, type AuthorType, type EventType } from "@threa/types"
+import {
+  StreamTypes,
+  BOARD_EVENT_ROW_TYPES,
+  BOARD_TAIL_MAX_ROWS,
+  BOARD_TAIL_MIN_ROWS,
+  BOARD_TAIL_RUNS,
+  type AuthorType,
+  type EventType,
+} from "@threa/types"
 import type { BoardViewPost } from "./use-stable-board-view"
 
 /**
@@ -1047,8 +1055,32 @@ export function useBoardCardMessages(
 }
 
 /**
- * The collapsed card's reply window: the trailing `RECENT_PREVIEW_CAP` replies
- * at first reveal, then append-only. A new arrival GROWS the window instead of
+ * The trailing `BOARD_TAIL_RUNS` author-runs, floored at `BOARD_TAIL_MIN_ROWS`
+ * rows and capped at `BOARD_TAIL_MAX_ROWS`. Fragmented typing — one thought
+ * sent as four quick messages — is one run, so the tail shows the thought whole
+ * instead of its last three lines. The floor keeps a sparse conversation (every
+ * reply its own run) from showing fewer rows than the card always did; the row
+ * cap wins over both, and a window that starts mid-run renders headed because
+ * the row before it isn't shown.
+ */
+export function boardTailWindow(replies: RenderableMessage[]): RenderableMessage[] {
+  if (replies.length === 0) return replies
+  let start = replies.length - 1
+  let runs = 1
+  for (let i = replies.length - 1; i > 0; i--) {
+    if (!isContinuation(replies[i - 1], replies[i])) {
+      if (runs === BOARD_TAIL_RUNS) break
+      runs++
+    }
+    start = i - 1
+  }
+  const floored = Math.max(0, Math.min(start, replies.length - BOARD_TAIL_MIN_ROWS))
+  return replies.slice(Math.max(floored, replies.length - BOARD_TAIL_MAX_ROWS))
+}
+
+/**
+ * The collapsed card's reply window: the trailing {@link boardTailWindow} at
+ * first reveal, then append-only. A new arrival GROWS the window instead of
  * sliding it, so a reply the viewer has seen never drops back under the "N
  * more" gap and rows never move under the eye (INV-61's no-motion rule,
  * extended inside the card). A deleted reply still leaves (a real removal, not
@@ -1070,7 +1102,7 @@ export function useStableReplyWindow(conversationId: string, replies: Renderable
         return replies.filter((message, index) => shown.has(message.id) || index > lastShownIndex)
       }
     }
-    return replies.slice(-RECENT_PREVIEW_CAP)
+    return boardTailWindow(replies)
   }, [conversationId, replies])
 
   // Record what's shown after commit, never during render (concurrent-safe,
