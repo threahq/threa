@@ -1,6 +1,8 @@
 # GitHub stacked PR merge investigation
 
-Status: 2026-07-20. GitHub Stacked PRs is in private preview; its interfaces may change without notice.
+Status: **superseded 2026-07-31.** gh-stack v0.1.0 (2026-07-29) added `gh stack merge`, a first-class atomic stack merge. The browser-session wrapper this document motivated (`merge-stack.ts`) has been deleted; use `gh stack merge <pr> --yes --squash`. Kept as the record of why the wrapper existed and what the preview REST surface did and did not offer.
+
+Status at time of writing: 2026-07-20. GitHub Stacked PRs is in private preview; its interfaces may change without notice.
 
 ## Supported surfaces
 
