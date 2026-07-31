@@ -1,6 +1,6 @@
 import { Pool } from "pg"
 import { withClient, withTransaction, type Querier } from "../../db"
-import { ConversationRepository, type Conversation } from "./repository"
+import { ConversationRepository, distinctAuthors, type Conversation } from "./repository"
 import { ConversationFeedbackRepository } from "./feedback-repository"
 import { MessageConversationStateRepository } from "./settling-repository"
 import { MessageRepository, type Message } from "../messaging"
@@ -1619,21 +1619,6 @@ export class ConversationService {
     // Map keys are unique, so a strict less-than comparator totally orders them.
     return [...groups.entries()].sort(([a], [b]) => (a < b ? -1 : 1))
   }
-}
-
-/** Distinct non-null author ids of `ids`, in first-appearance order — the
- *  recomputed `participant_ids` for a membership move. */
-function distinctAuthors(ids: string[], messages: Map<string, Message>): string[] {
-  const seen = new Set<string>()
-  const authors: string[] = []
-  for (const id of ids) {
-    const authorId = messages.get(id)?.authorId
-    if (authorId && !seen.has(authorId)) {
-      seen.add(authorId)
-      authors.push(authorId)
-    }
-  }
-  return authors
 }
 
 /** Project a full message + its hydrated rich content down to a board post message. */

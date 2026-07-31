@@ -417,6 +417,33 @@ export const ConversationRepository = {
     return result.rows.map(mapRowToConversation)
   },
 
+  /**
+   * The stream's most recently active NON-EMPTY active conversation, bounded by
+   * `activeSince`. Workspace-scoped (INV-8). Empty shells are excluded so a
+   * provisional attach can't resurrect a conversation whose messages all moved
+   * away, and the time bound keeps a long-dormant conversation from swallowing
+   * an unrelated new message.
+   */
+  async findLatestActiveByStream(
+    db: Querier,
+    workspaceId: string,
+    streamId: string,
+    activeSince: Date
+  ): Promise<Conversation | null> {
+    const result = await db.query<ConversationRow>(sql`
+      SELECT ${sql.raw(SELECT_FIELDS)} FROM conversations
+      WHERE workspace_id = ${workspaceId}
+        AND stream_id = ${streamId}
+        AND status = ${ConversationStatuses.ACTIVE}
+        AND cardinality(message_ids) > 0
+        AND last_activity_at >= ${activeSince}
+      ORDER BY last_activity_at DESC
+      LIMIT 1
+    `)
+    if (!result.rows[0]) return null
+    return mapRowToConversation(result.rows[0])
+  },
+
   async findActiveByStream(db: Querier, streamId: string, limit = 50): Promise<Conversation[]> {
     return this.findByStream(db, streamId, { status: "active", limit })
   },
@@ -1033,4 +1060,19 @@ export const ConversationRepository = {
     const result = await db.query(sql`DELETE FROM conversations WHERE id = ${id}`)
     return result.rowCount !== null && result.rowCount > 0
   },
+}
+
+/** Distinct non-null author ids of `ids`, in first-appearance order — the
+ *  recomputed `participant_ids` for a membership move. */
+export function distinctAuthors(ids: string[], messages: Map<string, { authorId: string | null }>): string[] {
+  const seen = new Set<string>()
+  const authors: string[] = []
+  for (const id of ids) {
+    const authorId = messages.get(id)?.authorId
+    if (authorId && !seen.has(authorId)) {
+      seen.add(authorId)
+      authors.push(authorId)
+    }
+  }
+  return authors
 }

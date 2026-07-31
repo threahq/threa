@@ -2,11 +2,20 @@ import type { PoolClient } from "pg"
 import { sql } from "../../db"
 import { ConversationRepository } from "./repository"
 import type { ConversationAssigner, Message } from "../messaging"
-import { checkStreamAccess, StreamRepository } from "../streams"
+import { checkStreamAccess, StreamRepository, type Stream } from "../streams"
 import { emitAssignmentEvents } from "./assignment-events"
 import { conversationId } from "../../lib/id"
-import { ConversationIntents, ConversationStatuses } from "@threa/types"
+import { ConversationIntents, ConversationStatuses, StreamTypes, type AuthorType } from "@threa/types"
 import { HttpError } from "../../lib/errors"
+import { MessageConversationStateRepository } from "./settling-repository"
+import { isClusteredSend } from "./extraction-eligibility"
+
+/**
+ * How far back a root-stream send looks for a conversation to provisionally
+ * join. Past it the stream has gone quiet and the new message is likelier to
+ * open a topic than continue one — no attach, and the extractor decides.
+ */
+export const PROVISIONAL_ATTACH_WINDOW_MINUTES = 30
 
 /**
  * Assigns a message that DECLARED its conversation at send time, synchronously,
@@ -92,6 +101,68 @@ export const conversationAssigner: ConversationAssigner = {
     })
     return target.id
   },
+
+  async attachProvisionalInTransaction(client, { workspaceId, message, stream, authorType }) {
+    if (!stream) return null
+    if (
+      !(await isClusteredSend(client, {
+        workspaceId,
+        streamId: stream.id,
+        streamType: stream.type,
+        authorType,
+      }))
+    ) {
+      return null
+    }
+
+    const candidate = await findProvisionalCandidate(client, workspaceId, stream)
+    if (!candidate) return null
+
+    // Same lock order as the declared `existing` path (INV-20): the candidate
+    // row is locked before any membership write.
+    const target = await ConversationRepository.findByIdForUpdate(client, workspaceId, candidate.id)
+    if (!target || target.status !== ConversationStatuses.ACTIVE) return null
+
+    await ConversationRepository.addPrimaryMessage(client, workspaceId, target.id, message.id, message.authorId)
+    // Before the events: the payload's `settlingMessageIds` is read back from
+    // this row.
+    await MessageConversationStateRepository.insertSettling(client, {
+      messageId: message.id,
+      workspaceId,
+      streamId: message.streamId,
+      conversationId: target.id,
+    })
+    await ConversationRepository.bumpActivityForIds(client, workspaceId, [target.id])
+    await emitAssignmentEvents(client, {
+      workspaceId,
+      message,
+      conversationId: target.id,
+      created: false,
+      reason: "provisional",
+      settling: true,
+    })
+    return target.id
+  },
+}
+
+/**
+ * The structural guess a send can make without an LLM. A thread reply continues
+ * the conversation its anchor belongs to (structural, so no time bound); a root
+ * message continues the stream's most recent conversation, but only while that
+ * conversation is still warm. Never mints — no candidate means the extractor
+ * assigns later, exactly as before.
+ */
+async function findProvisionalCandidate(
+  client: PoolClient,
+  workspaceId: string,
+  stream: Stream
+): Promise<{ id: string } | null> {
+  if (stream.type === StreamTypes.THREAD) {
+    if (!stream.parentAnchorId?.startsWith("msg_")) return null
+    return ConversationRepository.findPrimaryByMessageId(client, workspaceId, stream.parentAnchorId)
+  }
+  const activeSince = new Date(Date.now() - PROVISIONAL_ATTACH_WINDOW_MINUTES * 60_000)
+  return ConversationRepository.findLatestActiveByStream(client, workspaceId, stream.id, activeSince)
 }
 
 /** Mint a fresh conversation in the message's stream, seeded with the message.

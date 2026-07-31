@@ -61,6 +61,28 @@ export const MessageConversationStateRepository = {
     `)
   },
 
+  /** The message's state row, or null when its assignment was never provisional. */
+  async findByMessageId(db: Querier, workspaceId: string, messageId: string): Promise<SettlingRow | null> {
+    const result = await db.query<SettlingDbRow>(sql`
+      SELECT message_id, workspace_id, stream_id, conversation_id, state, settled_by, settled_at
+      FROM message_conversation_state
+      WHERE workspace_id = ${workspaceId} AND message_id = ${messageId}
+    `)
+    const row = result.rows[0]
+    return row ? mapRow(row) : null
+  },
+
+  /** State rows for `messageIds`, keyed by message id. Absent = never provisional. */
+  async findByMessageIds(db: Querier, workspaceId: string, messageIds: string[]): Promise<Map<string, SettlingRow>> {
+    if (messageIds.length === 0) return new Map()
+    const result = await db.query<SettlingDbRow>(sql`
+      SELECT message_id, workspace_id, stream_id, conversation_id, state, settled_by, settled_at
+      FROM message_conversation_state
+      WHERE workspace_id = ${workspaceId} AND message_id = ANY(${messageIds}::text[])
+    `)
+    return new Map(result.rows.map((row) => [row.message_id, mapRow(row)]))
+  },
+
   /** Settle every still-settling row among `messageIds`. Returns the rows it flipped. */
   async settle(
     db: Querier,
@@ -128,8 +150,15 @@ export const MessageConversationStateRepository = {
   },
 
   /**
-   * Re-file AND settle in one statement: the user moved the message, so the row
-   * must follow it rather than keep pointing at the conversation it left.
+   * Re-file AND settle: the row must follow the message rather than keep
+   * pointing at the conversation it left.
+   *
+   * A human placement (`'user'`) UPSERTS — the extractor skips a `'user'` row
+   * forever, so the mark has to exist even when the message was never
+   * provisional, and has to carry the CURRENT conversation even when the row
+   * was already settled. Machine settles stay update-only against a still
+   * settling row: absence of a row means "not provisional", and a settle must
+   * not manufacture one.
    */
   async settleForConversationTarget(
     db: Querier,
@@ -138,18 +167,8 @@ export const MessageConversationStateRepository = {
     conversationId: string,
     settledBy: SettledByReason
   ): Promise<SettlingRow | null> {
-    const result = await db.query<SettlingDbRow>(sql`
-      UPDATE message_conversation_state
-      SET conversation_id = ${conversationId},
-          state = 'settled',
-          settled_by = ${settledBy},
-          settled_at = NOW(),
-          updated_at = NOW()
-      WHERE workspace_id = ${workspaceId} AND message_id = ${messageId} AND state = 'settling'
-      RETURNING message_id, workspace_id, stream_id, conversation_id, state, settled_by, settled_at
-    `)
-    const row = result.rows[0]
-    return row ? mapRow(row) : null
+    const rows = await this.settleForConversationTargets(db, workspaceId, [messageId], conversationId, settledBy)
+    return rows[0] ?? null
   },
 
   /** Set-based counterpart of {@link settleForConversationTarget} (INV-56). */
@@ -161,6 +180,25 @@ export const MessageConversationStateRepository = {
     settledBy: SettledByReason
   ): Promise<SettlingRow[]> {
     if (messageIds.length === 0) return []
+    if (settledBy === "user") {
+      // `stream_id` comes from the message itself — `messages` carries no
+      // workspace_id, so the workspace scope (INV-8) rides the literal below.
+      const upserted = await db.query<SettlingDbRow>(sql`
+        INSERT INTO message_conversation_state (message_id, workspace_id, stream_id, conversation_id, state, settled_by, settled_at)
+        SELECT m.id, ${workspaceId}, m.stream_id, ${conversationId}, 'settled', 'user', NOW()
+        FROM messages m
+        WHERE m.id = ANY(${messageIds}::text[])
+        ON CONFLICT (message_id) DO UPDATE
+        SET conversation_id = EXCLUDED.conversation_id,
+            state = 'settled',
+            settled_by = 'user',
+            settled_at = NOW(),
+            updated_at = NOW()
+        WHERE message_conversation_state.workspace_id = ${workspaceId}
+        RETURNING message_id, workspace_id, stream_id, conversation_id, state, settled_by, settled_at
+      `)
+      return upserted.rows.map(mapRow)
+    }
     const result = await db.query<SettlingDbRow>(sql`
       UPDATE message_conversation_state
       SET conversation_id = ${conversationId},

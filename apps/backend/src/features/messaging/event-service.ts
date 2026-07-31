@@ -1,7 +1,7 @@
 import type { Pool, PoolClient } from "pg"
 import { withTransaction, withClient, sql } from "../../db"
 import { StreamEventRepository, type StreamEvent, type MoveEventIdSequenceUpdate } from "../streams"
-import { StreamRepository } from "../streams"
+import { StreamRepository, type Stream } from "../streams"
 import { StreamMemberRepository, SparseReadRepository, ReadStateRepository } from "../streams"
 import { checkStreamAccess, resolveEffectiveAccessStream } from "../streams"
 import { MessageRepository, type Message, type MoveMessageSequenceUpdate } from "./repository"
@@ -44,6 +44,7 @@ import { HttpError, MessageNotFoundError, StreamNotFoundError } from "../../lib/
 import { OperationLeaseRepository } from "../../lib/operation-leases"
 import { resolveMentionContent } from "../mentions"
 import { deriveContentMarkdown } from "./content"
+import { logger } from "../../lib/logger"
 import {
   AttachmentSafetyStatuses,
   AuthorTypes,
@@ -413,6 +414,20 @@ export interface ConversationAssigner {
     client: PoolClient,
     params: { workspaceId: string; message: Message; directive: ConversationDirective }
   ): Promise<string>
+
+  /** Attaches an UNDECLARED message to a cheap structural candidate, marked
+   *  settling, so board viewers see it before the debounced extractor runs.
+   *  Returns null when nothing suitable exists (the extractor assigns later) or
+   *  the send isn't one extraction would cluster. Never mints. */
+  attachProvisionalInTransaction(
+    client: PoolClient,
+    params: {
+      workspaceId: string
+      message: Message
+      stream: Stream | null
+      authorType: CreateMessageParams["authorType"]
+    }
+  ): Promise<string | null>
 }
 
 /**
@@ -933,6 +948,31 @@ export class EventService {
         message,
         directive: params.conversation,
       })
+    } else if (this.conversationAssigner) {
+      // Undeclared: attach to a structural candidate, marked settling, so the
+      // board isn't blind to the message until the debounced extractor runs.
+      // The extractor still decides — `conversation_intent` stays NULL, so the
+      // pass evaluates the message and re-files it when it disagrees.
+      // The attach is an optimization; the send is the contract. A savepoint
+      // (`withTransaction` on the client) so a failure rolls back only the
+      // attach's writes — a bare try/catch would commit them half-done — and
+      // the send completes exactly as if no candidate existed.
+      try {
+        conversationId =
+          (await withTransaction(client, (tx) =>
+            this.conversationAssigner!.attachProvisionalInTransaction(tx, {
+              workspaceId: params.workspaceId,
+              message,
+              stream: stream ?? null,
+              authorType: params.authorType,
+            })
+          )) ?? undefined
+      } catch (err) {
+        logger.warn(
+          { err, messageId: message.id, streamId: params.streamId },
+          "Provisional conversation attach failed; sending without it"
+        )
+      }
     }
 
     return { message, conversationId, created: true }

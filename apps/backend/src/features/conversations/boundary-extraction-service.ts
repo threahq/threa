@@ -1,6 +1,6 @@
 import type { Pool, PoolClient } from "pg"
 import { sql, withTransaction, withClient } from "../../db"
-import { ConversationRepository, type Conversation } from "./repository"
+import { ConversationRepository, distinctAuthors, type Conversation } from "./repository"
 import { MessageRepository, type Message } from "../messaging"
 import { StreamRepository, StreamEventRepository, type Stream } from "../streams"
 import { OutboxRepository } from "../../lib/outbox"
@@ -24,14 +24,9 @@ import { MessageConversationStateRepository } from "./settling-repository"
 import { SETTLING_CONFIDENCE_THRESHOLD } from "./boundary-extraction/config"
 import { resolveConversationDelivery } from "./conversation-delivery"
 import { emitAssignmentEvents } from "./assignment-events"
+import { isClusteredAuthorType, isClusteredStreamType } from "./extraction-eligibility"
 import { conversationId } from "../../lib/id"
-import {
-  AuthorTypes,
-  ConversationStatuses,
-  LinkPreviewStatuses,
-  StreamTypes,
-  THREAD_ANCHORABLE_EVENT_TYPES,
-} from "@threa/types"
+import { ConversationStatuses, LinkPreviewStatuses, StreamTypes, THREAD_ANCHORABLE_EVENT_TYPES } from "@threa/types"
 import { logger } from "../../lib/logger"
 
 const MESSAGES_BEFORE = 5
@@ -129,10 +124,9 @@ export class BoundaryExtractionService {
         return { message: null, stream: null, extractionContextBase: null }
       }
 
-      // A message that DECLARED its conversation was assigned synchronously in
-      // the send transaction. The message:created outbox still fires, but the
-      // async pass must never re-cluster or move a human-declared assignment
-      // (INV-20) — short-circuit with the conversation it already owns.
+      // A message that DECLARED its conversation is human-assigned: the async
+      // pass never re-clusters or moves it (INV-20) — short-circuit with the
+      // conversation it already owns.
       if (message.conversationIntent !== null) {
         const declaredPrimary = await ConversationRepository.findPrimaryByMessageId(client, workspaceId, message.id)
         return {
@@ -150,7 +144,7 @@ export class BoundaryExtractionService {
       // (the stream's active conversation, created if none), NOT LLM-clustered:
       // a reply continues the conversation it's posted within. Handled after the
       // connection is released so the assignment runs in its own transaction.
-      if (message.authorType !== AuthorTypes.USER) {
+      if (!isClusteredAuthorType(message.authorType)) {
         return {
           message,
           stream,
@@ -160,7 +154,7 @@ export class BoundaryExtractionService {
         }
       }
 
-      if (stream.type === StreamTypes.SCRATCHPAD) {
+      if (!isClusteredStreamType(stream.type)) {
         const existingConversations = await ConversationRepository.findByStream(client, stream.id)
         return {
           message,
@@ -490,6 +484,11 @@ export class BoundaryExtractionService {
         workspaceId,
         candidateReassignments.map((r) => r.messageId)
       )
+      const stateByMessageId = await MessageConversationStateRepository.findByMessageIds(
+        client,
+        workspaceId,
+        candidateReassignments.map((r) => r.messageId)
+      )
 
       const messagesById = new Map<string, Message>([[message.id, message]])
 
@@ -541,6 +540,14 @@ export class BoundaryExtractionService {
           continue
         }
 
+        // Engagement can freeze a send-time structural guess no model ever
+        // evaluated — accepted by design: the freeze binds the machine only, a
+        // human re-file remains available, and the pass itself always runs.
+        if (isPlacementFrozenByHuman(stateByMessageId.get(r.messageId) ?? null)) {
+          logger.debug({ messageId: r.messageId }, "Skipping reassignment of a human-settled message")
+          continue
+        }
+
         await ConversationRepository.removePrimaryMessage(client, workspaceId, fromConvId, r.messageId)
         await ConversationRepository.addPrimaryMessage(
           client,
@@ -565,9 +572,65 @@ export class BoundaryExtractionService {
         })
       }
 
+      // The triggering message may already hold a PROVISIONAL primary from its
+      // send transaction (structural guess, marked settling). If the pass lands
+      // it elsewhere, it must LEAVE that conversation — otherwise it would sit
+      // in two `message_ids` arrays and the guess would be permanent.
+      const priorPrimary = await ConversationRepository.findPrimaryByMessageId(client, workspaceId, messageId)
+      const triggerPlacementFrozen = isPlacementFrozenByHuman(
+        await MessageConversationStateRepository.findByMessageId(client, workspaceId, messageId)
+      )
+
+      // Engagement can freeze a send-time structural guess no model ever
+      // evaluated — accepted by design. The pass still ran and its other outputs
+      // (clustering, context reassignments, completeness, window settling) stand;
+      // only THIS message's placement is held against the machine, and a human
+      // re-file remains available.
+      if (triggerPlacementFrozen && priorPrimary) {
+        for (const a of resolvedAssignments) {
+          if (a.isPrimary) a.conversationId = priorPrimary.id
+        }
+      }
+
       const reopenedConversationIds = new Set<string>()
       for (const a of resolvedAssignments) {
         if (a.isPrimary) {
+          if (priorPrimary && priorPrimary.id !== a.conversationId) {
+            // Recomputed from who REMAINS in the LOCKED row (INV-20): a
+            // concurrent send's attach must not be dropped by a wholesale SET
+            // of participant_ids from a stale snapshot. One conversation row is
+            // locked at a time here and on the send path, so no lock cycle.
+            const lockedPrior =
+              (await ConversationRepository.findByIdForUpdate(client, workspaceId, priorPrimary.id)) ?? priorPrimary
+            // Participants are recomputed from who REMAINS: the send-time
+            // attach added this author to the guess, and an overturn must not
+            // leave them listed in a conversation they never spoke in.
+            const remainingIds = lockedPrior.messageIds.filter((id) => id !== messageId)
+            const remainingMessages = await MessageRepository.findByIds(client, remainingIds)
+            await ConversationRepository.removePrimaryMessages(
+              client,
+              workspaceId,
+              priorPrimary.id,
+              [messageId],
+              distinctAuthors(remainingIds, remainingMessages)
+            )
+            await ConversationRepository.resolveIfEmpty(client, workspaceId, priorPrimary.id)
+            // The still-settling row follows the message to its new home.
+            await MessageConversationStateRepository.moveConversation(
+              client,
+              workspaceId,
+              [messageId],
+              a.conversationId
+            )
+            touchedConversationIds.add(priorPrimary.id)
+            reassignmentEvents.push({
+              messageId,
+              streamId: message.streamId,
+              fromConversationId: priorPrimary.id,
+              toConversationId: a.conversationId,
+              reason: "extraction",
+            })
+          }
           await ConversationRepository.addPrimaryMessage(
             client,
             workspaceId,
@@ -599,6 +662,16 @@ export class BoundaryExtractionService {
           streamId,
           conversationId: primaryConversationId,
         })
+      } else if (primaryConversationId) {
+        // A confident ruling on a message whose send-time attach was provisional
+        // settles that row where the pass put it. No-op when nothing is settling.
+        await MessageConversationStateRepository.settleForConversationTarget(
+          client,
+          workspaceId,
+          messageId,
+          primaryConversationId,
+          "llm-window"
+        )
       }
 
       // Anything of this stream the pass could no longer see will never be
@@ -868,6 +941,15 @@ export class BoundaryExtractionService {
     }
     return { replyTargets, quotedConversations }
   }
+}
+
+/**
+ * Engagement freezes placement: a human who re-filed a message (`'user'`) or
+ * engaged with it where it sits (`'engagement'`) has ruled, and no later pass
+ * re-files it. `'llm-window'` settles are machine-made and stay decidable.
+ */
+function isPlacementFrozenByHuman(row: { state: string; settledBy: string | null } | null): boolean {
+  return row?.state === "settled" && (row.settledBy === "user" || row.settledBy === "engagement")
 }
 
 /** Append `extra` conversations not already present in `primary`, deduped by id. */
