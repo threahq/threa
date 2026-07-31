@@ -35,6 +35,8 @@ export {
   CONVERSATION_SPLIT_SYSTEM_PROMPT,
   CONVERSATION_SPLIT_PROMPT,
   conversationSplitResponseSchema,
+  SETTLING_CONFIDENCE_THRESHOLD,
+  SETTLING_MAX_AGE_SECONDS,
 } from "./boundary-extraction/config"
 export type { ExtractionResponse, ConversationSplitResponse } from "./boundary-extraction/config"
 
@@ -52,6 +54,13 @@ export {
 export type { StalenessSweepWorkerDeps } from "./staleness-sweep-worker"
 
 export { ConversationRepository } from "./repository"
+export {
+  MessageConversationStateRepository,
+  MESSAGE_CONVERSATION_STATES,
+  SETTLED_BY_REASONS,
+} from "./settling-repository"
+export type { MessageConversationState, SettledByReason, SettlingRow } from "./settling-repository"
+export { settleMessagesOnEngagement, emitSettledConversationUpdates } from "./settling-service"
 export { ConversationFeedbackRepository } from "./feedback-repository"
 export type { Conversation, InsertConversationParams, UpdateConversationParams } from "./repository"
 

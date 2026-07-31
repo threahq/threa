@@ -4,6 +4,9 @@ import { withTransaction } from "../../db"
 import { StreamRepository } from "../streams"
 import { OutboxRepository } from "../../lib/outbox"
 import { ConversationRepository } from "./repository"
+import { MessageConversationStateRepository } from "./settling-repository"
+import { emitSettledConversationUpdates } from "./settling-service"
+import { SETTLING_MAX_AGE_SECONDS } from "./boundary-extraction/config"
 import { addStalenessFields } from "./staleness"
 import { resolveConversationDelivery } from "./conversation-delivery"
 import { logger } from "../../lib/logger"
@@ -35,6 +38,31 @@ export function createStalenessSweepWorker(
   const { pool } = deps
 
   return async (job) => {
+    // Settling backstop: a quiet stream gets no further extraction pass, so
+    // nothing else will ever move its window past these rows. Own transaction —
+    // it must land even when no conversation transitioned.
+    const settled = await withTransaction(pool, async (client) => {
+      const rows = await MessageConversationStateRepository.settleOlderThan(
+        client,
+        SETTLING_MAX_AGE_SECONDS,
+        SWEEP_BATCH_LIMIT
+      )
+      // The sweep spans workspaces; the emit is workspace-scoped (INV-8).
+      const byWorkspace = new Map<string, typeof rows>()
+      for (const row of rows) {
+        const existing = byWorkspace.get(row.workspaceId)
+        if (existing) existing.push(row)
+        else byWorkspace.set(row.workspaceId, [row])
+      }
+      for (const [wsId, wsRows] of byWorkspace) {
+        await emitSettledConversationUpdates(client, wsId, wsRows)
+      }
+      return rows
+    })
+    if (settled.length > 0) {
+      logger.info({ jobId: job.id, settled: settled.length }, "Staleness sweep settled stale settling assignments")
+    }
+
     const swept = await withTransaction(pool, async (client) => {
       const transitioned = await ConversationRepository.sweepStale(client, {
         stalledAfterSeconds: SWEEP_STALLED_AFTER_SECONDS,
@@ -55,6 +83,24 @@ export function createStalenessSweepWorker(
       for (const id of streamIds) {
         deliveryByStreamId.set(id, await resolveConversationDelivery(client, streamById.get(id) ?? null))
       }
+      // The sweep spans workspaces, and the settling read is workspace-scoped
+      // (INV-8), so it runs once per workspace present in the batch.
+      const settlingByConversation = new Map<string, string[]>()
+      const idsByWorkspace = new Map<string, string[]>()
+      for (const conv of transitioned) {
+        const ids = idsByWorkspace.get(conv.workspaceId)
+        if (ids) ids.push(conv.id)
+        else idsByWorkspace.set(conv.workspaceId, [conv.id])
+      }
+      for (const [wsId, ids] of idsByWorkspace) {
+        for (const [convId, messageIds] of await MessageConversationStateRepository.listSettlingByConversationIds(
+          client,
+          wsId,
+          ids
+        )) {
+          settlingByConversation.set(convId, messageIds)
+        }
+      }
       await OutboxRepository.insertMany(
         client,
         transitioned.map((conv) => {
@@ -68,6 +114,7 @@ export function createStalenessSweepWorker(
               conversation: addStalenessFields(conv),
               parentStreamId: delivery?.parentStreamId,
               streamVisibility: delivery?.streamVisibility,
+              settlingMessageIds: settlingByConversation.get(conv.id) ?? [],
               origin: "staleness-sweep" as const,
             },
           }

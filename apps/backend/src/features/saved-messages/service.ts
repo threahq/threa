@@ -11,7 +11,7 @@ import "../workspaces"
 import { OutboxRepository } from "../../lib/outbox"
 import { StreamRepository, StreamMemberRepository } from "../streams"
 import { MessageRepository } from "../messaging"
-import { ConversationRepository } from "../conversations"
+import { ConversationRepository, settleMessagesOnEngagement } from "../conversations"
 import { reminderQueueId } from "../../lib/id"
 import { JobQueues, QueueRepository, enqueueQueuedJob, type SavedReminderFireJobData } from "../../lib/queue"
 import { logger } from "../../lib/logger"
@@ -144,6 +144,10 @@ export class SavedMessagesService {
             remindAt: clampedRemindAt,
           })
         : upsert.saved
+
+      // Saving is engagement: a provisional conversation placement the user just
+      // acted on stops being provisional (same transaction, INV-4/7).
+      await settleMessagesOnEngagement(client, params.workspaceId, [params.messageId])
 
       const [view] = await resolveSavedView(client, params.userId, [finalRow])
 

@@ -839,6 +839,15 @@ export interface BoardPost {
    */
   hasCapturedMemo: boolean
   /**
+   * Members of this conversation whose assignment is still SETTLING: the
+   * extractor placed them with low confidence, so the placement is provisional
+   * until a human engages with the message (reaction, save, re-file) or the
+   * extraction window moves past it. Absence from this list means settled —
+   * the wire never enumerates settled ids. Optional-free (always sent) so a
+   * card can render the state without a second fetch.
+   */
+  settlingMessageIds: string[]
+  /**
    * Whether this conversation is "mine" to the requesting viewer — they authored
    * or participate in it (`participant_ids`) or were `@`-mentioned on one of its
    * messages. The Mine lens signal. Like {@link hasCapturedMemo} this is a

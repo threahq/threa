@@ -6,7 +6,7 @@ import { SavedMessagesRepository } from "./repository"
 // Streams before messaging to avoid a latent circular-init in public-api/schemas.ts.
 import { StreamRepository, StreamMemberRepository } from "../streams"
 import { MessageRepository } from "../messaging"
-import { ConversationRepository } from "../conversations"
+import { ConversationRepository, MessageConversationStateRepository } from "../conversations"
 import { OutboxRepository } from "../../lib/outbox"
 import { QueueRepository } from "../../lib/queue"
 import * as dbModule from "../../db"
@@ -100,6 +100,9 @@ function fakeSaved(overrides: Partial<SavedMessage> = {}): SavedMessage {
 
 function setupService() {
   spyOn(dbModule, "withTransaction").mockImplementation(async (_pool: any, fn: any) => fn({} as PoolClient))
+  // Saving settles a provisional conversation assignment; nothing is settling in
+  // these fixtures, so the engagement hook short-circuits.
+  spyOn(MessageConversationStateRepository, "settle").mockResolvedValue([])
   // resolveSavedView is covered by its own tests; stub out here
   spyOn(viewModule, "resolveSavedView").mockImplementation(async (_db: any, _userId: string, rows: SavedMessage[]) =>
     rows.map((r) => ({

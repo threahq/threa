@@ -2,6 +2,7 @@ import { Pool } from "pg"
 import { withClient, withTransaction, type Querier } from "../../db"
 import { ConversationRepository, type Conversation } from "./repository"
 import { ConversationFeedbackRepository } from "./feedback-repository"
+import { MessageConversationStateRepository } from "./settling-repository"
 import { MessageRepository, type Message } from "../messaging"
 import { StreamRepository, applySparseRead, applySparseUnread, type ReadStateSnapshot } from "../streams"
 import { ActivityRepository } from "../activity"
@@ -93,6 +94,8 @@ export interface BoardPost {
   streamIds: string[]
   /** Whether an active memo was captured from this conversation — the Decisions lens signal. */
   hasCapturedMemo: boolean
+  /** Members whose assignment is still provisional (low extractor confidence). */
+  settlingMessageIds: string[]
   /** Whether the requesting viewer authored/participates in or was @-mentioned in this conversation — the Mine lens signal. */
   isMine: boolean
   /** Effective root of the anchor (`COALESCE(root_stream_id, id)`) — the client's stream-scope filter matches on this. */
@@ -355,6 +358,14 @@ export class ConversationService {
     // (INV-56). Pinned to primary `message_ids` — the SAME set the SQL half
     // (`boardLensCondSql` mine branch) tests — so the seed boundary and the
     // rendered `isMine` can't disagree.
+    // Provisional (settling) members, one batched read (INV-56). A board-level
+    // field like `hasCapturedMemo` — not part of the conversation aggregate.
+    const settlingByConversation = await MessageConversationStateRepository.listSettlingByConversationIds(
+      this.pool,
+      workspaceId,
+      conversations.map((c) => c.id)
+    )
+
     const mentionedMessageIds = await ActivityRepository.findMentionedMessageIds(this.pool, workspaceId, userId, [
       ...new Set(conversations.flatMap((c) => c.messageIds)),
     ])
@@ -384,6 +395,7 @@ export class ConversationService {
         totalReplies: plan.totalReplies,
         streamIds,
         hasCapturedMemo: conversationIdsWithMemos.has(conversation.id),
+        settlingMessageIds: settlingByConversation.get(conversation.id) ?? [],
         isMine:
           conversation.participantIds.includes(userId) ||
           conversation.messageIds.some((id) => mentionedMessageIds.has(id)),
@@ -546,6 +558,17 @@ export class ConversationService {
         userId,
       })
 
+      // A user re-filing a provisionally-placed message IS the human ruling:
+      // the row follows the message to its new home and settles there, so the
+      // emptied source can never be left holding a settling row.
+      await MessageConversationStateRepository.settleForConversationTarget(
+        client,
+        workspaceId,
+        messageId,
+        target.id,
+        "user"
+      )
+
       const touchedIds = previous ? [previous.id, target.id] : [target.id]
       await ConversationRepository.bumpActivityForIds(client, workspaceId, touchedIds)
 
@@ -565,6 +588,11 @@ export class ConversationService {
       }
 
       const touched = await ConversationRepository.findByIds(client, workspaceId, touchedIds)
+      const settlingByConversation = await MessageConversationStateRepository.listSettlingByConversationIds(
+        client,
+        workspaceId,
+        touchedIds
+      )
       for (const conv of touched) {
         const { parentStreamId, streamVisibility } = await deliveryFor(conv.streamId)
         await OutboxRepository.insert(client, "conversation:updated", {
@@ -574,6 +602,7 @@ export class ConversationService {
           conversation: addStalenessFields(conv),
           parentStreamId,
           streamVisibility,
+          settlingMessageIds: settlingByConversation.get(conv.id) ?? [],
         })
       }
 
@@ -645,6 +674,11 @@ export class ConversationService {
       }
       const stream = await StreamRepository.findById(client, updated.streamId)
       const { parentStreamId, streamVisibility } = await resolveConversationDelivery(client, stream)
+      const settlingByConversation = await MessageConversationStateRepository.listSettlingByConversationIds(
+        client,
+        workspaceId,
+        [updated.id]
+      )
       await OutboxRepository.insert(client, "conversation:updated", {
         workspaceId,
         streamId: updated.streamId,
@@ -652,6 +686,7 @@ export class ConversationService {
         conversation: addStalenessFields(updated),
         parentStreamId,
         streamVisibility,
+        settlingMessageIds: settlingByConversation.get(updated.id) ?? [],
       })
       return { conversation: addStalenessFields(updated) }
     })
@@ -747,6 +782,8 @@ export class ConversationService {
 
       await ConversationRepository.removePrimaryMessages(client, workspaceId, source.id, moveIds, remainingAuthors)
       await ConversationRepository.addPrimaryMessages(client, workspaceId, newId, moveIds, movedAuthors)
+      // A user split is a human ruling on where these messages belong.
+      await MessageConversationStateRepository.settle(client, workspaceId, moveIds, "user")
       await ConversationRepository.bumpActivityForIds(client, workspaceId, [source.id, newId])
 
       // Feedback ground truth — one row per moved message (parity with
@@ -775,6 +812,11 @@ export class ConversationService {
       // Each aggregate event routes by its OWN access root (INV-62): the new
       // conversation lives in the thread (parent-channel discoverability), the
       // source in its anchor.
+      const settlingByConversation = await MessageConversationStateRepository.listSettlingByConversationIds(
+        client,
+        workspaceId,
+        [newConversation.id, updatedSource.id]
+      )
       const threadDelivery = await resolveConversationDelivery(client, threadStream)
       await OutboxRepository.insert(client, "conversation:created", {
         workspaceId,
@@ -783,6 +825,7 @@ export class ConversationService {
         conversation: addStalenessFields(newConversation),
         parentStreamId: threadDelivery.parentStreamId,
         streamVisibility: threadDelivery.streamVisibility,
+        settlingMessageIds: settlingByConversation.get(newConversation.id) ?? [],
       })
 
       const sourceDelivery = await resolveConversationDelivery(client, sourceStream)
@@ -793,6 +836,7 @@ export class ConversationService {
         conversation: addStalenessFields(updatedSource),
         parentStreamId: sourceDelivery.parentStreamId,
         streamVisibility: sourceDelivery.streamVisibility,
+        settlingMessageIds: settlingByConversation.get(updatedSource.id) ?? [],
       })
 
       // Per-message move events route to each message's own stream (the thread),
@@ -1018,6 +1062,14 @@ export class ConversationService {
         distinctAuthors([...destination.messageIds, ...moveIds], memberMessages)
       )
       await ConversationRepository.reactivateIfInactive(client, workspaceId, destination.id)
+      // Same human ruling as the single-message re-file.
+      await MessageConversationStateRepository.settleForConversationTargets(
+        client,
+        workspaceId,
+        moveIds,
+        destination.id,
+        "user"
+      )
 
       const touchedIds = [destination.id, ...sourceRows.keys()]
       await ConversationRepository.bumpActivityForIds(client, workspaceId, touchedIds)
@@ -1025,6 +1077,11 @@ export class ConversationService {
       // Re-read every touched row post-write so the events carry final membership.
       const finalById = new Map(
         (await ConversationRepository.findByIds(client, workspaceId, touchedIds)).map((c) => [c.id, c])
+      )
+      const settlingByConversation = await MessageConversationStateRepository.listSettlingByConversationIds(
+        client,
+        workspaceId,
+        touchedIds
       )
       const finalDestination = finalById.get(destination.id)
       if (!finalDestination) {
@@ -1045,6 +1102,7 @@ export class ConversationService {
           conversation: addStalenessFields(finalDestination),
           parentStreamId,
           streamVisibility,
+          settlingMessageIds: settlingByConversation.get(finalDestination.id) ?? [],
         })
       }
 
@@ -1061,6 +1119,7 @@ export class ConversationService {
           conversation: addStalenessFields(conv),
           parentStreamId,
           streamVisibility,
+          settlingMessageIds: settlingByConversation.get(conv.id) ?? [],
         })
       }
 
@@ -1226,6 +1285,13 @@ export class ConversationService {
           g.messageIds,
           distinctAuthors(g.messageIds, memberMessages)
         )
+        await MessageConversationStateRepository.settleForConversationTargets(
+          client,
+          workspaceId,
+          g.messageIds,
+          minted.id,
+          "user"
+        )
         mintedIds.push(minted.id)
         for (const id of g.messageIds) movedTo.set(id, minted.id)
       }
@@ -1251,6 +1317,11 @@ export class ConversationService {
       const finalById = new Map(
         (await ConversationRepository.findByIds(client, workspaceId, touchedIds)).map((c) => [c.id, c])
       )
+      const settlingByConversation = await MessageConversationStateRepository.listSettlingByConversationIds(
+        client,
+        workspaceId,
+        touchedIds
+      )
       const finalSource = finalById.get(source.id)
       if (!finalSource) {
         throw new Error(`Conversation ${source.id} disappeared during split`)
@@ -1271,6 +1342,7 @@ export class ConversationService {
           conversation: addStalenessFields(minted),
           parentStreamId,
           streamVisibility,
+          settlingMessageIds: settlingByConversation.get(minted.id) ?? [],
         })
       }
 
@@ -1281,6 +1353,7 @@ export class ConversationService {
         conversation: addStalenessFields(finalSource),
         parentStreamId,
         streamVisibility,
+        settlingMessageIds: settlingByConversation.get(finalSource.id) ?? [],
       })
 
       // Per-message move events route to each message's own stream (for the
