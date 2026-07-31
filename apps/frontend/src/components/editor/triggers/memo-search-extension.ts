@@ -14,6 +14,7 @@
  * (`/memo ` or `/memo <query>`), which is also how the palette hands off.
  */
 import { Extension } from "@tiptap/core"
+import { memoEmbedSummary } from "@/lib/memo-embed-summary"
 import Suggestion from "@tiptap/suggestion"
 import { PluginKey } from "@tiptap/pm/state"
 import type { ResolvedPos } from "@tiptap/pm/model"
@@ -116,7 +117,12 @@ export const MemoSearchExtension = Extension.create<MemoSearchOptions>({
             .focus()
             .deleteRange(range)
             .insertContent([
-              { type: "memoEmbed", attrs: { memoId: memo.id, title: memo.title } },
+              {
+                type: "memoEmbed",
+                // The card's content rides inside the body, so a sealed stream
+                // or an offline send still renders a complete card.
+                attrs: { memoId: memo.id, title: memo.title, summary: memoEmbedSummary(memo) },
+              },
               { type: "text", text: " " },
             ])
             .run()

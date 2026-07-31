@@ -1,4 +1,5 @@
 import { Node, mergeAttributes } from "@tiptap/core"
+import type { MemoEmbedSummary } from "@threa/types"
 import { ReactNodeViewRenderer } from "@tiptap/react"
 import { MemoEmbedView } from "./memo-embed-view"
 
@@ -7,13 +8,28 @@ export interface MemoEmbedAttrs {
   memoId: string
   /** Memo title cached at insert time so the chip renders before hydration */
   title: string
+  /**
+   * The card's content, stamped at insert time and carried INSIDE the message
+   * body rather than beside it.
+   *
+   * The server writes the authoritative copy onto the message payload and that
+   * wins wherever it exists. This one covers the two cases where it can't: a
+   * sealed (E2E) stream, where the server only ever sees the placeholder body,
+   * and an optimistic or queued-offline send, which renders before any server
+   * round trip. Both would otherwise show a label-only card.
+   *
+   * It is a snapshot. For a sealed stream it is also permanent — `memo:updated`
+   * cannot patch what lives inside ciphertext — so a retitled memo keeps its old
+   * card there until the message is edited.
+   */
+  summary?: MemoEmbedSummary | null
 }
 
 declare module "@tiptap/core" {
   interface Commands<ReturnType> {
     memoEmbed: {
       /** Insert an inline memo-embed chip for the given memo. */
-      insertMemoEmbed: (attrs: { memoId: string; title?: string }) => ReturnType
+      insertMemoEmbed: (attrs: { memoId: string; title?: string; summary?: MemoEmbedSummary | null }) => ReturnType
     }
   }
 }
@@ -46,6 +62,21 @@ export const MemoEmbedExtension = Node.create({
         parseHTML: (element) => element.getAttribute("data-title"),
         renderHTML: (attrs) => ({ "data-title": attrs.title }),
       },
+      summary: {
+        default: null,
+        // Round-trips through HTML as JSON so a chip survives a copy/paste
+        // between composers with its card content intact.
+        parseHTML: (element) => {
+          const raw = element.getAttribute("data-summary")
+          if (!raw) return null
+          try {
+            return JSON.parse(raw) as MemoEmbedSummary
+          } catch {
+            return null
+          }
+        },
+        renderHTML: (attrs) => (attrs.summary ? { "data-summary": JSON.stringify(attrs.summary) } : {}),
+      },
     }
   },
 
@@ -75,7 +106,11 @@ export const MemoEmbedExtension = Node.create({
           const marks = currentMarks.map((mark) => ({ type: mark.type.name, attrs: mark.attrs }))
           return chain()
             .insertContent([
-              { type: this.name, attrs: { memoId: attrs.memoId, title: attrs.title ?? "" }, marks },
+              {
+                type: this.name,
+                attrs: { memoId: attrs.memoId, title: attrs.title ?? "", summary: attrs.summary ?? null },
+                marks,
+              },
               { type: "text", text: " ", marks },
             ])
             .run()
