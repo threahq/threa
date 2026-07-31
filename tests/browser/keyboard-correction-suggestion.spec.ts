@@ -91,6 +91,26 @@ test.describe("Keyboard word-correction in trigger popups", () => {
     await expect(page.locator("[data-emoji-grid]")).not.toBeVisible()
   })
 
+  test("Escape-dismissed picker stays closed through a keyboard word-correction", async ({ page }) => {
+    const { editor } = await setupWorkspaceWithEditor(page, "kbescape")
+
+    await page.keyboard.type(":fir")
+    await expect(page.locator("[data-emoji-grid]")).toBeVisible({ timeout: 2000 })
+
+    // Escape deactivates on its own transaction, so the correction lands with
+    // the popup inactive and must not reach the tolerant fallback.
+    await page.keyboard.press("Escape")
+    await expect(page.locator("[data-emoji-grid]")).not.toBeVisible()
+
+    await simulateKeyboardWordCorrection(page, ":fir", ": fire")
+    await expect(editor).toContainText(": fire")
+    await expect(page.locator("[data-emoji-grid]")).not.toBeVisible()
+
+    // Enter still sends the message rather than picking an emoji.
+    await page.keyboard.press("Enter")
+    await expect(page.getByRole("main").getByText(": fire")).toBeVisible({ timeout: 5000 })
+  })
+
   test("mention popup survives a word-correction with leading space and picks the mention", async ({ page }) => {
     const { editor, name } = await setupWorkspaceWithEditor(page, "kbmention")
     const [firstName] = name.split(" ")
