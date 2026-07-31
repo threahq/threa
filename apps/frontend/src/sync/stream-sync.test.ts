@@ -2989,6 +2989,58 @@ describe("registerStreamSocketHandlers — shared-message slot ingestion (Amendm
     cleanup()
   })
 
+  // The card renders from this array and never fetches, so a live edit that
+  // swaps or drops a memo has to rewrite it here. Nothing else would: the stale
+  // row survives the whole session otherwise.
+  it("message:edited replaces the cached memo summaries, including with an empty set", async () => {
+    const streamId = "stream_memo_edit"
+    const queryClient = new QueryClient()
+    const stale = {
+      memoId: "memo_old",
+      title: "Launch in May",
+      knowledgeType: "decision" as const,
+      memoType: "conversation" as const,
+      tags: [],
+      updatedAt: "2026-07-01T00:00:00.000Z",
+    }
+    const fresh = { ...stale, memoId: "memo_new", title: "Timezone change" }
+
+    for (const [id, memoEmbeds] of [
+      ["evt_swap", [fresh]],
+      ["evt_clear", []],
+    ] as const) {
+      await db.events.put({
+        ...makeEvent({
+          id,
+          streamId,
+          sequence: "50",
+          payload: { messageId: `msg_${id}`, contentMarkdown: "old", memoEmbeds: [stale] },
+        }),
+        workspaceId: "ws_1",
+        _sequenceNum: 50,
+        _cachedAt: Date.now(),
+      })
+
+      const { socket, emit } = createTestSocket()
+      const cleanup = registerStreamSocketHandlers(socket, "ws_1", streamId, queryClient)
+      await emit("message:edited", {
+        workspaceId: "ws_1",
+        streamId,
+        event: makeEvent({
+          id: `${id}_edit`,
+          streamId,
+          sequence: "101",
+          eventType: "message_edited",
+          payload: { messageId: `msg_${id}`, contentJson: {}, contentMarkdown: "edited", memoEmbeds },
+        }),
+      })
+      cleanup()
+
+      const row = await db.events.get(id)
+      expect((row?.payload as { memoEmbeds: unknown }).memoEmbeds).toEqual(memoEmbeds)
+    }
+  })
+
   it("message:edited rekeys a legacy-only payload to canonical keys", async () => {
     const streamId = "stream_wire_edit_legacy"
     const queryClient = new QueryClient()

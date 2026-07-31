@@ -39,7 +39,7 @@ import {
 } from "../../lib/id"
 import { MessageVersionRepository, type MessageVersion } from "./version-repository"
 import { MessageComposeTraceRepository } from "./compose-trace-repository"
-import { collectMemoEmbedIds } from "@threa/prosemirror"
+import { collectMemoEmbedIds, stripMemoEmbedSummaries } from "@threa/prosemirror"
 import { serializeBigInt } from "@threa/backend-common"
 import { messagesTotal } from "../../lib/observability"
 import { HttpError, MessageNotFoundError, StreamNotFoundError } from "../../lib/errors"
@@ -747,6 +747,13 @@ export class EventService {
     const declaredConversationId =
       params.conversation?.intent === ConversationIntents.EXISTING ? params.conversation.conversationId : undefined
 
+    // The composer stamps a memo's card content onto the node so it can ride
+    // inside a sealed body; on a plaintext one it would render to the room as
+    // though the server had vouched for it, bypassing the room-uniform check
+    // below. Dropped here — a no-op for a sealed message, whose stored body is
+    // a placeholder and keeps its real copy inside the ciphertext.
+    params.contentJson = stripMemoEmbedSummaries(params.contentJson)
+
     // Resolved against the citing stream's ROOT: a thread inherits its root's
     // audience (INV-62), and this payload is delivered to that whole room.
     const memoEmbeds = await resolveMemoEmbedSummaries(
@@ -1035,6 +1042,10 @@ export class EventService {
         contentMarkdown: existing.contentMarkdown,
         editedBy: params.actorId,
       })
+
+      // Same gate as the create path: a stamped summary must not survive on a
+      // plaintext body, where it would render unvouched to the whole room.
+      params.contentJson = stripMemoEmbedSummaries(params.contentJson)
 
       const editStream = await StreamRepository.findById(client, params.streamId)
       const memoEmbeds = await resolveMemoEmbedSummaries(

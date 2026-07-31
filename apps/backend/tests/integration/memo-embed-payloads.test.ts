@@ -177,6 +177,101 @@ describe("memo embed summaries on message payloads", () => {
     expect(payload.memoEmbeds?.map((s) => s.memoId)).toEqual([secondMemo, sameStreamMemo])
   })
 
+  // The composer stamps its own summary onto the node so a SEALED body can carry
+  // one. On a plaintext body that stamp is the author's view of a memo, resolved
+  // against the author's access, riding into a room the server may have decided
+  // cannot see it — so ingestion drops it and only the server's own gated copy
+  // survives.
+  test("drops a composer-stamped summary for a memo the room cannot read", async () => {
+    const stamped: JSONContent = {
+      type: "doc",
+      content: [
+        {
+          type: "paragraph",
+          content: [
+            { type: "text", text: "pasted" },
+            {
+              type: "memoEmbed",
+              attrs: {
+                memoId: unreachableMemo,
+                title: "Cited",
+                summary: {
+                  memoId: unreachableMemo,
+                  title: "Acquisition target",
+                  knowledgeType: "decision",
+                  memoType: "message",
+                  tags: ["confidential"],
+                  updatedAt: new Date().toISOString(),
+                },
+              },
+            },
+          ],
+        },
+      ],
+    }
+
+    const message = await eventService.createMessage({
+      workspaceId: testWorkspaceId,
+      streamId: channel,
+      authorId: testUserId,
+      authorType: "user",
+      contentJson: stamped,
+      contentMarkdown: `pasted [Cited](memo:${unreachableMemo})`,
+    })
+
+    const payload = (await payloadOf(message.id, "message_created")) as MessageCreatedPayload
+    expect(payload.memoEmbeds).toBeUndefined()
+    expect(JSON.stringify(payload.contentJson)).not.toContain("confidential")
+    expect(JSON.stringify(payload.contentJson)).not.toContain("Acquisition target")
+
+    const stored = await MessageRepository.findById(pool, message.id)
+    expect(JSON.stringify(stored?.contentJson)).not.toContain("confidential")
+  })
+
+  test("keeps the server's own summary when the room can read the memo", async () => {
+    const stamped: JSONContent = {
+      type: "doc",
+      content: [
+        {
+          type: "paragraph",
+          content: [
+            { type: "text", text: "picked" },
+            {
+              type: "memoEmbed",
+              attrs: {
+                memoId: sameStreamMemo,
+                title: "Cited",
+                summary: {
+                  memoId: sameStreamMemo,
+                  title: "STALE STAMP",
+                  knowledgeType: "decision",
+                  memoType: "message",
+                  tags: [],
+                  updatedAt: new Date().toISOString(),
+                },
+              },
+            },
+          ],
+        },
+      ],
+    }
+
+    const message = await eventService.createMessage({
+      workspaceId: testWorkspaceId,
+      streamId: channel,
+      authorId: testUserId,
+      authorType: "user",
+      contentJson: stamped,
+      contentMarkdown: `picked [Cited](memo:${sameStreamMemo})`,
+    })
+
+    const payload = (await payloadOf(message.id, "message_created")) as MessageCreatedPayload
+    // The server resolved it itself, so the card shows the memo's real title —
+    // never the stamp, which is dropped either way.
+    expect(payload.memoEmbeds?.[0]?.title).toBe("Theme switch")
+    expect(JSON.stringify(payload.contentJson)).not.toContain("STALE STAMP")
+  })
+
   test("an edit that adds a reference carries the new summary", async () => {
     const message = await eventService.createMessage({
       workspaceId: testWorkspaceId,

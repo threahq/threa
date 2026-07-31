@@ -282,6 +282,48 @@ export function collectMemoEmbedIds(content: JSONContent): string[] {
 }
 
 /**
+ * A copy of `content` with every `memoEmbed` node's `summary` attr removed.
+ *
+ * The composer stamps a memo's card content onto the node so it can ride inside
+ * the message body — which is the ONLY way a sealed stream or an offline send
+ * can have one, since the server never sees either. But that summary is the
+ * author's own view of the memo, resolved against the author's access, and the
+ * body reaches a whole room. Left in place on a plaintext message it renders as
+ * though the server had vouched for it, which silently defeats the room-uniform
+ * check the server applies to its own copy (`findEmbedSummaries`).
+ *
+ * So the server drops it at ingestion. For a sealed stream this is a no-op —
+ * the stored body is a placeholder and carries no nodes at all, so the real
+ * stamped copy stays inside the ciphertext where it is needed. For everything
+ * else the only summaries that survive are the ones the server resolved itself.
+ *
+ * Returns the input unchanged when there is nothing to strip, so an untouched
+ * document is not needlessly rebuilt.
+ */
+export function stripMemoEmbedSummaries(content: JSONContent): JSONContent {
+  let changed = false
+
+  const walk = (node: JSONContent): JSONContent => {
+    let next = node
+    if (node.type === "memoEmbed" && node.attrs && node.attrs.summary != null) {
+      const { summary: _dropped, ...attrs } = node.attrs
+      next = { ...node, attrs }
+      changed = true
+    }
+    if (next.content) {
+      const children = next.content.map(walk)
+      if (children.some((child, i) => child !== next.content?.[i])) {
+        next = { ...next, content: children }
+      }
+    }
+    return next
+  }
+
+  const result = walk(content)
+  return changed ? result : content
+}
+
+/**
  * External (http/https) URLs the document points at, in document order,
  * INCLUDING duplicates — callers dedup and ref-count.
  *
