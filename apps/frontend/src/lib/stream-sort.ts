@@ -18,15 +18,16 @@ export type SortableStream = Pick<Stream, "id" | "type" | "createdAt"> & {
   lastMessagePreview?: { createdAt: string } | null
 }
 
-/** Sorts after every name tier in scoreMatch (substring 0..11, fuzzy 12..14). */
+/** Sorts after every name tier in scoreMatch (substring 0..15, fuzzy 16..17, typo 18..19). */
 const STREAM_ID_MATCH_SCORE = 100
 
 /**
  * Score a stream against a lowercased query. Lower = better match.
  * Returns Infinity for non-matches. Delegates to the shared `scoreMatch`
- * tiers (exact/prefix/contains, separator-normalized, fuzzy subsequence) so
- * search results land in the same order across every picker surface; a raw
- * stream-id substring is the last-resort tier below all name matches.
+ * tiers (exact/prefix/whole-word/contains, separator-normalized, then the
+ * fuzzy and typo tolerance bands) so search results land in the same order
+ * across every picker surface; a raw stream-id substring is the last-resort
+ * tier below all name matches.
  */
 export function scoreStreamMatch(
   stream: Pick<Stream, "id" | "type" | "displayName" | "slug">,

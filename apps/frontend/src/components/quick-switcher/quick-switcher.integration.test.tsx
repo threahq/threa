@@ -886,6 +886,36 @@ describe("QuickSwitcher Integration Tests", () => {
       })
     })
 
+    it("ranks an exact user match above a stream that only matches by typo", async () => {
+      const user = userEvent.setup()
+      mockWorkspaceBootstrap.data.dmPeers = undefined
+      // "alise" is one substitution from "alice" and is not a subsequence of
+      // it, so it reaches the typo band and nothing above it; the member
+      // "Alice" matches her name exactly. Streams render above users and Enter
+      // fires the first row, so the guess must not take that slot.
+      mockWorkspaceBootstrap.data.streams = [
+        ...mockStreamsList,
+        {
+          ...(mockStreamsList[0] as object),
+          id: "stream_typo_only",
+          slug: "alise",
+          displayName: "alise",
+          archivedAt: null,
+        },
+      ]
+
+      renderWithProviders(<QuickSwitcher {...defaultProps} />)
+
+      const input = screen.getByLabelText("Quick switcher input")
+      await user.type(input, "alice")
+
+      await waitFor(() => {
+        expect(document.querySelector('a[href="/w/workspace_1/s/draft_dm_member_3"]')).toBeInTheDocument()
+      })
+      // The typo-band stream is dropped entirely while a real match exists.
+      expect(document.querySelector('a[href="/w/workspace_1/s/stream_typo_only"]')).not.toBeInTheDocument()
+    })
+
     it("should include virtual DM targets when dmPeers is missing", async () => {
       const user = userEvent.setup()
       mockWorkspaceBootstrap.data.dmPeers = undefined

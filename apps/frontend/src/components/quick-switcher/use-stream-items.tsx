@@ -11,7 +11,7 @@ import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { calculateUrgency } from "@/components/layout/sidebar/utils"
-import { scoreMatch } from "@/lib/match-score"
+import { isToleranceMatch, scoreMatch } from "@/lib/match-score"
 import { compareStreamEntries, scoreStreamMatch } from "@/lib/stream-sort"
 import { FilterSelect } from "./filter-select"
 import {
@@ -178,40 +178,44 @@ export function useStreamItems(context: ModeContext): ModeResult {
 
     // Quick-switcher always uses the recency-style browsing order; the share
     // pickers expose a toggle but reuse the same comparator.
-    const streamItems = enriched
-      .sort((a, b) => compareStreamEntries(a, b, { isSearching, mode: "recency" }))
-      .map(({ stream, unreadCount, mentionCount, urgency }): QuickSwitcherItem => {
-        const href = `/w/${workspaceId}/s/${stream.id}`
-        const isArchived = stream.archivedAt != null
-        const typeLabel = getStreamTypeLabel(stream.type)
-        const notJoined = !memberStreamIds.has(stream.id) && stream.visibility === "public"
-        let description = typeLabel
-        if (isArchived) description = `${typeLabel} · Archived`
-        else if (notJoined) description = `${typeLabel} · Not joined`
+    const sortedStreams = enriched.sort((a, b) => compareStreamEntries(a, b, { isSearching, mode: "recency" }))
+    const toStreamItem = ({
+      stream,
+      unreadCount,
+      mentionCount,
+      urgency,
+    }: (typeof enriched)[number]): QuickSwitcherItem => {
+      const href = `/w/${workspaceId}/s/${stream.id}`
+      const isArchived = stream.archivedAt != null
+      const typeLabel = getStreamTypeLabel(stream.type)
+      const notJoined = !memberStreamIds.has(stream.id) && stream.visibility === "public"
+      let description = typeLabel
+      if (isArchived) description = `${typeLabel} · Archived`
+      else if (notJoined) description = `${typeLabel} · Not joined`
 
-        let avatarUrl: string | undefined
-        if (stream.type === StreamTypes.DM) {
-          const peerUserId = dmPeerByStreamId.get(stream.id)
-          const peerUser = peerUserId ? usersById.get(peerUserId) : undefined
-          avatarUrl = getAvatarUrl(workspaceId, peerUser?.avatarUrl, 64)
-        }
+      let avatarUrl: string | undefined
+      if (stream.type === StreamTypes.DM) {
+        const peerUserId = dmPeerByStreamId.get(stream.id)
+        const peerUser = peerUserId ? usersById.get(peerUserId) : undefined
+        avatarUrl = getAvatarUrl(workspaceId, peerUser?.avatarUrl, 64)
+      }
 
-        return {
-          id: stream.id,
-          label: streamLabel(stream),
-          description,
-          icon: STREAM_ICONS[stream.type],
-          avatarUrl,
-          href,
-          onSelect: () => {
-            closeDialog()
-            navigate(href)
-          },
-          urgency,
-          unreadCount,
-          mentionCount,
-        }
-      })
+      return {
+        id: stream.id,
+        label: streamLabel(stream),
+        description,
+        icon: STREAM_ICONS[stream.type],
+        avatarUrl,
+        href,
+        onSelect: () => {
+          closeDialog()
+          navigate(href)
+        },
+        urgency,
+        unreadCount,
+        mentionCount,
+      }
+    }
 
     const canShowVirtualDms =
       Boolean(currentUserId) &&
@@ -220,11 +224,11 @@ export function useStreamItems(context: ModeContext): ModeResult {
       (typeFilters.length === 0 || typeFilters.includes(StreamTypes.DM))
 
     if (!canShowVirtualDms) {
-      return streamItems
+      return sortedStreams.map(toStreamItem)
     }
 
     const existingDmPeerIds = new Set((dmPeers ?? []).map((peer) => peer.userId))
-    const virtualDmItems = users!
+    const scoredVirtualDms = users!
       .filter((workspaceUser) => workspaceUser.id !== currentUserId)
       .filter((workspaceUser) => !existingDmPeerIds.has(workspaceUser.id))
       .map((workspaceUser) => ({
@@ -232,6 +236,20 @@ export function useStreamItems(context: ModeContext): ModeResult {
         score: searchText ? scoreMatch(lowerQuery, [workspaceUser.name]) : 0,
       }))
       .filter(({ score }) => score !== Infinity)
+
+    // Streams always render above users, so the two independently scored lists
+    // are compared before they are concatenated: without this a stream matched
+    // only by the typo band outranks a user whose name matches exactly, and
+    // Enter (which fires the first row) opens the wrong thing. Same rule as
+    // rankGroups in use-command-items.
+    const hasRealMatch =
+      enriched.some(({ score }) => !isToleranceMatch(score)) ||
+      scoredVirtualDms.some(({ score }) => !isToleranceMatch(score))
+
+    const keep = (score: number) => !hasRealMatch || !isToleranceMatch(score)
+
+    const virtualDmItems = scoredVirtualDms
+      .filter(({ score }) => keep(score))
       .sort((a, b) => a.workspaceUser.name.localeCompare(b.workspaceUser.name))
       .map(
         ({ workspaceUser }): QuickSwitcherItem => ({
@@ -249,7 +267,7 @@ export function useStreamItems(context: ModeContext): ModeResult {
         })
       )
 
-    return [...streamItems, ...virtualDmItems]
+    return [...sortedStreams.filter(({ score }) => keep(score)).map(toStreamItem), ...virtualDmItems]
   }, [
     activeStreams,
     archivedStreams,
