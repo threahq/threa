@@ -183,6 +183,7 @@ export const MessageConversationStateRepository = {
             settled_by = 'user',
             settled_at = NOW(),
             updated_at = NOW()
+        WHERE message_conversation_state.workspace_id = ${workspaceId}
         RETURNING message_id, workspace_id, stream_id, conversation_id, state, settled_by, settled_at
       `)
       return upserted.rows.map(mapRow)

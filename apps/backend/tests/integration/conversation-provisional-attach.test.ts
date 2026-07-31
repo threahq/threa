@@ -407,6 +407,98 @@ describe("provisional conversation attach", () => {
     })
   })
 
+  test("the pass still RUNS for an engagement-settled trigger — only that message's placement is frozen", async () => {
+    const opener = await send("Opener")
+    const guessedConvId = await seedConversation({ messageIds: [opener.message.id] })
+    const otherConvId = await seedConversation({})
+
+    const engaged = await send("Engaged where it sits")
+    await MessageConversationStateRepository.settle(pool, testWorkspaceId, [engaged.message.id], "engagement")
+
+    extractor.next = {
+      assignments: [{ conversationId: otherConvId, isPrimary: true }],
+      completenessUpdates: [{ conversationId: guessedConvId, score: 7, status: "active" }],
+      confidence: 0.9,
+    }
+    const decided = await extraction.processMessage(engaged.message.id, testStreamId, testWorkspaceId)
+
+    const guessed = await ConversationRepository.findById(pool, guessedConvId)
+    const other = await ConversationRepository.findById(pool, otherConvId)
+    expect({
+      decided: decided?.id,
+      guessedMembers: guessed!.messageIds,
+      otherMembers: other!.messageIds,
+      // The whole-pass short-circuit would have skipped this write entirely.
+      guessedScore: guessed!.completenessScore,
+    }).toEqual({
+      decided: guessedConvId,
+      guessedMembers: [opener.message.id, engaged.message.id],
+      otherMembers: [],
+      guessedScore: 7,
+    })
+  })
+
+  test("a declared trigger short-circuits the whole pass — no reassignments, no completeness updates", async () => {
+    const opener = await send("Opener")
+    const declaredConvId = await seedConversation({ messageIds: [opener.message.id] })
+    const otherConvId = await seedConversation({})
+
+    const declared = await send("Declared", {
+      conversation: { intent: ConversationIntents.EXISTING, conversationId: declaredConvId },
+    })
+
+    extractor.next = {
+      assignments: [{ conversationId: otherConvId, isPrimary: true }],
+      completenessUpdates: [{ conversationId: declaredConvId, score: 7, status: "active" }],
+      confidence: 0.9,
+    }
+    const decided = await extraction.processMessage(declared.message.id, testStreamId, testWorkspaceId)
+
+    const declaredConv = await ConversationRepository.findById(pool, declaredConvId)
+    const other = await ConversationRepository.findById(pool, otherConvId)
+    expect({
+      decided: decided?.id,
+      declaredMembers: declaredConv!.messageIds,
+      otherMembers: other!.messageIds,
+      // Untouched: the pass never ran.
+      declaredScore: declaredConv!.completenessScore,
+    }).toEqual({
+      decided: declaredConvId,
+      declaredMembers: [opener.message.id, declared.message.id],
+      otherMembers: [],
+      declaredScore: 1,
+    })
+  })
+
+  test("an overturn recomputes participants from the CURRENT source row, keeping a concurrently-attached author", async () => {
+    const opener = await send("Opener")
+    const guessedConvId = await seedConversation({ messageIds: [opener.message.id] })
+    const otherConvId = await seedConversation({})
+
+    const sent = await send("Provisionally attached")
+    // Simulates a concurrent send landing in the source conversation after the
+    // pass read its snapshot: a new author joins message_ids/participant_ids.
+    const concurrent = await send("Concurrent send", { authorId: otherUserId })
+    await withTransaction(pool, async (client) => {
+      await ConversationRepository.addPrimaryMessage(
+        client,
+        testWorkspaceId,
+        guessedConvId,
+        concurrent.message.id,
+        otherUserId
+      )
+    })
+
+    extractor.next = { assignments: [{ conversationId: otherConvId, isPrimary: true }], confidence: 0.9 }
+    await extraction.processMessage(sent.message.id, testStreamId, testWorkspaceId)
+
+    const guessed = await ConversationRepository.findById(pool, guessedConvId)
+    expect({ members: guessed!.messageIds, participants: guessed!.participantIds.sort() }).toEqual({
+      members: [opener.message.id, concurrent.message.id],
+      participants: [testUserId, otherUserId].sort(),
+    })
+  })
+
   test("a human re-file of a message with NO state row leaves a durable 'user' row, and a later pass is immune", async () => {
     const opener = await send("Opener")
     const convId = await seedConversation({ messageIds: [opener.message.id] })

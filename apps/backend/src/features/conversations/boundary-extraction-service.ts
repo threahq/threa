@@ -124,21 +124,10 @@ export class BoundaryExtractionService {
         return { message: null, stream: null, extractionContextBase: null }
       }
 
-      // A message that DECLARED its conversation, or whose placement a human
-      // has since frozen, is human-assigned: the async pass never re-clusters or
-      // moves it (INV-20) — short-circuit with the conversation it already owns.
-      // Engagement freezes placement exactly as an explicit re-file does: a
-      // human acting on a message where it sits ratifies where it sits.
-      // A message merely attached PROVISIONALLY at send time (intent NULL, state
-      // `settling`), or settled only because the window moved on (`llm-window`),
-      // is NOT skipped: the pass evaluates it and re-files it below when it
-      // disagrees. The heuristic never becomes gospel.
-      const frozen =
-        message.conversationIntent === null &&
-        isPlacementFrozenByHuman(
-          await MessageConversationStateRepository.findByMessageId(client, workspaceId, message.id)
-        )
-      if (message.conversationIntent !== null || frozen) {
+      // A message that DECLARED its conversation is human-assigned: the async
+      // pass never re-clusters or moves it (INV-20) — short-circuit with the
+      // conversation it already owns.
+      if (message.conversationIntent !== null) {
         const declaredPrimary = await ConversationRepository.findPrimaryByMessageId(client, workspaceId, message.id)
         return {
           message,
@@ -546,8 +535,9 @@ export class BoundaryExtractionService {
           continue
         }
 
-        // Same freeze as the triggering message: a human ruling — an explicit
-        // re-file or engagement where it sits — outranks a later pass.
+        // Engagement can freeze a send-time structural guess no model ever
+        // evaluated — accepted by design: the freeze binds the machine only, a
+        // human re-file remains available, and the pass itself always runs.
         if (
           isPlacementFrozenByHuman(
             await MessageConversationStateRepository.findByMessageId(client, workspaceId, r.messageId)
@@ -586,15 +576,35 @@ export class BoundaryExtractionService {
       // it elsewhere, it must LEAVE that conversation — otherwise it would sit
       // in two `message_ids` arrays and the guess would be permanent.
       const priorPrimary = await ConversationRepository.findPrimaryByMessageId(client, workspaceId, messageId)
+      const triggerPlacementFrozen = isPlacementFrozenByHuman(
+        await MessageConversationStateRepository.findByMessageId(client, workspaceId, messageId)
+      )
+
+      // Engagement can freeze a send-time structural guess no model ever
+      // evaluated — accepted by design. The pass still ran and its other outputs
+      // (clustering, context reassignments, completeness, window settling) stand;
+      // only THIS message's placement is held against the machine, and a human
+      // re-file remains available.
+      if (triggerPlacementFrozen && priorPrimary) {
+        for (const a of resolvedAssignments) {
+          if (a.isPrimary) a.conversationId = priorPrimary.id
+        }
+      }
 
       const reopenedConversationIds = new Set<string>()
       for (const a of resolvedAssignments) {
         if (a.isPrimary) {
           if (priorPrimary && priorPrimary.id !== a.conversationId) {
+            // Recomputed from who REMAINS in the LOCKED row (INV-20): a
+            // concurrent send's attach must not be dropped by a wholesale SET
+            // of participant_ids from a stale snapshot. One conversation row is
+            // locked at a time here and on the send path, so no lock cycle.
+            const lockedPrior =
+              (await ConversationRepository.findByIdForUpdate(client, workspaceId, priorPrimary.id)) ?? priorPrimary
             // Participants are recomputed from who REMAINS: the send-time
             // attach added this author to the guess, and an overturn must not
             // leave them listed in a conversation they never spoke in.
-            const remainingIds = priorPrimary.messageIds.filter((id) => id !== messageId)
+            const remainingIds = lockedPrior.messageIds.filter((id) => id !== messageId)
             const remainingMessages = await MessageRepository.findByIds(client, remainingIds)
             await ConversationRepository.removePrimaryMessages(
               client,
