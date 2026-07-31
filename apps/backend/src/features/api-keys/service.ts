@@ -37,7 +37,12 @@ export class BotChannelService {
     const stream = await StreamRepository.findByIdForWorkspace(this.pool, streamId, workspaceId)
     if (!stream || stream.archivedAt) return false
 
-    if (stream.visibility === "public") return true
+    // Publicness is the ROOT's visibility (INV-62) — a thread's own row can
+    // hold a stale copied "public" long after its root went private.
+    const accessStream = stream.rootStreamId
+      ? await StreamRepository.findByIdForWorkspace(this.pool, stream.rootStreamId, workspaceId)
+      : stream
+    if (accessStream?.visibility === "public") return true
 
     const grantStreamId = stream.type === StreamTypes.THREAD && stream.rootStreamId ? stream.rootStreamId : stream.id
 

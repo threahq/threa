@@ -432,6 +432,11 @@ export const SearchRepository = {
   /**
    * Get public stream IDs in a workspace.
    * Used by agent access control for public_only access spec.
+   *
+   * Publicness is the ROOT's visibility (INV-62): threads copy the root's
+   * visibility at creation and are never re-synced, so a thread's own row can
+   * say "public" long after its root went private — trusting it leaked those
+   * threads into agent research and bot scopes.
    */
   async getPublicStreams(
     db: Querier,
@@ -442,11 +447,12 @@ export const SearchRepository = {
     const { includeActive, includeArchived, filterAll } = parseArchiveStatusFilter(options?.archiveStatus)
 
     const result = await db.query<{ id: string }>(sql`
-      SELECT id FROM streams
-      WHERE workspace_id = ${workspaceId}
-        AND visibility = ${Visibilities.PUBLIC}
-        AND (${!hasTypeFilter} OR type = ANY(${options?.streamTypes ?? []}))
-        AND (${filterAll} OR (${includeArchived} AND archived_at IS NOT NULL) OR (${!includeArchived} AND archived_at IS NULL))
+      SELECT s.id FROM streams s
+      JOIN streams root ON root.id = COALESCE(s.root_stream_id, s.id)
+      WHERE s.workspace_id = ${workspaceId}
+        AND root.visibility = ${Visibilities.PUBLIC}
+        AND (${!hasTypeFilter} OR s.type = ANY(${options?.streamTypes ?? []}))
+        AND (${filterAll} OR (${includeArchived} AND s.archived_at IS NOT NULL) OR (${!includeArchived} AND s.archived_at IS NULL))
     `)
 
     return result.rows.map((r) => r.id)

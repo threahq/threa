@@ -211,11 +211,18 @@ export class StreamNamingService {
         displayNameGeneratedAt: new Date(),
       })
 
+      // The payload's visibility gates workspace-wide fanout in
+      // delivery-groups. A thread's own row can hold a stale copied "public"
+      // under a since-privatized root (INV-62) — resolve the effective root so
+      // a private tree's thread names never broadcast workspace-wide.
+      const namingAccessRoot = currentStream.rootStreamId
+        ? await StreamRepository.findById(client, currentStream.rootStreamId)
+        : null
       await OutboxRepository.insert(client, "stream:display_name_updated", {
         workspaceId: stream.workspaceId,
         streamId,
         displayName: cleanName,
-        visibility: currentStream.visibility,
+        visibility: namingAccessRoot?.visibility ?? currentStream.visibility,
       })
 
       logger.info({ streamId, displayName: cleanName, requireName }, "Auto-generated stream display name")
