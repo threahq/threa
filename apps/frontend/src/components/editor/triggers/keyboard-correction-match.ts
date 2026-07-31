@@ -1,4 +1,5 @@
-import { escapeForRegEx } from "@tiptap/core"
+import { escapeForRegEx, type Editor } from "@tiptap/core"
+import type { PluginKey } from "@tiptap/pm/state"
 import { findSuggestionMatch, type SuggestionMatch, type Trigger } from "@tiptap/suggestion"
 
 /**
@@ -18,7 +19,11 @@ import { findSuggestionMatch, type SuggestionMatch, type Trigger } from "@tiptap
  * plain `:fir ` still dismisses, and a second space after a correction dismisses
  * too — the corrected state is the one place a single space can't.
  */
-export function withKeyboardCorrectionTolerance(wasActive: () => boolean): typeof findSuggestionMatch {
+export function withKeyboardCorrectionTolerance(pluginKey: PluginKey, editor: Editor): typeof findSuggestionMatch {
+  // Runs during state application, when editor.state still holds the
+  // pre-transaction state — so this reads the *previous* active flag.
+  const wasActive = () => (pluginKey.getState(editor.state) as { active?: boolean } | undefined)?.active === true
+
   return (config: Trigger): SuggestionMatch => {
     const match = findSuggestionMatch(config)
     if (match) return match
@@ -47,9 +52,4 @@ export function withKeyboardCorrectionTolerance(wasActive: () => boolean): typeo
       text: corrected[0],
     }
   }
-}
-
-/** Reads the previous active state of a suggestion plugin during state application. */
-export interface SuggestionActiveProbe {
-  active?: boolean
 }

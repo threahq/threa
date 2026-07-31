@@ -5,7 +5,7 @@ import { PluginKey } from "@tiptap/pm/state"
 import type { SuggestionProps, SuggestionKeyDownProps } from "@tiptap/suggestion"
 import type { EmojiEntry } from "@threa/types"
 import { currentWordContainsBacktick, isInBacktickWord } from "../markdown-guards"
-import { withKeyboardCorrectionTolerance, type SuggestionActiveProbe } from "./keyboard-correction-match"
+import { withKeyboardCorrectionTolerance } from "./keyboard-correction-match"
 
 export const EmojiPluginKey = new PluginKey("emoji")
 
@@ -143,11 +143,7 @@ export const EmojiExtension = Node.create<EmojiExtensionOptions>({
         char: ":",
         allowSpaces: false,
         startOfLine: false,
-        // Called during state application, when this.editor.state still holds the
-        // pre-transaction state — so getState reads the *previous* active flag.
-        findSuggestionMatch: withKeyboardCorrectionTolerance(
-          () => (EmojiPluginKey.getState(this.editor.state) as SuggestionActiveProbe | undefined)?.active === true
-        ),
+        findSuggestionMatch: withKeyboardCorrectionTolerance(EmojiPluginKey, this.editor),
         allow: ({ state, range }) => {
           const $from = state.doc.resolve(range.from)
 
