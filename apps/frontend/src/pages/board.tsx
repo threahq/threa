@@ -78,6 +78,8 @@ const SELF_POST_VISIBLE_LENSES = new Set<BoardLens>(["all", "mine"])
  *  anything the viewer sees. */
 const REVEAL_PREWARM_CARDS = 12
 
+const SEED_COMMIT_TIMEOUT_MS = 2500
+
 /** Empty-state copy per lens — an empty Decisions view isn't "nothing on the board". */
 const LENS_EMPTY_COPY: Record<BoardLens, { title: string; body: string }> = {
   all: {
@@ -333,6 +335,28 @@ function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: Boar
     () => ({ hidden, muted, muteActive: scopeStreamIds.length === 0 }),
     [hidden, muted, scopeStreamIds.length]
   )
+  // The seed gate: hold the board's first commit until the seeded rows are
+  // actually in IDB, so a cold load doesn't freeze last session's order and
+  // strand everything since behind an "N new" pill. The timeout is the offline
+  // escape hatch — `newestId: null` then means "commit whatever you have".
+  const [seedTimedOut, setSeedTimedOut] = useState(false)
+  const seedWorkspaceRef = useRef(workspaceId)
+  // A render-phase `setState` doesn't update this render's binding, so the
+  // switch render must read the local value, not `seedTimedOut`.
+  let timedOut = seedTimedOut
+  if (seedWorkspaceRef.current !== workspaceId) {
+    seedWorkspaceRef.current = workspaceId
+    timedOut = false
+    if (seedTimedOut) setSeedTimedOut(false)
+  }
+  useEffect(() => {
+    const timer = setTimeout(() => setSeedTimedOut(true), SEED_COMMIT_TIMEOUT_MS)
+    return () => clearTimeout(timer)
+  }, [workspaceId])
+  const newestSeedId = data?.pages[0]?.posts[0]?.conversation.id ?? null
+  const seedSettled = !isLoading || timedOut
+  const seedNewestId = timedOut ? null : newestSeedId
+  const seed = useMemo(() => ({ settled: seedSettled, newestId: seedNewestId }), [seedSettled, seedNewestId])
   const {
     posts,
     activityById,
@@ -340,7 +364,7 @@ function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: Boar
     commit,
     isLoading: viewLoading,
     hasRawPosts,
-  } = useStableBoardView(workspaceId, filter, exclusions)
+  } = useStableBoardView(workspaceId, filter, exclusions, seed)
   // After a refetch settles, `isLoading` is already false but the seed effect
   // writes IDB on the next tick, so the IDB feed can be momentarily empty while
   // the query already holds posts. Treat that window as loading so the feed

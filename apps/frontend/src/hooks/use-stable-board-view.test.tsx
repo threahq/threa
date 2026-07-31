@@ -9,6 +9,7 @@ import {
   useStableBoardView,
   type BoardExclusionState,
   type BoardViewFilter,
+  type BoardSeedState,
   type CommittedView,
 } from "./use-stable-board-view"
 
@@ -791,5 +792,107 @@ describe("useStableBoardView — unread filter", () => {
     // key, mirroring the label-scope re-resolution guarantee.
     rerender({ filter: unreadFilter(["stream_x", "stream_other"]) })
     expect(result.current.posts.map((p) => p.id)).toEqual(["a"])
+  })
+})
+
+describe("useStableBoardView seed gate", () => {
+  let liveValue: CachedBoardPost[] | undefined
+  function mockLive(value: CachedBoardPost[] | undefined) {
+    liveValue = value
+    vi.spyOn(boardStoreModule, "useBoardPosts").mockImplementation(() => liveValue)
+  }
+
+  afterEach(() => vi.restoreAllMocks())
+
+  it("holds the stale feed until the seeded rows LAND in the feed, not merely until the query settles", () => {
+    mockLive(feed(post("a", 300), post("b", 200)))
+    const { result, rerender } = renderHook(({ seed }) => useStableBoardView("ws_1", ALL, undefined, seed), {
+      initialProps: { seed: { settled: false, newestId: "conv_fresh" } },
+    })
+    expect(result.current.posts).toEqual([])
+    expect(result.current.isLoading).toBe(true)
+    expect(result.current.newCount).toBe(0)
+    expect(result.current.hasRawPosts).toBe(true)
+
+    // Query settled, but the un-awaited bulkPut + liveQuery re-emission haven't
+    // landed yet: the feed is still last session's. Committing here is the bug.
+    rerender({ seed: { settled: true, newestId: "conv_fresh" } })
+    expect(result.current.posts).toEqual([])
+    expect(result.current.isLoading).toBe(true)
+    expect(result.current.newCount).toBe(0)
+
+    act(() => mockLive(feed(post("conv_fresh", 900), post("a", 300), post("b", 200))))
+    rerender({ seed: { settled: true, newestId: "conv_fresh" } })
+    expect(result.current.posts.map((p) => p.id)).toEqual(["conv_fresh", "a", "b"])
+    expect(result.current.newCount).toBe(0)
+    expect(result.current.isLoading).toBe(false)
+  })
+
+  it("the offline/timeout escape hatch commits what it has, and buffers arrivals after it", () => {
+    mockLive(feed(post("a", 300), post("b", 200)))
+    const { result, rerender } = renderHook(({ seed }) => useStableBoardView("ws_1", ALL, undefined, seed), {
+      initialProps: { seed: { settled: true, newestId: null } },
+    })
+    expect(result.current.posts.map((p) => p.id)).toEqual(["a", "b"])
+
+    act(() => mockLive(feed(post("fresh", 900), post("a", 300), post("b", 200))))
+    rerender({ seed: { settled: true, newestId: null } })
+    expect(result.current.posts.map((p) => p.id)).toEqual(["a", "b"])
+    expect(result.current.newCount).toBe(1)
+  })
+
+  it("commits the LATEST live feed when the gate opens, not the snapshot it held", () => {
+    mockLive(feed(post("a", 300)))
+    const { result, rerender } = renderHook(({ seed }) => useStableBoardView("ws_1", ALL, undefined, seed), {
+      initialProps: { seed: { settled: false, newestId: "c" } },
+    })
+    act(() => mockLive(feed(post("b", 400))))
+    rerender({ seed: { settled: false, newestId: "c" } })
+    expect(result.current.posts).toEqual([])
+
+    act(() => mockLive(feed(post("c", 500), post("b", 400))))
+    rerender({ seed: { settled: true, newestId: "c" } })
+    expect(result.current.posts.map((p) => p.id)).toEqual(["c", "b"])
+    expect(result.current.newCount).toBe(0)
+  })
+
+  it("a workspace switch re-arms the gate — the previous workspace's cached rows never commit", () => {
+    mockLive(feed(post("a", 300), post("b", 200)))
+    const { result, rerender } = renderHook(({ ws, seed }) => useStableBoardView(ws, ALL, undefined, seed), {
+      initialProps: { ws: "ws_1", seed: { settled: true, newestId: null } },
+    })
+    expect(result.current.posts.map((p) => p.id)).toEqual(["a", "b"])
+
+    // ws_2's query is still loading; the liveQuery still returns ws_1's rows.
+    rerender({ ws: "ws_2", seed: { settled: false, newestId: null } })
+    expect(result.current.posts).toEqual([])
+    expect(result.current.isLoading).toBe(true)
+    expect(result.current.newCount).toBe(0)
+  })
+
+  it("commits a filter switch instantly once this workspace has committed (the gate is per-workspace)", () => {
+    mockLive(
+      feed(
+        lensPost("decided", 300, { hasCapturedMemo: true }),
+        lensPost("plain", 200, { status: "active", completenessScore: 5 })
+      )
+    )
+    const { result, rerender } = renderHook(
+      ({ lens, seed }) => useStableBoardView("ws_1", lensFilter(lens), undefined, seed),
+      { initialProps: { lens: "all" as BoardLens, seed: { settled: true, newestId: null } as BoardSeedState } }
+    )
+    expect(result.current.posts.map((p) => p.id)).toEqual(["decided", "plain"])
+
+    // The new lens's query is still fetching — the lens must still switch now.
+    rerender({ lens: "decisions" as BoardLens, seed: { settled: false, newestId: "x" } })
+    expect(result.current.posts.map((p) => p.id)).toEqual(["decided"])
+    expect(result.current.isLoading).toBe(false)
+  })
+
+  it("no seed argument means no gating (existing call sites commit immediately)", () => {
+    mockLive(feed(post("a", 300)))
+    const { result } = renderHook(() => useStableBoardView("ws_1", ALL))
+    expect(result.current.posts.map((p) => p.id)).toEqual(["a"])
+    expect(result.current.isLoading).toBe(false)
   })
 })
