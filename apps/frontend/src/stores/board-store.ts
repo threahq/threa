@@ -292,7 +292,13 @@ export async function mergeBoardConversation(
       ...existing,
       conversation,
       recentMessages,
-      settlingMessageIds: settlingMessageIds ?? existing.settlingMessageIds ?? [],
+      // A kept cached set is still pruned to the new membership: an event that
+      // omits the field but moves a message out must not leave it marked.
+      settlingMessageIds:
+        settlingMessageIds ??
+        (memberIds
+          ? (existing.settlingMessageIds ?? []).filter((id) => memberIds.has(id))
+          : (existing.settlingMessageIds ?? [])),
       _lastActivityMs: lastActivityMs(conversation),
       _cachedAt: Date.now(),
       _status: undefined,

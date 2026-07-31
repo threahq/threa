@@ -24,5 +24,8 @@ CREATE INDEX idx_message_conversation_state_conversation
 CREATE INDEX idx_message_conversation_state_stream
   ON message_conversation_state (stream_id, state);
 
-CREATE INDEX idx_message_conversation_state_workspace
-  ON message_conversation_state (workspace_id);
+-- The sweep backstop's read: still-settling rows by age. Partial — settled rows
+-- are the steady-state majority and the sweep never reads them.
+CREATE INDEX idx_message_conversation_state_settling_age
+  ON message_conversation_state (created_at)
+  WHERE state = 'settling';

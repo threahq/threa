@@ -19,6 +19,7 @@ import {
   BoundaryExtractionService,
   createStalenessSweepWorker,
   SETTLING_CONFIDENCE_THRESHOLD,
+  SETTLING_MAX_AGE_SECONDS,
 } from "../../src/features/conversations"
 import { sql } from "../../src/db"
 import { userId, workspaceId, streamId, messageId, conversationId } from "../../src/lib/id"
@@ -488,9 +489,10 @@ describe("conversation settling", () => {
     }
     const conversation = await service.processMessage(msgId, testStreamId, testWorkspaceId)
 
+    // Derived from the constant so raising the threshold keeps this test honest.
     await pool.query(sql`
       UPDATE message_conversation_state
-      SET created_at = NOW() - INTERVAL '31 minutes'
+      SET created_at = NOW() - make_interval(secs => ${SETTLING_MAX_AGE_SECONDS + 60})
       WHERE message_id = ${msgId}
     `)
     await pool.query("DELETE FROM outbox")

@@ -49,6 +49,7 @@ export async function emitSettledConversationUpdates(
   )
 
   const deliveryByStreamId = new Map<string, Awaited<ReturnType<typeof resolveConversationDelivery>>>()
+  const events = []
   for (const conversation of conversations) {
     let delivery = deliveryByStreamId.get(conversation.streamId)
     if (!delivery) {
@@ -58,14 +59,18 @@ export async function emitSettledConversationUpdates(
       )
       deliveryByStreamId.set(conversation.streamId, delivery)
     }
-    await OutboxRepository.insert(client, "conversation:updated", {
-      workspaceId,
-      streamId: conversation.streamId,
-      conversationId: conversation.id,
-      conversation: addStalenessFields(conversation),
-      parentStreamId: delivery.parentStreamId,
-      streamVisibility: delivery.streamVisibility,
-      settlingMessageIds: settlingByConversation.get(conversation.id) ?? [],
+    events.push({
+      eventType: "conversation:updated" as const,
+      payload: {
+        workspaceId,
+        streamId: conversation.streamId,
+        conversationId: conversation.id,
+        conversation: addStalenessFields(conversation),
+        parentStreamId: delivery.parentStreamId,
+        streamVisibility: delivery.streamVisibility,
+        settlingMessageIds: settlingByConversation.get(conversation.id) ?? [],
+      },
     })
   }
+  await OutboxRepository.insertMany(client, events)
 }
