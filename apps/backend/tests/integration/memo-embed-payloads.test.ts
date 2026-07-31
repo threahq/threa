@@ -282,6 +282,54 @@ describe("memo embed summaries on message payloads", () => {
       expect(payload.memoEmbeds).toEqual([])
     })
 
+    // A message stored before summaries shipped has no memoEmbeds key at all.
+    // With the per-card fetch deleted up-stack, its card would render label-only
+    // forever — enrichment has to resolve it, not just edited messages.
+    test("resolves summaries for a message stored before summaries shipped", async () => {
+      const message = await eventService.createMessage({
+        workspaceId: testWorkspaceId,
+        streamId: channel,
+        authorId: testUserId,
+        authorType: "user",
+        ...bodyCiting("stored before summaries existed", [sameStreamMemo]),
+      })
+      await pool.query(`UPDATE stream_events SET payload = payload - 'memoEmbeds' WHERE payload->>'messageId' = $1`, [
+        message.id,
+      ])
+
+      const events = await eventService.listEvents(channel, { limit: 200 })
+      const enriched = await eventService.enrichBootstrapEvents(events, new Map(), new Map(), {
+        workspaceId: testWorkspaceId,
+        streamId: channel,
+      })
+
+      const payload = enriched.find(
+        (e) => e.eventType === "message_created" && (e.payload as MessageCreatedPayload).messageId === message.id
+      )?.payload as MessageCreatedPayload
+      expect(payload.memoEmbeds?.map((s) => s.memoId)).toEqual([sameStreamMemo])
+    })
+
+    test("leaves a message citing only an unreachable memo without the key", async () => {
+      const message = await eventService.createMessage({
+        workspaceId: testWorkspaceId,
+        streamId: channel,
+        authorId: testUserId,
+        authorType: "user",
+        ...bodyCiting("cites what this room can't read", [unreachableMemo]),
+      })
+
+      const events = await eventService.listEvents(channel, { limit: 200 })
+      const enriched = await eventService.enrichBootstrapEvents(events, new Map(), new Map(), {
+        workspaceId: testWorkspaceId,
+        streamId: channel,
+      })
+
+      const payload = enriched.find(
+        (e) => e.eventType === "message_created" && (e.payload as MessageCreatedPayload).messageId === message.id
+      )?.payload as MessageCreatedPayload
+      expect(payload.memoEmbeds).toBeUndefined()
+    })
+
     test("leaves an unedited message's create-time summaries alone", async () => {
       const message = await eventService.createMessage({
         workspaceId: testWorkspaceId,

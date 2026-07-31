@@ -2041,37 +2041,46 @@ export class EventService {
    * no message in it was edited. Without a scope (a caller that predates this)
    * the map is empty and payloads keep their create-time summaries.
    */
-  private async refreshEditedMemoEmbeds(
+  private async refreshMemoEmbeds(
     messagesMap: Map<string, Message>,
+    messageIdsLackingKey: Set<string>,
     scope?: { workspaceId: string; streamId: string }
   ): Promise<Map<string, MemoEmbedSummary[]>> {
     const refreshed = new Map<string, MemoEmbedSummary[]>()
     if (!scope) return refreshed
 
+    // Edited messages always land in the result — an edit that dropped the last
+    // reference must still push an empty array to clear the stale card. Legacy
+    // messages (payload written before summaries shipped, or when none were
+    // readable) land only when something resolves: there is no stale card to
+    // clear, and the created payload omits the key when empty.
     const edited = [...messagesMap.values()].filter((m) => m.editedAt && !m.deletedAt)
-    if (edited.length === 0) return refreshed
+    const legacyCiting = [...messagesMap.values()]
+      .filter((m) => !m.editedAt && !m.deletedAt && messageIdsLackingKey.has(m.id))
+      .map((m) => [m.id, collectMemoEmbedIds(m.contentJson)] as const)
+      .filter(([, ids]) => ids.length > 0)
+    if (edited.length === 0 && legacyCiting.length === 0) return refreshed
 
-    const byMessage = new Map(edited.map((m) => [m.id, collectMemoEmbedIds(m.contentJson)]))
+    const byMessage = new Map([
+      ...edited.map((m) => [m.id, collectMemoEmbedIds(m.contentJson)] as const),
+      ...legacyCiting,
+    ])
+    const legacyIds = new Set(legacyCiting.map(([id]) => id))
     const allIds = [...new Set([...byMessage.values()].flat())]
-    if (allIds.length === 0) {
-      // Every edited message dropped its references — the empty arrays still
-      // have to reach the payload to clear the stale cards.
-      for (const id of byMessage.keys()) refreshed.set(id, [])
-      return refreshed
-    }
 
-    const stream = await StreamRepository.findById(this.pool, scope.streamId)
-    const summaries = await MemoRepository.findEmbedSummaries(
-      this.pool,
-      scope.workspaceId,
-      allIds,
-      stream?.rootStreamId ?? scope.streamId
-    )
+    const summaries =
+      allIds.length > 0
+        ? await MemoRepository.findEmbedSummaries(
+            this.pool,
+            scope.workspaceId,
+            allIds,
+            (await StreamRepository.findById(this.pool, scope.streamId))?.rootStreamId ?? scope.streamId
+          )
+        : new Map<string, MemoEmbedSummary>()
     for (const [messageId, ids] of byMessage) {
-      refreshed.set(
-        messageId,
-        ids.map((id) => summaries.get(id)).filter((s): s is MemoEmbedSummary => s !== undefined)
-      )
+      const resolved = ids.map((id) => summaries.get(id)).filter((s): s is MemoEmbedSummary => s !== undefined)
+      if (legacyIds.has(messageId) && resolved.length === 0) continue
+      refreshed.set(messageId, resolved)
     }
     return refreshed
   }
@@ -2146,10 +2155,18 @@ export class EventService {
 
     // An edited message's payload is overlaid with the CURRENT content below, so
     // its create-time summaries can describe memos the body no longer cites (or
-    // miss ones it now does). The `message_edited` event that carries the right
-    // set is filtered out of this response, so it is recomputed here — for edited
-    // messages only, in one batch, against the same root the write path used.
-    const memoEmbedsByMessageId = await this.refreshEditedMemoEmbeds(messagesMap, memoEmbedScope)
+    // miss ones it now does); the `message_edited` event that carries the right
+    // set is filtered out of this response. A payload with NO memoEmbeds key at
+    // all predates summaries (or none were readable at write time) — its card
+    // would render label-only forever, a regression against the fetch this stack
+    // deletes. Both are recomputed here in one batch, against the same root the
+    // write path used.
+    const messageIdsLackingKey = new Set(
+      messageCreatedEvents
+        .filter((e) => (e.payload as MessageCreatedPayload).memoEmbeds === undefined)
+        .map((e) => (e.payload as MessageCreatedPayload).messageId)
+    )
+    const memoEmbedsByMessageId = await this.refreshMemoEmbeds(messagesMap, messageIdsLackingKey, memoEmbedScope)
 
     return events
       .filter((e) => e.eventType !== "message_edited" && e.eventType !== "message_deleted")
@@ -2206,11 +2223,12 @@ export class EventService {
           enrichments.editedAt = message.editedAt.toISOString()
           enrichments.contentJson = message.contentJson
           enrichments.contentMarkdown = message.contentMarkdown
-          const refreshed = memoEmbedsByMessageId.get(message.id)
-          // Set even when empty, so an edit that dropped the last reference
-          // doesn't leave the create-time card behind.
-          if (refreshed) enrichments.memoEmbeds = refreshed
         }
+        // Edited entries may be empty (an edit that dropped the last reference
+        // must clear the create-time card); legacy entries are only ever
+        // non-empty. Deleted messages never enter the map.
+        const refreshedMemoEmbeds = memoEmbedsByMessageId.get(payload.messageId)
+        if (refreshedMemoEmbeds) enrichments.memoEmbeds = refreshedMemoEmbeds
         if (message?.reactions && Object.keys(message.reactions).length > 0) {
           enrichments.reactions = message.reactions
         }
