@@ -6,6 +6,7 @@ import {
   type AttachmentSummary,
   type JSONContent,
   type LinkPreviewSummary,
+  type MemoEmbedSummary,
   type ThreadSummary,
   type MovedFromProvenance,
 } from "@threa/types"
@@ -101,6 +102,7 @@ interface MessagePayload {
   contentJson?: JSONContent
   attachments?: AttachmentSummary[]
   linkPreviews?: LinkPreviewSummary[]
+  memoEmbeds?: MemoEmbedSummary[]
   replyCount?: number
   threadId?: string
   /**
@@ -608,7 +610,11 @@ function MessageLayout({
           previews={payload.linkPreviews}
           hydrateFromApi={!deferSecondaryHydration}
         />
-        <MemoPreviewList contentMarkdown={payload.contentMarkdown} />
+        <MemoPreviewList
+          contentMarkdown={payload.contentMarkdown}
+          contentJson={payload.contentJson}
+          memoEmbeds={payload.memoEmbeds}
+        />
         <GiphyPreviewList contentMarkdown={payload.contentMarkdown} />
       </AttachmentProvider>
     </LinkPreviewProvider>

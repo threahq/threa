@@ -6,11 +6,13 @@ import {
   type LabelActor,
   type LabeledMessage,
   type LinkPreviewSummary,
+  type MemoEmbedSummary,
 } from "@threa/types"
 import { MessageRepository, type Message } from "../messaging"
 import { AttachmentRepository, hydrateAttachmentSummaries } from "../attachments"
 import { LinkPreviewRepository, toLinkPreviewSummary } from "../link-previews"
 import { listAccessibleStreamIds } from "../streams"
+import { resolveMemoEmbedSummariesForMessages } from "../memos"
 import type { BotChannelService } from "../api-keys"
 import { LabelAssignmentRepository } from "./repository"
 
@@ -65,12 +67,15 @@ export class LabelMessageService {
     ])
 
     const summariesByMessage = await hydrateAttachmentSummaries(this.pool, workspaceId, attachmentsByMessage)
+    // Labeled rows span streams, so the resolver buckets them by their own roots
+    // — a memo readable from one row's room may not be from another's.
+    const memoEmbedsByMessage = await resolveMemoEmbedSummariesForMessages(this.pool, workspaceId, visible)
     return visible.map((message) => {
       const attachments = summariesByMessage.get(message.id) ?? []
       const linkPreviews = (linkPreviewsByMessage.get(message.id) ?? [])
         .filter((p) => p.status === "completed")
         .map((p, i) => toLinkPreviewSummary(p, i))
-      return toLabeledMessage(message, attachments, linkPreviews)
+      return toLabeledMessage(message, attachments, linkPreviews, memoEmbedsByMessage.get(message.id))
     })
   }
 
@@ -91,7 +96,8 @@ export class LabelMessageService {
 function toLabeledMessage(
   message: Message,
   attachments: AttachmentSummary[],
-  linkPreviews: LinkPreviewSummary[]
+  linkPreviews: LinkPreviewSummary[],
+  memoEmbeds?: MemoEmbedSummary[]
 ): LabeledMessage {
   return {
     id: message.id,
@@ -102,6 +108,7 @@ function toLabeledMessage(
     reactions: message.reactions,
     attachments,
     linkPreviews,
+    ...(memoEmbeds && memoEmbeds.length > 0 && { memoEmbeds }),
     createdAt: message.createdAt.toISOString(),
     editedAt: message.editedAt?.toISOString() ?? null,
   }

@@ -775,6 +775,12 @@ export interface BoardPostMessage {
   attachments: AttachmentSummary[]
   /** Completed link previews for this message. */
   linkPreviews: LinkPreviewSummary[]
+  /**
+   * Card content for the memos this body references, so an embed card renders
+   * complete on its first frame here exactly as it does on the timeline. Absent
+   * when the body cites none, or when the citing room can't uniformly read them.
+   */
+  memoEmbeds?: MemoEmbedSummary[]
   createdAt: string
   /** When the message was last edited, or null if never — drives the "(edited)"
    * affordance and the revisions dialog on the row (parity with the timeline). */
@@ -1220,6 +1226,25 @@ export interface LinkPreview {
   fetchedAt: string | null
   expiresAt?: string | null
   createdAt: string
+}
+
+/**
+ * A referenced memo's card content, carried on the message payload that cites
+ * it so the embed card renders complete on its first frame — no per-card fetch
+ * anywhere in the stream, and therefore no content that changes without an
+ * underlying change (`memo:updated` is the only thing that may move it).
+ *
+ * Only what the card draws. The memo's substance (abstract, key points, source
+ * messages) stays behind the access-checked detail endpoint, which is what the
+ * card's click opens.
+ */
+export interface MemoEmbedSummary {
+  memoId: string
+  title: string
+  knowledgeType: KnowledgeType
+  memoType: MemoType
+  tags: string[]
+  updatedAt: string
 }
 
 /**

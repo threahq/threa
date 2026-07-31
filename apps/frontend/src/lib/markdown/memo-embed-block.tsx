@@ -1,28 +1,32 @@
 import { useState } from "react"
 import { useParams } from "react-router-dom"
+import type { MemoEmbedSummary } from "@threa/types"
 import { cn } from "@/lib/utils"
-import { useMemoEmbedSource } from "@/hooks/use-memo-embed-source"
 import { MemoEmbedCardBody, MemoEmbedDate } from "@/components/memo-embed/card-body"
 import { MemoPreviewDialog } from "@/components/memo/memo-preview-dialog"
 
 interface MemoEmbedBlockProps {
   memoId: string
-  /** Title parsed from the markdown link text; used as a pre-hydration fallback. */
+  /** Title parsed from the markdown link text; the card's whole content without a summary. */
   title: string
+  /**
+   * The memo's card content, delivered with the message. There is deliberately
+   * no fetch here: the stream renders what it was given (INV-21 — content may
+   * change only when the memo changed, never because it hadn't loaded yet).
+   */
+  summary: MemoEmbedSummary | null
 }
 
 /**
  * Renders a memo-embed preview card below a message (`MemoPreviewList`), one
  * per memo referenced in the body — mirroring how link previews surface. The
- * inline reference itself renders as a `MemoChip`. The card body routes through
- * the shared resolver hook + `MemoEmbedCardBody` so cache + render behavior
- * match the composer chip. Clicking the card opens an in-stream preview
- * (`MemoPreviewDialog`) — a modal on desktop, a drawer on mobile — which links
- * through to the full memo in the memory explorer.
+ * inline reference itself renders as a `MemoChip`. Clicking the card opens an
+ * in-stream preview (`MemoPreviewDialog`) — a modal on desktop, a drawer on
+ * mobile — which is where the memo's substance is fetched, access-checked, and
+ * where the link through to the memory explorer lives.
  */
-export function MemoEmbedBlock({ memoId, title }: MemoEmbedBlockProps) {
+export function MemoEmbedBlock({ memoId, title, summary }: MemoEmbedBlockProps) {
   const { workspaceId } = useParams<{ workspaceId: string }>()
-  const source = useMemoEmbedSource(memoId)
   const [open, setOpen] = useState(false)
 
   const card = (
@@ -33,7 +37,7 @@ export function MemoEmbedBlock({ memoId, title }: MemoEmbedBlockProps) {
       )}
       data-type="memo-embed"
     >
-      <MemoEmbedCardBody source={source} fallbackTitle={title} trailing={<MemoEmbedDate source={source} />} />
+      <MemoEmbedCardBody summary={summary} fallbackTitle={title} trailing={<MemoEmbedDate summary={summary} />} />
     </div>
   )
 
@@ -58,7 +62,7 @@ export function MemoEmbedBlock({ memoId, title }: MemoEmbedBlockProps) {
         onOpenChange={setOpen}
         workspaceId={workspaceId}
         memoId={memoId}
-        fallbackTitle={title}
+        fallbackTitle={summary?.title || title}
       />
     </>
   )

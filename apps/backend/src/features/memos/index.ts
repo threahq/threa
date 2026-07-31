@@ -1,5 +1,5 @@
 export { MemoRepository } from "./repository"
-export { resolveMemoEmbedSummaries } from "./embed-summaries"
+export { resolveMemoEmbedSummaries, resolveMemoEmbedSummariesForMessages } from "./embed-summaries"
 export type {
   Memo,
   InsertMemoParams,

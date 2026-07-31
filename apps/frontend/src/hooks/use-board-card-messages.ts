@@ -32,6 +32,7 @@ interface MessageCreatedPayloadShape {
   reactions?: Record<string, string[]>
   attachments?: RenderableMessage["attachments"]
   linkPreviews?: RenderableMessage["linkPreviews"]
+  memoEmbeds?: RenderableMessage["memoEmbeds"]
   // Patched onto the row by the live edit handler (stream-sync) and by bootstrap
   // enrichment for an already-edited message, so the rail carries it too.
   editedAt?: string | null
@@ -64,6 +65,7 @@ function eventToRenderable(event: CachedEvent): RenderableMessage | null {
     editedAt: p.editedAt ?? null,
     attachments: p.attachments,
     linkPreviews: p.linkPreviews,
+    memoEmbeds: p.memoEmbeds,
   }
 }
 
