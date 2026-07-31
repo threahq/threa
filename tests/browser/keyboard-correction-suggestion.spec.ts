@@ -76,6 +76,35 @@ test.describe("Keyboard word-correction in trigger popups", () => {
     await expect(page.locator("[data-emoji-grid]")).not.toBeVisible()
   })
 
+  test("emoji picker survives the keyboard's trailing space and still picks", async ({ page }) => {
+    const { editor } = await setupWorkspaceWithEditor(page, "kbtrail")
+
+    await page.keyboard.type(":fir")
+    await expect(page.locator("[data-emoji-grid]")).toBeVisible({ timeout: 2000 })
+
+    // Keyboards deliver `: fire ` — the leading-space replacement, then a
+    // trailing space, usually as a follow-up transaction.
+    await simulateKeyboardWordCorrection(page, ":fir", ": fire")
+    await expect(page.locator("[data-emoji-grid]")).toBeVisible()
+    await simulateKeyboardWordCorrection(page, ": fire", ": fire ")
+
+    await expect(page.locator("[data-emoji-grid]")).toBeVisible()
+    await expect(page.locator("[data-emoji-grid] button[aria-label=':fire:']").first()).toBeVisible()
+
+    // Picking replaces the whole `: fire ` range, both spaces included.
+    await page.keyboard.press("Enter")
+    await expect(editor).toContainText(EMOJI_RE)
+    await expect(editor).not.toContainText(":")
+    await expect(editor).not.toContainText("fire")
+
+    // A second space after a trailing-space correction still dismisses.
+    await page.keyboard.type(":fir")
+    await simulateKeyboardWordCorrection(page, ":fir", ": fire ")
+    await expect(page.locator("[data-emoji-grid]")).toBeVisible()
+    await page.keyboard.type(" ")
+    await expect(page.locator("[data-emoji-grid]")).not.toBeVisible()
+  })
+
   test("manually typed space after the trigger still dismisses the picker for good", async ({ page }) => {
     await setupWorkspaceWithEditor(page, "kbspace")
 

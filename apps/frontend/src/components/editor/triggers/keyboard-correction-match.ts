@@ -12,6 +12,11 @@ import { findSuggestionMatch, type SuggestionMatch, type Trigger } from "@tiptap
  * space deactivates the suggestion on its own transaction, so ordinary text like
  * "ratio : 5" can never reopen the popup — only a multi-character insert landing
  * while the popup is open (the keyboard word-correction) reaches the fallback.
+ *
+ * Keyboards also append a trailing space (`: shrug `), often as a follow-up
+ * transaction, so the pattern tolerates one. Only in the leading-space form: a
+ * plain `:fir ` still dismisses, and a second space after a correction dismisses
+ * too — the corrected state is the one place a single space can't.
  */
 export function withKeyboardCorrectionTolerance(wasActive: () => boolean): typeof findSuggestionMatch {
   return (config: Trigger): SuggestionMatch => {
@@ -27,7 +32,7 @@ export function withKeyboardCorrectionTolerance(wasActive: () => boolean): typeo
 
     const escapedChar = escapeForRegEx(char)
     const prefix = startOfLine ? "^" : ""
-    const corrected = text.match(new RegExp(`${prefix}${escapedChar} [^\\s${escapedChar}]+$`))
+    const corrected = text.match(new RegExp(`${prefix}${escapedChar} [^\\s${escapedChar}]+ ?$`))
     if (!corrected || corrected.index === undefined) return null
 
     const matchPrefix = text.slice(Math.max(0, corrected.index - 1), corrected.index)
@@ -38,7 +43,7 @@ export function withKeyboardCorrectionTolerance(wasActive: () => boolean): typeo
     const from = $position.pos - text.length + corrected.index
     return {
       range: { from, to: $position.pos },
-      query: corrected[0].slice(char.length + 1),
+      query: corrected[0].slice(char.length + 1).trimEnd(),
       text: corrected[0],
     }
   }
