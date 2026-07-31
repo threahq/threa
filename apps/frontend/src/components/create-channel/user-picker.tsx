@@ -22,7 +22,10 @@ export function UserPicker({ workspaceId, currentUserId, selectedUserIds, onChan
   const selectedSet = useMemo(() => new Set(selectedUserIds), [selectedUserIds])
 
   const availableToAdd = useMemo((): UserListItem[] => {
-    if (!search) return []
+    // Trimmed: rankMatches treats a whitespace-only query as "not searching
+    // yet" and returns every candidate, which here would dump the whole
+    // member list the moment a stray space is typed.
+    if (!search.trim()) return []
     const candidates = workspaceUsers.filter((m) => m.id !== currentUserId && !selectedSet.has(m.id))
     return rankMatches(candidates, search, (m) => ({ labels: [m.name, m.slug] })).map((m) => ({
       id: m.id,
