@@ -414,7 +414,7 @@ describe("MemoService.processBatch — memo scope write policy (roadmap 6.4)", (
   })
 
   it("keeps channel and public-scratchpad memos workspace-scoped", async () => {
-    const { service } = setupService({ memoContents: [memoContent] })
+    const { service, outboxInsert } = setupService({ memoContents: [memoContent] })
     spyOn(StreamRepository, "findById").mockResolvedValue(fakeStream({ type: "channel", visibility: "public" }))
     const insert = spyOn(MemoRepository, "insert").mockResolvedValue(undefined as never)
 
@@ -424,10 +424,34 @@ describe("MemoService.processBatch — memo scope write policy (roadmap 6.4)", (
       expect.anything(),
       expect.objectContaining({ scope: "workspace", scopeUserId: null })
     )
+    // The whole payload: the source stream to route by, the id to invalidate on,
+    // and nothing of the memo's content — it is replayed from `sync_log` for
+    // weeks, so anything here outlives the emit. No scopeUserId ⇒ the room.
+    expect(outboxInsert).toHaveBeenCalledWith(expect.anything(), "memo:created", {
+      workspaceId: WORKSPACE_ID,
+      streamId: STREAM_ID,
+      memoId: expect.stringMatching(/^memo_/),
+    })
+  })
+
+  it("routes a user-scoped memo's memo:created to its owner, not the stream", async () => {
+    const { service, outboxInsert } = setupService({ memoContents: [memoContent] })
+    spyOn(StreamRepository, "findById").mockResolvedValue(
+      fakeStream({ type: "scratchpad", visibility: "private", createdBy: "usr_owner" })
+    )
+
+    await service.processBatch(WORKSPACE_ID, STREAM_ID)
+
+    expect(outboxInsert).toHaveBeenCalledWith(expect.anything(), "memo:created", {
+      workspaceId: WORKSPACE_ID,
+      streamId: STREAM_ID,
+      memoId: expect.stringMatching(/^memo_/),
+      scopeUserId: "usr_owner",
+    })
   })
 
   it("resolves the root stream so a thread inside a private scratchpad inherits user scope", async () => {
-    const { service } = setupService({ memoContents: [memoContent] })
+    const { service, outboxInsert } = setupService({ memoContents: [memoContent] })
     // The batch's stream is a thread; its root is the owner's private scratchpad.
     // Without root resolution the thread's own type (not SCRATCHPAD) would fall
     // through to workspace scope, leaking the private memo.
@@ -447,6 +471,14 @@ describe("MemoService.processBatch — memo scope write policy (roadmap 6.4)", (
     expect(insert).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({ scope: "user", scopeUserId: "usr_owner" })
+    )
+    // The same resolved root carries the routing: memo:created names the root,
+    // never the thread, so it reaches the root's audience rather than whoever
+    // has the thread open.
+    expect(outboxInsert).toHaveBeenCalledWith(
+      expect.anything(),
+      "memo:created",
+      expect.objectContaining({ streamId: "stream_root" })
     )
   })
 })
@@ -660,12 +692,12 @@ describe("MemoService.saveMemo — agent-authored memo (roadmap 6.2)", () => {
         status: "active",
       })
     )
-    // memo:created rides the outbox.
-    expect(outboxInsert).toHaveBeenCalledWith(
-      expect.anything(),
-      "memo:created",
-      expect.objectContaining({ workspaceId: WORKSPACE_ID })
-    )
+    // memo:created rides the outbox, carrying the source room and the id alone.
+    expect(outboxInsert).toHaveBeenCalledWith(expect.anything(), "memo:created", {
+      workspaceId: WORKSPACE_ID,
+      streamId: STREAM_ID,
+      memoId: expect.stringMatching(/^memo_/),
+    })
     // Visible in situ (INV-62): capture event on the stream, no conversationId.
     expect(streamEventInsertMany).toHaveBeenCalledWith(expect.anything(), [
       expect.objectContaining({
@@ -951,11 +983,11 @@ describe("MemoService.captureSessionReflection — reflective capture (roadmap 6
         status: "active",
       })
     )
-    expect(outboxInsert).toHaveBeenCalledWith(
-      expect.anything(),
-      "memo:created",
-      expect.objectContaining({ workspaceId: WORKSPACE_ID })
-    )
+    expect(outboxInsert).toHaveBeenCalledWith(expect.anything(), "memo:created", {
+      workspaceId: WORKSPACE_ID,
+      streamId: STREAM_ID,
+      memoId: expect.stringMatching(/^memo_/),
+    })
     // Visible in situ (INV-62): capture event on the session's stream, no conversationId.
     expect(streamEventInsertMany).toHaveBeenCalledWith(expect.anything(), [
       expect.objectContaining({

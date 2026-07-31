@@ -28,6 +28,7 @@ import {
   type MessagesMovedOutboxPayload,
   type ConversationCreatedOutboxPayload,
   type ConversationUpdatedOutboxPayload,
+  type MemoCreatedOutboxPayload,
   type LabelUpsertedOutboxPayload,
   type LabelDeletedOutboxPayload,
   type LabelAssignedOutboxPayload,
@@ -343,6 +344,16 @@ export function resolveDeliveryGroups(event: OutboxEvent): string[] | null {
     return rootStreamId && rootStreamId !== streamId
       ? [streamGroup(streamId), streamGroup(rootStreamId)]
       : [streamGroup(streamId)]
+  }
+
+  // memo:created — the source stream's room, so a member of the room the memo
+  // came from refreshes the explorer live. A `user`-scoped memo is private to
+  // its owner even when captured in a shared stream (save_memo can file one
+  // there), so it goes to the owner alone: the room must not learn that a memo
+  // it will never be shown exists.
+  if (isOutboxEventType(event, "memo:created")) {
+    const payload = event.payload as MemoCreatedOutboxPayload
+    return payload.scopeUserId ? [userGroup(payload.scopeUserId)] : [streamGroup(payload.streamId)]
   }
 
   // Permission-scoped events (e.g. invitation lifecycle → members:write) go to

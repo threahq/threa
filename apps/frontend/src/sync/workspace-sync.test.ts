@@ -1830,13 +1830,16 @@ describe("registerWorkspaceSocketHandlers", () => {
     gate.dispose()
   })
 
+  // The event is delivered to the memo's source stream room, not the workspace
+  // room — but registration is per event type on the one workspace socket, so
+  // the handler must still fire on the room-delivered payload.
   it("invalidates the memo search queries when a memo:created event lands", () => {
     const queryClient = new QueryClient()
     const invalidate = vi.spyOn(queryClient, "invalidateQueries")
     const { socket, emit } = createTestSocket()
     const cleanup = registerWorkspaceSocketHandlers(socket, "ws_1", queryClient, handlerRefs)
 
-    emit("memo:created", { workspaceId: "ws_1", memoId: "memo_1" })
+    emit("memo:created", { workspaceId: "ws_1", streamId: "stream_1", memoId: "memo_1" })
 
     expect(invalidate).toHaveBeenCalledWith({ queryKey: memoKeys.searches("ws_1") })
     cleanup()
@@ -1848,7 +1851,7 @@ describe("registerWorkspaceSocketHandlers", () => {
     const { socket, emit } = createTestSocket()
     const cleanup = registerWorkspaceSocketHandlers(socket, "ws_1", queryClient, handlerRefs)
 
-    emit("memo:created", { workspaceId: "ws_other", memoId: "memo_1" })
+    emit("memo:created", { workspaceId: "ws_other", streamId: "stream_1", memoId: "memo_1" })
 
     expect(invalidate).not.toHaveBeenCalledWith({ queryKey: memoKeys.searches("ws_other") })
     expect(invalidate).not.toHaveBeenCalledWith({ queryKey: memoKeys.searches("ws_1") })
