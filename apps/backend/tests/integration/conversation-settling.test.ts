@@ -295,6 +295,41 @@ describe("conversation settling", () => {
     expect({ state: row?.state, settledBy: row?.settled_by }).toEqual({ state: "settling", settledBy: null })
   })
 
+  test("a late pass never settles rows for messages newer than its window", async () => {
+    // Pass A's trigger lands first; by the time its (slow) pass runs, newer
+    // messages exist with their own settling rows — rows that predate the pass
+    // clock-wise but are AHEAD of it sequence-wise. The window settle is
+    // strictly backwards-looking, so they must survive.
+    const triggerMsgId = await insertMessage("Slow pass trigger")
+    for (let i = 0; i < 3; i++) await insertMessage(`Later filler ${i}`)
+    const newerMsgId = await insertMessage("Newer provisional message")
+    const newerConvId = conversationId()
+    await withTransaction(pool, async (client) => {
+      await ConversationRepository.insert(client, {
+        id: newerConvId,
+        streamId: testStreamId,
+        workspaceId: testWorkspaceId,
+        topicSummary: "Newer",
+      })
+      await MessageConversationStateRepository.insertSettling(client, {
+        messageId: newerMsgId,
+        workspaceId: testWorkspaceId,
+        streamId: testStreamId,
+        conversationId: newerConvId,
+      })
+    })
+
+    extractor.next = {
+      assignments: [{ conversationId: null, isPrimary: true }],
+      newConversationTopic: "Slow pass",
+      confidence: 0.95,
+    }
+    await service.processMessage(triggerMsgId, testStreamId, testWorkspaceId)
+
+    const row = await settlingRow(newerMsgId)
+    expect({ state: row?.state, settledBy: row?.settled_by }).toEqual({ state: "settling", settledBy: null })
+  })
+
   test("an LLM reassignment moves the settling row without settling it", async () => {
     const msgId = await insertMessage("Uncertain message")
     extractor.next = {

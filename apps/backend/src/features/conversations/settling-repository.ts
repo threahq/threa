@@ -99,15 +99,24 @@ export const MessageConversationStateRepository = {
     settledBy: SettledByReason,
     createdBefore: Date
   ): Promise<SettlingRow[]> {
+    // Strictly backwards-looking on BOTH axes. `created_at < createdBefore`
+    // (DB clock) protects rows a concurrent pass wrote after this one began;
+    // the sequence subquery protects rows for messages NEWER than this pass's
+    // window — a late pass (its LLM round-trip outlived several later sends)
+    // must not settle placements those messages' own passes still consider
+    // provisional. Passes only ever settle behind the window, never ahead.
     const result = await db.query<SettlingDbRow>(sql`
-      UPDATE message_conversation_state
+      UPDATE message_conversation_state mcs
       SET state = 'settled', settled_by = ${settledBy}, settled_at = NOW(), updated_at = NOW()
-      WHERE workspace_id = ${workspaceId}
-        AND stream_id = ${streamId}
-        AND state = 'settling'
-        AND created_at < ${createdBefore}
-        AND NOT (message_id = ANY(${keepMessageIds}::text[]))
-      RETURNING message_id, workspace_id, stream_id, conversation_id, state, settled_by, settled_at
+      FROM messages m
+      WHERE mcs.workspace_id = ${workspaceId}
+        AND mcs.stream_id = ${streamId}
+        AND mcs.state = 'settling'
+        AND mcs.created_at < ${createdBefore}
+        AND NOT (mcs.message_id = ANY(${keepMessageIds}::text[]))
+        AND m.id = mcs.message_id
+        AND m.sequence < (SELECT MIN(mw.sequence) FROM messages mw WHERE mw.id = ANY(${keepMessageIds}::text[]) AND mw.stream_id = ${streamId})
+      RETURNING mcs.message_id, mcs.workspace_id, mcs.stream_id, mcs.conversation_id, mcs.state, mcs.settled_by, mcs.settled_at
     `)
     return result.rows.map(mapRow)
   },

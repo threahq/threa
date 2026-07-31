@@ -110,12 +110,15 @@ export class BoundaryExtractionService {
   async processMessage(messageId: string, streamId: string, workspaceId: string): Promise<Conversation | null> {
     // Bounds this pass's out-of-window settle to rows that already existed when
     // it looked (INV-20): a concurrent pass's fresh settling row must survive.
-    const passStartedAt = await MessageConversationStateRepository.now(this.pool)
+    // Assigned inside Phase 1's withClient so it rides the already-held
+    // connection instead of a separate pool checkout.
+    let passStartedAt!: Date
 
     // Phase 1: fetch context; collect new-message attachment IDs so their
     // processing can be awaited after the connection is released (INV-41), then
     // fetch extractions on the pool — mirrors streams/naming-service.ts.
     const fetchedData = await withClient(this.pool, async (client) => {
+      passStartedAt = await MessageConversationStateRepository.now(client)
       const message = await MessageRepository.findById(client, messageId)
       if (!message) {
         return { message: null, stream: null, extractionContextBase: null }
