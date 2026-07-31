@@ -136,6 +136,7 @@ export type OutboxEventType =
 
 /** Events that are scoped to a stream (have streamId) */
 export type StreamScopedEventType =
+  | "memo:updated"
   | "message:created"
   | "message:edited"
   | "message:deleted"
@@ -1307,6 +1308,12 @@ export function isOneOfOutboxEventType<T extends OutboxEventType>(
 }
 
 const STREAM_SCOPED_EVENTS: StreamScopedEventType[] = [
+  // Routing is driven by THIS list, not by the payload extending
+  // `StreamScopedPayload` — `resolveDeliveryGroups` only takes the stream
+  // branch when `isStreamScopedEvent` finds the type here. Omitted, an event
+  // falls through to the whole-workspace group, which for this one would hand
+  // a memo's card content to every member regardless of stream access.
+  "memo:updated",
   "message:created",
   "message:edited",
   "message:deleted",
