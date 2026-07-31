@@ -6,7 +6,7 @@ import { MemoryRouter, useNavigate } from "react-router-dom"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import type { Socket } from "socket.io-client"
 import type { BoardPost, BoardPostMessage, ConversationWithStaleness, EventType } from "@threa/types"
-import { ConversationPanel } from "./conversation-panel"
+import { ConversationPanel, hasUnknownMembers } from "./conversation-panel"
 import { ServicesProvider, SidebarProvider, PanelProvider, TraceProvider, SKELETON_DELAY_MS } from "@/contexts"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { spyOnExport } from "@/test/spy"
@@ -216,7 +216,7 @@ function mountPanel(opts: {
     return null
   }
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-  render(
+  const tree = () => (
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>
         <ServicesProvider services={{ conversations: { getBoardPost, getBoardMessages } as never }}>
@@ -234,10 +234,22 @@ function mountPanel(opts: {
       </TooltipProvider>
     </QueryClientProvider>
   )
-  return { getBoardPost, getBoardMessages, nav, queryClient }
+  // A fresh element per render: re-rendering the SAME element object lets React
+  // bail out of the subtree, and the new store snapshot would never be read.
+  const { rerender } = render(tree())
+  /** Push a new board-store snapshot (e.g. a `conversation:updated` membership
+   *  change) and re-render the mounted panel against it. */
+  const setCached = (post: BoardViewPost) => {
+    vi.spyOn(boardStoreModule, "useBoardPost").mockReturnValue(post as never)
+    rerender(tree())
+  }
+  return { getBoardPost, getBoardMessages, nav, queryClient, setCached }
 }
 
-beforeEach(() => {
+beforeEach(async () => {
+  // The panel seeds its backfill into IDB now, so a leaked conversation's rows
+  // would widen the next test's member set.
+  await db.conversationMessages.clear()
   // Default composer stub: the real form (desktop always-open since the
   // thread-semantics ruling) pulls auth/mention providers this harness doesn't
   // mount. Tests that inspect composer props install their own spy.
@@ -1530,5 +1542,62 @@ describe("ConversationPanel settle echo on a by-id fetched post", () => {
       expect(document.querySelector('[data-message-id="msg_1"]')?.hasAttribute("data-settling")).toBe(false)
     )
     cleanup()
+  })
+})
+
+describe("backfill invalidation — mounted panel", () => {
+  function withMembers(messageIds: string[]): BoardViewPost {
+    const post = makePost()
+    return asCached({ ...post, conversation: { ...post.conversation, messageIds } })
+  }
+  const bothMessages = async () => [
+    makeMessage({ id: "msg_1" }),
+    makeMessage({ id: "msg_2", contentMarkdown: "Reply two body." }),
+  ]
+  /** The mount-time fetch and the cold-start invalidation it answers both settle
+   *  before the assertions below, which are about what the MEMBERSHIP CHANGE adds:
+   *  wait until the response has landed in the store (the gate's "locally present"
+   *  condition), then let any in-flight refetch drain. */
+  async function settledCallCount(spy: ReturnType<typeof vi.fn>): Promise<number> {
+    await waitFor(async () =>
+      expect((await db.conversationMessages.toArray()).map((row) => row.messageId).sort()).toEqual(["msg_1", "msg_2"])
+    )
+    await new Promise((resolve) => setTimeout(resolve, 200))
+    return spy.mock.calls.length
+  }
+
+  it("does not refetch when a membership change names only locally-present ids", async () => {
+    const { getBoardMessages, setCached } = mountPanel({
+      cached: withMembers(["msg_1", "msg_2"]),
+      getBoardMessages: bothMessages,
+    })
+    const baseline = await settledCallCount(getBoardMessages)
+
+    act(() => setCached(withMembers(["msg_2", "msg_1"])))
+
+    await new Promise((resolve) => setTimeout(resolve, 200))
+    expect(getBoardMessages).toHaveBeenCalledTimes(baseline)
+  })
+
+  it("refetches when a membership change gains an id in neither the rail nor the store", async () => {
+    const { getBoardMessages, setCached } = mountPanel({
+      cached: withMembers(["msg_1", "msg_2"]),
+      getBoardMessages: bothMessages,
+    })
+    const baseline = await settledCallCount(getBoardMessages)
+
+    act(() => setCached(withMembers(["msg_1", "msg_2", "msg_3"])))
+
+    await waitFor(() => expect(getBoardMessages.mock.calls.length).toBeGreaterThan(baseline))
+  })
+})
+
+describe("hasUnknownMembers — backfill invalidation gate", () => {
+  it("is false when every member is locally present (rail ∪ backfill store)", () => {
+    expect(hasUnknownMembers(["m1", "r1", "r2"], new Set(["m1", "r1", "r2", "other"]))).toBe(false)
+  })
+
+  it("is true when membership gains an id the browser can't render locally", () => {
+    expect(hasUnknownMembers(["m1", "r1", "r2"], new Set(["m1", "r1"]))).toBe(true)
   })
 })

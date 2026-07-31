@@ -48,6 +48,7 @@ import { useInlineBranchComposer, type ArmBranchTarget } from "@/components/boar
 import { useMoveToSubtopic } from "@/components/board/use-move-to-subtopic"
 import { ConversationActionsMenu } from "@/components/conversations/conversation-actions-menu"
 import { useBoardHiddenConversations } from "@/stores/board-exclusions-store"
+import { seedConversationMessages } from "@/stores/conversation-messages-store"
 import { useWorkspaceStreamReadStates, useWorkspaceUnreadState } from "@/stores/workspace-store"
 import { cn } from "@/lib/utils"
 import { actorRowTheme } from "@/components/message/actor-row-theme"
@@ -481,6 +482,15 @@ interface ConversationPanelBodyProps {
 }
 
 /**
+ * Whether the conversation lists a member the browser cannot render from IDB —
+ * the only reason to mark the server backfill stale. Everything the rail or the
+ * backfill store already holds needs no fetch.
+ */
+export function hasUnknownMembers(messageIds: string[], knownMessageIds: ReadonlySet<string>): boolean {
+  return messageIds.some((id) => !knownMessageIds.has(id))
+}
+
+/**
  * The panel's header, message column and scoped composer. Always renders the
  * FULL conversation (the panel is permanently "expanded"): the live rail from
  * {@link useBoardCardMessages} for opening + recent + the viewer's pending
@@ -582,6 +592,8 @@ function ConversationPanelBody({
     messagesById,
     taggedByConversation,
     settlingIds,
+    knownMessageIds,
+    railCoversMembership,
   } = useBoardCardMessages(post, hostStreamType, {
     branchStreamIds: inlineComposer.branchStreamIds,
     extraDraftPanelIds: inlineComposer.extraDraftPanelIds,
@@ -591,6 +603,10 @@ function ConversationPanelBody({
   // stream isn't synced yet); the live rail shows immediately, this only fills the
   // gap when online. Mirrors board-card's expand path.
   const incompleteLocally = source === "projection" || railReplies.length < totalReplies
+  // Same gate as the card: rail coverage only. A warm backfill store renders but
+  // never refreshes, so opening a conversation the rail doesn't fully carry always
+  // revalidates (within `staleTime`).
+  const railIncomplete = !railCoversMembership
   const {
     data: allMessages,
     isError: backfillFailed,
@@ -598,41 +614,29 @@ function ConversationPanelBody({
   } = useQuery({
     queryKey: conversationKeys.boardMessages(conversation.id),
     queryFn: () => conversationService.getBoardMessages(workspaceId, conversation.id),
-    enabled: incompleteLocally,
+    enabled: railIncomplete,
     staleTime: 60_000,
   })
-  // The backfill is a 60s-stale snapshot of a growing conversation: without this
-  // a reply that arrives while the panel is open is never in it, and a rail the
-  // union below can't complete (an unsynced member latches `incompleteLocally`
-  // forever) would pin the panel to that snapshot. Follow membership instead —
-  // every change to the member set marks the snapshot stale, so the open panel
-  // refetches it.
-  const queryClient = useQueryClient()
-  const memberCount = conversation.messageIds.length
+  // Seed, don't render: the response lands in IDB and the hook merges it under
+  // the rail, so a backfilled row keeps taking live edits/reactions/tombstones.
   useEffect(() => {
-    void queryClient.invalidateQueries({ queryKey: conversationKeys.boardMessages(conversation.id) })
-  }, [queryClient, conversation.id, memberCount])
+    if (!allMessages) return
+    void seedConversationMessages(workspaceId, conversation.id, allMessages)
+  }, [allMessages, workspaceId, conversation.id])
 
-  // Union, not either/or: the snapshot only FILLS GAPS the rail hasn't synced,
-  // and the rail wins every id it holds (it carries live edits, reactions and
-  // tombstones the snapshot predates). An either/or here let a stale snapshot
-  // hide a message the browser already had in IDB.
-  // Union, but only while the rail is still incomplete: `useQuery` keeps serving
-  // cached `data` after `enabled` flips false, and an inactive query can't be
-  // refetched (v5 `refetchType: "active"`), so a completed rail merged with a
-  // frozen snapshot would keep rendering messages that left the conversation.
-  let replies: RenderableMessage[]
-  if (allMessages && incompleteLocally) {
-    // Only a live rail wins an id. On `source === "projection"` `railReplies` is the
-    // cached board projection, which is never patched on edit or soft-delete — letting
-    // it win would render a deleted message's body over the fresh backfill row.
-    const railById = new Map(source === "events" ? railReplies.map((m) => [m.id, m] as const) : [])
-    const merged = (allMessages as RenderableMessage[])
-      .filter((m) => m.id !== openingMessage?.id)
-      .map((m) => railById.get(m.id) ?? m)
-    const backfilledIds = new Set(merged.map((m) => m.id))
-    replies = [...merged, ...railReplies.filter((m) => !backfilledIds.has(m.id))]
-  } else replies = railReplies
+  // The backfill is a 60s-stale snapshot of a growing conversation, so a member
+  // it doesn't cover marks it stale. Only a member the browser can't render
+  // locally does: following the raw member COUNT refetched the endpoint on every
+  // arriving message, including the ones the rail had already delivered.
+  const queryClient = useQueryClient()
+  const memberKey = conversation.messageIds.join(",")
+  useEffect(() => {
+    if (!hasUnknownMembers(conversation.messageIds, knownMessageIds)) return
+    void queryClient.invalidateQueries({ queryKey: conversationKeys.boardMessages(conversation.id) })
+    // `memberKey` proxies `conversation.messageIds` (a fresh array per render).
+  }, [queryClient, conversation.id, conversation.messageIds, memberKey, knownMessageIds])
+
+  const replies: RenderableMessage[] = railReplies
   // Merge the viewer's own just-sent replies (deduped), then sort by time — a
   // pending reply can be older than a confirmed one.
   const seenReplyIds = new Set(replies.map((m) => m.id))

@@ -147,6 +147,7 @@ beforeEach(async () => {
   __clearConversationGraphRegistry()
   __resetCollapseCacheForTests()
   await db.events.clear()
+  await db.conversationMessages.clear()
   await db.conversations.clear()
   await db.streams.clear()
   vi.spyOn(workspaceStoreModule, "useWorkspaceStreams").mockReturnValue([] as never)

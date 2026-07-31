@@ -39,6 +39,7 @@ import { TextSelectionQuote } from "@/components/timeline/text-selection-quote"
 import { useActors, useVisibleStreams } from "@/hooks"
 import { useWorkspaceUserId } from "@/hooks/use-workspaces"
 import { useBoardFlash } from "@/stores/board-flash-store"
+import { seedConversationMessages } from "@/stores/conversation-messages-store"
 import { useConversationService, usePanel, createConversationPanelId, usePreferences } from "@/contexts"
 import { useBoardCardCollapse } from "@/hooks/use-board-card-collapse"
 import { conversationKeys, useSplitThread } from "@/hooks/use-conversations"
@@ -154,6 +155,7 @@ export function BoardCard({
     messagesById,
     taggedByConversation,
     settlingIds,
+    railCoversMembership,
   } = useBoardCardMessages(post, streamType, {
     branchStreamIds: inlineComposer.branchStreamIds,
     extraDraftPanelIds: inlineComposer.extraDraftPanelIds,
@@ -368,6 +370,12 @@ export function BoardCard({
   // the full hydrated set from the server. Never blocks the first render: the
   // local replies show immediately, this only fills the gap when online.
   const incompleteLocally = source === "projection" || railReplies.length < totalReplies
+  // The fetch gate is RAIL coverage only: the backfill store renders those bodies
+  // but can't refresh them, so a warm store must not suppress the fetch that
+  // brings this conversation's out-of-rail edits/deletes/reactions. `staleTime`
+  // bounds the frequency; the predicate can't loop, since fetching seeds the
+  // store, never the rail.
+  const railIncomplete = !railCoversMembership
   const {
     data: allMessages,
     isError: expandFailed,
@@ -375,9 +383,16 @@ export function BoardCard({
   } = useQuery({
     queryKey: conversationKeys.boardMessages(conversation.id),
     queryFn: () => conversationService.getBoardMessages(workspaceId, conversation.id),
-    enabled: expanded && incompleteLocally,
+    enabled: expanded && railIncomplete,
     staleTime: 60_000,
   })
+  // Seed, don't render: the response lands in IDB and the card reads it back
+  // through the hook's merged view, so an edit/reaction/delete on a backfilled
+  // row patches in place instead of staying frozen until the next fetch.
+  useEffect(() => {
+    if (!allMessages) return
+    void seedConversationMessages(workspaceId, conversation.id, allMessages)
+  }, [allMessages, workspaceId, conversation.id])
 
   // Collapsed cards preview an append-only window over the local rail: trailing
   // replies at first reveal, growing (never sliding) as new ones land, so a
@@ -386,17 +401,9 @@ export function BoardCard({
   // counted in `totalReplies` — the collapsed card reads "deleted", not "gone".
   const collapsedReplies = useStableReplyWindow(conversation.id, railReplies)
 
-  // Expanded: the full conversation minus the opening (server backfill when the
-  // local rail is incomplete, else the rail itself). Collapsed: the stable
-  // window of the local rail. Flat if-chain, not a nested ternary (INV-47).
-  let replies: RenderableMessage[]
-  if (!expanded) replies = collapsedReplies
-  // Prefer the server backfill only while the local rail is still incomplete;
-  // once the rail catches up, fall through to it so live edits keep flowing (the
-  // backfill's `data` lingers after `enabled` goes false).
-  else if (incompleteLocally && allMessages)
-    replies = (allMessages as RenderableMessage[]).filter((m) => m.id !== openingMessage?.id)
-  else replies = railReplies
+  // Expanded: the hook's merged view (rail > backfill store > projection).
+  // Collapsed: the stable window over it.
+  const replies: RenderableMessage[] = expanded ? railReplies : collapsedReplies
   // Merge this card's own just-sent replies with the confirmed set, skipping any
   // the rail or a backfill already carries, then sort by time: a pending reply
   // can be OLDER than a confirmed one (someone else's reply lands while yours is

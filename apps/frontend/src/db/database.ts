@@ -3,6 +3,7 @@ import type {
   Activity,
   AuthorType,
   BoardPost,
+  BoardPostMessage,
   CompanionMode,
   ConversationDirective,
   E2eActor,
@@ -968,6 +969,26 @@ export interface CachedBoardPost extends BoardPost {
   _status?: "pending"
 }
 
+/**
+ * One message of a conversation's server backfill (`GET /conversations/:id/
+ * board-messages`), cached so the expanded card and the panel render it from IDB
+ * instead of from a response body. Deliberately NOT `db.events`: row presence
+ * there is the sync engine's window bookkeeping, and sparse insertion would
+ * corrupt catch-up cursors.
+ *
+ * Replace-per-conversation on seed, patched in place by the live message/
+ * reaction/link-preview handlers, so a backfilled row stays as current as a
+ * railed one.
+ */
+export interface CachedConversationMessage extends BoardPostMessage {
+  /** The message id — the primary key (`id` is inherited and identical; the
+   *  explicit name keeps the key legible against the board post's `id`). */
+  messageId: string
+  conversationId: string
+  workspaceId: string
+  _cachedAt: number
+}
+
 /** A conversation the viewer hid from the board (board-view-design.md § "Hide & mute").
  *  `id` is the conversation id; `hiddenAt` (ms) is the snooze watermark. */
 export interface CachedBoardHiddenConversation {
@@ -1055,6 +1076,7 @@ export class ThreaDatabase extends Dexie {
   e2eDeviceKeys!: EntityTable<CachedE2eDeviceKey, "id">
   sidebarConfigs!: EntityTable<CachedSidebarConfig, "id">
   conversations!: EntityTable<CachedBoardPost, "id">
+  conversationMessages!: EntityTable<CachedConversationMessage, "messageId">
   boardHiddenConversations!: EntityTable<CachedBoardHiddenConversation, "id">
   boardMutedStreams!: EntityTable<CachedBoardMutedStream, "id">
   uploadJobs!: EntityTable<CachedUploadJob, "attachmentId">
@@ -1522,6 +1544,14 @@ export class ThreaDatabase extends Dexie {
         "key, workspaceId, streamId, rootStreamId, [workspaceId+sourceMessageId], [rootStreamId+occurredAt], [streamId+occurredAt], [groupRef+occurredAt]",
     })
 
+    // v46: the board-messages backfill gets its own store so an expanded card
+    // and the panel render it from IDB (live-patched) instead of straight from
+    // the response body. Keyed by message id; read per conversation, wiped per
+    // workspace. Starts empty and fills from the backfill fetch.
+    this.version(46).stores({
+      conversationMessages: "messageId, conversationId, workspaceId",
+    })
+
     this.workspaceUsers = this.table(WORKSPACE_USERS_STORE) as EntityTable<CachedWorkspaceUser, "id">
   }
 }
@@ -1600,6 +1630,7 @@ export async function clearAllCachedData(): Promise<void> {
       db.labelAssignments.clear(),
       db.sidebarConfigs.clear(),
       db.conversations.clear(),
+      db.conversationMessages.clear(),
       db.streamContextItems.clear(),
       db.slots.clear(),
       // The persisted device key seals this identity's private key for
