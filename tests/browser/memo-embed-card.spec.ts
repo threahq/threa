@@ -36,24 +36,41 @@ function memoCards(page: Page) {
   return page.locator('[data-type="memo-embed"]')
 }
 
-/** Records layout shifts, tagging any whose source sits inside a memo card. */
+/**
+ * Records layout shifts in which a memo card CHANGED SIZE.
+ *
+ * Deliberately not "a memo card was a source": a card is also a source when
+ * something above it pushes the whole column down, which happens on a cold load
+ * for reasons that have nothing to do with this card (a font landing, an avatar
+ * decoding). That version of the assertion passed locally and failed in CI —
+ * correctly, since the claim it made was one the card cannot keep. The claim the
+ * card CAN keep, and the one the defect broke, is that its own box never
+ * changes: compare each source's previous and current rect and keep only the
+ * ones whose dimensions moved.
+ */
 async function installShiftProbe(page: Page) {
   await page.addInitScript(() => {
-    const shifts: Array<{ value: number; inMemoCard: boolean }> = []
+    const shifts: Array<{ value: number; from: string; to: string }> = []
     ;(window as unknown as { __shifts: typeof shifts }).__shifts = shifts
     new PerformanceObserver((list) => {
       for (const entry of list.getEntries()) {
         const shift = entry as PerformanceEntry & {
           value: number
           hadRecentInput: boolean
-          sources?: Array<{ node?: Node }>
+          sources?: Array<{ node?: Node; previousRect: DOMRectReadOnly; currentRect: DOMRectReadOnly }>
         }
         if (shift.hadRecentInput) continue
-        const inMemoCard = (shift.sources ?? []).some((source) => {
+        for (const source of shift.sources ?? []) {
           const el = source.node as HTMLElement | null
-          return !!el?.closest?.('[data-type="memo-embed"]')
-        })
-        shifts.push({ value: shift.value, inMemoCard })
+          if (!el?.closest?.('[data-type="memo-embed"]')) continue
+          const { previousRect: before, currentRect: after } = source
+          if (before.height === after.height && before.width === after.width) continue
+          shifts.push({
+            value: shift.value,
+            from: `${before.width}x${before.height}`,
+            to: `${after.width}x${after.height}`,
+          })
+        }
       }
     }).observe({ type: "layout-shift", buffered: true })
   })
@@ -111,12 +128,10 @@ test.describe("memo embed card", () => {
     await page.waitForTimeout(2000)
     expect(await card.evaluate((el) => el.getBoundingClientRect().height)).toBe(height)
 
-    const memoShifts = await page.evaluate(() =>
-      (window as unknown as { __shifts: Array<{ value: number; inMemoCard: boolean }> }).__shifts.filter(
-        (shift) => shift.inMemoCard
-      )
+    const resizes = await page.evaluate(
+      () => (window as unknown as { __shifts: Array<{ value: number; from: string; to: string }> }).__shifts
     )
-    expect(memoShifts).toEqual([])
+    expect(resizes).toEqual([])
   })
 
   test("a memo with no summary renders its label alone, and never goes looking for one", async ({ page }) => {
