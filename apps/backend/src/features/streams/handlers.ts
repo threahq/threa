@@ -806,7 +806,10 @@ export function createStreamHandlers({
         streamService.getThreadsWithReplyCounts(streamId, candidateAnchorIds),
         streamService.getThreadSummaries(streamId, candidateAnchorIds),
       ])
-      const enrichedEvents = await eventService.enrichBootstrapEvents(result.events, threadDataMap, threadSummaryMap)
+      const enrichedEvents = await eventService.enrichBootstrapEvents(result.events, threadDataMap, threadSummaryMap, {
+        workspaceId,
+        streamId,
+      })
       const eventsWithLinkPreviews = await enrichEventsWithLinkPreviews(
         linkPreviewService,
         workspaceId,
@@ -1108,7 +1111,10 @@ export function createStreamHandlers({
             }))
           : undefined
 
-      const enrichedEvents = await eventService.enrichBootstrapEvents(events, threadDataMap, threadSummaryMap)
+      const enrichedEvents = await eventService.enrichBootstrapEvents(events, threadDataMap, threadSummaryMap, {
+        workspaceId,
+        streamId,
+      })
       const eventsWithLinkPreviews = await enrichEventsWithLinkPreviews(
         linkPreviewService,
         workspaceId,

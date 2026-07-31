@@ -28,6 +28,7 @@ import { settleMessagesOnEngagement } from "../conversations"
 import { DraftsRepository, toDraftView } from "../drafts"
 import { E2eStreamsRepository } from "../e2e-streams"
 import { StreamContextRepository, contextRowsForMessage, contextSnippet } from "../stream-context"
+import { MemoRepository, resolveMemoEmbedSummaries } from "../memos"
 import {
   attachmentReferenceId,
   eventId,
@@ -38,6 +39,7 @@ import {
 } from "../../lib/id"
 import { MessageVersionRepository, type MessageVersion } from "./version-repository"
 import { MessageComposeTraceRepository } from "./compose-trace-repository"
+import { collectMemoEmbedIds } from "@threa/prosemirror"
 import { serializeBigInt } from "@threa/backend-common"
 import { messagesTotal } from "../../lib/observability"
 import { HttpError, MessageNotFoundError, StreamNotFoundError } from "../../lib/errors"
@@ -59,6 +61,7 @@ import {
   type ComposeTrace,
   type ConversationDirective,
   type FeatureFlagValue,
+  type MemoEmbedSummary,
   type EventType,
   type SourceItem,
   type JSONContent,
@@ -129,12 +132,27 @@ export interface MessageCreatedPayload {
   ciphertext?: string
   envelope?: unknown
   e2eVersion?: number
+  /**
+   * Card content for the memos this body references, so each embed card renders
+   * complete on its first frame instead of fetching (INV-21, and the rule it
+   * serves: content may change only when the memo changed). Omitted when the
+   * body cites none. Ids the room can't uniformly read are absent — those cards
+   * render the reference's own label and stay there.
+   */
+  memoEmbeds?: MemoEmbedSummary[]
 }
 
 export interface MessageEditedPayload {
   messageId: string
   contentJson: JSONContent
   contentMarkdown: string
+  /**
+   * Always present, empty array included — unlike the create payload. The client
+   * applies an edit by spreading it over the stored payload, so an omitted key
+   * would leave the pre-edit summaries in place: a removed reference would keep
+   * its card content, and one swapped for another would show the wrong memo.
+   */
+  memoEmbeds: MemoEmbedSummary[]
 }
 
 export interface MessageDeletedPayload {
@@ -729,6 +747,15 @@ export class EventService {
     const declaredConversationId =
       params.conversation?.intent === ConversationIntents.EXISTING ? params.conversation.conversationId : undefined
 
+    // Resolved against the citing stream's ROOT: a thread inherits its root's
+    // audience (INV-62), and this payload is delivered to that whole room.
+    const memoEmbeds = await resolveMemoEmbedSummaries(
+      client,
+      params.workspaceId,
+      params.contentJson,
+      stream?.rootStreamId ?? params.streamId
+    )
+
     const event = await StreamEventRepository.insert(client, {
       id: evtId,
       streamId: params.streamId,
@@ -743,6 +770,7 @@ export class EventService {
         ...(params.clientMessageId && { clientMessageId: params.clientMessageId }),
         ...(params.sentVia && { sentVia: params.sentVia }),
         ...(declaredConversationId && { declaredConversationId }),
+        ...(memoEmbeds.length > 0 && { memoEmbeds }),
         ...(metadata && { metadata }),
         ...(params.ciphertext && { ciphertext: params.ciphertext.toString("base64") }),
         ...(params.envelope !== undefined && { envelope: params.envelope }),
@@ -1008,6 +1036,14 @@ export class EventService {
         editedBy: params.actorId,
       })
 
+      const editStream = await StreamRepository.findById(client, params.streamId)
+      const memoEmbeds = await resolveMemoEmbedSummaries(
+        client,
+        params.workspaceId,
+        params.contentJson,
+        editStream?.rootStreamId ?? params.streamId
+      )
+
       const event = await StreamEventRepository.insert(client, {
         id: eventId(),
         streamId: params.streamId,
@@ -1016,6 +1052,7 @@ export class EventService {
           messageId: params.messageId,
           contentJson: params.contentJson,
           contentMarkdown: params.contentMarkdown,
+          memoEmbeds,
         } satisfies MessageEditedPayload,
         actorId: params.actorId,
         actorType,
@@ -1999,6 +2036,47 @@ export class EventService {
   }
 
   /**
+   * Memo-embed summaries for the edited messages in a bootstrap window, keyed by
+   * message id — one batch for the whole window (INV-56), and nothing at all when
+   * no message in it was edited. Without a scope (a caller that predates this)
+   * the map is empty and payloads keep their create-time summaries.
+   */
+  private async refreshEditedMemoEmbeds(
+    messagesMap: Map<string, Message>,
+    scope?: { workspaceId: string; streamId: string }
+  ): Promise<Map<string, MemoEmbedSummary[]>> {
+    const refreshed = new Map<string, MemoEmbedSummary[]>()
+    if (!scope) return refreshed
+
+    const edited = [...messagesMap.values()].filter((m) => m.editedAt && !m.deletedAt)
+    if (edited.length === 0) return refreshed
+
+    const byMessage = new Map(edited.map((m) => [m.id, collectMemoEmbedIds(m.contentJson)]))
+    const allIds = [...new Set([...byMessage.values()].flat())]
+    if (allIds.length === 0) {
+      // Every edited message dropped its references — the empty arrays still
+      // have to reach the payload to clear the stale cards.
+      for (const id of byMessage.keys()) refreshed.set(id, [])
+      return refreshed
+    }
+
+    const stream = await StreamRepository.findById(this.pool, scope.streamId)
+    const summaries = await MemoRepository.findEmbedSummaries(
+      this.pool,
+      scope.workspaceId,
+      allIds,
+      stream?.rootStreamId ?? scope.streamId
+    )
+    for (const [messageId, ids] of byMessage) {
+      refreshed.set(
+        messageId,
+        ids.map((id) => summaries.get(id)).filter((s): s is MemoEmbedSummary => s !== undefined)
+      )
+    }
+    return refreshed
+  }
+
+  /**
    * Enrich bootstrap events with projection state for display.
    *
    * Filters out operational events (message_edited, message_deleted) that are
@@ -2010,7 +2088,8 @@ export class EventService {
   async enrichBootstrapEvents(
     events: StreamEvent[],
     threadDataMap: Map<string, { threadId: string; replyCount: number }>,
-    threadSummaryMap: Map<string, ThreadSummary> = new Map()
+    threadSummaryMap: Map<string, ThreadSummary> = new Map(),
+    memoEmbedScope?: { workspaceId: string; streamId: string }
   ): Promise<StreamEvent[]> {
     const messageCreatedEvents = events.filter((e) => e.eventType === "message_created")
     const messageIds = messageCreatedEvents.map((e) => (e.payload as MessageCreatedPayload).messageId)
@@ -2064,6 +2143,13 @@ export class EventService {
       startedSessionIds.length > 0
         ? await AgentSessionRepository.findProgressSnapshotsByIds(this.pool, startedSessionIds)
         : new Map()
+
+    // An edited message's payload is overlaid with the CURRENT content below, so
+    // its create-time summaries can describe memos the body no longer cites (or
+    // miss ones it now does). The `message_edited` event that carries the right
+    // set is filtered out of this response, so it is recomputed here — for edited
+    // messages only, in one batch, against the same root the write path used.
+    const memoEmbedsByMessageId = await this.refreshEditedMemoEmbeds(messagesMap, memoEmbedScope)
 
     return events
       .filter((e) => e.eventType !== "message_edited" && e.eventType !== "message_deleted")
@@ -2120,6 +2206,10 @@ export class EventService {
           enrichments.editedAt = message.editedAt.toISOString()
           enrichments.contentJson = message.contentJson
           enrichments.contentMarkdown = message.contentMarkdown
+          const refreshed = memoEmbedsByMessageId.get(message.id)
+          // Set even when empty, so an edit that dropped the last reference
+          // doesn't leave the create-time card behind.
+          if (refreshed) enrichments.memoEmbeds = refreshed
         }
         if (message?.reactions && Object.keys(message.reactions).length > 0) {
           enrichments.reactions = message.reactions
