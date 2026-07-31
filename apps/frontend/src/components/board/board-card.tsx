@@ -465,6 +465,7 @@ export function BoardCard({
   }, [beginReveal, railReplies.length, collapsedReplies.length])
   useBoardGapAutoReveal({
     seamRef,
+    cardRef,
     scrollerRef,
     enabled: !expanded && hiddenCount > 0 && !removed,
     onReveal: revealPage,

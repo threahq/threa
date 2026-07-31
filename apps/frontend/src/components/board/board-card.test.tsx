@@ -1115,16 +1115,17 @@ describe("BoardCard gap scroll reveal", () => {
         </TooltipProvider>
       </QueryClientProvider>
     )
-    /** The reader scrolls up, with the seam on or off screen. */
+    /** The reader scrolls up over this card, with the seam on or off screen.
+     *  The wheel goes to the card, as it does under a real pointer. */
     const scrollUp = async (seamLabel: HTMLElement, seamOnScreen = true) => {
       const seam = seamLabel.closest("button") ?? seamLabel
       const observer = seamObservers.find((o) => o.element === seam)
       await act(async () => {
         observer?.fire(seamOnScreen)
-        scrollerRef.current?.dispatchEvent(new WheelEvent("wheel", { deltaY: -40, bubbles: true }))
+        seam.closest(".board-card-hover")?.dispatchEvent(new WheelEvent("wheel", { deltaY: -40, bubbles: true }))
       })
     }
-    return { ...result, scrollUp }
+    return { ...result, scrollUp, scrollerRef }
   }
 
   /** `replyCount` replies on the local rail; only the trailing window shows. */
@@ -1216,6 +1217,38 @@ describe("BoardCard gap scroll reveal", () => {
     expect(await screen.findByText("24 older messages")).toBeTruthy()
     expect(screen.getByText("Reply 25.")).toBeTruthy()
     expect(screen.queryByText("Reply 24.")).toBeNull()
+  })
+
+  it("gives a flick one page: wheel events with no fresh intersection report in between", async () => {
+    // A trackpad flick emits dozens of wheel events before the observer can report
+    // the seam leaving; without pacing on the report, one gesture dumps the middle.
+    mountOnBoard(await seedRail(40))
+
+    await screen.findByText("Reply 40.")
+    const seam = (await screen.findByText("35 older messages")).closest("button")!
+    seamObservers.find((o) => o.element === seam)?.fire(true)
+    await act(async () => {
+      for (let i = 0; i < 5; i++)
+        seam.closest(".board-card-hover")?.dispatchEvent(new WheelEvent("wheel", { deltaY: -40, bubbles: true }))
+    })
+
+    expect(await screen.findByText("20 older messages")).toBeTruthy()
+  })
+
+  it("ignores a scroll over a sibling card: only the card under the pointer pages", async () => {
+    const { scrollerRef } = mountOnBoard(await seedRail(9))
+
+    await screen.findByText("Reply 9.")
+    const seam = (await screen.findByText("4 older messages")).closest("button")!
+    const siblingCard = document.createElement("div")
+    scrollerRef.current?.append(siblingCard)
+    await act(async () => {
+      seamObservers.find((o) => o.element === seam)?.fire(true)
+      siblingCard.dispatchEvent(new WheelEvent("wheel", { deltaY: -40, bubbles: true }))
+    })
+
+    expect(screen.queryByText("Reply 1.")).toBeNull()
+    expect(screen.getByText("4 older messages")).toBeTruthy()
   })
 
   it("puts a failed paged reveal inside the seam's own row rather than mounting a retry below it", async () => {
