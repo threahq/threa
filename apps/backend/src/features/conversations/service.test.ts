@@ -2,6 +2,7 @@ import { describe, test, expect, spyOn, beforeEach, afterEach, mock } from "bun:
 import { ConversationService } from "./service"
 import * as dbModule from "../../db"
 import { ConversationRepository, type Conversation } from "./repository"
+import { MessageConversationStateRepository } from "./settling-repository"
 import { StreamRepository } from "../streams"
 import * as streamsModule from "../streams"
 import { MessageRepository, type Message } from "../messaging"
@@ -44,6 +45,7 @@ describe("ConversationService.updateConversation — user status lock", () => {
       streamVisibility: "private",
     } as never)
     spyOn(OutboxRepository, "insert").mockResolvedValue(undefined as never)
+    spyOn(MessageConversationStateRepository, "listSettlingByConversationIds").mockResolvedValue(new Map())
   })
 
   afterEach(() => mock.restore())

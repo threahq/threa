@@ -9,6 +9,22 @@ export const BOUNDARY_EXTRACTION_MODEL_ID = "openrouter:openai/gpt-5.6-luna"
 export const BOUNDARY_EXTRACTION_TEMPERATURE = 0.2
 
 /**
+ * Below this pass `confidence`, a DERIVED assignment (the author declared no
+ * conversation) is recorded as settling: the placement is provisional and
+ * renders as such until a human engages with the message or the extractor's
+ * context window moves past it. Derived from the extractor's existing top-level
+ * confidence — the response schema does not change.
+ */
+export const SETTLING_CONFIDENCE_THRESHOLD = 0.7
+
+/**
+ * Backstop for a stream that goes quiet: no further extraction pass will ever
+ * move its window past these rows, so the staleness sweep settles anything that
+ * has been settling this long.
+ */
+export const SETTLING_MAX_AGE_SECONDS = 30 * 60
+
+/**
  * Per-attachment character budget when rendering extracted text in the prompt.
  * The new message's attachments get a bigger window because they are the
  * payload most likely to change the classification decision; context messages

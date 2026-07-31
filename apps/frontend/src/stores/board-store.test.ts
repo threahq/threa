@@ -59,6 +59,7 @@ function makePost(id: string, lastActivityAt: string, recentMessages: BoardPostM
     totalReplies: recentMessages.length,
     streamIds: [...new Set([conversation.streamId, openingMessage.streamId, ...recentMessages.map((m) => m.streamId)])],
     hasCapturedMemo: false,
+    settlingMessageIds: [],
     isMine: false,
   }
 }
@@ -109,6 +110,21 @@ describe("mergeBoardConversation", () => {
     // The event carries the aggregate, not message bodies — a member's cached
     // preview is preserved.
     expect(board[0]?.recentMessages.map((m) => m.id)).toEqual(["r1"])
+  })
+
+  it("carries settlingMessageIds from the payload, and keeps the cached set when the event omits it", async () => {
+    await seedBoardPosts(WORKSPACE_ID, [makePost("conv_1", "2026-06-20T12:00:00.000Z", [makeMessage("r1")])])
+    const conversation = { ...makeConversation("conv_1", "2026-06-22T12:00:00.000Z"), messageIds: ["m1", "r1"] }
+
+    await mergeBoardConversation("conv_1", conversation, ["r1"])
+    expect((await db.conversations.get("conv_1"))?.settlingMessageIds).toEqual(["r1"])
+
+    // An emitter that doesn't report the set must not silently clear it.
+    await mergeBoardConversation("conv_1", conversation)
+    expect((await db.conversations.get("conv_1"))?.settlingMessageIds).toEqual(["r1"])
+
+    await mergeBoardConversation("conv_1", conversation, [])
+    expect((await db.conversations.get("conv_1"))?.settlingMessageIds).toEqual([])
   })
 
   it("drops a re-filed message from the preview when it leaves the membership", async () => {
@@ -200,6 +216,7 @@ describe("putOptimisticBoardPost", () => {
       openingMessage: expect.objectContaining({ id: "msg_1", contentMarkdown: "just posted", authorId: "usr_1" }),
       isMine: true,
       rootStreamType: "channel",
+      settlingMessageIds: [],
     })
     expect(row?.conversation.status).toBe("active")
     expect(row?.conversation.messageIds).toEqual(["msg_1"])

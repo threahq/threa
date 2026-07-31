@@ -4,6 +4,7 @@ import * as dbModule from "../../db"
 import { StreamRepository } from "../streams"
 import { OutboxRepository } from "../../lib/outbox"
 import { ConversationRepository, type Conversation } from "./repository"
+import { MessageConversationStateRepository } from "./settling-repository"
 import { createStalenessSweepWorker } from "./staleness-sweep-worker"
 
 function makeConversation(overrides: Partial<Conversation>): Conversation {
@@ -44,6 +45,8 @@ describe("createStalenessSweepWorker", () => {
       },
     ] as never)
     const insertMany = spyOn(OutboxRepository, "insertMany").mockResolvedValue([] as never)
+    spyOn(MessageConversationStateRepository, "listSettlingByConversationIds").mockResolvedValue(new Map())
+    spyOn(MessageConversationStateRepository, "settleOlderThan").mockResolvedValue([])
     return { worker: createStalenessSweepWorker({ pool: {} as never }), insertMany }
   }
 

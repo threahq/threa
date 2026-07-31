@@ -20,6 +20,8 @@ import type {
 import { HttpError } from "../../lib/errors"
 import { collectQuoteReplyMessageIds } from "@threa/prosemirror"
 import { addStalenessFields } from "./staleness"
+import { MessageConversationStateRepository } from "./settling-repository"
+import { SETTLING_CONFIDENCE_THRESHOLD } from "./boundary-extraction/config"
 import { resolveConversationDelivery } from "./conversation-delivery"
 import { emitAssignmentEvents } from "./assignment-events"
 import { conversationId } from "../../lib/id"
@@ -106,6 +108,10 @@ export class BoundaryExtractionService {
    * exists, otherwise creates a new one.
    */
   async processMessage(messageId: string, streamId: string, workspaceId: string): Promise<Conversation | null> {
+    // Bounds this pass's out-of-window settle to rows that already existed when
+    // it looked (INV-20): a concurrent pass's fresh settling row must survive.
+    const passStartedAt = await MessageConversationStateRepository.now(this.pool)
+
     // Phase 1: fetch context; collect new-message attachment IDs so their
     // processing can be awaited after the connection is released (INV-41), then
     // fetch extractions on the pool — mirrors streams/naming-service.ts.
@@ -541,6 +547,10 @@ export class BoundaryExtractionService {
           reassignedMessage?.authorId ?? null
         )
 
+        // A still-settling row must follow its message, never keep pointing at
+        // the conversation the message just left.
+        await MessageConversationStateRepository.moveConversation(client, workspaceId, [r.messageId], toConvId)
+
         touchedConversationIds.add(fromConvId)
         touchedConversationIds.add(toConvId)
         reassignmentEvents.push({
@@ -571,6 +581,36 @@ export class BoundaryExtractionService {
         }
         touchedConversationIds.add(a.conversationId)
       }
+
+      // Settling (chunk 3): a DERIVED assignment the model wasn't confident about
+      // is provisional until a human engages or the window moves past it. The
+      // paths that never reach here — declared sends and agent replies — are
+      // never settling by construction.
+      const contextWindowIds = validReassignmentMessageIds ?? new Set<string>()
+      const primaryConversationId = resolvedAssignments.find((a) => a.isPrimary)?.conversationId ?? null
+      const newMessageSettling = primaryConversationId !== null && decision.confidence < SETTLING_CONFIDENCE_THRESHOLD
+      if (newMessageSettling) {
+        await MessageConversationStateRepository.insertSettling(client, {
+          messageId,
+          workspaceId,
+          streamId,
+          conversationId: primaryConversationId,
+        })
+      }
+
+      // Anything of this stream the pass could no longer see will never be
+      // revisited by extraction — its placement is final.
+      const windowSettled = await MessageConversationStateRepository.settleStreamOutsideWindow(
+        client,
+        workspaceId,
+        streamId,
+        [messageId, ...contextWindowIds],
+        "llm-window",
+        passStartedAt
+      )
+      // Kept OUT of touchedConversationIds: these conversations saw no activity,
+      // only a settle, so bumping last_activity_at would falsely revive them.
+      const windowSettledConversationIds = new Set(windowSettled.map((row) => row.conversationId))
 
       if (decision.completenessUpdates) {
         for (const update of decision.completenessUpdates) {
@@ -630,11 +670,15 @@ export class BoundaryExtractionService {
         return resolved
       }
 
-      const primaryAssignment = resolvedAssignments.find((a) => a.isPrimary)
-      const primaryConvId = primaryAssignment?.conversationId ?? null
-
-      const touchedConversations = await ConversationRepository.findByIds(client, workspaceId, touchedIds)
-      for (const conv of touchedConversations) {
+      const settledOnlyIds = [...windowSettledConversationIds].filter((id) => !touchedConversationIds.has(id))
+      const eventConversationIds = [...touchedIds, ...settledOnlyIds]
+      const eventConversations = await ConversationRepository.findByIds(client, workspaceId, eventConversationIds)
+      const settlingByConversation = await MessageConversationStateRepository.listSettlingByConversationIds(
+        client,
+        workspaceId,
+        eventConversationIds
+      )
+      for (const conv of eventConversations) {
         const isNewThisCall = newConversation?.id === conv.id
         const eventType = isNewThisCall ? "conversation:created" : "conversation:updated"
         const { parentStreamId: convParentStreamId, streamVisibility } = await deliveryFor(conv.streamId)
@@ -645,6 +689,7 @@ export class BoundaryExtractionService {
           conversation: addStalenessFields(conv),
           parentStreamId: convParentStreamId,
           streamVisibility,
+          settlingMessageIds: settlingByConversation.get(conv.id) ?? [],
         })
       }
 
@@ -661,6 +706,7 @@ export class BoundaryExtractionService {
           conversationId: a.conversationId,
           isPrimary: a.isPrimary,
           reason: a.isPrimary ? "initial" : "secondary",
+          settling: a.isPrimary && newMessageSettling,
         })
       }
 
@@ -682,7 +728,7 @@ export class BoundaryExtractionService {
       logger.info(
         {
           messageId,
-          primaryConversationId: primaryConvId,
+          primaryConversationId: primaryConversationId,
           assignmentCount: resolvedAssignments.length,
           reassignmentCount: reassignmentEvents.length,
           confidence: decision.confidence,
@@ -690,8 +736,8 @@ export class BoundaryExtractionService {
         "Boundary extraction complete"
       )
 
-      if (!primaryConvId) return null
-      return touchedConversations.find((c) => c.id === primaryConvId) ?? null
+      if (!primaryConversationId) return null
+      return eventConversations.find((c) => c.id === primaryConversationId) ?? null
     })
   }
 

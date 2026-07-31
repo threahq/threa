@@ -540,6 +540,10 @@ export interface ConversationCreatedOutboxPayload extends StreamScopedPayload {
    *  workspace receives it (the board can show it); otherwise only the stream's
    *  own members do, via the stream room (INV-62). */
   streamVisibility?: Visibility
+  /** Members of this conversation whose assignment is still settling (provisional
+   *  low-confidence placement). Omitted by emitters that don't read the state;
+   *  an explicit `[]` means "nothing settling here". */
+  settlingMessageIds?: string[]
 }
 
 export interface ConversationUpdatedOutboxPayload extends StreamScopedPayload {
@@ -549,6 +553,8 @@ export interface ConversationUpdatedOutboxPayload extends StreamScopedPayload {
   parentStreamId?: string
   /** See {@link ConversationCreatedOutboxPayload.streamVisibility}. */
   streamVisibility?: Visibility
+  /** See {@link ConversationCreatedOutboxPayload.settlingMessageIds}. */
+  settlingMessageIds?: string[]
   /**
    * Set when the update is a pure status fade from the staleness sweep — no
    * new content. The memo accumulator skips these instead of re-queueing the
@@ -570,6 +576,8 @@ export interface ConversationMessageAssignedOutboxPayload extends StreamScopedPa
   /** For thread messages, the parent channel's stream ID so the parent-channel
    *  room also receives the membership update. */
   parentStreamId?: string
+  /** Whether this assignment is provisional (low extractor confidence). */
+  settling?: boolean
 }
 
 /**

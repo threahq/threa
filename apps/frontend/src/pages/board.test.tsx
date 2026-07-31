@@ -88,6 +88,7 @@ function makePost(
       ]),
     ],
     hasCapturedMemo: false,
+    settlingMessageIds: [],
     isMine: false,
   }
 }

@@ -134,6 +134,8 @@ function buildOptimisticPost(workspaceId: string, input: OptimisticBoardPostInpu
     totalReplies: 0,
     streamIds: [input.streamId],
     hasCapturedMemo: false,
+    // An authored post is the author's own declaration — never provisional.
+    settlingMessageIds: [],
     // The author's own post is trivially theirs — shows on the Mine lens at once.
     isMine: true,
     rootStreamId: input.rootStreamId,
@@ -248,7 +250,11 @@ export async function addBoardConversationStream(conversationId: string, streamI
  */
 export async function mergeBoardConversation(
   conversationId: string,
-  conversation: ConversationWithStaleness
+  conversation: ConversationWithStaleness,
+  /** The event's board-level settling set. `settlingMessageIds` is a BoardPost
+   *  field, not part of the aggregate, so it is carried explicitly; `undefined`
+   *  (an emitter that doesn't report it) keeps the cached value. */
+  settlingMessageIds?: string[]
 ): Promise<boolean> {
   // Read-modify-write in one rw transaction so a concurrent optimistic write or
   // a second echo can't merge over a stale read of this row.
@@ -286,6 +292,7 @@ export async function mergeBoardConversation(
       ...existing,
       conversation,
       recentMessages,
+      settlingMessageIds: settlingMessageIds ?? existing.settlingMessageIds ?? [],
       _lastActivityMs: lastActivityMs(conversation),
       _cachedAt: Date.now(),
       _status: undefined,

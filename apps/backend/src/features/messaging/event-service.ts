@@ -24,6 +24,7 @@ import {
 } from "../attachments"
 import { OutboxRepository } from "../../lib/outbox"
 import { AgentSessionRepository, StreamPersonaParticipantRepository } from "../agents"
+import { settleMessagesOnEngagement } from "../conversations"
 import { DraftsRepository, toDraftView } from "../drafts"
 import { E2eStreamsRepository } from "../e2e-streams"
 import { StreamContextRepository, contextRowsForMessage, contextSnippet } from "../stream-context"
@@ -1840,6 +1841,13 @@ export class EventService {
       })
 
       const message = await MessageRepository.addReaction(client, params.messageId, params.emoji, params.userId)
+
+      if (message && actorType === AuthorTypes.USER) {
+        // Reacting is engagement: a provisional conversation placement the
+        // reader just acknowledged stops being provisional (same transaction,
+        // INV-4/7).
+        await settleMessagesOnEngagement(client, params.workspaceId, [params.messageId])
+      }
 
       if (message) {
         await OutboxRepository.insert(client, "reaction:added", {

@@ -4,6 +4,7 @@ import { StreamRepository } from "../streams"
 import { type Message } from "../messaging"
 import { OutboxRepository } from "../../lib/outbox"
 import { addStalenessFields } from "./staleness"
+import { MessageConversationStateRepository } from "./settling-repository"
 import { resolveConversationDelivery } from "./conversation-delivery"
 
 /**
@@ -33,6 +34,14 @@ export async function emitAssignmentEvents(
     throw new Error(`Conversation ${conversationId} vanished during assignment`)
   }
 
+  // The declared/agent assignment itself is never settling, but the conversation
+  // it joins may hold provisional members — the payload must carry the full set.
+  const settlingByConversation = await MessageConversationStateRepository.listSettlingByConversationIds(
+    client,
+    workspaceId,
+    [refreshed.id]
+  )
+
   await OutboxRepository.insert(client, created ? "conversation:created" : "conversation:updated", {
     workspaceId,
     streamId: message.streamId,
@@ -40,6 +49,7 @@ export async function emitAssignmentEvents(
     conversation: addStalenessFields(refreshed),
     parentStreamId,
     streamVisibility,
+    settlingMessageIds: settlingByConversation.get(refreshed.id) ?? [],
   })
   await OutboxRepository.insert(client, "conversation:message_assigned", {
     workspaceId,
@@ -49,6 +59,7 @@ export async function emitAssignmentEvents(
     conversationId: refreshed.id,
     isPrimary: true,
     reason,
+    settling: false,
   })
 
   return refreshed
