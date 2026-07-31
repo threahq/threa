@@ -826,7 +826,12 @@ function ConversationPanelBody({
   const rows = injectUnreadDivider(baseRows, markerMessageId, isDimmed)
   // "Move to sub-topic" re-file — same gesture as the board card (membership move
   // within one root; the hook hides the action when a row has nowhere to go).
-  const moveToSubtopic = useMoveToSubtopic({ workspaceId, conversation, branchesByForkMessageId })
+  const moveToSubtopic = useMoveToSubtopic({
+    workspaceId,
+    conversation,
+    branchesByForkMessageId,
+    hasSettlingRows: settlingIds.size > 0,
+  })
   const renderMessage = (message: RenderableMessage, continuation: boolean) => {
     // Each row renders against its own stream so reactions and the permalink
     // target where the message actually lives (one root, many streams); fall

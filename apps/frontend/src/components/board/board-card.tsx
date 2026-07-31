@@ -340,7 +340,12 @@ export function BoardCard({
   // "Move to sub-topic" re-file: membership move between this conversation and
   // its nested sub-topics (one root). The hook hides the action when a row has
   // nowhere to go.
-  const moveToSubtopic = useMoveToSubtopic({ workspaceId, conversation, branchesByForkMessageId })
+  const moveToSubtopic = useMoveToSubtopic({
+    workspaceId,
+    conversation,
+    branchesByForkMessageId,
+    hasSettlingRows: settlingIds.size > 0,
+  })
   // A spanning-overflow row from a card opens the whole conversation in the panel.
   const continueThreadTo = () => getPanelUrl(createConversationPanelId(conversation.id))
   // Heal a soft-thread seam into its own topic (the card re-forms as a nested

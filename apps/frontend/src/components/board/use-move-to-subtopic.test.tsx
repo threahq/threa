@@ -63,6 +63,7 @@ function MoveSurface({
     workspaceId: WS,
     conversation: { id: "conv_main", streamId: "chan_1", topicSummary: "Main thing" },
     branchesByForkMessageId: new Map([["m1", branches]]),
+    hasSettlingRows: settling ?? false,
   })
   const handler = move.moveHandlerFor("m_target", currentConversationId, settling)
   return (

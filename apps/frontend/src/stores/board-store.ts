@@ -34,15 +34,21 @@ function toCached(workspaceId: string, post: BoardPost, status?: "pending"): Cac
  * without a refetch. Returns `undefined` until the first IDB read resolves
  * (loading), `[]` when the store is genuinely empty.
  */
-export function useBoardPosts(workspaceId: string): CachedBoardPost[] | undefined {
+export function useBoardPosts(workspaceId: string, opts?: { enabled?: boolean }): CachedBoardPost[] | undefined {
+  const enabled = opts?.enabled ?? true
   return useLiveQuery(
+    // A disabled querier touches no table, so it registers no Dexie
+    // subscription and never re-fires on board writes — callers that read the
+    // feed conditionally (per-card sibling pickers) pay nothing when off.
     () =>
-      db.conversations
-        .where("[workspaceId+_lastActivityMs]")
-        .between([workspaceId, Dexie.minKey], [workspaceId, Dexie.maxKey])
-        .reverse()
-        .toArray(),
-    [workspaceId]
+      enabled
+        ? db.conversations
+            .where("[workspaceId+_lastActivityMs]")
+            .between([workspaceId, Dexie.minKey], [workspaceId, Dexie.maxKey])
+            .reverse()
+            .toArray()
+        : [],
+    [workspaceId, enabled]
   )
 }
 

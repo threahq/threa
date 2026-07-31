@@ -39,11 +39,15 @@ export function useMoveToSubtopic(params: {
   workspaceId: string
   conversation: { id: string; streamId: string; topicSummary: string | null }
   branchesByForkMessageId: Map<string, BranchConversationView[]>
+  /** Whether this surface currently renders any settling row. Gates the sibling
+   *  feed subscription: only settling rows read siblings, and a full-feed
+   *  liveQuery per card re-fires on every board write (#1640's cost class). */
+  hasSettlingRows?: boolean
 }): {
   moveHandlerFor: (messageId: string, currentConversationId: string, settling?: boolean) => (() => void) | undefined
   moveDialog: ReactNode
 } {
-  const { workspaceId, conversation, branchesByForkMessageId } = params
+  const { workspaceId, conversation, branchesByForkMessageId, hasSettlingRows = false } = params
   const [pendingMove, setPendingMove] = useState<{
     messageId: string
     currentConversationId: string
@@ -73,7 +77,10 @@ export function useMoveToSubtopic(params: {
   // OTHER conversations of the same stream held by the board store: the server's
   // same-effective-root guard passes trivially for a same-stream target, so
   // these are legal re-file destinations. Settled rows never see them.
-  const boardPosts = useBoardPosts(workspaceId)
+  // Gated on the card actually rendering a settling row: only those read
+  // siblings, and an ungated full-feed liveQuery per card re-fires on every
+  // board write (#1640's cost class).
+  const boardPosts = useBoardPosts(workspaceId, { enabled: hasSettlingRows })
   const siblings = useMemo(() => {
     if (!boardPosts) return []
     return boardPosts
@@ -149,9 +156,11 @@ export function useMoveToSubtopic(params: {
     <Dialog open={pendingMove !== null} onOpenChange={(open) => !open && setPendingMove(null)}>
       <DialogContent className="max-w-sm">
         <DialogHeader>
-          <DialogTitle>Move to sub-topic</DialogTitle>
+          <DialogTitle>{pendingMove?.settling ? "Move to another topic" : "Move to sub-topic"}</DialogTitle>
           <DialogDescription>
-            Re-file this message into another topic of this conversation. The message stays where it was posted.
+            {pendingMove?.settling
+              ? "Re-file this message into the topic it belongs to. The message stays where it was posted."
+              : "Re-file this message into another topic of this conversation. The message stays where it was posted."}
           </DialogDescription>
         </DialogHeader>
         <div className="flex max-h-[50dvh] flex-col gap-1 overflow-y-auto">
