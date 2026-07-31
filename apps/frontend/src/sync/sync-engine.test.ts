@@ -7,6 +7,7 @@ import { SyncStatusStore } from "./sync-status"
 import { markInitialRevealComplete, resetRevealGate } from "./reveal-gate"
 import { workspaceKeys } from "@/hooks/use-workspaces"
 import { streamKeys } from "@/hooks/use-streams"
+import { conversationKeys } from "@/hooks/use-conversations"
 import { db } from "@/db"
 import {
   DEFAULT_USER_PREFERENCES,
@@ -1414,6 +1415,16 @@ describe("SyncEngine sync cursor (active mode)", () => {
     expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["saved"] })
     expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["scheduled"] })
     expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["activity"] })
+    // The board feed is seeded by its own workspace-list query, not the
+    // bootstrap, so it heals here too — every filter variant, no per-id keys.
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: conversationKeys.workspaceListAll })
+    // …and that prefix really is one: a family rename that unmatched the board
+    // feed keys would break here rather than silently invalidating nothing.
+    const oneWorkspaceList = conversationKeys.workspaceList("ws_1", {})
+    expect(oneWorkspaceList.length).toBeGreaterThan(conversationKeys.workspaceListAll.length)
+    expect(oneWorkspaceList.slice(0, conversationKeys.workspaceListAll.length)).toEqual([
+      ...conversationKeys.workspaceListAll,
+    ])
     // Collapsing re-derives via the (already atomic) bootstrap, so it never opens
     // a replay apply-window.
     applyWindow.stop()

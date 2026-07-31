@@ -7,6 +7,8 @@ import {
   putOptimisticBoardPost,
   reconcileOptimisticBoardPost,
   deleteOptimisticBoardPost,
+  setBoardRootArchived,
+  removeBoardConversationsForStream,
 } from "./board-store"
 import type { BoardPost, BoardPostMessage, ConversationWithStaleness } from "@threa/types"
 
@@ -348,5 +350,54 @@ describe("deleteOptimisticBoardPost", () => {
   it("no-ops when the card doesn't exist", async () => {
     await deleteOptimisticBoardPost("conv_absent")
     expect(await db.conversations.get("conv_absent")).toBeUndefined()
+  })
+})
+
+/** A post anchored in `streamId` whose effective root is `rootStreamId`. */
+function scopedPost(id: string, streamId: string, rootStreamId: string): BoardPost {
+  const base = makePost(id, "2026-06-22T12:00:00.000Z")
+  return { ...base, conversation: { ...base.conversation, streamId }, rootStreamId }
+}
+
+describe("setBoardRootArchived", () => {
+  it("flips only the rows of this workspace whose anchor or root is the stream", async () => {
+    await seedBoardPosts(WORKSPACE_ID, [
+      scopedPost("conv_root", "thread_1", "chan_1"),
+      scopedPost("conv_anchor", "chan_1", "chan_1"),
+      scopedPost("conv_other", "chan_2", "chan_2"),
+    ])
+    await seedBoardPosts("ws_2", [scopedPost("conv_ws2", "chan_1", "chan_1")])
+
+    await setBoardRootArchived(WORKSPACE_ID, "chan_1", true)
+
+    expect(await db.conversations.get("conv_root")).toMatchObject({ rootArchived: true })
+    expect(await db.conversations.get("conv_anchor")).toMatchObject({ rootArchived: true })
+    expect((await db.conversations.get("conv_other"))?.rootArchived).toBeUndefined()
+    expect((await db.conversations.get("conv_ws2"))?.rootArchived).toBeUndefined()
+  })
+
+  it("clears the flag on unarchive", async () => {
+    await seedBoardPosts(WORKSPACE_ID, [scopedPost("conv_root", "thread_1", "chan_1")])
+    await setBoardRootArchived(WORKSPACE_ID, "chan_1", true)
+    await setBoardRootArchived(WORKSPACE_ID, "chan_1", false)
+    expect(await db.conversations.get("conv_root")).toMatchObject({ rootArchived: false })
+  })
+})
+
+describe("removeBoardConversationsForStream", () => {
+  it("deletes only the rows of this workspace the stream contributes", async () => {
+    await seedBoardPosts(WORKSPACE_ID, [
+      scopedPost("conv_root", "thread_1", "chan_1"),
+      scopedPost("conv_anchor", "chan_1", "chan_1"),
+      scopedPost("conv_other", "chan_2", "chan_2"),
+    ])
+    await seedBoardPosts("ws_2", [scopedPost("conv_ws2", "chan_1", "chan_1")])
+
+    await removeBoardConversationsForStream(WORKSPACE_ID, "chan_1")
+
+    expect(await db.conversations.get("conv_root")).toBeUndefined()
+    expect(await db.conversations.get("conv_anchor")).toBeUndefined()
+    expect(await db.conversations.get("conv_other")).toBeDefined()
+    expect(await db.conversations.get("conv_ws2")).toBeDefined()
   })
 })

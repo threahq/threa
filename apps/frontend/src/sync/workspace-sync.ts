@@ -66,7 +66,12 @@ import { conversationKeys } from "@/hooks/use-conversations"
 import { addIncomingCall, settleIncomingCall } from "@/stores/incoming-call-store"
 import type { CallMode } from "@/calls/config"
 import { personaKeys } from "@/hooks/use-personas"
-import { mergeBoardConversation, addBoardConversationStream } from "@/stores/board-store"
+import {
+  mergeBoardConversation,
+  addBoardConversationStream,
+  setBoardRootArchived,
+  removeBoardConversationsForStream,
+} from "@/stores/board-store"
 import { putHidden, deleteHidden, putMuted, deleteMuted } from "@/stores/board-exclusions-store"
 import { activityKeys } from "@/hooks/use-activity"
 import { memoKeys } from "@/hooks/use-memos"
@@ -911,6 +916,10 @@ export function registerWorkspaceSocketHandlers(
     // Upsert IndexedDB — partial merge preserves lastMessagePreview etc.; a
     // missing row (swept while archived) is restored rather than silently lost.
     void upsertStreamRow(payload.stream)
+    // The board gates on each card's own `rootArchived`, so the cards this
+    // stream covers must carry the new verdict or they keep showing until a
+    // refetch.
+    void setBoardRootArchived(workspaceId, payload.stream.id, true)
   }
 
   const handleStreamUnarchived = (payload: StreamPayload) => {
@@ -939,6 +948,7 @@ export function registerWorkspaceSocketHandlers(
     // Upsert IndexedDB — partial merge preserves lastMessagePreview etc.; a
     // missing row (swept while archived) is restored rather than silently lost.
     void upsertStreamRow(payload.stream)
+    void setBoardRootArchived(workspaceId, payload.stream.id, false)
   }
 
   const handleWorkspaceUserAdded = (payload: WorkspaceUserAddedPayload) => {
@@ -1558,6 +1568,9 @@ export function registerWorkspaceSocketHandlers(
       if (shouldRemoveFromSidebar) {
         db.streams.delete(payload.streamId)
         void deleteStreamSlots(db, payload.streamId)
+        // The cards this stream contributed are unreadable now — drop them
+        // rather than leave them rendering off the cache.
+        void removeBoardConversationsForStream(workspaceId, payload.streamId)
       }
 
       return {

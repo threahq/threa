@@ -1,0 +1,63 @@
+import { Link } from "react-router-dom"
+import { BoardCard } from "@/components/board/board-card"
+import { usePanel, createConversationPanelId } from "@/contexts"
+import type { BoardViewPost, RemovedSuccessor } from "@/hooks/use-stable-board-view"
+
+interface BoardRemovedCardProps {
+  workspaceId: string
+  /** The last retained copy of the conversation whose row is gone. */
+  post: BoardViewPost
+  /** Where the post lived — the same header locator the live card renders. */
+  contextLabel: string
+  streamType: string | undefined
+  dmPeerUserId?: string | null
+  /** The conversation that now holds the opening message, or null when none does. */
+  successor: RemovedSuccessor | null
+}
+
+/**
+ * A committed card whose conversation left the store — merged into another
+ * conversation or emptied. The retained card still renders underneath at its
+ * exact height, so the swap shifts nothing below it (INV-21); it is inert
+ * (`removed`), so no reply composer opens and no read POST goes to a
+ * conversation that no longer exists. The overlay is the only live surface:
+ * it names where the content went. Pruned by the next commit.
+ */
+export function BoardRemovedCard({
+  workspaceId,
+  post,
+  contextLabel,
+  streamType,
+  dmPeerUserId,
+  successor,
+}: BoardRemovedCardProps) {
+  const { getPanelUrl } = usePanel()
+
+  return (
+    <div className="relative">
+      <BoardCard
+        workspaceId={workspaceId}
+        post={post}
+        contextLabel={contextLabel}
+        streamType={streamType}
+        dmPeerUserId={dmPeerUserId}
+        removed
+      />
+      <div className="absolute inset-0 flex items-center justify-center rounded-xl bg-background/60 text-xs text-muted-foreground">
+        {successor ? (
+          <span>
+            Merged into{" "}
+            <Link
+              to={getPanelUrl(createConversationPanelId(successor.conversationId))}
+              className="font-medium text-foreground underline-offset-2 hover:underline"
+            >
+              {successor.topicSummary ?? "another conversation"}
+            </Link>
+          </span>
+        ) : (
+          <span>No longer on your board.</span>
+        )}
+      </div>
+    </div>
+  )
+}

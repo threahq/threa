@@ -59,6 +59,10 @@ interface UseConversationAutoReadOptions {
    * overlay ids, diffed to catch a cross-device mark-unread. See the pin notes
    * on the hook doc for why this is raw truth and not derived row state. */
   getReadTruth: (streamId: string) => { lastReadSequence: string | null; readMessageIds: readonly string[] }
+  /** Mount the hook inert: no dwell observation and no mark-read, ever. For a
+   *  surface rendering a conversation that no longer exists (the board's
+   *  merged-away card), where a read POST would target a dead id. */
+  disabled?: boolean
 }
 
 /**
@@ -126,8 +130,11 @@ export function useConversationAutoRead({
   markRead,
   registerExplicitUnread,
   getReadTruth,
+  disabled = false,
 }: UseConversationAutoReadOptions): void {
-  const canAutoRead = useAutoReadAttention()
+  const canAutoRead = useAutoReadAttention() && !disabled
+  const disabledRef = useRef(disabled)
+  disabledRef.current = disabled
   const canAutoReadRef = useRef(canAutoRead)
   canAutoReadRef.current = canAutoRead
 
@@ -162,6 +169,7 @@ export function useConversationAutoRead({
 
   const evaluate = useCallback(() => {
     debounceRef.current = null
+    if (disabledRef.current) return
     // An active pin blocks firing entirely (not just for the pinned rows): the
     // cutoff means marking through ANY newer row would undo the explicit unread.
     if (suppressedRef.current.size > 0) {
