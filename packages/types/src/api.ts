@@ -388,6 +388,32 @@ export type ConversationDirective =
   | { intent: "newSubtopic" }
 
 /**
+ * The causal horizon of one compose session: what the author could already have
+ * seen when they started writing, and how far the stream had moved by the time
+ * they sent. Carried as weighted signal for later classification — never read as
+ * ground truth, and absent from every send by an old client, an API caller, a
+ * scheduled send, or a flag-off workspace. Absence is normal, never an error.
+ *
+ * Sequences are `horizonStreamId`'s newest locally-synced global sequence at
+ * each moment, `null` when the client had nothing synced yet.
+ */
+export interface ComposeTrace {
+  /**
+   * The stream both sequences were measured against — the surface the author was
+   * reading. Sequences are per-stream, and a send can land somewhere else (a
+   * board reply routed to another stream, a not-yet-created thread), so the
+   * numbering is only interpretable against this id, never the message's stream.
+   */
+  horizonStreamId: string
+  /** ISO timestamp of the moment the composer session started (focus while idle). */
+  openedAt: string
+  openedAtSequence: number | null
+  sentAtSequence: number | null
+  /** The composer already held non-empty draft content when the session started. */
+  resumedDraft: boolean
+}
+
+/**
  * JSON input format - used by rich clients sending ProseMirror JSON directly.
  */
 export interface CreateMessageInputJson {
@@ -411,6 +437,8 @@ export interface CreateMessageInputJson {
    * `SHARE_PRIVACY_CONFIRMATION_REQUIRED`.
    */
   confirmedPrivacyWarning?: boolean
+  /** Compose-session provenance for this send (see {@link ComposeTrace}); omitted by clients that don't capture it. */
+  composeTrace?: ComposeTrace
 }
 
 export interface CreateDmMessageInputJson {
@@ -426,6 +454,8 @@ export interface CreateDmMessageInputJson {
   conversation?: ConversationDirective
   /** Same semantics as `CreateMessageInputJson.confirmedPrivacyWarning`. */
   confirmedPrivacyWarning?: boolean
+  /** Compose-session provenance for this send (see {@link ComposeTrace}); omitted by clients that don't capture it. */
+  composeTrace?: ComposeTrace
 }
 
 /**
@@ -442,6 +472,8 @@ export interface CreateMessageInputMarkdown {
   steer?: true
   /** External references as a flat string->string map. Keys under `threa.*` are reserved. */
   metadata?: Record<string, string>
+  /** Compose-session provenance for this send (see {@link ComposeTrace}); omitted by clients that don't capture it. */
+  composeTrace?: ComposeTrace
 }
 
 export interface CreateDmMessageInputMarkdown {
@@ -453,6 +485,8 @@ export interface CreateDmMessageInputMarkdown {
   clientMessageId?: string
   /** External references as a flat string->string map. Keys under `threa.*` are reserved. */
   metadata?: Record<string, string>
+  /** Compose-session provenance for this send (see {@link ComposeTrace}); omitted by clients that don't capture it. */
+  composeTrace?: ComposeTrace
 }
 
 /**
@@ -479,6 +513,8 @@ export interface CreateMessageInputE2e {
   clientMessageId?: string
   /** Persist this message first, then dispatch `/steer` in the same transaction. */
   steer?: true
+  /** Compose-session provenance for this send (see {@link ComposeTrace}); omitted by clients that don't capture it. */
+  composeTrace?: ComposeTrace
 }
 
 /**

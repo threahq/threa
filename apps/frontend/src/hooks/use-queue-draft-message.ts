@@ -4,7 +4,14 @@ import { useUser } from "@/auth"
 import { useWorkspaceUsers } from "@/stores/workspace-store"
 import { db, sequenceToNum, type CachedStream, type PendingStreamCreation } from "@/db"
 import { serializeToMarkdown } from "@threa/prosemirror"
-import { StreamTypes, Visibilities, type ConversationDirective, type JSONContent, type StreamEvent } from "@threa/types"
+import {
+  StreamTypes,
+  Visibilities,
+  type ComposeTrace,
+  type ConversationDirective,
+  type JSONContent,
+  type StreamEvent,
+} from "@threa/types"
 import { createDraftPanelId } from "@/contexts/panel-context"
 import { getLatestPersistedSequence, optimisticReplyCountUpdate } from "@/sync/stream-sync"
 import { nextOptimisticSequence } from "@/lib/optimistic-sequence"
@@ -18,6 +25,8 @@ export interface QueueDraftMessageInput {
   contentJson: JSONContent
   attachmentIds?: string[]
   attachments?: AttachmentSummary[]
+  /** Compose-session provenance for this send (see {@link ComposeTrace}). */
+  composeTrace?: ComposeTrace
 }
 
 export interface QueueDraftMessageParams {
@@ -182,6 +191,7 @@ export function useQueueDraftMessage(workspaceId: string) {
             contentFormat: "markdown",
             contentJson: input.contentJson,
             attachmentIds: input.attachmentIds,
+            composeTrace: input.composeTrace,
             createdAt: Date.now(),
             retryCount: 0,
             streamCreation: params.streamCreation,

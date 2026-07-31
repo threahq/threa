@@ -41,6 +41,15 @@ interface MockPendingMessage {
   createdAt: number
   retryCount: number
   retryAfter?: number
+  composeTrace?: {
+    openedAt: string
+    openedAtSequence: number | null
+    sentAtSequence: number | null
+    resumedDraft: boolean
+  }
+  ciphertext?: string
+  envelope?: unknown
+  e2eVersion?: number
 }
 
 let mockPendingMessages: MockPendingMessage[] = []
@@ -486,6 +495,66 @@ describe("useMessageQueue", () => {
     // B should have been sent successfully
     expect(mockMarkSent).toHaveBeenCalledWith("temp_b")
     expect(mockCreate).toHaveBeenCalledTimes(2)
+  })
+
+  it("carries a queued compose trace through to the send body", async () => {
+    const composeTrace = {
+      openedAt: "2026-07-30T10:00:00.000Z",
+      openedAtSequence: 41,
+      sentAtSequence: 47,
+      resumedDraft: true,
+    }
+    mockPendingMessages = [
+      {
+        clientId: "temp_traced",
+        workspaceId: "ws_1",
+        streamId: "stream_1",
+        content: "Hello",
+        contentFormat: "markdown",
+        contentJson: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "Hello" }] }] },
+        createdAt: 1000,
+        retryCount: 0,
+        composeTrace,
+      },
+    ]
+
+    renderHook(() => useMessageQueue(), { wrapper: createWrapper() })
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 10))
+    })
+
+    expect(mockCreate).toHaveBeenCalledWith("ws_1", "stream_1", expect.objectContaining({ composeTrace }))
+  })
+
+  it("carries a queued compose trace through the E2E send body too", async () => {
+    const composeTrace = {
+      openedAt: "2026-07-30T10:00:00.000Z",
+      openedAtSequence: null,
+      sentAtSequence: 5,
+      resumedDraft: false,
+    }
+    mockPendingMessages = [
+      {
+        clientId: "temp_sealed",
+        workspaceId: "ws_1",
+        streamId: "stream_1",
+        content: "Hello",
+        contentFormat: "markdown",
+        createdAt: 1000,
+        retryCount: 0,
+        ciphertext: "Y2lwaGVydGV4dA==",
+        envelope: { v: 2, keyGeneration: 0, iv: "aXY=", aad: "msg_1" },
+        e2eVersion: 2,
+        composeTrace,
+      },
+    ]
+
+    renderHook(() => useMessageQueue(), { wrapper: createWrapper() })
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 10))
+    })
+
+    expect(mockCreate).toHaveBeenCalledWith("ws_1", "stream_1", expect.objectContaining({ composeTrace }))
   })
 
   it("should process messages with attachmentIds", async () => {

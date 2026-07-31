@@ -21,7 +21,7 @@ export interface UseDraftComposerOptions {
 }
 
 /** Check if a document is empty (no actual text content) */
-function hasDocContent(doc: JSONContent | undefined): boolean {
+export function hasDocContent(doc: JSONContent | undefined): boolean {
   if (!doc?.content) return false
   return doc.content.some((node) => {
     if (node.type === "paragraph") {

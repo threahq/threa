@@ -7,6 +7,7 @@ import type {
   ConversationDirective,
   E2eActor,
   EventType,
+  ComposeTrace,
   FeatureFlagLayers,
   JSONContent,
   NotificationLevel,
@@ -367,6 +368,13 @@ export interface PendingMessage {
    * Omitted on ordinary stream sends, which let the async extractor infer.
    */
   conversation?: ConversationDirective
+  /**
+   * Compose-session provenance captured while the author wrote this message
+   * (see {@link ComposeTrace}). Rides the durable queue row so a send that only
+   * reaches the server after a reload still carries the horizon it was composed
+   * against. Absent unless the workspace's `composeTraces` flag is on.
+   */
+  composeTrace?: ComposeTrace
   /** The draft ID to clean up after successful stream creation + message send */
   draftId?: string
   /** Set by the queue after stream creation succeeds — prevents duplicate creation on retry */

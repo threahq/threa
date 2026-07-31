@@ -82,7 +82,12 @@ export { useMessageQueue } from "./use-message-queue"
 
 export { useAttachments, type PendingAttachment, type UseAttachmentsReturn } from "./use-attachments"
 
-export { useDraftComposer, type UseDraftComposerOptions, type DraftComposerState } from "./use-draft-composer"
+export {
+  useDraftComposer,
+  hasDocContent,
+  type UseDraftComposerOptions,
+  type DraftComposerState,
+} from "./use-draft-composer"
 
 export { useScrollBehavior } from "./use-scroll-behavior"
 

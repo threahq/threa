@@ -36,6 +36,7 @@ import {
   streamId as generateStreamId,
 } from "../../lib/id"
 import { MessageVersionRepository, type MessageVersion } from "./version-repository"
+import { MessageComposeTraceRepository } from "./compose-trace-repository"
 import { serializeBigInt } from "@threa/backend-common"
 import { messagesTotal } from "../../lib/observability"
 import { HttpError, MessageNotFoundError, StreamNotFoundError } from "../../lib/errors"
@@ -54,7 +55,9 @@ import {
   draftThreadScope,
   type AttachmentSummary,
   type AuthorType,
+  type ComposeTrace,
   type ConversationDirective,
+  type FeatureFlagValue,
   type EventType,
   type SourceItem,
   type JSONContent,
@@ -171,6 +174,13 @@ export interface CreateMessageParams {
    * leaves it locked). Omit to let the async extractor infer the conversation.
    */
   conversation?: ConversationDirective
+  /**
+   * Compose-session provenance captured by the client (see {@link ComposeTrace}).
+   * Persisted to the `message_compose_traces` sidecar only while the workspace's
+   * `composeTraces` flag is on; absent for API sends, old clients, and every
+   * non-user author, which is normal rather than an error.
+   */
+  composeTrace?: ComposeTrace
   /**
    * Present when the sharer has acknowledged a privacy warning in the
    * share modal. Backend still independently verifies whether the share
@@ -417,10 +427,19 @@ interface ThreadStreamStats {
   replyCount?: number
 }
 
+/**
+ * Resolves the workspace's `composeTraces` rollout value. Injected rather than
+ * read from a service locator so `EventService` stays constructed once with its
+ * collaborators (INV-13) and the messaging feature never imports the
+ * feature-flags feature's internals (INV-52).
+ */
+export type GetComposeTraceMode = (workspaceId: string) => Promise<FeatureFlagValue<"composeTraces">>
+
 export class EventService {
   constructor(
     private pool: Pool,
-    private conversationAssigner?: ConversationAssigner
+    private conversationAssigner?: ConversationAssigner,
+    private getComposeTraceMode?: GetComposeTraceMode
   ) {}
 
   /**
@@ -776,6 +795,22 @@ export class EventService {
       await StreamPersonaParticipantRepository.recordParticipation(client, params.streamId, params.authorId)
     }
 
+    // Compose-session provenance rides the send's own transaction so a trace can
+    // never outlive a rolled-back message. Already gated on the `composeTraces`
+    // flag by the caller (see `shouldCaptureComposeTrace`).
+    if (params.composeTrace) {
+      await MessageComposeTraceRepository.insert(client, {
+        messageId: msgId,
+        workspaceId: params.workspaceId,
+        streamId: params.streamId,
+        horizonStreamId: params.composeTrace.horizonStreamId,
+        openedAt: params.composeTrace.openedAt,
+        openedAtSequence: params.composeTrace.openedAtSequence,
+        sentAtSequence: params.composeTrace.sentAtSequence,
+        resumedDraft: params.composeTrace.resumedDraft,
+      })
+    }
+
     // First-time attachments were linked (attachToMessage) before the event
     // payload was built — see the summary re-read above. Re-referenced
     // attachments keep their owning `message_id`/`stream_id`: overwriting them
@@ -902,12 +937,27 @@ export class EventService {
     return { message, conversationId, created: true }
   }
 
+  /**
+   * Whether this send's client-supplied compose trace should be persisted.
+   * Resolved BEFORE the send's transaction opens: the lookup is an uncached
+   * query on its own pool connection, and issuing it while holding the send's
+   * client would have two connections outstanding per send (INV-41). No trace
+   * on the send means no lookup at all, so flag-off workspaces pay nothing.
+   */
+  private async shouldCaptureComposeTrace(params: CreateMessageParams): Promise<boolean> {
+    if (!params.composeTrace || !this.getComposeTraceMode) return false
+    return (await this.getComposeTraceMode(params.workspaceId)) === "capture"
+  }
+
   private async _createMessageTxn(
     params: CreateMessageParams,
     onCreated?: (client: PoolClient, message: Message) => Promise<void>
   ): Promise<{ message: Message; conversationId?: string; created: boolean }> {
+    // The trace is dropped here rather than inside the transaction, so
+    // `createMessageInTransaction` can persist whatever reaches it.
+    const gatedParams = (await this.shouldCaptureComposeTrace(params)) ? params : { ...params, composeTrace: undefined }
     return withTransaction(this.pool, async (client) => {
-      const result = await this.createMessageInTransaction(client, params)
+      const result = await this.createMessageInTransaction(client, gatedParams)
       if (result.created) await onCreated?.(client, result.message)
       return result
     })

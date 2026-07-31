@@ -240,6 +240,13 @@ export interface MessageComposerProps {
    */
   onEscapeBlur?: () => void
 
+  /**
+   * Called when the editor gains focus. Fires on every focus (clicks, tab-backs),
+   * so a consumer that only wants the FIRST focus of a session must dedupe —
+   * see `useComposeTrace`.
+   */
+  onComposerFocus?: () => void
+
   /** Called when the desktop expand button is clicked — opens fullscreen document editor */
   onExpandClick?: () => void
 
@@ -328,6 +335,7 @@ export function MessageComposer({
   scopeId,
   onEditLastMessage,
   onEscapeBlur,
+  onComposerFocus,
   onExpandClick,
   expanded = false,
   onCollapse,
@@ -766,6 +774,7 @@ export function MessageComposer({
       disableSelectionToolbar={disableSelectionToolbar}
       onEditLastMessage={onEditLastMessage}
       onEscapeBlur={onEscapeBlur}
+      onFocus={onComposerFocus}
       ariaLabel="Message input"
       ariaDescribedBy={instructionsId}
       blurOnEscape
@@ -945,6 +954,7 @@ export function MessageComposer({
                 staticToolbarOpen
                 disableSelectionToolbar
                 onEditLastMessage={onEditLastMessage}
+                onFocus={onComposerFocus}
                 toolbarTrailingContent={expandedTrailingContent}
                 ariaLabel="Fullscreen message editor"
                 ariaDescribedBy={instructionsId}

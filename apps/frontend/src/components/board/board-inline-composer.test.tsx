@@ -1,5 +1,6 @@
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { describe, it, expect, vi, beforeEach } from "vitest"
-import { useState, type ReactElement, type ReactNode } from "react"
+import { useEffect, useState, type ReactElement, type ReactNode } from "react"
 import { render, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { InlineComposerForm } from "./board-inline-composer"
@@ -15,7 +16,9 @@ import * as workspaceStoreModule from "@/stores/workspace-store"
 import * as streamStoreModule from "@/stores/stream-store"
 import * as draftMessageModule from "@/hooks/use-draft-message"
 import type { MessageComposerProps } from "@/components/composer"
-import type { JSONContent } from "@threa/types"
+import type { FeatureFlagLayers, JSONContent, WorkspaceBootstrap } from "@threa/types"
+import * as streamSyncModule from "@/sync/stream-sync"
+import { workspaceKeys } from "@/hooks/use-workspaces"
 
 // The behavior under test is the floating-anchor layer (portal placement,
 // slot exclusivity, close semantics, height publication) — not editor
@@ -113,13 +116,19 @@ beforeEach(() => {
 /** Anchor container + provider, the shape the board page / panel supply. */
 function Anchored({ children }: { children: ReactNode }) {
   const [el, setEl] = useState<HTMLElement | null>(null)
+  // The composer reads the workspace's `composeTraces` flag, which resolves out
+  // of the bootstrap query cache — so the form needs a client here as it has one
+  // everywhere it mounts in the app.
+  const [queryClient] = useState(() => new QueryClient({ defaultOptions: { queries: { retry: false } } }))
   return (
-    <div>
-      <div data-testid="anchor" ref={setEl} />
-      <div data-testid="in-place">
-        <FloatingComposerAnchorProvider el={el}>{children}</FloatingComposerAnchorProvider>
+    <QueryClientProvider client={queryClient}>
+      <div>
+        <div data-testid="anchor" ref={setEl} />
+        <div data-testid="in-place">
+          <FloatingComposerAnchorProvider el={el}>{children}</FloatingComposerAnchorProvider>
+        </div>
       </div>
-    </div>
+    </QueryClientProvider>
   )
 }
 
@@ -427,5 +436,78 @@ describe("InlineComposerForm stash + schedule", () => {
     await trigger.props.onSchedule(new Date("2030-01-02T10:00:00.000Z"))
 
     expect(scheduleMutateAsync).not.toHaveBeenCalled()
+  })
+})
+
+describe("InlineComposerForm compose trace", () => {
+  /** Editor stand-in that focuses on mount (TipTap `autoFocus`) and can send on demand. */
+  const AutoFocusEditorStub = (props: MessageComposerProps) => {
+    useEffect(() => props.onComposerFocus?.(), [props.onComposerFocus])
+    return (
+      <button type="button" data-testid="send" onClick={() => void props.onSubmit()}>
+        send
+      </button>
+    )
+  }
+
+  function Capturing({ children }: { children: ReactNode }) {
+    const [queryClient] = useState(() => {
+      const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+      const layers: FeatureFlagLayers = { workspace: { composeTraces: "capture" }, user: {} }
+      client.setQueryData(workspaceKeys.bootstrap("ws_1"), { featureFlags: layers } as WorkspaceBootstrap)
+      return client
+    })
+    return (
+      <QueryClientProvider client={queryClient}>
+        <FloatingComposerAnchorProvider el={null}>{children}</FloatingComposerAnchorProvider>
+      </QueryClientProvider>
+    )
+  }
+
+  beforeEach(() => {
+    editorSpy = vi.fn(AutoFocusEditorStub)
+    spyOnExport(composerModule, "MessageComposer").mockReturnValue(editorSpy as never)
+    spyOnExport(streamSyncModule, "getLatestPersistedSequence").mockReturnValue((async (id: string) =>
+      id === "stream_1" ? "77" : null) as never)
+  })
+
+  it("measures against the streamId prop even when the host is absent from the workspace cache", async () => {
+    // A thread host never appears in the workspace streams cache — resolving the
+    // horizon there is what left branch and panel replies unmeasured.
+    vi.spyOn(workspaceStoreModule, "useWorkspaceStreams").mockReturnValue([] as never)
+    const onSubmit = vi.fn().mockResolvedValue(undefined)
+    composerStub.canSend = true
+    render(<Capturing>{form({ onSubmit })}</Capturing>)
+
+    await userEvent.click(await screen.findByTestId("send"))
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalled())
+    expect(onSubmit.mock.calls[0][0].composeTrace).toMatchObject({
+      horizonStreamId: "stream_1",
+      openedAtSequence: 77,
+      sentAtSequence: 77,
+    })
+  })
+
+  it("opens the session only after the draft hydrates, so a resumed draft reports as resumed", async () => {
+    composerStub.isLoaded = false
+    composerStub.canSend = true
+    const onSubmit = vi.fn().mockResolvedValue(undefined)
+    const { rerender } = render(<Capturing>{form({ onSubmit })}</Capturing>)
+    // Autofocus has already fired against an empty, not-yet-hydrated composer.
+    await screen.findByTestId("send")
+
+    const hydratedAt = new Date().toISOString()
+    composerStub.isLoaded = true
+    composerStub.content = { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "hi" }] }] }
+    rerender(<Capturing>{form({ onSubmit })}</Capturing>)
+    await userEvent.click(screen.getByTestId("send"))
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalled())
+    const trace = onSubmit.mock.calls[0][0].composeTrace
+    expect({ resumedDraft: trace.resumedDraft, afterHydration: trace.openedAt >= hydratedAt }).toEqual({
+      resumedDraft: true,
+      afterHydration: true,
+    })
   })
 })

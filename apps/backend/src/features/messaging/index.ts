@@ -24,7 +24,9 @@ export { MessageVersionRepository } from "./version-repository"
 export type { MessageVersion } from "./version-repository"
 
 export { EventService } from "./event-service"
-export type { ConversationAssigner } from "./event-service"
+export type { ConversationAssigner, GetComposeTraceMode } from "./event-service"
+export { MessageComposeTraceRepository } from "./compose-trace-repository"
+export type { MessageComposeTrace } from "./compose-trace-repository"
 export type {
   MessageCreatedPayload,
   MessageEditedPayload,

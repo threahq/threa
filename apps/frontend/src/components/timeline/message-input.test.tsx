@@ -3,6 +3,9 @@ import type { ReactNode } from "react"
 import { act, render, screen } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { Router } from "react-router-dom"
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
+
+const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
 import { useState } from "react"
 import * as contextsModule from "@/contexts"
 import * as hooksModule from "@/hooks"
@@ -376,13 +379,18 @@ function Wrapper({ children }: { children: React.ReactNode }) {
     block: () => () => {},
   }
   return (
-    <Router
-      location={location}
-      navigator={navigator as unknown as Parameters<typeof Router>[0]["navigator"]}
-      navigationType={"POP" as Parameters<typeof Router>[0]["navigationType"]}
-    >
-      {children}
-    </Router>
+    // The composer reads the workspace's `composeTraces` flag out of the
+    // bootstrap query cache, so it needs a client here as it has one everywhere
+    // it mounts in the app. Inside `Wrapper` so `rerender(<Wrapper>…)` keeps it.
+    <QueryClientProvider client={queryClient}>
+      <Router
+        location={location}
+        navigator={navigator as unknown as Parameters<typeof Router>[0]["navigator"]}
+        navigationType={"POP" as Parameters<typeof Router>[0]["navigationType"]}
+      >
+        {children}
+      </Router>
+    </QueryClientProvider>
   )
 }
 
