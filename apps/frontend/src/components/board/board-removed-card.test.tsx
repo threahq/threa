@@ -136,21 +136,29 @@ describe("BoardRemovedCard", () => {
   })
 
   it("offers no interactive affordance but the successor link", () => {
-    renderCard({ conversationId: "conv_successor", topicSummary: "Deploy plan" })
+    const { container } = renderCard({ conversationId: "conv_successor", topicSummary: "Deploy plan" })
 
-    // The card underneath is aria-hidden + pointer-events-none, so the overlay's
-    // link is the ONLY reachable control: no card actions, no reply composer.
-    expect(screen.getAllByRole("link")).toHaveLength(1)
-    expect(screen.queryByRole("button")).toBeNull()
-    expect(screen.queryByRole("textbox")).toBeNull()
+    // The card underneath is `inert` — out of the a11y tree AND the tab order
+    // (aria-hidden alone would satisfy role queries while leaving every button
+    // keyboard-reachable). jsdom implements neither inert focus nor its a11y
+    // pruning, so the contract asserted here is: the inert wrapper exists, and
+    // every interactive element except the successor link lives inside it.
+    const inert = container.querySelector("[inert]")
+    expect(inert).not.toBeNull()
+    const outside = (role: string) => screen.queryAllByRole(role).filter((el) => !inert!.contains(el))
+    expect(outside("link")).toHaveLength(1)
+    expect(outside("button")).toHaveLength(0)
+    expect(outside("textbox")).toHaveLength(0)
   })
 
   it("says the card is gone when nothing holds the opening message", () => {
-    renderCard(null)
+    const { container } = renderCard(null)
 
     expect(screen.getByText("No longer on your board.")).toBeTruthy()
-    expect(screen.queryByRole("link")).toBeNull()
-    expect(screen.queryByRole("button")).toBeNull()
-    expect(screen.queryByRole("textbox")).toBeNull()
+    const inert = container.querySelector("[inert]")
+    expect(inert).not.toBeNull()
+    for (const role of ["link", "button", "textbox"]) {
+      expect(screen.queryAllByRole(role).filter((el) => !inert!.contains(el))).toHaveLength(0)
+    }
   })
 })

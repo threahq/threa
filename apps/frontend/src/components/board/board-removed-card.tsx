@@ -43,20 +43,24 @@ export function BoardRemovedCard({
         dmPeerUserId={dmPeerUserId}
         removed
       />
-      <div className="absolute inset-0 flex items-center justify-center rounded-xl bg-background/60 text-xs text-muted-foreground">
-        {successor ? (
-          <span>
-            Merged into{" "}
-            <Link
-              to={getPanelUrl(createConversationPanelId(successor.conversationId))}
-              className="font-medium text-foreground underline-offset-2 hover:underline"
-            >
-              {successor.topicSummary ?? "another conversation"}
-            </Link>
-          </span>
-        ) : (
-          <span>No longer on your board.</span>
-        )}
+      {/* Top-pinned + sticky: tall cards pin their own header to the viewport, so a
+          centered line — and the only successor link — could sit off-screen. */}
+      <div className="absolute inset-0 flex items-start justify-center rounded-xl bg-background/60 text-xs text-muted-foreground">
+        <div className="sticky top-2 py-2">
+          {successor ? (
+            <span>
+              Merged into{" "}
+              <Link
+                to={getPanelUrl(createConversationPanelId(successor.conversationId))}
+                className="font-medium text-foreground underline-offset-2 hover:underline"
+              >
+                {successor.topicSummary ?? "another conversation"}
+              </Link>
+            </span>
+          ) : (
+            <span>No longer on your board.</span>
+          )}
+        </div>
       </div>
     </div>
   )

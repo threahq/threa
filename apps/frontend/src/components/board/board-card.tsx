@@ -664,15 +664,18 @@ export function BoardCard({
         {/* Rest shadow lifts the card off the page — the light-mode card/bg
             lightness delta is ~1%, so the border alone left cards reading flat.
             Board-scoped; global tokens untouched. Dark leans on a deeper shadow
-            since the fill delta reads weakly on the charcoal canvas. */}
+            since the fill delta reads weakly on the charcoal canvas.
+            Removed cards use `inert`, not pointer-events-none + aria-hidden: only
+            inert also removes the card's buttons and composer from the tab order —
+            a keyboard user could otherwise focus into the dead conversation. */}
         <div
           ref={cardRef}
           className={cn(
             "board-card-hover rounded-xl border bg-card p-3 shadow-[0_1px_2px_rgb(0_0_0/0.04),0_4px_14px_-8px_rgb(0_0_0/0.10)] sm:p-4 dark:shadow-[0_1px_2px_rgb(0_0_0/0.4),0_6px_16px_-8px_rgb(0_0_0/0.5)]",
             flash && "board-post-flash",
-            removed && "pointer-events-none opacity-60"
+            removed && "opacity-60"
           )}
-          aria-hidden={removed || undefined}
+          inert={removed || undefined}
         >
           {/* Zero-height marker at the card top: drives the header's stuck state
               (see the observer above). In flow but h-0, so it shifts nothing. */}
