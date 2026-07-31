@@ -1,9 +1,10 @@
-import type { Pool } from "pg"
+import type { Pool, PoolClient } from "pg"
 import type { AuthorType, KnowledgeType, MemoScope, MemoStatus, MemoType } from "@threa/types"
 import { MemoScopes } from "@threa/types"
 import { withTransaction } from "../../db"
 import { logger } from "../../lib/logger"
 import { ConversationRepository } from "../conversations"
+import { OutboxRepository } from "../../lib/outbox"
 import { MessageRepository, type Message } from "../messaging"
 import { MemoRepository, type Memo, type MemoSearchFilters } from "./repository"
 import { classifyMemoQueryIntent } from "./query-intent"
@@ -260,6 +261,7 @@ export class MemoExplorerService {
       if (row && embedding) {
         await MemoRepository.updateEmbedding(client, memoId, embedding)
       }
+      if (row) await this.publishCardUpdates(client, workspaceId, row)
       return row
     })
 
@@ -267,6 +269,39 @@ export class MemoExplorerService {
       return null
     }
     return this.buildDetail(workspaceId, updated, resolved.sourceContext, permissions)
+  }
+
+  /**
+   * Push the memo's new card content to the streams that cite it, in the same
+   * transaction as the edit (INV-4/7).
+   *
+   * Per citing stream, gated by the same room-uniform predicate the write path
+   * uses — a room that could never be shown this memo does not get told about
+   * it, and a stream that has since been privatized stops receiving updates
+   * without any bookkeeping of its own. Streams whose rooms may not see it are
+   * simply skipped, which leaves their cards showing what they already had.
+   *
+   * Deliberately NOT workspace-scoped: `memo:created` broadcasts a whole
+   * `WireMemo` (abstract and key points included) to every workspace member,
+   * which is a wider exposure than this event is willing to inherit.
+   */
+  private async publishCardUpdates(client: PoolClient, workspaceId: string, memo: Memo): Promise<void> {
+    const citingStreamIds = await MemoRepository.findCitingStreamIds(client, workspaceId, memo.id)
+    if (citingStreamIds.length === 0) return
+
+    const streams = await StreamRepository.findByIds(client, citingStreamIds)
+    for (const stream of streams) {
+      const root = stream.rootStreamId ?? stream.id
+      const allowed = await MemoRepository.findEmbedSummaries(client, workspaceId, [memo.id], root)
+      const summary = allowed.get(memo.id)
+      if (!summary) continue
+      await OutboxRepository.insert(client, "memo:updated", {
+        workspaceId,
+        streamId: stream.id,
+        memoId: memo.id,
+        summary,
+      })
+    }
   }
 
   async archive(

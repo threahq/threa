@@ -390,3 +390,33 @@ describe("resolveDeliveryGroups — activity:read", () => {
     expect(groups).toEqual([userGroup("usr_alice")])
   })
 })
+
+describe("resolveDeliveryGroups — memo:updated", () => {
+  // The event carries a memo's card content to the streams that cite it, and
+  // the server decided per room which of those may see it. Routing is driven by
+  // the STREAM_SCOPED_EVENTS list, not by the payload's shape, so an event whose
+  // type is missing from that list falls through to the whole-workspace group —
+  // handing the content to every member regardless of stream access, and
+  // undoing the per-room gate at the point of delivery. The outbox-row tests
+  // cannot see this: the rows are correct either way.
+  it("delivers only to the citing stream, never the whole workspace", () => {
+    const groups = resolveDeliveryGroups(
+      event("memo:updated", {
+        workspaceId: "ws_1",
+        streamId: "stream_citing",
+        memoId: "memo_1",
+        summary: {
+          memoId: "memo_1",
+          title: "Launch in June",
+          knowledgeType: "decision",
+          memoType: "conversation",
+          tags: [],
+          updatedAt: "2026-07-31T10:00:00.000Z",
+        },
+      })
+    )
+
+    expect(groups).toEqual([streamGroup("stream_citing")])
+    expect(groups).not.toContain(WORKSPACE_GROUP)
+  })
+})

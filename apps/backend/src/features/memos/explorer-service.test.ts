@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, mock, spyOn } from "bun:test"
+import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from "bun:test"
 import type { Pool } from "pg"
 import { MemoExplorerService } from "./explorer-service"
 import { MemoRepository, type Memo } from "./repository"
@@ -79,6 +79,14 @@ afterEach(() => {
 })
 
 describe("MemoExplorerService.update (roadmap 6.1)", () => {
+  // An edit now also pushes the memo's new card content to the streams citing
+  // it. These cases are about the embedding, and their fake transaction client
+  // has no `query`, so the citation lookup is stubbed empty — the publish path
+  // itself is covered against real rows in tests/integration/memo-card-updates.
+  beforeEach(() => {
+    spyOn(MemoRepository, "findCitingStreamIds").mockResolvedValue([])
+  })
+
   it("re-embeds when the abstract changes and persists both in one transaction", async () => {
     const { service, embed } = buildService()
     stubSourceStreamResolution()

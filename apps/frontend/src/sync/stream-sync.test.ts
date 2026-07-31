@@ -11,6 +11,7 @@ import {
   registerStreamSocketHandlers,
   toCachedStreamBootstrap,
   updateMessageEvent,
+  updateMemoEmbedSummary,
   type CachedStreamBootstrap,
 } from "./stream-sync"
 import { streamKeys } from "@/hooks/use-streams"
@@ -1120,6 +1121,74 @@ describe("applyStreamBootstrap — read-state freshness (stale response guard)",
       lastReadSequence: "50",
       lastReadAt: "2026-01-01T00:00:05.000Z",
     })
+  })
+})
+
+describe("updateMemoEmbedSummary", () => {
+  const SUMMARY = {
+    memoId: "memo_a",
+    title: "Launch in June",
+    knowledgeType: "decision" as const,
+    memoType: "conversation" as const,
+    tags: ["launch"],
+    updatedAt: "2026-07-31T10:00:00.000Z",
+  }
+
+  async function seed(streamId: string, id: string, memoEmbeds: unknown) {
+    await db.events.put({
+      ...makeEvent({
+        id,
+        streamId,
+        sequence: "100",
+        payload: { messageId: `msg_${id}`, contentMarkdown: "cites a memo", memoEmbeds },
+      }),
+      workspaceId: "ws_1",
+      _sequenceNum: 100,
+      _cachedAt: Date.now(),
+    })
+  }
+
+  beforeEach(async () => {
+    await db.events.clear()
+  })
+
+  it("replaces the summary on every message citing that memo", async () => {
+    const streamId = "stream_memo_patch"
+    await seed(streamId, "evt_1", [{ ...SUMMARY, title: "Launch in May" }])
+    await seed(streamId, "evt_2", [
+      { memoId: "memo_other", title: "Untouched" },
+      { ...SUMMARY, title: "Launch in May" },
+    ])
+
+    await updateMemoEmbedSummary(streamId, SUMMARY)
+
+    const first = await db.events.get("evt_1")
+    expect((first?.payload as { memoEmbeds: Array<{ title: string }> }).memoEmbeds[0].title).toBe("Launch in June")
+    const second = await db.events.get("evt_2")
+    const embeds = (second?.payload as { memoEmbeds: Array<{ memoId: string; title: string }> }).memoEmbeds
+    expect(embeds.map((e) => e.title)).toEqual(["Untouched", "Launch in June"])
+  })
+
+  // The event says a memo changed, not that this reader may see it. The server
+  // already decided per room which messages carry a summary; adding one here
+  // would put a card in front of someone the write path withheld it from.
+  it("does not add a summary to a message that never carried one", async () => {
+    const streamId = "stream_memo_absent"
+    await seed(streamId, "evt_bare", undefined)
+
+    await updateMemoEmbedSummary(streamId, SUMMARY)
+
+    expect((await db.events.get("evt_bare"))?.payload).not.toHaveProperty("memoEmbeds.0")
+  })
+
+  it("leaves other streams alone", async () => {
+    await seed("stream_a", "evt_a", [{ ...SUMMARY, title: "Launch in May" }])
+    await seed("stream_b", "evt_b", [{ ...SUMMARY, title: "Launch in May" }])
+
+    await updateMemoEmbedSummary("stream_a", SUMMARY)
+
+    const untouched = await db.events.get("evt_b")
+    expect((untouched?.payload as { memoEmbeds: Array<{ title: string }> }).memoEmbeds[0].title).toBe("Launch in May")
   })
 })
 
@@ -3039,6 +3108,80 @@ describe("registerStreamSocketHandlers — shared-message slot ingestion (Amendm
       const row = await db.events.get(id)
       expect((row?.payload as { memoEmbeds: unknown }).memoEmbeds).toEqual(memoEmbeds)
     }
+  })
+
+  // An edit event can arrive AFTER a memo:updated patch it predates — the edit
+  // resolved its summaries before the memo changed. Per memo, the strictly
+  // newer updatedAt wins, so the card never repaints backwards; the edit still
+  // decides WHICH memos have cards at all.
+  it("message:edited does not repaint a summary backwards past a newer memo:updated patch", async () => {
+    const streamId = "stream_memo_edit_race"
+    const queryClient = new QueryClient()
+    const base = {
+      memoId: "memo_raced",
+      knowledgeType: "decision" as const,
+      memoType: "conversation" as const,
+      tags: [],
+    }
+    const patched = { ...base, title: "Launch in June", updatedAt: "2026-07-31T12:00:00.000Z" }
+    const preUpdate = { ...base, title: "Launch in May", updatedAt: "2026-07-31T11:00:00.000Z" }
+    await db.events.put({
+      ...makeEvent({
+        id: "evt_raced",
+        streamId,
+        sequence: "50",
+        payload: { messageId: "msg_raced", contentMarkdown: "old", memoEmbeds: [patched] },
+      }),
+      workspaceId: "ws_1",
+      _sequenceNum: 50,
+      _cachedAt: Date.now(),
+    })
+
+    const { socket, emit } = createTestSocket()
+    const cleanup = registerStreamSocketHandlers(socket, "ws_1", streamId, queryClient)
+    await emit("message:edited", {
+      workspaceId: "ws_1",
+      streamId,
+      event: makeEvent({
+        id: "evt_raced_edit",
+        streamId,
+        sequence: "101",
+        eventType: "message_edited",
+        payload: { messageId: "msg_raced", contentJson: {}, contentMarkdown: "edited", memoEmbeds: [preUpdate] },
+      }),
+    })
+    cleanup()
+
+    const row = await db.events.get("evt_raced")
+    expect((row?.payload as { memoEmbeds: Array<{ title: string }> }).memoEmbeds).toEqual([patched])
+  })
+
+  // Label pages render from their own query, not db.events; the backend
+  // resolves their summaries fresh at read, so invalidation IS their repaint.
+  it("memo:updated invalidates label message queries but not the label list", async () => {
+    const streamId = "stream_memo_labels"
+    const queryClient = new QueryClient()
+    queryClient.setQueryData(["labels", "ws_1", "label_1", "messages"], [])
+    queryClient.setQueryData(["labels", "ws_1"], [])
+
+    const { socket, emit } = createTestSocket()
+    const cleanup = registerStreamSocketHandlers(socket, "ws_1", streamId, queryClient)
+    await emit("memo:updated", {
+      streamId,
+      memoId: "memo_a",
+      summary: {
+        memoId: "memo_a",
+        title: "Launch in June",
+        knowledgeType: "decision",
+        memoType: "conversation",
+        tags: [],
+        updatedAt: "2026-07-31T12:00:00.000Z",
+      },
+    })
+    cleanup()
+
+    expect(queryClient.getQueryState(["labels", "ws_1", "label_1", "messages"])?.isInvalidated).toBe(true)
+    expect(queryClient.getQueryState(["labels", "ws_1"])?.isInvalidated).toBe(false)
   })
 
   it("message:edited rekeys a legacy-only payload to canonical keys", async () => {

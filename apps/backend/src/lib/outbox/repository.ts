@@ -6,6 +6,7 @@ import type { ConversationWithStaleness } from "../../features/conversations"
 import type { HydratedSharedMessage } from "../../features/messaging/sharing"
 import type {
   Memo as WireMemo,
+  MemoEmbedSummary,
   StreamEvent as WireStreamEvent,
   UserPreferences,
   SidebarConfig,
@@ -61,6 +62,7 @@ export type OutboxEventType =
   | "board:conversation_hide_changed"
   | "board:stream_mute_changed"
   | "memo:created"
+  | "memo:updated"
   | "command:dispatched"
   | "command:completed"
   | "command:failed"
@@ -134,6 +136,7 @@ export type OutboxEventType =
 
 /** Events that are scoped to a stream (have streamId) */
 export type StreamScopedEventType =
+  | "memo:updated"
   | "message:created"
   | "message:edited"
   | "message:deleted"
@@ -595,6 +598,23 @@ export interface ConversationMessageReassignedOutboxPayload extends StreamScoped
 export interface MemoCreatedOutboxPayload extends WorkspaceScopedPayload {
   memoId: string
   memo: WireMemo
+}
+
+/**
+ * A memo's card content changed, for the streams that cite it.
+ *
+ * STREAM-scoped, one event per citing stream, and it carries only the card's
+ * fields — never the abstract or key points. Both are deliberate: the summary a
+ * room may see is decided per room (`findEmbedSummaries`), so a workspace-wide
+ * broadcast would hand it to people who can't open the memo, and the card needs
+ * nothing beyond what it draws.
+ *
+ * This is the ONLY thing allowed to change a rendered memo card. Content may
+ * change when the memo changed; it may not change because it hadn't loaded.
+ */
+export interface MemoUpdatedOutboxPayload extends StreamScopedPayload {
+  memoId: string
+  summary: MemoEmbedSummary
 }
 
 // Author-scoped event payloads (only visible to the author)
@@ -1196,6 +1216,7 @@ export interface OutboxEventPayloadMap {
   "board:conversation_hide_changed": BoardConversationHideChangedOutboxPayload
   "board:stream_mute_changed": BoardStreamMuteChangedOutboxPayload
   "memo:created": MemoCreatedOutboxPayload
+  "memo:updated": MemoUpdatedOutboxPayload
   "command:dispatched": CommandDispatchedOutboxPayload
   "command:completed": CommandCompletedOutboxPayload
   "command:failed": CommandFailedOutboxPayload
@@ -1287,6 +1308,12 @@ export function isOneOfOutboxEventType<T extends OutboxEventType>(
 }
 
 const STREAM_SCOPED_EVENTS: StreamScopedEventType[] = [
+  // Routing is driven by THIS list, not by the payload extending
+  // `StreamScopedPayload` — `resolveDeliveryGroups` only takes the stream
+  // branch when `isStreamScopedEvent` finds the type here. Omitted, an event
+  // falls through to the whole-workspace group, which for this one would hand
+  // a memo's card content to every member regardless of stream access.
+  "memo:updated",
   "message:created",
   "message:edited",
   "message:deleted",

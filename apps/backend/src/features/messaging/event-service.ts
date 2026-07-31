@@ -1748,6 +1748,32 @@ export class EventService {
           return a.id.localeCompare(b.id)
         }
       )
+
+      // Stored message payloads snapshot their memo summaries at send time; the
+      // destination bulkPut would repaint a memo:updated patch backwards with
+      // that snapshot. Re-resolve against the destination root at move time —
+      // the same room-uniform shape as the share hydration below. Must run
+      // BEFORE serializeBigInt, which deep-copies the payloads.
+      const movedMemoIdsByMessage = new Map(selectedMessages.map((m) => [m.id, collectMemoEmbedIds(m.contentJson)]))
+      const movedMemoIds = [...new Set([...movedMemoIdsByMessage.values()].flat())]
+      if (movedMemoIds.length > 0) {
+        const movedSummaries = await MemoRepository.findEmbedSummaries(
+          client,
+          params.workspaceId,
+          movedMemoIds,
+          destinationThread.rootStreamId ?? destinationThread.id
+        )
+        for (const event of orderedDestinationEvents) {
+          if (event.eventType !== "message_created") continue
+          const payload = event.payload as { messageId?: string; memoEmbeds?: MemoEmbedSummary[] }
+          const ids = payload.messageId ? movedMemoIdsByMessage.get(payload.messageId) : undefined
+          if (!ids) continue
+          const resolved = ids.map((id) => movedSummaries.get(id)).filter((s): s is MemoEmbedSummary => s !== undefined)
+          if (resolved.length > 0) payload.memoEmbeds = resolved
+          else delete payload.memoEmbeds
+        }
+      }
+
       const serializedDestinationEvents = orderedDestinationEvents.map(
         (event) => serializeBigInt(event) as unknown as WireStreamEvent
       )
