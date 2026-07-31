@@ -21,9 +21,16 @@ import { resolveConversationDelivery } from "./conversation-delivery"
  */
 export async function emitAssignmentEvents(
   client: PoolClient,
-  params: { workspaceId: string; message: Message; conversationId: string; created: boolean; reason: string }
+  params: {
+    workspaceId: string
+    message: Message
+    conversationId: string
+    created: boolean
+    reason: string
+    settling?: boolean
+  }
 ): Promise<Conversation> {
-  const { workspaceId, message, conversationId, created, reason } = params
+  const { workspaceId, message, conversationId, created, reason, settling = false } = params
 
   const stream = await StreamRepository.findById(client, message.streamId)
   const { parentStreamId, streamVisibility } = await resolveConversationDelivery(client, stream)
@@ -34,8 +41,8 @@ export async function emitAssignmentEvents(
     throw new Error(`Conversation ${conversationId} vanished during assignment`)
   }
 
-  // The declared/agent assignment itself is never settling, but the conversation
-  // it joins may hold provisional members — the payload must carry the full set.
+  // The conversation may hold provisional members beyond this assignment — the
+  // payload must carry the full set.
   const settlingByConversation = await MessageConversationStateRepository.listSettlingByConversationIds(
     client,
     workspaceId,
@@ -59,7 +66,7 @@ export async function emitAssignmentEvents(
     conversationId: refreshed.id,
     isPrimary: true,
     reason,
-    settling: false,
+    settling,
   })
 
   return refreshed

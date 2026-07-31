@@ -1,6 +1,6 @@
 export { createConversationHandlers } from "./handlers"
 
-export { conversationAssigner } from "./conversation-assigner"
+export { conversationAssigner, PROVISIONAL_ATTACH_WINDOW_MINUTES } from "./conversation-assigner"
 
 export { ConversationService } from "./service"
 export type { ConversationWithStaleness, ListConversationsOptions } from "./service"

@@ -1138,10 +1138,12 @@ describe("EventService.createMessage conversation declaration (Mechanism C)", ()
   }
 
   const assignInTransaction = mock(async () => "conv_assigned")
-  const conversationAssigner = { assignInTransaction }
+  const attachProvisionalInTransaction = mock(async (): Promise<string | null> => null)
+  const conversationAssigner = { assignInTransaction, attachProvisionalInTransaction }
 
   beforeEach(() => {
     assignInTransaction.mockClear()
+    attachProvisionalInTransaction.mockClear()
     spyOn(db, "withTransaction").mockImplementation(((_db: unknown, callback: (client: any) => Promise<unknown>) =>
       callback({})) as any)
     spyOn(StreamRepository, "findById").mockResolvedValue({ id: "stream_1", type: "scratchpad" } as any)
@@ -1216,7 +1218,7 @@ describe("EventService.createMessage conversation declaration (Mechanism C)", ()
     expect(assignInTransaction).toHaveBeenCalled()
   })
 
-  it("omits declaredConversationId and skips the assigner when the send declares no conversation", async () => {
+  it("omits declaredConversationId and takes the provisional path when the send declares no conversation", async () => {
     const service = new EventService({} as any, conversationAssigner)
 
     await service.createMessage({ ...baseParams })
@@ -1224,6 +1226,7 @@ describe("EventService.createMessage conversation declaration (Mechanism C)", ()
     const eventPayload = (StreamEventRepository.insert as any).mock.calls[0][1].payload
     expect(eventPayload).not.toHaveProperty("declaredConversationId")
     expect(assignInTransaction).not.toHaveBeenCalled()
+    expect(attachProvisionalInTransaction).toHaveBeenCalled()
   })
 
   it("surfaces the assigner's conversation id from createMessageReturningConversation for an optimistic board card", async () => {
