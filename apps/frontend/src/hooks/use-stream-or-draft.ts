@@ -167,6 +167,10 @@ export interface UseStreamOrDraftReturn {
   archive: () => Promise<void>
   unarchive?: () => Promise<void>
   sendMessage: (input: SendMessageInput) => Promise<{ navigateTo?: string; replace?: boolean }>
+  /** The viewer's workspace user id the send path stamps on optimistic rows;
+   *  null until the users liveQuery delivers — `sendMessage` throws before then,
+   *  so callers (and tests) that fire sends programmatically gate on this. */
+  currentUserId: string | null
 }
 
 /**
@@ -250,6 +254,7 @@ function useDraftStream(workspaceId: string, streamId: string, enabled: boolean)
     rename,
     archive,
     sendMessage,
+    currentUserId,
   }
 }
 
@@ -455,6 +460,7 @@ function useDraftDmStream(workspaceId: string, streamId: string, enabled: boolea
     rename,
     archive,
     sendMessage,
+    currentUserId,
   }
 }
 
@@ -712,6 +718,7 @@ function useRealStream(workspaceId: string, streamId: string, enabled: boolean):
     archive,
     unarchive,
     sendMessage,
+    currentUserId,
   }
 }
 

@@ -47,8 +47,8 @@ import { useBoardCardCollapse } from "@/hooks/use-board-card-collapse"
 import { useSplitThread } from "@/hooks/use-conversations"
 import {
   applySettlingAll,
-  composeRevealedWindow,
   useBoardCardMessages,
+  useRevealedReplyWindow,
   useStableReplyWindow,
 } from "@/hooks/use-board-card-messages"
 import { useConversationBackfill } from "@/hooks/use-conversation-backfill"
@@ -137,7 +137,19 @@ export function BoardCard({
   // Revealing the hidden middle ("N more messages") grows this card from OLDER
   // content above the trailing replies; hold the card bottom fixed so the newest
   // replies the reader is on don't jump (the board's `shift`, see the hook).
-  const beginReveal = useBoardCardRevealAnchor({ cardRef, scrollerRef, listRef })
+  // Mirrors `loadingMore` (computed below, after the rail) so the anchor hook can
+  // read it at settle time without re-subscribing each render.
+  const loadingMoreRef = useRef(false)
+  // The first row of the current visible window — the reveal anchor's landmark,
+  // read at gesture time. A ref so `revealPage`'s identity doesn't churn per render
+  // (the auto-reveal hook subscribes on it).
+  const firstDisplayedIdRef = useRef<string | undefined>(undefined)
+  const { beginReveal, closeReveal } = useBoardCardRevealAnchor({
+    cardRef,
+    scrollerRef,
+    listRef,
+    shouldHoldOpen: useCallback(() => loadingMoreRef.current, []),
+  })
   // Rows scrolled out from under the gap so far, one page per upward gesture.
   // Recycling this card instance onto another conversation resets the count —
   // the conversation id lives IN the state (not a ref) so a discarded render
@@ -412,9 +424,8 @@ export function BoardCard({
 
   // Expanded: the hook's merged view (rail > backfill store > projection).
   // Collapsed: the stable window over it.
-  const replies: RenderableMessage[] = expanded
-    ? railReplies
-    : composeRevealedWindow(railReplies, collapsedReplies, revealedRows)
+  const revealedReplies = useRevealedReplyWindow(conversation.id, railReplies, collapsedReplies, revealedRows)
+  const replies: RenderableMessage[] = expanded ? railReplies : revealedReplies
   // Merge this card's own just-sent replies with the confirmed set, skipping any
   // the rail or a backfill already carries, then sort by time: a pending reply
   // can be OLDER than a confirmed one (someone else's reply lands while yours is
@@ -429,6 +440,7 @@ export function BoardCard({
     ),
     settlingIds
   )
+  firstDisplayedIdRef.current = displayedReplies[0]?.id
   // `totalReplies` counts tombstones as zero, so the visible rows must be counted
   // the same way or a drawn tombstone would subtract from the gap it isn't in.
   const hiddenCount = expanded ? 0 : Math.max(0, totalReplies - replies.filter((m) => !m.deletedAt).length)
@@ -436,6 +448,7 @@ export function BoardCard({
   // server backfill fills both, so the wait and its retry show for both.
   const revealing = expanded || revealedRows > 0
   const loadingMore = revealing && incompleteLocally && !allMessages && !expandFailed
+  loadingMoreRef.current = loadingMore
   // No middle is hidden, so opening + replies form one uninterrupted run that
   // groups across the boundary. Otherwise a gap row sits between them.
   const contiguous = (expanded && (!incompleteLocally || !!allMessages)) || (!expanded && hiddenCount === 0)
@@ -454,7 +467,14 @@ export function BoardCard({
   // another page — a short flick banks twenty of them and the whole hidden middle
   // dumps at once the moment the rows land.
   const revealPage = useCallback(() => {
-    beginReveal({ mode: "scroll" })
+    // The row directly below the seam as it stands NOW: the revealed page pushes
+    // exactly this row (and everything under it) down, so holding it still holds
+    // the reader's eye-line while a live tail reply below it still pushes normally.
+    const firstVisibleId = firstDisplayedIdRef.current
+    const landmark = firstVisibleId
+      ? cardRef.current?.querySelector<HTMLElement>(`[data-message-row][data-message-id="${firstVisibleId}"]`)
+      : null
+    beginReveal({ mode: "scroll", landmark })
     setRevealed((current) => {
       const rows = current.conversationId === conversation.id ? current.rows : 0
       return {
@@ -521,6 +541,15 @@ export function BoardCard({
     observer.observe(el)
     return () => observer.disconnect()
   }, [])
+  // A programmatic jump (the "N new" pill sets scrollTop to 0) doesn't fire the
+  // gesture listeners that disarm the hold, so an armed window on a card that just
+  // left the viewport would scroll the feed back toward it when its growth lands.
+  // A card taller than the viewport keeps intersecting mid-walk, so a genuine walk
+  // is unaffected.
+  useEffect(() => {
+    if (!cardInViewport) closeReveal()
+  }, [cardInViewport, closeReveal])
+
   // The nested branches the card renders count as on-screen too — their content
   // is read right here, so pushes for them must suppress as well.
   const cardVisibleStreamIds = useMemo(

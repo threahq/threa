@@ -189,6 +189,8 @@ describe("useStreamOrDraft real stream send", () => {
 
     await waitFor(() => {
       expect(result.current.stream?.id).toBe("stream_socket_seen")
+      // Sends throw until the users liveQuery delivers the sender's identity.
+      expect(result.current.currentUserId).toBe("member_1")
     })
 
     return { result, queryClient }
@@ -430,6 +432,12 @@ describe("useStreamOrDraft draft DM send", () => {
 
     await waitFor(() => {
       expect(result.current.stream?.id).toBe("draft_dm_member_2")
+      // Sends throw until the users liveQuery delivers the sender's identity.
+      expect(result.current.currentUserId).toBe("member_1")
+      // The persist path names the DM from the peer row; wait until the draft
+      // itself resolves the peer (users + dmPeers delivered), or the persisted
+      // row races into the "Direct message" placeholder.
+      expect(result.current.stream?.displayName).toBe("Invitee")
     })
 
     await act(async () => {
