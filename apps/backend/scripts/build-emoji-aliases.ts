@@ -69,6 +69,24 @@ function fold(text: string): string {
   return text.toLowerCase().replace(/[\s_-]/g, "")
 }
 
+/**
+ * Reduce a CLDR annotation to characters a picker query can plausibly contain:
+ * diacritics folded to ASCII, everything outside [a-z0-9 _+-] turned into a
+ * separator. Punctuation left in place would match queries no one means —
+ * "a button (blood type)" made `:)` match 🅰️, so the classic smiley typo held
+ * the emoji popup open and swallowed the Enter that should have sent the
+ * message (tests/browser/emoji-shortcuts.spec.ts).
+ */
+function sanitizeKeyword(text: string): string {
+  return text
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/\p{Diacritic}/gu, "")
+    .replace(/[^a-z0-9 _+-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+}
+
 function toList(value: string | string[] | undefined): string[] {
   if (value === undefined) return []
   return Array.isArray(value) ? value : [value]
@@ -139,7 +157,7 @@ async function main() {
     const covered = new Set(entry.shortcodes.map(fold))
     const keywords: string[] = []
     for (const raw of [...(source.tags ?? []), source.label]) {
-      const keyword = raw.toLowerCase().trim()
+      const keyword = sanitizeKeyword(raw)
       // A keyword identical to one of this emoji's own shortcodes is pure
       // payload — the shortcode already matches at a strictly better tier.
       if (!keyword || covered.has(fold(keyword))) continue
@@ -150,7 +168,12 @@ async function main() {
     keywordCount += keywords.length
   }
 
-  writeFileSync(dataPath, `${JSON.stringify(data, null, 2)}\n`)
+  // Format through prettier, not bare JSON.stringify: lint-staged reformats the
+  // file on commit, so unformatted output makes every regeneration a 14k-line
+  // whitespace diff instead of the handful of lines that actually changed.
+  const prettier = await import("prettier")
+  const config = await prettier.resolveConfig(dataPath)
+  writeFileSync(dataPath, await prettier.format(JSON.stringify(data), { ...config, filepath: dataPath }))
 
   console.log(`Added ${Object.values(added).reduce((sum, n) => sum + n, 0)} shortcodes`, added)
   console.log(`Wrote ${keywordCount} keywords`)

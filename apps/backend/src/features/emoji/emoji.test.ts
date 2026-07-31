@@ -171,18 +171,34 @@ describe("Emoji Library", () => {
       expect(redundant).toEqual([])
     })
 
-    test("keywords are lowercase and free of the colon wrapper", () => {
-      // Keywords never cross the wire as `:name:`; the only formatting contract
-      // is that search compares them lowercased and unwrapped.
+    test("keywords contain only characters a picker query can carry", () => {
+      // Punctuation in a keyword matches queries nobody means. The CLDR label
+      // "A button (blood type)" made `:)` match 🅰️, so the classic smiley typo
+      // held the composer's emoji popup open and swallowed the Enter that
+      // should have sent the message.
+      const QUERY_SAFE = /^[a-z0-9 _+-]+$/
       const invalid: string[] = []
       for (const { emoji, keywords } of emojiData.emojis) {
         for (const keyword of keywords) {
-          if (keyword !== keyword.toLowerCase().trim() || /^:.*:$/.test(keyword)) {
-            invalid.push(`${emoji} -> "${keyword}"`)
-          }
+          if (!QUERY_SAFE.test(keyword)) invalid.push(`${emoji} -> "${keyword}"`)
         }
       }
       expect(invalid).toEqual([])
+    })
+
+    test("no emoji matches a bare punctuation query", () => {
+      // The `:)` regression above, stated as the behaviour rather than the
+      // format rule — a shortcode or keyword must never make an emoticon typo
+      // look like a search with results.
+      const matched: string[] = []
+      for (const query of [")", "(", ":", "!", "?", "*", "'", "."]) {
+        for (const { emoji, shortcodes, keywords } of emojiData.emojis) {
+          if ([...shortcodes, ...keywords].some((text) => text.includes(query))) {
+            matched.push(`"${query}" -> ${emoji}`)
+          }
+        }
+      }
+      expect(matched).toEqual([])
     })
 
     test("primary shortcode is canonical for toShortcode()", () => {

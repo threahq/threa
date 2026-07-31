@@ -594,7 +594,6 @@
       "group": "smileys",
       "order": 46,
       "keywords": [
-        "...",
         "bored",
         "face",
         "fine",
@@ -1182,7 +1181,7 @@
       "shortcodes": ["skull", "dead", "rip", "skeleton"],
       "group": "smileys",
       "order": 113,
-      "keywords": ["body", "death", "face", "fairy", "fairytale", "i’m", "lmao", "monster", "tale", "yolo"]
+      "keywords": ["body", "death", "face", "fairy", "fairytale", "i m", "lmao", "monster", "tale", "yolo"]
     },
     {
       "emoji": "☠️",
@@ -1213,13 +1212,7 @@
         "turd"
       ]
     },
-    {
-      "emoji": "🤡",
-      "shortcodes": ["clown_face", "clown"],
-      "group": "smileys",
-      "order": 117,
-      "keywords": ["face"]
-    },
+    { "emoji": "🤡", "shortcodes": ["clown_face", "clown"], "group": "smileys", "order": 117, "keywords": ["face"] },
     {
       "emoji": "👹",
       "shortcodes": ["japanese_ogre", "ogre"],
@@ -1677,13 +1670,7 @@
       "order": 171,
       "keywords": ["away", "cloud", "comic", "dashing", "fart", "fast", "go", "gone", "gotta", "running", "smoke"]
     },
-    {
-      "emoji": "🕳️",
-      "shortcodes": ["hole"],
-      "group": "smileys",
-      "order": 172,
-      "keywords": []
-    },
+    { "emoji": "🕳️", "shortcodes": ["hole"], "group": "smileys", "order": 172, "keywords": [] },
     {
       "emoji": "💬",
       "shortcodes": ["speech_balloon"],
@@ -2053,13 +2040,7 @@
       "order": 270,
       "keywords": ["bored", "care", "cosmetics", "done", "makeup", "manicure", "nail", "polish", "whatever"]
     },
-    {
-      "emoji": "🤳",
-      "shortcodes": ["selfie"],
-      "group": "people",
-      "order": 276,
-      "keywords": ["camera", "phone"]
-    },
+    { "emoji": "🤳", "shortcodes": ["selfie"], "group": "people", "order": 276, "keywords": ["camera", "phone"] },
     {
       "emoji": "💪",
       "shortcodes": ["muscle", "strong", "flex", "right_bicep", "flexed_biceps"],
@@ -2130,13 +2111,7 @@
       "order": 314,
       "keywords": ["body", "noses", "nosey", "odor", "smell", "smells"]
     },
-    {
-      "emoji": "🧠",
-      "shortcodes": ["brain"],
-      "group": "people",
-      "order": 320,
-      "keywords": ["intelligent", "smart"]
-    },
+    { "emoji": "🧠", "shortcodes": ["brain"], "group": "people", "order": 320, "keywords": ["intelligent", "smart"] },
     {
       "emoji": "🫀",
       "shortcodes": ["anatomical_heart"],
@@ -2172,20 +2147,8 @@
       "order": 325,
       "keywords": ["body", "eye", "face", "googly", "look", "omg", "peep", "see", "seeing"]
     },
-    {
-      "emoji": "👁️",
-      "shortcodes": ["eye"],
-      "group": "people",
-      "order": 326,
-      "keywords": ["1", "body", "one"]
-    },
-    {
-      "emoji": "👅",
-      "shortcodes": ["tongue"],
-      "group": "people",
-      "order": 328,
-      "keywords": ["body", "lick", "slurp"]
-    },
+    { "emoji": "👁️", "shortcodes": ["eye"], "group": "people", "order": 326, "keywords": ["1", "body", "one"] },
+    { "emoji": "👅", "shortcodes": ["tongue"], "group": "people", "order": 328, "keywords": ["body", "lick", "slurp"] },
     {
       "emoji": "👄",
       "shortcodes": ["lips", "mouth"],
@@ -2214,41 +2177,23 @@
       "order": 349,
       "keywords": ["bright-eyed", "child", "daughter", "granddaughter", "kid", "virgo", "young", "younger", "zodiac"]
     },
-    {
-      "emoji": "🧑",
-      "shortcodes": ["adult", "person"],
-      "group": "people",
-      "order": 355,
-      "keywords": []
-    },
+    { "emoji": "🧑", "shortcodes": ["adult", "person"], "group": "people", "order": 355, "keywords": [] },
     {
       "emoji": "👱",
       "shortcodes": ["person_blond_hair", "blond_haired_person", "person_with_blond_hair", "blond_haired"],
       "group": "people",
       "order": 361,
-      "keywords": ["blond", "human", "person", "person: blond hair"]
+      "keywords": ["blond", "human", "person"]
     },
-    {
-      "emoji": "👨",
-      "shortcodes": ["man"],
-      "group": "people",
-      "order": 367,
-      "keywords": ["adult", "bro"]
-    },
+    { "emoji": "👨", "shortcodes": ["man"], "group": "people", "order": 367, "keywords": ["adult", "bro"] },
     {
       "emoji": "🧔",
       "shortcodes": ["bearded_person", "person_bearded", "person_beard"],
       "group": "people",
       "order": 373,
-      "keywords": ["beard", "bearded", "person", "whiskers", "person: beard"]
+      "keywords": ["beard", "bearded", "person", "whiskers"]
     },
-    {
-      "emoji": "👩",
-      "shortcodes": ["woman"],
-      "group": "people",
-      "order": 427,
-      "keywords": ["adult", "lady"]
-    },
+    { "emoji": "👩", "shortcodes": ["woman"], "group": "people", "order": 427, "keywords": ["adult", "lady"] },
     {
       "emoji": "🧓",
       "shortcodes": ["older_adult", "older_person"],
@@ -2557,8 +2502,7 @@
         "mrs",
         "santa",
         "tale",
-        "xmas",
-        "mrs. claus"
+        "xmas"
       ]
     },
     {
@@ -2725,7 +2669,7 @@
         "flair",
         "flamenco",
         "groove",
-        "let’s",
+        "let s",
         "salsa",
         "tango",
         "woman"
@@ -2745,7 +2689,7 @@
         "flair",
         "flamenco",
         "groove",
-        "let’s",
+        "let s",
         "man",
         "salsa",
         "tango"
@@ -3164,13 +3108,7 @@
         "thanks"
       ]
     },
-    {
-      "emoji": "👪",
-      "shortcodes": ["family"],
-      "group": "people",
-      "order": 3284,
-      "keywords": ["child"]
-    },
+    { "emoji": "👪", "shortcodes": ["family"], "group": "people", "order": 3284, "keywords": ["child"] },
     {
       "emoji": "👣",
       "shortcodes": ["footprints"],
@@ -3185,20 +3123,8 @@
       "order": 0,
       "keywords": ["animal", "banana", "face", "monkey"]
     },
-    {
-      "emoji": "🐒",
-      "shortcodes": ["monkey"],
-      "group": "animals",
-      "order": 1,
-      "keywords": ["animal", "banana"]
-    },
-    {
-      "emoji": "🦍",
-      "shortcodes": ["gorilla"],
-      "group": "animals",
-      "order": 2,
-      "keywords": ["animal"]
-    },
+    { "emoji": "🐒", "shortcodes": ["monkey"], "group": "animals", "order": 1, "keywords": ["animal", "banana"] },
+    { "emoji": "🦍", "shortcodes": ["gorilla"], "group": "animals", "order": 2, "keywords": ["animal"] },
     {
       "emoji": "🦧",
       "shortcodes": ["orangutan"],
@@ -3325,13 +3251,7 @@
       "order": 22,
       "keywords": ["animal", "equestrian", "farm", "racing", "horse"]
     },
-    {
-      "emoji": "🦄",
-      "shortcodes": ["unicorn", "unicorn_face"],
-      "group": "animals",
-      "order": 23,
-      "keywords": ["face"]
-    },
+    { "emoji": "🦄", "shortcodes": ["unicorn", "unicorn_face"], "group": "animals", "order": 23, "keywords": ["face"] },
     {
       "emoji": "🦓",
       "shortcodes": ["zebra", "zebra_face"],
@@ -3339,13 +3259,7 @@
       "order": 24,
       "keywords": ["animal", "stripe"]
     },
-    {
-      "emoji": "🦌",
-      "shortcodes": ["deer"],
-      "group": "animals",
-      "order": 25,
-      "keywords": ["animal"]
-    },
+    { "emoji": "🦌", "shortcodes": ["deer"], "group": "animals", "order": 25, "keywords": ["animal"] },
     {
       "emoji": "🦬",
       "shortcodes": ["bison"],
@@ -3395,13 +3309,7 @@
       "order": 32,
       "keywords": ["animal", "bacon", "farm", "pork", "sow", "pig"]
     },
-    {
-      "emoji": "🐗",
-      "shortcodes": ["boar"],
-      "group": "animals",
-      "order": 33,
-      "keywords": ["animal", "pig"]
-    },
+    { "emoji": "🐗", "shortcodes": ["boar"], "group": "animals", "order": 33, "keywords": ["animal", "pig"] },
     {
       "emoji": "🐽",
       "shortcodes": ["pig_nose"],
@@ -3449,7 +3357,7 @@
       "shortcodes": ["llama"],
       "group": "animals",
       "order": 40,
-      "keywords": ["alpaca", "animal", "guanaco", "vicuña", "wool"]
+      "keywords": ["alpaca", "animal", "guanaco", "vicuna", "wool"]
     },
     {
       "emoji": "🦒",
@@ -3458,13 +3366,7 @@
       "order": 41,
       "keywords": ["animal", "spots"]
     },
-    {
-      "emoji": "🐘",
-      "shortcodes": ["elephant"],
-      "group": "animals",
-      "order": 42,
-      "keywords": ["animal"]
-    },
+    { "emoji": "🐘", "shortcodes": ["elephant"], "group": "animals", "order": 42, "keywords": ["animal"] },
     {
       "emoji": "🦣",
       "shortcodes": ["mammoth"],
@@ -3472,20 +3374,8 @@
       "order": 43,
       "keywords": ["animal", "extinction", "large", "tusk", "wooly"]
     },
-    {
-      "emoji": "🦏",
-      "shortcodes": ["rhinoceros", "rhino"],
-      "group": "animals",
-      "order": 44,
-      "keywords": ["animal"]
-    },
-    {
-      "emoji": "🦛",
-      "shortcodes": ["hippopotamus", "hippo"],
-      "group": "animals",
-      "order": 45,
-      "keywords": ["animal"]
-    },
+    { "emoji": "🦏", "shortcodes": ["rhinoceros", "rhino"], "group": "animals", "order": 44, "keywords": ["animal"] },
+    { "emoji": "🦛", "shortcodes": ["hippopotamus", "hippo"], "group": "animals", "order": 45, "keywords": ["animal"] },
     {
       "emoji": "🐭",
       "shortcodes": ["mouse", "mouse_face"],
@@ -3500,13 +3390,7 @@
       "order": 47,
       "keywords": ["animal", "animals", "mouse"]
     },
-    {
-      "emoji": "🐀",
-      "shortcodes": ["rat"],
-      "group": "animals",
-      "order": 48,
-      "keywords": ["animal"]
-    },
+    { "emoji": "🐀", "shortcodes": ["rat"], "group": "animals", "order": 48, "keywords": ["animal"] },
     {
       "emoji": "🐹",
       "shortcodes": ["hamster", "hamster_face"],
@@ -3528,13 +3412,7 @@
       "order": 51,
       "keywords": ["animal", "bunny", "pet", "rabbit"]
     },
-    {
-      "emoji": "🐿️",
-      "shortcodes": ["chipmunk"],
-      "group": "animals",
-      "order": 52,
-      "keywords": ["animal", "squirrel"]
-    },
+    { "emoji": "🐿️", "shortcodes": ["chipmunk"], "group": "animals", "order": 52, "keywords": ["animal", "squirrel"] },
     {
       "emoji": "🦫",
       "shortcodes": ["beaver"],
@@ -3542,20 +3420,8 @@
       "order": 54,
       "keywords": ["animal", "dam", "teeth"]
     },
-    {
-      "emoji": "🦔",
-      "shortcodes": ["hedgehog"],
-      "group": "animals",
-      "order": 55,
-      "keywords": ["animal", "spiny"]
-    },
-    {
-      "emoji": "🦇",
-      "shortcodes": ["bat"],
-      "group": "animals",
-      "order": 56,
-      "keywords": ["animal", "vampire"]
-    },
+    { "emoji": "🦔", "shortcodes": ["hedgehog"], "group": "animals", "order": 55, "keywords": ["animal", "spiny"] },
+    { "emoji": "🦇", "shortcodes": ["bat"], "group": "animals", "order": 56, "keywords": ["animal", "vampire"] },
     {
       "emoji": "🐻",
       "shortcodes": ["bear", "bear_face"],
@@ -3584,13 +3450,7 @@
       "order": 61,
       "keywords": ["animal", "bamboo", "face"]
     },
-    {
-      "emoji": "🦥",
-      "shortcodes": ["sloth"],
-      "group": "animals",
-      "order": 62,
-      "keywords": ["lazy", "slow"]
-    },
+    { "emoji": "🦥", "shortcodes": ["sloth"], "group": "animals", "order": 62, "keywords": ["lazy", "slow"] },
     {
       "emoji": "🦦",
       "shortcodes": ["otter"],
@@ -3598,13 +3458,7 @@
       "order": 63,
       "keywords": ["animal", "fishing", "playful"]
     },
-    {
-      "emoji": "🦨",
-      "shortcodes": ["skunk"],
-      "group": "animals",
-      "order": 64,
-      "keywords": ["animal", "stink"]
-    },
+    { "emoji": "🦨", "shortcodes": ["skunk"], "group": "animals", "order": 64, "keywords": ["animal", "stink"] },
     {
       "emoji": "🦘",
       "shortcodes": ["kangaroo"],
@@ -3759,13 +3613,7 @@
       "order": 91,
       "keywords": ["animal", "face"]
     },
-    {
-      "emoji": "🐊",
-      "shortcodes": ["crocodile"],
-      "group": "animals",
-      "order": 92,
-      "keywords": ["animal", "zoo"]
-    },
+    { "emoji": "🐊", "shortcodes": ["crocodile"], "group": "animals", "order": 92, "keywords": ["animal", "zoo"] },
     {
       "emoji": "🐢",
       "shortcodes": ["turtle"],
@@ -3773,13 +3621,7 @@
       "order": 93,
       "keywords": ["animal", "terrapin", "tortoise"]
     },
-    {
-      "emoji": "🦎",
-      "shortcodes": ["lizard"],
-      "group": "animals",
-      "order": 94,
-      "keywords": ["animal", "reptile"]
-    },
+    { "emoji": "🦎", "shortcodes": ["lizard"], "group": "animals", "order": 94, "keywords": ["animal", "reptile"] },
     {
       "emoji": "🐍",
       "shortcodes": ["snake"],
@@ -3857,20 +3699,8 @@
       "order": 105,
       "keywords": ["animal", "fish", "fishes", "tropical"]
     },
-    {
-      "emoji": "🐡",
-      "shortcodes": ["blowfish"],
-      "group": "animals",
-      "order": 106,
-      "keywords": ["animal", "fish"]
-    },
-    {
-      "emoji": "🦈",
-      "shortcodes": ["shark"],
-      "group": "animals",
-      "order": 107,
-      "keywords": ["animal", "fish"]
-    },
+    { "emoji": "🐡", "shortcodes": ["blowfish"], "group": "animals", "order": 106, "keywords": ["animal", "fish"] },
+    { "emoji": "🦈", "shortcodes": ["shark"], "group": "animals", "order": 107, "keywords": ["animal", "fish"] },
     {
       "emoji": "🐙",
       "shortcodes": ["octopus"],
@@ -3885,13 +3715,7 @@
       "order": 109,
       "keywords": ["animal", "beach", "conch", "sea", "spiral"]
     },
-    {
-      "emoji": "🦀",
-      "shortcodes": ["crab"],
-      "group": "animals",
-      "order": 112,
-      "keywords": ["cancer", "zodiac"]
-    },
+    { "emoji": "🦀", "shortcodes": ["crab"], "group": "animals", "order": 112, "keywords": ["cancer", "zodiac"] },
     {
       "emoji": "🦞",
       "shortcodes": ["lobster"],
@@ -3913,13 +3737,7 @@
       "order": 115,
       "keywords": ["animal", "food", "mollusk"]
     },
-    {
-      "emoji": "🦪",
-      "shortcodes": ["oyster"],
-      "group": "animals",
-      "order": 116,
-      "keywords": ["diving", "pearl"]
-    },
+    { "emoji": "🦪", "shortcodes": ["oyster"], "group": "animals", "order": 116, "keywords": ["diving", "pearl"] },
     {
       "emoji": "🐌",
       "shortcodes": ["snail"],
@@ -3927,13 +3745,7 @@
       "order": 117,
       "keywords": ["animal", "escargot", "garden", "nature", "slug"]
     },
-    {
-      "emoji": "🦋",
-      "shortcodes": ["butterfly"],
-      "group": "animals",
-      "order": 118,
-      "keywords": ["insect", "pretty"]
-    },
+    { "emoji": "🦋", "shortcodes": ["butterfly"], "group": "animals", "order": 118, "keywords": ["insect", "pretty"] },
     {
       "emoji": "🐛",
       "shortcodes": ["bug", "bug_fix"],
@@ -3983,20 +3795,8 @@
       "order": 125,
       "keywords": ["animal", "insect", "pest", "roach"]
     },
-    {
-      "emoji": "🕷️",
-      "shortcodes": ["spider"],
-      "group": "animals",
-      "order": 126,
-      "keywords": ["animal", "insect"]
-    },
-    {
-      "emoji": "🕸️",
-      "shortcodes": ["spider_web"],
-      "group": "animals",
-      "order": 128,
-      "keywords": ["spider", "web"]
-    },
+    { "emoji": "🕷️", "shortcodes": ["spider"], "group": "animals", "order": 126, "keywords": ["animal", "insect"] },
+    { "emoji": "🕸️", "shortcodes": ["spider_web"], "group": "animals", "order": 128, "keywords": ["spider", "web"] },
     {
       "emoji": "🦂",
       "shortcodes": ["scorpion"],
@@ -4053,13 +3853,7 @@
       "order": 137,
       "keywords": ["flower", "white"]
     },
-    {
-      "emoji": "🏵️",
-      "shortcodes": ["rosette"],
-      "group": "animals",
-      "order": 139,
-      "keywords": ["plant"]
-    },
+    { "emoji": "🏵️", "shortcodes": ["rosette"], "group": "animals", "order": 139, "keywords": ["plant"] },
     {
       "emoji": "🌹",
       "shortcodes": ["rose"],
@@ -4074,13 +3868,7 @@
       "order": 142,
       "keywords": ["dying", "flower", "wilted"]
     },
-    {
-      "emoji": "🌺",
-      "shortcodes": ["hibiscus"],
-      "group": "animals",
-      "order": 143,
-      "keywords": ["flower", "plant"]
-    },
+    { "emoji": "🌺", "shortcodes": ["hibiscus"], "group": "animals", "order": 143, "keywords": ["flower", "plant"] },
     {
       "emoji": "🌻",
       "shortcodes": ["sunflower"],
@@ -4151,20 +3939,8 @@
       "order": 154,
       "keywords": ["ear", "grain", "grains", "plant", "rice", "sheaf"]
     },
-    {
-      "emoji": "🌿",
-      "shortcodes": ["herb"],
-      "group": "animals",
-      "order": 155,
-      "keywords": ["leaf", "plant"]
-    },
-    {
-      "emoji": "☘️",
-      "shortcodes": ["shamrock"],
-      "group": "animals",
-      "order": 156,
-      "keywords": ["irish", "plant"]
-    },
+    { "emoji": "🌿", "shortcodes": ["herb"], "group": "animals", "order": 155, "keywords": ["leaf", "plant"] },
+    { "emoji": "☘️", "shortcodes": ["shamrock"], "group": "animals", "order": 156, "keywords": ["irish", "plant"] },
     {
       "emoji": "🍀",
       "shortcodes": ["four_leaf_clover"],
@@ -4207,20 +3983,8 @@
       "order": 0,
       "keywords": ["dionysus", "fruit", "grape"]
     },
-    {
-      "emoji": "🍈",
-      "shortcodes": ["melon"],
-      "group": "food",
-      "order": 1,
-      "keywords": ["cantaloupe", "fruit"]
-    },
-    {
-      "emoji": "🍉",
-      "shortcodes": ["watermelon"],
-      "group": "food",
-      "order": 2,
-      "keywords": ["fruit"]
-    },
+    { "emoji": "🍈", "shortcodes": ["melon"], "group": "food", "order": 1, "keywords": ["cantaloupe", "fruit"] },
+    { "emoji": "🍉", "shortcodes": ["watermelon"], "group": "food", "order": 2, "keywords": ["fruit"] },
     {
       "emoji": "🍊",
       "shortcodes": ["tangerine", "orange", "mandarin"],
@@ -4228,20 +3992,8 @@
       "order": 3,
       "keywords": ["c", "citrus", "fruit", "nectarine", "vitamin"]
     },
-    {
-      "emoji": "🍋",
-      "shortcodes": ["lemon"],
-      "group": "food",
-      "order": 4,
-      "keywords": ["citrus", "fruit", "sour"]
-    },
-    {
-      "emoji": "🍌",
-      "shortcodes": ["banana"],
-      "group": "food",
-      "order": 6,
-      "keywords": ["fruit", "potassium"]
-    },
+    { "emoji": "🍋", "shortcodes": ["lemon"], "group": "food", "order": 4, "keywords": ["citrus", "fruit", "sour"] },
+    { "emoji": "🍌", "shortcodes": ["banana"], "group": "food", "order": 6, "keywords": ["fruit", "potassium"] },
     {
       "emoji": "🍍",
       "shortcodes": ["pineapple"],
@@ -4249,13 +4001,7 @@
       "order": 7,
       "keywords": ["colada", "fruit", "pina", "tropical"]
     },
-    {
-      "emoji": "🥭",
-      "shortcodes": ["mango"],
-      "group": "food",
-      "order": 8,
-      "keywords": ["food", "fruit", "tropical"]
-    },
+    { "emoji": "🥭", "shortcodes": ["mango"], "group": "food", "order": 8, "keywords": ["food", "fruit", "tropical"] },
     {
       "emoji": "🍎",
       "shortcodes": ["apple", "red_apple"],
@@ -4270,20 +4016,8 @@
       "order": 10,
       "keywords": ["apple", "fruit", "green"]
     },
-    {
-      "emoji": "🍐",
-      "shortcodes": ["pear"],
-      "group": "food",
-      "order": 11,
-      "keywords": ["fruit"]
-    },
-    {
-      "emoji": "🍑",
-      "shortcodes": ["peach"],
-      "group": "food",
-      "order": 12,
-      "keywords": ["fruit"]
-    },
+    { "emoji": "🍐", "shortcodes": ["pear"], "group": "food", "order": 11, "keywords": ["fruit"] },
+    { "emoji": "🍑", "shortcodes": ["peach"], "group": "food", "order": 12, "keywords": ["fruit"] },
     {
       "emoji": "🍒",
       "shortcodes": ["cherries"],
@@ -4291,13 +4025,7 @@
       "order": 13,
       "keywords": ["berries", "cherry", "fruit", "red"]
     },
-    {
-      "emoji": "🍓",
-      "shortcodes": ["strawberry"],
-      "group": "food",
-      "order": 14,
-      "keywords": ["berry", "fruit"]
-    },
+    { "emoji": "🍓", "shortcodes": ["strawberry"], "group": "food", "order": 14, "keywords": ["berry", "fruit"] },
     {
       "emoji": "🫐",
       "shortcodes": ["blueberries"],
@@ -4319,48 +4047,12 @@
       "order": 17,
       "keywords": ["food", "fruit", "vegetable"]
     },
-    {
-      "emoji": "🫒",
-      "shortcodes": ["olive"],
-      "group": "food",
-      "order": 18,
-      "keywords": ["food"]
-    },
-    {
-      "emoji": "🥥",
-      "shortcodes": ["coconut"],
-      "group": "food",
-      "order": 19,
-      "keywords": ["colada", "palm", "piña"]
-    },
-    {
-      "emoji": "🥑",
-      "shortcodes": ["avocado"],
-      "group": "food",
-      "order": 20,
-      "keywords": ["food", "fruit"]
-    },
-    {
-      "emoji": "🍆",
-      "shortcodes": ["eggplant"],
-      "group": "food",
-      "order": 21,
-      "keywords": ["aubergine", "vegetable"]
-    },
-    {
-      "emoji": "🥔",
-      "shortcodes": ["potato"],
-      "group": "food",
-      "order": 22,
-      "keywords": ["food", "vegetable"]
-    },
-    {
-      "emoji": "🥕",
-      "shortcodes": ["carrot"],
-      "group": "food",
-      "order": 23,
-      "keywords": ["food", "vegetable"]
-    },
+    { "emoji": "🫒", "shortcodes": ["olive"], "group": "food", "order": 18, "keywords": ["food"] },
+    { "emoji": "🥥", "shortcodes": ["coconut"], "group": "food", "order": 19, "keywords": ["colada", "palm", "pina"] },
+    { "emoji": "🥑", "shortcodes": ["avocado"], "group": "food", "order": 20, "keywords": ["food", "fruit"] },
+    { "emoji": "🍆", "shortcodes": ["eggplant"], "group": "food", "order": 21, "keywords": ["aubergine", "vegetable"] },
+    { "emoji": "🥔", "shortcodes": ["potato"], "group": "food", "order": 22, "keywords": ["food", "vegetable"] },
+    { "emoji": "🥕", "shortcodes": ["carrot"], "group": "food", "order": 23, "keywords": ["food", "vegetable"] },
     {
       "emoji": "🌽",
       "shortcodes": ["corn", "ear_of_corn"],
@@ -4368,13 +4060,7 @@
       "order": 24,
       "keywords": ["crops", "ear", "farm", "maize", "maze"]
     },
-    {
-      "emoji": "🌶️",
-      "shortcodes": ["hot_pepper"],
-      "group": "food",
-      "order": 25,
-      "keywords": ["hot", "pepper"]
-    },
+    { "emoji": "🌶️", "shortcodes": ["hot_pepper"], "group": "food", "order": 25, "keywords": ["hot", "pepper"] },
     {
       "emoji": "🫑",
       "shortcodes": ["bell_pepper"],
@@ -4396,27 +4082,9 @@
       "order": 29,
       "keywords": ["bok", "burgers", "cabbage", "choy", "green", "kale", "leafy", "lettuce", "salad"]
     },
-    {
-      "emoji": "🥦",
-      "shortcodes": ["broccoli"],
-      "group": "food",
-      "order": 30,
-      "keywords": ["cabbage", "wild"]
-    },
-    {
-      "emoji": "🧄",
-      "shortcodes": ["garlic"],
-      "group": "food",
-      "order": 31,
-      "keywords": ["flavoring"]
-    },
-    {
-      "emoji": "🧅",
-      "shortcodes": ["onion"],
-      "group": "food",
-      "order": 32,
-      "keywords": ["flavoring"]
-    },
+    { "emoji": "🥦", "shortcodes": ["broccoli"], "group": "food", "order": 30, "keywords": ["cabbage", "wild"] },
+    { "emoji": "🧄", "shortcodes": ["garlic"], "group": "food", "order": 31, "keywords": ["flavoring"] },
+    { "emoji": "🧅", "shortcodes": ["onion"], "group": "food", "order": 32, "keywords": ["flavoring"] },
     {
       "emoji": "🥜",
       "shortcodes": ["peanuts", "shelled_peanut"],
@@ -4424,13 +4092,7 @@
       "order": 33,
       "keywords": ["food", "nut", "peanut", "vegetable"]
     },
-    {
-      "emoji": "🌰",
-      "shortcodes": ["chestnut"],
-      "group": "food",
-      "order": 35,
-      "keywords": ["almond", "plant"]
-    },
+    { "emoji": "🌰", "shortcodes": ["chestnut"], "group": "food", "order": 35, "keywords": ["almond", "plant"] },
     {
       "emoji": "🍞",
       "shortcodes": ["bread"],
@@ -4459,13 +4121,7 @@
       "order": 43,
       "keywords": ["arepa", "bread", "food", "gordita", "lavash", "naan", "pita"]
     },
-    {
-      "emoji": "🥨",
-      "shortcodes": ["pretzel"],
-      "group": "food",
-      "order": 44,
-      "keywords": ["convoluted", "twisted"]
-    },
+    { "emoji": "🥨", "shortcodes": ["pretzel"], "group": "food", "order": 44, "keywords": ["convoluted", "twisted"] },
     {
       "emoji": "🥯",
       "shortcodes": ["bagel"],
@@ -4478,7 +4134,7 @@
       "shortcodes": ["pancakes"],
       "group": "food",
       "order": 46,
-      "keywords": ["breakfast", "crêpe", "food", "hotcake", "pancake"]
+      "keywords": ["breakfast", "crepe", "food", "hotcake", "pancake"]
     },
     {
       "emoji": "🧇",
@@ -4487,20 +4143,8 @@
       "order": 47,
       "keywords": ["breakfast", "indecisive", "iron"]
     },
-    {
-      "emoji": "🧀",
-      "shortcodes": ["cheese", "cheese_wedge"],
-      "group": "food",
-      "order": 48,
-      "keywords": ["wedge"]
-    },
-    {
-      "emoji": "🍖",
-      "shortcodes": ["meat_on_bone"],
-      "group": "food",
-      "order": 49,
-      "keywords": ["bone", "meat"]
-    },
+    { "emoji": "🧀", "shortcodes": ["cheese", "cheese_wedge"], "group": "food", "order": 48, "keywords": ["wedge"] },
+    { "emoji": "🍖", "shortcodes": ["meat_on_bone"], "group": "food", "order": 49, "keywords": ["bone", "meat"] },
     {
       "emoji": "🍗",
       "shortcodes": ["poultry_leg"],
@@ -4515,13 +4159,7 @@
       "order": 51,
       "keywords": ["chop", "cut", "lambchop", "meat", "porkchop", "red", "steak"]
     },
-    {
-      "emoji": "🥓",
-      "shortcodes": ["bacon"],
-      "group": "food",
-      "order": 52,
-      "keywords": ["breakfast", "food", "meat"]
-    },
+    { "emoji": "🥓", "shortcodes": ["bacon"], "group": "food", "order": 52, "keywords": ["breakfast", "food", "meat"] },
     {
       "emoji": "🍔",
       "shortcodes": ["hamburger"],
@@ -4550,27 +4188,9 @@
       "order": 56,
       "keywords": ["dog", "frankfurter", "hot", "sausage"]
     },
-    {
-      "emoji": "🥪",
-      "shortcodes": ["sandwich"],
-      "group": "food",
-      "order": 57,
-      "keywords": ["bread"]
-    },
-    {
-      "emoji": "🌮",
-      "shortcodes": ["taco"],
-      "group": "food",
-      "order": 58,
-      "keywords": ["mexican"]
-    },
-    {
-      "emoji": "🌯",
-      "shortcodes": ["burrito"],
-      "group": "food",
-      "order": 59,
-      "keywords": ["mexican", "wrap"]
-    },
+    { "emoji": "🥪", "shortcodes": ["sandwich"], "group": "food", "order": 57, "keywords": ["bread"] },
+    { "emoji": "🌮", "shortcodes": ["taco"], "group": "food", "order": 58, "keywords": ["mexican"] },
+    { "emoji": "🌯", "shortcodes": ["burrito"], "group": "food", "order": 59, "keywords": ["mexican", "wrap"] },
     {
       "emoji": "🫔",
       "shortcodes": ["tamale"],
@@ -4585,20 +4205,8 @@
       "order": 61,
       "keywords": ["falafel", "flatbread", "food", "gyro", "kebab", "stuffed"]
     },
-    {
-      "emoji": "🧆",
-      "shortcodes": ["falafel"],
-      "group": "food",
-      "order": 62,
-      "keywords": ["chickpea", "meatball"]
-    },
-    {
-      "emoji": "🥚",
-      "shortcodes": ["egg"],
-      "group": "food",
-      "order": 63,
-      "keywords": ["breakfast", "food"]
-    },
+    { "emoji": "🧆", "shortcodes": ["falafel"], "group": "food", "order": 62, "keywords": ["chickpea", "meatball"] },
+    { "emoji": "🥚", "shortcodes": ["egg"], "group": "food", "order": 63, "keywords": ["breakfast", "food"] },
     {
       "emoji": "🍳",
       "shortcodes": ["fried_egg", "cooking"],
@@ -4641,20 +4249,8 @@
       "order": 69,
       "keywords": ["food", "green"]
     },
-    {
-      "emoji": "🍿",
-      "shortcodes": ["popcorn"],
-      "group": "food",
-      "order": 70,
-      "keywords": ["corn", "movie", "pop"]
-    },
-    {
-      "emoji": "🧈",
-      "shortcodes": ["butter"],
-      "group": "food",
-      "order": 71,
-      "keywords": ["dairy"]
-    },
+    { "emoji": "🍿", "shortcodes": ["popcorn"], "group": "food", "order": 70, "keywords": ["corn", "movie", "pop"] },
+    { "emoji": "🧈", "shortcodes": ["butter"], "group": "food", "order": 71, "keywords": ["dairy"] },
     {
       "emoji": "🧂",
       "shortcodes": ["salt"],
@@ -4669,13 +4265,7 @@
       "order": 73,
       "keywords": ["can", "canned", "food"]
     },
-    {
-      "emoji": "🍱",
-      "shortcodes": ["bento", "bento_box"],
-      "group": "food",
-      "order": 74,
-      "keywords": ["box", "food"]
-    },
+    { "emoji": "🍱", "shortcodes": ["bento", "bento_box"], "group": "food", "order": 74, "keywords": ["box", "food"] },
     {
       "emoji": "🍘",
       "shortcodes": ["rice_cracker"],
@@ -4732,13 +4322,7 @@
       "order": 82,
       "keywords": ["food", "kebab", "restaurant", "seafood", "skewer", "stick"]
     },
-    {
-      "emoji": "🍣",
-      "shortcodes": ["sushi"],
-      "group": "food",
-      "order": 83,
-      "keywords": ["food"]
-    },
+    { "emoji": "🍣", "shortcodes": ["sushi"], "group": "food", "order": 83, "keywords": ["food"] },
     {
       "emoji": "🍤",
       "shortcodes": ["fried_shrimp"],
@@ -4758,7 +4342,7 @@
       "shortcodes": ["moon_cake"],
       "group": "food",
       "order": 86,
-      "keywords": ["autumn", "cake", "festival", "moon", "yuèbǐng"]
+      "keywords": ["autumn", "cake", "festival", "moon", "yuebing"]
     },
     {
       "emoji": "🍡",
@@ -4772,7 +4356,7 @@
       "shortcodes": ["dumpling"],
       "group": "food",
       "order": 88,
-      "keywords": ["empanada", "gyōza", "jiaozi", "pierogi", "potsticker"]
+      "keywords": ["empanada", "gyoza", "jiaozi", "pierogi", "potsticker"]
     },
     {
       "emoji": "🥠",
@@ -5058,13 +4642,7 @@
       "order": 122,
       "keywords": ["beverage", "box", "juice", "straw", "sweet"]
     },
-    {
-      "emoji": "🧉",
-      "shortcodes": ["mate", "mate_drink"],
-      "group": "food",
-      "order": 123,
-      "keywords": ["drink"]
-    },
+    { "emoji": "🧉", "shortcodes": ["mate", "mate_drink"], "group": "food", "order": 123, "keywords": ["drink"] },
     {
       "emoji": "🧊",
       "shortcodes": ["ice_cube", "ice"],
@@ -5110,13 +4688,7 @@
         "yummy"
       ]
     },
-    {
-      "emoji": "🥄",
-      "shortcodes": ["spoon"],
-      "group": "food",
-      "order": 129,
-      "keywords": ["eat", "tableware"]
-    },
+    { "emoji": "🥄", "shortcodes": ["spoon"], "group": "food", "order": 129, "keywords": ["eat", "tableware"] },
     {
       "emoji": "🔪",
       "shortcodes": ["hocho", "knife", "kitchen_knife"],
@@ -5159,13 +4731,7 @@
       "order": 3,
       "keywords": ["earth", "globe", "internet", "meridians", "web", "world", "worldwide"]
     },
-    {
-      "emoji": "🗺️",
-      "shortcodes": ["world_map", "map"],
-      "group": "travel",
-      "order": 4,
-      "keywords": ["world"]
-    },
+    { "emoji": "🗺️", "shortcodes": ["world_map", "map"], "group": "travel", "order": 4, "keywords": ["world"] },
     {
       "emoji": "🗾",
       "shortcodes": ["japan", "japan_map", "map_of_japan"],
@@ -5187,13 +4753,7 @@
       "order": 8,
       "keywords": ["cold", "mountain", "snow", "snow-capped"]
     },
-    {
-      "emoji": "⛰️",
-      "shortcodes": ["mountain"],
-      "group": "travel",
-      "order": 10,
-      "keywords": []
-    },
+    { "emoji": "⛰️", "shortcodes": ["mountain"], "group": "travel", "order": 10, "keywords": [] },
     {
       "emoji": "🌋",
       "shortcodes": ["volcano"],
@@ -5208,13 +4768,7 @@
       "order": 13,
       "keywords": ["fuji", "mount", "mountain", "nature"]
     },
-    {
-      "emoji": "🏕️",
-      "shortcodes": ["camping"],
-      "group": "travel",
-      "order": 14,
-      "keywords": []
-    },
+    { "emoji": "🏕️", "shortcodes": ["camping"], "group": "travel", "order": 14, "keywords": [] },
     {
       "emoji": "🏖️",
       "shortcodes": ["beach_umbrella", "beach_with_umbrella", "beach"],
@@ -5222,13 +4776,7 @@
       "order": 16,
       "keywords": ["umbrella"]
     },
-    {
-      "emoji": "🏜️",
-      "shortcodes": ["desert"],
-      "group": "travel",
-      "order": 18,
-      "keywords": []
-    },
+    { "emoji": "🏜️", "shortcodes": ["desert"], "group": "travel", "order": 18, "keywords": [] },
     {
       "emoji": "🏝️",
       "shortcodes": ["desert_island", "island"],
@@ -5243,13 +4791,7 @@
       "order": 22,
       "keywords": ["national"]
     },
-    {
-      "emoji": "🏟️",
-      "shortcodes": ["stadium"],
-      "group": "travel",
-      "order": 24,
-      "keywords": []
-    },
+    { "emoji": "🏟️", "shortcodes": ["stadium"], "group": "travel", "order": 24, "keywords": [] },
     {
       "emoji": "🏛️",
       "shortcodes": ["classical_building"],
@@ -5278,13 +4820,7 @@
       "order": 31,
       "keywords": ["boulder", "heavy", "solid", "stone", "tough"]
     },
-    {
-      "emoji": "🪵",
-      "shortcodes": ["wood"],
-      "group": "travel",
-      "order": 32,
-      "keywords": ["log", "lumber", "timber"]
-    },
+    { "emoji": "🪵", "shortcodes": ["wood"], "group": "travel", "order": 32, "keywords": ["log", "lumber", "timber"] },
     {
       "emoji": "🛖",
       "shortcodes": ["hut"],
@@ -5361,20 +4897,8 @@
       "order": 43,
       "keywords": ["building", "doctor", "medicine"]
     },
-    {
-      "emoji": "🏦",
-      "shortcodes": ["bank"],
-      "group": "travel",
-      "order": 44,
-      "keywords": ["building"]
-    },
-    {
-      "emoji": "🏨",
-      "shortcodes": ["hotel"],
-      "group": "travel",
-      "order": 45,
-      "keywords": ["building"]
-    },
+    { "emoji": "🏦", "shortcodes": ["bank"], "group": "travel", "order": 44, "keywords": ["building"] },
+    { "emoji": "🏨", "shortcodes": ["hotel"], "group": "travel", "order": 45, "keywords": ["building"] },
     {
       "emoji": "🏩",
       "shortcodes": ["love_hotel"],
@@ -5389,13 +4913,7 @@
       "order": 47,
       "keywords": ["24", "building", "convenience", "hours", "store"]
     },
-    {
-      "emoji": "🏫",
-      "shortcodes": ["school"],
-      "group": "travel",
-      "order": 48,
-      "keywords": ["building"]
-    },
+    { "emoji": "🏫", "shortcodes": ["school"], "group": "travel", "order": 48, "keywords": ["building"] },
     {
       "emoji": "🏬",
       "shortcodes": ["department_store"],
@@ -5403,13 +4921,7 @@
       "order": 49,
       "keywords": ["building", "department", "store"]
     },
-    {
-      "emoji": "🏭",
-      "shortcodes": ["factory"],
-      "group": "travel",
-      "order": 50,
-      "keywords": ["building"]
-    },
+    { "emoji": "🏭", "shortcodes": ["factory"], "group": "travel", "order": 50, "keywords": ["building"] },
     {
       "emoji": "🏯",
       "shortcodes": ["japanese_castle"],
@@ -5431,13 +4943,7 @@
       "order": 53,
       "keywords": ["chapel", "hitched", "nuptials", "romance"]
     },
-    {
-      "emoji": "🗼",
-      "shortcodes": ["tokyo_tower"],
-      "group": "travel",
-      "order": 54,
-      "keywords": ["tokyo", "tower"]
-    },
+    { "emoji": "🗼", "shortcodes": ["tokyo_tower"], "group": "travel", "order": 54, "keywords": ["tokyo", "tower"] },
     {
       "emoji": "🗽",
       "shortcodes": ["statue_of_liberty"],
@@ -5459,13 +4965,7 @@
       "order": 57,
       "keywords": ["islam", "masjid", "muslim", "religion"]
     },
-    {
-      "emoji": "🛕",
-      "shortcodes": ["hindu_temple"],
-      "group": "travel",
-      "order": 58,
-      "keywords": ["hindu", "temple"]
-    },
+    { "emoji": "🛕", "shortcodes": ["hindu_temple"], "group": "travel", "order": 58, "keywords": ["hindu", "temple"] },
     {
       "emoji": "🕍",
       "shortcodes": ["synagogue"],
@@ -5487,27 +4987,9 @@
       "order": 62,
       "keywords": ["hajj", "islam", "muslim", "religion", "umrah"]
     },
-    {
-      "emoji": "⛲",
-      "shortcodes": ["fountain"],
-      "group": "travel",
-      "order": 63,
-      "keywords": []
-    },
-    {
-      "emoji": "⛺",
-      "shortcodes": ["tent"],
-      "group": "travel",
-      "order": 64,
-      "keywords": ["camping"]
-    },
-    {
-      "emoji": "🌁",
-      "shortcodes": ["foggy"],
-      "group": "travel",
-      "order": 65,
-      "keywords": ["fog"]
-    },
+    { "emoji": "⛲", "shortcodes": ["fountain"], "group": "travel", "order": 63, "keywords": [] },
+    { "emoji": "⛺", "shortcodes": ["tent"], "group": "travel", "order": 64, "keywords": ["camping"] },
+    { "emoji": "🌁", "shortcodes": ["foggy"], "group": "travel", "order": 65, "keywords": ["fog"] },
     {
       "emoji": "🌃",
       "shortcodes": ["night_with_stars"],
@@ -5515,13 +4997,7 @@
       "order": 66,
       "keywords": ["night", "star", "stars"]
     },
-    {
-      "emoji": "🏙️",
-      "shortcodes": ["cityscape"],
-      "group": "travel",
-      "order": 67,
-      "keywords": ["city"]
-    },
+    { "emoji": "🏙️", "shortcodes": ["cityscape"], "group": "travel", "order": 67, "keywords": ["city"] },
     {
       "emoji": "🌄",
       "shortcodes": ["sunrise_over_mountains"],
@@ -5592,13 +5068,7 @@
       "order": 80,
       "keywords": ["cut", "fresh", "haircut", "pole", "shave"]
     },
-    {
-      "emoji": "🎪",
-      "shortcodes": ["circus_tent"],
-      "group": "travel",
-      "order": 81,
-      "keywords": ["circus", "tent"]
-    },
+    { "emoji": "🎪", "shortcodes": ["circus_tent"], "group": "travel", "order": 81, "keywords": ["circus", "tent"] },
     {
       "emoji": "🚂",
       "shortcodes": ["steam_locomotive", "locomotive"],
@@ -5634,13 +5104,7 @@
       "order": 86,
       "keywords": ["arrived", "choo", "railway", "train"]
     },
-    {
-      "emoji": "🚇",
-      "shortcodes": ["metro"],
-      "group": "travel",
-      "order": 87,
-      "keywords": ["subway", "travel"]
-    },
+    { "emoji": "🚇", "shortcodes": ["metro"], "group": "travel", "order": 87, "keywords": ["subway", "travel"] },
     {
       "emoji": "🚈",
       "shortcodes": ["light_rail"],
@@ -5648,27 +5112,9 @@
       "order": 88,
       "keywords": ["arrived", "light", "monorail", "rail", "railway"]
     },
-    {
-      "emoji": "🚉",
-      "shortcodes": ["station"],
-      "group": "travel",
-      "order": 89,
-      "keywords": ["railway", "train"]
-    },
-    {
-      "emoji": "🚊",
-      "shortcodes": ["tram"],
-      "group": "travel",
-      "order": 90,
-      "keywords": ["trolleybus"]
-    },
-    {
-      "emoji": "🚝",
-      "shortcodes": ["monorail"],
-      "group": "travel",
-      "order": 91,
-      "keywords": ["vehicle"]
-    },
+    { "emoji": "🚉", "shortcodes": ["station"], "group": "travel", "order": 89, "keywords": ["railway", "train"] },
+    { "emoji": "🚊", "shortcodes": ["tram"], "group": "travel", "order": 90, "keywords": ["trolleybus"] },
+    { "emoji": "🚝", "shortcodes": ["monorail"], "group": "travel", "order": 91, "keywords": ["vehicle"] },
     {
       "emoji": "🚞",
       "shortcodes": ["mountain_railway"],
@@ -5683,13 +5129,7 @@
       "order": 93,
       "keywords": ["bus", "car", "tram", "trolley", "trolleybus"]
     },
-    {
-      "emoji": "🚌",
-      "shortcodes": ["bus"],
-      "group": "travel",
-      "order": 94,
-      "keywords": ["school", "vehicle"]
-    },
+    { "emoji": "🚌", "shortcodes": ["bus"], "group": "travel", "order": 94, "keywords": ["school", "vehicle"] },
     {
       "emoji": "🚍",
       "shortcodes": ["oncoming_bus"],
@@ -5730,7 +5170,7 @@
       "shortcodes": ["police_car"],
       "group": "travel",
       "order": 100,
-      "keywords": ["5–0", "car", "cops", "patrol", "police"]
+      "keywords": ["5 0", "car", "cops", "patrol", "police"]
     },
     {
       "emoji": "🚔",
@@ -5795,13 +5235,7 @@
       "order": 109,
       "keywords": ["articulated", "car", "drive", "lorry", "move", "semi", "truck", "vehicle"]
     },
-    {
-      "emoji": "🚜",
-      "shortcodes": ["tractor"],
-      "group": "travel",
-      "order": 110,
-      "keywords": ["vehicle"]
-    },
+    { "emoji": "🚜", "shortcodes": ["tractor"], "group": "travel", "order": 110, "keywords": ["vehicle"] },
     {
       "emoji": "🏎️",
       "shortcodes": ["racing_car", "race_car"],
@@ -5851,13 +5285,7 @@
       "order": 119,
       "keywords": ["class", "cycle", "cycling", "cyclist", "gang", "ride", "spin", "spinning"]
     },
-    {
-      "emoji": "🛴",
-      "shortcodes": ["kick_scooter", "scooter"],
-      "group": "travel",
-      "order": 120,
-      "keywords": ["kick"]
-    },
+    { "emoji": "🛴", "shortcodes": ["kick_scooter", "scooter"], "group": "travel", "order": 120, "keywords": ["kick"] },
     {
       "emoji": "🛹",
       "shortcodes": ["skateboard"],
@@ -5879,13 +5307,7 @@
       "order": 123,
       "keywords": ["bus", "stop"]
     },
-    {
-      "emoji": "🛣️",
-      "shortcodes": ["motorway"],
-      "group": "travel",
-      "order": 124,
-      "keywords": ["highway", "road"]
-    },
+    { "emoji": "🛣️", "shortcodes": ["motorway"], "group": "travel", "order": 124, "keywords": ["highway", "road"] },
     {
       "emoji": "🛤️",
       "shortcodes": ["railway_track", "railroad_track"],
@@ -5893,13 +5315,7 @@
       "order": 126,
       "keywords": ["railway", "track", "train"]
     },
-    {
-      "emoji": "🛢️",
-      "shortcodes": ["oil_drum", "oil"],
-      "group": "travel",
-      "order": 128,
-      "keywords": ["drum"]
-    },
+    { "emoji": "🛢️", "shortcodes": ["oil_drum", "oil"], "group": "travel", "order": 128, "keywords": ["drum"] },
     {
       "emoji": "⛽",
       "shortcodes": ["fuelpump", "fuel_pump"],
@@ -5935,20 +5351,8 @@
       "order": 135,
       "keywords": ["octagonal", "sign", "stop"]
     },
-    {
-      "emoji": "🚧",
-      "shortcodes": ["construction"],
-      "group": "travel",
-      "order": 136,
-      "keywords": ["barrier"]
-    },
-    {
-      "emoji": "⚓",
-      "shortcodes": ["anchor"],
-      "group": "travel",
-      "order": 137,
-      "keywords": ["ship", "tool"]
-    },
+    { "emoji": "🚧", "shortcodes": ["construction"], "group": "travel", "order": 136, "keywords": ["barrier"] },
+    { "emoji": "⚓", "shortcodes": ["anchor"], "group": "travel", "order": 137, "keywords": ["ship", "tool"] },
     {
       "emoji": "⛵",
       "shortcodes": ["boat", "sailboat"],
@@ -5956,13 +5360,7 @@
       "order": 139,
       "keywords": ["resort", "sailing", "sea", "yacht"]
     },
-    {
-      "emoji": "🛶",
-      "shortcodes": ["canoe", "kayak"],
-      "group": "travel",
-      "order": 140,
-      "keywords": ["boat"]
-    },
+    { "emoji": "🛶", "shortcodes": ["canoe", "kayak"], "group": "travel", "order": 140, "keywords": ["boat"] },
     {
       "emoji": "🚤",
       "shortcodes": ["speedboat"],
@@ -5977,13 +5375,7 @@
       "order": 142,
       "keywords": ["passenger", "ship"]
     },
-    {
-      "emoji": "⛴️",
-      "shortcodes": ["ferry"],
-      "group": "travel",
-      "order": 144,
-      "keywords": ["boat", "passenger"]
-    },
+    { "emoji": "⛴️", "shortcodes": ["ferry"], "group": "travel", "order": 144, "keywords": ["boat", "passenger"] },
     {
       "emoji": "🛥️",
       "shortcodes": ["motor_boat", "motorboat"],
@@ -6033,13 +5425,7 @@
       "order": 155,
       "keywords": ["hang-glide", "parasail", "skydive"]
     },
-    {
-      "emoji": "💺",
-      "shortcodes": ["seat"],
-      "group": "travel",
-      "order": 156,
-      "keywords": ["chair"]
-    },
+    { "emoji": "💺", "shortcodes": ["seat"], "group": "travel", "order": 156, "keywords": ["chair"] },
     {
       "emoji": "🚁",
       "shortcodes": ["helicopter"],
@@ -6117,13 +5503,7 @@
       "order": 169,
       "keywords": ["done", "flowing", "hourglass", "hours", "not", "sand", "timer", "waiting", "yolo"]
     },
-    {
-      "emoji": "⌚",
-      "shortcodes": ["watch"],
-      "group": "travel",
-      "order": 170,
-      "keywords": ["clock", "time"]
-    },
+    { "emoji": "⌚", "shortcodes": ["watch"], "group": "travel", "order": 170, "keywords": ["clock", "time"] },
     {
       "emoji": "⏰",
       "shortcodes": ["alarm_clock"],
@@ -6131,20 +5511,8 @@
       "order": 171,
       "keywords": ["alarm", "clock", "hours", "hrs", "late", "time", "waiting"]
     },
-    {
-      "emoji": "⏱️",
-      "shortcodes": ["stopwatch"],
-      "group": "travel",
-      "order": 172,
-      "keywords": ["clock", "time"]
-    },
-    {
-      "emoji": "⏲️",
-      "shortcodes": ["timer_clock", "timer"],
-      "group": "travel",
-      "order": 174,
-      "keywords": ["clock"]
-    },
+    { "emoji": "⏱️", "shortcodes": ["stopwatch"], "group": "travel", "order": 172, "keywords": ["clock", "time"] },
+    { "emoji": "⏲️", "shortcodes": ["timer_clock", "timer"], "group": "travel", "order": 174, "keywords": ["clock"] },
     {
       "emoji": "🕰️",
       "shortcodes": ["mantelpiece_clock", "clock", "mantlepiece_clock"],
@@ -6157,168 +5525,168 @@
       "shortcodes": ["clock12", "twelve_oclock"],
       "group": "travel",
       "order": 178,
-      "keywords": ["12", "12:00", "clock", "o’clock", "time", "twelve", "twelve o’clock"]
+      "keywords": ["12", "12 00", "clock", "o clock", "time", "twelve"]
     },
     {
       "emoji": "🕧",
       "shortcodes": ["clock1230", "twelve_thirty"],
       "group": "travel",
       "order": 179,
-      "keywords": ["12", "12:30", "30", "clock", "thirty", "time", "twelve"]
+      "keywords": ["12", "12 30", "30", "clock", "thirty", "time", "twelve"]
     },
     {
       "emoji": "🕐",
       "shortcodes": ["clock1", "one_oclock"],
       "group": "travel",
       "order": 180,
-      "keywords": ["1", "1:00", "clock", "one", "o’clock", "time", "one o’clock"]
+      "keywords": ["1", "1 00", "clock", "one", "o clock", "time"]
     },
     {
       "emoji": "🕜",
       "shortcodes": ["clock130", "one_thirty"],
       "group": "travel",
       "order": 181,
-      "keywords": ["1", "1:30", "30", "clock", "one", "thirty", "time"]
+      "keywords": ["1", "1 30", "30", "clock", "one", "thirty", "time"]
     },
     {
       "emoji": "🕑",
       "shortcodes": ["clock2", "two_oclock"],
       "group": "travel",
       "order": 182,
-      "keywords": ["2", "2:00", "clock", "o’clock", "time", "two", "two o’clock"]
+      "keywords": ["2", "2 00", "clock", "o clock", "time", "two"]
     },
     {
       "emoji": "🕝",
       "shortcodes": ["clock230", "two_thirty"],
       "group": "travel",
       "order": 183,
-      "keywords": ["2", "2:30", "30", "clock", "thirty", "time", "two"]
+      "keywords": ["2", "2 30", "30", "clock", "thirty", "time", "two"]
     },
     {
       "emoji": "🕒",
       "shortcodes": ["clock3", "three_oclock"],
       "group": "travel",
       "order": 184,
-      "keywords": ["3", "3:00", "clock", "o’clock", "three", "time", "three o’clock"]
+      "keywords": ["3", "3 00", "clock", "o clock", "three", "time"]
     },
     {
       "emoji": "🕞",
       "shortcodes": ["clock330", "three_thirty"],
       "group": "travel",
       "order": 185,
-      "keywords": ["3", "30", "3:30", "clock", "thirty", "three", "time"]
+      "keywords": ["3", "30", "3 30", "clock", "thirty", "three", "time"]
     },
     {
       "emoji": "🕓",
       "shortcodes": ["clock4", "four_oclock"],
       "group": "travel",
       "order": 186,
-      "keywords": ["4", "4:00", "clock", "four", "o’clock", "time", "four o’clock"]
+      "keywords": ["4", "4 00", "clock", "four", "o clock", "time"]
     },
     {
       "emoji": "🕟",
       "shortcodes": ["clock430", "four_thirty"],
       "group": "travel",
       "order": 187,
-      "keywords": ["30", "4", "4:30", "clock", "four", "thirty", "time"]
+      "keywords": ["30", "4", "4 30", "clock", "four", "thirty", "time"]
     },
     {
       "emoji": "🕔",
       "shortcodes": ["clock5", "five_oclock"],
       "group": "travel",
       "order": 188,
-      "keywords": ["5", "5:00", "clock", "five", "o’clock", "time", "five o’clock"]
+      "keywords": ["5", "5 00", "clock", "five", "o clock", "time"]
     },
     {
       "emoji": "🕠",
       "shortcodes": ["clock530", "five_thirty"],
       "group": "travel",
       "order": 189,
-      "keywords": ["30", "5", "5:30", "clock", "five", "thirty", "time"]
+      "keywords": ["30", "5", "5 30", "clock", "five", "thirty", "time"]
     },
     {
       "emoji": "🕕",
       "shortcodes": ["clock6", "six_oclock"],
       "group": "travel",
       "order": 190,
-      "keywords": ["6", "6:00", "clock", "o’clock", "six", "time", "six o’clock"]
+      "keywords": ["6", "6 00", "clock", "o clock", "six", "time"]
     },
     {
       "emoji": "🕡",
       "shortcodes": ["clock630", "six_thirty"],
       "group": "travel",
       "order": 191,
-      "keywords": ["30", "6", "6:30", "clock", "six", "thirty"]
+      "keywords": ["30", "6", "6 30", "clock", "six", "thirty"]
     },
     {
       "emoji": "🕖",
       "shortcodes": ["clock7", "seven_oclock"],
       "group": "travel",
       "order": 192,
-      "keywords": ["0", "7", "7:00", "clock", "o’clock", "seven", "seven o’clock"]
+      "keywords": ["0", "7", "7 00", "clock", "o clock", "seven"]
     },
     {
       "emoji": "🕢",
       "shortcodes": ["clock730", "seven_thirty"],
       "group": "travel",
       "order": 193,
-      "keywords": ["30", "7", "7:30", "clock", "seven", "thirty"]
+      "keywords": ["30", "7", "7 30", "clock", "seven", "thirty"]
     },
     {
       "emoji": "🕗",
       "shortcodes": ["clock8", "eight_oclock"],
       "group": "travel",
       "order": 194,
-      "keywords": ["8", "8:00", "clock", "eight", "o’clock", "time", "eight o’clock"]
+      "keywords": ["8", "8 00", "clock", "eight", "o clock", "time"]
     },
     {
       "emoji": "🕣",
       "shortcodes": ["clock830", "eight_thirty"],
       "group": "travel",
       "order": 195,
-      "keywords": ["30", "8", "8:30", "clock", "eight", "thirty", "time"]
+      "keywords": ["30", "8", "8 30", "clock", "eight", "thirty", "time"]
     },
     {
       "emoji": "🕘",
       "shortcodes": ["clock9", "nine_oclock"],
       "group": "travel",
       "order": 196,
-      "keywords": ["9", "9:00", "clock", "nine", "o’clock", "time", "nine o’clock"]
+      "keywords": ["9", "9 00", "clock", "nine", "o clock", "time"]
     },
     {
       "emoji": "🕤",
       "shortcodes": ["clock930", "nine_thirty"],
       "group": "travel",
       "order": 197,
-      "keywords": ["30", "9", "9:30", "clock", "nine", "thirty", "time"]
+      "keywords": ["30", "9", "9 30", "clock", "nine", "thirty", "time"]
     },
     {
       "emoji": "🕙",
       "shortcodes": ["clock10", "ten_oclock"],
       "group": "travel",
       "order": 198,
-      "keywords": ["0", "10", "10:00", "clock", "o’clock", "ten", "ten o’clock"]
+      "keywords": ["0", "10", "10 00", "clock", "o clock", "ten"]
     },
     {
       "emoji": "🕥",
       "shortcodes": ["clock1030", "ten_thirty"],
       "group": "travel",
       "order": 199,
-      "keywords": ["10", "10:30", "30", "clock", "ten", "thirty", "time"]
+      "keywords": ["10", "10 30", "30", "clock", "ten", "thirty", "time"]
     },
     {
       "emoji": "🕚",
       "shortcodes": ["clock11", "eleven_oclock"],
       "group": "travel",
       "order": 200,
-      "keywords": ["11", "11:00", "clock", "eleven", "o’clock", "time", "eleven o’clock"]
+      "keywords": ["11", "11 00", "clock", "eleven", "o clock", "time"]
     },
     {
       "emoji": "🕦",
       "shortcodes": ["clock1130", "eleven_thirty"],
       "group": "travel",
       "order": 201,
-      "keywords": ["11", "11:30", "30", "clock", "eleven", "thirty", "time"]
+      "keywords": ["11", "11 30", "30", "clock", "eleven", "thirty", "time"]
     },
     {
       "emoji": "🌑",
@@ -6404,13 +5772,7 @@
       "order": 213,
       "keywords": ["dreams", "face", "last", "moon", "quarter"]
     },
-    {
-      "emoji": "🌡️",
-      "shortcodes": ["thermometer"],
-      "group": "travel",
-      "order": 214,
-      "keywords": ["weather"]
-    },
+    { "emoji": "🌡️", "shortcodes": ["thermometer"], "group": "travel", "order": 214, "keywords": ["weather"] },
     {
       "emoji": "☀️",
       "shortcodes": ["sunny", "sun"],
@@ -6467,13 +5829,7 @@
       "order": 224,
       "keywords": ["milky", "space", "way"]
     },
-    {
-      "emoji": "☁️",
-      "shortcodes": ["cloud"],
-      "group": "travel",
-      "order": 225,
-      "keywords": ["weather"]
-    },
+    { "emoji": "☁️", "shortcodes": ["cloud"], "group": "travel", "order": 225, "keywords": ["weather"] },
     {
       "emoji": "⛅",
       "shortcodes": ["partly_sunny"],
@@ -6556,13 +5912,7 @@
       "order": 242,
       "keywords": ["cloud", "weather", "whirlwind"]
     },
-    {
-      "emoji": "🌫️",
-      "shortcodes": ["fog"],
-      "group": "travel",
-      "order": 244,
-      "keywords": ["cloud", "weather"]
-    },
+    { "emoji": "🌫️", "shortcodes": ["fog"], "group": "travel", "order": 244, "keywords": ["cloud", "weather"] },
     {
       "emoji": "🌬️",
       "shortcodes": ["wind_face", "wind_blowing_face"],
@@ -6666,13 +6016,7 @@
       "order": 261,
       "keywords": ["cold", "man", "snow"]
     },
-    {
-      "emoji": "☄️",
-      "shortcodes": ["comet"],
-      "group": "travel",
-      "order": 262,
-      "keywords": ["space"]
-    },
+    { "emoji": "☄️", "shortcodes": ["comet"], "group": "travel", "order": 262, "keywords": ["space"] },
     {
       "emoji": "🔥",
       "shortcodes": ["fire", "lit", "hot", "flame"],
@@ -6734,7 +6078,7 @@
       "shortcodes": ["sparkles"],
       "group": "activities",
       "order": 5,
-      "keywords": ["*", "magic", "sparkle", "star"]
+      "keywords": ["magic", "sparkle", "star"]
     },
     {
       "emoji": "🎈",
@@ -6804,15 +6148,9 @@
       "shortcodes": ["red_envelope"],
       "group": "activities",
       "order": 15,
-      "keywords": ["envelope", "gift", "good", "hóngbāo", "lai", "luck", "money", "red", "see"]
+      "keywords": ["envelope", "gift", "good", "hongbao", "lai", "luck", "money", "red", "see"]
     },
-    {
-      "emoji": "🎀",
-      "shortcodes": ["ribbon"],
-      "group": "activities",
-      "order": 16,
-      "keywords": ["celebration"]
-    },
+    { "emoji": "🎀", "shortcodes": ["ribbon"], "group": "activities", "order": 16, "keywords": ["celebration"] },
     {
       "emoji": "🎁",
       "shortcodes": ["gift", "wrapped_gift"],
@@ -6834,13 +6172,7 @@
       "order": 20,
       "keywords": ["admission", "ticket"]
     },
-    {
-      "emoji": "🎫",
-      "shortcodes": ["ticket"],
-      "group": "activities",
-      "order": 22,
-      "keywords": ["admission", "stub"]
-    },
+    { "emoji": "🎫", "shortcodes": ["ticket"], "group": "activities", "order": 22, "keywords": ["admission", "stub"] },
     {
       "emoji": "🎖️",
       "shortcodes": ["medal_military", "medal", "military_medal"],
@@ -6890,13 +6222,7 @@
       "order": 30,
       "keywords": ["ball", "football", "futbol", "sport"]
     },
-    {
-      "emoji": "⚾",
-      "shortcodes": ["baseball"],
-      "group": "activities",
-      "order": 31,
-      "keywords": ["ball", "sport"]
-    },
+    { "emoji": "⚾", "shortcodes": ["baseball"], "group": "activities", "order": 31, "keywords": ["ball", "sport"] },
     {
       "emoji": "🥎",
       "shortcodes": ["softball"],
@@ -6911,13 +6237,7 @@
       "order": 33,
       "keywords": ["ball", "hoop", "sport"]
     },
-    {
-      "emoji": "🏐",
-      "shortcodes": ["volleyball"],
-      "group": "activities",
-      "order": 34,
-      "keywords": ["ball", "game"]
-    },
+    { "emoji": "🏐", "shortcodes": ["volleyball"], "group": "activities", "order": 34, "keywords": ["ball", "game"] },
     {
       "emoji": "🏈",
       "shortcodes": ["football", "american_football"],
@@ -7009,13 +6329,7 @@
       "order": 47,
       "keywords": ["arts", "judo", "karate", "martial", "taekwondo", "uniform"]
     },
-    {
-      "emoji": "🥅",
-      "shortcodes": ["goal_net", "goal"],
-      "group": "activities",
-      "order": 48,
-      "keywords": ["net"]
-    },
+    { "emoji": "🥅", "shortcodes": ["goal_net", "goal"], "group": "activities", "order": 48, "keywords": ["net"] },
     {
       "emoji": "⛳",
       "shortcodes": ["golf", "flag_in_hole"],
@@ -7051,13 +6365,7 @@
       "order": 54,
       "keywords": ["athletics", "running", "sash", "shirt"]
     },
-    {
-      "emoji": "🎿",
-      "shortcodes": ["ski", "skis"],
-      "group": "activities",
-      "order": 55,
-      "keywords": ["snow", "sport"]
-    },
+    { "emoji": "🎿", "shortcodes": ["ski", "skis"], "group": "activities", "order": 55, "keywords": ["snow", "sport"] },
     {
       "emoji": "🛷",
       "shortcodes": ["sled"],
@@ -7086,13 +6394,7 @@
       "order": 59,
       "keywords": ["fluctuate", "toy"]
     },
-    {
-      "emoji": "🪁",
-      "shortcodes": ["kite"],
-      "group": "activities",
-      "order": 60,
-      "keywords": ["fly", "soar"]
-    },
+    { "emoji": "🪁", "shortcodes": ["kite"], "group": "activities", "order": 60, "keywords": ["fly", "soar"] },
     {
       "emoji": "🔫",
       "shortcodes": ["gun", "pistol", "water_pistol"],
@@ -7168,7 +6470,7 @@
       "shortcodes": ["pinata"],
       "group": "activities",
       "order": 72,
-      "keywords": ["candy", "celebrate", "celebration", "cinco", "de", "festive", "mayo", "party", "pinada", "piñata"]
+      "keywords": ["candy", "celebrate", "celebration", "cinco", "de", "festive", "mayo", "party", "pinada"]
     },
     {
       "emoji": "🪆",
@@ -7367,13 +6669,7 @@
       "order": 9,
       "keywords": ["bundle", "cold", "neck", "up"]
     },
-    {
-      "emoji": "🧤",
-      "shortcodes": ["gloves"],
-      "group": "objects",
-      "order": 10,
-      "keywords": ["hand"]
-    },
+    { "emoji": "🧤", "shortcodes": ["gloves"], "group": "objects", "order": 10, "keywords": ["hand"] },
     {
       "emoji": "🧥",
       "shortcodes": ["coat"],
@@ -7381,13 +6677,7 @@
       "order": 11,
       "keywords": ["brr", "bundle", "cold", "jacket", "up"]
     },
-    {
-      "emoji": "🧦",
-      "shortcodes": ["socks"],
-      "group": "objects",
-      "order": 12,
-      "keywords": ["stocking"]
-    },
+    { "emoji": "🧦", "shortcodes": ["socks"], "group": "objects", "order": 12, "keywords": ["stocking"] },
     {
       "emoji": "👗",
       "shortcodes": ["dress"],
@@ -7402,13 +6692,7 @@
       "order": 14,
       "keywords": ["clothing", "comfortable"]
     },
-    {
-      "emoji": "🥻",
-      "shortcodes": ["sari"],
-      "group": "objects",
-      "order": 15,
-      "keywords": ["clothing", "dress"]
-    },
+    { "emoji": "🥻", "shortcodes": ["sari"], "group": "objects", "order": 15, "keywords": ["clothing", "dress"] },
     {
       "emoji": "🩱",
       "shortcodes": ["one_piece_swimsuit", "one-piece_swimsuit"],
@@ -7453,8 +6737,7 @@
         "shirt",
         "shopping",
         "woman",
-        "woman’s",
-        "woman’s clothes"
+        "woman s"
       ]
     },
     {
@@ -7497,26 +6780,14 @@
       "shortcodes": ["thong_sandal"],
       "group": "objects",
       "order": 28,
-      "keywords": ["beach", "flip", "flop", "sandal", "sandals", "shoe", "thong", "thongs", "zōri"]
+      "keywords": ["beach", "flip", "flop", "sandal", "sandals", "shoe", "thong", "thongs", "zori"]
     },
     {
       "emoji": "👞",
       "shortcodes": ["mans_shoe", "shoe"],
       "group": "objects",
       "order": 29,
-      "keywords": [
-        "brown",
-        "clothes",
-        "clothing",
-        "feet",
-        "foot",
-        "kick",
-        "man",
-        "man’s",
-        "shoes",
-        "shopping",
-        "man’s shoe"
-      ]
+      "keywords": ["brown", "clothes", "clothing", "feet", "foot", "kick", "man", "man s", "shoes", "shopping"]
     },
     {
       "emoji": "👟",
@@ -7564,7 +6835,7 @@
       "shortcodes": ["sandal", "womans_sandal"],
       "group": "objects",
       "order": 34,
-      "keywords": ["clothing", "shoe", "woman", "woman’s", "woman’s sandal"]
+      "keywords": ["clothing", "shoe", "woman", "woman s"]
     },
     {
       "emoji": "🩰",
@@ -7578,7 +6849,7 @@
       "shortcodes": ["boot", "womans_boot"],
       "group": "objects",
       "order": 36,
-      "keywords": ["clothes", "clothing", "dress", "shoe", "shoes", "shopping", "woman", "woman’s", "woman’s boot"]
+      "keywords": ["clothes", "clothing", "dress", "shoe", "shoes", "shopping", "woman", "woman s"]
     },
     {
       "emoji": "👑",
@@ -7592,7 +6863,7 @@
       "shortcodes": ["womans_hat"],
       "group": "objects",
       "order": 39,
-      "keywords": ["clothes", "clothing", "garden", "hat", "hats", "party", "woman", "woman’s", "woman’s hat"]
+      "keywords": ["clothes", "clothing", "garden", "hat", "hats", "party", "woman", "woman s"]
     },
     {
       "emoji": "🎩",
@@ -7627,7 +6898,7 @@
       "shortcodes": ["rescue_worker_helmet", "helmet_with_white_cross", "helmet_with_cross", "rescue_workers_helmet"],
       "group": "objects",
       "order": 44,
-      "keywords": ["aid", "cross", "face", "hat", "helmet", "rescue", "worker’s", "rescue worker’s helmet"]
+      "keywords": ["aid", "cross", "face", "hat", "helmet", "rescue", "worker s"]
     },
     {
       "emoji": "📿",
@@ -7811,27 +7082,9 @@
       "order": 74,
       "keywords": ["instrument", "keyboard", "music", "musical", "piano"]
     },
-    {
-      "emoji": "🎺",
-      "shortcodes": ["trumpet"],
-      "group": "objects",
-      "order": 75,
-      "keywords": ["instrument", "music"]
-    },
-    {
-      "emoji": "🎻",
-      "shortcodes": ["violin"],
-      "group": "objects",
-      "order": 76,
-      "keywords": ["instrument", "music"]
-    },
-    {
-      "emoji": "🪕",
-      "shortcodes": ["banjo"],
-      "group": "objects",
-      "order": 77,
-      "keywords": ["music", "stringed"]
-    },
+    { "emoji": "🎺", "shortcodes": ["trumpet"], "group": "objects", "order": 75, "keywords": ["instrument", "music"] },
+    { "emoji": "🎻", "shortcodes": ["violin"], "group": "objects", "order": 76, "keywords": ["instrument", "music"] },
+    { "emoji": "🪕", "shortcodes": ["banjo"], "group": "objects", "order": 77, "keywords": ["music", "stringed"] },
     {
       "emoji": "🥁",
       "shortcodes": ["drum", "drum_with_drumsticks"],
@@ -7860,13 +7113,7 @@
       "order": 84,
       "keywords": ["arrow", "build", "call", "cell", "communication", "mobile", "phone", "receive", "telephone"]
     },
-    {
-      "emoji": "☎️",
-      "shortcodes": ["phone", "telephone"],
-      "group": "objects",
-      "order": 85,
-      "keywords": []
-    },
+    { "emoji": "☎️", "shortcodes": ["phone", "telephone"], "group": "objects", "order": 85, "keywords": [] },
     {
       "emoji": "📞",
       "shortcodes": ["telephone_receiver"],
@@ -7874,13 +7121,7 @@
       "order": 87,
       "keywords": ["communication", "phone", "receiver", "telephone", "voip"]
     },
-    {
-      "emoji": "📟",
-      "shortcodes": ["pager"],
-      "group": "objects",
-      "order": 88,
-      "keywords": ["communication"]
-    },
+    { "emoji": "📟", "shortcodes": ["pager"], "group": "objects", "order": 88, "keywords": ["communication"] },
     {
       "emoji": "📠",
       "shortcodes": ["fax", "fax_machine"],
@@ -7888,13 +7129,7 @@
       "order": 89,
       "keywords": ["communication", "machine"]
     },
-    {
-      "emoji": "🔋",
-      "shortcodes": ["battery"],
-      "group": "objects",
-      "order": 90,
-      "keywords": []
-    },
+    { "emoji": "🔋", "shortcodes": ["battery"], "group": "objects", "order": 90, "keywords": [] },
     {
       "emoji": "🔌",
       "shortcodes": ["electric_plug"],
@@ -7916,20 +7151,8 @@
       "order": 94,
       "keywords": ["computer", "monitor"]
     },
-    {
-      "emoji": "🖨️",
-      "shortcodes": ["printer"],
-      "group": "objects",
-      "order": 96,
-      "keywords": ["computer"]
-    },
-    {
-      "emoji": "⌨️",
-      "shortcodes": ["keyboard"],
-      "group": "objects",
-      "order": 98,
-      "keywords": ["computer"]
-    },
+    { "emoji": "🖨️", "shortcodes": ["printer"], "group": "objects", "order": 96, "keywords": ["computer"] },
+    { "emoji": "⌨️", "shortcodes": ["keyboard"], "group": "objects", "order": 98, "keywords": ["computer"] },
     {
       "emoji": "🖱️",
       "shortcodes": ["computer_mouse", "three_button_mouse", "mouse_three_button"],
@@ -7937,13 +7160,7 @@
       "order": 100,
       "keywords": ["computer", "mouse"]
     },
-    {
-      "emoji": "🖲️",
-      "shortcodes": ["trackball"],
-      "group": "objects",
-      "order": 102,
-      "keywords": ["computer"]
-    },
+    { "emoji": "🖲️", "shortcodes": ["trackball"], "group": "objects", "order": 102, "keywords": ["computer"] },
     {
       "emoji": "💽",
       "shortcodes": ["minidisc", "computer_disk"],
@@ -8007,13 +7224,7 @@
       "order": 114,
       "keywords": ["action", "board", "movie"]
     },
-    {
-      "emoji": "📺",
-      "shortcodes": ["tv", "television"],
-      "group": "objects",
-      "order": 115,
-      "keywords": ["video"]
-    },
+    { "emoji": "📺", "shortcodes": ["tv", "television"], "group": "objects", "order": 115, "keywords": ["video"] },
     {
       "emoji": "📷",
       "shortcodes": ["camera"],
@@ -8067,13 +7278,7 @@
         "tool"
       ]
     },
-    {
-      "emoji": "🕯️",
-      "shortcodes": ["candle"],
-      "group": "objects",
-      "order": 122,
-      "keywords": ["light"]
-    },
+    { "emoji": "🕯️", "shortcodes": ["candle"], "group": "objects", "order": 122, "keywords": ["light"] },
     {
       "emoji": "💡",
       "shortcodes": ["bulb", "idea", "lightbulb_idea", "light_bulb"],
@@ -8151,20 +7356,8 @@
       "order": 134,
       "keywords": ["book", "education", "fantasy", "knowledge", "library", "novels", "reading", "school", "study"]
     },
-    {
-      "emoji": "📓",
-      "shortcodes": ["notebook"],
-      "group": "objects",
-      "order": 135,
-      "keywords": []
-    },
-    {
-      "emoji": "📒",
-      "shortcodes": ["ledger"],
-      "group": "objects",
-      "order": 136,
-      "keywords": ["notebook"]
-    },
+    { "emoji": "📓", "shortcodes": ["notebook"], "group": "objects", "order": 135, "keywords": [] },
+    { "emoji": "📒", "shortcodes": ["ledger"], "group": "objects", "order": 136, "keywords": ["notebook"] },
     {
       "emoji": "📃",
       "shortcodes": ["page_with_curl"],
@@ -8172,13 +7365,7 @@
       "order": 137,
       "keywords": ["curl", "document", "page", "paper"]
     },
-    {
-      "emoji": "📜",
-      "shortcodes": ["scroll"],
-      "group": "objects",
-      "order": 138,
-      "keywords": ["paper"]
-    },
+    { "emoji": "📜", "shortcodes": ["scroll"], "group": "objects", "order": 138, "keywords": ["paper"] },
     {
       "emoji": "📄",
       "shortcodes": ["page_facing_up"],
@@ -8207,20 +7394,8 @@
       "order": 143,
       "keywords": ["bookmark", "mark", "marker", "tabs"]
     },
-    {
-      "emoji": "🔖",
-      "shortcodes": ["bookmark"],
-      "group": "objects",
-      "order": 144,
-      "keywords": ["mark"]
-    },
-    {
-      "emoji": "🏷️",
-      "shortcodes": ["label"],
-      "group": "objects",
-      "order": 145,
-      "keywords": ["tag"]
-    },
+    { "emoji": "🔖", "shortcodes": ["bookmark"], "group": "objects", "order": 144, "keywords": ["mark"] },
+    { "emoji": "🏷️", "shortcodes": ["label"], "group": "objects", "order": 145, "keywords": ["tag"] },
     {
       "emoji": "💰",
       "shortcodes": ["moneybag", "money_bag"],
@@ -8332,13 +7507,7 @@
         "yen"
       ]
     },
-    {
-      "emoji": "✉️",
-      "shortcodes": ["email", "envelope"],
-      "group": "objects",
-      "order": 157,
-      "keywords": ["letter"]
-    },
+    { "emoji": "✉️", "shortcodes": ["email", "envelope"], "group": "objects", "order": 157, "keywords": ["letter"] },
     {
       "emoji": "📧",
       "shortcodes": ["e-mail", "e_mail"],
@@ -8409,13 +7578,7 @@
       "order": 168,
       "keywords": ["flag", "lowered", "mail", "mailbox", "open", "postbox"]
     },
-    {
-      "emoji": "📮",
-      "shortcodes": ["postbox"],
-      "group": "objects",
-      "order": 169,
-      "keywords": ["mail", "mailbox"]
-    },
+    { "emoji": "📮", "shortcodes": ["postbox"], "group": "objects", "order": 169, "keywords": ["mail", "mailbox"] },
     {
       "emoji": "🗳️",
       "shortcodes": ["ballot_box", "ballot_box_with_ballot"],
@@ -8423,13 +7586,7 @@
       "order": 170,
       "keywords": ["ballot", "box"]
     },
-    {
-      "emoji": "✏️",
-      "shortcodes": ["pencil2"],
-      "group": "objects",
-      "order": 172,
-      "keywords": ["pencil"]
-    },
+    { "emoji": "✏️", "shortcodes": ["pencil2"], "group": "objects", "order": 172, "keywords": ["pencil"] },
     {
       "emoji": "✒️",
       "shortcodes": ["black_nib"],
@@ -8458,13 +7615,7 @@
       "order": 180,
       "keywords": ["painting"]
     },
-    {
-      "emoji": "🖍️",
-      "shortcodes": ["crayon", "lower_left_crayon"],
-      "group": "objects",
-      "order": 182,
-      "keywords": []
-    },
+    { "emoji": "🖍️", "shortcodes": ["crayon", "lower_left_crayon"], "group": "objects", "order": 182, "keywords": [] },
     {
       "emoji": "📝",
       "shortcodes": ["memo", "pencil"],
@@ -8472,20 +7623,8 @@
       "order": 184,
       "keywords": ["communication", "media", "notes"]
     },
-    {
-      "emoji": "💼",
-      "shortcodes": ["briefcase"],
-      "group": "objects",
-      "order": 185,
-      "keywords": ["office"]
-    },
-    {
-      "emoji": "📁",
-      "shortcodes": ["file_folder"],
-      "group": "objects",
-      "order": 186,
-      "keywords": ["file", "folder"]
-    },
+    { "emoji": "💼", "shortcodes": ["briefcase"], "group": "objects", "order": 185, "keywords": ["office"] },
+    { "emoji": "📁", "shortcodes": ["file_folder"], "group": "objects", "order": 186, "keywords": ["file", "folder"] },
     {
       "emoji": "📂",
       "shortcodes": ["open_file_folder"],
@@ -8500,13 +7639,7 @@
       "order": 188,
       "keywords": ["card", "index"]
     },
-    {
-      "emoji": "📅",
-      "shortcodes": ["date"],
-      "group": "objects",
-      "order": 190,
-      "keywords": ["calendar"]
-    },
+    { "emoji": "📅", "shortcodes": ["date"], "group": "objects", "order": 190, "keywords": ["calendar"] },
     {
       "emoji": "📆",
       "shortcodes": ["calendar", "tear_off_calendar"],
@@ -8563,13 +7696,7 @@
       "order": 200,
       "keywords": ["do", "list", "notes"]
     },
-    {
-      "emoji": "📌",
-      "shortcodes": ["pushpin", "pin"],
-      "group": "objects",
-      "order": 201,
-      "keywords": ["collage"]
-    },
+    { "emoji": "📌", "shortcodes": ["pushpin", "pin"], "group": "objects", "order": 201, "keywords": ["collage"] },
     {
       "emoji": "📍",
       "shortcodes": ["round_pushpin"],
@@ -8577,13 +7704,7 @@
       "order": 202,
       "keywords": ["location", "map", "pin", "pushpin", "round"]
     },
-    {
-      "emoji": "📎",
-      "shortcodes": ["paperclip"],
-      "group": "objects",
-      "order": 203,
-      "keywords": []
-    },
+    { "emoji": "📎", "shortcodes": ["paperclip"], "group": "objects", "order": 203, "keywords": [] },
     {
       "emoji": "🖇️",
       "shortcodes": ["paperclips", "linked_paperclips"],
@@ -8745,13 +7866,7 @@
       "order": 237,
       "keywords": ["archer", "arrow", "bow", "sagittarius", "tool", "weapon", "zodiac"]
     },
-    {
-      "emoji": "🛡️",
-      "shortcodes": ["shield"],
-      "group": "objects",
-      "order": 238,
-      "keywords": ["weapon"]
-    },
+    { "emoji": "🛡️", "shortcodes": ["shield"], "group": "objects", "order": 238, "keywords": ["weapon"] },
     {
       "emoji": "🪚",
       "shortcodes": ["carpentry_saw"],
@@ -8808,20 +7923,8 @@
       "order": 250,
       "keywords": ["accessibility", "blind", "cane", "probing", "white"]
     },
-    {
-      "emoji": "🔗",
-      "shortcodes": ["link"],
-      "group": "objects",
-      "order": 251,
-      "keywords": ["links"]
-    },
-    {
-      "emoji": "⛓️",
-      "shortcodes": ["chains"],
-      "group": "objects",
-      "order": 254,
-      "keywords": ["chain"]
-    },
+    { "emoji": "🔗", "shortcodes": ["link"], "group": "objects", "order": 251, "keywords": ["links"] },
+    { "emoji": "⛓️", "shortcodes": ["chains"], "group": "objects", "order": 254, "keywords": ["chain"] },
     {
       "emoji": "🪝",
       "shortcodes": ["hook"],
@@ -8850,13 +7953,7 @@
       "order": 259,
       "keywords": ["climb", "rung", "step"]
     },
-    {
-      "emoji": "⚗️",
-      "shortcodes": ["alembic"],
-      "group": "objects",
-      "order": 261,
-      "keywords": ["chemistry", "tool"]
-    },
+    { "emoji": "⚗️", "shortcodes": ["alembic"], "group": "objects", "order": 261, "keywords": ["chemistry", "tool"] },
     {
       "emoji": "🧪",
       "shortcodes": ["test_tube"],
@@ -8962,13 +8059,7 @@
       "order": 279,
       "keywords": ["air", "frame", "fresh", "opening", "transparent", "view"]
     },
-    {
-      "emoji": "🛏️",
-      "shortcodes": ["bed"],
-      "group": "objects",
-      "order": 280,
-      "keywords": ["hotel", "sleep"]
-    },
+    { "emoji": "🛏️", "shortcodes": ["bed"], "group": "objects", "order": 280, "keywords": ["hotel", "sleep"] },
     {
       "emoji": "🛋️",
       "shortcodes": ["couch_and_lamp", "couch"],
@@ -8976,20 +8067,8 @@
       "order": 282,
       "keywords": ["hotel", "lamp"]
     },
-    {
-      "emoji": "🪑",
-      "shortcodes": ["chair"],
-      "group": "objects",
-      "order": 284,
-      "keywords": ["seat", "sit"]
-    },
-    {
-      "emoji": "🚽",
-      "shortcodes": ["toilet"],
-      "group": "objects",
-      "order": 285,
-      "keywords": ["bathroom"]
-    },
+    { "emoji": "🪑", "shortcodes": ["chair"], "group": "objects", "order": 284, "keywords": ["seat", "sit"] },
+    { "emoji": "🚽", "shortcodes": ["toilet"], "group": "objects", "order": 285, "keywords": ["bathroom"] },
     {
       "emoji": "🪠",
       "shortcodes": ["plunger"],
@@ -8997,20 +8076,8 @@
       "order": 286,
       "keywords": ["cup", "force", "plumber", "poop", "suction", "toilet"]
     },
-    {
-      "emoji": "🚿",
-      "shortcodes": ["shower"],
-      "group": "objects",
-      "order": 287,
-      "keywords": ["water"]
-    },
-    {
-      "emoji": "🛁",
-      "shortcodes": ["bathtub"],
-      "group": "objects",
-      "order": 288,
-      "keywords": ["bath"]
-    },
+    { "emoji": "🚿", "shortcodes": ["shower"], "group": "objects", "order": 287, "keywords": ["water"] },
+    { "emoji": "🛁", "shortcodes": ["bathtub"], "group": "objects", "order": 288, "keywords": ["bath"] },
     {
       "emoji": "🪤",
       "shortcodes": ["mouse_trap"],
@@ -9018,13 +8085,7 @@
       "order": 289,
       "keywords": ["bait", "cheese", "lure", "mouse", "snare", "trap"]
     },
-    {
-      "emoji": "🪒",
-      "shortcodes": ["razor"],
-      "group": "objects",
-      "order": 290,
-      "keywords": ["sharp", "shave"]
-    },
+    { "emoji": "🪒", "shortcodes": ["razor"], "group": "objects", "order": 290, "keywords": ["sharp", "shave"] },
     {
       "emoji": "🧴",
       "shortcodes": ["lotion_bottle", "squeeze_bottle"],
@@ -9060,13 +8121,7 @@
       "order": 295,
       "keywords": ["paper", "roll", "toilet", "towels"]
     },
-    {
-      "emoji": "🪣",
-      "shortcodes": ["bucket"],
-      "group": "objects",
-      "order": 296,
-      "keywords": ["cask", "pail", "vat"]
-    },
+    { "emoji": "🪣", "shortcodes": ["bucket"], "group": "objects", "order": 296, "keywords": ["cask", "pail", "vat"] },
     {
       "emoji": "🧼",
       "shortcodes": ["soap"],
@@ -9102,13 +8157,7 @@
       "order": 302,
       "keywords": ["cart", "shopping", "trolley"]
     },
-    {
-      "emoji": "🚬",
-      "shortcodes": ["smoking", "cigarette"],
-      "group": "objects",
-      "order": 303,
-      "keywords": []
-    },
+    { "emoji": "🚬", "shortcodes": ["smoking", "cigarette"], "group": "objects", "order": 303, "keywords": [] },
     {
       "emoji": "⚰️",
       "shortcodes": ["coffin"],
@@ -9184,14 +8233,14 @@
       "shortcodes": ["mens", "mens_room"],
       "group": "symbols",
       "order": 4,
-      "keywords": ["bathroom", "lavatory", "man", "men’s", "restroom", "room", "toilet", "wc", "men’s room"]
+      "keywords": ["bathroom", "lavatory", "man", "restroom", "room", "toilet", "wc"]
     },
     {
       "emoji": "🚺",
       "shortcodes": ["womens", "womens_room"],
       "group": "symbols",
       "order": 5,
-      "keywords": ["bathroom", "lavatory", "restroom", "room", "toilet", "wc", "woman", "women’s", "women’s room"]
+      "keywords": ["bathroom", "lavatory", "restroom", "room", "toilet", "wc", "woman"]
     },
     {
       "emoji": "🚻",
@@ -9221,13 +8270,7 @@
       "order": 9,
       "keywords": ["control", "passport"]
     },
-    {
-      "emoji": "🛃",
-      "shortcodes": ["customs"],
-      "group": "symbols",
-      "order": 10,
-      "keywords": ["packing"]
-    },
+    { "emoji": "🛃", "shortcodes": ["customs"], "group": "symbols", "order": 10, "keywords": ["packing"] },
     {
       "emoji": "🛄",
       "shortcodes": ["baggage_claim"],
@@ -9458,27 +8501,9 @@
       "order": 58,
       "keywords": ["again", "anticlockwise", "arrow", "arrows", "button", "deja", "refresh", "rewindershins", "vu"]
     },
-    {
-      "emoji": "🔙",
-      "shortcodes": ["back", "back_arrow"],
-      "group": "symbols",
-      "order": 59,
-      "keywords": ["arrow"]
-    },
-    {
-      "emoji": "🔚",
-      "shortcodes": ["end", "end_arrow"],
-      "group": "symbols",
-      "order": 60,
-      "keywords": ["arrow"]
-    },
-    {
-      "emoji": "🔛",
-      "shortcodes": ["on", "on_arrow"],
-      "group": "symbols",
-      "order": 61,
-      "keywords": ["arrow", "mark", "on!", "on! arrow"]
-    },
+    { "emoji": "🔙", "shortcodes": ["back", "back_arrow"], "group": "symbols", "order": 59, "keywords": ["arrow"] },
+    { "emoji": "🔚", "shortcodes": ["end", "end_arrow"], "group": "symbols", "order": 60, "keywords": ["arrow"] },
+    { "emoji": "🔛", "shortcodes": ["on", "on_arrow"], "group": "symbols", "order": 61, "keywords": ["arrow", "mark"] },
     {
       "emoji": "🔜",
       "shortcodes": ["soon", "soon_arrow"],
@@ -9612,13 +8637,7 @@
       "order": 90,
       "keywords": ["horoscope", "lion", "zodiac"]
     },
-    {
-      "emoji": "♍",
-      "shortcodes": ["virgo"],
-      "group": "symbols",
-      "order": 91,
-      "keywords": ["horoscope", "zodiac"]
-    },
+    { "emoji": "♍", "shortcodes": ["virgo"], "group": "symbols", "order": 91, "keywords": ["horoscope", "zodiac"] },
     {
       "emoji": "♎",
       "shortcodes": ["libra"],
@@ -9873,28 +8892,22 @@
       "shortcodes": ["heavy_multiplication_x", "multiplication", "multiply"],
       "group": "symbols",
       "order": 139,
-      "keywords": ["cancel", "sign", "x", "×"]
+      "keywords": ["cancel", "sign", "x"]
     },
-    {
-      "emoji": "➕",
-      "shortcodes": ["heavy_plus_sign", "plus"],
-      "group": "symbols",
-      "order": 141,
-      "keywords": ["+"]
-    },
+    { "emoji": "➕", "shortcodes": ["heavy_plus_sign", "plus"], "group": "symbols", "order": 141, "keywords": ["+"] },
     {
       "emoji": "➖",
       "shortcodes": ["heavy_minus_sign", "minus"],
       "group": "symbols",
       "order": 142,
-      "keywords": ["-", "heavy", "math", "sign", "−"]
+      "keywords": ["-", "heavy", "math", "sign"]
     },
     {
       "emoji": "➗",
       "shortcodes": ["heavy_division_sign", "divide", "division"],
       "group": "symbols",
       "order": 143,
-      "keywords": ["heavy", "math", "sign", "÷"]
+      "keywords": ["heavy", "math", "sign"]
     },
     {
       "emoji": "♾️",
@@ -9908,42 +8921,42 @@
       "shortcodes": ["bangbang", "double_exclamation", "double_exclamation_mark"],
       "group": "symbols",
       "order": 147,
-      "keywords": ["!", "!!", "double", "exclamation", "mark", "punctuation"]
+      "keywords": ["double", "exclamation", "mark", "punctuation"]
     },
     {
       "emoji": "⁉️",
       "shortcodes": ["interrobang", "exclamation_question", "exclamation_question_mark"],
       "group": "symbols",
       "order": 149,
-      "keywords": ["!", "!?", "?", "exclamation", "mark", "punctuation", "question"]
+      "keywords": ["exclamation", "mark", "punctuation", "question"]
     },
     {
       "emoji": "❓",
       "shortcodes": ["question", "question_mark", "huh", "red_question_mark"],
       "group": "symbols",
       "order": 151,
-      "keywords": ["?", "mark", "punctuation", "red"]
+      "keywords": ["mark", "punctuation", "red"]
     },
     {
       "emoji": "❔",
       "shortcodes": ["grey_question", "white_question", "white_question_mark"],
       "group": "symbols",
       "order": 152,
-      "keywords": ["?", "mark", "outlined", "punctuation", "question", "white"]
+      "keywords": ["mark", "outlined", "punctuation", "question", "white"]
     },
     {
       "emoji": "❕",
       "shortcodes": ["grey_exclamation", "white_exclamation", "white_exclamation_mark"],
       "group": "symbols",
       "order": 153,
-      "keywords": ["!", "exclamation", "mark", "outlined", "punctuation", "white"]
+      "keywords": ["exclamation", "mark", "outlined", "punctuation", "white"]
     },
     {
       "emoji": "❗",
       "shortcodes": ["exclamation", "heavy_exclamation_mark", "red_exclamation_mark"],
       "group": "symbols",
       "order": 154,
-      "keywords": ["!", "mark", "punctuation", "red"]
+      "keywords": ["mark", "punctuation", "red"]
     },
     {
       "emoji": "〰️",
@@ -9994,13 +9007,7 @@
       "order": 165,
       "keywords": ["anchor", "emblem", "poseidon", "ship", "tool"]
     },
-    {
-      "emoji": "📛",
-      "shortcodes": ["name_badge"],
-      "group": "symbols",
-      "order": 166,
-      "keywords": ["badge", "name"]
-    },
+    { "emoji": "📛", "shortcodes": ["name_badge"], "group": "symbols", "order": 166, "keywords": ["badge", "name"] },
     {
       "emoji": "🔰",
       "shortcodes": ["beginner", "japanese_symbol_for_beginner"],
@@ -10020,35 +9027,35 @@
       "shortcodes": ["white_check_mark", "done", "yes", "checkmark", "check_done", "check_mark_button"],
       "group": "symbols",
       "order": 169,
-      "keywords": ["button", "check", "checked", "complete", "completed", "fixed", "mark", "tick", "✓"]
+      "keywords": ["button", "check", "checked", "complete", "completed", "fixed", "mark", "tick"]
     },
     {
       "emoji": "☑️",
       "shortcodes": ["ballot_box_with_check", "check_box_with_check"],
       "group": "symbols",
       "order": 170,
-      "keywords": ["ballot", "box", "check", "checked", "done", "off", "tick", "✓"]
+      "keywords": ["ballot", "box", "check", "checked", "done", "off", "tick"]
     },
     {
       "emoji": "✔️",
       "shortcodes": ["heavy_check_mark", "check_mark"],
       "group": "symbols",
       "order": 172,
-      "keywords": ["check", "checked", "done", "heavy", "mark", "tick", "✓"]
+      "keywords": ["check", "checked", "done", "heavy", "mark", "tick"]
     },
     {
       "emoji": "❌",
       "shortcodes": ["x", "no", "wrong", "cross_mark"],
       "group": "symbols",
       "order": 174,
-      "keywords": ["cancel", "cross", "mark", "multiplication", "multiply", "×"]
+      "keywords": ["cancel", "cross", "mark", "multiplication", "multiply"]
     },
     {
       "emoji": "❎",
       "shortcodes": ["negative_squared_cross_mark", "cross_mark_button"],
       "group": "symbols",
       "order": 175,
-      "keywords": ["button", "cross", "mark", "multiplication", "multiply", "square", "x", "×"]
+      "keywords": ["button", "cross", "mark", "multiplication", "multiply", "square", "x"]
     },
     {
       "emoji": "➰",
@@ -10076,36 +9083,18 @@
       "shortcodes": ["eight_spoked_asterisk"],
       "group": "symbols",
       "order": 180,
-      "keywords": ["*", "asterisk", "eight-spoked"]
+      "keywords": ["asterisk", "eight-spoked"]
     },
     {
       "emoji": "✴️",
       "shortcodes": ["eight_pointed_black_star", "eight_pointed_star"],
       "group": "symbols",
       "order": 182,
-      "keywords": ["*", "eight-pointed", "star"]
+      "keywords": ["eight-pointed", "star"]
     },
-    {
-      "emoji": "❇️",
-      "shortcodes": ["sparkle"],
-      "group": "symbols",
-      "order": 184,
-      "keywords": ["*"]
-    },
-    {
-      "emoji": "©️",
-      "shortcodes": ["copyright"],
-      "group": "symbols",
-      "order": 186,
-      "keywords": ["c"]
-    },
-    {
-      "emoji": "®️",
-      "shortcodes": ["registered"],
-      "group": "symbols",
-      "order": 188,
-      "keywords": ["r"]
-    },
+    { "emoji": "❇️", "shortcodes": ["sparkle"], "group": "symbols", "order": 184, "keywords": [] },
+    { "emoji": "©️", "shortcodes": ["copyright"], "group": "symbols", "order": 186, "keywords": ["c"] },
+    { "emoji": "®️", "shortcodes": ["registered"], "group": "symbols", "order": 188, "keywords": ["r"] },
     {
       "emoji": "™️",
       "shortcodes": ["tm", "trade_mark"],
@@ -10118,91 +9107,73 @@
       "shortcodes": ["hash", "number_sign", "keycap_number_sign"],
       "group": "symbols",
       "order": 193,
-      "keywords": ["keycap", "keycap: #"]
+      "keywords": ["keycap"]
     },
     {
       "emoji": "*️⃣",
       "shortcodes": ["asterisk", "keycap_star", "keycap_asterisk"],
       "group": "symbols",
       "order": 195,
-      "keywords": ["keycap", "keycap: *"]
+      "keywords": ["keycap"]
     },
     {
       "emoji": "0️⃣",
       "shortcodes": ["zero", "keycap_0"],
       "group": "symbols",
       "order": 197,
-      "keywords": ["0", "keycap", "keycap: 0"]
+      "keywords": ["0", "keycap"]
     },
-    {
-      "emoji": "1️⃣",
-      "shortcodes": ["one", "keycap_1"],
-      "group": "symbols",
-      "order": 199,
-      "keywords": ["1", "keycap", "keycap: 1"]
-    },
-    {
-      "emoji": "2️⃣",
-      "shortcodes": ["two", "keycap_2"],
-      "group": "symbols",
-      "order": 201,
-      "keywords": ["2", "keycap", "keycap: 2"]
-    },
+    { "emoji": "1️⃣", "shortcodes": ["one", "keycap_1"], "group": "symbols", "order": 199, "keywords": ["1", "keycap"] },
+    { "emoji": "2️⃣", "shortcodes": ["two", "keycap_2"], "group": "symbols", "order": 201, "keywords": ["2", "keycap"] },
     {
       "emoji": "3️⃣",
       "shortcodes": ["three", "keycap_3"],
       "group": "symbols",
       "order": 203,
-      "keywords": ["3", "keycap", "keycap: 3"]
+      "keywords": ["3", "keycap"]
     },
     {
       "emoji": "4️⃣",
       "shortcodes": ["four", "keycap_4"],
       "group": "symbols",
       "order": 205,
-      "keywords": ["4", "keycap", "keycap: 4"]
+      "keywords": ["4", "keycap"]
     },
     {
       "emoji": "5️⃣",
       "shortcodes": ["five", "keycap_5"],
       "group": "symbols",
       "order": 207,
-      "keywords": ["5", "keycap", "keycap: 5"]
+      "keywords": ["5", "keycap"]
     },
-    {
-      "emoji": "6️⃣",
-      "shortcodes": ["six", "keycap_6"],
-      "group": "symbols",
-      "order": 209,
-      "keywords": ["6", "keycap", "keycap: 6"]
-    },
+    { "emoji": "6️⃣", "shortcodes": ["six", "keycap_6"], "group": "symbols", "order": 209, "keywords": ["6", "keycap"] },
     {
       "emoji": "7️⃣",
       "shortcodes": ["seven", "keycap_7"],
       "group": "symbols",
       "order": 211,
-      "keywords": ["7", "keycap", "keycap: 7"]
+      "keywords": ["7", "keycap"]
     },
     {
       "emoji": "8️⃣",
       "shortcodes": ["eight", "keycap_8"],
       "group": "symbols",
       "order": 213,
-      "keywords": ["8", "keycap", "keycap: 8"]
+      "keywords": ["8", "keycap"]
     },
     {
       "emoji": "9️⃣",
       "shortcodes": ["nine", "keycap_9"],
       "group": "symbols",
       "order": 215,
-      "keywords": ["9", "keycap", "keycap: 9"]
+      "keywords": ["9", "keycap"]
     },
     {
       "emoji": "🔟",
       "shortcodes": ["keycap_ten", "ten", "keycap_10"],
       "group": "symbols",
       "order": 217,
-      "keywords": ["keycap", "keycap: 10"]
+      "keywords": ["keycap"]
     },
     {
       "emoji": "🔠",
@@ -10230,7 +9201,7 @@
       "shortcodes": ["symbols", "input_symbols"],
       "group": "symbols",
       "order": 221,
-      "keywords": ["%", "&", "input", "♪", "〒"]
+      "keywords": ["input"]
     },
     {
       "emoji": "🔤",
@@ -10244,43 +9215,25 @@
       "shortcodes": ["a", "a_blood", "a_button_blood_type"],
       "group": "symbols",
       "order": 223,
-      "keywords": ["blood", "button", "type", "a button (blood type)"]
+      "keywords": ["blood", "button", "type"]
     },
     {
       "emoji": "🆎",
       "shortcodes": ["ab", "ab_blood", "ab_button_blood_type"],
       "group": "symbols",
       "order": 225,
-      "keywords": ["blood", "button", "type", "ab button (blood type)"]
+      "keywords": ["blood", "button", "type"]
     },
     {
       "emoji": "🅱️",
       "shortcodes": ["b", "b_blood", "b_button_blood_type"],
       "group": "symbols",
       "order": 226,
-      "keywords": ["blood", "button", "type", "b button (blood type)"]
+      "keywords": ["blood", "button", "type"]
     },
-    {
-      "emoji": "🆑",
-      "shortcodes": ["cl", "cl_button"],
-      "group": "symbols",
-      "order": 228,
-      "keywords": ["button"]
-    },
-    {
-      "emoji": "🆒",
-      "shortcodes": ["cool", "cool_button"],
-      "group": "symbols",
-      "order": 229,
-      "keywords": ["button"]
-    },
-    {
-      "emoji": "🆓",
-      "shortcodes": ["free", "free_button"],
-      "group": "symbols",
-      "order": 230,
-      "keywords": ["button"]
-    },
+    { "emoji": "🆑", "shortcodes": ["cl", "cl_button"], "group": "symbols", "order": 228, "keywords": ["button"] },
+    { "emoji": "🆒", "shortcodes": ["cool", "cool_button"], "group": "symbols", "order": 229, "keywords": ["button"] },
+    { "emoji": "🆓", "shortcodes": ["free", "free_button"], "group": "symbols", "order": 230, "keywords": ["button"] },
     {
       "emoji": "ℹ️",
       "shortcodes": ["information_source", "info", "information"],
@@ -10302,26 +9255,14 @@
       "order": 234,
       "keywords": ["circle", "circled"]
     },
-    {
-      "emoji": "🆕",
-      "shortcodes": ["new", "new_button"],
-      "group": "symbols",
-      "order": 236,
-      "keywords": ["button"]
-    },
-    {
-      "emoji": "🆖",
-      "shortcodes": ["ng", "ng_button"],
-      "group": "symbols",
-      "order": 237,
-      "keywords": ["button"]
-    },
+    { "emoji": "🆕", "shortcodes": ["new", "new_button"], "group": "symbols", "order": 236, "keywords": ["button"] },
+    { "emoji": "🆖", "shortcodes": ["ng", "ng_button"], "group": "symbols", "order": 237, "keywords": ["button"] },
     {
       "emoji": "🅾️",
       "shortcodes": ["o2", "o_blood", "o_button_blood_type"],
       "group": "symbols",
       "order": 238,
-      "keywords": ["blood", "button", "o", "type", "o button (blood type)"]
+      "keywords": ["blood", "button", "o", "type"]
     },
     {
       "emoji": "🆗",
@@ -10349,7 +9290,7 @@
       "shortcodes": ["up", "up2", "up_button"],
       "group": "symbols",
       "order": 244,
-      "keywords": ["button", "mark", "up!", "up! button"]
+      "keywords": ["button", "mark"]
     },
     {
       "emoji": "🆚",
@@ -10363,119 +9304,119 @@
       "shortcodes": ["koko", "ja_here", "japanese_here_button"],
       "group": "symbols",
       "order": 246,
-      "keywords": ["button", "here", "japanese", "katakana", "japanese “here” button"]
+      "keywords": ["button", "here", "japanese", "katakana"]
     },
     {
       "emoji": "🈂️",
       "shortcodes": ["sa", "ja_service_charge", "japanese_service_charge_button"],
       "group": "symbols",
       "order": 247,
-      "keywords": ["button", "charge", "japanese", "katakana", "service", "japanese “service charge” button"]
+      "keywords": ["button", "charge", "japanese", "katakana", "service"]
     },
     {
       "emoji": "🈷️",
       "shortcodes": ["u6708", "ja_monthly_amount", "japanese_monthly_amount_button"],
       "group": "symbols",
       "order": 249,
-      "keywords": ["amount", "button", "ideograph", "japanese", "monthly", "japanese “monthly amount” button"]
+      "keywords": ["amount", "button", "ideograph", "japanese", "monthly"]
     },
     {
       "emoji": "🈶",
       "shortcodes": ["u6709", "ja_not_free_of_carge", "japanese_not_free_of_charge_button"],
       "group": "symbols",
       "order": 251,
-      "keywords": ["button", "charge", "free", "ideograph", "japanese", "not", "japanese “not free of charge” button"]
+      "keywords": ["button", "charge", "free", "ideograph", "japanese", "not"]
     },
     {
       "emoji": "🈯",
       "shortcodes": ["u6307", "ja_reserved", "japanese_reserved_button"],
       "group": "symbols",
       "order": 252,
-      "keywords": ["button", "ideograph", "japanese", "reserved", "japanese “reserved” button"]
+      "keywords": ["button", "ideograph", "japanese", "reserved"]
     },
     {
       "emoji": "🉐",
       "shortcodes": ["ideograph_advantage", "ja_bargain", "japanese_bargain_button"],
       "group": "symbols",
       "order": 253,
-      "keywords": ["bargain", "button", "ideograph", "japanese", "japanese “bargain” button"]
+      "keywords": ["bargain", "button", "ideograph", "japanese"]
     },
     {
       "emoji": "🈹",
       "shortcodes": ["u5272", "ja_discount", "japanese_discount_button"],
       "group": "symbols",
       "order": 254,
-      "keywords": ["button", "discount", "ideograph", "japanese", "japanese “discount” button"]
+      "keywords": ["button", "discount", "ideograph", "japanese"]
     },
     {
       "emoji": "🈚",
       "shortcodes": ["u7121", "ja_free_of_charge", "japanese_free_of_charge_button"],
       "group": "symbols",
       "order": 255,
-      "keywords": ["button", "charge", "free", "ideograph", "japanese", "japanese “free of charge” button"]
+      "keywords": ["button", "charge", "free", "ideograph", "japanese"]
     },
     {
       "emoji": "🈲",
       "shortcodes": ["u7981", "ja_prohibited", "japanese_prohibited_button"],
       "group": "symbols",
       "order": 256,
-      "keywords": ["button", "ideograph", "japanese", "prohibited", "japanese “prohibited” button"]
+      "keywords": ["button", "ideograph", "japanese", "prohibited"]
     },
     {
       "emoji": "🉑",
       "shortcodes": ["accept", "ja_acceptable", "japanese_acceptable_button"],
       "group": "symbols",
       "order": 257,
-      "keywords": ["acceptable", "button", "ideograph", "japanese", "japanese “acceptable” button"]
+      "keywords": ["acceptable", "button", "ideograph", "japanese"]
     },
     {
       "emoji": "🈸",
       "shortcodes": ["u7533", "ja_application", "japanese_application_button"],
       "group": "symbols",
       "order": 258,
-      "keywords": ["application", "button", "ideograph", "japanese", "japanese “application” button"]
+      "keywords": ["application", "button", "ideograph", "japanese"]
     },
     {
       "emoji": "🈴",
       "shortcodes": ["u5408", "ja_passing_grade", "japanese_passing_grade_button"],
       "group": "symbols",
       "order": 259,
-      "keywords": ["button", "grade", "ideograph", "japanese", "passing", "japanese “passing grade” button"]
+      "keywords": ["button", "grade", "ideograph", "japanese", "passing"]
     },
     {
       "emoji": "🈳",
       "shortcodes": ["u7a7a", "ja_vacancy", "japanese_vacancy_button"],
       "group": "symbols",
       "order": 260,
-      "keywords": ["button", "ideograph", "japanese", "vacancy", "japanese “vacancy” button"]
+      "keywords": ["button", "ideograph", "japanese", "vacancy"]
     },
     {
       "emoji": "㊗️",
       "shortcodes": ["congratulations", "ja_congratulations", "japanese_congratulations_button"],
       "group": "symbols",
       "order": 261,
-      "keywords": ["button", "ideograph", "japanese", "japanese “congratulations” button"]
+      "keywords": ["button", "ideograph", "japanese"]
     },
     {
       "emoji": "㊙️",
       "shortcodes": ["secret", "ja_secret", "japanese_secret_button"],
       "group": "symbols",
       "order": 263,
-      "keywords": ["button", "ideograph", "japanese", "japanese “secret” button"]
+      "keywords": ["button", "ideograph", "japanese"]
     },
     {
       "emoji": "🈺",
       "shortcodes": ["u55b6", "ja_open_for_business", "japanese_open_for_business_button"],
       "group": "symbols",
       "order": 265,
-      "keywords": ["business", "button", "ideograph", "japanese", "open", "japanese “open for business” button"]
+      "keywords": ["business", "button", "ideograph", "japanese", "open"]
     },
     {
       "emoji": "🈵",
       "shortcodes": ["u6e80", "ja_no_vacancy", "japanese_no_vacancy_button"],
       "group": "symbols",
       "order": 266,
-      "keywords": ["button", "ideograph", "japanese", "no", "vacancy", "japanese “no vacancy” button"]
+      "keywords": ["button", "ideograph", "japanese", "no", "vacancy"]
     },
     {
       "emoji": "🔴",
@@ -10835,7 +9776,7 @@
       "shortcodes": ["saluting_face", "salute", "saluting"],
       "group": "smileys",
       "order": 187,
-      "keywords": ["face", "good", "luck", "ma’am", "ok", "respect", "sir", "troops", "yes"]
+      "keywords": ["face", "good", "luck", "ma am", "ok", "respect", "sir", "troops", "yes"]
     },
     {
       "emoji": "🫢",
@@ -10919,7 +9860,7 @@
       "shortcodes": ["hand_with_index_finger_and_thumb_crossed", "finger_heart", "money_fingers"],
       "group": "people",
       "order": 3290,
-      "keywords": ["<3", "crossed", "expensive", "finger", "hand", "heart", "index", "love", "money", "snap", "thumb"]
+      "keywords": ["3", "crossed", "expensive", "finger", "hand", "heart", "index", "love", "money", "snap", "thumb"]
     },
     {
       "emoji": "🫱",
@@ -10967,7 +9908,7 @@
       "shortcodes": ["heart_hands", "hand_heart", "love_hands"],
       "group": "people",
       "order": 3296,
-      "keywords": ["<3", "hands", "heart", "love", "you"]
+      "keywords": ["3", "hands", "heart", "love", "you"]
     },
     {
       "emoji": "🫅",
