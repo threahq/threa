@@ -15,6 +15,7 @@ import {
   useConversations,
   useCreateBoardPost,
   useReplyToBoardPost,
+  useSettleConversationMessage,
   planBoardReply,
   conversationKeys,
 } from "./use-conversations"
@@ -618,5 +619,71 @@ describe("useReplyToBoardPost", () => {
         conversation: { intent: "existing", conversationId: "conv_1" },
       })
     )
+  })
+})
+
+describe("useSettleConversationMessage", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it("merges the confirmed aggregate and the shrunken settling set into the list cache, the board store and the by-id post", async () => {
+    const conversation = makeConversation("conv_1")
+    const settleMessage = vi.fn().mockResolvedValue({
+      conversation,
+      previousConversation: null,
+      settlingMessageIds: ["m_2"],
+    })
+    vi.spyOn(contextsModule, "useConversationService").mockReturnValue({
+      settleMessage,
+    } as unknown as contextsModule.ConversationService)
+    const merge = vi.spyOn(boardStoreModule, "mergeBoardConversation").mockResolvedValue(true)
+
+    const { queryClient, wrapper } = createWrapper()
+    queryClient.setQueryData(conversationKeys.list(WORKSPACE_ID, STREAM_ID, {}), [
+      makeConversation("conv_0"),
+      { id: "conv_1", topicSummary: "stale" } as unknown as ConversationWithStaleness,
+    ])
+    queryClient.setQueryData(conversationKeys.boardPost("conv_1"), {
+      conversation: { id: "conv_1", topicSummary: "stale" },
+      settlingMessageIds: ["m_1", "m_2"],
+      recentMessages: [],
+    })
+
+    const { result } = renderHook(() => useSettleConversationMessage(WORKSPACE_ID, STREAM_ID), { wrapper })
+    await act(async () => {
+      await result.current.mutateAsync({ messageId: "m_1", conversationId: "conv_1" })
+    })
+
+    expect(settleMessage).toHaveBeenCalledWith(WORKSPACE_ID, "conv_1", "m_1")
+    expect(merge).toHaveBeenCalledWith("conv_1", conversation, ["m_2"])
+    expect(queryClient.getQueryData(conversationKeys.list(WORKSPACE_ID, STREAM_ID, {}))).toEqual([
+      makeConversation("conv_0"),
+      conversation,
+    ])
+    expect(queryClient.getQueryData(conversationKeys.boardPost("conv_1"))).toEqual({
+      conversation,
+      settlingMessageIds: ["m_2"],
+      recentMessages: [],
+    })
+  })
+
+  it("leaves an uncached by-id post uncached rather than seeding a partial row", async () => {
+    vi.spyOn(contextsModule, "useConversationService").mockReturnValue({
+      settleMessage: vi.fn().mockResolvedValue({
+        conversation: makeConversation("conv_1"),
+        previousConversation: null,
+        settlingMessageIds: [],
+      }),
+    } as unknown as contextsModule.ConversationService)
+    vi.spyOn(boardStoreModule, "mergeBoardConversation").mockResolvedValue(true)
+
+    const { queryClient, wrapper } = createWrapper()
+    const { result } = renderHook(() => useSettleConversationMessage(WORKSPACE_ID, STREAM_ID), { wrapper })
+    await act(async () => {
+      await result.current.mutateAsync({ messageId: "m_1", conversationId: "conv_1" })
+    })
+
+    expect(queryClient.getQueryData(conversationKeys.boardPost("conv_1"))).toBeUndefined()
   })
 })

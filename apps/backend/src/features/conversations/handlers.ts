@@ -97,6 +97,11 @@ const reassignMessageParamsSchema = z.object({
   messageId: z.string().min(1),
 })
 
+const settleMessageParamsSchema = z.object({
+  conversationId: z.string().min(1),
+  messageId: z.string().min(1),
+})
+
 const splitThreadSchema = z.object({
   threadStreamId: z.string().min(1),
 })
@@ -342,6 +347,30 @@ export function createConversationHandlers({
       await streamService.validateStreamAccess(conversation.streamId, workspaceId, userId)
 
       const result = await conversationService.reassignMessage({ workspaceId, conversationId, messageId, userId })
+      res.json(result)
+    },
+
+    /**
+     * "Keep here": the user confirms a provisionally-placed message belongs in
+     * this conversation. Same access posture as {@link reassignMessage} —
+     * workspace-scoped conversation lookup, then stream access resolved through
+     * the thread root (INV-62).
+     */
+    async settleMessage(req: Request, res: Response) {
+      const userId = req.user!.id
+      const workspaceId = req.workspaceId!
+
+      const { conversationId, messageId } = validateRequest(settleMessageParamsSchema, req.params)
+
+      const conversation = await conversationService.getById(conversationId)
+      if (!conversation || conversation.workspaceId !== workspaceId) {
+        return res.status(404).json({ error: "Conversation not found" })
+      }
+
+      // validateStreamAccess handles public visibility + thread root membership
+      await streamService.validateStreamAccess(conversation.streamId, workspaceId, userId)
+
+      const result = await conversationService.settleMessage({ workspaceId, conversationId, messageId, userId })
       res.json(result)
     },
 

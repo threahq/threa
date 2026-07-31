@@ -855,7 +855,7 @@ function ConversationPanelBody({
         surfaceClassName="bg-background px-3 sm:px-6"
         rowInsetClassName="-mx-3 sm:-mx-6"
         onNewSubtopic={canBranch ? () => inlineComposer.openNewSubtopic(rowStreamId, message.id) : undefined}
-        onMoveToSubtopic={moveToSubtopic.moveHandlerFor(message.id, conversation.id)}
+        onMoveToSubtopic={moveToSubtopic.moveHandlerFor(message.id, conversation.id, message.settling)}
       />
     )
   }
@@ -889,7 +889,9 @@ function ConversationPanelBody({
               : undefined
           }
           onMoveToSubtopic={
-            branch.pending ? undefined : moveToSubtopic.moveHandlerFor(message.id, branch.conversationId)
+            branch.pending
+              ? undefined
+              : moveToSubtopic.moveHandlerFor(message.id, branch.conversationId, message.settling)
           }
         />
       </ConversationReadProvider>

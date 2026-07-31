@@ -1075,6 +1075,12 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     conversation.reassignMessage
   )
   app.post(
+    "/api/workspaces/:workspaceId/conversations/:conversationId/messages/:messageId/settle",
+    ...authed,
+    audit("conversations.settle_message", "write"),
+    conversation.settleMessage
+  )
+  app.post(
     "/api/workspaces/:workspaceId/conversations/:conversationId/split-thread",
     ...authed,
     audit("conversations.split_thread", "write"),

@@ -496,7 +496,7 @@ export function BoardCard({
         surfaceClassName="bg-card px-3 sm:px-4"
         rowInsetClassName="-mx-3 sm:-mx-4"
         onNewSubtopic={canBranch ? () => inlineComposer.openNewSubtopic(rowStreamId, message.id) : undefined}
-        onMoveToSubtopic={moveToSubtopic.moveHandlerFor(message.id, conversation.id)}
+        onMoveToSubtopic={moveToSubtopic.moveHandlerFor(message.id, conversation.id, message.settling)}
       />
     )
   }
@@ -536,7 +536,9 @@ export function BoardCard({
               : undefined
           }
           onMoveToSubtopic={
-            branch.pending ? undefined : moveToSubtopic.moveHandlerFor(message.id, branch.conversationId)
+            branch.pending
+              ? undefined
+              : moveToSubtopic.moveHandlerFor(message.id, branch.conversationId, message.settling)
           }
         />
       </ConversationReadProvider>

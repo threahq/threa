@@ -719,6 +719,37 @@ export function useReassignConversationMessage(workspaceId: string, streamId: st
 }
 
 /**
+ * The confirm half of the settling pair: "Keep here" settles the row where it
+ * already sits. Nothing moves, so only the settling set changes — the returned
+ * aggregate and set are written into the list cache, the board store and the
+ * by-id post cache so the mark fades on the response rather than the socket
+ * echo (which then lands as an idempotent overwrite). Success is silent
+ * (INV-63): the mark fading IS the confirmation.
+ */
+export function useSettleConversationMessage(workspaceId: string, streamId: string) {
+  const conversationService = useConversationService()
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: ({ messageId, conversationId }: { messageId: string; conversationId: string }) =>
+      conversationService.settleMessage(workspaceId, conversationId, messageId),
+    onSuccess: ({ conversation, settlingMessageIds }) => {
+      queryClient.setQueryData(
+        conversationKeys.list(workspaceId, streamId, {}),
+        (old: ConversationWithStaleness[] | undefined) => old?.map((c) => (c.id === conversation.id ? conversation : c))
+      )
+      void mergeBoardConversation(conversation.id, conversation, settlingMessageIds)
+      const boardPostKey = conversationKeys.boardPost(conversation.id)
+      if (queryClient.getQueryData(boardPostKey)) {
+        queryClient.setQueryData<BoardPost>(boardPostKey, (prev) =>
+          prev ? { ...prev, conversation, settlingMessageIds } : prev
+        )
+      }
+    },
+  })
+}
+
+/**
  * Batch counterpart of {@link useReassignConversationMessage}: reassign a set of
  * selected messages to another conversation, or split them into a new one
  * (`targetConversationId` omitted). The response carries the destination and

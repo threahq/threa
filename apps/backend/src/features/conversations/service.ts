@@ -12,6 +12,7 @@ import { MemoRepository } from "../memos"
 import { OutboxRepository } from "../../lib/outbox"
 import { addStalenessFields, type ConversationWithStaleness } from "./staleness"
 import { resolveConversationDelivery } from "./conversation-delivery"
+import { emitSettledConversationUpdates } from "./settling-service"
 import { effectiveRootId } from "./conversation-assigner"
 import { conversationFeedbackId, conversationId as generateConversationId } from "../../lib/id"
 import { HttpError } from "../../lib/errors"
@@ -120,6 +121,25 @@ export interface ReassignMessageResult {
   conversation: ConversationWithStaleness
   /** The conversation the message left, or null if it had no primary before. */
   previousConversation: ConversationWithStaleness | null
+}
+
+export interface SettleMessageParams {
+  workspaceId: string
+  /** The conversation the message is being confirmed into. */
+  conversationId: string
+  messageId: string
+  /** The confirming user — recorded with the feedback row. */
+  userId: string
+}
+
+export interface SettleMessageResult {
+  conversation: ConversationWithStaleness
+  /** Always null — a confirm moves nothing. Present so the client can merge the
+   *  response with the same code path as {@link ReassignMessageResult}. */
+  previousConversation: null
+  /** The conversation's remaining settling set, so the caller can drop the row's
+   *  mark without waiting for the socket echo. */
+  settlingMessageIds: string[]
 }
 
 export interface SplitThreadParams {
@@ -639,6 +659,59 @@ export class ConversationService {
       return {
         conversation: addStalenessFields(updatedTarget),
         previousConversation: updatedPrevious ? addStalenessFields(updatedPrevious) : null,
+      }
+    })
+  }
+
+  /**
+   * The other half of the correction pair: the user confirms a provisionally-
+   * placed message belongs where the extractor put it. Settles the row (the mark
+   * fades) and records the confirmation as `conversation_feedback` with
+   * `from == to` — a confirmed placement is ground truth for the extractor just
+   * as a correction is.
+   *
+   * Idempotent by construction (INV-20): the settle is the guard, so a row that
+   * settled between render and tap writes no feedback and emits no event, and
+   * the response still carries the current aggregate.
+   */
+  async settleMessage(params: SettleMessageParams): Promise<SettleMessageResult> {
+    const { workspaceId, conversationId, messageId, userId } = params
+
+    return withTransaction(this.pool, async (client) => {
+      const conversation = await ConversationRepository.findById(client, conversationId)
+      if (!conversation || conversation.workspaceId !== workspaceId) {
+        throw new HttpError("Conversation not found", { status: 404, code: "CONVERSATION_NOT_FOUND" })
+      }
+
+      const message = await MessageRepository.findById(client, messageId)
+      if (!message || !conversation.messageIds.includes(messageId)) {
+        throw new HttpError("Message not found", { status: 404, code: "MESSAGE_NOT_FOUND" })
+      }
+
+      const settled = await MessageConversationStateRepository.settle(client, workspaceId, [messageId], "user")
+      if (settled.length > 0) {
+        await ConversationFeedbackRepository.insert(client, {
+          id: conversationFeedbackId(),
+          workspaceId,
+          streamId: message.streamId,
+          messageId,
+          fromConversationId: conversation.id,
+          toConversationId: conversation.id,
+          userId,
+        })
+        await emitSettledConversationUpdates(client, workspaceId, settled)
+      }
+
+      const settlingByConversation = await MessageConversationStateRepository.listSettlingByConversationIds(
+        client,
+        workspaceId,
+        [conversation.id]
+      )
+
+      return {
+        conversation: addStalenessFields(conversation),
+        previousConversation: null,
+        settlingMessageIds: settlingByConversation.get(conversation.id) ?? [],
       }
     })
   }

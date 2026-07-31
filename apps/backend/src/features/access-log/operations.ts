@@ -147,6 +147,7 @@ export const ACCESS_LOG_OPERATIONS = [
   "conversations.mute_stream",
   "conversations.unmute_stream",
   "conversations.reassign_message",
+  "conversations.settle_message",
   "conversations.split_thread",
   "conversations.reassign_messages",
   "conversations.propose_split",

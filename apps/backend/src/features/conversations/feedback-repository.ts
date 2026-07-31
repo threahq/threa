@@ -15,7 +15,9 @@ export interface InsertConversationFeedbackParams {
  * Durable record of user corrections to conversation membership. Write-only
  * from the product surface; read offline (scripts/analyze-conversation-
  * boundaries.ts and future extractor evals) as ground truth for where the
- * boundary extractor drew the wrong line.
+ * boundary extractor drew the wrong line. Not every row is an error: a row whose
+ * `from_conversation_id` equals its `to_conversation_id` is written by
+ * `settleMessage` and means the user CONFIRMED the placement.
  */
 export const ConversationFeedbackRepository = {
   async insert(db: Querier, params: InsertConversationFeedbackParams): Promise<void> {

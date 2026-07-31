@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { act, render, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
+import { toast } from "sonner"
 import type { Socket } from "socket.io-client"
 import { MemoryRouter } from "react-router-dom"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
@@ -24,6 +25,7 @@ import * as contextsModule from "@/contexts"
 import * as queueDraftModule from "@/hooks/use-queue-draft-message"
 import * as inlineComposerModule from "@/components/board/board-inline-composer"
 import * as inputModeModule from "@/hooks/use-input-mode"
+import * as boardStoreModule from "@/stores/board-store"
 import { setBoardFlash, resetBoardFlashStoreCache } from "@/stores/board-flash-store"
 import { spyOnExport } from "@/test/spy"
 import { MESSAGE_ROW_HEAD_PADDING } from "@/components/message/message-row-layout"
@@ -935,5 +937,87 @@ describe("BoardCard settling mark", () => {
     expect(container.querySelector('[data-message-id="m_r1"]')).toBeNull()
     // The settling id names a row the card doesn't render — it must not conjure one.
     expect(container.querySelectorAll("[data-settling]").length).toBe(1)
+  })
+})
+
+describe("BoardCard settling actions", () => {
+  function settlingPost(ids: string[]) {
+    const post = makePost()
+    ;(post as unknown as { settlingMessageIds: string[] }).settlingMessageIds = ids
+    return post
+  }
+
+  it("puts the keep-here button leftmost in the hover toolbar of a settling row", async () => {
+    const { container } = mountCard(settlingPost(["m_open"]), { settleMessage: vi.fn() })
+    await screen.findByText("Opening body.")
+
+    const toolbar = container.querySelector(".reveal-actions-hover-only > div") as HTMLElement
+    const first = toolbar.firstElementChild as HTMLElement
+    expect(first.getAttribute("aria-label")).toBe("Keep here")
+  })
+
+  it("leaves a settled row's toolbar exactly as it was — no settling buttons at all", async () => {
+    const { container } = mountCard(settlingPost([]), { settleMessage: vi.fn() })
+    await screen.findByText("Opening body.")
+
+    const toolbar = container.querySelector(".reveal-actions-hover-only > div") as HTMLElement
+    expect(
+      [...toolbar.children]
+        .map((el) => el.getAttribute("aria-label"))
+        .filter((l) => l === "Keep here" || l === "Not this topic…")
+    ).toEqual([])
+  })
+
+  it("hides 'Not this topic' when the row has no other topic to move to (never a dead menu item)", async () => {
+    mountCard(settlingPost(["m_open"]), { settleMessage: vi.fn() })
+    await screen.findByText("Opening body.")
+
+    expect(screen.queryByLabelText("Not this topic…")).toBeNull()
+  })
+
+  it("offers the stream's other conversations as 'Not this topic' targets, with no duplicate 'Move to sub-topic…' beside it", async () => {
+    // The common case: a channel's main conversation, no sub-topics. Without the
+    // sibling widening the correction half of the chip would never render; with
+    // both entries wired it would render twice (same icon, same dialog).
+    const boardPosts = vi.spyOn(boardStoreModule, "useBoardPosts").mockReturnValue([
+      { id: "conv_1", workspaceId: WS, conversation: { id: "conv_1", streamId: STREAM, messageIds: ["m_open"] } },
+      {
+        id: "conv_sibling",
+        workspaceId: WS,
+        conversation: {
+          id: "conv_sibling",
+          streamId: STREAM,
+          topicSummary: "Deploy plan",
+          messageIds: ["m_other"],
+        },
+        _lastActivityMs: 1,
+      },
+    ] as never)
+    mountCard(settlingPost(["m_open"]), { settleMessage: vi.fn() })
+    await screen.findByText("Opening body.")
+
+    expect(screen.getAllByLabelText("Not this topic…")).toHaveLength(1)
+    await userEvent.click(screen.getAllByLabelText("Message actions")[0])
+    const entries = (await screen.findAllByRole("menuitem")).map((el) => el.textContent)
+    expect(entries.filter((t) => t?.includes("Not this topic") || t?.includes("Move to sub-topic"))).toEqual([
+      "Not this topic…",
+    ])
+    boardPosts.mockRestore()
+  })
+
+  it("settles the message on click and stays silent about it (INV-63)", async () => {
+    const settleMessage = vi.fn().mockResolvedValue({
+      conversation: { id: "conv_1", streamId: STREAM, messageIds: ["m_open"] },
+      previousConversation: null,
+      settlingMessageIds: [],
+    })
+    const success = vi.spyOn(toast, "success")
+    mountCard(settlingPost(["m_open"]), { settleMessage })
+    await screen.findByText("Opening body.")
+
+    await userEvent.click(screen.getByLabelText("Keep here"))
+
+    await waitFor(() => expect(settleMessage).toHaveBeenCalledWith(WS, "conv_1", "m_open"))
+    expect(success).not.toHaveBeenCalled()
   })
 })
