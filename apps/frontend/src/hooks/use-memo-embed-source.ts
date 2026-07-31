@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react"
+import { useMemo } from "react"
 import { useParams } from "react-router-dom"
 import type { KnowledgeType, MemoType } from "@threa/types"
 import { useMemoDetail } from "./use-memos"
@@ -23,20 +23,18 @@ export interface MemoEmbedMissing {
 }
 
 export interface MemoEmbedPending {
-  /** Still resolving. UI stays blank until the staggered-skeleton delay. */
+  /** Still resolving. The card renders the label it already has, at full size. */
   status: "pending"
-  /** Becomes true once the staggered-skeleton delay has elapsed. */
-  showSkeleton: boolean
 }
 
 export type MemoEmbedSource = MemoEmbedResolved | MemoEmbedMissing | MemoEmbedPending
 
-const SKELETON_DELAY_MS = 300
-
 /**
- * Resolve a memo-embed pointer's card content from the memo detail API, with
- * the same staggered-skeleton semantics as `useSharedMessageSource`: stay blank
- * until 300ms, then show a skeleton, so the common fast path doesn't flicker.
+ * Resolve a memo-embed pointer's card content from the memo detail API.
+ *
+ * There is no loading state to stagger: `MemoEmbedCardBody` gives every status
+ * the same geometry and falls back to the title parsed from the reference, so a
+ * pending card is a complete card with a thinner eyebrow, not a placeholder.
  *
  * The viewer's read access is enforced server-side — the detail endpoint 404s
  * for memos the viewer can't see, which surfaces here as `missing`.
@@ -45,7 +43,7 @@ export function useMemoEmbedSource(memoId: string): MemoEmbedSource {
   const { workspaceId } = useParams<{ workspaceId: string }>()
   const { data, isError } = useMemoDetail(workspaceId ?? "", memoId)
 
-  const resolved = useMemo<MemoEmbedSource | null>(() => {
+  return useMemo<MemoEmbedSource>(() => {
     const memo = data?.memo?.memo
     if (memo) {
       return {
@@ -59,23 +57,6 @@ export function useMemoEmbedSource(memoId: string): MemoEmbedSource {
       }
     }
     if (isError) return { status: "missing" }
-    return null
+    return { status: "pending" }
   }, [data, isError])
-
-  const [showSkeleton, setShowSkeleton] = useState(false)
-
-  useEffect(() => {
-    if (resolved) {
-      setShowSkeleton(false)
-      return
-    }
-    // Reset + restart the delay whenever the memo changes, so a new pointer
-    // doesn't inherit the previous one's elapsed skeleton timer.
-    setShowSkeleton(false)
-    const timer = setTimeout(() => setShowSkeleton(true), SKELETON_DELAY_MS)
-    return () => clearTimeout(timer)
-  }, [resolved, memoId])
-
-  if (resolved) return resolved
-  return { status: "pending", showSkeleton }
 }
