@@ -1117,3 +1117,25 @@ export function useStableReplyWindow(conversationId: string, replies: Renderable
 
   return window
 }
+
+/**
+ * The collapsed card's visible replies once the reader has scrolled pages out
+ * from under the gap: the trailing `stable.length + revealedRows` rows, UNIONed
+ * with the stable window rather than replacing it. The union is load-bearing —
+ * {@link useStableReplyWindow} deliberately leaves a late-syncing older reply
+ * under the gap, so its window can hold rows that are not the trailing run, and
+ * a plain trailing slice of the same length would evict one. The result is
+ * always a superset of `stable`, in rail order, and clamps when `revealedRows`
+ * outruns the rail.
+ */
+export function composeRevealedWindow(
+  replies: RenderableMessage[],
+  stable: RenderableMessage[],
+  revealedRows: number
+): RenderableMessage[] {
+  if (revealedRows <= 0) return stable
+  const start = Math.max(0, replies.length - (stable.length + revealedRows))
+  if (start === 0) return replies
+  const stableIds = new Set(stable.map((message) => message.id))
+  return replies.filter((message, index) => index >= start || stableIds.has(message.id))
+}

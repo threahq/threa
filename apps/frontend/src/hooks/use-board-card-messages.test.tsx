@@ -9,6 +9,7 @@ import {
   useBoardCardMessages,
   useBoardRailsReady,
   useStableReplyWindow,
+  composeRevealedWindow,
   __clearBoardRailRegistry,
   __boardRailRegistrySize,
   type BoardCardMessages,
@@ -1222,5 +1223,59 @@ describe("useBoardCardMessages — backfill-store merge precedence", () => {
     expect(result.current.replies.map((m) => ({ id: m.id, contentMarkdown: m.contentMarkdown }))).toEqual([
       { id: "r1", contentMarkdown: "projection r1" },
     ])
+  })
+})
+
+describe("composeRevealedWindow", () => {
+  const message = (id: string, deletedAt: string | null = null): RenderableMessage =>
+    ({
+      id,
+      streamId: STREAM,
+      authorId: "usr_1",
+      authorType: "user",
+      contentMarkdown: id,
+      reactions: {},
+      createdAt: "2026-06-22T12:00:00.000Z",
+      editedAt: null,
+      deletedAt,
+    }) as RenderableMessage
+  const rail = ["r1", "r2", "r3", "r4", "r5", "r6"].map((id) => message(id))
+  const ids = (messages: RenderableMessage[]) => messages.map((m) => m.id)
+
+  it("returns the stable window untouched before anything is revealed", () => {
+    const stable = rail.slice(-2)
+    expect(composeRevealedWindow(rail, stable, 0)).toBe(stable)
+  })
+
+  it("pulls a page of older rows out from under the gap", () => {
+    expect(ids(composeRevealedWindow(rail, rail.slice(-2), 2))).toEqual(["r3", "r4", "r5", "r6"])
+  })
+
+  it("clamps to the rail when the reveal outruns what is synced", () => {
+    expect(ids(composeRevealedWindow(rail, rail.slice(-2), 99))).toEqual(["r1", "r2", "r3", "r4", "r5", "r6"])
+  })
+
+  it("keeps a late-syncing older row that the stable window already shows (superset, not a slice)", () => {
+    // `useStableReplyWindow` leaves a row that synced in BELOW the last shown one
+    // under the gap, so its window is not always the trailing run. A blind
+    // trailing slice of the same length would evict the shown row; the union
+    // cannot.
+    const late = [message("r1"), message("late"), message("r2"), message("r3"), message("r4")]
+    const stable = [late[0], late[2], late[3], late[4]]
+    expect(ids(composeRevealedWindow(late, stable, 0))).toEqual(["r1", "r2", "r3", "r4"])
+    expect(ids(composeRevealedWindow(late, stable, 1))).toEqual(["r1", "late", "r2", "r3", "r4"])
+  })
+
+  it("spends page slots on tombstones, which the caller counts as zero toward the gap", () => {
+    const withTombstone = [
+      message("r1"),
+      message("rd", "2026-06-22T12:05:00.000Z"),
+      message("r2"),
+      message("r3"),
+      message("r4"),
+    ]
+    const visible = composeRevealedWindow(withTombstone, withTombstone.slice(-2), 2)
+    expect(ids(visible)).toEqual(["rd", "r2", "r3", "r4"])
+    expect(visible.filter((m) => !m.deletedAt).length).toBe(3)
   })
 })

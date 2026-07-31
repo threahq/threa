@@ -530,6 +530,11 @@ export const BOARD_TAIL_MAX_ROWS = 5
  *  still shows this many trailing rows. */
 export const BOARD_TAIL_MIN_ROWS = 3
 
+/** Rows a single upward-scroll reveal pulls out from under a collapsed card's
+ *  "N older messages" seam. One page per gesture, so reading up a long hidden
+ *  middle walks backward at a readable pace instead of dumping it whole. */
+export const BOARD_GAP_REVEAL_PAGE_ROWS = 15
+
 // How a message's conversation was decided. Absent/null on a message means the
 // async boundary-extractor inferred (clustered) it — the default. A set value
 // records that the sender DECLARED the conversation at send time, so the

@@ -25,7 +25,15 @@ function setup() {
   const scroller = document.createElement("div")
   setRect(scroller, 0, 720)
   setRect(card, 100, 300) // card bottom sits at viewport-Y 300 (scroller top is 0)
-  const scrollBy = vi.fn()
+  scroller.scrollTop = 500
+  // Close the loop the way the browser does: injected scroll moves the offset AND
+  // drags the card's viewport rect with it, so the correction can't silently
+  // double-count its own effect.
+  const scrollBy = vi.fn((delta: number) => {
+    scroller.scrollTop += delta
+    const rect = card.getBoundingClientRect()
+    setRect(card, rect.top - delta, rect.bottom - delta)
+  })
   const listRef = { current: { scrollBy } as unknown as VirtualizerHandle }
   const { result } = renderHook(() =>
     useBoardCardRevealAnchor({ cardRef: { current: card }, scrollerRef: { current: scroller }, listRef })
@@ -109,6 +117,113 @@ describe("useBoardCardRevealAnchor", () => {
     setRect(card, 100, 700)
     roCallback?.() // disarmed → no further correction
     expect(scrollBy).toHaveBeenCalledTimes(1)
+  })
+
+  it("scroll mode keeps holding through the upward gesture that asked for the page", () => {
+    const { card, scroller, scrollBy, beginReveal } = setup()
+    beginReveal({ mode: "scroll" })
+    scroller.dispatchEvent(new WheelEvent("wheel", { deltaY: -40 }))
+    setRect(card, 100, 632)
+    roCallback?.()
+    expect(scrollBy).toHaveBeenCalledWith(332)
+  })
+
+  it("scroll mode still hands control back when the reader turns around and scrolls down", () => {
+    const { card, scroller, scrollBy, beginReveal } = setup()
+    beginReveal({ mode: "scroll" })
+    scroller.dispatchEvent(new WheelEvent("wheel", { deltaY: 40 }))
+    setRect(card, 100, 632)
+    roCallback?.()
+    expect(scrollBy).not.toHaveBeenCalled()
+  })
+
+  it("scroll mode holds through a finger dragging down (content up) but not up", () => {
+    const { card, scroller, scrollBy, beginReveal } = setup()
+    const touchEvent = (type: string, clientY: number) => {
+      const event = new Event(type, { bubbles: true }) as Event & { touches: { clientY: number }[] }
+      event.touches = [{ clientY }]
+      return event
+    }
+    beginReveal({ mode: "scroll" })
+    scroller.dispatchEvent(touchEvent("touchstart", 200))
+    scroller.dispatchEvent(touchEvent("touchmove", 260))
+    setRect(card, 100, 632)
+    roCallback?.()
+    expect(scrollBy).toHaveBeenCalledWith(332)
+
+    scroller.dispatchEvent(touchEvent("touchmove", 210))
+    setRect(card, 100, 700)
+    roCallback?.()
+    expect(scrollBy).toHaveBeenCalledTimes(1)
+  })
+
+  it("scroll mode still closes on a keyboard scroll, and still ignores typing", () => {
+    const { card, scroller, scrollBy, beginReveal } = setup()
+    const editor = document.createElement("textarea")
+    scroller.appendChild(editor)
+    beginReveal({ mode: "scroll" })
+    editor.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true }))
+    setRect(card, 100, 632)
+    roCallback?.()
+    expect(scrollBy).toHaveBeenCalledWith(332)
+
+    scroller.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true }))
+    setRect(card, 100, 700)
+    roCallback?.()
+    expect(scrollBy).toHaveBeenCalledTimes(1)
+  })
+
+  it("compensates each page once across a multi-page window, never the growth already undone", () => {
+    const { card, scrollBy, beginReveal } = setup()
+    beginReveal({ mode: "scroll" })
+    setRect(card, 100, 632)
+    roCallback?.() // 332px of page 1 undone; the card bottom is back at 300
+    expect(scrollBy).toHaveBeenLastCalledWith(332)
+    // Second page grows another 68 on top of the already-corrected view.
+    beginReveal({ mode: "scroll" })
+    setRect(card, -232, 368)
+    roCallback?.()
+    expect(scrollBy).toHaveBeenLastCalledWith(68)
+  })
+
+  it("re-arming mid-correction keeps the first page's baseline, so the next page can't adopt its growth", () => {
+    const { card, scrollBy, beginReveal } = setup()
+    beginReveal({ mode: "scroll" })
+    setRect(card, 100, 432) // page 1 lands; its correction has not run yet
+    beginReveal({ mode: "scroll" }) // second wheel tick asks for page 2
+    setRect(card, 100, 632)
+    roCallback?.()
+    // Both pages' growth since the FIRST arm — re-measuring at 432 would have
+    // compensated only 200 and let the trailing replies leap by a page.
+    expect(scrollBy).toHaveBeenCalledWith(332)
+  })
+
+  it("undoes the card's growth only, letting the reader's own scrolling through", () => {
+    const { card, scroller, scrollBy, beginReveal } = setup()
+    beginReveal({ mode: "scroll" })
+    // The reader keeps flicking upward: the scroller moves 50px and the card rides
+    // down with it, no resize involved.
+    scroller.scrollTop -= 50
+    setRect(card, 150, 350)
+    // Then the page lands: 120px of older middle.
+    setRect(card, 150, 470)
+    roCallback?.()
+    expect(scrollBy).toHaveBeenCalledWith(120)
+  })
+
+  it("ignores a touchmove with no recorded start rather than reading it as a gesture", () => {
+    const { card, scroller, scrollBy, beginReveal } = setup()
+    const touchEvent = (type: string, clientY: number) => {
+      const event = new Event(type, { bubbles: true }) as Event & { touches: { clientY: number }[] }
+      event.touches = [{ clientY }]
+      return event
+    }
+    beginReveal() // tap mode: any real gesture would close the window
+    // The listener attached mid-drag, so this move has no origin — direction unknown.
+    scroller.dispatchEvent(touchEvent("touchmove", 260))
+    setRect(card, 100, 632)
+    roCallback?.()
+    expect(scrollBy).toHaveBeenCalledWith(332)
   })
 
   it("closes the window at the hard cap even if no resize ever settles it", () => {

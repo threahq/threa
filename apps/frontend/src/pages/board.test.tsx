@@ -367,8 +367,8 @@ describe("BoardPage", () => {
       makeOpeningMessage({ id: "m5" }),
     ]
     mountBoard([makePost({ messageIds: ["m1", "m2", "m3", "m4", "m5"] }, { id: "m1" }, recent)])
-    expect(await screen.findByText("1 more message")).toBeTruthy()
-    expect(screen.queryByText("1 more messages")).toBeNull()
+    expect(await screen.findByText("1 older message")).toBeTruthy()
+    expect(screen.queryByText("1 older messages")).toBeNull()
   })
 
   it("offers a retry when expanding the middle fails", async () => {
@@ -378,7 +378,7 @@ describe("BoardPage", () => {
       makeOpeningMessage({ id: "m5" }),
     ]
     mountBoard([makePost({ messageIds: ["m1", "m2", "m3", "m4", "m5"] }, { id: "m1" }, recent)], { failMessages: true })
-    fireEvent.click(await screen.findByText("1 more message"))
+    fireEvent.click(await screen.findByText("1 older message"))
     expect(await screen.findByText("Couldn't load older messages. Retry.")).toBeTruthy()
   })
 

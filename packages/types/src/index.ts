@@ -100,6 +100,7 @@ export {
   BOARD_TAIL_RUNS,
   BOARD_TAIL_MAX_ROWS,
   BOARD_TAIL_MIN_ROWS,
+  BOARD_GAP_REVEAL_PAGE_ROWS,
   CONVERSATION_INTENTS,
   type ConversationIntent,
   ConversationIntents,

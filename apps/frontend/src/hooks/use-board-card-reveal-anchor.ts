@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef } from "react"
 import type { RefObject } from "react"
 import type { VirtualizerHandle } from "virtua"
+import { attachScrollGestureDirection } from "./scroll-gesture-direction"
 
 /** No-resize quiet gap after which the reveal window closes on its own. Long
  *  enough to span the sync expand and its async server backfill; short enough that
@@ -52,10 +53,27 @@ interface Options {
  * own machinery (a raw `scrollTop` write is re-asserted away by virtua's per-item
  * resize handling — the library tug-of-war the owned-scroller design avoids).
  */
-export function useBoardCardRevealAnchor({ cardRef, scrollerRef, listRef }: Options): () => void {
+export interface BeginRevealOptions {
+  /** `"tap"` (default): any scroll gesture hands control back to the reader.
+   *  `"scroll"`: the reveal WAS an upward scroll, so the gesture that triggered it
+   *  — and the ones continuing it — must not disarm the hold, or the inserted page
+   *  lands uncompensated and the viewport leaps. Downward scroll still closes. */
+  mode?: "tap" | "scroll"
+}
+
+export function useBoardCardRevealAnchor({
+  cardRef,
+  scrollerRef,
+  listRef,
+}: Options): (opts?: BeginRevealOptions) => void {
   // Target viewport-Y of the card's bottom edge while the window is armed; null
   // when disarmed (the RO correction and gesture-close both key off this).
   const anchorRef = useRef<number | null>(null)
+  // The scroller's own offset when the window armed, and the total scroll we have
+  // injected since — together they separate the card's growth from the reader's
+  // own scrolling, so the correction only ever undoes the former.
+  const scrollTopAtArmRef = useRef(0)
+  const injectedRef = useRef(0)
   const settleTimerRef = useRef(0)
   const maxTimerRef = useRef(0)
   const detachGestureRef = useRef<(() => void) | null>(null)
@@ -69,6 +87,8 @@ export function useBoardCardRevealAnchor({ cardRef, scrollerRef, listRef }: Opti
 
   const close = useCallback(() => {
     anchorRef.current = null
+    scrollTopAtArmRef.current = 0
+    injectedRef.current = 0
     if (settleTimerRef.current) {
       clearTimeout(settleTimerRef.current)
       settleTimerRef.current = 0
@@ -81,31 +101,46 @@ export function useBoardCardRevealAnchor({ cardRef, scrollerRef, listRef }: Opti
     detachGestureRef.current = null
   }, [])
 
-  const beginReveal = useCallback(() => {
-    const scroller = scrollerRef?.current
-    if (!scroller || !listRef?.current) return
-    const anchor = measure()
-    if (anchor === null) return
-    anchorRef.current = anchor
-    if (maxTimerRef.current) clearTimeout(maxTimerRef.current)
-    maxTimerRef.current = window.setTimeout(close, REVEAL_MAX_MS)
-    // A deliberate scroll means the reader took over — stop holding immediately.
-    // keydown is gated to non-editable targets so typing in the in-scroller
-    // composer (whose keystrokes bubble here) doesn't disarm the hold.
-    detachGestureRef.current?.()
-    const onGesture = () => close()
-    const onKeyGesture = (e: KeyboardEvent) => {
-      if (!isEditableTarget(e.target)) close()
-    }
-    scroller.addEventListener("wheel", onGesture, { passive: true })
-    scroller.addEventListener("touchmove", onGesture, { passive: true })
-    scroller.addEventListener("keydown", onKeyGesture)
-    detachGestureRef.current = () => {
-      scroller.removeEventListener("wheel", onGesture)
-      scroller.removeEventListener("touchmove", onGesture)
-      scroller.removeEventListener("keydown", onKeyGesture)
-    }
-  }, [measure, scrollerRef, listRef, close])
+  const beginReveal = useCallback(
+    (opts?: BeginRevealOptions) => {
+      const scroller = scrollerRef?.current
+      if (!scroller || !listRef?.current) return
+      const scrollMode = opts?.mode === "scroll"
+      // Re-arming mid-window (the next page, one gesture later) must NOT re-baseline:
+      // a correction for the previous page can still be pending (RO → rAF), so a
+      // fresh measurement would adopt growth nobody has compensated yet and the
+      // trailing replies would leap by a page. Keep the arm-time baseline; only the
+      // deadline and the listeners (the mode may differ) are refreshed.
+      if (anchorRef.current === null) {
+        const anchor = measure()
+        if (anchor === null) return
+        anchorRef.current = anchor
+        scrollTopAtArmRef.current = scroller.scrollTop
+        injectedRef.current = 0
+      }
+      if (maxTimerRef.current) clearTimeout(maxTimerRef.current)
+      maxTimerRef.current = window.setTimeout(close, REVEAL_MAX_MS)
+      // A deliberate scroll means the reader took over — stop holding immediately.
+      // keydown is gated to non-editable targets so typing in the in-scroller
+      // composer (whose keystrokes bubble here) doesn't disarm the hold.
+      detachGestureRef.current?.()
+      const detachDirection = attachScrollGestureDirection(scroller, {
+        onUp: () => {
+          if (!scrollMode) close()
+        },
+        onDown: close,
+      })
+      const onKeyGesture = (e: KeyboardEvent) => {
+        if (!isEditableTarget(e.target)) close()
+      }
+      scroller.addEventListener("keydown", onKeyGesture)
+      detachGestureRef.current = () => {
+        detachDirection()
+        scroller.removeEventListener("keydown", onKeyGesture)
+      }
+    },
+    [measure, scrollerRef, listRef, close]
+  )
 
   // Correct on every card resize while armed, re-arming the settle timer so the
   // window spans the expand + its backfill, then closes once growth stops.
@@ -120,11 +155,21 @@ export function useBoardCardRevealAnchor({ cardRef, scrollerRef, listRef }: Opti
       // adjustments don't stack into a double shift.
       raf = requestAnimationFrame(() => {
         const target = anchorRef.current
-        if (target === null) return
+        const scroller = scrollerRef?.current
+        if (target === null || !scroller) return
         const after = measure()
         if (after === null) return
-        const delta = after - target
-        if (Math.abs(delta) > 0.5) listRef?.current?.scrollBy(delta)
+        // A bottom edge's viewport-Y is its document-Y minus the scroll offset, so
+        // the card's GROWTH since arming is what's left once the reader's own
+        // scrolling (and our own injections, which move scrollTop the same way) is
+        // added back in. Driving total injected scroll to total growth holds the
+        // trailing replies still while letting a continuous flick scroll through.
+        const growth = after - target + (scroller.scrollTop - scrollTopAtArmRef.current)
+        const correction = growth - injectedRef.current
+        if (Math.abs(correction) > 0.5) {
+          listRef?.current?.scrollBy(correction)
+          injectedRef.current += correction
+        }
       })
       if (settleTimerRef.current) clearTimeout(settleTimerRef.current)
       settleTimerRef.current = window.setTimeout(close, REVEAL_SETTLE_MS)
@@ -134,7 +179,7 @@ export function useBoardCardRevealAnchor({ cardRef, scrollerRef, listRef }: Opti
       observer.disconnect()
       cancelAnimationFrame(raf)
     }
-  }, [cardRef, measure, listRef, close])
+  }, [cardRef, measure, listRef, scrollerRef, close])
 
   useEffect(() => () => close(), [close])
 

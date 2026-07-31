@@ -3,7 +3,11 @@ import type { RefObject } from "react"
 import { Link } from "react-router-dom"
 import type { VirtualizerHandle } from "virtua"
 import { ChevronDown, ChevronRight, CircleCheck, PanelRight } from "lucide-react"
-import { DEFAULT_BOARD_CARD_COLLAPSE_AT_HEIGHT, DEFAULT_BOARD_CARD_COLLAPSE_TO_HEIGHT } from "@threa/types"
+import {
+  BOARD_GAP_REVEAL_PAGE_ROWS,
+  DEFAULT_BOARD_CARD_COLLAPSE_AT_HEIGHT,
+  DEFAULT_BOARD_CARD_COLLAPSE_TO_HEIGHT,
+} from "@threa/types"
 import { RelativeTime } from "@/components/relative-time"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button"
@@ -41,10 +45,16 @@ import { useBoardFlash } from "@/stores/board-flash-store"
 import { usePanel, createConversationPanelId, usePreferences } from "@/contexts"
 import { useBoardCardCollapse } from "@/hooks/use-board-card-collapse"
 import { useSplitThread } from "@/hooks/use-conversations"
-import { applySettlingAll, useBoardCardMessages, useStableReplyWindow } from "@/hooks/use-board-card-messages"
+import {
+  applySettlingAll,
+  composeRevealedWindow,
+  useBoardCardMessages,
+  useStableReplyWindow,
+} from "@/hooks/use-board-card-messages"
 import { useConversationBackfill } from "@/hooks/use-conversation-backfill"
 import { useInlineBranchComposer } from "@/components/board/use-inline-branch-composer"
 import { useBoardCardRevealAnchor } from "@/hooks/use-board-card-reveal-anchor"
+import { useBoardGapAutoReveal } from "@/hooks/use-board-gap-auto-reveal"
 import type { BoardViewPost } from "@/hooks/use-stable-board-view"
 import { Skeleton } from "@/components/ui/skeleton"
 import { MESSAGE_ROW_CONTINUATION_PADDING, MESSAGE_ROW_HEAD_PADDING } from "@/components/message/message-row-layout"
@@ -128,6 +138,18 @@ export function BoardCard({
   // content above the trailing replies; hold the card bottom fixed so the newest
   // replies the reader is on don't jump (the board's `shift`, see the hook).
   const beginReveal = useBoardCardRevealAnchor({ cardRef, scrollerRef, listRef })
+  // Rows scrolled out from under the gap so far, one page per upward gesture.
+  // Recycling this card instance onto another conversation resets the count, the
+  // same guard `useStableReplyWindow` puts on its shown set.
+  const seamRef = useRef<HTMLButtonElement>(null)
+  const [revealedRowsState, setRevealedRows] = useState(0)
+  const revealedForRef = useRef(conversation.id)
+  let revealedRows = revealedRowsState
+  if (revealedForRef.current !== conversation.id) {
+    revealedForRef.current = conversation.id
+    revealedRows = 0
+    setRevealedRows(0)
+  }
 
   // Shared graph + structural index, needed BEFORE the rail hook: the inline
   // branch composer derives the branch thread streams (and any pending
@@ -379,7 +401,7 @@ export function BoardCard({
     isError: expandFailed,
     refetch: refetchMessages,
   } = useConversationBackfill(workspaceId, conversation.id, {
-    enabled: expanded,
+    enabled: expanded || revealedRows > 0,
     railCoversMembership,
     memberIds: conversation.messageIds,
     knownMessageIds,
@@ -394,7 +416,9 @@ export function BoardCard({
 
   // Expanded: the hook's merged view (rail > backfill store > projection).
   // Collapsed: the stable window over it.
-  const replies: RenderableMessage[] = expanded ? railReplies : collapsedReplies
+  const replies: RenderableMessage[] = expanded
+    ? railReplies
+    : composeRevealedWindow(railReplies, collapsedReplies, revealedRows)
   // Merge this card's own just-sent replies with the confirmed set, skipping any
   // the rail or a backfill already carries, then sort by time: a pending reply
   // can be OLDER than a confirmed one (someone else's reply lands while yours is
@@ -412,10 +436,39 @@ export function BoardCard({
   // `totalReplies` counts tombstones as zero, so the visible rows must be counted
   // the same way or a drawn tombstone would subtract from the gap it isn't in.
   const hiddenCount = expanded ? 0 : Math.max(0, totalReplies - replies.filter((m) => !m.deletedAt).length)
-  const loadingMore = expanded && incompleteLocally && !allMessages && !expandFailed
+  // Any reveal — a page or the full expand — can outrun the local rail; the same
+  // server backfill fills both, so the wait and its retry show for both.
+  const revealing = expanded || revealedRows > 0
+  const loadingMore = revealing && incompleteLocally && !allMessages && !expandFailed
   // No middle is hidden, so opening + replies form one uninterrupted run that
   // groups across the boundary. Otherwise a gap row sits between them.
   const contiguous = (expanded && (!incompleteLocally || !!allMessages)) || (!expanded && hiddenCount === 0)
+  // The wait and the failure both swap the seam row's own label rather than adding
+  // a line below it, so nothing under the seam shifts through either (INV-21).
+  let seamLabel = `${hiddenCount} older ${hiddenCount === 1 ? "message" : "messages"}`
+  if (loadingMore) seamLabel = "Loading older messages…"
+  if (expandFailed) seamLabel = "Couldn't load older messages. Retry."
+
+  // Scrolling up onto the seam pulls the next page out from under it, the way
+  // reading up past the timeline's unread divider keeps going. Measure the anchor
+  // BEFORE the rows land, exactly as the tap path does.
+  // Demand is clamped to what the rail can actually satisfy plus one outstanding
+  // page: while the backfill is in flight the card doesn't grow, so the seam stays
+  // under the reader's cursor and every further wheel tick would otherwise add
+  // another page — a short flick banks twenty of them and the whole hidden middle
+  // dumps at once the moment the rows land.
+  const revealPage = useCallback(() => {
+    beginReveal({ mode: "scroll" })
+    setRevealedRows(
+      (n) => Math.min(n, Math.max(0, railReplies.length - collapsedReplies.length)) + BOARD_GAP_REVEAL_PAGE_ROWS
+    )
+  }, [beginReveal, railReplies.length, collapsedReplies.length])
+  useBoardGapAutoReveal({
+    seamRef,
+    scrollerRef,
+    enabled: !expanded && hiddenCount > 0 && !removed,
+    onReveal: revealPage,
+  })
 
   // Viewport auto-read: rows that dwell on screen mark themselves read (the menu
   // actions are the override). Every rendered row is eligible — on a collapsed
@@ -790,25 +843,40 @@ export function BoardCard({
                   {/* The opening renders outside the row builder here, so its inline
                     "new sub-topic" composer slot must be placed explicitly. */}
                   {openingMessage && inlineComposer.renderAfterMessage(openingMessage.id)}
-                  {!expanded && hiddenCount > 0 && (
+                  {!expanded && hiddenCount > 0 ? (
                     <button
+                      ref={seamRef}
                       type="button"
                       onClick={() => {
+                        if (expandFailed) {
+                          void refetchMessages()
+                          return
+                        }
                         beginReveal()
                         setExpanded(true)
                       }}
-                      className="mt-3 flex w-fit items-center gap-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
+                      className={cn(
+                        "mt-3 flex w-full items-center gap-3 text-xs transition-colors",
+                        expandFailed ? "text-destructive" : "text-muted-foreground hover:text-foreground"
+                      )}
                     >
-                      <ChevronDown className="h-3.5 w-3.5" />
-                      {hiddenCount} more {hiddenCount === 1 ? "message" : "messages"}
+                      <span className="flex-1 border-t border-current" />
+                      <span className="flex items-center gap-1 whitespace-nowrap">
+                        <ChevronDown className="h-3.5 w-3.5" />
+                        {seamLabel}
+                      </span>
+                      <span className="flex-1 border-t border-current" />
                     </button>
-                  )}
-                  {loadingMore && (
-                    <span className="mt-3 block text-xs text-muted-foreground">Loading older messages…</span>
+                  ) : (
+                    loadingMore && (
+                      <span className="mt-3 block text-xs text-muted-foreground">Loading older messages…</span>
+                    )
                   )}
                   {/* The backfill loads the older/full window; the recent replies the
                 rail carried are already shown above, so the error names "older"
                 rather than contradicting visible content. */}
+                  {/* Collapsed, the failure lives in the seam's own row; a standalone
+                      button there would add a row and shove the trailing replies. */}
                   {expanded && expandFailed && (
                     <button
                       type="button"
