@@ -48,6 +48,7 @@ export {
   collectGiphyEmbeds,
   collectLinkUrls,
   collectQuoteReplyMessageIds,
+  collectMemoEmbedIds,
   collectMentionActorRefs,
   collectChannelStreamIds,
   collectUnresolvedMentionSlugs,

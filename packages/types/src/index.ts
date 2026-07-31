@@ -564,6 +564,7 @@ export type {
   MessagesMovedEventPayload,
   MovedFromProvenance,
   CapturedMemoSummary,
+  MemoEmbedSummary,
   MemosCapturedEventPayload,
   AgentFollowUpScheduledEventPayload,
   AgentFollowUpCancelledEventPayload,

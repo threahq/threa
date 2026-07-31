@@ -17,6 +17,7 @@ import type {
   E2eKeyWrapRecipientKind,
   AgentStepType,
   KnowledgeType,
+  MemoType,
   DelegationStatus,
 } from "./constants"
 import type { WorkspaceInvitableRole } from "./workspace-permissions"
@@ -1236,6 +1237,25 @@ export interface CapturedMemoSummary {
   knowledgeType: KnowledgeType
   /** The exact messages this memo was derived from. */
   sourceMessageIds: string[]
+}
+
+/**
+ * A referenced memo's card content, carried on the message payload that cites
+ * it so the embed card renders complete on its first frame — no per-card fetch
+ * anywhere in the stream, and therefore no content that changes without an
+ * underlying change (`memo:updated` is the only thing that may move it).
+ *
+ * Only what the card draws. The memo's substance (abstract, key points, source
+ * messages) stays behind the access-checked detail endpoint, which is what the
+ * card's click opens.
+ */
+export interface MemoEmbedSummary {
+  memoId: string
+  title: string
+  knowledgeType: KnowledgeType
+  memoType: MemoType
+  tags: string[]
+  updatedAt: string
 }
 
 /**

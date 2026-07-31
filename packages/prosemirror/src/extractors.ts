@@ -251,6 +251,37 @@ export function collectGiphyEmbeds(content: JSONContent): GiphyEmbedRef[] {
 }
 
 /**
+ * Memo ids from inline `memoEmbed` nodes, de-duplicated in first-seen order.
+ *
+ * Reads the node attrs, not the `[title](memo:…)` markdown: `contentJson` is
+ * canonical (INV-58), and it carries the nodes whatever the author was — the
+ * markdown parser builds a `memoEmbed` for a raw `memo:` link too, so an
+ * API-authored reference is visible here exactly like a picker-inserted one.
+ */
+export function collectMemoEmbedIds(content: JSONContent): string[] {
+  const ids: string[] = []
+  const seen = new Set<string>()
+
+  const walk = (node: JSONContent): void => {
+    if (node.type === "memoEmbed") {
+      const memoId = node.attrs?.memoId
+      if (typeof memoId === "string" && memoId.length > 0 && !seen.has(memoId)) {
+        seen.add(memoId)
+        ids.push(memoId)
+      }
+    }
+    if (node.content) {
+      for (const child of node.content) {
+        walk(child)
+      }
+    }
+  }
+
+  walk(content)
+  return ids
+}
+
+/**
  * External (http/https) URLs the document points at, in document order,
  * INCLUDING duplicates — callers dedup and ref-count.
  *
