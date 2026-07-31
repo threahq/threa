@@ -116,9 +116,10 @@ export function buildQuickEmojis(
 
 /**
  * Filter and rank emojis for a search query. The canonical shortcode is the
- * primary match target; other aliases score a tier below, so `:smile:` ranks
- * above an emoji that merely lists "smile" as a hidden alias. Ties keep input
- * order (default order for the grid, weight order for recents).
+ * primary match target; other aliases and the search keywords score a tier
+ * below, so `:smile:` ranks above an emoji that merely lists "smile" as a
+ * hidden synonym. Ties keep input order (default order for the grid, weight
+ * order for recents).
  *
  * `aliases` includes the primary shortcode (see EmojiEntry), so it is
  * excluded from the keyword band to keep the tier intent explicit.
@@ -126,8 +127,30 @@ export function buildQuickEmojis(
 export function filterBySearch(emojis: EmojiEntry[], query: string): EmojiEntry[] {
   return rankMatches(emojis, query, (e) => ({
     labels: [e.shortcode],
-    keywords: e.aliases.filter((alias) => alias !== e.shortcode),
+    keywords: [...e.aliases.filter((alias) => alias !== e.shortcode), ...(e.keywords ?? [])],
   }))
+}
+
+/**
+ * Index every emoji by its primary shortcode *and* its aliases, because the
+ * backend accepts any alias in `:shortcode:` markdown — a primary-only index
+ * leaves `:smiley_cat:` rendering as literal text.
+ *
+ * Aliases are globally unique (guarded by emoji.test.ts), but primaries are
+ * written last so a stale cached list can never shadow one.
+ */
+export function buildShortcodeIndex(emojis: EmojiEntry[]): Map<string, EmojiEntry> {
+  const index = new Map<string, EmojiEntry>()
+  for (const entry of emojis) {
+    for (const alias of entry.aliases) index.set(alias, entry)
+  }
+  for (const entry of emojis) index.set(entry.shortcode, entry)
+  return index
+}
+
+/** Strip the wrapping colons from `:name:`, leaving a bare name unchanged. */
+export function stripShortcodeColons(shortcode: string): string {
+  return shortcode.startsWith(":") && shortcode.endsWith(":") ? shortcode.slice(1, -1) : shortcode
 }
 
 export type Section = "recent" | "all"

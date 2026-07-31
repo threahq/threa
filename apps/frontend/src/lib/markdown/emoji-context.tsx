@@ -1,5 +1,6 @@
 import { createContext, useContext, useMemo, type ReactNode } from "react"
 import type { EmojiEntry } from "@threa/types"
+import { buildShortcodeIndex, stripShortcodeColons } from "@/lib/emoji-picker"
 
 type ToEmoji = (shortcode: string) => string | null
 
@@ -20,16 +21,9 @@ interface EmojiProviderProps {
  */
 export function EmojiProvider({ emojis, children }: EmojiProviderProps) {
   const value = useMemo<EmojiContextValue>(() => {
-    const shortcodeToEmoji = new Map<string, string>()
-    for (const entry of emojis) {
-      shortcodeToEmoji.set(entry.shortcode, entry.emoji)
-    }
-
+    const index = buildShortcodeIndex(emojis)
     return {
-      toEmoji: (shortcode: string) => {
-        const normalized = shortcode.startsWith(":") && shortcode.endsWith(":") ? shortcode.slice(1, -1) : shortcode
-        return shortcodeToEmoji.get(normalized) ?? null
-      },
+      toEmoji: (shortcode: string) => index.get(stripShortcodeColons(shortcode))?.emoji ?? null,
     }
   }, [emojis])
 

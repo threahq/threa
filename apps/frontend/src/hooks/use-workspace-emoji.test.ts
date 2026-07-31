@@ -85,6 +85,27 @@ describe("useWorkspaceEmoji", () => {
       expect(entry?.aliases).toEqual(["love"])
     })
 
+    it("should resolve an alias, not just the primary shortcode", () => {
+      // The backend accepts every alias in `:shortcode:` markdown, so the
+      // composer input rule and renderer must resolve them too.
+      mockMetadata = {
+        id: workspaceId,
+        workspaceId,
+        emojis: [
+          { shortcode: "heart", emoji: "❤️", type: "native", group: "people", order: 0, aliases: ["heart", "love"] },
+        ],
+        emojiWeights: {},
+        commands: [],
+        _cachedAt: Date.now(),
+      }
+
+      const { result } = renderHook(() => useWorkspaceEmoji(workspaceId), {
+        wrapper: createTestWrapper(queryClient),
+      })
+      expect(result.current.toEmoji(":love:")).toBe("❤️")
+      expect(result.current.getEmoji("love")?.shortcode).toBe("heart")
+    })
+
     it("should strip colons from shortcode when looking up", () => {
       mockMetadata = {
         id: workspaceId,

@@ -902,7 +902,16 @@ export interface CachedE2eDeviceKey {
 export interface CachedWorkspaceMetadata {
   id: string // workspaceId
   workspaceId: string
-  emojis: Array<{ shortcode: string; emoji: string; type: string; group: string; order: number; aliases: string[] }>
+  emojis: Array<{
+    shortcode: string
+    emoji: string
+    type: string
+    group: string
+    order: number
+    aliases: string[]
+    /** Absent on rows cached before search keywords shipped. */
+    keywords?: string[]
+  }>
   emojiWeights: Record<string, number>
   /**
    * Agent tool categories the workspace has tooling configured for (`web` +

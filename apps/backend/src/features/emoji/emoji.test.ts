@@ -157,6 +157,34 @@ describe("Emoji Library", () => {
       expect(empty).toEqual([])
     })
 
+    test("no keyword duplicates a shortcode of the same emoji", () => {
+      // Keywords are the lower-ranked search band; one that repeats a shortcode
+      // this emoji already owns is payload that can never change a result.
+      const fold = (text: string) => text.toLowerCase().replace(/[\s_-]/g, "")
+      const redundant: string[] = []
+      for (const { emoji, shortcodes, keywords } of emojiData.emojis) {
+        const owned = new Set(shortcodes.map(fold))
+        for (const keyword of keywords) {
+          if (owned.has(fold(keyword))) redundant.push(`${emoji} -> "${keyword}"`)
+        }
+      }
+      expect(redundant).toEqual([])
+    })
+
+    test("keywords are lowercase and free of the colon wrapper", () => {
+      // Keywords never cross the wire as `:name:`; the only formatting contract
+      // is that search compares them lowercased and unwrapped.
+      const invalid: string[] = []
+      for (const { emoji, keywords } of emojiData.emojis) {
+        for (const keyword of keywords) {
+          if (keyword !== keyword.toLowerCase().trim() || /^:.*:$/.test(keyword)) {
+            invalid.push(`${emoji} -> "${keyword}"`)
+          }
+        }
+      }
+      expect(invalid).toEqual([])
+    })
+
     test("primary shortcode is canonical for toShortcode()", () => {
       // shortcodes[0] is the wire-format primary that toShortcode() returns
       // and is what gets persisted, displayed in tooltips, and rendered into
@@ -172,6 +200,41 @@ describe("Emoji Library", () => {
         .map(({ emoji, expected, actual }) => `${emoji}: expected ${expected}, got ${actual}`)
       expect(mismatches).toEqual([])
     })
+  })
+
+  describe("plain-language search coverage", () => {
+    // The dataset used to carry 1.13 shortcodes per emoji and nothing else, so
+    // searching the word a person actually thinks of ("sad", "cheers") returned
+    // nothing at all. These are the words, not the shortcode spellings — each
+    // must be an exact match on some emoji's shortcode or keyword, and the
+    // obvious emoji must be among the matches.
+    const expectations: Array<{ query: string; expected: string[] }> = [
+      { query: "sad", expected: ["😢", "😭", "😔", "☹️"] },
+      { query: "cheers", expected: ["🍻"] },
+      { query: "celebrate", expected: ["🎉", "🥳"] },
+      { query: "thanks", expected: ["🙏"] },
+      { query: "angry", expected: ["😠", "😡"] },
+      { query: "confused", expected: ["😕", "🫤"] },
+      { query: "tired", expected: ["😴", "🥱"] },
+      { query: "hug", expected: ["🤗", "🫂"] },
+      { query: "oops", expected: ["🤭"] },
+      { query: "excited", expected: ["🤩", "🥳"] },
+      { query: "disappointed", expected: ["😔", "😞"] },
+      { query: "money", expected: ["💰", "🤑"] },
+      { query: "idea", expected: ["💡"] },
+      { query: "bug", expected: ["🐛"] },
+    ]
+
+    for (const { query, expected } of expectations) {
+      test(`"${query}" matches ${expected.join("")}`, () => {
+        const matched = new Set(
+          emojiData.emojis
+            .filter((entry) => entry.shortcodes.includes(query) || entry.keywords.includes(query))
+            .map((entry) => entry.emoji)
+        )
+        expect(expected.filter((emoji) => !matched.has(emoji))).toEqual([])
+      })
+    }
   })
 
   describe("Unicode version coverage", () => {
