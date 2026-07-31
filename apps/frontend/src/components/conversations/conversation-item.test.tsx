@@ -57,8 +57,9 @@ describe("ConversationItem", () => {
     for (const label of ["Active", "Stalled", "Resolved"]) {
       expect(screen.queryByText(label)).not.toBeInTheDocument()
     }
-    // The completeness meter rendered seven fixed-size segments; none may remain.
-    expect(container.querySelectorAll("div.w-1\\.5.h-3").length).toBe(0)
+    // The completeness meter carried a tooltip naming the score; none may remain.
+    expect(container.querySelector("[aria-label^='Completeness']")).toBeNull()
+    expect(screen.queryByText(/Completeness/)).not.toBeInTheDocument()
   })
 
   it("does not dim a temporally stale conversation — staleness no longer drives the row", () => {
