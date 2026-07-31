@@ -1334,6 +1334,11 @@ export function registerStreamSocketHandlers(
     if (payload.streamId !== streamId) return
     await updateMemoEmbedSummary(streamId, payload.summary)
     await queryClient.invalidateQueries({ queryKey: streamKeys.events(workspaceId, streamId) })
+    // Label pages render from their own query, not db.events, and the backend
+    // resolves their summaries fresh at read — an invalidation IS the repaint.
+    await queryClient.invalidateQueries({
+      predicate: (q) => q.queryKey[0] === "labels" && q.queryKey[1] === workspaceId && q.queryKey[3] === "messages",
+    })
   }
 
   const handleMessageEdited = async (payload: MessageEventPayload) => {
@@ -1352,12 +1357,15 @@ export function registerStreamSocketHandlers(
         ...p,
         contentJson: editPayload.contentJson,
         contentMarkdown: editPayload.contentMarkdown,
-        // REPLACED, not merged: the edit payload always carries this array,
-        // empty included, so a reference the edit removed loses its card rather
-        // than keeping the pre-edit one. Without this the cached row holds the
-        // old summaries for the life of the session — and since the card no
-        // longer fetches, nothing else would ever correct it.
-        memoEmbeds: editPayload.memoEmbeds ?? [],
+        // The edit payload's array decides WHICH memos have cards (always
+        // carried, empty included, so a removed reference loses its card).
+        // Per memo, though, a `memo:updated` patch may have landed while this
+        // edit event was in flight carrying the pre-update summary — the
+        // strictly newer updatedAt wins so the card never repaints backwards.
+        memoEmbeds: (editPayload.memoEmbeds ?? []).map((entry) => {
+          const prior = (p.memoEmbeds as MemoEmbedSummary[] | undefined)?.find((x) => x.memoId === entry.memoId)
+          return prior && Date.parse(prior.updatedAt) > Date.parse(entry.updatedAt) ? prior : entry
+        }),
         editedAt: editEvent.createdAt,
       }))
       await writeSlotCarrier({ database: db, workspaceId, streamId, carrier: payload, mode: "merge", cachedAt: now })

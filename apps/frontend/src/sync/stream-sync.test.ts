@@ -3110,6 +3110,80 @@ describe("registerStreamSocketHandlers — shared-message slot ingestion (Amendm
     }
   })
 
+  // An edit event can arrive AFTER a memo:updated patch it predates — the edit
+  // resolved its summaries before the memo changed. Per memo, the strictly
+  // newer updatedAt wins, so the card never repaints backwards; the edit still
+  // decides WHICH memos have cards at all.
+  it("message:edited does not repaint a summary backwards past a newer memo:updated patch", async () => {
+    const streamId = "stream_memo_edit_race"
+    const queryClient = new QueryClient()
+    const base = {
+      memoId: "memo_raced",
+      knowledgeType: "decision" as const,
+      memoType: "conversation" as const,
+      tags: [],
+    }
+    const patched = { ...base, title: "Launch in June", updatedAt: "2026-07-31T12:00:00.000Z" }
+    const preUpdate = { ...base, title: "Launch in May", updatedAt: "2026-07-31T11:00:00.000Z" }
+    await db.events.put({
+      ...makeEvent({
+        id: "evt_raced",
+        streamId,
+        sequence: "50",
+        payload: { messageId: "msg_raced", contentMarkdown: "old", memoEmbeds: [patched] },
+      }),
+      workspaceId: "ws_1",
+      _sequenceNum: 50,
+      _cachedAt: Date.now(),
+    })
+
+    const { socket, emit } = createTestSocket()
+    const cleanup = registerStreamSocketHandlers(socket, "ws_1", streamId, queryClient)
+    await emit("message:edited", {
+      workspaceId: "ws_1",
+      streamId,
+      event: makeEvent({
+        id: "evt_raced_edit",
+        streamId,
+        sequence: "101",
+        eventType: "message_edited",
+        payload: { messageId: "msg_raced", contentJson: {}, contentMarkdown: "edited", memoEmbeds: [preUpdate] },
+      }),
+    })
+    cleanup()
+
+    const row = await db.events.get("evt_raced")
+    expect((row?.payload as { memoEmbeds: Array<{ title: string }> }).memoEmbeds).toEqual([patched])
+  })
+
+  // Label pages render from their own query, not db.events; the backend
+  // resolves their summaries fresh at read, so invalidation IS their repaint.
+  it("memo:updated invalidates label message queries but not the label list", async () => {
+    const streamId = "stream_memo_labels"
+    const queryClient = new QueryClient()
+    queryClient.setQueryData(["labels", "ws_1", "label_1", "messages"], [])
+    queryClient.setQueryData(["labels", "ws_1"], [])
+
+    const { socket, emit } = createTestSocket()
+    const cleanup = registerStreamSocketHandlers(socket, "ws_1", streamId, queryClient)
+    await emit("memo:updated", {
+      streamId,
+      memoId: "memo_a",
+      summary: {
+        memoId: "memo_a",
+        title: "Launch in June",
+        knowledgeType: "decision",
+        memoType: "conversation",
+        tags: [],
+        updatedAt: "2026-07-31T12:00:00.000Z",
+      },
+    })
+    cleanup()
+
+    expect(queryClient.getQueryState(["labels", "ws_1", "label_1", "messages"])?.isInvalidated).toBe(true)
+    expect(queryClient.getQueryState(["labels", "ws_1"])?.isInvalidated).toBe(false)
+  })
+
   it("message:edited rekeys a legacy-only payload to canonical keys", async () => {
     const streamId = "stream_wire_edit_legacy"
     const queryClient = new QueryClient()
