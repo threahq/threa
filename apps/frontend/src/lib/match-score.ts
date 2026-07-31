@@ -62,6 +62,19 @@ const KEYWORD_FUZZY_TIER = 19
 const LABEL_TYPO_TIER = 20
 const KEYWORD_TYPO_TIER = 21
 
+/**
+ * First tier of the tolerance bands. A score at or above this is a guess —
+ * the query did not actually occur in the text.
+ *
+ * Callers that rank several lists separately and then concatenate them must
+ * check this: within one `rankMatches` call a tolerance match can never
+ * displace a real one, but across two calls it can, and the reader only sees
+ * the concatenated order. The command palette ranks its contextual and global
+ * groups separately, so `> drafts` on a draft scratchpad put a guessed
+ * "Delete this draft" above an exact "View Drafts".
+ */
+export const TOLERANCE_TIER = LABEL_FUZZY_TIER
+
 /** Place a match kind on the tier ladder for the field it was found in. */
 function tierFor(kind: number, isKeyword: boolean): number {
   if (kind === Infinity) return Infinity
@@ -208,7 +221,19 @@ export function rankMatches<T>(
   query: string,
   getText: (item: T) => { labels: readonly string[]; keywords?: readonly string[] }
 ): T[] {
-  if (!query.trim()) return [...items]
+  return rankMatchesScored(items, query, getText).map((entry) => entry.item)
+}
+
+/**
+ * `rankMatches` with each item's score, for callers that rank several lists
+ * and need to compare quality across them — see `TOLERANCE_TIER`.
+ */
+export function rankMatchesScored<T>(
+  items: readonly T[],
+  query: string,
+  getText: (item: T) => { labels: readonly string[]; keywords?: readonly string[] }
+): { item: T; score: number }[] {
+  if (!query.trim()) return items.map((item) => ({ item, score: 0 }))
   return items
     .map((item) => {
       const { labels, keywords } = getText(item)
@@ -216,5 +241,4 @@ export function rankMatches<T>(
     })
     .filter((entry) => entry.score !== Infinity)
     .sort((a, b) => a.score - b.score)
-    .map((entry) => entry.item)
 }

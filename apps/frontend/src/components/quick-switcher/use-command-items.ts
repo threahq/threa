@@ -3,7 +3,7 @@ import { WORKSPACE_PERMISSION_SCOPES } from "@threa/types"
 import { isDraftId } from "@/hooks"
 import { useCachedWorkspaceBootstrap } from "@/hooks/use-workspaces"
 import { hasPermission } from "@/lib/permissions"
-import { rankMatches } from "@/lib/match-score"
+import { rankMatchesScored, TOLERANCE_TIER } from "@/lib/match-score"
 import { commands, type Command, type CommandContext } from "./commands"
 import { draftStreamCommands, streamCommands } from "./stream-commands"
 import type { ModeResult, QuickSwitcherItem } from "./types"
@@ -21,10 +21,29 @@ interface UseCommandItemsParams {
  * array order.
  */
 export function rankCommands(candidates: Command[], query: string): Command[] {
-  return rankMatches(candidates, query, (command) => ({
+  return rankCommandsScored(candidates, query).map((entry) => entry.item)
+}
+
+function rankCommandsScored(candidates: Command[], query: string) {
+  return rankMatchesScored(candidates, query, (command) => ({
     labels: [command.label],
     keywords: [command.id, ...(command.keywords ?? [])],
   }))
+}
+
+/**
+ * Rank the palette's groups against each other before they are concatenated.
+ * Groups render in section order rather than by score, so the first row of the
+ * first group is what Enter fires — and a guessed match there would beat an
+ * exact one below it. Typo and fuzzy matches are therefore dropped from every
+ * group as soon as any group holds a real one: on a draft scratchpad,
+ * `> drafts` offered a guessed "Delete this draft" above "View Drafts".
+ */
+export function rankGroups(query: string, groups: readonly Command[][]): Command[][] {
+  const scored = groups.map((group) => rankCommandsScored(group, query))
+  const best = Math.min(...scored.flat().map((entry) => entry.score))
+  if (best >= TOLERANCE_TIER) return scored.map((group) => group.map((entry) => entry.item))
+  return scored.map((group) => group.filter((entry) => entry.score < TOLERANCE_TIER).map((entry) => entry.item))
 }
 
 export function useCommandItems({ query, commandContext }: UseCommandItemsParams): ModeResult {
@@ -54,12 +73,13 @@ export function useCommandItems({ query, commandContext }: UseCommandItemsParams
       contextualCommands = isDraftId(currentStreamId) ? draftStreamCommands : streamCommands
     }
     const contextualGroup = currentStreamName ? `This stream — ${currentStreamName}` : "This stream"
-    // Each group is ranked independently — the list renders grouped, so
-    // cross-group ordering is the section order, not match quality.
-    const contextualItems = rankCommands(contextualCommands, query).map((c) => toItem(c, contextualGroup))
-
+    // Groups render in section order, not by score, so they are ranked
+    // together (see rankGroups) and only ordered within a section afterwards.
     const globalCommands = commands.filter((c) => c.id !== "open-ai-agents" || isAdmin)
-    const globalItems = rankCommands(globalCommands, query).map((c) => toItem(c, "Commands"))
+    const [rankedContextual, rankedGlobal] = rankGroups(query, [contextualCommands, globalCommands])
+    const contextualItems = rankedContextual.map((c) => toItem(c, contextualGroup))
+
+    const globalItems = rankedGlobal.map((c) => toItem(c, "Commands"))
 
     return [...contextualItems, ...globalItems]
   }, [query, commandContext, isAdmin])

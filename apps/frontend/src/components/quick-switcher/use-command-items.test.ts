@@ -1,7 +1,8 @@
 import { describe, it, expect } from "vitest"
 import { FileText } from "lucide-react"
 import { commands, type Command } from "./commands"
-import { rankCommands } from "./use-command-items"
+import { rankCommands, rankGroups } from "./use-command-items"
+import { draftStreamCommands } from "./stream-commands"
 
 function makeCommand(overrides: Partial<Command> & Pick<Command, "id" | "label">): Command {
   return { icon: FileText, action: () => {}, ...overrides }
@@ -46,5 +47,23 @@ describe("rankCommands", () => {
     for (const q of ["post", "compose", "write"]) {
       expect(rankCommands(commands, q).map((c) => c.id)).toContain("new-post")
     }
+  })
+})
+
+describe("rankGroups", () => {
+  it("drops guessed matches from every group once any group holds a real one", () => {
+    // The palette renders the contextual group first and fires its first row
+    // on Enter. On a draft scratchpad, "drafts" is one edit from the keyword
+    // of "Delete this draft" — a guess that must not outrank the exact
+    // "View Drafts" below it, or Enter deletes the draft.
+    const [contextual, global] = rankGroups("drafts", [draftStreamCommands, commands])
+    expect(contextual).toEqual([])
+    expect(global[0]?.id).toBe("view-drafts")
+  })
+
+  it("keeps guessed matches when no group holds a real one", () => {
+    const typo = makeCommand({ id: "view-drafts", label: "View Drafts", keywords: ["draft"] })
+    const [only] = rankGroups("drfats", [[typo]])
+    expect(only.map((c) => c.id)).toEqual(["view-drafts"])
   })
 })
