@@ -22,6 +22,7 @@ import { CommandEvent } from "./command-event"
 import { UnreadDivider } from "./unread-divider"
 import { DayDivider } from "./day-divider"
 import { localStartOfDayMs } from "@/lib/dates"
+import { isSameAuthorRun } from "@/lib/message-grouping"
 import { Skeleton } from "@/components/ui/skeleton"
 import { ConversationOverlayRow } from "./conversation-overlay/conversation-overlay"
 import type {
@@ -154,9 +155,6 @@ export type TimelineItem =
 /** Event types that participate in author-grouping (render as message bodies). */
 const MESSAGE_EVENT_TYPES = new Set<StreamEvent["eventType"]>(["message_created", "companion_response"])
 
-/** Window (ms) within which same-author messages collapse into a single run. */
-const AUTHOR_GROUP_WINDOW_MS = 5 * 60 * 1000
-
 function isGroupableMessage(event: StreamEvent): boolean {
   if (!MESSAGE_EVENT_TYPES.has(event.eventType)) return false
   // Soft-deleted messages render as a placeholder, not a grouped message body.
@@ -167,7 +165,7 @@ function isGroupableMessage(event: StreamEvent): boolean {
 /**
  * Walks a timeline and annotates consecutive same-author `message_created` /
  * `companion_response` events with author-grouping metadata. Same actor + actor
- * type + within 5 minutes + no non-message item between = continuation.
+ * type + within the shared author-run window + no non-message item between = continuation.
  *
  * Any non-event TimelineItem (command/session groups), non-message event type,
  * or deleted/pending message breaks the current run.
@@ -185,9 +183,14 @@ export function annotateAuthorGroups(items: TimelineItem[]): TimelineItem[] {
     const currentTimeMs = new Date(item.event.createdAt).getTime()
     const belongsToRun =
       previousMessage != null &&
-      previousMessage.event.actorId === item.event.actorId &&
-      previousMessage.event.actorType === item.event.actorType &&
-      currentTimeMs - previousMessage.timeMs <= AUTHOR_GROUP_WINDOW_MS
+      isSameAuthorRun(
+        {
+          authorId: previousMessage.event.actorId,
+          authorType: previousMessage.event.actorType,
+          createdAtMs: previousMessage.timeMs,
+        },
+        { authorId: item.event.actorId, authorType: item.event.actorType, createdAtMs: currentTimeMs }
+      )
 
     previousMessage = { event: item.event, timeMs: currentTimeMs }
 

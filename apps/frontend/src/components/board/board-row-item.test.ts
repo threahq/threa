@@ -43,6 +43,12 @@ describe("buildBoardRows", () => {
     expect(rows.map((r) => (r.kind === "message" ? r.continuation : "event"))).toEqual([false, true, false])
   })
 
+  it("renders a window that starts mid-run headed, because the preceding row isn't shown", () => {
+    // What the card gets when the row cap cuts into the trailing author-run.
+    const rows = buildBoardRows([msg("b", "u1", 1), msg("c", "u1", 2)], [])
+    expect(rows.map((r) => (r.kind === "message" ? r.continuation : "event"))).toEqual([false, true])
+  })
+
   it("an interleaved event row breaks a same-author continuation run", () => {
     // Two same-author messages that WOULD group, with an event between them by time.
     const rows = buildBoardRows([msg("a", "u1", 0), msg("b", "u1", 2)], [memoEventRow("evt", 1)])

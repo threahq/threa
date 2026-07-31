@@ -1,6 +1,7 @@
 import type { StreamEvent } from "@threa/types"
 import { useSteerAgentSession, useStopAgentSession } from "@/hooks"
-import { isContinuation, type RenderableMessage } from "@/components/message/message-item"
+import { isContinuation } from "@/lib/message-grouping"
+import { type RenderableMessage } from "@/components/message/message-item"
 import { AgentSessionEvent } from "@/components/timeline/agent-session-event"
 import { MemoCapturedEvent } from "@/components/timeline/memo-captured-event"
 import { FollowUpScheduledEvent } from "@/components/timeline/follow-up-event"

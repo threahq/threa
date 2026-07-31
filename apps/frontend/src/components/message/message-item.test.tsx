@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest"
-import { isContinuation, type RenderableMessage } from "./message-item"
+import { isContinuation } from "@/lib/message-grouping"
+import { type RenderableMessage } from "./message-item"
 
 function message(overrides: Partial<RenderableMessage> = {}): RenderableMessage {
   return {
