@@ -73,6 +73,10 @@ interface BoardCardProps {
    * explains the state; this only makes the card underneath dead weight.
    */
   removed?: boolean
+  /** Fired ONCE, on the card's first intersection with the viewport — "the viewer
+   *  has laid eyes on this card in this session". Drives the board's re-buffering:
+   *  an unseen card that gains activity goes back behind the "N new" pill. */
+  onSeen?: () => void
 }
 
 /** How many trailing messages a nested branch previews on a collapsed card; the
@@ -103,6 +107,7 @@ export function BoardCard({
   scrollerRef,
   listRef,
   removed = false,
+  onSeen,
 }: BoardCardProps) {
   const { conversation } = post
   const flash = useBoardFlash(conversation.id)
@@ -442,10 +447,23 @@ export function BoardCard({
   // so off-screen cards on a long board don't suppress streams the user can't
   // see.
   const [cardInViewport, setCardInViewport] = useState(false)
+  // Same observer answers "has the viewer seen this card" (`onSeen`, first
+  // intersection only) — seen-ness is latched in a ref so a later re-intersection
+  // can't re-fire it, and the callback is held in a ref so the observer isn't
+  // torn down when the parent hands a fresh closure.
+  const onSeenRef = useRef(onSeen)
+  onSeenRef.current = onSeen
+  const seenFiredRef = useRef(false)
   useEffect(() => {
     const el = cardRef.current
     if (!el || typeof IntersectionObserver === "undefined") return
-    const observer = new IntersectionObserver(([entry]) => setCardInViewport(entry.isIntersecting))
+    const observer = new IntersectionObserver(([entry]) => {
+      setCardInViewport(entry.isIntersecting)
+      if (entry.isIntersecting && !seenFiredRef.current) {
+        seenFiredRef.current = true
+        onSeenRef.current?.()
+      }
+    })
     observer.observe(el)
     return () => observer.disconnect()
   }, [])

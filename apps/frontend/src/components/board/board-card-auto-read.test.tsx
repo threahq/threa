@@ -78,7 +78,7 @@ class FakeIntersectionObserver {
 const markRead = vi.fn().mockResolvedValue({ streams: [] })
 const markUnread = vi.fn().mockResolvedValue({ streams: [] })
 
-function mountCard() {
+function mountCard(onSeen?: () => void) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   render(
     <QueryClientProvider client={queryClient}>
@@ -86,7 +86,13 @@ function mountCard() {
         <ServicesProvider services={{ conversations: { markRead, markUnread } as never }}>
           <MemoryRouter initialEntries={[`/w/${WS}/board`]}>
             <PanelProvider>
-              <BoardCard workspaceId={WS} post={makePost()} contextLabel="#general" streamType="channel" />
+              <BoardCard
+                workspaceId={WS}
+                post={makePost()}
+                contextLabel="#general"
+                streamType="channel"
+                onSeen={onSeen}
+              />
             </PanelProvider>
           </MemoryRouter>
         </ServicesProvider>
@@ -190,5 +196,26 @@ describe("BoardCard viewport auto-read (full wiring: real card, real controller,
     })
 
     expect(markRead).toHaveBeenCalledWith(WS, "conv_1", "m_open")
+  })
+})
+
+describe("BoardCard onSeen", () => {
+  it("fires once on the card's first intersection and never again", async () => {
+    const onSeen = vi.fn()
+    mountCard(onSeen)
+    await act(async () => {})
+
+    const cardEl = document.querySelector(".board-card-hover")
+    expect(cardEl, "the card root should render").toBeTruthy()
+    const io = FakeIntersectionObserver.instances.find((instance) => instance.observed.has(cardEl!))
+    expect(io, "an IntersectionObserver should be observing the card root").toBeTruthy()
+
+    expect(onSeen).not.toHaveBeenCalled()
+    act(() => io!.fire([{ target: cardEl!, isIntersecting: true }]))
+    expect(onSeen).toHaveBeenCalledTimes(1)
+
+    act(() => io!.fire([{ target: cardEl!, isIntersecting: false }]))
+    act(() => io!.fire([{ target: cardEl!, isIntersecting: true }]))
+    expect(onSeen).toHaveBeenCalledTimes(1)
   })
 })
