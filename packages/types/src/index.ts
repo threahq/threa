@@ -395,6 +395,7 @@ export type {
   // Link previews
   LinkPreview,
   LinkPreviewSummary,
+  MemoEmbedSummary,
   WorkspaceIntegration,
   WorkspaceIntegrationRateLimit,
   GitHubInstalledRepository,
@@ -564,7 +565,6 @@ export type {
   MessagesMovedEventPayload,
   MovedFromProvenance,
   CapturedMemoSummary,
-  MemoEmbedSummary,
   MemosCapturedEventPayload,
   AgentFollowUpScheduledEventPayload,
   AgentFollowUpCancelledEventPayload,

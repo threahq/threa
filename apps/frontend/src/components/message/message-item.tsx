@@ -7,6 +7,7 @@ import {
   type AttachmentSummary,
   type AuthorType,
   type LinkPreviewSummary,
+  type MemoEmbedSummary,
   type StreamType,
 } from "@threa/types"
 import { ActorAvatar } from "@/components/actor-avatar"
@@ -90,6 +91,13 @@ export interface RenderableMessage {
    * affordance and the revisions dialog (parity with the timeline row). */
   editedAt?: string | null
   attachments?: AttachmentSummary[]
+  /**
+   * The memos this body cites, with their card content — delivered with the
+   * message on every surface that renders it, so a card never fetches. Dropping
+   * it when projecting a row into this shape is how the board's event rail
+   * silently regressed cards mid-session.
+   */
+  memoEmbeds?: MemoEmbedSummary[]
   linkPreviews?: LinkPreviewSummary[]
   /** Soft-delete stamp, or null/absent when live. A deleted row renders as a
    * tombstone on the conversation surfaces — it carries no body, reactions,
@@ -653,9 +661,9 @@ export function MessageItem({
           hydrateFromApi={false}
         />
       )}
-      {/* Memo + giphy embeds are parsed from the markdown, so they render here
-          just like the timeline — no extra payload needed. */}
-      <MemoPreviewList contentMarkdown={message.contentMarkdown} />
+      {/* Giphy embeds are parsed from the markdown; memo cards take their
+          content from the message the same way the timeline does. */}
+      <MemoPreviewList contentMarkdown={message.contentMarkdown} memoEmbeds={message.memoEmbeds} />
       <GiphyPreviewList contentMarkdown={message.contentMarkdown} />
     </>
   )

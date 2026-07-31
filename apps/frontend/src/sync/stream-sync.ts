@@ -8,6 +8,7 @@ import {
   type StreamReadFrontier,
   type LastMessagePreview,
   type LinkPreviewSummary,
+  type MemoEmbedSummary,
   type ThreadSummary,
   type WorkspaceBootstrap,
   type BotRuntimePresenceSummary,
@@ -1302,6 +1303,7 @@ export function registerStreamSocketHandlers(
       messageId: string
       contentJson: unknown
       contentMarkdown: string
+      memoEmbeds?: MemoEmbedSummary[]
     }
 
     const now = Date.now()
@@ -1310,6 +1312,12 @@ export function registerStreamSocketHandlers(
         ...p,
         contentJson: editPayload.contentJson,
         contentMarkdown: editPayload.contentMarkdown,
+        // REPLACED, not merged: the edit payload always carries this array,
+        // empty included, so a reference the edit removed loses its card rather
+        // than keeping the pre-edit one. Without this the cached row holds the
+        // old summaries for the life of the session — and since this PR deletes
+        // the per-card fetch, nothing else would ever correct it.
+        memoEmbeds: editPayload.memoEmbeds ?? [],
         editedAt: editEvent.createdAt,
       }))
       await writeSlotCarrier({ database: db, workspaceId, streamId, carrier: payload, mode: "merge", cachedAt: now })

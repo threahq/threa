@@ -8,7 +8,7 @@ import { StreamRepository, applySparseRead, applySparseUnread, type ReadStateSna
 import { ActivityRepository } from "../activity"
 import { AttachmentRepository, hydrateAttachmentSummaries } from "../attachments"
 import { LinkPreviewRepository, toLinkPreviewSummary } from "../link-previews"
-import { MemoRepository } from "../memos"
+import { MemoRepository, resolveMemoEmbedSummariesForMessages } from "../memos"
 import { OutboxRepository } from "../../lib/outbox"
 import { addStalenessFields, type ConversationWithStaleness } from "./staleness"
 import { resolveConversationDelivery } from "./conversation-delivery"
@@ -26,6 +26,7 @@ import {
   type BoardScopeStreamType,
   type ConversationStatus,
   type LinkPreviewSummary,
+  type MemoEmbedSummary,
 } from "@threa/types"
 
 export { ConversationWithStaleness }
@@ -456,12 +457,19 @@ export class ConversationService {
     const attachmentsByMessage = await AttachmentRepository.findByMessageIds(this.pool, ids)
     const linkPreviewsByMessage = await LinkPreviewRepository.findByMessageIds(this.pool, workspaceId, ids)
     const summariesByMessage = await hydrateAttachmentSummaries(this.pool, workspaceId, attachmentsByMessage)
+    // Same card content the timeline gets from the event payload, so a message
+    // reads identically on both surfaces and neither one fetches per card.
+    const memoEmbedsByMessage = await resolveMemoEmbedSummariesForMessages(
+      this.pool,
+      workspaceId,
+      messages.filter((m) => m.deletedAt == null)
+    )
     for (const message of messages) {
       const attachments = summariesByMessage.get(message.id) ?? []
       const linkPreviews = (linkPreviewsByMessage.get(message.id) ?? [])
         .filter((p) => p.status === "completed")
         .map((p, i) => toLinkPreviewSummary(p, i))
-      byId.set(message.id, toBoardPostMessage(message, attachments, linkPreviews))
+      byId.set(message.id, toBoardPostMessage(message, attachments, linkPreviews, memoEmbedsByMessage.get(message.id)))
     }
     return byId
   }
@@ -1626,7 +1634,8 @@ export class ConversationService {
 function toBoardPostMessage(
   message: Message,
   attachments: AttachmentSummary[],
-  linkPreviews: LinkPreviewSummary[]
+  linkPreviews: LinkPreviewSummary[],
+  memoEmbeds?: MemoEmbedSummary[]
 ): BoardPostMessage {
   const deleted = message.deletedAt != null
   return {
@@ -1641,6 +1650,7 @@ function toBoardPostMessage(
     reactions: deleted ? {} : message.reactions,
     attachments: deleted ? [] : attachments,
     linkPreviews: deleted ? [] : linkPreviews,
+    ...(!deleted && memoEmbeds && memoEmbeds.length > 0 && { memoEmbeds }),
     createdAt: message.createdAt,
     editedAt: message.editedAt,
     deletedAt: message.deletedAt,
