@@ -610,11 +610,7 @@ function MessageLayout({
           previews={payload.linkPreviews}
           hydrateFromApi={!deferSecondaryHydration}
         />
-        <MemoPreviewList
-          contentMarkdown={payload.contentMarkdown}
-          contentJson={payload.contentJson}
-          memoEmbeds={payload.memoEmbeds}
-        />
+        <MemoPreviewList contentMarkdown={payload.contentMarkdown} memoEmbeds={payload.memoEmbeds} />
         <GiphyPreviewList contentMarkdown={payload.contentMarkdown} />
       </AttachmentProvider>
     </LinkPreviewProvider>
