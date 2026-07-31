@@ -450,4 +450,19 @@ describe("resolveDeliveryGroups — memo:created", () => {
 
     expect(groups).toEqual([userGroup("usr_owner")])
   })
+
+  // Rollout window: a replica still on the old code writes the old payload —
+  // no streamId, whole memo inline. Dropping it keeps that content out of the
+  // log; routing it by shape would file it under `stream:undefined`.
+  it("drops a pre-cutover payload instead of routing it anywhere", () => {
+    const groups = resolveDeliveryGroups(
+      event("memo:created", {
+        workspaceId: "ws_1",
+        memoId: "memo_1",
+        memo: { id: "memo_1", title: "Launch in June", abstract: "…" },
+      })
+    )
+
+    expect(groups).toEqual([])
+  })
 })

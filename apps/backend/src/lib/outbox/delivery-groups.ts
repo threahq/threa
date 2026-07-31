@@ -351,9 +351,13 @@ export function resolveDeliveryGroups(event: OutboxEvent): string[] | null {
   // its owner even when captured in a shared stream (save_memo can file one
   // there), so it goes to the owner alone: the room must not learn that a memo
   // it will never be shown exists.
+  // A row written by a pre-cutover replica has no streamId and carries the whole
+  // memo; it is dropped (no audience, so neither logged nor emitted) rather than
+  // routed to `stream:undefined`, which would park that content in the log.
   if (isOutboxEventType(event, "memo:created")) {
     const payload = event.payload as MemoCreatedOutboxPayload
-    return payload.scopeUserId ? [userGroup(payload.scopeUserId)] : [streamGroup(payload.streamId)]
+    if (payload.scopeUserId) return [userGroup(payload.scopeUserId)]
+    return payload.streamId ? [streamGroup(payload.streamId)] : []
   }
 
   // Permission-scoped events (e.g. invitation lifecycle → members:write) go to
