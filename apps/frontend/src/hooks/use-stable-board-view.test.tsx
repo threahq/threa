@@ -69,12 +69,18 @@ function pendingPost(id: string, activityMs: number): CachedBoardPost {
 function lensPost(
   id: string,
   activityMs: number,
-  opts: { status?: "active" | "stalled" | "resolved"; completenessScore?: number; hasCapturedMemo?: boolean }
+  opts: {
+    status?: "active" | "stalled" | "resolved"
+    completenessScore?: number
+    hasCapturedMemo?: boolean
+    isMine?: boolean
+  }
 ): CachedBoardPost {
   const base = post(id, activityMs)
   return {
     ...base,
     hasCapturedMemo: opts.hasCapturedMemo ?? false,
+    isMine: opts.isMine ?? false,
     conversation: {
       ...base.conversation,
       status: opts.status ?? "active",
@@ -273,15 +279,15 @@ describe("useStableBoardView", () => {
   it("commits the new lens's feed wholesale across disjoint subsets — no stranding behind the pill", () => {
     // The bug this guards: switching between two lenses with disjoint subsets where
     // a fresh card of the new lens sits ABOVE the old lens's committed floor. `s`
-    // is the only Needs-resolution card (floor 300); `d` is a Decisions card above
-    // it (400) that isn't a Needs-resolution card. Reconciling `d` against the
-    // stale `{s}` committed strands it behind an empty "N new" pill; folding the
-    // reset into the reconcile input commits `d` immediately instead.
-    const stalled = lensPost("s", 300, { status: "stalled" })
+    // is the only Mine card (floor 300); `d` is a Decisions card above it (400)
+    // that isn't a Mine card. Reconciling `d` against the stale `{s}` committed
+    // strands it behind an empty "N new" pill; folding the reset into the
+    // reconcile input commits `d` immediately instead.
+    const mine = lensPost("s", 300, { isMine: true })
     const decision = lensPost("d", 400, { hasCapturedMemo: true })
-    mockLive(feed(stalled, decision))
+    mockLive(feed(mine, decision))
     const { result, rerender } = renderHook(({ lens }) => useStableBoardView("ws_1", lensFilter(lens)), {
-      initialProps: { lens: "needs-resolution" as BoardLens },
+      initialProps: { lens: "mine" as BoardLens },
     })
     expect(result.current.posts.map((p) => p.id)).toEqual(["s"])
     rerender({ lens: "decisions" })
@@ -297,11 +303,11 @@ describe("useStableBoardView", () => {
     // new lens (classified "already committed"), so its fresh arrival never shows
     // behind the "N new" pill. Feeding the reset (EMPTY_VIEW) into the reconcile
     // leaves no phantom, so the later arrival buffers. Fails on the pre-fix code.
-    const stalled = lensPost("s", 300, { status: "stalled" }) // needs-resolution only
+    const mine = lensPost("s", 300, { isMine: true }) // mine only
     const decisionLow = lensPost("x", 200, { hasCapturedMemo: true }) // decisions, below s's floor
-    mockLive(feed(stalled, decisionLow))
+    mockLive(feed(mine, decisionLow))
     const { result, rerender } = renderHook(({ lens }) => useStableBoardView("ws_1", lensFilter(lens)), {
-      initialProps: { lens: "needs-resolution" as BoardLens },
+      initialProps: { lens: "mine" as BoardLens },
     })
     expect(result.current.posts.map((p) => p.id)).toEqual(["s"])
 
@@ -309,8 +315,8 @@ describe("useStableBoardView", () => {
     expect(result.current.posts.map((p) => p.id)).toEqual(["x"])
 
     // `s` gains a memo with fresh activity — a genuine new arrival on decisions.
-    const stalledWithMemo = lensPost("s", 500, { status: "stalled", hasCapturedMemo: true })
-    act(() => mockLive(feed(stalledWithMemo, decisionLow)))
+    const mineWithMemo = lensPost("s", 500, { isMine: true, hasCapturedMemo: true })
+    act(() => mockLive(feed(mineWithMemo, decisionLow)))
     rerender({ lens: "decisions" })
     // The fresh `s` waits behind the pill; it is not absorbed in-place.
     expect(result.current.newCount).toBe(1)
@@ -318,19 +324,18 @@ describe("useStableBoardView", () => {
   })
 
   it("keeps an acted-on card in place when it stops matching the lens (never yanked)", () => {
-    // The steer this encodes: replying to a Needs-resolution card makes it fresh,
-    // so it stops MATCHING the lens — but a filter must never yank what's on
-    // screen. The committed card keeps rendering (retained) until the viewer
-    // commits a fresh view themselves.
-    const stalled = lensPost("s", 300, { status: "stalled" })
-    const idle = lensPost("i", 200, { status: "stalled" })
-    mockLive(feed(stalled, idle))
-    const { result, rerender } = renderHook(() => useStableBoardView("ws_1", lensFilter("needs-resolution")))
+    // The steer this encodes: a card can stop MATCHING the lens after an update
+    // (here its memo is archived, so it leaves Decisions) — but a filter must
+    // never yank what's on screen. The committed card keeps rendering (retained)
+    // until the viewer commits a fresh view themselves.
+    const decision = lensPost("s", 300, { hasCapturedMemo: true })
+    const idle = lensPost("i", 200, { hasCapturedMemo: true })
+    mockLive(feed(decision, idle))
+    const { result, rerender } = renderHook(() => useStableBoardView("ws_1", lensFilter("decisions")))
     expect(result.current.posts.map((p) => p.id)).toEqual(["s", "i"])
 
-    // The viewer replies to `s`: fresh activity, status back to active — it no
-    // longer matches the lens.
-    act(() => mockLive(feed(lensPost("s", 900, { status: "active" }), idle)))
+    // `s`'s memo is archived with fresh activity — it no longer matches the lens.
+    act(() => mockLive(feed(lensPost("s", 900, { hasCapturedMemo: false }), idle)))
     rerender()
     // Still rendered in place, and not counted as "new".
     expect(result.current.posts.map((p) => p.id)).toEqual(["s", "i"])
@@ -345,16 +350,16 @@ describe("useStableBoardView", () => {
     // Posting from a filtered board navigates back to the All home (the new post
     // might not match the filter); the pending optimistic card reveals itself at
     // top there via reconcile, no arm to carry across the reset.
-    const stalled = lensPost("s", 300, { status: "stalled" })
-    mockLive(feed(stalled))
+    const decision = lensPost("s", 300, { hasCapturedMemo: true })
+    mockLive(feed(decision))
     const { result, rerender } = renderHook(({ filter }) => useStableBoardView("ws_1", filter), {
-      initialProps: { filter: lensFilter("needs-resolution") },
+      initialProps: { filter: lensFilter("decisions") },
     })
     expect(result.current.posts.map((p) => p.id)).toEqual(["s"])
 
     // Navigate to All, then the authored card lands after the fresh view's commit.
     rerender({ filter: ALL })
-    act(() => mockLive(feed(pendingPost("mine", 900), stalled)))
+    act(() => mockLive(feed(pendingPost("mine", 900), decision)))
     rerender({ filter: ALL })
     expect(result.current.posts.map((p) => p.id)).toEqual(["mine", "s"])
     expect(result.current.newCount).toBe(0)

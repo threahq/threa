@@ -107,20 +107,21 @@ export function BoardTileToggle({
 
 /**
  * The board-mode row preview line: the stream's topic tally in place of the last
- * message ("14 topics · 6 active", "· 2 need resolution" only when > 0, "No
- * topics yet" at zero). Same size/truncation as the message preview it replaces
- * so swapping in board mode shifts nothing (INV-21). `null` stats = the single
- * aggregation hasn't resolved yet; render nothing rather than flash "No topics".
+ * message ("14 topics", "No topics yet" at zero). Same size/truncation as the
+ * message preview it replaces so swapping in board mode shifts nothing (INV-21).
+ * `null` stats = the single aggregation hasn't resolved yet; render nothing
+ * rather than flash "No topics".
  */
 export function BoardStatsLine({ stats }: { stats: BoardStreamStats | null }) {
   if (!stats) return null
   if (stats.topics === 0) {
     return <div className="truncate text-xs text-muted-foreground">No topics yet</div>
   }
-  const parts = [`${stats.topics} ${stats.topics === 1 ? "topic" : "topics"}`, `${stats.active} active`]
-  if (stats.needsResolution > 0)
-    parts.push(`${stats.needsResolution} ${stats.needsResolution === 1 ? "needs" : "need"} resolution`)
-  return <div className="truncate text-xs text-muted-foreground">{parts.join(" · ")}</div>
+  return (
+    <div className="truncate text-xs text-muted-foreground">
+      {stats.topics} {stats.topics === 1 ? "topic" : "topics"}
+    </div>
+  )
 }
 
 export function UrgencyStrip({ urgency }: { urgency: UrgencyLevel }) {

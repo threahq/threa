@@ -486,7 +486,7 @@ export const MAX_BOARD_VIEW_NAME_LENGTH = 60
  * must opt out of. Same signal for every viewer (personal lenses like Mine
  * come later). Ordered as they render in the lens picker.
  */
-export const BOARD_LENSES = ["all", "active", "needs-resolution", "decisions", "mine"] as const
+export const BOARD_LENSES = ["all", "decisions", "mine"] as const
 export type BoardLens = (typeof BOARD_LENSES)[number]
 
 /** The board's home view: everything, newest activity first, nothing hidden. */
@@ -512,19 +512,6 @@ export const MAX_BOARD_SCOPE_LABELS = 50
  */
 export const BOARD_SCOPE_STREAM_TYPES = ["channel", "dm", "scratchpad", "system"] as const
 export type BoardScopeStreamType = (typeof BOARD_SCOPE_STREAM_TYPES)[number]
-
-/**
- * Idle hours after which a still-incomplete conversation counts as a loose end
- * for the Needs-resolution lens. 12h ≈ temporalStaleness ≥ 3 (staleness.ts), so
- * a conversation that went quiet mid-workday resurfaces the next.
- */
-export const BOARD_LENS_STALE_HOURS = 12
-
-/**
- * Completeness (1–7, LLM-scored) below which an idle conversation reads as
- * unresolved. 4 is the midpoint — score 1–3 is "not yet half-settled".
- */
-export const BOARD_LENS_MAX_COMPLETENESS = 4
 
 // How a message's conversation was decided. Absent/null on a message means the
 // async boundary-extractor inferred (clustered) it — the default. A set value

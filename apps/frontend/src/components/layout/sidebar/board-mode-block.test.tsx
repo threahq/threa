@@ -121,7 +121,7 @@ describe("BoardModeBlock", () => {
     mountAt(`/w/${WS}/board`)
 
     expect(screen.getByText("Lenses")).toBeInTheDocument()
-    for (const label of ["All", "Active", "Needs resolution", "Decisions", "Mine"]) {
+    for (const label of ["All", "Decisions", "Mine"]) {
       expect(screen.getByRole("link", { name: label })).toBeInTheDocument()
     }
   })
@@ -135,7 +135,7 @@ describe("BoardModeBlock", () => {
 
   it("carries the current filters across every lens link", () => {
     stub()
-    mountAt(`/w/${WS}/board?lens=active&in=stream_1&label=label_a`)
+    mountAt(`/w/${WS}/board?lens=mine&in=stream_1&label=label_a`)
 
     const all = new URL(hrefOf("All"), "http://x")
     expect(all.searchParams.get("lens")).toBe("all")
@@ -155,15 +155,15 @@ describe("BoardModeBlock", () => {
     const all = new URL(hrefOf("All"), "http://x")
     expect(all.pathname).toBe(`/w/${WS}/board`)
     expect(all.searchParams.get("lens")).toBe("all")
-    const active = new URL(hrefOf("Active"), "http://x")
-    expect(active.searchParams.get("lens")).toBe("active")
+    const mine = new URL(hrefOf("Mine"), "http://x")
+    expect(mine.searchParams.get("lens")).toBe("mine")
   })
 
   it("marks the current lens active", () => {
     stub()
-    mountAt(`/w/${WS}/board?lens=active`)
+    mountAt(`/w/${WS}/board?lens=mine`)
 
-    expect(screen.getByRole("link", { name: "Active" })).toHaveAttribute("aria-current", "true")
+    expect(screen.getByRole("link", { name: "Mine" })).toHaveAttribute("aria-current", "true")
     expect(screen.getByRole("link", { name: "All" })).not.toHaveAttribute("aria-current")
   })
 
@@ -203,7 +203,7 @@ describe("BoardModeBlock", () => {
   it("renders per-lens counts from lensTotals, right-aligned inside each lens row", () => {
     stub()
     mountAt(`/w/${WS}/board`, {
-      lensTotals: { all: 14, active: 6, "needs-resolution": 2, decisions: 3, mine: 0 },
+      lensTotals: { all: 14, decisions: 3, mine: 0 },
     })
 
     const all = screen.getByRole("link", { name: "All" })
@@ -216,7 +216,7 @@ describe("BoardModeBlock", () => {
     stub()
     mountAt(`/w/${WS}/board`, { lensTotals: null })
 
-    expect(screen.getByRole("link", { name: "Active" })).toHaveTextContent(/^Active$/)
+    expect(screen.getByRole("link", { name: "Decisions" })).toHaveTextContent(/^Decisions$/)
   })
 
   it("renders the Filters group with the stream and type pickers", () => {
@@ -263,8 +263,8 @@ describe("BoardModeBlock", () => {
     const { updatePreferences } = stub({ boardDefaultLens: "all" })
     mountAt(`/w/${WS}/board?lens=all`)
 
-    await user.click(screen.getByRole("button", { name: "Set Active as board home" }))
-    expect(updatePreferences).toHaveBeenCalledWith({ boardDefaultLens: "active", boardDefaultViewId: null })
+    await user.click(screen.getByRole("button", { name: "Set Mine as board home" }))
+    expect(updatePreferences).toHaveBeenCalledWith({ boardDefaultLens: "mine", boardDefaultViewId: null })
   })
 
   it("pinning a saved view writes the home-view preference", async () => {

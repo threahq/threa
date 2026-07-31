@@ -45,72 +45,61 @@ function post(id: string, opts: PostOpts): CachedBoardPost {
 }
 
 describe("aggregateBoardSidebarStats", () => {
-  it("tallies topics/active/needsResolution per effective root stream", () => {
-    const { byStream } = aggregateBoardSidebarStats(
-      [
-        post("c1", { streamId: "chan_a", status: "active" }),
-        post("c2", { streamId: "chan_a", status: "stalled" }),
-        post("c3", { streamId: "chan_a", status: "resolved" }),
-        post("c4", { streamId: "chan_b", status: "active" }),
-      ],
-      NOW
-    )
-    expect(byStream.get("chan_a")).toEqual({ topics: 3, active: 1, needsResolution: 1 })
-    expect(byStream.get("chan_b")).toEqual({ topics: 1, active: 1, needsResolution: 0 })
+  it("tallies topics per effective root stream, whatever the conversation status", () => {
+    const { byStream } = aggregateBoardSidebarStats([
+      post("c1", { streamId: "chan_a", status: "active" }),
+      post("c2", { streamId: "chan_a", status: "stalled" }),
+      post("c3", { streamId: "chan_a", status: "resolved" }),
+      post("c4", { streamId: "chan_b", status: "active" }),
+    ])
+    expect(byStream.get("chan_a")).toEqual({ topics: 3 })
+    expect(byStream.get("chan_b")).toEqual({ topics: 1 })
   })
 
   it("resolves a thread-anchored conversation to its rootStreamId, not its anchor", () => {
-    const { byStream } = aggregateBoardSidebarStats(
-      [post("c1", { streamId: "thread_x", rootStreamId: "chan_a" }), post("c2", { streamId: "chan_a" })],
-      NOW
-    )
+    const { byStream } = aggregateBoardSidebarStats([
+      post("c1", { streamId: "thread_x", rootStreamId: "chan_a" }),
+      post("c2", { streamId: "chan_a" }),
+    ])
     expect(byStream.get("chan_a")?.topics).toBe(2)
     expect(byStream.has("thread_x")).toBe(false)
   })
 
   it("falls back to the anchor streamId when rootStreamId is absent (pre-field row)", () => {
-    const { byStream } = aggregateBoardSidebarStats([post("c1", { streamId: "chan_a" })], NOW)
+    const { byStream } = aggregateBoardSidebarStats([post("c1", { streamId: "chan_a" })])
     expect(byStream.get("chan_a")?.topics).toBe(1)
   })
 
   it("excludes emptied-shell conversations (no messages) — mirrors the board feed", () => {
-    const { byStream, lensTotals } = aggregateBoardSidebarStats(
-      [post("c1", { streamId: "chan_a", messageIds: [] }), post("c2", { streamId: "chan_a", messageIds: ["m"] })],
-      NOW
-    )
+    const { byStream, lensTotals } = aggregateBoardSidebarStats([
+      post("c1", { streamId: "chan_a", messageIds: [] }),
+      post("c2", { streamId: "chan_a", messageIds: ["m"] }),
+    ])
     expect(byStream.get("chan_a")?.topics).toBe(1)
     expect(lensTotals.all).toBe(1)
   })
 
   it("excludes conversations whose root is archived", () => {
-    const { byStream } = aggregateBoardSidebarStats(
-      [post("c1", { streamId: "chan_a", rootArchived: true }), post("c2", { streamId: "chan_a" })],
-      NOW
-    )
+    const { byStream } = aggregateBoardSidebarStats([
+      post("c1", { streamId: "chan_a", rootArchived: true }),
+      post("c2", { streamId: "chan_a" }),
+    ])
     expect(byStream.get("chan_a")?.topics).toBe(1)
   })
 
-  it("computes per-lens totals via matchesBoardLens (all five lenses)", () => {
-    const { lensTotals } = aggregateBoardSidebarStats(
-      [
-        post("c1", { streamId: "chan_a", status: "active", isMine: true }),
-        post("c2", { streamId: "chan_a", status: "stalled", completenessScore: 1, idleHours: 0 }),
-        post("c3", { streamId: "chan_a", status: "resolved", hasCapturedMemo: true }),
-        // Idle + incomplete → needs-resolution even though status is active.
-        post("c4", { streamId: "chan_b", status: "active", idleHours: 100, completenessScore: 1 }),
-      ],
-      NOW
-    )
-    expect(lensTotals.all).toBe(4)
-    expect(lensTotals.active).toBe(2) // c1, c4
-    expect(lensTotals["needs-resolution"]).toBe(2) // c2 (stalled), c4 (idle+incomplete)
-    expect(lensTotals.decisions).toBe(1) // c3
-    expect(lensTotals.mine).toBe(1) // c1
+  it("computes per-lens totals via matchesBoardLens, keyed by exactly the three lenses", () => {
+    const { lensTotals } = aggregateBoardSidebarStats([
+      post("c1", { streamId: "chan_a", status: "active", isMine: true }),
+      post("c2", { streamId: "chan_a", status: "stalled", completenessScore: 1, idleHours: 0 }),
+      post("c3", { streamId: "chan_a", status: "resolved", hasCapturedMemo: true }),
+      post("c4", { streamId: "chan_b", status: "active", idleHours: 100, completenessScore: 1 }),
+    ])
+    expect(lensTotals).toEqual({ all: 4, decisions: 1, mine: 1 })
   })
 
   it("returns empty tallies for an empty feed", () => {
-    const { byStream, lensTotals } = aggregateBoardSidebarStats([], NOW)
+    const { byStream, lensTotals } = aggregateBoardSidebarStats([])
     expect(byStream.size).toBe(0)
-    expect(lensTotals).toEqual({ all: 0, active: 0, "needs-resolution": 0, decisions: 0, mine: 0 })
+    expect(lensTotals).toEqual({ all: 0, decisions: 0, mine: 0 })
   })
 })

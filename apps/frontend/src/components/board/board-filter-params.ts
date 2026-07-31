@@ -76,9 +76,11 @@ export const BOARD_FILTER_PARAMS = [
   BOARD_UNREAD_PARAM,
 ] as const
 
-/** Parse `?lens=`: a valid lens, anything else (absent, unknown) degrades to
- *  the default `all` — a hand-built URL renders the widest view rather than
- *  erroring. */
+/** Parse a stored or URL-supplied lens value: a valid lens, anything else
+ *  (absent, unknown, a lens retired since the value was written) degrades to the
+ *  default `all` — a hand-built URL, a stale saved view, or a stale home
+ *  preference renders the widest view rather than erroring or landing nowhere.
+ *  The single degrade authority; `matchesBoardLens` mirrors it read-side. */
 export function parseLensParam(value: string | null): BoardLens {
   return value && (BOARD_LENSES as readonly string[]).includes(value) ? (value as BoardLens) : DEFAULT_BOARD_LENS
 }

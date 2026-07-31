@@ -51,7 +51,17 @@ const csvTypeListSchema = z
 // `excludeTypes` (root-stream grains), and `labels` + `excludeLabels` (the
 // viewer's own label assignments on the anchor/root stream).
 const listWorkspaceConversationsSchema = listConversationsSchema.extend({
-  lens: z.enum(BOARD_LENSES).optional(),
+  // A retired lens degrades to "no lens condition" instead of a 400: the
+  // frontend deploys before the backend and SW-cached bundles linger, so old
+  // bundles still send retired values and must get the board, not an error.
+  lens: z
+    .string()
+    .optional()
+    .transform((value) =>
+      value !== undefined && (BOARD_LENSES as readonly string[]).includes(value)
+        ? (value as (typeof BOARD_LENSES)[number])
+        : undefined
+    ),
   streams: csvIdListSchema(MAX_BOARD_SCOPE_STREAMS, "streams").optional(),
   excludeStreams: csvIdListSchema(MAX_BOARD_SCOPE_STREAMS, "excludeStreams").optional(),
   types: csvTypeListSchema.optional(),

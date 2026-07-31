@@ -577,26 +577,20 @@ describe("StreamItem — board mode", () => {
 
   it("shows the topic stats line in place of the message preview", () => {
     const stream = createStream()
-    renderBoardRow(stream, makeBoardMode({ statsForStream: () => ({ topics: 14, active: 6, needsResolution: 2 }) }))
-    expect(screen.getByText("14 topics · 6 active · 2 need resolution")).toBeInTheDocument()
+    renderBoardRow(stream, makeBoardMode({ statsForStream: () => ({ topics: 14 }) }))
+    expect(screen.getByText("14 topics")).toBeInTheDocument()
     expect(screen.queryByText("Latest update from the stream")).not.toBeInTheDocument()
   })
 
-  it("uses singular grammar for a lone topic and resolution", () => {
+  it("uses singular grammar for a lone topic", () => {
     const stream = createStream()
-    renderBoardRow(stream, makeBoardMode({ statsForStream: () => ({ topics: 1, active: 1, needsResolution: 1 }) }))
-    expect(screen.getByText("1 topic · 1 active · 1 needs resolution")).toBeInTheDocument()
-  })
-
-  it("omits the resolution clause when nothing needs resolution", () => {
-    const stream = createStream()
-    renderBoardRow(stream, makeBoardMode({ statsForStream: () => ({ topics: 3, active: 3, needsResolution: 0 }) }))
-    expect(screen.getByText("3 topics · 3 active")).toBeInTheDocument()
+    renderBoardRow(stream, makeBoardMode({ statsForStream: () => ({ topics: 1 }) }))
+    expect(screen.getByText("1 topic")).toBeInTheDocument()
   })
 
   it("renders 'No topics yet' at zero topics", () => {
     const stream = createStream()
-    renderBoardRow(stream, makeBoardMode({ statsForStream: () => ({ topics: 0, active: 0, needsResolution: 0 }) }))
+    renderBoardRow(stream, makeBoardMode({ statsForStream: () => ({ topics: 0 }) }))
     expect(screen.getByText("No topics yet")).toBeInTheDocument()
   })
 
@@ -606,7 +600,7 @@ describe("StreamItem — board mode", () => {
       stream,
       makeBoardMode({
         mutedStreamIds: new Set(["stream_general"]),
-        statsForStream: () => ({ topics: 14, active: 6, needsResolution: 2 }),
+        statsForStream: () => ({ topics: 14 }),
       })
     )
     expect(screen.getByText("Muted on the board")).toBeInTheDocument()
@@ -620,13 +614,13 @@ describe("StreamItem — board mode", () => {
       makeBoardMode({
         includedStreamIds: new Set(["stream_general"]),
         mutedStreamIds: new Set(["stream_general"]),
-        statsForStream: () => ({ topics: 14, active: 6, needsResolution: 2 }),
+        statsForStream: () => ({ topics: 14 }),
       })
     )
     // ?in= overrides the board mute server-side, so the row must read as on the
     // board: stats line instead of the muted status, no dim.
     expect(screen.queryByText("Muted on the board")).not.toBeInTheDocument()
-    expect(screen.getByText("14 topics · 6 active · 2 need resolution")).toBeInTheDocument()
+    expect(screen.getByText("14 topics")).toBeInTheDocument()
     expect(screen.getByRole("link", { name: /general/i })).not.toHaveClass("opacity-50")
   })
 })

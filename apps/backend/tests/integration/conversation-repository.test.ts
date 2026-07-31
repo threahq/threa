@@ -19,7 +19,7 @@ import { MemoRepository } from "../../src/features/memos"
 import { sql } from "../../src/db"
 import { setupTestDatabase, testMessageContent } from "./setup"
 import { userId, workspaceId, streamId, messageId, conversationId, memoId } from "../../src/lib/id"
-import { ConversationStatuses } from "@threa/types"
+import { ConversationStatuses, type BoardLens } from "@threa/types"
 
 describe("ConversationRepository", () => {
   let pool: Pool
@@ -457,36 +457,67 @@ describe("ConversationRepository", () => {
           limit: 100,
         })
         const ids = new Set(rows.map((r) => r.id))
-        for (const id of [activeConv, stalledConv, idleIncompleteConv, resolvedIdleConv, decisionConv]) {
+        for (const id of [
+          activeConv,
+          stalledConv,
+          idleIncompleteConv,
+          idleCompleteConv,
+          resolvedIdleConv,
+          decisionConv,
+        ]) {
           expect(ids.has(id)).toBe(true)
         }
       }
     })
 
-    test("active lens keeps only status-active conversations", async () => {
-      const rows = await ConversationRepository.findByWorkspaceForViewer(pool, testWorkspaceId, testUserId, {
-        lens: "active",
+    // A saved board view created before the status lenses were retired still holds
+    // `base_lens = 'active'` / `'needs-resolution'`. Those must degrade to `all`
+    // (same rows, no filter, no throw), never to an empty board.
+    test("a retired lens value still stored on a saved view returns exactly the `all` rows", async () => {
+      const all = await ConversationRepository.findByWorkspaceForViewer(pool, testWorkspaceId, testUserId, {
+        lens: "all",
         limit: 100,
       })
-      const ids = new Set(rows.map((r) => r.id))
-      expect(ids.has(activeConv)).toBe(true)
-      expect(ids.has(idleIncompleteConv)).toBe(true)
-      expect(ids.has(stalledConv)).toBe(false)
-      expect(ids.has(resolvedIdleConv)).toBe(false)
+      for (const retired of ["active", "needs-resolution"] as unknown as BoardLens[]) {
+        const rows = await ConversationRepository.findByWorkspaceForViewer(pool, testWorkspaceId, testUserId, {
+          lens: retired,
+          limit: 100,
+        })
+        expect(rows.map((r) => r.id)).toEqual(all.map((r) => r.id))
+      }
     })
 
-    test("needs-resolution lens keeps stalled and long-idle-incomplete, drops fresh and near-complete", async () => {
+    test("mine lens keeps only the viewer's own conversations", async () => {
+      const all = await ConversationRepository.findByWorkspaceForViewer(pool, testWorkspaceId, testUserId, {
+        lens: "all",
+        limit: 100,
+      })
       const rows = await ConversationRepository.findByWorkspaceForViewer(pool, testWorkspaceId, testUserId, {
-        lens: "needs-resolution",
+        lens: "mine",
         limit: 100,
       })
       const ids = new Set(rows.map((r) => r.id))
-      expect(ids.has(stalledConv)).toBe(true)
-      expect(ids.has(idleIncompleteConv)).toBe(true)
-      expect(ids.has(activeConv)).toBe(false)
-      expect(ids.has(idleCompleteConv)).toBe(false)
-      // Resolved is done — excluded even when idle + low-score.
-      expect(ids.has(resolvedIdleConv)).toBe(false)
+      // Every seeded conversation lists the test user as a participant.
+      for (const id of [activeConv, stalledConv, decisionConv]) expect(ids.has(id)).toBe(true)
+
+      const stranger = await ConversationRepository.findByWorkspaceForViewer(
+        pool,
+        testWorkspaceId,
+        "usr_not_a_member",
+        {
+          lens: "mine",
+          limit: 100,
+        }
+      )
+      expect(stranger.map((r) => r.id)).toEqual([])
+      // The stranger CAN read the public channel — `mine` is what empties it, not access.
+      const strangerAll = await ConversationRepository.findByWorkspaceForViewer(
+        pool,
+        testWorkspaceId,
+        "usr_not_a_member",
+        { lens: "all", limit: 100 }
+      )
+      expect(strangerAll.map((r) => r.id)).toEqual(all.map((r) => r.id))
     })
 
     test("decisions lens keeps only conversations with an active captured memo", async () => {

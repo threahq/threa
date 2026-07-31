@@ -3,7 +3,6 @@ import { cn } from "@/lib/utils"
 import { useConversations } from "@/hooks"
 import { ConversationItem } from "./conversation-item"
 import { Skeleton } from "@/components/ui/skeleton"
-import type { ConversationWithStaleness } from "@threa/types"
 
 interface ConversationListProps {
   workspaceId: string
@@ -48,80 +47,22 @@ export function ConversationList({ workspaceId, streamId, className, onMessageCl
     return <div className={cn("p-4 text-sm text-muted-foreground text-center", className)}>No conversations yet</div>
   }
 
-  const activeConversations = conversations.filter((c) => c.status === "active")
-  const stalledConversations = conversations.filter((c) => c.status === "stalled")
-  const resolvedConversations = conversations.filter((c) => c.status === "resolved")
-
-  return (
-    <div className={cn("space-y-4 p-2", className)}>
-      {activeConversations.length > 0 && (
-        <ConversationSection
-          title="Active"
-          workspaceId={workspaceId}
-          conversations={activeConversations}
-          expandedConversationId={expandedConversationId}
-          onToggle={handleToggle}
-          onMessageClick={onMessageClick}
-        />
-      )}
-      {stalledConversations.length > 0 && (
-        <ConversationSection
-          title="Stalled"
-          workspaceId={workspaceId}
-          conversations={stalledConversations}
-          expandedConversationId={expandedConversationId}
-          onToggle={handleToggle}
-          onMessageClick={onMessageClick}
-        />
-      )}
-      {resolvedConversations.length > 0 && (
-        <ConversationSection
-          title="Resolved"
-          workspaceId={workspaceId}
-          conversations={resolvedConversations}
-          expandedConversationId={expandedConversationId}
-          onToggle={handleToggle}
-          onMessageClick={onMessageClick}
-        />
-      )}
-    </div>
+  const ordered = [...conversations].sort(
+    (a, b) => new Date(b.lastActivityAt).getTime() - new Date(a.lastActivityAt).getTime()
   )
-}
 
-interface ConversationSectionProps {
-  title: string
-  workspaceId: string
-  conversations: ConversationWithStaleness[]
-  expandedConversationId: string | null
-  onToggle: (conversationId: string) => void
-  onMessageClick?: () => void
-}
-
-function ConversationSection({
-  title,
-  workspaceId,
-  conversations,
-  expandedConversationId,
-  onToggle,
-  onMessageClick,
-}: ConversationSectionProps) {
   return (
-    <div>
-      <h3 className="text-xs font-medium text-muted-foreground uppercase tracking-wider px-1 mb-2">
-        {title} ({conversations.length})
-      </h3>
-      <div className="space-y-1">
-        {conversations.map((conversation) => (
-          <ConversationItem
-            key={conversation.id}
-            workspaceId={workspaceId}
-            conversation={conversation}
-            isExpanded={expandedConversationId === conversation.id}
-            onToggle={() => onToggle(conversation.id)}
-            onMessageClick={onMessageClick}
-          />
-        ))}
-      </div>
+    <div className={cn("space-y-1 p-2", className)}>
+      {ordered.map((conversation) => (
+        <ConversationItem
+          key={conversation.id}
+          workspaceId={workspaceId}
+          conversation={conversation}
+          isExpanded={expandedConversationId === conversation.id}
+          onToggle={() => handleToggle(conversation.id)}
+          onMessageClick={onMessageClick}
+        />
+      ))}
     </div>
   )
 }

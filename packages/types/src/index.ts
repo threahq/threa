@@ -97,8 +97,6 @@ export {
   MAX_BOARD_SCOPE_LABELS,
   BOARD_SCOPE_STREAM_TYPES,
   type BoardScopeStreamType,
-  BOARD_LENS_STALE_HOURS,
-  BOARD_LENS_MAX_COMPLETENESS,
   CONVERSATION_INTENTS,
   type ConversationIntent,
   ConversationIntents,

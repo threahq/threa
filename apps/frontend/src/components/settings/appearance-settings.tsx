@@ -8,6 +8,7 @@ import { Separator } from "@/components/ui/separator"
 import { usePreferences } from "@/contexts"
 import { useBoardHome, useBoardViews } from "@/hooks/use-board-views"
 import { summarizeBoardView } from "@/components/board/board-saved-views"
+import { parseLensParam } from "@/components/board/board-filter-params"
 import { BOARD_LENS_DEFS } from "@/lib/board/lens-defs"
 import {
   THEME_OPTIONS,
@@ -33,7 +34,6 @@ import {
   BOARD_CARD_COLLAPSE_TO_HEIGHT_MAX,
   DEFAULT_BOARD_CARD_COLLAPSE_TO_HEIGHT,
   BOARD_LENSES,
-  DEFAULT_BOARD_LENS,
   type Theme,
   type MessageDisplay,
   type UnreadOpenPosition,
@@ -89,7 +89,7 @@ function BoardHomeSection({ workspaceId }: { workspaceId: string }) {
   const { preferences, updatePreferences } = usePreferences()
   const { data: views } = useBoardViews(workspaceId)
   const savedViews = views ?? []
-  const boardDefaultLens = preferences?.boardDefaultLens ?? DEFAULT_BOARD_LENS
+  const boardDefaultLens = parseLensParam(preferences?.boardDefaultLens ?? null)
   // The resolved home view's id, or null when the home is a lens (or the stored id
   // no longer resolves) — land on the lens then.
   const activeViewId = useBoardHome(workspaceId).view?.id ?? null

@@ -1,6 +1,6 @@
 import { sql, type Querier } from "../../db"
 import { boardViewId } from "../../lib/id"
-import type { BoardView, BoardLens, BoardScopeStreamType } from "@threa/types"
+import { BOARD_LENSES, type BoardView, type BoardLens, type BoardScopeStreamType } from "@threa/types"
 
 interface BoardViewRow {
   id: string
@@ -18,11 +18,18 @@ interface BoardViewRow {
 const SELECT =
   "id, name, base_lens, scope_stream_ids, scope_stream_types, scope_label_ids, exclude_stream_ids, exclude_stream_types, exclude_label_ids, sort_order"
 
+/** A row written under a since-retired lens degrades to the widest lens here, at
+ *  the single read boundary, so every consumer of a saved view (href,
+ *  active-match, summary) sees a live lens. Mirrors `parseLensParam`. */
+function normalizeLens(value: string): BoardLens {
+  return (BOARD_LENSES as readonly string[]).includes(value) ? (value as BoardLens) : "all"
+}
+
 function mapRow(row: BoardViewRow): BoardView {
   return {
     id: row.id,
     name: row.name,
-    baseLens: row.base_lens as BoardLens,
+    baseLens: normalizeLens(row.base_lens),
     scopeStreamIds: row.scope_stream_ids,
     scopeStreamTypes: row.scope_stream_types as BoardScopeStreamType[],
     scopeLabelIds: row.scope_label_ids,

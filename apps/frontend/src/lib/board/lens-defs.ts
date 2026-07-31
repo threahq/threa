@@ -1,5 +1,5 @@
 import type { LucideIcon } from "lucide-react"
-import { BookMarked, CircleDashed, LayoutGrid, User, Zap } from "lucide-react"
+import { BookMarked, LayoutGrid, User } from "lucide-react"
 import { type BoardLens } from "@threa/types"
 
 export interface BoardLensDef {
@@ -17,13 +17,6 @@ export interface BoardLensDef {
  */
 export const BOARD_LENS_DEFS: Record<BoardLens, BoardLensDef> = {
   all: { value: "all", label: "All", description: "Everything, newest activity first", icon: LayoutGrid },
-  active: { value: "active", label: "Active", description: "Still in motion — not stalled or resolved", icon: Zap },
-  "needs-resolution": {
-    value: "needs-resolution",
-    label: "Needs resolution",
-    description: "Stalled or gone quiet while unresolved",
-    icon: CircleDashed,
-  },
   decisions: {
     value: "decisions",
     label: "Decisions",

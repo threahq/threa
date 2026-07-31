@@ -60,7 +60,6 @@ import {
 } from "@/components/board/board-filter-params"
 import { cn } from "@/lib/utils"
 import {
-  DEFAULT_BOARD_LENS,
   MAX_BOARD_SCOPE_STREAMS,
   MAX_BOARD_SCOPE_LABELS,
   type BoardLens,
@@ -68,9 +67,9 @@ import {
 } from "@threa/types"
 
 /** Lenses that always contain the viewer's own fresh post: `all` (everything)
- *  and `mine` (a self-authored conversation is `isMine`). The status/memo lenses
- *  gate on classification a brand-new post may not have yet, so posting from
- *  those routes back to All so the author's card always surfaces. */
+ *  and `mine` (a self-authored conversation is `isMine`). `decisions` gates on a
+ *  memo a brand-new post doesn't have yet, so posting from it routes back to All
+ *  so the author's card always surfaces. */
 const SELF_POST_VISIBLE_LENSES = new Set<BoardLens>(["all", "mine"])
 
 /** How many leading cards' rails the reveal gate pre-warms before first paint.
@@ -84,14 +83,6 @@ const LENS_EMPTY_COPY: Record<BoardLens, { title: string; body: string }> = {
   all: {
     title: "Nothing on the board yet",
     body: "As your conversations build up, the topics worth returning to surface here, newest activity first.",
-  },
-  active: {
-    title: "Nothing in motion",
-    body: "Conversations that are still being worked — not stalled, not resolved — show up here.",
-  },
-  "needs-resolution": {
-    title: "No loose ends",
-    body: "Conversations that stall or go quiet while unresolved show up here. Nothing needs picking back up right now.",
   },
   decisions: {
     title: "No decisions captured yet",
@@ -156,7 +147,7 @@ function groupByRecency(posts: BoardViewPost[], activityById: Map<string, number
  * message-led post) ordered by recent activity, grouped into recency sections.
  *
  * Route is `/w/:workspaceId/board`; the whole view is query state (INV-59). The
- * lens rides `?lens=` (`all`, `active`, `needs-resolution`, `decisions`, `mine`
+ * lens rides `?lens=` (`all`, `decisions`, `mine`
  * — board-view-design.md § "Lenses"; absent or unknown degrades to `all`), the
  * stream scope rides `?in=`, and every rendered board URL carries an explicit
  * `?lens=`. The bare query-less `/board` is only an entry alias: it redirects
@@ -169,7 +160,7 @@ export function BoardPage() {
   const { workspaceId } = useParams<{ workspaceId: string }>()
   const location = useLocation()
   const preferences = usePreferencesOptional()
-  const homeLens = preferences?.preferences?.boardDefaultLens ?? DEFAULT_BOARD_LENS
+  const homeLens = parseLensParam(preferences?.preferences?.boardDefaultLens ?? null)
   const defaultViewId = preferences?.preferences?.boardDefaultViewId ?? null
   // Already mounted deeper (the lens menu), so this adds no fetch — it just lets
   // the entry alias resolve a saved-view home.

@@ -5,9 +5,8 @@ import { BOARD_LENSES, matchesBoardLens, type BoardLens } from "@threa/types"
 import { db, type CachedBoardPost } from "@/db"
 
 /** Per-root-stream topic tally shown on a board-mode sidebar row. `topics` counts
- *  the visible conversations whose effective root is that stream; `active` and
- *  `needsResolution` split them by conversation status. No `unread`: the design
- *  doc's "N unread" needs per-conversation read truth (per-message watermarks via
+ *  the visible conversations whose effective root is that stream. No `unread`: the
+ *  design doc's "N unread" needs per-conversation read truth (per-message watermarks via
  *  the sparse-read overlay, as board cards compute it), which this single pass
  *  over `db.conversations` can't derive without breaking the one-subscription
  *  perf contract — so unread is deliberately left off the stats line.
@@ -20,8 +19,6 @@ import { db, type CachedBoardPost } from "@/db"
  *  would need the full projection per stream, breaking the single pass. */
 export interface BoardStreamStats {
   topics: number
-  active: number
-  needsResolution: number
 }
 
 /** The single aggregation the board sidebar reads: per-root-stream tallies plus
@@ -33,7 +30,7 @@ export interface BoardSidebarStats {
 
 /** Shared zero tally for a stream the aggregation resolved but never counted (no
  *  topics) — a constant so the per-row lookup allocates nothing. */
-export const ZERO_BOARD_STREAM_STATS: BoardStreamStats = { topics: 0, active: 0, needsResolution: 0 }
+export const ZERO_BOARD_STREAM_STATS: BoardStreamStats = { topics: 0 }
 
 /**
  * Fold the cached board feed into the sidebar's per-stream + per-lens counts in a
@@ -43,25 +40,22 @@ export const ZERO_BOARD_STREAM_STATS: BoardStreamStats = { topics: 0, active: 0,
  * `cardinality(message_ids) > 0` board filter and `mergeBoardConversation`'s
  * delete-on-empty) or its root is archived (hidden on the board by default). Lens
  * totals reuse `matchesBoardLens`, the same read-side lens authority the board
- * card filters with, so the two surfaces can't drift. `nowMs` is passed so the
- * function stays pure/testable; the hook samples it per feed change.
+ * card filters with, so the two surfaces can't drift.
  */
-export function aggregateBoardSidebarStats(posts: CachedBoardPost[], nowMs: number): BoardSidebarStats {
+export function aggregateBoardSidebarStats(posts: CachedBoardPost[]): BoardSidebarStats {
   const byStream = new Map<string, BoardStreamStats>()
-  const lensTotals: Record<BoardLens, number> = { all: 0, active: 0, "needs-resolution": 0, decisions: 0, mine: 0 }
+  const lensTotals = Object.fromEntries(BOARD_LENSES.map((lens) => [lens, 0])) as Record<BoardLens, number>
   for (const post of posts) {
     if (post.conversation.messageIds.length === 0) continue
     if (post.rootArchived === true) continue
     const rootId = post.rootStreamId ?? post.conversation.streamId
     let entry = byStream.get(rootId)
     if (!entry) {
-      entry = { topics: 0, active: 0, needsResolution: 0 }
+      entry = { topics: 0 }
       byStream.set(rootId, entry)
     }
     entry.topics += 1
-    if (post.conversation.status === "active") entry.active += 1
-    else if (post.conversation.status === "stalled") entry.needsResolution += 1
-    for (const lens of BOARD_LENSES) if (matchesBoardLens(post, lens, nowMs)) lensTotals[lens] += 1
+    for (const lens of BOARD_LENSES) if (matchesBoardLens(post, lens)) lensTotals[lens] += 1
   }
   return { byStream, lensTotals }
 }
@@ -89,5 +83,5 @@ export function useBoardSidebarStats(workspaceId: string, enabled: boolean): Boa
       .between([workspaceId, Dexie.minKey], [workspaceId, Dexie.maxKey])
       .toArray()
   }, [enabled, workspaceId])
-  return useMemo(() => (posts ? aggregateBoardSidebarStats(posts, Date.now()) : null), [posts])
+  return useMemo(() => (posts ? aggregateBoardSidebarStats(posts) : null), [posts])
 }
