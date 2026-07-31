@@ -7,6 +7,7 @@ import { UserPlus, X } from "lucide-react"
 import { useWorkspaceUsers } from "@/stores/workspace-store"
 import { getInitials } from "@/lib/initials"
 import { getAvatarColor } from "@/lib/avatar-color"
+import { rankMatches } from "@/lib/match-score"
 
 interface UserPickerProps {
   workspaceId: string
@@ -22,21 +23,14 @@ export function UserPicker({ workspaceId, currentUserId, selectedUserIds, onChan
 
   const availableToAdd = useMemo((): UserListItem[] => {
     if (!search) return []
-    const q = search.toLowerCase()
-    return workspaceUsers
-      .filter(
-        (m) =>
-          m.id !== currentUserId &&
-          !selectedSet.has(m.id) &&
-          (m.name.toLowerCase().includes(q) || m.slug.toLowerCase().includes(q))
-      )
-      .map((m) => ({
-        id: m.id,
-        label: m.name || m.slug,
-        description: `@${m.slug}`,
-        slug: m.slug,
-        name: m.name,
-      }))
+    const candidates = workspaceUsers.filter((m) => m.id !== currentUserId && !selectedSet.has(m.id))
+    return rankMatches(candidates, search, (m) => ({ labels: [m.name, m.slug] })).map((m) => ({
+      id: m.id,
+      label: m.name || m.slug,
+      description: `@${m.slug}`,
+      slug: m.slug,
+      name: m.name,
+    }))
   }, [workspaceUsers, currentUserId, selectedSet, search])
 
   const selectedUsers = useMemo(() => {

@@ -7,6 +7,22 @@ import { Search } from "lucide-react"
 
 import { cn } from "@/lib/utils"
 import { Dialog, DialogContent } from "@/components/ui/dialog"
+import { scoreMatch } from "@/lib/match-score"
+
+/**
+ * Rank cmdk lists with the same scorer every other picker uses, so one query
+ * orders the same way wherever it is typed. cmdk ships its own subsequence
+ * scorer, which ranked seven surfaces differently from the rest of the app.
+ *
+ * cmdk's `value` doubles as the selection identity, and our pickers put an id
+ * there and the searchable text in `keywords` — so keywords, when present, are
+ * the text to match; `value` is only a fallback for lists that never set them.
+ * Higher is better here, the inverse of scoreMatch, and 0 hides the item.
+ */
+const commandFilter = (value: string, search: string, keywords?: string[]): number => {
+  const score = scoreMatch(search, keywords?.length ? keywords : [value])
+  return score === Infinity ? 0 : 1 / (1 + score)
+}
 
 const Command = React.forwardRef<
   React.ElementRef<typeof CommandPrimitive>,
@@ -14,6 +30,7 @@ const Command = React.forwardRef<
 >(({ className, ...props }, ref) => (
   <CommandPrimitive
     ref={ref}
+    filter={commandFilter}
     className={cn(
       "flex h-full w-full flex-col overflow-hidden rounded-md bg-popover text-popover-foreground",
       className

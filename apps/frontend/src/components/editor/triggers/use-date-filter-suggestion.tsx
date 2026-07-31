@@ -4,6 +4,7 @@ import type { SuggestionProps, SuggestionKeyDownProps } from "@tiptap/suggestion
 import { DateFilterList } from "./date-filter-list"
 import { getDateFilterOptions, type DateFilterItem, type DateFilterType } from "./date-filter-extension"
 import type { SuggestionListRef } from "./suggestion-list"
+import { rankMatches } from "@/lib/match-score"
 
 interface DateFilterState {
   items: DateFilterItem[]
@@ -19,8 +20,6 @@ interface DateFilterState {
 export function filterDateOptions(items: DateFilterItem[], query: string): DateFilterItem[] {
   if (!query) return items
 
-  const lowerQuery = query.toLowerCase()
-
   const isDateLike = /^\d{4}(-\d{0,2})?(-\d{0,2})?$/.test(query)
   if (isDateLike) {
     const filterType = items[0]?.filterType ?? "after"
@@ -34,7 +33,7 @@ export function filterDateOptions(items: DateFilterItem[], query: string): DateF
     return [customOption, ...items.filter((item) => item.value.startsWith(query))]
   }
 
-  return items.filter((item) => item.label.toLowerCase().includes(lowerQuery) || item.value.includes(query))
+  return rankMatches(items, query, (item) => ({ labels: [item.label], keywords: [item.value] }))
 }
 
 function detectFilterType(text: string): DateFilterType {
