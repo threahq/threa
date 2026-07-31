@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
 import type { RefObject } from "react"
 import { Link } from "react-router-dom"
-import { useQuery } from "@tanstack/react-query"
 import type { VirtualizerHandle } from "virtua"
 import { ChevronDown, ChevronRight, CircleCheck, PanelRight } from "lucide-react"
 import { DEFAULT_BOARD_CARD_COLLAPSE_AT_HEIGHT, DEFAULT_BOARD_CARD_COLLAPSE_TO_HEIGHT } from "@threa/types"
@@ -39,11 +38,11 @@ import { TextSelectionQuote } from "@/components/timeline/text-selection-quote"
 import { useActors, useVisibleStreams } from "@/hooks"
 import { useWorkspaceUserId } from "@/hooks/use-workspaces"
 import { useBoardFlash } from "@/stores/board-flash-store"
-import { seedConversationMessages } from "@/stores/conversation-messages-store"
-import { useConversationService, usePanel, createConversationPanelId, usePreferences } from "@/contexts"
+import { usePanel, createConversationPanelId, usePreferences } from "@/contexts"
 import { useBoardCardCollapse } from "@/hooks/use-board-card-collapse"
-import { conversationKeys, useSplitThread } from "@/hooks/use-conversations"
+import { useSplitThread } from "@/hooks/use-conversations"
 import { applySettlingAll, useBoardCardMessages, useStableReplyWindow } from "@/hooks/use-board-card-messages"
+import { useConversationBackfill } from "@/hooks/use-conversation-backfill"
 import { useInlineBranchComposer } from "@/components/board/use-inline-branch-composer"
 import { useBoardCardRevealAnchor } from "@/hooks/use-board-card-reveal-anchor"
 import type { BoardViewPost } from "@/hooks/use-stable-board-view"
@@ -109,7 +108,6 @@ export function BoardCard({
   const flash = useBoardFlash(conversation.id)
   const { getActorName, getActorAvatar } = useActors(workspaceId)
   const currentUserId = useWorkspaceUserId(workspaceId)
-  const conversationService = useConversationService()
   const { openPanel, getPanelUrl } = usePanel()
   const [expanded, setExpanded] = useState(false)
   // A running session's Redirect bumps this nonce to expand + focus the card's
@@ -155,6 +153,7 @@ export function BoardCard({
     messagesById,
     taggedByConversation,
     settlingIds,
+    knownMessageIds,
     railCoversMembership,
   } = useBoardCardMessages(post, streamType, {
     branchStreamIds: inlineComposer.branchStreamIds,
@@ -370,29 +369,16 @@ export function BoardCard({
   // the full hydrated set from the server. Never blocks the first render: the
   // local replies show immediately, this only fills the gap when online.
   const incompleteLocally = source === "projection" || railReplies.length < totalReplies
-  // The fetch gate is RAIL coverage only: the backfill store renders those bodies
-  // but can't refresh them, so a warm store must not suppress the fetch that
-  // brings this conversation's out-of-rail edits/deletes/reactions. `staleTime`
-  // bounds the frequency; the predicate can't loop, since fetching seeds the
-  // store, never the rail.
-  const railIncomplete = !railCoversMembership
   const {
     data: allMessages,
     isError: expandFailed,
     refetch: refetchMessages,
-  } = useQuery({
-    queryKey: conversationKeys.boardMessages(conversation.id),
-    queryFn: () => conversationService.getBoardMessages(workspaceId, conversation.id),
-    enabled: expanded && railIncomplete,
-    staleTime: 60_000,
+  } = useConversationBackfill(workspaceId, conversation.id, {
+    enabled: expanded,
+    railCoversMembership,
+    memberIds: conversation.messageIds,
+    knownMessageIds,
   })
-  // Seed, don't render: the response lands in IDB and the card reads it back
-  // through the hook's merged view, so an edit/reaction/delete on a backfilled
-  // row patches in place instead of staying frozen until the next fetch.
-  useEffect(() => {
-    if (!allMessages) return
-    void seedConversationMessages(workspaceId, conversation.id, allMessages)
-  }, [allMessages, workspaceId, conversation.id])
 
   // Collapsed cards preview an append-only window over the local rail: trailing
   // replies at first reveal, growing (never sliding) as new ones land, so a

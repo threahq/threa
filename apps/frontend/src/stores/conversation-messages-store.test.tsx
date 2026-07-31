@@ -101,6 +101,35 @@ describe("patchConversationMessage", () => {
     await patchConversationMessage("m_absent", { contentMarkdown: "edited" })
     expect(await db.conversationMessages.toArray()).toEqual([])
   })
+
+  it("does not write when the resolved patch changes nothing — a duplicate reaction", async () => {
+    // A re-delivered reaction resolves to `{}`; writing it anyway would bump
+    // `_cachedAt` and wake every liveQuery watching this conversation.
+    await seedConversationMessages(WS, CONV_A, [message("m1", { reactions: { "👍": ["usr_1"] } })])
+    // Age the stamp so any write is visible: seeding and patching can land in the
+    // same millisecond, which would make an identical `_cachedAt` prove nothing.
+    await db.conversationMessages.update("m1", { _cachedAt: 1 })
+    const before = await db.conversationMessages.get("m1")
+
+    await patchConversationMessage("m1", (row) => {
+      const reactions = { ...row.reactions }
+      if ((reactions["👍"] ?? []).includes("usr_1")) return {}
+      reactions["👍"] = [...(reactions["👍"] ?? []), "usr_1"]
+      return { reactions }
+    })
+
+    expect(await db.conversationMessages.get("m1")).toEqual(before)
+  })
+
+  it("does not write when every patched field already holds that value", async () => {
+    await seedConversationMessages(WS, CONV_A, [message("m1")])
+    await db.conversationMessages.update("m1", { _cachedAt: 1 })
+    const before = await db.conversationMessages.get("m1")
+
+    await patchConversationMessage("m1", { contentMarkdown: "body m1", editedAt: null })
+
+    expect(await db.conversationMessages.get("m1")).toEqual(before)
+  })
 })
 
 describe("useConversationBackfillMessages", () => {

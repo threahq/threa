@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useSearchParams } from "react-router-dom"
-import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { toast } from "sonner"
 import {
   ChevronLeft,
@@ -48,7 +47,6 @@ import { useInlineBranchComposer, type ArmBranchTarget } from "@/components/boar
 import { useMoveToSubtopic } from "@/components/board/use-move-to-subtopic"
 import { ConversationActionsMenu } from "@/components/conversations/conversation-actions-menu"
 import { useBoardHiddenConversations } from "@/stores/board-exclusions-store"
-import { seedConversationMessages } from "@/stores/conversation-messages-store"
 import { useWorkspaceStreamReadStates, useWorkspaceUnreadState } from "@/stores/workspace-store"
 import { cn } from "@/lib/utils"
 import { actorRowTheme } from "@/components/message/actor-row-theme"
@@ -74,18 +72,12 @@ import { useStashedDrafts } from "@/hooks/use-stashed-drafts"
 import { boardReplyDraftKey, boardBranchReplyDraftKey } from "@/lib/board/draft-keys"
 import { useWorkspaceUserId } from "@/hooks/use-workspaces"
 import { useStreamName } from "@/hooks/use-stream-name"
-import {
-  useConversationService,
-  usePanel,
-  parseConversationPanel,
-  useSidebar,
-  useCoordinatedPhase,
-  type CoordinatedPhase,
-} from "@/contexts"
+import { usePanel, parseConversationPanel, useSidebar, useCoordinatedPhase, type CoordinatedPhase } from "@/contexts"
 import { useStreamFromStore } from "@/stores/stream-store"
 import { consumeConversationReplyOpen, subscribeConversationReplyOpen } from "@/stores/conversation-reply-open-store"
-import { conversationKeys, useConversationBoardPost, useSplitThread } from "@/hooks/use-conversations"
+import { useConversationBoardPost, useSplitThread } from "@/hooks/use-conversations"
 import { applySettlingAll, useBoardCardMessages } from "@/hooks/use-board-card-messages"
+import { useConversationBackfill } from "@/hooks/use-conversation-backfill"
 import { useScrollBehavior } from "@/hooks/use-scroll-behavior"
 import { usePanelStreamSubscriptions } from "@/hooks/use-panel-stream-subscriptions"
 import { buildConversationLink } from "@/lib/stream-links"
@@ -482,15 +474,6 @@ interface ConversationPanelBodyProps {
 }
 
 /**
- * Whether the conversation lists a member the browser cannot render from IDB —
- * the only reason to mark the server backfill stale. Everything the rail or the
- * backfill store already holds needs no fetch.
- */
-export function hasUnknownMembers(messageIds: string[], knownMessageIds: ReadonlySet<string>): boolean {
-  return messageIds.some((id) => !knownMessageIds.has(id))
-}
-
-/**
  * The panel's header, message column and scoped composer. Always renders the
  * FULL conversation (the panel is permanently "expanded"): the live rail from
  * {@link useBoardCardMessages} for opening + recent + the viewer's pending
@@ -508,7 +491,6 @@ function ConversationPanelBody({
 }: ConversationPanelBodyProps) {
   const { getActorName } = useActors(workspaceId)
   const currentUserId = useWorkspaceUserId(workspaceId)
-  const conversationService = useConversationService()
   const splitThread = useSplitThread(workspaceId)
   const { conversation } = post
   // Per-row read state + the mark-read/unread actions for this conversation's
@@ -603,52 +585,17 @@ function ConversationPanelBody({
   // stream isn't synced yet); the live rail shows immediately, this only fills the
   // gap when online. Mirrors board-card's expand path.
   const incompleteLocally = source === "projection" || railReplies.length < totalReplies
-  // Same gate as the card: rail coverage only. A warm backfill store renders but
-  // never refreshes, so opening a conversation the rail doesn't fully carry always
-  // revalidates (within `staleTime`).
-  const railIncomplete = !railCoversMembership
+  // Same gate as the card: rail coverage only, and the panel is permanently open.
   const {
     data: allMessages,
     isError: backfillFailed,
     refetch: refetchMessages,
-  } = useQuery({
-    queryKey: conversationKeys.boardMessages(conversation.id),
-    queryFn: () => conversationService.getBoardMessages(workspaceId, conversation.id),
-    enabled: railIncomplete,
-    staleTime: 60_000,
+  } = useConversationBackfill(workspaceId, conversation.id, {
+    enabled: true,
+    railCoversMembership,
+    memberIds: conversation.messageIds,
+    knownMessageIds,
   })
-  // Seed, don't render: the response lands in IDB and the hook merges it under
-  // the rail, so a backfilled row keeps taking live edits/reactions/tombstones.
-  useEffect(() => {
-    if (!allMessages) return
-    void seedConversationMessages(workspaceId, conversation.id, allMessages)
-  }, [allMessages, workspaceId, conversation.id])
-
-  // The backfill is a 60s-stale snapshot of a growing conversation, so a member
-  // it doesn't cover marks it stale. Only a member the browser can't render
-  // locally does: following the raw member COUNT refetched the endpoint on every
-  // arriving message, including the ones the rail had already delivered.
-  const queryClient = useQueryClient()
-  const memberKey = conversation.messageIds.join(",")
-  // What the browser can already answer with: the hook's local set, plus the
-  // landed response itself — its rows reach `knownMessageIds` only after an async
-  // IDB seed, and treating that window as "unknown" refetched the very response
-  // being seeded.
-  const backfillKey = allMessages?.map((m) => m.id).join(",") ?? ""
-  const coveredMessageIds = useMemo<ReadonlySet<string>>(
-    () => new Set([...knownMessageIds, ...(allMessages?.map((m) => m.id) ?? [])]),
-    [knownMessageIds, backfillKey]
-  )
-  useEffect(() => {
-    // Before the first response lands, the fetch the mount already started IS the
-    // answer to every unknown member — invalidating here refetches it (the cold
-    // open's double fetch).
-    if (!allMessages) return
-    if (!hasUnknownMembers(conversation.messageIds, coveredMessageIds)) return
-    void queryClient.invalidateQueries({ queryKey: conversationKeys.boardMessages(conversation.id) })
-    // `memberKey` proxies `conversation.messageIds` (a fresh array per render) —
-    // keeping the array itself here re-ran the effect on EVERY render.
-  }, [queryClient, conversation.id, memberKey, coveredMessageIds, allMessages])
 
   const replies: RenderableMessage[] = railReplies
   // Merge the viewer's own just-sent replies (deduped), then sort by time — a

@@ -74,6 +74,13 @@ export async function patchConversationMessage(
     const existing = await db.conversationMessages.get(messageId)
     if (!existing) return
     const fields = typeof patch === "function" ? patch(existing) : patch
+    // A patch that changes nothing (a duplicate reaction, a re-delivered edit)
+    // must not write: the `_cachedAt` bump alone wakes every liveQuery watching
+    // this conversation.
+    const changed = Object.entries(fields).some(
+      ([key, value]) => !Object.is(existing[key as keyof CachedConversationMessage], value)
+    )
+    if (!changed) return
     await db.conversationMessages.put({ ...existing, ...fields, _cachedAt: Date.now() })
   })
 }

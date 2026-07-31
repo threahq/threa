@@ -6,7 +6,8 @@ import { MemoryRouter, useNavigate } from "react-router-dom"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import type { Socket } from "socket.io-client"
 import type { BoardPost, BoardPostMessage, ConversationWithStaleness, EventType } from "@threa/types"
-import { ConversationPanel, hasUnknownMembers } from "./conversation-panel"
+import { ConversationPanel } from "./conversation-panel"
+import { hasUnknownMembers } from "@/hooks/use-conversation-backfill"
 import { ServicesProvider, SidebarProvider, PanelProvider, TraceProvider, SKELETON_DELAY_MS } from "@/contexts"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { spyOnExport } from "@/test/spy"
@@ -1285,6 +1286,23 @@ function postWithDeletedReply(): BoardPost {
   return post
 }
 
+/**
+ * The call count once it stops moving: polls until two consecutive reads agree,
+ * so "no further fetch" is decided by the query actually going idle rather than
+ * by a fixed sleep.
+ */
+async function stableCallCount(spy: { mock: { calls: unknown[] } }): Promise<number> {
+  let last = -1
+  let repeats = 0
+  await waitFor(() => {
+    const count = spy.mock.calls.length
+    repeats = count === last ? repeats + 1 : 0
+    last = count
+    expect(repeats).toBeGreaterThan(0)
+  })
+  return last
+}
+
 describe("ConversationPanel backfill merge", () => {
   beforeEach(async () => {
     __clearBoardRailRegistry()
@@ -1361,9 +1379,8 @@ describe("ConversationPanel backfill merge", () => {
     })
 
     expect(await screen.findByText("Reply two body.")).toBeTruthy()
-    await new Promise((resolve) => setTimeout(resolve, 200))
+    expect(await stableCallCount(getBoardMessages)).toBe(1)
     expect(screen.queryByText("Re-filed elsewhere.")).toBeNull()
-    expect(getBoardMessages).toHaveBeenCalledTimes(1)
   })
 
   it("does not let the cached board projection shadow the backfill's tombstone", async () => {
@@ -1582,8 +1599,7 @@ describe("backfill invalidation — mounted panel", () => {
     await waitFor(async () =>
       expect((await db.conversationMessages.toArray()).map((row) => row.messageId).sort()).toEqual(["msg_1", "msg_2"])
     )
-    await new Promise((resolve) => setTimeout(resolve, 200))
-    return spy.mock.calls.length
+    return await stableCallCount(spy)
   }
 
   it("fetches exactly once on a cold open", async () => {
@@ -1608,8 +1624,7 @@ describe("backfill invalidation — mounted panel", () => {
 
     act(() => setCached(withMembers(["msg_2", "msg_1"])))
 
-    await new Promise((resolve) => setTimeout(resolve, 200))
-    expect(getBoardMessages).toHaveBeenCalledTimes(baseline)
+    expect(await stableCallCount(getBoardMessages)).toBe(baseline)
   })
 
   it("refetches when a membership change gains an id in neither the rail nor the store", async () => {
