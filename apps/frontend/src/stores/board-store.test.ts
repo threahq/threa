@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach } from "vitest"
+import { waitFor } from "@testing-library/react"
 import Dexie from "dexie"
 import { db } from "@/db"
 import {
@@ -10,6 +11,7 @@ import {
   setBoardRootArchived,
   removeBoardConversationsForStream,
 } from "./board-store"
+import { seedConversationMessages } from "./conversation-messages-store"
 import type { BoardPost, BoardPostMessage, ConversationWithStaleness } from "@threa/types"
 
 const WORKSPACE_ID = "ws_1"
@@ -76,6 +78,7 @@ async function readBoard() {
 
 beforeEach(async () => {
   await db.conversations.clear()
+  await db.conversationMessages.clear()
 })
 
 describe("seedBoardPosts", () => {
@@ -399,5 +402,37 @@ describe("removeBoardConversationsForStream", () => {
     expect(await db.conversations.get("conv_anchor")).toBeUndefined()
     expect(await db.conversations.get("conv_other")).toBeDefined()
     expect(await db.conversations.get("conv_ws2")).toBeDefined()
+  })
+})
+
+describe("mergeBoardConversation — backfill-store pruning", () => {
+  it("drops a re-filed message's backfilled row so the merged view can't resurrect it", async () => {
+    await seedBoardPosts(WORKSPACE_ID, [
+      makePost("conv_1", "2026-06-20T12:00:00.000Z", [makeMessage("r_old"), makeMessage("r_moved")]),
+    ])
+    await seedConversationMessages(WORKSPACE_ID, "conv_1", [makeMessage("r_old"), makeMessage("r_moved")])
+
+    await mergeBoardConversation("conv_1", {
+      ...makeConversation("conv_1", "2026-06-22T12:00:00.000Z"),
+      messageIds: ["m1", "r_old"],
+    })
+
+    await waitFor(async () =>
+      expect((await db.conversationMessages.toArray()).map((row) => row.messageId)).toEqual(["r_old"])
+    )
+    const board = await readBoard()
+    expect(board[0]?.recentMessages.map((m) => m.id)).toEqual(["r_old"])
+  })
+
+  it("clears the backfilled rows of a conversation emptied to zero members", async () => {
+    await seedBoardPosts(WORKSPACE_ID, [makePost("conv_1", "2026-06-20T12:00:00.000Z", [makeMessage("r1")])])
+    await seedConversationMessages(WORKSPACE_ID, "conv_1", [makeMessage("r1")])
+
+    await mergeBoardConversation("conv_1", {
+      ...makeConversation("conv_1", "2026-06-22T12:00:00.000Z"),
+      messageIds: [],
+    })
+
+    await waitFor(async () => expect(await db.conversationMessages.toArray()).toEqual([]))
   })
 })

@@ -1,6 +1,7 @@
 import Dexie from "dexie"
 import { useLiveQuery } from "dexie-react-hooks"
 import { db, type CachedBoardPost } from "@/db"
+import { deleteConversationMessages, pruneConversationMessagesToMembership } from "./conversation-messages-store"
 import type { AttachmentSummary, BoardPost, BoardScopeStreamType, ConversationWithStaleness } from "@threa/types"
 
 /**
@@ -274,6 +275,9 @@ export async function mergeBoardConversation(
     // partial/aggregate-only event) is not "known empty" — fall through to upsert.
     if (Array.isArray(conversation.messageIds) && conversation.messageIds.length === 0) {
       await db.conversations.delete(conversationId)
+      // A separate table, so it can't join this transaction's scope — run it
+      // outside the zone rather than letting Dexie reject a foreign-table write.
+      Dexie.ignoreTransaction(() => void deleteConversationMessages(conversationId))
       return true
     }
     const existing = await db.conversations.get(conversationId)
@@ -288,6 +292,10 @@ export async function mergeBoardConversation(
     const recentMessages = memberIds
       ? existing.recentMessages.filter((m) => memberIds.has(m.id))
       : existing.recentMessages
+    // The backfill store is the other snapshot of these bodies, and the merged
+    // view unions it with the rail — prune it on the same event or a re-filed
+    // message keeps rendering off a fetch nothing else would ever correct.
+    if (memberIds) Dexie.ignoreTransaction(() => void pruneConversationMessagesToMembership(conversationId, memberIds))
     // An opening that moved away can't be patched in place (its replacement's
     // body isn't in the event): merge what's known but report unhandled, so the
     // caller refetches the board head and re-seeds the card with its real new

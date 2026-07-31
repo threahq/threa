@@ -147,6 +147,7 @@ beforeEach(async () => {
   __clearConversationGraphRegistry()
   __resetCollapseCacheForTests()
   await db.events.clear()
+  await db.conversationMessages.clear()
   await db.conversations.clear()
   await db.streams.clear()
   vi.spyOn(workspaceStoreModule, "useWorkspaceStreams").mockReturnValue([] as never)
@@ -1019,5 +1020,31 @@ describe("BoardCard settling actions", () => {
 
     await waitFor(() => expect(settleMessage).toHaveBeenCalledWith(WS, "conv_1", "m_open"))
     expect(success).not.toHaveBeenCalled()
+  })
+})
+
+describe("BoardCard backfill invalidation", () => {
+  it("refetches when membership gains an id neither the rail nor the store can render", async () => {
+    // The card shares `useConversationBackfill` with the panel, so an expanded
+    // card revalidates on a genuinely new member instead of waiting out the 60s
+    // `staleTime`.
+    const getBoardMessages = vi
+      .fn()
+      .mockResolvedValue([
+        openingMessage(),
+        openingMessage({ id: "m_r1", contentMarkdown: "Reply body.", createdAt: "2026-06-22T12:00:10.000Z" }),
+      ])
+    const post = makePost({ messageIds: ["m_open", "m_r1"] })
+    ;(post as unknown as { totalReplies: number }).totalReplies = 1
+    const { rerenderPost } = mountCard(post, { getBoardMessages })
+
+    await userEvent.click(await screen.findByText(/1 more message/))
+    await waitFor(() => expect(getBoardMessages).toHaveBeenCalledTimes(1))
+
+    const grown = makePost({ messageIds: ["m_open", "m_r1", "m_r2"] })
+    ;(grown as unknown as { totalReplies: number }).totalReplies = 2
+    act(() => rerenderPost(grown))
+
+    await waitFor(() => expect(getBoardMessages.mock.calls.length).toBeGreaterThan(1))
   })
 })

@@ -3,6 +3,7 @@ import { liveQuery, type Subscription } from "dexie"
 import { db, type CachedEvent } from "@/db"
 import { createDraftPanelId } from "@/contexts/panel-context"
 import { RECENT_PREVIEW_CAP } from "@/stores/board-store"
+import { useConversationBackfillMessages } from "@/stores/conversation-messages-store"
 import type { RenderableMessage } from "@/components/message/message-item"
 import { StreamTypes, BOARD_EVENT_ROW_TYPES, type AuthorType, type EventType } from "@threa/types"
 import type { BoardViewPost } from "./use-stable-board-view"
@@ -596,9 +597,22 @@ export interface BoardCardMessages {
    *  in place so a just-sent reply shows immediately and stays put across the
    *  echo hand-off; each empties once its id appears in `messageIds`. */
   pendingReplies: RenderableMessage[]
-  /** Where the bodies came from: the live `db.events` rail, or the cached server
-   *  projection (a stream not yet synced into IDB — a cold/offline first open). */
-  source: "events" | "projection"
+  /** Where the bodies came from: the live `db.events` rail, the cached backfill
+   *  store (fetched + live-patched, for members the rail's window doesn't hold),
+   *  or the board projection snapshot — the last-resort cold-start layer before
+   *  any fetch lands. */
+  source: "events" | "backfill" | "projection"
+  /** Every member id the card can render locally — the rail's synced set (live
+   *  rows and tombstones) unioned with the backfill store's. The panel gates its
+   *  backfill invalidation on this: a membership change naming only ids already
+   *  here needs no refetch. */
+  knownMessageIds: ReadonlySet<string>
+  /** Whether the live `db.events` rail ALONE covers the conversation's current
+   *  membership. Deliberately excludes the backfill store: that store is a render
+   *  cache, not a fetch suppressor, so a warm store must not stop the surface from
+   *  refetching fresh edits/deletes/reactions for members the rail never carries.
+   *  This is the `enabled` input of the board-messages query on both surfaces. */
+  railCoversMembership: boolean
   /** Spec-eligible non-message rows across the conversation's streams (agent
    *  sessions, memo captures, follow-ups), unresolved — the card runs
    *  `resolveBoardEventRows` to filter+group them to this conversation. Always the
@@ -672,7 +686,7 @@ export function applySettlingAll(messages: RenderableMessage[], settlingIds: Rea
 // at the return boundary (they come straight off the merged rail, not the view).
 type BoardCardView = Omit<
   BoardCardMessages,
-  "messagesById" | "taggedByConversation" | "deletedById" | "settlingIds"
+  "messagesById" | "taggedByConversation" | "deletedById" | "settlingIds" | "knownMessageIds" | "railCoversMembership"
 > & {
   nextRetained: RenderableMessage[]
 }
@@ -767,6 +781,37 @@ export function useBoardCardMessages(
 
   const rail = useMergedStreamRail(gatingStreamIds, extraStreamIds)
   const conversationId = post.conversation.id
+
+  // The backfill store only matters while the rail's window is missing members —
+  // subscribing unconditionally would put a Dexie subscription behind every card
+  // on the board (the #1640 cost class). Gate on the rail having READ first: an
+  // unresolved rail knows nothing, and enabling on it would churn the
+  // subscription on every card mount.
+  const railKnowsEveryMember =
+    (openingId === null || rail.seen.has(openingId)) && replyIds.every((id) => rail.seen.has(id))
+  const backfillRows = useConversationBackfillMessages(conversationId, {
+    enabled: rail.resolved && !railKnowsEveryMember,
+  })
+  const backfillById = useMemo(() => {
+    if (backfillRows.length === 0) return null
+    const map = new Map<string, RenderableMessage>()
+    for (const row of backfillRows) {
+      map.set(row.messageId, {
+        id: row.id,
+        streamId: row.streamId,
+        authorId: row.authorId,
+        authorType: row.authorType,
+        contentMarkdown: row.contentMarkdown,
+        reactions: row.reactions,
+        attachments: row.attachments,
+        linkPreviews: row.linkPreviews,
+        createdAt: row.createdAt,
+        editedAt: row.editedAt,
+        deletedAt: row.deletedAt ?? null,
+      })
+    }
+    return map
+  }, [backfillRows])
   // One Set per card, rebuilt only when the post's settling set actually changes
   // (the `conversation:updated` echo carrying a settle) — never a per-row scan.
   const settlingKey = (post.settlingMessageIds ?? []).join(",")
@@ -820,6 +865,12 @@ export function useBoardCardMessages(
     // but a merged rail can pair one rail's fresh snapshot (echo present) with
     // another's stale one (temp still there) — without this the reply renders
     // doubled for that frame.
+    // Caches (rail, backfill store) supply BODIES; membership events supply
+    // MEMBERSHIP. A fetched snapshot can never widen the conversation — it may
+    // have left the server before a re-file and would replace-write a moved row
+    // back with no self-correction. Membership arrives through the event flow
+    // (or the panel's own fresh `getBoardPost`), so a backfill row renders only
+    // when `messageIds` lists it.
     const replyIdSet = new Set(replyIds)
     const tagged = rail.taggedByConversation.get(conversationId)
     const unconfirmed = tagged
@@ -839,15 +890,23 @@ export function useBoardCardMessages(
     // window keeps the cached preview.
     const openingSeen = openingId !== null && rail.seen.has(openingId)
     const conversationSeen = rail.resolved && (openingSeen || replyIds.some((id) => rail.seen.has(id)))
+    // The backfill store is the middle layer: fetched from the server for
+    // exactly the members the rail's window doesn't hold, and patched by the
+    // same live handlers, so it beats the projection snapshot (which only a
+    // board refetch ever rewrites) everywhere the rail is silent.
+    const backfillSeen =
+      backfillById !== null &&
+      ((openingId !== null && backfillById.has(openingId)) || replyIds.some((id) => backfillById.has(id)))
 
     let openingMessage = (post.openingMessage as RenderableMessage | null) ?? null
+    if (openingId !== null && backfillById?.has(openingId)) openingMessage = backfillById.get(openingId) ?? null
     // A deleted opener is in `seen` but not in `messages`; falling through to
     // null would show its tombstone from the projection and then drop the row
     // entirely once the rail syncs it.
     if (openingId !== null && rail.seen.has(openingId))
       openingMessage = rail.messages.get(openingId) ?? rail.deletedMessages.get(openingId) ?? null
 
-    if (!conversationSeen) {
+    if (!conversationSeen && !backfillSeen) {
       // Cold/unsynced: capture a fresh pending row but never drop a live bridge.
       const nextRetained = pendingReplies.length > 0 ? pendingReplies : retained
       return {
@@ -867,7 +926,11 @@ export function useBoardCardMessages(
     // silently shifting every row below it up.
     const liveReplies: RenderableMessage[] = []
     for (const id of replyIds) {
-      const message = rail.messages.get(id) ?? rail.deletedMessages.get(id)
+      // Precedence: rail (authoritative by id) > backfill store > nothing. The
+      // projection never reaches here — it is the whole-card fallback above.
+      const message = rail.seen.has(id)
+        ? (rail.messages.get(id) ?? rail.deletedMessages.get(id))
+        : backfillById?.get(id)
       if (message) liveReplies.push(message)
     }
     liveReplies.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime())
@@ -893,7 +956,7 @@ export function useBoardCardMessages(
     // it must not inflate the "N more" gap. Otherwise trust the server count, but never
     // below what's already on screen (a bridged reply fills its own slot, so it
     // mustn't also leave a phantom "1 more").
-    const fullySynced = replyIds.every((id) => rail.seen.has(id))
+    const fullySynced = replyIds.every((id) => rail.seen.has(id) || backfillById?.has(id) === true)
     // `conversation:updated` can land BEFORE the message echo swaps the optimistic
     // row: `messageIds` then lists a real id the rail hasn't seen while the same
     // message is still on screen as a pending row under its client id. Counting
@@ -924,16 +987,16 @@ export function useBoardCardMessages(
       replies,
       totalReplies,
       pendingReplies,
-      source: "events" as const,
+      source: conversationSeen ? ("events" as const) : ("backfill" as const),
       events: rail.events,
       nextRetained,
     }
-  }, [rail, replyIds, openingId, messageIds, post, conversationId])
+  }, [rail, replyIds, openingId, messageIds, post, conversationId, backfillById])
 
   // Commit the bridge bookkeeping after render, never during it.
   useEffect(() => {
     retainedPendingRef.current = view.nextRetained
-    if (view.source === "events") lastLiveRef.current = { conversationId, view }
+    if (view.source !== "projection") lastLiveRef.current = { conversationId, view }
     if (view.pendingReplies.length > 0) {
       const episode = pendingEpisodeRef.current
       // Snapshot only on the 0→N transition — re-snapshotting mid-episode would
@@ -945,6 +1008,13 @@ export function useBoardCardMessages(
       pendingEpisodeRef.current = null
     }
   }, [view, conversationId, replyIds])
+
+  const knownMessageIds = useMemo<ReadonlySet<string>>(() => {
+    if (!backfillById) return rail.seen
+    const set = new Set(rail.seen)
+    for (const id of backfillById.keys()) set.add(id)
+    return set
+  }, [rail.seen, backfillById])
 
   // Expose the merged rail's message maps so the card can resolve its nested
   // branch conversations' bodies through the same rail (kept off the `view` memo
@@ -960,8 +1030,19 @@ export function useBoardCardMessages(
       taggedByConversation: rail.taggedByConversation,
       deletedById: rail.deletedMessages,
       settlingIds,
+      knownMessageIds,
+      railCoversMembership: rail.resolved && railKnowsEveryMember,
     }),
-    [view, settlingIds, rail.messages, rail.taggedByConversation, rail.deletedMessages]
+    [
+      view,
+      settlingIds,
+      rail.messages,
+      rail.taggedByConversation,
+      rail.deletedMessages,
+      rail.resolved,
+      railKnowsEveryMember,
+      knownMessageIds,
+    ]
   )
 }
 

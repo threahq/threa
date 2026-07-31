@@ -16,6 +16,7 @@ import {
   type SharedMessageSlot,
 } from "@threa/types"
 import { writeSlotCarrier } from "@/stores/slot-store"
+import { patchConversationMessage } from "@/stores/conversation-messages-store"
 import { seedDecryption } from "@/lib/crypto/decrypt-cache"
 import type { AttachmentRef } from "@/lib/crypto/attachment-crypto"
 import type { SyncEventSource } from "./socket-event-gate"
@@ -1313,6 +1314,12 @@ export function registerStreamSocketHandlers(
       }))
       await writeSlotCarrier({ database: db, workspaceId, streamId, carrier: payload, mode: "merge", cachedAt: now })
     })
+    // Mirror onto the backfill store so an expanded card's server-fetched row
+    // takes the edit too (no-op when the message isn't cached there).
+    await patchConversationMessage(editPayload.messageId, {
+      contentMarkdown: editPayload.contentMarkdown,
+      editedAt: editEvent.createdAt,
+    })
 
     // Replace, not patch: an edit can drop a link the message used to carry, so
     // the message's rows are rebuilt from the now-updated event (which still
@@ -1342,6 +1349,7 @@ export function registerStreamSocketHandlers(
       ...p,
       deletedAt: payload.deletedAt,
     }))
+    await patchConversationMessage(payload.messageId, { deletedAt: payload.deletedAt })
 
     // A deleted message holds no context rows — the server drops them in the
     // delete transaction with no separate event.
@@ -1466,6 +1474,13 @@ export function registerStreamSocketHandlers(
       }
       return { ...p, reactions }
     })
+    await patchConversationMessage(payload.messageId, (row) => {
+      const reactions = { ...row.reactions }
+      const existing = reactions[payload.emoji] || []
+      if (existing.includes(payload.userId)) return {}
+      reactions[payload.emoji] = [...existing, payload.userId]
+      return { reactions }
+    })
   }
 
   const handleReactionRemoved = async (payload: ReactionPayload) => {
@@ -1479,6 +1494,13 @@ export function registerStreamSocketHandlers(
         }
       }
       return { ...p, reactions }
+    })
+    await patchConversationMessage(payload.messageId, (row) => {
+      const reactions = { ...row.reactions }
+      if (!reactions[payload.emoji]) return {}
+      reactions[payload.emoji] = reactions[payload.emoji].filter((id) => id !== payload.userId)
+      if (reactions[payload.emoji].length === 0) delete reactions[payload.emoji]
+      return { reactions }
     })
 
     // Drop the held activity row this reaction produced (D4): the server deleted
@@ -1652,6 +1674,9 @@ export function registerStreamSocketHandlers(
     await updateMessageEvent(streamId, payload.messageId, (p) => ({
       ...p,
       linkPreviews: preserveBakedInAppData(payload.previews, p.linkPreviews as LinkPreviewSummary[] | undefined),
+    }))
+    await patchConversationMessage(payload.messageId, (row) => ({
+      linkPreviews: preserveBakedInAppData(payload.previews, row.linkPreviews),
     }))
   }
 

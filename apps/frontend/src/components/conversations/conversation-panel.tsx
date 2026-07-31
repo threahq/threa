@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useSearchParams } from "react-router-dom"
-import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { toast } from "sonner"
 import {
   ChevronLeft,
@@ -73,18 +72,12 @@ import { useStashedDrafts } from "@/hooks/use-stashed-drafts"
 import { boardReplyDraftKey, boardBranchReplyDraftKey } from "@/lib/board/draft-keys"
 import { useWorkspaceUserId } from "@/hooks/use-workspaces"
 import { useStreamName } from "@/hooks/use-stream-name"
-import {
-  useConversationService,
-  usePanel,
-  parseConversationPanel,
-  useSidebar,
-  useCoordinatedPhase,
-  type CoordinatedPhase,
-} from "@/contexts"
+import { usePanel, parseConversationPanel, useSidebar, useCoordinatedPhase, type CoordinatedPhase } from "@/contexts"
 import { useStreamFromStore } from "@/stores/stream-store"
 import { consumeConversationReplyOpen, subscribeConversationReplyOpen } from "@/stores/conversation-reply-open-store"
-import { conversationKeys, useConversationBoardPost, useSplitThread } from "@/hooks/use-conversations"
+import { useConversationBoardPost, useSplitThread } from "@/hooks/use-conversations"
 import { applySettlingAll, useBoardCardMessages } from "@/hooks/use-board-card-messages"
+import { useConversationBackfill } from "@/hooks/use-conversation-backfill"
 import { useScrollBehavior } from "@/hooks/use-scroll-behavior"
 import { usePanelStreamSubscriptions } from "@/hooks/use-panel-stream-subscriptions"
 import { buildConversationLink } from "@/lib/stream-links"
@@ -498,7 +491,6 @@ function ConversationPanelBody({
 }: ConversationPanelBodyProps) {
   const { getActorName } = useActors(workspaceId)
   const currentUserId = useWorkspaceUserId(workspaceId)
-  const conversationService = useConversationService()
   const splitThread = useSplitThread(workspaceId)
   const { conversation } = post
   // Per-row read state + the mark-read/unread actions for this conversation's
@@ -582,6 +574,8 @@ function ConversationPanelBody({
     messagesById,
     taggedByConversation,
     settlingIds,
+    knownMessageIds,
+    railCoversMembership,
   } = useBoardCardMessages(post, hostStreamType, {
     branchStreamIds: inlineComposer.branchStreamIds,
     extraDraftPanelIds: inlineComposer.extraDraftPanelIds,
@@ -591,48 +585,19 @@ function ConversationPanelBody({
   // stream isn't synced yet); the live rail shows immediately, this only fills the
   // gap when online. Mirrors board-card's expand path.
   const incompleteLocally = source === "projection" || railReplies.length < totalReplies
+  // Same gate as the card: rail coverage only, and the panel is permanently open.
   const {
     data: allMessages,
     isError: backfillFailed,
     refetch: refetchMessages,
-  } = useQuery({
-    queryKey: conversationKeys.boardMessages(conversation.id),
-    queryFn: () => conversationService.getBoardMessages(workspaceId, conversation.id),
-    enabled: incompleteLocally,
-    staleTime: 60_000,
+  } = useConversationBackfill(workspaceId, conversation.id, {
+    enabled: true,
+    railCoversMembership,
+    memberIds: conversation.messageIds,
+    knownMessageIds,
   })
-  // The backfill is a 60s-stale snapshot of a growing conversation: without this
-  // a reply that arrives while the panel is open is never in it, and a rail the
-  // union below can't complete (an unsynced member latches `incompleteLocally`
-  // forever) would pin the panel to that snapshot. Follow membership instead —
-  // every change to the member set marks the snapshot stale, so the open panel
-  // refetches it.
-  const queryClient = useQueryClient()
-  const memberCount = conversation.messageIds.length
-  useEffect(() => {
-    void queryClient.invalidateQueries({ queryKey: conversationKeys.boardMessages(conversation.id) })
-  }, [queryClient, conversation.id, memberCount])
 
-  // Union, not either/or: the snapshot only FILLS GAPS the rail hasn't synced,
-  // and the rail wins every id it holds (it carries live edits, reactions and
-  // tombstones the snapshot predates). An either/or here let a stale snapshot
-  // hide a message the browser already had in IDB.
-  // Union, but only while the rail is still incomplete: `useQuery` keeps serving
-  // cached `data` after `enabled` flips false, and an inactive query can't be
-  // refetched (v5 `refetchType: "active"`), so a completed rail merged with a
-  // frozen snapshot would keep rendering messages that left the conversation.
-  let replies: RenderableMessage[]
-  if (allMessages && incompleteLocally) {
-    // Only a live rail wins an id. On `source === "projection"` `railReplies` is the
-    // cached board projection, which is never patched on edit or soft-delete — letting
-    // it win would render a deleted message's body over the fresh backfill row.
-    const railById = new Map(source === "events" ? railReplies.map((m) => [m.id, m] as const) : [])
-    const merged = (allMessages as RenderableMessage[])
-      .filter((m) => m.id !== openingMessage?.id)
-      .map((m) => railById.get(m.id) ?? m)
-    const backfilledIds = new Set(merged.map((m) => m.id))
-    replies = [...merged, ...railReplies.filter((m) => !backfilledIds.has(m.id))]
-  } else replies = railReplies
+  const replies: RenderableMessage[] = railReplies
   // Merge the viewer's own just-sent replies (deduped), then sort by time — a
   // pending reply can be older than a confirmed one.
   const seenReplyIds = new Set(replies.map((m) => m.id))

@@ -36,6 +36,7 @@ export type {
   CachedLabelAssignment,
   CachedE2eDeviceKey,
   CachedBoardPost,
+  CachedConversationMessage,
   CachedUploadJob,
   CachedSlot,
   CachedStreamContextItem,

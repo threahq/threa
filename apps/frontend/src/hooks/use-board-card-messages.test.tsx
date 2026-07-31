@@ -14,6 +14,7 @@ import {
   type BoardCardMessages,
 } from "./use-board-card-messages"
 import type { RenderableMessage } from "@/components/message/message-item"
+import { seedConversationMessages } from "@/stores/conversation-messages-store"
 
 const WS = "ws_1"
 const STREAM = "stream_1"
@@ -92,6 +93,7 @@ beforeEach(async () => {
   __clearBoardRailRegistry()
   await db.events.clear()
   await db.streams.clear()
+  await db.conversationMessages.clear()
 })
 
 describe("useBoardCardMessages", () => {
@@ -1087,5 +1089,102 @@ describe("useBoardRailsReady", () => {
     await waitFor(() => expect(result.current).toBe(true))
     // The registry entry the gate created is the same one a mounting card uses.
     expect(__boardRailRegistrySize()).toBeGreaterThan(0)
+  })
+})
+
+describe("useBoardCardMessages — backfill-store merge precedence", () => {
+  function backfillMessage(id: string, contentMarkdown: string) {
+    return {
+      id,
+      streamId: STREAM,
+      authorId: "usr_1",
+      authorType: "user" as const,
+      contentMarkdown,
+      reactions: {},
+      attachments: [],
+      linkPreviews: [],
+      createdAt: new Date(2).toISOString(),
+      editedAt: null,
+    }
+  }
+
+  it("renders the rail's copy for a message present in rail AND backfill AND projection", async () => {
+    // r2 is missing from the rail, so the backfill layer is subscribed; r1 is in
+    // all three layers and must render the rail's copy.
+    await db.events.bulkPut([msgEvent("m1", "the opening", 1), msgEvent("r1", "rail body", 2)])
+    await seedConversationMessages(WS, "conv_1", [
+      backfillMessage("r1", "backfill body"),
+      backfillMessage("r2", "backfill r2"),
+    ])
+    const post = makePost({
+      messageIds: ["m1", "r1", "r2"],
+      openingId: "m1",
+      recentMessages: [projectionMessage("r1")],
+    })
+    const { result } = renderHook(() => useBoardCardMessages(post))
+
+    await waitFor(() => expect(result.current.replies).toHaveLength(2))
+    expect(result.current.source).toBe("events")
+    expect(result.current.replies.map((m) => ({ id: m.id, contentMarkdown: m.contentMarkdown }))).toEqual([
+      { id: "r1", contentMarkdown: "rail body" },
+      { id: "r2", contentMarkdown: "backfill r2" },
+    ])
+  })
+
+  it("renders the backfill row over the projection snapshot for a member the rail never synced", async () => {
+    await db.events.bulkPut([msgEvent("m1", "the opening", 1)])
+    await seedConversationMessages(WS, "conv_1", [backfillMessage("r1", "backfill body")])
+    const post = makePost({
+      messageIds: ["m1", "r1"],
+      openingId: "m1",
+      recentMessages: [projectionMessage("r1")],
+    })
+    const { result } = renderHook(() => useBoardCardMessages(post))
+
+    await waitFor(() =>
+      expect(result.current.replies.map((m) => ({ id: m.id, contentMarkdown: m.contentMarkdown }))).toEqual([
+        { id: "r1", contentMarkdown: "backfill body" },
+      ])
+    )
+    expect(result.current.knownMessageIds.has("r1")).toBe(true)
+  })
+
+  it("reports the rail as not covering membership even when the store holds every out-of-rail member", async () => {
+    // The regression: a warm store used to make the surface look complete and
+    // suppress its own refresh. The store renders r_old; only the rail counts.
+    await db.events.bulkPut([msgEvent("m1", "the opening", 1), msgEvent("r_recent", "rail body", 2)])
+    await seedConversationMessages(WS, "conv_1", [backfillMessage("r_old", "backfill body")])
+    const post = makePost({
+      messageIds: ["m1", "r_old", "r_recent"],
+      openingId: "m1",
+      recentMessages: [projectionMessage("r_recent")],
+    })
+    const { result } = renderHook(() => useBoardCardMessages(post))
+
+    await waitFor(() => expect(result.current.replies.map((m) => m.id)).toEqual(["r_old", "r_recent"]))
+    expect(result.current.railCoversMembership).toBe(false)
+    expect(result.current.knownMessageIds.has("r_old")).toBe(true)
+  })
+
+  it("reports the rail as covering membership once every member is on the rail", async () => {
+    await db.events.bulkPut([msgEvent("m1", "the opening", 1), msgEvent("r1", "rail body", 2)])
+    const post = makePost({ messageIds: ["m1", "r1"], openingId: "m1", recentMessages: [projectionMessage("r1")] })
+    const { result } = renderHook(() => useBoardCardMessages(post))
+
+    await waitFor(() => expect(result.current.railCoversMembership).toBe(true))
+  })
+
+  it("stays on the projection when nothing has been backfilled yet (cold start)", async () => {
+    const post = makePost({
+      messageIds: ["m1", "r1"],
+      openingId: "m1",
+      recentMessages: [projectionMessage("r1")],
+    })
+    const { result } = renderHook(() => useBoardCardMessages(post))
+
+    await waitFor(() => expect(result.current.source).toBe("projection"))
+    expect(result.current.replies.map((m) => ({ id: m.id, contentMarkdown: m.contentMarkdown }))).toEqual([
+      { id: "r1", contentMarkdown: "projection r1" },
+    ])
   })
 })

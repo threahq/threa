@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
 import type { RefObject } from "react"
 import { Link } from "react-router-dom"
-import { useQuery } from "@tanstack/react-query"
 import type { VirtualizerHandle } from "virtua"
 import { ChevronDown, ChevronRight, CircleCheck, PanelRight } from "lucide-react"
 import { DEFAULT_BOARD_CARD_COLLAPSE_AT_HEIGHT, DEFAULT_BOARD_CARD_COLLAPSE_TO_HEIGHT } from "@threa/types"
@@ -39,10 +38,11 @@ import { TextSelectionQuote } from "@/components/timeline/text-selection-quote"
 import { useActors, useVisibleStreams } from "@/hooks"
 import { useWorkspaceUserId } from "@/hooks/use-workspaces"
 import { useBoardFlash } from "@/stores/board-flash-store"
-import { useConversationService, usePanel, createConversationPanelId, usePreferences } from "@/contexts"
+import { usePanel, createConversationPanelId, usePreferences } from "@/contexts"
 import { useBoardCardCollapse } from "@/hooks/use-board-card-collapse"
-import { conversationKeys, useSplitThread } from "@/hooks/use-conversations"
+import { useSplitThread } from "@/hooks/use-conversations"
 import { applySettlingAll, useBoardCardMessages, useStableReplyWindow } from "@/hooks/use-board-card-messages"
+import { useConversationBackfill } from "@/hooks/use-conversation-backfill"
 import { useInlineBranchComposer } from "@/components/board/use-inline-branch-composer"
 import { useBoardCardRevealAnchor } from "@/hooks/use-board-card-reveal-anchor"
 import type { BoardViewPost } from "@/hooks/use-stable-board-view"
@@ -108,7 +108,6 @@ export function BoardCard({
   const flash = useBoardFlash(conversation.id)
   const { getActorName, getActorAvatar } = useActors(workspaceId)
   const currentUserId = useWorkspaceUserId(workspaceId)
-  const conversationService = useConversationService()
   const { openPanel, getPanelUrl } = usePanel()
   const [expanded, setExpanded] = useState(false)
   // A running session's Redirect bumps this nonce to expand + focus the card's
@@ -154,6 +153,8 @@ export function BoardCard({
     messagesById,
     taggedByConversation,
     settlingIds,
+    knownMessageIds,
+    railCoversMembership,
   } = useBoardCardMessages(post, streamType, {
     branchStreamIds: inlineComposer.branchStreamIds,
     extraDraftPanelIds: inlineComposer.extraDraftPanelIds,
@@ -372,11 +373,11 @@ export function BoardCard({
     data: allMessages,
     isError: expandFailed,
     refetch: refetchMessages,
-  } = useQuery({
-    queryKey: conversationKeys.boardMessages(conversation.id),
-    queryFn: () => conversationService.getBoardMessages(workspaceId, conversation.id),
-    enabled: expanded && incompleteLocally,
-    staleTime: 60_000,
+  } = useConversationBackfill(workspaceId, conversation.id, {
+    enabled: expanded,
+    railCoversMembership,
+    memberIds: conversation.messageIds,
+    knownMessageIds,
   })
 
   // Collapsed cards preview an append-only window over the local rail: trailing
@@ -386,17 +387,9 @@ export function BoardCard({
   // counted in `totalReplies` — the collapsed card reads "deleted", not "gone".
   const collapsedReplies = useStableReplyWindow(conversation.id, railReplies)
 
-  // Expanded: the full conversation minus the opening (server backfill when the
-  // local rail is incomplete, else the rail itself). Collapsed: the stable
-  // window of the local rail. Flat if-chain, not a nested ternary (INV-47).
-  let replies: RenderableMessage[]
-  if (!expanded) replies = collapsedReplies
-  // Prefer the server backfill only while the local rail is still incomplete;
-  // once the rail catches up, fall through to it so live edits keep flowing (the
-  // backfill's `data` lingers after `enabled` goes false).
-  else if (incompleteLocally && allMessages)
-    replies = (allMessages as RenderableMessage[]).filter((m) => m.id !== openingMessage?.id)
-  else replies = railReplies
+  // Expanded: the hook's merged view (rail > backfill store > projection).
+  // Collapsed: the stable window over it.
+  const replies: RenderableMessage[] = expanded ? railReplies : collapsedReplies
   // Merge this card's own just-sent replies with the confirmed set, skipping any
   // the rail or a backfill already carries, then sort by time: a pending reply
   // can be OLDER than a confirmed one (someone else's reply lands while yours is
