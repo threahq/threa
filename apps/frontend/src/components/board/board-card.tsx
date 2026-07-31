@@ -139,17 +139,13 @@ export function BoardCard({
   // replies the reader is on don't jump (the board's `shift`, see the hook).
   const beginReveal = useBoardCardRevealAnchor({ cardRef, scrollerRef, listRef })
   // Rows scrolled out from under the gap so far, one page per upward gesture.
-  // Recycling this card instance onto another conversation resets the count, the
-  // same guard `useStableReplyWindow` puts on its shown set.
+  // Recycling this card instance onto another conversation resets the count —
+  // the conversation id lives IN the state (not a ref) so a discarded render
+  // can't strand the guard past the reset it was meant to trigger.
   const seamRef = useRef<HTMLButtonElement>(null)
-  const [revealedRowsState, setRevealedRows] = useState(0)
-  const revealedForRef = useRef(conversation.id)
-  let revealedRows = revealedRowsState
-  if (revealedForRef.current !== conversation.id) {
-    revealedForRef.current = conversation.id
-    revealedRows = 0
-    setRevealedRows(0)
-  }
+  const [revealed, setRevealed] = useState({ conversationId: conversation.id, rows: 0 })
+  if (revealed.conversationId !== conversation.id) setRevealed({ conversationId: conversation.id, rows: 0 })
+  const revealedRows = revealed.conversationId === conversation.id ? revealed.rows : 0
 
   // Shared graph + structural index, needed BEFORE the rail hook: the inline
   // branch composer derives the branch thread streams (and any pending
@@ -459,10 +455,14 @@ export function BoardCard({
   // dumps at once the moment the rows land.
   const revealPage = useCallback(() => {
     beginReveal({ mode: "scroll" })
-    setRevealedRows(
-      (n) => Math.min(n, Math.max(0, railReplies.length - collapsedReplies.length)) + BOARD_GAP_REVEAL_PAGE_ROWS
-    )
-  }, [beginReveal, railReplies.length, collapsedReplies.length])
+    setRevealed((current) => {
+      const rows = current.conversationId === conversation.id ? current.rows : 0
+      return {
+        conversationId: conversation.id,
+        rows: Math.min(rows, Math.max(0, railReplies.length - collapsedReplies.length)) + BOARD_GAP_REVEAL_PAGE_ROWS,
+      }
+    })
+  }, [beginReveal, conversation.id, railReplies.length, collapsedReplies.length])
   useBoardGapAutoReveal({
     seamRef,
     cardRef,

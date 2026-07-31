@@ -359,7 +359,7 @@ describe("BoardPage", () => {
     expect(screen.getByRole("button", { name: "Write a reply…" })).toBeTruthy()
   })
 
-  it("collapses the middle as an 'N more messages' expander, pluralizing the count", async () => {
+  it("collapses the middle as an 'N older messages' expander, pluralizing the count", async () => {
     // 5 messages: opening + 3 recent shown + 1 hidden in the middle.
     const recent = [
       makeOpeningMessage({ id: "m3" }),
@@ -386,7 +386,7 @@ describe("BoardPage", () => {
     const recent = [makeOpeningMessage({ id: "m2" }), makeOpeningMessage({ id: "m3" })]
     mountBoard([makePost({ messageIds: ["m1", "m2", "m3"] }, { id: "m1" }, recent)])
     await screen.findAllByText("Opening message body.")
-    expect(screen.queryByText(/more messages?$/)).toBeNull()
+    expect(screen.queryByText(/older messages?$/)).toBeNull()
   })
 
   it("renders reactions on the opening message", async () => {
