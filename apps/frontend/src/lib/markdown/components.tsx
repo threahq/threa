@@ -306,6 +306,13 @@ function MarkdownLink({ href, children }: { href?: string; children: ReactNode }
   )
 }
 
+/** A fence's text, flattened: remark may hand back a string, or an array of strings. */
+function codeText(children: ReactNode): string {
+  return Children.toArray(children)
+    .map((child) => (typeof child === "string" || typeof child === "number" ? String(child) : ""))
+    .join("")
+}
+
 export const markdownComponents: Components = {
   // Headers - scaled for message context, process @mentions, #channels, and :emoji:
   h1: ({ children }) => (
@@ -366,21 +373,24 @@ export const markdownComponents: Components = {
   // [&_span] ensures inline-flex elements like TriggerChips inherit underline decoration
   a: ({ href, children }) => <MarkdownLink href={href}>{children}</MarkdownLink>,
 
-  // Code - inline and blocks
-  code: ({ className, children }) => {
-    const isCodeBlock = className?.includes("language-")
+  // Inline only. Blocks are detected in `pre`, never here: remark sets
+  // `language-*` on the inner <code> only when the fence declared one, so a bare
+  // ``` fence reaches this branch and loses `white-space: pre`.
+  //
+  // break-all so long identifiers, paths, or tokens inside backticks wrap inside
+  // the message column instead of overflowing.
+  code: ({ children }) => (
+    <code className="bg-muted px-1.5 py-0.5 rounded text-sm font-mono break-all">{children}</code>
+  ),
 
-    if (isCodeBlock) {
-      const language = className?.replace("language-", "") || "text"
-      return <CodeBlock language={language}>{String(children)}</CodeBlock>
-    }
-
-    // Inline code — break-all so long identifiers, paths, or tokens inside
-    // backticks wrap inside the message column instead of overflowing.
-    return <code className="bg-muted px-1.5 py-0.5 rounded text-sm font-mono break-all">{children}</code>
+  pre: ({ children }) => {
+    const inner = Children.toArray(children).find(isValidElement) as
+      | { props?: { className?: string; children?: ReactNode } }
+      | undefined
+    const className = inner?.props?.className ?? ""
+    const language = /language-([\w-]+)/.exec(className)?.[1] ?? "text"
+    return <CodeBlock language={language}>{codeText(inner?.props?.children)}</CodeBlock>
   },
-
-  pre: ({ children }) => <>{children}</>,
 
   strong: ({ children }) => (
     <strong className="font-semibold">
