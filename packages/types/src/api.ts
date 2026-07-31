@@ -1529,6 +1529,13 @@ export interface EmojiEntry {
   order: number
   /** All shortcodes including aliases (for search matching) */
   aliases: string[]
+  /**
+   * Search-only synonyms (CLDR annotation tags — "sad", "unhappy", "tear").
+   * Unlike aliases these are shared across emoji, so they never resolve a
+   * `:shortcode:`. Optional on the wire: a client reading a cached emoji list
+   * written before keywords shipped sees entries without it.
+   */
+  keywords?: string[]
 }
 
 export const CommandKinds = {

@@ -2,7 +2,9 @@ import { describe, it, expect } from "vitest"
 import type { EmojiEntry } from "@threa/types"
 import {
   buildQuickEmojis,
+  buildShortcodeIndex,
   filterBySearch,
+  stripShortcodeColons,
   indexToCoord,
   moveSelection,
   pickRecentlyUsed,
@@ -10,7 +12,7 @@ import {
   totalCount,
 } from "./emoji-picker"
 
-function make(shortcode: string, group: string, order: number, aliases?: string[]): EmojiEntry {
+function make(shortcode: string, group: string, order: number, aliases?: string[], keywords?: string[]): EmojiEntry {
   return {
     shortcode,
     emoji: shortcode,
@@ -18,6 +20,7 @@ function make(shortcode: string, group: string, order: number, aliases?: string[
     group,
     order,
     aliases: aliases ?? [shortcode],
+    keywords: keywords ?? [],
   }
 }
 
@@ -98,6 +101,47 @@ describe("filterBySearch", () => {
     const happy = make("happy_face", "people", 1, ["happy_face", "smile_alt"])
     const matches = filterBySearch([happy, smile], "smile")
     expect(matches.map((e) => e.shortcode)).toEqual(["smile", "happy_face"])
+  })
+
+  it("matches search keywords, which no shortcode spells", () => {
+    const cry = make("cry", "smileys", 1, ["cry"], ["sad", "unhappy", "tear"])
+    expect(filterBySearch([smile, cry], "unhappy").map((e) => e.shortcode)).toEqual(["cry"])
+  })
+
+  it("ranks a shortcode match above a keyword match", () => {
+    const sadFace = make("sad_face", "smileys", 9, ["sad_face"])
+    const cry = make("cry", "smileys", 1, ["cry"], ["sad"])
+    expect(filterBySearch([cry, sadFace], "sad").map((e) => e.shortcode)).toEqual(["sad_face", "cry"])
+  })
+
+  it("tolerates entries with no keywords field (emoji list cached before keywords shipped)", () => {
+    const legacy = { ...smile, keywords: undefined } as unknown as EmojiEntry
+    expect(filterBySearch([legacy], "smile").map((e) => e.shortcode)).toEqual(["smile"])
+  })
+})
+
+describe("buildShortcodeIndex", () => {
+  it("resolves aliases as well as primary shortcodes", () => {
+    const poop = make("poop", "people", 10, ["poop", "hankey", "shit"])
+    const index = buildShortcodeIndex([poop])
+    expect(index.get("hankey")).toBe(poop)
+    expect(index.get("poop")).toBe(poop)
+    expect(index.get("nope")).toBeUndefined()
+  })
+
+  it("never lets another emoji's alias shadow a primary shortcode", () => {
+    // A stale cached list can carry an alias that has since been reassigned;
+    // the primary must still win, whatever the input order.
+    const stale = make("old", "objects", 1, ["old", "smile"])
+    expect(buildShortcodeIndex([smile, stale]).get("smile")).toBe(smile)
+    expect(buildShortcodeIndex([stale, smile]).get("smile")).toBe(smile)
+  })
+})
+
+describe("stripShortcodeColons", () => {
+  it("unwraps :name: and leaves a bare name alone", () => {
+    expect(stripShortcodeColons(":smile:")).toBe("smile")
+    expect(stripShortcodeColons("smile")).toBe("smile")
   })
 })
 

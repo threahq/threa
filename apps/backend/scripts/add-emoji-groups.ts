@@ -88,7 +88,7 @@ function parseEmojiTest(text: string): Map<string, { group: string; order: numbe
 
 async function main() {
   // Read existing emoji data
-  const emojiDataPath = join(import.meta.dir, "../src/lib/emoji-data.json")
+  const emojiDataPath = join(import.meta.dir, "../src/features/emoji/emoji-data.json")
   const emojiData: EmojiData = JSON.parse(readFileSync(emojiDataPath, "utf-8"))
 
   console.log(`Found ${emojiData.emojis.length} emojis in emoji-data.json`)
