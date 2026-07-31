@@ -1434,7 +1434,7 @@ export class SyncEngine {
     queryClient.invalidateQueries({ queryKey: savedKeys.all })
     queryClient.invalidateQueries({ queryKey: scheduledKeys.all })
     queryClient.invalidateQueries({ queryKey: activityKeys.all })
-    queryClient.invalidateQueries({ queryKey: conversationKeys.workspaceListAll })
+    queryClient.invalidateQueries({ queryKey: conversationKeys.workspaceLists(this.workspaceId) })
   }
 
   /**

@@ -88,8 +88,8 @@ export const conversationKeys = {
       limit?: number
     }
   ) => [...conversationKeys.all, "workspaceList", workspaceId, options ?? {}] as const,
-  /** Every board feed list, whatever workspace/filters — the invalidation prefix. */
-  workspaceListAll: [...conversationKeysRoot, "workspaceList"] as const,
+  /** One workspace's board feed lists, whatever filters — the invalidation prefix. */
+  workspaceLists: (workspaceId: string) => [...conversationKeysRoot, "workspaceList", workspaceId] as const,
   byId: (workspaceId: string, conversationId: string) =>
     [...conversationKeys.all, "detail", workspaceId, conversationId] as const,
   messages: (conversationId: string) => ["conversations", conversationId, "messages"] as const,

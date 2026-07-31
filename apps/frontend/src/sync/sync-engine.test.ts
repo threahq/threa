@@ -1416,15 +1416,17 @@ describe("SyncEngine sync cursor (active mode)", () => {
     expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["scheduled"] })
     expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["activity"] })
     // The board feed is seeded by its own workspace-list query, not the
-    // bootstrap, so it heals here too — every filter variant, no per-id keys.
-    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: conversationKeys.workspaceListAll })
+    // bootstrap, so it heals here too — THIS workspace's filter variants only
+    // (the queryClient is shared across workspaces), no per-id keys.
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: conversationKeys.workspaceLists("ws_1") })
     // …and that prefix really is one: a family rename that unmatched the board
-    // feed keys would break here rather than silently invalidating nothing.
+    // feed keys would break here rather than silently invalidating nothing —
+    // while another workspace's feed key stays unmatched.
+    const wsPrefix = conversationKeys.workspaceLists("ws_1")
     const oneWorkspaceList = conversationKeys.workspaceList("ws_1", {})
-    expect(oneWorkspaceList.length).toBeGreaterThan(conversationKeys.workspaceListAll.length)
-    expect(oneWorkspaceList.slice(0, conversationKeys.workspaceListAll.length)).toEqual([
-      ...conversationKeys.workspaceListAll,
-    ])
+    expect(oneWorkspaceList.length).toBeGreaterThan(wsPrefix.length)
+    expect(oneWorkspaceList.slice(0, wsPrefix.length)).toEqual([...wsPrefix])
+    expect(conversationKeys.workspaceList("ws_2", {}).slice(0, wsPrefix.length)).not.toEqual([...wsPrefix])
     // Collapsing re-derives via the (already atomic) bootstrap, so it never opens
     // a replay apply-window.
     applyWindow.stop()
