@@ -5,6 +5,7 @@ import { PluginKey } from "@tiptap/pm/state"
 import type { SuggestionProps, SuggestionKeyDownProps } from "@tiptap/suggestion"
 import type { EmojiEntry } from "@threa/types"
 import { currentWordContainsBacktick, isInBacktickWord } from "../markdown-guards"
+import { withKeyboardCorrectionTolerance } from "./keyboard-correction-match"
 
 export const EmojiPluginKey = new PluginKey("emoji")
 
@@ -142,6 +143,7 @@ export const EmojiExtension = Node.create<EmojiExtensionOptions>({
         char: ":",
         allowSpaces: false,
         startOfLine: false,
+        findSuggestionMatch: withKeyboardCorrectionTolerance(EmojiPluginKey, this.editor),
         allow: ({ state, range }) => {
           const $from = state.doc.resolve(range.from)
 

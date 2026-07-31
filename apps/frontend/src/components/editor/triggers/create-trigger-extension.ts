@@ -3,6 +3,7 @@ import Suggestion from "@tiptap/suggestion"
 import { PluginKey } from "@tiptap/pm/state"
 import type { SuggestionProps, SuggestionKeyDownProps } from "@tiptap/suggestion"
 import { currentWordContainsBacktick } from "../markdown-guards"
+import { withKeyboardCorrectionTolerance } from "./keyboard-correction-match"
 
 /**
  * Configuration for a single attribute on a trigger node.
@@ -143,6 +144,7 @@ export function createTriggerExtension<TItem, TAttrs extends object>(config: Tri
           char,
           allowSpaces: false,
           startOfLine,
+          findSuggestionMatch: withKeyboardCorrectionTolerance(pluginKey, this.editor),
           // Disable suggestions in code contexts (code blocks and inline code)
           allow: ({ state, range }) => {
             const $from = state.doc.resolve(range.from)
