@@ -362,6 +362,12 @@ describe("Emoji Library", () => {
       expect(findMissing(expected)).toEqual([])
     })
 
+    // Emoji 17.0 (Sept 2025)
+    test("supports Emoji 17.0 (2025)", () => {
+      const expected = ["🫪", "🫯", "🫈", "🧑‍🩰", "🫍", "🛘", "🪊", "🪎"]
+      expect(findMissing(expected)).toEqual([])
+    })
+
     // Explicit guard for the rightwards-hand family. The version blocks
     // above could be reorganized or split; this test pins the specific
     // hand emojis and their canonical/aliased shortcode lookups.
@@ -369,6 +375,44 @@ describe("Emoji Library", () => {
       expect(findMissing(["🫱", "🫲", "🫳", "🫴", "🫵", "🫶"])).toEqual([])
       expect(toEmoji(":rightwards_hand:")).toBe("🫱")
       expect(toEmoji(":open_hand_right:")).toBe("🫱")
+    })
+
+    test("covers every non-component emoji Unicode lists", () => {
+      // The dataset is generated from emoji-test.txt minus the Component group
+      // and skin-tone sequences, so the count is a cheap tripwire for a
+      // generator run that silently dropped a slice of the set.
+      const byGroup: Record<string, number> = {}
+      for (const { group } of emojiData.emojis) byGroup[group] = (byGroup[group] ?? 0) + 1
+      expect(byGroup).toEqual({
+        smileys: 171,
+        people: 388,
+        animals: 160,
+        food: 131,
+        travel: 219,
+        activities: 85,
+        objects: 266,
+        symbols: 224,
+        flags: 270,
+      })
+    })
+
+    test("supports country flags", () => {
+      expect(findMissing(["🇸🇪", "🇺🇸", "🇯🇵", "🇧🇷", "🇳🇬", "🇺🇦"])).toEqual([])
+      expect(toEmoji(":sweden:")).toBe("🇸🇪")
+      expect(toEmoji(":flag_se:")).toBe("🇸🇪")
+    })
+
+    test("supports gendered and role variants", () => {
+      expect(findMissing(["🤷‍♀️", "🤦‍♂️", "🙋‍♀️", "🧑‍⚕️", "🧑‍🏫", "🧑‍🍳", "🧑‍🌾"])).toEqual([])
+      expect(toEmoji(":woman_shrugging:")).toBe("🤷‍♀️")
+    })
+
+    test("supports the ZWJ sequences the hand-curated file skipped", () => {
+      expect(findMissing(["😮‍💨", "😶‍🌫️", "😵‍💫", "❤️‍🔥", "❤️‍🩹", "🫦", "🧒", "🙂‍↔️"])).toEqual([])
+      // 🧒's upstream name "child" has been 💒's primary since the original
+      // hand-curated file, so it carries the SHORTCODE_OVERRIDES name instead.
+      expect(toEmoji(":kid:")).toBe("🧒")
+      expect(toEmoji(":child:")).toBe("💒")
     })
   })
 
