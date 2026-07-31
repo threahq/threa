@@ -63,8 +63,8 @@ const LABEL_TYPO_TIER = 20
 const KEYWORD_TYPO_TIER = 21
 
 /**
- * First tier of the tolerance bands. A score at or above this is a guess —
- * the query did not actually occur in the text.
+ * Whether a score came from the fuzzy or typo band — i.e. the query never
+ * actually occurred in the text and the match is a guess.
  *
  * Callers that rank several lists separately and then concatenate them must
  * check this: within one `rankMatches` call a tolerance match can never
@@ -72,8 +72,14 @@ const KEYWORD_TYPO_TIER = 21
  * the concatenated order. The command palette ranks its contextual and global
  * groups separately, so `> drafts` on a draft scratchpad put a guessed
  * "Delete this draft" above an exact "View Drafts".
+ *
+ * A range rather than a floor, because a caller may rank its own weaker-than-
+ * fuzzy tiers below the bands and those are still real matches:
+ * `scoreStreamMatch` scores a raw stream-id substring at 100.
  */
-export const TOLERANCE_TIER = LABEL_FUZZY_TIER
+export function isToleranceMatch(score: number): boolean {
+  return score >= LABEL_FUZZY_TIER && score < KEYWORD_TYPO_TIER + 1
+}
 
 /** Place a match kind on the tier ladder for the field it was found in. */
 function tierFor(kind: number, isKeyword: boolean): number {

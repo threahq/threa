@@ -1,14 +1,17 @@
 import { describe, it, expect } from "vitest"
 import { FileText } from "lucide-react"
 import { commands, type Command } from "./commands"
-import { rankCommands, rankGroups } from "./use-command-items"
+import { rankGroups } from "./use-command-items"
 import { draftStreamCommands } from "./stream-commands"
 
 function makeCommand(overrides: Partial<Command> & Pick<Command, "id" | "label">): Command {
   return { icon: FileText, action: () => {}, ...overrides }
 }
 
-describe("rankCommands", () => {
+/** One group through the production path, which is the only way the palette ranks. */
+const rankCommands = (candidates: Command[], query: string) => rankGroups(query, [candidates])[0]
+
+describe("ranking one group", () => {
   it("returns all commands in curated order for an empty query", () => {
     expect(rankCommands(commands, "")).toEqual(commands)
   })

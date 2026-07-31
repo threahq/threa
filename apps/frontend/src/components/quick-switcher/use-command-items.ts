@@ -3,7 +3,7 @@ import { WORKSPACE_PERMISSION_SCOPES } from "@threa/types"
 import { isDraftId } from "@/hooks"
 import { useCachedWorkspaceBootstrap } from "@/hooks/use-workspaces"
 import { hasPermission } from "@/lib/permissions"
-import { rankMatchesScored, TOLERANCE_TIER } from "@/lib/match-score"
+import { isToleranceMatch, rankMatchesScored } from "@/lib/match-score"
 import { commands, type Command, type CommandContext } from "./commands"
 import { draftStreamCommands, streamCommands } from "./stream-commands"
 import type { ModeResult, QuickSwitcherItem } from "./types"
@@ -20,10 +20,6 @@ interface UseCommandItemsParams {
  * matches on an alias, regardless of definition order. Ties keep the curated
  * array order.
  */
-export function rankCommands(candidates: Command[], query: string): Command[] {
-  return rankCommandsScored(candidates, query).map((entry) => entry.item)
-}
-
 function rankCommandsScored(candidates: Command[], query: string) {
   return rankMatchesScored(candidates, query, (command) => ({
     labels: [command.label],
@@ -41,9 +37,9 @@ function rankCommandsScored(candidates: Command[], query: string) {
  */
 export function rankGroups(query: string, groups: readonly Command[][]): Command[][] {
   const scored = groups.map((group) => rankCommandsScored(group, query))
-  const best = Math.min(...scored.flat().map((entry) => entry.score))
-  if (best >= TOLERANCE_TIER) return scored.map((group) => group.map((entry) => entry.item))
-  return scored.map((group) => group.filter((entry) => entry.score < TOLERANCE_TIER).map((entry) => entry.item))
+  const hasRealMatch = scored.some((group) => group.some((entry) => !isToleranceMatch(entry.score)))
+  if (!hasRealMatch) return scored.map((group) => group.map((entry) => entry.item))
+  return scored.map((group) => group.filter((entry) => !isToleranceMatch(entry.score)).map((entry) => entry.item))
 }
 
 export function useCommandItems({ query, commandContext }: UseCommandItemsParams): ModeResult {
