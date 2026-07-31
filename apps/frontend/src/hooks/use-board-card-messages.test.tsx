@@ -1352,7 +1352,18 @@ describe("useRevealedReplyWindow", () => {
       ...rail.slice(10),
     ]
     rerender({ conversationId: "conv_1", replies: backfilled, stable, revealedRows: 15 })
-    for (const id of before) expect(ids(result.current)).toContain(id)
+    // One whole-window comparison (INV-24): every previously revealed row stays,
+    // in rail order, plus the backfilled rows the trailing window now covers.
+    expect(before).toEqual(ids(rail.slice(5)))
+    expect(ids(result.current)).toEqual([
+      ...ids(rail.slice(5, 10)),
+      "b3",
+      "b4",
+      "b5",
+      "b6",
+      "b7",
+      ...ids(rail.slice(10)),
+    ])
   })
 
   it("resets the shown set when the card is recycled onto another conversation", () => {

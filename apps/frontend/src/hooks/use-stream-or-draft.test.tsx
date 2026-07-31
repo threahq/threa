@@ -285,6 +285,25 @@ describe("useStreamOrDraft draft DM send", () => {
     await clearAllCachedData()
   })
 
+  it("refuses to send while the viewer's identity is unresolved instead of creating a membershipless DM", async () => {
+    // No user row matches the authed WorkOS id, so currentUserId never
+    // resolves — the send must throw up front rather than create the DM and
+    // silently skip the local membership/bootstrap writes.
+    const createDm = vi.fn()
+    const queryClient = new QueryClient()
+    const { result } = renderHook(() => useStreamOrDraft("ws_1", "draft_dm_member_2"), {
+      wrapper: createWrapper(queryClient, { messageService: { createDm } }),
+    })
+    await waitFor(() => expect(result.current.stream?.id).toBe("draft_dm_member_2"))
+
+    await expect(
+      result.current.sendMessage({
+        contentJson: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "hi" }] }] },
+      })
+    ).rejects.toThrow("user identity not resolved")
+    expect(createDm).not.toHaveBeenCalled()
+  })
+
   it("persists the created DM to IndexedDB so the sidebar can switch from the virtual draft immediately", async () => {
     const createdAt = "2026-03-31T12:00:00Z"
     const queryClient = new QueryClient()

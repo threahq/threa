@@ -752,7 +752,7 @@ describe("BoardCard deleted messages", () => {
     const { container } = mountCard(post)
 
     expect(await screen.findByText("This message was deleted")).toBeTruthy()
-    expect(container.querySelector('[data-message-id="m_r1"]')).toBeNull()
+    expect(container.querySelector('[data-message-id="m_r1"]')?.textContent).toBe("This message was deleted")
   })
 
   it("renders a tombstone, not a blank row, for a deleted reply from the expand backfill", async () => {
@@ -779,7 +779,7 @@ describe("BoardCard deleted messages", () => {
     await userEvent.click(await screen.findByText(/1 older message/))
 
     expect(await screen.findByText("This message was deleted")).toBeTruthy()
-    expect(container.querySelector('[data-message-id="m_r2"]')).toBeNull()
+    expect(container.querySelector('[data-message-id="m_r2"]')?.textContent).toBe("This message was deleted")
   })
 
   it("renders a tombstone for a deleted reply once the rail is complete", async () => {
@@ -935,7 +935,7 @@ describe("BoardCard settling mark", () => {
     const { container } = mountCard(settlingPost(["m_open", "m_r1"], { messageIds: ["m_open", "m_r1"] }))
 
     expect(await screen.findByText("This message was deleted")).toBeTruthy()
-    expect(container.querySelector('[data-message-id="m_r1"]')).toBeNull()
+    expect(container.querySelector('[data-message-id="m_r1"]')?.textContent).toBe("This message was deleted")
     // The settling id names a row the card doesn't render — it must not conjure one.
     expect(container.querySelectorAll("[data-settling]").length).toBe(1)
   })

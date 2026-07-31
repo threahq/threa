@@ -579,8 +579,15 @@ export function BoardCard({
 
   const renderMessage = (message: RenderableMessage, continuation: boolean) => {
     // Mirrors the panel: a deleted row is a tombstone, never a blank MessageItem
-    // carrying an author, a timestamp and an action menu.
-    if (message.deletedAt) return <DeletedMessageEvent key={message.id} />
+    // carrying an author, a timestamp and an action menu. It still carries the
+    // row attributes so the reveal anchor can landmark it when it is the first
+    // visible reply.
+    if (message.deletedAt)
+      return (
+        <div key={message.id} data-message-row data-message-id={message.id}>
+          <DeletedMessageEvent />
+        </div>
+      )
     // A conversation can span its root + threads (one root); render each row
     // against its own stream so reactions and the permalink target where the
     // message actually lives, falling back to the card's anchor stream.

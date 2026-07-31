@@ -343,6 +343,9 @@ function useDraftDmStream(workspaceId: string, streamId: string, enabled: boolea
 
   const sendMessage = useCallback(
     async (input: SendMessageInput): Promise<{ navigateTo?: string; replace?: boolean }> => {
+      if (!currentUserId) {
+        throw new Error("Cannot send message: user identity not resolved yet")
+      }
       if (!targetUserId) {
         throw new Error("Invalid DM draft target")
       }
