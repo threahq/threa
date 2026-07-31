@@ -131,6 +131,24 @@ export interface BoardExclusionState {
 
 const NO_EXCLUSIONS: BoardExclusionState = { hidden: new Map(), muted: new Set(), muteActive: true }
 
+/**
+ * The network seed's state, as the board page knows it. `settled` is "the query
+ * is no longer loading (or the escape-hatch timeout fired)"; `newest` is the
+ * newest conversation the settled query returned (id + its `lastActivityAt` in
+ * ms), or null when there is nothing to wait for (timeout, error, empty). The
+ * hook holds its first commit until the seed has SETTLED *and* that SNAPSHOT —
+ * not merely the id — is visible in the IDB feed: when the newest activity is a
+ * reply to an old conversation the id is already cached at its stale activity,
+ * so an id-presence check opens the gate before the bulkPut lands and commits
+ * the stale order. Matching the activity proves the seeded rows arrived (they
+ * land one or more renders later through an un-awaited bulkPut + liveQuery
+ * re-emission).
+ */
+export interface BoardSeedState {
+  settled: boolean
+  newest: { id: string; activityMs: number } | null
+}
+
 function matchesScope(post: CachedBoardPost, scope: BoardScope | null): boolean {
   if (!scope) return true
   // Cached rows predating `rootStreamId` fall back to the anchor itself — a
@@ -326,7 +344,8 @@ export interface StableBoardView {
 export function useStableBoardView(
   workspaceId: string,
   filter: BoardViewFilter,
-  exclusions: BoardExclusionState = NO_EXCLUSIONS
+  exclusions: BoardExclusionState = NO_EXCLUSIONS,
+  seed?: BoardSeedState
 ): StableBoardView {
   const { lens, scope, types, excludeStreams, excludeTypes, labels, excludeLabels, unread, showArchived } = filter
   const { hidden, muted, muteActive } = exclusions
@@ -426,23 +445,50 @@ export function useStableBoardView(
     if (buffered.length > 0) setBuffered([])
   }
 
+  // The seed gate is per-WORKSPACE, not per-view: once this workspace has
+  // committed once, a lens/scope switch commits its new subset instantly even
+  // while that view's query is still fetching. Switching workspace re-arms the
+  // gate in the render phase, so the previous workspace's still-cached liveQuery
+  // rows can never commit into the new workspace's view.
+  const seedWorkspaceRef = useRef(workspaceId)
+  const hasCommittedForWorkspaceRef = useRef(false)
+  if (seedWorkspaceRef.current !== workspaceId) {
+    seedWorkspaceRef.current = workspaceId
+    hasCommittedForWorkspaceRef.current = false
+  }
+
   // Fold the live feed into the committed view during render (deriving state from
   // props/inputs, not an effect — the render reads `committed`/`buffered` below,
   // so an effect would paint one frame stale). `setState` during render bails out
   // and re-renders synchronously; the equality guards keep it from looping once
   // converged.
-  if (live) {
+  // Persisted IDB resolves in milliseconds, long before the network seed page
+  // lands: committing then would freeze last session's feed and classify
+  // everything created since as buffered ("N new" on a cold load).
+  const seedNewest = seed?.newest ?? null
+  const seedLanded =
+    seed !== undefined &&
+    seed.settled &&
+    (seedNewest === null ||
+      (rawLive?.some((post) => post.conversation.id === seedNewest.id && postMs(post) >= seedNewest.activityMs) ??
+        false))
+  const holdingForSeed = seed !== undefined && !seedLanded && !hasCommittedForWorkspaceRef.current
+  if (live && !holdingForSeed) {
     liveRef.current = live
     for (const post of live) retainedRef.current.set(postId(post), post)
     // `reconcileStableView` reveals the viewer's own pending post (at top) and
     // paged-in older rows; everything else stays buffered behind the pill.
     const next = reconcileStableView(committedInput, live)
-    if (next.committed !== committedInput) setCommitted(next.committed)
+    if (next.committed !== committedInput) {
+      hasCommittedForWorkspaceRef.current = true
+      setCommitted(next.committed)
+    }
     if (!sameIds(bufferedInput, next.buffered)) setBuffered(next.buffered)
   }
 
   const commit = useCallback(() => {
     const snap = snapshot(liveRef.current)
+    hasCommittedForWorkspaceRef.current = true
     setCommitted(snap)
     setBuffered([])
     const keep = new Set(snap.order)
@@ -475,7 +521,7 @@ export function useStableBoardView(
     activityById: committed.activityById,
     newCount: buffered.length,
     commit,
-    isLoading: live === undefined,
+    isLoading: live === undefined || holdingForSeed,
     hasRawPosts: (rawLive?.length ?? 0) > 0,
   }
 }
