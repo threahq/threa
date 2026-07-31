@@ -2043,29 +2043,32 @@ export class EventService {
    */
   private async refreshMemoEmbeds(
     messagesMap: Map<string, Message>,
-    messageIdsLackingKey: Set<string>,
+    messageIdsWithKey: Set<string>,
     scope?: { workspaceId: string; streamId: string }
   ): Promise<Map<string, MemoEmbedSummary[]>> {
     const refreshed = new Map<string, MemoEmbedSummary[]>()
     if (!scope) return refreshed
 
-    // Edited messages always land in the result — an edit that dropped the last
-    // reference must still push an empty array to clear the stale card. Legacy
-    // messages (payload written before summaries shipped, or when none were
-    // readable) land only when something resolves: there is no stale card to
-    // clear, and the created payload omits the key when empty.
+    // Every citing message is re-resolved against the predicate AS OF THIS
+    // read, never trusted from its stored payload. The stored summary is a
+    // snapshot of a past access decision: serving it after the memo's source
+    // went private would be a fresh delivery of withheld content, not
+    // tolerable staleness. Who gets the key set:
+    // - edited: always, even empty — an edit that dropped the last reference
+    //   must clear the stale card, and the stored payload predates the edit.
+    // - citing with a stored key: always, even empty — empty RETRACTS a
+    //   summary the room may no longer see.
+    // - citing without a key: only when something resolves — the created
+    //   payload omits the key when empty, and there is nothing to retract.
     const edited = [...messagesMap.values()].filter((m) => m.editedAt && !m.deletedAt)
-    const legacyCiting = [...messagesMap.values()]
-      .filter((m) => !m.editedAt && !m.deletedAt && messageIdsLackingKey.has(m.id))
+    const citing = [...messagesMap.values()]
+      .filter((m) => !m.editedAt && !m.deletedAt)
       .map((m) => [m.id, collectMemoEmbedIds(m.contentJson)] as const)
       .filter(([, ids]) => ids.length > 0)
-    if (edited.length === 0 && legacyCiting.length === 0) return refreshed
+    if (edited.length === 0 && citing.length === 0) return refreshed
 
-    const byMessage = new Map([
-      ...edited.map((m) => [m.id, collectMemoEmbedIds(m.contentJson)] as const),
-      ...legacyCiting,
-    ])
-    const legacyIds = new Set(legacyCiting.map(([id]) => id))
+    const byMessage = new Map([...edited.map((m) => [m.id, collectMemoEmbedIds(m.contentJson)] as const), ...citing])
+    const editedIds = new Set(edited.map((m) => m.id))
     const allIds = [...new Set([...byMessage.values()].flat())]
 
     const summaries =
@@ -2079,7 +2082,8 @@ export class EventService {
         : new Map<string, MemoEmbedSummary>()
     for (const [messageId, ids] of byMessage) {
       const resolved = ids.map((id) => summaries.get(id)).filter((s): s is MemoEmbedSummary => s !== undefined)
-      if (legacyIds.has(messageId) && resolved.length === 0) continue
+      const mustSet = editedIds.has(messageId) || messageIdsWithKey.has(messageId)
+      if (!mustSet && resolved.length === 0) continue
       refreshed.set(messageId, resolved)
     }
     return refreshed
@@ -2153,20 +2157,20 @@ export class EventService {
         ? await AgentSessionRepository.findProgressSnapshotsByIds(this.pool, startedSessionIds)
         : new Map()
 
-    // An edited message's payload is overlaid with the CURRENT content below, so
-    // its create-time summaries can describe memos the body no longer cites (or
-    // miss ones it now does); the `message_edited` event that carries the right
-    // set is filtered out of this response. A payload with NO memoEmbeds key at
-    // all predates summaries (or none were readable at write time) — its card
-    // would render label-only forever, a regression against the fetch this stack
-    // deletes. Both are recomputed here in one batch, against the same root the
-    // write path used.
-    const messageIdsLackingKey = new Set(
+    // Stored payloads snapshot a PAST access decision and a past memo state:
+    // an edit can change what the body cites, the memo's source can go private
+    // after the citation (serving the old summary then would be a fresh
+    // delivery of withheld content), a retitle can land between the create and
+    // this read, and a pre-summaries row has no key at all. Every citing
+    // message is therefore re-resolved here in one batch, against the same
+    // root the write path used; the stored key only decides whether an empty
+    // resolution must be pushed to retract.
+    const messageIdsWithKey = new Set(
       messageCreatedEvents
-        .filter((e) => (e.payload as MessageCreatedPayload).memoEmbeds === undefined)
+        .filter((e) => (e.payload as MessageCreatedPayload).memoEmbeds !== undefined)
         .map((e) => (e.payload as MessageCreatedPayload).messageId)
     )
-    const memoEmbedsByMessageId = await this.refreshMemoEmbeds(messagesMap, messageIdsLackingKey, memoEmbedScope)
+    const memoEmbedsByMessageId = await this.refreshMemoEmbeds(messagesMap, messageIdsWithKey, memoEmbedScope)
 
     return events
       .filter((e) => e.eventType !== "message_edited" && e.eventType !== "message_deleted")

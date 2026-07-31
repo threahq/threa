@@ -330,14 +330,19 @@ describe("memo embed summaries on message payloads", () => {
       expect(payload.memoEmbeds).toBeUndefined()
     })
 
-    test("leaves an unedited message's create-time summaries alone", async () => {
+    // The stored payload is a snapshot; a retitle that never touched the
+    // message must still reach a cold load. This is also what heals a first
+    // citation that raced a concurrent memo edit.
+    test("re-resolves an unedited message rather than trusting its stored summary", async () => {
+      const retitled = await seedMemo(channel, "Before the retitle")
       const message = await eventService.createMessage({
         workspaceId: testWorkspaceId,
         streamId: channel,
         authorId: testUserId,
         authorType: "user",
-        ...bodyCiting("untouched", [sameStreamMemo]),
+        ...bodyCiting("untouched", [retitled]),
       })
+      await pool.query(`UPDATE memos SET title = 'After the retitle' WHERE id = $1`, [retitled])
 
       const events = await eventService.listEvents(channel, { limit: 200 })
       const enriched = await eventService.enrichBootstrapEvents(events, new Map(), new Map(), {
@@ -348,7 +353,47 @@ describe("memo embed summaries on message payloads", () => {
       const payload = enriched.find(
         (e) => e.eventType === "message_created" && (e.payload as MessageCreatedPayload).messageId === message.id
       )?.payload as MessageCreatedPayload
-      expect(payload.memoEmbeds?.map((s) => s.memoId)).toEqual([sameStreamMemo])
+      expect(payload.memoEmbeds?.map((s) => s.title)).toEqual(["After the retitle"])
+    })
+
+    // Serving a stored summary after the memo's source went private is a fresh
+    // delivery of withheld content to whoever bootstraps next — the retraction
+    // must be an explicit empty array, or the client keeps the stored card.
+    test("retracts a stored summary once the memo's source goes private", async () => {
+      const publicElsewhere = streamId()
+      await withTransaction(pool, async (client) => {
+        await StreamRepository.insert(client, {
+          id: publicElsewhere,
+          workspaceId: testWorkspaceId,
+          type: "channel",
+          visibility: "public",
+          slug: `s-${publicElsewhere.slice(-8)}`,
+          createdBy: testUserId,
+        })
+      })
+      const memoGoingPrivate = await seedMemo(publicElsewhere, "Public while cited")
+      const message = await eventService.createMessage({
+        workspaceId: testWorkspaceId,
+        streamId: channel,
+        authorId: testUserId,
+        authorType: "user",
+        ...bodyCiting("cited while public", [memoGoingPrivate]),
+      })
+      const stored = (await payloadOf(message.id, "message_created")) as MessageCreatedPayload
+      expect(stored.memoEmbeds?.map((s) => s.memoId)).toEqual([memoGoingPrivate])
+
+      await pool.query(`UPDATE streams SET visibility = 'private' WHERE id = $1`, [publicElsewhere])
+
+      const events = await eventService.listEvents(channel, { limit: 200 })
+      const enriched = await eventService.enrichBootstrapEvents(events, new Map(), new Map(), {
+        workspaceId: testWorkspaceId,
+        streamId: channel,
+      })
+
+      const payload = enriched.find(
+        (e) => e.eventType === "message_created" && (e.payload as MessageCreatedPayload).messageId === message.id
+      )?.payload as MessageCreatedPayload
+      expect(payload.memoEmbeds).toEqual([])
     })
   })
 })
