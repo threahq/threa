@@ -72,6 +72,17 @@ export const MessageConversationStateRepository = {
     return row ? mapRow(row) : null
   },
 
+  /** State rows for `messageIds`, keyed by message id. Absent = never provisional. */
+  async findByMessageIds(db: Querier, workspaceId: string, messageIds: string[]): Promise<Map<string, SettlingRow>> {
+    if (messageIds.length === 0) return new Map()
+    const result = await db.query<SettlingDbRow>(sql`
+      SELECT message_id, workspace_id, stream_id, conversation_id, state, settled_by, settled_at
+      FROM message_conversation_state
+      WHERE workspace_id = ${workspaceId} AND message_id = ANY(${messageIds}::text[])
+    `)
+    return new Map(result.rows.map((row) => [row.message_id, mapRow(row)]))
+  },
+
   /** Settle every still-settling row among `messageIds`. Returns the rows it flipped. */
   async settle(
     db: Querier,

@@ -484,6 +484,11 @@ export class BoundaryExtractionService {
         workspaceId,
         candidateReassignments.map((r) => r.messageId)
       )
+      const stateByMessageId = await MessageConversationStateRepository.findByMessageIds(
+        client,
+        workspaceId,
+        candidateReassignments.map((r) => r.messageId)
+      )
 
       const messagesById = new Map<string, Message>([[message.id, message]])
 
@@ -538,11 +543,7 @@ export class BoundaryExtractionService {
         // Engagement can freeze a send-time structural guess no model ever
         // evaluated — accepted by design: the freeze binds the machine only, a
         // human re-file remains available, and the pass itself always runs.
-        if (
-          isPlacementFrozenByHuman(
-            await MessageConversationStateRepository.findByMessageId(client, workspaceId, r.messageId)
-          )
-        ) {
+        if (isPlacementFrozenByHuman(stateByMessageId.get(r.messageId) ?? null)) {
           logger.debug({ messageId: r.messageId }, "Skipping reassignment of a human-settled message")
           continue
         }
