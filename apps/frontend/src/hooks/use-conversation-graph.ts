@@ -7,6 +7,7 @@ import { streamLabel } from "@/lib/streams"
 import { stripMarkdownToInline } from "@/lib/markdown/strip"
 import type { RenderableMessage } from "@/components/message/message-item"
 import type { BranchConversationView } from "@/lib/board/branch-grouping"
+import { applySettlingAll } from "@/hooks/use-board-card-messages"
 
 /**
  * The board's cross-conversation lookups, derived once per workspace from the
@@ -280,6 +281,14 @@ export function deriveBranchConversations(params: {
       const nextSeen = new Set(seen).add(childConversationId)
       const childMemberIds = childPost.conversation.messageIds
       const { messages, hiddenCount } = resolveMessages(childConversationId, childMemberIds)
+      // The rail's rows carry no settling state (it's board-post scoped), and the
+      // parent's set doesn't cover a child's members — so the mark is stamped
+      // here, from the child post in hand. Without it the same message reads
+      // settled inside the parent's card and settling on its own card.
+      const settlingMessageIds = childPost.settlingMessageIds ?? []
+      const markedMessages = settlingMessageIds.length
+        ? applySettlingAll(messages, new Set(settlingMessageIds))
+        : messages
       const title = stripMarkdownToInline(childPost.conversation.topicSummary ?? "") || streamLabel(thread, "generic")
       const children = depth < maxDepth ? walk(childMemberIds, depth + 1, nextSeen) : []
       const overflow = depth >= maxDepth && hasDeeperBranch(childMemberIds, index, graph, nextSeen)
@@ -290,7 +299,8 @@ export function deriveBranchConversations(params: {
         title,
         displayDepth: depth,
         overflow,
-        messages,
+        messages: markedMessages,
+        settlingMessageIds,
         hiddenCount,
         children,
       })

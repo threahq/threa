@@ -51,6 +51,7 @@ import type {
   ScheduledMessageSentPayload,
   ScheduledMessageCancelledPayload,
   ConversationWithStaleness,
+  BoardPost,
   LabelUpsertedPayload,
   LabelDeletedPayload,
   LabelAssignedPayload,
@@ -2109,11 +2110,37 @@ export function registerWorkspaceSocketHandlers(
     if (payload.workspaceId !== workspaceId) return
     void mergeBoardConversation(payload.conversation.id, payload.conversation, payload.settlingMessageIds).then(
       (merged) => {
-        if (!merged) {
-          queryClient.invalidateQueries({
-            queryKey: [...conversationKeys.all, "workspaceList", workspaceId],
-            refetchType: "active",
-          })
+        if (merged) return
+        queryClient.invalidateQueries({
+          queryKey: [...conversationKeys.all, "workspaceList", workspaceId],
+          refetchType: "active",
+        })
+        // A post fetched by id (deep link, search, in-stream list, past the board
+        // cursor) has no IDB row, so the merge above reached nothing and the
+        // panel would sit on its 60s-stale copy — the settling mark would never
+        // appear or fade. Patch the by-id cache in place when it holds the row
+        // (no refetch, panel stays live); otherwise mark it stale.
+        const boardPostKey = conversationKeys.boardPost(payload.conversation.id)
+        const cached = queryClient.getQueryData<BoardPost>(boardPostKey)
+        // A patched post must stay internally consistent, like
+        // mergeBoardConversation: prune rendered rows to the new membership, and
+        // if the OPENER left the membership the post's shape can't be patched —
+        // refetch instead of rendering a non-member opening.
+        const memberIds =
+          cached && new Set([...payload.conversation.messageIds, ...payload.conversation.secondaryMessageIds])
+        if (cached && memberIds && (!cached.openingMessage || memberIds.has(cached.openingMessage.id))) {
+          queryClient.setQueryData<BoardPost>(boardPostKey, (prev) =>
+            prev
+              ? {
+                  ...prev,
+                  conversation: payload.conversation,
+                  recentMessages: prev.recentMessages.filter((m) => memberIds.has(m.id)),
+                  settlingMessageIds: payload.settlingMessageIds ?? prev.settlingMessageIds,
+                }
+              : prev
+          )
+        } else {
+          queryClient.invalidateQueries({ queryKey: boardPostKey })
         }
       }
     )

@@ -113,6 +113,17 @@ interface BranchGroupProps {
  * one card, not between two. Beyond the depth cap the subtree collapses to a
  * "Continue this thread" link into the branch's own panel.
  */
+/**
+ * Where a nested branch row draws its settling rail. A branch row has no left
+ * padding of its own (the group above carries `pl-2 sm:pl-3` plus its 2px
+ * spine), so the default `left-0` would paint over the avatar. These offsets put
+ * the dashed rail exactly on the group's spine for a plain (user) row, and at
+ * the same physical spot for a colored row, which is already broken out onto the
+ * spine by `-mx-2.5 sm:-mx-3.5`. Absolute overlay either way — no box change.
+ */
+export const BRANCH_SETTLING_RAIL_CLASS = "-left-2.5 sm:-left-3.5"
+export const BRANCH_ACCENTED_SETTLING_RAIL_CLASS = "left-0"
+
 export function BranchGroup({ branch, renderBranchMessage, renderBranchTail, renderAfterMessage }: BranchGroupProps) {
   const { getPanelUrl } = usePanel()
   const panelUrl = getPanelUrl(createConversationPanelId(branch.conversationId))

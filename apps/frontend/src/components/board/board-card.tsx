@@ -12,7 +12,12 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { MessageItem, type RenderableMessage } from "@/components/message/message-item"
 import { actorRowTheme } from "@/components/message/actor-row-theme"
 import { buildBranchedBoardRows } from "@/components/board/board-row-item"
-import { BranchedBoardRows, BranchProvenanceRow } from "@/components/board/branch-rows"
+import {
+  BranchedBoardRows,
+  BranchProvenanceRow,
+  BRANCH_SETTLING_RAIL_CLASS,
+  BRANCH_ACCENTED_SETTLING_RAIL_CLASS,
+} from "@/components/board/branch-rows"
 import { resolveBoardEventRows } from "@/lib/board/board-event-rows"
 import { groupBranches, type BranchConversationView } from "@/lib/board/branch-grouping"
 import {
@@ -37,7 +42,7 @@ import { useBoardFlash } from "@/stores/board-flash-store"
 import { useConversationService, usePanel, createConversationPanelId, usePreferences } from "@/contexts"
 import { useBoardCardCollapse } from "@/hooks/use-board-card-collapse"
 import { conversationKeys, useSplitThread } from "@/hooks/use-conversations"
-import { useBoardCardMessages, useStableReplyWindow } from "@/hooks/use-board-card-messages"
+import { applySettlingAll, useBoardCardMessages, useStableReplyWindow } from "@/hooks/use-board-card-messages"
 import { useInlineBranchComposer } from "@/components/board/use-inline-branch-composer"
 import { useBoardCardRevealAnchor } from "@/hooks/use-board-card-reveal-anchor"
 import type { BoardViewPost } from "@/hooks/use-stable-board-view"
@@ -139,6 +144,7 @@ export function BoardCard({
     events: railEvents,
     messagesById,
     taggedByConversation,
+    settlingIds,
   } = useBoardCardMessages(post, streamType, {
     branchStreamIds: inlineComposer.branchStreamIds,
     extraDraftPanelIds: inlineComposer.extraDraftPanelIds,
@@ -382,8 +388,14 @@ export function BoardCard({
   // can be OLDER than a confirmed one (someone else's reply lands while yours is
   // still in flight), so appending blindly would render it out of order.
   const seenReplyIds = new Set(replies.map((m) => m.id))
-  const displayedReplies = [...replies, ...pendingReplies.filter((m) => !seenReplyIds.has(m.id))].sort(
-    (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
+  // The hook stamps settling on its own rows; the server backfill above bypasses
+  // it, so the merged list runs through the same helper (rows already marked come
+  // back by identity).
+  const displayedReplies = applySettlingAll(
+    [...replies, ...pendingReplies.filter((m) => !seenReplyIds.has(m.id))].sort(
+      (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
+    ),
+    settlingIds
   )
   // `totalReplies` counts tombstones as zero, so the visible rows must be counted
   // the same way or a drawn tombstone would subtract from the gap it isn't in.
@@ -516,6 +528,7 @@ export function BoardCard({
           conversationRootStreamId={branch.threadStreamId}
           surfaceClassName={rail ? cn("bg-card border-l-2 px-2 sm:px-3", rail) : "bg-card"}
           rowInsetClassName={rail ? "-mx-2.5 sm:-mx-3.5" : undefined}
+          settlingRailClassName={rail ? BRANCH_ACCENTED_SETTLING_RAIL_CLASS : BRANCH_SETTLING_RAIL_CLASS}
           suppressRowAccent
           onNewSubtopic={
             canBranch

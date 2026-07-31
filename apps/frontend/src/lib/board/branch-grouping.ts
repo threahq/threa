@@ -249,6 +249,10 @@ export interface BranchConversationView {
   /** The child conversation's own messages, resolved through the parent card's rail
    *  (already sliced to the collapsed window when the card is collapsed). */
   messages: RenderableMessage[]
+  /** The child conversation's own provisional (still-settling) member ids —
+   *  already stamped onto {@link messages}; kept so a surface re-deriving rows
+   *  from this view marks them the same way. */
+  settlingMessageIds?: string[]
   /** Locally-available branch messages hidden by the collapsed window — surfaced as
    *  an "N more replies" link into the child panel. 0 when nothing is hidden. */
   hiddenCount: number

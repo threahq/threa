@@ -617,6 +617,10 @@ export interface BoardCardMessages {
    *  `totalReplies`); this exposes the rest of the rail's tombstones for surfaces
    *  that resolve rows outside the conversation (nested branches). */
   deletedById: Map<string, RenderableMessage>
+  /** The post's provisional (still-settling) member ids. The hook already stamps
+   *  its own rows; surfaces that merge a server backfill run their merged list
+   *  through {@link applySettlingAll} with this so a backfilled row is marked too. */
+  settlingIds: ReadonlySet<string>
 }
 
 /** Extra rails a board card subscribes to beyond its conversation's own streams:
@@ -634,10 +638,42 @@ export interface BoardCardExtraRails {
 }
 
 const NO_PENDING: RenderableMessage[] = []
+const NO_SETTLING: ReadonlySet<string> = new Set<string>()
+
+/**
+ * Stamp the board post's provisional-placement state onto a row. A row already
+ * in the wanted state comes back by IDENTITY (no copy), so a settled card
+ * renders exactly what it rendered before the feature existed and a re-render
+ * of an already-marked row allocates nothing. A tombstone is never marked:
+ * deleted trumps settling.
+ *
+ * The rail's row objects are shared across every card reading that stream, so
+ * marking happens here — per card, at row assembly — never inside `buildRail`.
+ */
+export function applySettling(message: RenderableMessage, settlingIds: ReadonlySet<string>): RenderableMessage {
+  const shouldSettle = !message.deletedAt && settlingIds.has(message.id)
+  if (Boolean(message.settling) === shouldSettle) return message
+  return { ...message, settling: shouldSettle }
+}
+
+/** Map {@link applySettling} over a list, returning the SAME array when nothing
+ *  is settling so downstream memos don't churn. */
+export function applySettlingAll(messages: RenderableMessage[], settlingIds: ReadonlySet<string>): RenderableMessage[] {
+  let changed = false
+  const next = messages.map((message) => {
+    const marked = applySettling(message, settlingIds)
+    if (marked !== message) changed = true
+    return marked
+  })
+  return changed ? next : messages
+}
 
 // The memoized per-render derivation below; the rail's message maps are appended
 // at the return boundary (they come straight off the merged rail, not the view).
-type BoardCardView = Omit<BoardCardMessages, "messagesById" | "taggedByConversation" | "deletedById"> & {
+type BoardCardView = Omit<
+  BoardCardMessages,
+  "messagesById" | "taggedByConversation" | "deletedById" | "settlingIds"
+> & {
   nextRetained: RenderableMessage[]
 }
 
@@ -731,6 +767,13 @@ export function useBoardCardMessages(
 
   const rail = useMergedStreamRail(gatingStreamIds, extraStreamIds)
   const conversationId = post.conversation.id
+  // One Set per card, rebuilt only when the post's settling set actually changes
+  // (the `conversation:updated` echo carrying a settle) — never a per-row scan.
+  const settlingKey = (post.settlingMessageIds ?? []).join(",")
+  const settlingIds = useMemo<ReadonlySet<string>>(
+    () => (settlingKey ? new Set(settlingKey.split(",")) : NO_SETTLING),
+    [settlingKey]
+  )
   // The viewer's just-sent reply, kept alive across the convert-to-thread hand-off.
   // When a lone post's first reply lands, its optimistic row is swapped onto a
   // freshly-created thread stream the card is still catching up to, and for a beat
@@ -910,11 +953,15 @@ export function useBoardCardMessages(
   return useMemo(
     () => ({
       ...view,
+      openingMessage: view.openingMessage ? applySettling(view.openingMessage, settlingIds) : null,
+      replies: applySettlingAll(view.replies, settlingIds),
+      pendingReplies: applySettlingAll(view.pendingReplies, settlingIds),
       messagesById: rail.messages,
       taggedByConversation: rail.taggedByConversation,
       deletedById: rail.deletedMessages,
+      settlingIds,
     }),
-    [view, rail.messages, rail.taggedByConversation, rail.deletedMessages]
+    [view, settlingIds, rail.messages, rail.taggedByConversation, rail.deletedMessages]
   )
 }
 
