@@ -36,46 +36,6 @@ function memoCards(page: Page) {
   return page.locator('[data-type="memo-embed"]')
 }
 
-/**
- * Records layout shifts in which a memo card CHANGED SIZE.
- *
- * Deliberately not "a memo card was a source": a card is also a source when
- * something above it pushes the whole column down, which happens on a cold load
- * for reasons that have nothing to do with this card (a font landing, an avatar
- * decoding). That version of the assertion passed locally and failed in CI —
- * correctly, since the claim it made was one the card cannot keep. The claim the
- * card CAN keep, and the one the defect broke, is that its own box never
- * changes: compare each source's previous and current rect and keep only the
- * ones whose dimensions moved.
- */
-async function installShiftProbe(page: Page) {
-  await page.addInitScript(() => {
-    const shifts: Array<{ value: number; from: string; to: string }> = []
-    ;(window as unknown as { __shifts: typeof shifts }).__shifts = shifts
-    new PerformanceObserver((list) => {
-      for (const entry of list.getEntries()) {
-        const shift = entry as PerformanceEntry & {
-          value: number
-          hadRecentInput: boolean
-          sources?: Array<{ node?: Node; previousRect: DOMRectReadOnly; currentRect: DOMRectReadOnly }>
-        }
-        if (shift.hadRecentInput) continue
-        for (const source of shift.sources ?? []) {
-          const el = source.node as HTMLElement | null
-          if (!el?.closest?.('[data-type="memo-embed"]')) continue
-          const { previousRect: before, currentRect: after } = source
-          if (before.height === after.height && before.width === after.width) continue
-          shifts.push({
-            value: shift.value,
-            from: `${before.width}x${before.height}`,
-            to: `${after.width}x${after.height}`,
-          })
-        }
-      }
-    }).observe({ type: "layout-shift", buffered: true })
-  })
-}
-
 /** Serve the stream bootstrap with `memoEmbeds` stamped onto our message. */
 async function stampSummaryOntoBootstrap(page: Page) {
   await page.route("**/api/workspaces/*/streams/*/bootstrap*", async (route) => {
@@ -111,11 +71,16 @@ test.describe("memo embed card", () => {
     expect(sendRes.ok()).toBeTruthy()
 
     await stampSummaryOntoBootstrap(page)
-    await installShiftProbe(page)
     await page.goto(`/w/${workspaceId}/s/${streamId}`)
 
     const card = memoCards(page).first()
     await expect(card).toBeVisible({ timeout: LOAD_TIMEOUT })
+
+    // Sampled the instant the card exists, BEFORE any retrying assertion. Every
+    // `expect(...).toContainText` polls, so measuring after them would wait out
+    // exactly the late growth this is looking for — a version of this test that
+    // measured later passed against a card deliberately made to grow at 800ms.
+    const firstPaintHeight = await card.evaluate((el) => el.getBoundingClientRect().height)
 
     // Complete on arrival: the memo's own title, its knowledge type and its
     // tags — none of which the markdown reference carries. "Theme switch" is
@@ -124,14 +89,11 @@ test.describe("memo embed card", () => {
     await expect(card).toContainText("settings")
     await expect(card).toContainText("Switched the workspace theme to light")
 
-    const height = await card.evaluate((el) => el.getBoundingClientRect().height)
+    // Height is the card's own claim: a card that grows pushes everything below
+    // it down, which is what the reader sees. Width belongs to the column it
+    // sits in and changes as the layout settles, so it is not asserted.
     await page.waitForTimeout(2000)
-    expect(await card.evaluate((el) => el.getBoundingClientRect().height)).toBe(height)
-
-    const resizes = await page.evaluate(
-      () => (window as unknown as { __shifts: Array<{ value: number; from: string; to: string }> }).__shifts
-    )
-    expect(resizes).toEqual([])
+    expect(await card.evaluate((el) => el.getBoundingClientRect().height)).toBe(firstPaintHeight)
   })
 
   test("a memo with no summary renders its label alone, and never goes looking for one", async ({ page }) => {
