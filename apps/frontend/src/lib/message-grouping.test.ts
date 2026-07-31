@@ -87,6 +87,12 @@ describe("isSameAuthorRun", () => {
     }).toEqual({ inclusive: true, exclusive: false })
   })
 
+  it("treats two null actor ids as the same author (system rows)", () => {
+    const prev = { authorId: null, authorType: null, createdAtMs: BASE }
+    const next = { authorId: null, authorType: null, createdAtMs: BASE + 1 }
+    expect(isSameAuthorRun(prev, next)).toBe(true)
+  })
+
   it("never groups a row that breaks the run", () => {
     const prev = { authorId: "usr_1", authorType: "user", createdAtMs: BASE }
     expect(isSameAuthorRun(prev, { ...prev, createdAtMs: BASE + 1, breaksRun: true })).toBe(false)
