@@ -17,9 +17,8 @@ import { cn } from "@/lib/utils"
  * card is sized by its own content and stays that size.
  *
  * A card lands in the label-only state when the summary could not ride the
- * message: a sealed stream whose body the server cannot read and whose composer
- * did not stamp the node, a message written before this shipped, or a memo the
- * citing room cannot uniformly open.
+ * message: a sealed stream whose body the server cannot read, a message written
+ * before this shipped, or a memo the citing room cannot uniformly open.
  */
 export function MemoEmbedCardBody({
   summary,

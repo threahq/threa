@@ -23,8 +23,8 @@ const srcRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..")
  *   the memo's substance (abstract, key points, sources) is access-checked.
  * - `memory` is the explorer page, which is a memo browser.
  * - `use-memo-embed-source` / `memo-embed-view` are the COMPOSER's chip: it
- *   resolves a pasted memo link so the node can be stamped before sending. The
- *   composer is not the stream.
+ *   resolves a pasted memo link's title so the serialized label isn't the
+ *   generic "Memo" fallback. The composer is not the stream.
  */
 const ALLOWED = [
   "components/memo/memo-preview-dialog.tsx",
