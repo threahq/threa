@@ -535,7 +535,7 @@ describe("BoardPage", () => {
       ])
     })
 
-    expect(await screen.findByText("1 new post available")).toBeTruthy()
+    expect(await screen.findByText("1 update available")).toBeTruthy()
     expect(screen.getByText("Seen card body.")).toBeTruthy()
     expect(screen.queryByText("Unseen card body.")).toBeNull()
   })

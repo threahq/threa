@@ -276,9 +276,15 @@ export function reconcileStableView(
 
   const committedSet = new Set(committed.order)
   // Unseen committed cards that gained activity leave the frozen order and go
-  // back behind the pill (see the safety invariant above).
+  // back behind the pill (see the safety invariant above). Armed only once at
+  // least one card of THIS committed view has been seen: observers report a
+  // beat after paint (IO records land after layout, later than React's effect
+  // flush), so "no committed card seen yet" means the view hasn't had a
+  // seeable frame — re-buffering then would strip cards the viewer never had a
+  // chance to see. Self-re-arms on every view reset by construction.
   const rebuffered = new Set<string>()
-  if (seen) {
+  const armed = seen !== undefined && seen.size > 0 && committed.order.some((id) => seen.has(id))
+  if (seen && armed) {
     for (const post of live) {
       const id = postId(post)
       if (!committedSet.has(id) || seen.has(id) || post._status === "pending") continue

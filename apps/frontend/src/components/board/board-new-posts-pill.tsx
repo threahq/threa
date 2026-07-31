@@ -32,7 +32,7 @@ export function BoardNewPostsPill({ count, onReveal, scrollerRef }: BoardNewPost
       <button
         type="button"
         onClick={onReveal}
-        aria-label={`Show ${count} new ${count === 1 ? "post" : "posts"}`}
+        aria-label={`Show ${count} ${count === 1 ? "update" : "updates"}`}
         {...forwardScroll}
         className={cn(
           "pointer-events-auto inline-flex items-center gap-1 rounded-full border px-3 py-1.5",
@@ -41,7 +41,7 @@ export function BoardNewPostsPill({ count, onReveal, scrollerRef }: BoardNewPost
         )}
       >
         <ArrowUp className="-ml-0.5 h-3 w-3" aria-hidden />
-        {count} new
+        {count} {count === 1 ? "update" : "updates"}
       </button>
     </div>
   )

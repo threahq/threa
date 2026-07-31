@@ -346,21 +346,14 @@ function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: Boar
   // Per-session and per-workspace, never persisted: a seen card stays frozen, an
   // unseen one that gains activity goes back behind the "N new" pill.
   const seenCardsRef = useRef<Set<string>>(new Set())
-  // Re-buffering arms only once the feed has actually painted: before the first
-  // paint nothing can have been seen, so every committed card would look unseen
-  // and a bump would pull it back behind the pill for no reason.
-  const [boardPainted, setBoardPainted] = useState(false)
   // A render-phase `setState` doesn't update this render's binding, so the
   // switch render must read the local value, not `seedTimedOut`.
   let timedOut = seedTimedOut
-  let painted = boardPainted
   if (seedWorkspaceRef.current !== workspaceId) {
     seedWorkspaceRef.current = workspaceId
     seenCardsRef.current = new Set()
     timedOut = false
     if (seedTimedOut) setSeedTimedOut(false)
-    painted = false
-    if (boardPainted) setBoardPainted(false)
   }
   useEffect(() => {
     const timer = setTimeout(() => setSeedTimedOut(true), SEED_COMMIT_TIMEOUT_MS)
@@ -389,7 +382,7 @@ function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: Boar
     hasRawPosts,
     removedIds,
     removedSuccessorById,
-  } = useStableBoardView(workspaceId, filter, exclusions, seed, painted ? seenCardsRef : undefined)
+  } = useStableBoardView(workspaceId, filter, exclusions, seed, seenCardsRef)
   // After a refetch settles, `isLoading` is already false but the seed effect
   // writes IDB on the next tick, so the IDB feed can be momentarily empty while
   // the query already holds posts. Treat that window as loading so the feed
@@ -595,10 +588,6 @@ function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: Boar
   // past SKELETON_DELAY_MS of genuine loading (cold device), never as a flash on
   // a warm refresh. Empty state only once IDB has resolved to genuinely nothing.
   const showFeed = posts.length > 0 && revealReady
-  useEffect(() => {
-    if (showFeed) setBoardPainted(true)
-  }, [showFeed])
-
   // The virtualized feed is ONE flat row list — recency-section headers
   // interleaved with their cards, plus a trailing load-more — so the whole board
   // is a single <Virtualizer> instead of one per section (a section can hold
@@ -786,7 +775,7 @@ function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: Boar
         <h1 className="truncate font-semibold">Board</h1>
       </header>
       <span className="sr-only" role="status" aria-live="polite">
-        {newCount > 0 ? `${newCount} new ${newCount === 1 ? "post" : "posts"} available` : ""}
+        {newCount > 0 ? `${newCount} ${newCount === 1 ? "update" : "updates"} available` : ""}
       </span>
       {/* The "N new" pill floats over the top of the feed (see BoardNewPostsPill),
           so buffered posts never shove the composer/feed down the way the old
