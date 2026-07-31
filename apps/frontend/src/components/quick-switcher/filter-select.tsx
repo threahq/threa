@@ -90,7 +90,9 @@ function UserSelect({ users, onSelect }: UserSelectProps) {
 
   return (
     <div className="w-48">
-      <Command className="border rounded-md">
+      {/* Ranked above; each row's cmdk value is an id, so a second filter pass
+          over it would match nothing and empty the list. */}
+      <Command className="border rounded-md" shouldFilter={false}>
         <CommandInput placeholder="Search users..." value={search} onValueChange={setSearch} className="h-8" />
         <CommandList className="max-h-32">
           <CommandEmpty>No users found.</CommandEmpty>
@@ -174,7 +176,8 @@ function StreamSelect({ streams, onSelect }: StreamSelectProps) {
 
   return (
     <div className="w-48">
-      <Command className="border rounded-md">
+      {/* Ranked above; see UserSelect for why cmdk must not filter again. */}
+      <Command className="border rounded-md" shouldFilter={false}>
         <CommandInput placeholder="Search streams..." value={search} onValueChange={setSearch} className="h-8" />
         <CommandList className="max-h-32">
           <CommandEmpty>No streams found.</CommandEmpty>
