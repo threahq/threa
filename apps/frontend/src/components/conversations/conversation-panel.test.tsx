@@ -366,6 +366,23 @@ describe("ConversationPanel", () => {
     expect(screen.queryByRole("button", { name: "Conversation actions" })).toBeNull()
   })
 
+  it("reveals cached rows immediately while the backfill is still in flight (it's a timeline)", async () => {
+    // Rail short of the server's count on a slow network: the old gate held the
+    // whole panel on the backfill until the 1500ms escape. Cached content must
+    // paint well inside that window, with the loading line below it.
+    const post = makePost()
+    post.conversation.messageIds = ["msg_1", "msg_2", "msg_3"]
+    post.totalReplies = 2
+    mountPanel({
+      cached: asCached(post),
+      getBoardMessages: () => new Promise(() => {}),
+    })
+
+    expect(await screen.findByText("Opening message body.", undefined, { timeout: 1000 })).toBeTruthy()
+    expect(screen.getByText("Reply two body.")).toBeTruthy()
+    expect(screen.getByText("Loading messages…")).toBeTruthy()
+  })
+
   it("renders the conversation from the reactive store row without a by-id fetch", async () => {
     const { getBoardPost } = mountPanel({ cached: asCached(makePost()) })
     expect(await screen.findByText("Opening message body.")).toBeTruthy()
