@@ -620,6 +620,13 @@ export function useEvents(workspaceId: string, streamId: string, options?: { ena
     return true
   }, [jumpState, isFetchingNewer, hasNewerPage, queryClient, workspaceId, streamId, fetchNewerPage])
 
+  /** Exit jump mode and return to live tail (latest messages from IDB). */
+  const exitJumpMode = useCallback(() => {
+    setJumpState(null)
+    queryClient.removeQueries({ queryKey: eventKeys.list(workspaceId, streamId) })
+    queryClient.removeQueries({ queryKey: eventKeys.newer(workspaceId, streamId) })
+  }, [queryClient, workspaceId, streamId])
+
   /**
    * Jump to a specific event (e.g. from search or push notification deep link).
    * Loads events around it and switches to bidirectional pagination mode.
@@ -638,8 +645,14 @@ export function useEvents(workspaceId: string, streamId: string, options?: { ena
       await cacheToIndexedDB(workspaceId, streamId, result.events, result)
 
       // If there are no newer events, the target is already at the bottom —
-      // skip jump mode and let the live tail render from IDB.
-      if (!result.hasNewer) return true
+      // skip jump mode and let the live tail render from IDB. A previous jump
+      // may still be active; its window renders instead of IDB, so exit it —
+      // otherwise the timeline stays frozen on the old window and this
+      // navigation silently does nothing.
+      if (!result.hasNewer) {
+        exitJumpMode()
+        return true
+      }
 
       const sorted = sortBySequence([...result.events])
       setJumpState({
@@ -656,7 +669,7 @@ export function useEvents(workspaceId: string, streamId: string, options?: { ena
 
       return true
     },
-    [streamService, workspaceId, streamId, queryClient]
+    [streamService, workspaceId, streamId, queryClient, exitJumpMode]
   )
 
   /**
@@ -674,7 +687,11 @@ export function useEvents(workspaceId: string, streamId: string, options?: { ena
 
       // No newer events means the anchor sits at the live tail — skip jump mode
       // and let IDB render the tail; the caller still scrolls to the anchor.
-      if (!result.hasNewer) return result.anchorMessageId
+      // Exit any active jump first: its window would render instead of IDB.
+      if (!result.hasNewer) {
+        exitJumpMode()
+        return result.anchorMessageId
+      }
 
       const sorted = sortBySequence([...result.events])
       setJumpState({
@@ -690,15 +707,8 @@ export function useEvents(workspaceId: string, streamId: string, options?: { ena
 
       return result.anchorMessageId
     },
-    [streamService, workspaceId, streamId, queryClient]
+    [streamService, workspaceId, streamId, queryClient, exitJumpMode]
   )
-
-  /** Exit jump mode and return to live tail (latest messages from IDB). */
-  const exitJumpMode = useCallback(() => {
-    setJumpState(null)
-    queryClient.removeQueries({ queryKey: eventKeys.list(workspaceId, streamId) })
-    queryClient.removeQueries({ queryKey: eventKeys.newer(workspaceId, streamId) })
-  }, [queryClient, workspaceId, streamId])
 
   // addEvent and updateEvent write directly to IDB; useLiveQuery picks up
   // changes automatically — no TanStack cache needed.

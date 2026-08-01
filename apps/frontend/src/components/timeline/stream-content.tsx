@@ -568,6 +568,12 @@ export function StreamContent({
   const [deepLinkHoldExpired, setDeepLinkHoldExpired] = useState(false)
   const user = useUser()
   const [isSearchOpen, setIsSearchOpen] = useState(false)
+  // True while an out-of-window search navigation is fetching its event window —
+  // drives the search bar's spinner so a tap that needs a round-trip is visibly
+  // loading instead of appearing dead. Versioned so a superseding navigation's
+  // completion doesn't clear a newer one's spinner.
+  const [isSearchNavigating, setIsSearchNavigating] = useState(false)
+  const searchNavVersionRef = useRef(0)
   const [batchMode, setBatchMode] = useState(false)
   // What the current batch selection is for. `moveToThread` (default) drags the
   // selection onto a target message; `splitConversation` reassigns the selection's
@@ -1746,7 +1752,24 @@ export function StreamContent({
       // Message not in current window — load events around it, then scroll after load
       disableAutoScroll()
       pendingScrollTarget.current = messageId
+      const version = ++searchNavVersionRef.current
+      setIsSearchNavigating(true)
+      // On success the spinner stays up until the post-jump driver engages the
+      // scroll (or gives up) — the fetch is the smaller half of the wait; the
+      // window swap + scroll placement is the rest of it.
       jumpToEvent(messageId)
+        .then((success) => {
+          if (searchNavVersionRef.current !== version) return
+          if (!success) {
+            setIsSearchNavigating(false)
+            if (pendingScrollTarget.current === messageId) pendingScrollTarget.current = null
+          }
+        })
+        .catch(() => {
+          if (searchNavVersionRef.current !== version) return
+          setIsSearchNavigating(false)
+          if (pendingScrollTarget.current === messageId) pendingScrollTarget.current = null
+        })
     },
     [events, jumpToEvent, disableAutoScroll, scrollToMessage]
   )
@@ -1811,6 +1834,7 @@ export function StreamContent({
     if (!useVirtualized) {
       // Threads use plain scroll, not this jump-then-virtualized-scroll path.
       pendingScrollTarget.current = null
+      setIsSearchNavigating(false)
       return
     }
 
@@ -1834,11 +1858,13 @@ export function StreamContent({
       if (phase === "user-abort") {
         deepLinkDebug("post-jump: user interacted, abandoning", target)
         pendingScrollTarget.current = null
+        setIsSearchNavigating(false)
         return
       }
       if (phase === "deadline") {
         deepLinkDebug("post-jump: deadline exceeded, giving up", target)
         pendingScrollTarget.current = null
+        setIsSearchNavigating(false)
         // The jump window loaded but the target never became placeable (e.g. a
         // mid-flight window swap). Mark the deep-link as conclusively failed so
         // the holdForDeepLink skeleton releases and the gated ?m= clear can
@@ -1854,6 +1880,7 @@ export function StreamContent({
         // + user-abort from here, so this driver is done.
         deepLinkDebug("post-jump: scrollToMessage engaged", target)
         pendingScrollTarget.current = null
+        setIsSearchNavigating(false)
         return
       }
 
@@ -1942,6 +1969,8 @@ export function StreamContent({
     setDeepLinkHoldExpired(false)
     exitJumpMode()
     setIsSearchOpen(false)
+    searchNavVersionRef.current++
+    setIsSearchNavigating(false)
     clearSearch()
   }, [streamId, exitJumpMode, clearSearch])
 
@@ -2371,6 +2400,7 @@ export function StreamContent({
                     {isSearchOpen && (
                       <StreamSearchBar
                         search={streamSearch}
+                        isNavigating={isSearchNavigating}
                         onClose={handleSearchClose}
                         onNavigate={handleSearchNavigate}
                       />
