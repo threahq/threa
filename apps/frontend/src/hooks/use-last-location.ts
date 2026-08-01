@@ -129,8 +129,12 @@ export function usePersistLastLocation(workspaceId: string | undefined) {
 
   useEffect(() => {
     if (!user || !workspaceId) return
-    // The bare index is a transient redirect hop, never a place to restore to.
+    // Transient redirect hops are never a place to restore to. The bare index
+    // would loop the exact restore; /delegations/:id 404s away to the index
+    // (routes/index.tsx DelegationRedirect), so restoring it would loop the
+    // 404 toast; /memos/:id is its sibling alias.
     if (pathname === `/w/${workspaceId}`) return
+    if (pathname.startsWith(`/w/${workspaceId}/delegations/`) || pathname.startsWith(`/w/${workspaceId}/memos/`)) return
     const exact = { path: `${pathname}${search}`, at: Date.now() }
     const existing = getLastLocation(user.id, workspaceId)
     if (onBoard) {

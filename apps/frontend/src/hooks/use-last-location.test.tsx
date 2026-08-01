@@ -208,8 +208,10 @@ describe("usePersistLastLocation", () => {
     })
   })
 
-  it("writes nothing on the transient workspace index route", () => {
-    renderHook(() => usePersistLastLocation(WS), { wrapper: routerAt("/w/ws_1") })
+  it("writes nothing on transient redirect routes (index, delegations, memos)", () => {
+    for (const path of ["/w/ws_1", "/w/ws_1/delegations/deleg_1", "/w/ws_1/memos/memo_1"]) {
+      renderHook(() => usePersistLastLocation(WS), { wrapper: routerAt(path) })
+    }
     expect(getLastLocation(USER, WS)).toBeNull()
   })
 
