@@ -202,7 +202,10 @@ function ExactRestore({ path }: { path: string }) {
     if (url.searchParams.has("panel")) {
       url.searchParams.delete("panel")
       navigate(`${url.pathname}${url.search}`, { replace: true })
-      navigate(path)
+      // Both hops batch into ONE commit, so PanelProvider never observes the
+      // panel-less entry this push lands on — the state attestation carries
+      // what the construction guarantees, letting close pop instead of rewrite.
+      navigate(path, { state: { panelPopsToClose: true } })
     } else {
       navigate(path, { replace: true })
     }

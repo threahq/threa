@@ -245,6 +245,27 @@ describe("usePersistLastLocation", () => {
     expect(getLastLocation(USER, WS)).toBeNull()
   })
 
+  it("re-asserts this tab's own page on backgrounding, not a foreign tab's record", () => {
+    // localStorage is shared across tabs. If another tab (an externally-opened
+    // link) wrote its page since, blindly bumping the stored record would
+    // extend the WRONG page's freshness with this tab's backgrounding signal.
+    renderHook(() => usePersistLastLocation(WS), { wrapper: routerAt("/w/ws_1/s/stream_a") })
+    setLastLocation(USER, WS, {
+      surface: "stream",
+      streamId: "stream_b",
+      board: null,
+      exact: { path: "/w/ws_1/s/stream_b", at: Date.now() - 60_000 },
+    })
+
+    vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden")
+    document.dispatchEvent(new Event("visibilitychange"))
+
+    expect(getLastLocation(USER, WS)).toMatchObject({
+      streamId: "stream_a",
+      exact: { path: "/w/ws_1/s/stream_a", at: expect.any(Number) },
+    })
+  })
+
   it("bumps the exact timestamp when the page is backgrounded", () => {
     renderHook(() => usePersistLastLocation(WS), { wrapper: routerAt("/w/ws_1/s/stream_a") })
     const before = getLastLocation(USER, WS)?.exact

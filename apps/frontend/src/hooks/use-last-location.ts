@@ -152,52 +152,50 @@ export function usePersistLastLocation(workspaceId: string | undefined) {
     // that visit warmed, the exact arm would never serve.
     coldLaunch = false
     if (pathname.startsWith(`/w/${workspaceId}/delegations/`) || pathname.startsWith(`/w/${workspaceId}/memos/`)) return
-    const exact = { path: `${pathname}${search}`, at: Date.now() }
-    const existing = getLastLocation(user.id, workspaceId)
-    if (onBoard) {
+    const persist = () => {
+      const exact = { path: `${pathname}${search}`, at: Date.now() }
+      const existing = getLastLocation(user.id, workspaceId)
+      if (onBoard) {
+        setLastLocation(user.id, workspaceId, {
+          surface: "board",
+          streamId: existing?.streamId ?? null,
+          board: { search: sanitizeBoardSearch(search) },
+          exact,
+        })
+        return
+      }
+      if (streamId) {
+        setLastLocation(user.id, workspaceId, {
+          surface: "stream",
+          streamId,
+          board: existing?.board ?? null,
+          exact,
+        })
+        return
+      }
+      // Other workspace pages (activity, saved, memory, …): keep the
+      // stream/board arms as they were, record only the exact URL.
       setLastLocation(user.id, workspaceId, {
-        surface: "board",
+        surface: existing?.surface ?? "stream",
         streamId: existing?.streamId ?? null,
-        board: { search: sanitizeBoardSearch(search) },
-        exact,
-      })
-      return
-    }
-    if (streamId) {
-      setLastLocation(user.id, workspaceId, {
-        surface: "stream",
-        streamId,
         board: existing?.board ?? null,
         exact,
       })
-      return
     }
-    // Other workspace pages (activity, saved, memory, …): keep the stream/board
-    // arms as they were, record only the exact URL.
-    setLastLocation(user.id, workspaceId, {
-      surface: existing?.surface ?? "stream",
-      streamId: existing?.streamId ?? null,
-      board: existing?.board ?? null,
-      exact,
-    })
-  }, [user, workspaceId, streamId, search, onBoard, pathname])
-
-  // Backgrounding is the last moment we run before an OS kill — bump `at` so
-  // the exact record's freshness measures time-since-last-seen. Without this a
-  // long reading session ages the record out and a kill minutes later restores
-  // the sanitized arms instead of the page the viewer was on.
-  useEffect(() => {
-    if (!user || !workspaceId) return
+    persist()
+    // Backgrounding is the last moment we run before an OS kill — re-persist so
+    // the exact record's freshness measures time-since-last-seen. This tab's
+    // OWN page is re-written, never a bump of whatever is stored: another tab
+    // (an externally-opened link) may have written since, and re-stamping its
+    // record would extend the wrong page's freshness with this tab's signal.
+    // Only the tab transitioning visible→hidden fires; a tab that is already
+    // hidden gets no visibilitychange when the whole browser backgrounds.
     const onVisibilityChange = () => {
-      if (document.visibilityState !== "hidden") return
-      const existing = getLastLocation(user.id, workspaceId)
-      if (existing?.exact) {
-        setLastLocation(user.id, workspaceId, { ...existing, exact: { ...existing.exact, at: Date.now() } })
-      }
+      if (document.visibilityState === "hidden") persist()
     }
     document.addEventListener("visibilitychange", onVisibilityChange)
     return () => document.removeEventListener("visibilitychange", onVisibilityChange)
-  }, [user, workspaceId])
+  }, [user, workspaceId, streamId, search, onBoard, pathname])
 }
 
 function getMostRecentStreamId(streams: CachedStream[]): string {
