@@ -281,9 +281,6 @@ export class MemoExplorerService {
    * without any bookkeeping of its own. Streams whose rooms may not see it are
    * simply skipped, which leaves their cards showing what they already had.
    *
-   * Deliberately NOT workspace-scoped: `memo:created` broadcasts a whole
-   * `WireMemo` (abstract and key points included) to every workspace member,
-   * which is a wider exposure than this event is willing to inherit.
    */
   private async publishCardUpdates(client: PoolClient, workspaceId: string, memo: Memo): Promise<void> {
     const citingStreamIds = await MemoRepository.findCitingStreamIds(client, workspaceId, memo.id)

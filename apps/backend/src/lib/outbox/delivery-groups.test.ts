@@ -420,3 +420,49 @@ describe("resolveDeliveryGroups — memo:updated", () => {
     expect(groups).not.toContain(WORKSPACE_GROUP)
   })
 })
+
+describe("resolveDeliveryGroups — memo:created", () => {
+  // Same blindness as memo:updated above, one event earlier: this one announces
+  // that a memo exists at all, and every payload is copied into `sync_log` and
+  // replayed on catch-up for weeks — so a workspace group here is a standing
+  // record of every capture, readable by members with no access to the stream
+  // it came from. The outbox row is identical either way.
+  it("delivers only to the memo's source stream, never the whole workspace", () => {
+    const groups = resolveDeliveryGroups(
+      event("memo:created", { workspaceId: "ws_1", streamId: "stream_source", memoId: "memo_1" })
+    )
+
+    expect(groups).toEqual([streamGroup("stream_source")])
+    expect(groups).not.toContain(WORKSPACE_GROUP)
+  })
+
+  // save_memo can file a `user`-scoped memo from a shared stream. Its owner is
+  // the only one who will ever see it, so the room must not even learn it exists.
+  it("delivers a user-scoped memo to its owner instead of the source stream", () => {
+    const groups = resolveDeliveryGroups(
+      event("memo:created", {
+        workspaceId: "ws_1",
+        streamId: "stream_source",
+        memoId: "memo_1",
+        scopeUserId: "usr_owner",
+      })
+    )
+
+    expect(groups).toEqual([userGroup("usr_owner")])
+  })
+
+  // Rollout window: a replica still on the old code writes the old payload —
+  // no streamId, whole memo inline. Dropping it keeps that content out of the
+  // log; routing it by shape would file it under `stream:undefined`.
+  it("drops a pre-cutover payload instead of routing it anywhere", () => {
+    const groups = resolveDeliveryGroups(
+      event("memo:created", {
+        workspaceId: "ws_1",
+        memoId: "memo_1",
+        memo: { id: "memo_1", title: "Launch in June", abstract: "…" },
+      })
+    )
+
+    expect(groups).toEqual([])
+  })
+})

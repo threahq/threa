@@ -1780,11 +1780,12 @@ export function registerWorkspaceSocketHandlers(
   }
 
   // GAM memo extraction: surface new memos in the memory explorer without a
-  // manual refresh. memo:created is workspace-group routed (sync log + emit),
-  // so registering here puts memos on the sync catch-up path like every
-  // other workspace-level event — a reconnect replay invalidates the same
-  // queries a live emit does. The in-situ timeline row rides the separate
-  // stream:memos_captured event (stream-sync).
+  // manual refresh. memo:created is routed to the memo's source root (or its
+  // owner, for a user-scoped memo) — never workspace-wide — but registration
+  // is per event type on the one workspace socket/gate, so a room-delivered
+  // event and its catch-up replay both land here. Registering per stream would
+  // only duplicate the invalidation. The in-situ timeline row rides the
+  // separate stream:memos_captured event (stream-sync).
   const handleMemoCreated = (payload: { workspaceId: string; memoId: string }) => {
     if (payload.workspaceId !== workspaceId) return
     queryClient.invalidateQueries({ queryKey: memoKeys.searches(workspaceId) })

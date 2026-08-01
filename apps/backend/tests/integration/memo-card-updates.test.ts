@@ -4,9 +4,8 @@
  * The card no longer fetches, so this event is how a retitle reaches a reader
  * who already has the message on screen. It is stream-scoped and gated per
  * citing room by the same predicate the write path uses, which is what stops it
- * becoming a workspace-wide broadcast of a memo's title. (`memo:created` IS
- * that broadcast today, carrying the whole memo including its abstract — noted,
- * pre-existing, and deliberately not inherited here.)
+ * becoming a workspace-wide broadcast of a memo's title. (`memo:created` is
+ * scoped the same way, per `memo-created-routing.test.ts`.)
  */
 
 import { describe, test, expect, beforeAll, afterAll } from "bun:test"

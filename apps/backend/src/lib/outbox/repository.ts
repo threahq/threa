@@ -5,7 +5,6 @@ import type { User } from "../../features/workspaces"
 import type { ConversationWithStaleness } from "../../features/conversations"
 import type { HydratedSharedMessage } from "../../features/messaging/sharing"
 import type {
-  Memo as WireMemo,
   MemoEmbedSummary,
   StreamEvent as WireStreamEvent,
   UserPreferences,
@@ -136,6 +135,7 @@ export type OutboxEventType =
 
 /** Events that are scoped to a stream (have streamId) */
 export type StreamScopedEventType =
+  | "memo:created"
   | "memo:updated"
   | "message:created"
   | "message:edited"
@@ -595,9 +595,18 @@ export interface ConversationMessageReassignedOutboxPayload extends StreamScoped
   reason: string
 }
 
-export interface MemoCreatedOutboxPayload extends WorkspaceScopedPayload {
+/**
+ * A memo was captured, for the room it was captured from.
+ *
+ * STREAM-scoped to the memo's source root and carries the id alone — the memory
+ * explorer only invalidates on it, and every payload is copied verbatim into
+ * `sync_log` and replayed on catch-up for weeks, so content here would outlive
+ * the emit. `scopeUserId` is set for a `user`-scoped memo (private to its owner
+ * even inside a shared stream), which routes to that user instead of the room.
+ */
+export interface MemoCreatedOutboxPayload extends StreamScopedPayload {
   memoId: string
-  memo: WireMemo
+  scopeUserId?: string
 }
 
 /**
@@ -1311,8 +1320,10 @@ const STREAM_SCOPED_EVENTS: StreamScopedEventType[] = [
   // Routing is driven by THIS list, not by the payload extending
   // `StreamScopedPayload` — `resolveDeliveryGroups` only takes the stream
   // branch when `isStreamScopedEvent` finds the type here. Omitted, an event
-  // falls through to the whole-workspace group, which for this one would hand
-  // a memo's card content to every member regardless of stream access.
+  // falls through to the whole-workspace group, which for these two would hand
+  // a memo's existence and card content to every member regardless of stream
+  // access — the shape that shipped a leak on each of them in turn.
+  "memo:created",
   "memo:updated",
   "message:created",
   "message:edited",

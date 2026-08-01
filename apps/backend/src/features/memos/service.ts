@@ -29,7 +29,6 @@ import {
   type KnowledgeType,
   type MemoScope,
   type MemosCapturedEventPayload,
-  type Memo as WireMemo,
 } from "@threa/types"
 import {
   MEMO_GEM_CONFIDENCE_FLOOR,
@@ -94,14 +93,18 @@ function resolveExtractedMemoScope(stream: Stream | null): { scope: MemoScope; s
  * private scratchpad; resolving to the root first keeps their memos in the
  * owner's private tier instead of silently falling through to `workspace`. The
  * batch path already passes a top-level stream, so this is a no-op there.
+ *
+ * `rootStreamId` is that same resolved root, returned so callers routing a
+ * memo's `memo:created` reach the root's audience rather than whoever happens
+ * to have a thread open.
  */
 export async function resolveMemoScopeForStreamId(
   db: Querier,
   streamId: string
-): Promise<{ scope: MemoScope; scopeUserId: string | null }> {
+): Promise<{ scope: MemoScope; scopeUserId: string | null; rootStreamId: string }> {
   const stream = await StreamRepository.findById(db, streamId)
   const root = stream?.rootStreamId ? await StreamRepository.findById(db, stream.rootStreamId) : stream
-  return resolveExtractedMemoScope(root)
+  return { ...resolveExtractedMemoScope(root), rootStreamId: root?.id ?? streamId }
 }
 
 export interface ProcessResult {
@@ -743,8 +746,9 @@ export class MemoService implements MemoServiceLike {
         await MemoRepository.updateEmbedding(client, memoData.id, embedding)
         await OutboxRepository.insert(client, "memo:created", {
           workspaceId,
+          streamId: fetchedData.memoScope.rootStreamId,
           memoId: memoData.id,
-          memo: this.toWireMemoFromData(memoData),
+          ...(memoData.scopeUserId ? { scopeUserId: memoData.scopeUserId } : {}),
         })
         createdMemos.push(memoData)
       }
@@ -1016,7 +1020,7 @@ export class MemoService implements MemoServiceLike {
         return { ok: true, memoId: duplicate.memo.id, title: duplicate.memo.title, deduped: true }
       }
 
-      const inserted = await MemoRepository.insert(client, {
+      await MemoRepository.insert(client, {
         id: newMemoId,
         workspaceId,
         memoType: MemoTypes.MESSAGE,
@@ -1037,8 +1041,9 @@ export class MemoService implements MemoServiceLike {
       await MemoRepository.updateEmbedding(client, newMemoId, embedding)
       await OutboxRepository.insert(client, "memo:created", {
         workspaceId,
+        streamId: natural.rootStreamId,
         memoId: newMemoId,
-        memo: this.toWireMemo(inserted),
+        ...(resolvedScopeUserId ? { scopeUserId: resolvedScopeUserId } : {}),
       })
 
       // Visible in situ (INV-62): one broadcast timeline event on the stream the
@@ -1212,7 +1217,7 @@ export class MemoService implements MemoServiceLike {
         }
 
         const newMemoId = memoId()
-        const inserted = await MemoRepository.insert(client, {
+        await MemoRepository.insert(client, {
           id: newMemoId,
           workspaceId,
           memoType: MemoTypes.MESSAGE,
@@ -1233,8 +1238,9 @@ export class MemoService implements MemoServiceLike {
         await MemoRepository.updateEmbedding(client, newMemoId, embedding)
         await OutboxRepository.insert(client, "memo:created", {
           workspaceId,
+          streamId: context.memoScope.rootStreamId,
           memoId: newMemoId,
-          memo: this.toWireMemo(inserted),
+          ...(context.memoScope.scopeUserId ? { scopeUserId: context.memoScope.scopeUserId } : {}),
         })
         capturedMemos.push({
           memoId: newMemoId,
@@ -1294,64 +1300,5 @@ export class MemoService implements MemoServiceLike {
       )
       return { classified: true, captured: capturedMemos.length, deduped }
     })
-  }
-
-  /** Wire format for a persisted memo row (repository `Memo` → `@threa/types` `Memo`). */
-  private toWireMemo(memo: Memo): WireMemo {
-    return {
-      id: memo.id,
-      workspaceId: memo.workspaceId,
-      memoType: memo.memoType,
-      sourceMessageId: memo.sourceMessageId,
-      sourceConversationId: memo.sourceConversationId,
-      title: memo.title,
-      abstract: memo.abstract,
-      keyPoints: memo.keyPoints,
-      sourceMessageIds: memo.sourceMessageIds,
-      participantIds: memo.participantIds,
-      knowledgeType: memo.knowledgeType,
-      tags: memo.tags,
-      parentMemoId: memo.parentMemoId,
-      status: memo.status,
-      version: memo.version,
-      revisionReason: memo.revisionReason,
-      authoredByKind: memo.authoredByKind,
-      sourceSessionId: memo.sourceSessionId,
-      scope: memo.scope,
-      scopeUserId: memo.scopeUserId,
-      createdAt: memo.createdAt.toISOString(),
-      updatedAt: memo.updatedAt.toISOString(),
-      archivedAt: memo.archivedAt ? memo.archivedAt.toISOString() : null,
-    }
-  }
-
-  /** Wire format for a memo not yet inserted, so timestamps are synthesized as now. */
-  private toWireMemoFromData(memoData: MemoToCreate): WireMemo {
-    const now = new Date().toISOString()
-    return {
-      id: memoData.id,
-      workspaceId: memoData.workspaceId,
-      memoType: memoData.memoType,
-      sourceMessageId: memoData.sourceMessageId ?? null,
-      sourceConversationId: memoData.sourceConversationId ?? null,
-      title: memoData.title,
-      abstract: memoData.abstract,
-      keyPoints: memoData.keyPoints,
-      sourceMessageIds: memoData.sourceMessageIds,
-      participantIds: memoData.participantIds,
-      knowledgeType: memoData.knowledgeType,
-      tags: memoData.tags,
-      parentMemoId: memoData.parentMemoId ?? null,
-      status: memoData.status,
-      version: 1,
-      revisionReason: null,
-      authoredByKind: AuthoredByKinds.PIPELINE,
-      sourceSessionId: null,
-      scope: memoData.scope,
-      scopeUserId: memoData.scopeUserId,
-      createdAt: now,
-      updatedAt: now,
-      archivedAt: null,
-    }
   }
 }
