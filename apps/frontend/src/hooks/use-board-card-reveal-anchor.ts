@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef } from "react"
 import type { RefObject } from "react"
 import type { VirtualizerHandle } from "virtua"
 import { attachScrollGestureDirection } from "./scroll-gesture-direction"
+import { registerRevealWindow } from "./board-reveal-windows"
 
 /** No-resize quiet gap after which the reveal window closes on its own. Long
  *  enough to span the sync expand and its async server backfill; short enough that
@@ -257,6 +258,11 @@ export function useBoardCardRevealAnchor({ cardRef, scrollerRef, listRef, should
   }, [cardRef, measure, listRef, scrollerRef, close, onSettle])
 
   useEffect(() => () => close(), [close])
+
+  // Programmatic feed jumps (the "N new" pill, lens-switch resets, the own-post
+  // jump) fire no wheel/touch event, so the gesture close never sees them — the
+  // jump site closes every armed window through the registry before it scrolls.
+  useEffect(() => registerRevealWindow(close), [close])
 
   return useMemo(() => ({ beginReveal, closeReveal: close }), [beginReveal, close])
 }

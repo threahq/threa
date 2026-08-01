@@ -24,6 +24,7 @@ import { useWorkspaceConversations, useBoardExclusions } from "@/hooks/use-conve
 import { useBoardHiddenConversations, useBoardMutedStreamIds } from "@/stores/board-exclusions-store"
 import { useBoardRailsReady } from "@/hooks/use-board-card-messages"
 import { useBoardRevealLatch } from "@/hooks/use-board-reveal-latch"
+import { closeAllRevealWindows } from "@/hooks/board-reveal-windows"
 import {
   useConversationGraph,
   useConversationGraphReady,
@@ -491,12 +492,17 @@ function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: Boar
   // down the All wall who taps Decisions lands past the end of a one-card list.
   const resetKey = `${lens}|${scopeKey}|${typeKey}|${excludeScopeKey}|${excludeTypeKey}|${labelKey}|${excludeLabelKey}|${showArchived ? "arch" : ""}|${unreadOnly ? "unread" : ""}`
   useLayoutEffect(() => {
+    closeAllRevealWindows()
     if (scrollerRef.current) scrollerRef.current.scrollTop = 0
   }, [resetKey])
 
   const revealNew = () => {
-    // Jump to the top first so the freshly-committed cards flow in where the
-    // viewer can see them, then commit the buffered order.
+    // Disarm every card's reveal window first: the programmatic jump fires no
+    // gesture event, and an armed window would read the jump + reorder as
+    // growth to compensate — scrolling the viewport right back off the top.
+    closeAllRevealWindows()
+    // Jump to the top so the freshly-committed cards flow in where the viewer
+    // can see them, then commit the buffered order.
     if (scrollerRef.current) scrollerRef.current.scrollTop = 0
     commit()
   }
@@ -545,6 +551,7 @@ function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: Boar
     // the `resetKey` layout effect.
     const currentViewSurfacesOwnPost = SELF_POST_VISIBLE_LENSES.has(lens) && !hasFilterParams
     if (currentViewSurfacesOwnPost) {
+      closeAllRevealWindows()
       if (scrollerRef.current) scrollerRef.current.scrollTop = 0
     } else {
       navigate(boardEverything)

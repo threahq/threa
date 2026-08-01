@@ -2,6 +2,7 @@ import { describe, expect, it, vi, beforeEach, afterEach } from "vitest"
 import { renderHook } from "@testing-library/react"
 import type { VirtualizerHandle } from "virtua"
 import { useBoardCardRevealAnchor } from "./use-board-card-reveal-anchor"
+import { closeAllRevealWindows } from "./board-reveal-windows"
 
 // The hook reacts to card resizes via a ResizeObserver and defers its correction a
 // frame; drive both deterministically. jsdom has no layout, so element rects are
@@ -87,6 +88,19 @@ describe("useBoardCardRevealAnchor", () => {
   it("leaves scroll alone when no reveal is armed, so a live append still pushes normally", () => {
     const { card, scrollBy } = setup()
     setRect(card, 100, 632)
+    roCallback?.()
+    expect(scrollBy).not.toHaveBeenCalled()
+  })
+
+  it("disarms through the registry before a programmatic jump, so the pill's scroll-to-top isn't compensated away", () => {
+    // The "N new" pill (and lens-switch resets) move the scroller without any
+    // wheel/touch event. An armed window would fold that jump + the commit's
+    // reorder into its growth math and scroll the viewport back off the top.
+    const { card, scroller, scrollBy, beginReveal } = setup()
+    beginReveal()
+    closeAllRevealWindows()
+    scroller.scrollTop = 0 // the jump
+    setRect(card, 900, 1432) // commit reordered the feed; the card moved and grew
     roCallback?.()
     expect(scrollBy).not.toHaveBeenCalled()
   })
