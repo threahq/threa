@@ -35,15 +35,53 @@ export async function resolveMemoEmbedSummaries(
 }
 
 /**
+ * Resolve summaries for memo ids grouped by the STREAM citing them, for
+ * callers that span streams (the board/label batch below, the sync-log
+ * sanitizer). Roots are looked up once for the distinct streams, and memos
+ * once per distinct root (INV-56). Per-root grouping is not an optimisation:
+ * the predicate is "readable by everyone who can see the citing stream", so a
+ * memo id that qualifies under one root may not under another and must be
+ * asked separately. A stream whose row is missing resolves against its own id
+ * — fail closed, only the public leg of the predicate can match.
+ *
+ * Returns one map per input stream id (possibly empty), keyed memoId → summary.
+ */
+export async function resolveMemoSummariesByStream(
+  db: Querier,
+  workspaceId: string,
+  memoIdsByStreamId: Map<string, Iterable<string>>
+): Promise<Map<string, Map<string, MemoEmbedSummary>>> {
+  const result = new Map<string, Map<string, MemoEmbedSummary>>()
+  if (memoIdsByStreamId.size === 0) return result
+
+  const streamIds = [...memoIdsByStreamId.keys()]
+  const streams = await StreamRepository.findByIds(db, streamIds)
+  const rootByStreamId = new Map(streams.map((s) => [s.id, s.rootStreamId ?? s.id]))
+
+  const idsByRoot = new Map<string, Set<string>>()
+  for (const [streamId, ids] of memoIdsByStreamId) {
+    const root = rootByStreamId.get(streamId) ?? streamId
+    const bucket = idsByRoot.get(root) ?? new Set<string>()
+    for (const id of ids) bucket.add(id)
+    idsByRoot.set(root, bucket)
+  }
+
+  const summariesByRoot = new Map<string, Map<string, MemoEmbedSummary>>()
+  for (const [root, ids] of idsByRoot) {
+    summariesByRoot.set(root, await MemoRepository.findEmbedSummaries(db, workspaceId, [...ids], root))
+  }
+
+  for (const streamId of streamIds) {
+    const root = rootByStreamId.get(streamId) ?? streamId
+    result.set(streamId, summariesByRoot.get(root) ?? new Map())
+  }
+  return result
+}
+
+/**
  * The same resolution for a batch of messages that may span streams — the board
  * feed and the label view, which hydrate many messages at once and whose rows
  * are not all from one root.
- *
- * Roots are looked up once for the distinct streams, and memos once per distinct
- * root (INV-56) — normally a single query each, since a board card's messages
- * share a root. Per-root grouping is not an optimisation: the predicate is
- * "readable by everyone who can see the citing stream", so a memo id that
- * qualifies under one root may not under another and must be asked separately.
  */
 export async function resolveMemoEmbedSummariesForMessages(
   db: Querier,
@@ -58,30 +96,20 @@ export async function resolveMemoEmbedSummariesForMessages(
   const result = new Map<string, MemoEmbedSummary[]>()
   if (byMessage.size === 0) return result
 
-  const citingStreamIds = [...new Set(messages.filter((m) => byMessage.has(m.id)).map((m) => m.streamId))]
-  const streams = await StreamRepository.findByIds(db, citingStreamIds)
-  const rootByStreamId = new Map(streams.map((s) => [s.id, s.rootStreamId ?? s.id]))
-
-  const idsByRoot = new Map<string, Set<string>>()
+  const memoIdsByStreamId = new Map<string, Set<string>>()
   for (const message of messages) {
     const ids = byMessage.get(message.id)
     if (!ids) continue
-    const root = rootByStreamId.get(message.streamId) ?? message.streamId
-    const bucket = idsByRoot.get(root) ?? new Set<string>()
+    const bucket = memoIdsByStreamId.get(message.streamId) ?? new Set<string>()
     for (const id of ids) bucket.add(id)
-    idsByRoot.set(root, bucket)
+    memoIdsByStreamId.set(message.streamId, bucket)
   }
-
-  const summariesByRoot = new Map<string, Map<string, MemoEmbedSummary>>()
-  for (const [root, ids] of idsByRoot) {
-    summariesByRoot.set(root, await MemoRepository.findEmbedSummaries(db, workspaceId, [...ids], root))
-  }
+  const summariesByStream = await resolveMemoSummariesByStream(db, workspaceId, memoIdsByStreamId)
 
   for (const message of messages) {
     const ids = byMessage.get(message.id)
     if (!ids) continue
-    const root = rootByStreamId.get(message.streamId) ?? message.streamId
-    const summaries = summariesByRoot.get(root)
+    const summaries = summariesByStream.get(message.streamId)
     if (!summaries) continue
     const resolved = ids.map((id) => summaries.get(id)).filter((s): s is MemoEmbedSummary => s !== undefined)
     if (resolved.length > 0) result.set(message.id, resolved)

@@ -1,6 +1,7 @@
 import type { Pool } from "pg"
 import { withClient } from "../../db"
 import { SyncLogRepository, type SyncLogEntry } from "./repository"
+import { sanitizeSyncEntries } from "./sanitize"
 
 export interface CatchUpResult {
   entries: SyncLogEntry[]
@@ -50,7 +51,18 @@ export class SyncService {
       if (params.after < retainedFrom) {
         return { entries: [], head, requiresBootstrap: true }
       }
-      return { entries, head }
+      // Stored payloads snapshot access-gated content (hydrated share slots,
+      // memo summaries) at write time; replaying them verbatim within the
+      // retention window would freshly deliver content the viewer or room may
+      // no longer see. Re-resolved here, at serve time.
+      return {
+        entries: await sanitizeSyncEntries(client, {
+          workspaceId: params.workspaceId,
+          userId: params.userId,
+          entries,
+        }),
+        head,
+      }
     })
   }
 }

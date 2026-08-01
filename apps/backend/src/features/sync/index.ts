@@ -1,5 +1,6 @@
 export { SyncLogRepository, type SyncLogEntryInput, type SyncLogEntry } from "./repository"
 export { SyncService, type CatchUpResult } from "./service"
+export { sanitizeSyncEntries } from "./sanitize"
 export { createSyncHandlers } from "./handlers"
 export { SyncLogReconciliationWorker, type SyncLogReconciliationWorkerConfig } from "./reconciliation-worker"
 export { SyncHeartbeatWorker, type SyncHeartbeatWorkerConfig } from "./heartbeat-worker"
