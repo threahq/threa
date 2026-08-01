@@ -90,10 +90,52 @@ describe("WorkspaceHome", () => {
     } as unknown as ReturnType<typeof sidebarContextModule.useSidebar>)
 
     mockUseLastLocation.mockReturnValue({
+      exactPath: null,
       redirectStreamId: "stream_123",
       boardHref: null,
       shouldOpenSidebar: false,
     })
+  })
+
+  it("restores a fresh exact path verbatim", async () => {
+    mockUseLastLocation.mockReturnValue({
+      exactPath: "/w/ws_123/board?lens=mine&panel=conv:c_1",
+      redirectStreamId: null,
+      boardHref: null,
+      shouldOpenSidebar: false,
+    })
+    render(
+      <MemoryRouter initialEntries={["/w/ws_123"]}>
+        <Routes>
+          <Route path="/w/:workspaceId" element={<WorkspaceHome />} />
+          <Route path="/w/:workspaceId/board" element={<PathAndSearchEcho />} />
+        </Routes>
+      </MemoryRouter>
+    )
+
+    expect(await screen.findByTestId("path")).toHaveTextContent("/w/ws_123/board?lens=mine&panel=conv:c_1")
+  })
+
+  it("lets index search params win over the exact path", async () => {
+    // `?ws-settings=` and friends must reach the stream redirect, not be
+    // swallowed by a verbatim restore.
+    mockUseLastLocation.mockReturnValue({
+      exactPath: "/w/ws_123/board?lens=mine",
+      redirectStreamId: "stream_123",
+      boardHref: null,
+      shouldOpenSidebar: false,
+    })
+    render(
+      <MemoryRouter initialEntries={["/w/ws_123?ws-settings=bots"]}>
+        <Routes>
+          <Route path="/w/:workspaceId" element={<WorkspaceHome />} />
+          <Route path="/w/:workspaceId/s/:streamId" element={<SearchEcho />} />
+          <Route path="/w/:workspaceId/board" element={<PathAndSearchEcho />} />
+        </Routes>
+      </MemoryRouter>
+    )
+
+    expect(await screen.findByTestId("search")).toHaveTextContent("?ws-settings=bots")
   })
 
   it("preserves workspace search params when redirecting to the last stream", async () => {

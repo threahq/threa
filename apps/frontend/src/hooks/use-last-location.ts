@@ -4,14 +4,16 @@ import { useAuth } from "@/auth"
 import { useWorkspaceStreams } from "@/stores/workspace-store"
 import {
   buildBoardHref,
+  freshExactPath,
   getLastLocation,
   setLastLocation,
-  clearLastLocation,
   sanitizeBoardSearch,
 } from "@/lib/last-location"
 import type { CachedStream } from "@/db"
 
 interface UseLastLocationResult {
+  /** Exact URL to restore verbatim after a fresh crash/kill relaunch. */
+  exactPath: string | null
   /** Stream ID to redirect to, or null when the board arm or a fallback applies. */
   redirectStreamId: string | null
   /** Explicit board URL to redirect to when the last surface was the board. */
@@ -24,18 +26,24 @@ interface UseLastLocationResult {
  * Resolves where the workspace index route should land, restoring the last
  * surface (stream or board) the viewer was on.
  *
- * Board arm: a stored board record resolves straight to the board URL, with the
- * query sanitized and stale scope ids swept inside {@link buildBoardHref}.
+ * Exact arm: a fresh exact record (the PWA was killed while backgrounded and
+ * relaunched at `start_url` shortly after) restores the URL verbatim —
+ * including `?panel=`/`?m=` and non-stream pages the sanitized arms don't cover.
  *
- * Stream arm (unchanged): stored stream validated against bootstrap, most-
- * recently-active fallback, and `shouldOpenSidebar` only once bootstrap has
- * confirmed zero streams. Evicts a stale record via `useEffect`.
+ * Board arm: a stored board record resolves to the board URL, with the query
+ * sanitized and stale scope ids swept inside {@link buildBoardHref}.
+ *
+ * Stream arm: stored stream validated against bootstrap, most-recently-active
+ * fallback, and `shouldOpenSidebar` only once bootstrap has confirmed zero
+ * streams. A stored id absent from the cache is NOT evicted: the cache can't
+ * distinguish a deleted stream from a lazily-hydrated thread/conversation, and
+ * the record self-heals on the next persisted navigation anyway.
  */
 export function useLastLocation(workspaceId: string): UseLastLocationResult {
   const { user } = useAuth()
   const allStreams = useWorkspaceStreams(workspaceId)
 
-  const result = useMemo(() => {
+  return useMemo(() => {
     // The stream cache durably holds archived rows (archived-stream index).
     // They must not count as landing targets: archiving bumps updated_at, so an
     // unfiltered most-recent fallback would redirect a fresh device INTO the
@@ -44,8 +52,14 @@ export function useLastLocation(workspaceId: string): UseLastLocationResult {
     const streams = allStreams.filter((s) => !s.archivedAt)
     const record = user ? getLastLocation(user.id, workspaceId) : null
 
+    const exactPath = freshExactPath(record, workspaceId, Date.now())
+    if (exactPath) {
+      return { exactPath, redirectStreamId: null, boardHref: null, shouldOpenSidebar: false }
+    }
+
     if (record?.surface === "board" && record.board) {
       return {
+        exactPath: null,
         redirectStreamId: null,
         boardHref: buildBoardHref(
           workspaceId,
@@ -53,7 +67,6 @@ export function useLastLocation(workspaceId: string): UseLastLocationResult {
           streams.map((s) => s.id)
         ),
         shouldOpenSidebar: false,
-        staleStoredId: false,
       }
     }
 
@@ -61,85 +74,109 @@ export function useLastLocation(workspaceId: string): UseLastLocationResult {
     if (storedId) {
       // Deliberately checked against ALL rows: a stored pointer to a stream
       // archived since the last visit is still viewable, so honor it rather
-      // than evicting the record. Only the fallbacks below exclude archived.
+      // than falling back. Only the fallbacks below exclude archived.
       const stillExists = allStreams.some((s) => s.id === storedId)
       if (stillExists) {
         return {
+          exactPath: null,
           redirectStreamId: storedId,
           boardHref: null,
           shouldOpenSidebar: false,
-          staleStoredId: false,
         }
       }
       return {
+        exactPath: null,
         redirectStreamId: streams.length > 0 ? getMostRecentStreamId(streams) : null,
         boardHref: null,
         shouldOpenSidebar: streams.length === 0,
-        staleStoredId: true,
       }
     }
 
     if (streams.length > 0) {
       return {
+        exactPath: null,
         redirectStreamId: getMostRecentStreamId(streams),
         boardHref: null,
         shouldOpenSidebar: false,
-        staleStoredId: false,
       }
     }
 
     return {
+      exactPath: null,
       redirectStreamId: null,
       boardHref: null,
       shouldOpenSidebar: true,
-      staleStoredId: false,
     }
   }, [user, workspaceId, allStreams])
-
-  useEffect(() => {
-    if (result.staleStoredId && user) {
-      clearLastLocation(user.id, workspaceId)
-    }
-  }, [result.staleStoredId, user, workspaceId])
-
-  return result
 }
 
 /**
  * Persists the current surface — a stream page or the board — for
- * restore-on-return. On the board it retains the last visited stream (so the
- * "← Chats" affordance has a target); on a stream it retains the last board
- * state. The board search is sanitized to the filter axes before storage.
+ * restore-on-return, plus the exact URL of every workspace page for verbatim
+ * restore after a crash-relaunch. On the board it retains the last visited
+ * stream (so the "← Chats" affordance has a target); on a stream it retains
+ * the last board state. The board search is sanitized to the filter axes
+ * before storage.
  */
 export function usePersistLastLocation(workspaceId: string | undefined) {
   const { user } = useAuth()
   const streamMatch = useMatch("/w/:workspaceId/s/:streamId")
   const boardMatch = useMatch("/w/:workspaceId/board")
-  const search = useLocation().search
+  const { pathname, search } = useLocation()
 
   const streamId = streamMatch?.params.streamId
   const onBoard = boardMatch !== null
 
   useEffect(() => {
     if (!user || !workspaceId) return
+    // The bare index is a transient redirect hop, never a place to restore to.
+    if (pathname === `/w/${workspaceId}`) return
+    const exact = { path: `${pathname}${search}`, at: Date.now() }
+    const existing = getLastLocation(user.id, workspaceId)
     if (onBoard) {
-      const existing = getLastLocation(user.id, workspaceId)
       setLastLocation(user.id, workspaceId, {
         surface: "board",
         streamId: existing?.streamId ?? null,
         board: { search: sanitizeBoardSearch(search) },
+        exact,
       })
       return
     }
     if (streamId) {
-      const existing = getLastLocation(user.id, workspaceId)
       setLastLocation(user.id, workspaceId, {
         surface: "stream",
         streamId,
         board: existing?.board ?? null,
+        exact,
       })
+      return
     }
-  }, [user, workspaceId, streamId, search, onBoard])
+    // Other workspace pages (activity, saved, memory, …): keep the stream/board
+    // arms as they were, record only the exact URL.
+    setLastLocation(user.id, workspaceId, {
+      surface: existing?.surface ?? "stream",
+      streamId: existing?.streamId ?? null,
+      board: existing?.board ?? null,
+      exact,
+    })
+  }, [user, workspaceId, streamId, search, onBoard, pathname])
+
+  // Backgrounding is the last moment we run before an OS kill — bump `at` so
+  // the exact record's freshness measures time-since-last-seen. Without this a
+  // long reading session ages the record out and a kill minutes later restores
+  // the sanitized arms instead of the page the viewer was on.
+  useEffect(() => {
+    if (!user || !workspaceId) return
+    const onVisibilityChange = () => {
+      if (document.visibilityState !== "hidden") return
+      const existing = getLastLocation(user.id, workspaceId)
+      if (existing?.exact) {
+        setLastLocation(user.id, workspaceId, { ...existing, exact: { ...existing.exact, at: Date.now() } })
+      }
+    }
+    document.addEventListener("visibilitychange", onVisibilityChange)
+    return () => document.removeEventListener("visibilitychange", onVisibilityChange)
+  }, [user, workspaceId])
 }
 
 function getMostRecentStreamId(streams: CachedStream[]): string {

@@ -190,7 +190,7 @@ export function WorkspaceHome() {
   const { workspaceId } = useParams<{ workspaceId: string }>()
   const location = useLocation()
   const { state, togglePinned } = useSidebar()
-  const { redirectStreamId, boardHref, shouldOpenSidebar } = useLastLocation(workspaceId ?? "")
+  const { exactPath, redirectStreamId, boardHref, shouldOpenSidebar } = useLastLocation(workspaceId ?? "")
   const sidebarOpenedRef = useRef(false)
 
   useEffect(() => {
@@ -199,6 +199,13 @@ export function WorkspaceHome() {
       togglePinned()
     }
   }, [shouldOpenSidebar, state, togglePinned])
+
+  // Verbatim restore after a crash/kill relaunch. Only when the index carries
+  // no search of its own — params like `?ws-settings=` must reach the stream
+  // redirect below, not be silently swallowed by the exact record.
+  if (exactPath && workspaceId && !location.search) {
+    return <Navigate to={exactPath} replace />
+  }
 
   if (boardHref && workspaceId) {
     return <Navigate to={boardHref} replace />

@@ -1263,7 +1263,9 @@ describe("BoardCard gap scroll reveal", () => {
     await scrollUp(await screen.findByText("8 older messages"))
     await waitFor(() => expect(getBoardMessages).toHaveBeenCalled())
     const rowsLoading = revealRowStructure(container)
-    const failedSeam = await screen.findByText("Couldn't load older messages. Retry.")
+    // The failed label lands only after the query's single retry (#1714), which
+    // waits out TanStack's ~1s backoff — past findByText's default timeout.
+    const failedSeam = await screen.findByText("Couldn't load older messages. Retry.", undefined, { timeout: 5000 })
 
     // The failure swaps the seam's label; it never adds a row, so the replies below
     // stay exactly where the reader left them (INV-21).
