@@ -574,6 +574,9 @@ export function StreamContent({
   // completion doesn't clear a newer one's spinner.
   const [isSearchNavigating, setIsSearchNavigating] = useState(false)
   const searchNavVersionRef = useRef(0)
+  // Target of the most recent out-of-window search navigation — lets close
+  // distinguish the search's own pendingScrollTarget from a deep-link's.
+  const searchNavTargetRef = useRef<string | null>(null)
   const [batchMode, setBatchMode] = useState(false)
   // What the current batch selection is for. `moveToThread` (default) drags the
   // selection onto a target message; `splitConversation` reassigns the selection's
@@ -778,6 +781,7 @@ export function StreamContent({
     jumpToEvent,
     jumpToEventByDate,
     exitJumpMode,
+    cancelPendingJump,
     isJumpMode,
   } = useEvents(workspaceId, streamId, { enabled: !isDraft, loadAll: isThread })
 
@@ -863,6 +867,20 @@ export function StreamContent({
     }
   }, [isDraft, isThread, openOrFocusSearch])
 
+  const handleSearchClose = useCallback(() => {
+    setIsSearchOpen(false)
+    // Closing abandons any in-flight search navigation. Without this the jump
+    // resolves up to seconds later and swaps/scrolls the window under a user
+    // who has moved on.
+    cancelPendingJump()
+    searchNavVersionRef.current++
+    setIsSearchNavigating(false)
+    if (pendingScrollTarget.current && pendingScrollTarget.current === searchNavTargetRef.current) {
+      pendingScrollTarget.current = null
+    }
+    clearSearch()
+  }, [clearSearch, cancelPendingJump])
+
   // Escape closes search when focus is outside the search input.
   useEffect(() => {
     if (!isSearchOpen) return
@@ -872,19 +890,13 @@ export function StreamContent({
       const isInput = target?.tagName === "INPUT" || target?.tagName === "TEXTAREA" || target?.isContentEditable
 
       if (event.key === "Escape" && !isInput) {
-        setIsSearchOpen(false)
-        clearSearch()
+        handleSearchClose()
       }
     }
 
     document.addEventListener("keydown", handleKeyDown)
     return () => document.removeEventListener("keydown", handleKeyDown)
-  }, [isSearchOpen, clearSearch])
-
-  const handleSearchClose = useCallback(() => {
-    setIsSearchOpen(false)
-    clearSearch()
-  }, [clearSearch])
+  }, [isSearchOpen, handleSearchClose])
 
   // Compute timeline items in StreamContent so the virtualizer can use count + keys.
   // After grouping commands/sessions, annotate consecutive same-author message runs
@@ -1003,10 +1015,9 @@ export function StreamContent({
       setDragGhost(null)
       // Selection and search share the same flush-top strip; keep one open at a
       // time so they can't stack. Search bar's own listeners handle the reverse.
-      setIsSearchOpen(false)
-      clearSearch()
+      handleSearchClose()
     },
-    [clearSearch]
+    [handleSearchClose]
   )
 
   const toggleBatchMessage = useCallback((messageId: string) => {
@@ -1752,23 +1763,32 @@ export function StreamContent({
       // Message not in current window — load events around it, then scroll after load
       disableAutoScroll()
       pendingScrollTarget.current = messageId
+      searchNavTargetRef.current = messageId
       const version = ++searchNavVersionRef.current
       setIsSearchNavigating(true)
       // On success the spinner stays up until the post-jump driver engages the
       // scroll (or gives up) — the fetch is the smaller half of the wait; the
       // window swap + scroll placement is the rest of it.
       jumpToEvent(messageId)
-        .then((success) => {
+        .then((result) => {
           if (searchNavVersionRef.current !== version) return
-          if (!success) {
+          if (result === "superseded") {
+            // A date jump or deep link took over mid-flight; it owns the
+            // window and the spinner semantics now.
+            setIsSearchNavigating(false)
+            return
+          }
+          if (!result) {
             setIsSearchNavigating(false)
             if (pendingScrollTarget.current === messageId) pendingScrollTarget.current = null
+            toast.error("Couldn't load that search result")
           }
         })
         .catch(() => {
           if (searchNavVersionRef.current !== version) return
           setIsSearchNavigating(false)
           if (pendingScrollTarget.current === messageId) pendingScrollTarget.current = null
+          toast.error("Couldn't load that search result")
         })
     },
     [events, jumpToEvent, disableAutoScroll, scrollToMessage]
@@ -1791,6 +1811,9 @@ export function StreamContent({
       }
       resetShiftBaseline()
       const anchorId = await jumpToEventByDate(new Date(targetDayMs).toISOString())
+      // A newer jump (another date pick, a search navigation) superseded this
+      // one mid-flight — it owns the window and pendingScrollTarget now.
+      if (anchorId === "superseded") return
       if (anchorId) {
         pendingScrollTarget.current = anchorId
         setPendingScrollRequestVersion((version) => version + 1)
@@ -1968,11 +1991,15 @@ export function StreamContent({
     setDeepLinkGaveUp(false)
     setDeepLinkHoldExpired(false)
     exitJumpMode()
+    // An in-flight jump for the previous stream must not apply its window to
+    // this one — jumpState carries no streamId, so a late resolution would
+    // render the old stream's events here.
+    cancelPendingJump()
     setIsSearchOpen(false)
     searchNavVersionRef.current++
     setIsSearchNavigating(false)
     clearSearch()
-  }, [streamId, exitJumpMode, clearSearch])
+  }, [streamId, exitJumpMode, cancelPendingJump, clearSearch])
 
   // Auto-mark stream as read when viewing. The stream opens at the live bottom;
   // read state advances only through the contiguous run the viewer scrolls

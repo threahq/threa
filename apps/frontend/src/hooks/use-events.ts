@@ -627,22 +627,38 @@ export function useEvents(workspaceId: string, streamId: string, options?: { ena
     queryClient.removeQueries({ queryKey: eventKeys.newer(workspaceId, streamId) })
   }, [queryClient, workspaceId, streamId])
 
+  // Generation counter for jump requests. A jump that resolves after a newer
+  // jump has started (or after cancelPendingJump) must not mutate window
+  // state: a stale exitJumpMode() would snap an already-landed newer window
+  // back to the live tail, and a stale setJumpState would resurrect an
+  // abandoned window. The fetches have no cancellation, so out-of-order
+  // resolution is routine under rapid result cycling.
+  const jumpGenerationRef = useRef(0)
+
+  /** Invalidate any in-flight jump so its resolution can't mutate window state. */
+  const cancelPendingJump = useCallback(() => {
+    jumpGenerationRef.current++
+  }, [])
+
   /**
    * Jump to a specific event (e.g. from search or push notification deep link).
    * Loads events around it and switches to bidirectional pagination mode.
    */
   const jumpToEvent = useCallback(
-    async (targetMessageId: string): Promise<boolean> => {
+    async (targetMessageId: string): Promise<boolean | "superseded"> => {
+      const generation = ++jumpGenerationRef.current
       const result: EventsAroundResponse = await streamService.getEventsAround(
         workspaceId,
         streamId,
         targetMessageId,
         EVENT_PAGE_SIZE
       )
+      if (generation !== jumpGenerationRef.current) return "superseded"
       if (result.events.length === 0) return false
 
       // Write to IDB so they persist across sessions
       await cacheToIndexedDB(workspaceId, streamId, result.events, result)
+      if (generation !== jumpGenerationRef.current) return "superseded"
 
       // If there are no newer events, the target is already at the bottom —
       // skip jump mode and let the live tail render from IDB. A previous jump
@@ -679,11 +695,14 @@ export function useEvents(workspaceId: string, streamId: string, options?: { ena
    * (the date is past the last message — caller stays on the live tail).
    */
   const jumpToEventByDate = useCallback(
-    async (isoDate: string): Promise<string | null> => {
+    async (isoDate: string): Promise<string | null | "superseded"> => {
+      const generation = ++jumpGenerationRef.current
       const result = await streamService.getEventsAroundDate(workspaceId, streamId, isoDate, EVENT_PAGE_SIZE)
+      if (generation !== jumpGenerationRef.current) return "superseded"
       if (result.events.length === 0) return null
 
       await cacheToIndexedDB(workspaceId, streamId, result.events, result)
+      if (generation !== jumpGenerationRef.current) return "superseded"
 
       // No newer events means the anchor sits at the live tail — skip jump mode
       // and let IDB render the tail; the caller still scrolls to the anchor.
@@ -744,6 +763,7 @@ export function useEvents(workspaceId: string, streamId: string, options?: { ena
     jumpToEvent,
     jumpToEventByDate,
     exitJumpMode,
+    cancelPendingJump,
     isJumpMode: !!jumpState,
     addEvent,
     updateEvent,
