@@ -102,8 +102,12 @@ export async function runSwRecovery(options?: { force?: boolean; bustUrls?: stri
   }
   // Overwrite any immutable-cached bad responses in the browser HTTP cache.
   // Always bust the app shell; bust the specific failing chunk when we have it.
+  // Bounded: a hung bust fetch on a dead connection must not stall the reload
+  // that recovery exists to deliver.
   const bustUrls = new Set(["/index.html", ...(options?.bustUrls ?? [])])
-  await Promise.all([...bustUrls].map((url) => fetch(url, { cache: "reload" }).catch(() => {})))
+  await Promise.all(
+    [...bustUrls].map((url) => fetch(url, { cache: "reload", signal: AbortSignal.timeout(10_000) }).catch(() => {}))
+  )
   window.location.reload()
   return true
 }
