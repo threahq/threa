@@ -1037,17 +1037,6 @@ export const StreamRepository = {
     return result.rows.length > 0
   },
 
-  async isPublic(db: Querier, workspaceId: string, streamId: string): Promise<boolean> {
-    const result = await db.query(sql`
-      SELECT EXISTS(
-        SELECT 1 FROM streams
-        WHERE id = ${streamId} AND workspace_id = ${workspaceId} AND archived_at IS NULL
-          AND visibility = 'public'
-      ) AS accessible
-    `)
-    return result.rows[0].accessible
-  },
-
   /**
    * Insert a system stream for a member.
    * System streams are created atomically with the member in the same transaction,
