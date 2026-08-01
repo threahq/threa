@@ -115,14 +115,14 @@ describe("runSwRecovery", () => {
 
   it("force-refetches the app shell past the browser HTTP cache", async () => {
     await runSwRecovery({ force: true })
-    expect(fetch).toHaveBeenCalledWith("/index.html", { cache: "reload" })
+    expect(fetch).toHaveBeenCalledWith("/index.html", { cache: "reload", signal: expect.any(AbortSignal) })
   })
 
   it("force-refetches the failing chunk URL so an immutable-cached bad response is overwritten", async () => {
     const bad = "https://app.threa.io/assets/workspace-layout-D6MDsthX.js"
     await runSwRecovery({ force: true, bustUrls: [bad] })
-    expect(fetch).toHaveBeenCalledWith(bad, { cache: "reload" })
-    expect(fetch).toHaveBeenCalledWith("/index.html", { cache: "reload" })
+    expect(fetch).toHaveBeenCalledWith(bad, { cache: "reload", signal: expect.any(AbortSignal) })
+    expect(fetch).toHaveBeenCalledWith("/index.html", { cache: "reload", signal: expect.any(AbortSignal) })
   })
 
   it("clears CacheStorage before refetching a poisoned chunk", async () => {

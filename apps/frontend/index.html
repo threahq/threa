@@ -135,7 +135,7 @@
       ;(function () {
         var attempts = parseInt(sessionStorage.getItem("sw-recovery-attempts") || "0", 10)
         if (attempts >= 2) return
-        setTimeout(function () {
+        var check = function () {
           var hasStyles = false
           var sheets = document.styleSheets
           for (var i = 0; i < sheets.length; i++) {
@@ -160,6 +160,35 @@
               sessionStorage.removeItem("sw-recovery-attempts")
               sessionStorage.removeItem("sw-recovery-last")
             }
+            return
+          }
+          // No styles yet — but "missing" has two very different causes. A
+          // stylesheet request that COMPLETED and still produced no rules is the
+          // poisoned-cache state this watchdog exists for (an immutable-cached
+          // HTML-as-CSS response). One still IN FLIGHT is just a slow network —
+          // wiping then destroys the only cached copy exactly when the network
+          // can't replace it, and each reload starts colder than the last (the
+          // reload-to-white loop). Wait and re-check instead; if the CSS never
+          // completes the network is down and a wipe wouldn't help either.
+          var cssFinished = false
+          try {
+            var entries = performance.getEntriesByType("resource")
+            for (var j = 0; j < entries.length; j++) {
+              if (
+                entries[j].initiatorType === "link" &&
+                /\.css(\?|$)/.test(entries[j].name) &&
+                entries[j].responseEnd > 0
+              ) {
+                cssFinished = true
+                break
+              }
+            }
+          } catch (e) {
+            // No Performance API — assume completed so the recovery still runs.
+            cssFinished = true
+          }
+          if (!cssFinished) {
+            setTimeout(check, 3000)
             return
           }
           sessionStorage.setItem("sw-recovery-attempts", String(attempts + 1))
@@ -191,8 +220,15 @@
           // which the unregister + caches.delete above can't evict and
           // location.reload() won't revalidate. Re-fetch the shell and its
           // asset URLs with `cache: "reload"` to bypass and overwrite them.
+          // Bounded fetches: a hung bust request on a dead connection must not
+          // stall the reload this recovery exists to deliver.
+          var bustFetch = function (url) {
+            var opts = { cache: "reload" }
+            if (typeof AbortSignal !== "undefined" && AbortSignal.timeout) opts.signal = AbortSignal.timeout(10000)
+            return fetch(url, opts)
+          }
           tasks.push(
-            fetch("/index.html", { cache: "reload" })
+            bustFetch("/index.html")
               .then(function (res) {
                 return res.text()
               })
@@ -202,7 +238,7 @@
                 })
                 return Promise.all(
                   urls.map(function (u) {
-                    return fetch(u, { cache: "reload" }).catch(function () {})
+                    return bustFetch(u).catch(function () {})
                   })
                 )
               })
@@ -211,7 +247,8 @@
           Promise.all(tasks).then(function () {
             location.reload()
           })
-        }, 3000)
+        }
+        setTimeout(check, 3000)
       })()
     </script>
   </body>
