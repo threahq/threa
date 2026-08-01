@@ -9,7 +9,7 @@
 
 import { describe, test, expect, beforeAll, afterAll, afterEach } from "bun:test"
 import { Pool } from "pg"
-import { withTransaction, addTestMember, setupTestDatabase, testMessageContent } from "./setup"
+import { withTransaction, addTestMember, setupIsolatedTestDatabase, testMessageContent } from "./setup"
 import { WorkspaceRepository } from "../../src/features/workspaces"
 import { StreamRepository } from "../../src/features/streams"
 import { MessageRepository } from "../../src/features/messaging"
@@ -18,13 +18,16 @@ import { userId, workspaceId, streamId, messageId, conversationId } from "../../
 
 describe("ConversationService.reassignMessage", () => {
   let pool: Pool
+  let cleanupDatabase: () => Promise<void>
   let service: ConversationService
   let testUserId: string
   let testWorkspaceId: string
   let testStreamId: string
 
   beforeAll(async () => {
-    pool = await setupTestDatabase()
+    const isolated = await setupIsolatedTestDatabase("conversation_reassign")
+    pool = isolated.pool
+    cleanupDatabase = isolated.cleanup
 
     testUserId = userId()
     testWorkspaceId = workspaceId()
@@ -49,11 +52,11 @@ describe("ConversationService.reassignMessage", () => {
     })
 
     service = new ConversationService(pool)
-  })
+  }, 120_000)
 
   afterAll(async () => {
-    await pool.end()
-  })
+    await cleanupDatabase()
+  }, 120_000)
 
   afterEach(async () => {
     await withTransaction(pool, async (client) => {

@@ -6,18 +6,18 @@ import { SyncLogRepository, SyncLogReconciliationWorker } from "../../src/featur
 
 describe("SyncLogReconciliationWorker", () => {
   let pool: Pool
-  let cleanupDatabase: () => Promise<void>
+  let cleanupDatabase: (() => Promise<void>) | undefined
 
   beforeAll(async () => {
     const isolated = await setupIsolatedTestDatabase("sync_reconciliation")
     pool = isolated.pool
     cleanupDatabase = isolated.cleanup
     await SyncLogRepository.ensureSweepState(pool)
-  })
+  }, 120_000)
 
   afterAll(async () => {
-    await cleanupDatabase()
-  })
+    await cleanupDatabase?.()
+  }, 120_000)
 
   function uniqueId(prefix: string): string {
     return `${prefix}_${crypto.randomUUID().replaceAll("-", "").slice(0, 20)}`

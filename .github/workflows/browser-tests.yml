@@ -58,23 +58,32 @@ jobs:
       matrix:
         shard_index: [1, 2, 3, 4]
 
-    services:
-      postgres:
-        image: pgvector/pgvector:pg17
-        env:
-          POSTGRES_USER: threa
-          POSTGRES_PASSWORD: threa
-          POSTGRES_DB: threa
-        ports:
-          - 5454:5432
-        options: >-
-          --health-cmd "pg_isready -U threa -d threa"
-          --health-interval 2s
-          --health-timeout 5s
-          --health-retries 10
-
     steps:
       - uses: actions/checkout@v4
+
+      - name: Start PostgreSQL
+        run: |
+          for attempt in 1 2 3 4 5; do
+            if docker pull pgvector/pgvector:pg17; then
+              break
+            fi
+            echo "docker pull pgvector failed (attempt $attempt/5) — retrying in $((attempt * 5))s"
+            sleep $((attempt * 5))
+          done
+          docker run -d --name postgres -p 5454:5432 \
+            -e POSTGRES_USER=threa \
+            -e POSTGRES_PASSWORD=threa \
+            -e POSTGRES_DB=threa \
+            pgvector/pgvector:pg17
+          for i in {1..30}; do
+            if docker exec postgres pg_isready -U threa -d threa; then
+              exit 0
+            fi
+            echo "Waiting for PostgreSQL... ($i/30)"
+            sleep 2
+          done
+          docker logs postgres
+          exit 1
 
       - name: Start MinIO
         run: |
@@ -205,11 +214,14 @@ jobs:
         if: steps.initial-run.outcome == 'failure'
         continue-on-error: true
         run: |
-          if [ ! -f test-results/.last-run.json ]; then
-            echo "::warning::No .last-run.json found — skipping retry (likely an infra failure)"
-            exit 1
+          if [ -f test-results/.last-run.json ] && \
+            bun -e 'const r = await Bun.file("test-results/.last-run.json").json(); process.exit(r.failedTests?.length ? 0 : 1)'; then
+            retry_target=(--last-failed)
+          else
+            echo "::warning::No failed-test IDs found — retrying the shard after the infrastructure failure"
+            retry_target=(--shard=${{ matrix.shard_index }}/${{ env.TOTAL_SHARDS }})
           fi
-          bun run test:browser -- --reporter=line,blob --last-failed --retries=0
+          bun run test:browser -- --reporter=line,blob "${retry_target[@]}" --retries=0
         env:
           CI: true
           PLAYWRIGHT_TEST_DB_NAME: ${{ env.PLAYWRIGHT_TEST_DB_NAME }}

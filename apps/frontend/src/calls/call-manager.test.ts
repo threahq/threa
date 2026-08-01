@@ -231,7 +231,7 @@ describe("CallManager", () => {
   afterEach(async () => {
     vi.useRealTimers()
     for (const manager of managers.splice(0)) {
-      if (manager.isActive()) await manager.leaveCall()
+      await manager.leaveCall()
     }
   })
 
