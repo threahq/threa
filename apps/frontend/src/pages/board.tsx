@@ -31,7 +31,7 @@ import {
   collectBranchThreadStreamIds,
 } from "@/hooks/use-conversation-graph"
 import { useBoardDraftsReady } from "@/hooks/use-scope-draft-preview"
-import { useCoordinatedPhase } from "@/contexts/coordinated-loading-context"
+import { SKELETON_DELAY_MS, useCoordinatedPhase } from "@/contexts/coordinated-loading-context"
 import { FloatingComposerAnchorProvider, FLOATING_COMPOSER_HEIGHT_VAR } from "@/components/composer"
 import { BoardCard, BoardCardSkeleton } from "@/components/board/board-card"
 import { BoardFeedList } from "@/components/board/board-feed-list"
@@ -79,7 +79,12 @@ const SELF_POST_VISIBLE_LENSES = new Set<BoardLens>(["all", "mine"])
  *  anything the viewer sees. */
 const REVEAL_PREWARM_CARDS = 12
 
-const SEED_COMMIT_TIMEOUT_MS = 2500
+/** How long the seed gate gives the network page to win before committing the
+ *  cached order (newer content then arrives behind the "N new" pill — the same
+ *  experience as opening offline and coming online). Twice the skeleton delay:
+ *  a fast seed still lands live with no pill flash, a slow one costs at most
+ *  one skeleton-length beat beyond the skeleton's own appearance. */
+const SEED_COMMIT_TIMEOUT_MS = SKELETON_DELAY_MS * 2
 
 /** Empty-state copy per lens — an empty Decisions view isn't "nothing on the board". */
 const LENS_EMPTY_COPY: Record<BoardLens, { title: string; body: string }> = {
