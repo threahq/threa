@@ -2,7 +2,7 @@ import type { Pool } from "pg"
 import { StreamTypes } from "@threa/types"
 import { BotChannelAccessRepository } from "./repository"
 import { SearchRepository } from "../search"
-import { StreamRepository } from "../streams"
+import { StreamRepository, resolveEffectiveAccessStream } from "../streams"
 
 interface BotChannelServiceDeps {
   pool: Pool
@@ -38,11 +38,12 @@ export class BotChannelService {
     if (!stream || stream.archivedAt) return false
 
     // Publicness is the ROOT's visibility (INV-62) — a thread's own row can
-    // hold a stale copied "public" long after its root went private.
-    const accessStream = stream.rootStreamId
-      ? await StreamRepository.findByIdForWorkspace(this.pool, stream.rootStreamId, workspaceId)
-      : stream
-    if (accessStream?.visibility === "public") return true
+    // hold a stale copied "public" long after its root went private. A
+    // dangling root (INV-1, FK-less) resolves back to the thread itself:
+    // fail closed to the grant check, never the stale copied value.
+    const effective = await resolveEffectiveAccessStream(this.pool, stream)
+    const rootResolved = !stream.rootStreamId || effective.id === stream.rootStreamId
+    if (rootResolved && effective.visibility === "public") return true
 
     const grantStreamId = stream.type === StreamTypes.THREAD && stream.rootStreamId ? stream.rootStreamId : stream.id
 

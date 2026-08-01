@@ -1,6 +1,8 @@
 import { Pool } from "pg"
+import { Visibilities } from "@threa/types"
 import { withTransaction, withClient } from "../../db"
 import { StreamRepository } from "./repository"
+import { resolveEffectiveAccessStream } from "./access"
 import { MessageRepository } from "../messaging"
 import { OutboxRepository } from "../../lib/outbox"
 import { AttachmentRepository, type AttachmentWithExtraction } from "../attachments"
@@ -214,15 +216,19 @@ export class StreamNamingService {
       // The payload's visibility gates workspace-wide fanout in
       // delivery-groups. A thread's own row can hold a stale copied "public"
       // under a since-privatized root (INV-62) — resolve the effective root so
-      // a private tree's thread names never broadcast workspace-wide.
-      const namingAccessRoot = currentStream.rootStreamId
-        ? await StreamRepository.findById(client, currentStream.rootStreamId)
-        : null
+      // a private tree's thread names never broadcast workspace-wide. A
+      // dangling root (INV-1) resolves back to the thread itself: fail closed
+      // to stream-scoped fanout rather than trust the stale copied value.
+      const effective = await resolveEffectiveAccessStream(client, currentStream)
+      const fanoutVisibility =
+        currentStream.rootStreamId && effective.id !== currentStream.rootStreamId
+          ? Visibilities.PRIVATE
+          : effective.visibility
       await OutboxRepository.insert(client, "stream:display_name_updated", {
         workspaceId: stream.workspaceId,
         streamId,
         displayName: cleanName,
-        visibility: namingAccessRoot?.visibility ?? currentStream.visibility,
+        visibility: fanoutVisibility,
       })
 
       logger.info({ streamId, displayName: cleanName, requireName }, "Auto-generated stream display name")
