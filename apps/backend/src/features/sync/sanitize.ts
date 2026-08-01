@@ -1,8 +1,7 @@
 import type { Querier } from "../../db"
 import type { MemoEmbedSummary } from "@threa/types"
 import { hydrateSharedMessageIds, type HydratedSharedMessage } from "../messaging"
-import { MemoRepository } from "../memos"
-import { StreamRepository } from "../streams"
+import { resolveMemoSummariesByStream } from "../memos"
 import type { SyncLogEntry } from "./repository"
 
 /**
@@ -49,7 +48,11 @@ export async function sanitizeSyncEntries(
   }
   const collectMemoEmbeds = (holder: Record<string, unknown> | undefined, streamId: unknown) => {
     if (!holder || typeof streamId !== "string") return
-    if (Array.isArray((holder as MemoEmbedHolder).memoEmbeds)) {
+    // Empty arrays carry nothing to leak or refresh — skipping them keeps a
+    // page of plain edits (whose payloads always carry `memoEmbeds: []`) on
+    // the zero-query path.
+    const embeds = (holder as MemoEmbedHolder).memoEmbeds
+    if (Array.isArray(embeds) && embeds.length > 0) {
       memoSites.push({ holder: holder as MemoEmbedHolder, streamId })
     }
   }
@@ -94,46 +97,33 @@ export async function sanitizeSyncEntries(
     }
   }
 
-  // Memo summaries: resolve each citing stream to its root, then one
-  // predicate query per distinct root for the union of cited ids.
-  const citingStreamIds = [
-    ...new Set([...memoSites.map((s) => s.streamId), ...memoUpdatedEntries.map((s) => s.streamId)]),
-  ]
+  // Memo summaries: the shared per-citing-stream resolver (INV-35) groups by
+  // root and runs one predicate query per distinct root.
   const dropped = new Set<SyncLogEntry>()
-  if (citingStreamIds.length > 0) {
-    const streams = await StreamRepository.findByIds(db, citingStreamIds)
-    const rootByStream = new Map(citingStreamIds.map((id) => [id, id]))
-    for (const stream of streams) rootByStream.set(stream.id, stream.rootStreamId ?? stream.id)
+  const memoIdsByStreamId = new Map<string, Set<string>>()
+  const addMemoIds = (streamId: string, ids: string[]) => {
+    const set = memoIdsByStreamId.get(streamId) ?? new Set<string>()
+    for (const id of ids) set.add(id)
+    memoIdsByStreamId.set(streamId, set)
+  }
+  for (const site of memoSites)
+    addMemoIds(
+      site.streamId,
+      (site.holder.memoEmbeds ?? []).map((s) => s.memoId)
+    )
+  for (const site of memoUpdatedEntries) addMemoIds(site.streamId, [site.memoId])
 
-    const memoIdsByRoot = new Map<string, Set<string>>()
-    const addMemoIds = (streamId: string, ids: string[]) => {
-      const root = rootByStream.get(streamId) ?? streamId
-      let set = memoIdsByRoot.get(root)
-      if (!set) memoIdsByRoot.set(root, (set = new Set()))
-      for (const id of ids) set.add(id)
-    }
-    for (const site of memoSites)
-      addMemoIds(
-        site.streamId,
-        (site.holder.memoEmbeds ?? []).map((s) => s.memoId)
-      )
-    for (const site of memoUpdatedEntries) addMemoIds(site.streamId, [site.memoId])
-
-    const summariesByRoot = new Map<string, Map<string, MemoEmbedSummary>>()
-    for (const [root, ids] of memoIdsByRoot) {
-      summariesByRoot.set(root, await MemoRepository.findEmbedSummaries(db, workspaceId, [...ids], root))
-    }
+  if (memoIdsByStreamId.size > 0) {
+    const summariesByStream = await resolveMemoSummariesByStream(db, workspaceId, memoIdsByStreamId)
 
     for (const site of memoSites) {
-      const root = rootByStream.get(site.streamId) ?? site.streamId
-      const summaries = summariesByRoot.get(root)
+      const summaries = summariesByStream.get(site.streamId)
       site.holder.memoEmbeds = (site.holder.memoEmbeds ?? [])
         .map((s) => summaries?.get(s.memoId))
         .filter((s): s is MemoEmbedSummary => s !== undefined)
     }
     for (const site of memoUpdatedEntries) {
-      const root = rootByStream.get(site.streamId) ?? site.streamId
-      const fresh = summariesByRoot.get(root)?.get(site.memoId)
+      const fresh = summariesByStream.get(site.streamId)?.get(site.memoId)
       if (!fresh) {
         dropped.add(site.entry)
       } else {

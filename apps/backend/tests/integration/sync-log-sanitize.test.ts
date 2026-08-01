@@ -218,7 +218,21 @@ describe("sanitizeSyncEntries", () => {
   })
 
   test("entries with no gated content pass through untouched, same array", async () => {
-    const entries = [entry("stream:read_state_updated", { workspaceId: testWorkspaceId, streamId: citingChannel })]
+    // Includes a plain edit: edited payloads ALWAYS carry memoEmbeds (empty
+    // included), and an empty array must not knock the page off the
+    // zero-query identity path.
+    const entries = [
+      entry("stream:read_state_updated", { workspaceId: testWorkspaceId, streamId: citingChannel }),
+      entry("message:edited", {
+        workspaceId: testWorkspaceId,
+        streamId: citingChannel,
+        event: {
+          id: "evt_plain_edit",
+          eventType: "message_edited",
+          payload: { messageId: messageId(), memoEmbeds: [] },
+        },
+      }),
+    ]
     const out = await sanitizeSyncEntries(pool, { workspaceId: testWorkspaceId, userId: viewer, entries })
     expect(out).toBe(entries)
   })
