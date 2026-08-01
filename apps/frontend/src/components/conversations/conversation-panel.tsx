@@ -724,19 +724,22 @@ function ConversationPanelBody({
     }
     return true
   }, [unreadState, streamReadStates, readableRows, conversation.streamId])
-  // One reveal, not three: the header, the rail, the server backfill and the read
-  // state each used to paint as they landed (`post.recentMessages` under a
-  // "Loading messages…" line, then the rest, then the divider). Hold the whole
-  // panel — header included — until all of them are in.
+  // One reveal, not three: the header, the rail and the read state paint
+  // together, never staggered. But the panel is a timeline (Kris's ruling,
+  // 2026-08-01): cached rows render immediately and the server backfill fills
+  // in behind them — `loadingMore` only holds the reveal when there is nothing
+  // local to show, so a slow network never blanks a warm conversation. The
+  // read-state wait stays in the gate (the divider belongs in the first frame,
+  // and it resolves from IDB on a warm device).
   //
-  // Any of these can also fail to settle. `readStateResolved` is the known one:
+  // Either input can also fail to settle. `readStateResolved` is the known one:
   // the bootstrap builds BOTH `unreadCounts` and `streamReadState` from stream
   // MEMBERSHIPS, and a thread gets no `stream_members` row (INV-62), so a
   // conversation spanning a never-read thread leg holds a row decidable by
   // neither map, and no read event ever writes one. Gating on it unbounded would
   // hold a blank panel forever, so the wait is bounded across every input: the
   // divider (or a still-syncing leg) is worth a beat, never the whole panel.
-  const panelLoading = loadingMore || !readStateResolved
+  const panelLoading = (loadingMore && all.length === 0) || !readStateResolved
   const [revealTimedOut, setRevealTimedOut] = useState(false)
   useEffect(() => {
     setRevealTimedOut(false)
@@ -885,10 +888,13 @@ function ConversationPanelBody({
 
   const { scrollContainerRef, handleScroll, isScrolledFarFromBottom, scrollToBottom, disableAutoScroll } =
     useScrollBehavior({
-      // The rows are gated on `revealed`, not on `loadingMore`: on the reveal-timeout
-      // path `loadingMore` is already false while only the skeleton is mounted, and
-      // the hook would spend its one initial pin against an empty container.
-      isLoading: loadingMore || !revealed,
+      // The hook pins once: it must fire on the first frame that has rows, so
+      // "loading" is "no rows on screen yet" — not the backfill's status (rows
+      // now reveal while it is in flight; keying on it would spend the pin
+      // late, yanking a panel the viewer already sees) and not `revealed` alone
+      // (the reveal-timeout path mounts with zero rows, and the pin would land
+      // against an empty container).
+      isLoading: !revealed || rows.length === 0,
       itemCount: rows.length,
       resetKey: conversation.id,
       // Only treat the user as "at the bottom" when they are essentially flush, so
