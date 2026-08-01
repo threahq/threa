@@ -189,6 +189,8 @@ describe("useStreamOrDraft real stream send", () => {
 
     await waitFor(() => {
       expect(result.current.stream?.id).toBe("stream_socket_seen")
+      // Sends throw until the users liveQuery delivers the sender's identity.
+      expect(result.current.currentUserId).toBe("member_1")
     })
 
     return { result, queryClient }
@@ -281,6 +283,25 @@ describe("useStreamOrDraft real stream send", () => {
 describe("useStreamOrDraft draft DM send", () => {
   beforeEach(async () => {
     await clearAllCachedData()
+  })
+
+  it("refuses to send while the viewer's identity is unresolved instead of creating a membershipless DM", async () => {
+    // No user row matches the authed WorkOS id, so currentUserId never
+    // resolves — the send must throw up front rather than create the DM and
+    // silently skip the local membership/bootstrap writes.
+    const createDm = vi.fn()
+    const queryClient = new QueryClient()
+    const { result } = renderHook(() => useStreamOrDraft("ws_1", "draft_dm_member_2"), {
+      wrapper: createWrapper(queryClient, { messageService: { createDm } }),
+    })
+    await waitFor(() => expect(result.current.stream?.id).toBe("draft_dm_member_2"))
+
+    await expect(
+      result.current.sendMessage({
+        contentJson: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "hi" }] }] },
+      })
+    ).rejects.toThrow("user identity not resolved")
+    expect(createDm).not.toHaveBeenCalled()
   })
 
   it("persists the created DM to IndexedDB so the sidebar can switch from the virtual draft immediately", async () => {
@@ -430,6 +451,12 @@ describe("useStreamOrDraft draft DM send", () => {
 
     await waitFor(() => {
       expect(result.current.stream?.id).toBe("draft_dm_member_2")
+      // Sends throw until the users liveQuery delivers the sender's identity.
+      expect(result.current.currentUserId).toBe("member_1")
+      // The persist path names the DM from the peer row; wait until the draft
+      // itself resolves the peer (users + dmPeers delivered), or the persisted
+      // row races into the "Direct message" placeholder.
+      expect(result.current.stream?.displayName).toBe("Invitee")
     })
 
     await act(async () => {

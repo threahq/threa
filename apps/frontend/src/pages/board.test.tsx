@@ -359,7 +359,7 @@ describe("BoardPage", () => {
     expect(screen.getByRole("button", { name: "Write a reply…" })).toBeTruthy()
   })
 
-  it("collapses the middle as an 'N more messages' expander, pluralizing the count", async () => {
+  it("collapses the middle as an 'N older messages' expander, pluralizing the count", async () => {
     // 5 messages: opening + 3 recent shown + 1 hidden in the middle.
     const recent = [
       makeOpeningMessage({ id: "m3" }),
@@ -367,8 +367,8 @@ describe("BoardPage", () => {
       makeOpeningMessage({ id: "m5" }),
     ]
     mountBoard([makePost({ messageIds: ["m1", "m2", "m3", "m4", "m5"] }, { id: "m1" }, recent)])
-    expect(await screen.findByText("1 more message")).toBeTruthy()
-    expect(screen.queryByText("1 more messages")).toBeNull()
+    expect(await screen.findByText("1 older message")).toBeTruthy()
+    expect(screen.queryByText("1 older messages")).toBeNull()
   })
 
   it("offers a retry when expanding the middle fails", async () => {
@@ -378,7 +378,7 @@ describe("BoardPage", () => {
       makeOpeningMessage({ id: "m5" }),
     ]
     mountBoard([makePost({ messageIds: ["m1", "m2", "m3", "m4", "m5"] }, { id: "m1" }, recent)], { failMessages: true })
-    fireEvent.click(await screen.findByText("1 more message"))
+    fireEvent.click(await screen.findByText("1 older message"))
     expect(await screen.findByText("Couldn't load older messages. Retry.")).toBeTruthy()
   })
 
@@ -386,7 +386,7 @@ describe("BoardPage", () => {
     const recent = [makeOpeningMessage({ id: "m2" }), makeOpeningMessage({ id: "m3" })]
     mountBoard([makePost({ messageIds: ["m1", "m2", "m3"] }, { id: "m1" }, recent)])
     await screen.findAllByText("Opening message body.")
-    expect(screen.queryByText(/more messages?$/)).toBeNull()
+    expect(screen.queryByText(/older messages?$/)).toBeNull()
   })
 
   it("renders reactions on the opening message", async () => {

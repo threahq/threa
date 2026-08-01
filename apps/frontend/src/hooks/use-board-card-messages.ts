@@ -1119,3 +1119,69 @@ export function useStableReplyWindow(conversationId: string, replies: Renderable
 
   return window
 }
+
+/**
+ * The collapsed card's visible replies once the reader has scrolled pages out
+ * from under the gap: the trailing `stable.length + revealedRows` rows, UNIONed
+ * with the stable window rather than replacing it. The union is load-bearing —
+ * {@link useStableReplyWindow} deliberately leaves a late-syncing older reply
+ * under the gap, so its window can hold rows that are not the trailing run, and
+ * a plain trailing slice of the same length would evict one. The result is
+ * always a superset of `stable`, in rail order, and clamps when `revealedRows`
+ * outruns the rail.
+ *
+ * `shownIds` (the rows this card has already revealed — see
+ * {@link useRevealedReplyWindow}) joins the union because the trailing slice is
+ * positional: a row inserting into the rail ABOVE the trailing region (a backfill
+ * landing, a late-syncing reply sorting into the middle) advances `start` and
+ * would push an already-revealed row back under the seam.
+ */
+export function composeRevealedWindow(
+  replies: RenderableMessage[],
+  stable: RenderableMessage[],
+  revealedRows: number,
+  shownIds?: ReadonlySet<string>
+): RenderableMessage[] {
+  // `revealedRows` never decreases within a conversation (it resets only when the
+  // card is recycled onto another one, which also clears `shownIds`), so at zero
+  // nothing has ever been revealed and `shownIds` can hold nothing beyond what
+  // `stable` already carries — the identity return can't drop a revealed row.
+  if (revealedRows <= 0) return stable
+  const start = Math.max(0, replies.length - (stable.length + revealedRows))
+  if (start === 0) return replies
+  const stableIds = new Set(stable.map((message) => message.id))
+  return replies.filter(
+    (message, index) => index >= start || stableIds.has(message.id) || shownIds?.has(message.id) === true
+  )
+}
+
+/**
+ * {@link composeRevealedWindow} with memory: the ids it returned stay visible for
+ * the life of the conversation, so the revealed window only ever grows. Same
+ * discipline as {@link useStableReplyWindow} — the shown set is recorded after
+ * commit, never during render, and resets when the card is recycled onto another
+ * conversation.
+ */
+export function useRevealedReplyWindow(
+  conversationId: string,
+  replies: RenderableMessage[],
+  stable: RenderableMessage[],
+  revealedRows: number
+): RenderableMessage[] {
+  const shownRef = useRef<{ conversationId: string; ids: Set<string> }>({ conversationId, ids: new Set() })
+
+  const window = useMemo(() => {
+    const shown = shownRef.current.conversationId === conversationId ? shownRef.current.ids : undefined
+    return composeRevealedWindow(replies, stable, revealedRows, shown)
+  }, [conversationId, replies, stable, revealedRows])
+
+  useEffect(() => {
+    if (shownRef.current.conversationId !== conversationId) {
+      shownRef.current = { conversationId, ids: new Set(window.map((message) => message.id)) }
+      return
+    }
+    for (const message of window) shownRef.current.ids.add(message.id)
+  }, [conversationId, window])
+
+  return window
+}

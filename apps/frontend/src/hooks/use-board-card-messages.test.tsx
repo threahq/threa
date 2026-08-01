@@ -8,7 +8,9 @@ import {
   revokeOptimisticRailEvent,
   useBoardCardMessages,
   useBoardRailsReady,
+  useRevealedReplyWindow,
   useStableReplyWindow,
+  composeRevealedWindow,
   __clearBoardRailRegistry,
   __boardRailRegistrySize,
   type BoardCardMessages,
@@ -1222,5 +1224,160 @@ describe("useBoardCardMessages — backfill-store merge precedence", () => {
     expect(result.current.replies.map((m) => ({ id: m.id, contentMarkdown: m.contentMarkdown }))).toEqual([
       { id: "r1", contentMarkdown: "projection r1" },
     ])
+  })
+})
+
+describe("composeRevealedWindow", () => {
+  const message = (id: string, deletedAt: string | null = null): RenderableMessage =>
+    ({
+      id,
+      streamId: STREAM,
+      authorId: "usr_1",
+      authorType: "user",
+      contentMarkdown: id,
+      reactions: {},
+      createdAt: "2026-06-22T12:00:00.000Z",
+      editedAt: null,
+      deletedAt,
+    }) as RenderableMessage
+  const rail = ["r1", "r2", "r3", "r4", "r5", "r6"].map((id) => message(id))
+  const ids = (messages: RenderableMessage[]) => messages.map((m) => m.id)
+
+  it("returns the stable window untouched before anything is revealed", () => {
+    const stable = rail.slice(-2)
+    expect(composeRevealedWindow(rail, stable, 0)).toBe(stable)
+  })
+
+  it("pulls a page of older rows out from under the gap", () => {
+    expect(ids(composeRevealedWindow(rail, rail.slice(-2), 2))).toEqual(["r3", "r4", "r5", "r6"])
+  })
+
+  it("clamps to the rail when the reveal outruns what is synced", () => {
+    expect(ids(composeRevealedWindow(rail, rail.slice(-2), 99))).toEqual(["r1", "r2", "r3", "r4", "r5", "r6"])
+  })
+
+  it("keeps a late-syncing older row that the stable window already shows (superset, not a slice)", () => {
+    // `useStableReplyWindow` leaves a row that synced in BELOW the last shown one
+    // under the gap, so its window is not always the trailing run. A blind
+    // trailing slice of the same length would evict the shown row; the union
+    // cannot.
+    const late = [message("r1"), message("late"), message("r2"), message("r3"), message("r4")]
+    const stable = [late[0], late[2], late[3], late[4]]
+    expect(ids(composeRevealedWindow(late, stable, 0))).toEqual(["r1", "r2", "r3", "r4"])
+    expect(ids(composeRevealedWindow(late, stable, 1))).toEqual(["r1", "late", "r2", "r3", "r4"])
+  })
+
+  it("spends page slots on tombstones, which the caller counts as zero toward the gap", () => {
+    const withTombstone = [
+      message("r1"),
+      message("rd", "2026-06-22T12:05:00.000Z"),
+      message("r2"),
+      message("r3"),
+      message("r4"),
+    ]
+    const visible = composeRevealedWindow(withTombstone, withTombstone.slice(-2), 2)
+    expect(ids(visible)).toEqual(["rd", "r2", "r3", "r4"])
+    expect(visible.filter((m) => !m.deletedAt).length).toBe(3)
+  })
+
+  it("keeps a previously revealed row visible when a late row sorts in above the trailing region", () => {
+    const stable = rail.slice(-2)
+    const revealed = composeRevealedWindow(rail, stable, 2)
+    expect(ids(revealed)).toEqual(["r3", "r4", "r5", "r6"])
+    // A row sorts into the middle: the positional start advances, so without the
+    // shown-ids union r3 would fall back under the seam.
+    const grown = [...rail.slice(0, 4), message("late"), ...rail.slice(4)]
+    const shown = new Set(ids(revealed))
+    expect(ids(composeRevealedWindow(grown, stable, 2, shown))).toEqual(["r3", "r4", "late", "r5", "r6"])
+  })
+})
+
+describe("useRevealedReplyWindow", () => {
+  const message = (id: string): RenderableMessage =>
+    ({
+      id,
+      streamId: STREAM,
+      authorId: "usr_1",
+      authorType: "user",
+      contentMarkdown: id,
+      reactions: {},
+      createdAt: "2026-06-22T12:00:00.000Z",
+      editedAt: null,
+      deletedAt: null,
+    }) as RenderableMessage
+  const ids = (messages: RenderableMessage[]) => messages.map((m) => m.id)
+  const rail = Array.from({ length: 25 }, (_, i) => message(`r${i + 1}`))
+
+  interface Props {
+    conversationId: string
+    replies: RenderableMessage[]
+    stable: RenderableMessage[]
+    revealedRows: number
+  }
+  function renderWindow(initialProps: Props) {
+    return renderHook((p: Props) => useRevealedReplyWindow(p.conversationId, p.replies, p.stable, p.revealedRows), {
+      initialProps,
+    })
+  }
+
+  it("holds a revealed row visible when a late reply sorts into the middle of the rail", () => {
+    const stable = rail.slice(-5) // r21…r25
+    const { result, rerender } = renderWindow({
+      conversationId: "conv_1",
+      replies: rail,
+      stable,
+      revealedRows: 15,
+    })
+    expect(result.current[0].id).toBe("r6")
+
+    const late = message("late")
+    const grown = [...rail.slice(0, 20), late, ...rail.slice(20)]
+    rerender({ conversationId: "conv_1", replies: grown, stable, revealedRows: 15 })
+    expect(ids(result.current)).toEqual([...ids(rail.slice(5, 20)), "late", ...ids(rail.slice(20))])
+  })
+
+  it("keeps every revealed row when a backfill lands a whole page in the middle", () => {
+    const stable = rail.slice(-5)
+    const { result, rerender } = renderWindow({
+      conversationId: "conv_1",
+      replies: rail,
+      stable,
+      revealedRows: 15,
+    })
+    const before = ids(result.current)
+
+    const backfilled = [
+      ...rail.slice(0, 10),
+      ...Array.from({ length: 8 }, (_, i) => message(`b${i}`)),
+      ...rail.slice(10),
+    ]
+    rerender({ conversationId: "conv_1", replies: backfilled, stable, revealedRows: 15 })
+    // One whole-window comparison (INV-24): every previously revealed row stays,
+    // in rail order, plus the backfilled rows the trailing window now covers.
+    expect(before).toEqual(ids(rail.slice(5)))
+    expect(ids(result.current)).toEqual([
+      ...ids(rail.slice(5, 10)),
+      "b3",
+      "b4",
+      "b5",
+      "b6",
+      "b7",
+      ...ids(rail.slice(10)),
+    ])
+  })
+
+  it("resets the shown set when the card is recycled onto another conversation", () => {
+    const stable = rail.slice(-5)
+    const { result, rerender } = renderWindow({
+      conversationId: "conv_1",
+      replies: rail,
+      stable,
+      revealedRows: 15,
+    })
+    expect(result.current[0].id).toBe("r6")
+
+    const next = Array.from({ length: 25 }, (_, i) => message(`n${i + 1}`))
+    rerender({ conversationId: "conv_2", replies: next, stable: next.slice(-5), revealedRows: 2 })
+    expect(ids(result.current)).toEqual(ids(next.slice(-7)))
   })
 })

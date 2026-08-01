@@ -167,6 +167,10 @@ export interface UseStreamOrDraftReturn {
   archive: () => Promise<void>
   unarchive?: () => Promise<void>
   sendMessage: (input: SendMessageInput) => Promise<{ navigateTo?: string; replace?: boolean }>
+  /** The viewer's workspace user id the send path stamps on optimistic rows;
+   *  null until the users liveQuery delivers — `sendMessage` throws before then,
+   *  so callers (and tests) that fire sends programmatically gate on this. */
+  currentUserId: string | null
 }
 
 /**
@@ -250,6 +254,7 @@ function useDraftStream(workspaceId: string, streamId: string, enabled: boolean)
     rename,
     archive,
     sendMessage,
+    currentUserId,
   }
 }
 
@@ -338,6 +343,9 @@ function useDraftDmStream(workspaceId: string, streamId: string, enabled: boolea
 
   const sendMessage = useCallback(
     async (input: SendMessageInput): Promise<{ navigateTo?: string; replace?: boolean }> => {
+      if (!currentUserId) {
+        throw new Error("Cannot send message: user identity not resolved yet")
+      }
       if (!targetUserId) {
         throw new Error("Invalid DM draft target")
       }
@@ -378,17 +386,15 @@ function useDraftDmStream(workspaceId: string, streamId: string, enabled: boolea
       await db.transaction("rw", [db.streams, db.streamMemberships, db.dmPeers], async () => {
         await db.streams.put(optimisticStream)
 
-        if (currentUserId) {
-          await db.streamMemberships.put({
-            id: `${workspaceId}:${message.streamId}`,
-            workspaceId,
-            streamId: message.streamId,
-            memberId: currentUserId,
-            notificationLevel: null,
-            joinedAt: message.createdAt,
-            _cachedAt: now,
-          })
-        }
+        await db.streamMemberships.put({
+          id: `${workspaceId}:${message.streamId}`,
+          workspaceId,
+          streamId: message.streamId,
+          memberId: currentUserId,
+          notificationLevel: null,
+          joinedAt: message.createdAt,
+          _cachedAt: now,
+        })
 
         await db.dmPeers.put({
           id: `${workspaceId}:${message.streamId}`,
@@ -411,14 +417,12 @@ function useDraftDmStream(workspaceId: string, streamId: string, enabled: boolea
           lastMessagePreview: optimisticStream.lastMessagePreview ?? null,
         }
 
-        const optimisticMembership: StreamMember | null = currentUserId
-          ? {
-              streamId: message.streamId,
-              memberId: currentUserId,
-              notificationLevel: null,
-              joinedAt: message.createdAt,
-            }
-          : null
+        const optimisticMembership: StreamMember = {
+          streamId: message.streamId,
+          memberId: currentUserId,
+          notificationLevel: null,
+          joinedAt: message.createdAt,
+        }
 
         const hasPeer = old.dmPeers.some((peer) => peer.userId === targetUserId && peer.streamId === message.streamId)
 
@@ -435,10 +439,9 @@ function useDraftDmStream(workspaceId: string, streamId: string, enabled: boolea
               ? { ...stream, displayName: targetUserName ?? stream.displayName }
               : stream
           ),
-          streamMemberships:
-            !membershipExists && optimisticMembership
-              ? [...old.streamMemberships, optimisticMembership]
-              : old.streamMemberships,
+          streamMemberships: membershipExists
+            ? old.streamMemberships
+            : [...old.streamMemberships, optimisticMembership],
         }
       })
 
@@ -455,6 +458,7 @@ function useDraftDmStream(workspaceId: string, streamId: string, enabled: boolea
     rename,
     archive,
     sendMessage,
+    currentUserId,
   }
 }
 
@@ -712,6 +716,7 @@ function useRealStream(workspaceId: string, streamId: string, enabled: boolean):
     archive,
     unarchive,
     sendMessage,
+    currentUserId,
   }
 }
 

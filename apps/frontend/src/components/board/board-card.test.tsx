@@ -752,7 +752,7 @@ describe("BoardCard deleted messages", () => {
     const { container } = mountCard(post)
 
     expect(await screen.findByText("This message was deleted")).toBeTruthy()
-    expect(container.querySelector('[data-message-id="m_r1"]')).toBeNull()
+    expect(container.querySelector('[data-message-id="m_r1"]')?.textContent).toBe("This message was deleted")
   })
 
   it("renders a tombstone, not a blank row, for a deleted reply from the expand backfill", async () => {
@@ -776,10 +776,10 @@ describe("BoardCard deleted messages", () => {
     ;(post as unknown as { totalReplies: number }).totalReplies = 1
     const { container } = mountCard(post, { getBoardMessages })
 
-    await userEvent.click(await screen.findByText(/1 more message/))
+    await userEvent.click(await screen.findByText(/1 older message/))
 
     expect(await screen.findByText("This message was deleted")).toBeTruthy()
-    expect(container.querySelector('[data-message-id="m_r2"]')).toBeNull()
+    expect(container.querySelector('[data-message-id="m_r2"]')?.textContent).toBe("This message was deleted")
   })
 
   it("renders a tombstone for a deleted reply once the rail is complete", async () => {
@@ -802,7 +802,7 @@ describe("BoardCard deleted messages", () => {
 
     // Collapsed the card previews the trailing live replies only; expanding falls
     // through to the complete local rail.
-    await userEvent.click(await screen.findByText(/2 more messages/))
+    await userEvent.click(await screen.findByText(/2 older messages/))
 
     expect(await screen.findByText("This message was deleted")).toBeTruthy()
     expect(screen.queryByText("The deleted body.")).toBeNull()
@@ -935,7 +935,7 @@ describe("BoardCard settling mark", () => {
     const { container } = mountCard(settlingPost(["m_open", "m_r1"], { messageIds: ["m_open", "m_r1"] }))
 
     expect(await screen.findByText("This message was deleted")).toBeTruthy()
-    expect(container.querySelector('[data-message-id="m_r1"]')).toBeNull()
+    expect(container.querySelector('[data-message-id="m_r1"]')?.textContent).toBe("This message was deleted")
     // The settling id names a row the card doesn't render — it must not conjure one.
     expect(container.querySelectorAll("[data-settling]").length).toBe(1)
   })
@@ -1038,7 +1038,7 @@ describe("BoardCard backfill invalidation", () => {
     ;(post as unknown as { totalReplies: number }).totalReplies = 1
     const { rerenderPost } = mountCard(post, { getBoardMessages })
 
-    await userEvent.click(await screen.findByText(/1 more message/))
+    await userEvent.click(await screen.findByText(/1 older message/))
     await waitFor(() => expect(getBoardMessages).toHaveBeenCalledTimes(1))
 
     const grown = makePost({ messageIds: ["m_open", "m_r1", "m_r2"] })
@@ -1046,5 +1046,253 @@ describe("BoardCard backfill invalidation", () => {
     act(() => rerenderPost(grown))
 
     await waitFor(() => expect(getBoardMessages.mock.calls.length).toBeGreaterThan(1))
+  })
+})
+
+/** The reveal affordances a collapsed card mounts: the seam row (the button
+ *  carrying the divider lines) and any standalone retry button beside it. */
+function revealRowStructure(container: HTMLElement) {
+  const buttons = Array.from(container.querySelectorAll("button"))
+  const seams = buttons.filter((button) => button.querySelector(".border-t"))
+  return {
+    seams: seams.length,
+    standaloneRetries: buttons.filter((button) => !seams.includes(button) && button.textContent?.includes("Retry."))
+      .length,
+  }
+}
+
+describe("BoardCard gap scroll reveal", () => {
+  // The board's owned scroller is what the reveal listens on; the harness mounts
+  // the card inside one, as the real feed does. jsdom has no IntersectionObserver,
+  // so the seam's on-screen state is driven by hand.
+  let seamObservers: { element: Element; fire: (isIntersecting: boolean) => void }[] = []
+  let originalIO: typeof IntersectionObserver | undefined
+
+  beforeEach(() => {
+    seamObservers = []
+    originalIO = globalThis.IntersectionObserver
+    globalThis.IntersectionObserver = class {
+      cb: (entries: { isIntersecting: boolean }[]) => void
+      constructor(cb: (entries: { isIntersecting: boolean }[]) => void) {
+        this.cb = cb
+      }
+      observe(element: Element) {
+        seamObservers.push({ element, fire: (isIntersecting) => this.cb([{ isIntersecting }]) })
+      }
+      unobserve() {}
+      disconnect() {}
+    } as unknown as typeof IntersectionObserver
+  })
+  afterEach(() => {
+    globalThis.IntersectionObserver = originalIO as typeof IntersectionObserver
+  })
+
+  function mountOnBoard(post: BoardViewPost, conversations: Record<string, unknown> = {}) {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const scrollerRef = { current: null as HTMLDivElement | null }
+    const listRef = { current: { scrollBy: vi.fn() } as never }
+    const result = render(
+      <QueryClientProvider client={queryClient}>
+        <TooltipProvider>
+          <ServicesProvider services={{ conversations: conversations as never }}>
+            <MemoryRouter initialEntries={[`/w/${WS}/board`]}>
+              <TraceProvider>
+                <PanelProvider>
+                  <div ref={scrollerRef}>
+                    <BoardCard
+                      workspaceId={WS}
+                      post={post}
+                      contextLabel="#general"
+                      streamType="channel"
+                      scrollerRef={scrollerRef}
+                      listRef={listRef}
+                    />
+                  </div>
+                </PanelProvider>
+              </TraceProvider>
+            </MemoryRouter>
+          </ServicesProvider>
+        </TooltipProvider>
+      </QueryClientProvider>
+    )
+    /** The reader scrolls up over this card, with the seam on or off screen.
+     *  The wheel goes to the card, as it does under a real pointer. */
+    const scrollUp = async (seamLabel: HTMLElement, seamOnScreen = true) => {
+      const seam = seamLabel.closest("button") ?? seamLabel
+      const observer = seamObservers.find((o) => o.element === seam)
+      await act(async () => {
+        observer?.fire(seamOnScreen)
+        seam.closest(".board-card-hover")?.dispatchEvent(new WheelEvent("wheel", { deltaY: -40, bubbles: true }))
+      })
+    }
+    return { ...result, scrollUp, scrollerRef }
+  }
+
+  /** `replyCount` replies on the local rail; only the trailing window shows. */
+  async function seedRail(replyCount: number) {
+    const ids = Array.from({ length: replyCount }, (_, i) => `m_r${i + 1}`)
+    await db.events.bulkPut([
+      messageEvent("m_open", "Opening body.", 10),
+      ...ids.map((id, i) => messageEvent(id, `Reply ${i + 1}.`, 11 + i)),
+    ])
+    const post = makePost({ messageIds: ["m_open", ...ids] })
+    ;(post as unknown as { totalReplies: number }).totalReplies = replyCount
+    return post
+  }
+
+  it("reveals the older middle when the reader scrolls up onto the seam", async () => {
+    const { scrollUp } = mountOnBoard(await seedRail(9))
+
+    await screen.findByText("Reply 9.")
+    const seam = await screen.findByText("4 older messages")
+    expect(screen.queryByText("Reply 1.")).toBeNull()
+
+    await scrollUp(seam)
+
+    expect(await screen.findByText("Reply 1.")).toBeTruthy()
+    // A page (15 rows) covers this whole middle, so the seam goes with it.
+    await waitFor(() => expect(screen.queryByText(/older message/)).toBeNull())
+  })
+
+  it("leaves the middle alone when the reader scrolls up with the seam off screen", async () => {
+    const { scrollUp } = mountOnBoard(await seedRail(9))
+    await screen.findByText("Reply 9.")
+    const seam = await screen.findByText("4 older messages")
+
+    await scrollUp(seam, false)
+
+    expect(screen.queryByText("Reply 1.")).toBeNull()
+    expect(screen.getByText("4 older messages")).toBeTruthy()
+  })
+
+  it("arms the server backfill on a paged reveal, and says so in the seam row while it loads", async () => {
+    // The rail carries only the newest reply, so the reveal demands rows only the
+    // server has — the same wait the full expand shows, swapped into the seam's
+    // own row so nothing below it shifts.
+    const getBoardMessages = vi.fn(() => new Promise(() => {}))
+    await db.events.bulkPut([messageEvent("m_open", "Opening body.", 10), messageEvent("m_r9", "Reply 9.", 30)])
+    const post = makePost({ messageIds: ["m_open", ...Array.from({ length: 9 }, (_, i) => `m_r${i + 1}`)] })
+    ;(post as unknown as { totalReplies: number }).totalReplies = 9
+    const { scrollUp } = mountOnBoard(post, { getBoardMessages })
+
+    await screen.findByText("Reply 9.")
+    await scrollUp(await screen.findByText("8 older messages"))
+
+    await waitFor(() => expect(getBoardMessages).toHaveBeenCalled())
+    expect(await screen.findByText("Loading older messages…")).toBeTruthy()
+  })
+
+  it("banks at most one outstanding page while the rail can't advance, so the backfill doesn't dump the middle", async () => {
+    // The rail carries only the newest reply and the backfill is in flight, so the
+    // card can't grow and the seam stays under the reader's cursor. Every further
+    // wheel tick of a flick would otherwise buy another page and the whole hidden
+    // middle would land at once when the rows arrive.
+    const backfill = Promise.withResolvers<BoardPostMessage[]>()
+    const getBoardMessages = vi.fn(() => backfill.promise)
+    const ids = Array.from({ length: 40 }, (_, i) => `m_r${i + 1}`)
+    await db.events.bulkPut([messageEvent("m_open", "Opening body.", 10), messageEvent("m_r40", "Reply 40.", 50)])
+    const post = makePost({ messageIds: ["m_open", ...ids] })
+    ;(post as unknown as { totalReplies: number }).totalReplies = 40
+    const { scrollUp } = mountOnBoard(post, { getBoardMessages })
+
+    await screen.findByText("Reply 40.")
+    const seam = await screen.findByText("39 older messages")
+    for (let i = 0; i < 5; i++) await scrollUp(seam)
+    await waitFor(() => expect(getBoardMessages).toHaveBeenCalled())
+
+    await act(async () => {
+      backfill.resolve([
+        openingMessage(),
+        ...ids.map((id, i) => ({
+          ...openingMessage(),
+          id,
+          contentMarkdown: `Reply ${i + 1}.`,
+          createdAt: new Date(Date.parse("2026-06-22T12:00:00.000Z") + (i + 1) * 1000).toISOString(),
+        })),
+      ])
+      await backfill.promise
+    })
+
+    // One page (15 rows) of the middle, not five: 40 - (1 trailing + 15) still hidden.
+    expect(await screen.findByText("24 older messages")).toBeTruthy()
+    expect(screen.getByText("Reply 25.")).toBeTruthy()
+    expect(screen.queryByText("Reply 24.")).toBeNull()
+  })
+
+  it("gives a flick one page: wheel events with no fresh intersection report in between", async () => {
+    // A trackpad flick emits dozens of wheel events before the observer can report
+    // the seam leaving; without pacing on the report, one gesture dumps the middle.
+    mountOnBoard(await seedRail(40))
+
+    await screen.findByText("Reply 40.")
+    const seam = (await screen.findByText("35 older messages")).closest("button")!
+    seamObservers.find((o) => o.element === seam)?.fire(true)
+    await act(async () => {
+      for (let i = 0; i < 5; i++)
+        seam.closest(".board-card-hover")?.dispatchEvent(new WheelEvent("wheel", { deltaY: -40, bubbles: true }))
+    })
+
+    expect(await screen.findByText("20 older messages")).toBeTruthy()
+  })
+
+  it("ignores a scroll over a sibling card: only the card under the pointer pages", async () => {
+    const { scrollerRef } = mountOnBoard(await seedRail(9))
+
+    await screen.findByText("Reply 9.")
+    const seam = (await screen.findByText("4 older messages")).closest("button")!
+    const siblingCard = document.createElement("div")
+    scrollerRef.current?.append(siblingCard)
+    await act(async () => {
+      seamObservers.find((o) => o.element === seam)?.fire(true)
+      siblingCard.dispatchEvent(new WheelEvent("wheel", { deltaY: -40, bubbles: true }))
+    })
+
+    expect(screen.queryByText("Reply 1.")).toBeNull()
+    expect(screen.getByText("4 older messages")).toBeTruthy()
+  })
+
+  it("puts a failed paged reveal inside the seam's own row rather than mounting a retry below it", async () => {
+    const getBoardMessages = vi.fn().mockRejectedValue(new Error("offline"))
+    await db.events.bulkPut([messageEvent("m_open", "Opening body.", 10), messageEvent("m_r9", "Reply 9.", 30)])
+    const post = makePost({ messageIds: ["m_open", ...Array.from({ length: 9 }, (_, i) => `m_r${i + 1}`)] })
+    ;(post as unknown as { totalReplies: number }).totalReplies = 9
+    const { container, scrollUp } = mountOnBoard(post, { getBoardMessages })
+
+    await screen.findByText("Reply 9.")
+    const rowsBefore = revealRowStructure(container)
+    await scrollUp(await screen.findByText("8 older messages"))
+    await waitFor(() => expect(getBoardMessages).toHaveBeenCalled())
+    const rowsLoading = revealRowStructure(container)
+    const failedSeam = await screen.findByText("Couldn't load older messages. Retry.")
+
+    // The failure swaps the seam's label; it never adds a row, so the replies below
+    // stay exactly where the reader left them (INV-21).
+    expect({ ...revealRowStructure(container), rowsBefore, rowsLoading }).toEqual({
+      seams: 1,
+      standaloneRetries: 0,
+      rowsBefore: { seams: 1, standaloneRetries: 0 },
+      rowsLoading: { seams: 1, standaloneRetries: 0 },
+    })
+
+    getBoardMessages.mockClear()
+    await userEvent.click(failedSeam)
+    await waitFor(() => expect(getBoardMessages).toHaveBeenCalled())
+  })
+
+  it("keeps the tap path: clicking the seam expands the whole conversation", async () => {
+    mountOnBoard(await seedRail(9))
+
+    await screen.findByText("Reply 9.")
+    await userEvent.click(await screen.findByText("4 older messages"))
+
+    expect(await screen.findByText("Reply 1.")).toBeTruthy()
+    expect(screen.queryByText(/older message/)).toBeNull()
+  })
+
+  it("renders no seam when nothing is hidden, so there is nothing to scroll into", async () => {
+    mountOnBoard(await seedRail(3))
+
+    expect(await screen.findByText("Reply 1.")).toBeTruthy()
+    expect(screen.queryByText(/older message/)).toBeNull()
   })
 })
