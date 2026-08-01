@@ -150,6 +150,24 @@ describe("useLastLocation — exact arm", () => {
     expect(result.current).toMatchObject({ exactPath: null, redirectStreamId: "stream_a" })
   })
 
+  it("stays cold while the persist hook mounts on the bare index", () => {
+    // WorkspaceLayout mounts the persist hook OUTSIDE CoordinatedLoadingGate,
+    // so on a cold launch its effect runs at the index pathname before the
+    // gated WorkspaceHome ever renders. If that visit warmed the session, the
+    // exact restore would never fire in production — only a page the viewer
+    // actually reached proves a live in-app session.
+    setup({ streams: [stream("stream_a")] })
+    setLastLocation(USER, WS, {
+      surface: "stream",
+      streamId: "stream_a",
+      board: null,
+      exact: { path: "/w/ws_1/saved/done", at: Date.now() },
+    })
+    renderHook(() => usePersistLastLocation(WS), { wrapper: routerAt("/w/ws_1") })
+    const { result } = renderHook(() => useLastLocation(WS))
+    expect(result.current.exactPath).toBe("/w/ws_1/saved/done")
+  })
+
   it("ignores an exact path from another workspace or the bare index", () => {
     setup({ streams: [stream("stream_a")] })
     setLastLocation(USER, WS, {

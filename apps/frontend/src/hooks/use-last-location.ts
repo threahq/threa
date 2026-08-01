@@ -141,14 +141,16 @@ export function usePersistLastLocation(workspaceId: string | undefined) {
 
   useEffect(() => {
     if (!user || !workspaceId) return
-    // Any rendered workspace page — including the index and transient hops
-    // below — proves a live in-app session; the exact arm is done serving.
-    coldLaunch = false
     // Transient redirect hops are never a place to restore to. The bare index
     // would loop the exact restore; /delegations/:id 404s away to the index
     // (routes/index.tsx DelegationRedirect), so restoring it would loop the
     // 404 toast; /memos/:id is its sibling alias.
     if (pathname === `/w/${workspaceId}`) return
+    // Only a page beyond the index warms the session: WorkspaceLayout mounts
+    // this hook OUTSIDE CoordinatedLoadingGate, so on a cold launch this effect
+    // runs at the index pathname before the gated WorkspaceHome renders — if
+    // that visit warmed, the exact arm would never serve.
+    coldLaunch = false
     if (pathname.startsWith(`/w/${workspaceId}/delegations/`) || pathname.startsWith(`/w/${workspaceId}/memos/`)) return
     const exact = { path: `${pathname}${search}`, at: Date.now() }
     const existing = getLastLocation(user.id, workspaceId)
