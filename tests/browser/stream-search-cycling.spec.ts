@@ -34,13 +34,15 @@ async function seedMessages(page: Page, workspaceId: string, streamId: string): 
     // The workspace-router worker occasionally restarts mid-request (503);
     // retry those too.
     for (let attempt = 0; ; attempt++) {
-      const r = await page.request.post(`/api/workspaces/${workspaceId}/messages`, { data: { streamId, content } })
-      if (r.ok()) return
-      if ((r.status() === 429 || r.status() >= 500) && attempt < 30) {
+      const response = await page.request.post(`/api/workspaces/${workspaceId}/messages`, {
+        data: { streamId, content },
+      })
+      if (response.ok()) return
+      if ((response.status() === 429 || response.status() >= 500) && attempt < 30) {
         await new Promise((resolve) => setTimeout(resolve, 5000))
         continue
       }
-      await expectApiOk(r, `Send message ${i}`)
+      await expectApiOk(response, `Send message ${i}`)
     }
   }
   for (let start = 1; start <= TOTAL; start += BATCH_SIZE) {
@@ -79,9 +81,9 @@ test("cycles through matches in both directions across jump windows", async ({ p
 
   // Scoped to timeline rows: preview surfaces (sidebar rows, offscreen
   // drawers) can carry the same text and count as "visible" while offscreen.
-  const matchVisible = (k: number) =>
+  const matchVisible = (matchNumber: number) =>
     expect(
-      page.locator("[data-message-id]").getByText(`(match ${k} of ${MATCH_POSITIONS.length})`).first()
+      page.locator("[data-message-id]").getByText(`(match ${matchNumber} of ${MATCH_POSITIONS.length})`).first()
     ).toBeVisible({ timeout: 15_000 })
 
   // Down from the newest match wraps to the oldest — an out-of-window jump.
