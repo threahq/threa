@@ -169,6 +169,12 @@ interface MessageItemProps {
    * Passed already-gated by the conversation surfaces (set only when the row has
    * a valid target); other surfaces leave it undefined and the action hides. */
   onMoveToSubtopic?: () => void
+  /** Collapse long bodies on this surface regardless of the viewer's global
+   * message-collapse preference. The board card sets it — it's an OVERVIEW
+   * surface, and one long agent/coding message otherwise makes the card a
+   * screen tall. The preference's height tuning still applies; reading surfaces
+   * (panel, label page) keep following the preference alone. */
+  alwaysCollapse?: boolean
 }
 
 /**
@@ -198,6 +204,7 @@ export function MessageItem({
   suppressRowAccent,
   onNewSubtopic,
   onMoveToSubtopic,
+  alwaysCollapse,
 }: MessageItemProps) {
   const { formatTime, formatFull } = useFormattedDate()
   const messageCollapse = useMessageCollapseSettings()
@@ -647,7 +654,7 @@ export function MessageItem({
           content={message.contentMarkdown}
           collapseAtHeight={messageCollapse.collapseAtHeight}
           collapseToHeight={messageCollapse.collapseToHeight}
-          defaultCollapsed={messageCollapse.enabled}
+          defaultCollapsed={messageCollapse.enabled || alwaysCollapse === true}
         >
           <MarkdownContent content={message.contentMarkdown} className="text-sm leading-relaxed" />
         </CollapsibleBody>

@@ -19,6 +19,7 @@ import * as contextsModule from "@/contexts"
 import * as queueDraftModule from "@/hooks/use-queue-draft-message"
 import * as pointerModule from "@/hooks/use-pointer"
 import * as panelHostModule from "@/components/layout/panel-host"
+import * as collapsibleBodyModule from "@/lib/markdown/collapsible-body"
 
 const WORKSPACE_ID = "ws_1"
 
@@ -258,6 +259,22 @@ describe("BoardPage", () => {
   it("renders the opening-message body", async () => {
     mountBoard([makePost({}, { contentMarkdown: "Rotate the tokens before Friday." })])
     expect(await screen.findByText("Rotate the tokens before Friday.")).toBeTruthy()
+  })
+
+  it("collapses long bodies on the card regardless of the global preference (overview surface)", async () => {
+    // jsdom can't measure the clamp itself; assert at the seam — every card body
+    // mounts CollapsibleBody with defaultCollapsed forced on, even though the
+    // viewer's messageCollapseEnabled preference defaults off.
+    const captured: boolean[] = []
+    const realBody = collapsibleBodyModule.CollapsibleBody
+    vi.spyOn(collapsibleBodyModule, "CollapsibleBody").mockImplementation((props) => {
+      captured.push(props.defaultCollapsed === true)
+      return realBody(props)
+    })
+    mountBoard([makePost({}, { contentMarkdown: "Opening message body." })])
+    await screen.findByText("Opening message body.")
+    expect(captured.length).toBeGreaterThan(0)
+    expect(captured.every(Boolean)).toBe(true)
   })
 
   it("shows only the viewer's own conversations on the Mine lens", async () => {

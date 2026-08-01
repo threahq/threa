@@ -613,6 +613,10 @@ export function BoardCard({
         rowInsetClassName="-mx-3 sm:-mx-4"
         onNewSubtopic={canBranch ? () => inlineComposer.openNewSubtopic(rowStreamId, message.id) : undefined}
         onMoveToSubtopic={moveToSubtopic.moveHandlerFor(message.id, conversation.id, message.settling)}
+        // The card is an overview surface: one long agent/coding message must
+        // not make it a screen tall. The panel (a reading surface) follows the
+        // viewer's preference instead.
+        alwaysCollapse
       />
     )
   }
@@ -656,6 +660,7 @@ export function BoardCard({
               ? undefined
               : moveToSubtopic.moveHandlerFor(message.id, branch.conversationId, message.settling)
           }
+          alwaysCollapse
         />
       </ConversationReadProvider>
     )
