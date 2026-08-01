@@ -582,9 +582,12 @@ export function StreamContent({
   // from there), "idle" otherwise. Abandoning paths cancel a "fetching"
   // navigation outright but let a "swapped" one finish landing — killing it
   // mid-way would strand the swapped window unanchored at an arbitrary
-  // position. The cancel itself is gated on "fetching" so it can never hit an
-  // unrelated in-flight jump (deep link, date) that search doesn't own.
+  // position. The phase alone can go stale (a foreign jump superseding the
+  // search nav doesn't reset it), so cancels also pass the generation the
+  // search's own jump claimed (searchNavGenRef) — an ownership-checked
+  // cancel no-ops when the in-flight jump isn't search's.
   const searchNavPhaseRef = useRef<"idle" | "fetching" | "swapped">("idle")
+  const searchNavGenRef = useRef(0)
   const [batchMode, setBatchMode] = useState(false)
   // What the current batch selection is for. `moveToThread` (default) drags the
   // selection onto a target message; `splitConversation` reassigns the selection's
@@ -790,6 +793,7 @@ export function StreamContent({
     jumpToEventByDate,
     exitJumpMode,
     cancelPendingJump,
+    currentJumpGeneration,
     isJumpMode,
   } = useEvents(workspaceId, streamId, { enabled: !isDraft, loadAll: isThread })
 
@@ -883,7 +887,7 @@ export function StreamContent({
     // — keep its pendingScrollTarget so the post-jump driver finishes landing
     // instead of stranding the swapped window unanchored.
     if (searchNavPhaseRef.current === "fetching") {
-      cancelPendingJump()
+      cancelPendingJump(searchNavGenRef.current)
       if (pendingScrollTarget.current && pendingScrollTarget.current === searchNavTargetRef.current) {
         pendingScrollTarget.current = null
       }
@@ -1771,7 +1775,7 @@ export function StreamContent({
         // A previous out-of-window navigation may still be pending; this newer
         // navigation supersedes it — otherwise its window swap or landing
         // arrives later, under a user who is already at this match.
-        if (searchNavPhaseRef.current === "fetching") cancelPendingJump()
+        if (searchNavPhaseRef.current === "fetching") cancelPendingJump(searchNavGenRef.current)
         if (pendingScrollTarget.current && pendingScrollTarget.current === searchNavTargetRef.current) {
           pendingScrollTarget.current = null
         }
@@ -1793,7 +1797,11 @@ export function StreamContent({
       // On success the spinner stays up until the post-jump driver engages the
       // scroll (or gives up) — the fetch is the smaller half of the wait; the
       // window swap + scroll placement is the rest of it.
-      jumpToEvent(messageId)
+      const navPromise = jumpToEvent(messageId)
+      // jumpToEvent claims its generation synchronously — capture it as the
+      // ownership token for phase-gated cancels.
+      searchNavGenRef.current = currentJumpGeneration()
+      navPromise
         .then((result) => {
           if (searchNavVersionRef.current !== version) return
           if (result === "superseded") {
@@ -1820,7 +1828,7 @@ export function StreamContent({
           toast.error("Couldn't load that search result")
         })
     },
-    [events, jumpToEvent, cancelPendingJump, disableAutoScroll, scrollToMessage]
+    [events, jumpToEvent, cancelPendingJump, currentJumpGeneration, disableAutoScroll, scrollToMessage]
   )
 
   // Jump to a calendar date from the floating date header. Scrolls to the first
@@ -1834,7 +1842,13 @@ export function StreamContent({
       disableAutoScroll()
       const inWindowMessageId = resolveDateJumpAnchor({ events, targetDayMs, hasOlderEvents })
       if (inWindowMessageId) {
+        // Explicit navigation: abandon whatever jump is in flight — a
+        // late-resolving one would swap the window under this scroll.
+        cancelPendingJump()
         pendingScrollTarget.current = null
+        searchNavPhaseRef.current = "idle"
+        searchNavVersionRef.current++
+        setIsSearchNavigating(false)
         scrollToMessage(inWindowMessageId)
         return
       }
@@ -1851,7 +1865,15 @@ export function StreamContent({
         toast.info("No messages on or after that date")
       }
     },
-    [events, hasOlderEvents, disableAutoScroll, scrollToMessage, jumpToEventByDate, resetShiftBaseline]
+    [
+      events,
+      hasOlderEvents,
+      cancelPendingJump,
+      disableAutoScroll,
+      scrollToMessage,
+      jumpToEventByDate,
+      resetShiftBaseline,
+    ]
   )
 
   // Highlight search matches in the DOM via CSS Custom Highlight API

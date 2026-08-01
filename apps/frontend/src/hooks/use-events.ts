@@ -635,10 +635,27 @@ export function useEvents(workspaceId: string, streamId: string, options?: { ena
   // resolution is routine under rapid result cycling.
   const jumpGenerationRef = useRef(0)
 
-  /** Invalidate any in-flight jump so its resolution can't mutate window state. */
-  const cancelPendingJump = useCallback(() => {
+  /**
+   * Invalidate an in-flight jump so its resolution can't mutate window state.
+   * With `expectedGeneration` (from `currentJumpGeneration()` right after the
+   * jump call), the cancel is ownership-checked: it no-ops when a newer jump
+   * has already claimed the generation — cancelling unconditionally there
+   * would kill the *newer* navigation, not the caller's own stale one. Omit
+   * the argument only for actions that mean "abandon whatever is in flight"
+   * (stream switch, jump-to-latest, an explicit in-window navigation).
+   */
+  const cancelPendingJump = useCallback((expectedGeneration?: number) => {
+    if (expectedGeneration !== undefined && expectedGeneration !== jumpGenerationRef.current) return
     jumpGenerationRef.current++
   }, [])
+
+  /**
+   * The generation of the most recently started jump. A jump function bumps
+   * the generation synchronously before its first await, so reading this
+   * immediately after calling `jumpToEvent`/`jumpToEventByDate` yields the
+   * generation that call claimed — the token for an ownership-checked cancel.
+   */
+  const currentJumpGeneration = useCallback(() => jumpGenerationRef.current, [])
 
   /**
    * Jump to a specific event (e.g. from search or push notification deep link).
@@ -764,6 +781,7 @@ export function useEvents(workspaceId: string, streamId: string, options?: { ena
     jumpToEventByDate,
     exitJumpMode,
     cancelPendingJump,
+    currentJumpGeneration,
     isJumpMode: !!jumpState,
     addEvent,
     updateEvent,
