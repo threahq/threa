@@ -7,7 +7,7 @@
 
 import { describe, test, expect, beforeAll, afterAll, afterEach, spyOn } from "bun:test"
 import { Pool } from "pg"
-import { withTransaction, addTestMember, setupTestDatabase, testMessageContent } from "./setup"
+import { withTransaction, addTestMember, setupIsolatedTestDatabase, testMessageContent } from "./setup"
 import { WorkspaceRepository } from "../../src/features/workspaces"
 import { StreamRepository, StreamMemberRepository } from "../../src/features/streams"
 import { EventService } from "../../src/features/messaging"
@@ -37,6 +37,7 @@ class StubExtractor implements BoundaryExtractor {
 
 describe("provisional conversation attach", () => {
   let pool: Pool
+  let cleanupDatabase: () => Promise<void>
   let eventService: EventService
   let extractor: StubExtractor
   let extraction: BoundaryExtractionService
@@ -113,7 +114,9 @@ describe("provisional conversation attach", () => {
   }
 
   beforeAll(async () => {
-    pool = await setupTestDatabase()
+    const isolated = await setupIsolatedTestDatabase("provisional_attach")
+    pool = isolated.pool
+    cleanupDatabase = isolated.cleanup
     testUserId = userId()
     testWorkspaceId = workspaceId()
     testStreamId = streamId()
@@ -152,11 +155,11 @@ describe("provisional conversation attach", () => {
     extractor = new StubExtractor()
     extraction = new BoundaryExtractionService(pool, extractor)
     conversationService = new ConversationService(pool)
-  })
+  }, 120_000)
 
   afterAll(async () => {
-    await pool.end()
-  })
+    await cleanupDatabase()
+  }, 120_000)
 
   afterEach(async () => {
     await withTransaction(pool, async (client) => {

@@ -46,7 +46,7 @@ const modeConfigs: Record<Mode, ModeConfig> = {
   "backend-integration": {
     runner: "bun",
     cwd: path.join(rootDir, "apps/backend"),
-    baseOptions: ["--preload", "./tests/setup.ts"],
+    baseOptions: ["--preload", "./tests/setup.ts", "--max-concurrency", "1"],
     defaultPatterns: ["tests/integration/"],
   },
   "backend-e2e": {
