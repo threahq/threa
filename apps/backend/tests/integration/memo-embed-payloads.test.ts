@@ -147,6 +147,7 @@ describe("memo embed summaries on message payloads", () => {
         memoType: "message",
         tags: ["settings"],
         updatedAt: expect.any(String),
+        version: expect.any(Number),
       },
     ])
   })

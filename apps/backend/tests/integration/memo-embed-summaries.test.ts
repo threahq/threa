@@ -149,6 +149,7 @@ describe("MemoRepository.findEmbedSummaries", () => {
       memoType: "message",
       tags: ["settings", "preferences"],
       updatedAt: expect.any(String),
+      version: expect.any(Number),
     })
   })
 

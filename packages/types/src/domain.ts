@@ -1245,6 +1245,14 @@ export interface MemoEmbedSummary {
   memoType: MemoType
   tags: string[]
   updatedAt: string
+  /**
+   * Monotonic card-content version (`memos.version`), bumped on every
+   * card-field update. The client's newer-wins guard orders on it absolutely —
+   * `updatedAt` is ms-precision and can tie. Optional only for summaries
+   * stored before it shipped (IDB rows, sync-log replays); comparisons fall
+   * back to `updatedAt` when either side lacks it.
+   */
+  version?: number
 }
 
 /**
