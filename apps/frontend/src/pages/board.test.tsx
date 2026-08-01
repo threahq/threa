@@ -379,7 +379,9 @@ describe("BoardPage", () => {
     ]
     mountBoard([makePost({ messageIds: ["m1", "m2", "m3", "m4", "m5"] }, { id: "m1" }, recent)], { failMessages: true })
     fireEvent.click(await screen.findByText("1 older message"))
-    expect(await screen.findByText("Couldn't load older messages. Retry.")).toBeTruthy()
+    // The backfill retries once (retry: 1, ~1s backoff) before surfacing the
+    // error label, so the wait must span the retry cycle.
+    expect(await screen.findByText("Couldn't load older messages. Retry.", undefined, { timeout: 4000 })).toBeTruthy()
   })
 
   it("shows no expander when the whole conversation already fits", async () => {

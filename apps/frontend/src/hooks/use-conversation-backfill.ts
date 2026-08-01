@@ -51,9 +51,17 @@ export function useConversationBackfill(
     refetch,
   } = useQuery({
     queryKey: conversationKeys.boardMessages(conversationId),
-    queryFn: () => conversationService.getBoardMessages(workspaceId, conversationId),
+    // Tighter bounds than the client's 20s default × 3 retries: this fetch sits
+    // behind a visible "loading…" label (the card seam, the panel's loading
+    // line), and on a bad connection the default cycle keeps that label up for
+    // over a minute. ~10s × 2 attempts reaches the error label — which offers
+    // the tap-to-retry — while a slow-but-alive network still fits comfortably.
+    // TanStack's signal rides along so an unmount cancels the request.
+    queryFn: ({ signal }) =>
+      conversationService.getBoardMessages(workspaceId, conversationId, { signal, timeoutMs: 10_000 }),
     enabled: enabled && railIncomplete,
     staleTime: 60_000,
+    retry: 1,
   })
 
   // Seed, don't render: the response lands in IDB and the merged view reads it

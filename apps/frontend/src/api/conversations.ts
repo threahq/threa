@@ -131,9 +131,14 @@ export const conversationsApi = {
    * post messages (attachments + link previews), so revealed messages render
    * with the same richness as the opening + recent run.
    */
-  async getBoardMessages(workspaceId: string, conversationId: string): Promise<BoardPostMessage[]> {
+  async getBoardMessages(
+    workspaceId: string,
+    conversationId: string,
+    options?: { signal?: AbortSignal; timeoutMs?: number }
+  ): Promise<BoardPostMessage[]> {
     const res = await api.get<{ messages: BoardPostMessage[] }>(
-      `/api/workspaces/${workspaceId}/conversations/${conversationId}/board-messages`
+      `/api/workspaces/${workspaceId}/conversations/${conversationId}/board-messages`,
+      options
     )
     return res.messages
   },
