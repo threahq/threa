@@ -1,6 +1,15 @@
 import { describe, it, expect, vi, beforeEach } from "vitest"
-import { render, screen } from "@testing-library/react"
-import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom"
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
+import {
+  createMemoryRouter,
+  MemoryRouter,
+  Route,
+  RouterProvider,
+  Routes,
+  useLocation,
+  useNavigate,
+} from "react-router-dom"
+import { PanelProvider, usePanel } from "@/contexts/panel-context"
 import { toast } from "sonner"
 import type { DelegationSummary } from "@threa/types"
 import { DelegationRedirect, LegacyMemoRedirect, RootRedirect, WorkspaceHome } from "./index"
@@ -25,6 +34,27 @@ function PathEcho() {
 function PathAndSearchEcho() {
   const location = useLocation()
   return <div data-testid="path">{`${location.pathname}${location.search}`}</div>
+}
+
+function CloseProbe() {
+  const { closePanel } = usePanel()
+  const location = useLocation()
+  return (
+    <div>
+      <span data-testid="loc">{`${location.pathname}${location.search}`}</span>
+      <button onClick={closePanel}>close</button>
+    </div>
+  )
+}
+
+function BackProbe() {
+  const navigate = useNavigate()
+  const location = useLocation()
+  return (
+    <button data-testid="back" onClick={() => navigate(-1)}>
+      {`${location.pathname}${location.search}`}
+    </button>
+  )
 }
 
 function makeDelegationSummary(overrides: Partial<DelegationSummary> = {}): DelegationSummary {
@@ -90,10 +120,117 @@ describe("WorkspaceHome", () => {
     } as unknown as ReturnType<typeof sidebarContextModule.useSidebar>)
 
     mockUseLastLocation.mockReturnValue({
+      exactPath: null,
       redirectStreamId: "stream_123",
       boardHref: null,
       shouldOpenSidebar: false,
     })
+  })
+
+  it("restores a fresh exact path verbatim", async () => {
+    mockUseLastLocation.mockReturnValue({
+      exactPath: "/w/ws_123/board?lens=mine&panel=conv:c_1",
+      redirectStreamId: null,
+      boardHref: null,
+      shouldOpenSidebar: false,
+    })
+    render(
+      <MemoryRouter initialEntries={["/w/ws_123"]}>
+        <Routes>
+          <Route path="/w/:workspaceId" element={<WorkspaceHome />} />
+          <Route path="/w/:workspaceId/board" element={<PathAndSearchEcho />} />
+        </Routes>
+      </MemoryRouter>
+    )
+
+    expect(await screen.findByTestId("path")).toHaveTextContent("/w/ws_123/board?lens=mine&panel=conv:c_1")
+  })
+
+  it("restores a panel URL with an entry beneath, so back closes the panel instead of exiting", async () => {
+    // The relaunched WebAPK starts with a one-entry history; a plain replace
+    // into a `?panel=` URL would make the Android back gesture exit the app
+    // (#1666's pop-to-close needs a same-view entry underneath).
+    mockUseLastLocation.mockReturnValue({
+      exactPath: "/w/ws_123/board?lens=mine&panel=conv:c_1",
+      redirectStreamId: null,
+      boardHref: null,
+      shouldOpenSidebar: false,
+    })
+    render(
+      <MemoryRouter initialEntries={["/w/ws_123"]}>
+        <Routes>
+          <Route path="/w/:workspaceId" element={<WorkspaceHome />} />
+          <Route path="/w/:workspaceId/board" element={<BackProbe />} />
+        </Routes>
+      </MemoryRouter>
+    )
+
+    const probe = await screen.findByTestId("back")
+    expect(probe.textContent).toBe("/w/ws_123/board?lens=mine&panel=conv:c_1")
+    fireEvent.click(probe)
+    await waitFor(() => expect(screen.getByTestId("back").textContent).toBe("/w/ws_123/board?lens=mine"))
+  })
+
+  it("closing a restored panel pops the pushed entry, leaving no duplicate", async () => {
+    // The two restore hops batch into one commit, so PanelProvider never
+    // observes the panel-less entry beneath; the push carries an attestation
+    // instead. Without it, close rewrites in place and the first back press
+    // after closing is a visual no-op on a duplicate entry.
+    mockUseLastLocation.mockReturnValue({
+      exactPath: "/w/ws_123/board?lens=mine&panel=conv:c_1",
+      redirectStreamId: null,
+      boardHref: null,
+      shouldOpenSidebar: false,
+    })
+    const router = createMemoryRouter(
+      [
+        { path: "/elsewhere", element: <PathAndSearchEcho /> },
+        { path: "/w/:workspaceId", element: <WorkspaceHome /> },
+        {
+          path: "/w/:workspaceId/board",
+          element: (
+            <PanelProvider>
+              <CloseProbe />
+            </PanelProvider>
+          ),
+        },
+      ],
+      { initialEntries: ["/elsewhere", "/w/ws_123"], initialIndex: 1 }
+    )
+    render(<RouterProvider router={router} />)
+
+    await waitFor(() => expect(screen.getByTestId("loc").textContent).toBe("/w/ws_123/board?lens=mine&panel=conv:c_1"))
+    fireEvent.click(screen.getByRole("button", { name: "close" }))
+    await waitFor(() => expect(screen.getByTestId("loc").textContent).toBe("/w/ws_123/board?lens=mine"))
+
+    // ONE back leaves the restored view entirely: close consumed the pushed
+    // panel entry instead of stacking a rewrite on top.
+    await act(async () => {
+      await router.navigate(-1)
+    })
+    expect(screen.getByTestId("path").textContent).toBe("/elsewhere")
+  })
+
+  it("lets index search params win over the exact path", async () => {
+    // `?ws-settings=` and friends must reach the stream redirect, not be
+    // swallowed by a verbatim restore.
+    mockUseLastLocation.mockReturnValue({
+      exactPath: "/w/ws_123/board?lens=mine",
+      redirectStreamId: "stream_123",
+      boardHref: null,
+      shouldOpenSidebar: false,
+    })
+    render(
+      <MemoryRouter initialEntries={["/w/ws_123?ws-settings=bots"]}>
+        <Routes>
+          <Route path="/w/:workspaceId" element={<WorkspaceHome />} />
+          <Route path="/w/:workspaceId/s/:streamId" element={<SearchEcho />} />
+          <Route path="/w/:workspaceId/board" element={<PathAndSearchEcho />} />
+        </Routes>
+      </MemoryRouter>
+    )
+
+    expect(await screen.findByTestId("search")).toHaveTextContent("?ws-settings=bots")
   })
 
   it("preserves workspace search params when redirecting to the last stream", async () => {

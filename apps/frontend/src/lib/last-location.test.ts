@@ -2,9 +2,11 @@ import { describe, it, expect, beforeEach } from "vitest"
 import {
   sanitizeBoardSearch,
   buildBoardHref,
+  freshExactPath,
   getLastLocation,
   setLastLocation,
   clearLastLocation,
+  EXACT_RESTORE_WINDOW_MS,
   type LastLocation,
 } from "./last-location"
 
@@ -115,6 +117,49 @@ describe("getLastLocation / setLastLocation round-trip", () => {
   it("returns null and does not throw on a malformed record", () => {
     localStorage.setItem(key, "{not json")
     expect(getLastLocation(USER, WS)).toBeNull()
+  })
+
+  it("round-trips the exact record and drops a malformed one", () => {
+    const record: LastLocation = {
+      surface: "stream",
+      streamId: "stream_a",
+      board: null,
+      exact: { path: "/w/ws_1/s/stream_a?panel=conv:c_1", at: 1234 },
+    }
+    setLastLocation(USER, WS, record)
+    expect(getLastLocation(USER, WS)).toEqual(record)
+
+    localStorage.setItem(
+      key,
+      JSON.stringify({ surface: "stream", streamId: "stream_a", board: null, exact: { path: 7 } })
+    )
+    expect(getLastLocation(USER, WS)).toEqual({ surface: "stream", streamId: "stream_a", board: null })
+  })
+})
+
+describe("freshExactPath", () => {
+  const NOW = 1_700_000_000_000
+  const record = (path: string, at: number): LastLocation => ({
+    surface: "stream",
+    streamId: null,
+    board: null,
+    exact: { path, at },
+  })
+
+  it("returns a fresh in-workspace path verbatim", () => {
+    expect(freshExactPath(record("/w/ws_1/board?lens=mine&panel=conv:c_1", NOW - 1000), WS, NOW)).toBe(
+      "/w/ws_1/board?lens=mine&panel=conv:c_1"
+    )
+  })
+
+  it("returns null when stale, missing, cross-workspace, or the bare index", () => {
+    expect(freshExactPath(record("/w/ws_1/s/stream_a", NOW - EXACT_RESTORE_WINDOW_MS - 1), WS, NOW)).toBeNull()
+    expect(freshExactPath({ surface: "stream", streamId: null, board: null }, WS, NOW)).toBeNull()
+    expect(freshExactPath(null, WS, NOW)).toBeNull()
+    expect(freshExactPath(record("/w/ws_2/s/stream_a", NOW), WS, NOW)).toBeNull()
+    expect(freshExactPath(record("/w/ws_1", NOW), WS, NOW)).toBeNull()
+    expect(freshExactPath(record("/w/ws_1/", NOW), WS, NOW)).toBeNull()
+    expect(freshExactPath(record("/w/ws_1/?m=evt_1", NOW), WS, NOW)).toBeNull()
   })
 })
 

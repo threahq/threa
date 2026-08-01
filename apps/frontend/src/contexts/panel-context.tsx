@@ -154,8 +154,15 @@ export function PanelProvider({ children }: PanelProviderProps) {
     if (panelId === null) canPopToClose.current = false
     // A replace leaves the entry below untouched, so the claim carries over.
     else if (navigationType !== "REPLACE")
-      canPopToClose.current = navigationType === "PUSH" && previousLocation === hereWithoutPanel
-  }, [location.key, location.pathname, location.search, navigationType, panelId])
+      canPopToClose.current =
+        navigationType === "PUSH" &&
+        // The exact-restore two-hop (routes/index.tsx ExactRestore) batches
+        // both navigations into one commit, so `previousLocation` never sees
+        // the panel-less entry it pushed on top of — the push carries an
+        // attestation of what its construction guarantees instead.
+        (previousLocation === hereWithoutPanel ||
+          (location.state as { panelPopsToClose?: boolean } | null)?.panelPopsToClose === true)
+  }, [location.key, location.pathname, location.search, location.state, navigationType, panelId])
 
   const closePanel = useCallback(() => {
     if (canPopToClose.current) {

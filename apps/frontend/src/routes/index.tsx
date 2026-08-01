@@ -185,12 +185,40 @@ export function RootRedirect() {
   return <Navigate to="/workspaces" replace />
 }
 
+/**
+ * Restores the pre-kill URL verbatim after a cold relaunch. A `?panel=` URL is
+ * restored in two hops — the panel-less URL replaced in, then the panel pushed
+ * on top — so the relaunched app's one-entry history gains an entry beneath the
+ * panel and the Android back gesture closes it (panel-context pops to the entry
+ * underneath) instead of exiting the WebAPK at the bottom of history.
+ */
+function ExactRestore({ path }: { path: string }) {
+  const navigate = useNavigate()
+  const restored = useRef(false)
+  useEffect(() => {
+    if (restored.current) return
+    restored.current = true
+    const url = new URL(path, window.location.origin)
+    if (url.searchParams.has("panel")) {
+      url.searchParams.delete("panel")
+      navigate(`${url.pathname}${url.search}`, { replace: true })
+      // Both hops batch into ONE commit, so PanelProvider never observes the
+      // panel-less entry this push lands on — the state attestation carries
+      // what the construction guarantees, letting close pop instead of rewrite.
+      navigate(path, { state: { panelPopsToClose: true } })
+    } else {
+      navigate(path, { replace: true })
+    }
+  }, [navigate, path])
+  return null
+}
+
 /** Workspace index route — redirects to a stream or opens the sidebar. */
 export function WorkspaceHome() {
   const { workspaceId } = useParams<{ workspaceId: string }>()
   const location = useLocation()
   const { state, togglePinned } = useSidebar()
-  const { redirectStreamId, boardHref, shouldOpenSidebar } = useLastLocation(workspaceId ?? "")
+  const { exactPath, redirectStreamId, boardHref, shouldOpenSidebar } = useLastLocation(workspaceId ?? "")
   const sidebarOpenedRef = useRef(false)
 
   useEffect(() => {
@@ -199,6 +227,13 @@ export function WorkspaceHome() {
       togglePinned()
     }
   }, [shouldOpenSidebar, state, togglePinned])
+
+  // Verbatim restore after a crash/kill relaunch. Only when the index carries
+  // no search of its own — params like `?ws-settings=` must reach the stream
+  // redirect below, not be silently swallowed by the exact record.
+  if (exactPath && workspaceId && !location.search) {
+    return <ExactRestore path={exactPath} />
+  }
 
   if (boardHref && workspaceId) {
     return <Navigate to={boardHref} replace />

@@ -15,11 +15,30 @@ export interface LastLocationBoard {
   search: string
 }
 
+/** The exact in-workspace URL last seen, for verbatim restore after a crash or
+ *  OS kill of the backgrounded PWA. `at` is bumped on backgrounding, so it
+ *  measures time-since-last-seen, not time-since-last-navigation. */
+export interface LastLocationExact {
+  path: string
+  at: number
+}
+
 export interface LastLocation {
   surface: LastLocationSurface
   streamId: string | null
   board: LastLocationBoard | null
+  exact?: LastLocationExact
 }
+
+/**
+ * How recent the exact record must be to restore verbatim. Within the window a
+ * relaunch is a crash-restart continuation (the Firefox round-trip that got the
+ * PWA killed), so the viewer gets back exactly what they were looking at —
+ * including `?panel=`/`?m=` and non-stream pages. Beyond it, the sanitized
+ * stream/board arms apply: a cold start into a months-old panel is a worse
+ * default than the filtered feed.
+ */
+export const EXACT_RESTORE_WINDOW_MS = 30 * 60 * 1000
 
 function key(userId: string, workspaceId: string): string {
   return `${STORAGE_PREFIX}:${userId}:${workspaceId}`
@@ -69,10 +88,19 @@ function parseRecord(raw: string): LastLocation | null {
     board = { search: b.search }
   }
 
+  let exact: LastLocationExact | undefined
+  if (record.exact !== null && record.exact !== undefined && typeof record.exact === "object") {
+    const e = record.exact as Record<string, unknown>
+    if (typeof e.path === "string" && typeof e.at === "number") {
+      exact = { path: e.path, at: e.at }
+    }
+  }
+
   return {
     surface: record.surface,
     streamId: (record.streamId as string | null) ?? null,
     board,
+    ...(exact ? { exact } : {}),
   }
 }
 
@@ -101,6 +129,7 @@ export function setLastLocation(userId: string, workspaceId: string, location: L
       surface: location.surface,
       streamId: location.streamId,
       board: location.board ? { search: sanitizeBoardSearch(location.board.search) } : null,
+      ...(location.exact ? { exact: location.exact } : {}),
     }
     localStorage.setItem(key(userId, workspaceId), JSON.stringify(record))
     localStorage.removeItem(legacyKey(userId, workspaceId))
@@ -149,6 +178,22 @@ function sweepStaleStreamScope(search: string, knownStreamIds: readonly string[]
  * `in` axis. An empty stored search restores the bare entry alias, which
  * re-resolves the viewer's home — the meaning of having been there.
  */
+/**
+ * The exact path to restore verbatim, or null when the record is missing,
+ * stale (older than {@link EXACT_RESTORE_WINDOW_MS}), for another workspace, or
+ * the workspace index itself (restoring the index would loop the redirect).
+ */
+export function freshExactPath(record: LastLocation | null, workspaceId: string, now: number): string | null {
+  const exact = record?.exact
+  if (!exact) return null
+  if (now - exact.at > EXACT_RESTORE_WINDOW_MS) return null
+  const prefix = `/w/${workspaceId}`
+  if (!exact.path.startsWith(`${prefix}/`)) return null
+  const rest = exact.path.slice(prefix.length)
+  if (rest === "/" || rest.startsWith("/?")) return null
+  return exact.path
+}
+
 export function buildBoardHref(
   workspaceId: string,
   board: LastLocationBoard,
