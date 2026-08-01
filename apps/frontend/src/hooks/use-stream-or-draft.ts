@@ -386,17 +386,15 @@ function useDraftDmStream(workspaceId: string, streamId: string, enabled: boolea
       await db.transaction("rw", [db.streams, db.streamMemberships, db.dmPeers], async () => {
         await db.streams.put(optimisticStream)
 
-        if (currentUserId) {
-          await db.streamMemberships.put({
-            id: `${workspaceId}:${message.streamId}`,
-            workspaceId,
-            streamId: message.streamId,
-            memberId: currentUserId,
-            notificationLevel: null,
-            joinedAt: message.createdAt,
-            _cachedAt: now,
-          })
-        }
+        await db.streamMemberships.put({
+          id: `${workspaceId}:${message.streamId}`,
+          workspaceId,
+          streamId: message.streamId,
+          memberId: currentUserId,
+          notificationLevel: null,
+          joinedAt: message.createdAt,
+          _cachedAt: now,
+        })
 
         await db.dmPeers.put({
           id: `${workspaceId}:${message.streamId}`,
@@ -419,14 +417,12 @@ function useDraftDmStream(workspaceId: string, streamId: string, enabled: boolea
           lastMessagePreview: optimisticStream.lastMessagePreview ?? null,
         }
 
-        const optimisticMembership: StreamMember | null = currentUserId
-          ? {
-              streamId: message.streamId,
-              memberId: currentUserId,
-              notificationLevel: null,
-              joinedAt: message.createdAt,
-            }
-          : null
+        const optimisticMembership: StreamMember = {
+          streamId: message.streamId,
+          memberId: currentUserId,
+          notificationLevel: null,
+          joinedAt: message.createdAt,
+        }
 
         const hasPeer = old.dmPeers.some((peer) => peer.userId === targetUserId && peer.streamId === message.streamId)
 
@@ -443,10 +439,9 @@ function useDraftDmStream(workspaceId: string, streamId: string, enabled: boolea
               ? { ...stream, displayName: targetUserName ?? stream.displayName }
               : stream
           ),
-          streamMemberships:
-            !membershipExists && optimisticMembership
-              ? [...old.streamMemberships, optimisticMembership]
-              : old.streamMemberships,
+          streamMemberships: membershipExists
+            ? old.streamMemberships
+            : [...old.streamMemberships, optimisticMembership],
         }
       })
 
