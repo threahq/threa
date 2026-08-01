@@ -4,7 +4,7 @@ import { renderHook } from "@testing-library/react"
 import { MemoryRouter } from "react-router-dom"
 import * as authModule from "@/auth"
 import * as workspaceStoreModule from "@/stores/workspace-store"
-import { useLastLocation, usePersistLastLocation } from "./use-last-location"
+import { useLastLocation, usePersistLastLocation, resetColdLaunchForTests } from "./use-last-location"
 import { setLastLocation, getLastLocation, EXACT_RESTORE_WINDOW_MS } from "@/lib/last-location"
 import type { CachedStream } from "@/db"
 
@@ -25,6 +25,7 @@ function setup({ streams = [] }: { streams?: CachedStream[] }) {
 beforeEach(() => {
   vi.restoreAllMocks()
   localStorage.clear()
+  resetColdLaunchForTests()
 })
 
 describe("useLastLocation — stream arm", () => {
@@ -136,6 +137,17 @@ describe("useLastLocation — exact arm", () => {
     })
     const { result } = renderHook(() => useLastLocation(WS))
     expect(result.current).toMatchObject({ exactPath: null, boardHref: "/w/ws_1/board?lens=mine" })
+  })
+
+  it("serves the exact arm only on a cold launch, never after in-app navigation", () => {
+    // A rendered workspace page proves a live session; a later visit to the
+    // index is a deliberate "go home" (back arrows, quick switcher,
+    // StreamErrorView's escape link) and must use the sanitized arms — the
+    // exact arm would bounce the viewer straight back to the page they left.
+    setup({ streams: [stream("stream_a")] })
+    renderHook(() => usePersistLastLocation(WS), { wrapper: routerAt("/w/ws_1/s/stream_a") })
+    const { result } = renderHook(() => useLastLocation(WS))
+    expect(result.current).toMatchObject({ exactPath: null, redirectStreamId: "stream_a" })
   })
 
   it("ignores an exact path from another workspace or the bare index", () => {

@@ -11,6 +11,17 @@ import {
 } from "@/lib/last-location"
 import type { CachedStream } from "@/db"
 
+// The exact arm serves only a cold launch — the OS killed the backgrounded PWA
+// and relaunched it at `start_url`. Once this JS context has rendered any
+// workspace page, arriving at the index is a deliberate "go home" (back
+// arrows, the quick switcher, StreamErrorView's escape link); restoring exact
+// there would bounce the viewer straight back to the page they just left.
+let coldLaunch = true
+
+export function resetColdLaunchForTests(): void {
+  coldLaunch = true
+}
+
 interface UseLastLocationResult {
   /** Exact URL to restore verbatim after a fresh crash/kill relaunch. */
   exactPath: string | null
@@ -26,9 +37,10 @@ interface UseLastLocationResult {
  * Resolves where the workspace index route should land, restoring the last
  * surface (stream or board) the viewer was on.
  *
- * Exact arm: a fresh exact record (the PWA was killed while backgrounded and
- * relaunched at `start_url` shortly after) restores the URL verbatim —
- * including `?panel=`/`?m=` and non-stream pages the sanitized arms don't cover.
+ * Exact arm: on a cold launch only (see `coldLaunch`), a fresh exact record
+ * (the PWA was killed while backgrounded and relaunched at `start_url` shortly
+ * after) restores the URL verbatim — including `?panel=`/`?m=` and non-stream
+ * pages the sanitized arms don't cover.
  *
  * Board arm: a stored board record resolves to the board URL, with the query
  * sanitized and stale scope ids swept inside {@link buildBoardHref}.
@@ -52,7 +64,7 @@ export function useLastLocation(workspaceId: string): UseLastLocationResult {
     const streams = allStreams.filter((s) => !s.archivedAt)
     const record = user ? getLastLocation(user.id, workspaceId) : null
 
-    const exactPath = freshExactPath(record, workspaceId, Date.now())
+    const exactPath = coldLaunch ? freshExactPath(record, workspaceId, Date.now()) : null
     if (exactPath) {
       return { exactPath, redirectStreamId: null, boardHref: null, shouldOpenSidebar: false }
     }
@@ -129,6 +141,9 @@ export function usePersistLastLocation(workspaceId: string | undefined) {
 
   useEffect(() => {
     if (!user || !workspaceId) return
+    // Any rendered workspace page — including the index and transient hops
+    // below — proves a live in-app session; the exact arm is done serving.
+    coldLaunch = false
     // Transient redirect hops are never a place to restore to. The bare index
     // would loop the exact restore; /delegations/:id 404s away to the index
     // (routes/index.tsx DelegationRedirect), so restoring it would loop the
