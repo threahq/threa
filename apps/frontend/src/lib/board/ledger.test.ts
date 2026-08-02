@@ -22,6 +22,21 @@ describe("leadLine", () => {
     expect(leadLine("```ts\nconst a = 1\n```\nafter", 80)).toBe("const a = 1")
   })
 
+  it("keeps fence content verbatim — a code comment is not a heading", () => {
+    expect(leadLine("```py\n# load the frame\ndf = 1\n```", 80)).toBe("# load the frame")
+  })
+
+  it("keeps a shell redirect inside a fence — not a blockquote", () => {
+    expect(leadLine("```sh\n> out.txt\n```", 80)).toBe("> out.txt")
+  })
+
+  it("resolves emoji shortcodes when a converter is passed", () => {
+    const toEmoji = (shortcode: string) => (shortcode === "tada" ? "🎉" : null)
+    expect(leadLine(":tada: shipped", 80, toEmoji)).toBe("🎉 shipped")
+    expect(leadLine(":nope: shipped", 80, toEmoji)).toBe(":nope: shipped")
+    expect(leadLine(":tada: shipped", 80)).toBe(":tada: shipped")
+  })
+
   it("drops blockquote markers", () => {
     expect(leadLine("> quoted thought", 80)).toBe("quoted thought")
   })

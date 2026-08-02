@@ -6,7 +6,7 @@ import {
   type LinkPreviewSummary,
 } from "@threa/types"
 
-import { stripMarkdown, stripMarkdownToInline, truncateInline } from "@/lib/markdown/strip"
+import { resolveEmojiShortcodes, stripMarkdownKeepingCode, truncateInline } from "@/lib/markdown/strip"
 
 /** Characters of prose one reading-minute covers. */
 const CHARS_PER_MINUTE = 1100
@@ -16,16 +16,22 @@ const MAX_LINK_TITLE_CHARS = 28
 
 /**
  * The first meaningful line of a message, as inline text (INV-60 — the strip is
- * `stripMarkdownToInline`, never a parallel implementation).
+ * the shared `@threa/types` one, never a parallel implementation).
  *
  * The whole markdown is stripped before the split: fences are block-level, so a
  * line-first split would leave a bare ``` behind instead of the code's first
- * line. Lines that strip to nothing (dividers, alt-less images, empty headings)
- * are skipped. Returns "" when nothing survives — the caller picks the fallback.
+ * line. The per-line pass is emoji-only — re-stripping markdown here would
+ * re-interpret fence-extracted code (`# comment`, `> out.txt`) as markdown.
+ * Lines that strip to nothing (dividers, alt-less images, empty headings) are
+ * skipped. Returns "" when nothing survives — the caller picks the fallback.
  */
-export function leadLine(contentMarkdown: string, maxChars: number): string {
-  for (const line of stripMarkdown(contentMarkdown).split("\n")) {
-    const inline = stripMarkdownToInline(line).trim()
+export function leadLine(
+  contentMarkdown: string,
+  maxChars: number,
+  toEmoji?: (shortcode: string) => string | null
+): string {
+  for (const line of stripMarkdownKeepingCode(contentMarkdown).split("\n")) {
+    const inline = resolveEmojiShortcodes(line, toEmoji).trim()
     if (!inline) continue
     return truncateInline(inline, maxChars)
   }

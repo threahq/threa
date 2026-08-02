@@ -2,7 +2,7 @@
 // can reuse it (INV-60 — notification bodies are stripped before they ship,
 // the SW renders them verbatim). Re-exported here so existing frontend
 // imports keep their `@/lib/markdown/strip` path and there's one impl, not two.
-export { stripMarkdown, stripMarkdownToInline } from "@threa/types"
+export { stripMarkdown, stripMarkdownKeepingCode, stripMarkdownToInline, resolveEmojiShortcodes } from "@threa/types"
 
 /**
  * Truncate stripped inline text to `maxChars` code POINTS — a `.slice()` on

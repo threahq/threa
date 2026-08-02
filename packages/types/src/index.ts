@@ -330,7 +330,12 @@ export { STREAM_ROW_SPEC, BOARD_EVENT_ROW_TYPES, THREAD_ANCHORABLE_EVENT_TYPES }
 export type { StreamRowSpec, ConversationRef } from "./stream-rows"
 
 // Markdown → plain-text stripping for preview surfaces (shared FE/BE, INV-60)
-export { stripMarkdown, stripMarkdownToInline } from "./markdown-strip"
+export {
+  stripMarkdown,
+  stripMarkdownKeepingCode,
+  stripMarkdownToInline,
+  resolveEmojiShortcodes,
+} from "./markdown-strip"
 
 // Board lens predicate (shared FE filter / BE seed, board-view-design.md § "Lenses")
 export { matchesBoardLens } from "./board-lens"

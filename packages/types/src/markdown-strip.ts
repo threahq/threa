@@ -16,20 +16,50 @@
  * sequences into their emoji characters; unresolved shortcodes stay as text.
  */
 export function stripMarkdownToInline(md: string, toEmoji?: (shortcode: string) => string | null): string {
-  const stripped = stripMarkdown(md).replace(/\n+/g, " ")
-  if (!toEmoji) return stripped
-  return stripped.replace(/:([a-z0-9_+-]+):/g, (match, shortcode) => toEmoji(shortcode) ?? match)
+  return resolveEmojiShortcodes(stripMarkdown(md).replace(/\n+/g, " "), toEmoji)
+}
+
+/**
+ * The inline finishing pass of {@link stripMarkdownToInline}, without the
+ * markdown strip. Callers that already stripped the document (and must not
+ * re-interpret the result as markdown — fence-extracted code would lose its
+ * `#` and `>` prefixes) use this instead of a second `stripMarkdownToInline`.
+ */
+export function resolveEmojiShortcodes(text: string, toEmoji?: (shortcode: string) => string | null): string {
+  if (!toEmoji) return text
+  return text.replace(/:([a-z0-9_+-]+):/g, (match, shortcode) => toEmoji(shortcode) ?? match)
+}
+
+const FENCE_RE = /```[\s\S]*?```/g
+
+/** The inner lines of a fenced block, without the fence markers. */
+function fenceBody(fence: string): string {
+  return fence.split("\n").slice(1, -1).join("\n")
 }
 
 /** Strip markdown formatting, returning plain text content. */
 export function stripMarkdown(md: string): string {
+  return stripBlocks(md.replace(FENCE_RE, fenceBody)).trim()
+}
+
+/**
+ * Like {@link stripMarkdown}, but code inside fenced blocks is kept verbatim —
+ * a `# comment` or a `> redirect` line is code, not a heading or a blockquote.
+ * Text outside the fences is stripped exactly as {@link stripMarkdown} does.
+ */
+export function stripMarkdownKeepingCode(md: string): string {
+  let out = ""
+  let last = 0
+  for (const match of md.matchAll(FENCE_RE)) {
+    out += stripBlocks(md.slice(last, match.index)) + fenceBody(match[0])
+    last = match.index + match[0].length
+  }
+  return (out + stripBlocks(md.slice(last))).trim()
+}
+
+function stripBlocks(md: string): string {
   return (
     md
-      // Remove code blocks (fenced) — extract inner content
-      .replace(/```[\s\S]*?```/g, (match) => {
-        const lines = match.split("\n")
-        return lines.slice(1, -1).join("\n")
-      })
       // Remove headers
       .replace(/^#{1,6}\s+/gm, "")
       // Remove bold/italic
@@ -44,12 +74,11 @@ export function stripMarkdown(md: string): string {
       .replace(/!\[([^\]]*)\]\([^)]+\)/g, "$1")
       // Remove links but keep text
       .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
-      // Remove blockquotes
-      .replace(/^>\s?/gm, "")
+      // Remove blockquotes, including nested ones (`> > quoted`)
+      .replace(/^(?:>[ \t]?)+/gm, "")
       // Remove horizontal rules
       .replace(/^---+$/gm, "")
       // Clean up extra whitespace
       .replace(/\n{3,}/g, "\n\n")
-      .trim()
   )
 }
