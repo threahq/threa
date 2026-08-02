@@ -161,12 +161,19 @@ class SeedClient {
 
   constructor(private readonly baseUrl: string) {}
 
-  /** True when the caller can already read the workspace, i.e. is a member. */
+  /**
+   * True when the caller can already read the workspace, i.e. is a member.
+   * Only auth-shaped statuses mean "not a member" — a 429/5xx must not be
+   * mistaken for one and trigger a join.
+   */
   async canReach(path: string): Promise<boolean> {
     const response = await fetch(`${this.baseUrl}${path}`, {
       headers: { ...(this.cookie ? { cookie: this.cookie } : {}) },
     })
-    return response.ok
+    if (response.ok) return true
+    if ([401, 403, 404].includes(response.status)) return false
+    const text = await response.text().catch(() => "<unreadable body>")
+    throw new Error(`GET ${path} failed: ${response.status} ${response.statusText} — ${text}`)
   }
 
   async request(method: string, path: string, body?: unknown, attempt = 0): Promise<unknown> {
@@ -321,6 +328,8 @@ async function joinStream(authors: SeedClient[], workspaceId: string, streamId: 
  * shape — round-robining authors so the per-user create limit is not the
  * bottleneck.
  */
+const joinedStreams = new Set<string>()
+
 async function postMessages(
   authors: SeedClient[],
   workspaceId: string,
@@ -329,7 +338,10 @@ async function postMessages(
   from: number,
   count: number
 ): Promise<void> {
-  await joinStream(authors, workspaceId, streamId)
+  if (!joinedStreams.has(streamId)) {
+    await joinStream(authors, workspaceId, streamId)
+    joinedStreams.add(streamId)
+  }
   const last = from + count - 1
   for (let start = from; start <= last; start += BATCH_SIZE) {
     const end = Math.min(start + BATCH_SIZE - 1, last)

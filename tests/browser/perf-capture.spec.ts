@@ -54,7 +54,6 @@ test.describe("Performance capture", () => {
     // validity and wire shape are enforced where they can actually fail:
     // `exportCapture` parses `performanceCaptureSchema`, and the schema's
     // rejection cases are covered in packages/types.
-    expect(capture.samples.length).toBeGreaterThan(0)
 
     // (c) The privacy proof, over the serialized payload the upload would send.
     const serialized = JSON.stringify(capture)

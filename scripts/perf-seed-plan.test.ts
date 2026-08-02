@@ -91,7 +91,9 @@ describe("planSeed — each profile plans the documented operation counts", () =
 
   test("board-large: 24 channels — four full BOARD_SYNC_CONCURRENCY waves — each with 3 messages", () => {
     const plan = planSeed(parseProfile("board-large"), empty)
-    expect(plan.filter((op) => op.kind === "createStream").length).toBe(BOARD_LARGE_STREAM_COUNT)
+    expect(plan.filter((op) => op.kind === "createStream").map((op) => op.key)).toEqual(
+      Array.from({ length: BOARD_LARGE_STREAM_COUNT }, (_, i) => `perf-board-${String(i + 1).padStart(2, "0")}`)
+    )
     expect(plan.filter((op) => op.kind === "postMessages")).toEqual(
       Array.from({ length: BOARD_LARGE_STREAM_COUNT }, (_, i) => ({
         kind: "postMessages" as const,
@@ -145,7 +147,10 @@ describe("planSeed — a partially seeded workspace tops up rather than duplicat
     expect(plan.filter((op) => op.key === "perf-board-02")).toEqual([
       { kind: "postMessages", key: "perf-board-02", from: 2, count: BOARD_LARGE_MESSAGES_PER_STREAM - 1 },
     ])
-    expect(plan.filter((op) => op.kind === "createStream").length).toBe(BOARD_LARGE_STREAM_COUNT - 2)
+    const createdKeys = plan.filter((op) => op.kind === "createStream").map((op) => op.key)
+    expect(createdKeys).toHaveLength(BOARD_LARGE_STREAM_COUNT - 2)
+    expect(createdKeys).not.toContain("perf-board-01")
+    expect(createdKeys).not.toContain("perf-board-02")
   })
 })
 

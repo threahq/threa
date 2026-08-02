@@ -4,8 +4,9 @@ Twelve scenarios, each with the exact `perf-seed` invocation that builds its
 fixture and the capture marks that prove it ran. Operator-run: nothing here is
 asserted in CI, because every threshold worth measuring is device-dependent.
 
-The one automated check is `tests/browser/perf-capture.spec.ts`, which proves
-the capture plumbing works end to end and carries no content. It asserts no
+Two things are automated: `scripts/perf-seed-plan.test.ts` (32 unit tests over
+the pure planning logic) and `tests/browser/perf-capture.spec.ts`, which proves
+the capture plumbing works end to end and carries no content. Neither asserts
 timings.
 
 ## Running a scenario
@@ -41,13 +42,13 @@ measures locally and never uploads — upload requires the consent preference.
 
 ## Profiles
 
-| Profile                                     | Builds                                                                             |
-| ------------------------------------------- | ---------------------------------------------------------------------------------- |
-| `large-stream`                              | `#perf-large-stream` with 5,000 messages                                           |
-| `thread-100` / `thread-500` / `thread-2000` | a channel with one anchor message, and a thread under it with N replies            |
-| `missed-entries=<N>`                        | advances the sync log by N entries in `#perf-missed-entries`                       |
-| `drafts`                                    | four empty channels, each holding a staged draft of 1 KB / 10 KB / 100 KB / 256 KB |
-| `board-large`                               | 24 channels (four full `BOARD_SYNC_CONCURRENCY = 6` waves), 3 messages each        |
+| Profile                                     | Builds                                                                                                                        |
+| ------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| `large-stream`                              | `#perf-large-stream` with 5,000 messages                                                                                      |
+| `thread-100` / `thread-500` / `thread-2000` | a channel with one anchor message, and a thread under it with N replies                                                       |
+| `missed-entries=<N>`                        | advances the sync log by at least N entries (batches overshoot; the printed delta is authoritative) in `#perf-missed-entries` |
+| `drafts`                                    | four empty channels, each holding a staged draft of 1 KB / 10 KB / 100 KB / 256 KB                                            |
+| `board-large`                               | 24 channels (four full `BOARD_SYNC_CONCURRENCY = 6` waves), 3 messages each                                                   |
 
 ### Hitting a missed-entry boundary
 

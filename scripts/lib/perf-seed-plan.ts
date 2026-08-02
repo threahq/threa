@@ -234,7 +234,7 @@ export function planSeed(profile: ParsedProfile, existing: ExistingState, runMar
     const entries = profile.entries
     if (entries === undefined) throw new UnknownPerfProfileError("missed-entries")
     if (!runMarker) throw new Error("planSeed needs a runMarker for missed-entries — each run must open a fresh gap.")
-    operations.push({ kind: "advanceSyncLog", key: "perf-missed-entries", entries, runMarker })
+    operations.push({ kind: "advanceSyncLog", key: spec.slots[0]!.key, entries, runMarker })
   }
 
   const draftKeys = new Set(existing.draftKeys ?? [])
