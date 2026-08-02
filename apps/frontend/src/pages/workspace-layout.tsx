@@ -81,6 +81,7 @@ import { useQueryClient } from "@tanstack/react-query"
 import { SyncStatusStore, SyncStatusContext } from "@/sync/sync-status"
 import { copyStreamLink, copyConversationLink } from "@/lib/stream-links"
 import { PerfCaptureProvider } from "@/lib/perf/context"
+import { PerfCaptureConsentGate } from "@/lib/perf/consent"
 import { useResolveOrBounce } from "./use-resolve-or-bounce"
 import { useNotificationAccountSwitch } from "./use-notification-account-switch"
 
@@ -487,6 +488,7 @@ export function WorkspaceLayout() {
                                 <E2eUnlockProvider workspaceId={workspaceId}>
                                   <QuickSwitcherProvider openSwitcher={openSwitcher}>
                                     <PanelProvider>
+                                      <PerfCaptureConsentGate workspaceId={workspaceId} />
                                       <StreamLinkKeyboardHandler workspaceId={workspaceId} mainStreamId={streamId} />
                                       <EnclaveRewrapNudgeListener workspaceId={workspaceId} />
                                       <MediaGalleryProvider>

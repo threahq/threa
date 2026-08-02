@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
+import { useParams } from "react-router-dom"
 import {
   ResponsiveDialog,
   ResponsiveDialogContent,
@@ -21,11 +22,22 @@ import { ScheduleSettings } from "./schedule-settings"
 import { NotificationsSettings } from "./notifications-settings"
 import { KeyboardSettings } from "./keyboard-settings"
 import { AccessibilitySettings } from "./accessibility-settings"
+import { DiagnosticsSettings } from "./diagnostics-settings"
+import { useFeatureFlag } from "@/hooks"
 
 export function SettingsDialog() {
   const { isOpen, activeTab, closeSettings, setActiveTab } = useSettings()
   const [mounted, setMounted] = useState(false)
   const [isShortcutCaptureActive, setIsShortcutCaptureActive] = useState(false)
+  const { workspaceId } = useParams<{ workspaceId: string }>()
+  const perfDiagnostics = useFeatureFlag(workspaceId ?? "", "perfDiagnostics")
+  // The Diagnostics tab is offered only where the rollout enables it; the tab
+  // itself carries the consent toggle.
+  const visibleTabs = useMemo(
+    () => SETTINGS_TABS.filter((tab) => tab !== "diagnostics" || perfDiagnostics === "available"),
+    [perfDiagnostics]
+  )
+  const visibleTab = visibleTabs.includes(activeTab) ? activeTab : visibleTabs[0]
 
   // Delay dialog render until after hydration to avoid scroll lock measurement issues
   useEffect(() => {
@@ -55,15 +67,15 @@ export function SettingsDialog() {
 
         <Tabs
           data-slot="settings-tabs"
-          value={activeTab}
+          value={visibleTab}
           onValueChange={(value) => setActiveTab(value as SettingsTab)}
           className={SETTINGS_DIALOG_LAYOUT_CLASSNAMES.tabs}
         >
           <div data-slot="settings-panels" className={SETTINGS_DIALOG_LAYOUT_CLASSNAMES.panels}>
             <ResponsiveSettingsNav
-              tabs={SETTINGS_TABS}
+              tabs={visibleTabs}
               items={SETTINGS_TAB_CONFIG}
-              value={activeTab}
+              value={visibleTab}
               onValueChange={(value) => setActiveTab(value as SettingsTab)}
             />
 
@@ -98,6 +110,11 @@ export function SettingsDialog() {
               <TabsContent value="accessibility" className="mt-0">
                 <AccessibilitySettings />
               </TabsContent>
+              {perfDiagnostics === "available" && (
+                <TabsContent value="diagnostics" className="mt-0">
+                  <DiagnosticsSettings />
+                </TabsContent>
+              )}
             </div>
           </div>
         </Tabs>

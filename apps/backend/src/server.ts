@@ -146,6 +146,7 @@ import { EmojiUsageHandler } from "./features/emoji"
 import { SystemMessageService, SystemMessageOutboxHandler } from "./features/system-messages"
 import { ActivityService, ActivityFeedHandler } from "./features/activity"
 import { SyncService, SyncLogReconciliationWorker, SyncHeartbeatWorker, SyncLogRetentionWorker } from "./features/sync"
+import { PerfCaptureRetentionWorker, PerfDiagnosticsService } from "./features/perf-diagnostics"
 import { BotInvocationOutboxHandler } from "./features/bot-runtimes/invocation-outbox-handler"
 import {
   BotRuntimeInstanceRepository,
@@ -329,6 +330,15 @@ export async function startServer(): Promise<ServerInstance> {
     : new StreamNamingService(pool, ai, configResolver, messageFormatter)
   const conversationService = new ConversationService(pool)
   const userPreferencesService = new UserPreferencesService(pool)
+  // Both halves of the consent pair are resolved server-side and injected as
+  // plain functions (INV-52): the flag decides availability, the preference is
+  // the consent itself.
+  const perfDiagnosticsService = new PerfDiagnosticsService(
+    pool,
+    (workspaceId, workosUserId) => featureFlagService.getFlag(workspaceId, workosUserId, "perfDiagnostics"),
+    async (workspaceId, userId) =>
+      (await userPreferencesService.getPreferences(workspaceId, userId)).performanceDiagnosticsOptIn
+  )
   const workspaceSettingsService = new WorkspaceSettingsService(pool)
   const platformAdminService = new PlatformAdminService(pool)
   const sidebarConfigService = new SidebarConfigService(pool)
@@ -744,6 +754,7 @@ export async function startServer(): Promise<ServerInstance> {
     labelAssignmentService,
     labelMessageService,
     pushService,
+    perfDiagnosticsService,
     s3Config: config.s3,
     commandRegistry,
     avatarService,
@@ -1573,6 +1584,13 @@ export async function startServer(): Promise<ServerInstance> {
   )
   syncLogRetentionWorker.start()
 
+  // Bounds performance_captures: diagnostic uploads leave after 14 days.
+  const perfCaptureRetentionWorker = new PerfCaptureRetentionWorker(
+    { pool },
+    { retentionMs: Number(process.env.PERF_CAPTURE_RETENTION_MS) || undefined }
+  )
+  perfCaptureRetentionWorker.start()
+
   const queueDepthSampler = new QueueDepthSampler({ pool })
   queueDepthSampler.start()
 
@@ -1623,6 +1641,7 @@ export async function startServer(): Promise<ServerInstance> {
     await syncLogReconciliationWorker.stop()
     await syncHeartbeatWorker.stop()
     await syncLogRetentionWorker.stop()
+    await perfCaptureRetentionWorker.stop()
     await queueDepthSampler.stop()
     await outboxDispatcher.stop()
     await enclaveClaimNudge?.stop()

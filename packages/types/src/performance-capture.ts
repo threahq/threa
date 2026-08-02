@@ -61,10 +61,18 @@ export type PerformanceSample = z.infer<typeof performanceSampleSchema>
 
 export const performanceCaptureSchema = z
   .object({
-    captureId: z.string().min(1),
-    appVersion: z.string().min(1),
+    captureId: z
+      .string()
+      .min(1)
+      .max(64)
+      .regex(/^cap_[0-9A-Za-z]+$/),
+    appVersion: z
+      .string()
+      .min(1)
+      .max(64)
+      .regex(/^[0-9A-Za-z._-]+$/),
     deviceClass: z.enum(PERF_DEVICE_CLASSES),
-    startedAt: z.string().min(1),
+    startedAt: z.string().datetime(),
     samples: z.array(performanceSampleSchema).max(PERF_CAPTURE_MAX_SAMPLES),
   })
   .strict()

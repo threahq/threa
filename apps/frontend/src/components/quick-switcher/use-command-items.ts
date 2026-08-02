@@ -1,6 +1,6 @@
 import { useMemo } from "react"
 import { WORKSPACE_PERMISSION_SCOPES } from "@threa/types"
-import { isDraftId } from "@/hooks"
+import { isDraftId, useFeatureFlag } from "@/hooks"
 import { useCachedWorkspaceBootstrap } from "@/hooks/use-workspaces"
 import { hasPermission } from "@/lib/permissions"
 import { isToleranceMatch, rankMatchesScored } from "@/lib/match-score"
@@ -47,6 +47,9 @@ export function useCommandItems({ query, commandContext }: UseCommandItemsParams
   // command hides for non-admins rather than opening settings to a fallback tab.
   const bootstrap = useCachedWorkspaceBootstrap(commandContext.workspaceId)
   const isAdmin = hasPermission(bootstrap?.viewerPermissions, WORKSPACE_PERMISSION_SCOPES.WORKSPACE_ADMIN)
+  // The Diagnostics settings tab is rollout-gated; without the same gate here
+  // the command opens Settings to a tab that isn't there.
+  const perfDiagnostics = useFeatureFlag(commandContext.workspaceId, "perfDiagnostics")
   const items = useMemo(() => {
     const { currentStreamId, currentStreamName } = commandContext
 
@@ -71,14 +74,17 @@ export function useCommandItems({ query, commandContext }: UseCommandItemsParams
     const contextualGroup = currentStreamName ? `This stream — ${currentStreamName}` : "This stream"
     // Groups render in section order, not by score, so they are ranked
     // together (see rankGroups) and only ordered within a section afterwards.
-    const globalCommands = commands.filter((c) => c.id !== "open-ai-agents" || isAdmin)
+    const globalCommands = commands.filter(
+      (c) =>
+        (c.id !== "open-ai-agents" || isAdmin) && (c.id !== "settings-diagnostics" || perfDiagnostics === "available")
+    )
     const [rankedContextual, rankedGlobal] = rankGroups(query, [contextualCommands, globalCommands])
     const contextualItems = rankedContextual.map((c) => toItem(c, contextualGroup))
 
     const globalItems = rankedGlobal.map((c) => toItem(c, "Commands"))
 
     return [...contextualItems, ...globalItems]
-  }, [query, commandContext, isAdmin])
+  }, [query, commandContext, isAdmin, perfDiagnostics])
 
   return {
     items,

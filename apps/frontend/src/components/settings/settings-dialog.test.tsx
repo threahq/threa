@@ -1,4 +1,6 @@
-import { useEffect } from "react"
+import { useEffect, type ReactNode } from "react"
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
+import { MemoryRouter } from "react-router-dom"
 import { describe, expect, it, vi, beforeEach } from "vitest"
 import { render, screen } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
@@ -13,6 +15,20 @@ import * as keyboardSettingsModule from "./keyboard-settings"
 import * as accessibilitySettingsModule from "./accessibility-settings"
 
 const useSettingsSpy = vi.fn()
+
+// The dialog resolves `perfDiagnostics` (query cache) and the workspace id
+// (route params) to decide whether the Diagnostics tab is offered.
+function renderDialog() {
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  function Wrapper({ children }: { children: ReactNode }) {
+    return (
+      <QueryClientProvider client={queryClient}>
+        <MemoryRouter initialEntries={["/w/ws_1"]}>{children}</MemoryRouter>
+      </QueryClientProvider>
+    )
+  }
+  return render(<SettingsDialog />, { wrapper: Wrapper })
+}
 let keyboardCaptureActive = false
 
 describe("SettingsDialog", () => {
@@ -60,7 +76,7 @@ describe("SettingsDialog", () => {
       setActiveTab: vi.fn(),
     })
 
-    render(<SettingsDialog />)
+    renderDialog()
 
     expect(await screen.findByText("Identity and account details")).toBeInTheDocument()
     expect(screen.getByText("Profile panel")).toBeVisible()
@@ -87,7 +103,7 @@ describe("SettingsDialog", () => {
       setActiveTab: vi.fn(),
     })
 
-    render(<SettingsDialog />)
+    renderDialog()
 
     await user.keyboard("{Escape}")
 
