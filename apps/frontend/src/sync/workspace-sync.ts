@@ -5,6 +5,7 @@ import {
   type CachedStreamReadState,
   type CachedUnreadState,
 } from "@/db"
+import { getPerfCapture } from "@/lib/perf/capture"
 import { seedWorkspaceCache, upsertWorkspaceUserInCache } from "@/stores/workspace-store"
 import {
   seedAgentActivity,
@@ -2417,6 +2418,7 @@ export async function applyWorkspaceBootstrap(
   fetchStartedAt?: number
 ): Promise<WorkspaceBootstrap> {
   const now = Date.now()
+  const capture = getPerfCapture()
 
   // Build membership lookup for O(1) access when merging onto streams
   const membershipByStream = new Map(bootstrap.streamMemberships.map((sm) => [sm.streamId, sm]))
@@ -2427,8 +2429,10 @@ export async function applyWorkspaceBootstrap(
   // a refresh — without this merge, opening any bag-attached scratchpad
   // after a fresh load shows the message badge briefly, then loses it when
   // workspace bootstrap clobbers the field.
+  const stopPreRead = capture.time("bootstrap.preRead")
   const existingStreams = await db.streams.where("workspaceId").equals(workspaceId).toArray()
   const existingByStreamId = new Map(existingStreams.map((s) => [s.id, s]))
+  stopPreRead()
 
   // Effective sidebar config for the in-memory seed below. If a newer
   // `sidebar_config:updated` landed during the fetch window we keep the local
@@ -2449,6 +2453,10 @@ export async function applyWorkspaceBootstrap(
   let effectiveReadStateMap = bootstrap.streamReadState
   let seedReadStates: CachedStreamReadState[] | undefined
 
+  // Counts only the conditional writes; the unconditional ones are summed at
+  // the mark below.
+  let conditionalRowsWritten = 0
+
   // One transaction over every table so they commit together and each table's
   // `useLiveQuery` fires once — one settle, not a per-table trickle. Parallel
   // independent writes (the previous shape) commit a micro-transaction each, so
@@ -2457,6 +2465,7 @@ export async function applyWorkspaceBootstrap(
   // cold first connect). Mirrors applyReconnectBootstrapBatch. The conditional
   // unread/prefs/sidebar writes are inlined (read→check→write stays atomic,
   // INV-20) rather than nested transactions.
+  const stopTx = capture.time("bootstrap.tx")
   await db.transaction(
     "rw",
     [
@@ -2574,12 +2583,16 @@ export async function applyWorkspaceBootstrap(
             _cachedAt: now,
           })
         }
-        if (serverRows.length > 0) await db.streamReadState.bulkPut(serverRows)
+        if (serverRows.length > 0) {
+          await db.streamReadState.bulkPut(serverRows)
+          conditionalRowsWritten += serverRows.length
+        }
         seedReadStates = mergeLocalAndServerReadStates(existingRows, serverRows)
       }
 
       const existingPrefs = await db.userPreferences.get(workspaceId)
       if (!existingPrefs || !fetchStartedAt || existingPrefs._cachedAt < fetchStartedAt) {
+        conditionalRowsWritten += 1
         await db.userPreferences.put({
           ...bootstrap.userPreferences,
           id: workspaceId,
@@ -2590,6 +2603,7 @@ export async function applyWorkspaceBootstrap(
 
       const existingSidebar = await db.sidebarConfigs.get(workspaceId)
       if (!existingSidebar || !fetchStartedAt || existingSidebar._cachedAt < fetchStartedAt) {
+        conditionalRowsWritten += 1
         await db.sidebarConfigs.put({
           id: workspaceId,
           workspaceId,
@@ -2602,6 +2616,23 @@ export async function applyWorkspaceBootstrap(
     }
   )
 
+  stopTx()
+  capture.mark(
+    "bootstrap.rowsWritten",
+    bootstrap.users.length +
+      bootstrap.streams.length +
+      (bootstrap.archivedStreams?.length ?? 0) +
+      bootstrap.streamMemberships.length +
+      bootstrap.dmPeers.length +
+      bootstrap.personas.length +
+      bootstrap.bots.length +
+      bootstrap.labels.length +
+      bootstrap.labelAssignments.length +
+      // workspace + workspaceMetadata + unreadState
+      3 +
+      conditionalRowsWritten
+  )
+
   // Clean up stale entities: anything in IDB for this workspace that
   // wasn't in the bootstrap AND was written before this bootstrap.
   // Entities with _cachedAt >= now were written concurrently by socket
@@ -2611,12 +2642,15 @@ export async function applyWorkspaceBootstrap(
   // survive. Only truly stale entities (from before we started fetching)
   // are removed. If no fetchStartedAt provided, skip cleanup entirely.
   if (fetchStartedAt !== undefined) {
+    const stopCleanup = capture.time("bootstrap.cleanup")
     await cleanupStaleEntities(workspaceId, bootstrap, fetchStartedAt)
+    stopCleanup()
   }
 
   // Populate in-memory cache so useLiveQuery hooks return real data on first
   // synchronous render (the default value). Without this, every component sees
   // empty arrays for one render cycle until the async IDB read resolves.
+  const stopSeed = capture.time("bootstrap.seed")
   seedWorkspaceCache(workspaceId, {
     workspace: { ...bootstrap.workspace, _cachedAt: now },
     users: bootstrap.users.map((u) => ({ ...u, _cachedAt: now })),
@@ -2681,6 +2715,7 @@ export async function applyWorkspaceBootstrap(
       _cachedAt: now,
     },
   })
+  stopSeed()
 
   // Seed the sidebar agent-activity store so a session already running on cold
   // load paints its stream row without waiting for a live event.

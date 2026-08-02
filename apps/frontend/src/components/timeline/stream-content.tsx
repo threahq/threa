@@ -131,6 +131,7 @@ import { useStreamSearch } from "@/hooks/use-stream-search"
 import { useSearchHighlight } from "@/hooks/use-search-highlight"
 import { stripMarkdownToInline } from "@/lib/markdown"
 import { localStartOfDayMs } from "@/lib/dates"
+import { getPerfCapture } from "@/lib/perf/capture"
 import { addStartBatchSelectListener, type BatchSelectIntent } from "@/lib/batch-selection-events"
 import { addMarkReadUpToHereListener, addMarkUnreadListener } from "@/lib/mark-read-events"
 import { ReadFrontierContext, type ReadFrontier } from "./read-frontier-context"
@@ -1381,6 +1382,11 @@ export function StreamContent({
     const base = injectDayDividers(filtered)
     return showOlderSkeletons ? [...OLDER_SKELETON_ITEMS, ...base] : base
   }, [timelineItems, useVirtualized, isChannel, showOlderSkeletons])
+
+  const visibleItemCount = visibleItems.length
+  useEffect(() => {
+    getPerfCapture().mark("timeline.windowItems", visibleItemCount)
+  }, [visibleItemCount])
 
   // Collected from the PRE-filter `timelineItems`: the zero-height
   // `agent:follow_up_cancelled` events are dropped by `filterVisibleItems`, so

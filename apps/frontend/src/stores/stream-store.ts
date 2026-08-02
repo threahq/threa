@@ -2,6 +2,7 @@ import Dexie from "dexie"
 import { useLiveQuery } from "dexie-react-hooks"
 import { useRef } from "react"
 import { db, sequenceToNum, type CachedEvent, type CachedStream } from "@/db"
+import { getPerfCapture } from "@/lib/perf/capture"
 
 /**
  * Cap the number of events loaded from IDB per stream when no sequence floor
@@ -152,7 +153,11 @@ export function useStreamEvents(
 ): CachedEvent[] | undefined {
   const result = useLiveQuery(async () => {
     if (!streamId) return []
+    const capture = getPerfCapture()
+    capture.count("liveQuery.rerun")
+    const stopLoad = capture.time("liveQuery.load")
     const events = await loadStreamEvents(streamId, fromSequenceNum ?? null)
+    stopLoad()
     // Stamp the result with the streamId it was fetched for so the caller
     // can distinguish a fresh empty result from a stale empty result left
     // over from the previous stream.
