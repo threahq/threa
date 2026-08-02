@@ -128,7 +128,9 @@ export function parseProfile(raw: string): ParsedProfile {
   const match = /^missed-entries=(\d+)$/.exec(trimmed)
   if (match) {
     const entries = Number(match[1])
-    if (entries <= 0) throw new UnknownPerfProfileError(raw)
+    // 100k entries is far above any collapse-boundary experiment; anything
+    // bigger is a typo, not a fixture.
+    if (entries <= 0 || entries > 100_000) throw new UnknownPerfProfileError(raw)
     return { name: PERF_SEED_PARAMETERISED_PROFILE, entries }
   }
 

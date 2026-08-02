@@ -44,7 +44,9 @@ const HEAD_PROBE_CURSOR = "9223372036854775807"
 function authorCount(raw: string | undefined): number {
   if (raw === undefined) return DEFAULT_AUTHORS
   const parsed = Number(raw)
-  if (!Number.isInteger(parsed) || parsed < 1) throw new Error(`--authors must be a positive integer, got "${raw}".`)
+  if (!Number.isInteger(parsed) || parsed < 1 || parsed > 24) {
+    throw new Error(`--authors must be an integer between 1 and 24, got "${raw}".`)
+  }
   return parsed
 }
 
@@ -140,6 +142,12 @@ function parseArgs(argv: string[]): Args {
   const baseUrl = flags.get("base-url") ?? (backendPort ? `http://localhost:${backendPort}` : undefined)
   if (!baseUrl) {
     throw new Error("No --base-url and no DEV_TEST_BACKEND_PORT in the environment. See --help.")
+  }
+  // Local-only tool. Any non-loopback deployment running stub auth (a preview
+  // env, a misconfigured staging) would happily accept the whole fixture.
+  const host = new URL(baseUrl).hostname
+  if (!["localhost", "127.0.0.1", "::1", "[::1]"].includes(host)) {
+    throw new Error(`perf-seed only targets a local stack; refusing host "${host}".`)
   }
 
   return {
@@ -390,7 +398,9 @@ async function advanceSyncLog(
   let posted = 0
   while (head - startHead < BigInt(entries)) {
     const remaining = entries - Number(head - startHead)
-    const batch = messagesForMissedEntries(remaining)
+    // Bounded rounds: the head is re-read between them, so a huge target can
+    // never turn into one unbounded posting loop.
+    const batch = Math.min(messagesForMissedEntries(remaining), 100)
     await postMessages(authors, workspaceId, streamId, runMarker, posted + 1, batch)
     posted += batch
     const next = await readSyncHead(authors[0]!, workspaceId)

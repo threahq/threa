@@ -29,6 +29,7 @@ describe("parseProfile", () => {
     expect(() => parseProfile("thread-9000")).toThrow(UnknownPerfProfileError)
     expect(() => parseProfile("missed-entries")).toThrow(UnknownPerfProfileError)
     expect(() => parseProfile("missed-entries=0")).toThrow(UnknownPerfProfileError)
+    expect(() => parseProfile("missed-entries=100001")).toThrow(UnknownPerfProfileError)
     expect(() => parseProfile("")).toThrow(UnknownPerfProfileError)
   })
 })

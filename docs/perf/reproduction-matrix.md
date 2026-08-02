@@ -30,6 +30,8 @@ open 'http://localhost:4004/w/<workspaceId>?perfCapture=1'
 
 `--dry-run` prints the outstanding operations without writing. `--help` lists
 every profile. The script targets a local stack only; it has no API-key path.
+Fixture streams are matched by their `perf-*` slug alone — run against a
+throwaway workspace, not one holding channels that happen to share those names.
 
 Message creation is rate-limited per user (120/min), so seeding posts as six
 stub authors derived from `--email` (`--authors` to change it). The global
