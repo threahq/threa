@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react"
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react"
 import { useParams } from "react-router-dom"
 import { Check, Send } from "lucide-react"
 import { toast } from "sonner"
@@ -8,7 +8,7 @@ import { Label } from "@/components/ui/label"
 import { Switch } from "@/components/ui/switch"
 import { usePreferences } from "@/contexts"
 import { ApiError } from "@/api/client"
-import { getPerfArmingSources, getPerfCapture, isUploadPermitted } from "@/lib/perf/capture"
+import { getPerfArmingSources, getPerfCapture, isUploadPermitted, subscribePerfArming } from "@/lib/perf/capture"
 import { exportCapture } from "@/lib/perf/export"
 
 type SendState = "idle" | "sending" | "sent"
@@ -43,7 +43,8 @@ export function DiagnosticsSettings() {
   }, [optIn])
 
   const sampleCount = useMemo(() => (optIn ? getPerfCapture().snapshot().length : 0), [optIn, tick])
-  const uploadPermitted = isUploadPermitted(getPerfArmingSources())
+  const armingSources = useSyncExternalStore(subscribePerfArming, getPerfArmingSources, getPerfArmingSources)
+  const uploadPermitted = isUploadPermitted(armingSources)
   const devOnly = optIn && !uploadPermitted
 
   async function toggle(checked: boolean) {
@@ -62,6 +63,8 @@ export function DiagnosticsSettings() {
     setSendState("sending")
     try {
       await sendPerfCapture(workspaceId, exportCapture(getPerfCapture()))
+      // A second press must not re-upload the same window as overlapping rows.
+      getPerfCapture().clear()
       setSendState("sent")
       if (resetTimerRef.current !== null) clearTimeout(resetTimerRef.current)
       resetTimerRef.current = setTimeout(() => {

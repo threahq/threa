@@ -100,7 +100,7 @@ export function createRateLimiters(config: RateLimiterConfig): RateLimiterSet {
     }),
 
     // User-triggered diagnostics upload: a handful of sends a minute is the
-    // whole legitimate pattern, and each row is up to 2MB of JSONB.
+    // whole legitimate pattern, and each row is up to 512KB of JSONB.
     perfCapture: createRateLimit({
       name: "perf-capture",
       windowMs: 60_000,
