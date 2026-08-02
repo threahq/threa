@@ -7,6 +7,8 @@ import type { useStreamSearch } from "@/hooks/use-stream-search"
 
 interface StreamSearchBarProps {
   search: ReturnType<typeof useStreamSearch>
+  /** True while an out-of-window navigation is loading its event window */
+  isNavigating: boolean
   onClose: () => void
   /** Called when the active result changes (navigate to that message) */
   onNavigate: (messageId: string) => void
@@ -15,7 +17,7 @@ interface StreamSearchBarProps {
 /** Debounce delay in milliseconds for auto-search on typing */
 const DEBOUNCE_MS = 300
 
-export function StreamSearchBar({ search, onClose, onNavigate }: StreamSearchBarProps) {
+export function StreamSearchBar({ search, isNavigating, onClose, onNavigate }: StreamSearchBarProps) {
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const prevActiveResultIdRef = useRef<string | null>(null)
 
@@ -108,7 +110,7 @@ export function StreamSearchBar({ search, onClose, onNavigate }: StreamSearchBar
             {search.activeMatchIndex + 1}/{search.matchCount}
           </span>
         )}
-        {search.isSearching && <Loader2 className="h-3 w-3 animate-spin" />}
+        {(search.isSearching || isNavigating) && <Loader2 className="h-3 w-3 animate-spin" />}
         {hasQuery && !search.isSearching && search.hasSearched && search.matchCount === 0 && <span>No results</span>}
       </div>
 

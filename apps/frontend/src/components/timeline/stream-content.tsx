@@ -568,6 +568,26 @@ export function StreamContent({
   const [deepLinkHoldExpired, setDeepLinkHoldExpired] = useState(false)
   const user = useUser()
   const [isSearchOpen, setIsSearchOpen] = useState(false)
+  // True while an out-of-window search navigation is fetching its event window —
+  // drives the search bar's spinner so a tap that needs a round-trip is visibly
+  // loading instead of appearing dead. Versioned so a superseding navigation's
+  // completion doesn't clear a newer one's spinner.
+  const [isSearchNavigating, setIsSearchNavigating] = useState(false)
+  const searchNavVersionRef = useRef(0)
+  // Target of the most recent out-of-window search navigation — lets close
+  // distinguish the search's own pendingScrollTarget from a deep-link's.
+  const searchNavTargetRef = useRef<string | null>(null)
+  // Lifecycle of that navigation: "fetching" until jumpToEvent resolves,
+  // "swapped" once the window changed (the post-jump driver owns the landing
+  // from there), "idle" otherwise. Abandoning paths cancel a "fetching"
+  // navigation outright but let a "swapped" one finish landing — killing it
+  // mid-way would strand the swapped window unanchored at an arbitrary
+  // position. The phase alone can go stale (a foreign jump superseding the
+  // search nav doesn't reset it), so cancels also pass the generation the
+  // search's own jump claimed (searchNavGenRef) — an ownership-checked
+  // cancel no-ops when the in-flight jump isn't search's.
+  const searchNavPhaseRef = useRef<"idle" | "fetching" | "swapped">("idle")
+  const searchNavGenRef = useRef(0)
   const [batchMode, setBatchMode] = useState(false)
   // What the current batch selection is for. `moveToThread` (default) drags the
   // selection onto a target message; `splitConversation` reassigns the selection's
@@ -772,6 +792,8 @@ export function StreamContent({
     jumpToEvent,
     jumpToEventByDate,
     exitJumpMode,
+    cancelPendingJump,
+    currentJumpGeneration,
     isJumpMode,
   } = useEvents(workspaceId, streamId, { enabled: !isDraft, loadAll: isThread })
 
@@ -857,6 +879,25 @@ export function StreamContent({
     }
   }, [isDraft, isThread, openOrFocusSearch])
 
+  const handleSearchClose = useCallback(() => {
+    setIsSearchOpen(false)
+    // Closing abandons a still-fetching navigation. Without this the jump
+    // resolves up to seconds later and swaps/scrolls the window under a user
+    // who has moved on. A "swapped" navigation is past the point of no return
+    // — keep its pendingScrollTarget so the post-jump driver finishes landing
+    // instead of stranding the swapped window unanchored.
+    if (searchNavPhaseRef.current === "fetching") {
+      cancelPendingJump(searchNavGenRef.current)
+      if (pendingScrollTarget.current && pendingScrollTarget.current === searchNavTargetRef.current) {
+        pendingScrollTarget.current = null
+      }
+    }
+    searchNavPhaseRef.current = "idle"
+    searchNavVersionRef.current++
+    setIsSearchNavigating(false)
+    clearSearch()
+  }, [clearSearch, cancelPendingJump])
+
   // Escape closes search when focus is outside the search input.
   useEffect(() => {
     if (!isSearchOpen) return
@@ -866,19 +907,13 @@ export function StreamContent({
       const isInput = target?.tagName === "INPUT" || target?.tagName === "TEXTAREA" || target?.isContentEditable
 
       if (event.key === "Escape" && !isInput) {
-        setIsSearchOpen(false)
-        clearSearch()
+        handleSearchClose()
       }
     }
 
     document.addEventListener("keydown", handleKeyDown)
     return () => document.removeEventListener("keydown", handleKeyDown)
-  }, [isSearchOpen, clearSearch])
-
-  const handleSearchClose = useCallback(() => {
-    setIsSearchOpen(false)
-    clearSearch()
-  }, [clearSearch])
+  }, [isSearchOpen, handleSearchClose])
 
   // Compute timeline items in StreamContent so the virtualizer can use count + keys.
   // After grouping commands/sessions, annotate consecutive same-author message runs
@@ -997,10 +1032,9 @@ export function StreamContent({
       setDragGhost(null)
       // Selection and search share the same flush-top strip; keep one open at a
       // time so they can't stack. Search bar's own listeners handle the reverse.
-      setIsSearchOpen(false)
-      clearSearch()
+      handleSearchClose()
     },
-    [clearSearch]
+    [handleSearchClose]
   )
 
   const toggleBatchMessage = useCallback((messageId: string) => {
@@ -1738,6 +1772,16 @@ export function StreamContent({
       const isInCurrentEvents = events.some((e) => matchesDeepLinkTarget(e, messageId))
 
       if (isInCurrentEvents) {
+        // A previous out-of-window navigation may still be pending; this newer
+        // navigation supersedes it — otherwise its window swap or landing
+        // arrives later, under a user who is already at this match.
+        if (searchNavPhaseRef.current === "fetching") cancelPendingJump(searchNavGenRef.current)
+        if (pendingScrollTarget.current && pendingScrollTarget.current === searchNavTargetRef.current) {
+          pendingScrollTarget.current = null
+        }
+        searchNavPhaseRef.current = "idle"
+        searchNavVersionRef.current++
+        setIsSearchNavigating(false)
         // Message is loaded — scroll to it (handles both in-DOM and virtualized-out items)
         scrollToMessage(messageId)
         return
@@ -1746,9 +1790,45 @@ export function StreamContent({
       // Message not in current window — load events around it, then scroll after load
       disableAutoScroll()
       pendingScrollTarget.current = messageId
-      jumpToEvent(messageId)
+      searchNavTargetRef.current = messageId
+      searchNavPhaseRef.current = "fetching"
+      const version = ++searchNavVersionRef.current
+      setIsSearchNavigating(true)
+      // On success the spinner stays up until the post-jump driver engages the
+      // scroll (or gives up) — the fetch is the smaller half of the wait; the
+      // window swap + scroll placement is the rest of it.
+      const navPromise = jumpToEvent(messageId)
+      // jumpToEvent claims its generation synchronously — capture it as the
+      // ownership token for phase-gated cancels.
+      searchNavGenRef.current = currentJumpGeneration()
+      navPromise
+        .then((result) => {
+          if (searchNavVersionRef.current !== version) return
+          if (result === "superseded") {
+            // A date jump or deep link took over mid-flight; it owns the
+            // window and the spinner semantics now.
+            searchNavPhaseRef.current = "idle"
+            setIsSearchNavigating(false)
+            return
+          }
+          if (!result) {
+            searchNavPhaseRef.current = "idle"
+            setIsSearchNavigating(false)
+            if (pendingScrollTarget.current === messageId) pendingScrollTarget.current = null
+            toast.error("Couldn't load that search result")
+            return
+          }
+          searchNavPhaseRef.current = "swapped"
+        })
+        .catch(() => {
+          if (searchNavVersionRef.current !== version) return
+          searchNavPhaseRef.current = "idle"
+          setIsSearchNavigating(false)
+          if (pendingScrollTarget.current === messageId) pendingScrollTarget.current = null
+          toast.error("Couldn't load that search result")
+        })
     },
-    [events, jumpToEvent, disableAutoScroll, scrollToMessage]
+    [events, jumpToEvent, cancelPendingJump, currentJumpGeneration, disableAutoScroll, scrollToMessage]
   )
 
   // Jump to a calendar date from the floating date header. Scrolls to the first
@@ -1762,12 +1842,21 @@ export function StreamContent({
       disableAutoScroll()
       const inWindowMessageId = resolveDateJumpAnchor({ events, targetDayMs, hasOlderEvents })
       if (inWindowMessageId) {
+        // Explicit navigation: abandon whatever jump is in flight — a
+        // late-resolving one would swap the window under this scroll.
+        cancelPendingJump()
         pendingScrollTarget.current = null
+        searchNavPhaseRef.current = "idle"
+        searchNavVersionRef.current++
+        setIsSearchNavigating(false)
         scrollToMessage(inWindowMessageId)
         return
       }
       resetShiftBaseline()
       const anchorId = await jumpToEventByDate(new Date(targetDayMs).toISOString())
+      // A newer jump (another date pick, a search navigation) superseded this
+      // one mid-flight — it owns the window and pendingScrollTarget now.
+      if (anchorId === "superseded") return
       if (anchorId) {
         pendingScrollTarget.current = anchorId
         setPendingScrollRequestVersion((version) => version + 1)
@@ -1776,7 +1865,15 @@ export function StreamContent({
         toast.info("No messages on or after that date")
       }
     },
-    [events, hasOlderEvents, disableAutoScroll, scrollToMessage, jumpToEventByDate, resetShiftBaseline]
+    [
+      events,
+      hasOlderEvents,
+      cancelPendingJump,
+      disableAutoScroll,
+      scrollToMessage,
+      jumpToEventByDate,
+      resetShiftBaseline,
+    ]
   )
 
   // Highlight search matches in the DOM via CSS Custom Highlight API
@@ -1811,6 +1908,8 @@ export function StreamContent({
     if (!useVirtualized) {
       // Threads use plain scroll, not this jump-then-virtualized-scroll path.
       pendingScrollTarget.current = null
+      searchNavPhaseRef.current = "idle"
+      setIsSearchNavigating(false)
       return
     }
 
@@ -1834,11 +1933,15 @@ export function StreamContent({
       if (phase === "user-abort") {
         deepLinkDebug("post-jump: user interacted, abandoning", target)
         pendingScrollTarget.current = null
+        searchNavPhaseRef.current = "idle"
+        setIsSearchNavigating(false)
         return
       }
       if (phase === "deadline") {
         deepLinkDebug("post-jump: deadline exceeded, giving up", target)
         pendingScrollTarget.current = null
+        searchNavPhaseRef.current = "idle"
+        setIsSearchNavigating(false)
         // The jump window loaded but the target never became placeable (e.g. a
         // mid-flight window swap). Mark the deep-link as conclusively failed so
         // the holdForDeepLink skeleton releases and the gated ?m= clear can
@@ -1854,6 +1957,8 @@ export function StreamContent({
         // + user-abort from here, so this driver is done.
         deepLinkDebug("post-jump: scrollToMessage engaged", target)
         pendingScrollTarget.current = null
+        searchNavPhaseRef.current = "idle"
+        setIsSearchNavigating(false)
         return
       }
 
@@ -1870,6 +1975,37 @@ export function StreamContent({
       }
     }
   }, [events, isLoading, scrollToMessage, useVirtualized, setDeepLinkGaveUp, pendingScrollRequestVersion])
+
+  // Reset jump and search state when switching streams (component stays mounted).
+  // Also abort any in-flight scrollToMessage retry loop so its stale closure
+  // (holding an index from the previous stream) doesn't scroll the new stream
+  // to the wrong position.
+  //
+  // Declared BEFORE the highlight deep-link effect below: effects run in
+  // declaration order, and a navigation that changes stream and ?m= together
+  // must reset first, then start the new stream's deep-link jump — the other
+  // order cancels the jump this same commit just started.
+  useEffect(() => {
+    jumpTriggeredKeyRef.current = null
+    scrollAbortRef.current?.()
+    if (pendingScrollRafRef.current) {
+      cancelAnimationFrame(pendingScrollRafRef.current)
+      pendingScrollRafRef.current = 0
+    }
+    pendingScrollTarget.current = null
+    setDeepLinkGaveUp(false)
+    setDeepLinkHoldExpired(false)
+    exitJumpMode()
+    // An in-flight jump for the previous stream must not apply its window to
+    // this one — jumpState carries no streamId, so a late resolution would
+    // render the old stream's events here.
+    cancelPendingJump()
+    setIsSearchOpen(false)
+    searchNavPhaseRef.current = "idle"
+    searchNavVersionRef.current++
+    setIsSearchNavigating(false)
+    clearSearch()
+  }, [streamId, exitJumpMode, cancelPendingJump, clearSearch])
 
   // Jump to highlighted message if it's not in the current event window.
   // The guard uses location.key so repeat clicks on the same message link
@@ -1913,6 +2049,14 @@ export function StreamContent({
         // release the new mount hold.
         if (jumpTriggeredKeyRef.current !== navigationKey) return
         deepLinkDebug("highlight: jumpToEvent resolved", targetMessageId, "success=", success)
+        if (success === "superseded") {
+          // Another navigation (search, date, jump-to-latest) took over while
+          // this deep link loaded. Release the ?m= hold so the param and
+          // highlight don't hang; the superseding action owns the window now.
+          if (pendingScrollTarget.current === targetMessageId) pendingScrollTarget.current = null
+          setDeepLinkGaveUp(true)
+          return
+        }
         if (!success) {
           pendingScrollTarget.current = null
           setDeepLinkGaveUp(true)
@@ -1925,25 +2069,6 @@ export function StreamContent({
         setDeepLinkGaveUp(true)
       })
   }, [highlightMessageId, location.key, isLoading, isDraft, events, jumpToEvent, disableAutoScroll, scrollToMessage])
-
-  // Reset jump and search state when switching streams (component stays mounted).
-  // Also abort any in-flight scrollToMessage retry loop so its stale closure
-  // (holding an index from the previous stream) doesn't scroll the new stream
-  // to the wrong position.
-  useEffect(() => {
-    jumpTriggeredKeyRef.current = null
-    scrollAbortRef.current?.()
-    if (pendingScrollRafRef.current) {
-      cancelAnimationFrame(pendingScrollRafRef.current)
-      pendingScrollRafRef.current = 0
-    }
-    pendingScrollTarget.current = null
-    setDeepLinkGaveUp(false)
-    setDeepLinkHoldExpired(false)
-    exitJumpMode()
-    setIsSearchOpen(false)
-    clearSearch()
-  }, [streamId, exitJumpMode, clearSearch])
 
   // Auto-mark stream as read when viewing. The stream opens at the live bottom;
   // read state advances only through the contiguous run the viewer scrolls
@@ -2160,6 +2285,14 @@ export function StreamContent({
   )
 
   const handleJumpToLatest = useCallback(() => {
+    // Explicit "go to latest": abandon any pending navigation — a
+    // late-resolving jump would otherwise re-enter jump mode and scroll back
+    // to the abandoned target, overriding this click.
+    cancelPendingJump()
+    pendingScrollTarget.current = null
+    searchNavPhaseRef.current = "idle"
+    searchNavVersionRef.current++
+    setIsSearchNavigating(false)
     if (isJumpMode) {
       exitJumpMode()
       // The event window is about to be replaced wholesale (jump window →
@@ -2172,7 +2305,7 @@ export function StreamContent({
     } else {
       scrollToBottom({ force: true })
     }
-  }, [isJumpMode, exitJumpMode, resetShiftBaseline, scrollToBottom])
+  }, [isJumpMode, exitJumpMode, cancelPendingJump, resetShiftBaseline, scrollToBottom])
 
   // Jump up to the first unread (the "New" divider) and stop following the tail
   // so a live message doesn't yank the reader back down. Lands the divider near
@@ -2371,6 +2504,7 @@ export function StreamContent({
                     {isSearchOpen && (
                       <StreamSearchBar
                         search={streamSearch}
+                        isNavigating={isSearchNavigating}
                         onClose={handleSearchClose}
                         onNavigate={handleSearchNavigate}
                       />
