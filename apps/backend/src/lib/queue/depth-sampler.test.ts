@@ -68,3 +68,23 @@ describe("QueueDepthSampler.sampleOnce", () => {
     expect(error).toHaveBeenCalled()
   })
 })
+
+describe("QueueDepthSampler lifecycle", () => {
+  it("start() samples on the ticker and stop() drains", async () => {
+    const depth = spyOn(QueueRepository, "depthByQueue").mockResolvedValue([
+      { queueName: "embedding", pending: 4, oldestPendingAt: null, dlq: 0 },
+    ])
+
+    const sampler = new QueueDepthSampler({ pool }, { intervalMs: 5 })
+    sampler.start()
+    await new Promise((resolve) => setTimeout(resolve, 40))
+    await sampler.stop()
+
+    const calls = depth.mock.calls.length
+    expect(calls).toBeGreaterThan(1)
+    expect((await gaugeValues(queueMessagesPending)).embedding).toBe(4)
+
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(depth.mock.calls.length).toBe(calls)
+  })
+})

@@ -61,8 +61,7 @@ describe("observability metrics", () => {
       const source = readFileSync(file, "utf8")
       for (const name of metrics) {
         if (referenced.has(name)) continue
-        if (new RegExp(`\\b${name}\\s*\\.\\s*(inc|dec|set|observe|startTimer|labels)\\b`).test(source))
-          referenced.add(name)
+        if (new RegExp(`\\b${name}\\s*\\.\\s*(inc|dec|set|observe|startTimer)\\b`).test(source)) referenced.add(name)
       }
     }
 
