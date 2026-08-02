@@ -10,7 +10,7 @@ import {
   registerWorkspaceSocketHandlers,
 } from "./workspace-sync"
 import { SocketEventGate } from "./socket-event-gate"
-import { resetRowConfirmations } from "./bootstrap-diff"
+import { resetRowConfirmations, rowConfirmedAt } from "./bootstrap-diff"
 import { PerfCapture, armPerfCapture, NO_CAPTURE } from "@/lib/perf/capture"
 import { savedKeys } from "@/hooks/use-saved"
 import { scheduledKeys } from "@/hooks/use-scheduled"
@@ -955,6 +955,24 @@ describe("applyWorkspaceBootstrap (real IndexedDB)", () => {
       const samples = capture.snapshot()
       expect(samples.filter((s) => s.name === "bootstrap.rowsWritten").map((s) => s.value)).toEqual([0])
       expect(samples.filter((s) => s.name === "bootstrap.rowsSkipped").map((s) => s.value)).toEqual([rowCount])
+    })
+
+    it("the stale sweep drops a deleted row's confirmation", async () => {
+      await applyWorkspaceBootstrap("ws_1", diffBootstrap(), Date.now() - 5000)
+      await stampCachedAt(1)
+      await applyWorkspaceBootstrap("ws_1", diffBootstrap(), Date.now())
+      expect(rowConfirmedAt("ws_1", "streams", "stream_d2")).toBeDefined()
+
+      await applyWorkspaceBootstrap(
+        "ws_1",
+        diffBootstrap({
+          streams: [{ ...makeStream("stream_d1"), lastMessagePreview: null }] as WorkspaceBootstrap["streams"],
+        }),
+        Date.now()
+      )
+
+      expect(await db.streams.get("stream_d2")).toBeUndefined()
+      expect(rowConfirmedAt("ws_1", "streams", "stream_d2")).toBeUndefined()
     })
 
     it("a changed row is written and its neighbours are not", async () => {

@@ -19,6 +19,7 @@ import {
   diffSingleton,
   effectiveFreshness,
   recordSkippedRowConfirmations,
+  removeRowConfirmations,
   semanticEqual,
   writeAllRows,
 } from "./bootstrap-diff"
@@ -3156,6 +3157,9 @@ export async function applyReconnectBootstrapBatch(
           db.streamReadState.bulkDelete(terminalRowIds),
           deleteSlotsForStreams(db, terminalIds),
         ])
+        removeRowConfirmations(workspaceId, "streams", terminalIds)
+        removeRowConfirmations(workspaceId, "streamMemberships", terminalRowIds)
+        removeRowConfirmations(workspaceId, "streamReadState", terminalRowIds)
       }
     }
   )
@@ -3273,7 +3277,7 @@ async function cleanupStaleEntities(workspaceId: string, bootstrap: WorkspaceBoo
   // can't ride the generic deleteStale (Amendment A4).
   const staleStreamIds = await staleEntityIds(db.streams, "workspaceId", workspaceId, bootstrapStreamIds, now)
 
-  await Promise.all([
+  const [, , , staleMembershipIds] = await Promise.all([
     staleStreamIds.length > 0 ? db.streams.bulkDelete(staleStreamIds) : Promise.resolve(),
     deleteSlotsForStreams(db, staleStreamIds),
     deleteStale(db.workspaceUsers, "workspaceId", workspaceId, bootstrapUserIds, now),
@@ -3291,6 +3295,9 @@ async function cleanupStaleEntities(workspaceId: string, bootstrap: WorkspaceBoo
     deleteStale(db.labels, "workspaceId", workspaceId, bootstrapLabelIds, now),
     deleteStale(db.labelAssignments, "workspaceId", workspaceId, bootstrapLabelAssignmentIds, now),
   ])
+
+  removeRowConfirmations(workspaceId, "streams", staleStreamIds)
+  removeRowConfirmations(workspaceId, "streamMemberships", staleMembershipIds)
 }
 
 async function staleEntityIds(
@@ -3319,9 +3326,10 @@ async function deleteStale(
   scopeValue: string,
   keepIds: Set<string>,
   now: number
-): Promise<void> {
+): Promise<string[]> {
   const toDelete = await staleEntityIds(table, scopeField, scopeValue, keepIds, now)
   if (toDelete.length > 0) {
     await table.bulkDelete(toDelete)
   }
+  return toDelete
 }

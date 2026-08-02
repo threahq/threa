@@ -115,6 +115,12 @@ export function effectiveFreshness(workspaceId: string, table: ConfirmableTable,
   return confirmed !== undefined && confirmed > cachedAt ? confirmed : cachedAt
 }
 
+export function removeRowConfirmations(workspaceId: string, table: ConfirmableTable, ids: Iterable<string>): void {
+  for (const id of ids) {
+    rowConfirmations.delete(confirmationKey(workspaceId, table, id))
+  }
+}
+
 export function resetRowConfirmations(): void {
   rowConfirmations.clear()
 }
