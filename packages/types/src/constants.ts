@@ -513,27 +513,9 @@ export const MAX_BOARD_SCOPE_LABELS = 50
 export const BOARD_SCOPE_STREAM_TYPES = ["channel", "dm", "scratchpad", "system"] as const
 export type BoardScopeStreamType = (typeof BOARD_SCOPE_STREAM_TYPES)[number]
 
-/**
- * The collapsed board card's tail is measured in author-runs, not rows: a
- * thought typed as four quick messages is one run and shows whole. Shared by
- * the backend projection (which ships enough rows for the client to cut) and
- * the card's window.
- */
-export const BOARD_TAIL_RUNS = 2
-
-/** Hard row cap on that tail — when the trailing runs are longer than this, the
- *  card shows the trailing rows and starts mid-run. Also the number of recent
- *  replies the board projection ships per conversation. */
+/** How many recent replies the board projection ships per conversation — the
+ *  server-side slice backing the card's ledger + full tail. */
 export const BOARD_TAIL_MAX_ROWS = 5
-
-/** Floor on that tail: a sparse conversation, where every reply is its own run,
- *  still shows this many trailing rows. */
-export const BOARD_TAIL_MIN_ROWS = 3
-
-/** Rows a single upward-scroll reveal pulls out from under a collapsed card's
- *  "N older messages" seam. One page per gesture, so reading up a long hidden
- *  middle walks backward at a readable pace instead of dumping it whole. */
-export const BOARD_GAP_REVEAL_PAGE_ROWS = 15
 
 // How a message's conversation was decided. Absent/null on a message means the
 // async boundary-extractor inferred (clustered) it — the default. A set value
