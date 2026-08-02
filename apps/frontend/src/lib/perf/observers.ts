@@ -1,6 +1,9 @@
 import { NO_CAPTURE, type PerfCaptureLike } from "./capture"
 
-const FRAME_GAP_THRESHOLD_MS = 50
+// 25ms is ~1.5 missed frames at 60Hz: real misses record, per-frame jitter does
+// not. The distribution is censored below this floor — the reproduction matrix
+// states its frame-gap targets in these terms.
+const FRAME_GAP_THRESHOLD_MS = 25
 
 /**
  * Only durations are read off browser performance entries. Names, target
@@ -18,7 +21,9 @@ export function startObservers(capture: PerfCaptureLike): () => void {
         const observer = new PerformanceObserver((list) => {
           for (const entry of list.getEntries()) capture.mark(mark, entry.duration)
         })
-        observer.observe({ type, buffered: true })
+        // durationThreshold applies to "event" only (16 is the API minimum;
+        // the default 104 would sit above the INP target this exists to verify).
+        observer.observe({ type, buffered: true, durationThreshold: 16 } as PerformanceObserverInit)
         observers.push(observer)
       } catch {
         // Entry type unsupported in this browser — the other observers still run.

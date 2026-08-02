@@ -64,8 +64,6 @@ export const performanceCaptureSchema = z
     deviceClass: z.enum(PERF_DEVICE_CLASSES),
     startedAt: z.string().min(1),
     samples: z.array(performanceSampleSchema).max(PERF_CAPTURE_MAX_SAMPLES),
-    workspaceStreamCount: z.number().optional(),
-    retainedEventCount: z.number().optional(),
   })
   .strict()
 

@@ -37,8 +37,6 @@ describe("performance capture schema", () => {
           { name: "observer.longTask", at: 20, value: 78 },
           { name: "liveQuery.rerun", at: 30, count: 1 },
         ],
-        workspaceStreamCount: 42,
-        retainedEventCount: 12000,
       })
     )
     expect(parsed.samples).toHaveLength(3)
