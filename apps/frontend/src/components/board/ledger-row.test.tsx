@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
-import { act, fireEvent, render, screen } from "@testing-library/react"
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { MemoryRouter } from "react-router-dom"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
@@ -18,7 +18,11 @@ import * as useMobileModule from "@/hooks/use-mobile"
 import * as messageHistoryDialogModule from "@/components/timeline/message-history-dialog"
 import * as conversationsModule from "@/hooks/use-conversations"
 import { spyOnExport } from "@/test/spy"
-import { LedgerEventGroup, LedgerRow } from "./ledger-row"
+import { LedgerBranchRow, LedgerEventGroup, LedgerRow } from "./ledger-row"
+import { boardBranchReplyDraftKey, boardSubtopicDraftKey } from "@/lib/board/draft-keys"
+import { __clearBoardDraftsRegistry } from "@/hooks/use-scope-draft-preview"
+// eslint-disable-next-line no-restricted-imports -- seeds IDB directly to drive the real board-drafts snapshot
+import { db } from "@/db"
 
 const WS = "ws_1"
 const STREAM = "stream_1"
@@ -413,6 +417,83 @@ describe("LedgerRow settling", () => {
     await user.pointer({ keys: "[MouseRight]", target: rowButton })
     expect(await screen.findByRole("menuitem", { name: /Move to sub-topic/i })).toBeInTheDocument()
     expect(screen.queryByRole("menuitem", { name: "Keep here" })).not.toBeInTheDocument()
+  })
+})
+
+describe("LedgerBranchRow", () => {
+  function renderBranchRow(overrides: Partial<Parameters<typeof LedgerBranchRow>[0]> = {}) {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    return render(
+      <QueryClientProvider client={queryClient}>
+        <TooltipProvider>
+          <MemoryRouter initialEntries={[`/w/${WS}/board`]}>
+            <LedgerBranchRow
+              workspaceId={WS}
+              title="GPU budget"
+              conversationId="conv_child"
+              messageIds={["msg_1"]}
+              messageCount={2}
+              lastMessage={message({ contentMarkdown: "We went with the 5090s." })}
+              leadLineLength={80}
+              settling={false}
+              onToggle={vi.fn()}
+              {...overrides}
+            />
+          </MemoryRouter>
+        </TooltipProvider>
+      </QueryClientProvider>
+    )
+  }
+
+  beforeEach(async () => {
+    __clearBoardDraftsRegistry()
+    await db.drafts.clear()
+    await db.composerLoaded.clear()
+  })
+
+  it("announces settling in the button's accessible name, never as content it overrides", () => {
+    renderBranchRow({ settling: true })
+    const button = screen.getByRole("button", { name: /GPU budget, 2 messages, still settling/ })
+    // The sr-only copy is a SIBLING: an aria-label overrides descendant content,
+    // so a span inside the button would never be announced.
+    const announcement = screen.getByText(/Still settling/)
+    expect(button.contains(announcement)).toBe(false)
+  })
+
+  it("shows a draft chip when the branch's tail reply holds an unsent draft", async () => {
+    await db.drafts.add({
+      id: "draft_1",
+      workspaceId: WS,
+      scope: boardBranchReplyDraftKey("conv_child"),
+      contentJson: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "half a reply" }] }] },
+      attachments: [],
+      clientUpdatedAt: 1000,
+    } as never)
+
+    const { container } = renderBranchRow()
+    await waitFor(() => expect(container.querySelector("[data-branch-draft-chip]")).not.toBeNull())
+    expect(screen.getByRole("button", { name: /GPU budget, 2 messages, unsent draft/ })).toBeInTheDocument()
+  })
+
+  it("shows a draft chip for an unsent sub-topic draft on one of the branch's messages", async () => {
+    await db.drafts.add({
+      id: "draft_2",
+      workspaceId: WS,
+      scope: boardSubtopicDraftKey(STREAM, "msg_1"),
+      contentJson: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "a sub-topic" }] }] },
+      attachments: [],
+      clientUpdatedAt: 1000,
+    } as never)
+
+    const { container } = renderBranchRow()
+    await waitFor(() => expect(container.querySelector("[data-branch-draft-chip]")).not.toBeNull())
+  })
+
+  it("shows no draft chip when the branch holds nothing unsent", async () => {
+    const { container } = renderBranchRow()
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    expect(container.querySelector("[data-branch-draft-chip]")).toBeNull()
+    expect(screen.getByRole("button", { name: "GPU budget, 2 messages" })).toBeInTheDocument()
   })
 })
 

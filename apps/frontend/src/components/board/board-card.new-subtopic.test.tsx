@@ -167,12 +167,16 @@ beforeEach(async () => {
     placeholder: string
     contextChip?: string
     onSubmit: (input: { contentJson: unknown }) => Promise<void>
+    onClose: () => void
   }) => (
     <div>
       {props.contextChip && <span>{props.contextChip}</span>}
       <span>{props.placeholder}</span>
       <button type="button" onClick={() => void props.onSubmit({ contentJson: SENT_DOC })}>
         Send inline
+      </button>
+      <button type="button" onClick={props.onClose}>
+        Close inline
       </button>
     </div>
   )) as never)
@@ -320,7 +324,8 @@ describe("BoardCard — inline sub-topic + branch reply", () => {
     const user = userEvent.setup()
     mount(parent)
     await screen.findByText("Child branch message.")
-
+    // The branch is a collapsed ledger row on the card — expand it to reach its tail.
+    await user.click(screen.getByRole("button", { name: "GPU budget, 1 message" }))
     await user.click(screen.getByRole("button", { name: "Reply…" }))
     // The chip names the reply target — the inline forms all look alike.
     expect(await screen.findByText("Replying in GPU budget")).toBeTruthy()
@@ -404,13 +409,138 @@ describe("BoardCard — inline sub-topic + branch reply", () => {
     expect(await screen.findByText("Pending sub-topic body.")).toBeTruthy()
   })
 
+  it("pins a branch open while its composer is armed, withholding the minimize control", async () => {
+    const { parent } = await seedParentWithBranch()
+
+    const user = userEvent.setup()
+    mount(parent)
+    await screen.findByText("Child branch message.")
+    await user.click(screen.getByRole("button", { name: "GPU budget, 1 message" }))
+    await user.click(screen.getByRole("button", { name: "Reply…" }))
+    expect(await screen.findByText("Replying in GPU budget")).toBeTruthy()
+
+    // Collapsing the branch would unmount the composer the user is typing into,
+    // so the control is withheld entirely while it's armed.
+    expect(screen.queryByRole("button", { name: "Collapse GPU budget" })).toBeNull()
+    expect(screen.getByText("Child branch message.")).toBeTruthy()
+  })
+
+  it("keeps the new sub-topic expanded when the graph takes over from the pending branch", async () => {
+    await db.streams.bulkPut([cachedStream("stream_1", StreamTypes.CHANNEL)])
+    const post = makePost({
+      id: "conv_parent",
+      streamId: "stream_1",
+      messageIds: ["m_open"],
+      topicSummary: "Hardware refresh",
+      streamIds: ["stream_1"],
+    })
+    await db.conversations.bulkPut([post])
+
+    const user = userEvent.setup()
+    mount(post)
+    await screen.findByText("Hardware refresh opening.")
+    await user.click(screen.getByRole("button", { name: "Message actions" }))
+    await user.click(screen.getByText("New sub-topic"))
+    await user.click(await screen.findByRole("button", { name: "Send inline" }))
+    await db.events.put(messageEvent("pend_1", createDraftPanelId("stream_1", "m_open"), 30, "Sub-topic body."))
+    await screen.findByText("Sub-topic body.")
+
+    // The echo lands: the thread stream and the child conversation materialize,
+    // so the graph branch (under a conversation id the card has never seen)
+    // replaces the pending one.
+    await db.streams.put(
+      cachedStream("thread_child", StreamTypes.THREAD, {
+        parentStreamId: "stream_1",
+        rootStreamId: "stream_1",
+        parentMessageId: "m_open",
+      })
+    )
+    await db.events.put(messageEvent("c1", "thread_child", 31, "Sub-topic body."))
+    await db.conversations.put(
+      makePost({
+        id: "conv_child",
+        streamId: "thread_child",
+        messageIds: ["c1"],
+        topicSummary: "GPU budget",
+        streamIds: ["thread_child"],
+      })
+    )
+
+    // The branch stays open across the hand-off — the message just sent is still
+    // a rendered body, not a folded ledger row.
+    expect(await screen.findByRole("button", { name: "Collapse GPU budget" })).toBeTruthy()
+    expect(await screen.findByText("Sub-topic body.")).toBeTruthy()
+    expect(document.body.querySelector("[data-ledger-branch-row]")).toBeNull()
+  })
+
+  it("pins an ancestor branch open while a nested branch's composer is armed", async () => {
+    await db.streams.bulkPut([
+      cachedStream("stream_1", StreamTypes.CHANNEL),
+      cachedStream("thread_a", StreamTypes.THREAD, {
+        parentStreamId: "stream_1",
+        rootStreamId: "stream_1",
+        parentMessageId: "m_open",
+      }),
+      cachedStream("thread_c", StreamTypes.THREAD, {
+        parentStreamId: "thread_a",
+        rootStreamId: "stream_1",
+        parentMessageId: "a1",
+      }),
+    ])
+    await db.events.bulkPut([
+      messageEvent("a1", "thread_a", 10, "Branch A message."),
+      messageEvent("c1", "thread_c", 11, "Branch C message."),
+    ])
+    const parent = makePost({
+      id: "conv_parent",
+      streamId: "stream_1",
+      messageIds: ["m_open"],
+      topicSummary: "Hardware refresh",
+      streamIds: ["stream_1"],
+    })
+    await db.conversations.bulkPut([
+      parent,
+      makePost({
+        id: "conv_a",
+        streamId: "thread_a",
+        messageIds: ["a1"],
+        topicSummary: "Topic A",
+        streamIds: ["thread_a"],
+      }),
+      makePost({
+        id: "conv_c",
+        streamId: "thread_c",
+        messageIds: ["c1"],
+        topicSummary: "Topic C",
+        streamIds: ["thread_c"],
+      }),
+    ])
+
+    const user = userEvent.setup()
+    mount(parent)
+    await user.click(await screen.findByRole("button", { name: "Topic A, 1 message" }))
+    await user.click(await screen.findByRole("button", { name: "Topic C, 1 message" }))
+    // The nested branch's tail comes before its ancestor's in the DOM.
+    await user.click(screen.getAllByRole("button", { name: "Reply…" })[0])
+    expect(await screen.findByText("Replying in Topic C")).toBeTruthy()
+
+    // Collapsing A would unmount C's live composer (and strand the open-composer
+    // state with no mounted UI), so A's control is withheld too.
+    expect(screen.queryByRole("button", { name: "Collapse Topic A" })).toBeNull()
+    expect(screen.queryByRole("button", { name: "Collapse Topic C" })).toBeNull()
+
+    await user.click(screen.getByRole("button", { name: "Close inline" }))
+    expect(await screen.findByRole("button", { name: "Collapse Topic A" })).toBeTruthy()
+  })
+
   it("keeps one inline composer open per card — opening another closes the first", async () => {
     const { parent } = await seedParentWithBranch()
 
     const user = userEvent.setup()
     mount(parent)
     await screen.findByText("Child branch message.")
-
+    // The branch is a collapsed ledger row on the card — expand it to reach its tail.
+    await user.click(screen.getByRole("button", { name: "GPU budget, 1 message" }))
     // Open the branch-tail reply…
     await user.click(screen.getByRole("button", { name: "Reply…" }))
     // The composer stub renders the reply chip once it's mounted in the tail.

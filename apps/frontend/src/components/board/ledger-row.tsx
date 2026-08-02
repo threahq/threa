@@ -1,7 +1,7 @@
 import { useCallback, useMemo, useRef, useState, type MouseEvent, type ReactNode } from "react"
 import { useNavigate } from "react-router-dom"
 import { toast } from "sonner"
-import { ChevronUp, ChevronRight, Paperclip, Link2 } from "lucide-react"
+import { ChevronUp, ChevronRight, CornerDownRight, Paperclip, Link2, Pencil } from "lucide-react"
 import { LabelableResourceTypes, LinkPreviewContentTypes } from "@threa/types"
 import { MessageItem, type RenderableMessage } from "@/components/message/message-item"
 import { actorRowTheme } from "@/components/message/actor-row-theme"
@@ -22,6 +22,8 @@ import { useIsMobile } from "@/hooks/use-mobile"
 import { useMessageReactions, stripColons, reactionShortcodes } from "@/hooks/use-message-reactions"
 import { useSavedForMessage, useSaveMessage, useDeleteSaved } from "@/hooks/use-saved"
 import { useSettleConversationMessage } from "@/hooks/use-conversations"
+import { useScopeDraftPreview, useBoardSubtopicDraftIndex } from "@/hooks"
+import { boardBranchReplyDraftKey } from "@/lib/board/draft-keys"
 import { leadLine, rowArtifacts } from "@/lib/board/ledger"
 import { resolveInternalAppPath } from "@/lib/internal-url"
 import { getInitials } from "@/lib/initials"
@@ -424,6 +426,94 @@ export function LedgerRow({
         </div>
       )}
       {overlays}
+    </div>
+  )
+}
+
+/**
+ * A whole sub-conversation compressed to one ledger line: the branch's name, how
+ * many messages it holds, and the OUTCOME lead — the lead line of its LAST
+ * message, which is what the reader wants from a branch they aren't in. Expands
+ * in place into the branch's full rendering (rows, rails, overflow link, reply
+ * affordance), same a11y contract as {@link LedgerRow}.
+ */
+export function LedgerBranchRow({
+  workspaceId,
+  title,
+  conversationId,
+  messageIds,
+  messageCount,
+  lastMessage,
+  leadLineLength,
+  settling,
+  onToggle,
+}: {
+  workspaceId: string
+  title: string
+  /** The branch's own conversation id — its tail reply draft scope. */
+  conversationId: string
+  /** The branch's rendered message ids — their sub-topic draft scopes. */
+  messageIds: string[]
+  messageCount: number
+  /** The branch's newest locally-known message — the outcome lead. */
+  lastMessage: RenderableMessage | null
+  leadLineLength: number
+  settling: boolean
+  onToggle: () => void
+}) {
+  const { toEmoji } = useWorkspaceEmoji(workspaceId)
+  // An unsent draft inside the branch (its tail reply, or a sub-topic gesture on
+  // one of its messages) is invisible once the branch folds, so the collapsed row
+  // carries the same Pencil marker `CollapsedComposerBar` uses. Presence only —
+  // it never pins the branch open; tapping the row expands as normal.
+  const tailDraft = useScopeDraftPreview(workspaceId, boardBranchReplyDraftKey(conversationId))
+  const subtopicDrafts = useBoardSubtopicDraftIndex(workspaceId)
+  const hasDraft = tailDraft !== null || messageIds.some((id) => subtopicDrafts.has(id))
+  let lead: string | null = null
+  if (lastMessage) {
+    lead = lastMessage.deletedAt
+      ? TOMBSTONE_LEAD
+      : ledgerLead(lastMessage.contentMarkdown, leadLineLength, rowArtifacts(lastMessage), toEmoji)
+  }
+  return (
+    <div className="mt-3 ml-3" data-ledger-branch-row="" data-settling={settling ? "" : undefined}>
+      {/* Outside the button: an `aria-label` overrides the element's content, so
+          an sr-only span INSIDE it is never announced (as the message row does). */}
+      {settling && <span className="sr-only">Still settling — messages here may move to another topic</span>}
+      <button
+        type="button"
+        onClick={onToggle}
+        aria-expanded={false}
+        aria-label={`${title}, ${messageCount} ${messageCount === 1 ? "message" : "messages"}${
+          settling ? ", still settling" : ""
+        }${hasDraft ? ", unsent draft" : ""}`}
+        className={cn(
+          "relative flex w-full items-center gap-2 rounded border-l-2 border-muted-foreground/20 py-0.5 pl-2 text-left transition-opacity duration-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+          settling && "opacity-70"
+        )}
+      >
+        <span
+          aria-hidden
+          className={cn(
+            "pointer-events-none absolute inset-y-0 left-0 w-0 border-l-[2px] border-dashed transition-colors duration-300",
+            settling ? "border-muted-foreground/40" : "border-transparent"
+          )}
+        />
+        <CornerDownRight aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
+        <span className="max-w-[45%] shrink truncate text-xs font-medium text-foreground/75">{title}</span>
+        <span className="shrink-0 font-mono text-[10px] tabular-nums text-muted-foreground/70">{messageCount}</span>
+        {lead && <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">{lead}</span>}
+        {hasDraft && (
+          <span
+            aria-hidden
+            data-branch-draft-chip=""
+            className="flex shrink-0 items-center gap-0.5 text-[10px] text-muted-foreground"
+          >
+            <Pencil className="size-3 shrink-0" />
+            Draft
+          </span>
+        )}
+      </button>
     </div>
   )
 }

@@ -1,6 +1,6 @@
 import { Fragment, useState, type ReactNode } from "react"
 import { Link } from "react-router-dom"
-import { CornerDownRight, GitBranch, ArrowRight, MoveRight, ChevronDown, Scissors } from "lucide-react"
+import { CornerDownRight, GitBranch, ArrowRight, MoveRight, ChevronDown, ChevronUp, Scissors } from "lucide-react"
 import { useStreamName } from "@/hooks/use-stream-name"
 import { usePanel, createConversationPanelId } from "@/contexts"
 import {
@@ -15,6 +15,7 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog"
 import { BoardEventRowItem, type BoardRow } from "@/components/board/board-row-item"
+import { LedgerBranchRow } from "@/components/board/ledger-row"
 import { DayDivider } from "@/components/timeline/day-divider"
 import { UnreadDivider } from "@/components/timeline/unread-divider"
 import { isContinuation } from "@/lib/message-grouping"
@@ -94,8 +95,25 @@ function SplitThreadAction({ label, onConfirm }: { label: string; onConfirm: () 
   )
 }
 
+/**
+ * Ledger collapse for nested branches, owned by the surface (the board card joins
+ * it to the card's ledger expansion set). Absent ⇒ every branch renders expanded,
+ * which is what the conversation panel wants.
+ */
+export interface BranchExpansion {
+  workspaceId: string
+  /** Lead-line budget for a collapsed branch row's outcome lead. */
+  leadLineLength: number
+  isExpanded: (branch: BranchConversationView) => boolean
+  /** False while the branch is pinned open (pending send, armed composer) — the
+   *  minimize control is withheld rather than rendered inert. */
+  canCollapse: (branch: BranchConversationView) => boolean
+  toggle: (branch: BranchConversationView) => void
+}
+
 interface BranchGroupProps {
   branch: BranchConversationView
+  expansion?: BranchExpansion
   /** Render one of the branch's own messages — render-only (its read state belongs
    *  to the child conversation, not the parent card). Omitted ⇒ header only. */
   renderBranchMessage?: (branch: BranchConversationView, message: RenderableMessage, continuation: boolean) => ReactNode
@@ -125,9 +143,30 @@ interface BranchGroupProps {
 export const BRANCH_SETTLING_RAIL_CLASS = "-left-2.5 sm:-left-3.5"
 export const BRANCH_ACCENTED_SETTLING_RAIL_CLASS = "left-0"
 
-export function BranchGroup({ branch, renderBranchMessage, renderBranchTail, renderAfterMessage }: BranchGroupProps) {
+export function BranchGroup({
+  branch,
+  expansion,
+  renderBranchMessage,
+  renderBranchTail,
+  renderAfterMessage,
+}: BranchGroupProps) {
   const { getPanelUrl } = usePanel()
   const panelUrl = getPanelUrl(createConversationPanelId(branch.conversationId))
+  if (expansion && !expansion.isExpanded(branch)) {
+    return (
+      <LedgerBranchRow
+        workspaceId={expansion.workspaceId}
+        title={branch.title}
+        conversationId={branch.conversationId}
+        messageIds={branch.messages.map((m) => m.id)}
+        messageCount={branch.messages.length + branch.hiddenCount}
+        lastMessage={branch.messages.at(-1) ?? null}
+        leadLineLength={expansion.leadLineLength}
+        settling={branch.messages.some((m) => m.settling) || (branch.settlingMessageIds?.length ?? 0) > 0}
+        onToggle={() => expansion.toggle(branch)}
+      />
+    )
+  }
   // A pending branch (sub-topic sent, conversation echo not landed) has no real
   // conversation to open yet — its header is inert until the graph takes over.
   const header = (
@@ -138,16 +177,31 @@ export function BranchGroup({ branch, renderBranchMessage, renderBranchTail, ren
   )
   return (
     <div className="mt-3">
-      {branch.pending ? (
-        <div className="flex items-center gap-1.5 text-xs text-muted-foreground">{header}</div>
-      ) : (
-        <Link
-          to={panelUrl}
-          className="flex items-center gap-1.5 text-xs text-muted-foreground transition-colors hover:text-foreground"
-        >
-          {header}
-        </Link>
-      )}
+      {/* Minimize strip: the header row carries the collapse control, so the
+          branch folds back to the exact line it expanded from (INV-21). */}
+      <div className="flex items-center gap-1.5">
+        {branch.pending ? (
+          <div className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">{header}</div>
+        ) : (
+          <Link
+            to={panelUrl}
+            className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground transition-colors hover:text-foreground"
+          >
+            {header}
+          </Link>
+        )}
+        {expansion?.canCollapse(branch) && (
+          <button
+            type="button"
+            onClick={() => expansion.toggle(branch)}
+            aria-expanded
+            aria-label={`Collapse ${branch.title}`}
+            className="ml-auto shrink-0 rounded p-0.5 text-muted-foreground transition-colors hover:text-foreground"
+          >
+            <ChevronUp className="size-3.5" />
+          </button>
+        )}
+      </div>
       <div className="mt-1 border-l-2 border-muted-foreground/25 pl-2 sm:pl-3 [&>*:first-child]:mt-0">
         {renderBranchMessage &&
           branch.messages.map((message, index) => {
@@ -173,6 +227,7 @@ export function BranchGroup({ branch, renderBranchMessage, renderBranchTail, ren
           <BranchGroup
             key={child.conversationId}
             branch={child}
+            expansion={expansion}
             renderBranchMessage={renderBranchMessage}
             renderBranchTail={renderBranchTail}
             renderAfterMessage={renderAfterMessage}
@@ -248,6 +303,8 @@ interface BranchedBoardRowsProps {
   renderBranchTail?: (branch: BranchConversationView) => ReactNode
   /** The inline "new sub-topic" composer slot rendered under a message row. */
   renderAfterMessage?: (messageId: string) => ReactNode
+  /** Collapse nested branches to one ledger row each. Absent ⇒ always expanded. */
+  branchExpansion?: BranchExpansion
   /** Open + focus the surface's reply composer for a running session's Redirect. */
   onRedirectSession?: () => void
 }
@@ -260,6 +317,7 @@ function renderRowContent(row: BoardRow, props: BranchedBoardRowsProps): ReactNo
     renderBranchMessage,
     renderBranchTail,
     renderAfterMessage,
+    branchExpansion,
     onSplitThread,
     onRedirectSession,
   } = props
@@ -295,6 +353,7 @@ function renderRowContent(row: BoardRow, props: BranchedBoardRowsProps): ReactNo
         <BranchGroup
           key={row.key}
           branch={row.branch}
+          expansion={branchExpansion}
           renderBranchMessage={renderBranchMessage}
           renderBranchTail={renderBranchTail}
           renderAfterMessage={renderAfterMessage}

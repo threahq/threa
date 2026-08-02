@@ -1115,6 +1115,14 @@ describe("BoardCard ledger", () => {
     expect(screen.getByText("Reply 5.")).toBeTruthy()
   })
 
+  it("does not count a tombstone hidden above the window in the head row", async () => {
+    // 20 replies, the second deleted: it falls in the hidden-older range, and
+    // `totalReplies` counts tombstones as zero — so must the head row.
+    mountCard(await seedLedgerRail(20, { deletedIndex: 1 }))
+
+    expect(await screen.findByText(/^3 earlier · /)).toBeTruthy()
+  })
+
   it("opens a ledger row into the full message in place, and minimizes it back to a lead", async () => {
     mountCard(await seedLedgerRail(8))
 
