@@ -24,6 +24,7 @@ import { SyncLogCursor } from "./sync-log-cursor"
 import { SocketEventGate, type SyncEventSource } from "./socket-event-gate"
 import { CatchUpBatch } from "./catch-up-batch"
 import { beginApplyWindow, endApplyWindow } from "@/stores/apply-window"
+import { getPerfCapture } from "@/lib/perf/capture"
 import { SyncStatusStore } from "./sync-status"
 import { streamKeys } from "@/hooks/use-streams"
 import { workspaceKeys } from "@/hooks/use-workspaces"
@@ -486,6 +487,7 @@ export class SyncEngine {
     if (cleanup) {
       cleanup()
       this.streamHandlerCleanups.delete(streamId)
+      getPerfCapture().mark("stream.subscriptions", this.streamHandlerCleanups.size)
     }
   }
 
@@ -782,7 +784,9 @@ export class SyncEngine {
         // forceFull runs from the catch-up fallbacks, which stamp the cursor at
         // a head they read themselves — so this snapshot must not be the
         // service worker's lock-time copy (see workspaceService.bootstrap).
+        const stopFetch = getPerfCapture().time("bootstrap.fetch")
         bootstrap = await workspaceService.bootstrap(workspaceId, { fresh: forceFull })
+        stopFetch()
 
         // On the very first connect of a warm start, hold the IndexedDB write
         // until the cached reveal has painted. applyWorkspaceBootstrap writes the
@@ -825,7 +829,9 @@ export class SyncEngine {
         bootstrap = await applyWorkspaceBootstrap(workspaceId, bootstrap, fetchStartedAt)
 
         // Write to TanStack cache (bridge for coordinated-loading, sidebar loading/error)
+        const stopPublish = getPerfCapture().time("bootstrap.publish")
         queryClient.setQueryData(workspaceKeys.bootstrap(workspaceId), bootstrap)
+        stopPublish()
 
         // Cold-boot single bootstrap: this first-connect snapshot is the
         // authority for everything <= its sync head (read-before-stamp on the
@@ -1086,6 +1092,7 @@ export class SyncEngine {
         }
       )
       this.streamHandlerCleanups.set(streamId, cleanup)
+      getPerfCapture().mark("stream.subscriptions", this.streamHandlerCleanups.size)
     }
 
     const room = `ws:${this.deps.workspaceId}:stream:${streamId}`
@@ -1482,6 +1489,9 @@ export class SyncEngine {
     const catchUpBatch = new CatchUpBatch(this.deps.queryClient, this.workspaceId)
     this.activeCatchUpBatch = catchUpBatch
 
+    const capture = getPerfCapture()
+    const stopReplay = capture.time("catchup.replay")
+
     try {
       await cursorStore.load()
       const cursorBefore = cursorStore.get()
@@ -1567,6 +1577,7 @@ export class SyncEngine {
         // gate.resume splices the buffered events on top — fire-and-forget would
         // let the snapshot finish after the splice and regress events above head.
         if (pages === 0 && response.entries.length >= CATCHUP_COLLAPSE_THRESHOLD) {
+          capture.mark("catchup.collapse", response.entries.length)
           console.info("Sync catch-up gap large; collapsing to a full bootstrap", {
             workspaceId: this.workspaceId,
             trigger,
@@ -1593,6 +1604,7 @@ export class SyncEngine {
           applyWindowOpen = true
         }
 
+        if (pages === 0) capture.mark("catchup.serialReplay", response.entries.length)
         pages += 1
         fetched += response.entries.length
         for (const entry of response.entries) {
@@ -1604,7 +1616,9 @@ export class SyncEngine {
             typeof entry.payload === "object" && entry.payload !== null
               ? { ...entry.payload, syncId: entry.syncId }
               : entry.payload
+          const stopEntry = capture.time("catchup.entryApply")
           await gate.dispatch(entry.eventType, payload)
+          stopEntry()
           cursorStore.advance(entry.syncId)
           appliedThrough = BigInt(entry.syncId)
           cursor = entry.syncId
@@ -1666,6 +1680,7 @@ export class SyncEngine {
       // reflects the replay's final state plus the spliced live events together.
       // Unconditional (even on destroy/throw) so the window never strands open.
       if (applyWindowOpen) endApplyWindow()
+      stopReplay()
     }
   }
 
@@ -1679,6 +1694,7 @@ export class SyncEngine {
   private cleanupStreamHandlers(): void {
     for (const cleanup of this.streamHandlerCleanups.values()) cleanup()
     this.streamHandlerCleanups.clear()
+    getPerfCapture().mark("stream.subscriptions", this.streamHandlerCleanups.size)
     this.subscribedStreams.clear()
   }
 

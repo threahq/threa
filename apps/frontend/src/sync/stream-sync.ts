@@ -16,6 +16,7 @@ import {
   type SlotMap,
   type SharedMessageSlot,
 } from "@threa/types"
+import { getPerfCapture } from "@/lib/perf/capture"
 import { writeSlotCarrier } from "@/stores/slot-store"
 import { patchConversationMessage } from "@/stores/conversation-messages-store"
 import { seedDecryption } from "@/lib/crypto/decrypt-cache"
@@ -1184,145 +1185,151 @@ export function registerStreamSocketHandlers(
   const handleMessageCreated = async (payload: MessageEventPayload) => {
     if (payload.streamId !== streamId) return
 
-    // E2E payloads stay as ciphertext + envelope at rest; decryption runs on
-    // demand in the render path. The wire `contentMarkdown` / `contentJson`
-    // for E2E messages is the backend placeholder, so the sidebar preview
-    // write below is a placeholder-by-placeholder substitution — the sidebar
-    // surfaces it as the sentinel via `stream.e2eEnabled`.
-    const newEvent = payload.event
-    const newPayload = newEvent.payload as {
-      contentJson: unknown
-      clientMessageId?: string
-    }
-    const now = Date.now()
-
-    // When this is the echo of a message we sent, the optimistic row still holds
-    // the plaintext we just encrypted. Capture it so we can seed the decrypt
-    // cache for the server event id below — otherwise the encrypted server event
-    // would flash "decrypting" as the optimistic row is swapped for the sent row.
-    let optimisticPlaintext: {
-      contentMarkdown: string
-      contentJson: JSONContent
-      attachmentRefs: AttachmentRef[]
-    } | null = null
-
-    // Set when this event's sequence reveals missed events behind it; reported
-    // after the transaction commits so the backfill never runs inside it.
-    let gapAfterSequence: string | null = null
-
-    await db.transaction("rw", [db.events, db.pendingMessages, db.slots], async () => {
-      // Merge the carrier's slots in the same transaction as the event. A
-      // map-less carrier is a no-op; the merge is idempotent so it runs even
-      // when the event already exists (heals a pre-slots row on replay).
-      await writeSlotCarrier({ database: db, workspaceId, streamId, carrier: payload, mode: "merge", cachedAt: now })
-
-      const existing = await db.events.get(newEvent.id)
-      if (existing) return
-
-      // Tail-gap check must read the latest BEFORE this write advances it.
-      if (onSequenceGap) {
-        gapAfterSequence = detectSequenceGap(await getPersistedTail(streamId), newEvent)
+    const stopApply = getPerfCapture().time("stream.eventApply")
+    try {
+      // E2E payloads stay as ciphertext + envelope at rest; decryption runs on
+      // demand in the render path. The wire `contentMarkdown` / `contentJson`
+      // for E2E messages is the backend placeholder, so the sidebar preview
+      // write below is a placeholder-by-placeholder substitution — the sidebar
+      // surfaces it as the sentinel via `stream.e2eEnabled`.
+      const newEvent = payload.event
+      const newPayload = newEvent.payload as {
+        contentJson: unknown
+        clientMessageId?: string
       }
+      const now = Date.now()
 
-      // Read the optimistic row (keyed by the client id the server echoes back)
-      // BEFORE writing the real event, so we can carry forward state the server
-      // event doesn't itself carry.
-      let carriedConversationId: string | undefined
-      let optimistic: CachedEvent | undefined
-      if (newPayload.clientMessageId) {
-        optimistic = await db.events.get(newPayload.clientMessageId)
-        optimisticPlaintext = readPlaintextContent(optimistic?.payload)
-        // A board reply tags its optimistic event with the conversation it
-        // attaches to; the server `message:created` does NOT carry that (the
-        // conversation aggregate rides a separate `conversation:updated`). Carry
-        // it onto the real event so the board card keeps showing the reply in the
-        // window between this swap and the aggregate update — otherwise the row
-        // would blink out (its id isn't in `conversation.messageIds` yet, and the
-        // optimistic copy is about to be deleted). Read-side only; ignored by the
-        // timeline. See `useBoardCardMessages`.
-        carriedConversationId = (optimistic?.payload as { conversationId?: string } | undefined)?.conversationId
-      }
+      // When this is the echo of a message we sent, the optimistic row still holds
+      // the plaintext we just encrypted. Capture it so we can seed the decrypt
+      // cache for the server event id below — otherwise the encrypted server event
+      // would flash "decrypting" as the optimistic row is swapped for the sent row.
+      let optimisticPlaintext: {
+        contentMarkdown: string
+        contentJson: JSONContent
+        attachmentRefs: AttachmentRef[]
+      } | null = null
 
-      // Add the real event BEFORE deleting the optimistic one so that
-      // Dexie live-query observers never see a frame with neither event.
-      const eventToStore = carriedConversationId
-        ? {
-            ...newEvent,
-            payload: { ...(newEvent.payload as Record<string, unknown>), conversationId: carriedConversationId },
+      // Set when this event's sequence reveals missed events behind it; reported
+      // after the transaction commits so the backfill never runs inside it.
+      let gapAfterSequence: string | null = null
+
+      getPerfCapture().count("stream.idbTransaction")
+      await db.transaction("rw", [db.events, db.pendingMessages, db.slots], async () => {
+        // Merge the carrier's slots in the same transaction as the event. A
+        // map-less carrier is a no-op; the merge is idempotent so it runs even
+        // when the event already exists (heals a pre-slots row on replay).
+        await writeSlotCarrier({ database: db, workspaceId, streamId, carrier: payload, mode: "merge", cachedAt: now })
+
+        const existing = await db.events.get(newEvent.id)
+        if (existing) return
+
+        // Tail-gap check must read the latest BEFORE this write advances it.
+        if (onSequenceGap) {
+          gapAfterSequence = detectSequenceGap(await getPersistedTail(streamId), newEvent)
+        }
+
+        // Read the optimistic row (keyed by the client id the server echoes back)
+        // BEFORE writing the real event, so we can carry forward state the server
+        // event doesn't itself carry.
+        let carriedConversationId: string | undefined
+        let optimistic: CachedEvent | undefined
+        if (newPayload.clientMessageId) {
+          optimistic = await db.events.get(newPayload.clientMessageId)
+          optimisticPlaintext = readPlaintextContent(optimistic?.payload)
+          // A board reply tags its optimistic event with the conversation it
+          // attaches to; the server `message:created` does NOT carry that (the
+          // conversation aggregate rides a separate `conversation:updated`). Carry
+          // it onto the real event so the board card keeps showing the reply in the
+          // window between this swap and the aggregate update — otherwise the row
+          // would blink out (its id isn't in `conversation.messageIds` yet, and the
+          // optimistic copy is about to be deleted). Read-side only; ignored by the
+          // timeline. See `useBoardCardMessages`.
+          carriedConversationId = (optimistic?.payload as { conversationId?: string } | undefined)?.conversationId
+        }
+
+        // Add the real event BEFORE deleting the optimistic one so that
+        // Dexie live-query observers never see a frame with neither event.
+        const eventToStore = carriedConversationId
+          ? {
+              ...newEvent,
+              payload: { ...(newEvent.payload as Record<string, unknown>), conversationId: carriedConversationId },
+            }
+          : newEvent
+        await db.events.put({
+          ...eventToStore,
+          workspaceId,
+          _sequenceNum: sequenceToNum(newEvent.sequence),
+          _cachedAt: now,
+        })
+        await resolveUnknownOptimisticAnchors(streamId)
+
+        if (newPayload.clientMessageId) {
+          if (optimistic) {
+            await bumpLaterOptimisticAnchors(
+              streamId,
+              optimistic._sequenceNum,
+              sequenceToNum(newEvent.sequence),
+              optimistic.id
+            )
           }
-        : newEvent
-      await db.events.put({
-        ...eventToStore,
+          await db.events.delete(newPayload.clientMessageId).catch(() => {})
+          await db.pendingMessages.delete(newPayload.clientMessageId).catch(() => {})
+        }
+      })
+
+      if (gapAfterSequence !== null) {
+        onSequenceGap?.({ streamId, afterSequence: gapAfterSequence })
+      }
+
+      await applyContextRowsForEvent(workspaceId, streamId, {
+        ...newEvent,
         workspaceId,
         _sequenceNum: sequenceToNum(newEvent.sequence),
         _cachedAt: now,
       })
-      await resolveUnknownOptimisticAnchors(streamId)
 
-      if (newPayload.clientMessageId) {
-        if (optimistic) {
-          await bumpLaterOptimisticAnchors(
-            streamId,
-            optimistic._sequenceNum,
-            sequenceToNum(newEvent.sequence),
-            optimistic.id
-          )
+      // Seed the decrypt cache so the encrypted server event renders its content
+      // immediately. Only meaningful for E2E events (the wire payload carries a
+      // ciphertext); for plaintext sends the render path ignores the cache.
+      if (optimisticPlaintext && isEncryptedPayload(newEvent.payload)) {
+        seedDecryption(newEvent.id, optimisticPlaintext)
+      }
+
+      // Update sidebar preview in both TanStack cache and IDB so the sort order
+      // and preview text survive cold starts (offline-first).
+      const newPreview: LastMessagePreview = {
+        authorId: newEvent.actorId ?? "",
+        authorType: newEvent.actorType ?? "user",
+        content: newPayload.contentJson as string,
+        createdAt: newEvent.createdAt,
+      }
+
+      await db.streams.update(streamId, {
+        lastMessagePreview: newPreview,
+        _cachedAt: Date.now(),
+      })
+
+      queryClient.setQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap(workspaceId), (old) => {
+        if (!old) return old
+        return {
+          ...old,
+          streams: old.streams.map((stream) => {
+            if (stream.id !== streamId) return stream
+            return { ...stream, lastMessagePreview: newPreview }
+          }),
         }
-        await db.events.delete(newPayload.clientMessageId).catch(() => {})
-        await db.pendingMessages.delete(newPayload.clientMessageId).catch(() => {})
+      })
+
+      if (!(payload.slots || payload.sharedMessages) && contentHasSharedMessage(newPayload.contentJson)) {
+        // Deploy skew (D-Fallback): a share-bearing event with NEITHER map —
+        // pre-hydration outbox rows / old backends — refetch so the pointer still
+        // hydrates (the bootstrap apply repopulates db.slots). A legacy map is
+        // data, not map-less, so it never lands here.
+        await queryClient.invalidateQueries({ queryKey: streamKeys.bootstrap(workspaceId, streamId) })
+        await queryClient.invalidateQueries({ queryKey: streamKeys.events(workspaceId, streamId) })
       }
-    })
-
-    if (gapAfterSequence !== null) {
-      onSequenceGap?.({ streamId, afterSequence: gapAfterSequence })
-    }
-
-    await applyContextRowsForEvent(workspaceId, streamId, {
-      ...newEvent,
-      workspaceId,
-      _sequenceNum: sequenceToNum(newEvent.sequence),
-      _cachedAt: now,
-    })
-
-    // Seed the decrypt cache so the encrypted server event renders its content
-    // immediately. Only meaningful for E2E events (the wire payload carries a
-    // ciphertext); for plaintext sends the render path ignores the cache.
-    if (optimisticPlaintext && isEncryptedPayload(newEvent.payload)) {
-      seedDecryption(newEvent.id, optimisticPlaintext)
-    }
-
-    // Update sidebar preview in both TanStack cache and IDB so the sort order
-    // and preview text survive cold starts (offline-first).
-    const newPreview: LastMessagePreview = {
-      authorId: newEvent.actorId ?? "",
-      authorType: newEvent.actorType ?? "user",
-      content: newPayload.contentJson as string,
-      createdAt: newEvent.createdAt,
-    }
-
-    await db.streams.update(streamId, {
-      lastMessagePreview: newPreview,
-      _cachedAt: Date.now(),
-    })
-
-    queryClient.setQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap(workspaceId), (old) => {
-      if (!old) return old
-      return {
-        ...old,
-        streams: old.streams.map((stream) => {
-          if (stream.id !== streamId) return stream
-          return { ...stream, lastMessagePreview: newPreview }
-        }),
-      }
-    })
-
-    if (!(payload.slots || payload.sharedMessages) && contentHasSharedMessage(newPayload.contentJson)) {
-      // Deploy skew (D-Fallback): a share-bearing event with NEITHER map —
-      // pre-hydration outbox rows / old backends — refetch so the pointer still
-      // hydrates (the bootstrap apply repopulates db.slots). A legacy map is
-      // data, not map-less, so it never lands here.
-      await queryClient.invalidateQueries({ queryKey: streamKeys.bootstrap(workspaceId, streamId) })
-      await queryClient.invalidateQueries({ queryKey: streamKeys.events(workspaceId, streamId) })
+    } finally {
+      stopApply()
     }
   }
 

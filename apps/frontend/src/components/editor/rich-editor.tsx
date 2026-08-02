@@ -28,6 +28,7 @@ import {
 } from "./triggers"
 import type { CommandItem } from "./triggers/types"
 import { parseMemoUrl } from "@/lib/memo-url"
+import { getPerfCapture } from "@/lib/perf/capture"
 import { classifyDraftLink } from "@/lib/in-app-links"
 import { MentionPluginKey } from "./triggers/mention-extension"
 import { CommandPluginKey } from "./triggers/command-extension"
@@ -878,14 +879,19 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
   useEffect(() => {
     if (!editor || editor.isDestroyed) return
 
+    const stopExternalSync = getPerfCapture().time("editor.externalSync")
+
     const currentJson = JSON.stringify(editor.getJSON())
     const newJson = JSON.stringify(editableValue)
     if (newJson === currentJson) {
       externalSyncFailuresRef.current = 0
+      stopExternalSync()
       return
     }
 
-    if (applyExternalEditorContent(editor, editableValue, isInternalUpdate)) {
+    const applied = applyExternalEditorContent(editor, editableValue, isInternalUpdate)
+    stopExternalSync()
+    if (applied) {
       externalSyncFailuresRef.current = 0
       return
     }

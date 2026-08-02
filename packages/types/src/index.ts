@@ -966,6 +966,19 @@ export {
   resolveFeatureFlags,
 } from "./feature-flags"
 
+// Client performance capture (closed mark registry + wire schema)
+export {
+  PERF_MARK_NAMES,
+  PERF_DEVICE_CLASSES,
+  PERF_CAPTURE_MAX_SAMPLES,
+  performanceSampleSchema,
+  performanceCaptureSchema,
+  type PerfMarkName,
+  type PerfDeviceClass,
+  type PerformanceSample,
+  type PerformanceCapture,
+} from "./performance-capture"
+
 // User statuses (cosmetic emoji + text shown beside the avatar)
 export {
   type StatusDuration,

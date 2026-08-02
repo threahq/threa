@@ -80,6 +80,7 @@ import { TraceDialog } from "@/components/trace"
 import { useQueryClient } from "@tanstack/react-query"
 import { SyncStatusStore, SyncStatusContext } from "@/sync/sync-status"
 import { copyStreamLink, copyConversationLink } from "@/lib/stream-links"
+import { PerfCaptureProvider } from "@/lib/perf/context"
 import { useResolveOrBounce } from "./use-resolve-or-bounce"
 import { useNotificationAccountSwitch } from "./use-notification-account-switch"
 
@@ -463,81 +464,83 @@ export function WorkspaceLayout() {
 
   return (
     <SyncStatusContext.Provider value={syncStatusStore}>
-      <SocketProvider workspaceId={workspaceId}>
-        <WorkspaceSyncHandler workspaceId={workspaceId} visibleStreamIds={streamIds}>
-          <UnreadTabIndicator workspaceId={workspaceId} />
-          <NotificationSweeper workspaceId={workspaceId} />
-          <VisibleStreamPresence streamIds={streamIds} />
-          <AppUpdateChecker />
-          <FreshnessWatchers />
-          <MessageQueueHandler />
-          <StreamNameDecryptor workspaceId={workspaceId} />
-          <CoordinatedLoadingProvider workspaceId={workspaceId} streamIds={coordinatedStreamIds}>
-            <ChannelLinkProvider workspaceId={workspaceId} streams={streams}>
-              <CallLaunchProvider>
-                <UserProfileProvider>
-                  <MentionableWrapper mentionables={mentionables}>
-                    <WorkspaceCommandListProvider workspaceId={workspaceId}>
-                      <WorkspaceEmojiProvider workspaceId={workspaceId}>
-                        <PreferencesProvider workspaceId={workspaceId}>
-                          <SettingsProvider>
-                            <WorkspaceKeyboardHandler onOpenSwitcher={openSwitcher} currentStreamId={streamId}>
-                              <E2eUnlockProvider workspaceId={workspaceId}>
-                                <QuickSwitcherProvider openSwitcher={openSwitcher}>
-                                  <PanelProvider>
-                                    <StreamLinkKeyboardHandler workspaceId={workspaceId} mainStreamId={streamId} />
-                                    <EnclaveRewrapNudgeListener workspaceId={workspaceId} />
-                                    <MediaGalleryProvider>
-                                      <TraceProvider>
-                                        <SidebarProvider>
-                                          <SearchPanelProvider workspaceId={workspaceId}>
-                                            <SidebarKeyboardHandler />
-                                            <SearchKeyboardHandler />
-                                            <CoordinatedLoadingGate>
-                                              <AppShell sidebar={<Sidebar workspaceId={workspaceId} />}>
-                                                <MainContentGate>
-                                                  <Outlet />
-                                                </MainContentGate>
-                                              </AppShell>
-                                            </CoordinatedLoadingGate>
-                                            <QuickSwitcher
-                                              workspaceId={workspaceId}
-                                              open={switcherOpen}
-                                              onOpenChange={setSwitcherOpen}
-                                              initialMode={switcherMode}
-                                              currentStreamId={streamId}
-                                            />
-                                            <ComposeOverlayMount workspaceId={workspaceId} />
-                                          </SearchPanelProvider>
-                                        </SidebarProvider>
-                                        <SettingsDialog />
-                                        <WorkspaceSettingsDialog workspaceId={workspaceId} />
-                                        <AccountSwitcherDialog />
-                                        <LogoutScopeDialog />
-                                        <StreamSettingsDialog workspaceId={workspaceId} />
-                                        <CreateChannelDialog workspaceId={workspaceId} />
-                                        <AttachmentExplorer workspaceId={workspaceId} />
-                                        <TraceDialogContainer />
-                                        <Toaster />
-                                      </TraceProvider>
-                                    </MediaGalleryProvider>
-                                  </PanelProvider>
-                                </QuickSwitcherProvider>
-                              </E2eUnlockProvider>
-                            </WorkspaceKeyboardHandler>
-                          </SettingsProvider>
-                        </PreferencesProvider>
-                      </WorkspaceEmojiProvider>
-                    </WorkspaceCommandListProvider>
-                  </MentionableWrapper>
-                </UserProfileProvider>
-                <CallDock />
-                <IncomingCallOverlay workspaceId={workspaceId} />
-              </CallLaunchProvider>
-            </ChannelLinkProvider>
-          </CoordinatedLoadingProvider>
-        </WorkspaceSyncHandler>
-      </SocketProvider>
+      <PerfCaptureProvider>
+        <SocketProvider workspaceId={workspaceId}>
+          <WorkspaceSyncHandler workspaceId={workspaceId} visibleStreamIds={streamIds}>
+            <UnreadTabIndicator workspaceId={workspaceId} />
+            <NotificationSweeper workspaceId={workspaceId} />
+            <VisibleStreamPresence streamIds={streamIds} />
+            <AppUpdateChecker />
+            <FreshnessWatchers />
+            <MessageQueueHandler />
+            <StreamNameDecryptor workspaceId={workspaceId} />
+            <CoordinatedLoadingProvider workspaceId={workspaceId} streamIds={coordinatedStreamIds}>
+              <ChannelLinkProvider workspaceId={workspaceId} streams={streams}>
+                <CallLaunchProvider>
+                  <UserProfileProvider>
+                    <MentionableWrapper mentionables={mentionables}>
+                      <WorkspaceCommandListProvider workspaceId={workspaceId}>
+                        <WorkspaceEmojiProvider workspaceId={workspaceId}>
+                          <PreferencesProvider workspaceId={workspaceId}>
+                            <SettingsProvider>
+                              <WorkspaceKeyboardHandler onOpenSwitcher={openSwitcher} currentStreamId={streamId}>
+                                <E2eUnlockProvider workspaceId={workspaceId}>
+                                  <QuickSwitcherProvider openSwitcher={openSwitcher}>
+                                    <PanelProvider>
+                                      <StreamLinkKeyboardHandler workspaceId={workspaceId} mainStreamId={streamId} />
+                                      <EnclaveRewrapNudgeListener workspaceId={workspaceId} />
+                                      <MediaGalleryProvider>
+                                        <TraceProvider>
+                                          <SidebarProvider>
+                                            <SearchPanelProvider workspaceId={workspaceId}>
+                                              <SidebarKeyboardHandler />
+                                              <SearchKeyboardHandler />
+                                              <CoordinatedLoadingGate>
+                                                <AppShell sidebar={<Sidebar workspaceId={workspaceId} />}>
+                                                  <MainContentGate>
+                                                    <Outlet />
+                                                  </MainContentGate>
+                                                </AppShell>
+                                              </CoordinatedLoadingGate>
+                                              <QuickSwitcher
+                                                workspaceId={workspaceId}
+                                                open={switcherOpen}
+                                                onOpenChange={setSwitcherOpen}
+                                                initialMode={switcherMode}
+                                                currentStreamId={streamId}
+                                              />
+                                              <ComposeOverlayMount workspaceId={workspaceId} />
+                                            </SearchPanelProvider>
+                                          </SidebarProvider>
+                                          <SettingsDialog />
+                                          <WorkspaceSettingsDialog workspaceId={workspaceId} />
+                                          <AccountSwitcherDialog />
+                                          <LogoutScopeDialog />
+                                          <StreamSettingsDialog workspaceId={workspaceId} />
+                                          <CreateChannelDialog workspaceId={workspaceId} />
+                                          <AttachmentExplorer workspaceId={workspaceId} />
+                                          <TraceDialogContainer />
+                                          <Toaster />
+                                        </TraceProvider>
+                                      </MediaGalleryProvider>
+                                    </PanelProvider>
+                                  </QuickSwitcherProvider>
+                                </E2eUnlockProvider>
+                              </WorkspaceKeyboardHandler>
+                            </SettingsProvider>
+                          </PreferencesProvider>
+                        </WorkspaceEmojiProvider>
+                      </WorkspaceCommandListProvider>
+                    </MentionableWrapper>
+                  </UserProfileProvider>
+                  <CallDock />
+                  <IncomingCallOverlay workspaceId={workspaceId} />
+                </CallLaunchProvider>
+              </ChannelLinkProvider>
+            </CoordinatedLoadingProvider>
+          </WorkspaceSyncHandler>
+        </SocketProvider>
+      </PerfCaptureProvider>
     </SyncStatusContext.Provider>
   )
 }

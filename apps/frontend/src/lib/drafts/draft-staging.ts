@@ -31,6 +31,7 @@
 
 import type { JSONContent } from "@threa/types"
 import { isEmptyContent } from "@/lib/prosemirror-utils"
+import { getPerfCapture } from "@/lib/perf/capture"
 
 const PREFIX = "threa:draft-stage:"
 
@@ -73,6 +74,8 @@ function storageAvailable(): boolean {
  */
 export function stageDraftContent(workspaceId: string, scope: string, contentJson: JSONContent): void {
   if (!storageAvailable()) return
+  const capture = getPerfCapture()
+  const stopStaging = capture.time("draft.staging")
   try {
     if (isEmptyContent(contentJson)) {
       localStorage.removeItem(keyFor(workspaceId, scope))
@@ -85,10 +88,13 @@ export function stageDraftContent(workspaceId: string, scope: string, contentJso
       localStorage.removeItem(keyFor(workspaceId, scope))
       return
     }
+    capture.mark("draft.stagedChars", raw.length)
     localStorage.setItem(keyFor(workspaceId, scope), raw)
   } catch {
     // Quota exceeded / storage disabled — never interrupt typing. The local
     // copy reaches IDB on the debounce regardless.
+  } finally {
+    stopStaging()
   }
 }
 
