@@ -88,8 +88,8 @@ export function stageDraftContent(workspaceId: string, scope: string, contentJso
       localStorage.removeItem(keyFor(workspaceId, scope))
       return
     }
-    capture.mark("draft.stagedChars", raw.length)
     localStorage.setItem(keyFor(workspaceId, scope), raw)
+    capture.mark("draft.stagedChars", raw.length)
   } catch {
     // Quota exceeded / storage disabled — never interrupt typing. The local
     // copy reaches IDB on the debounce regardless.
