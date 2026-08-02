@@ -1,4 +1,5 @@
 import { test, expect } from "@playwright/test"
+import { runTestSql } from "./global-setup"
 import { loginAndCreateWorkspace, createChannel } from "./helpers"
 import { armCapture, readCapture, seedStream } from "./perf-fixtures"
 
@@ -61,5 +62,49 @@ test.describe("Performance capture", () => {
     expect(serialized).not.toContain(channelName)
     expect(serialized).not.toContain(workspaceId)
     expect(serialized).not.toContain(streamId)
+  })
+
+  test("a second reload of an idle workspace writes no bootstrap rows", async ({ page }) => {
+    const { testId } = await loginAndCreateWorkspace(page, "perf-diff")
+    await createChannel(page, `perf-diff-${testId}`)
+    const workspaceId = page.url().match(/\/w\/([^/]+)/)![1]!
+
+    // The workspace layer of `bootstrapDiff`. The region reads
+    // `feature_flag_overrides` straight from Postgres on every bootstrap
+    // (FeatureFlagOverrideRepository.findLayers, no cache), so the flag is live
+    // for the next load with no control-plane round trip.
+    runTestSql(
+      `INSERT INTO feature_flag_overrides (workspace_id, subject_type, subject_id, flag_key, value)
+       VALUES ('${workspaceId}', 'workspace', '${workspaceId}', 'bootstrapDiff', 'on')
+       ON CONFLICT (workspace_id, subject_type, subject_id, flag_key) DO UPDATE SET value = EXCLUDED.value`
+    )
+
+    await armCapture(page)
+
+    // Three loads, no seeding between any of them. The first applies under the
+    // flag and writes everything; the second lets anything the first load itself
+    // changed on the server settle (the read watermark it advances is the one
+    // such row); only the third is a genuinely unchanged apply. Each load mounts
+    // a fresh PerfCapture (`lib/perf/context.tsx` builds one per mount and
+    // deletes the window handle on unmount), so the samples read at the end
+    // belong to the third load alone.
+    for (let load = 0; load < 3; load++) {
+      await page.reload()
+      await expect(page.getByRole("main").first()).toBeVisible({ timeout: 30_000 })
+      await expect
+        .poll(async () => (await readCapture(page)).samples.some((s) => s.name === "bootstrap.rowsWritten"), {
+          timeout: 30_000,
+          message: "capture should record the bootstrap row counts",
+        })
+        .toBe(true)
+    }
+
+    const samples = (await readCapture(page)).samples
+    const written = samples.filter((s) => s.name === "bootstrap.rowsWritten").map((s) => s.value)
+    const skipped = samples.filter((s) => s.name === "bootstrap.rowsSkipped").map((s) => s.value)
+
+    expect(written.length).toBeGreaterThan(0)
+    expect(written).toEqual(written.map(() => 0))
+    expect(Math.max(...skipped)).toBeGreaterThan(0)
   })
 })

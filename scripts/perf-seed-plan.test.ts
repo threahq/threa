@@ -9,8 +9,12 @@ import {
   parseProfile,
   planSeed,
   seedSpec,
+  WORKSPACE_WIDE_MESSAGES_PER_STREAM,
+  WORKSPACE_WIDE_STREAM_COUNT,
   type ExistingState,
 } from "./lib/perf-seed-plan"
+
+const wideKey = (i: number) => `perf-wide-${String(i + 1).padStart(2, "0")}`
 
 const empty: ExistingState = { messageCounts: {} }
 
@@ -104,6 +108,23 @@ describe("planSeed — each profile plans the documented operation counts", () =
       }))
     )
   })
+
+  test("workspace-wide plans 60 channel creations on an empty workspace", () => {
+    expect(WORKSPACE_WIDE_STREAM_COUNT).toBe(60)
+    expect(WORKSPACE_WIDE_STREAM_COUNT).toBeGreaterThan(50)
+    const plan = planSeed(parseProfile("workspace-wide"), empty)
+    expect(plan.filter((op) => op.kind === "createStream").map((op) => op.key)).toEqual(
+      Array.from({ length: WORKSPACE_WIDE_STREAM_COUNT }, (_, i) => wideKey(i))
+    )
+    expect(plan.filter((op) => op.kind === "postMessages")).toEqual(
+      Array.from({ length: WORKSPACE_WIDE_STREAM_COUNT }, (_, i) => ({
+        kind: "postMessages" as const,
+        key: wideKey(i),
+        from: 1,
+        count: WORKSPACE_WIDE_MESSAGES_PER_STREAM,
+      }))
+    )
+  })
 })
 
 describe("planSeed — a partially seeded workspace tops up rather than duplicating", () => {
@@ -152,6 +173,27 @@ describe("planSeed — a partially seeded workspace tops up rather than duplicat
     expect(createdKeys).toHaveLength(BOARD_LARGE_STREAM_COUNT - 2)
     expect(createdKeys).not.toContain("perf-board-01")
     expect(createdKeys).not.toContain("perf-board-02")
+  })
+
+  test("workspace-wide is idempotent when the channels already hold their message", () => {
+    const messageCounts = Object.fromEntries(
+      Array.from({ length: WORKSPACE_WIDE_STREAM_COUNT }, (_, i) => [wideKey(i), WORKSPACE_WIDE_MESSAGES_PER_STREAM])
+    )
+    expect(planSeed(parseProfile("workspace-wide"), { messageCounts })).toEqual([])
+  })
+
+  test("workspace-wide tops up a partially seeded workspace", () => {
+    const plan = planSeed(parseProfile("workspace-wide"), {
+      messageCounts: { [wideKey(0)]: WORKSPACE_WIDE_MESSAGES_PER_STREAM, [wideKey(1)]: 0 },
+    })
+    expect(plan.filter((op) => op.key === wideKey(0))).toEqual([])
+    expect(plan.filter((op) => op.key === wideKey(1))).toEqual([
+      { kind: "postMessages", key: wideKey(1), from: 1, count: WORKSPACE_WIDE_MESSAGES_PER_STREAM },
+    ])
+    const createdKeys = plan.filter((op) => op.kind === "createStream").map((op) => op.key)
+    expect(createdKeys).toHaveLength(WORKSPACE_WIDE_STREAM_COUNT - 2)
+    expect(createdKeys).not.toContain(wideKey(0))
+    expect(createdKeys).not.toContain(wideKey(1))
   })
 })
 

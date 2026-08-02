@@ -1038,6 +1038,30 @@ describe("applyWorkspaceBootstrap (real IndexedDB)", () => {
       expect((await db.userPreferences.get("ws_1")) as unknown as { sendMode?: string }).not.toHaveProperty("sendMode")
     })
 
+    it("userPreferences does not false-diff on the server's per-request createdAt/updatedAt", async () => {
+      await applyWorkspaceBootstrap("ws_1", diffBootstrap(), Date.now() - 5000)
+      await stampCachedAt(1)
+
+      const restamped = diffBootstrap()
+      const later = new Date(Date.now() + 60_000).toISOString()
+      restamped.userPreferences = { ...restamped.userPreferences, createdAt: later, updatedAt: later }
+      await applyWorkspaceBootstrap("ws_1", restamped, Date.now())
+
+      expect((await db.userPreferences.get("ws_1"))?._cachedAt).toBe(1)
+    })
+
+    it("reconnect apply's userPreferences does not false-diff on the server's per-request createdAt/updatedAt", async () => {
+      await applyReconnectBootstrapBatch("ws_1", diffBootstrap(), new Map(), new Set(), new Set(), Date.now() - 5000)
+      await stampCachedAt(1)
+
+      const restamped = diffBootstrap()
+      const later = new Date(Date.now() + 60_000).toISOString()
+      restamped.userPreferences = { ...restamped.userPreferences, createdAt: later, updatedAt: later }
+      await applyReconnectBootstrapBatch("ws_1", restamped, new Map(), new Set(), new Set(), Date.now())
+
+      expect((await db.userPreferences.get("ws_1"))?._cachedAt).toBe(1)
+    })
+
     it("archived roots ride the single diffed streams write", async () => {
       const archivedRoot = makeStream("stream_arch_diff", { archivedAt: "2026-01-01T00:00:00Z" })
       await db.streams.put({

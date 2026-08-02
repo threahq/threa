@@ -1,5 +1,18 @@
 export const BOOTSTRAP_DIFF_IGNORED_KEYS: ReadonlySet<string> = new Set(["_cachedAt"])
 
+/**
+ * For payload fields whose timestamps carry no data: the server synthesises both
+ * with `new Date()` on every read (`mergeOverrides` in the user-preferences and
+ * workspace-settings services — only the individual overrides are stored), so an
+ * unchanged value arrives with two fresh stamps on every bootstrap and would be
+ * rewritten forever. Applies to the compared value's own keys only.
+ */
+export const SERVER_STAMP_IGNORED_KEYS: ReadonlySet<string> = new Set([
+  ...BOOTSTRAP_DIFF_IGNORED_KEYS,
+  "createdAt",
+  "updatedAt",
+])
+
 export interface RowDiff<T> {
   toWrite: T[]
   merged: T[]
@@ -16,11 +29,20 @@ function isPlainObjectOrArray(value: object): boolean {
   return tag === "[object Object]" || tag === "[object Array]"
 }
 
+/**
+ * The caller's ignore set applies to the compared value's own keys only; nested
+ * values fall back to the base set, so ignoring a synthesized top-level stamp
+ * cannot blind the comparison to a real nested `updatedAt`.
+ */
 export function semanticEqual(
   a: unknown,
   b: unknown,
   ignoreKeys: ReadonlySet<string> = BOOTSTRAP_DIFF_IGNORED_KEYS
 ): boolean {
+  return semanticEqualAt(a, b, ignoreKeys)
+}
+
+function semanticEqualAt(a: unknown, b: unknown, ignoreKeys: ReadonlySet<string>): boolean {
   if (Object.is(a, b)) return true
   if (a === null || b === null || typeof a !== "object" || typeof b !== "object") return false
 
@@ -35,7 +57,7 @@ export function semanticEqual(
     const right = b as unknown[]
     if (left.length !== right.length) return false
     for (let i = 0; i < left.length; i++) {
-      if (!semanticEqual(left[i], right[i], ignoreKeys)) return false
+      if (!semanticEqualAt(left[i], right[i], BOOTSTRAP_DIFF_IGNORED_KEYS)) return false
     }
     return true
   }
@@ -46,7 +68,7 @@ export function semanticEqual(
   for (const key of Object.keys(left)) if (!ignoreKeys.has(key)) keys.add(key)
   for (const key of Object.keys(right)) if (!ignoreKeys.has(key)) keys.add(key)
   for (const key of keys) {
-    if (!semanticEqual(left[key], right[key], ignoreKeys)) return false
+    if (!semanticEqualAt(left[key], right[key], BOOTSTRAP_DIFF_IGNORED_KEYS)) return false
   }
   return true
 }

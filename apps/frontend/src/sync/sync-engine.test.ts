@@ -2242,6 +2242,18 @@ describe("SyncEngine bootstrap query-cache identity (bootstrapDiff)", () => {
     engine.destroy()
   })
 
+  it("fresh workspaceSettings stamps do not replace the cached bootstrap object", async () => {
+    const later = new Date(Date.now() + 60_000).toISOString()
+    const { deps, engine, afterFirst } = await runTwoWarmBootstraps(() => {
+      const next = diffOnBootstrap()
+      next.workspaceSettings = { ...next.workspaceSettings, createdAt: later, updatedAt: later }
+      return next
+    })
+
+    expect(deps.queryClient.getQueryData(workspaceKeys.bootstrap("ws_1"))).toBe(afterFirst)
+    engine.destroy()
+  })
+
   it("a changed bootstrap replaces the cached object", async () => {
     const { deps, engine, afterFirst } = await runTwoWarmBootstraps(() =>
       diffOnBootstrap({ syncHead: "4242", workspace: { ...diffOnBootstrap().workspace, name: "Renamed" } })

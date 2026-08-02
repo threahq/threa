@@ -21,6 +21,7 @@ import {
   recordSkippedRowConfirmations,
   removeRowConfirmations,
   semanticEqual,
+  SERVER_STAMP_IGNORED_KEYS,
   writeAllRows,
 } from "./bootstrap-diff"
 import { getCachedWorkspaceTables, seedWorkspaceCache, upsertWorkspaceUserInCache } from "@/stores/workspace-store"
@@ -2494,9 +2495,17 @@ type UnclassifiedBootstrapField = Exclude<BootstrapNonRowField, (typeof BOOTSTRA
 const _bootstrapFieldsExhaustive: UnclassifiedBootstrapField extends never ? true : false = true
 void _bootstrapFieldsExhaustive
 
-/** Whether two bootstraps agree on every field the row diff cannot speak for. */
+/**
+ * Whether two bootstraps agree on every field the row diff cannot speak for.
+ * `workspaceSettings` carries server-synthesized stamps like the preferences
+ * row, so it compares under the same ignore set.
+ */
 export function bootstrapNonRowFieldsEqual(a: WorkspaceBootstrap, b: WorkspaceBootstrap): boolean {
-  return BOOTSTRAP_NON_ROW_FIELDS.every((field) => semanticEqual(a[field], b[field]))
+  return BOOTSTRAP_NON_ROW_FIELDS.every((field) =>
+    field === "workspaceSettings"
+      ? semanticEqual(a[field], b[field], SERVER_STAMP_IGNORED_KEYS)
+      : semanticEqual(a[field], b[field])
+  )
 }
 
 /**
@@ -2866,7 +2875,7 @@ export async function applyWorkspaceBootstrap(
           workspaceId,
           _cachedAt: now,
         }
-        if (diffEnabled && existingPrefs && semanticEqual(existingPrefs, prefsRow)) {
+        if (diffEnabled && existingPrefs && semanticEqual(existingPrefs, prefsRow, SERVER_STAMP_IGNORED_KEYS)) {
           rowsSkipped += 1
         } else {
           rowsWritten += 1
@@ -3288,7 +3297,11 @@ export async function applyReconnectBootstrapBatch(
           workspaceId,
           _cachedAt: now,
         }
-        if (!diffEnabled || !existingUserPreferences || !semanticEqual(existingUserPreferences, prefsRow)) {
+        if (
+          !diffEnabled ||
+          !existingUserPreferences ||
+          !semanticEqual(existingUserPreferences, prefsRow, SERVER_STAMP_IGNORED_KEYS)
+        ) {
           rowsWritten += 1
           await db.userPreferences.put(prefsRow)
         } else {
