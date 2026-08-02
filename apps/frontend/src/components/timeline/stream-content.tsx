@@ -1562,13 +1562,21 @@ export function StreamContent({
   // Scroll to a specific timeline row — addressed by message id or event id
   // (any row `findTimelineTargetIndex` resolves, including session/command
   // group cards) — and keep re-scrolling until the target element is actually
-  // visible in the scroller viewport. Items rendered with estimated heights
-  // cause the target to drift after the first scroll as surrounding items are
-  // measured; this loop keeps correcting until stable (or a short timeout).
+  // visible in the scroller viewport. Items rendered with estimated heights —
+  // and link previews / long-message toggles that resolve later — drift the
+  // target after the first scroll; this loop keeps correcting for a bounded
+  // window rather than stopping at the first frame that looks right.
   // User input (wheel / touch / key) aborts the loop immediately so manual
   // scrolling always wins. `align: "center"` (default) centers the target
   // (deep links); `align: "start"` pins its top near the viewport top (the
   // unread marker open).
+  //
+  // This is the *only* thing that scrolls a highlighted row into view, on both
+  // scroll modes: the plain thread scroller renders every row, so it just takes
+  // the DOM branch and never reaches virtua. A second, ungated
+  // `scrollIntoView({behavior:"smooth"})` on the row itself used to race this
+  // loop — it re-fired every time virtua remounted the row, dragging a reader
+  // who had scrolled away back to the match.
   //
   // Implementation notes: Virtuoso's scrollToIndex expects the 0-based
   // index within the current data array (NOT firstItemIndex + idx). Once
@@ -1589,10 +1597,6 @@ export function StreamContent({
   const scrollToMessage = useCallback(
     (targetId: string, opts?: { align?: "center" | "start" }) => {
       const align = opts?.align ?? "center"
-      if (!useVirtualized) {
-        deepLinkDebug("scrollToMessage bail: not virtualized", targetId)
-        return false
-      }
       if (findTimelineTargetIndex(visibleItems, targetId) < 0) {
         deepLinkDebug("scrollToMessage bail: target not a timeline item yet", targetId)
         return false
@@ -1618,7 +1622,7 @@ export function StreamContent({
       // while we're trying to scroll the target into view.
       disableAutoScroll()
 
-      const scroller = virtuosoScrollerRef.current
+      const scroller = scrollContainerRef.current
       if (!scroller) {
         deepLinkDebug("scrollToMessage bail: scroller not attached yet", targetId)
         return false
@@ -1643,8 +1647,13 @@ export function StreamContent({
       scroller.addEventListener("keydown", abort)
 
       const started = performance.now()
+      // The loop watches for the whole window rather than stopping the moment
+      // the target first looks settled: a link preview card resolving above the
+      // target lands ~800ms after the window renders and shoves the target down
+      // under a reader already looking at it. Any real input aborts within one
+      // tick (the listeners above plus the shared gesture stamp, which also
+      // covers a scrollbar drag), so watching costs the user nothing.
       const MAX_MS = 1200
-      let stableFrames = 0
 
       const attempt = () => {
         if (aborted) return
@@ -1669,38 +1678,12 @@ export function StreamContent({
           const er = el.getBoundingClientRect()
           const scCenter = (sr.top + sr.bottom) / 2
           // "start" pins the target's top near the viewport top (the unread
-          // marker open: a long first-unread message must read from its start,
-          // and centering can never satisfy fullyVisible for a row taller than
-          // the viewport). "center" is the deep-link behavior, unchanged.
+          // marker open: a long first-unread message must read from its start).
+          // "center" is the deep-link behavior, unchanged.
           const desiredTop = sr.top + UNREAD_MARKER_TOP_GAP_PX
           const delta = align === "start" ? er.top - desiredTop : (er.top + er.bottom) / 2 - scCenter
           if (Math.abs(delta) > 2) {
             scroller.scrollTop += delta
-          }
-
-          // Re-measure after the scroll
-          const er2 = el.getBoundingClientRect()
-          const hasScrollRoom = scroller.scrollHeight > scroller.clientHeight + 8
-          let settled: boolean
-          if (align === "start") {
-            // A target too close to the tail can't reach the top — the scroller
-            // clamps at max scroll. Visible-at-clamp counts as settled.
-            const atMaxScroll = scroller.scrollTop + scroller.clientHeight >= scroller.scrollHeight - 1
-            const topAligned = Math.abs(er2.top - desiredTop) < 4
-            settled = !hasScrollRoom || topAligned || (atMaxScroll && er2.top >= sr.top && er2.top <= sr.bottom)
-          } else {
-            const fullyVisible = er2.top >= sr.top - 1 && er2.bottom <= sr.bottom + 1
-            const centered = !hasScrollRoom || Math.abs((er2.top + er2.bottom) / 2 - scCenter) < 40
-            settled = fullyVisible && centered
-          }
-          if (settled) {
-            stableFrames += 1
-            if (stableFrames >= 2) {
-              abort()
-              return
-            }
-          } else {
-            stableFrames = 0
           }
         } else {
           // Target is virtualized out — ask Virtuoso to render it (0-based
@@ -1727,7 +1710,6 @@ export function StreamContent({
               // renders.
             }
           }
-          stableFrames = 0
         }
 
         const elapsed = performance.now() - started
@@ -1741,7 +1723,7 @@ export function StreamContent({
       attempt()
       return true
     },
-    [useVirtualized, visibleItems, listRef, disableAutoScroll]
+    [visibleItems, listRef, disableAutoScroll, scrollContainerRef]
   )
 
   useEffect(() => {
@@ -1905,14 +1887,6 @@ export function StreamContent({
     if (!pendingScrollTarget.current || isLoading) return
     const target = pendingScrollTarget.current
 
-    if (!useVirtualized) {
-      // Threads use plain scroll, not this jump-then-virtualized-scroll path.
-      pendingScrollTarget.current = null
-      searchNavPhaseRef.current = "idle"
-      setIsSearchNavigating(false)
-      return
-    }
-
     const started = performance.now()
     // Generous bound: a cold push-notification deep-link can spend ~1s in
     // jumpToEvent + the skeleton hold before Virtuoso even mounts. Must
@@ -1974,7 +1948,7 @@ export function StreamContent({
         pendingScrollRafRef.current = 0
       }
     }
-  }, [events, isLoading, scrollToMessage, useVirtualized, setDeepLinkGaveUp, pendingScrollRequestVersion])
+  }, [events, isLoading, scrollToMessage, setDeepLinkGaveUp, pendingScrollRequestVersion])
 
   // Reset jump and search state when switching streams (component stays mounted).
   // Also abort any in-flight scrollToMessage retry loop so its stale closure
