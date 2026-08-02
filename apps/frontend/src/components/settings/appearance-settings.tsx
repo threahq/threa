@@ -33,6 +33,17 @@ import {
   BOARD_CARD_COLLAPSE_TO_HEIGHT_MIN,
   BOARD_CARD_COLLAPSE_TO_HEIGHT_MAX,
   DEFAULT_BOARD_CARD_COLLAPSE_TO_HEIGHT,
+  BOARD_FULL_TAIL_COUNT_MIN,
+  BOARD_FULL_TAIL_COUNT_MAX,
+  DEFAULT_BOARD_FULL_TAIL_COUNT,
+  BOARD_LEDGER_ROWS_MIN,
+  BOARD_LEDGER_ROWS_MAX,
+  DEFAULT_BOARD_LEDGER_ROWS,
+  BOARD_LEAD_LINE_LENGTH_MIN,
+  BOARD_LEAD_LINE_LENGTH_MAX,
+  DEFAULT_BOARD_LEAD_LINE_LENGTH,
+  BOARD_MASS_BADGE_MODES,
+  type BoardMassBadge,
   BOARD_LENSES,
   type Theme,
   type MessageDisplay,
@@ -65,6 +76,18 @@ const UNREAD_OPEN_LABELS: Record<UnreadOpenPosition, string> = {
 const UNREAD_OPEN_DESCRIPTIONS: Record<UnreadOpenPosition, string> = {
   latest: "Land at the bottom; a “N new messages” button jumps up to where you left off",
   marker: "Land where you left off; a “Jump to latest” button gets you back to the bottom",
+}
+
+const BOARD_MASS_BADGE_LABELS: Record<BoardMassBadge, string> = {
+  "count-minutes": "Messages and read time",
+  count: "Message count only",
+  off: "No badge",
+}
+
+const BOARD_MASS_BADGE_DESCRIPTIONS: Record<BoardMassBadge, string> = {
+  "count-minutes": "How many messages the ledger holds and roughly how long they take to read",
+  count: "How many messages the ledger holds",
+  off: "Leave the head row bare",
 }
 
 const LABEL_REMOVE_LABELS: Record<LabelRemoveOnMove, string> = {
@@ -158,6 +181,10 @@ export function AppearanceSettings() {
   const boardCardCollapseEnabled = preferences?.boardCardCollapseEnabled ?? false
   const boardCardCollapseAtHeight = preferences?.boardCardCollapseAtHeight ?? DEFAULT_BOARD_CARD_COLLAPSE_AT_HEIGHT
   const boardCardCollapseToHeight = preferences?.boardCardCollapseToHeight ?? DEFAULT_BOARD_CARD_COLLAPSE_TO_HEIGHT
+  const boardFullTailCount = preferences?.boardFullTailCount ?? DEFAULT_BOARD_FULL_TAIL_COUNT
+  const boardLedgerRows = preferences?.boardLedgerRows ?? DEFAULT_BOARD_LEDGER_ROWS
+  const boardLeadLineLength = preferences?.boardLeadLineLength ?? DEFAULT_BOARD_LEAD_LINE_LENGTH
+  const boardMassBadge = preferences?.boardMassBadge ?? "count-minutes"
 
   // Local input state so users can type freely without each keystroke
   // hitting the preferences mutation. We commit on blur / Enter only.
@@ -190,6 +217,57 @@ export function AppearanceSettings() {
   useEffect(() => {
     setBoardCardCollapseToDraft(String(boardCardCollapseToHeight))
   }, [boardCardCollapseToHeight])
+
+  const [boardFullTailDraft, setBoardFullTailDraft] = useState<string>(String(boardFullTailCount))
+  useEffect(() => {
+    setBoardFullTailDraft(String(boardFullTailCount))
+  }, [boardFullTailCount])
+
+  const [boardLedgerRowsDraft, setBoardLedgerRowsDraft] = useState<string>(String(boardLedgerRows))
+  useEffect(() => {
+    setBoardLedgerRowsDraft(String(boardLedgerRows))
+  }, [boardLedgerRows])
+
+  const [boardLeadLineDraft, setBoardLeadLineDraft] = useState<string>(String(boardLeadLineLength))
+  useEffect(() => {
+    setBoardLeadLineDraft(String(boardLeadLineLength))
+  }, [boardLeadLineLength])
+
+  const commitBoardFullTailCount = () => {
+    const parsed = Number.parseInt(boardFullTailDraft, 10)
+    if (!Number.isFinite(parsed)) {
+      setBoardFullTailDraft(String(boardFullTailCount))
+      return
+    }
+    const clamped = Math.min(BOARD_FULL_TAIL_COUNT_MAX, Math.max(BOARD_FULL_TAIL_COUNT_MIN, parsed))
+    setBoardFullTailDraft(String(clamped))
+    if (clamped === boardFullTailCount) return
+    void updatePreference("boardFullTailCount", clamped)
+  }
+
+  const commitBoardLedgerRows = () => {
+    const parsed = Number.parseInt(boardLedgerRowsDraft, 10)
+    if (!Number.isFinite(parsed)) {
+      setBoardLedgerRowsDraft(String(boardLedgerRows))
+      return
+    }
+    const clamped = Math.min(BOARD_LEDGER_ROWS_MAX, Math.max(BOARD_LEDGER_ROWS_MIN, parsed))
+    setBoardLedgerRowsDraft(String(clamped))
+    if (clamped === boardLedgerRows) return
+    void updatePreference("boardLedgerRows", clamped)
+  }
+
+  const commitBoardLeadLineLength = () => {
+    const parsed = Number.parseInt(boardLeadLineDraft, 10)
+    if (!Number.isFinite(parsed)) {
+      setBoardLeadLineDraft(String(boardLeadLineLength))
+      return
+    }
+    const clamped = Math.min(BOARD_LEAD_LINE_LENGTH_MAX, Math.max(BOARD_LEAD_LINE_LENGTH_MIN, parsed))
+    setBoardLeadLineDraft(String(clamped))
+    if (clamped === boardLeadLineLength) return
+    void updatePreference("boardLeadLineLength", clamped)
+  }
 
   const commitCodeThreshold = () => {
     const parsed = Number.parseInt(codeThresholdDraft, 10)
@@ -607,6 +685,120 @@ export function AppearanceSettings() {
             className="w-24"
           />
         </div>
+      </section>
+
+      <Separator />
+
+      <section className="space-y-3">
+        <div>
+          <h3 className="text-sm font-medium">Board Ledger</h3>
+          <p className="text-sm text-muted-foreground">
+            How a board card splits between the newest messages, rendered in full, and the compact ledger rows above
+            them
+          </p>
+        </div>
+        <div className="flex items-start gap-4">
+          <div className="grid gap-1 flex-1">
+            <Label htmlFor="board-full-tail-count" className="cursor-pointer">
+              Messages shown in full
+            </Label>
+            <p className="text-sm text-muted-foreground">
+              The newest messages on a card render as full message bodies. Everything older becomes a ledger row.
+            </p>
+          </div>
+          <Input
+            id="board-full-tail-count"
+            type="number"
+            inputMode="numeric"
+            min={BOARD_FULL_TAIL_COUNT_MIN}
+            max={BOARD_FULL_TAIL_COUNT_MAX}
+            value={boardFullTailDraft}
+            onChange={(event) => setBoardFullTailDraft(event.target.value)}
+            onBlur={commitBoardFullTailCount}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                event.preventDefault()
+                commitBoardFullTailCount()
+              }
+            }}
+            className="w-24"
+          />
+        </div>
+        <div className="flex items-start gap-4">
+          <div className="grid gap-1 flex-1">
+            <Label htmlFor="board-ledger-rows" className="cursor-pointer">
+              Ledger rows
+            </Label>
+            <p className="text-sm text-muted-foreground">
+              How many ledger rows a card keeps before the rest fold into a single head row.
+            </p>
+          </div>
+          <Input
+            id="board-ledger-rows"
+            type="number"
+            inputMode="numeric"
+            min={BOARD_LEDGER_ROWS_MIN}
+            max={BOARD_LEDGER_ROWS_MAX}
+            value={boardLedgerRowsDraft}
+            onChange={(event) => setBoardLedgerRowsDraft(event.target.value)}
+            onBlur={commitBoardLedgerRows}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                event.preventDefault()
+                commitBoardLedgerRows()
+              }
+            }}
+            className="w-24"
+          />
+        </div>
+        <div className="flex items-start gap-4">
+          <div className="grid gap-1 flex-1">
+            <Label htmlFor="board-lead-line-length" className="cursor-pointer">
+              Lead line length
+            </Label>
+            <p className="text-sm text-muted-foreground">
+              Characters of a message kept on its ledger row before it is cut short.
+            </p>
+          </div>
+          <Input
+            id="board-lead-line-length"
+            type="number"
+            inputMode="numeric"
+            min={BOARD_LEAD_LINE_LENGTH_MIN}
+            max={BOARD_LEAD_LINE_LENGTH_MAX}
+            value={boardLeadLineDraft}
+            onChange={(event) => setBoardLeadLineDraft(event.target.value)}
+            onBlur={commitBoardLeadLineLength}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                event.preventDefault()
+                commitBoardLeadLineLength()
+              }
+            }}
+            className="w-24"
+          />
+        </div>
+        <div className="grid gap-1">
+          <Label className="cursor-default">Head row badge</Label>
+          <p className="text-sm text-muted-foreground">What the folded head row reports about the messages it hides</p>
+        </div>
+        <RadioGroup
+          value={boardMassBadge}
+          onValueChange={(value) => updatePreference("boardMassBadge", value as BoardMassBadge)}
+          className="space-y-3"
+        >
+          {BOARD_MASS_BADGE_MODES.map((option) => (
+            <div key={option} className="flex items-start space-x-3">
+              <RadioGroupItem value={option} id={`board-mass-badge-${option}`} className="mt-1" />
+              <div className="grid gap-1">
+                <Label htmlFor={`board-mass-badge-${option}`} className="cursor-pointer">
+                  {BOARD_MASS_BADGE_LABELS[option]}
+                </Label>
+                <p className="text-sm text-muted-foreground">{BOARD_MASS_BADGE_DESCRIPTIONS[option]}</p>
+              </div>
+            </div>
+          ))}
+        </RadioGroup>
       </section>
 
       <Separator />

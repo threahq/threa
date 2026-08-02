@@ -33,6 +33,13 @@ import {
   BOARD_CARD_COLLAPSE_TO_HEIGHT_MAX,
   BOARD_CARD_COLLAPSE_THRESHOLD_MIN,
   BOARD_CARD_COLLAPSE_THRESHOLD_MAX,
+  BOARD_FULL_TAIL_COUNT_MIN,
+  BOARD_FULL_TAIL_COUNT_MAX,
+  BOARD_LEDGER_ROWS_MIN,
+  BOARD_LEDGER_ROWS_MAX,
+  BOARD_LEAD_LINE_LENGTH_MIN,
+  BOARD_LEAD_LINE_LENGTH_MAX,
+  BOARD_MASS_BADGE_MODES,
   BOARD_LENSES,
 } from "@threa/types"
 import { workScheduleSchema, statusPresetsSchema } from "../../lib/schemas"
@@ -102,6 +109,10 @@ const updatePreferencesSchema = z.object({
     .min(BOARD_CARD_COLLAPSE_THRESHOLD_MIN)
     .max(BOARD_CARD_COLLAPSE_THRESHOLD_MAX)
     .optional(),
+  boardFullTailCount: z.number().int().min(BOARD_FULL_TAIL_COUNT_MIN).max(BOARD_FULL_TAIL_COUNT_MAX).optional(),
+  boardLedgerRows: z.number().int().min(BOARD_LEDGER_ROWS_MIN).max(BOARD_LEDGER_ROWS_MAX).optional(),
+  boardLeadLineLength: z.number().int().min(BOARD_LEAD_LINE_LENGTH_MIN).max(BOARD_LEAD_LINE_LENGTH_MAX).optional(),
+  boardMassBadge: z.enum(BOARD_MASS_BADGE_MODES).optional(),
   boardDefaultLens: z.enum(BOARD_LENSES).optional(),
   // A saved board view id (`boardview_…`) or null to clear. Non-empty, matching
   // the board-view endpoints' own id validation (board-views/handlers.ts); a

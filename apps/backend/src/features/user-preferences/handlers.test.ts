@@ -8,6 +8,15 @@ import {
   BOARD_CARD_COLLAPSE_AT_HEIGHT_MIN,
   BOARD_CARD_COLLAPSE_TO_HEIGHT_MAX,
   BOARD_CARD_COLLAPSE_TO_HEIGHT_MIN,
+  BOARD_FULL_TAIL_COUNT_MIN,
+  BOARD_FULL_TAIL_COUNT_MAX,
+  DEFAULT_BOARD_FULL_TAIL_COUNT,
+  BOARD_LEDGER_ROWS_MIN,
+  BOARD_LEDGER_ROWS_MAX,
+  DEFAULT_BOARD_LEDGER_ROWS,
+  BOARD_LEAD_LINE_LENGTH_MIN,
+  BOARD_LEAD_LINE_LENGTH_MAX,
+  DEFAULT_BOARD_LEAD_LINE_LENGTH,
   VOICE_STEERING_WORDS_MAX,
   VOICE_STEERING_WORD_MAX_LENGTH,
   DEFAULT_USER_PREFERENCES,
@@ -176,6 +185,53 @@ describe("updatePreferencesSchema message collapse settings", () => {
     expect(parsed.messageCollapseEnabled).toBeUndefined()
     expect(parsed.messageCollapseAtHeight).toBeUndefined()
     expect(parsed.messageCollapseToHeight).toBeUndefined()
+  })
+})
+
+describe("updatePreferencesSchema board ledger settings", () => {
+  it("accepts the ledger settings at their bounds", () => {
+    const parsed = updatePreferencesSchema.parse({
+      boardFullTailCount: BOARD_FULL_TAIL_COUNT_MIN,
+      boardLedgerRows: BOARD_LEDGER_ROWS_MAX,
+      boardLeadLineLength: BOARD_LEAD_LINE_LENGTH_MIN,
+      boardMassBadge: "off",
+    })
+
+    expect(parsed).toEqual({
+      boardFullTailCount: BOARD_FULL_TAIL_COUNT_MIN,
+      boardLedgerRows: BOARD_LEDGER_ROWS_MAX,
+      boardLeadLineLength: BOARD_LEAD_LINE_LENGTH_MIN,
+      boardMassBadge: "off",
+    })
+  })
+
+  it("rejects numbers outside the bounds", () => {
+    expect(updatePreferencesSchema.safeParse({ boardFullTailCount: BOARD_FULL_TAIL_COUNT_MIN - 1 }).success).toBe(false)
+    expect(updatePreferencesSchema.safeParse({ boardFullTailCount: BOARD_FULL_TAIL_COUNT_MAX + 1 }).success).toBe(false)
+    expect(updatePreferencesSchema.safeParse({ boardLedgerRows: BOARD_LEDGER_ROWS_MIN - 1 }).success).toBe(false)
+    expect(updatePreferencesSchema.safeParse({ boardLedgerRows: BOARD_LEDGER_ROWS_MAX + 1 }).success).toBe(false)
+    expect(updatePreferencesSchema.safeParse({ boardLeadLineLength: BOARD_LEAD_LINE_LENGTH_MIN - 1 }).success).toBe(
+      false
+    )
+    expect(updatePreferencesSchema.safeParse({ boardLeadLineLength: BOARD_LEAD_LINE_LENGTH_MAX + 1 }).success).toBe(
+      false
+    )
+  })
+
+  it("rejects a non-integer row count", () => {
+    expect(updatePreferencesSchema.safeParse({ boardLedgerRows: 15.5 }).success).toBe(false)
+  })
+
+  it("rejects an unknown mass badge mode", () => {
+    expect(updatePreferencesSchema.safeParse({ boardMassBadge: "minutes" }).success).toBe(false)
+  })
+
+  it("treats the fields as optional and defaults them", () => {
+    expect(updatePreferencesSchema.parse({})).toEqual({})
+    expect(DEFAULT_USER_PREFERENCES.boardFullTailCount).toBe(DEFAULT_BOARD_FULL_TAIL_COUNT)
+    expect(DEFAULT_USER_PREFERENCES.boardLedgerRows).toBe(DEFAULT_BOARD_LEDGER_ROWS)
+    expect(DEFAULT_USER_PREFERENCES.boardLeadLineLength).toBe(DEFAULT_BOARD_LEAD_LINE_LENGTH)
+    expect(DEFAULT_USER_PREFERENCES.boardMassBadge).toBe("count-minutes")
   })
 })
 

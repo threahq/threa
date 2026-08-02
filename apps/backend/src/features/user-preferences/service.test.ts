@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, mock, spyOn } from "bun:test"
 import type { PoolClient } from "pg"
+import { DEFAULT_BOARD_LEDGER_ROWS } from "@threa/types"
 import { UserPreferencesService } from "./service"
 import { UserPreferencesRepository } from "./repository"
 import { OutboxRepository } from "../../lib/outbox"
@@ -72,5 +73,66 @@ describe("UserPreferencesService.updatePreferences defaultCompanionPersonaId", (
     expect(findById).not.toHaveBeenCalled()
     expect(bulkDelete).toHaveBeenCalledWith({}, USER_ID, ["defaultCompanionPersonaId"])
     expect(bulkSet).not.toHaveBeenCalled()
+  })
+})
+
+describe("UserPreferencesService.updatePreferences board ledger settings", () => {
+  afterEach(() => mock.restore())
+
+  it("stores non-default ledger settings and deletes ones back at their default", async () => {
+    setupTransaction()
+    const bulkSet = spyOn(UserPreferencesRepository, "bulkSetOverrides").mockResolvedValue(undefined as any)
+    const bulkDelete = spyOn(UserPreferencesRepository, "bulkDeleteOverrides").mockResolvedValue(undefined as any)
+    spyOn(UserPreferencesRepository, "findOverrides").mockResolvedValue([
+      { key: "boardFullTailCount", value: 3 },
+      { key: "boardLedgerRows", value: 40 },
+      { key: "boardLeadLineLength", value: 200 },
+      { key: "boardMassBadge", value: "off" },
+    ])
+    spyOn(OutboxRepository, "insert").mockResolvedValue({} as any)
+    const service = new UserPreferencesService({} as any)
+
+    const prefs = await service.updatePreferences(WORKSPACE_ID, USER_ID, {
+      boardFullTailCount: 3,
+      boardLedgerRows: 40,
+      boardLeadLineLength: 200,
+      boardMassBadge: "off",
+    })
+
+    expect(bulkSet).toHaveBeenCalledWith({}, USER_ID, [
+      { key: "boardFullTailCount", value: 3 },
+      { key: "boardLedgerRows", value: 40 },
+      { key: "boardLeadLineLength", value: 200 },
+      { key: "boardMassBadge", value: "off" },
+    ])
+    expect(bulkDelete).not.toHaveBeenCalled()
+    expect({
+      boardFullTailCount: prefs.boardFullTailCount,
+      boardLedgerRows: prefs.boardLedgerRows,
+      boardLeadLineLength: prefs.boardLeadLineLength,
+      boardMassBadge: prefs.boardMassBadge,
+    }).toEqual({
+      boardFullTailCount: 3,
+      boardLedgerRows: 40,
+      boardLeadLineLength: 200,
+      boardMassBadge: "off",
+    })
+  })
+
+  it("drops the override when a ledger setting returns to its default", async () => {
+    setupTransaction()
+    const bulkSet = spyOn(UserPreferencesRepository, "bulkSetOverrides").mockResolvedValue(undefined as any)
+    const bulkDelete = spyOn(UserPreferencesRepository, "bulkDeleteOverrides").mockResolvedValue(undefined as any)
+    spyOn(UserPreferencesRepository, "findOverrides").mockResolvedValue([])
+    spyOn(OutboxRepository, "insert").mockResolvedValue({} as any)
+    const service = new UserPreferencesService({} as any)
+
+    const prefs = await service.updatePreferences(WORKSPACE_ID, USER_ID, {
+      boardLedgerRows: DEFAULT_BOARD_LEDGER_ROWS,
+    })
+
+    expect(bulkDelete).toHaveBeenCalledWith({}, USER_ID, ["boardLedgerRows"])
+    expect(bulkSet).not.toHaveBeenCalled()
+    expect(prefs.boardLedgerRows).toBe(DEFAULT_BOARD_LEDGER_ROWS)
   })
 })
