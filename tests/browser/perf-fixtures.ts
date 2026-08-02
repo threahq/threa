@@ -44,58 +44,12 @@ export async function seedStream(
 }
 
 /**
- * Create a thread anchored on `anchorMessageId` under `parentStreamId` and seed
- * it with `count` replies. Returns the thread's stream id.
- */
-export async function seedThread(
-  page: Page,
-  workspaceId: string,
-  parentStreamId: string,
-  anchorMessageId: string,
-  count: number,
-  prefix: string
-): Promise<string> {
-  const response = await page.request.post(`/api/workspaces/${workspaceId}/streams`, {
-    data: { type: "thread", displayName: prefix, parentStreamId, parentAnchorId: anchorMessageId },
-  })
-  await expectApiOk(response, "Create thread")
-  const { stream } = (await response.json()) as { stream: { id: string } }
-  await seedStream(page, workspaceId, stream.id, count, prefix)
-  return stream.id
-}
-
-/**
  * Requested body size clamped so the SERIALIZED entry stays within the staging
  * cap. `stageDraftContent` measures `MAX_STAGED_CHARS` against the whole JSON
  * envelope, not the text node, so the largest documented draft size (256 KB)
  * would otherwise write a buffer the app itself would have refused to write.
  */
 const MAX_STAGED_CHARS = 256 * 1024
-
-/**
- * Write a staged draft body straight into the composer's localStorage staging
- * buffer for `scope` — the same key and envelope `stageDraftContent` writes.
- * `chars` is a count of UTF-16 code units of body text, matching the unit the
- * cap is measured in; it is reduced when the envelope would push the serialized
- * entry over `MAX_STAGED_CHARS`, so what lands is always a buffer the app could
- * have produced. The over-cap path (where `stageDraftContent` drops the entry
- * instead) is deliberately not exercised here. Must run before the page that
- * reads it loads.
- */
-export async function stageLargeDraft(page: Page, workspaceId: string, scope: string, chars: number): Promise<void> {
-  await page.evaluate(
-    ({ workspaceId, scope, chars, cap }) => {
-      const envelope = (text: string) => ({
-        contentJson: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text }] }] },
-        clientUpdatedAt: Date.now(),
-      })
-      const overhead = JSON.stringify(envelope("")).length
-      const text = "x".repeat(Math.min(chars, cap - overhead))
-      localStorage.setItem(`threa:draft-stage:${workspaceId}:${scope}`, JSON.stringify(envelope(text)))
-    },
-    { workspaceId, scope, chars, cap: MAX_STAGED_CHARS }
-  )
-}
 
 /**
  * Arm the dev capture for every subsequent navigation in this context. Dev
