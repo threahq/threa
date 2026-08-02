@@ -40,6 +40,7 @@ import { BoardNewPostsPill } from "@/components/board/board-new-posts-pill"
 import { BoardRemovedCard } from "@/components/board/board-removed-card"
 import { openCompose, registerComposeOnPosted } from "@/stores/compose-overlay-store"
 import { setBoardFlash } from "@/stores/board-flash-store"
+import { useBoardBackfillPrimed } from "@/stores/conversation-messages-store"
 import { resetBoardUnreadLatches } from "@/stores/board-unread-latch-store"
 import { boardHomeHref } from "@/components/board/board-saved-views"
 import { useBoardViews } from "@/hooks/use-board-views"
@@ -457,6 +458,14 @@ function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: Boar
   // the timeline uses, so the common path is blank-for-a-beat → complete board.
   const conversationGraph = useConversationGraph(workspaceId)
   const structuralIndex = useStreamStructuralIndex(workspaceId)
+  // The same prewarm slice the rails use: a card whose rail doesn't cover its
+  // conversation's membership renders the older leads from the backfill store,
+  // whose per-card liveQuery can't emit until a tick after the rail resolves.
+  // Priming the snapshot for these conversations puts those rows in the first frame.
+  const prewarmConversationIds = useMemo(
+    () => posts.slice(0, REVEAL_PREWARM_CARDS).map((post) => post.conversation.id),
+    [posts]
+  )
   const prewarmStreamIds = useMemo(() => {
     const set = new Set<string>()
     for (const post of posts.slice(0, REVEAL_PREWARM_CARDS)) {
@@ -485,9 +494,16 @@ function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: Boar
   // shared board-drafts snapshot; hold the reveal until its first read lands so
   // a pill is in the card's first frame, never a later one.
   const draftsReady = useBoardDraftsReady(workspaceId)
+  const backfillPrimed = useBoardBackfillPrimed(prewarmConversationIds)
   // Latch the reveal so a newly added conversation's cold rail can't un-paint the
   // whole feed (see `useBoardRevealLatch`); the gate only holds the first paint.
-  const revealReady = useBoardRevealLatch(railsReady && graphReady && draftsReady, workspaceId)
+  // `posts.length > 0` is load-bearing: every term above is vacuously true on an
+  // empty feed, and latching there would defeat the hold before any post existed.
+  const revealReady = useBoardRevealLatch(
+    railsReady && graphReady && draftsReady && backfillPrimed,
+    posts.length > 0,
+    workspaceId
+  )
   const holding = posts.length > 0 && !revealReady
   const loading = isLoading || viewLoading || seedPending || holding
   // The shared coordinated-loading machine (INV-35), not a second copy of its
