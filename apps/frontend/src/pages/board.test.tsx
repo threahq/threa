@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
-import { act, fireEvent, render, screen } from "@testing-library/react"
+import { act, render, screen } from "@testing-library/react"
 import { Fragment, createElement } from "react"
 import * as boardFeedListModule from "@/components/board/board-feed-list"
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom"
@@ -7,7 +7,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import type { BoardPost, BoardPostMessage, BoardView, ConversationWithStaleness } from "@threa/types"
 import { BoardPage } from "./board"
 import * as boardStoreModule from "@/stores/board-store"
-import { ServicesProvider, SidebarProvider, PanelProvider } from "@/contexts"
+import { ServicesProvider, SidebarProvider, PanelProvider, MediaGalleryProvider } from "@/contexts"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { workspaceKeys } from "@/hooks/use-workspaces"
 import * as useWorkspacesModule from "@/hooks/use-workspaces"
@@ -19,6 +19,8 @@ import * as contextsModule from "@/contexts"
 import * as queueDraftModule from "@/hooks/use-queue-draft-message"
 import * as pointerModule from "@/hooks/use-pointer"
 import * as panelHostModule from "@/components/layout/panel-host"
+// eslint-disable-next-line no-restricted-imports -- test seeds IDB directly to drive the real rail read path
+import { db } from "@/db"
 
 const WORKSPACE_ID = "ws_1"
 
@@ -172,10 +174,12 @@ function mountBoard(
           <SidebarProvider>
             <MemoryRouter initialEntries={[entry]}>
               <PanelProvider>
-                <LocationProbe />
-                <Routes>
-                  <Route path="/w/:workspaceId/board" element={<BoardPage />} />
-                </Routes>
+                <MediaGalleryProvider>
+                  <LocationProbe />
+                  <Routes>
+                    <Route path="/w/:workspaceId/board" element={<BoardPage />} />
+                  </Routes>
+                </MediaGalleryProvider>
               </PanelProvider>
             </MemoryRouter>
           </SidebarProvider>
@@ -193,7 +197,9 @@ function mountBoard(
   return { listByWorkspace, tree: buildTree(), rerender, rerenderWith }
 }
 
-beforeEach(() => {
+beforeEach(async () => {
+  // The rail reads real IDB — a seeded event must not leak into the next test.
+  await db.events.clear()
   // `virtua` renders zero items under jsdom's zero-height, no-op-ResizeObserver
   // layout, so swap the board's virtualization seam for a passthrough that renders
   // every child — these integration tests exercise the real cards; the windowing
@@ -359,36 +365,55 @@ describe("BoardPage", () => {
     expect(screen.getByRole("button", { name: "Write a reply…" })).toBeTruthy()
   })
 
-  it("collapses the middle as an 'N older messages' expander, pluralizing the count", async () => {
-    // 5 messages: opening + 3 recent shown + 1 hidden in the middle.
+  it("renders the older replies as ledger lead rows, the newest one full", async () => {
+    // 5 messages: opening + 3 shown replies; the ledger keeps the newest full and
+    // leads the two before it. The one member nothing local can render is earlier
+    // mass, so it rides the head row rather than a lead of its own.
     const recent = [
       makeOpeningMessage({ id: "m3" }),
       makeOpeningMessage({ id: "m4" }),
       makeOpeningMessage({ id: "m5" }),
     ]
     mountBoard([makePost({ messageIds: ["m1", "m2", "m3", "m4", "m5"] }, { id: "m1" }, recent)])
-    expect(await screen.findByText("1 older message")).toBeTruthy()
-    expect(screen.queryByText("1 older messages")).toBeNull()
+    await screen.findAllByText("Opening message body.")
+    await vi.waitFor(() => expect(document.querySelectorAll("[data-ledger-row]").length).toBe(2))
+    expect(await screen.findByText(/^1 earlier/)).toBeTruthy()
   })
 
-  it("offers a retry when expanding the middle fails", async () => {
+  it("offers a retry when the earlier mass can't be fetched", async () => {
     const recent = [
       makeOpeningMessage({ id: "m3" }),
       makeOpeningMessage({ id: "m4" }),
       makeOpeningMessage({ id: "m5" }),
     ]
+    // The backfill only arms on a card whose rail has READ (a projection-sourced
+    // card is still resolving), so seed the opening onto the rail — the older
+    // members stay server-only, which is what the failing fetch is for.
+    await db.events.put({
+      id: "evt_m1",
+      workspaceId: WORKSPACE_ID,
+      streamId: "stream_1",
+      sequence: "10",
+      _sequenceNum: 10,
+      eventType: "message_created",
+      payload: { messageId: "m1", contentMarkdown: "Opening message body.", reactions: {} },
+      actorId: "usr_me",
+      actorType: "user",
+      createdAt: "2026-06-22T12:00:00.000Z",
+      _cachedAt: 10,
+    })
     mountBoard([makePost({ messageIds: ["m1", "m2", "m3", "m4", "m5"] }, { id: "m1" }, recent)], { failMessages: true })
-    fireEvent.click(await screen.findByText("1 older message"))
-    // The backfill retries once (retry: 1, ~1s backoff) before surfacing the
-    // error label, so the wait must span the retry cycle.
+    // The ledger wants the whole window, so the backfill arms without a gesture.
+    // It retries once (retry: 1, ~1s backoff) before surfacing the error label, so
+    // the wait must span the retry cycle.
     expect(await screen.findByText("Couldn't load older messages. Retry.", undefined, { timeout: 4000 })).toBeTruthy()
   })
 
-  it("shows no expander when the whole conversation already fits", async () => {
+  it("shows no head row when the whole conversation already fits the ledger", async () => {
     const recent = [makeOpeningMessage({ id: "m2" }), makeOpeningMessage({ id: "m3" })]
     mountBoard([makePost({ messageIds: ["m1", "m2", "m3"] }, { id: "m1" }, recent)])
     await screen.findAllByText("Opening message body.")
-    expect(screen.queryByText(/older messages?$/)).toBeNull()
+    expect(screen.queryByText(/earlier/)).toBeNull()
   })
 
   it("renders reactions on the opening message", async () => {

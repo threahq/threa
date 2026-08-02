@@ -4,9 +4,11 @@ import { Link } from "react-router-dom"
 import type { VirtualizerHandle } from "virtua"
 import { ChevronDown, ChevronRight, CircleCheck, PanelRight } from "lucide-react"
 import {
-  BOARD_GAP_REVEAL_PAGE_ROWS,
   DEFAULT_BOARD_CARD_COLLAPSE_AT_HEIGHT,
   DEFAULT_BOARD_CARD_COLLAPSE_TO_HEIGHT,
+  DEFAULT_BOARD_FULL_TAIL_COUNT,
+  DEFAULT_BOARD_LEDGER_ROWS,
+  DEFAULT_BOARD_LEAD_LINE_LENGTH,
 } from "@threa/types"
 import { RelativeTime } from "@/components/relative-time"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
@@ -45,16 +47,13 @@ import { useBoardFlash } from "@/stores/board-flash-store"
 import { usePanel, createConversationPanelId, usePreferences } from "@/contexts"
 import { useBoardCardCollapse } from "@/hooks/use-board-card-collapse"
 import { useSplitThread } from "@/hooks/use-conversations"
-import {
-  applySettlingAll,
-  useBoardCardMessages,
-  useRevealedReplyWindow,
-  useStableReplyWindow,
-} from "@/hooks/use-board-card-messages"
+import { applySettlingAll, useBoardCardMessages } from "@/hooks/use-board-card-messages"
 import { useConversationBackfill } from "@/hooks/use-conversation-backfill"
 import { useInlineBranchComposer } from "@/components/board/use-inline-branch-composer"
 import { useBoardCardRevealAnchor } from "@/hooks/use-board-card-reveal-anchor"
-import { useBoardGapAutoReveal } from "@/hooks/use-board-gap-auto-reveal"
+import { LedgerRow } from "@/components/board/ledger-row"
+import { useFormattedDate } from "@/hooks/use-formatted-date"
+import { localStartOfDayMs } from "@/lib/dates"
 import type { BoardViewPost } from "@/hooks/use-stable-board-view"
 import { Skeleton } from "@/components/ui/skeleton"
 import { MESSAGE_ROW_CONTINUATION_PADDING, MESSAGE_ROW_HEAD_PADDING } from "@/components/message/message-row-layout"
@@ -69,8 +68,9 @@ interface BoardCardProps {
   /** For a DM post, the peer's user id — resolves the peer avatar shown over the
    *  locator tile, matching the sidebar. Absent for non-DM streams. */
   dmPeerUserId?: string | null
-  /** The board's owned scroll viewport — lets a middle-gap expand hold the newest
-   *  replies still instead of shoving them down (`useBoardCardRevealAnchor`).
+  /** The board's owned scroll viewport — lets a card that grows from older content
+   *  hold the newest replies still instead of shoving them down
+   *  (`useBoardCardRevealAnchor`).
    *  Absent when the card renders outside the virtualized board (tests). */
   scrollerRef?: RefObject<HTMLDivElement | null>
   /** virtua's imperative handle for the board feed, paired with `scrollerRef`. */
@@ -93,6 +93,8 @@ interface BoardCardProps {
  *  hidden rest sits behind an "N more replies" link into the child's panel. */
 const BRANCH_PREVIEW_CAP = 2
 
+const EMPTY_EXPANDED: Set<string> = new Set()
+
 // Softens the collapsed card's raw `max-height` clip so it doesn't slice a
 // message mid-line/mid-image. Masks the content transparent at the cut (like
 // CollapsibleBody) rather than painting a colored gradient — the rows carry the
@@ -105,8 +107,9 @@ const COLLAPSED_FADE_MASK = "linear-gradient(to bottom, black calc(100% - 2rem),
  * stream timeline. Messages use the same primitives (`ActorAvatar`,
  * `MarkdownContent`, `MessageReactions`) and the same same-author grouping, so a
  * board message is indistinguishable from a real one. The card delimits the
- * conversation (no reply indentation); a collapsed "N more messages" gap fills
- * in on click. The stream it lives in is the header locator, not a topic line.
+ * conversation (no reply indentation); the reply region is the ledger — the
+ * newest replies stay full rows, older ones collapse to lead lines that expand
+ * in place. The stream it lives in is the header locator, not a topic line.
  */
 export function BoardCard({
   workspaceId,
@@ -124,7 +127,6 @@ export function BoardCard({
   const { getActorName, getActorAvatar } = useActors(workspaceId)
   const currentUserId = useWorkspaceUserId(workspaceId)
   const { openPanel, getPanelUrl } = usePanel()
-  const [expanded, setExpanded] = useState(false)
   // A running session's Redirect bumps this nonce to expand + focus the card's
   // reply composer in place (its editor is collapsed until opened, so there's no
   // DOM zone to walk to). A counter, not a boolean, so a repeat Redirect re-opens
@@ -134,30 +136,52 @@ export function BoardCard({
   // Scopes text-selection quoting to this card so a selection routes into this
   // card's composer, not a sibling card's provider.
   const cardRef = useRef<HTMLDivElement>(null)
-  // Revealing the hidden middle ("N more messages") grows this card from OLDER
-  // content above the trailing replies; hold the card bottom fixed so the newest
-  // replies the reader is on don't jump (the board's `shift`, see the hook).
-  // Mirrors `loadingMore` (computed below, after the rail) so the anchor hook can
-  // read it at settle time without re-subscribing each render.
+  // Older rows landing above the full tail (backfill / late sync) insert INSIDE
+  // one virtua item, so nothing compensates the jump. The card arms the reveal
+  // window for exactly the backfill's flight (`beginReveal` on the in-flight
+  // rising edge below, landmarked on the first full-tail row) and holds it open
+  // through `loadingMoreRef` — which mirrors `loadingMore` (computed below, after
+  // the rail) so the hook reads it at settle time without re-subscribing.
   const loadingMoreRef = useRef(false)
-  // The first row of the current visible window — the reveal anchor's landmark,
-  // read at gesture time. A ref so `revealPage`'s identity doesn't churn per render
-  // (the auto-reveal hook subscribes on it).
-  const firstDisplayedIdRef = useRef<string | undefined>(undefined)
   const { beginReveal, closeReveal } = useBoardCardRevealAnchor({
     cardRef,
     scrollerRef,
     listRef,
     shouldHoldOpen: useCallback(() => loadingMoreRef.current, []),
   })
-  // Rows scrolled out from under the gap so far, one page per upward gesture.
-  // Recycling this card instance onto another conversation resets the count —
-  // the conversation id lives IN the state (not a ref) so a discarded render
-  // can't strand the guard past the reset it was meant to trigger.
-  const seamRef = useRef<HTMLButtonElement>(null)
-  const [revealed, setRevealed] = useState({ conversationId: conversation.id, rows: 0 })
-  if (revealed.conversationId !== conversation.id) setRevealed({ conversationId: conversation.id, rows: 0 })
-  const revealedRows = revealed.conversationId === conversation.id ? revealed.rows : 0
+  // Which ledger rows the reader has opened into full messages. Recycling this
+  // card instance onto another conversation resets the set — the conversation id
+  // lives IN the state (not a ref) so a discarded render can't strand the reset.
+  const [ledgerExpansion, setLedgerExpansion] = useState<{ conversationId: string; expanded: Set<string> }>({
+    conversationId: conversation.id,
+    expanded: EMPTY_EXPANDED,
+  })
+  if (ledgerExpansion.conversationId !== conversation.id)
+    setLedgerExpansion({ conversationId: conversation.id, expanded: EMPTY_EXPANDED })
+  const expandedRowIds = ledgerExpansion.conversationId === conversation.id ? ledgerExpansion.expanded : EMPTY_EXPANDED
+  // The full tail is MONOTONE for the card's life on one conversation: the row
+  // that opened it stays its first row, so a message rendered full never demotes
+  // to a lead (which would unmount its MessageItem — losing an open edit buffer,
+  // menu or selection) and a newer arrival simply extends the tail. Only the
+  // FIRST full row is remembered; everything at or after it is full, so an older
+  // row inserted above (backfill) lands in the ledger where it belongs.
+  // `boardFullTailCount` therefore sizes the INITIAL tail, not a rolling window.
+  const [fullTailAnchor, setFullTailAnchor] = useState<{ conversationId: string; messageId: string | null }>({
+    conversationId: conversation.id,
+    messageId: null,
+  })
+  if (fullTailAnchor.conversationId !== conversation.id)
+    setFullTailAnchor({ conversationId: conversation.id, messageId: null })
+  const toggleLedgerRow = useCallback(
+    (messageId: string) =>
+      setLedgerExpansion((current) => {
+        const base = current.conversationId === conversation.id ? current.expanded : EMPTY_EXPANDED
+        const expanded = new Set(base)
+        if (!expanded.delete(messageId)) expanded.add(messageId)
+        return { conversationId: conversation.id, expanded }
+      }),
+    [conversation.id]
+  )
 
   // Shared graph + structural index, needed BEFORE the rail hook: the inline
   // branch composer derives the branch thread streams (and any pending
@@ -212,6 +236,11 @@ export function BoardCard({
     preferences?.boardCardCollapseToHeight ?? DEFAULT_BOARD_CARD_COLLAPSE_TO_HEIGHT,
     collapseAtHeight
   )
+  // Ledger density: how many newest replies stay full rows, how many ledger lines
+  // sit above them, and how long a collapsed lead runs.
+  const fullTailCount = Math.max(0, preferences?.boardFullTailCount ?? DEFAULT_BOARD_FULL_TAIL_COUNT)
+  const ledgerRowLimit = Math.max(0, preferences?.boardLedgerRows ?? DEFAULT_BOARD_LEDGER_ROWS)
+  const leadLineLength = preferences?.boardLeadLineLength ?? DEFAULT_BOARD_LEAD_LINE_LENGTH
   const messageCount = totalReplies + (openingMessage ? 1 : 0)
   const bodyRef = useRef<HTMLDivElement>(null)
   const [tall, setTall] = useState(false)
@@ -315,13 +344,13 @@ export function BoardCard({
         if (!seen.has(tagged.id)) rows.push(tagged)
       }
       rows.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime())
-      const shown = expanded ? rows : rows.slice(-BRANCH_PREVIEW_CAP)
+      const shown = rows.slice(-BRANCH_PREVIEW_CAP)
       // Server-known members not shown (locally missing, or under the collapsed
       // window) count toward the "N more replies" link into the child's panel.
       const knownTotal = Math.max(branchMemberIds.length, rows.length)
       return { messages: shown, hiddenCount: Math.max(0, knownTotal - shown.length) }
     },
-    [messagesById, taggedByConversation, expanded]
+    [messagesById, taggedByConversation]
   )
   const branchesByForkMessageId = useMemo(() => {
     const branches = deriveBranchConversations({
@@ -400,126 +429,18 @@ export function BoardCard({
     splitThread.mutate({ conversationId: conversation.id, threadStreamId })
 
   // The rail carries every locally-synced reply; older ones (or a wholly unsynced
-  // stream — `source === "projection"`) may be missing, so on expand we backfill
-  // the full hydrated set from the server. Never blocks the first render: the
-  // local replies show immediately, this only fills the gap when online.
+  // stream — `source === "projection"`) may be missing. The ledger shows up to
+  // `ledgerRowLimit` older rows, so the card wants the whole hydrated set, not
+  // just a trailing preview — the backfill arms whenever the rail is short (the
+  // hook self-gates on rail coverage, so a complete rail fetches nothing). Never
+  // blocks the first render: the local replies show immediately.
   const incompleteLocally = source === "projection" || railReplies.length < totalReplies
-  const {
-    data: allMessages,
-    isError: expandFailed,
-    refetch: refetchMessages,
-  } = useConversationBackfill(workspaceId, conversation.id, {
-    enabled: expanded || revealedRows > 0,
-    railCoversMembership,
-    memberIds: conversation.messageIds,
-    knownMessageIds,
-  })
-
-  // Collapsed cards preview an append-only window over the local rail: trailing
-  // replies at first reveal, growing (never sliding) as new ones land, so a
-  // visible reply is never evicted back under the "N more" gap. Tombstones ride
-  // the rail like any other row, so a deleted reply spends a preview slot and is
-  // counted in `totalReplies` — the collapsed card reads "deleted", not "gone".
-  const collapsedReplies = useStableReplyWindow(conversation.id, railReplies)
-
-  // Expanded: the hook's merged view (rail > backfill store > projection).
-  // Collapsed: the stable window over it.
-  const revealedReplies = useRevealedReplyWindow(conversation.id, railReplies, collapsedReplies, revealedRows)
-  const replies: RenderableMessage[] = expanded ? railReplies : revealedReplies
-  // Merge this card's own just-sent replies with the confirmed set, skipping any
-  // the rail or a backfill already carries, then sort by time: a pending reply
-  // can be OLDER than a confirmed one (someone else's reply lands while yours is
-  // still in flight), so appending blindly would render it out of order.
-  const seenReplyIds = new Set(replies.map((m) => m.id))
-  // The hook stamps settling on its own rows; the server backfill above bypasses
-  // it, so the merged list runs through the same helper (rows already marked come
-  // back by identity).
-  const displayedReplies = applySettlingAll(
-    [...replies, ...pendingReplies.filter((m) => !seenReplyIds.has(m.id))].sort(
-      (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
-    ),
-    settlingIds
-  )
-  firstDisplayedIdRef.current = displayedReplies[0]?.id
-  // `totalReplies` counts tombstones as zero, so the visible rows must be counted
-  // the same way or a drawn tombstone would subtract from the gap it isn't in.
-  const hiddenCount = expanded ? 0 : Math.max(0, totalReplies - replies.filter((m) => !m.deletedAt).length)
-  // Any reveal — a page or the full expand — can outrun the local rail; the same
-  // server backfill fills both, so the wait and its retry show for both.
-  const revealing = expanded || revealedRows > 0
-  const loadingMore = revealing && incompleteLocally && !allMessages && !expandFailed
-  loadingMoreRef.current = loadingMore
-  // No middle is hidden, so opening + replies form one uninterrupted run that
-  // groups across the boundary. Otherwise a gap row sits between them.
-  const contiguous = (expanded && (!incompleteLocally || !!allMessages)) || (!expanded && hiddenCount === 0)
-  // The wait and the failure both swap the seam row's own label rather than adding
-  // a line below it, so nothing under the seam shifts through either (INV-21).
-  let seamLabel = `${hiddenCount} older ${hiddenCount === 1 ? "message" : "messages"}`
-  if (loadingMore) seamLabel = "Loading older messages…"
-  if (expandFailed) seamLabel = "Couldn't load older messages. Retry."
-
-  // Scrolling up onto the seam pulls the next page out from under it, the way
-  // reading up past the timeline's unread divider keeps going. Measure the anchor
-  // BEFORE the rows land, exactly as the tap path does.
-  // Demand is clamped to what the rail can actually satisfy plus one outstanding
-  // page: while the backfill is in flight the card doesn't grow, so the seam stays
-  // under the reader's cursor and every further wheel tick would otherwise add
-  // another page — a short flick banks twenty of them and the whole hidden middle
-  // dumps at once the moment the rows land.
-  const revealPage = useCallback(() => {
-    // The row directly below the seam as it stands NOW: the revealed page pushes
-    // exactly this row (and everything under it) down, so holding it still holds
-    // the reader's eye-line while a live tail reply below it still pushes normally.
-    const firstVisibleId = firstDisplayedIdRef.current
-    const landmark = firstVisibleId
-      ? cardRef.current?.querySelector<HTMLElement>(`[data-message-row][data-message-id="${firstVisibleId}"]`)
-      : null
-    beginReveal({ mode: "scroll", landmark })
-    setRevealed((current) => {
-      const rows = current.conversationId === conversation.id ? current.rows : 0
-      return {
-        conversationId: conversation.id,
-        rows: Math.min(rows, Math.max(0, railReplies.length - collapsedReplies.length)) + BOARD_GAP_REVEAL_PAGE_ROWS,
-      }
-    })
-  }, [beginReveal, conversation.id, railReplies.length, collapsedReplies.length])
-  useBoardGapAutoReveal({
-    seamRef,
-    cardRef,
-    scrollerRef,
-    enabled: !expanded && hiddenCount > 0 && !removed,
-    onReveal: revealPage,
-  })
-
-  // Viewport auto-read: rows that dwell on screen mark themselves read (the menu
-  // actions are the override). Every rendered row is eligible — on a collapsed
-  // card the cutoff through a trailing-preview row also covers the hidden "N
-  // more" middle, deliberately: the card IS the conversation surface, so reading
-  // its visible tail reads the conversation up to there, exactly like invoking
-  // "Mark as read up to here" on that row (Kris's dogfood ruling on PR #1174 —
-  // having the conversation open is enough to mark it).
-  // A tombstone counts as zero for unread, so it must not carry read state either
-  // way — keep it out of the auto-read set entirely.
-  const autoReadRows = (openingMessage ? [openingMessage, ...displayedReplies] : displayedReplies).filter(
-    (m) => !m.deletedAt
-  )
-  useConversationAutoRead({
-    containerRef: cardRef,
-    messages: autoReadRows,
-    rootStreamId: streamId,
-    rowState: conversationReadValue.state,
-    markRead: markReadSilently,
-    registerExplicitUnread: setExplicitUnreadListener,
-    getReadTruth,
-    disabled: removed,
-  })
-
   // The card is a first-class reading surface (live message bodies, viewport
-  // auto-read above), so while any part of it is on screen its streams count
+  // auto-read below), so while any part of it is on screen its streams count
   // as visible for push suppression — otherwise a push banners the exact
   // message the user is reading on the board. Viewport-gated (not mount-gated)
   // so off-screen cards on a long board don't suppress streams the user can't
-  // see.
+  // see. The same signal gates the backfill below.
   const [cardInViewport, setCardInViewport] = useState(false)
   // Same observer answers "has the viewer seen this card" (`onSeen`, first
   // intersection only) — seen-ness is latched in a ref so a later re-intersection
@@ -541,6 +462,147 @@ export function BoardCard({
     observer.observe(el)
     return () => observer.disconnect()
   }, [])
+  // Without an IntersectionObserver (jsdom, ancient engines) there is no viewport
+  // truth to gate on — fail open rather than never fetching at all.
+  const viewportUnknown = typeof IntersectionObserver === "undefined"
+  // Two gates beyond "the rail is short": the card's rail has actually READ (a
+  // projection-sourced card is still resolving, and its incompleteness is an
+  // artifact of that, not a real gap — every mounted card fetching on mount was
+  // the #1640 cost class), and the card is on screen.
+  const backfillEnabled =
+    !removed && source !== "projection" && incompleteLocally && (cardInViewport || viewportUnknown)
+  const {
+    data: allMessages,
+    isError: expandFailed,
+    refetch: refetchMessages,
+  } = useConversationBackfill(workspaceId, conversation.id, {
+    enabled: backfillEnabled,
+    railCoversMembership,
+    memberIds: conversation.messageIds,
+    knownMessageIds,
+  })
+
+  const replies: RenderableMessage[] = railReplies
+  // Merge this card's own just-sent replies with the confirmed set, skipping any
+  // the rail or a backfill already carries, then sort by time: a pending reply
+  // can be OLDER than a confirmed one (someone else's reply lands while yours is
+  // still in flight), so appending blindly would render it out of order.
+  const seenReplyIds = new Set(replies.map((m) => m.id))
+  // The hook stamps settling on its own rows; the server backfill above bypasses
+  // it, so the merged list runs through the same helper (rows already marked come
+  // back by identity).
+  const displayedReplies = applySettlingAll(
+    [...replies, ...pendingReplies.filter((m) => !seenReplyIds.has(m.id))].sort(
+      (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
+    ),
+    settlingIds
+  )
+  // The reply region IS the ledger: the newest `fullTailCount` replies keep the
+  // full message row (reactions, actions, settling affordances); everything older
+  // that fits in `ledgerRowLimit` renders as a collapsed ledger line, and the mass
+  // above that collapses into one head row into the panel.
+  // Monotone: once a row opened the tail it stays its first row, so the partition
+  // only ever grows downward. A remembered anchor that has left the window (moved
+  // away, re-filed) falls back to a fresh newest-N partition, which the effect
+  // below re-remembers.
+  const anchorId = fullTailAnchor.conversationId === conversation.id ? fullTailAnchor.messageId : null
+  const anchorIndex = anchorId === null ? -1 : displayedReplies.findIndex((m) => m.id === anchorId)
+  const tailStart = anchorIndex >= 0 ? anchorIndex : Math.max(0, displayedReplies.length - fullTailCount)
+  const ledgerCandidates = displayedReplies.slice(0, tailStart)
+  const fullTailReplies = displayedReplies.slice(tailStart)
+  const ledgerReplies =
+    ledgerCandidates.length > ledgerRowLimit ? ledgerCandidates.slice(-ledgerRowLimit) : ledgerCandidates
+  const hiddenOlder = ledgerCandidates.slice(0, ledgerCandidates.length - ledgerReplies.length)
+  const ledgerIds = new Set(ledgerReplies.map((m) => m.id))
+  const visibleReplies = [...ledgerReplies, ...fullTailReplies]
+  const firstFullTailId = fullTailReplies[0]?.id ?? null
+  // Commit the partition's first row after render, never during it.
+  useEffect(() => {
+    if (firstFullTailId === null) return
+    setFullTailAnchor((current) =>
+      current.conversationId === conversation.id && current.messageId === firstFullTailId
+        ? current
+        : { conversationId: conversation.id, messageId: firstFullTailId }
+    )
+  }, [conversation.id, firstFullTailId])
+  // `totalReplies` counts tombstones as zero, so the rendered rows are counted the
+  // same way — replies the rail hasn't synced at all are earlier mass too.
+  const unsyncedOlder = Math.max(0, totalReplies - displayedReplies.filter((m) => !m.deletedAt).length)
+  const earlierCount = hiddenOlder.length + unsyncedOlder
+  // The backfill can outrun the local rail while the head row stands for rows only
+  // the server has; the wait and its retry take that same single row, so nothing
+  // below them shifts through either state (INV-21). Both are gated on there being
+  // unsynced older replies at all — a card whose whole conversation is on screen
+  // must never flip through a "Loading older messages…" row it has no use for
+  // (the flip would also swap the rows between the two render shapes below).
+  // Gated on the backfill actually being ARMED, not merely on the rail being
+  // short: an unarmed card (off-screen, rail unresolved) would otherwise sit under
+  // a "Loading older messages…" label with no request behind it, forever.
+  const loadingMore = unsyncedOlder > 0 && backfillEnabled && !allMessages && !expandFailed
+  loadingMoreRef.current = loadingMore
+  // The rows that backfill brings land ABOVE the full tail, inside this one virtua
+  // item. Arm the reveal window on the flight's rising edge, landmarked on the
+  // tail's first row — monotone above, so the element stays put for the whole
+  // window — and let `shouldHoldOpen` (loadingMoreRef) keep it open until the rows
+  // land. Idle card: never armed, so a live tail reply still pushes normally.
+  const revealArmedRef = useRef(false)
+  useEffect(() => {
+    if (!loadingMore) {
+      revealArmedRef.current = false
+      return
+    }
+    if (revealArmedRef.current) return
+    revealArmedRef.current = true
+    const landmark =
+      firstFullTailId === null
+        ? null
+        : (cardRef.current?.querySelector<HTMLElement>(`[data-message-row][data-message-id="${firstFullTailId}"]`) ??
+          null)
+    beginReveal({ mode: "scroll", landmark })
+  }, [loadingMore, firstFullTailId, beginReveal])
+  const failedOlder = unsyncedOlder > 0 && expandFailed
+  // Nothing sits above the ledger, so opening + replies form one uninterrupted run
+  // that groups across the boundary. Otherwise a head row sits between them.
+  const contiguous = earlierCount === 0 && !loadingMore && !failedOlder
+  // Device-local (INV-42). A range inside one day reads as times; across days the
+  // date carries it, since two clock times would say nothing about the span.
+  const { formatTime, formatDate } = useFormattedDate()
+  let earlierLabel = `${earlierCount} earlier`
+  if (hiddenOlder.length > 0) {
+    const first = new Date(hiddenOlder[0].createdAt)
+    const last = new Date(hiddenOlder[hiddenOlder.length - 1].createdAt)
+    const sameDay = localStartOfDayMs(first) === localStartOfDayMs(last)
+    const render = (date: Date) => (sameDay ? formatTime(date) : formatDate(date))
+    earlierLabel = `${earlierCount} earlier · ${render(first)} → ${render(last)}`
+  }
+
+  // Viewport auto-read: rows that dwell on screen mark themselves read (the menu
+  // actions are the override). Every rendered row is eligible — on a collapsed
+  // card the cutoff through a trailing-preview row also covers the hidden "N
+  // more" middle, deliberately: the card IS the conversation surface, so reading
+  // its visible tail reads the conversation up to there, exactly like invoking
+  // "Mark as read up to here" on that row (Kris's dogfood ruling on PR #1174 —
+  // having the conversation open is enough to mark it).
+  // A tombstone counts as zero for unread, so it must not carry read state either
+  // way — keep it out of the auto-read set entirely.
+  // The ledger does NOT change this: a lead mounts no `data-message-row`, so it
+  // never dwells as an observed row, but the cutoff through a read tail row still
+  // covers the older leads beneath it — whole-card read, exactly as before the
+  // ledger. Lead-granular read waits for sparse-read.
+  const autoReadRows = (openingMessage ? [openingMessage, ...displayedReplies] : displayedReplies).filter(
+    (m) => !m.deletedAt
+  )
+  useConversationAutoRead({
+    containerRef: cardRef,
+    messages: autoReadRows,
+    rootStreamId: streamId,
+    rowState: conversationReadValue.state,
+    markRead: markReadSilently,
+    registerExplicitUnread: setExplicitUnreadListener,
+    getReadTruth,
+    disabled: removed,
+  })
+
   // A programmatic jump (the "N new" pill sets scrollTop to 0) doesn't fire the
   // gesture listeners that disarm the hold, so an armed window on a card that just
   // left the viewport would scroll the feed back toward it when its growth lands.
@@ -577,7 +639,58 @@ export function BoardCard({
     return () => observer.disconnect()
   }, [])
 
+  // One row above the ledger, whatever it says: the earlier mass, the wait for it,
+  // or its failure — so nothing below shifts as the state changes (INV-21). The
+  // head row is a link into the panel, where the whole conversation reads
+  // coherently.
+  let ledgerHeadRow = (
+    <Link
+      to={continueThreadTo()}
+      className="mt-3 block w-fit text-xs text-muted-foreground transition-colors hover:text-foreground"
+    >
+      {earlierLabel}
+    </Link>
+  )
+  if (loadingMore)
+    ledgerHeadRow = <span className="mt-3 block text-xs text-muted-foreground">Loading older messages…</span>
+  if (failedOlder)
+    ledgerHeadRow = (
+      <button
+        type="button"
+        onClick={() => void refetchMessages()}
+        className="mt-3 block w-fit text-xs text-destructive underline underline-offset-2"
+      >
+        Couldn't load older messages. Retry.
+      </button>
+    )
+
   const renderMessage = (message: RenderableMessage, continuation: boolean) => {
+    // A ledger line, not a full row: collapsed it carries `data-ledger-row` and no
+    // `data-message-row`, so viewport auto-read (which matches the latter) never
+    // counts a lead as a read row. Expanding mounts the real MessageItem, which
+    // brings the attribute — and the read participation — back with it.
+    if (ledgerIds.has(message.id))
+      return (
+        <LedgerRow
+          key={message.id}
+          workspaceId={workspaceId}
+          streamId={message.streamId ?? streamId}
+          message={message}
+          authorName={getActorName(message.authorId, message.authorType)}
+          currentUserId={currentUserId}
+          expanded={expandedRowIds.has(message.id)}
+          onToggle={() => toggleLedgerRow(message.id)}
+          leadLineLength={leadLineLength}
+          conversationId={conversation.id}
+          conversationRootStreamId={conversation.streamId}
+          onNewSubtopic={
+            structuralIndex.threadsByAnchorId.has(message.id)
+              ? undefined
+              : () => inlineComposer.openNewSubtopic(message.streamId ?? streamId, message.id)
+          }
+          onMoveToSubtopic={moveToSubtopic.moveHandlerFor(message.id, conversation.id, message.settling)}
+        />
+      )
     // Mirrors the panel: a deleted row is a tombstone, never a blank MessageItem
     // carrying an author, a timestamp and an action menu. It still carries the
     // row attributes so the reveal anchor can landmark it when it is the first
@@ -596,6 +709,11 @@ export function BoardCard({
     // already exists under the message (a populated thread would mix membership —
     // "Split this thread" is the gesture there, adjustment D).
     const canBranch = !structuralIndex.threadsByAnchorId.has(message.id)
+    // Adjacency is computed over the raw run, so a full row whose predecessor
+    // collapsed to a lead would inherit `continuation` from a row that shows no
+    // author — the tail would open headerless. The first full row after any
+    // ledger line always carries its own header.
+    const isTailHead = message.id === firstFullTailId && ledgerReplies.length > 0
     return (
       <MessageItem
         key={message.id}
@@ -604,7 +722,7 @@ export function BoardCard({
         message={message}
         authorName={getActorName(message.authorId, message.authorType)}
         currentUserId={currentUserId}
-        continuation={continuation}
+        continuation={continuation && !isTailHead}
         conversationId={conversation.id}
         conversationRootStreamId={conversation.streamId}
         // Break the row out of the card's p-3/p-4 padding and pad the content back in,
@@ -864,7 +982,7 @@ export function BoardCard({
               )}
               {contiguous ? (
                 <BranchedBoardRows
-                  rows={branchRows(openingMessage ? [openingMessage, ...displayedReplies] : displayedReplies)}
+                  rows={branchRows(openingMessage ? [openingMessage, ...visibleReplies] : visibleReplies)}
                   workspaceId={workspaceId}
                   renderMessage={renderMessage}
                   continueThreadTo={continueThreadTo}
@@ -880,51 +998,9 @@ export function BoardCard({
                   {/* The opening renders outside the row builder here, so its inline
                     "new sub-topic" composer slot must be placed explicitly. */}
                   {openingMessage && inlineComposer.renderAfterMessage(openingMessage.id)}
-                  {!expanded && hiddenCount > 0 ? (
-                    <button
-                      ref={seamRef}
-                      type="button"
-                      onClick={() => {
-                        if (expandFailed) {
-                          void refetchMessages()
-                          return
-                        }
-                        beginReveal()
-                        setExpanded(true)
-                      }}
-                      className={cn(
-                        "mt-3 flex w-full items-center gap-3 text-xs transition-colors",
-                        expandFailed ? "text-destructive" : "text-muted-foreground hover:text-foreground"
-                      )}
-                    >
-                      <span className="flex-1 border-t border-current" />
-                      <span className="flex items-center gap-1 whitespace-nowrap">
-                        <ChevronDown className="h-3.5 w-3.5" />
-                        {seamLabel}
-                      </span>
-                      <span className="flex-1 border-t border-current" />
-                    </button>
-                  ) : (
-                    loadingMore && (
-                      <span className="mt-3 block text-xs text-muted-foreground">Loading older messages…</span>
-                    )
-                  )}
-                  {/* The backfill loads the older/full window; the recent replies the
-                rail carried are already shown above, so the error names "older"
-                rather than contradicting visible content. */}
-                  {/* Collapsed, the failure lives in the seam's own row; a standalone
-                      button there would add a row and shove the trailing replies. */}
-                  {expanded && expandFailed && (
-                    <button
-                      type="button"
-                      onClick={() => void refetchMessages()}
-                      className="mt-3 block w-fit text-xs text-destructive underline underline-offset-2"
-                    >
-                      Couldn't load older messages. Retry.
-                    </button>
-                  )}
+                  {ledgerHeadRow}
                   <BranchedBoardRows
-                    rows={branchRows(displayedReplies)}
+                    rows={branchRows(visibleReplies)}
                     workspaceId={workspaceId}
                     renderMessage={renderMessage}
                     continueThreadTo={continueThreadTo}

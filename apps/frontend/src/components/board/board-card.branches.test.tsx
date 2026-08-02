@@ -5,7 +5,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { StreamTypes } from "@threa/types"
 import { BoardCard } from "./board-card"
 import type { BoardViewPost } from "@/hooks/use-stable-board-view"
-import { ServicesProvider, PanelProvider, TraceProvider } from "@/contexts"
+import { ServicesProvider, PanelProvider, TraceProvider, MediaGalleryProvider } from "@/contexts"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { __clearBoardRailRegistry } from "@/hooks/use-board-card-messages"
 import { __clearConversationGraphRegistry } from "@/hooks/use-conversation-graph"
@@ -141,7 +141,14 @@ function mount(post: CachedBoardPost) {
           <MemoryRouter initialEntries={[`/w/${WS}/board`]}>
             <TraceProvider>
               <PanelProvider>
-                <BoardCard workspaceId={WS} post={post as BoardViewPost} contextLabel="#general" streamType="channel" />
+                <MediaGalleryProvider>
+                  <BoardCard
+                    workspaceId={WS}
+                    post={post as BoardViewPost}
+                    contextLabel="#general"
+                    streamType="channel"
+                  />
+                </MediaGalleryProvider>
               </PanelProvider>
             </TraceProvider>
           </MemoryRouter>
@@ -306,8 +313,9 @@ describe("BoardCard branches", () => {
     const { container } = mount(post)
     await screen.findByText("Moved into the thread.")
     expect(await screen.findByText(/continued in/)).toBeTruthy()
-    // Soft renders flat: no indent wrapper (the spanning left rail).
-    expect(container.querySelector(".border-l-2")).toBeNull()
+    // Soft renders flat: no indent wrapper (the spanning left rail). A ledger row
+    // carries its own `border-l-2` rail, so the assertion names the indent classes.
+    expect(container.querySelector(".ml-3.border-l-2, .ml-6.border-l-2")).toBeNull()
   })
 
   it("renders a convert-to-thread continuation with no seam or split chrome", async () => {

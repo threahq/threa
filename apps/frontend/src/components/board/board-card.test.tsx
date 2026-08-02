@@ -8,7 +8,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import type { BoardPostMessage } from "@threa/types"
 import { BoardCard } from "./board-card"
 import type { BoardViewPost } from "@/hooks/use-stable-board-view"
-import { ServicesProvider, PanelProvider, TraceProvider } from "@/contexts"
+import { ServicesProvider, PanelProvider, TraceProvider, MediaGalleryProvider } from "@/contexts"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { __clearBoardRailRegistry } from "@/hooks/use-board-card-messages"
 import { __clearConversationGraphRegistry } from "@/hooks/use-conversation-graph"
@@ -26,9 +26,10 @@ import * as queueDraftModule from "@/hooks/use-queue-draft-message"
 import * as inlineComposerModule from "@/components/board/board-inline-composer"
 import * as inputModeModule from "@/hooks/use-input-mode"
 import * as boardStoreModule from "@/stores/board-store"
+import * as revealAnchorModule from "@/hooks/use-board-card-reveal-anchor"
 import { setBoardFlash, resetBoardFlashStoreCache } from "@/stores/board-flash-store"
 import { spyOnExport } from "@/test/spy"
-import { MESSAGE_ROW_HEAD_PADDING } from "@/components/message/message-row-layout"
+import { MESSAGE_ROW_CONTINUATION_PADDING, MESSAGE_ROW_HEAD_PADDING } from "@/components/message/message-row-layout"
 import { formatDayDivider, localStartOfDayMs } from "@/lib/dates"
 
 const WS = "ws_1"
@@ -91,7 +92,9 @@ function cardTree(post: BoardViewPost, conversations: Record<string, unknown>, q
           <MemoryRouter initialEntries={[`/w/${WS}/board`]}>
             <TraceProvider>
               <PanelProvider>
-                <BoardCard workspaceId={WS} post={post} contextLabel="#general" streamType="channel" />
+                <MediaGalleryProvider>
+                  <BoardCard workspaceId={WS} post={post} contextLabel="#general" streamType="channel" />
+                </MediaGalleryProvider>
               </PanelProvider>
             </TraceProvider>
           </MemoryRouter>
@@ -755,7 +758,7 @@ describe("BoardCard deleted messages", () => {
     expect(container.querySelector('[data-message-id="m_r1"]')?.textContent).toBe("This message was deleted")
   })
 
-  it("renders a tombstone, not a blank row, for a deleted reply from the expand backfill", async () => {
+  it("renders a tombstone, not a blank row, for a deleted reply from the backfill", async () => {
     const getBoardMessages = vi.fn().mockResolvedValue([
       openingMessage(),
       {
@@ -772,12 +775,14 @@ describe("BoardCard deleted messages", () => {
         deletedAt: "2026-06-22T12:11:00.000Z",
       },
     ])
+    // The rail has READ and holds the opening — the backfill only arms on a
+    // rail-resolved card — but the reply member is out of its window.
+    await db.events.bulkPut([messageEvent("m_open", "Opening body.", 10)])
     const post = makePost({ messageIds: ["m_open", "m_r2"] })
     ;(post as unknown as { totalReplies: number }).totalReplies = 1
     const { container } = mountCard(post, { getBoardMessages })
 
-    await userEvent.click(await screen.findByText(/1 older message/))
-
+    // The ledger wants the whole window, so the backfill arms on its own.
     expect(await screen.findByText("This message was deleted")).toBeTruthy()
     expect(container.querySelector('[data-message-id="m_r2"]')?.textContent).toBe("This message was deleted")
   })
@@ -799,10 +804,6 @@ describe("BoardCard deleted messages", () => {
     const post = makePost({ messageIds: ["m_open", "m_r1", "m_r2", "m_rd", "m_r3", "m_r4", "m_r5"] })
     ;(post as unknown as { totalReplies: number }).totalReplies = 5
     mountCard(post)
-
-    // Collapsed the card previews the trailing live replies only; expanding falls
-    // through to the complete local rail.
-    await userEvent.click(await screen.findByText(/2 older messages/))
 
     expect(await screen.findByText("This message was deleted")).toBeTruthy()
     expect(screen.queryByText("The deleted body.")).toBeNull()
@@ -1025,20 +1026,19 @@ describe("BoardCard settling actions", () => {
 
 describe("BoardCard backfill invalidation", () => {
   it("refetches when membership gains an id neither the rail nor the store can render", async () => {
-    // The card shares `useConversationBackfill` with the panel, so an expanded
-    // card revalidates on a genuinely new member instead of waiting out the 60s
-    // `staleTime`.
+    // The card shares `useConversationBackfill` with the panel, so it revalidates
+    // on a genuinely new member instead of waiting out the 60s `staleTime`.
     const getBoardMessages = vi
       .fn()
       .mockResolvedValue([
         openingMessage(),
         openingMessage({ id: "m_r1", contentMarkdown: "Reply body.", createdAt: "2026-06-22T12:00:10.000Z" }),
       ])
+    await db.events.bulkPut([messageEvent("m_open", "Opening body.", 10)])
     const post = makePost({ messageIds: ["m_open", "m_r1"] })
     ;(post as unknown as { totalReplies: number }).totalReplies = 1
     const { rerenderPost } = mountCard(post, { getBoardMessages })
 
-    await userEvent.click(await screen.findByText(/1 older message/))
     await waitFor(() => expect(getBoardMessages).toHaveBeenCalledTimes(1))
 
     const grown = makePost({ messageIds: ["m_open", "m_r1", "m_r2"] })
@@ -1049,252 +1049,315 @@ describe("BoardCard backfill invalidation", () => {
   })
 })
 
-/** The reveal affordances a collapsed card mounts: the seam row (the button
- *  carrying the divider lines) and any standalone retry button beside it. */
-function revealRowStructure(container: HTMLElement) {
-  const buttons = Array.from(container.querySelectorAll("button"))
-  const seams = buttons.filter((button) => button.querySelector(".border-t"))
-  return {
-    seams: seams.length,
-    standaloneRetries: buttons.filter((button) => !seams.includes(button) && button.textContent?.includes("Retry."))
-      .length,
-  }
+/** `count` replies on the local rail, each a two-line body: the first line is
+ *  what a collapsed ledger row leads with, the second only exists on the full
+ *  message row — so "collapsed" and "expanded" are distinguishable by text. */
+async function seedLedgerRail(count: number, options: { deletedIndex?: number } = {}) {
+  const ids = Array.from({ length: count }, (_, i) => `m_r${i + 1}`)
+  await db.events.bulkPut([
+    messageEvent("m_open", "Opening body.", 10),
+    ...ids.map((id, i) =>
+      messageEvent(
+        id,
+        `Reply ${i + 1}.\n\nBody of reply ${i + 1}.`,
+        11 + i,
+        options.deletedIndex === i ? "2026-06-22T12:05:00.000Z" : undefined
+      )
+    ),
+  ])
+  const post = makePost({ messageIds: ["m_open", ...ids] })
+  ;(post as unknown as { totalReplies: number }).totalReplies = options.deletedIndex === undefined ? count : count - 1
+  return post
 }
 
-describe("BoardCard gap scroll reveal", () => {
-  // The board's owned scroller is what the reveal listens on; the harness mounts
-  // the card inside one, as the real feed does. jsdom has no IntersectionObserver,
-  // so the seam's on-screen state is driven by hand.
-  let seamObservers: { element: Element; fire: (isIntersecting: boolean) => void }[] = []
-  let originalIO: typeof IntersectionObserver | undefined
+function withPreferences(preferences: Record<string, unknown>) {
+  vi.mocked(contextsModule.usePreferences).mockReturnValue({
+    preferences: { timezone: "UTC", locale: "en-US", ...preferences },
+  } as unknown as ReturnType<typeof contextsModule.usePreferences>)
+}
 
-  beforeEach(() => {
-    seamObservers = []
-    originalIO = globalThis.IntersectionObserver
-    globalThis.IntersectionObserver = class {
-      cb: (entries: { isIntersecting: boolean }[]) => void
-      constructor(cb: (entries: { isIntersecting: boolean }[]) => void) {
-        this.cb = cb
-      }
-      observe(element: Element) {
-        seamObservers.push({ element, fire: (isIntersecting) => this.cb([{ isIntersecting }]) })
-      }
-      unobserve() {}
-      disconnect() {}
-    } as unknown as typeof IntersectionObserver
-  })
-  afterEach(() => {
-    globalThis.IntersectionObserver = originalIO as typeof IntersectionObserver
+const ledgerRows = (container: HTMLElement) => container.querySelectorAll("[data-ledger-row]")
+
+describe("BoardCard ledger", () => {
+  it("keeps the newest reply full and renders every older one as a lead line", async () => {
+    const { container } = mountCard(await seedLedgerRail(8))
+
+    // The newest reply is the full row: its body is on screen.
+    expect(await screen.findByText("Body of reply 8.")).toBeTruthy()
+    // The seven older ones are leads — first line only, body withheld.
+    await waitFor(() => expect(ledgerRows(container).length).toBe(7))
+    expect(screen.getByText("Reply 7.")).toBeTruthy()
+    expect(screen.queryByText("Body of reply 7.")).toBeNull()
+    expect(screen.queryByText("Body of reply 1.")).toBeNull()
+    // Everything fits the ledger window, so there is no earlier-mass head row.
+    expect(screen.queryByText(/earlier/)).toBeNull()
   })
 
-  function mountOnBoard(post: BoardViewPost, conversations: Record<string, unknown> = {}) {
-    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-    const scrollerRef = { current: null as HTMLDivElement | null }
-    const listRef = { current: { scrollBy: vi.fn() } as never }
-    const result = render(
-      <QueryClientProvider client={queryClient}>
-        <TooltipProvider>
-          <ServicesProvider services={{ conversations: conversations as never }}>
-            <MemoryRouter initialEntries={[`/w/${WS}/board`]}>
-              <TraceProvider>
-                <PanelProvider>
-                  <div ref={scrollerRef}>
-                    <BoardCard
-                      workspaceId={WS}
-                      post={post}
-                      contextLabel="#general"
-                      streamType="channel"
-                      scrollerRef={scrollerRef}
-                      listRef={listRef}
-                    />
-                  </div>
-                </PanelProvider>
-              </TraceProvider>
-            </MemoryRouter>
-          </ServicesProvider>
-        </TooltipProvider>
-      </QueryClientProvider>
+  it("keeps `boardFullTailCount` newest replies full", async () => {
+    withPreferences({ boardFullTailCount: 2 })
+    const { container } = mountCard(await seedLedgerRail(8))
+
+    expect(await screen.findByText("Body of reply 8.")).toBeTruthy()
+    expect(screen.getByText("Body of reply 7.")).toBeTruthy()
+    await waitFor(() => expect(ledgerRows(container).length).toBe(6))
+    expect(screen.queryByText("Body of reply 6.")).toBeNull()
+  })
+
+  it("collapses the mass above the ledger window into one head row linking to the panel", async () => {
+    // 20 replies: 1 stays full, 15 ledger rows, the remaining 4 are earlier mass.
+    const { container } = mountCard(await seedLedgerRail(20))
+
+    const head = await screen.findByText(/^4 earlier · /)
+    expect(ledgerRows(container).length).toBe(15)
+    expect(head.closest("a")?.getAttribute("href")).toBe(`/w/${WS}/board?panel=conv%3Aconv_1`)
+    // The head row stands for the oldest four; the fifth is the ledger's first row.
+    expect(screen.queryByText("Reply 4.")).toBeNull()
+    expect(screen.getByText("Reply 5.")).toBeTruthy()
+  })
+
+  it("opens a ledger row into the full message in place, and minimizes it back to a lead", async () => {
+    mountCard(await seedLedgerRail(8))
+
+    await userEvent.click(await screen.findByText("Reply 3."))
+    expect(await screen.findByText("Body of reply 3.")).toBeTruthy()
+
+    await userEvent.click(screen.getByLabelText("Collapse message"))
+    await waitFor(() => expect(screen.queryByText("Body of reply 3.")).toBeNull())
+    expect(screen.getByText("Reply 3.")).toBeTruthy()
+  })
+
+  it("renders a mid-ledger tombstone as a deleted lead", async () => {
+    const { container } = mountCard(await seedLedgerRail(8, { deletedIndex: 2 }))
+
+    expect(await screen.findByText("This message was deleted")).toBeTruthy()
+    expect(screen.queryByText("Reply 3.")).toBeNull()
+    expect(container.querySelector('[data-ledger-row][data-message-id="m_r3"]')).toBeTruthy()
+  })
+
+  it("gives a lead no observable row (only a mounted MessageItem carries one), while leads stay inside the card's whole-card read scope", async () => {
+    // Auto-read observes `data-message-row` (use-conversation-auto-read), so a lead
+    // never DWELLS as an observed row; expanding mounts the real MessageItem, which
+    // brings the attribute with it. That is NOT lead-level unread protection: read
+    // mechanics are unchanged by the ledger — the leads are still in the card's read
+    // set, so the cutoff through a read tail row marks them read exactly as before
+    // (whole-card read; lead-granular read waits for sparse-read).
+    const hasUnread = vi.fn().mockReturnValue(false)
+    vi.spyOn(conversationReadModule, "useConversationReadController").mockReturnValue({
+      value: readValue,
+      hasUnread,
+      markReadSilently: () => Promise.resolve(),
+      setExplicitUnreadListener: () => {},
+      getReadTruth: () => ({ lastReadSequence: null, readMessageIds: [] }),
+    })
+    const { container } = mountCard(await seedLedgerRail(8))
+
+    await screen.findByText("Body of reply 8.")
+    expect(container.querySelector('[data-message-row][data-message-id="m_r3"]')).toBeNull()
+    expect(container.querySelector('[data-ledger-row][data-message-id="m_r3"]')).toBeTruthy()
+    // The lead is a rendering choice, not a read-scope one: m_r3 is still one of the
+    // card's known messages, so it lights the dot and the cutoff can clear it.
+    await waitFor(() =>
+      expect(hasUnread.mock.calls.some((call) => (call[0] as { id: string }[]).some((m) => m.id === "m_r3"))).toBe(true)
     )
-    /** The reader scrolls up over this card, with the seam on or off screen.
-     *  The wheel goes to the card, as it does under a real pointer. */
-    const scrollUp = async (seamLabel: HTMLElement, seamOnScreen = true) => {
-      const seam = seamLabel.closest("button") ?? seamLabel
-      const observer = seamObservers.find((o) => o.element === seam)
-      await act(async () => {
-        observer?.fire(seamOnScreen)
-        seam.closest(".board-card-hover")?.dispatchEvent(new WheelEvent("wheel", { deltaY: -40, bubbles: true }))
-      })
-    }
-    return { ...result, scrollUp, scrollerRef }
-  }
 
-  /** `replyCount` replies on the local rail; only the trailing window shows. */
-  async function seedRail(replyCount: number) {
-    const ids = Array.from({ length: replyCount }, (_, i) => `m_r${i + 1}`)
+    await userEvent.click(screen.getByText("Reply 3."))
+
+    await waitFor(() => expect(container.querySelector('[data-message-row][data-message-id="m_r3"]')).toBeTruthy())
+  })
+
+  it("gives the first full row after the leads its own header, even when the lead above shares its author", async () => {
+    // Adjacency runs over the raw reply run, so the tail's first row would inherit
+    // `continuation` from a row that renders as a headerless lead line.
+    const { container } = mountCard(await seedLedgerRail(8))
+
+    await screen.findByText("Body of reply 8.")
+    const row = container.querySelector('[data-message-row][data-message-id="m_r8"]')
+    expect(row).toBeTruthy()
+    const accent = row!.querySelector(".reveal-host")
+    for (const cls of MESSAGE_ROW_HEAD_PADDING.split(" ")) expect(accent!.className).toContain(cls)
+    // ...and not the continuation row's, which carries neither avatar nor author.
+    expect(accent!.className).not.toContain(MESSAGE_ROW_CONTINUATION_PADDING)
+  })
+
+  it("never demotes a full row to a lead: a newer reply extends the tail instead of rolling it", async () => {
+    const post = await seedLedgerRail(8)
+    const { container, rerenderPost } = mountCard(post)
+
+    await screen.findByText("Body of reply 8.")
+    await waitFor(() => expect(ledgerRows(container).length).toBe(7))
+
+    // A newer reply lands on the rail. A rolling window would demote m_r8 (its
+    // MessageItem unmounting, taking any open edit buffer with it); the monotone
+    // tail keeps it full and appends the new row.
+    await db.events.bulkPut([messageEvent("m_r9", "Reply 9.\n\nBody of reply 9.", 19)])
+    const grown = makePost({ messageIds: ["m_open", ...Array.from({ length: 9 }, (_, i) => `m_r${i + 1}`)] })
+    ;(grown as unknown as { totalReplies: number }).totalReplies = 9
+    act(() => rerenderPost(grown))
+
+    expect(await screen.findByText("Body of reply 9.")).toBeTruthy()
+    expect(screen.getByText("Body of reply 8.")).toBeTruthy()
+    expect(container.querySelector('[data-message-row][data-message-id="m_r8"]')).toBeTruthy()
+    expect(container.querySelector('[data-ledger-row][data-message-id="m_r8"]')).toBeNull()
+    expect(ledgerRows(container).length).toBe(7)
+  })
+
+  it("re-partitions from scratch when the card is recycled onto another conversation", async () => {
+    const { container, rerenderPost } = mountCard(await seedLedgerRail(8))
+    await screen.findByText("Body of reply 8.")
+    await waitFor(() => expect(ledgerRows(container).length).toBe(7))
+
     await db.events.bulkPut([
-      messageEvent("m_open", "Opening body.", 10),
-      ...ids.map((id, i) => messageEvent(id, `Reply ${i + 1}.`, 11 + i)),
+      messageEvent("m2_open", "Other opening.", 40),
+      messageEvent("m2_r1", "Other reply 1.\n\nOther body 1.", 41),
+      messageEvent("m2_r2", "Other reply 2.\n\nOther body 2.", 42),
     ])
-    const post = makePost({ messageIds: ["m_open", ...ids] })
-    ;(post as unknown as { totalReplies: number }).totalReplies = replyCount
-    return post
-  }
+    const other = makePost({ id: "conv_2", messageIds: ["m2_open", "m2_r1", "m2_r2"] }) as BoardViewPost
+    ;(other.conversation as unknown as { id: string }).id = "conv_2"
+    ;(other as unknown as { openingMessage: BoardPostMessage }).openingMessage = openingMessage({ id: "m2_open" })
+    ;(other as unknown as { totalReplies: number }).totalReplies = 2
+    act(() => rerenderPost(other))
 
-  it("reveals the older middle when the reader scrolls up onto the seam", async () => {
-    const { scrollUp } = mountOnBoard(await seedRail(9))
-
-    await screen.findByText("Reply 9.")
-    const seam = await screen.findByText("4 older messages")
-    expect(screen.queryByText("Reply 1.")).toBeNull()
-
-    await scrollUp(seam)
-
-    expect(await screen.findByText("Reply 1.")).toBeTruthy()
-    // A page (15 rows) covers this whole middle, so the seam goes with it.
-    await waitFor(() => expect(screen.queryByText(/older message/)).toBeNull())
+    // Fresh newest-N partition on the new conversation: one full row, one lead.
+    expect(await screen.findByText("Other body 2.")).toBeTruthy()
+    await waitFor(() => expect(ledgerRows(container).length).toBe(1))
+    expect(screen.queryByText("Other body 1.")).toBeNull()
   })
 
-  it("leaves the middle alone when the reader scrolls up with the seam off screen", async () => {
-    const { scrollUp } = mountOnBoard(await seedRail(9))
-    await screen.findByText("Reply 9.")
-    const seam = await screen.findByText("4 older messages")
-
-    await scrollUp(seam, false)
-
-    expect(screen.queryByText("Reply 1.")).toBeNull()
-    expect(screen.getByText("4 older messages")).toBeTruthy()
-  })
-
-  it("arms the server backfill on a paged reveal, and says so in the seam row while it loads", async () => {
-    // The rail carries only the newest reply, so the reveal demands rows only the
-    // server has — the same wait the full expand shows, swapped into the seam's
-    // own row so nothing below it shifts.
-    const getBoardMessages = vi.fn(() => new Promise(() => {}))
-    await db.events.bulkPut([messageEvent("m_open", "Opening body.", 10), messageEvent("m_r9", "Reply 9.", 30)])
-    const post = makePost({ messageIds: ["m_open", ...Array.from({ length: 9 }, (_, i) => `m_r${i + 1}`)] })
-    ;(post as unknown as { totalReplies: number }).totalReplies = 9
-    const { scrollUp } = mountOnBoard(post, { getBoardMessages })
-
-    await screen.findByText("Reply 9.")
-    await scrollUp(await screen.findByText("8 older messages"))
-
-    await waitFor(() => expect(getBoardMessages).toHaveBeenCalled())
-    expect(await screen.findByText("Loading older messages…")).toBeTruthy()
-  })
-
-  it("banks at most one outstanding page while the rail can't advance, so the backfill doesn't dump the middle", async () => {
-    // The rail carries only the newest reply and the backfill is in flight, so the
-    // card can't grow and the seam stays under the reader's cursor. Every further
-    // wheel tick of a flick would otherwise buy another page and the whole hidden
-    // middle would land at once when the rows arrive.
-    const backfill = Promise.withResolvers<BoardPostMessage[]>()
-    const getBoardMessages = vi.fn(() => backfill.promise)
-    const ids = Array.from({ length: 40 }, (_, i) => `m_r${i + 1}`)
-    await db.events.bulkPut([messageEvent("m_open", "Opening body.", 10), messageEvent("m_r40", "Reply 40.", 50)])
-    const post = makePost({ messageIds: ["m_open", ...ids] })
-    ;(post as unknown as { totalReplies: number }).totalReplies = 40
-    const { scrollUp } = mountOnBoard(post, { getBoardMessages })
-
-    await screen.findByText("Reply 40.")
-    const seam = await screen.findByText("39 older messages")
-    for (let i = 0; i < 5; i++) await scrollUp(seam)
-    await waitFor(() => expect(getBoardMessages).toHaveBeenCalled())
-
-    await act(async () => {
-      backfill.resolve([
-        openingMessage(),
-        ...ids.map((id, i) => ({
-          ...openingMessage(),
-          id,
-          contentMarkdown: `Reply ${i + 1}.`,
-          createdAt: new Date(Date.parse("2026-06-22T12:00:00.000Z") + (i + 1) * 1000).toISOString(),
-        })),
-      ])
-      await backfill.promise
-    })
-
-    // One page (15 rows) of the middle, not five: 40 - (1 trailing + 15) still hidden.
-    expect(await screen.findByText("24 older messages")).toBeTruthy()
-    expect(screen.getByText("Reply 25.")).toBeTruthy()
-    expect(screen.queryByText("Reply 24.")).toBeNull()
-  })
-
-  it("gives a flick one page: wheel events with no fresh intersection report in between", async () => {
-    // A trackpad flick emits dozens of wheel events before the observer can report
-    // the seam leaving; without pacing on the report, one gesture dumps the middle.
-    mountOnBoard(await seedRail(40))
-
-    await screen.findByText("Reply 40.")
-    const seam = (await screen.findByText("35 older messages")).closest("button")!
-    seamObservers.find((o) => o.element === seam)?.fire(true)
-    await act(async () => {
-      for (let i = 0; i < 5; i++)
-        seam.closest(".board-card-hover")?.dispatchEvent(new WheelEvent("wheel", { deltaY: -40, bubbles: true }))
-    })
-
-    expect(await screen.findByText("20 older messages")).toBeTruthy()
-  })
-
-  it("ignores a scroll over a sibling card: only the card under the pointer pages", async () => {
-    const { scrollerRef } = mountOnBoard(await seedRail(9))
-
-    await screen.findByText("Reply 9.")
-    const seam = (await screen.findByText("4 older messages")).closest("button")!
-    const siblingCard = document.createElement("div")
-    scrollerRef.current?.append(siblingCard)
-    await act(async () => {
-      seamObservers.find((o) => o.element === seam)?.fire(true)
-      siblingCard.dispatchEvent(new WheelEvent("wheel", { deltaY: -40, bubbles: true }))
-    })
-
-    expect(screen.queryByText("Reply 1.")).toBeNull()
-    expect(screen.getByText("4 older messages")).toBeTruthy()
-  })
-
-  it("puts a failed paged reveal inside the seam's own row rather than mounting a retry below it", async () => {
+  it("says it is loading, then offers a retry, when the earlier mass is only on the server", async () => {
+    // The rail carries the newest reply only, so the ledger's older rows have to
+    // come from the backfill — the wait and its failure take the head row's slot.
     const getBoardMessages = vi.fn().mockRejectedValue(new Error("offline"))
     await db.events.bulkPut([messageEvent("m_open", "Opening body.", 10), messageEvent("m_r9", "Reply 9.", 30)])
     const post = makePost({ messageIds: ["m_open", ...Array.from({ length: 9 }, (_, i) => `m_r${i + 1}`)] })
     ;(post as unknown as { totalReplies: number }).totalReplies = 9
-    const { container, scrollUp } = mountOnBoard(post, { getBoardMessages })
+    mountCard(post, { getBoardMessages })
 
-    await screen.findByText("Reply 9.")
-    const rowsBefore = revealRowStructure(container)
-    await scrollUp(await screen.findByText("8 older messages"))
-    await waitFor(() => expect(getBoardMessages).toHaveBeenCalled())
-    const rowsLoading = revealRowStructure(container)
-    // The failed label lands only after the query's single retry (#1714), which
-    // waits out TanStack's ~1s backoff — past findByText's default timeout.
-    const failedSeam = await screen.findByText("Couldn't load older messages. Retry.", undefined, { timeout: 5000 })
-
-    // The failure swaps the seam's label; it never adds a row, so the replies below
-    // stay exactly where the reader left them (INV-21).
-    expect({ ...revealRowStructure(container), rowsBefore, rowsLoading }).toEqual({
-      seams: 1,
-      standaloneRetries: 0,
-      rowsBefore: { seams: 1, standaloneRetries: 0 },
-      rowsLoading: { seams: 1, standaloneRetries: 0 },
-    })
+    expect(await screen.findByText("Loading older messages…")).toBeTruthy()
+    // The label lands only after the query's single retry (#1714), which waits out
+    // TanStack's ~1s backoff — past findByText's default timeout.
+    const failed = await screen.findByText("Couldn't load older messages. Retry.", undefined, { timeout: 5000 })
+    // One row, whatever it says: no head row beside the failure (INV-21).
+    expect(screen.queryByText(/earlier/)).toBeNull()
 
     getBoardMessages.mockClear()
-    await userEvent.click(failedSeam)
+    await userEvent.click(failed)
     await waitFor(() => expect(getBoardMessages).toHaveBeenCalled())
   })
+})
 
-  it("keeps the tap path: clicking the seam expands the whole conversation", async () => {
-    mountOnBoard(await seedRail(9))
+/** Installs a controllable IntersectionObserver: jsdom ships none, and the card
+ *  fails open without one. Returns a setter that drives every live observer. */
+function stubIntersectionObserver(initiallyIntersecting: boolean) {
+  type Entry = { isIntersecting: boolean; target: Element }
+  const live = new Set<{ cb: (entries: Entry[]) => void; targets: Set<Element> }>()
+  let intersecting = initiallyIntersecting
+  class Stub {
+    private entry = { cb: (_: Entry[]) => {}, targets: new Set<Element>() }
+    constructor(cb: (entries: Entry[]) => void) {
+      this.entry.cb = cb
+      live.add(this.entry)
+    }
+    observe(target: Element) {
+      this.entry.targets.add(target)
+      this.entry.cb([{ isIntersecting: intersecting, target }])
+    }
+    unobserve(target: Element) {
+      this.entry.targets.delete(target)
+    }
+    disconnect() {
+      live.delete(this.entry)
+    }
+  }
+  vi.stubGlobal("IntersectionObserver", Stub)
+  return (next: boolean) => {
+    intersecting = next
+    act(() => {
+      for (const { cb, targets } of live) cb([...targets].map((target) => ({ isIntersecting: next, target })))
+    })
+  }
+}
 
-    await screen.findByText("Reply 9.")
-    await userEvent.click(await screen.findByText("4 older messages"))
+describe("BoardCard backfill arming", () => {
+  afterEach(() => vi.unstubAllGlobals())
 
-    expect(await screen.findByText("Reply 1.")).toBeTruthy()
-    expect(screen.queryByText(/older message/)).toBeNull()
+  /** A card whose rail has READ and holds the opening, but whose one reply member
+   *  is outside the rail's window — the only shape that wants a backfill. */
+  async function railResolvedIncompletePost() {
+    await db.events.bulkPut([messageEvent("m_open", "Opening body.", 10)])
+    const post = makePost({ messageIds: ["m_open", "m_r1"] })
+    ;(post as unknown as { totalReplies: number }).totalReplies = 1
+    return post
+  }
+
+  it("does not fetch on a projection-sourced card: its rail hasn't read yet", async () => {
+    // No IDB events at all → `source === "projection"`. Every mounted card firing
+    // here was the whole board's mount-time fetch storm.
+    stubIntersectionObserver(true)
+    const getBoardMessages = vi.fn().mockResolvedValue([])
+    const post = makePost({ messageIds: ["m_open", "m_r1"] })
+    ;(post as unknown as { totalReplies: number }).totalReplies = 1
+    mountCard(post, { getBoardMessages })
+
+    await screen.findByText("Opening body.")
+    await waitFor(() => expect(screen.getByText(/1 earlier/)).toBeTruthy())
+    expect(getBoardMessages).not.toHaveBeenCalled()
+    // ...and it says so honestly: no "Loading…" label with no request behind it.
+    expect(screen.queryByText("Loading older messages…")).toBeNull()
   })
 
-  it("renders no seam when nothing is hidden, so there is nothing to scroll into", async () => {
-    mountOnBoard(await seedRail(3))
+  it("does not fetch for a rail-resolved incomplete card while it is off screen", async () => {
+    stubIntersectionObserver(false)
+    const getBoardMessages = vi.fn().mockResolvedValue([])
+    mountCard(await railResolvedIncompletePost(), { getBoardMessages })
 
-    expect(await screen.findByText("Reply 1.")).toBeTruthy()
-    expect(screen.queryByText(/older message/)).toBeNull()
+    await screen.findByText("Opening body.")
+    await waitFor(() => expect(screen.getByText(/1 earlier/)).toBeTruthy())
+    expect(getBoardMessages).not.toHaveBeenCalled()
+  })
+
+  it("fetches once a rail-resolved incomplete card enters the viewport", async () => {
+    const setIntersecting = stubIntersectionObserver(false)
+    const getBoardMessages = vi.fn().mockResolvedValue([openingMessage()])
+    mountCard(await railResolvedIncompletePost(), { getBoardMessages })
+
+    await screen.findByText("Opening body.")
+    expect(getBoardMessages).not.toHaveBeenCalled()
+
+    setIntersecting(true)
+    await waitFor(() => expect(getBoardMessages).toHaveBeenCalledTimes(1))
+  })
+
+  it("arms the reveal window on the backfill's rising edge, landmarked on a real row, and never while idle", async () => {
+    const beginReveal = vi.fn()
+    const closeReveal = vi.fn()
+    spyOnExport(revealAnchorModule, "useBoardCardRevealAnchor").mockReturnValue((() => ({
+      beginReveal,
+      closeReveal,
+    })) as never)
+    stubIntersectionObserver(true)
+    // Idle: a complete rail wants no backfill, so nothing arms — a live tail reply
+    // must still push the view normally.
+    await db.events.bulkPut([messageEvent("m_open", "Opening body.", 10), messageEvent("m_r1", "Reply 1.", 11)])
+    const complete = makePost({ messageIds: ["m_open", "m_r1"] })
+    ;(complete as unknown as { totalReplies: number }).totalReplies = 1
+    const idle = mountCard(complete, { getBoardMessages: vi.fn() })
+    await screen.findByText("Reply 1.")
+    expect(beginReveal).not.toHaveBeenCalled()
+    idle.unmount()
+
+    // In flight: armed, holding a row element that is actually in the document.
+    await db.events.clear()
+    const getBoardMessages = vi.fn(() => new Promise<never>(() => {}))
+    // The rail holds the opening and the newest reply; the older member (m_r1) is
+    // only on the server, so it lands ABOVE the tail — the jump this compensates.
+    await db.events.bulkPut([messageEvent("m_open", "Opening body.", 10), messageEvent("m_r2", "Reply 2.", 12)])
+    const post = makePost({ messageIds: ["m_open", "m_r1", "m_r2"] })
+    ;(post as unknown as { totalReplies: number }).totalReplies = 2
+    const { container } = mountCard(post, { getBoardMessages })
+
+    await waitFor(() => expect(beginReveal).toHaveBeenCalled())
+    const [options] = beginReveal.mock.calls.at(-1) as [{ mode: string; landmark: HTMLElement | null }]
+    expect(options.mode).toBe("scroll")
+    expect(options.landmark).toBe(container.querySelector('[data-message-row][data-message-id="m_r2"]'))
   })
 })
