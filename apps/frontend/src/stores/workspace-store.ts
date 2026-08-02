@@ -196,8 +196,13 @@ export async function seedCacheFromIdb(workspaceId: string): Promise<boolean> {
   if (!workspace) return false
 
   // If the version bumped during our async reads, a bootstrap completed
-  // and seeded fresher data — skip writing stale cache.
-  if ((cacheVersion.get(workspaceId) ?? 0) !== versionBefore) return true
+  // and seeded fresher data — skip writing stale cache. Still publish: that
+  // seed may have been publish:false (unchanged apply), and a subscriber that
+  // mounted cold before it would otherwise never learn the cache is populated.
+  if ((cacheVersion.get(workspaceId) ?? 0) !== versionBefore) {
+    publishWorkspaceCache(workspaceId)
+    return true
+  }
 
   seedWorkspaceCache(workspaceId, {
     workspace,

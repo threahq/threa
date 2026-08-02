@@ -2443,7 +2443,10 @@ export interface AppliedWorkspaceBootstrap {
 
 // The top-level `WorkspaceBootstrap` fields the 14-table row diff DOES cover:
 // `anyChanged` already answers for them, and comparing them below would
-// re-introduce the deep walk this gate exists to avoid.
+// re-introduce the deep walk this gate exists to avoid. That delegation is
+// sound only while every writer that mutates these rows in IDB also patches
+// the bootstrap query cache — an IDB-only writer would leave the query cache
+// permanently stale behind an anyChanged=false apply.
 type BootstrapRowCoveredField =
   | "workspace"
   | "users"
