@@ -8,7 +8,7 @@ import {
   type StreamWithPreview,
 } from "@threa/types"
 import { createDmDraftId } from "@/hooks/use-stream-or-draft"
-import { stripMarkdownToInline } from "@/lib/markdown"
+import { stripMarkdownToInline, truncateInline } from "@/lib/markdown"
 import { getStreamName } from "@/lib/streams"
 import type { SectionKey, SortType, StreamItemData, UrgencyLevel } from "./types"
 
@@ -183,7 +183,7 @@ export function truncateContent(
 ): string {
   const markdown = typeof content === "string" ? content : serializeToMarkdown(content)
   const stripped = stripMarkdownToInline(markdown, toEmoji)
-  return stripped.length > maxLength ? stripped.slice(0, maxLength) + "..." : stripped
+  return truncateInline(stripped, maxLength, "...")
 }
 
 /** Get display name for sorting (handles channels, scratchpads, DMs) */
