@@ -359,6 +359,12 @@ export function getFutureDatePresets(now: Date = new Date()): DatePreset[] {
   ]
 }
 
+/** Compact fire time in the viewer's local zone (INV-42): "Wed, Jul 8 at 2:30 PM". */
+export function formatFireTime(date: Date): string {
+  const day = date.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" })
+  return `${day} at ${formatTime(date)}`
+}
+
 /**
  * Format a duration in milliseconds to a human-readable string.
  * Examples: "150ms", "2.3s", "1m 30s"

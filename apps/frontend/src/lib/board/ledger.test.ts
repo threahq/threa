@@ -2,7 +2,17 @@ import { describe, expect, it } from "vitest"
 
 import type { AttachmentSummary, LinkPreviewSummary } from "@threa/types"
 
-import { coalesceLedgerItems, estimateReadingMinutes, leadLine, linkLabel, rowArtifacts } from "./ledger"
+import type { CachedEvent } from "@/db"
+import { formatFireTime } from "@/lib/dates"
+import type { BoardEventRow } from "./board-event-rows"
+import {
+  coalesceLedgerItems,
+  estimateReadingMinutes,
+  leadLine,
+  ledgerEventContent,
+  linkLabel,
+  rowArtifacts,
+} from "./ledger"
 
 describe("leadLine", () => {
   it("returns plain text unchanged", () => {
@@ -191,5 +201,187 @@ describe("coalesceLedgerItems", () => {
 
   it("returns an empty list unchanged", () => {
     expect(coalesceLedgerItems([])).toEqual([])
+  })
+})
+
+describe("ledgerEventContent", () => {
+  const ctx = { workspaceId: "ws_1", traceUrl: (sessionId: string) => `/w/ws_1/trace/${sessionId}` }
+
+  function event(eventType: string, payload: unknown): CachedEvent {
+    return {
+      id: "evt_1",
+      workspaceId: "ws_1",
+      streamId: "stream_1",
+      sequence: "1",
+      _sequenceNum: 1,
+      eventType: eventType as CachedEvent["eventType"],
+      payload: payload as CachedEvent["payload"],
+      actorId: null,
+      actorType: null,
+      createdAt: "2026-07-28T10:00:00.000Z",
+      _cachedAt: 1,
+    }
+  }
+
+  it("names the persona, its steps and duration, and links the trace", () => {
+    const row: BoardEventRow = {
+      kind: "session",
+      key: "slot_1",
+      sortMs: 0,
+      streamId: "stream_1",
+      events: [
+        event("agent_session:started", { sessionId: "sess_1", personaName: "Ariadne" }),
+        event("agent_session:completed", { sessionId: "sess_1", stepCount: 41, messageCount: 2, duration: 720_000 }),
+      ],
+    }
+    expect(ledgerEventContent(row, ctx)).toEqual({
+      key: "slot_1",
+      kind: "session",
+      label: "Ariadne",
+      meta: "41 steps · 12m 0s",
+      href: "/w/ws_1/trace/sess_1",
+    })
+  })
+
+  it("reads a still-running session as running", () => {
+    const row: BoardEventRow = {
+      kind: "session",
+      key: "slot_1",
+      sortMs: 0,
+      streamId: "stream_1",
+      events: [event("agent_session:started", { sessionId: "sess_1", personaName: "Ariadne" })],
+    }
+    expect(ledgerEventContent(row, ctx).meta).toBe("running")
+  })
+
+  it("carries a capture's TITLE and its memo deep link, never the memo content", () => {
+    const row: BoardEventRow = {
+      kind: "memo",
+      key: "evt_1",
+      sortMs: 0,
+      streamId: "stream_1",
+      event: event("memos:captured", {
+        conversationId: "conv_1",
+        memos: [
+          {
+            memoId: "memo_9",
+            title: "Postgres upserts need the index",
+            knowledgeType: "fact",
+            sourceMessageIds: ["msg_1"],
+          },
+        ],
+      }),
+    }
+    expect(ledgerEventContent(row, ctx)).toEqual({
+      key: "evt_1",
+      kind: "memo",
+      label: "Memo: Postgres upserts need the index",
+      href: "/w/ws_1/memory?memo=memo_9",
+    })
+  })
+
+  it("leaves a multi-memo capture without a link (no single target to open)", () => {
+    const row: BoardEventRow = {
+      kind: "memo",
+      key: "evt_1",
+      sortMs: 0,
+      streamId: "stream_1",
+      event: event("memos:captured", {
+        conversationId: "conv_1",
+        memos: [
+          { memoId: "memo_1", title: "One", knowledgeType: "fact", sourceMessageIds: [] },
+          { memoId: "memo_2", title: "Two", knowledgeType: "fact", sourceMessageIds: [] },
+        ],
+      }),
+    }
+    expect(ledgerEventContent(row, ctx)).toEqual({
+      key: "evt_1",
+      kind: "memo",
+      label: "Memo: One, Two",
+      href: undefined,
+    })
+  })
+
+  it("marks a cancelled follow-up cancelled and never links it", () => {
+    const row: BoardEventRow = {
+      kind: "followUp",
+      key: "evt_1",
+      sortMs: 0,
+      streamId: "stream_1",
+      cancelled: true,
+      event: event("agent:follow_up_scheduled", {
+        followUpId: "fu_1",
+        note: "Chase the vendor quote",
+        scheduledFor: "2026-08-01T09:00:00.000Z",
+      }),
+    }
+    expect(ledgerEventContent(row, ctx)).toEqual({
+      key: "evt_1",
+      kind: "followUp",
+      label: "Follow-up: Chase the vendor quote",
+      meta: "cancelled",
+    })
+  })
+
+  it("renders a fired follow-up's schedule as an absolute time, never a clamped countdown", () => {
+    const scheduledFor = new Date(Date.now() - 5 * 24 * 60 * 60 * 1000)
+    const row: BoardEventRow = {
+      kind: "followUp",
+      key: "evt_1",
+      sortMs: 0,
+      streamId: "stream_1",
+      cancelled: false,
+      event: event("agent:follow_up_scheduled", {
+        followUpId: "fu_1",
+        note: "Chase the vendor quote",
+        scheduledFor: scheduledFor.toISOString(),
+      }),
+    }
+    expect(ledgerEventContent(row, ctx)).toEqual({
+      key: "evt_1",
+      kind: "followUp",
+      label: "Follow-up: Chase the vendor quote",
+      meta: `fires ${formatFireTime(scheduledFor)}`,
+    })
+  })
+
+  it("labels an unclaimed delegation with the shared Open label", () => {
+    const row: BoardEventRow = {
+      kind: "delegation",
+      key: "evt_1",
+      sortMs: 0,
+      streamId: "stream_1",
+      event: event("delegation:created", {
+        delegationId: "dlg_1",
+        title: "Migrate the index",
+        brief: "…",
+        contextRefs: [],
+        sourceConversationId: "conv_1",
+      }),
+    }
+    expect(ledgerEventContent(row, ctx)?.meta).toBe("Open")
+  })
+
+  it("carries a delegation's title and its latest status", () => {
+    const row: BoardEventRow = {
+      kind: "delegation",
+      key: "evt_1",
+      sortMs: 0,
+      streamId: "stream_1",
+      event: event("delegation:created", {
+        delegationId: "dlg_1",
+        title: "Migrate the index",
+        brief: "…",
+        contextRefs: [],
+        sourceConversationId: "conv_1",
+      }),
+      statusPatch: { delegationId: "dlg_1", status: "claimed" },
+    }
+    expect(ledgerEventContent(row, ctx)).toEqual({
+      key: "evt_1",
+      kind: "delegation",
+      label: "Delegation: Migrate the index",
+      meta: "Claimed",
+    })
   })
 })

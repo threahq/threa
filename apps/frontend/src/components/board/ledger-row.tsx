@@ -1,7 +1,7 @@
 import { useCallback, useMemo, useRef, useState, type MouseEvent, type ReactNode } from "react"
-import { useNavigate } from "react-router-dom"
+import { Link, useNavigate } from "react-router-dom"
 import { toast } from "sonner"
-import { ChevronUp, ChevronRight, CornerDownRight, Paperclip, Link2, Pencil } from "lucide-react"
+import { ChevronUp, ChevronDown, ChevronRight, CornerDownRight, Paperclip, Link2, Pencil } from "lucide-react"
 import { LabelableResourceTypes, LinkPreviewContentTypes } from "@threa/types"
 import { MessageItem, type RenderableMessage } from "@/components/message/message-item"
 import { actorRowTheme } from "@/components/message/actor-row-theme"
@@ -22,7 +22,7 @@ import { useIsMobile } from "@/hooks/use-mobile"
 import { useMessageReactions, stripColons, reactionShortcodes } from "@/hooks/use-message-reactions"
 import { useSavedForMessage, useSaveMessage, useDeleteSaved } from "@/hooks/use-saved"
 import { useSettleConversationMessage } from "@/hooks/use-conversations"
-import { useScopeDraftPreview, useBoardSubtopicDraftIndex } from "@/hooks"
+import { useBoardScopeDraftIndex, useBoardSubtopicDraftIndex } from "@/hooks"
 import { boardBranchReplyDraftKey } from "@/lib/board/draft-keys"
 import { leadLine, rowArtifacts } from "@/lib/board/ledger"
 import { resolveInternalAppPath } from "@/lib/internal-url"
@@ -440,7 +440,7 @@ export function LedgerRow({
 export function LedgerBranchRow({
   workspaceId,
   title,
-  conversationId,
+  conversationIds,
   messageIds,
   messageCount,
   lastMessage,
@@ -450,9 +450,11 @@ export function LedgerBranchRow({
 }: {
   workspaceId: string
   title: string
-  /** The branch's own conversation id — its tail reply draft scope. */
-  conversationId: string
-  /** The branch's rendered message ids — their sub-topic draft scopes. */
+  /** The branch's conversation id AND every descendant's — their tail reply draft
+   *  scopes. Collapse hides the whole subtree, so the row speaks for all of it. */
+  conversationIds: string[]
+  /** The rendered message ids of the branch and its descendants — their sub-topic
+   *  draft scopes. */
   messageIds: string[]
   messageCount: number
   /** The branch's newest locally-known message — the outcome lead. */
@@ -466,9 +468,11 @@ export function LedgerBranchRow({
   // one of its messages) is invisible once the branch folds, so the collapsed row
   // carries the same Pencil marker `CollapsedComposerBar` uses. Presence only —
   // it never pins the branch open; tapping the row expands as normal.
-  const tailDraft = useScopeDraftPreview(workspaceId, boardBranchReplyDraftKey(conversationId))
+  const scopeDrafts = useBoardScopeDraftIndex(workspaceId)
   const subtopicDrafts = useBoardSubtopicDraftIndex(workspaceId)
-  const hasDraft = tailDraft !== null || messageIds.some((id) => subtopicDrafts.has(id))
+  const hasDraft =
+    conversationIds.some((id) => scopeDrafts.has(boardBranchReplyDraftKey(id))) ||
+    messageIds.some((id) => subtopicDrafts.has(id))
   let lead: string | null = null
   if (lastMessage) {
     lead = lastMessage.deletedAt
@@ -568,12 +572,15 @@ export function LedgerEventRow({
   icon,
   label,
   meta,
+  href,
   onToggle,
   expanded,
 }: {
   icon: ReactNode
   label: string
   meta?: string
+  /** The kind's own detail target — the row navigates instead of toggling (INV-40). */
+  href?: string
   onToggle?: () => void
   expanded?: boolean
 }) {
@@ -587,6 +594,12 @@ export function LedgerEventRow({
     </>
   )
   const className = "flex w-full items-center gap-1.5 py-px text-left text-xs text-muted-foreground"
+  if (href)
+    return (
+      <Link to={href} className={cn(className, "no-underline transition-colors hover:text-foreground")}>
+        {content}
+      </Link>
+    )
   if (!onToggle) return <div className={className}>{content}</div>
   return (
     <button type="button" onClick={onToggle} aria-expanded={expanded ?? false} className={className}>
@@ -600,30 +613,42 @@ export interface LedgerEventDescriptor {
   icon: ReactNode
   label: string
   meta?: string
+  href?: string
 }
 
 /**
  * A coalesced run of events (the `coalesceLedgerItems` grouping): one thin
  * summary row that expands in place into the individual rows and re-coalesces
  * on a second tap.
+ *
+ * Expansion is the surface's state, not the group's: the card holds one ledger
+ * expansion set for message leads, branches and event groups alike, so it
+ * resets on conversation switch with them.
  */
-export function LedgerEventGroup({ events }: { events: LedgerEventDescriptor[] }) {
-  const [expanded, setExpanded] = useState(false)
-  const toggle = useCallback(() => setExpanded((e) => !e), [])
+export function LedgerEventGroup({
+  events,
+  expanded,
+  onToggle,
+}: {
+  events: LedgerEventDescriptor[]
+  expanded: boolean
+  onToggle: () => void
+}) {
+  const toggle = onToggle
   if (expanded) {
+    // The summary row stays: an expanded row carries its OWN tap affordance (a
+    // capture's memo link, a session's trace), so the way back has to be a
+    // control of its own rather than "tap any row".
     return (
       <div>
+        <LedgerEventRow
+          icon={<ChevronDown className="size-3" />}
+          label={`${events.length} events`}
+          onToggle={toggle}
+          expanded
+        />
         {events.map((event) => (
-          <LedgerEventRow
-            key={event.key}
-            icon={event.icon}
-            label={event.label}
-            meta={event.meta}
-            // Any of the rows re-coalesces the group — the reader's way back is
-            // wherever their eye landed.
-            onToggle={toggle}
-            expanded
-          />
+          <LedgerEventRow key={event.key} icon={event.icon} label={event.label} meta={event.meta} href={event.href} />
         ))}
       </div>
     )

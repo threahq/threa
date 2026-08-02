@@ -1,12 +1,23 @@
 import {
+  DelegationStatuses,
   isInAppLinkContentType,
   LinkPreviewContentTypes,
+  type AgentFollowUpScheduledEventPayload,
+  type AgentSessionCompletedPayload,
+  type AgentSessionFailedPayload,
+  type AgentSessionStartedPayload,
   type AttachmentSummary,
+  type DelegationCreatedEventPayload,
   type LinkPreviewContentType,
   type LinkPreviewSummary,
+  type MemosCapturedEventPayload,
 } from "@threa/types"
 
+import type { BoardEventRow } from "@/lib/board/board-event-rows"
+import { DELEGATION_STATUS_LABEL } from "@/lib/delegation-display"
+import { formatDuration, formatFireTime } from "@/lib/dates"
 import { resolveEmojiShortcodes, stripMarkdownKeepingCode, truncateInline } from "@/lib/markdown/strip"
+import { memoDeepLink } from "@/lib/memo-url"
 
 /** Characters of prose one reading-minute covers. */
 const CHARS_PER_MINUTE = 1100
@@ -86,6 +97,120 @@ function hostname(url: string): string {
     return new URL(url).hostname.replace(/^www\./, "")
   } catch {
     return url
+  }
+}
+
+/**
+ * The renderable content of one ledger event line — everything the thin row
+ * shows, plus the in-app detail target when the kind has one. Data only: the
+ * surface picks the icon and turns `href` into a `<Link>` (INV-40).
+ */
+export interface LedgerEventContent {
+  key: string
+  kind: BoardEventRow["kind"]
+  label: string
+  meta?: string
+  href?: string
+}
+
+export interface LedgerEventContentCtx {
+  workspaceId: string
+  /** The session's trace-view URL, from the surface's `useTrace`. */
+  traceUrl: (sessionId: string) => string
+}
+
+function stepsLabel(count: number): string {
+  return `${count} ${count === 1 ? "step" : "steps"}`
+}
+
+/**
+ * A board event row compressed to its ledger line. Titles and counts only —
+ * a capture line carries its memos' TITLES, never their content (INV-62): the
+ * memo body is the memory explorer's, one deep link away.
+ */
+export function ledgerEventContent(row: BoardEventRow, ctx: LedgerEventContentCtx): LedgerEventContent {
+  switch (row.kind) {
+    case "session": {
+      let sessionId = ""
+      let personaName: string | null = null
+      let completed: AgentSessionCompletedPayload | null = null
+      let failed: AgentSessionFailedPayload | null = null
+      let interrupted = false
+      let deleted = false
+      for (const event of row.events) {
+        const id = (event.payload as { sessionId?: string } | undefined)?.sessionId
+        if (id) sessionId = id
+        switch (event.eventType) {
+          case "agent_session:started":
+            personaName = (event.payload as AgentSessionStartedPayload | undefined)?.personaName ?? null
+            break
+          case "agent_session:completed":
+            completed = event.payload as AgentSessionCompletedPayload
+            break
+          case "agent_session:failed":
+            failed = event.payload as AgentSessionFailedPayload
+            break
+          case "agent_session:interrupted":
+            interrupted = true
+            break
+          case "agent_session:deleted":
+            deleted = true
+            break
+        }
+      }
+      // Same precedence the full card derives: deleted › completed › failed ›
+      // interrupted, so a retried session never reads as finished.
+      let meta: string
+      if (deleted) meta = "deleted"
+      else if (completed) meta = `${stepsLabel(completed.stepCount)} · ${formatDuration(completed.duration)}`
+      else if (failed) meta = `${stepsLabel(failed.stepCount)} · failed`
+      else if (interrupted) meta = "retrying"
+      else meta = "running"
+      return {
+        key: row.key,
+        kind: "session",
+        label: personaName ?? "Agent",
+        meta,
+        href: sessionId ? ctx.traceUrl(sessionId) : undefined,
+      }
+    }
+    case "memo": {
+      const memos = (row.event.payload as MemosCapturedEventPayload | undefined)?.memos ?? []
+      const titles = memos.map((memo) => memo.title)
+      return {
+        key: row.key,
+        kind: "memo",
+        label: titles.length === 0 ? "Memo captured" : `Memo: ${titles.join(", ")}`,
+        // One memo has an unambiguous target; a batch would have to pick one, so
+        // it stays a plain line and the reader opens what they want in the panel.
+        href: memos.length === 1 ? memoDeepLink(ctx.workspaceId, memos[0].memoId) : undefined,
+      }
+    }
+    case "followUp": {
+      const payload = row.event.payload as AgentFollowUpScheduledEventPayload | undefined
+      let meta: string | undefined
+      if (row.cancelled) meta = "cancelled"
+      else if (payload) meta = `fires ${formatFireTime(new Date(payload.scheduledFor))}`
+      return {
+        key: row.key,
+        kind: "followUp",
+        label: payload?.note ? `Follow-up: ${payload.note}` : "Follow-up scheduled",
+        meta,
+      }
+    }
+    case "delegation": {
+      const payload = row.event.payload as DelegationCreatedEventPayload | undefined
+      return {
+        key: row.key,
+        kind: "delegation",
+        label: payload?.title ? `Delegation: ${payload.title}` : "Delegation",
+        meta: DELEGATION_STATUS_LABEL[row.statusPatch?.status ?? DelegationStatuses.OPEN],
+      }
+    }
+    default: {
+      const exhaustive: never = row
+      return exhaustive
+    }
   }
 }
 

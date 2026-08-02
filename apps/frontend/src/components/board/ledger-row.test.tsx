@@ -1,3 +1,4 @@
+import { useState } from "react"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
@@ -430,7 +431,7 @@ describe("LedgerBranchRow", () => {
             <LedgerBranchRow
               workspaceId={WS}
               title="GPU budget"
-              conversationId="conv_child"
+              conversationIds={["conv_child"]}
               messageIds={["msg_1"]}
               messageCount={2}
               lastMessage={message({ contentMarkdown: "We went with the 5090s." })}
@@ -504,15 +505,25 @@ describe("LedgerEventGroup", () => {
     { key: "e3", icon: null, label: "call" },
   ]
 
+  // Expansion is the surface's state (the card's ledger expansion set), so the
+  // group is controlled — the harness stands in for that owner.
+  function ControlledGroup() {
+    const [expanded, setExpanded] = useState(false)
+    return <LedgerEventGroup events={events} expanded={expanded} onToggle={() => setExpanded((e) => !e)} />
+  }
+
   it("coalesces to one composite row, expands to the individual rows, and re-coalesces", async () => {
     const user = userEvent.setup()
-    render(<LedgerEventGroup events={events} />)
+    render(<ControlledGroup />)
     const summary = screen.getByRole("button", { name: /3 events/ })
     expect(summary).toHaveTextContent("3 events — memo captured · thread split · call")
     await user.click(summary)
-    expect(screen.getAllByRole("button")).toHaveLength(3)
+    // Expanded: the three rows, plus the summary row that folds them back — the
+    // individual rows keep their own tap affordance, so collapsing has its own.
     expect(screen.getByText("memo captured")).toBeInTheDocument()
-    await user.click(screen.getByText("thread split"))
-    expect(screen.getByRole("button", { name: /3 events/ })).toBeInTheDocument()
+    expect(screen.getByText("thread split")).toBeInTheDocument()
+    expect(screen.getByText("call")).toBeInTheDocument()
+    await user.click(screen.getByRole("button", { name: "3 events" }))
+    expect(screen.getByRole("button", { name: /3 events —/ })).toBeInTheDocument()
   })
 })
