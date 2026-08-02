@@ -58,6 +58,11 @@ export const SETTINGS_TAB_CONFIG: Record<SettingsTab, SettingsTabConfig> = {
     description: "Shortcuts and send behavior",
     keywords: ["shortcuts", "hotkeys", "bindings", "enter", "send"],
   },
+  diagnostics: {
+    label: "Diagnostics",
+    description: "Performance data sharing",
+    keywords: ["performance", "diagnostics", "telemetry", "slow", "lag", "freeze", "timing"],
+  },
   accessibility: {
     label: "Accessibility",
     description: "Motion, contrast, fonts, and composer layout",

@@ -92,6 +92,7 @@ function flattenUpdates(updates: UpdateUserPreferencesInput): Array<{ key: strin
     "defaultCompanionPersonaId",
     "statusPresets",
     "gettingStartedDismissed",
+    "performanceDiagnosticsOptIn",
   ] as const
 
   for (const key of simpleKeys) {

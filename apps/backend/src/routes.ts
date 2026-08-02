@@ -103,6 +103,7 @@ import { BotAccessRequestService, createBotAccessRequestHandlers } from "./featu
 import type { DraftsService } from "./features/drafts"
 import type { LabelService, LabelAssignmentService, LabelMessageService } from "./features/labels"
 import type { PushService } from "./features/push"
+import { createPerfDiagnosticsHandlers, type PerfDiagnosticsService } from "./features/perf-diagnostics"
 import type { S3Config } from "./lib/env"
 import type { StorageProvider } from "./lib/storage/s3-client"
 import type { CommandRegistry } from "./features/commands"
@@ -160,6 +161,7 @@ interface Dependencies {
   labelAssignmentService: LabelAssignmentService
   labelMessageService: LabelMessageService
   pushService: PushService
+  perfDiagnosticsService: PerfDiagnosticsService
   s3Config: S3Config
   commandRegistry: CommandRegistry
   avatarService: AvatarService
@@ -228,6 +230,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     labelAssignmentService,
     labelMessageService,
     pushService,
+    perfDiagnosticsService,
     s3Config,
     commandRegistry,
     avatarService,
@@ -1446,11 +1449,19 @@ export function registerRoutes(app: Express, deps: Dependencies) {
   app.delete("/api/workspaces/:workspaceId/drafts/:id", ...authed, audit("drafts.delete", "write"), drafts.delete)
 
   const push = createPushHandlers({ pushService })
+  const perfDiagnostics = createPerfDiagnosticsHandlers({ perfDiagnosticsService })
   app.get(
     "/api/workspaces/:workspaceId/push/vapid-key",
     ...authed,
     audit("push.get_vapid_key", "read"),
     push.getVapidKey
+  )
+  app.post(
+    "/api/workspaces/:workspaceId/perf-captures",
+    ...authed,
+    audit("perf_capture.create", "write"),
+    rateLimits.perfCapture,
+    perfDiagnostics.create
   )
   app.post("/api/workspaces/:workspaceId/push/subscribe", ...authed, audit("push.subscribe", "write"), push.subscribe)
   app.post(

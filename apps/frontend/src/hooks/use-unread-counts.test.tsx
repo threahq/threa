@@ -117,6 +117,7 @@ function makeBootstrap(): WorkspaceBootstrap {
       workSchedule: null,
       defaultCompanionPersonaId: null,
       gettingStartedDismissed: false,
+      performanceDiagnosticsOptIn: false,
       accessibility: {
         fontSize: "medium",
         fontFamily: "system",

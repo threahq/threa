@@ -239,6 +239,7 @@ export const SETTINGS_TAB_OPTIONS = [
   "notifications",
   "keyboard",
   "accessibility",
+  "diagnostics",
 ] as const
 export type SettingsTab = (typeof SETTINGS_TAB_OPTIONS)[number]
 
@@ -382,6 +383,12 @@ export interface UserPreferences {
    * devices.
    */
   gettingStartedDismissed: boolean
+  /**
+   * The user's consent to upload client performance captures. Off unless the
+   * user turns it on; the `perfDiagnostics` flag only decides whether the
+   * toggle is offered, and the upload endpoint re-checks both.
+   */
+  performanceDiagnosticsOptIn: boolean
   createdAt: string
   updatedAt: string
 }
@@ -424,6 +431,7 @@ export const DEFAULT_USER_PREFERENCES: Omit<UserPreferences, "workspaceId" | "us
   defaultCompanionPersonaId: null,
   statusPresets: [],
   gettingStartedDismissed: false,
+  performanceDiagnosticsOptIn: false,
 }
 
 /**
@@ -464,6 +472,7 @@ export interface UpdateUserPreferencesInput {
   defaultCompanionPersonaId?: string | null
   statusPresets?: StatusPreset[]
   gettingStartedDismissed?: boolean
+  performanceDiagnosticsOptIn?: boolean
 }
 
 /**

@@ -120,11 +120,68 @@ export function isCaptureArmed(): boolean {
   }
 }
 
+/**
+ * The two independent reasons capture may be running. `dev` is chunk 2's
+ * query-param/localStorage switch — it works in any build but only measures
+ * locally; it never permits upload. `consent` is the real pair (flag available AND the user's
+ * opt-in preference) and is the only source that does.
+ */
+export interface PerfArmingSources {
+  dev: boolean
+  consent: boolean
+}
+
+const DISARMED: PerfArmingSources = { dev: false, consent: false }
+
+// Dev arming is read at module load so marks taken during the first commit's
+// child effects (which run before any provider effect) land in a real capture.
+let armingSources: PerfArmingSources = { dev: isCaptureArmed(), consent: false }
+const armingListeners = new Set<() => void>()
+
+function setArmingSources(next: PerfArmingSources): void {
+  if (next.dev === armingSources.dev && next.consent === armingSources.consent) return
+  armingSources = next
+  for (const listener of armingListeners) listener()
+}
+
+export function getPerfArmingSources(): PerfArmingSources {
+  return armingSources
+}
+
+export function subscribePerfArming(listener: () => void): () => void {
+  armingListeners.add(listener)
+  return () => {
+    armingListeners.delete(listener)
+  }
+}
+
+export function setPerfDevArmed(dev: boolean): void {
+  setArmingSources({ ...armingSources, dev })
+}
+
+export function setPerfConsentArmed(consent: boolean): void {
+  setArmingSources({ ...armingSources, consent })
+}
+
+export function resetPerfArming(): void {
+  setArmingSources(DISARMED)
+}
+
+export function shouldArmCapture(sources: PerfArmingSources = armingSources): boolean {
+  return sources.dev || sources.consent
+}
+
+/** Upload requires consent; dev arming measures locally and stops there. */
+export function isUploadPermitted(sources: PerfArmingSources = armingSources): boolean {
+  return sources.consent
+}
+
 let moduleCapture: PerfCaptureLike = NO_CAPTURE
 
 /**
  * Arming has exactly one production caller: the provider in `context.tsx`,
- * which decides once per mount. Non-React modules (sync engine,
+ * which follows the arming sources above — chunk 2 decided once per mount,
+ * which cannot see a consent toggle flip. Non-React modules (sync engine,
  * draft staging) read `getPerfCapture()` instead of taking the capture through
  * a constructor, so instrumenting a hot path never changes its signature.
  */

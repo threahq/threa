@@ -217,6 +217,8 @@ export const ACCESS_LOG_OPERATIONS = [
   "drafts.upsert",
   "drafts.resolve",
   "drafts.delete",
+  // Performance diagnostics
+  "perf_capture.create",
   // Push
   "push.get_vapid_key",
   "push.subscribe",

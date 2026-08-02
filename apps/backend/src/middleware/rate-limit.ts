@@ -12,6 +12,7 @@ export interface RateLimiterSet {
   pushTest: RequestHandler
   calls: RequestHandler
   callsStart: RequestHandler
+  perfCapture: RequestHandler
   publicApiWorkspace: RequestHandler
   publicApiKey: RequestHandler
 }
@@ -95,6 +96,15 @@ export function createRateLimiters(config: RateLimiterConfig): RateLimiterSet {
       name: "calls-start",
       windowMs: 60_000,
       max: 12,
+      key: userScopeKey,
+    }),
+
+    // User-triggered diagnostics upload: a handful of sends a minute is the
+    // whole legitimate pattern, and each row is up to 512KB of JSONB.
+    perfCapture: createRateLimit({
+      name: "perf-capture",
+      windowMs: 60_000,
+      max: 6,
       key: userScopeKey,
     }),
 

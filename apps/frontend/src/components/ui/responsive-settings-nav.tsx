@@ -1,3 +1,4 @@
+import { useCallback } from "react"
 import { cn } from "@/lib/utils"
 import { ResponsiveTabs } from "./responsive-tabs"
 
@@ -27,6 +28,12 @@ export function ResponsiveSettingsNav<T extends string>({
 }: ResponsiveSettingsNavProps<T>) {
   const labels = Object.fromEntries(tabs.map((tab) => [tab, items[tab].label])) as Record<T, string>
 
+  // Opening straight to a bottom-of-list tab (?settings=…) otherwise leaves the
+  // active row clipped behind the nav's own scroll edge.
+  const activeRef = useCallback((node: HTMLButtonElement | null) => {
+    node?.scrollIntoView({ block: "nearest" })
+  }, [])
+
   return (
     <ResponsiveTabs tabs={tabs} labels={labels} value={value} onValueChange={onValueChange}>
       <div
@@ -40,6 +47,7 @@ export function ResponsiveSettingsNav<T extends string>({
           return (
             <button
               key={tab}
+              ref={isActive ? activeRef : undefined}
               type="button"
               onClick={() => onValueChange(tab)}
               aria-current={isActive ? "page" : undefined}
