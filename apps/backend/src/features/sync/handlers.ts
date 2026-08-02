@@ -2,8 +2,14 @@ import type { Request, Response } from "express"
 import { z } from "zod"
 import type { SyncCatchUpResponse } from "@threa/types"
 import { HttpError } from "../../lib/errors"
+import { bigIntReplacer } from "@threa/backend-common"
 import { permissionGroupsForRole } from "../../lib/outbox"
 import { setAuditSubjects } from "../access-log"
+import {
+  syncCatchupDurationSeconds,
+  syncCatchupEntriesReturned,
+  syncCatchupPayloadBytes,
+} from "../../lib/observability"
 import type { SyncService } from "./service"
 
 const catchUpQuerySchema = z.object({
@@ -29,6 +35,7 @@ export function createSyncHandlers({ syncService }: Dependencies) {
         throw new HttpError("Invalid sync catch-up query", { status: 400, code: "VALIDATION_ERROR" })
       }
 
+      const startedAt = Date.now()
       const { entries, head, requiresBootstrap } = await syncService.catchUp({
         workspaceId,
         userId,
@@ -41,16 +48,26 @@ export function createSyncHandlers({ syncService }: Dependencies) {
         { type: "workspace", id: workspaceId, fromSync: parsed.data.after, toSync: head.toString() },
       ])
 
-      res.json({
-        entries: entries.map((entry) => ({
-          syncId: entry.syncId.toString(),
-          eventType: entry.eventType,
-          payload: entry.payload,
-          createdAt: entry.createdAt.toISOString(),
-        })),
-        head: head.toString(),
-        ...(requiresBootstrap ? { requiresBootstrap: true } : {}),
-      } satisfies SyncCatchUpResponse)
+      const body = JSON.stringify(
+        {
+          entries: entries.map((entry) => ({
+            syncId: entry.syncId.toString(),
+            eventType: entry.eventType,
+            payload: entry.payload,
+            createdAt: entry.createdAt.toISOString(),
+          })),
+          head: head.toString(),
+          ...(requiresBootstrap ? { requiresBootstrap: true } : {}),
+        } satisfies SyncCatchUpResponse,
+        bigIntReplacer
+      )
+
+      const requiresBootstrapLabel = requiresBootstrap ? "true" : "false"
+      syncCatchupEntriesReturned.observe({ requires_bootstrap: requiresBootstrapLabel }, entries.length)
+      syncCatchupPayloadBytes.observe(Buffer.byteLength(body))
+      syncCatchupDurationSeconds.observe((Date.now() - startedAt) / 1000)
+
+      res.type("application/json").send(body)
     },
   }
 }

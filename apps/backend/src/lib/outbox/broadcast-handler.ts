@@ -19,6 +19,12 @@ import { SyncLogRepository, type SyncLogEntryInput } from "../../features/sync"
 import { CursorLock, ensureListenerFromLatest, DebounceWithMaxWait, type ProcessResult } from "@threa/backend-common"
 import type { OutboxHandler } from "@threa/backend-common"
 import { invalidatePointersForEvent } from "../../features/messaging/sharing"
+import {
+  outboxBatchSize,
+  outboxDispatchLagSeconds,
+  outboxBatchProcessSeconds,
+  outboxEventsEmitted,
+} from "../observability"
 
 export interface BroadcastHandlerConfig {
   batchSize?: number
@@ -107,11 +113,14 @@ export class BroadcastHandler implements OutboxHandler {
 
   private async processEvents(): Promise<void> {
     await this.cursorLock.run(async (cursor, processedIds): Promise<ProcessResult> => {
+      const batchStartedAt = Date.now()
       const events = await OutboxRepository.fetchAfterId(this.db, cursor, this.batchSize, processedIds)
 
       if (events.length === 0) {
         return { status: "no_events" }
       }
+
+      outboxBatchSize.observe(events.length)
 
       // Sequence the whole batch into the sync log BEFORE any emit: the log
       // entry is the durable record, the socket emit is best-effort delivery.
@@ -130,12 +139,16 @@ export class BroadcastHandler implements OutboxHandler {
       try {
         for (const event of events) {
           this.broadcastEvent(event, routed.get(event.id))
+          outboxDispatchLagSeconds.observe(Math.max(0, (Date.now() - event.createdAt.getTime()) / 1000))
+          outboxEventsEmitted.inc({ event_type: event.eventType })
           // After the normal per-event emit, fan out any pointer-invalidated
           // hints so clients subscribed to target streams refresh their
           // hydrated pointer content (see features/messaging/sharing, D7).
           await invalidatePointersForEvent(event, this.db, this.io)
           seen.push(event.id)
         }
+
+        outboxBatchProcessSeconds.observe((Date.now() - batchStartedAt) / 1000)
 
         return { status: "processed", processedIds: seen }
       } catch (err) {

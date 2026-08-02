@@ -77,42 +77,9 @@ curl http://localhost:3001/readyz | jq
 
 **Note:** The listen pool utilization is expected to be 100% during normal operation (9 outbox handlers holding LISTEN connections).
 
-### 4. Stress Test Script (`scripts/stress-test.ts`)
+### 4. Load Fixtures
 
-Tool for reproducing connection leaks and testing pool behavior under load.
-
-**Basic usage:**
-
-```bash
-cd apps/backend
-
-# Light load test (default)
-bun scripts/stress-test.ts
-
-# Heavy load test
-bun scripts/stress-test.ts --requests 100 --waves 20 --delay 500
-
-# Custom endpoint
-bun scripts/stress-test.ts --endpoint /api/workspaces --requests 20
-```
-
-**Options:**
-
-- `--requests <n>`: Concurrent requests per wave (default: 50)
-- `--waves <n>`: Number of waves (default: 10)
-- `--delay <ms>`: Delay between waves (default: 1000)
-- `--endpoint <path>`: API endpoint to test (default: /readyz)
-- `--base-url <url>`: Base URL (default: http://localhost:3001)
-
-**Output:**
-
-The script will:
-
-1. Show initial pool health
-2. Run waves of concurrent requests
-3. Report success/failure rates and response times
-4. Show pool health after each wave
-5. Provide a final summary
+No load-fixture script is checked in yet; seed a workspace by hand when reproducing load locally.
 
 ## Pool Configuration
 
@@ -167,16 +134,13 @@ Pool 'main': 23% utilized (7/30 active, 23 idle, 0 waiting)
 
 ### Step 1: Identify the Leak Pattern
 
-**Run the stress test:**
+**Watch pool stats under load:**
 
 ```bash
-# Monitor logs in one terminal
 tail -f apps/backend/logs/combined.log | grep "Pool stats"
-
-# Run stress test in another
-cd apps/backend
-bun scripts/stress-test.ts --requests 100 --waves 30 --delay 1000
 ```
+
+Then drive load against the server while watching the stats.
 
 **Look for:**
 
@@ -310,7 +274,7 @@ const DEFAULT_POOL_CONFIG: Partial<PoolConfig> = {
 
 ## Next Steps
 
-1. **Run stress test** to reproduce the leak
+1. **Drive sustained load** to reproduce the leak
 2. **Check server logs** during the test
 3. **Identify the code path** where connections aren't released
 4. **Add explicit logging** around suspected leak areas

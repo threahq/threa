@@ -31,12 +31,6 @@ export const poolUtilizationPercent = new Gauge({
   registers: [registry],
 })
 
-export const queueHandlersConcurrent = new Gauge({
-  name: "queue_handlers_concurrent",
-  help: "Number of concurrently executing queue handlers",
-  registers: [registry],
-})
-
 export const queueMessagesEnqueued = new Counter({
   name: "queue_messages_enqueued_total",
   help: "Total number of messages enqueued",
@@ -70,27 +64,6 @@ export const queueTokensStuck = new Counter({
   name: "queue_tokens_stuck_total",
   help: "Total number of queue tokens that exceeded the stuck warning threshold",
   labelNames: ["queue", "workspace_id"],
-  registers: [registry],
-})
-
-export const cronSchedulesTotal = new Gauge({
-  name: "cron_schedules_total",
-  help: "Total number of active cron schedules",
-  labelNames: ["queue"],
-  registers: [registry],
-})
-
-export const cronTicksGenerated = new Counter({
-  name: "cron_ticks_generated_total",
-  help: "Total number of cron ticks generated",
-  labelNames: ["queue"],
-  registers: [registry],
-})
-
-export const cronTicksExecuted = new Counter({
-  name: "cron_ticks_executed_total",
-  help: "Total number of cron ticks executed",
-  labelNames: ["queue"],
   registers: [registry],
 })
 
@@ -157,25 +130,6 @@ export const messagesTotal = new Counter({
   registers: [registry],
 })
 
-export const memoProcessingDuration = new Histogram({
-  name: "memo_processing_duration_seconds",
-  help: "Duration of memo batch processing in seconds",
-  buckets: [1, 5, 10, 30, 60, 120, 300], // 1s to 5 minutes
-  registers: [registry],
-})
-
-export const memoCreated = new Counter({
-  name: "memo_created_total",
-  help: "Total number of memos created",
-  registers: [registry],
-})
-
-export const memoRevised = new Counter({
-  name: "memo_revised_total",
-  help: "Total number of memos revised",
-  registers: [registry],
-})
-
 export const agentSessionsActive = new Gauge({
   name: "agent_sessions_active",
   help: "Number of agent sessions by workspace and status",
@@ -188,28 +142,6 @@ export const agentSessionDuration = new Histogram({
   help: "Duration of agent sessions in seconds",
   labelNames: ["workspace_id", "status"],
   buckets: [1, 5, 10, 30, 60, 120, 300, 600], // 1s to 10 minutes
-  registers: [registry],
-})
-
-export const aiCallsTotal = new Counter({
-  name: "ai_calls_total",
-  help: "Total number of AI API calls",
-  labelNames: ["function", "model", "status"], // status: success | error
-  registers: [registry],
-})
-
-export const aiCallDuration = new Histogram({
-  name: "ai_call_duration_seconds",
-  help: "AI API call duration in seconds",
-  labelNames: ["function", "model"],
-  buckets: [0.5, 1, 2, 5, 10, 20, 30, 60], // 500ms to 1 minute
-  registers: [registry],
-})
-
-export const aiTokensUsed = new Counter({
-  name: "ai_tokens_used_total",
-  help: "Total number of AI tokens used",
-  labelNames: ["function", "model", "type"], // type: prompt | completion
   registers: [registry],
 })
 
@@ -269,6 +201,112 @@ export const callSweepReapedTotal = new Counter({
   name: "call_sweep_reaped_total",
   help: "Rows reaped by the call lease sweeper by kind",
   labelNames: ["kind"], // endpoint | participant | grace_call | expired_ring
+  registers: [registry],
+})
+
+// ── Queue depth ──────────────────────────────────────────────────────────────
+// Sampled from queue_messages by QueueDepthSampler, not incremented at the call
+// site: in-flight counters answer "is work moving", these answer "is work
+// piling up". No workspace_id — fleet health.
+
+export const queueMessagesPending = new Gauge({
+  name: "queue_messages_pending",
+  help: "Claimable queue messages waiting to be processed",
+  labelNames: ["queue"],
+  registers: [registry],
+})
+
+export const queueOldestPendingAgeSeconds = new Gauge({
+  name: "queue_oldest_pending_age_seconds",
+  help: "Age in seconds of the oldest claimable queue message",
+  labelNames: ["queue"],
+  registers: [registry],
+})
+
+export const queueMessagesDlq = new Gauge({
+  name: "queue_messages_dlq",
+  help: "Queue messages currently sitting in the dead-letter queue",
+  labelNames: ["queue"],
+  registers: [registry],
+})
+
+// ── Outbox dispatch ──────────────────────────────────────────────────────────
+
+export const outboxBatchSize = new Histogram({
+  name: "outbox_batch_size",
+  help: "Number of outbox events fetched per broadcast batch",
+  buckets: [1, 5, 10, 25, 50, 100],
+  registers: [registry],
+})
+
+export const outboxDispatchLagSeconds = new Histogram({
+  name: "outbox_dispatch_lag_seconds",
+  help: "Seconds between an outbox event's creation and its socket emit",
+  buckets: [0.01, 0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10, 30],
+  registers: [registry],
+})
+
+export const outboxBatchProcessSeconds = new Histogram({
+  name: "outbox_batch_process_seconds",
+  help: "Seconds from broadcast-handler batch entry to the last emit of that batch",
+  buckets: [0.01, 0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10, 30],
+  registers: [registry],
+})
+
+export const outboxEventsEmitted = new Counter({
+  name: "outbox_events_emitted_total",
+  help: "Total number of outbox events emitted by the broadcast handler",
+  labelNames: ["event_type"],
+  registers: [registry],
+})
+
+// ── Sync catch-up serve ──────────────────────────────────────────────────────
+
+export const syncCatchupEntriesReturned = new Histogram({
+  name: "sync_catchup_entries_returned",
+  help: "Entries returned by a sync catch-up serve",
+  labelNames: ["requires_bootstrap"],
+  buckets: [0, 1, 10, 50, 100, 200, 500],
+  registers: [registry],
+})
+
+export const syncCatchupPayloadBytes = new Histogram({
+  name: "sync_catchup_payload_bytes",
+  help: "Serialized response size of a sync catch-up serve in bytes",
+  buckets: [1e3, 1e4, 5e4, 1e5, 5e5, 1e6, 5e6],
+  registers: [registry],
+})
+
+export const syncCatchupDurationSeconds = new Histogram({
+  name: "sync_catchup_duration_seconds",
+  help: "Duration of a sync catch-up serve in seconds",
+  buckets: [0.005, 0.02, 0.05, 0.1, 0.25, 0.5, 1, 2, 5],
+  registers: [registry],
+})
+
+// ── Bootstrap serve ──────────────────────────────────────────────────────────
+
+export const bootstrapServePayloadBytes = new Histogram({
+  name: "bootstrap_serve_payload_bytes",
+  help: "Serialized response size of a bootstrap serve in bytes",
+  labelNames: ["kind"], // workspace | stream
+  buckets: [1e3, 1e4, 5e4, 1e5, 5e5, 1e6, 5e6],
+  registers: [registry],
+})
+
+export const bootstrapServeDurationSeconds = new Histogram({
+  name: "bootstrap_serve_duration_seconds",
+  help: "Duration of a bootstrap serve in seconds",
+  labelNames: ["kind"],
+  buckets: [0.005, 0.02, 0.05, 0.1, 0.25, 0.5, 1, 2, 5],
+  registers: [registry],
+})
+
+export const bootstrapServeEntitiesReturned = new Histogram({
+  name: "bootstrap_serve_entities_returned",
+  help: "Top-level entities returned by a bootstrap serve",
+  labelNames: ["kind"],
+  buckets: [0, 10, 50, 100, 250, 500, 1000, 5000],
   registers: [registry],
 })
 

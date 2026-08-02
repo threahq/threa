@@ -68,8 +68,9 @@ function makeReqRes() {
   let jsonBody: any
   const res = {
     locals: {},
-    json: (body: any) => {
-      jsonBody = body
+    type: () => res,
+    send: (body: string) => {
+      jsonBody = JSON.parse(body)
       return res
     },
     status: () => res,
@@ -91,16 +92,20 @@ describe("workspace bootstrap handler", () => {
     spyOn(BotRepository, "listVisibleTo").mockResolvedValue([] as never)
     spyOn(AgentSessionRepository, "listRunningByWorkspace").mockResolvedValue([] as never)
 
-    const archivedChannel = { id: "stream_arch", workspaceId: "ws_1", type: "channel", archivedAt: new Date() }
+    const archivedAt = new Date()
+    const archivedChannel = { id: "stream_arch", workspaceId: "ws_1", type: "channel", archivedAt }
     // Archived DMs are absent from dmPeers, so the handler must bake the
     // viewer-dependent name onto the row itself.
-    const archivedDm = { id: "stream_dm", workspaceId: "ws_1", type: "dm", displayName: null, archivedAt: new Date() }
+    const archivedDm = { id: "stream_dm", workspaceId: "ws_1", type: "dm", displayName: null, archivedAt }
     const handlers = createWorkspaceHandlers(makeDeps([archivedChannel, archivedDm]))
     const { req, res, getJson } = makeReqRes()
 
     await handlers.bootstrap(req, res)
 
-    expect(getJson().data.archivedStreams).toEqual([archivedChannel, { ...archivedDm, displayName: "Peer Name" }])
+    expect(getJson().data.archivedStreams).toEqual([
+      { ...archivedChannel, archivedAt: archivedAt.toISOString() },
+      { ...archivedDm, archivedAt: archivedAt.toISOString(), displayName: "Peer Name" },
+    ])
     // Active streams list stays a separate contract (empty here).
     expect(getJson().data.streams).toEqual([])
   })
@@ -188,7 +193,7 @@ describe("workspace bootstrap handler", () => {
       streamId: "stream_b",
       memberId: "usr_1",
       notificationLevel: null,
-      joinedAt: new Date("2026-01-01T00:00:00.000Z"),
+      joinedAt: "2026-01-01T00:00:00.000Z",
     })
   })
 

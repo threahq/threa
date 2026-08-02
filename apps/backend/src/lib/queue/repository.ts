@@ -87,6 +87,13 @@ export interface UnDlqParams {
   processAfter: Date
 }
 
+export interface QueueDepthRow {
+  queueName: string
+  pending: number
+  oldestPendingAt: Date | null
+  dlq: number
+}
+
 export type QueueRetentionCategory = "completed" | "cancelled" | "dlq"
 
 export interface DeleteExpiredMessagesBatchParams {
@@ -120,6 +127,16 @@ function mapRowToMessage(row: QueueMessageRow): QueueMessage {
     cancelledAt: row.cancelled_at,
   }
 }
+
+/**
+ * Claimable right now — the batchClaimMessages predicate without its workspace
+ * filter or terminal-state guards, which the depth query applies as a WHERE so
+ * the partial index can serve it.
+ */
+const CLAIMABLE_NOW_PREDICATE = sql.raw(`
+  process_after <= NOW()
+  AND (claimed_until IS NULL OR claimed_until < NOW())
+`)
 
 const SELECT_FIELDS = sql.raw(`
   id, queue_name, workspace_id, payload,
@@ -417,6 +434,69 @@ export const QueueRepository = {
     )
 
     return result.rowCount ?? 0
+  },
+
+  /**
+   * Per-queue depth. Split in two so each aggregate matches a partial index
+   * (idx_queue_messages_available / idx_queue_messages_dlq) instead of scanning
+   * terminal rows, which dominate the table. The pending predicate mirrors
+   * batchClaimMessages exactly (minus the workspace filter) — a row counts as
+   * pending iff a worker could claim it right now — and oldestPendingAt is
+   * MIN(process_after), the column that claim orders by. A queue with only
+   * terminal rows yields no row at all; the sampler owns zeroing.
+   */
+  async depthByQueue(db: Querier): Promise<QueueDepthRow[]> {
+    const active = await db.query<{
+      queue_name: string
+      pending: string
+      oldest_pending_at: Date | null
+    }>(
+      sql`
+        SELECT
+          queue_name,
+          COUNT(*) FILTER (WHERE ${CLAIMABLE_NOW_PREDICATE}) AS pending,
+          MIN(process_after) FILTER (WHERE ${CLAIMABLE_NOW_PREDICATE}) AS oldest_pending_at
+        FROM queue_messages
+        WHERE completed_at IS NULL
+          AND cancelled_at IS NULL
+          AND dlq_at IS NULL
+        GROUP BY queue_name
+      `
+    )
+
+    const dlq = await db.query<{ queue_name: string; dlq: string }>(
+      sql`
+        SELECT queue_name, COUNT(*) AS dlq
+        FROM queue_messages
+        WHERE dlq_at IS NOT NULL
+        GROUP BY queue_name
+      `
+    )
+
+    const byQueue = new Map<string, QueueDepthRow>()
+    for (const row of active.rows) {
+      byQueue.set(row.queue_name, {
+        queueName: row.queue_name,
+        pending: Number(row.pending),
+        oldestPendingAt: row.oldest_pending_at,
+        dlq: 0,
+      })
+    }
+    for (const row of dlq.rows) {
+      const existing = byQueue.get(row.queue_name)
+      if (existing) {
+        existing.dlq = Number(row.dlq)
+        continue
+      }
+      byQueue.set(row.queue_name, {
+        queueName: row.queue_name,
+        pending: 0,
+        oldestPendingAt: null,
+        dlq: Number(row.dlq),
+      })
+    }
+
+    return [...byQueue.values()]
   },
 
   /** For testing/debugging. */
