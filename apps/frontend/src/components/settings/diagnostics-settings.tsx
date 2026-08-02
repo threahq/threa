@@ -55,7 +55,11 @@ export function DiagnosticsSettings() {
       getPerfCapture().clear()
       setSendState("idle")
     }
-    await updatePreference("performanceDiagnosticsOptIn", checked)
+    try {
+      await updatePreference("performanceDiagnosticsOptIn", checked)
+    } catch (err) {
+      toast.error(ApiError.isApiError(err) ? err.message : "Failed to update the diagnostics preference")
+    }
   }
 
   async function send() {

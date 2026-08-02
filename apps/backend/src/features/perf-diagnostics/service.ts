@@ -1,7 +1,6 @@
 import type { Pool } from "pg"
 import { HttpError } from "@threa/backend-common"
 import type { FeatureFlagValue, PerformanceCapture } from "@threa/types"
-import { withTransaction } from "../../db"
 import { perfCaptureId } from "../../lib/id"
 import { PerformanceCaptureRepository } from "./repository"
 
@@ -56,19 +55,17 @@ export class PerfDiagnosticsService {
     }
 
     const id = perfCaptureId()
-    await withTransaction(this.pool, async (client) => {
-      await PerformanceCaptureRepository.insert(client, {
-        id,
-        workspaceId: input.workspaceId,
-        userId: input.userId,
-        captureId: input.capture.captureId,
-        appVersion: input.capture.appVersion,
-        deviceClass: input.capture.deviceClass,
-        startedAt: input.capture.startedAt,
-        sampleCount: input.capture.samples.length,
-        byteSize: input.byteSize,
-        samples: input.capture.samples,
-      })
+    await PerformanceCaptureRepository.insert(this.pool, {
+      id,
+      workspaceId: input.workspaceId,
+      userId: input.userId,
+      captureId: input.capture.captureId,
+      appVersion: input.capture.appVersion,
+      deviceClass: input.capture.deviceClass,
+      startedAt: input.capture.startedAt,
+      sampleCount: input.capture.samples.length,
+      byteSize: input.byteSize,
+      samples: input.capture.samples,
     })
 
     return { id }

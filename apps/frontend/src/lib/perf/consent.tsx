@@ -22,10 +22,13 @@ export function usePerfDiagnosticsConsent(workspaceId: string): boolean {
 export function PerfCaptureConsentGate({ workspaceId }: { workspaceId: string }) {
   const consented = usePerfDiagnosticsConsent(workspaceId)
 
+  // workspaceId is a dep so a workspace switch disarms and re-arms: the consent
+  // edge clears the buffer, so samples measured in one workspace are never
+  // uploaded attributed to another.
   useEffect(() => {
     setPerfConsentArmed(consented)
     return () => setPerfConsentArmed(false)
-  }, [consented])
+  }, [consented, workspaceId])
 
   return null
 }

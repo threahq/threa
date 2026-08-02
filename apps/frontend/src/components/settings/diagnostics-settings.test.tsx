@@ -134,7 +134,8 @@ describe("DiagnosticsSettings", () => {
 
     await userEvent.click(screen.getByRole("button", { name: /send diagnostics/i }))
 
-    await waitFor(() => expect(error).toHaveBeenCalledTimes(1))
+    await waitFor(() => expect(error).toHaveBeenCalledWith("Failed to send diagnostics"))
+    expect(error).toHaveBeenCalledTimes(1)
   })
 })
 

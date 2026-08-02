@@ -42,6 +42,9 @@ export class PerfCaptureRetentionWorker {
       batchSize: config?.batchSize ?? DEFAULT_CONFIG.batchSize,
       maxBatchesPerRun: config?.maxBatchesPerRun ?? DEFAULT_CONFIG.maxBatchesPerRun,
     }
+    if (!Number.isFinite(this.config.retentionMs) || this.config.retentionMs <= 0) {
+      throw new Error(`retentionMs must be a positive duration, got ${this.config.retentionMs}`)
+    }
     this.ticker = new Ticker({
       name: "perf-capture-retention",
       intervalMs: this.config.intervalMs,
