@@ -1028,7 +1028,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "sum(queue_messages_pending) by (queue)",
+          "expr": "max(queue_messages_pending) by (queue)",
           "legendFormat": "pending {{queue}}",
           "refId": "A"
         },
