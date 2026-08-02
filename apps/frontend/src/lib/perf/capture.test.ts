@@ -69,3 +69,18 @@ describe("PerfCapture ring buffer", () => {
     expect(typeof sample?.value).toBe("number")
   })
 })
+
+describe("draft mark timestamp quantization", () => {
+  it("coarsens draft.* timestamps to whole seconds and leaves values precise", () => {
+    const capture = new PerfCapture()
+    capture.mark("draft.stagedChars", 1234)
+    capture.mark("bootstrap.tx", 1)
+
+    const samples = capture.snapshot()
+    const draft = samples.find((s) => s.name === "draft.stagedChars")
+    const other = samples.find((s) => s.name === "bootstrap.tx")
+    expect(draft && draft.at % 1000).toBe(0)
+    expect(draft?.value).toBe(1234)
+    expect(other && other.at % 1000).not.toBe(0)
+  })
+})

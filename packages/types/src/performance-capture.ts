@@ -2,9 +2,11 @@
 // measure, plus the wire schema for one capture session.
 //
 // The registry is closed on purpose. A sample carries a name from this tuple, a
-// timestamp, and at most one number — there is no free-text field anywhere, so a
-// capture can never carry a stream id, a message body, a URL, or a user agent.
-// Adding a measurement means adding a name here first; nothing else can emit.
+// timestamp, and at most one number — there is no free-text field anywhere, so
+// the APP can never record a stream id, a message body, a URL, or a user agent.
+// (A hostile client can encode data it already owns into numbers; the guarantee
+// is about what the app collects, not what a consented user could smuggle out
+// of their own session.) Adding a measurement means adding a name here first.
 
 import { z } from "zod"
 

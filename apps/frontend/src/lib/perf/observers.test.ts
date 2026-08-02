@@ -9,6 +9,7 @@ const constructed: FakeObserver[] = []
 class FakeObserver {
   disconnected = false
   observedTypes: string[] = []
+  observedOptions: object[] = []
 
   constructor(public callback: ObserverCallback) {
     constructed.push(this)
@@ -16,6 +17,7 @@ class FakeObserver {
 
   observe(options: { type: string }) {
     this.observedTypes.push(options.type)
+    this.observedOptions.push(options)
   }
 
   disconnect() {
@@ -89,5 +91,34 @@ describe("startObservers", () => {
 
     expect(constructed.every((o) => o.disconnected)).toBe(true)
     expect(cancelled).toEqual([7])
+  })
+})
+
+describe("consent hygiene", () => {
+  it("does not request buffered entries", () => {
+    installFakes()
+    const dispose = startObservers(new PerfCapture())
+    expect(constructed.map((o) => o.observedOptions.map((opt) => (opt as { buffered?: boolean }).buffered))).toEqual([
+      [undefined],
+      [undefined],
+    ])
+    dispose()
+  })
+
+  it("records no frame gap across a hidden interval", () => {
+    const { runFrame } = installFakes()
+    const capture = new PerfCapture()
+    const dispose = startObservers(capture)
+
+    runFrame(0)
+    Object.defineProperty(document, "hidden", { configurable: true, value: true })
+    runFrame(5000)
+    Object.defineProperty(document, "hidden", { configurable: true, value: false })
+    runFrame(5016)
+    runFrame(5216)
+
+    expect(capture.snapshot().map((s) => s.value)).toEqual([200])
+    dispose()
+    Object.defineProperty(document, "hidden", { configurable: true, value: false })
   })
 })

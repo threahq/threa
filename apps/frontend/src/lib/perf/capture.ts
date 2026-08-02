@@ -64,6 +64,10 @@ export class PerfCapture implements PerfCaptureLike {
   }
 
   private push(sample: PerformanceSample): void {
+    // Draft marks fire per keystroke; precise timestamps would upload
+    // keystroke-dynamics-grade cadence, a content proxy the schema's
+    // no-free-text rule cannot see. Durations/sizes keep full precision.
+    if (sample.name.startsWith("draft.")) sample = { ...sample, at: Math.floor(sample.at / 1000) * 1000 }
     // Bootstrap marks fire once per session; the ring would evict them long
     // before an export, so they live outside it.
     if (sample.name.startsWith("bootstrap.")) {
@@ -103,14 +107,17 @@ function armedFromSearchParams(): boolean | null {
 export function isCaptureArmed(): boolean {
   if (typeof window === "undefined") return false
 
-  const paramFlag = armedFromSearchParams()
-  if (paramFlag !== null) return paramFlag
+  // try/catch is load-bearing: reading window.localStorage itself throws a
+  // SecurityError under blocked-storage policies, and this runs at module load.
+  try {
+    const paramFlag = armedFromSearchParams()
+    if (paramFlag !== null) return paramFlag
 
-  const getItem = window.localStorage?.getItem
-  if (typeof getItem !== "function") return false
-
-  const stored = getItem.call(window.localStorage, CAPTURE_STORAGE_KEY)
-  return stored === "1" || stored === "true"
+    const stored = window.localStorage.getItem(CAPTURE_STORAGE_KEY)
+    return stored === "1" || stored === "true"
+  } catch {
+    return false
+  }
 }
 
 let moduleCapture: PerfCaptureLike = NO_CAPTURE
