@@ -44,14 +44,6 @@ export async function seedStream(
 }
 
 /**
- * Requested body size clamped so the SERIALIZED entry stays within the staging
- * cap. `stageDraftContent` measures `MAX_STAGED_CHARS` against the whole JSON
- * envelope, not the text node, so the largest documented draft size (256 KB)
- * would otherwise write a buffer the app itself would have refused to write.
- */
-const MAX_STAGED_CHARS = 256 * 1024
-
-/**
  * Arm the dev capture for every subsequent navigation in this context. Dev
  * arming is local-only and never uploads (`isUploadPermitted` requires
  * consent), so a spec can measure without touching the consent path.

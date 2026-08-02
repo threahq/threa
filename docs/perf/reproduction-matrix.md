@@ -100,8 +100,8 @@ From the performance handover — read these against a capture, never against
 desktop feel:
 
 - No bootstrap or catch-up task over 50 ms.
-- p95 frame gap under 32 ms during bootstrap, under 20 ms while typing.
-- Typing INP p95 under 100 ms on the target mobile device.
+- Frame gaps ≥25 ms (the observer's recording floor — the distribution is censored below it): near zero during bootstrap, none while typing.
+- Typing INP p95 under 100 ms on the target mobile device (`observer.eventDuration` records interactions ≥16 ms, so the target is measurable).
 - Listener count independent of stream count.
 - An unchanged warm bootstrap does zero semantic writes and causes no broad commit.
 - Catch-up publishes at most once per bounded chunk.
