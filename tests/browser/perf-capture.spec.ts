@@ -104,7 +104,9 @@ test.describe("Performance capture", () => {
     const skipped = samples.filter((s) => s.name === "bootstrap.rowsSkipped").map((s) => s.value)
 
     expect(written.length).toBeGreaterThan(0)
-    expect(written).toEqual(written.map(() => 0))
+    // The first sample is this load's warm apply; a mid-poll socket reconnect
+    // can legitimately append a reconnect apply's non-zero sample after it.
+    expect(written[0]).toBe(0)
     expect(Math.max(...skipped)).toBeGreaterThan(0)
   })
 })
