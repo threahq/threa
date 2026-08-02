@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react"
 import { Link, useLocation, useSearchParams } from "react-router-dom"
-import { Archive, Bookmark, Check, CircleDot, MoreHorizontal, Pencil, Pin, Trash2 } from "lucide-react"
+import { Archive, Bookmark, Check, MoreHorizontal, Pencil, Pin, Trash2 } from "lucide-react"
 import { BOARD_LENSES, type BoardLens, type BoardScopeStreamType } from "@threa/types"
 import { useSidebar, usePreferencesOptional } from "@/contexts"
 import { cn } from "@/lib/utils"
@@ -31,16 +31,17 @@ import {
   BOARD_LABEL_PARAM,
   BOARD_SCOPE_PARAM,
   BOARD_TYPE_PARAM,
-  BOARD_UNREAD_ON,
-  BOARD_UNREAD_PARAM,
   parseLensParam,
 } from "@/components/board/board-filter-params"
 import { BOARD_LENS_DEFS } from "@/lib/board/lens-defs"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { BoardFilterChips } from "./board-filter-chips"
+import { BoardUnreadRow } from "./board-link-row"
 
 interface BoardModeBlockProps {
   workspaceId: string
+  /** Streams the viewer has unread (muted excluded) — badges the Unread row. */
+  unreadStreamCount: number
   /** Per-lens workspace topic totals for the Lenses row counts, from the sidebar's
    *  single stats pass; `null`/absent while it resolves (render no count). */
   lensTotals?: Record<BoardLens, number> | null
@@ -60,7 +61,7 @@ const SECTION_LABEL_CLASS =
  * (INV-40/INV-59) — built with the same helpers the pickers use
  * (`lensHref`, `savedViewHref`) so the surfaces can't drift (INV-35).
  */
-export function BoardModeBlock({ workspaceId, lensTotals }: BoardModeBlockProps) {
+export function BoardModeBlock({ workspaceId, lensTotals, unreadStreamCount }: BoardModeBlockProps) {
   const { collapseOnMobile } = useSidebar()
   const location = useLocation()
   const prefs = usePreferencesOptional()
@@ -96,7 +97,7 @@ export function BoardModeBlock({ workspaceId, lensTotals }: BoardModeBlockProps)
 
   return (
     <div className="mb-2 space-y-1">
-      <BoardModeFilters workspaceId={workspaceId} />
+      <BoardModeFilters workspaceId={workspaceId} unreadStreamCount={unreadStreamCount} />
 
       {hasActiveFilters && <BoardFilterChips workspaceId={workspaceId} />}
 
@@ -247,7 +248,7 @@ export function BoardModeBlock({ workspaceId, lensTotals }: BoardModeBlockProps)
  * state, it just navigates. Filter rewrites `replace`, so toggling doesn't spam
  * history. Shares the URL vocabulary SSOT (`board-filter-params`) with the page.
  */
-function BoardModeFilters({ workspaceId }: { workspaceId: string }) {
+function BoardModeFilters({ workspaceId, unreadStreamCount }: { workspaceId: string; unreadStreamCount: number }) {
   const [searchParams, setSearchParams] = useSearchParams()
   const { selection } = useBoardSelection()
 
@@ -265,7 +266,6 @@ function BoardModeFilters({ workspaceId }: { workspaceId: string }) {
   const unmuteStream = useUnmuteStream(workspaceId)
 
   const showArchived = searchParams.get(BOARD_ARCHIVED_PARAM) === BOARD_ARCHIVED_ON
-  const unreadOnly = searchParams.get(BOARD_UNREAD_PARAM) === BOARD_UNREAD_ON
 
   const labelFor = (streamId: string) =>
     resolveStreamName(streamId, { streams, users, dmPeers }, "generic") ?? "Unknown stream"
@@ -333,12 +333,7 @@ function BoardModeFilters({ workspaceId }: { workspaceId: string }) {
           />
         )}
       </div>
-      <FilterToggleRow
-        icon={CircleDot}
-        label="Unread only"
-        active={unreadOnly}
-        onToggle={() => setParamLists([[BOARD_UNREAD_PARAM, unreadOnly ? [] : [BOARD_UNREAD_ON]]])}
-      />
+      <BoardUnreadRow workspaceId={workspaceId} unreadStreamCount={unreadStreamCount} />
       <FilterToggleRow
         icon={Archive}
         label="Archived"

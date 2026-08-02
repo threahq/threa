@@ -398,6 +398,34 @@ describe("BoardCard unread divider", () => {
     expect(isBefore(after!, rowFor("r6"))).toBe(true)
   })
 
+  it("re-decides when the settled anchor row was deleted, instead of wedging on it", async () => {
+    unreadIds = new Set(["r3", "r4", "r5"])
+    const first = mount()
+    await screen.findByText("Reply 5.")
+
+    // Settle, then the anchor row (r3) is deleted — it leaves `readableRows`
+    // entirely, so the strictly-after check alone could never re-decide.
+    first.unmount()
+    unreadIds = new Set()
+    const settled = mount()
+    await screen.findByText("Reply 5.")
+    expect(dividerLabel()!.parentElement!.className).toContain("text-muted-foreground")
+
+    settled.unmount()
+    const r3 = messageEvent("r3", 3, "Reply 3.")
+    r3.payload = { ...(r3.payload as object), deletedAt: at(90) } as CachedEvent["payload"]
+    await db.events.put(r3)
+    const withNew = await arriveNewReply("r6", 20)
+    unreadIds = new Set(["r6"])
+    mount(withNew)
+    await screen.findByText("Reply r6.")
+
+    const after = dividerLabel()
+    expect(after, "a deleted anchor re-decides the latch").toBeTruthy()
+    expect(after!.parentElement!.className).toContain("text-destructive")
+    expect(isBefore(after!, rowFor("r6"))).toBe(true)
+  })
+
   it("does not move a live red divider when more unread arrives below it", async () => {
     unreadIds = new Set(["r4", "r5"])
     const { rerender } = mount()
