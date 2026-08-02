@@ -1642,17 +1642,24 @@ export async function clearAllCachedData(): Promise<void> {
       // must survive the re-login to heal the send.
     ])
   } finally {
-    const [{ resetWorkspaceStoreCache }, { resetStreamStoreCache }, { resetDraftStoreCache }, { resetUploadManager }] =
-      await Promise.all([
-        import("@/stores/workspace-store"),
-        import("@/stores/stream-store"),
-        import("@/stores/draft-store"),
-        import("@/lib/uploads/upload-manager"),
-      ])
+    const [
+      { resetWorkspaceStoreCache },
+      { resetStreamStoreCache },
+      { resetDraftStoreCache },
+      { resetUploadManager },
+      { resetRowConfirmations },
+    ] = await Promise.all([
+      import("@/stores/workspace-store"),
+      import("@/stores/stream-store"),
+      import("@/stores/draft-store"),
+      import("@/lib/uploads/upload-manager"),
+      import("@/sync/bootstrap-diff"),
+    ])
     resetWorkspaceStoreCache()
     resetStreamStoreCache()
     resetDraftStoreCache()
     resetUploadManager()
+    resetRowConfirmations()
   }
 }
 

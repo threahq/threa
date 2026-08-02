@@ -11,6 +11,11 @@ export interface SingletonDiff<T> {
   merged: T
 }
 
+function isPlainObjectOrArray(value: object): boolean {
+  const tag = Object.prototype.toString.call(value)
+  return tag === "[object Object]" || tag === "[object Array]"
+}
+
 export function semanticEqual(
   a: unknown,
   b: unknown,
@@ -21,6 +26,10 @@ export function semanticEqual(
 
   const aIsArray = Array.isArray(a)
   if (aIsArray !== Array.isArray(b)) return false
+  // Exotic instances (Date/Map/Set/RegExp) carry no own enumerable keys, so a
+  // plain key walk would call every pair equal and silently skip the write.
+  // Reference identity is the only equality we can prove here: they always write.
+  if (!isPlainObjectOrArray(a) || !isPlainObjectOrArray(b)) return Object.is(a, b)
   if (aIsArray) {
     const left = a as unknown[]
     const right = b as unknown[]

@@ -23,6 +23,7 @@ import { clearCallLifecycleLog } from "@/calls/lifecycle-log"
 import { resetIncomingCallStoreCache } from "@/stores/incoming-call-store"
 import { resetFloatingSurfaceGeometryStoreCache } from "@/stores/floating-surface-geometry-store"
 import { resetRevealGate } from "@/sync/reveal-gate"
+import { resetRowConfirmations } from "@/sync/bootstrap-diff"
 import { useAuth } from "./hooks"
 
 const NO_ACCOUNT_KEY = "__no_account__"
@@ -75,6 +76,7 @@ export function useAccountScopeOptional(): AccountScopeValue | null {
 // them or account A's cached workspaces/drafts/shares bleed into account B.
 function flushModuleStoreCaches(): void {
   resetWorkspaceStoreCache()
+  resetRowConfirmations()
   resetStreamStoreCache()
   resetDraftStoreCache()
   resetShareHandoffStoreCache()

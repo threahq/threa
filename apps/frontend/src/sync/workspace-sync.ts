@@ -2904,10 +2904,11 @@ export async function applyReconnectBootstrapBatch(
 
   const workspaceRow = { ...finalBootstrap.workspace, _cachedAt: now }
   const userRows = finalBootstrap.users.map((user) => ({ ...user, _cachedAt: now }))
+  const localStreamById = byId(localStreams)
   const streamRows = dedupeById<CachedStream>([
     ...finalBootstrap.streams.map((stream) => {
       const membership = membershipByStream.get(stream.id)
-      const local = localStreams.find((s) => s.id === stream.id)
+      const local = localStreamById.get(stream.id)
       return {
         ...stream,
         notificationLevel: membership?.notificationLevel,
@@ -2919,7 +2920,7 @@ export async function applyReconnectBootstrapBatch(
       }
     }),
     // Persist archived roots on reconnect too (mirrors applyWorkspaceBootstrap).
-    ...mapArchivedStreamRows(finalBootstrap.archivedStreams ?? [], byId(localStreams), now),
+    ...mapArchivedStreamRows(finalBootstrap.archivedStreams ?? [], localStreamById, now),
   ])
   const membershipRows = finalBootstrap.streamMemberships.map((membership) => ({
     ...membership,

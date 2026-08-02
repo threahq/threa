@@ -34,6 +34,13 @@ describe("bootstrap diff", () => {
     expect(result.skipped).toBe(0)
   })
 
+  it("exotic instances always write — the diff never silently skips them", () => {
+    expect(semanticEqual(new Date(0), new Date(9e9))).toBe(false)
+    expect(semanticEqual(new Map([["a", 1]]), new Map([["a", 1]]))).toBe(false)
+    const same = new Date(0)
+    expect(semanticEqual(same, same)).toBe(true)
+  })
+
   it("a nested array reorder is a change", () => {
     const existing = { id: "stream_1", members: ["usr_1", "usr_2"] }
     const candidate = { id: "stream_1", members: ["usr_2", "usr_1"] }

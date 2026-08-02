@@ -5,6 +5,7 @@ import { workspaceKeys } from "@/hooks/use-workspaces"
 import { streamKeys } from "@/hooks/use-streams"
 import { applyStreamReadMessages, applyStreamsReadAllOrdinals, dropMessageActivities } from "./unread-counters"
 import { applyCountersToCache, putCountersIdb, type CounterMutator } from "./catch-up-batch"
+import { effectiveFreshness } from "./bootstrap-diff"
 
 /**
  * Upsert the read-frontier row in IDB — the sole read watermark. Runs inside the
@@ -49,7 +50,8 @@ export function toStreamReadFrontier(row: CachedStreamReadState): StreamReadFron
  */
 export async function readStateTouchedSince(workspaceId: string, streamId: string, since: number): Promise<boolean> {
   const row = await db.streamReadState.get(`${workspaceId}:${streamId}`)
-  return row !== undefined && row._cachedAt >= since
+  if (row === undefined) return false
+  return effectiveFreshness(workspaceId, "streamReadState", row.id, row._cachedAt) >= since
 }
 
 /** Merge one stream's standalone frontier into the workspace bootstrap query cache. */

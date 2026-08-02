@@ -859,7 +859,7 @@ describe("applyWorkspaceBootstrap (real IndexedDB)", () => {
             avatarEmoji: null,
             avatarUrl: null,
             systemPrompt: null,
-            model: "anthropic/claude-sonnet-4.5",
+            model: "openrouter:anthropic/claude-sonnet-5",
             temperature: null,
             maxTokens: null,
             enabledTools: null,
@@ -1135,6 +1135,21 @@ describe("applyWorkspaceBootstrap (real IndexedDB)", () => {
       })
 
       expect((await db.streams.get("stream_d1"))?.displayName).toBe("Stream stream_d1")
+    })
+
+    it("a reconnect carrying an older notificationLevel cannot clobber a membership row the diff just confirmed", async () => {
+      await warmThenOlderReconnect(true, {
+        streamMemberships: [
+          {
+            streamId: "stream_d1",
+            memberId: "member_1",
+            notificationLevel: "mentions",
+            joinedAt: "2026-01-01T00:00:00Z",
+          },
+        ],
+      })
+
+      expect((await db.streamMemberships.get("ws_1:stream_d1"))?.notificationLevel).toBeNull()
     })
 
     it("with bootstrapDiff off, every row is rewritten", async () => {
