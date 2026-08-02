@@ -171,7 +171,7 @@ const ResponsiveDialogContent = React.forwardRef<HTMLDivElement, ResponsiveDialo
             <div
               data-slot="drawer-snap-spacer"
               aria-hidden
-              className="shrink-0 transition-[height] duration-500 ease-[cubic-bezier(0.32,0.72,0,1)]"
+              className="shrink-0 transition-[height] duration-500 [transition-timing-function:cubic-bezier(0.32,0.72,0,1)]"
               style={{ height: getSnapPointOffset(activeSnapPoint) }}
             />
           )}
