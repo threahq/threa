@@ -9,6 +9,12 @@ import { loginAndCreateWorkspace, createChannel, expectApiOk } from "./helpers"
  * (hasNewer=false). jumpToEvent used to early-return without exiting jump
  * mode there, leaving the timeline frozen on the old window while the match
  * counter kept advancing.
+ *
+ * The tail of the test guards the other half of the contract, which also needs
+ * a real scroller: once the reader scrolls away from the active match, nothing
+ * may scroll it back. Rows carrying the search highlight used to self-center on
+ * mount, so the yank arrived seconds later, whenever virtua happened to
+ * re-render the row.
  */
 
 test.describe.configure({ timeout: 600_000 })
@@ -52,7 +58,29 @@ async function seedMessages(page: Page, workspaceId: string, streamId: string): 
   }
 }
 
-test("cycles through matches in both directions across jump windows", async ({ page }) => {
+/**
+ * Whether the active match overlaps the scroller viewport. Measured against the
+ * scroller found from a rendered row rather than a test id — it is whichever
+ * ancestor actually scrolls, which differs between the virtualized channel list
+ * and the plain thread list. `toBeVisible` is no substitute: it counts an
+ * element that has been scrolled clean out of the viewport as visible.
+ */
+async function activeMatchInView(page: Page): Promise<boolean> {
+  return page.evaluate(() => {
+    const row = document.querySelector("[data-message-id]")
+    let el = row?.parentElement ?? null
+    while (el && el.scrollHeight <= el.clientHeight + 4) el = el.parentElement
+    const match = Array.from(document.querySelectorAll<HTMLElement>("[data-message-id]")).find((n) =>
+      n.textContent?.includes("the pelican lands here (match 1 ")
+    )
+    if (!el || !match) return false
+    const sr = el.getBoundingClientRect()
+    const mr = match.getBoundingClientRect()
+    return mr.bottom > sr.top && mr.top < sr.bottom
+  })
+}
+
+test("cycles through matches in both directions, and a scroll away is never overridden", async ({ page }) => {
   await loginAndCreateWorkspace(page, "search-cycle")
   await createChannel(page, `search-cycle-${Date.now().toString(36)}`)
 
@@ -96,4 +124,16 @@ test("cycles through matches in both directions across jump windows", async ({ p
   // And back up through the same windows.
   await input.press("Shift+Enter")
   await matchVisible(1)
+
+  // A manual scroll always wins. Nothing may pull the reader back to the active
+  // match afterwards — the row leaving and re-entering the virtualized window
+  // used to re-fire a scrollIntoView on it seconds after the navigation.
+  await page.mouse.move(640, 400)
+  for (let i = 0; i < 10; i++) {
+    await page.mouse.wheel(0, -400)
+    await page.waitForTimeout(80)
+  }
+  expect(await activeMatchInView(page)).toBe(false)
+  await page.waitForTimeout(4000)
+  expect(await activeMatchInView(page)).toBe(false)
 })

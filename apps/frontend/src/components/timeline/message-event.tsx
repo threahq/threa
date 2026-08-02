@@ -1008,12 +1008,6 @@ function SentMessageEvent({
     })
   }, [payload.messageId, registerMessage, startEditing])
 
-  useEffect(() => {
-    if (isHighlighted && containerRef.current) {
-      containerRef.current.scrollIntoView({ behavior: "smooth", block: "center" })
-    }
-  }, [isHighlighted])
-
   // Shared thread affordance wiring, keyed on this message's canonical id.
   // `activity.threadStreamId` lets us link to the real thread immediately when
   // an agent response is in flight, before the slower stream:created event.
