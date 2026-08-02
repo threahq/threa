@@ -480,7 +480,9 @@ export function LedgerBranchRow({
       : ledgerLead(lastMessage.contentMarkdown, leadLineLength, rowArtifacts(lastMessage), toEmoji)
   }
   return (
-    <div className="mt-3 ml-3" data-ledger-branch-row="" data-settling={settling ? "" : undefined}>
+    // `mt-3` and nothing else: the expanded BranchGroup's wrapper is the same, so
+    // the branch's leading edge holds still across a collapse/expand toggle.
+    <div className="mt-3" data-ledger-branch-row="" data-settling={settling ? "" : undefined}>
       {/* Outside the button: an `aria-label` overrides the element's content, so
           an sr-only span INSIDE it is never announced (as the message row does). */}
       {settling && <span className="sr-only">Still settling — messages here may move to another topic</span>}

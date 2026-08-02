@@ -422,29 +422,35 @@ describe("LedgerRow settling", () => {
 })
 
 describe("LedgerBranchRow", () => {
-  function renderBranchRow(overrides: Partial<Parameters<typeof LedgerBranchRow>[0]> = {}) {
+  function renderBranchRows(...rows: Array<Partial<Parameters<typeof LedgerBranchRow>[0]>>) {
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
     return render(
       <QueryClientProvider client={queryClient}>
         <TooltipProvider>
           <MemoryRouter initialEntries={[`/w/${WS}/board`]}>
-            <LedgerBranchRow
-              workspaceId={WS}
-              title="GPU budget"
-              conversationIds={["conv_child"]}
-              messageIds={["msg_1"]}
-              messageCount={2}
-              lastMessage={message({ contentMarkdown: "We went with the 5090s." })}
-              leadLineLength={80}
-              settling={false}
-              onToggle={vi.fn()}
-              {...overrides}
-            />
+            {(rows.length ? rows : [{}]).map((overrides, i) => (
+              <div key={i} data-row-index={i}>
+                <LedgerBranchRow
+                  workspaceId={WS}
+                  title="GPU budget"
+                  conversationIds={["conv_child"]}
+                  messageIds={["msg_1"]}
+                  messageCount={2}
+                  lastMessage={message({ contentMarkdown: "We went with the 5090s." })}
+                  leadLineLength={80}
+                  settling={false}
+                  onToggle={vi.fn()}
+                  {...overrides}
+                />
+              </div>
+            ))}
           </MemoryRouter>
         </TooltipProvider>
       </QueryClientProvider>
     )
   }
+  const renderBranchRow = (overrides: Partial<Parameters<typeof LedgerBranchRow>[0]> = {}) =>
+    renderBranchRows(overrides)
 
   beforeEach(async () => {
     __clearBoardDraftsRegistry()
@@ -491,9 +497,22 @@ describe("LedgerBranchRow", () => {
   })
 
   it("shows no draft chip when the branch holds nothing unsent", async () => {
-    const { container } = renderBranchRow()
-    await new Promise((resolve) => setTimeout(resolve, 50))
-    expect(container.querySelector("[data-branch-draft-chip]")).toBeNull()
+    // The absence claim needs the drafts index SETTLED, not a timer: a sibling row
+    // whose branch does hold a draft is the marker — its chip can only appear once
+    // the shared snapshot has loaded, so the empty row's absence is then real.
+    await db.drafts.add({
+      id: "draft_other",
+      workspaceId: WS,
+      scope: boardBranchReplyDraftKey("conv_other"),
+      contentJson: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "elsewhere" }] }] },
+      attachments: [],
+      clientUpdatedAt: 1000,
+    } as never)
+
+    const { container } = renderBranchRows({}, { title: "Cooling", conversationIds: ["conv_other"], messageIds: [] })
+    const marker = container.querySelector('[data-row-index="1"]')!
+    await waitFor(() => expect(marker.querySelector("[data-branch-draft-chip]")).not.toBeNull())
+    expect(container.querySelector('[data-row-index="0"] [data-branch-draft-chip]')).toBeNull()
     expect(screen.getByRole("button", { name: "GPU budget, 2 messages" })).toBeInTheDocument()
   })
 })

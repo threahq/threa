@@ -205,6 +205,7 @@ describe("buildBranchedBoardRows continuation", () => {
       displayDepth: 1,
       overflow: false,
       messages: [msg("c1", "u2", 2, "thread_x")],
+      memberMessageIds: ["c1"],
       hiddenCount: 0,
       children: [],
     }
@@ -228,6 +229,7 @@ describe("buildBranchedBoardRows continuation", () => {
       displayDepth: 1,
       overflow: false,
       messages: [msg("c1", "u2", 2, "thread_x")],
+      memberMessageIds: ["c1"],
       hiddenCount: 0,
       children: [],
     }

@@ -160,7 +160,9 @@ function collectBranchSubtree(branch: BranchConversationView): {
   settling: boolean
 } {
   const conversationIds = [branch.conversationId]
-  const messageIds = branch.messages.map((m) => m.id)
+  // Full members, not the preview slice: a sub-topic draft anchored on a branch
+  // message outside the collapsed window still has to surface on this row.
+  const messageIds = [...branch.memberMessageIds]
   let settling = branch.messages.some((m) => m.settling) || (branch.settlingMessageIds?.length ?? 0) > 0
   for (const child of branch.children) {
     const sub = collectBranchSubtree(child)
