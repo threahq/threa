@@ -23,7 +23,7 @@ import {
   semanticEqual,
   writeAllRows,
 } from "./bootstrap-diff"
-import { seedWorkspaceCache, upsertWorkspaceUserInCache } from "@/stores/workspace-store"
+import { getCachedWorkspaceTables, seedWorkspaceCache, upsertWorkspaceUserInCache } from "@/stores/workspace-store"
 import {
   seedAgentActivity,
   upsertAgentSession,
@@ -2435,6 +2435,109 @@ function dedupeById<T extends { id: string }>(rows: T[]): T[] {
  * reload's bootstrap apply. When no local row exists, the result is just the
  * plain stream fields stamped with `_cachedAt`.
  */
+export interface AppliedWorkspaceBootstrap {
+  bootstrap: WorkspaceBootstrap
+  /** True when the apply wrote at least one row (or singleton) to IDB. */
+  anyChanged: boolean
+}
+
+// The top-level `WorkspaceBootstrap` fields the 14-table row diff DOES cover:
+// `anyChanged` already answers for them, and comparing them below would
+// re-introduce the deep walk this gate exists to avoid.
+type BootstrapRowCoveredField =
+  | "workspace"
+  | "users"
+  | "streams"
+  | "streamMemberships"
+  | "dmPeers"
+  | "personas"
+  | "bots"
+  | "labels"
+  | "labelAssignments"
+  | "emojis"
+  | "userPreferences"
+
+type BootstrapNonRowField = Exclude<keyof WorkspaceBootstrap, BootstrapRowCoveredField>
+
+const BOOTSTRAP_NON_ROW_FIELDS = [
+  "syncHead",
+  "archivedStreams",
+  "activeAgentSessions",
+  "activeCalls",
+  "emojiWeights",
+  "commands",
+  "configuredToolCategories",
+  "featureFlags",
+  "sidebarConfig",
+  "streamReadState",
+  "unreadCounts",
+  "unreadActivities",
+  "unreadActivityCount",
+  "activityCounts",
+  "mentionCounts",
+  "messageCounts",
+  "readMessageIds",
+  "mutedStreamIds",
+  "boardViews",
+  "invitations",
+  "viewerPermissions",
+  "viewerIsPlatformAdmin",
+  "workspaceSettings",
+] as const satisfies readonly BootstrapNonRowField[]
+
+// A new `WorkspaceBootstrap` field must be classified: either add it to
+// BootstrapRowCoveredField or list it above, or this assignment fails to compile.
+type UnclassifiedBootstrapField = Exclude<BootstrapNonRowField, (typeof BOOTSTRAP_NON_ROW_FIELDS)[number]>
+const _bootstrapFieldsExhaustive: UnclassifiedBootstrapField extends never ? true : false = true
+void _bootstrapFieldsExhaustive
+
+/** Whether two bootstraps agree on every field the row diff cannot speak for. */
+export function bootstrapNonRowFieldsEqual(a: WorkspaceBootstrap, b: WorkspaceBootstrap): boolean {
+  return BOOTSTRAP_NON_ROW_FIELDS.every((field) => semanticEqual(a[field], b[field]))
+}
+
+/**
+ * The seed array for a table: the array the in-memory cache already holds when
+ * the diff wrote nothing for that table, so the store can skip the `set` and
+ * every downstream memo keeps its input identity (D11). The length guard covers
+ * the one zero-write shape that still changes the list: a row the payload
+ * dropped is merged away without any write, and the sweep's per-table deleted
+ * count covers the case where a socket add and a sweep delete balance lengths.
+ * A socket write landing between the merge and this seed still drifts the reused
+ * array; that window is bounded by the next liveQuery emission.
+ */
+function reuseIfUnchanged<T>(previous: T[] | undefined, merged: T[], writeCount: number, tableDeleted: number): T[] {
+  return writeCount === 0 && tableDeleted === 0 && previous !== undefined && previous.length === merged.length
+    ? previous
+    : merged
+}
+
+interface TableDeletions {
+  streams: number
+  users: number
+  memberships: number
+  readStates: number
+  dmPeers: number
+  personas: number
+  bots: number
+  labels: number
+  labelAssignments: number
+  total: number
+}
+
+const NO_TABLE_DELETIONS: TableDeletions = {
+  streams: 0,
+  users: 0,
+  memberships: 0,
+  readStates: 0,
+  dmPeers: 0,
+  personas: 0,
+  bots: 0,
+  labels: 0,
+  labelAssignments: 0,
+  total: 0,
+}
+
 function mapArchivedStreamRows(
   archivedStreams: Stream[],
   existingByStreamId: Map<string, CachedStream>,
@@ -2447,7 +2550,7 @@ export async function applyWorkspaceBootstrap(
   workspaceId: string,
   bootstrap: WorkspaceBootstrap,
   fetchStartedAt?: number
-): Promise<WorkspaceBootstrap> {
+): Promise<AppliedWorkspaceBootstrap> {
   const now = Date.now()
   const capture = getPerfCapture()
   const diffEnabled = resolveFeatureFlags(bootstrap.featureFlags ?? EMPTY_FLAG_LAYERS).bootstrapDiff === "on"
@@ -2515,6 +2618,20 @@ export async function applyWorkspaceBootstrap(
   let mergedBots: CachedBot[] = botRows
   let mergedLabels: CachedLabel[] = labelRows
   let mergedLabelAssignments: CachedLabelAssignment[] = labelAssignmentRows
+
+  // Per-table write counts, so the in-memory seed can hand back the array the
+  // cache already holds for every table that wrote nothing (D11).
+  const writeCounts = {
+    users: 0,
+    streams: 0,
+    memberships: 0,
+    readStates: 0,
+    dmPeers: 0,
+    personas: 0,
+    bots: 0,
+    labels: 0,
+    labelAssignments: 0,
+  }
 
   // One transaction over every table so they commit together and each table's
   // `useLiveQuery` fires once — one settle, not a per-table trickle. Parallel
@@ -2624,6 +2741,14 @@ export async function applyWorkspaceBootstrap(
       mergedLabelAssignments = labelAssignmentsDiff.merged
       recordSkippedRowConfirmations(workspaceId, "streams", streamsDiff, now)
       recordSkippedRowConfirmations(workspaceId, "streamMemberships", membershipsDiff, now)
+      writeCounts.users = usersDiff.toWrite.length
+      writeCounts.streams = streamsDiff.toWrite.length
+      writeCounts.memberships = membershipsDiff.toWrite.length
+      writeCounts.dmPeers = dmPeersDiff.toWrite.length
+      writeCounts.personas = personasDiff.toWrite.length
+      writeCounts.bots = botsDiff.toWrite.length
+      writeCounts.labels = labelsDiff.toWrite.length
+      writeCounts.labelAssignments = labelAssignmentsDiff.toWrite.length
       rowsSkipped +=
         usersDiff.skipped +
         streamsDiff.skipped +
@@ -2725,6 +2850,7 @@ export async function applyWorkspaceBootstrap(
         }
         rowsWritten += readStateDiff.toWrite.length
         rowsSkipped += readStateDiff.skipped
+        writeCounts.readStates = readStateDiff.toWrite.length
         recordSkippedRowConfirmations(workspaceId, "streamReadState", readStateDiff, now)
         seedReadStates = mergeLocalAndServerReadStates(existingRows, readStateDiff.merged)
       }
@@ -2777,9 +2903,10 @@ export async function applyWorkspaceBootstrap(
   // socket handlers DURING the fetch have _cachedAt > fetchStartedAt and
   // survive. Only truly stale entities (from before we started fetching)
   // are removed. If no fetchStartedAt provided, skip cleanup entirely.
+  let deletions = NO_TABLE_DELETIONS
   if (fetchStartedAt !== undefined) {
     const stopCleanup = capture.time("bootstrap.cleanup")
-    await cleanupStaleEntities(workspaceId, bootstrap, fetchStartedAt)
+    deletions = await cleanupStaleEntities(workspaceId, bootstrap, fetchStartedAt)
     stopCleanup()
   }
 
@@ -2787,54 +2914,73 @@ export async function applyWorkspaceBootstrap(
   // synchronous render (the default value). Without this, every component sees
   // empty arrays for one render cycle until the async IDB read resolves.
   const stopSeed = capture.time("bootstrap.seed")
-  seedWorkspaceCache(workspaceId, {
-    workspace: mergedWorkspace,
-    users: mergedUsers,
-    // Archived roots must be in the synchronous seed too, or the first paint
-    // can't tell a stream is archived until the IDB read resolves — a
-    // one-frame flash of archived-root drafts (INV-21-adjacent).
-    streams: mergedStreams,
-    memberships: mergedMemberships,
-    // An omitted map leaves the in-memory rows in place (nothing was written);
-    // a present map seeds IDB's effective contents — server rows plus every
-    // local row the member-only map omits (nonmember thread lazy state) and
-    // every frontier preserved as touched during the fetch window.
-    readStates: seedReadStates,
-    dmPeers: mergedDmPeers,
-    personas: mergedPersonas,
-    bots: mergedBots,
-    labels: mergedLabels,
-    labelAssignments: mergedLabelAssignments,
-    unreadState: {
-      id: workspaceId,
-      workspaceId,
-      ...effectiveUnread,
-      _cachedAt: now,
+  const anyChanged = rowsWritten > 0 || deletions.total > 0
+  const previousTables = getCachedWorkspaceTables(workspaceId)
+  seedWorkspaceCache(
+    workspaceId,
+    {
+      workspace: mergedWorkspace,
+      users: reuseIfUnchanged(previousTables.users, mergedUsers, writeCounts.users, deletions.users),
+      // Archived roots must be in the synchronous seed too, or the first paint
+      // can't tell a stream is archived until the IDB read resolves — a
+      // one-frame flash of archived-root drafts (INV-21-adjacent).
+      streams: reuseIfUnchanged(previousTables.streams, mergedStreams, writeCounts.streams, deletions.streams),
+      memberships: reuseIfUnchanged(
+        previousTables.memberships,
+        mergedMemberships,
+        writeCounts.memberships,
+        deletions.memberships
+      ),
+      // An omitted map leaves the in-memory rows in place (nothing was written);
+      // a present map seeds IDB's effective contents — server rows plus every
+      // local row the member-only map omits (nonmember thread lazy state) and
+      // every frontier preserved as touched during the fetch window.
+      readStates:
+        seedReadStates &&
+        reuseIfUnchanged(previousTables.readStates, seedReadStates, writeCounts.readStates, deletions.readStates),
+      dmPeers: reuseIfUnchanged(previousTables.dmPeers, mergedDmPeers, writeCounts.dmPeers, deletions.dmPeers),
+      personas: reuseIfUnchanged(previousTables.personas, mergedPersonas, writeCounts.personas, deletions.personas),
+      bots: reuseIfUnchanged(previousTables.bots, mergedBots, writeCounts.bots, deletions.bots),
+      labels: reuseIfUnchanged(previousTables.labels, mergedLabels, writeCounts.labels, deletions.labels),
+      labelAssignments: reuseIfUnchanged(
+        previousTables.labelAssignments,
+        mergedLabelAssignments,
+        writeCounts.labelAssignments,
+        deletions.labelAssignments
+      ),
+      unreadState: {
+        id: workspaceId,
+        workspaceId,
+        ...effectiveUnread,
+        _cachedAt: now,
+      },
+      userPreferences: {
+        ...bootstrap.userPreferences,
+        id: workspaceId,
+        workspaceId,
+        sendMode: bootstrap.userPreferences.messageSendMode,
+        _cachedAt: now,
+      },
+      sidebarConfig: {
+        id: workspaceId,
+        workspaceId,
+        config: effectiveSidebarConfig,
+        _cachedAt: now,
+      },
+      metadata: {
+        id: workspaceId,
+        workspaceId,
+        emojis: bootstrap.emojis,
+        emojiWeights: bootstrap.emojiWeights,
+        commands: bootstrap.commands,
+        configuredToolCategories: bootstrap.configuredToolCategories,
+        _cachedAt: now,
+      },
     },
-    userPreferences: {
-      ...bootstrap.userPreferences,
-      id: workspaceId,
-      workspaceId,
-      sendMode: bootstrap.userPreferences.messageSendMode,
-      _cachedAt: now,
-    },
-    sidebarConfig: {
-      id: workspaceId,
-      workspaceId,
-      config: effectiveSidebarConfig,
-      _cachedAt: now,
-    },
-    metadata: {
-      id: workspaceId,
-      workspaceId,
-      emojis: bootstrap.emojis,
-      emojiWeights: bootstrap.emojiWeights,
-      commands: bootstrap.commands,
-      configuredToolCategories: bootstrap.configuredToolCategories,
-      _cachedAt: now,
-    },
-  })
+    { publish: anyChanged }
+  )
   stopSeed()
+  if (anyChanged) capture.mark("bootstrap.storePublish", 1)
 
   // Seed the sidebar agent-activity store so a session already running on cold
   // load paints its stream row without waiting for a live event.
@@ -2846,16 +2992,19 @@ export async function applyWorkspaceBootstrap(
   // merged counter fields and the preserved frontiers so cache and IDB never
   // disagree on unread state.
   return {
-    ...bootstrap,
-    streamReadState: effectiveReadStateMap,
-    unreadCounts: effectiveUnread.unreadCounts,
-    unreadActivities: effectiveUnread.unreadActivities,
-    activityCounts: effectiveUnread.activityCounts,
-    mentionCounts: effectiveUnread.mentionCounts,
-    unreadActivityCount: effectiveUnread.unreadActivityCount,
-    messageCounts: effectiveUnread.latestOrdinals,
-    readMessageIds: effectiveUnread.readMessageIds,
-    mutedStreamIds: effectiveUnread.mutedStreamIds,
+    anyChanged,
+    bootstrap: {
+      ...bootstrap,
+      streamReadState: effectiveReadStateMap,
+      unreadCounts: effectiveUnread.unreadCounts,
+      unreadActivities: effectiveUnread.unreadActivities,
+      activityCounts: effectiveUnread.activityCounts,
+      mentionCounts: effectiveUnread.mentionCounts,
+      unreadActivityCount: effectiveUnread.unreadActivityCount,
+      messageCounts: effectiveUnread.latestOrdinals,
+      readMessageIds: effectiveUnread.readMessageIds,
+      mutedStreamIds: effectiveUnread.mutedStreamIds,
+    },
   }
 }
 
@@ -2973,6 +3122,18 @@ export async function applyReconnectBootstrapBatch(
   let mergedLabels: CachedLabel[] = labelRows
   let mergedLabelAssignments: CachedLabelAssignment[] = labelAssignmentRows
 
+  const writeCounts = {
+    users: 0,
+    streams: 0,
+    memberships: 0,
+    readStates: 0,
+    dmPeers: 0,
+    personas: 0,
+    bots: 0,
+    labels: 0,
+    labelAssignments: 0,
+  }
+
   await db.transaction(
     "rw",
     [
@@ -3063,6 +3224,15 @@ export async function applyReconnectBootstrapBatch(
       recordSkippedRowConfirmations(workspaceId, "streams", streamsDiff, now)
       recordSkippedRowConfirmations(workspaceId, "streamMemberships", membershipsDiff, now)
       recordSkippedRowConfirmations(workspaceId, "streamReadState", readStatesDiff, now)
+      writeCounts.users = usersDiff.toWrite.length
+      writeCounts.streams = streamsDiff.toWrite.length
+      writeCounts.memberships = membershipsDiff.toWrite.length
+      writeCounts.readStates = readStatesDiff.toWrite.length
+      writeCounts.dmPeers = dmPeersDiff.toWrite.length
+      writeCounts.personas = personasDiff.toWrite.length
+      writeCounts.bots = botsDiff.toWrite.length
+      writeCounts.labels = labelsDiff.toWrite.length
+      writeCounts.labelAssignments = labelAssignmentsDiff.toWrite.length
       rowsSkipped +=
         usersDiff.skipped +
         streamsDiff.skipped +
@@ -3167,69 +3337,102 @@ export async function applyReconnectBootstrapBatch(
   capture.mark("bootstrap.rowsWritten", rowsWritten)
   capture.mark("bootstrap.rowsSkipped", rowsSkipped)
 
-  if (fetchStartedAt !== undefined) {
-    await cleanupStaleEntities(workspaceId, finalBootstrap, fetchStartedAt)
+  const swept =
+    fetchStartedAt !== undefined
+      ? await cleanupStaleEntities(workspaceId, finalBootstrap, fetchStartedAt)
+      : NO_TABLE_DELETIONS
+  const terminalCount = terminalStreamIds.size
+  const deletions: TableDeletions = {
+    ...swept,
+    streams: swept.streams + terminalCount,
+    memberships: swept.memberships + terminalCount,
+    readStates: swept.readStates + terminalCount,
+    total: swept.total + terminalCount,
   }
 
-  seedWorkspaceCache(workspaceId, {
-    workspace: mergedWorkspace,
-    users: mergedUsers,
-    // Archived roots ride the seed (mirrors applyWorkspaceBootstrap) so the
-    // first paint after reconnect knows they're archived (no draft flash) —
-    // they are already deduped into the merged streams list.
-    streams: mergedStreams,
-    memberships: mergedMemberships,
-    // A present map seeds IDB's effective contents: the merged map's rows win
-    // per stream, but local rows the member-only map omits (nonmember thread
-    // lazy state) stay seeded — the apply upserts, it never sweeps. Terminal
-    // streams' rows are bulkDeleted in this same transaction, so they must not
-    // be re-seeded from the pre-transaction snapshot.
-    readStates: finalBootstrap.streamReadState
-      ? mergeLocalAndServerReadStates(
-          localReadStates.filter((row) => !terminalStreamIds.has(row.streamId)),
-          toCachedReadStates(workspaceId, finalBootstrap.streamReadState, now)
-        )
-      : undefined,
-    dmPeers: mergedDmPeers,
-    personas: mergedPersonas,
-    bots: mergedBots,
-    labels: mergedLabels,
-    labelAssignments: mergedLabelAssignments,
-    unreadState: {
-      id: workspaceId,
-      workspaceId,
-      unreadCounts: finalBootstrap.unreadCounts,
-      ...bootstrapActivityCacheFields(finalBootstrap),
-      latestOrdinals: finalBootstrap.messageCounts,
-      readMessageIds: finalBootstrap.readMessageIds,
-      mutedStreamIds: finalBootstrap.mutedStreamIds,
-      counterTouchedAt: pruneCounterTouches(localUnreadState?.counterTouchedAt, fetchStartedAt),
-      mutedTouchedAt: pruneCounterTouches(localUnreadState?.mutedTouchedAt, fetchStartedAt),
-      _cachedAt: now,
+  // Per-stream bootstraps and terminal deletes write `db.streams` inside the
+  // same transaction without going through the workspace diff, so either one
+  // means the cached arrays can no longer be assumed current.
+  const anyChanged = rowsWritten > 0 || streamBootstraps.size > 0 || deletions.total > 0
+  const previousTables = getCachedWorkspaceTables(workspaceId)
+  const seedReadStates = finalBootstrap.streamReadState
+    ? mergeLocalAndServerReadStates(
+        localReadStates.filter((row) => !terminalStreamIds.has(row.streamId)),
+        toCachedReadStates(workspaceId, finalBootstrap.streamReadState, now)
+      )
+    : undefined
+
+  seedWorkspaceCache(
+    workspaceId,
+    {
+      workspace: mergedWorkspace,
+      users: reuseIfUnchanged(previousTables.users, mergedUsers, writeCounts.users, deletions.users),
+      // Archived roots ride the seed (mirrors applyWorkspaceBootstrap) so the
+      // first paint after reconnect knows they're archived (no draft flash) —
+      // they are already deduped into the merged streams list.
+      streams: reuseIfUnchanged(previousTables.streams, mergedStreams, writeCounts.streams, deletions.streams),
+      memberships: reuseIfUnchanged(
+        previousTables.memberships,
+        mergedMemberships,
+        writeCounts.memberships,
+        deletions.memberships
+      ),
+      // A present map seeds IDB's effective contents: the merged map's rows win
+      // per stream, but local rows the member-only map omits (nonmember thread
+      // lazy state) stay seeded — the apply upserts, it never sweeps. Terminal
+      // streams' rows are bulkDeleted in this same transaction, so they must not
+      // be re-seeded from the pre-transaction snapshot.
+      readStates:
+        seedReadStates &&
+        reuseIfUnchanged(previousTables.readStates, seedReadStates, writeCounts.readStates, deletions.readStates),
+      dmPeers: reuseIfUnchanged(previousTables.dmPeers, mergedDmPeers, writeCounts.dmPeers, deletions.dmPeers),
+      personas: reuseIfUnchanged(previousTables.personas, mergedPersonas, writeCounts.personas, deletions.personas),
+      bots: reuseIfUnchanged(previousTables.bots, mergedBots, writeCounts.bots, deletions.bots),
+      labels: reuseIfUnchanged(previousTables.labels, mergedLabels, writeCounts.labels, deletions.labels),
+      labelAssignments: reuseIfUnchanged(
+        previousTables.labelAssignments,
+        mergedLabelAssignments,
+        writeCounts.labelAssignments,
+        deletions.labelAssignments
+      ),
+      unreadState: {
+        id: workspaceId,
+        workspaceId,
+        unreadCounts: finalBootstrap.unreadCounts,
+        ...bootstrapActivityCacheFields(finalBootstrap),
+        latestOrdinals: finalBootstrap.messageCounts,
+        readMessageIds: finalBootstrap.readMessageIds,
+        mutedStreamIds: finalBootstrap.mutedStreamIds,
+        counterTouchedAt: pruneCounterTouches(localUnreadState?.counterTouchedAt, fetchStartedAt),
+        mutedTouchedAt: pruneCounterTouches(localUnreadState?.mutedTouchedAt, fetchStartedAt),
+        _cachedAt: now,
+      },
+      userPreferences: {
+        ...finalBootstrap.userPreferences,
+        id: workspaceId,
+        workspaceId,
+        sendMode: finalBootstrap.userPreferences.messageSendMode,
+        _cachedAt: now,
+      },
+      sidebarConfig: {
+        id: workspaceId,
+        workspaceId,
+        config: effectiveSidebarConfig,
+        _cachedAt: now,
+      },
+      metadata: {
+        id: workspaceId,
+        workspaceId,
+        emojis: finalBootstrap.emojis,
+        emojiWeights: finalBootstrap.emojiWeights,
+        commands: finalBootstrap.commands,
+        configuredToolCategories: finalBootstrap.configuredToolCategories,
+        _cachedAt: now,
+      },
     },
-    userPreferences: {
-      ...finalBootstrap.userPreferences,
-      id: workspaceId,
-      workspaceId,
-      sendMode: finalBootstrap.userPreferences.messageSendMode,
-      _cachedAt: now,
-    },
-    sidebarConfig: {
-      id: workspaceId,
-      workspaceId,
-      config: effectiveSidebarConfig,
-      _cachedAt: now,
-    },
-    metadata: {
-      id: workspaceId,
-      workspaceId,
-      emojis: finalBootstrap.emojis,
-      emojiWeights: finalBootstrap.emojiWeights,
-      commands: finalBootstrap.commands,
-      configuredToolCategories: finalBootstrap.configuredToolCategories,
-      _cachedAt: now,
-    },
-  })
+    { publish: anyChanged }
+  )
+  if (anyChanged) capture.mark("bootstrap.storePublish", 1)
 
   // The returned bootstrap is written to the bootstrap query cache by the
   // caller; reflect the preserved local config so it doesn't carry the stale
@@ -3251,7 +3454,11 @@ export async function applyReconnectBootstrapBatch(
 // "the ids we wrote" would sweep exactly those rows. Presence in the payload is
 // the protection; `_cachedAt >= now` only shields rows the payload never
 // enumerated (concurrent socket writes during the fetch window).
-async function cleanupStaleEntities(workspaceId: string, bootstrap: WorkspaceBootstrap, now: number): Promise<void> {
+async function cleanupStaleEntities(
+  workspaceId: string,
+  bootstrap: WorkspaceBootstrap,
+  now: number
+): Promise<TableDeletions> {
   // Archived roots ride in bootstrap.archivedStreams (absent from .streams);
   // keep them so the absence-sweep doesn't delete rows every consumer still
   // needs (drafts hiding, name resolution) across a reload.
@@ -3277,7 +3484,7 @@ async function cleanupStaleEntities(workspaceId: string, bootstrap: WorkspaceBoo
   // can't ride the generic deleteStale (Amendment A4).
   const staleStreamIds = await staleEntityIds(db.streams, "workspaceId", workspaceId, bootstrapStreamIds, now)
 
-  const [, , , staleMembershipIds] = await Promise.all([
+  const [, , staleUserIds, staleMembershipIds, staleDmPeerIds, stalePersonaIds, staleBotIds, staleLabelIds, staleLabelAssignmentIds] = await Promise.all([
     staleStreamIds.length > 0 ? db.streams.bulkDelete(staleStreamIds) : Promise.resolve(),
     deleteSlotsForStreams(db, staleStreamIds),
     deleteStale(db.workspaceUsers, "workspaceId", workspaceId, bootstrapUserIds, now),
@@ -3298,6 +3505,27 @@ async function cleanupStaleEntities(workspaceId: string, bootstrap: WorkspaceBoo
 
   removeRowConfirmations(workspaceId, "streams", staleStreamIds)
   removeRowConfirmations(workspaceId, "streamMemberships", staleMembershipIds)
+
+  const streams = staleStreamIds.length
+  const users = staleUserIds.length
+  const memberships = staleMembershipIds.length
+  const dmPeers = staleDmPeerIds.length
+  const personas = stalePersonaIds.length
+  const bots = staleBotIds.length
+  const labels = staleLabelIds.length
+  const labelAssignments = staleLabelAssignmentIds.length
+  return {
+    streams,
+    users,
+    memberships,
+    readStates: 0,
+    dmPeers,
+    personas,
+    bots,
+    labels,
+    labelAssignments,
+    total: streams + users + memberships + dmPeers + personas + bots + labels + labelAssignments,
+  }
 }
 
 async function staleEntityIds(

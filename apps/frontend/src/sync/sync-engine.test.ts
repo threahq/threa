@@ -2145,3 +2145,135 @@ describe("SyncEngine active-mode reconnect bootstrap slimming", () => {
     engine.destroy()
   })
 })
+
+describe("SyncEngine bootstrap query-cache identity (bootstrapDiff)", () => {
+  beforeEach(async () => {
+    resetRevealGate()
+    resetApplyWindow()
+    await Promise.all([
+      db.workspaces.clear(),
+      db.workspaceUsers.clear(),
+      db.streams.clear(),
+      db.streamMemberships.clear(),
+      db.streamReadState.clear(),
+      db.dmPeers.clear(),
+      db.personas.clear(),
+      db.bots.clear(),
+      db.labels.clear(),
+      db.labelAssignments.clear(),
+      db.unreadState.clear(),
+      db.userPreferences.clear(),
+      db.sidebarConfigs.clear(),
+      db.workspaceMetadata.clear(),
+    ])
+  })
+
+  // One frozen base, cloned per call: `makeWorkspaceBootstrap` stamps `new
+  // Date()` into createdAt/updatedAt, so two live calls are genuinely different
+  // payloads and nothing would compare unchanged.
+  let diffBase: WorkspaceBootstrap | undefined
+
+  function diffOnBootstrap(overrides: Partial<WorkspaceBootstrap> = {}): WorkspaceBootstrap {
+    diffBase ??= {
+      ...makeWorkspaceBootstrap(),
+      featureFlags: { workspace: { bootstrapDiff: "on" }, user: {} },
+      streams: [
+        {
+          ...makeStreamBootstrap("stream_id_1").stream,
+          lastMessagePreview: {
+            messageId: "msg_1",
+            content: "hello",
+            authorId: "user_1",
+            authorName: "Kris",
+            createdAt: "2026-01-01T00:00:00Z",
+          },
+        },
+      ] as unknown as WorkspaceBootstrap["streams"],
+    }
+    return { ...structuredClone(diffBase), ...overrides }
+  }
+
+  /** Two warm applies of the same engine; `second` supplies the second payload. */
+  async function runTwoWarmBootstraps(second: () => WorkspaceBootstrap): Promise<{
+    deps: ReturnType<typeof makeDeps>
+    engine: SyncEngine
+    afterFirst: WorkspaceBootstrap | undefined
+  }> {
+    const deps = makeDeps()
+    deps.workspaceService.bootstrap.mockResolvedValueOnce(diffOnBootstrap())
+    const engine = new SyncEngine(deps)
+    const socket = new MockSocket()
+    socket.ackBehavior = "immediate"
+
+    await engine.onConnect(asSocket(socket))
+    const afterFirst = deps.queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap("ws_1"))
+
+    deps.workspaceService.bootstrap.mockResolvedValueOnce(second())
+    await engine.onConnect(asSocket(socket))
+    return { deps, engine, afterFirst }
+  }
+
+  it("an unchanged warm bootstrap leaves the cached bootstrap object identity intact", async () => {
+    // The cached object carries a local patch (the shape `stream-content.tsx`
+    // and the settings tabs write), so it is NOT deep-equal to the incoming
+    // payload: TanStack's own replaceEqualDeep cannot preserve identity here,
+    // only the "nothing was written, so keep prev" gate can.
+    const deps = makeDeps()
+    deps.workspaceService.bootstrap.mockResolvedValueOnce(diffOnBootstrap())
+    const engine = new SyncEngine(deps)
+    const socket = new MockSocket()
+    socket.ackBehavior = "immediate"
+
+    await engine.onConnect(asSocket(socket))
+    const cached = deps.queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap("ws_1"))!
+    deps.queryClient.setQueryData(workspaceKeys.bootstrap("ws_1"), {
+      ...cached,
+      streams: cached.streams.map((s) => ({ ...s, lastMessagePreview: null })),
+    })
+    // Read back: TanStack's structural sharing means the object now in the
+    // cache is not the one handed to setQueryData.
+    const patched = deps.queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap("ws_1"))
+    expect(patched).not.toBe(cached)
+
+    deps.workspaceService.bootstrap.mockResolvedValueOnce(diffOnBootstrap())
+    await engine.onConnect(asSocket(socket))
+
+    expect(deps.queryClient.getQueryData(workspaceKeys.bootstrap("ws_1"))).toBe(patched)
+    engine.destroy()
+  })
+
+  it("a changed bootstrap replaces the cached object", async () => {
+    const { deps, engine, afterFirst } = await runTwoWarmBootstraps(() =>
+      diffOnBootstrap({ syncHead: "4242", workspace: { ...diffOnBootstrap().workspace, name: "Renamed" } })
+    )
+
+    expect(deps.queryClient.getQueryData(workspaceKeys.bootstrap("ws_1"))).not.toBe(afterFirst)
+    expect(deps.queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap("ws_1"))?.workspace.name).toBe(
+      "Renamed"
+    )
+    engine.destroy()
+  })
+
+  it("an optimistic preferences patch in the query cache survives an unchanged bootstrap", async () => {
+    const deps = makeDeps()
+    deps.workspaceService.bootstrap.mockResolvedValueOnce(diffOnBootstrap())
+    const engine = new SyncEngine(deps)
+    const socket = new MockSocket()
+    socket.ackBehavior = "immediate"
+
+    await engine.onConnect(asSocket(socket))
+    const cached = deps.queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap("ws_1"))!
+    deps.queryClient.setQueryData(workspaceKeys.bootstrap("ws_1"), {
+      ...cached,
+      userPreferences: { ...cached.userPreferences, theme: "dark" },
+    })
+
+    deps.workspaceService.bootstrap.mockResolvedValueOnce(diffOnBootstrap())
+    await engine.onConnect(asSocket(socket))
+
+    expect(
+      deps.queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap("ws_1"))?.userPreferences.theme
+    ).toBe("dark")
+    engine.destroy()
+  })
+})

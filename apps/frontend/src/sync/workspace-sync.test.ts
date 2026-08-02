@@ -33,6 +33,7 @@ import {
 } from "@threa/types"
 import { assignmentId } from "@/hooks/use-labels"
 import { getAgentActivityForStream, __resetAgentActivityStore } from "@/stores/agent-activity-store"
+import { getCachedWorkspaceTables, subscribeWorkspaceCache } from "@/stores/workspace-store"
 import type { Socket } from "socket.io-client"
 
 function makeBootstrap(overrides: Partial<WorkspaceBootstrap> = {}): WorkspaceBootstrap {
@@ -408,7 +409,7 @@ describe("applyWorkspaceBootstrap (real IndexedDB)", () => {
       _cachedAt: fetchStartedAt + 100,
     })
 
-    const returned = await applyWorkspaceBootstrap(
+    const { bootstrap: returned } = await applyWorkspaceBootstrap(
       "ws_1",
       makeBootstrap({
         streamReadState: {
@@ -442,7 +443,7 @@ describe("applyWorkspaceBootstrap (real IndexedDB)", () => {
       _cachedAt: fetchStartedAt + 100,
     })
 
-    const returned = await applyWorkspaceBootstrap(
+    const { bootstrap: returned } = await applyWorkspaceBootstrap(
       "ws_1",
       makeBootstrap({
         streamReadState: {
@@ -472,7 +473,7 @@ describe("applyWorkspaceBootstrap (real IndexedDB)", () => {
       _cachedAt: fetchStartedAt - 1000,
     })
 
-    const returned = await applyWorkspaceBootstrap(
+    const { bootstrap: returned } = await applyWorkspaceBootstrap(
       "ws_1",
       makeBootstrap({
         streamReadState: {
@@ -1168,6 +1169,71 @@ describe("applyWorkspaceBootstrap (real IndexedDB)", () => {
       })
 
       expect((await db.streamMemberships.get("ws_1:stream_d1"))?.notificationLevel).toBeNull()
+    })
+
+    it("an identical re-apply emits no store publication", async () => {
+      await applyWorkspaceBootstrap("ws_1", diffBootstrap(), Date.now() - 5000)
+
+      let notifications = 0
+      const unsubscribe = subscribeWorkspaceCache("ws_1", () => {
+        notifications += 1
+      })
+      const capture = new PerfCapture()
+      armPerfCapture(capture)
+      await applyWorkspaceBootstrap("ws_1", diffBootstrap(), Date.now())
+      unsubscribe()
+
+      expect(notifications).toBe(0)
+      expect(capture.snapshot().filter((s) => s.name === "bootstrap.storePublish")).toEqual([])
+    })
+
+    it("a changed row still publishes exactly once", async () => {
+      await applyWorkspaceBootstrap("ws_1", diffBootstrap(), Date.now() - 5000)
+
+      const base = diffBootstrap()
+      const changed = diffBootstrap({
+        streams: base.streams.map((s) => (s.id === "stream_d1" ? { ...s, displayName: "Renamed" } : s)),
+      })
+      let notifications = 0
+      const unsubscribe = subscribeWorkspaceCache("ws_1", () => {
+        notifications += 1
+      })
+      await applyWorkspaceBootstrap("ws_1", changed, Date.now())
+      unsubscribe()
+
+      expect(notifications).toBe(1)
+    })
+
+    it("a bootstrap that drops a row publishes and replaces the cached bootstrap object", async () => {
+      await applyWorkspaceBootstrap("ws_1", diffBootstrap(), Date.now() - 5000)
+      await stampCachedAt(1)
+
+      const base = diffBootstrap()
+      const dropped = diffBootstrap({
+        streams: base.streams.filter((s) => s.id !== "stream_d2") as WorkspaceBootstrap["streams"],
+      })
+      let notifications = 0
+      const unsubscribe = subscribeWorkspaceCache("ws_1", () => {
+        notifications += 1
+      })
+      const applied = await applyWorkspaceBootstrap("ws_1", dropped, Date.now())
+      unsubscribe()
+
+      expect(notifications).toBe(1)
+      expect(await db.streams.get("stream_d2")).toBeUndefined()
+      // The value sync-engine's setQueryData gate consults: false here would
+      // leave the swept stream in the cached bootstrap forever.
+      expect(applied.anyChanged).toBe(true)
+      expect(getCachedWorkspaceTables("ws_1").streams?.map((s) => s.id)).toEqual(["stream_d1"])
+    })
+
+    it("two unchanged applies keep the cached streams array reference", async () => {
+      await applyWorkspaceBootstrap("ws_1", diffBootstrap(), Date.now() - 5000)
+      const first = getCachedWorkspaceTables("ws_1").streams
+
+      await applyWorkspaceBootstrap("ws_1", diffBootstrap(), Date.now())
+
+      expect(getCachedWorkspaceTables("ws_1").streams).toBe(first)
     })
 
     it("with bootstrapDiff off, every row is rewritten", async () => {
@@ -3773,7 +3839,7 @@ describe("latest ordinal seeding and reconnect merge (sync phase 2c)", () => {
       _cachedAt: fetchStartedAt + 200,
     })
 
-    const effective = await applyWorkspaceBootstrap(
+    const { bootstrap: effective } = await applyWorkspaceBootstrap(
       "ws_1",
       makeBootstrap({
         unreadCounts: { stream_drifted: 3, stream_busy: 9 },

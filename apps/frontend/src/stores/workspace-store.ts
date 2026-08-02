@@ -57,7 +57,13 @@ const cache = {
 
 // Monotonic version per workspace so seedCacheFromIdb (async IDB read) never
 // overwrites a fresher seedWorkspaceCache call (synchronous bootstrap write).
+// ALWAYS bumped, including for a seed that publishes nothing: it orders writes,
+// it does not describe change.
 const cacheVersion = new Map<string, number>()
+
+// What `useSyncExternalStore` reads. Bumped only when a seed actually changed
+// something, so an unchanged bootstrap apply wakes no subscriber.
+const cacheSignal = new Map<string, number>()
 const cacheListeners = new Map<string, Set<() => void>>()
 
 function emitWorkspaceCacheChange(workspaceId: string): void {
@@ -66,7 +72,7 @@ function emitWorkspaceCacheChange(workspaceId: string): void {
   for (const listener of listeners) listener()
 }
 
-function subscribeWorkspaceCache(workspaceId: string | undefined, listener: () => void): () => void {
+export function subscribeWorkspaceCache(workspaceId: string | undefined, listener: () => void): () => void {
   if (!workspaceId) return () => {}
 
   let listeners = cacheListeners.get(workspaceId)
@@ -87,7 +93,12 @@ function subscribeWorkspaceCache(workspaceId: string | undefined, listener: () =
 }
 
 function getWorkspaceCacheSnapshot(workspaceId: string | undefined): number {
-  return workspaceId ? (cacheVersion.get(workspaceId) ?? 0) : 0
+  return workspaceId ? (cacheSignal.get(workspaceId) ?? 0) : 0
+}
+
+function publishWorkspaceCache(workspaceId: string): void {
+  cacheSignal.set(workspaceId, (cacheSignal.get(workspaceId) ?? 0) + 1)
+  emitWorkspaceCacheChange(workspaceId)
 }
 
 function useWorkspaceCacheSignal(workspaceId: string | undefined): number {
@@ -113,7 +124,7 @@ export function hasSeededWorkspaceCache(workspaceId: string): boolean {
 }
 
 export function resetWorkspaceStoreCache(): void {
-  const workspaceIds = new Set([...cacheVersion.keys(), ...cacheListeners.keys()])
+  const workspaceIds = new Set([...cacheVersion.keys(), ...cacheSignal.keys(), ...cacheListeners.keys()])
   cache.workspaces.clear()
   cache.users.clear()
   cache.streams.clear()
@@ -129,8 +140,11 @@ export function resetWorkspaceStoreCache(): void {
   cache.sidebarConfig.clear()
   cache.metadata.clear()
   cacheVersion.clear()
+  // cacheSignal is bumped, never cleared: resetting it to 0 and publishing 1
+  // reproduces a value a mounted subscriber may already hold, and
+  // useSyncExternalStore compares values — the reset would then not re-render.
   for (const workspaceId of workspaceIds) {
-    emitWorkspaceCacheChange(workspaceId)
+    publishWorkspaceCache(workspaceId)
   }
 }
 
@@ -226,9 +240,11 @@ export function seedWorkspaceCache(
     userPreferences?: CachedUserPreferences
     sidebarConfig?: CachedSidebarConfig
     metadata?: CachedWorkspaceMetadata
-  }
+  },
+  options?: { publish?: boolean }
 ): void {
-  // Bump version so concurrent seedCacheFromIdb calls know to skip.
+  // Bump version so concurrent seedCacheFromIdb calls know to skip. Always —
+  // the version orders writes; `publish` says whether anything changed.
   cacheVersion.set(workspaceId, (cacheVersion.get(workspaceId) ?? 0) + 1)
   cache.workspaces.set(workspaceId, data.workspace)
   cache.users.set(workspaceId, data.users)
@@ -244,7 +260,35 @@ export function seedWorkspaceCache(
   if (data.userPreferences) cache.userPreferences.set(workspaceId, data.userPreferences)
   if (data.sidebarConfig) cache.sidebarConfig.set(workspaceId, data.sidebarConfig)
   if (data.metadata) cache.metadata.set(workspaceId, data.metadata)
-  emitWorkspaceCacheChange(workspaceId)
+  if (options?.publish !== false) publishWorkspaceCache(workspaceId)
+}
+
+/**
+ * The arrays/singletons currently cached for a workspace, so an apply can hand
+ * back the very same reference for a table its diff found unchanged.
+ */
+export function getCachedWorkspaceTables(workspaceId: string): {
+  users?: CachedWorkspaceUser[]
+  streams?: CachedStream[]
+  memberships?: CachedStreamMembership[]
+  readStates?: CachedStreamReadState[]
+  dmPeers?: CachedDmPeer[]
+  personas?: CachedPersona[]
+  bots?: CachedBot[]
+  labels?: CachedLabel[]
+  labelAssignments?: CachedLabelAssignment[]
+} {
+  return {
+    users: cache.users.get(workspaceId),
+    streams: cache.streams.get(workspaceId),
+    memberships: cache.memberships.get(workspaceId),
+    readStates: cache.readStates.get(workspaceId),
+    dmPeers: cache.dmPeers.get(workspaceId),
+    personas: cache.personas.get(workspaceId),
+    bots: cache.bots.get(workspaceId),
+    labels: cache.labels.get(workspaceId),
+    labelAssignments: cache.labelAssignments.get(workspaceId),
+  }
 }
 
 /**
@@ -266,7 +310,7 @@ export function upsertWorkspaceUserInCache(workspaceId: string, user: CachedWork
   const exists = current.some((u) => u.id === user.id)
   cache.users.set(workspaceId, exists ? current.map((u) => (u.id === user.id ? user : u)) : [...current, user])
   cacheVersion.set(workspaceId, (cacheVersion.get(workspaceId) ?? 0) + 1)
-  emitWorkspaceCacheChange(workspaceId)
+  publishWorkspaceCache(workspaceId)
 }
 
 // Array-valued hooks read live from IDB but fall back to the in-memory
@@ -383,7 +427,7 @@ export function upsertWorkspacePersonaCache(workspaceId: string, persona: Cached
   const idx = rows.findIndex((p) => p.id === persona.id)
   cache.personas.set(workspaceId, idx >= 0 ? rows.map((p) => (p.id === persona.id ? persona : p)) : [...rows, persona])
   cacheVersion.set(workspaceId, (cacheVersion.get(workspaceId) ?? 0) + 1)
-  emitWorkspaceCacheChange(workspaceId)
+  publishWorkspaceCache(workspaceId)
   void db.personas.put(persona)
 }
 

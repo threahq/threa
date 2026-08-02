@@ -111,7 +111,7 @@ export function useWorkspaceBootstrap(workspaceId: string) {
       // Shred bootstrap into individual IDB tables (including unreadState +
       // userPreferences); cache the returned merged bootstrap so the query
       // cache carries the same counter values as IDB.
-      return await applyWorkspaceBootstrap(workspaceId, bootstrap, fetchStartedAt)
+      return (await applyWorkspaceBootstrap(workspaceId, bootstrap, fetchStartedAt)).bootstrap
     },
     // Keep terminal auth/not-found errors disabled to avoid loops.
     // Non-terminal errors can recover automatically on future attempts.
