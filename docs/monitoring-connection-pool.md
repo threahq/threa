@@ -79,7 +79,7 @@ curl http://localhost:3001/readyz | jq
 
 ### 4. Load Fixtures
 
-No load-fixture script is checked in yet; seed a workspace by hand when reproducing load locally.
+`scripts/perf-seed.ts` seeds the load fixtures (large streams, deep threads, missed sync-log entries, large drafts, wide boards) into a local stack. Profiles and the scenarios they serve: [`docs/perf/reproduction-matrix.md`](perf/reproduction-matrix.md).
 
 ## Pool Configuration
 
