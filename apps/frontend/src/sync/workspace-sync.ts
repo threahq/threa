@@ -1,11 +1,27 @@
 import {
   db,
+  type CachedBot,
+  type CachedDmPeer,
+  type CachedLabel,
+  type CachedLabelAssignment,
+  type CachedPersona,
   type CachedStream,
   type CachedStreamMembership,
   type CachedStreamReadState,
   type CachedUnreadState,
+  type CachedWorkspace,
+  type CachedWorkspaceUser,
 } from "@/db"
 import { getPerfCapture } from "@/lib/perf/capture"
+import { resolveFeatureFlags } from "@threa/types"
+import {
+  diffRows,
+  diffSingleton,
+  effectiveFreshness,
+  recordSkippedRowConfirmations,
+  semanticEqual,
+  writeAllRows,
+} from "./bootstrap-diff"
 import { seedWorkspaceCache, upsertWorkspaceUserInCache } from "@/stores/workspace-store"
 import {
   seedAgentActivity,
@@ -511,8 +527,9 @@ export function mergeReconnectWorkspaceBootstrap({
   }
 
   if (fetchStartedAt !== undefined) {
+    const mergeWorkspaceId = workspaceBootstrap.workspace.id
     for (const stream of localStreams) {
-      if (stream._cachedAt < fetchStartedAt) continue
+      if (effectiveFreshness(mergeWorkspaceId, "streams", stream.id, stream._cachedAt) < fetchStartedAt) continue
       if (successfulStreamIds.has(stream.id)) continue
       // Archived rows persist in db.streams (they ride bootstrap.archivedStreams),
       // so a fresh _cachedAt no longer implies active — promoting one here would
@@ -522,13 +539,16 @@ export function mergeReconnectWorkspaceBootstrap({
     }
 
     for (const membership of localMemberships) {
-      if (membership._cachedAt < fetchStartedAt) continue
+      if (
+        effectiveFreshness(mergeWorkspaceId, "streamMemberships", membership.id, membership._cachedAt) < fetchStartedAt
+      )
+        continue
       if (successfulStreamIds.has(membership.streamId)) continue
       membershipsByStreamId.set(membership.streamId, toWorkspaceBootstrapMembership(membership))
     }
 
     for (const row of localReadStates) {
-      if (row._cachedAt < fetchStartedAt) continue
+      if (effectiveFreshness(mergeWorkspaceId, "streamReadState", row.id, row._cachedAt) < fetchStartedAt) continue
       if (successfulStreamIds.has(row.streamId)) continue
       readStateByStreamId.set(row.streamId, toStreamReadFrontier(row))
     }
@@ -2397,6 +2417,16 @@ async function upsertStreamRow(stream: Stream): Promise<void> {
   }
 }
 
+const EMPTY_FLAG_LAYERS: FeatureFlagLayers = { workspace: {}, user: {} }
+
+function byId<T extends { id: string }>(rows: T[]): Map<string, T> {
+  return new Map(rows.map((row) => [row.id, row]))
+}
+
+function dedupeById<T extends { id: string }>(rows: T[]): T[] {
+  return Array.from(byId(rows).values())
+}
+
 /**
  * Map slim archived-root `Stream` rows (bootstrap.archivedStreams — no preview
  * or membership joins) to `CachedStream` rows, merging onto any existing row so
@@ -2419,20 +2449,10 @@ export async function applyWorkspaceBootstrap(
 ): Promise<WorkspaceBootstrap> {
   const now = Date.now()
   const capture = getPerfCapture()
+  const diffEnabled = resolveFeatureFlags(bootstrap.featureFlags ?? EMPTY_FLAG_LAYERS).bootstrapDiff === "on"
 
   // Build membership lookup for O(1) access when merging onto streams
   const membershipByStream = new Map(bootstrap.streamMemberships.map((sm) => [sm.streamId, sm]))
-
-  // Workspace bootstrap doesn't carry stream-level fields that the per-stream
-  // bootstrap writes (e.g. `contextBag`), but `bulkPut` is a full overwrite.
-  // Read existing local records once so we can preserve those fields across
-  // a refresh — without this merge, opening any bag-attached scratchpad
-  // after a fresh load shows the message badge briefly, then loses it when
-  // workspace bootstrap clobbers the field.
-  const stopPreRead = capture.time("bootstrap.preRead")
-  const existingStreams = await db.streams.where("workspaceId").equals(workspaceId).toArray()
-  const existingByStreamId = new Map(existingStreams.map((s) => [s.id, s]))
-  stopPreRead()
 
   // Effective sidebar config for the in-memory seed below. If a newer
   // `sidebar_config:updated` landed during the fetch window we keep the local
@@ -2453,9 +2473,47 @@ export async function applyWorkspaceBootstrap(
   let effectiveReadStateMap = bootstrap.streamReadState
   let seedReadStates: CachedStreamReadState[] | undefined
 
-  // Counts only the conditional writes; the unconditional ones are summed at
-  // the mark below.
-  let conditionalRowsWritten = 0
+  let rowsWritten = 0
+  let rowsSkipped = 0
+
+  const workspaceRow = { ...bootstrap.workspace, _cachedAt: now }
+  const userRows = bootstrap.users.map((u) => ({ ...u, _cachedAt: now }))
+  const membershipRows = bootstrap.streamMemberships.map((sm) => ({
+    ...sm,
+    id: `${workspaceId}:${sm.streamId}`,
+    workspaceId,
+    _cachedAt: now,
+  }))
+  const dmPeerRows = bootstrap.dmPeers.map((dp) => ({
+    ...dp,
+    id: `${workspaceId}:${dp.streamId}`,
+    workspaceId,
+    _cachedAt: now,
+  }))
+  const personaRows = bootstrap.personas.map((p) => ({ ...p, workspaceId, _cachedAt: now }))
+  const botRows = bootstrap.bots.map((b) => ({ ...b, workspaceId, _cachedAt: now }))
+  const labelRows = bootstrap.labels.map((l) => ({ ...l, _cachedAt: now }))
+  const labelAssignmentRows = bootstrap.labelAssignments.map(assignmentToCached)
+  const metadataRow = {
+    id: workspaceId,
+    workspaceId,
+    emojis: bootstrap.emojis,
+    emojiWeights: bootstrap.emojiWeights,
+    commands: bootstrap.commands,
+    configuredToolCategories: bootstrap.configuredToolCategories,
+    featureFlags: bootstrap.featureFlags,
+    _cachedAt: now,
+  }
+
+  let mergedWorkspace: CachedWorkspace = workspaceRow
+  let mergedUsers: CachedWorkspaceUser[] = userRows
+  let mergedStreams: CachedStream[] = []
+  let mergedMemberships: CachedStreamMembership[] = membershipRows
+  let mergedDmPeers: CachedDmPeer[] = dmPeerRows
+  let mergedPersonas: CachedPersona[] = personaRows
+  let mergedBots: CachedBot[] = botRows
+  let mergedLabels: CachedLabel[] = labelRows
+  let mergedLabelAssignments: CachedLabelAssignment[] = labelAssignmentRows
 
   // One transaction over every table so they commit together and each table's
   // `useLiveQuery` fires once — one settle, not a per-table trickle. Parallel
@@ -2485,58 +2543,122 @@ export async function applyWorkspaceBootstrap(
       db.workspaceMetadata,
     ],
     async () => {
-      await Promise.all([
-        db.workspaces.put({ ...bootstrap.workspace, _cachedAt: now }),
-        db.workspaceUsers.bulkPut(bootstrap.users.map((u) => ({ ...u, _cachedAt: now }))),
-        db.streams.bulkPut(
-          bootstrap.streams.map((s) => {
-            const membership = membershipByStream.get(s.id)
-            const existing = existingByStreamId.get(s.id)
-            return {
-              ...s,
-              notificationLevel: membership?.notificationLevel,
-              // Preserve fields workspace-bootstrap doesn't carry but stream-
-              // bootstrap does (bag mirroring lives in `applyStreamBootstrap`).
-              contextBag: existing?.contextBag,
-              _cachedAt: now,
-            }
-          })
-        ),
+      const stopPreRead = capture.time("bootstrap.preRead")
+      const existingStreams = await db.streams.where("workspaceId").equals(workspaceId).toArray()
+      const existingByStreamId = new Map(existingStreams.map((s) => [s.id, s]))
+      const [
+        existingWorkspace,
+        existingUsers,
+        existingMemberships,
+        existingDmPeers,
+        existingPersonas,
+        existingBots,
+        existingLabels,
+        existingLabelAssignments,
+        existingMetadata,
+      ] = diffEnabled
+        ? await Promise.all([
+            db.workspaces.get(workspaceId),
+            db.workspaceUsers.where("workspaceId").equals(workspaceId).toArray(),
+            db.streamMemberships.where("workspaceId").equals(workspaceId).toArray(),
+            db.dmPeers.where("workspaceId").equals(workspaceId).toArray(),
+            db.personas.where("workspaceId").equals(workspaceId).toArray(),
+            db.bots.where("workspaceId").equals(workspaceId).toArray(),
+            db.labels.where("workspaceId").equals(workspaceId).toArray(),
+            db.labelAssignments.where("workspaceId").equals(workspaceId).toArray(),
+            db.workspaceMetadata.get(workspaceId),
+          ])
+        : [undefined, [], [], [], [], [], [], [], undefined]
+      stopPreRead()
+
+      const stopDiff = capture.time("bootstrap.diff")
+      const streamCandidates = dedupeById([
+        ...bootstrap.streams.map((s) => {
+          const membership = membershipByStream.get(s.id)
+          const existing = existingByStreamId.get(s.id)
+          return {
+            ...s,
+            notificationLevel: membership?.notificationLevel,
+            // Preserve fields workspace-bootstrap doesn't carry but stream-
+            // bootstrap does (bag mirroring lives in `applyStreamBootstrap`).
+            contextBag: existing?.contextBag,
+            _cachedAt: now,
+          }
+        }),
         // Archived roots ship slim (no preview/membership) but must persist so
         // every `useWorkspaceStreams` consumer (drafts, name resolution) keeps
         // seeing them across a reload. Not added to the TanStack bootstrap
         // `streams` cache — that list stays active-only.
-        db.streams.bulkPut(mapArchivedStreamRows(bootstrap.archivedStreams ?? [], existingByStreamId, now)),
-        db.streamMemberships.bulkPut(
-          bootstrap.streamMemberships.map((sm) => ({
-            ...sm,
-            id: `${workspaceId}:${sm.streamId}`,
-            workspaceId,
-            _cachedAt: now,
-          }))
-        ),
-        db.dmPeers.bulkPut(
-          bootstrap.dmPeers.map((dp) => ({
-            ...dp,
-            id: `${workspaceId}:${dp.streamId}`,
-            workspaceId,
-            _cachedAt: now,
-          }))
-        ),
-        db.personas.bulkPut(bootstrap.personas.map((p) => ({ ...p, workspaceId: workspaceId, _cachedAt: now }))),
-        db.bots.bulkPut(bootstrap.bots.map((b) => ({ ...b, workspaceId: workspaceId, _cachedAt: now }))),
-        db.labels.bulkPut(bootstrap.labels.map((l) => ({ ...l, _cachedAt: now }))),
-        db.labelAssignments.bulkPut(bootstrap.labelAssignments.map(assignmentToCached)),
-        db.workspaceMetadata.put({
-          id: workspaceId,
-          workspaceId,
-          emojis: bootstrap.emojis,
-          emojiWeights: bootstrap.emojiWeights,
-          commands: bootstrap.commands,
-          configuredToolCategories: bootstrap.configuredToolCategories,
-          featureFlags: bootstrap.featureFlags,
-          _cachedAt: now,
-        }),
+        ...mapArchivedStreamRows(bootstrap.archivedStreams ?? [], existingByStreamId, now),
+      ])
+
+      const workspaceDiff = diffEnabled
+        ? diffSingleton(existingWorkspace, workspaceRow)
+        : { write: true, merged: workspaceRow }
+      const usersDiff = diffEnabled ? diffRows(byId(existingUsers), userRows) : writeAllRows(userRows)
+      const streamsDiff = diffEnabled ? diffRows(existingByStreamId, streamCandidates) : writeAllRows(streamCandidates)
+      const membershipsDiff = diffEnabled
+        ? diffRows(byId(existingMemberships), membershipRows)
+        : writeAllRows(membershipRows)
+      const dmPeersDiff = diffEnabled ? diffRows(byId(existingDmPeers), dmPeerRows) : writeAllRows(dmPeerRows)
+      const personasDiff = diffEnabled ? diffRows(byId(existingPersonas), personaRows) : writeAllRows(personaRows)
+      const botsDiff = diffEnabled ? diffRows(byId(existingBots), botRows) : writeAllRows(botRows)
+      const labelsDiff = diffEnabled ? diffRows(byId(existingLabels), labelRows) : writeAllRows(labelRows)
+      const labelAssignmentsDiff = diffEnabled
+        ? diffRows(byId(existingLabelAssignments), labelAssignmentRows)
+        : writeAllRows(labelAssignmentRows)
+      const metadataDiff = diffEnabled
+        ? diffSingleton(existingMetadata, metadataRow)
+        : { write: true, merged: metadataRow }
+      stopDiff()
+
+      mergedWorkspace = workspaceDiff.merged
+      mergedUsers = usersDiff.merged
+      mergedStreams = streamsDiff.merged
+      mergedMemberships = membershipsDiff.merged
+      mergedDmPeers = dmPeersDiff.merged
+      mergedPersonas = personasDiff.merged
+      mergedBots = botsDiff.merged
+      mergedLabels = labelsDiff.merged
+      mergedLabelAssignments = labelAssignmentsDiff.merged
+      recordSkippedRowConfirmations(workspaceId, "streams", streamsDiff, now)
+      recordSkippedRowConfirmations(workspaceId, "streamMemberships", membershipsDiff, now)
+      rowsSkipped +=
+        usersDiff.skipped +
+        streamsDiff.skipped +
+        membershipsDiff.skipped +
+        dmPeersDiff.skipped +
+        personasDiff.skipped +
+        botsDiff.skipped +
+        labelsDiff.skipped +
+        labelAssignmentsDiff.skipped +
+        (workspaceDiff.write ? 0 : 1) +
+        (metadataDiff.write ? 0 : 1)
+      rowsWritten +=
+        usersDiff.toWrite.length +
+        streamsDiff.toWrite.length +
+        membershipsDiff.toWrite.length +
+        dmPeersDiff.toWrite.length +
+        personasDiff.toWrite.length +
+        botsDiff.toWrite.length +
+        labelsDiff.toWrite.length +
+        labelAssignmentsDiff.toWrite.length +
+        (workspaceDiff.write ? 1 : 0) +
+        (metadataDiff.write ? 1 : 0)
+
+      await Promise.all([
+        workspaceDiff.write ? db.workspaces.put(workspaceRow) : Promise.resolve(),
+        usersDiff.toWrite.length > 0 ? db.workspaceUsers.bulkPut(usersDiff.toWrite) : Promise.resolve(),
+        streamsDiff.toWrite.length > 0 ? db.streams.bulkPut(streamsDiff.toWrite) : Promise.resolve(),
+        membershipsDiff.toWrite.length > 0 ? db.streamMemberships.bulkPut(membershipsDiff.toWrite) : Promise.resolve(),
+        dmPeersDiff.toWrite.length > 0 ? db.dmPeers.bulkPut(dmPeersDiff.toWrite) : Promise.resolve(),
+        personasDiff.toWrite.length > 0 ? db.personas.bulkPut(personasDiff.toWrite) : Promise.resolve(),
+        botsDiff.toWrite.length > 0 ? db.bots.bulkPut(botsDiff.toWrite) : Promise.resolve(),
+        labelsDiff.toWrite.length > 0 ? db.labels.bulkPut(labelsDiff.toWrite) : Promise.resolve(),
+        labelAssignmentsDiff.toWrite.length > 0
+          ? db.labelAssignments.bulkPut(labelAssignmentsDiff.toWrite)
+          : Promise.resolve(),
+        metadataDiff.write ? db.workspaceMetadata.put(metadataRow) : Promise.resolve(),
       ])
 
       // Per-stream merge with concurrent socket writes (INV-20): the server
@@ -2546,7 +2668,14 @@ export async function applyWorkspaceBootstrap(
       // count never healed.
       const existingUnread = await db.unreadState.get(workspaceId)
       effectiveUnread = mergeBootstrapUnreadFields(bootstrap, existingUnread, fetchStartedAt)
-      await db.unreadState.put({ id: workspaceId, workspaceId, ...effectiveUnread, _cachedAt: now })
+      const unreadRow = { id: workspaceId, workspaceId, ...effectiveUnread, _cachedAt: now }
+      const unreadDiff = diffEnabled ? diffSingleton(existingUnread, unreadRow) : { write: true, merged: unreadRow }
+      if (unreadDiff.write) {
+        rowsWritten += 1
+        await db.unreadState.put(unreadRow)
+      } else {
+        rowsSkipped += 1
+      }
 
       // Standalone read frontier (read cutover), same per-stream freshness rule
       // as the counter triple above: the server snapshot wins except for
@@ -2583,33 +2712,48 @@ export async function applyWorkspaceBootstrap(
             _cachedAt: now,
           })
         }
-        if (serverRows.length > 0) {
-          await db.streamReadState.bulkPut(serverRows)
-          conditionalRowsWritten += serverRows.length
+        const readStateDiff = diffEnabled
+          ? diffRows(new Map(existingRows.map((row) => [row.id, row])), serverRows)
+          : writeAllRows(serverRows)
+        if (readStateDiff.toWrite.length > 0) {
+          await db.streamReadState.bulkPut(readStateDiff.toWrite)
         }
-        seedReadStates = mergeLocalAndServerReadStates(existingRows, serverRows)
+        rowsWritten += readStateDiff.toWrite.length
+        rowsSkipped += readStateDiff.skipped
+        recordSkippedRowConfirmations(workspaceId, "streamReadState", readStateDiff, now)
+        seedReadStates = mergeLocalAndServerReadStates(existingRows, readStateDiff.merged)
       }
 
       const existingPrefs = await db.userPreferences.get(workspaceId)
       if (!existingPrefs || !fetchStartedAt || existingPrefs._cachedAt < fetchStartedAt) {
-        conditionalRowsWritten += 1
-        await db.userPreferences.put({
+        const prefsRow = {
           ...bootstrap.userPreferences,
           id: workspaceId,
           workspaceId,
           _cachedAt: now,
-        })
+        }
+        if (diffEnabled && existingPrefs && semanticEqual(existingPrefs, prefsRow)) {
+          rowsSkipped += 1
+        } else {
+          rowsWritten += 1
+          await db.userPreferences.put(prefsRow)
+        }
       }
 
       const existingSidebar = await db.sidebarConfigs.get(workspaceId)
       if (!existingSidebar || !fetchStartedAt || existingSidebar._cachedAt < fetchStartedAt) {
-        conditionalRowsWritten += 1
-        await db.sidebarConfigs.put({
+        const sidebarRow = {
           id: workspaceId,
           workspaceId,
           config: bootstrap.sidebarConfig,
           _cachedAt: now,
-        })
+        }
+        if (diffEnabled && existingSidebar && semanticEqual(existingSidebar, sidebarRow)) {
+          rowsSkipped += 1
+        } else {
+          rowsWritten += 1
+          await db.sidebarConfigs.put(sidebarRow)
+        }
       } else {
         effectiveSidebarConfig = existingSidebar.config
       }
@@ -2617,21 +2761,8 @@ export async function applyWorkspaceBootstrap(
   )
 
   stopTx()
-  capture.mark(
-    "bootstrap.rowsWritten",
-    bootstrap.users.length +
-      bootstrap.streams.length +
-      (bootstrap.archivedStreams?.length ?? 0) +
-      bootstrap.streamMemberships.length +
-      bootstrap.dmPeers.length +
-      bootstrap.personas.length +
-      bootstrap.bots.length +
-      bootstrap.labels.length +
-      bootstrap.labelAssignments.length +
-      // workspace + workspaceMetadata + unreadState
-      3 +
-      conditionalRowsWritten
-  )
+  capture.mark("bootstrap.rowsWritten", rowsWritten)
+  capture.mark("bootstrap.rowsSkipped", rowsSkipped)
 
   // Clean up stale entities: anything in IDB for this workspace that
   // wasn't in the bootstrap AND was written before this bootstrap.
@@ -2652,40 +2783,23 @@ export async function applyWorkspaceBootstrap(
   // empty arrays for one render cycle until the async IDB read resolves.
   const stopSeed = capture.time("bootstrap.seed")
   seedWorkspaceCache(workspaceId, {
-    workspace: { ...bootstrap.workspace, _cachedAt: now },
-    users: bootstrap.users.map((u) => ({ ...u, _cachedAt: now })),
-    streams: [
-      ...bootstrap.streams.map((s) => ({
-        ...s,
-        notificationLevel: membershipByStream.get(s.id)?.notificationLevel,
-        _cachedAt: now,
-      })),
-      // Archived roots must be in the synchronous seed too, or the first paint
-      // can't tell a stream is archived until the IDB read resolves — a
-      // one-frame flash of archived-root drafts (INV-21-adjacent).
-      ...mapArchivedStreamRows(bootstrap.archivedStreams ?? [], existingByStreamId, now),
-    ],
-    memberships: bootstrap.streamMemberships.map((sm) => ({
-      ...sm,
-      id: `${workspaceId}:${sm.streamId}`,
-      workspaceId,
-      _cachedAt: now,
-    })),
+    workspace: mergedWorkspace,
+    users: mergedUsers,
+    // Archived roots must be in the synchronous seed too, or the first paint
+    // can't tell a stream is archived until the IDB read resolves — a
+    // one-frame flash of archived-root drafts (INV-21-adjacent).
+    streams: mergedStreams,
+    memberships: mergedMemberships,
     // An omitted map leaves the in-memory rows in place (nothing was written);
     // a present map seeds IDB's effective contents — server rows plus every
     // local row the member-only map omits (nonmember thread lazy state) and
     // every frontier preserved as touched during the fetch window.
     readStates: seedReadStates,
-    dmPeers: bootstrap.dmPeers.map((dp) => ({
-      ...dp,
-      id: `${workspaceId}:${dp.streamId}`,
-      workspaceId,
-      _cachedAt: now,
-    })),
-    personas: bootstrap.personas.map((p) => ({ ...p, workspaceId, _cachedAt: now })),
-    bots: bootstrap.bots.map((b) => ({ ...b, workspaceId, _cachedAt: now })),
-    labels: bootstrap.labels.map((l) => ({ ...l, _cachedAt: now })),
-    labelAssignments: bootstrap.labelAssignments.map(assignmentToCached),
+    dmPeers: mergedDmPeers,
+    personas: mergedPersonas,
+    bots: mergedBots,
+    labels: mergedLabels,
+    labelAssignments: mergedLabelAssignments,
     unreadState: {
       id: workspaceId,
       workspaceId,
@@ -2752,6 +2866,9 @@ export async function applyReconnectBootstrapBatch(
   streamBootstraps: Map<string, StreamBootstrap>
 }> {
   const now = Date.now()
+  const capture = getPerfCapture()
+  let rowsWritten = 0
+  let rowsSkipped = 0
 
   const [localStreams, localMemberships, localReadStates, localUnreadState] = await Promise.all([
     db.streams.where("workspaceId").equals(workspaceId).toArray(),
@@ -2772,12 +2889,83 @@ export async function applyReconnectBootstrapBatch(
     fetchStartedAt,
   })
 
+  const diffEnabled = resolveFeatureFlags(finalBootstrap.featureFlags ?? EMPTY_FLAG_LAYERS).bootstrapDiff === "on"
+
   const membershipByStream = new Map(finalBootstrap.streamMemberships.map((sm) => [sm.streamId, sm]))
 
   // See applyWorkspaceBootstrap: preserve a sidebar config written by a
   // `sidebar_config:updated` event during the fetch window rather than seeding
   // (and returning) the older snapshot.
   let effectiveSidebarConfig = finalBootstrap.sidebarConfig
+
+  const workspaceRow = { ...finalBootstrap.workspace, _cachedAt: now }
+  const userRows = finalBootstrap.users.map((user) => ({ ...user, _cachedAt: now }))
+  const streamRows = dedupeById<CachedStream>([
+    ...finalBootstrap.streams.map((stream) => {
+      const membership = membershipByStream.get(stream.id)
+      const local = localStreams.find((s) => s.id === stream.id)
+      return {
+        ...stream,
+        notificationLevel: membership?.notificationLevel,
+        // Preserve fields workspace-bootstrap doesn't carry but
+        // stream-bootstrap mirrors locally (`contextBag` is the
+        // canonical example — see `applyStreamBootstrap`).
+        contextBag: local?.contextBag,
+        _cachedAt: now,
+      }
+    }),
+    // Persist archived roots on reconnect too (mirrors applyWorkspaceBootstrap).
+    ...mapArchivedStreamRows(finalBootstrap.archivedStreams ?? [], byId(localStreams), now),
+  ])
+  const membershipRows = finalBootstrap.streamMemberships.map((membership) => ({
+    ...membership,
+    id: `${workspaceId}:${membership.streamId}`,
+    workspaceId,
+    _cachedAt: now,
+  }))
+  const readStateRows = toCachedReadStates(workspaceId, finalBootstrap.streamReadState, now)
+  const dmPeerRows = finalBootstrap.dmPeers.map((dmPeer) => ({
+    ...dmPeer,
+    id: `${workspaceId}:${dmPeer.streamId}`,
+    workspaceId,
+    _cachedAt: now,
+  }))
+  const personaRows = finalBootstrap.personas.map((persona) => ({ ...persona, workspaceId, _cachedAt: now }))
+  const botRows = finalBootstrap.bots.map((bot) => ({ ...bot, workspaceId, _cachedAt: now }))
+  const labelRows = finalBootstrap.labels.map((label) => ({ ...label, _cachedAt: now }))
+  const labelAssignmentRows = finalBootstrap.labelAssignments.map(assignmentToCached)
+  const unreadRow = {
+    id: workspaceId,
+    workspaceId,
+    unreadCounts: finalBootstrap.unreadCounts,
+    ...bootstrapActivityCacheFields(finalBootstrap),
+    latestOrdinals: finalBootstrap.messageCounts,
+    readMessageIds: finalBootstrap.readMessageIds,
+    mutedStreamIds: finalBootstrap.mutedStreamIds,
+    counterTouchedAt: pruneCounterTouches(localUnreadState?.counterTouchedAt, fetchStartedAt),
+    mutedTouchedAt: pruneCounterTouches(localUnreadState?.mutedTouchedAt, fetchStartedAt),
+    _cachedAt: now,
+  }
+  const metadataRow = {
+    id: workspaceId,
+    workspaceId,
+    emojis: finalBootstrap.emojis,
+    emojiWeights: finalBootstrap.emojiWeights,
+    commands: finalBootstrap.commands,
+    configuredToolCategories: finalBootstrap.configuredToolCategories,
+    featureFlags: finalBootstrap.featureFlags,
+    _cachedAt: now,
+  }
+
+  let mergedWorkspace: CachedWorkspace = workspaceRow
+  let mergedUsers: CachedWorkspaceUser[] = userRows
+  let mergedStreams: CachedStream[] = streamRows
+  let mergedMemberships: CachedStreamMembership[] = membershipRows
+  let mergedDmPeers: CachedDmPeer[] = dmPeerRows
+  let mergedPersonas: CachedPersona[] = personaRows
+  let mergedBots: CachedBot[] = botRows
+  let mergedLabels: CachedLabel[] = labelRows
+  let mergedLabelAssignments: CachedLabelAssignment[] = labelAssignmentRows
 
   await db.transaction(
     "rw",
@@ -2802,91 +2990,147 @@ export async function applyReconnectBootstrapBatch(
       db.slots,
     ],
     async () => {
+      const [
+        existingWorkspace,
+        existingUsers,
+        existingStreams,
+        existingMemberships,
+        existingReadStates,
+        existingDmPeers,
+        existingPersonas,
+        existingBots,
+        existingLabels,
+        existingLabelAssignments,
+        existingUnread,
+        existingMetadata,
+      ] = diffEnabled
+        ? await Promise.all([
+            db.workspaces.get(workspaceId),
+            db.workspaceUsers.where("workspaceId").equals(workspaceId).toArray(),
+            db.streams.where("workspaceId").equals(workspaceId).toArray(),
+            db.streamMemberships.where("workspaceId").equals(workspaceId).toArray(),
+            db.streamReadState.where("workspaceId").equals(workspaceId).toArray(),
+            db.dmPeers.where("workspaceId").equals(workspaceId).toArray(),
+            db.personas.where("workspaceId").equals(workspaceId).toArray(),
+            db.bots.where("workspaceId").equals(workspaceId).toArray(),
+            db.labels.where("workspaceId").equals(workspaceId).toArray(),
+            db.labelAssignments.where("workspaceId").equals(workspaceId).toArray(),
+            db.unreadState.get(workspaceId),
+            db.workspaceMetadata.get(workspaceId),
+          ])
+        : [undefined, [], [], [], [], [], [], [], [], [], undefined, undefined]
+
+      const stopDiff = capture.time("bootstrap.diff")
+      const workspaceDiff = diffEnabled
+        ? diffSingleton(existingWorkspace, workspaceRow)
+        : { write: true, merged: workspaceRow }
+      const usersDiff = diffEnabled ? diffRows(byId(existingUsers), userRows) : writeAllRows(userRows)
+      const streamsDiff = diffEnabled ? diffRows(byId(existingStreams), streamRows) : writeAllRows(streamRows)
+      const membershipsDiff = diffEnabled
+        ? diffRows(byId(existingMemberships), membershipRows)
+        : writeAllRows(membershipRows)
+      const readStatesDiff = diffEnabled
+        ? diffRows(byId(existingReadStates), readStateRows)
+        : writeAllRows(readStateRows)
+      const dmPeersDiff = diffEnabled ? diffRows(byId(existingDmPeers), dmPeerRows) : writeAllRows(dmPeerRows)
+      const personasDiff = diffEnabled ? diffRows(byId(existingPersonas), personaRows) : writeAllRows(personaRows)
+      const botsDiff = diffEnabled ? diffRows(byId(existingBots), botRows) : writeAllRows(botRows)
+      const labelsDiff = diffEnabled ? diffRows(byId(existingLabels), labelRows) : writeAllRows(labelRows)
+      const labelAssignmentsDiff = diffEnabled
+        ? diffRows(byId(existingLabelAssignments), labelAssignmentRows)
+        : writeAllRows(labelAssignmentRows)
+      const unreadDiff = diffEnabled ? diffSingleton(existingUnread, unreadRow) : { write: true, merged: unreadRow }
+      const metadataDiff = diffEnabled
+        ? diffSingleton(existingMetadata, metadataRow)
+        : { write: true, merged: metadataRow }
+      stopDiff()
+
+      mergedWorkspace = workspaceDiff.merged
+      mergedUsers = usersDiff.merged
+      mergedStreams = streamsDiff.merged
+      mergedMemberships = membershipsDiff.merged
+      mergedDmPeers = dmPeersDiff.merged
+      mergedPersonas = personasDiff.merged
+      mergedBots = botsDiff.merged
+      mergedLabels = labelsDiff.merged
+      mergedLabelAssignments = labelAssignmentsDiff.merged
+      recordSkippedRowConfirmations(workspaceId, "streams", streamsDiff, now)
+      recordSkippedRowConfirmations(workspaceId, "streamMemberships", membershipsDiff, now)
+      recordSkippedRowConfirmations(workspaceId, "streamReadState", readStatesDiff, now)
+      rowsSkipped +=
+        usersDiff.skipped +
+        streamsDiff.skipped +
+        membershipsDiff.skipped +
+        readStatesDiff.skipped +
+        dmPeersDiff.skipped +
+        personasDiff.skipped +
+        botsDiff.skipped +
+        labelsDiff.skipped +
+        labelAssignmentsDiff.skipped +
+        (workspaceDiff.write ? 0 : 1) +
+        (unreadDiff.write ? 0 : 1) +
+        (metadataDiff.write ? 0 : 1)
+      rowsWritten +=
+        usersDiff.toWrite.length +
+        streamsDiff.toWrite.length +
+        membershipsDiff.toWrite.length +
+        readStatesDiff.toWrite.length +
+        dmPeersDiff.toWrite.length +
+        personasDiff.toWrite.length +
+        botsDiff.toWrite.length +
+        labelsDiff.toWrite.length +
+        labelAssignmentsDiff.toWrite.length +
+        (workspaceDiff.write ? 1 : 0) +
+        (unreadDiff.write ? 1 : 0) +
+        (metadataDiff.write ? 1 : 0)
+
       await Promise.all([
-        db.workspaces.put({ ...finalBootstrap.workspace, _cachedAt: now }),
-        db.workspaceUsers.bulkPut(finalBootstrap.users.map((user) => ({ ...user, _cachedAt: now }))),
-        db.streams.bulkPut(
-          finalBootstrap.streams.map((stream) => {
-            const membership = membershipByStream.get(stream.id)
-            const local = localStreams.find((s) => s.id === stream.id)
-            return {
-              ...stream,
-              notificationLevel: membership?.notificationLevel,
-              // Preserve fields workspace-bootstrap doesn't carry but
-              // stream-bootstrap mirrors locally (`contextBag` is the
-              // canonical example — see `applyStreamBootstrap`).
-              contextBag: local?.contextBag,
-              _cachedAt: now,
-            }
-          })
-        ),
-        // Persist archived roots on reconnect too (mirrors applyWorkspaceBootstrap).
-        db.streams.bulkPut(
-          mapArchivedStreamRows(finalBootstrap.archivedStreams ?? [], new Map(localStreams.map((s) => [s.id, s])), now)
-        ),
-        db.streamMemberships.bulkPut(
-          finalBootstrap.streamMemberships.map((membership) => ({
-            ...membership,
-            id: `${workspaceId}:${membership.streamId}`,
-            workspaceId,
-            _cachedAt: now,
-          }))
-        ),
-        db.streamReadState.bulkPut(toCachedReadStates(workspaceId, finalBootstrap.streamReadState, now)),
-        db.dmPeers.bulkPut(
-          finalBootstrap.dmPeers.map((dmPeer) => ({
-            ...dmPeer,
-            id: `${workspaceId}:${dmPeer.streamId}`,
-            workspaceId,
-            _cachedAt: now,
-          }))
-        ),
-        db.personas.bulkPut(finalBootstrap.personas.map((persona) => ({ ...persona, workspaceId, _cachedAt: now }))),
-        db.bots.bulkPut(finalBootstrap.bots.map((bot) => ({ ...bot, workspaceId, _cachedAt: now }))),
-        db.labels.bulkPut(finalBootstrap.labels.map((label) => ({ ...label, _cachedAt: now }))),
-        db.labelAssignments.bulkPut(finalBootstrap.labelAssignments.map(assignmentToCached)),
-        db.unreadState.put({
-          id: workspaceId,
-          workspaceId,
-          unreadCounts: finalBootstrap.unreadCounts,
-          ...bootstrapActivityCacheFields(finalBootstrap),
-          latestOrdinals: finalBootstrap.messageCounts,
-          readMessageIds: finalBootstrap.readMessageIds,
-          mutedStreamIds: finalBootstrap.mutedStreamIds,
-          counterTouchedAt: pruneCounterTouches(localUnreadState?.counterTouchedAt, fetchStartedAt),
-          mutedTouchedAt: pruneCounterTouches(localUnreadState?.mutedTouchedAt, fetchStartedAt),
-          _cachedAt: now,
-        }),
-        db.workspaceMetadata.put({
-          id: workspaceId,
-          workspaceId,
-          emojis: finalBootstrap.emojis,
-          emojiWeights: finalBootstrap.emojiWeights,
-          commands: finalBootstrap.commands,
-          configuredToolCategories: finalBootstrap.configuredToolCategories,
-          featureFlags: finalBootstrap.featureFlags,
-          _cachedAt: now,
-        }),
+        workspaceDiff.write ? db.workspaces.put(workspaceRow) : Promise.resolve(),
+        usersDiff.toWrite.length > 0 ? db.workspaceUsers.bulkPut(usersDiff.toWrite) : Promise.resolve(),
+        streamsDiff.toWrite.length > 0 ? db.streams.bulkPut(streamsDiff.toWrite) : Promise.resolve(),
+        membershipsDiff.toWrite.length > 0 ? db.streamMemberships.bulkPut(membershipsDiff.toWrite) : Promise.resolve(),
+        readStatesDiff.toWrite.length > 0 ? db.streamReadState.bulkPut(readStatesDiff.toWrite) : Promise.resolve(),
+        dmPeersDiff.toWrite.length > 0 ? db.dmPeers.bulkPut(dmPeersDiff.toWrite) : Promise.resolve(),
+        personasDiff.toWrite.length > 0 ? db.personas.bulkPut(personasDiff.toWrite) : Promise.resolve(),
+        botsDiff.toWrite.length > 0 ? db.bots.bulkPut(botsDiff.toWrite) : Promise.resolve(),
+        labelsDiff.toWrite.length > 0 ? db.labels.bulkPut(labelsDiff.toWrite) : Promise.resolve(),
+        labelAssignmentsDiff.toWrite.length > 0
+          ? db.labelAssignments.bulkPut(labelAssignmentsDiff.toWrite)
+          : Promise.resolve(),
+        unreadDiff.write ? db.unreadState.put(unreadRow) : Promise.resolve(),
+        metadataDiff.write ? db.workspaceMetadata.put(metadataRow) : Promise.resolve(),
       ])
 
       const existingUserPreferences = await db.userPreferences.get(workspaceId)
       if (!existingUserPreferences || !fetchStartedAt || existingUserPreferences._cachedAt < fetchStartedAt) {
-        await db.userPreferences.put({
+        const prefsRow = {
           ...finalBootstrap.userPreferences,
           id: workspaceId,
           workspaceId,
           _cachedAt: now,
-        })
+        }
+        if (!diffEnabled || !existingUserPreferences || !semanticEqual(existingUserPreferences, prefsRow)) {
+          rowsWritten += 1
+          await db.userPreferences.put(prefsRow)
+        } else {
+          rowsSkipped += 1
+        }
       }
 
       const existingSidebarConfig = await db.sidebarConfigs.get(workspaceId)
       if (!existingSidebarConfig || !fetchStartedAt || existingSidebarConfig._cachedAt < fetchStartedAt) {
-        await db.sidebarConfigs.put({
+        const sidebarRow = {
           id: workspaceId,
           workspaceId,
           config: finalBootstrap.sidebarConfig,
           _cachedAt: now,
-        })
+        }
+        if (!diffEnabled || !existingSidebarConfig || !semanticEqual(existingSidebarConfig, sidebarRow)) {
+          rowsWritten += 1
+          await db.sidebarConfigs.put(sidebarRow)
+        } else {
+          rowsSkipped += 1
+        }
       } else {
         effectiveSidebarConfig = existingSidebarConfig.config
       }
@@ -2911,36 +3155,21 @@ export async function applyReconnectBootstrapBatch(
     }
   )
 
+  capture.mark("bootstrap.rowsWritten", rowsWritten)
+  capture.mark("bootstrap.rowsSkipped", rowsSkipped)
+
   if (fetchStartedAt !== undefined) {
     await cleanupStaleEntities(workspaceId, finalBootstrap, fetchStartedAt)
   }
 
   seedWorkspaceCache(workspaceId, {
-    workspace: { ...finalBootstrap.workspace, _cachedAt: now },
-    users: finalBootstrap.users.map((user) => ({ ...user, _cachedAt: now })),
-    streams: [
-      ...finalBootstrap.streams.map((stream) => ({
-        ...stream,
-        notificationLevel: membershipByStream.get(stream.id)?.notificationLevel,
-        _cachedAt: now,
-      })),
-      // Mirrors applyWorkspaceBootstrap: archived roots ride the seed so the
-      // first paint after reconnect knows they're archived (no draft flash).
-      // An archived stream open during reconnect can also land in the merged
-      // streams list via its per-stream bootstrap — skip those ids so the seed
-      // never carries duplicates.
-      ...mapArchivedStreamRows(
-        (finalBootstrap.archivedStreams ?? []).filter((s) => !finalBootstrap.streams.some((a) => a.id === s.id)),
-        new Map(localStreams.map((s) => [s.id, s])),
-        now
-      ),
-    ],
-    memberships: finalBootstrap.streamMemberships.map((membership) => ({
-      ...membership,
-      id: `${workspaceId}:${membership.streamId}`,
-      workspaceId,
-      _cachedAt: now,
-    })),
+    workspace: mergedWorkspace,
+    users: mergedUsers,
+    // Archived roots ride the seed (mirrors applyWorkspaceBootstrap) so the
+    // first paint after reconnect knows they're archived (no draft flash) —
+    // they are already deduped into the merged streams list.
+    streams: mergedStreams,
+    memberships: mergedMemberships,
     // A present map seeds IDB's effective contents: the merged map's rows win
     // per stream, but local rows the member-only map omits (nonmember thread
     // lazy state) stay seeded — the apply upserts, it never sweeps. Terminal
@@ -2952,16 +3181,11 @@ export async function applyReconnectBootstrapBatch(
           toCachedReadStates(workspaceId, finalBootstrap.streamReadState, now)
         )
       : undefined,
-    dmPeers: finalBootstrap.dmPeers.map((dmPeer) => ({
-      ...dmPeer,
-      id: `${workspaceId}:${dmPeer.streamId}`,
-      workspaceId,
-      _cachedAt: now,
-    })),
-    personas: finalBootstrap.personas.map((persona) => ({ ...persona, workspaceId, _cachedAt: now })),
-    bots: finalBootstrap.bots.map((bot) => ({ ...bot, workspaceId, _cachedAt: now })),
-    labels: finalBootstrap.labels.map((label) => ({ ...label, _cachedAt: now })),
-    labelAssignments: finalBootstrap.labelAssignments.map(assignmentToCached),
+    dmPeers: mergedDmPeers,
+    personas: mergedPersonas,
+    bots: mergedBots,
+    labels: mergedLabels,
+    labelAssignments: mergedLabelAssignments,
     unreadState: {
       id: workspaceId,
       workspaceId,
@@ -3012,6 +3236,12 @@ export async function applyReconnectBootstrapBatch(
   return { workspaceBootstrap: finalBootstrap, streamBootstraps }
 }
 
+// Every keep-set below derives from the BOOTSTRAP PAYLOAD, never from the set of
+// rows the apply actually wrote. Under `bootstrapDiff` a row present in the
+// payload can be skipped and keep an old `_cachedAt` — narrowing these sets to
+// "the ids we wrote" would sweep exactly those rows. Presence in the payload is
+// the protection; `_cachedAt >= now` only shields rows the payload never
+// enumerated (concurrent socket writes during the fetch window).
 async function cleanupStaleEntities(workspaceId: string, bootstrap: WorkspaceBootstrap, now: number): Promise<void> {
   // Archived roots ride in bootstrap.archivedStreams (absent from .streams);
   // keep them so the absence-sweep doesn't delete rows every consumer still
