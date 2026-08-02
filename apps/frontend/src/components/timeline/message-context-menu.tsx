@@ -24,10 +24,19 @@ import {
 
 interface MessageContextMenuProps {
   context: MessageActionContext
+  /** Drive the menu from outside (the ledger row opens it on right-click).
+   *  Omitted ⇒ the trigger owns the state, as every existing caller expects. */
+  open?: boolean
+  onOpenChange?: (open: boolean) => void
 }
 
-export function MessageContextMenu({ context }: MessageContextMenuProps) {
-  const [open, setOpen] = useState(false)
+export function MessageContextMenu({ context, open: openProp, onOpenChange }: MessageContextMenuProps) {
+  const [uncontrolledOpen, setUncontrolledOpen] = useState(false)
+  const open = openProp ?? uncontrolledOpen
+  const setOpen = (next: boolean) => {
+    setUncontrolledOpen(next)
+    onOpenChange?.(next)
+  }
   const actions = getVisibleActions(context)
   const groupedActions = useMemo(() => groupVisibleActions(actions), [actions])
 

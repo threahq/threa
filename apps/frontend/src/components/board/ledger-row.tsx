@@ -1,0 +1,524 @@
+import { useCallback, useMemo, useRef, useState, type MouseEvent, type ReactNode } from "react"
+import { useNavigate } from "react-router-dom"
+import { toast } from "sonner"
+import { ChevronUp, ChevronRight, Paperclip, Link2 } from "lucide-react"
+import { LabelableResourceTypes, LinkPreviewContentTypes } from "@threa/types"
+import { MessageItem, type RenderableMessage } from "@/components/message/message-item"
+import { actorRowTheme } from "@/components/message/actor-row-theme"
+import { MessageContextMenu } from "@/components/timeline/message-context-menu"
+import { MessageActionDrawer } from "@/components/timeline/message-action-drawer"
+import { MessageHistoryDialog } from "@/components/timeline/message-history-dialog"
+import { isGalleryPreviewableAttachment } from "@/components/timeline/attachment-list"
+import { ReactionEmojiPicker } from "@/components/timeline/reaction-emoji-picker"
+import { ReminderPickerSheet } from "@/components/timeline/reminder-picker-sheet"
+import type { MessageActionContext } from "@/components/timeline/message-actions"
+import { LabelPicker } from "@/components/labels/label-picker"
+import { useMediaGallery } from "@/contexts"
+import { useFormattedDate } from "@/hooks/use-formatted-date"
+import { useLongPress } from "@/hooks/use-long-press"
+import { useWorkspaceEmoji } from "@/hooks/use-workspace-emoji"
+import { useTouchCapable } from "@/hooks/use-touch-capable"
+import { useMessageReactions, stripColons, reactionShortcodes } from "@/hooks/use-message-reactions"
+import { useSavedForMessage, useSaveMessage, useDeleteSaved } from "@/hooks/use-saved"
+import { useSettleConversationMessage } from "@/hooks/use-conversations"
+import { leadLine, rowArtifacts } from "@/lib/board/ledger"
+import { resolveInternalAppPath } from "@/lib/internal-url"
+import { getInitials } from "@/lib/initials"
+import { cn } from "@/lib/utils"
+
+const TOMBSTONE_LEAD = "This message was deleted"
+const EMPTY_LEAD = "(no text)"
+
+interface LedgerRowProps {
+  workspaceId: string
+  streamId: string
+  message: RenderableMessage
+  authorName: string
+  currentUserId: string | null
+  expanded: boolean
+  onToggle: () => void
+  /** Tints the row's left rail — the reader hasn't seen this one yet. */
+  unread?: boolean
+  /** Lead-line budget in characters (the user's ledger density preference). */
+  leadLineLength: number
+  conversationId: string
+  conversationRootStreamId: string
+  onNewSubtopic?: () => void
+  onMoveToSubtopic?: () => void
+  /** Nested-branch placement: the row indents and drops its own left rail width. */
+  indent?: "branch"
+}
+
+/**
+ * One ledger line: a message compressed to a single row — actor glyph, lead
+ * line, artifact chips, time — that expands in place into the full
+ * {@link MessageItem} (same body, same action surface, same reactions). The
+ * collapsed row keeps the message's action surface through the SAME components
+ * the timeline and card rows use (`MessageContextMenu` / `MessageActionDrawer`
+ * over one `MessageActionContext`), so nothing is a ledger-only affordance.
+ *
+ * Expansion grows downward only — the header strip occupies the collapsed row's
+ * own line — so nothing above the row moves (INV-21).
+ */
+export function LedgerRow({
+  workspaceId,
+  streamId,
+  message,
+  authorName,
+  currentUserId,
+  expanded,
+  onToggle,
+  unread,
+  leadLineLength,
+  conversationId,
+  conversationRootStreamId,
+  onNewSubtopic,
+  onMoveToSubtopic,
+  indent,
+}: LedgerRowProps) {
+  const { formatTime, formatFull } = useFormattedDate()
+  const { openMedia } = useMediaGallery()
+  const touchCapable = useTouchCapable()
+  const [drawerOpen, setDrawerOpen] = useState(false)
+  const [menuOpen, setMenuOpen] = useState(false)
+  const [labelPickerOpen, setLabelPickerOpen] = useState(false)
+  const [reminderSheetOpen, setReminderSheetOpen] = useState(false)
+  const [pickerOpen, setPickerOpen] = useState(false)
+  const [historyOpen, setHistoryOpen] = useState(false)
+
+  const theme = actorRowTheme(message.authorType)
+  const tombstone = Boolean(message.deletedAt)
+  const sentAt = useMemo(() => new Date(message.createdAt), [message.createdAt])
+  const artifacts = rowArtifacts(message)
+  // The URL behind `firstLinkLabel`. `rowArtifacts` returns the label only, so
+  // the preview is re-selected here with its own predicate — keep the two in
+  // step if the selection ever changes.
+  const linkPreview = artifacts.firstLinkLabel
+    ? (message.linkPreviews ?? []).find((p) => p.contentType !== LinkPreviewContentTypes.STREAM_LINK)
+    : undefined
+  const firstAttachment = message.attachments?.[0] ?? null
+  const settling = Boolean(message.settling) && !tombstone
+
+  const { toEmoji } = useWorkspaceEmoji(workspaceId)
+  const lead = tombstone ? TOMBSTONE_LEAD : ledgerLead(message.contentMarkdown, leadLineLength, artifacts, toEmoji)
+
+  // The whole collapsed row is one <button> (tap = expand, Enter/Space = expand),
+  // so deferring to interactive descendants would kill long-press everywhere on
+  // the row. Defer to real links only — the link chip keeps the browser's native
+  // "Copy link" menu — and swallow the synthetic click that follows the hold so
+  // the drawer doesn't also expand the row.
+  const suppressToggleRef = useRef(false)
+  const openDrawer = useCallback(() => {
+    suppressToggleRef.current = true
+    setDrawerOpen(true)
+  }, [])
+  const longPress = useLongPress({
+    onLongPress: openDrawer,
+    enabled: touchCapable && !tombstone,
+    deferToNativeLinks: true,
+  })
+  const handleToggle = useCallback(() => {
+    if (suppressToggleRef.current) {
+      suppressToggleRef.current = false
+      return
+    }
+    onToggle()
+  }, [onToggle])
+
+  // Reactions, save, reminder and label are the collapsed row's own state; every
+  // other entry the menu shows is derived from the context below, exactly as on
+  // the full row.
+  const { toggleByEmoji } = useMessageReactions(workspaceId, message.id)
+  const handleAddReaction = useCallback(
+    (emoji: string) => toggleByEmoji(emoji, message.reactions, currentUserId),
+    [toggleByEmoji, message.reactions, currentUserId]
+  )
+  const activeReactionShortcodes = useMemo(() => {
+    if (!currentUserId) return new Set<string>()
+    const active = new Set<string>()
+    for (const [shortcode, userIds] of Object.entries(message.reactions)) {
+      if (userIds.includes(currentUserId)) active.add(stripColons(shortcode))
+    }
+    return active
+  }, [currentUserId, message.reactions])
+  const allReactionShortcodes = useMemo(() => reactionShortcodes(message.reactions), [message.reactions])
+
+  const savedForMessage = useSavedForMessage(workspaceId, message.id)
+  const saveMessageMutation = useSaveMessage(workspaceId)
+  const unsaveMessageMutation = useDeleteSaved(workspaceId)
+  const isSaved = !!savedForMessage && savedForMessage.status === "saved"
+  const handleToggleSave = useCallback(() => {
+    if (saveMessageMutation.isPending || unsaveMessageMutation.isPending) return
+    if (!savedForMessage || savedForMessage.status !== "saved") {
+      saveMessageMutation.mutate(
+        { messageId: message.id, conversationId },
+        { onError: () => toast.error("Could not save message") }
+      )
+      return
+    }
+    unsaveMessageMutation.mutate(savedForMessage.id, { onError: () => toast.error("Could not remove saved item") })
+  }, [savedForMessage, saveMessageMutation, unsaveMessageMutation, message.id, conversationId])
+
+  // The settling pair, exactly as the full row derives it: wired only while the
+  // row is still settling, and "Not this topic…" reuses the move picker rather
+  // than adding a second entry for the same dialog (INV-35).
+  const settleMessage = useSettleConversationMessage(workspaceId, conversationRootStreamId)
+  const isSettling = Boolean(message.settling && conversationId)
+  const handleKeepInConversation = useCallback(() => {
+    if (settleMessage.isPending) return
+    settleMessage.mutate(
+      { messageId: message.id, conversationId },
+      { onError: () => toast.error("Couldn't confirm the message. Please try again.") }
+    )
+  }, [settleMessage, conversationId, message.id])
+
+  const menuContext: MessageActionContext = {
+    contentMarkdown: message.contentMarkdown,
+    actorType: message.authorType,
+    authorId: message.authorId,
+    currentUserId: currentUserId ?? undefined,
+    isThreadParent: true,
+    replyUrl: "",
+    messageId: message.id,
+    workspaceId,
+    streamId,
+    conversationId,
+    reactions: message.reactions,
+    editedAt: message.editedAt ?? undefined,
+    // Defer so the closing menu/drawer doesn't fight the dialog open (as MessageItem).
+    onShowHistory: () => setTimeout(() => setHistoryOpen(true), 0),
+    onReact: handleAddReaction,
+    onOpenFullPicker: () => setPickerOpen(true),
+    isSaved,
+    onToggleSave: handleToggleSave,
+    onRequestReminder: () => setReminderSheetOpen(true),
+    onLabelMessage: () => setLabelPickerOpen(true),
+    onNewSubtopic,
+    onMoveToSubtopic: isSettling ? undefined : onMoveToSubtopic,
+    onKeepInConversation: isSettling ? handleKeepInConversation : undefined,
+    onNotThisTopic: isSettling ? onMoveToSubtopic : undefined,
+  }
+
+  const overlays = tombstone ? null : (
+    <>
+      {touchCapable && (
+        <MessageActionDrawer
+          open={drawerOpen}
+          onOpenChange={setDrawerOpen}
+          context={menuContext}
+          authorName={authorName}
+        />
+      )}
+      {labelPickerOpen && (
+        <LabelPicker
+          workspaceId={workspaceId}
+          resourceType={LabelableResourceTypes.MESSAGE}
+          resourceId={message.id}
+          open={labelPickerOpen}
+          onOpenChange={setLabelPickerOpen}
+        />
+      )}
+      {reminderSheetOpen && (
+        <ReminderPickerSheet
+          open={reminderSheetOpen}
+          onOpenChange={setReminderSheetOpen}
+          workspaceId={workspaceId}
+          messageId={message.id}
+          conversationId={conversationId}
+          saved={savedForMessage ?? null}
+        />
+      )}
+      {historyOpen && (
+        <MessageHistoryDialog
+          open={historyOpen}
+          onOpenChange={setHistoryOpen}
+          messageId={message.id}
+          workspaceId={workspaceId}
+          messageCreatedAt={String(message.createdAt)}
+          currentContent={{
+            contentMarkdown: message.contentMarkdown,
+            editedAt: message.editedAt ?? undefined,
+          }}
+        />
+      )}
+      {pickerOpen && (
+        <ReactionEmojiPicker
+          workspaceId={workspaceId}
+          onSelect={handleAddReaction}
+          activeShortcodes={activeReactionShortcodes}
+          allReactionShortcodes={allReactionShortcodes}
+          open={pickerOpen}
+          onOpenChange={setPickerOpen}
+        />
+      )}
+    </>
+  )
+
+  const railClassName = cn(
+    "border-l-2 pl-2",
+    unread ? "border-destructive/70" : "border-muted-foreground/20",
+    indent === "branch" && "ml-3"
+  )
+
+  const glyph = (
+    <span
+      aria-hidden
+      className={cn(
+        "grid size-4 shrink-0 place-items-center rounded-full bg-muted text-[9px] font-semibold",
+        theme.nameClassName
+      )}
+    >
+      {getInitials(authorName).slice(0, 1)}
+    </span>
+  )
+
+  const time = (
+    <span className="shrink-0 font-mono text-[10px] tabular-nums text-muted-foreground/70" title={formatFull(sentAt)}>
+      {formatTime(sentAt)}
+    </span>
+  )
+
+  if (expanded) {
+    return (
+      <div className={railClassName}>
+        {/* Minimize strip: the collapsed row's own line, so the body grows below
+            it and nothing above the row moves (INV-21). */}
+        <div className="flex items-center gap-2 py-0.5">
+          {glyph}
+          {time}
+          <button
+            type="button"
+            onClick={onToggle}
+            aria-label="Collapse message"
+            className="ml-auto shrink-0 rounded p-0.5 text-muted-foreground transition-colors hover:text-foreground"
+          >
+            <ChevronUp className="size-3.5" />
+          </button>
+        </div>
+        <MessageItem
+          workspaceId={workspaceId}
+          streamId={streamId}
+          message={message}
+          authorName={authorName}
+          currentUserId={currentUserId}
+          conversationId={conversationId}
+          conversationRootStreamId={conversationRootStreamId}
+          onNewSubtopic={onNewSubtopic}
+          onMoveToSubtopic={onMoveToSubtopic}
+        />
+      </div>
+    )
+  }
+
+  return (
+    <div
+      data-ledger-row=""
+      data-message-id={message.id}
+      data-settling={settling ? "" : undefined}
+      className={cn(
+        "reveal-host group relative flex items-center gap-2 py-0.5 transition-opacity duration-300",
+        railClassName,
+        // Provisional placement wears the same texture as the full row: muted
+        // content plus the always-mounted dashed rail below (INV-21).
+        settling && "opacity-70"
+      )}
+      onContextMenu={
+        tombstone
+          ? undefined
+          : (e) => {
+              if (touchCapable) {
+                longPress.handlers.onContextMenu(e)
+                return
+              }
+              e.preventDefault()
+              setMenuOpen(true)
+            }
+      }
+      {...(touchCapable && !tombstone
+        ? {
+            onTouchStart: longPress.handlers.onTouchStart,
+            onTouchMove: longPress.handlers.onTouchMove,
+            onTouchEnd: longPress.handlers.onTouchEnd,
+            onTouchCancel: longPress.handlers.onTouchCancel,
+          }
+        : {})}
+    >
+      <div
+        aria-hidden
+        className={cn(
+          "pointer-events-none absolute inset-y-0 left-0 w-0 border-l-[2px] border-dashed transition-colors duration-300",
+          settling ? "border-muted-foreground/40" : "border-transparent"
+        )}
+      />
+      {settling && <span className="sr-only">Still settling — this message may move to another topic</span>}
+      {tombstone ? (
+        <div className="flex min-w-0 flex-1 items-center gap-2">
+          {glyph}
+          <span className="min-w-0 flex-1 truncate text-xs italic text-muted-foreground">{lead}</span>
+        </div>
+      ) : (
+        // Text only — the chips beside it are their own controls, so the row's
+        // expand button never nests an interactive element.
+        <button
+          type="button"
+          onClick={handleToggle}
+          aria-expanded={false}
+          className="flex min-w-0 flex-1 items-center gap-2 rounded text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          {glyph}
+          <span className="sr-only">{authorName}: </span>
+          <span className="min-w-0 flex-1 truncate text-xs text-foreground/85">{lead}</span>
+        </button>
+      )}
+      {!tombstone && artifacts.attachmentCount > 0 && firstAttachment && (
+        <button
+          type="button"
+          onClick={() => {
+            // The gallery lives in the expanded row's `AttachmentList` (the one
+            // attachment-open path); expanding is what mounts it. A file the
+            // gallery can't open (a zip, an installer) only expands — writing
+            // `?media=` for it would leave a param nothing claims, which breaks
+            // the NEXT gallery open's history.
+            handleToggle()
+            if (isGalleryPreviewableAttachment(firstAttachment)) openMedia(firstAttachment.id)
+          }}
+          aria-label={`Open ${artifacts.attachmentCount} attachment${artifacts.attachmentCount === 1 ? "" : "s"}`}
+          className="flex shrink-0 items-center gap-0.5 rounded px-1 text-[10px] text-muted-foreground transition-colors hover:text-foreground"
+        >
+          <Paperclip className="size-3" />
+          {artifacts.attachmentCount}
+        </button>
+      )}
+      {!tombstone && linkPreview && artifacts.firstLinkLabel && (
+        <LedgerLinkChip url={linkPreview.url} label={artifacts.firstLinkLabel} />
+      )}
+      {time}
+      {!tombstone && (
+        <div className="reveal-actions-hover-only hidden shrink-0 sm:block">
+          <MessageContextMenu context={menuContext} open={menuOpen} onOpenChange={setMenuOpen} />
+        </div>
+      )}
+      {overlays}
+    </div>
+  )
+}
+
+/** The collapsed lead, with the artifact-only and empty fallbacks. */
+function ledgerLead(
+  contentMarkdown: string,
+  leadLineLength: number,
+  artifacts: { attachmentCount: number },
+  toEmoji?: (shortcode: string) => string | null
+): string {
+  const lead = leadLine(contentMarkdown, leadLineLength, toEmoji)
+  if (lead) return lead
+  if (artifacts.attachmentCount > 0) return `📎 ${artifacts.attachmentCount}`
+  return EMPTY_LEAD
+}
+
+/**
+ * The link artifact chip — a real anchor (so middle-click/copy-link work), with
+ * same-origin targets routed through the router instead of a full page load
+ * (the shared `resolveInternalAppPath` path).
+ */
+function LedgerLinkChip({ url, label }: { url: string; label: string }) {
+  const navigate = useNavigate()
+  const internalPath = resolveInternalAppPath(url)
+  return (
+    <a
+      href={internalPath ?? url}
+      {...(internalPath
+        ? {
+            onClick: (e: MouseEvent<HTMLAnchorElement>) => {
+              if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return
+              e.preventDefault()
+              navigate(internalPath)
+            },
+          }
+        : { target: "_blank", rel: "noreferrer" })}
+      className="flex max-w-[10rem] shrink-0 items-center gap-0.5 rounded px-1 text-[10px] text-muted-foreground no-underline transition-colors hover:text-foreground"
+    >
+      <Link2 className="size-3 shrink-0" />
+      <span className="truncate">{label}</span>
+    </a>
+  )
+}
+
+/**
+ * A non-message ledger line (agent session, memo capture, call…): hair-thin,
+ * muted, tighter than a message row so the eye skips it unless it's looking.
+ * Purely presentational — the surface supplies the icon, label and meta.
+ */
+export function LedgerEventRow({
+  icon,
+  label,
+  meta,
+  onToggle,
+  expanded,
+}: {
+  icon: ReactNode
+  label: string
+  meta?: string
+  onToggle?: () => void
+  expanded?: boolean
+}) {
+  const content = (
+    <>
+      <span aria-hidden className="flex size-3 shrink-0 items-center justify-center">
+        {icon}
+      </span>
+      <span className="min-w-0 truncate">{label}</span>
+      {meta && <span className="shrink-0 text-muted-foreground/70">· {meta}</span>}
+    </>
+  )
+  const className = "flex w-full items-center gap-1.5 py-px text-left text-xs text-muted-foreground"
+  if (!onToggle) return <div className={className}>{content}</div>
+  return (
+    <button type="button" onClick={onToggle} aria-expanded={expanded ?? false} className={className}>
+      {content}
+    </button>
+  )
+}
+
+export interface LedgerEventDescriptor {
+  key: string
+  icon: ReactNode
+  label: string
+  meta?: string
+}
+
+/**
+ * A coalesced run of events (the `coalesceLedgerItems` grouping): one thin
+ * summary row that expands in place into the individual rows and re-coalesces
+ * on a second tap.
+ */
+export function LedgerEventGroup({ events }: { events: LedgerEventDescriptor[] }) {
+  const [expanded, setExpanded] = useState(false)
+  const toggle = useCallback(() => setExpanded((e) => !e), [])
+  if (expanded) {
+    return (
+      <div>
+        {events.map((event) => (
+          <LedgerEventRow
+            key={event.key}
+            icon={event.icon}
+            label={event.label}
+            meta={event.meta}
+            // Any of the rows re-coalesces the group — the reader's way back is
+            // wherever their eye landed.
+            onToggle={toggle}
+            expanded
+          />
+        ))}
+      </div>
+    )
+  }
+  return (
+    <LedgerEventRow
+      icon={<ChevronRight className="size-3" />}
+      label={`${events.length} events — ${events.map((e) => e.label).join(" · ")}`}
+      onToggle={toggle}
+      expanded={false}
+    />
+  )
+}

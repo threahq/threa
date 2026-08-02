@@ -602,6 +602,19 @@ function FileAttachment({ attachment, workspaceId, isHighlighted }: AttachmentIt
   )
 }
 
+/**
+ * Whether this attachment is one the gallery below can actually open — the same
+ * classification the lists in {@link AttachmentList} are built from. Collapsed
+ * surfaces (the board ledger row) ask before writing a `?media=` param, so a
+ * non-previewable file falls to the expanded list's download chip instead of
+ * leaving a dead param behind.
+ */
+export function isGalleryPreviewableAttachment(a: AttachmentSummary): boolean {
+  if (a.mimeType.startsWith("image/")) return true
+  if (a.processingStatus) return a.processingStatus !== "failed"
+  return isMarkdownAttachment(a) || isHtmlAttachment(a) || isPdfAttachment(a) || isTextPreviewableAttachment(a)
+}
+
 export function AttachmentList({ attachments, workspaceId, className, deferHydration = false }: AttachmentListProps) {
   const attachmentContext = useAttachmentContext()
   const hoveredAttachmentId = attachmentContext?.hoveredAttachmentId ?? null
