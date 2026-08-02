@@ -75,6 +75,9 @@ import {
  *  so the author's card always surfaces. */
 const SELF_POST_VISIBLE_LENSES = new Set<BoardLens>(["all", "mine"])
 
+/** Stable empty set so a fresh unread session never re-renders on identity alone. */
+const EMPTY_CLEARED_UNREAD: ReadonlySet<string> = new Set()
+
 /** How many leading cards' rails the reveal gate pre-warms before first paint.
  *  Covers the viewport with margin; cards past it mount against already-warm or
  *  fast-resolving rails below the fold, where late resolution can't shift
@@ -237,7 +240,7 @@ function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: Boar
   // Mute-aware: a muted stream reads as "quiet" and must not resurface via the
   // unread filter, the same rule the sidebar's Unread section follows.
   const mutedStreamIds = useBoardMutedStreamIds(workspaceId)
-  const unreadStreamIds = useMemo(() => {
+  const liveUnreadStreamIds = useMemo(() => {
     // Fail OPEN while unhydrated (mirrors matchesTypeScope's pre-field-row
     // fail-open) — the board surfaces the not-yet-filtered feed rather than a
     // false "caught up" empty state.
@@ -248,6 +251,40 @@ function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: Boar
     }
     return ids
   }, [unreadOnly, unreadState, mutedStreamIds])
+  // The unread view's SESSION FLOOR (Kris, 2026-08): what is unread when the
+  // view opens — and anything that becomes unread while it stays open — joins
+  // the view and is never removed by reading it. Otherwise the card the viewer
+  // is reading disappears mid-read, which is exactly what the view is for.
+  // Leaving the view (or switching workspace, which remounts this page) starts a
+  // fresh floor; a card leaves early only through the per-card clear below.
+  const unreadFloorRef = useRef<Set<string>>(new Set())
+  const unreadFloorSnapshotRef = useRef<ReadonlySet<string> | null>(null)
+  const [clearedUnreadIds, setClearedUnreadIds] = useState<ReadonlySet<string>>(EMPTY_CLEARED_UNREAD)
+  const unreadViewRef = useRef(unreadOnly)
+  if (unreadViewRef.current !== unreadOnly) {
+    unreadViewRef.current = unreadOnly
+    unreadFloorRef.current = new Set()
+    unreadFloorSnapshotRef.current = null
+    if (clearedUnreadIds.size > 0) setClearedUnreadIds(EMPTY_CLEARED_UNREAD)
+  }
+  const unreadStreamIds = useMemo(() => {
+    if (liveUnreadStreamIds === null) return null
+    const floor = unreadFloorRef.current
+    let grew = false
+    for (const id of liveUnreadStreamIds) {
+      if (!floor.has(id)) {
+        floor.add(id)
+        grew = true
+      }
+    }
+    // A new identity only when membership actually grew, so a re-derivation
+    // that changes nothing doesn't re-run the whole feed filter.
+    if (grew || unreadFloorSnapshotRef.current === null) unreadFloorSnapshotRef.current = new Set(floor)
+    return unreadFloorSnapshotRef.current
+  }, [liveUnreadStreamIds])
+  const clearUnreadCard = useCallback((conversationId: string) => {
+    setClearedUnreadIds((prev) => new Set(prev).add(conversationId))
+  }, [])
   const scopeKey = useMemo(() => [...scopeStreamIds].sort().join(","), [scopeStreamIds])
   const excludeScopeKey = useMemo(() => [...excludeStreamIds].sort().join(","), [excludeStreamIds])
   const typeKey = useMemo(() => [...scopeStreamTypes].sort().join(","), [scopeStreamTypes])
@@ -278,7 +315,9 @@ function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: Boar
       excludeTypes: excludeStreamTypes.length > 0 ? { key: excludeTypeKey, ids: new Set(excludeStreamTypes) } : null,
       labels: labelStreamIds ? { key: labelKey, streamIds: labelStreamIds } : null,
       excludeLabels: excludeLabelStreamIds ? { key: excludeLabelKey, streamIds: excludeLabelStreamIds } : null,
-      unread: unreadStreamIds ? { key: BOARD_UNREAD_ON, streamIds: unreadStreamIds } : null,
+      unread: unreadStreamIds
+        ? { key: BOARD_UNREAD_ON, streamIds: unreadStreamIds, clearedConversationIds: clearedUnreadIds }
+        : null,
       showArchived,
     }),
     [
@@ -296,6 +335,7 @@ function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: Boar
       excludeLabelKey,
       excludeLabelStreamIds,
       unreadStreamIds,
+      clearedUnreadIds,
       showArchived,
     ]
   )
@@ -694,6 +734,7 @@ function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: Boar
               scrollerRef={scrollerRef}
               listRef={listRef}
               onSeen={() => markCardSeen(row.post.conversation.id)}
+              onClearUnread={unreadOnly ? () => clearUnreadCard(row.post.conversation.id) : undefined}
             />
           </div>
         )
@@ -709,6 +750,8 @@ function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: Boar
       loadMoreLabel,
       workspaceId,
       markCardSeen,
+      unreadOnly,
+      clearUnreadCard,
     ]
   )
 

@@ -567,3 +567,80 @@ describe("BoardPage", () => {
     expect(screen.queryByText("Unseen card body.")).toBeNull()
   })
 })
+
+describe("BoardPage unread view", () => {
+  const UNREAD_ENTRY = `/w/${WORKSPACE_ID}/board?unread=true`
+  let unreadCounts: Record<string, number> = {}
+
+  beforeEach(() => {
+    unreadCounts = { stream_1: 2 }
+    vi.spyOn(workspaceStoreModule, "useWorkspaceUnreadState").mockImplementation(
+      () =>
+        ({
+          workspaceId: WORKSPACE_ID,
+          unreadCounts,
+          mentionCounts: {},
+          messageCounts: {},
+          readMessageIds: {},
+        }) as never
+    )
+  })
+
+  it("keeps a card in the view after it is read — the session floor never drops it", async () => {
+    const { rerenderWith } = mountBoard([makePost()], { entry: UNREAD_ENTRY })
+    expect(await screen.findByText("CC Teams tokens")).toBeTruthy()
+
+    // Reading the card clears its stream's unread…
+    unreadCounts = {}
+    rerenderWith([makePost()])
+
+    // …and the card stays, because reading it is why the viewer is here.
+    expect(screen.getByText("CC Teams tokens")).toBeTruthy()
+  })
+
+  it("drops a card only when the viewer clears it, and writes no read state doing so", async () => {
+    const { rerenderWith } = mountBoard([makePost()], { entry: UNREAD_ENTRY })
+    await screen.findByText("CC Teams tokens")
+
+    act(() => {
+      screen.getByRole("button", { name: "Clear from unread" }).click()
+    })
+    expect(screen.queryByText("CC Teams tokens")).toBeNull()
+
+    // Still unread — clearing is view membership only.
+    expect(unreadCounts).toEqual({ stream_1: 2 })
+    rerenderWith([makePost()])
+    expect(screen.queryByText("CC Teams tokens")).toBeNull()
+  })
+
+  it("starts a fresh floor on each visit to the unread view", async () => {
+    const first = mountBoard([makePost()], { entry: UNREAD_ENTRY })
+    await screen.findByText("CC Teams tokens")
+    first.rerender(<Fragment />)
+
+    // A new visit with nothing unread shows nothing — the floor is per-visit,
+    // never a module-level latch that outlives the page.
+    unreadCounts = {}
+    mountBoard([makePost()], { entry: UNREAD_ENTRY })
+    expect(screen.queryByText("CC Teams tokens")).toBeNull()
+  })
+
+  it("lets a newly-unread conversation join the view behind the pill", async () => {
+    const { rerenderWith } = mountBoard([makePost()], { entry: UNREAD_ENTRY })
+    await screen.findByText("CC Teams tokens")
+
+    unreadCounts = { stream_1: 2, stream_2: 1 }
+    rerenderWith([
+      makePost(),
+      makePost({ id: "conv_2", streamId: "stream_2", topicSummary: "Index migration" }, { id: "msg_9" }),
+    ])
+
+    expect(await screen.findByRole("button", { name: "Show 1 update" })).toBeTruthy()
+  })
+
+  it("offers no clear control outside the unread view", async () => {
+    mountBoard([makePost()])
+    await screen.findByText("CC Teams tokens")
+    expect(screen.queryByRole("button", { name: "Clear from unread" })).toBeNull()
+  })
+})

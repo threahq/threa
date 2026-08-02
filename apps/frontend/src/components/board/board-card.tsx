@@ -2,14 +2,14 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import type { RefObject } from "react"
 import { Link } from "react-router-dom"
 import type { VirtualizerHandle } from "virtua"
-import { ChevronDown, ChevronRight, CircleCheck, PanelRight } from "lucide-react"
+import { Check, ChevronDown, ChevronRight, CircleCheck, PanelRight } from "lucide-react"
 import {
   DEFAULT_BOARD_CARD_COLLAPSE_AT_HEIGHT,
   DEFAULT_BOARD_CARD_COLLAPSE_TO_HEIGHT,
   DEFAULT_BOARD_FULL_TAIL_COUNT,
   DEFAULT_BOARD_LEDGER_ROWS,
   DEFAULT_BOARD_LEAD_LINE_LENGTH,
-  DEFAULT_USER_PREFERENCES,
+  normalizeBoardMassBadge,
 } from "@threa/types"
 import { RelativeTime } from "@/components/relative-time"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
@@ -91,6 +91,13 @@ interface BoardCardProps {
    * explains the state; this only makes the card underneath dead weight.
    */
   removed?: boolean
+  /**
+   * Drop this card from the unread view by hand — passed only while the board
+   * sits on `?unread=true`, where the session floor otherwise keeps every card
+   * until the viewer leaves the view. View membership only: it writes no read
+   * state, so the card's unread rows stay unread.
+   */
+  onClearUnread?: () => void
   /** Fired ONCE, on the card's first intersection with the viewport — "the viewer
    *  has laid eyes on this card in this session". Drives the board's re-buffering:
    *  an unseen card that gains activity goes back behind the "N new" pill. */
@@ -129,6 +136,7 @@ export function BoardCard({
   listRef,
   removed = false,
   onSeen,
+  onClearUnread,
 }: BoardCardProps) {
   const { conversation } = post
   const flash = useBoardFlash(conversation.id)
@@ -568,7 +576,7 @@ export function BoardCard({
   // synced are outside the count and contribute no minutes; only known rows are
   // reported, so the number never outruns what the card can account for.
   const unread = unreadMass(readableRows, unreadCtx)
-  const massBadgeMode = preferences?.boardMassBadge ?? DEFAULT_USER_PREFERENCES.boardMassBadge
+  const massBadgeMode = normalizeBoardMassBadge(preferences?.boardMassBadge)
   // The reply region IS the ledger: the newest `fullTailCount` replies keep the
   // full message row (reactions, actions, settling affordances); everything older
   // that fits in `ledgerRowLimit` renders as a collapsed ledger line, and the mass
@@ -954,25 +962,40 @@ export function BoardCard({
       {cardHasUnread && <span className="h-2 w-2 rounded-full bg-primary" />}
     </span>
   )
-  // How much new reading this card holds — an aggregate, never a "when": the
-  // count (and, per preference, the estimated minutes) of the same effectively
-  // unread rows the leads tint. Display-only. The slot is always in the header
+  // How many new messages this card holds — an aggregate, never a "when": a
+  // count of the same effectively unread rows the leads tint. Display-only. The slot is always in the header
   // (INV-21) so the badge arriving or clearing never restructures it; the pill
   // borrows the sidebar unread badge's visual language, destructive-tinted like
   // the lead tint it summarizes.
-  const massBadgeLabel =
-    massBadgeMode === "count-minutes" ? `${unread.count} new · ~${unread.minutes} min` : `${unread.count} new`
   const massBadge = (
     <span data-mass-badge-slot className="flex shrink-0 items-center">
       {massBadgeMode !== "off" && unread.count > 0 && (
         <span className="inline-flex h-4 items-center rounded-full bg-destructive px-1.5 text-[10px] font-medium whitespace-nowrap text-destructive-foreground">
-          {massBadgeLabel}
+          {unread.count} new
         </span>
       )}
     </span>
   )
   const headerActions = (
     <>
+      {/* Unread view only: leave the card behind on purpose. The result IS the
+          card leaving the view, so no toast (INV-63). */}
+      {onClearUnread && (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8 shrink-0 text-muted-foreground hover:text-foreground"
+              aria-label="Clear from unread"
+              onClick={onClearUnread}
+            >
+              <Check className="h-3.5 w-3.5" />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent side="bottom">Clear from unread</TooltipContent>
+        </Tooltip>
+      )}
       {/* Open the whole conversation in the side panel (Mechanism B) — reads it
           coherently and replies scoped to it, peer to a thread. */}
       <Tooltip>

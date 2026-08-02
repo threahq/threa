@@ -18,6 +18,9 @@ import * as touchCapableModule from "@/hooks/use-touch-capable"
 import * as useMobileModule from "@/hooks/use-mobile"
 import * as messageHistoryDialogModule from "@/components/timeline/message-history-dialog"
 import * as conversationsModule from "@/hooks/use-conversations"
+import * as actorsModule from "@/hooks"
+import * as memosModule from "@/hooks/use-memos"
+import { stubImageLoading } from "@/test"
 import { spyOnExport } from "@/test/spy"
 import { LedgerBranchRow, LedgerEventGroup, LedgerRow } from "./ledger-row"
 import { boardBranchReplyDraftKey, boardSubtopicDraftKey } from "@/lib/board/draft-keys"
@@ -146,6 +149,59 @@ describe("LedgerRow collapsed", () => {
     expect(screen.getByText("(no text)")).toBeInTheDocument()
   })
 
+  it("shows the actor's real avatar in the glyph, falling back to the initial", async () => {
+    stubImageLoading()
+    vi.spyOn(actorsModule, "useActors").mockReturnValue({
+      getActorAvatar: () => ({ fallback: "P", slug: "pierre", avatarUrl: "/api/avatars/usr_other.webp" }),
+    } as unknown as ReturnType<typeof actorsModule.useActors>)
+    const { container, unmount } = renderRow()
+    await waitFor(() => expect(container.querySelector("img")).toHaveAttribute("src", "/api/avatars/usr_other.webp"))
+    unmount()
+    vi.spyOn(actorsModule, "useActors").mockReturnValue({
+      getActorAvatar: () => ({ fallback: "P", slug: "pierre", avatarUrl: undefined }),
+    } as unknown as ReturnType<typeof actorsModule.useActors>)
+    renderRow()
+    expect(screen.getByText("P")).toBeInTheDocument()
+  })
+
+  it("opens a memo link chip in place instead of navigating to the memory page", async () => {
+    const user = userEvent.setup()
+    vi.spyOn(memosModule, "useMemoDetail").mockReturnValue({
+      data: undefined,
+      isLoading: true,
+    } as unknown as ReturnType<typeof memosModule.useMemoDetail>)
+    renderRow({
+      message: message({
+        linkPreviews: [
+          {
+            url: `${window.location.origin}/w/${WS}/memos/memo_1`,
+            contentType: "memo_link",
+          } as never,
+        ],
+      }),
+    })
+    // Not a link at all — a dialog trigger.
+    expect(screen.queryByRole("link", { name: "memo" })).toBeNull()
+    await user.click(screen.getByRole("button", { name: "memo" }))
+    // The dialog resolves the memo in place; the row never navigated.
+    expect(await screen.findByRole("dialog")).toBeInTheDocument()
+    expect(memosModule.useMemoDetail).toHaveBeenCalledWith(WS, "memo_1")
+  })
+
+  it("keeps a message link chip navigating — the panel it points at IS its in-place surface", () => {
+    renderRow({
+      message: message({
+        linkPreviews: [
+          {
+            url: `${window.location.origin}/w/${WS}/s/${STREAM}?m=msg_9`,
+            contentType: "message_link",
+          } as never,
+        ],
+      }),
+    })
+    expect(screen.getByRole("link", { name: "message" })).toHaveAttribute("href", `/w/${WS}/s/${STREAM}?m=msg_9`)
+  })
+
   it("keeps the link chip outside the expand button (no nested interactive element)", () => {
     renderRow({
       message: message({
@@ -175,6 +231,17 @@ describe("LedgerRow toggle", () => {
     expect(screen.getByText("Ledger rows compress a message to one line")).toBeInTheDocument()
     expect(screen.getByText("Pierre")).toBeInTheDocument()
     await user.click(screen.getByRole("button", { name: "Collapse message" }))
+    expect(onToggle).toHaveBeenCalledTimes(1)
+  })
+
+  it("collapses from anywhere on the minimize strip, and never from the body below it", async () => {
+    const user = userEvent.setup()
+    const { onToggle } = renderRow({ expanded: true })
+    // The strip's own contents — the time and the glyph — not just the chevron.
+    await user.click(screen.getByText(/^\d{2}:\d{2}$/))
+    expect(onToggle).toHaveBeenCalledTimes(1)
+
+    await user.click(screen.getByText("Ledger rows compress a message to one line"))
     expect(onToggle).toHaveBeenCalledTimes(1)
   })
 

@@ -1,9 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import { render, screen } from "@testing-library/react"
+import userEvent from "@testing-library/user-event"
 import { MemoryRouter, Route, Routes } from "react-router-dom"
 import type { StreamEvent } from "@threa/types"
 import type { BoardEventRow } from "@/lib/board/board-event-rows"
 import * as contextsModule from "@/contexts"
+import * as hooksModule from "@/hooks"
+import * as agentActivityModule from "@/hooks/use-agent-activity"
+import * as workspacesModule from "@/hooks/use-workspaces"
 import * as relativeTimeModule from "@/components/relative-time"
 import { BoardEventRowItem } from "./board-row-item"
 
@@ -68,5 +72,90 @@ describe("BoardEventRowItem session effects", () => {
     const cardLink = container.querySelector('a[href="/trace/session_fx"]')!
     expect(cardLink.querySelectorAll("a")).toHaveLength(0)
     expect(screen.getByRole("link", { name: /Saved a memo/ })).toHaveAttribute("href", "/w/ws_1/memory?memo=memo_1")
+  })
+})
+
+// A RUNNING board session is the same live card the timeline mounts — same
+// component, same live counts/substep off `useAgentActivity`, same stop/steer
+// affordances — not a board-only summary that only catches up at completion.
+describe("BoardEventRowItem running session", () => {
+  const started = sessionEvent("agent_session:started", {
+    sessionId: "session_live",
+    personaId: "persona_1",
+    personaName: "Ariadne",
+    triggerMessageId: "msg_1",
+    startedAt: "2026-02-19T18:00:00.000Z",
+  })
+  const row = {
+    kind: "session",
+    key: "session:session_live",
+    sortMs: 0,
+    streamId: "stream_1",
+    events: [started],
+  } as unknown as BoardEventRow
+
+  beforeEach(() => {
+    vi.restoreAllMocks()
+    vi.spyOn(contextsModule, "useTrace").mockReturnValue({
+      getTraceUrl: (sessionId: string) => `/trace/${sessionId}`,
+    } as ReturnType<typeof contextsModule.useTrace>)
+    vi.spyOn(contextsModule, "useSocket").mockReturnValue(null as never)
+    vi.spyOn(workspacesModule, "useWorkspaceUserId").mockReturnValue("usr_me")
+    vi.spyOn(relativeTimeModule, "RelativeTime").mockImplementation(() => <span>just now</span>)
+  })
+
+  function mount(onRedirectSession?: () => void) {
+    return render(
+      <MemoryRouter initialEntries={["/w/ws_1/board"]}>
+        <Routes>
+          <Route
+            path="/w/:workspaceId/board"
+            element={<BoardEventRowItem row={row} workspaceId="ws_1" onRedirectSession={onRedirectSession} />}
+          />
+        </Routes>
+      </MemoryRouter>
+    )
+  }
+
+  it("streams the session's live progress instead of waiting for the terminal event", () => {
+    vi.spyOn(agentActivityModule, "useAgentActivity").mockReturnValue(
+      new Map([
+        [
+          "msg_1",
+          {
+            sessionId: "session_live",
+            stepCount: 4,
+            messageCount: 1,
+            substep: "Updating your notification settings",
+          },
+        ],
+      ]) as never
+    )
+    const stop = vi.fn()
+    vi.spyOn(hooksModule, "useStopAgentSession").mockReturnValue(stop as never)
+    vi.spyOn(hooksModule, "useSteerAgentSession").mockReturnValue(vi.fn() as never)
+    mount()
+
+    // Mid-run, off the socket rail — the terminal payload has not landed.
+    expect(screen.getByText("Updating your notification settings")).toBeInTheDocument()
+    expect(screen.getByText(/4 steps/)).toBeInTheDocument()
+    // And the run stays steerable from the board.
+    expect(screen.getByRole("button", { name: "Stop" })).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Redirect" })).toBeInTheDocument()
+  })
+
+  it("stops the running session through the board's own wiring", async () => {
+    vi.spyOn(agentActivityModule, "useAgentActivity").mockReturnValue(new Map() as never)
+    const stop = vi.fn()
+    vi.spyOn(hooksModule, "useStopAgentSession").mockReturnValue(stop as never)
+    vi.spyOn(hooksModule, "useSteerAgentSession").mockReturnValue(vi.fn() as never)
+    const onRedirect = vi.fn()
+    mount(onRedirect)
+
+    await userEvent.click(screen.getByRole("button", { name: "Stop" }))
+    expect(stop).toHaveBeenCalledWith("session_live")
+
+    await userEvent.click(screen.getByRole("button", { name: "Redirect" }))
+    expect(onRedirect).toHaveBeenCalled()
   })
 })

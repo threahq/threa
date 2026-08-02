@@ -13,10 +13,10 @@ import {
 
 const WS = "ws_1"
 
-function mount() {
+function mount(preferences: Record<string, unknown> = {}) {
   const updatePreference = vi.fn()
   vi.spyOn(contextsModule, "usePreferences").mockReturnValue({
-    preferences: { accessibility: {} },
+    preferences: { accessibility: {}, ...preferences },
     updatePreference,
     updatePreferences: vi.fn(),
   } as unknown as ReturnType<typeof contextsModule.usePreferences>)
@@ -50,7 +50,13 @@ describe("AppearanceSettings — board ledger", () => {
     expect(input("board-full-tail-count").value).toBe(String(DEFAULT_BOARD_FULL_TAIL_COUNT))
     expect(input("board-ledger-rows").value).toBe(String(DEFAULT_BOARD_LEDGER_ROWS))
     expect(input("board-lead-line-length").value).toBe(String(DEFAULT_BOARD_LEAD_LINE_LENGTH))
-    expect(document.getElementById("board-mass-badge-count-minutes")).toHaveAttribute("data-state", "checked")
+    expect(document.getElementById("board-mass-badge-count")).toHaveAttribute("data-state", "checked")
+  })
+
+  it("shows a stored count-minutes row as the count mode", () => {
+    mount({ boardMassBadge: "count-minutes" })
+    expect(document.getElementById("board-mass-badge-count")).toHaveAttribute("data-state", "checked")
+    expect(document.getElementById("board-mass-badge-count-minutes")).toBeNull()
   })
 
   it("commits each number on blur", () => {

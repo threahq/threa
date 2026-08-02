@@ -224,6 +224,9 @@ describe("updatePreferencesSchema board ledger settings", () => {
 
   it("rejects an unknown mass badge mode", () => {
     expect(updatePreferencesSchema.safeParse({ boardMassBadge: "minutes" }).success).toBe(false)
+    // The retired reading-time mode is no longer accepted on the wire; a row
+    // still holding it normalizes on read (`normalizeBoardMassBadge`).
+    expect(updatePreferencesSchema.safeParse({ boardMassBadge: "count-minutes" }).success).toBe(false)
   })
 
   it("treats the fields as optional and defaults them", () => {
@@ -231,7 +234,7 @@ describe("updatePreferencesSchema board ledger settings", () => {
     expect(DEFAULT_USER_PREFERENCES.boardFullTailCount).toBe(DEFAULT_BOARD_FULL_TAIL_COUNT)
     expect(DEFAULT_USER_PREFERENCES.boardLedgerRows).toBe(DEFAULT_BOARD_LEDGER_ROWS)
     expect(DEFAULT_USER_PREFERENCES.boardLeadLineLength).toBe(DEFAULT_BOARD_LEAD_LINE_LENGTH)
-    expect(DEFAULT_USER_PREFERENCES.boardMassBadge).toBe("count-minutes")
+    expect(DEFAULT_USER_PREFERENCES.boardMassBadge).toBe("count")
   })
 })
 

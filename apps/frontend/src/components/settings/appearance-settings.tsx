@@ -43,6 +43,7 @@ import {
   BOARD_LEAD_LINE_LENGTH_MAX,
   DEFAULT_BOARD_LEAD_LINE_LENGTH,
   BOARD_MASS_BADGE_MODES,
+  normalizeBoardMassBadge,
   type BoardMassBadge,
   BOARD_LENSES,
   type Theme,
@@ -79,14 +80,12 @@ const UNREAD_OPEN_DESCRIPTIONS: Record<UnreadOpenPosition, string> = {
 }
 
 const BOARD_MASS_BADGE_LABELS: Record<BoardMassBadge, string> = {
-  "count-minutes": "Messages and read time",
-  count: "Message count only",
+  count: "Unread message count",
   off: "No badge",
 }
 
 const BOARD_MASS_BADGE_DESCRIPTIONS: Record<BoardMassBadge, string> = {
-  "count-minutes": "How many messages the ledger holds and roughly how long they take to read",
-  count: "How many messages the ledger holds",
+  count: "How many messages you have not read yet",
   off: "Leave the head row bare",
 }
 
@@ -184,7 +183,7 @@ export function AppearanceSettings() {
   const boardFullTailCount = preferences?.boardFullTailCount ?? DEFAULT_BOARD_FULL_TAIL_COUNT
   const boardLedgerRows = preferences?.boardLedgerRows ?? DEFAULT_BOARD_LEDGER_ROWS
   const boardLeadLineLength = preferences?.boardLeadLineLength ?? DEFAULT_BOARD_LEAD_LINE_LENGTH
-  const boardMassBadge = preferences?.boardMassBadge ?? "count-minutes"
+  const boardMassBadge = normalizeBoardMassBadge(preferences?.boardMassBadge)
 
   // Local input state so users can type freely without each keystroke
   // hitting the preferences mutation. We commit on blur / Enter only.

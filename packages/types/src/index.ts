@@ -859,6 +859,8 @@ export {
   BOARD_LEAD_LINE_LENGTH_MAX,
   DEFAULT_BOARD_LEAD_LINE_LENGTH,
   BOARD_MASS_BADGE_MODES,
+  DEFAULT_BOARD_MASS_BADGE,
+  normalizeBoardMassBadge,
   type BoardMassBadge,
   // Voice transcription model picker
   VOICE_TRANSCRIPTION_MODELS,
