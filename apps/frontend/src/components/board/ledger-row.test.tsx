@@ -172,6 +172,27 @@ describe("LedgerRow toggle", () => {
     await user.click(screen.getByRole("button", { name: "Collapse message" }))
     expect(onToggle).toHaveBeenCalledTimes(1)
   })
+
+  it("colorizes the rail beside an expanded agent body instead of a flush inner stripe", () => {
+    // A colored actor overlays its 2px border ON the ledger rail (the branch-rows
+    // idiom: -ml-2.5 pulls it over the wrapper's border, pl-2 pads the avatar off
+    // it) and the row's own inner accent — the flush-against-the-avatar bug — is
+    // suppressed.
+    const { container } = renderRow({ expanded: true, message: message({ authorType: "persona" }) })
+    const overlay = container.querySelector(".border-primary.border-l-2")
+    expect(overlay).toBeTruthy()
+    expect(overlay!.className).toContain("pl-2")
+    // The inset that pulls the colored border over the wrapper's neutral rail
+    // sits on the row's break-out wrapper, an ancestor of the surface element.
+    expect(overlay!.closest("[class*='-ml-2.5']")).toBeTruthy()
+    expect(container.querySelector("[class*='shadow-[inset_3px']")).toBeNull()
+  })
+
+  it("keeps a user-authored expanded body plain against the neutral rail", () => {
+    const { container } = renderRow({ expanded: true })
+    expect(container.querySelector(".border-primary")).toBeNull()
+    expect(container.querySelector(".-ml-2\\.5")).toBeNull()
+  })
 })
 
 describe("LedgerRow actions", () => {

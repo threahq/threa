@@ -286,6 +286,13 @@ export function LedgerRow({
   )
 
   if (expanded) {
+    // A colored actor (persona gold / bot green / system) colorizes the LEDGER
+    // RAIL beside its body — the branch-rows idiom: its 2px border overlays the
+    // wrapper's neutral rail at the same x (`-ml-2.5` = border + pl-2), content
+    // re-padded (`pl-2`) so the avatar sits off the rail, and the row's own
+    // inner accent stripe is suppressed (flush-against-the-avatar was the bug).
+    // A user row stays plain, so the neutral rail shows through.
+    const actorRail = theme.railClassName
     return (
       <div className={railClassName}>
         {/* Minimize strip: the collapsed row's own line, so the body grows below
@@ -312,6 +319,9 @@ export function LedgerRow({
           conversationRootStreamId={conversationRootStreamId}
           onNewSubtopic={onNewSubtopic}
           onMoveToSubtopic={onMoveToSubtopic}
+          suppressRowAccent
+          surfaceClassName={actorRail ? cn("bg-card border-l-2 pl-2", actorRail) : undefined}
+          rowInsetClassName={actorRail ? "-ml-2.5" : undefined}
         />
       </div>
     )
