@@ -8,6 +8,7 @@ import type { BoardViewPost } from "@/hooks/use-stable-board-view"
 import { ServicesProvider, PanelProvider, TraceProvider, MediaGalleryProvider } from "@/contexts"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { __clearBoardRailRegistry } from "@/hooks/use-board-card-messages"
+import { resetBoardUnreadLatches } from "@/stores/board-unread-latch-store"
 import { __clearConversationGraphRegistry } from "@/hooks/use-conversation-graph"
 // eslint-disable-next-line no-restricted-imports -- test seeds IDB directly to drive the real rail + graph read paths
 import { db, type CachedEvent, type CachedStream, type CachedBoardPost } from "@/db"
@@ -188,6 +189,7 @@ beforeEach(async () => {
   markUnread.mockClear()
   markReadSilently.mockClear()
   __clearBoardRailRegistry()
+  resetBoardUnreadLatches()
   __clearConversationGraphRegistry()
   await db.events.clear()
   await db.streams.clear()
@@ -330,6 +332,104 @@ describe("BoardCard unread divider", () => {
     expect(after!.parentElement!.className).not.toContain("text-destructive")
     expect(isBefore(rowFor("r2"), after!)).toBe(true)
     expect(isBefore(after!, rowFor("r3"))).toBe(true)
+  })
+
+  it("keeps the divider across an unmount/remount, dimmed once the rows are read", async () => {
+    // virtua unmounts a card scrolled past its buffer; the same board visit must
+    // still show the divider when it comes back, muted rather than re-reddened.
+    unreadIds = new Set(["r3", "r4", "r5"])
+    const { unmount } = mount()
+    await screen.findByText("Reply 5.")
+    expect(dividerLabel()!.parentElement!.className).toContain("text-destructive")
+
+    unmount()
+    unreadIds = new Set()
+    mount()
+    await screen.findByText("Reply 5.")
+
+    const after = dividerLabel()
+    expect(after, "the latch survives the remount").toBeTruthy()
+    expect(after!.parentElement!.className).toContain("text-muted-foreground")
+    expect(after!.parentElement!.className).not.toContain("text-destructive")
+    expect(isBefore(rowFor("r2"), after!)).toBe(true)
+    expect(isBefore(after!, rowFor("r3"))).toBe(true)
+  })
+
+  /** Appends a genuinely new reply to IDB and returns the post that includes it. */
+  async function arriveNewReply(id: string, seconds: number, resetRegistries = true): Promise<CachedBoardPost> {
+    await db.events.put(messageEvent(id, seconds, `Reply ${id}.`))
+    const withReply = {
+      ...post(),
+      conversation: { ...post().conversation, messageIds: ["m_open", ...REPLY_IDS, id] },
+      totalReplies: REPLY_IDS.length + 1,
+    } as unknown as CachedBoardPost
+    await db.conversations.put(withReply)
+    if (resetRegistries) {
+      __clearBoardRailRegistry()
+      __clearConversationGraphRegistry()
+    }
+    return withReply
+  }
+
+  it("re-latches a red divider above an arrival that lands under a settled marker", async () => {
+    unreadIds = new Set(["r3", "r4", "r5"])
+    const first = mount()
+    await screen.findByText("Reply 5.")
+    expect(dividerLabel()!.parentElement!.className).toContain("text-destructive")
+
+    // Everything read: the latch settles to muted.
+    first.unmount()
+    unreadIds = new Set()
+    const settled = mount()
+    await screen.findByText("Reply 5.")
+    expect(dividerLabel()!.parentElement!.className).toContain("text-muted-foreground")
+
+    // A new reply arrives below the settled marker.
+    settled.unmount()
+    const withNew = await arriveNewReply("r6", 20)
+    unreadIds = new Set(["r6"])
+    mount(withNew)
+    await screen.findByText("Reply r6.")
+
+    const after = dividerLabel()
+    expect(after, "the settled latch is discarded and re-decided").toBeTruthy()
+    expect(after!.parentElement!.className).toContain("text-destructive")
+    expect(isBefore(rowFor("r5"), after!)).toBe(true)
+    expect(isBefore(after!, rowFor("r6"))).toBe(true)
+  })
+
+  it("does not move a live red divider when more unread arrives below it", async () => {
+    unreadIds = new Set(["r4", "r5"])
+    const { rerender } = mount()
+    await screen.findByText("Reply 5.")
+    expect(isBefore(dividerLabel()!, rowFor("r4"))).toBe(true)
+
+    // Never unmount: a live (non-dimmed) latch must survive more arrivals in place.
+    const withNew = await arriveNewReply("r6", 20, false)
+    unreadIds = new Set(["r4", "r5", "r6"])
+    rerender(tree(withNew))
+    await screen.findByText("Reply r6.")
+
+    const after = dividerLabel()
+    expect(after!.parentElement!.className).toContain("text-destructive")
+    expect(isBefore(rowFor("r3"), after!)).toBe(true)
+    expect(isBefore(after!, rowFor("r4"))).toBe(true)
+  })
+
+  it("drops the divider after a registry reset when everything is read", async () => {
+    unreadIds = new Set(["r3", "r4", "r5"])
+    const { unmount } = mount()
+    await screen.findByText("Reply 5.")
+    expect(dividerLabel()).toBeTruthy()
+
+    unmount()
+    // A fresh board visit resets the registry: nothing unread, nothing to latch.
+    resetBoardUnreadLatches()
+    unreadIds = new Set()
+    mount()
+    await screen.findByText("Reply 5.")
+
+    expect(dividerLabel()).toBeUndefined()
   })
 
   it("skips an unread swallowed by a depth-collapsed subtree and lands on the first rendered one", async () => {

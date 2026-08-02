@@ -31,6 +31,21 @@ export function useConversationReadStateDecidable(
   }, [unreadState, streamReadStates, rows, rootStreamId])
 }
 
+/** One conversation's latched marker decision: where the divider sits, and
+ *  whether it has already settled from red to muted. */
+export interface UnreadMarkerLatch {
+  messageId: string | null
+  dimmed: boolean
+}
+
+/** Latch storage outliving the component, keyed by conversation id. Surfaces
+ *  whose rows unmount while still "open" (the board's virtualised cards) pass
+ *  one; the panel omits it and keeps its own per-open ref. */
+export interface UnreadMarkerLatchStorage {
+  get(conversationId: string): UnreadMarkerLatch | undefined
+  set(conversationId: string, latch: UnreadMarkerLatch): void
+}
+
 interface UseConversationUnreadMarkerOptions {
   /** Resets the latch — one marker decision per conversation, per open. */
   conversationId: string
@@ -46,6 +61,8 @@ interface UseConversationUnreadMarkerOptions {
   /** Ids that actually get a rendered row — a marker inside a collapsed subtree
    *  would draw no divider and have no scroll target. `null` = no filtering. */
   renderedMessageIds?: ReadonlySet<string> | null
+  /** External latch storage; omit to latch in a component-local ref. */
+  latchStorage?: UnreadMarkerLatchStorage
 }
 
 interface UseConversationUnreadMarkerResult {
@@ -72,6 +89,7 @@ export function useConversationUnreadMarker({
   currentUserId,
   readStateResolved,
   renderedMessageIds = null,
+  latchStorage,
 }: UseConversationUnreadMarkerOptions): UseConversationUnreadMarkerResult {
   const firstUnreadId = useMemo(() => {
     if (!readStateResolved) return null
@@ -89,6 +107,9 @@ export function useConversationUnreadMarker({
   // already-cleared value on the commit that matters — the divider would be
   // drawn at the tail, or not at all. The ref resets on conversation change and
   // then captures the first non-null first-unread; nothing after that moves it.
+  // With external storage the latch outlives the component (a board card is
+  // unmounted by virtualisation while its board visit is still one "open"), and
+  // the conversation key is what scopes it; the local ref is the panel's path.
   const latchRef = useRef<{ conversationId: string; messageId: string | null; dimmed: boolean }>({
     conversationId,
     messageId: null,
@@ -103,13 +124,35 @@ export function useConversationUnreadMarker({
     latchRef.current = { conversationId, messageId: null, dimmed: false }
     if (dismissed !== null) setDismissed(null)
   }
-  if (firstUnreadId && latchRef.current.messageId === null) {
-    latchRef.current.messageId = firstUnreadId
+  let latch: UnreadMarkerLatch = latchRef.current
+  if (latchStorage) {
+    const stored = latchStorage.get(conversationId)
+    if (stored) latch = stored
+    else {
+      latch = { messageId: null, dimmed: false }
+      latchStorage.set(conversationId, latch)
+    }
+  }
+  // Away-arrival re-latch, storage path only (the panel's per-open ref keeps the
+  // strict one-way rule). A settled entry points at rows the user has read; when
+  // new unread arrives strictly below it the muted divider marks nothing and the
+  // mass badge contradicts it, so that entry is discarded and re-decided. Only
+  // when dimmed: a live red divider must never move while unread is pending.
+  if (latchStorage && latch.dimmed && latch.messageId !== null && firstUnreadId !== null) {
+    const latchedIndex = rows.findIndex((row) => row.id === latch.messageId)
+    const firstUnreadIndex = rows.findIndex((row) => row.id === firstUnreadId)
+    if (latchedIndex >= 0 && firstUnreadIndex > latchedIndex) {
+      latch = { messageId: null, dimmed: false }
+      latchStorage.set(conversationId, latch)
+    }
+  }
+  if (firstUnreadId && latch.messageId === null) {
+    latch.messageId = firstUnreadId
   }
 
   const dismiss = useCallback(() => setDismissed(conversationId), [conversationId])
 
-  const latched = latchRef.current.messageId
+  const latched = latch.messageId
   const markerMessageId = dismissed === conversationId ? null : latched
 
   const unreadCount = useMemo(() => {
@@ -128,8 +171,8 @@ export function useConversationUnreadMarker({
   // Settling is one-way, like the timeline's: once the marker's rows have all
   // been read the divider stays muted for this open. A later arrival must not
   // re-redden a divider that now points at rows the user has already read.
-  if (markerMessageId != null && unreadCount === 0) latchRef.current.dimmed = true
-  const isDimmed = markerMessageId != null && latchRef.current.dimmed
+  if (markerMessageId != null && unreadCount === 0) latch.dimmed = true
+  const isDimmed = markerMessageId != null && latch.dimmed
 
   return { markerMessageId, unreadCount, isDimmed, dismiss }
 }

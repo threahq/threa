@@ -40,6 +40,7 @@ import { BoardNewPostsPill } from "@/components/board/board-new-posts-pill"
 import { BoardRemovedCard } from "@/components/board/board-removed-card"
 import { openCompose, registerComposeOnPosted } from "@/stores/compose-overlay-store"
 import { setBoardFlash } from "@/stores/board-flash-store"
+import { resetBoardUnreadLatches } from "@/stores/board-unread-latch-store"
 import { boardHomeHref } from "@/components/board/board-saved-views"
 import { useBoardViews } from "@/hooks/use-board-views"
 import { isBoardFiltered } from "@/lib/board/filter-state"
@@ -352,12 +353,20 @@ function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: Boar
   // Per-session and per-workspace, never persisted: a seen card stays frozen, an
   // unseen one that gains activity goes back behind the "N new" pill.
   const seenCardsRef = useRef<Set<string>>(new Set())
+  // A fresh board visit is a fresh "open": drop last visit's divider latches
+  // before any card renders (parents render first, so this beats an effect).
+  const visitRef = useRef(false)
+  if (!visitRef.current) {
+    visitRef.current = true
+    resetBoardUnreadLatches()
+  }
   // A render-phase `setState` doesn't update this render's binding, so the
   // switch render must read the local value, not `seedTimedOut`.
   let timedOut = seedTimedOut
   if (seedWorkspaceRef.current !== workspaceId) {
     seedWorkspaceRef.current = workspaceId
     seenCardsRef.current = new Set()
+    resetBoardUnreadLatches()
     timedOut = false
     if (seedTimedOut) setSeedTimedOut(false)
   }

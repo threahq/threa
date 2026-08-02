@@ -5,6 +5,7 @@ import { useWorkspaceStreamReadStates, useWorkspaceUnreadState } from "@/stores/
 import { applyReadStateSnapshots } from "@/hooks/use-unread-counts"
 import type { RowReadState } from "@/components/timeline/read-frontier-context"
 import type { RenderableMessage } from "@/components/message/message-item"
+import { isEffectivelyUnread } from "@/lib/board/ledger"
 
 /**
  * Per-row read state + the two read actions for a conversation surface (board
@@ -200,10 +201,7 @@ export function useConversationReadController(
 
   const hasUnread = useCallback(
     (messages: RenderableMessage[]): boolean =>
-      messages.some(
-        (m) =>
-          m.authorId !== currentUserId && state(m.streamId ?? rootStreamId, m.id, m.sequence, m.createdAt) === "unread"
-      ),
+      messages.some((m) => isEffectivelyUnread(m, { currentUserId, fallbackStreamId: rootStreamId, state })),
     [state, currentUserId, rootStreamId]
   )
 
