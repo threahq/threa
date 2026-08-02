@@ -18,6 +18,7 @@ import { useFormattedDate } from "@/hooks/use-formatted-date"
 import { useLongPress } from "@/hooks/use-long-press"
 import { useWorkspaceEmoji } from "@/hooks/use-workspace-emoji"
 import { useTouchCapable } from "@/hooks/use-touch-capable"
+import { useIsMobile } from "@/hooks/use-mobile"
 import { useMessageReactions, stripColons, reactionShortcodes } from "@/hooks/use-message-reactions"
 import { useSavedForMessage, useSaveMessage, useDeleteSaved } from "@/hooks/use-saved"
 import { useSettleConversationMessage } from "@/hooks/use-conversations"
@@ -28,6 +29,8 @@ import { cn } from "@/lib/utils"
 
 const TOMBSTONE_LEAD = "This message was deleted"
 const EMPTY_LEAD = "(no text)"
+/** Window after a long press in which the synthetic click it produces is ignored. */
+const SYNTHETIC_CLICK_SUPPRESS_MS = 700
 
 interface LedgerRowProps {
   workspaceId: string
@@ -79,6 +82,9 @@ export function LedgerRow({
   const { formatTime, formatFull } = useFormattedDate()
   const { openMedia } = useMediaGallery()
   const touchCapable = useTouchCapable()
+  // One signal for both the menu trigger's visibility and the right-click branch
+  // that anchors to it — matches the `sm:` breakpoint the cluster used to hide at.
+  const narrow = useIsMobile()
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
   const [labelPickerOpen, setLabelPickerOpen] = useState(false)
@@ -107,9 +113,13 @@ export function LedgerRow({
   // the row. Defer to real links only — the link chip keeps the browser's native
   // "Copy link" menu — and swallow the synthetic click that follows the hold so
   // the drawer doesn't also expand the row.
-  const suppressToggleRef = useRef(false)
+  // A time window, not a one-shot latch: an iOS hold that produces no synthetic
+  // click (drawer dismissed, touchcancel, scroll-away) would leave a boolean
+  // latched and swallow the next real tap.
+  const suppressClicksUntilRef = useRef(0)
+  const clickSuppressed = useCallback(() => Date.now() < suppressClicksUntilRef.current, [])
   const openDrawer = useCallback(() => {
-    suppressToggleRef.current = true
+    suppressClicksUntilRef.current = Date.now() + SYNTHETIC_CLICK_SUPPRESS_MS
     setDrawerOpen(true)
   }, [])
   const longPress = useLongPress({
@@ -118,12 +128,9 @@ export function LedgerRow({
     deferToNativeLinks: true,
   })
   const handleToggle = useCallback(() => {
-    if (suppressToggleRef.current) {
-      suppressToggleRef.current = false
-      return
-    }
+    if (clickSuppressed()) return
     onToggle()
-  }, [onToggle])
+  }, [clickSuppressed, onToggle])
 
   // Reactions, save, reminder and label are the collapsed row's own state; every
   // other entry the menu shows is derived from the context below, exactly as on
@@ -330,6 +337,10 @@ export function LedgerRow({
                 longPress.handlers.onContextMenu(e)
                 return
               }
+              // The menu's trigger is the same cluster hidden below `sm`;
+              // anchoring Radix to a zero-rect trigger would put the menu in the
+              // corner, so narrow non-touch keeps the browser's native menu.
+              if (narrow) return
               e.preventDefault()
               setMenuOpen(true)
             }
@@ -374,6 +385,10 @@ export function LedgerRow({
         <button
           type="button"
           onClick={() => {
+            // The hold that opened the drawer bubbled from this chip, so the
+            // synthetic click that follows must open nothing at all — gallery
+            // included, not just the expand.
+            if (clickSuppressed()) return
             // The gallery lives in the expanded row's `AttachmentList` (the one
             // attachment-open path); expanding is what mounts it. A file the
             // gallery can't open (a zip, an installer) only expands — writing
@@ -394,7 +409,7 @@ export function LedgerRow({
       )}
       {time}
       {!tombstone && (
-        <div className="reveal-actions-hover-only hidden shrink-0 sm:block">
+        <div className={cn("reveal-actions-hover-only shrink-0", narrow ? "hidden" : "block")}>
           <MessageContextMenu context={menuContext} open={menuOpen} onOpenChange={setMenuOpen} />
         </div>
       )}

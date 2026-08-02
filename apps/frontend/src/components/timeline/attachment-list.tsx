@@ -607,11 +607,12 @@ function FileAttachment({ attachment, workspaceId, isHighlighted }: AttachmentIt
  * classification the lists in {@link AttachmentList} are built from. Collapsed
  * surfaces (the board ledger row) ask before writing a `?media=` param, so a
  * non-previewable file falls to the expanded list's download chip instead of
- * leaving a dead param behind.
+ * leaving a dead param behind. A video only enters `galleryItems` once its
+ * transcode is terminal-and-playable, so a still-processing one answers false.
  */
 export function isGalleryPreviewableAttachment(a: AttachmentSummary): boolean {
   if (a.mimeType.startsWith("image/")) return true
-  if (a.processingStatus) return a.processingStatus !== "failed"
+  if (a.processingStatus) return a.processingStatus === "completed" || a.processingStatus === "skipped"
   return isMarkdownAttachment(a) || isHtmlAttachment(a) || isPdfAttachment(a) || isTextPreviewableAttachment(a)
 }
 

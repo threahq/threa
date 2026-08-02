@@ -14,6 +14,7 @@ import * as userProfileModule from "@/components/user-profile"
 import * as syncEngineModule from "@/sync/sync-engine"
 import * as emojiModule from "@/hooks/use-workspace-emoji"
 import * as touchCapableModule from "@/hooks/use-touch-capable"
+import * as useMobileModule from "@/hooks/use-mobile"
 import * as messageHistoryDialogModule from "@/components/timeline/message-history-dialog"
 import * as conversationsModule from "@/hooks/use-conversations"
 import { spyOnExport } from "@/test/spy"
@@ -205,6 +206,46 @@ describe("LedgerRow touch long-press", () => {
     expect(onToggle).not.toHaveBeenCalled()
   })
 
+  it("still toggles on the next real tap when the hold produced no synthetic click", () => {
+    vi.useFakeTimers()
+    const { onToggle } = renderRow({ onNewSubtopic: vi.fn() })
+    const rowButton = screen.getByRole("button", { name: /Pierre:/ })
+
+    fireEvent.touchStart(rowButton, { touches: [{ clientX: 10, clientY: 10 }] })
+    act(() => vi.advanceTimersByTime(500))
+    fireEvent.touchCancel(rowButton)
+    // No click follows this hold (drawer dismissed / touchcancel / scroll-away).
+    act(() => vi.advanceTimersByTime(1000))
+
+    fireEvent.click(rowButton)
+    expect(onToggle).toHaveBeenCalledTimes(1)
+  })
+
+  it("opens only the drawer from a long press on the attachment chip — no gallery", () => {
+    vi.useFakeTimers()
+    const openMedia = vi.fn()
+    vi.spyOn(contextsModule, "useMediaGallery").mockReturnValue({
+      mediaAttachmentId: null,
+      openMedia,
+      closeMedia: vi.fn(),
+    })
+    const { onToggle } = renderRow({
+      onNewSubtopic: vi.fn(),
+      message: message({
+        attachments: [{ id: "att_pdf", filename: "spec.pdf", mimeType: "application/pdf" } as never],
+      }),
+    })
+    const chip = screen.getByRole("button", { name: "Open 1 attachment" })
+
+    fireEvent.touchStart(chip, { touches: [{ clientX: 10, clientY: 10 }] })
+    act(() => vi.advanceTimersByTime(500))
+    expect(screen.getByRole("button", { name: /New sub-topic/i })).toBeInTheDocument()
+
+    fireEvent.click(chip)
+    expect(openMedia).not.toHaveBeenCalled()
+    expect(onToggle).not.toHaveBeenCalled()
+  })
+
   it("leaves a long press on the link chip to the browser", () => {
     vi.useFakeTimers()
     renderRow({
@@ -269,6 +310,53 @@ describe("LedgerRow attachment chip", () => {
     await user.click(screen.getByRole("button", { name: "Open 1 attachment" }))
     expect(onToggle).toHaveBeenCalledTimes(1)
     expect(openMedia).not.toHaveBeenCalled()
+  })
+
+  it("only expands for a video that is still processing", async () => {
+    const user = userEvent.setup()
+    const { openMedia, onToggle } = renderWithGallery({
+      id: "att_vid",
+      filename: "clip.mp4",
+      mimeType: "video/mp4",
+      processingStatus: "pending",
+    })
+    await user.click(screen.getByRole("button", { name: "Open 1 attachment" }))
+    expect(onToggle).toHaveBeenCalledTimes(1)
+    expect(openMedia).not.toHaveBeenCalled()
+  })
+
+  it("opens the gallery for a completed video", async () => {
+    const user = userEvent.setup()
+    const { openMedia } = renderWithGallery({
+      id: "att_vid",
+      filename: "clip.mp4",
+      mimeType: "video/mp4",
+      processingStatus: "completed",
+    })
+    await user.click(screen.getByRole("button", { name: "Open 1 attachment" }))
+    expect(openMedia).toHaveBeenCalledWith("att_vid")
+  })
+})
+
+describe("LedgerRow narrow viewport", () => {
+  it("keeps the native menu and hides the trigger cluster below sm", async () => {
+    const user = userEvent.setup()
+    vi.spyOn(useMobileModule, "useIsMobile").mockReturnValue(true)
+    const { container } = renderRow({ onNewSubtopic: vi.fn() })
+
+    expect(container.querySelector(".reveal-actions-hover-only")).toHaveClass("hidden")
+    await user.pointer({ keys: "[MouseRight]", target: screen.getByRole("button", { name: /Pierre:/ }) })
+    expect(screen.queryByRole("menuitem", { name: /New sub-topic/i })).not.toBeInTheDocument()
+  })
+
+  it("shows the cluster and opens the menu on right-click at sm and up", async () => {
+    const user = userEvent.setup()
+    vi.spyOn(useMobileModule, "useIsMobile").mockReturnValue(false)
+    const { container } = renderRow({ onNewSubtopic: vi.fn() })
+
+    expect(container.querySelector(".reveal-actions-hover-only")).not.toHaveClass("hidden")
+    await user.pointer({ keys: "[MouseRight]", target: screen.getByRole("button", { name: /Pierre:/ }) })
+    expect(await screen.findByRole("menuitem", { name: /New sub-topic/i })).toBeInTheDocument()
   })
 })
 
