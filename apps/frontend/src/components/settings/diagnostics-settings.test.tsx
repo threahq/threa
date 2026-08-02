@@ -9,7 +9,6 @@ import { DEFAULT_USER_PREFERENCES } from "@threa/types"
 import * as contextsModule from "@/contexts"
 import * as hooksModule from "@/hooks"
 import * as perfApiModule from "@/api/perf-diagnostics"
-import * as observersModule from "@/lib/perf/observers"
 import * as profileSettingsModule from "./profile-settings"
 import { PerfCapture, armPerfCapture, resetPerfArming, setPerfConsentArmed } from "@/lib/perf/capture"
 import { DiagnosticsSettings } from "./diagnostics-settings"
@@ -89,10 +88,8 @@ describe("DiagnosticsSettings", () => {
     await waitFor(() => expect(screen.getAllByText("Diagnostics").length).toBeGreaterThan(0))
   })
 
-  it("clears the buffer and stops capture when the toggle goes off", async () => {
+  it("clears the buffer and persists the opt-out when the toggle goes off", async () => {
     const capture = armWithSamples(3)
-    const dispose = vi.fn()
-    vi.spyOn(observersModule, "startObservers").mockReturnValue(dispose)
     mountSettings(true)
 
     await userEvent.click(screen.getByRole("switch", { name: /share performance diagnostics/i }))

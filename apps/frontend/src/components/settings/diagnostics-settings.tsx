@@ -80,7 +80,7 @@ export function DiagnosticsSettings() {
   return (
     <div className="space-y-6">
       <section className="space-y-3">
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between gap-4">
           <div className="space-y-1">
             <Label htmlFor="performance-diagnostics">Share performance diagnostics</Label>
             <p className="text-sm text-muted-foreground">
@@ -88,7 +88,12 @@ export function DiagnosticsSettings() {
               collected.
             </p>
           </div>
-          <Switch id="performance-diagnostics" checked={optIn} onCheckedChange={(checked) => void toggle(checked)} />
+          <Switch
+            className="shrink-0"
+            id="performance-diagnostics"
+            checked={optIn}
+            onCheckedChange={(checked) => void toggle(checked)}
+          />
         </div>
 
         {optIn && (

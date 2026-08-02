@@ -73,6 +73,7 @@ export const PerformanceCaptureRepository = {
   },
 
   /** A user's captures, newest first. Workspace-scoped (INV-8). */
+  /** Exists solely for INV-68 integration readback of the real INSERT; no route exposes it. */
   async listForUser(db: Querier, workspaceId: string, userId: string, limit: number): Promise<PerformanceCaptureRow[]> {
     const result = await db.query<PerformanceCaptureDbRow>(sql`
       SELECT id, workspace_id, user_id, capture_id, app_version, device_class,

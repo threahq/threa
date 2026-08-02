@@ -122,8 +122,8 @@ export function isCaptureArmed(): boolean {
 
 /**
  * The two independent reasons capture may be running. `dev` is chunk 2's
- * query-param/localStorage switch and is local-development only — it never
- * permits upload. `consent` is the real pair (flag available AND the user's
+ * query-param/localStorage switch — it works in any build but only measures
+ * locally; it never permits upload. `consent` is the real pair (flag available AND the user's
  * opt-in preference) and is the only source that does.
  */
 export interface PerfArmingSources {
@@ -133,7 +133,9 @@ export interface PerfArmingSources {
 
 const DISARMED: PerfArmingSources = { dev: false, consent: false }
 
-let armingSources: PerfArmingSources = DISARMED
+// Dev arming is read at module load so marks taken during the first commit's
+// child effects (which run before any provider effect) land in a real capture.
+let armingSources: PerfArmingSources = { dev: isCaptureArmed(), consent: false }
 const armingListeners = new Set<() => void>()
 
 function setArmingSources(next: PerfArmingSources): void {
