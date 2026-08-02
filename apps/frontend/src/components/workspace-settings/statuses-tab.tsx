@@ -19,6 +19,7 @@ import { hasPermission } from "@/lib/permissions"
 import { STATUS_DURATION_OPTIONS, durationsEqual } from "@/lib/status"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { cn } from "@/lib/utils"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { ReactionEmojiPicker } from "@/components/timeline/reaction-emoji-picker"
 
@@ -94,7 +95,11 @@ export function StatusesTab({ workspaceId }: StatusesTabProps) {
         {draft.map((preset, index) => {
           const glyph = preset.emoji ? toEmoji(preset.emoji) : null
           return (
-            <div key={preset.id} className="flex items-center gap-2">
+            <div
+              key={preset.id}
+              data-slot="status-preset"
+              className="grid grid-cols-[auto_minmax(0,1fr)_auto_auto] items-center gap-2 sm:flex"
+            >
               <ReactionEmojiPicker
                 workspaceId={workspaceId}
                 onSelect={(picked) => updatePreset(index, { emoji: toShortcode(picked) })}
@@ -115,7 +120,7 @@ export function StatusesTab({ workspaceId }: StatusesTabProps) {
                 maxLength={STATUS_TEXT_MAX_LENGTH}
                 placeholder="Status text"
                 disabled={!canManage}
-                className="flex-1"
+                className="col-span-3 min-w-0 sm:flex-1"
               />
               <Select
                 value={durationIdForPreset(preset)}
@@ -126,7 +131,7 @@ export function StatusesTab({ workspaceId }: StatusesTabProps) {
                 }
                 disabled={!canManage}
               >
-                <SelectTrigger className="w-36">
+                <SelectTrigger className={cn("w-full sm:w-36", canManage ? "col-span-2" : "col-span-3")}>
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -179,7 +184,7 @@ export function StatusesTab({ workspaceId }: StatusesTabProps) {
       )}
 
       {canManage ? (
-        <div className="flex justify-end gap-2">
+        <div className="flex flex-wrap justify-end gap-2">
           <Button
             type="button"
             variant="ghost"

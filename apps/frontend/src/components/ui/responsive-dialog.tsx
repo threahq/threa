@@ -33,6 +33,14 @@ const DEFAULT_ACTIVE_SNAP = 0.8
 // content can drop the vaul `h-[100dvh]` requirement when there are no
 // snap points to anchor to.
 const DisableSnapPointsContext = React.createContext(false)
+const ActiveSnapPointContext = React.createContext<number | string | null>(null)
+
+function getSnapPointOffset(activeSnapPoint: number | string | null): string {
+  if (typeof activeSnapPoint === "number") {
+    return `${Math.max(0, Math.round((1 - activeSnapPoint) * 10_000) / 100)}dvh`
+  }
+  return activeSnapPoint ? `max(0px, calc(100dvh - ${activeSnapPoint}))` : "0px"
+}
 
 // ── Root ────────────────────────────────────────────────────────────────
 
@@ -62,7 +70,9 @@ interface ResponsiveDialogProps {
 function ResponsiveDialog({ children, snapPoints, disableSnapPoints, ...props }: ResponsiveDialogProps) {
   const isMobile = useIsMobile()
   const resolvedSnaps = React.useMemo(() => snapPoints ?? [...DEFAULT_SNAP_POINTS], [snapPoints])
-  const [activeSnap, setActiveSnap] = React.useState<number | string | null>(DEFAULT_ACTIVE_SNAP)
+  const [activeSnap, setActiveSnap] = React.useState<number | string | null>(
+    () => resolvedSnaps[0] ?? DEFAULT_ACTIVE_SNAP
+  )
 
   // Reset snap point when drawer opens
   const handleOpenChange = React.useCallback(
@@ -86,16 +96,18 @@ function ResponsiveDialog({ children, snapPoints, disableSnapPoints, ...props }:
     )
   } else if (isMobile) {
     root = (
-      <Drawer
-        open={props.open}
-        onOpenChange={handleOpenChange}
-        snapPoints={resolvedSnaps}
-        activeSnapPoint={activeSnap}
-        setActiveSnapPoint={setActiveSnap}
-        fadeFromIndex={resolvedSnaps.length - 1}
-      >
-        {children}
-      </Drawer>
+      <ActiveSnapPointContext.Provider value={activeSnap}>
+        <Drawer
+          open={props.open}
+          onOpenChange={handleOpenChange}
+          snapPoints={resolvedSnaps}
+          activeSnapPoint={activeSnap}
+          setActiveSnapPoint={setActiveSnap}
+          fadeFromIndex={resolvedSnaps.length - 1}
+        >
+          {children}
+        </Drawer>
+      </ActiveSnapPointContext.Provider>
     )
   } else {
     root = <Dialog {...props}>{children}</Dialog>
@@ -140,6 +152,7 @@ const ResponsiveDialogContent = React.forwardRef<HTMLDivElement, ResponsiveDialo
   ({ className, desktopClassName, drawerClassName, children, hideCloseButton, ...props }, ref) => {
     const isMobile = useResponsiveMode()
     const noSnapPoints = React.useContext(DisableSnapPointsContext)
+    const activeSnapPoint = React.useContext(ActiveSnapPointContext)
 
     if (isMobile) {
       // With snap points: vaul's transform-based positioning needs the drawer
@@ -154,6 +167,14 @@ const ResponsiveDialogContent = React.forwardRef<HTMLDivElement, ResponsiveDialo
           {...props}
         >
           {children}
+          {!noSnapPoints && (
+            <div
+              data-slot="drawer-snap-spacer"
+              aria-hidden
+              className="shrink-0 transition-[height] duration-500 [transition-timing-function:cubic-bezier(0.32,0.72,0,1)]"
+              style={{ height: getSnapPointOffset(activeSnapPoint) }}
+            />
+          )}
         </DrawerContent>
       )
     }

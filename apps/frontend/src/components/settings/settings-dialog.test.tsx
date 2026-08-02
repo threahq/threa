@@ -89,7 +89,7 @@ describe("SettingsDialog", () => {
     expect(tabs).toHaveClass("flex", "flex-1", "min-h-0", "flex-col")
     expect(panels).toHaveClass("flex", "flex-1", "min-h-0", "overflow-hidden")
     expect(nav).toHaveClass("min-h-0", "overflow-y-auto")
-    expect(content).toHaveClass("flex-1", "min-h-0", "overflow-y-auto")
+    expect(content).toHaveClass("flex-1", "min-h-0", "overflow-y-auto", "pt-6")
   })
 
   it("does not close on Escape while shortcut capture is active", async () => {
