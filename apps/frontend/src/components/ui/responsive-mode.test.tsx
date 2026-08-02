@@ -66,3 +66,37 @@ describe("ResponsiveDialog mode coupling", () => {
     expect(screen.getByText("Settings")).toBeInTheDocument()
   })
 })
+
+describe("ResponsiveDialog snap layout", () => {
+  beforeEach(() => {
+    vi.spyOn(mobileModule, "useIsMobile").mockReturnValue(true)
+  })
+
+  it("reserves the hidden part of a partially snapped drawer below its content", () => {
+    render(
+      <ResponsiveDialog open onOpenChange={() => {}}>
+        <ResponsiveDialogContent>
+          <ResponsiveDialogTitle>Settings</ResponsiveDialogTitle>
+        </ResponsiveDialogContent>
+      </ResponsiveDialog>
+    )
+
+    const drawer = screen.getByRole("dialog")
+    const spacer = drawer.querySelector('[data-slot="drawer-snap-spacer"]')
+    expect(drawer.lastElementChild).toBe(spacer)
+    expect(spacer).toHaveClass("shrink-0", "transition-[height]")
+    expect(spacer).toHaveStyle({ height: "20dvh" })
+  })
+
+  it("uses a custom initial snap point for the reserved space", () => {
+    render(
+      <ResponsiveDialog open onOpenChange={() => {}} snapPoints={[0.5, 1]}>
+        <ResponsiveDialogContent>
+          <ResponsiveDialogTitle>Settings</ResponsiveDialogTitle>
+        </ResponsiveDialogContent>
+      </ResponsiveDialog>
+    )
+
+    expect(document.querySelector('[data-slot="drawer-snap-spacer"]')).toHaveStyle({ height: "50dvh" })
+  })
+})

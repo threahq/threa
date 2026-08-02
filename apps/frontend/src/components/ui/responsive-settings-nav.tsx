@@ -17,7 +17,7 @@ interface ResponsiveSettingsNavProps<T extends string> {
 export const SETTINGS_DIALOG_LAYOUT_CLASSNAMES = {
   tabs: "flex min-h-0 flex-1 flex-col",
   panels: "flex min-h-0 flex-1 flex-col overflow-hidden sm:grid sm:grid-cols-[220px,minmax(0,1fr)]",
-  content: "flex-1 min-h-0 overflow-y-auto px-4 pb-4 pt-4 scrollbar-thin sm:px-6 sm:py-6",
+  content: "flex-1 min-h-0 overflow-y-auto px-4 pb-4 pt-6 scrollbar-thin sm:px-6 sm:py-6",
 } as const
 
 export function ResponsiveSettingsNav<T extends string>({
