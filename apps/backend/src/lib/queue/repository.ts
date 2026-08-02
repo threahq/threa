@@ -445,6 +445,8 @@ export const QueueRepository = {
    * MIN(process_after), the column that claim orders by. A queue with only
    * terminal rows yields no row at all; the sampler owns zeroing.
    */
+  // Two independent snapshots (the price of hitting the partial indexes), so a
+  // row moving to DLQ between them can count in both for one 15s sample.
   async depthByQueue(db: Querier): Promise<QueueDepthRow[]> {
     const active = await db.query<{
       queue_name: string

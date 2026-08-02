@@ -67,6 +67,13 @@ export class QueueDepthSampler {
         queueOldestPendingAgeSeconds.set({ queue }, 0)
       }
     } catch (err) {
+      // Absence beats staleness: a replica that cannot sample must not keep
+      // serving its last values — max() across replicas would pin the fleet
+      // panel at this replica's stale reading.
+      queueMessagesPending.reset()
+      queueMessagesDlq.reset()
+      queueOldestPendingAgeSeconds.reset()
+      this.knownQueues.clear()
       logger.error({ err }, "queue depth sample failed")
     }
   }

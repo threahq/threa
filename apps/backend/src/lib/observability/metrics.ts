@@ -241,14 +241,14 @@ export const outboxBatchSize = new Histogram({
 
 export const outboxDispatchLagSeconds = new Histogram({
   name: "outbox_dispatch_lag_seconds",
-  help: "Seconds between an outbox event's creation and its socket emit",
+  help: "Seconds between an outbox event's creation and its socket emit (created_at is transaction-start NOW(), so a long producer transaction inflates this)",
   buckets: [0.01, 0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10, 30],
   registers: [registry],
 })
 
 export const outboxBatchProcessSeconds = new Histogram({
   name: "outbox_batch_process_seconds",
-  help: "Seconds from broadcast-handler batch entry to the last emit of that batch",
+  help: "Seconds from broadcast-handler batch entry to the last emit, successful batches only",
   buckets: [0.01, 0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10, 30],
   registers: [registry],
 })
