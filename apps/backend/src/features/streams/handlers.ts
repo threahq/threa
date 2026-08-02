@@ -43,6 +43,7 @@ import {
 import { UserE2eKeysRepository } from "../user-e2e-keys"
 import { HttpError } from "../../lib/errors"
 import { validateRequest } from "../../lib/validation"
+import { sendBootstrapJson } from "../../lib/observability"
 import {
   streamTypeSchema,
   visibilitySchema,
@@ -985,6 +986,7 @@ export function createStreamHandlers({
       const userId = req.user!.id
       const workspaceId = req.workspaceId!
       const { streamId } = req.params
+      const startedAt = Date.now()
       const query = validateRequest(streamBootstrapQuerySchema, req.query)
       const afterSequence = query.after ? BigInt(query.after) : undefined
 
@@ -1148,38 +1150,36 @@ export function createStreamHandlers({
       const activeCall =
         callService && canCarryCall ? await callService.getStreamActiveCall({ workspaceId, streamId, userId }) : null
 
-      res.json({
-        data: {
-          stream,
-          rootArchivedAt: rootStream?.archivedAt ?? null,
-          events: eventsWithLinkPreviews,
-          slots,
-          sharedMessages,
-          members,
-          botMemberIds,
-          botRuntimePresence,
-          commands,
-          membership,
-          readState: viewerReadState
-            ? {
-                lastReadEventId: viewerReadState.lastReadEventId,
-                lastReadSequence: readStateSequence,
-                lastReadAt: viewerReadState.lastReadAt ? viewerReadState.lastReadAt.toISOString() : null,
-              }
-            : null,
-          latestSequence: (latestSequence ?? 0n).toString(),
-          snapshotAt,
-          hasOlderEvents,
-          syncMode,
-          threadStates,
-          unreadCount,
-          mentionCount: activityCounts?.mentionCount ?? 0,
-          activityCount: activityCounts?.totalCount ?? 0,
-          contextBag,
-          allowedToolCategories,
-          configuredToolCategories,
-          activeCall,
-        },
+      sendBootstrapJson(res, "stream", startedAt, {
+        stream,
+        rootArchivedAt: rootStream?.archivedAt ?? null,
+        events: eventsWithLinkPreviews,
+        slots,
+        sharedMessages,
+        members,
+        botMemberIds,
+        botRuntimePresence,
+        commands,
+        membership,
+        readState: viewerReadState
+          ? {
+              lastReadEventId: viewerReadState.lastReadEventId,
+              lastReadSequence: readStateSequence,
+              lastReadAt: viewerReadState.lastReadAt ? viewerReadState.lastReadAt.toISOString() : null,
+            }
+          : null,
+        latestSequence: (latestSequence ?? 0n).toString(),
+        snapshotAt,
+        hasOlderEvents,
+        syncMode,
+        threadStates,
+        unreadCount,
+        mentionCount: activityCounts?.mentionCount ?? 0,
+        activityCount: activityCounts?.totalCount ?? 0,
+        contextBag,
+        allowedToolCategories,
+        configuredToolCategories,
+        activeCall,
       })
     },
 

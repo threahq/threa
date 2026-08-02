@@ -224,6 +224,7 @@ import {
   ScheduleManager,
   CleanupWorker,
   QueueRetentionWorker,
+  QueueDepthSampler,
   QueueRepository,
   TokenPoolRepository,
 } from "./lib/queue"
@@ -1572,6 +1573,9 @@ export async function startServer(): Promise<ServerInstance> {
   )
   syncLogRetentionWorker.start()
 
+  const queueDepthSampler = new QueueDepthSampler({ pool })
+  queueDepthSampler.start()
+
   const orphanSessionCleanup = createOrphanSessionCleanup(pools.main, io)
   orphanSessionCleanup.start()
 
@@ -1619,6 +1623,7 @@ export async function startServer(): Promise<ServerInstance> {
     await syncLogReconciliationWorker.stop()
     await syncHeartbeatWorker.stop()
     await syncLogRetentionWorker.stop()
+    await queueDepthSampler.stop()
     await outboxDispatcher.stop()
     await enclaveClaimNudge?.stop()
     await jobQueue.stop()

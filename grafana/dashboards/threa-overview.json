@@ -978,7 +978,7 @@
       "collapsed": false,
       "gridPos": { "h": 1, "w": 24, "x": 0, "y": 57 },
       "id": 105,
-      "title": "AI Usage",
+      "title": "Queue Depth, Outbox & Catch-up",
       "type": "row"
     },
     {
@@ -1011,7 +1011,13 @@
           "mappings": [],
           "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] },
           "unit": "short"
-        }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byRegexp", "options": "oldest age.*" },
+            "properties": [{ "id": "unit", "value": "s" }]
+          }
+        ]
       },
       "gridPos": { "h": 8, "w": 8, "x": 0, "y": 58 },
       "id": 50,
@@ -1022,12 +1028,21 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "sum(rate(ai_calls_total[1m])) by (function) * 60",
-          "legendFormat": "{{function}}",
+          "expr": "max(queue_messages_pending) by (queue)",
+          "legendFormat": "pending {{queue}}",
           "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "max(queue_oldest_pending_age_seconds) by (queue)",
+          "legendFormat": "oldest age {{queue}}",
+          "refId": "B"
         }
       ],
-      "title": "AI Calls by Function / min",
+      "title": "Queue Pending Depth & Oldest Age",
       "type": "timeseries"
     },
     {
@@ -1071,12 +1086,21 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "histogram_quantile(0.95, sum(rate(ai_call_duration_seconds_bucket[5m])) by (le, function))",
-          "legendFormat": "p95 {{function}}",
+          "expr": "histogram_quantile(0.50, sum(rate(outbox_dispatch_lag_seconds_bucket[5m])) by (le))",
+          "legendFormat": "p50",
           "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "histogram_quantile(0.95, sum(rate(outbox_dispatch_lag_seconds_bucket[5m])) by (le))",
+          "legendFormat": "p95",
+          "refId": "B"
         }
       ],
-      "title": "AI Call Duration (p95) by Function",
+      "title": "Outbox Dispatch Lag (p50/p95)",
       "type": "timeseries"
     },
     {
@@ -1103,13 +1127,19 @@
             "scaleDistribution": { "type": "linear" },
             "showPoints": "never",
             "spanNulls": false,
-            "stacking": { "group": "A", "mode": "normal" },
+            "stacking": { "group": "A", "mode": "none" },
             "thresholdsStyle": { "mode": "off" }
           },
           "mappings": [],
           "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] },
           "unit": "short"
-        }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byRegexp", "options": "p95 duration" },
+            "properties": [{ "id": "unit", "value": "s" }]
+          }
+        ]
       },
       "gridPos": { "h": 8, "w": 8, "x": 16, "y": 58 },
       "id": 52,
@@ -1120,12 +1150,21 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "sum(rate(ai_tokens_used_total[1m])) by (type) * 60",
-          "legendFormat": "{{type}}",
+          "expr": "histogram_quantile(0.95, sum(rate(sync_catchup_entries_returned_bucket[5m])) by (le))",
+          "legendFormat": "p95 entries",
           "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "histogram_quantile(0.95, sum(rate(sync_catchup_duration_seconds_bucket[5m])) by (le))",
+          "legendFormat": "p95 duration",
+          "refId": "B"
         }
       ],
-      "title": "AI Tokens Used / min",
+      "title": "Catch-up Entries & Duration (p95)",
       "type": "timeseries"
     }
   ],

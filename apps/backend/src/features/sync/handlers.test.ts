@@ -12,9 +12,15 @@ function makeReqRes(query: Record<string, string>, role: string = "member") {
     workspaceId: "ws_1",
     query,
   } as unknown as Request
-  const json = mock((_body: unknown) => {})
-  const res = { json, locals: {} } as unknown as Response
-  return { req, res, json }
+  const send = mock((_body: string) => {})
+  const type = mock(() => ({ send }))
+  const res = { type, send, locals: {} } as unknown as Response
+  return { req, res, send }
+}
+
+/** The handler serializes once and sends the string, so decode it to assert shape. */
+function sentBody(send: ReturnType<typeof mock<(body: string) => void>>): unknown {
+  return JSON.parse(send.mock.calls[0][0] as string)
 }
 
 describe("createSyncHandlers.catchUp", () => {
@@ -32,7 +38,7 @@ describe("createSyncHandlers.catchUp", () => {
     }))
     const handlers = createSyncHandlers({ syncService: { catchUp } as unknown as SyncService })
 
-    const { req, res, json } = makeReqRes({ after: "5", limit: "50" })
+    const { req, res, send } = makeReqRes({ after: "5", limit: "50" })
     await handlers.catchUp(req, res)
 
     expect(catchUp.mock.calls[0][0]).toEqual({
@@ -42,7 +48,7 @@ describe("createSyncHandlers.catchUp", () => {
       after: 5n,
       limit: 50,
     })
-    expect(json.mock.calls[0][0]).toEqual({
+    expect(sentBody(send)).toEqual({
       entries: [
         {
           syncId: "7",
@@ -63,10 +69,10 @@ describe("createSyncHandlers.catchUp", () => {
     }))
     const handlers = createSyncHandlers({ syncService: { catchUp } as unknown as SyncService })
 
-    const { req, res, json } = makeReqRes({ after: "3" })
+    const { req, res, send } = makeReqRes({ after: "3" })
     await handlers.catchUp(req, res)
 
-    expect(json.mock.calls[0][0]).toEqual({ entries: [], head: "12", requiresBootstrap: true })
+    expect(sentBody(send)).toEqual({ entries: [], head: "12", requiresBootstrap: true })
   })
 
   it("defaults after to 0 and limit to 200", async () => {

@@ -2,6 +2,7 @@ import { z } from "zod"
 import type { Request, Response } from "express"
 import { setAuditSubjects } from "../access-log"
 import { isValidIanaTimezone } from "../../lib/temporal"
+import { sendBootstrapJson } from "../../lib/observability"
 import type { WorkspaceService } from "./service"
 import type { StreamService } from "../streams"
 import type { UserPreferencesService } from "../user-preferences"
@@ -154,6 +155,7 @@ export function createWorkspaceHandlers({
     async bootstrap(req: Request, res: Response) {
       const userId = req.user!.id
       const workspaceId = req.workspaceId!
+      const startedAt = Date.now()
       setAuditSubjects(res, [{ type: "workspace", id: workspaceId }])
 
       // Read the sync-log head BEFORE the snapshot queries below: every
@@ -345,43 +347,41 @@ export function createWorkspaceHandlers({
         ? await invitationService.listInvitations(workspaceId)
         : undefined
 
-      res.json({
-        data: {
-          workspace,
-          users,
-          streams: resolvedStreams,
-          archivedStreams: resolvedArchivedStreams,
-          streamMemberships,
-          streamReadState,
-          readMessageIds,
-          personas,
-          bots: bots.map(serializeBot),
-          emojis: getEmojiList(),
-          emojiWeights,
-          commands,
-          unreadCounts,
-          messageCounts,
-          mentionCounts,
-          activityCounts: activityCountsPerStream,
-          unreadActivityCount: activityCounts?.total ?? 0,
-          unreadActivities: unreadActivities ?? [],
-          mutedStreamIds,
-          dmPeers,
-          userPreferences,
-          workspaceSettings,
-          featureFlags,
-          sidebarConfig,
-          boardViews,
-          labels,
-          labelAssignments,
-          invitations,
-          viewerPermissions,
-          viewerIsPlatformAdmin,
-          configuredToolCategories,
-          activeAgentSessions,
-          activeCalls,
-          syncHead: syncHead.toString(),
-        },
+      sendBootstrapJson(res, "workspace", startedAt, {
+        workspace,
+        users,
+        streams: resolvedStreams,
+        archivedStreams: resolvedArchivedStreams,
+        streamMemberships,
+        streamReadState,
+        readMessageIds,
+        personas,
+        bots: bots.map(serializeBot),
+        emojis: getEmojiList(),
+        emojiWeights,
+        commands,
+        unreadCounts,
+        messageCounts,
+        mentionCounts,
+        activityCounts: activityCountsPerStream,
+        unreadActivityCount: activityCounts?.total ?? 0,
+        unreadActivities: unreadActivities ?? [],
+        mutedStreamIds,
+        dmPeers,
+        userPreferences,
+        workspaceSettings,
+        featureFlags,
+        sidebarConfig,
+        boardViews,
+        labels,
+        labelAssignments,
+        invitations,
+        viewerPermissions,
+        viewerIsPlatformAdmin,
+        configuredToolCategories,
+        activeAgentSessions,
+        activeCalls,
+        syncHead: syncHead.toString(),
       })
     },
 
