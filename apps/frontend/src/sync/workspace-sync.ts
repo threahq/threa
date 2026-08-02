@@ -2695,7 +2695,11 @@ export async function applyWorkspaceBootstrap(
         effectiveReadStateMap = { ...bootstrap.streamReadState }
         for (const [streamId, frontier] of Object.entries(bootstrap.streamReadState)) {
           const local = existingByStreamId.get(streamId)
-          if (fetchStartedAt !== undefined && local && local._cachedAt >= fetchStartedAt) {
+          if (
+            fetchStartedAt !== undefined &&
+            local &&
+            effectiveFreshness(workspaceId, "streamReadState", local.id, local._cachedAt) >= fetchStartedAt
+          ) {
             // Touched during the fetch window: preserve the local cache+IDB row
             // exactly, and carry its frontier into the returned map so the
             // query cache the caller writes doesn't regress either.

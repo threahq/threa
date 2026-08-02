@@ -1091,6 +1091,23 @@ describe("applyWorkspaceBootstrap (real IndexedDB)", () => {
       )
     }
 
+    it("a warm apply carrying an older frontier cannot regress a row the diff just confirmed", async () => {
+      await applyWorkspaceBootstrap("ws_1", diffBootstrap(), Date.now() - 5000)
+      await stampCachedAt(1)
+
+      const fetchStartedAt = Date.now() - 1000
+      await applyWorkspaceBootstrap("ws_1", diffBootstrap(), Date.now())
+
+      const stale = diffBootstrap({
+        streamReadState: {
+          stream_d1: { lastReadEventId: "evt_old", lastReadSequence: "2", lastReadAt: "2025-01-01T00:00:00Z" },
+        },
+      })
+      await applyWorkspaceBootstrap("ws_1", stale, fetchStartedAt)
+
+      expect((await db.streamReadState.get("ws_1:stream_d1"))?.lastReadSequence).toBe("3")
+    })
+
     it("a reconnect carrying an older frontier cannot regress a row the diff just confirmed", async () => {
       await warmThenOlderReconnect(true, {
         streamReadState: {
