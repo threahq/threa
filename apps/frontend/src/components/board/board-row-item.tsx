@@ -1,4 +1,4 @@
-import type { ReactNode } from "react"
+import { useState, type ReactNode } from "react"
 import { Bot, Clock, Sparkles, TerminalSquare } from "lucide-react"
 import type { StreamEvent } from "@threa/types"
 import { useSteerAgentSession, useStopAgentSession } from "@/hooks"
@@ -6,6 +6,7 @@ import { isContinuation } from "@/lib/message-grouping"
 import { type RenderableMessage } from "@/components/message/message-item"
 import { AgentSessionEvent } from "@/components/timeline/agent-session-event"
 import { MemoCapturedEvent } from "@/components/timeline/memo-captured-event"
+import { MemoPreviewDialog } from "@/components/memo/memo-preview-dialog"
 import { FollowUpScheduledEvent } from "@/components/timeline/follow-up-event"
 import { DelegationEvent } from "@/components/timeline/delegation-event"
 import { getSessionId } from "@/components/timeline/session-grouping"
@@ -492,28 +493,47 @@ const LEDGER_EVENT_ICONS: Record<BoardEventRow["kind"], ReactNode> = {
   delegation: <TerminalSquare className="size-3" />,
 }
 
-function ledgerDescriptor(row: BoardEventRow, workspaceId: string, traceUrl: (sessionId: string) => string) {
-  const content = ledgerEventContent(row, { workspaceId, traceUrl })
+type OpenMemo = { memoId: string; title: string }
+
+function ledgerDescriptor(
+  row: BoardEventRow,
+  traceUrl: (sessionId: string) => string,
+  onOpenMemo: (memo: OpenMemo) => void
+) {
+  const content = ledgerEventContent(row, { traceUrl })
   return {
     key: content.key,
     icon: LEDGER_EVENT_ICONS[content.kind],
     label: content.label,
     meta: content.meta,
     href: content.href,
+    onOpen: content.memo ? () => onOpenMemo(content.memo as OpenMemo) : undefined,
   } satisfies LedgerEventDescriptor
 }
 
 /**
  * One event compressed to a ledger line. Its tap affordance is the kind's own:
- * a session opens the trace view its full card links to, a single capture deep-
- * links to the memo in the memory explorer. Follow-ups and delegations act only
- * through buttons on their full cards, so their lines are non-interactive.
+ * a session opens the trace view its full card links to, a single capture opens
+ * the SAME in-place `MemoPreviewDialog` the full capture row does (never a
+ * navigation off the board — the dialog's footer carries the deep link). Follow-
+ * ups and delegations act only through buttons on their full cards, so their
+ * lines are non-interactive.
  */
 export function LedgerBoardEventRow({ row, workspaceId }: { row: BoardEventRow; workspaceId: string }) {
   const { getTraceUrl } = useTrace()
-  const descriptor = ledgerDescriptor(row, workspaceId, getTraceUrl)
+  const [openMemo, setOpenMemo] = useState<OpenMemo | null>(null)
+  const descriptor = ledgerDescriptor(row, getTraceUrl, setOpenMemo)
   return (
-    <LedgerEventRow icon={descriptor.icon} label={descriptor.label} meta={descriptor.meta} href={descriptor.href} />
+    <>
+      <LedgerEventRow
+        icon={descriptor.icon}
+        label={descriptor.label}
+        meta={descriptor.meta}
+        href={descriptor.href}
+        onOpen={descriptor.onOpen}
+      />
+      <LedgerMemoPreview workspaceId={workspaceId} memo={openMemo} onClose={() => setOpenMemo(null)} />
+    </>
   )
 }
 
@@ -530,11 +550,37 @@ export function LedgerBoardEventGroup({
   onToggle: () => void
 }) {
   const { getTraceUrl } = useTrace()
+  const [openMemo, setOpenMemo] = useState<OpenMemo | null>(null)
   return (
-    <LedgerEventGroup
-      events={rows.map((row) => ledgerDescriptor(row, workspaceId, getTraceUrl))}
-      expanded={expanded}
-      onToggle={onToggle}
+    <>
+      <LedgerEventGroup
+        events={rows.map((row) => ledgerDescriptor(row, getTraceUrl, setOpenMemo))}
+        expanded={expanded}
+        onToggle={onToggle}
+      />
+      <LedgerMemoPreview workspaceId={workspaceId} memo={openMemo} onClose={() => setOpenMemo(null)} />
+    </>
+  )
+}
+
+function LedgerMemoPreview({
+  workspaceId,
+  memo,
+  onClose,
+}: {
+  workspaceId: string
+  memo: OpenMemo | null
+  onClose: () => void
+}) {
+  return (
+    <MemoPreviewDialog
+      open={memo !== null}
+      onOpenChange={(open) => {
+        if (!open) onClose()
+      }}
+      workspaceId={workspaceId}
+      memoId={memo?.memoId ?? ""}
+      fallbackTitle={memo?.title ?? ""}
     />
   )
 }

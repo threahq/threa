@@ -1,6 +1,35 @@
 import { useCallback, useMemo, useRef, useState } from "react"
 import type { ConversationRowRead } from "@/components/message/conversation-read-context"
 import type { RenderableMessage } from "@/components/message/message-item"
+import { useWorkspaceStreamReadStates, useWorkspaceUnreadState } from "@/stores/workspace-store"
+
+/**
+ * Whether every stream the given rows span can already be decided as read or
+ * unread — the gate {@link useConversationUnreadMarker}'s `readStateResolved`
+ * wants. A row whose leg has no frontier yet derives as `ungated`, so latching
+ * before that would anchor the marker below the true first unread, and the latch
+ * is one-way. A leg counts as decidable once it has a `stream_read_state` row or
+ * a zero unread count (mark-all-read advances counts without a frontier).
+ */
+export function useConversationReadStateDecidable(
+  workspaceId: string,
+  rows: RenderableMessage[],
+  rootStreamId: string
+): boolean {
+  const unreadState = useWorkspaceUnreadState(workspaceId)
+  const streamReadStates = useWorkspaceStreamReadStates(workspaceId)
+  return useMemo(() => {
+    if (unreadState === undefined) return false
+    const decidable = new Set(streamReadStates.map((row) => row.streamId))
+    for (const [streamId, count] of Object.entries(unreadState.unreadCounts ?? {})) {
+      if (count === 0) decidable.add(streamId)
+    }
+    for (const row of rows) {
+      if (!decidable.has(row.streamId ?? rootStreamId)) return false
+    }
+    return true
+  }, [unreadState, streamReadStates, rows, rootStreamId])
+}
 
 interface UseConversationUnreadMarkerOptions {
   /** Resets the latch — one marker decision per conversation, per open. */

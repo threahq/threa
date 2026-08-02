@@ -16,7 +16,7 @@ import { Button } from "@/components/ui/button"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { MessageItem, type RenderableMessage } from "@/components/message/message-item"
 import { actorRowTheme } from "@/components/message/actor-row-theme"
-import { buildBranchedBoardRows, foldLedgerEventRows } from "@/components/board/board-row-item"
+import { buildBranchedBoardRows, foldLedgerEventRows, injectUnreadDivider } from "@/components/board/board-row-item"
 import {
   BranchedBoardRows,
   BranchProvenanceRow,
@@ -39,6 +39,10 @@ import { ConversationReadProvider, useConversationReadController } from "@/compo
 import { useConversationAutoRead } from "@/components/message/use-conversation-auto-read"
 import { BoardReplyComposer } from "@/components/board/board-reply-composer"
 import { useMoveToSubtopic } from "@/components/board/use-move-to-subtopic"
+import {
+  useConversationReadStateDecidable,
+  useConversationUnreadMarker,
+} from "@/components/conversations/use-conversation-unread-marker"
 import { DeletedMessageEvent } from "@/components/timeline/deleted-message-event"
 import { QuoteReplyProvider } from "@/components/timeline/quote-reply-context"
 import { TextSelectionQuote } from "@/components/timeline/text-selection-quote"
@@ -537,6 +541,15 @@ export function BoardCard({
     ),
     settlingIds
   )
+  // The rows that carry read state: the opening plus every locally displayed
+  // reply, tombstones excluded (a deleted row counts as zero unread, so it must
+  // neither anchor the marker nor be auto-read). Feeds both the unread marker
+  // below and the viewport auto-read further down — one set, so "what can hold
+  // the divider" and "what can clear it" stay the same rows.
+  const readableRows = (openingMessage ? [openingMessage, ...displayedReplies] : displayedReplies).filter(
+    (m) => !m.deletedAt
+  )
+  const readStateResolved = useConversationReadStateDecidable(workspaceId, readableRows, streamId)
   // The reply region IS the ledger: the newest `fullTailCount` replies keep the
   // full message row (reactions, actions, settling affordances); everything older
   // that fits in `ledgerRowLimit` renders as a collapsed ledger line, and the mass
@@ -559,10 +572,41 @@ export function BoardCard({
   // Events interleave at their own timeline positions; those landing among the
   // ledger rows compress to the same hair-thin line the messages do, coalescing
   // adjacent runs. A card with no ledger rows is all full detail, so nothing folds.
-  const ledgerBranchRows = (messages: RenderableMessage[]) => {
+  const foldedBranchRows = (messages: RenderableMessage[]) => {
     const rows = branchRows(messages)
     return ledgerReplies.length > 0 ? foldLedgerEventRows(rows, firstFullTailId) : rows
   }
+  // The card's "New" divider: the SAME marker the conversation panel latches
+  // (per-stream frontiers + read overlay, one decision per open, one-way dim),
+  // rendered through the same `unread` row kind and `UnreadDivider`.
+  // Rows first, marker second (as in the panel): a message swallowed by a
+  // depth-collapsed "continue thread" row has no row, so a marker latched there
+  // would draw nothing and never correct itself. Unlike the panel, the set also
+  // unions the ledger's hidden older mass — that mass is deliberately off-card,
+  // and a marker landing in it must keep drawing NO divider rather than sliding
+  // down onto the first visible row and pointing at the wrong message.
+  const renderedMessageIds = new Set<string>(hiddenOlder.map((m) => m.id))
+  for (const row of foldedBranchRows(openingMessage ? [openingMessage, ...visibleReplies] : visibleReplies)) {
+    if (row.kind === "message") renderedMessageIds.add(row.message.id)
+  }
+  const { markerMessageId, isDimmed } = useConversationUnreadMarker({
+    conversationId: conversation.id,
+    rows: readableRows,
+    rootStreamId: streamId,
+    rowState: conversationReadValue.state,
+    currentUserId,
+    readStateResolved,
+    renderedMessageIds,
+  })
+  const ledgerBranchRows = (messages: RenderableMessage[]) =>
+    injectUnreadDivider(foldedBranchRows(messages), markerMessageId, isDimmed)
+  // The non-contiguous shape renders the opening outside the row builder, so the
+  // divider above it is lifted out of that same injection rather than drawn by a
+  // second authority — `injectUnreadDivider` stays the only thing that decides.
+  const openingLeadRows =
+    openingMessage && markerMessageId === openingMessage.id
+      ? ledgerBranchRows([openingMessage]).filter((row) => row.kind === "unread")
+      : []
   // Commit the partition's first row after render, never during it.
   useEffect(() => {
     if (firstFullTailId === null) return
@@ -636,12 +680,9 @@ export function BoardCard({
   // never dwells as an observed row, but the cutoff through a read tail row still
   // covers the older leads beneath it — whole-card read, exactly as before the
   // ledger. Lead-granular read waits for sparse-read.
-  const autoReadRows = (openingMessage ? [openingMessage, ...displayedReplies] : displayedReplies).filter(
-    (m) => !m.deletedAt
-  )
   useConversationAutoRead({
     containerRef: cardRef,
-    messages: autoReadRows,
+    messages: readableRows,
     rootStreamId: streamId,
     rowState: conversationReadValue.state,
     markRead: markReadSilently,
@@ -727,6 +768,17 @@ export function BoardCard({
           currentUserId={currentUserId}
           expanded={expandedRowIds.has(message.id)}
           onToggle={() => toggleLedgerRow(message.id)}
+          // Live effective read state, not the latched divider position: the tint
+          // decays as auto-read clears rows, the way the header dot does.
+          unread={
+            message.authorId !== currentUserId &&
+            conversationReadValue.state(
+              message.streamId ?? streamId,
+              message.id,
+              message.sequence,
+              message.createdAt
+            ) === "unread"
+          }
           leadLineLength={leadLineLength}
           conversationId={conversation.id}
           conversationRootStreamId={conversation.streamId}
@@ -1076,6 +1128,19 @@ export function BoardCard({
                 />
               ) : (
                 <>
+                  <BranchedBoardRows
+                    rows={openingLeadRows}
+                    workspaceId={workspaceId}
+                    renderMessage={renderMessage}
+                    continueThreadTo={continueThreadTo}
+                    onSplitThread={onSplitThread}
+                    renderBranchMessage={renderBranchMessage}
+                    renderBranchTail={inlineComposer.renderBranchTail}
+                    branchExpansion={branchExpansion}
+                    renderAfterMessage={inlineComposer.renderAfterMessage}
+                    onRedirectSession={openReplyComposer}
+                    ledgerEventExpansion={ledgerEventExpansion}
+                  />
                   {openingMessage && renderMessage(openingMessage, false)}
                   {/* The opening renders outside the row builder here, so its inline
                     "new sub-topic" composer slot must be placed explicitly. */}

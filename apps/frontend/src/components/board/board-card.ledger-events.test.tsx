@@ -82,6 +82,21 @@ function memoEvent(id: string, seconds: number, memoId: string, title: string): 
   )
 }
 
+function multiMemoEvent(id: string, seconds: number): CachedEvent {
+  return event(
+    "memos:captured",
+    seconds,
+    {
+      conversationId: CONV,
+      memos: [
+        { memoId: "memo_1", title: "One", knowledgeType: "fact", sourceMessageIds: ["r1"] },
+        { memoId: "memo_2", title: "Two", knowledgeType: "fact", sourceMessageIds: ["r1"] },
+      ],
+    },
+    id
+  )
+}
+
 function post(): CachedBoardPost {
   return {
     id: CONV,
@@ -205,7 +220,7 @@ function textOrder(...needles: string[]): number[] {
 }
 
 describe("BoardCard ledger events", () => {
-  it("renders a capture between the ledger messages as a thin title-only line linking to the memo", async () => {
+  it("renders a capture between the ledger messages as a thin title-only line that previews in place", async () => {
     await db.events.bulkPut([
       messageEvent("r1", 10, "First reply."),
       memoEvent("evt_memo", 11, "memo_9", "Postgres upserts need the index"),
@@ -215,16 +230,51 @@ describe("BoardCard ledger events", () => {
     await db.conversations.put(post())
     mount()
 
-    const link = await screen.findByRole("link", { name: /Memo: Postgres upserts need the index/ })
-    expect(link).toHaveAttribute("href", "/w/ws_1/memory?memo=memo_9")
-    // The full capture row's phrasing (and its memo-opening buttons) is not what
-    // a ledger line renders — title only, never the memo body.
+    const row = await screen.findByRole("button", { name: /Memo: Postgres upserts need the index/ })
+    // Never a navigation off the board: the thin row opens the same in-place
+    // preview the full capture row does (INV-35).
+    expect(row).not.toHaveAttribute("href")
+    expect(screen.queryByRole("link", { name: /Memo: Postgres upserts need the index/ })).toBeNull()
+    expect(screen.queryByRole("dialog")).toBeNull()
+
+    await userEvent.click(row)
+    const dialog = await screen.findByRole("dialog")
+    expect(within(dialog).getByText("Postgres upserts need the index")).toBeInTheDocument()
+    expect(within(dialog).getByRole("link", { name: /Open in memory/ })).toHaveAttribute(
+      "href",
+      "/w/ws_1/memory?memo=memo_9"
+    )
+
+    // The full capture row's phrasing (and its memo body) is not what a ledger
+    // line renders — title only.
     expect(screen.queryByText(/Saved to memory/)).toBeNull()
 
     const [first, memo, second] = textOrder("First reply.", "Memo: Postgres upserts need the index", "Second reply.")
     expect(first).toBeGreaterThan(-1)
     expect(memo).toBeGreaterThan(first)
     expect(second).toBeGreaterThan(memo)
+  })
+
+  // jsdom can't measure pixels, so this holds the padding CLASS contract that
+  // produces the hit area; the rendered height is a browser-suite follow-up.
+  it("gives interactive ledger event rows a thumb-sized hit area and leaves inert ones hair-thin", async () => {
+    await db.events.bulkPut([
+      messageEvent("r1", 10, "First reply."),
+      memoEvent("evt_memo", 11, "memo_9", "Single"),
+      messageEvent("r2", 12, "Second reply."),
+      multiMemoEvent("evt_multi", 13),
+      messageEvent("r3", 14, "Third reply."),
+    ])
+    await db.conversations.put(post())
+    mount()
+
+    const interactiveRow = await screen.findByRole("button", { name: /Memo: Single/ })
+    expect(interactiveRow.className).toContain("py-0.5")
+    expect(interactiveRow.className).toContain("text-xs")
+
+    const inertRow = screen.getByText("Memo: One, Two").parentElement as HTMLElement
+    expect(inertRow.className).toContain("py-px")
+    expect(inertRow.className).not.toContain("py-0.5")
   })
 
   it("coalesces a run of three ledger events into one row that expands and re-coalesces", async () => {
@@ -244,15 +294,19 @@ describe("BoardCard ledger events", () => {
     await userEvent.click(summary)
 
     const group = screen.getByRole("button", { name: "3 events" }).parentElement as HTMLElement
-    expect(within(group).getAllByRole("link")).toHaveLength(3)
-    expect(within(group).getByRole("link", { name: /Memo: Beta/ })).toHaveAttribute(
+    expect(within(group).queryAllByRole("link")).toHaveLength(0)
+    const beta = within(group).getByRole("button", { name: "Memo: Beta" })
+    await userEvent.click(beta)
+    const dialog = await screen.findByRole("dialog")
+    expect(within(dialog).getByRole("link", { name: /Open in memory/ })).toHaveAttribute(
       "href",
       "/w/ws_1/memory?memo=memo_2"
     )
+    await userEvent.keyboard("{Escape}")
 
     await userEvent.click(screen.getByRole("button", { name: "3 events" }))
     expect(screen.getByRole("button", { name: /3 events —/ })).toBeInTheDocument()
-    expect(screen.queryByRole("link", { name: /Memo: Beta/ })).toBeNull()
+    expect(screen.queryByRole("button", { name: "Memo: Beta" })).toBeNull()
   })
 
   it("keeps an event in the full-tail region fully rendered", async () => {
@@ -268,6 +322,6 @@ describe("BoardCard ledger events", () => {
     // The full capture row (title as a preview-opening button), not a thin line.
     expect(await screen.findByText(/Saved to memory/)).toBeInTheDocument()
     expect(screen.getByRole("button", { name: "Postgres upserts need the index" })).toBeInTheDocument()
-    expect(screen.queryByRole("link", { name: /Memo: Postgres upserts need the index/ })).toBeNull()
+    expect(screen.queryByRole("button", { name: /^Memo: Postgres upserts need the index/ })).toBeNull()
   })
 })
