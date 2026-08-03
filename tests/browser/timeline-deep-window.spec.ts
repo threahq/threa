@@ -16,10 +16,13 @@ import { armCapture, readCapture, seedStream } from "./perf-fixtures"
  * two-scrollers class of bug (#1717) lives in exactly this path.
  */
 
-// Seeding 160 messages over the API plus repeated scroll-ups needs headroom.
+// Seeding over the API plus repeated scroll-ups needs headroom. 100 messages,
+// not more: the backend rate limit is 120/60s per client and the seed shares
+// that window with setup requests — 160 sequential posts 429d deterministically
+// at message 121 in CI. 100 still yields 2+ pages of scroll-back depth.
 test.describe.configure({ timeout: 180_000 })
 
-const MESSAGE_COUNT = 160
+const MESSAGE_COUNT = 100
 const SCROLLER = "[data-suppress-pull-refresh]"
 
 function extractIds(page: Page): { workspaceId: string; streamId: string } {
