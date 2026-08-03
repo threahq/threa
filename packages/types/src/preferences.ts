@@ -183,11 +183,22 @@ export const BOARD_LEAD_LINE_LENGTH_MAX = 300
 export const DEFAULT_BOARD_LEAD_LINE_LENGTH = 110
 
 // What the mass badge on a collapsed ledger head row reports:
-//   - "count-minutes" → message count plus an estimated read time
-//   - "count"         → message count only
-//   - "off"           → no badge
-export const BOARD_MASS_BADGE_MODES = ["count-minutes", "count", "off"] as const
+//   - "count" → how many messages are unread
+//   - "off"   → no badge
+export const BOARD_MASS_BADGE_MODES = ["count", "off"] as const
 export type BoardMassBadge = (typeof BOARD_MASS_BADGE_MODES)[number]
+export const DEFAULT_BOARD_MASS_BADGE: BoardMassBadge = "count"
+
+/**
+ * A stored badge mode as one of the modes that still exist. Rows persisted
+ * before the reading-time mode was dropped still hold `"count-minutes"`, and a
+ * preferences row is never rewritten on read, so every read site normalizes.
+ */
+export function normalizeBoardMassBadge(value: string | null | undefined): BoardMassBadge {
+  return (BOARD_MASS_BADGE_MODES as readonly string[]).includes(value ?? "")
+    ? (value as BoardMassBadge)
+    : DEFAULT_BOARD_MASS_BADGE
+}
 
 // Voice polish level: how aggressively the polish model rewrites a finalized
 // dictation transcript. The id flows through the wire format and is mirrored
@@ -450,7 +461,7 @@ export const DEFAULT_USER_PREFERENCES: Omit<UserPreferences, "workspaceId" | "us
   boardFullTailCount: DEFAULT_BOARD_FULL_TAIL_COUNT,
   boardLedgerRows: DEFAULT_BOARD_LEDGER_ROWS,
   boardLeadLineLength: DEFAULT_BOARD_LEAD_LINE_LENGTH,
-  boardMassBadge: "count-minutes",
+  boardMassBadge: DEFAULT_BOARD_MASS_BADGE,
   boardDefaultLens: DEFAULT_BOARD_LENS,
   boardDefaultViewId: null,
   voiceTranscriptionModel: null,

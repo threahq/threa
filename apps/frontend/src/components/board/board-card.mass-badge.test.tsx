@@ -166,7 +166,7 @@ function dividerLabel(): HTMLElement | undefined {
 
 let unreadIds = new Set<string>()
 let ledgerRowsPref = 15
-let massBadgePref: BoardMassBadge = "count-minutes"
+let massBadgePref: BoardMassBadge = "count"
 const readValue = {
   state: (_streamId: string, messageId: string): RowReadState => (unreadIds.has(messageId) ? "unread" : "read"),
   markReadUpToHere: vi.fn(),
@@ -177,7 +177,7 @@ beforeEach(async () => {
   seq = 0
   unreadIds = new Set()
   ledgerRowsPref = 15
-  massBadgePref = "count-minutes"
+  massBadgePref = "count"
   replyBody = (index) => `Reply ${index + 1}.`
   __clearBoardRailRegistry()
   resetBoardUnreadLatches()
@@ -256,21 +256,21 @@ async function seedRail() {
 afterEach(() => vi.restoreAllMocks())
 
 describe("BoardCard mass badge", () => {
-  it("reports the unread count and the reading minutes over those rows only", async () => {
-    // 1200 chars each: two unread rows = 2400 → 3 minutes. The read rows are far
-    // longer, so a badge that measured the whole card would say something else.
+  it("counts the unread rows only, whatever their length", async () => {
+    // The read rows are far longer than the unread ones, so a badge measuring
+    // the whole card would report something other than a count of two.
     replyBody = (index) => (index >= 3 ? "u".repeat(1200) : "r".repeat(4000))
     await seedRail()
     unreadIds = new Set(["r4", "r5"])
     mount()
     await screen.findByText("u".repeat(1200))
 
-    expect(badgeText()).toBe("2 new · ~3 min")
+    expect(badgeText()).toBe("2 new")
   })
 
-  it("drops the minutes in count mode", async () => {
+  it("reads a stored count-minutes preference as the count mode", async () => {
     replyBody = () => "x".repeat(1200)
-    massBadgePref = "count"
+    massBadgePref = "count-minutes" as BoardMassBadge
     await seedRail()
     unreadIds = new Set(["r3", "r4", "r5"])
     mount()
@@ -309,7 +309,7 @@ describe("BoardCard mass badge", () => {
 
     expect(document.querySelector('[data-message-id="r1"]')).toBeNull()
     expect(dividerLabel()).toBeUndefined()
-    expect(badgeText()).toBe("5 new · ~1 min")
+    expect(badgeText()).toBe("5 new")
   })
 
   it("decays live as rows are read, without latching", async () => {
@@ -317,11 +317,11 @@ describe("BoardCard mass badge", () => {
     unreadIds = new Set(["r3", "r4", "r5"])
     const { rerender } = mount()
     await screen.findByText("Reply 5.")
-    expect(badgeText()).toBe("3 new · ~1 min")
+    expect(badgeText()).toBe("3 new")
 
     unreadIds = new Set(["r5"])
     rerender(tree())
-    expect(badgeText()).toBe("1 new · ~1 min")
+    expect(badgeText()).toBe("1 new")
 
     unreadIds = new Set()
     rerender(tree())
@@ -336,7 +336,7 @@ describe("BoardCard mass badge", () => {
     const shape = (): string[] =>
       [...badgeSlot().parentElement!.children].map((el) => (el as HTMLElement).tagName + ":" + el.getAttribute("class"))
     const withBadge = shape()
-    expect(badgeText()).toBe("1 new · ~1 min")
+    expect(badgeText()).toBe("1 new")
 
     unreadIds = new Set()
     rerender(tree())

@@ -111,7 +111,7 @@ function makeBootstrap(): WorkspaceBootstrap {
       boardFullTailCount: 1,
       boardLedgerRows: 15,
       boardLeadLineLength: 110,
-      boardMassBadge: "count-minutes",
+      boardMassBadge: "count",
       boardDefaultLens: "all",
       boardDefaultViewId: null,
       voiceTranscriptionModel: null,

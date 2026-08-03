@@ -3,10 +3,14 @@ import { renderHook, waitFor } from "@testing-library/react"
 import { db, type CachedConversationMessage } from "@/db"
 import type { BoardPostMessage } from "@threa/types"
 import {
+  __resetConversationMessageSnapshots,
+  conversationMessagesPrimed,
   deleteConversationMessages,
   patchConversationMessage,
+  primeConversationMessages,
   pruneConversationMessagesToMembership,
   seedConversationMessages,
+  useBoardBackfillPrimed,
   useConversationBackfillMessages,
 } from "./conversation-messages-store"
 
@@ -38,6 +42,7 @@ function rowsOf(rows: CachedConversationMessage[]): Omit<CachedConversationMessa
 
 beforeEach(async () => {
   await db.conversationMessages.clear()
+  __resetConversationMessageSnapshots()
 })
 
 describe("seedConversationMessages", () => {
@@ -141,6 +146,41 @@ describe("useConversationBackfillMessages", () => {
     await waitFor(() => expect(result.current.map((row) => row.messageId)).toEqual(["a1"]))
   })
 
+  it("returns the primed snapshot in its FIRST render, before the live query emits", async () => {
+    await seedConversationMessages(WS, CONV_A, [message("a1"), message("a2")])
+    await primeConversationMessages([CONV_A])
+
+    const renders: string[][] = []
+    const { result } = renderHook(() => {
+      const rows = useConversationBackfillMessages(CONV_A, { enabled: true })
+      renders.push(rows.map((row) => row.messageId))
+      return rows
+    })
+
+    // The frame the board reveals in — no waiting, no second render.
+    expect(renders[0]).toEqual(["a1", "a2"])
+    // The live query then takes ownership of the value.
+    await waitFor(() => expect(result.current.map((row) => row.messageId)).toEqual(["a1", "a2"]))
+  })
+
+  it("refreshes the snapshot from the live query, so a later mount is warm with the newer rows", async () => {
+    await seedConversationMessages(WS, CONV_A, [message("a1")])
+    await primeConversationMessages([CONV_A])
+    const first = renderHook(() => useConversationBackfillMessages(CONV_A, { enabled: true }))
+    await seedConversationMessages(WS, CONV_A, [message("a1"), message("a2")])
+    await waitFor(() => expect(first.result.current.map((row) => row.messageId)).toEqual(["a1", "a2"]))
+    first.unmount()
+
+    const renders: string[][] = []
+    renderHook(() => {
+      const rows = useConversationBackfillMessages(CONV_A, { enabled: true })
+      renders.push(rows.map((row) => row.messageId))
+      return rows
+    })
+
+    expect(renders[0]).toEqual(["a1", "a2"])
+  })
+
   it("returns [] and registers no Dexie subscription when disabled", async () => {
     await seedConversationMessages(WS, CONV_A, [message("a1")])
     let renders = 0
@@ -159,6 +199,50 @@ describe("useConversationBackfillMessages", () => {
 
     expect(result.current).toEqual([])
     expect(renders).toBe(rendersAfterMount)
+  })
+})
+
+describe("primeConversationMessages", () => {
+  it("fills only ABSENT keys — a conversation the live query already owns is not clobbered", async () => {
+    await seedConversationMessages(WS, CONV_A, [message("a1")])
+    await primeConversationMessages([CONV_A])
+    // A later write that the primed snapshot must NOT pick up: the live query owns
+    // this conversation now, and a re-prime is always the older read.
+    await seedConversationMessages(WS, CONV_A, [message("a1", { contentMarkdown: "edited" }), message("a2")])
+
+    await primeConversationMessages([CONV_A, CONV_B])
+
+    const renders: string[][] = []
+    renderHook(() => {
+      const rows = useConversationBackfillMessages(CONV_A, { enabled: true })
+      renders.push(rows.map((row) => row.contentMarkdown))
+      return rows
+    })
+    // First frame is the snapshot from the first prime, untouched by the second.
+    expect(renders[0]).toEqual(["body a1"])
+    // And the conversation with no rows still counts as primed (read, not found).
+    expect(conversationMessagesPrimed([CONV_A, CONV_B])).toBe(true)
+  })
+
+  it("reports unprimed conversations as not primed", async () => {
+    await primeConversationMessages([CONV_A])
+    expect(conversationMessagesPrimed([CONV_A])).toBe(true)
+    expect(conversationMessagesPrimed([CONV_A, CONV_B])).toBe(false)
+  })
+})
+
+describe("useBoardBackfillPrimed", () => {
+  it("is false until the prime resolves, then true", async () => {
+    await seedConversationMessages(WS, CONV_A, [message("a1")])
+    const { result } = renderHook(() => useBoardBackfillPrimed([CONV_A]))
+
+    expect(result.current).toBe(false)
+    await waitFor(() => expect(result.current).toBe(true))
+  })
+
+  it("is true with no conversations to prime — an empty feed gates on nothing", () => {
+    const { result } = renderHook(() => useBoardBackfillPrimed([]))
+    expect(result.current).toBe(true)
   })
 })
 

@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
+import { __resetConversationMessageSnapshots } from "@/stores/conversation-messages-store"
 import { act, render, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { toast } from "sonner"
@@ -151,6 +152,7 @@ beforeEach(async () => {
   __resetCollapseCacheForTests()
   await db.events.clear()
   await db.conversationMessages.clear()
+  __resetConversationMessageSnapshots()
   await db.conversations.clear()
   await db.streams.clear()
   vi.spyOn(workspaceStoreModule, "useWorkspaceStreams").mockReturnValue([] as never)

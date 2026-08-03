@@ -4,7 +4,7 @@ import type { Socket } from "socket.io-client"
 import type { BoardPostMessage, LinkPreviewSummary } from "@threa/types"
 import { db } from "@/db"
 import { registerStreamSocketHandlers } from "./stream-sync"
-import { seedConversationMessages } from "@/stores/conversation-messages-store"
+import { seedConversationMessages, __resetConversationMessageSnapshots } from "@/stores/conversation-messages-store"
 
 const WS = "ws_1"
 const STREAM = "stream_mirror"
@@ -68,6 +68,7 @@ let cleanup: () => void
 beforeEach(async () => {
   await db.events.clear()
   await db.conversationMessages.clear()
+  __resetConversationMessageSnapshots()
   cleanup?.()
   const testSocket = createTestSocket()
   emit = testSocket.emit

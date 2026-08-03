@@ -286,6 +286,10 @@ export function Sidebar({ workspaceId }: SidebarProps) {
   // The Unread affordance's badge: unread (unmuted) streams workspace-wide — the
   // same predicate the Unread section's membership uses, ungated by the layout
   // since the board row exists regardless of whether that section is configured.
+  // Workspace-wide deliberately: the board view it opens still applies the
+  // active lens/scope/saved-view filters, so a narrowed view can show fewer
+  // cards than the badge counts. Per-view counting would re-implement the
+  // board's filter resolution here; if the mismatch grates, that's the change.
   const unreadStreamCount = useMemo(
     () => processedStreams.filter((stream) => isUnreadStream(stream, getUnreadCount(stream.id))).length,
     [processedStreams, getUnreadCount]

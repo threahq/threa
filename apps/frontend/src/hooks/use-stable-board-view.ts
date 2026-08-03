@@ -75,14 +75,20 @@ export interface BoardLabelScope {
 /**
  * The board's unread narrowing (`?unread=true`). `key` is the SELECTION (just
  * "true" while active) — the view-reset key, so it never changes shape — while
- * `streamIds` is the live resolution to currently-unread-and-unmuted root
- * streams (mirrors the sidebar's own Unread section membership), re-derived as
- * things get read/unread without resetting the frozen view. Same key/resolution
- * split as {@link BoardLabelScope}.
+ * `streamIds` is the resolution to the streams this unread SESSION covers.
+ *
+ * That set is a floor, not a live membership: the page latches every stream
+ * that is unread while the view is open and never drops one on its own (Kris,
+ * 2026-08). Reading a card in the unread view is the point of being there, so
+ * the card it stands for must not vanish out from under the reader; leaving the
+ * view (or a workspace switch) starts a fresh floor. A card leaves early only
+ * by explicit will, through `clearedConversationIds`.
  */
 export interface BoardUnreadScope {
   key: string
   streamIds: ReadonlySet<string>
+  /** Cards the viewer cleared from this unread session by hand. */
+  clearedConversationIds?: ReadonlySet<string>
 }
 
 export interface BoardViewFilter {
@@ -206,6 +212,7 @@ function matchesExcludedLabels(post: CachedBoardPost, labels: BoardLabelScope | 
 
 function matchesUnread(post: CachedBoardPost, unread: BoardUnreadScope | null): boolean {
   if (!unread) return true
+  if (unread.clearedConversationIds?.has(post.conversation.id)) return false
   return unread.streamIds.has(post.rootStreamId ?? post.conversation.streamId)
 }
 
@@ -580,10 +587,11 @@ export function useStableBoardView(
       // so an involuntary drop (lost access, re-lensed by the viewer's own reply)
       // doesn't shift rows below it. But a VOLUNTARY hide/mute must drop NOW, not
       // wait for the next commit — so skip excluded ids here too, not just in the
-      // `live` filter. (The retained copy is pruned on the next `commit()`.) A
-      // card the viewer just read while sitting on `?unread=true` is the same
-      // class of voluntary action: reading it is the point of an unread-only
-      // view, so it must vanish immediately rather than linger until commit.
+      // `live` filter. (The retained copy is pruned on the next `commit()`.)
+      // Clearing a card from the unread view is the same class of voluntary
+      // action, and `matchesUnread` is where that verdict lives — reading a card
+      // is NOT: the unread session's floor keeps it here (see
+      // {@link BoardUnreadScope}).
       if (isExcluded(post)) continue
       if (!matchesUnread(post, unread)) continue
       if (rawIds !== null && !rawIds.has(id)) removed.add(id)

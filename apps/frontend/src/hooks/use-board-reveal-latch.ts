@@ -14,8 +14,16 @@ import { useLayoutEffect, useRef } from "react"
  * handles its own cold load via its projection fallback and pops in where it
  * belongs. Resets only on a workspace switch (a genuinely new board that should
  * gate afresh).
+ *
+ * `hasPosts` is what makes the latch mean anything on a cold load. Every input to
+ * `revealReadyNow` is an `every()` over a set derived FROM the posts, so an empty
+ * feed is vacuously ready: latching there would defeat the hold before a single
+ * post existed, and the first posts to commit would paint projection-first — the
+ * whole "lazy loading" pop-in. A ready state only counts when it was observed
+ * with content; posts arriving into a still-cold board re-gate through the live
+ * `revealReadyNow` term.
  */
-export function useBoardRevealLatch(revealReadyNow: boolean, workspaceId: string): boolean {
+export function useBoardRevealLatch(revealReadyNow: boolean, hasPosts: boolean, workspaceId: string): boolean {
   const hasRevealedRef = useRef(false)
   const workspaceRef = useRef(workspaceId)
   // The workspace-switch reset stays in render: it is idempotent and keyed on the
@@ -33,7 +41,7 @@ export function useBoardRevealLatch(revealReadyNow: boolean, workspaceId: string
   // ref just carries that forward once it has committed. (Same rule the sibling
   // scroll/rail hooks follow — mutating a ref during render is unsafe here.)
   useLayoutEffect(() => {
-    if (revealReadyNow) hasRevealedRef.current = true
-  }, [revealReadyNow, workspaceId])
+    if (revealReadyNow && hasPosts) hasRevealedRef.current = true
+  }, [revealReadyNow, hasPosts, workspaceId])
   return revealReadyNow || hasRevealedRef.current
 }

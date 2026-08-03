@@ -38,9 +38,10 @@ export function BoardUnreadRow({
   unreadStreamCount,
 }: {
   workspaceId: string
-  /** Streams the viewer has unread (muted excluded) — the same membership the
-   *  board's `?unread=true` narrowing resolves against, derived once by the
-   *  sidebar for its Unread section. */
+  /** Streams the viewer has unread (muted excluded), derived once by the
+   *  sidebar for its Unread section. A WORKSPACE-wide signal: the board view it
+   *  lands on still applies the active lens/scope/saved-view filters, so a
+   *  narrowed view can show fewer conversations than the badge counts. */
   unreadStreamCount: number
 }) {
   const { collapseOnMobile } = useSidebar()
@@ -68,6 +69,10 @@ export function BoardUnreadRow({
   return (
     <Link
       to={to}
+      // On-board flips rewrite the URL in place — the FilterToggleRow this row
+      // replaced used `replace`, and Back walking through unread on/off flips is
+      // history spam. From elsewhere it is a real navigation and keeps its entry.
+      replace={onBoard}
       onClick={collapseOnMobile}
       aria-current={active ? "true" : undefined}
       className={cn(ROW_BASE_CLASS, active ? "bg-primary/10" : "text-muted-foreground hover:bg-muted/50")}

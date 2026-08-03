@@ -7,7 +7,6 @@ import { formatFireTime } from "@/lib/dates"
 import type { BoardEventRow } from "./board-event-rows"
 import {
   coalesceLedgerItems,
-  estimateReadingMinutes,
   leadLine,
   ledgerEventContent,
   linkLabel,
@@ -83,16 +82,6 @@ describe("leadLine", () => {
   })
 })
 
-describe("estimateReadingMinutes", () => {
-  it("maps character counts to whole minutes", () => {
-    expect(estimateReadingMinutes(0)).toBe(0)
-    expect(estimateReadingMinutes(1)).toBe(1)
-    expect(estimateReadingMinutes(1100)).toBe(1)
-    expect(estimateReadingMinutes(1101)).toBe(2)
-    expect(estimateReadingMinutes(12_000)).toBe(11)
-  })
-})
-
 describe("unreadMass", () => {
   const row = (id: string, authorId: string, chars: number): UnreadCandidate => ({
     id,
@@ -106,18 +95,18 @@ describe("unreadMass", () => {
     state: (_streamId, messageId) => (unread.includes(messageId) ? "unread" : "read"),
   })
 
-  it("counts the unread rows and their reading minutes", () => {
+  it("counts the unread rows", () => {
     const rows = [row("a", "usr_other", 600), row("b", "usr_other", 600), row("c", "usr_other", 5000)]
-    expect(unreadMass(rows, ctx(["a", "b"]))).toEqual({ count: 2, minutes: 2 })
+    expect(unreadMass(rows, ctx(["a", "b"]))).toEqual({ count: 2 })
   })
 
   it("excludes read rows and the viewer's own messages", () => {
     const rows = [row("a", "usr_me", 5000), row("b", "usr_other", 100)]
-    expect(unreadMass(rows, ctx(["a", "b"]))).toEqual({ count: 1, minutes: 1 })
+    expect(unreadMass(rows, ctx(["a", "b"]))).toEqual({ count: 1 })
   })
 
   it("is zero when nothing is unread", () => {
-    expect(unreadMass([row("a", "usr_other", 900)], ctx([]))).toEqual({ count: 0, minutes: 0 })
+    expect(unreadMass([row("a", "usr_other", 900)], ctx([]))).toEqual({ count: 0 })
   })
 
   it("resolves a row without its own stream against the fallback", () => {

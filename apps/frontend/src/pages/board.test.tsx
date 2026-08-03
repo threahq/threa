@@ -21,6 +21,7 @@ import * as pointerModule from "@/hooks/use-pointer"
 import * as panelHostModule from "@/components/layout/panel-host"
 // eslint-disable-next-line no-restricted-imports -- test seeds IDB directly to drive the real rail read path
 import { db } from "@/db"
+import { __resetConversationMessageSnapshots, seedConversationMessages } from "@/stores/conversation-messages-store"
 
 const WORKSPACE_ID = "ws_1"
 
@@ -146,16 +147,25 @@ function mountBoard(
     entry?: string
     /** Seeds the saved-view list into the bootstrap cache (what `useBoardViews` reads). */
     boardViews?: BoardView[]
+    /** What the server backfill returns for a card whose rail misses members. */
+    boardMessages?: BoardPostMessage[]
   } = {}
 ) {
-  const { nextCursor = null, fail = false, failMessages = false, entry = `/w/${WORKSPACE_ID}/board`, boardViews } = opts
+  const {
+    nextCursor = null,
+    fail = false,
+    failMessages = false,
+    entry = `/w/${WORKSPACE_ID}/board`,
+    boardViews,
+    boardMessages = [],
+  } = opts
   const listByWorkspace = vi.fn(async () => {
     if (fail) throw new Error("boom")
     return { posts, nextCursor }
   })
   const getBoardMessages = vi.fn(async () => {
     if (failMessages) throw new Error("boom")
-    return []
+    return boardMessages
   })
   // The board reads its feed reactively from the conversations IDB store; mock
   // that store hook to return the test's posts (the IDB read/sort/merge path is
@@ -200,6 +210,8 @@ function mountBoard(
 beforeEach(async () => {
   // The rail reads real IDB — a seeded event must not leak into the next test.
   await db.events.clear()
+  await db.conversationMessages.clear()
+  __resetConversationMessageSnapshots()
   // `virtua` renders zero items under jsdom's zero-height, no-op-ResizeObserver
   // layout, so swap the board's virtualization seam for a passthrough that renders
   // every child — these integration tests exercise the real cards; the windowing
@@ -378,6 +390,43 @@ describe("BoardPage", () => {
     await screen.findAllByText("Opening message body.")
     await vi.waitFor(() => expect(document.querySelectorAll("[data-ledger-row]").length).toBe(2))
     expect(await screen.findByText(/^1 earlier/)).toBeTruthy()
+  })
+
+  it("has the backfilled older leads in the card's FIRST revealed frame", async () => {
+    // The warm-reload shape from the pop-in report: the projection window carries
+    // only the newest reply, the rail has read but doesn't cover membership, and
+    // the older leads live in the backfill store. Their per-card liveQuery can't
+    // emit until a tick after the rail resolves, so without the primed snapshot
+    // the card paints its projection window first and the leads pop in after.
+    const older = [
+      makeOpeningMessage({ id: "m3", contentMarkdown: "Older lead three." }),
+      makeOpeningMessage({ id: "m4", contentMarkdown: "Older lead four." }),
+    ]
+    const newest = makeOpeningMessage({ id: "m5", contentMarkdown: "Newest reply body." })
+    await seedConversationMessages(WORKSPACE_ID, "conv_1", [...older, newest])
+    await db.events.put({
+      id: "evt_m5",
+      workspaceId: WORKSPACE_ID,
+      streamId: "stream_1",
+      sequence: "50",
+      _sequenceNum: 50,
+      eventType: "message_created",
+      payload: { messageId: "m5", contentMarkdown: "Newest reply body.", reactions: {} },
+      actorId: "usr_me",
+      actorType: "user",
+      createdAt: "2026-06-22T12:00:00.000Z",
+      _cachedAt: 50,
+    })
+
+    mountBoard([makePost({ messageIds: ["m1", "m3", "m4", "m5"] }, { id: "m1" }, [newest])], {
+      boardMessages: [...older, newest],
+    })
+
+    // The reveal is all-or-nothing: the frame that first shows the card must
+    // already carry the leads. No second wait — that's the whole assertion.
+    await screen.findByText("Newest reply body.")
+    expect(screen.getByText("Older lead three.")).toBeTruthy()
+    expect(screen.getByText("Older lead four.")).toBeTruthy()
   })
 
   it("offers a retry when the earlier mass can't be fetched", async () => {
@@ -565,5 +614,82 @@ describe("BoardPage", () => {
     expect(await screen.findByText("1 update available")).toBeTruthy()
     expect(screen.getByText("Seen card body.")).toBeTruthy()
     expect(screen.queryByText("Unseen card body.")).toBeNull()
+  })
+})
+
+describe("BoardPage unread view", () => {
+  const UNREAD_ENTRY = `/w/${WORKSPACE_ID}/board?unread=true`
+  let unreadCounts: Record<string, number> = {}
+
+  beforeEach(() => {
+    unreadCounts = { stream_1: 2 }
+    vi.spyOn(workspaceStoreModule, "useWorkspaceUnreadState").mockImplementation(
+      () =>
+        ({
+          workspaceId: WORKSPACE_ID,
+          unreadCounts,
+          mentionCounts: {},
+          messageCounts: {},
+          readMessageIds: {},
+        }) as never
+    )
+  })
+
+  it("keeps a card in the view after it is read — the session floor never drops it", async () => {
+    const { rerenderWith } = mountBoard([makePost()], { entry: UNREAD_ENTRY })
+    expect(await screen.findByText("CC Teams tokens")).toBeTruthy()
+
+    // Reading the card clears its stream's unread…
+    unreadCounts = {}
+    rerenderWith([makePost()])
+
+    // …and the card stays, because reading it is why the viewer is here.
+    expect(screen.getByText("CC Teams tokens")).toBeTruthy()
+  })
+
+  it("drops a card only when the viewer clears it, and writes no read state doing so", async () => {
+    const { rerenderWith } = mountBoard([makePost()], { entry: UNREAD_ENTRY })
+    await screen.findByText("CC Teams tokens")
+
+    act(() => {
+      screen.getByRole("button", { name: "Clear from unread" }).click()
+    })
+    expect(screen.queryByText("CC Teams tokens")).toBeNull()
+
+    // Still unread — clearing is view membership only.
+    expect(unreadCounts).toEqual({ stream_1: 2 })
+    rerenderWith([makePost()])
+    expect(screen.queryByText("CC Teams tokens")).toBeNull()
+  })
+
+  it("starts a fresh floor on each visit to the unread view", async () => {
+    const first = mountBoard([makePost()], { entry: UNREAD_ENTRY })
+    await screen.findByText("CC Teams tokens")
+    first.rerender(<Fragment />)
+
+    // A new visit with nothing unread shows nothing — the floor is per-visit,
+    // never a module-level latch that outlives the page.
+    unreadCounts = {}
+    mountBoard([makePost()], { entry: UNREAD_ENTRY })
+    expect(screen.queryByText("CC Teams tokens")).toBeNull()
+  })
+
+  it("lets a newly-unread conversation join the view behind the pill", async () => {
+    const { rerenderWith } = mountBoard([makePost()], { entry: UNREAD_ENTRY })
+    await screen.findByText("CC Teams tokens")
+
+    unreadCounts = { stream_1: 2, stream_2: 1 }
+    rerenderWith([
+      makePost(),
+      makePost({ id: "conv_2", streamId: "stream_2", topicSummary: "Index migration" }, { id: "msg_9" }),
+    ])
+
+    expect(await screen.findByRole("button", { name: "Show 1 update" })).toBeTruthy()
+  })
+
+  it("offers no clear control outside the unread view", async () => {
+    mountBoard([makePost()])
+    await screen.findByText("CC Teams tokens")
+    expect(screen.queryByRole("button", { name: "Clear from unread" })).toBeNull()
   })
 })

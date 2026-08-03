@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach } from "vitest"
+import { __resetConversationMessageSnapshots } from "@/stores/conversation-messages-store"
 import { waitFor } from "@testing-library/react"
 import Dexie from "dexie"
 import { db } from "@/db"
@@ -79,6 +80,7 @@ async function readBoard() {
 beforeEach(async () => {
   await db.conversations.clear()
   await db.conversationMessages.clear()
+  __resetConversationMessageSnapshots()
 })
 
 describe("seedBoardPosts", () => {

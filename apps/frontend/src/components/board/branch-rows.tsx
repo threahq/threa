@@ -227,9 +227,11 @@ export function BranchGroup({
             onClick={() => expansion.toggle(branch)}
             aria-expanded
             aria-label={`Collapse ${branch.title}`}
-            className="ml-auto shrink-0 rounded p-0.5 text-muted-foreground transition-colors hover:text-foreground"
+            // The rest of the strip collapses, not just the chevron: the title
+            // half is the panel link, so everything beside it is the way back.
+            className="ml-auto flex flex-1 justify-end rounded p-0.5 text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
-            <ChevronUp className="size-3.5" />
+            <ChevronUp aria-hidden className="size-3.5 shrink-0" />
           </button>
         )}
       </div>

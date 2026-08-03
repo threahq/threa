@@ -18,9 +18,6 @@ import { DELEGATION_STATUS_LABEL } from "@/lib/delegation-display"
 import { formatDuration, formatFireTime } from "@/lib/dates"
 import { resolveEmojiShortcodes, stripMarkdownKeepingCode, truncateInline } from "@/lib/markdown/strip"
 
-/** Characters of prose one reading-minute covers. */
-const CHARS_PER_MINUTE = 1100
-
 /** Longest link-preview title that reads as a label; longer ones fall back to the hostname. */
 const MAX_LINK_TITLE_CHARS = 28
 
@@ -46,11 +43,6 @@ export function leadLine(
     return truncateInline(inline, maxChars)
   }
   return ""
-}
-
-export function estimateReadingMinutes(chars: number): number {
-  if (chars <= 0) return 0
-  return Math.max(1, Math.ceil(chars / CHARS_PER_MINUTE))
 }
 
 /** The row fields the effective-unread derivation reads, structurally. */
@@ -91,25 +83,20 @@ export function isEffectivelyUnread(message: UnreadCandidate, ctx: EffectiveUnre
 
 export interface UnreadMass {
   count: number
-  minutes: number
 }
 
 /**
- * How much unread mass the given rows carry. Callers pass the rows they KNOW
+ * How many unread messages the given rows carry. Callers pass the rows they KNOW
  * (the card's readable rows, including the ones hidden behind the head row —
  * off-card unread is exactly what the badge exists to signal). Replies the rail
- * has never synced are deliberately outside: their count is knowable but their
- * length is not, and a count that outran its minutes would read as a lie.
+ * has never synced are outside the count.
  */
 export function unreadMass(messages: UnreadCandidate[], ctx: EffectiveUnreadCtx): UnreadMass {
   let count = 0
-  let chars = 0
   for (const message of messages) {
-    if (!isEffectivelyUnread(message, ctx)) continue
-    count += 1
-    chars += message.contentMarkdown.length
+    if (isEffectivelyUnread(message, ctx)) count += 1
   }
-  return { count, minutes: estimateReadingMinutes(chars) }
+  return { count }
 }
 
 /** The `RenderableMessage` fields the artifact row reads, structurally. */

@@ -13,7 +13,7 @@ const REVEAL_MAX_MS = 2500
 /** The cap while the card says its server backfill is still in flight. An ordinary
  *  page routinely takes 600ms+, so the plain cap would expire mid-request and let
  *  the late rows shove the trailing region uncompensated. Past this the window
- *  closes regardless — that slow a backfill ends in the seam's error label. */
+ *  closes regardless — that slow a backfill ends in the card's backfill error row. */
 const REVEAL_HELD_MAX_MS = 10_000
 
 /** A keydown counts as "the reader scrolled" only when it can move the scroller —
@@ -43,34 +43,31 @@ interface Options {
 }
 
 /**
- * Holds a board card's bottom edge at a fixed viewport position while OLDER
- * content fills in above it — the "N more messages" middle-gap expand and its
- * async server backfill. Without this the fill shoves the trailing (newest)
- * replies the reader is looking at down the page: a card is a single virtua item,
- * and virtua anchors per-ITEM, so it cannot hold a position INSIDE one growing
- * item; the board scroller also runs `overflow-anchor: none`, so the browser won't
- * compensate either. The timeline gets this for free — each message is its own
- * item, so an older page is a list-level prepend its `shift` maintains from the
- * end. The board analog: measure how far the card bottom moved on each resize
- * during the reveal and undo it through virtua's own `scrollBy`, so the newest
- * replies stay put and the older middle appears above them (INV-61, the board's
- * "don't move shit on me").
+ * Holds a board card's content at a fixed viewport position while OLDER rows
+ * fill in above the full tail — the conversation backfill landing ledger rows.
+ * Without this the fill shoves the rows the reader is looking at down the page:
+ * a card is a single virtua item, and virtua anchors per-ITEM, so it cannot
+ * hold a position INSIDE one growing item; the board scroller also runs
+ * `overflow-anchor: none`, so the browser won't compensate either. The timeline
+ * gets this for free — each message is its own item, so an older page is a
+ * list-level prepend its `shift` maintains from the end. The board analog:
+ * measure how far the landmark moved on each resize during the window and undo
+ * it through virtua's own `scrollBy` (INV-61, the board's "don't move shit on
+ * me").
  *
- * Scoped to a reveal WINDOW opened by the returned `beginReveal()` — a live reply
- * appended BELOW the trailing must still push the view, so compensation runs only
- * from the expand gesture until growth settles, and a user scroll closes it at
- * once rather than fighting a deliberate gesture. `scrollBy` goes through virtua's
- * own machinery (a raw `scrollTop` write is re-asserted away by virtua's per-item
- * resize handling — the library tug-of-war the owned-scroller design avoids).
+ * Scoped to a WINDOW opened by the returned `beginReveal()` — the card arms it
+ * on the backfill's in-flight rising edge and `shouldHoldOpen` spans the fetch.
+ * A live reply appended BELOW the landmark must still push the view, so
+ * compensation runs only while the window is armed, and a user scroll closes it
+ * at once rather than fighting a deliberate gesture. `scrollBy` goes through
+ * virtua's own machinery (a raw `scrollTop` write is re-asserted away by
+ * virtua's per-item resize handling).
  *
- * WHAT is held still: a LANDMARK row when the caller names one (the first reply of
- * the visible window, the row directly below the seam), else the card's bottom
- * edge. The landmark is the better fixed point because it separates the two kinds
- * of growth a card sees during a reveal: growth ABOVE it (the revealed page, a
- * mid-region backfill) moves it down and is compensated, while growth BELOW it (a
- * live tail reply, the composer expanding) doesn't move it and correctly passes
- * through. Anchoring on the card bottom conflates the two and scrolls the reader
- * away from their eye-line on any tail growth.
+ * WHAT is held still: a LANDMARK row when the caller names one (the first
+ * full-tail row), else the card's bottom edge. The landmark separates the two
+ * kinds of growth: growth ABOVE it (backfilled ledger rows) is compensated,
+ * growth BELOW it (a live tail reply, the composer expanding) correctly passes
+ * through.
  */
 export interface BeginRevealOptions {
   /** `"tap"` (default): any scroll gesture hands control back to the reader.

@@ -4,6 +4,7 @@ import { toast } from "sonner"
 import { ChevronUp, ChevronDown, ChevronRight, CornerDownRight, Paperclip, Link2, Pencil } from "lucide-react"
 import { LabelableResourceTypes, LinkPreviewContentTypes } from "@threa/types"
 import { MessageItem, type RenderableMessage } from "@/components/message/message-item"
+import { ActorAvatar } from "@/components/actor-avatar"
 import { actorRowTheme } from "@/components/message/actor-row-theme"
 import { MessageContextMenu } from "@/components/timeline/message-context-menu"
 import { MessageActionDrawer } from "@/components/timeline/message-action-drawer"
@@ -26,7 +27,8 @@ import { useBoardScopeDraftIndex, useBoardSubtopicDraftIndex } from "@/hooks"
 import { boardBranchReplyDraftKey } from "@/lib/board/draft-keys"
 import { leadLine, rowArtifacts } from "@/lib/board/ledger"
 import { resolveInternalAppPath } from "@/lib/internal-url"
-import { getInitials } from "@/lib/initials"
+import { classifyDraftLink } from "@/lib/in-app-links"
+import { MemoPreviewDialog } from "@/components/memo/memo-preview-dialog"
 import { cn } from "@/lib/utils"
 
 const TOMBSTONE_LEAD = "This message was deleted"
@@ -269,16 +271,18 @@ export function LedgerRow({
     indent === "branch" && "ml-3"
   )
 
+  // The actor's real avatar at ledger scale — `xs` scaled to the row's 16px
+  // glyph slot. `ActorAvatar` owns the initial fallback, so an actor with no
+  // image still reads the way the hand-rolled glyph did.
   const glyph = (
-    <span
-      aria-hidden
-      className={cn(
-        "grid size-4 shrink-0 place-items-center rounded-full bg-muted text-[9px] font-semibold",
-        theme.nameClassName
-      )}
-    >
-      {getInitials(authorName).slice(0, 1)}
-    </span>
+    <ActorAvatar
+      actorId={message.authorId}
+      actorType={message.authorType}
+      workspaceId={workspaceId}
+      size="xs"
+      className="h-4 w-4 rounded-full"
+      showStatus={false}
+    />
   )
 
   const time = (
@@ -299,18 +303,20 @@ export function LedgerRow({
       <div className={railClassName}>
         {/* Minimize strip: the collapsed row's own line, so the body grows below
             it and nothing above the row moves (INV-21). */}
-        <div className="flex items-center gap-2 py-0.5">
+        {/* The WHOLE strip collapses — a chevron-sized target was the only way
+            back on a phone. Its own line, so it can't swallow a tap meant for
+            the body below it. */}
+        <button
+          type="button"
+          onClick={onToggle}
+          aria-label="Collapse message"
+          aria-expanded
+          className="flex w-full items-center gap-2 rounded py-0.5 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        >
           {glyph}
           {time}
-          <button
-            type="button"
-            onClick={onToggle}
-            aria-label="Collapse message"
-            className="ml-auto shrink-0 rounded p-0.5 text-muted-foreground transition-colors hover:text-foreground"
-          >
-            <ChevronUp className="size-3.5" />
-          </button>
-        </div>
+          <ChevronUp aria-hidden className="ml-auto size-3.5 shrink-0 text-muted-foreground" />
+        </button>
         <MessageItem
           workspaceId={workspaceId}
           streamId={streamId}
@@ -417,7 +423,7 @@ export function LedgerRow({
         </button>
       )}
       {!tombstone && linkPreview && artifacts.firstLinkLabel && (
-        <LedgerLinkChip url={linkPreview.url} label={artifacts.firstLinkLabel} />
+        <LedgerLinkChip workspaceId={workspaceId} url={linkPreview.url} label={artifacts.firstLinkLabel} />
       )}
       {time}
       {!tombstone && (
@@ -541,10 +547,42 @@ function ledgerLead(
  * The link artifact chip — a real anchor (so middle-click/copy-link work), with
  * same-origin targets routed through the router instead of a full page load
  * (the shared `resolveInternalAppPath` path).
+ *
+ * A MEMO link opens the same in-place {@link MemoPreviewDialog} the ledger's
+ * capture line and the full capture row open, never the memory page: the memo
+ * is a reference the reader wants beside the conversation, and the dialog's
+ * footer carries the deep link. Message/conversation links keep navigating —
+ * their in-place surface IS the panel the link already points at.
  */
-function LedgerLinkChip({ url, label }: { url: string; label: string }) {
+function LedgerLinkChip({ workspaceId, url, label }: { workspaceId: string; url: string; label: string }) {
   const navigate = useNavigate()
+  const [memoOpen, setMemoOpen] = useState(false)
   const internalPath = resolveInternalAppPath(url)
+  // The same classifier the composer chips and in-app preview cards read (INV-35).
+  const ref = classifyDraftLink(url)
+  const memoId = ref?.kind === "memo" ? ref.memoId : null
+  if (memoId) {
+    return (
+      <>
+        <button
+          type="button"
+          onClick={() => setMemoOpen(true)}
+          aria-haspopup="dialog"
+          className="flex max-w-[10rem] shrink-0 items-center gap-0.5 rounded px-1 text-[10px] text-muted-foreground transition-colors hover:text-foreground"
+        >
+          <Link2 aria-hidden className="size-3 shrink-0" />
+          <span className="truncate">{label}</span>
+        </button>
+        <MemoPreviewDialog
+          open={memoOpen}
+          onOpenChange={setMemoOpen}
+          workspaceId={workspaceId}
+          memoId={memoId}
+          fallbackTitle={label}
+        />
+      </>
+    )
+  }
   return (
     <a
       href={internalPath ?? url}

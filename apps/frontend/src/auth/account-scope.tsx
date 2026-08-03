@@ -14,6 +14,7 @@ import { resetShareHandoffStoreCache } from "@/stores/share-handoff-store"
 import { resetComposeOverlayStoreCache } from "@/stores/compose-overlay-store"
 import { resetBoardFlashStoreCache } from "@/stores/board-flash-store"
 import { resetBoardUnreadLatches } from "@/stores/board-unread-latch-store"
+import { resetConversationMessageSnapshots } from "@/stores/conversation-messages-store"
 import { resetSnippetRequestStoreCache } from "@/stores/snippet-request-store"
 import { resetConversationReplyOpenStoreCache } from "@/stores/conversation-reply-open-store"
 import { resetE2eSessionStoreCache } from "@/stores/e2e-session-store"
@@ -83,6 +84,7 @@ function flushModuleStoreCaches(): void {
   resetComposeOverlayStoreCache()
   resetBoardFlashStoreCache()
   resetBoardUnreadLatches()
+  resetConversationMessageSnapshots()
   // Ordered hangup before state drop: the call-store reset emits leave, closes
   // the transport, and stops tracks (the CallManager's registered hangup) so an
   // account switch with a live call never leaves the prior account's mic hot.

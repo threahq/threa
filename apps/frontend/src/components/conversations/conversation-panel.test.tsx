@@ -1,4 +1,5 @@
 import { useEffect } from "react"
+import { __resetConversationMessageSnapshots } from "@/stores/conversation-messages-store"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { act, render, screen, waitFor, fireEvent } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
@@ -251,6 +252,7 @@ beforeEach(async () => {
   // The panel seeds its backfill into IDB now, so a leaked conversation's rows
   // would widen the next test's member set.
   await db.conversationMessages.clear()
+  __resetConversationMessageSnapshots()
   // Default composer stub: the real form (desktop always-open since the
   // thread-semantics ruling) pulls auth/mention providers this harness doesn't
   // mount. Tests that inspect composer props install their own spy.
