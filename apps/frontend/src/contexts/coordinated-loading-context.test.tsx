@@ -17,6 +17,11 @@ import * as loadingComponentsModule from "@/components/loading"
 import * as useWorkspacesModule from "@/hooks/use-workspaces"
 import * as e2eSessionModule from "@/stores/e2e-session-store"
 import { clearStreamNameCache, primeStreamName, streamNameCacheKey } from "@/lib/crypto/stream-name-cache"
+import { db } from "@/db"
+import { applyWorkspaceBootstrap } from "@/sync/workspace-sync"
+import { resetRowConfirmations } from "@/sync/bootstrap-diff"
+import { makeStreamBootstrap, makeWorkspaceBootstrap } from "@/test/fixtures/sync-engine"
+import type { WorkspaceBootstrap } from "@threa/types"
 
 type MockQueryResult = {
   status: "pending" | "success" | "error"
@@ -833,5 +838,173 @@ describe("MainContentGate", () => {
 
     expect(screen.queryByTestId("stream-content-skeleton")).not.toBeInTheDocument()
     expect(screen.getByTestId("content")).toBeInTheDocument()
+  })
+})
+
+describe("CoordinatedLoadingProvider store publication", () => {
+  // The real workspace-store hooks, so the provider is woken (or not) by the
+  // real publication signal — the 10-hook fan-out this gating exists to stop.
+  const WS = "ws_clp"
+
+  function installNonStoreSpies(): void {
+    vi.spyOn(syncStatusModule, "useSyncStatus").mockReturnValue("synced")
+    vi.spyOn(syncStatusModule, "useSyncSnapshot").mockReturnValue({
+      statuses: new Map() as ReadonlyMap<string, syncStatusModule.SyncStatus>,
+      errors: new Map() as ReadonlyMap<string, syncStatusModule.SyncErrorRecord>,
+    })
+    vi.spyOn(useCoordinatedStreamQueriesModule, "useCoordinatedStreamQueries").mockImplementation(
+      () =>
+        ({
+          loadState: QUERY_LOAD_STATE.READY,
+          isLoading: false,
+          isError: false,
+          errors: [],
+          results: [],
+        }) as unknown as ReturnType<typeof useCoordinatedStreamQueriesModule.useCoordinatedStreamQueries>
+    )
+    vi.spyOn(usePreloadImagesModule, "usePreloadImages").mockReturnValue(true)
+    vi.spyOn(draftStoreModule, "seedDraftCacheFromIdb").mockImplementation(async () => undefined)
+    vi.spyOn(draftStoreModule, "hasSeededDraftCache").mockReturnValue(true)
+    vi.spyOn(useWorkspacesModule, "useWorkspaceUserId").mockReturnValue("user_1")
+    vi.spyOn(e2eSessionModule, "useE2eSession").mockImplementation(
+      () =>
+        ({
+          status: "no-key",
+          keyId: null,
+          publicKey: null,
+          privateKey: null,
+          deviceTrusted: false,
+          error: null,
+        }) as e2eSessionModule.E2eSessionState
+    )
+  }
+
+  function diffBootstrap(): WorkspaceBootstrap {
+    return structuredClone(bootstrapBase)
+  }
+
+  let bootstrapBase: WorkspaceBootstrap
+
+  beforeEach(async () => {
+    vi.restoreAllMocks()
+    installNonStoreSpies()
+    workspaceStoreModule.resetWorkspaceStoreCache()
+    resetRowConfirmations()
+    await Promise.all([
+      db.workspaces.clear(),
+      db.workspaceUsers.clear(),
+      db.streams.clear(),
+      db.streamMemberships.clear(),
+      db.streamReadState.clear(),
+      db.dmPeers.clear(),
+      db.personas.clear(),
+      db.bots.clear(),
+      db.labels.clear(),
+      db.labelAssignments.clear(),
+      db.unreadState.clear(),
+      db.userPreferences.clear(),
+      db.sidebarConfigs.clear(),
+      db.workspaceMetadata.clear(),
+    ])
+    const now = new Date().toISOString()
+    bootstrapBase = {
+      ...makeWorkspaceBootstrap(),
+      workspace: { id: WS, name: "CLP", slug: "clp", createdBy: "user_1", createdAt: now, updatedAt: now },
+      featureFlags: { workspace: { bootstrapDiff: "on" }, user: {} },
+      users: [
+        {
+          id: "user_1",
+          workspaceId: WS,
+          workosUserId: "workos_1",
+          email: "kris@example.com",
+          role: "owner",
+          slug: "kris",
+          name: "Kris",
+          description: null,
+          avatarUrl: null,
+          timezone: null,
+          locale: null,
+          pronouns: null,
+          phone: null,
+          githubUsername: null,
+          statusEmoji: null,
+          statusText: null,
+          statusExpiresAt: null,
+          statusPausesNotifications: false,
+          notificationsPausedUntil: null,
+          notificationsPausedIndefinitely: false,
+          setupCompleted: true,
+          joinedAt: now,
+        },
+      ] as unknown as WorkspaceBootstrap["users"],
+      streams: [
+        { ...makeStreamBootstrap("stream_clp1").stream, workspaceId: WS, lastMessagePreview: null },
+      ] as unknown as WorkspaceBootstrap["streams"],
+      streamMemberships: [
+        { streamId: "stream_clp1", memberId: "user_1", notificationLevel: null, joinedAt: now },
+      ] as unknown as WorkspaceBootstrap["streamMemberships"],
+    }
+  })
+
+  afterEach(() => {
+    vi.clearAllMocks()
+  })
+
+  it("an unchanged bootstrap apply does not re-render the coordinated-loading provider", async () => {
+    // One of the provider's 10 store hooks, wrapped rather than replaced: each
+    // call is one provider render pass.
+    const realUseWorkspaceUsers = workspaceStoreModule.useWorkspaceUsers
+    let providerRenders = 0
+    vi.spyOn(workspaceStoreModule, "useWorkspaceUsers").mockImplementation((workspaceId) => {
+      providerRenders += 1
+      return realUseWorkspaceUsers(workspaceId)
+    })
+
+    await applyWorkspaceBootstrap(WS, diffBootstrap(), Date.now() - 5000)
+
+    render(
+      <CoordinatedLoadingProvider workspaceId={WS} streamIds={[]}>
+        <TestConsumer />
+      </CoordinatedLoadingProvider>
+    )
+    await act(async () => {
+      await Promise.resolve()
+    })
+    const before = providerRenders
+
+    await act(async () => {
+      await applyWorkspaceBootstrap(WS, diffBootstrap(), Date.now())
+    })
+
+    expect(providerRenders).toBe(before)
+  })
+
+  it("a changed row re-renders the coordinated-loading provider exactly once", async () => {
+    const realUseWorkspaceUsers = workspaceStoreModule.useWorkspaceUsers
+    let providerRenders = 0
+    vi.spyOn(workspaceStoreModule, "useWorkspaceUsers").mockImplementation((workspaceId) => {
+      providerRenders += 1
+      return realUseWorkspaceUsers(workspaceId)
+    })
+
+    await applyWorkspaceBootstrap(WS, diffBootstrap(), Date.now() - 5000)
+
+    render(
+      <CoordinatedLoadingProvider workspaceId={WS} streamIds={[]}>
+        <TestConsumer />
+      </CoordinatedLoadingProvider>
+    )
+    await act(async () => {
+      await Promise.resolve()
+    })
+    const before = providerRenders
+
+    const changed = diffBootstrap()
+    changed.users = changed.users.map((u) => ({ ...u, name: "Renamed" }))
+    await act(async () => {
+      await applyWorkspaceBootstrap(WS, changed, Date.now())
+    })
+
+    expect(providerRenders).toBe(before + 1)
   })
 })

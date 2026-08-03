@@ -6,10 +6,33 @@ import type {
   PersonaCustomConfig,
   PersonaKind,
   PersonaListItem,
+  WorkspaceBootstrap,
 } from "@threa/types"
 import { personasApi } from "@/api"
+import { workspaceKeys } from "@/hooks/use-workspaces"
 import { cachedPersonaFromListItem } from "@/lib/personas"
 import { upsertWorkspacePersonaCache } from "@/stores/workspace-store"
+
+/**
+ * Mirror a store persona upsert into the bootstrap query cache. The publication
+ * gate diffs the store against the bootstrap snapshot, so a writer that patches
+ * only the store leaves the cache stale behind an `anyChanged=false` apply when
+ * the reconciling broadcast is lost. Same upsert-by-id rule as the
+ * `agent_config:updated` handler: merge the light display fields onto an
+ * existing row, else insert the synthesized row.
+ */
+function upsertBootstrapPersona(queryClient: QueryClient, workspaceId: string, item: PersonaListItem): void {
+  const { id, slug, name, description, avatarEmoji, avatarUrl, model, status } = item
+  const patch = { slug, name, description, avatarEmoji, avatarUrl, model, status }
+  queryClient.setQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap(workspaceId), (prev) => {
+    if (!prev) return prev
+    const personas = prev.personas ?? []
+    if (personas.some((persona) => persona.id === id)) {
+      return { ...prev, personas: personas.map((persona) => (persona.id === id ? { ...persona, ...patch } : persona)) }
+    }
+    return { ...prev, personas: [...personas, cachedPersonaFromListItem(item, workspaceId)] }
+  })
+}
 
 export const personaKeys = {
   all: ["personas"] as const,
@@ -297,6 +320,7 @@ export function useForkPersona(workspaceId: string) {
     onSuccess: (persona, input) => {
       if (input.scope === "personal") {
         upsertWorkspacePersonaCache(workspaceId, cachedPersonaFromListItem(persona, workspaceId))
+        upsertBootstrapPersona(queryClient, workspaceId, persona)
         return
       }
       upsertIntoList(queryClient, personaKeys.list(workspaceId), persona)
@@ -338,6 +362,7 @@ export function useArchivePersona(workspaceId: string) {
       // the owner-room broadcast (the durable reconcile) is in flight.
       if (persona.kind === "personal") {
         upsertWorkspacePersonaCache(workspaceId, cachedPersonaFromListItem(persona, workspaceId))
+        upsertBootstrapPersona(queryClient, workspaceId, persona)
       }
     },
   })
@@ -356,6 +381,7 @@ export function useUnarchivePersona(workspaceId: string) {
       removeFromList(queryClient, personaKeys.archived(workspaceId), persona.id)
       if (persona.kind === "personal") {
         upsertWorkspacePersonaCache(workspaceId, cachedPersonaFromListItem(persona, workspaceId))
+        upsertBootstrapPersona(queryClient, workspaceId, persona)
         return
       }
       upsertIntoList(queryClient, personaKeys.list(workspaceId), persona)

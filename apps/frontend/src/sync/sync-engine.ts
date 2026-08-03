@@ -8,6 +8,7 @@ import { ApiError } from "@/api/client"
 import {
   applyReconnectBootstrapBatch,
   applyWorkspaceBootstrap,
+  bootstrapNonRowFieldsEqual,
   registerWorkspaceSocketHandlers,
 } from "./workspace-sync"
 import {
@@ -826,12 +827,24 @@ export class SyncEngine {
 
         // Write to IDB (source of truth); the returned bootstrap carries the
         // per-stream-merged counter fields so the cache write below matches IDB.
-        bootstrap = await applyWorkspaceBootstrap(workspaceId, bootstrap, fetchStartedAt)
+        const applied = await applyWorkspaceBootstrap(workspaceId, bootstrap, fetchStartedAt)
+        bootstrap = applied.bootstrap
 
-        // Write to TanStack cache (bridge for coordinated-loading, sidebar loading/error)
+        // Write to TanStack cache (bridge for coordinated-loading, sidebar loading/error).
+        // Functional updater: when the apply wrote no row and every field the row
+        // diff can't speak for is unchanged, keep the cached object. Returning
+        // `prev` makes TanStack's replaceEqualDeep an identity hit instead of a
+        // ~1,000-row walk, and leaves other writers' cache patches intact.
         const stopPublish = getPerfCapture().time("bootstrap.publish")
-        queryClient.setQueryData(workspaceKeys.bootstrap(workspaceId), bootstrap)
+        const next = bootstrap
+        let replaced = false
+        queryClient.setQueryData(workspaceKeys.bootstrap(workspaceId), (prev?: WorkspaceBootstrap) => {
+          if (!applied.anyChanged && prev && bootstrapNonRowFieldsEqual(prev, next)) return prev
+          replaced = true
+          return next
+        })
         stopPublish()
+        if (replaced) getPerfCapture().mark("bootstrap.cachePublish", 1)
 
         // Cold-boot single bootstrap: this first-connect snapshot is the
         // authority for everything <= its sync head (read-before-stamp on the
