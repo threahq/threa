@@ -28,6 +28,7 @@ export const PERF_MARK_NAMES = [
   "catchup.collapse",
   "catchup.serialReplay",
   "stream.subscriptions",
+  "store.tableSubscriptions",
   "stream.eventApply",
   "stream.idbTransaction",
   "liveQuery.rerun",

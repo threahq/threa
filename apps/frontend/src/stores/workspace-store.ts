@@ -1,11 +1,16 @@
-import { useMemo, useSyncExternalStore } from "react"
-import { useLiveQuery } from "dexie-react-hooks"
+import { useCallback, useMemo, useRef, useSyncExternalStore } from "react"
 import { useBatchedValue } from "./apply-window"
 import {
-  applyDecryptedNameOverlay,
-  getStreamNameCacheVersion,
-  subscribeStreamNameCache,
-} from "@/lib/crypto/stream-name-cache"
+  allocateWorkspaceTableToken,
+  getWorkspaceTableSnapshot,
+  subscribeWorkspaceTable,
+  type WorkspaceTableKey,
+  type WorkspaceTableRowTypes,
+} from "./workspace-table-registry"
+// Namespace import so the shared overlay memo below is spy-able against the
+// module (INV-48) — the "once per workspace, not once per consumer" property is
+// only assertable through the real call.
+import * as streamNameCache from "@/lib/crypto/stream-name-cache"
 import {
   db,
   type CachedWorkspace,
@@ -140,6 +145,7 @@ export function resetWorkspaceStoreCache(): void {
   cache.sidebarConfig.clear()
   cache.metadata.clear()
   cacheVersion.clear()
+  nameOverlayMemo.clear()
   // cacheSignal is bumped, never cleared: resetting it to 0 and publishing 1
   // reproduces a value a mounted subscriber may already hold, and
   // useSyncExternalStore compares values — the reset would then not re-render.
@@ -329,17 +335,50 @@ export function upsertWorkspaceUserInCache(workspaceId: string, user: CachedWork
 // assignment removed via a socket event, which updates IDB but not the cache)
 // would otherwise be masked until the next bootstrap.
 
-function useArrayStoreHook<T>(queryFn: () => Promise<T[]> | T[], deps: unknown[], cached: T[]): T[] {
-  const live = useLiveQuery(queryFn, deps)
+// One shared empty array: a fresh `[]` per render would defeat every identity
+// check downstream (the shared name overlay's memo, and any consumer memoising
+// on the returned reference) for the whole pre-resolution window.
+const EMPTY_ROWS: never[] = []
+
+function useWorkspaceTableToken(): number {
+  const token = useRef<number | null>(null)
+  if (token.current === null) token.current = allocateWorkspaceTableToken()
+  return token.current
+}
+
+function useWorkspaceTable<K extends WorkspaceTableKey>(
+  workspaceId: string | undefined,
+  tableKey: K
+): WorkspaceTableRowTypes[K][] | undefined {
+  const token = useWorkspaceTableToken()
+  const subscribe = useCallback(
+    (listener: () => void) =>
+      workspaceId ? subscribeWorkspaceTable(workspaceId, tableKey, token, listener) : () => {},
+    [workspaceId, tableKey, token]
+  )
+  const getSnapshot = useCallback(
+    () => (workspaceId ? getWorkspaceTableSnapshot(workspaceId, tableKey, token) : undefined),
+    [workspaceId, tableKey, token]
+  )
+  return useSyncExternalStore(subscribe, getSnapshot, getSnapshot)
+}
+
+function useArrayStoreHook<K extends WorkspaceTableKey>(
+  workspaceId: string | undefined,
+  tableKey: K,
+  cached: WorkspaceTableRowTypes[K][]
+): WorkspaceTableRowTypes[K][] {
+  const live = useWorkspaceTable(workspaceId, tableKey)
   return useBatchedValue(live ?? cached)
 }
 
-function useSingletonStoreHook<T>(
-  queryFn: () => Promise<T | undefined> | T | undefined,
-  deps: unknown[],
-  cached: T | undefined
-): T | undefined {
-  const live = useLiveQuery(queryFn, deps, cached)
+function useSingletonStoreHook<K extends WorkspaceTableKey>(
+  workspaceId: string | undefined,
+  tableKey: K,
+  cached: WorkspaceTableRowTypes[K] | undefined
+): WorkspaceTableRowTypes[K] | undefined {
+  const rows = useWorkspaceTable(workspaceId, tableKey)
+  const live = rows ? rows[0] : cached
   const resolved = live === undefined && cached !== undefined ? cached : live
   return useBatchedValue(resolved)
 }
@@ -347,17 +386,13 @@ function useSingletonStoreHook<T>(
 export function useWorkspaceFromStore(workspaceId: string | undefined): CachedWorkspace | undefined {
   useWorkspaceCacheSignal(workspaceId)
   const cached = workspaceId ? cache.workspaces.get(workspaceId) : undefined
-  return useSingletonStoreHook(() => (workspaceId ? db.workspaces.get(workspaceId) : undefined), [workspaceId], cached)
+  return useSingletonStoreHook(workspaceId, "workspace", cached)
 }
 
 export function useWorkspaceUsers(workspaceId: string | undefined): CachedWorkspaceUser[] {
   useWorkspaceCacheSignal(workspaceId)
-  const cached = workspaceId ? (cache.users.get(workspaceId) ?? []) : []
-  return useArrayStoreHook(
-    () => (workspaceId ? db.workspaceUsers.where("workspaceId").equals(workspaceId).toArray() : []),
-    [workspaceId],
-    cached
-  )
+  const cached = workspaceId ? (cache.users.get(workspaceId) ?? EMPTY_ROWS) : EMPTY_ROWS
+  return useArrayStoreHook(workspaceId, "users", cached)
 }
 
 /**
@@ -368,12 +403,23 @@ export function useWorkspaceUsers(workspaceId: string | undefined): CachedWorksp
  */
 export function useWorkspaceStreamsRaw(workspaceId: string | undefined): CachedStream[] {
   useWorkspaceCacheSignal(workspaceId)
-  const cached = workspaceId ? (cache.streams.get(workspaceId) ?? []) : []
-  return useArrayStoreHook(
-    () => (workspaceId ? db.streams.where("workspaceId").equals(workspaceId).toArray() : []),
-    [workspaceId],
-    cached
-  )
+  const cached = workspaceId ? (cache.streams.get(workspaceId) ?? EMPTY_ROWS) : EMPTY_ROWS
+  return useArrayStoreHook(workspaceId, "streams", cached)
+}
+
+/**
+ * One overlay per workspace per change, not one per consumer per render: the
+ * inputs are shared (the registry's rows reference and the name cache's version),
+ * so 40 readers of `useWorkspaceStreams` would otherwise each walk every stream.
+ */
+const nameOverlayMemo = new Map<string, { rows: CachedStream[]; version: number; result: CachedStream[] }>()
+
+function sharedNameOverlay(workspaceId: string, streams: CachedStream[], version: number): CachedStream[] {
+  const memo = nameOverlayMemo.get(workspaceId)
+  if (memo && memo.rows === streams && memo.version === version) return memo.result
+  const result = streamNameCache.applyDecryptedNameOverlay(workspaceId, streams)
+  nameOverlayMemo.set(workspaceId, { rows: streams, version, result })
+  return result
 }
 
 export function useWorkspaceStreams(workspaceId: string | undefined): CachedStream[] {
@@ -382,41 +428,33 @@ export function useWorkspaceStreams(workspaceId: string | undefined): CachedStre
   // `displayName` so every label resolver reflects it without per-surface changes.
   // The plaintext lives only in the memory-only `stream-name-cache`; IDB keeps
   // ciphertext. `version` re-overlays when a decrypt lands (see `stream-name-cache`).
-  const version = useSyncExternalStore(subscribeStreamNameCache, getStreamNameCacheVersion, getStreamNameCacheVersion)
+  const version = useSyncExternalStore(
+    streamNameCache.subscribeStreamNameCache,
+    streamNameCache.getStreamNameCacheVersion,
+    streamNameCache.getStreamNameCacheVersion
+  )
   return useMemo(
-    () => (workspaceId ? applyDecryptedNameOverlay(workspaceId, streams) : streams),
+    () => (workspaceId ? sharedNameOverlay(workspaceId, streams, version) : streams),
     [streams, workspaceId, version]
   )
 }
 
 export function useWorkspaceStreamMemberships(workspaceId: string | undefined): CachedStreamMembership[] {
   useWorkspaceCacheSignal(workspaceId)
-  const cached = workspaceId ? (cache.memberships.get(workspaceId) ?? []) : []
-  return useArrayStoreHook(
-    () => (workspaceId ? db.streamMemberships.where("workspaceId").equals(workspaceId).toArray() : []),
-    [workspaceId],
-    cached
-  )
+  const cached = workspaceId ? (cache.memberships.get(workspaceId) ?? EMPTY_ROWS) : EMPTY_ROWS
+  return useArrayStoreHook(workspaceId, "memberships", cached)
 }
 
 export function useWorkspaceStreamReadStates(workspaceId: string | undefined): CachedStreamReadState[] {
   useWorkspaceCacheSignal(workspaceId)
-  const cached = workspaceId ? (cache.readStates.get(workspaceId) ?? []) : []
-  return useArrayStoreHook(
-    () => (workspaceId ? db.streamReadState.where("workspaceId").equals(workspaceId).toArray() : []),
-    [workspaceId],
-    cached
-  )
+  const cached = workspaceId ? (cache.readStates.get(workspaceId) ?? EMPTY_ROWS) : EMPTY_ROWS
+  return useArrayStoreHook(workspaceId, "readStates", cached)
 }
 
 export function useWorkspaceDmPeers(workspaceId: string | undefined): CachedDmPeer[] {
   useWorkspaceCacheSignal(workspaceId)
-  const cached = workspaceId ? (cache.dmPeers.get(workspaceId) ?? []) : []
-  return useArrayStoreHook(
-    () => (workspaceId ? db.dmPeers.where("workspaceId").equals(workspaceId).toArray() : []),
-    [workspaceId],
-    cached
-  )
+  const cached = workspaceId ? (cache.dmPeers.get(workspaceId) ?? EMPTY_ROWS) : EMPTY_ROWS
+  return useArrayStoreHook(workspaceId, "dmPeers", cached)
 }
 
 /**
@@ -438,76 +476,48 @@ export function upsertWorkspacePersonaCache(workspaceId: string, persona: Cached
 
 export function useWorkspacePersonas(workspaceId: string | undefined): CachedPersona[] {
   useWorkspaceCacheSignal(workspaceId)
-  const cached = workspaceId ? (cache.personas.get(workspaceId) ?? []) : []
-  return useArrayStoreHook(
-    () => (workspaceId ? db.personas.where("workspaceId").equals(workspaceId).toArray() : []),
-    [workspaceId],
-    cached
-  )
+  const cached = workspaceId ? (cache.personas.get(workspaceId) ?? EMPTY_ROWS) : EMPTY_ROWS
+  return useArrayStoreHook(workspaceId, "personas", cached)
 }
 
 export function useWorkspaceBots(workspaceId: string | undefined): CachedBot[] {
   useWorkspaceCacheSignal(workspaceId)
-  const cached = workspaceId ? (cache.bots.get(workspaceId) ?? []) : []
-  return useArrayStoreHook(
-    () => (workspaceId ? db.bots.where("workspaceId").equals(workspaceId).toArray() : []),
-    [workspaceId],
-    cached
-  )
+  const cached = workspaceId ? (cache.bots.get(workspaceId) ?? EMPTY_ROWS) : EMPTY_ROWS
+  return useArrayStoreHook(workspaceId, "bots", cached)
 }
 
 export function useWorkspaceLabels(workspaceId: string | undefined): CachedLabel[] {
   useWorkspaceCacheSignal(workspaceId)
-  const cached = workspaceId ? (cache.labels.get(workspaceId) ?? []) : []
-  return useArrayStoreHook(
-    () => (workspaceId ? db.labels.where("workspaceId").equals(workspaceId).toArray() : []),
-    [workspaceId],
-    cached
-  )
+  const cached = workspaceId ? (cache.labels.get(workspaceId) ?? EMPTY_ROWS) : EMPTY_ROWS
+  return useArrayStoreHook(workspaceId, "labels", cached)
 }
 
 export function useWorkspaceLabelAssignments(workspaceId: string | undefined): CachedLabelAssignment[] {
   useWorkspaceCacheSignal(workspaceId)
-  const cached = workspaceId ? (cache.labelAssignments.get(workspaceId) ?? []) : []
-  return useArrayStoreHook(
-    () => (workspaceId ? db.labelAssignments.where("workspaceId").equals(workspaceId).toArray() : []),
-    [workspaceId],
-    cached
-  )
+  const cached = workspaceId ? (cache.labelAssignments.get(workspaceId) ?? EMPTY_ROWS) : EMPTY_ROWS
+  return useArrayStoreHook(workspaceId, "labelAssignments", cached)
 }
 
 export function useWorkspaceUnreadState(workspaceId: string | undefined): CachedUnreadState | undefined {
   useWorkspaceCacheSignal(workspaceId)
   const cached = workspaceId ? cache.unreadState.get(workspaceId) : undefined
-  return useSingletonStoreHook(() => (workspaceId ? db.unreadState.get(workspaceId) : undefined), [workspaceId], cached)
+  return useSingletonStoreHook(workspaceId, "unreadState", cached)
 }
 
 export function useWorkspaceUserPreferences(workspaceId: string | undefined): CachedUserPreferences | undefined {
   useWorkspaceCacheSignal(workspaceId)
   const cached = workspaceId ? cache.userPreferences.get(workspaceId) : undefined
-  return useSingletonStoreHook(
-    () => (workspaceId ? db.userPreferences.get(workspaceId) : undefined),
-    [workspaceId],
-    cached
-  )
+  return useSingletonStoreHook(workspaceId, "userPreferences", cached)
 }
 
 export function useWorkspaceSidebarConfig(workspaceId: string | undefined): CachedSidebarConfig | undefined {
   useWorkspaceCacheSignal(workspaceId)
   const cached = workspaceId ? cache.sidebarConfig.get(workspaceId) : undefined
-  return useSingletonStoreHook(
-    () => (workspaceId ? db.sidebarConfigs.get(workspaceId) : undefined),
-    [workspaceId],
-    cached
-  )
+  return useSingletonStoreHook(workspaceId, "sidebarConfig", cached)
 }
 
 export function useWorkspaceMetadata(workspaceId: string | undefined): CachedWorkspaceMetadata | undefined {
   useWorkspaceCacheSignal(workspaceId)
   const cached = workspaceId ? cache.metadata.get(workspaceId) : undefined
-  return useSingletonStoreHook(
-    () => (workspaceId ? db.workspaceMetadata.get(workspaceId) : undefined),
-    [workspaceId],
-    cached
-  )
+  return useSingletonStoreHook(workspaceId, "metadata", cached)
 }
