@@ -742,6 +742,10 @@ function MessageInputComponent({
     contextRefs: composer.contextRefs,
     streamId,
     workspaceId,
+    // Explicit, not route-derived: the thread panel hosts this composer on
+    // routes with no `:streamId` (the board), where the palette would fall to
+    // workspace-only while dispatch held the thread's runtime commands.
+    commandStreamId: streamId,
     fileInputRef: composer.fileInputRef,
     onFileSelect: composer.handleFileSelect,
     onFileUpload: composer.uploadFile,
