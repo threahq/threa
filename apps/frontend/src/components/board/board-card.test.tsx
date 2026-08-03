@@ -6,7 +6,7 @@ import { toast } from "sonner"
 import type { Socket } from "socket.io-client"
 import { MemoryRouter } from "react-router-dom"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
-import type { BoardPostMessage } from "@threa/types"
+import { StreamTypes, type BoardPostMessage } from "@threa/types"
 import { BoardCard } from "./board-card"
 import type { BoardViewPost } from "@/hooks/use-stable-board-view"
 import { ServicesProvider, PanelProvider, TraceProvider, MediaGalleryProvider } from "@/contexts"
@@ -15,7 +15,7 @@ import { __clearBoardRailRegistry } from "@/hooks/use-board-card-messages"
 import { __clearConversationGraphRegistry } from "@/hooks/use-conversation-graph"
 import { __resetCollapseCacheForTests } from "@/lib/markdown/collapse-cache"
 // eslint-disable-next-line no-restricted-imports -- test seeds IDB directly to drive the real rail read path
-import { db, type CachedEvent } from "@/db"
+import { db, type CachedEvent, type CachedStream } from "@/db"
 import * as conversationReadModule from "@/components/message/conversation-read-context"
 import * as workspaceStoreModule from "@/stores/workspace-store"
 import * as useWorkspacesModule from "@/hooks/use-workspaces"
@@ -128,17 +128,19 @@ function sessionEvent(
   }
 }
 
-/** A command lifecycle event on the card's stream, author-scoped like the wire. */
+/** A command lifecycle event, author-scoped like the wire. Hosted on the card's
+ *  stream unless a host stream is named (a branch-reply command). */
 function commandEvent(
   eventType: "command_dispatched" | "command_completed" | "command_failed",
   seconds: number,
   actorId: string,
-  payload: Record<string, unknown>
+  payload: Record<string, unknown>,
+  hostStreamId: string = STREAM
 ): CachedEvent {
   return {
     id: `${eventType}_${seconds}`,
     workspaceId: WS,
-    streamId: STREAM,
+    streamId: hostStreamId,
     sequence: String(seconds),
     _sequenceNum: seconds,
     eventType,
@@ -148,6 +150,30 @@ function commandEvent(
     createdAt: `2026-06-22T12:00:${String(seconds).padStart(2, "0")}.000Z`,
     _cachedAt: seconds,
   }
+}
+
+/** A cached stream row: the card's channel when `parentStreamId` is null, else a
+ *  thread hanging off `parentAnchorId`. */
+function threadStream(
+  id: string,
+  parentStreamId: string | null,
+  rootStreamId: string | null,
+  parentAnchorId: string | null
+): CachedStream {
+  return {
+    id,
+    workspaceId: WS,
+    type: parentStreamId ? StreamTypes.THREAD : StreamTypes.CHANNEL,
+    displayName: null,
+    slug: id,
+    description: null,
+    visibility: "public",
+    parentStreamId,
+    parentAnchorId,
+    rootStreamId,
+    createdAt: "2026-06-22T11:00:00.000Z",
+    updatedAt: "2026-06-22T11:00:00.000Z",
+  } as unknown as CachedStream
 }
 
 /** A socket that records its listeners so a test can fire an ephemeral event
@@ -321,6 +347,44 @@ describe("BoardCard agent activity", () => {
     expect(await screen.findByText("/compact")).toBeTruthy()
     expect(screen.getByText("completed")).toBeTruthy()
     expect(screen.queryByText("/kick")).toBeNull()
+  })
+
+  it("renders the command chip for a command hosted on an overflowed branch stream", async () => {
+    // The board used to place event rows by `event.streamId`: a slash command typed
+    // into a deep branch reply is hosted on that branch's thread stream, which
+    // collapses behind a `continue thread` row, so the chip vanished. Card-level
+    // proof (resolver + row builder + render) of the depth-0 anchoring pinned in
+    // board-row-item.test.ts. Graph mirrors that test: root→t1→t2→t3, rel-depth 3.
+    await db.streams.bulkPut([
+      threadStream(STREAM, null, null, null),
+      threadStream("t1", STREAM, STREAM, "m_open"),
+      threadStream("t2", "t1", STREAM, "m_b1"),
+      threadStream("t3", "t2", STREAM, "m_b2"),
+    ])
+    await db.events.bulkPut([
+      messageEvent("m_open", "Opening body.", 10),
+      messageEvent("m_b1", "Branch one.", 20, undefined, "t1"),
+      messageEvent("m_b2", "Branch two.", 30, undefined, "t2"),
+      messageEvent("m_b3", "Branch three.", 40, undefined, "t3"),
+      commandEvent(
+        "command_dispatched",
+        50,
+        "usr_me",
+        { commandId: "cmd_deep", name: "compact", args: "", status: "dispatched", conversationId: "conv_1" },
+        "t3"
+      ),
+      commandEvent("command_completed", 51, "usr_me", { commandId: "cmd_deep" }, "t3"),
+    ])
+    const post = makePost({ messageIds: ["m_open", "m_b1", "m_b2", "m_b3"] })
+    mountCard({ ...post, streamIds: [STREAM, "t1", "t2", "t3"] } as unknown as BoardViewPost)
+
+    // The host stream really is collapsed behind the spanning-overflow row — the
+    // chip's host row is not rendered, so the chip can only survive by anchoring
+    // to the conversation.
+    expect(await screen.findByText("Continue this thread")).toBeTruthy()
+    expect(screen.queryByText("Branch three.")).toBeNull()
+    expect(await screen.findByText("/compact")).toBeTruthy()
+    expect(screen.getByText(/completed/)).toBeTruthy()
   })
 
   it("live-updates a running session's step count from agent_session:progress", async () => {
@@ -884,10 +948,17 @@ describe("BoardCard unread dot on a deleted opening", () => {
 
 /** A `message_created` row on the card's stream, seeded into IDB so the card's
  *  rail reads it like the timeline does. */
-function messageEvent(messageId: string, contentMarkdown: string, seconds: number, deletedAt?: string): CachedEvent {
+function messageEvent(
+  messageId: string,
+  contentMarkdown: string,
+  seconds: number,
+  deletedAt?: string,
+  hostStreamId: string = STREAM
+): CachedEvent {
   return {
     ...sessionEvent("agent_session:started", seconds, { messageId, contentMarkdown, reactions: {}, deletedAt }),
     id: `evt_${messageId}`,
+    streamId: hostStreamId,
     eventType: "message_created",
     actorId: "usr_me",
     actorType: "user",
