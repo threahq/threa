@@ -1,7 +1,19 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest"
 import { act, renderHook, waitFor } from "@testing-library/react"
+import Dexie, { liveQuery } from "dexie"
 import { db, sequenceToNum, type CachedEvent, type CachedStream } from "@/db"
-import { loadStreamEvents, orderStreamEvents, shareEventIdentities, useStreamFromStore } from "./stream-store"
+import { computeTimelineHoles } from "@/sync/contiguity"
+import {
+  TIMELINE_TAIL_EVENTS,
+  loadStreamEvents,
+  loadStreamPrefix,
+  loadStreamTail,
+  orderStreamEvents,
+  shareEventIdentities,
+  unionStreamRanges,
+  useStreamEvents,
+  useStreamFromStore,
+} from "./stream-store"
 import {
   allocateWorkspaceTableToken,
   getWorkspaceTableSnapshot,
@@ -597,5 +609,290 @@ describe("useStreamFromStore", () => {
     // kill switch exists to remove. The one expected call is the table
     // subscriber's own re-key.
     expect(where.mock.calls.length).toBe(1)
+  })
+})
+
+describe("bounded timeline read — tail and prefix", () => {
+  const STREAM = "stream_bounded"
+
+  function makeBroadcastEvent(streamId: string, sequence: string, broadcastSequence: string): CachedEvent {
+    return { ...makeRealEvent(streamId, sequence), broadcastSequence } as CachedEvent
+  }
+
+  /** Seed `count` persisted events at sequences 1..count, inserted reversed. */
+  async function seed(count: number, streamId = STREAM): Promise<void> {
+    const seqs = Array.from({ length: count }, (_, i) => i + 1)
+    await db.events.bulkPut([...seqs].reverse().map((n) => makeRealEvent(streamId, String(n))))
+  }
+
+  /** The production union of both ranges, at a given anchor. */
+  async function readUnion(streamId: string, floor: number | null, tailFloor: number | null): Promise<CachedEvent[]> {
+    const prefix = await loadStreamPrefix(streamId, floor, tailFloor)
+    const tail = await loadStreamTail(streamId, tailFloor, tailFloor === null ? floor : null)
+    return unionStreamRanges(prefix, tail)
+  }
+
+  /** Emissions of a subscription over `read`, counted while `run` writes. */
+  async function countEmissions(read: () => Promise<unknown>, run: () => Promise<void>): Promise<number> {
+    let emissions = 0
+    let resolveFirst: (() => void) | undefined
+    const first = new Promise<void>((resolve) => {
+      resolveFirst = resolve
+    })
+    const subscription = liveQuery(read).subscribe(() => {
+      emissions += 1
+      resolveFirst?.()
+    })
+    await first
+    const baseline = emissions
+    await run()
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    subscription.unsubscribe()
+    return emissions - baseline
+  }
+
+  beforeEach(async () => {
+    await db.events.clear()
+  })
+
+  it("the unanchored tail read returns the newest N above the floor, in ascending order", async () => {
+    await seed(TIMELINE_TAIL_EVENTS + 120)
+
+    const tail = await loadStreamTail(STREAM, null, 1)
+
+    expect(tail).toHaveLength(TIMELINE_TAIL_EVENTS)
+    expect(tail.map((e) => e._sequenceNum)).toEqual(Array.from({ length: TIMELINE_TAIL_EVENTS }, (_, i) => 121 + i))
+  })
+
+  it("the union of tail and prefix equals today's single floored read", async () => {
+    // The acceptance test: same fixture, both arms, deep-equal.
+    await seed(TIMELINE_TAIL_EVENTS + 300)
+    await db.events.bulkPut([
+      makeOptimisticEvent(STREAM, "temp_pending", String(Date.now())),
+      makeOptimisticEvent(STREAM, "temp_failed", String(Date.now() + 1)),
+    ])
+
+    const single = await loadStreamEvents(STREAM, 50)
+    const tailFloor = (await loadStreamTail(STREAM, null, 50)).filter((e) => e._status == null)[0]._sequenceNum
+    const split = await readUnion(STREAM, 50, tailFloor)
+
+    expect(split).toEqual(single)
+  })
+
+  it("an unsent optimistic row above the tail floor is included exactly once", async () => {
+    await seed(20)
+    await db.events.put(makeOptimisticEvent(STREAM, "temp_new", String(Date.now())))
+
+    const union = await readUnion(STREAM, 1, 15)
+
+    expect(union.filter((e) => e.id === "temp_new")).toHaveLength(1)
+    expect(union[union.length - 1].id).toBe("temp_new")
+
+    // And on the pre-anchor emission, where the tail is capped at the newest N:
+    // a legacy low-placeholder unsent row sits outside that window and is only
+    // in the result because the unanchored tail merges the `_status` index.
+    await seed(TIMELINE_TAIL_EVENTS + 50)
+    await db.events.put(makeOptimisticEvent(STREAM, "temp_low", "5"))
+    const unanchoredTail = await loadStreamTail(STREAM, null, 1)
+    expect(unanchoredTail.filter((e) => e.id === "temp_low")).toHaveLength(1)
+  })
+
+  it("an optimistic row anchored inside the prefix still orders at its anchor", async () => {
+    await seed(20)
+    // Production optimistic rows carry a `Date.now()` sequence (so they sit in the
+    // tail range) but anchor at the persisted row they were composed under.
+    await db.events.put(makeOptimisticEvent(STREAM, "temp_anchored", String(Date.now()), undefined, 5))
+
+    const union = await readUnion(STREAM, 1, 15)
+
+    expect(union.map((e) => e.id).indexOf("temp_anchored")).toBe(5)
+  })
+
+  it("a new message wakes the tail read and not the prefix read", async () => {
+    await seed(20)
+    const write = async () => {
+      await db.events.put(makeRealEvent(STREAM, "21"))
+    }
+
+    const tailEmissions = await countEmissions(() => loadStreamTail(STREAM, 15, null), write)
+    await db.events.delete(`evt_${STREAM}_21`)
+    const prefixEmissions = await countEmissions(() => loadStreamPrefix(STREAM, 1, 15), write)
+
+    expect(tailEmissions).toBeGreaterThan(0)
+    expect(prefixEmissions).toBe(0)
+  })
+
+  it("an edit to an old prefix row still wakes the prefix read", async () => {
+    await seed(20)
+
+    const prefixEmissions = await countEmissions(
+      () => loadStreamPrefix(STREAM, 1, 15),
+      async () => {
+        await db.events.update(`evt_${STREAM}_3`, { _patchedAt: Date.now() })
+      }
+    )
+
+    expect(prefixEmissions).toBeGreaterThan(0)
+  })
+
+  it("messages arriving during a visit land in the tail, and a stale prefix emission still composes a contiguous window", async () => {
+    await db.events.bulkPut(
+      Array.from({ length: 20 }, (_, i) => makeBroadcastEvent(STREAM, String(i + 1), String(i + 1)))
+    )
+    const tailFloor = 15
+
+    // The prefix range is `[floor, tailFloor)`, so nothing arriving above the
+    // floor can change it: holding the prefix's resolution is indistinguishable
+    // from letting it re-run, which is why emission skew cannot uncover a range.
+    const stalePrefix = await loadStreamPrefix(STREAM, 1, tailFloor)
+    await db.events.bulkPut(
+      Array.from({ length: 3 }, (_, i) => makeBroadcastEvent(STREAM, String(i + 21), String(i + 21)))
+    )
+    const freshPrefix = await loadStreamPrefix(STREAM, 1, tailFloor)
+    expect(freshPrefix).toEqual(stalePrefix)
+
+    const tail = await loadStreamTail(STREAM, tailFloor, null)
+    const union = unionStreamRanges(stalePrefix, tail)
+
+    expect(union.map((e) => e._sequenceNum)).toEqual(Array.from({ length: 23 }, (_, i) => i + 1))
+    expect(computeTimelineHoles(union)).toEqual([])
+  })
+
+  it("nothing already rendered vanishes at any intermediate step of an older-page load", async () => {
+    await seed(300)
+    const tailFloor = 251
+
+    const rendered = await readUnion(STREAM, 200, tailFloor)
+    const renderedIds = rendered.map((e) => e.id)
+    const widenedPrefix = await loadStreamPrefix(STREAM, 150, tailFloor)
+    const tail = await loadStreamTail(STREAM, tailFloor, null)
+
+    // Both interleavings of the two arms' emissions, and the fully-settled state.
+    const steps = [
+      unionStreamRanges(await loadStreamPrefix(STREAM, 200, tailFloor), tail),
+      unionStreamRanges(widenedPrefix, tail),
+    ]
+    for (const step of steps) {
+      const ids = new Set(step.map((e) => e.id))
+      expect(renderedIds.filter((id) => !ids.has(id))).toEqual([])
+    }
+    expect(steps[1].map((e) => e._sequenceNum)).toEqual(Array.from({ length: 151 }, (_, i) => i + 150))
+
+    // Neutralisation: the refuted design raised the tail floor on an older page.
+    // With the floor raised, the old prefix no longer reaches the new tail and
+    // rows the user was looking at disappear — this test fails against it.
+    const raisedTail = await loadStreamTail(STREAM, 261, null)
+    const raisedIds = new Set(
+      unionStreamRanges(await loadStreamPrefix(STREAM, 200, tailFloor), raisedTail).map((e) => e.id)
+    )
+    expect(renderedIds.filter((id) => !raisedIds.has(id)).length).toBeGreaterThan(0)
+  })
+
+  it("a hole in the broadcast chain is still detected across the tail/prefix boundary", async () => {
+    // Broadcast slot 15 never arrived; the gap straddles a tail floor of 16, so
+    // the row before the hole is in the prefix and the row after it is in the tail.
+    await db.events.bulkPut([
+      ...Array.from({ length: 14 }, (_, i) => makeBroadcastEvent(STREAM, String(i + 1), String(i + 1))),
+      ...Array.from({ length: 5 }, (_, i) => makeBroadcastEvent(STREAM, String(i + 16), String(i + 16))),
+    ])
+
+    const union = await readUnion(STREAM, 1, 16)
+
+    expect(union.map((e) => e._sequenceNum)).toEqual([
+      ...Array.from({ length: 14 }, (_, i) => i + 1),
+      16,
+      17,
+      18,
+      19,
+      20,
+    ])
+    expect(computeTimelineHoles(union)).toEqual([
+      { afterEventId: `evt_${STREAM}_14`, afterSequence: "14", missingCount: 1 },
+    ])
+  })
+})
+
+describe("useStreamEvents with the bounded read armed", () => {
+  const STREAM = "stream_hook_bounded"
+  const OTHER = "stream_hook_other"
+
+  async function seed(streamId: string, count: number, from = 1): Promise<void> {
+    await db.events.bulkPut(Array.from({ length: count }, (_, i) => makeRealEvent(streamId, String(from + i))))
+  }
+
+  /** Every `.between()` range opened on db.events while `capture` runs. */
+  function recordRanges(): { ranges: unknown[][]; restore: () => void } {
+    const ranges: unknown[][] = []
+    const original = db.events.where.bind(db.events)
+    const spy = vi.spyOn(db.events, "where").mockImplementation(((index: string) => {
+      const clause = original(index)
+      const between = clause.between.bind(clause)
+      clause.between = ((...args: unknown[]) => {
+        ranges.push(args)
+        return (between as (...a: unknown[]) => unknown)(...args)
+      }) as typeof clause.between
+      return clause
+    }) as typeof db.events.where)
+    return { ranges, restore: () => spy.mockRestore() }
+  }
+
+  beforeEach(async () => {
+    await db.events.clear()
+  })
+
+  it("paging older widens the prefix and never re-opens the tail range", async () => {
+    await seed(STREAM, 300)
+
+    const { ranges, restore } = recordRanges()
+    try {
+      const { result, rerender } = renderHook(
+        ({ floor }: { floor: number }) => useStreamEvents(STREAM, floor, { boundedRead: true }),
+        { initialProps: { floor: 200 } }
+      )
+      await waitFor(() => expect(result.current?.length).toBe(101))
+
+      const tailRanges = ranges.filter((args) => Array.isArray(args[1]) && (args[1] as unknown[])[1] === Dexie.maxKey)
+      const tailRangeCount = tailRanges.length
+      const anchoredTailLower = tailRanges[tailRanges.length - 1][0]
+
+      rerender({ floor: 150 })
+      await waitFor(() => expect(result.current?.length).toBe(151))
+
+      const tailRangesAfter = ranges.filter(
+        (args) => Array.isArray(args[1]) && (args[1] as unknown[])[1] === Dexie.maxKey
+      )
+      expect(tailRangesAfter.length).toBe(tailRangeCount)
+      expect(tailRangesAfter[tailRangesAfter.length - 1][0]).toEqual(anchoredTailLower)
+      expect(result.current?.map((e) => e._sequenceNum)).toEqual(Array.from({ length: 151 }, (_, i) => i + 150))
+    } finally {
+      restore()
+    }
+  })
+
+  // Bites the stale-stream guard as a whole; the tail half of that guard is
+  // defensive only, since the anchor can only latch from a tail already stamped
+  // for the current stream.
+  it("never returns a window mixing two streams while a switch is in flight", async () => {
+    await seed(STREAM, 40)
+    await seed(OTHER, 40)
+
+    const seen: (CachedEvent[] | undefined)[] = []
+    const { result, rerender } = renderHook(
+      ({ streamId }: { streamId: string }) => {
+        const events = useStreamEvents(streamId, 1, { boundedRead: true })
+        seen.push(events)
+        return events
+      },
+      { initialProps: { streamId: STREAM } }
+    )
+    await waitFor(() => expect(result.current?.length).toBe(40))
+
+    rerender({ streamId: OTHER })
+    await waitFor(() => expect(result.current?.[0]?.streamId).toBe(OTHER))
+
+    for (const events of seen) {
+      if (!events) continue
+      expect(new Set(events.map((e) => e.streamId)).size).toBe(1)
+    }
   })
 })

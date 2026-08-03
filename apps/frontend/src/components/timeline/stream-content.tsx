@@ -946,6 +946,11 @@ export function StreamContent({
   // useEvents' contiguity gate for how holes are detected and backfilled.
   const conversationOverlayModel = conversationOverlay?.model
   const timelineItems = useMemo(() => {
+    // `timeline.derive` covers the grouping/annotation/injection chain through
+    // `visibleItems` — the work that runs per live-query emission over the whole
+    // rendered window. It is the control on the bounded-read win: if the read
+    // cost falls and this rises by as much, the cost moved rather than shrank.
+    const stopDerive = getPerfCapture().time("timeline.derive")
     let items = annotateAuthorGroups(groupTimelineItems(displayEvents, currentWorkspaceUserId ?? undefined))
     if (conversationOverlayModel && conversationOverlayModel.conversations.length > 0) {
       items = annotateConversationRows(items, conversationOverlayModel)
@@ -958,7 +963,9 @@ export function StreamContent({
     if (supportsConversationOverlay) {
       items = annotateConversationRevivals(items, conversationIdByMessageId, conversationsById)
     }
-    return injectGapItems(items, holes)
+    const derived = injectGapItems(items, holes)
+    stopDerive()
+    return derived
   }, [
     displayEvents,
     currentWorkspaceUserId,
@@ -1369,11 +1376,14 @@ export function StreamContent({
   // passes `shift` to virtua for that render, holding the viewport exactly
   // like a real older-page prepend (INV-21).
   const visibleItems = useMemo(() => {
+    const stopDerive = getPerfCapture().time("timeline.derive")
     const filtered = useVirtualized ? filterVisibleItems(timelineItems, isChannel) : timelineItems
     // Day dividers go on the post-filter list so a boundary lands above the
     // first *visible* row of a day (INV-42), then skeletons prepend above all.
     const base = injectDayDividers(filtered)
-    return showOlderSkeletons ? [...OLDER_SKELETON_ITEMS, ...base] : base
+    const items = showOlderSkeletons ? [...OLDER_SKELETON_ITEMS, ...base] : base
+    stopDerive()
+    return items
   }, [timelineItems, useVirtualized, isChannel, showOlderSkeletons])
 
   const visibleItemCount = visibleItems.length

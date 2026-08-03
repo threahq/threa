@@ -74,7 +74,7 @@ Seed while the client under test is disconnected (close the tab, or seed from a
 terminal while parked on another workspace), or the entries arrive live and
 there is no gap to catch up on.
 
-## The thirteen scenarios
+## The fourteen scenarios
 
 | #   | Scenario                                                  | Seed                                                                                           | Marks that prove it                                                                                                                                                                                       |
 | --- | --------------------------------------------------------- | ---------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -91,6 +91,22 @@ there is no gap to catch up on.
 | 11  | Large stash restore through real TipTap                   | `--profile drafts`, reload on the 256 KB channel, then type into it                            | `editor.externalSync`, `draft.staging`, `observer.longTask`                                                                                                                                               |
 | 12  | Restore → switch stream → return → navigate away and back | `--profile drafts` plus `--profile large-stream`                                               | `editor.externalSync`, `stream.subscriptions`, `liveQuery.rerun`, `bootstrap.publish`                                                                                                                     |
 | 13  | Unchanged warm refresh, wide workspace                    | `--profile workspace-wide`, then hard-refresh twice with no new messages (read the third load) | `bootstrap.preRead` + `bootstrap.tx` (the comparable number), `bootstrap.rowsWritten`, `bootstrap.rowsSkipped`, `bootstrap.diff`, `bootstrap.storePublish`, `bootstrap.cachePublish`, `bootstrap.cleanup` |
+| 14  | One incoming message into a deep scroll-back window       | `--profile large-stream`, scroll up ten pages, then post from a second client                  | `timeline.tailLoad` (bounded and flat as the scroll-back deepens), `liveQuery.load`, `timeline.derive`, `timeline.windowItems` (identical between arms — a change here is a correctness bug)              |
+
+### Reading `liveQuery.rerun` / `liveQuery.load` (scenarios 7, 8, 14)
+
+Both marks aggregate across every mounted `useStreamEvents` instance — five on a
+stream page, twenty-four or more on the board — so a sample cannot be attributed
+to one timeline. Disambiguating would mean a per-caller mark name and the
+registry is closed on purpose (D15), so read them as a page total.
+
+They are also not like-for-like across arms: with `boundedTimelineRead` on, only
+the prefix read emits `liveQuery.rerun`/`liveQuery.load`, so an on-vs-off
+comparison is prefix-only after against whole-read before. That is the intended
+reading of the win (the tail is what the arriving message wakes), but it is not a
+measurement of the same population. `timeline.tailLoad` is emitted by the bounded
+tail read alone: it exists in the on arm only, so its presence is what proves the
+flag armed, and its duration is the cost of the read a live arrival triggers.
 
 ### Scenario 13 — reading the unchanged warm refresh
 
