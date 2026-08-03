@@ -119,6 +119,18 @@ export async function isEventWriteChunkingEnabled(database: ThreaDatabase, works
   return (await getEventWriteFlags(database, workspaceId)).chunking
 }
 
+/**
+ * The chunking flag read straight from the persisted row, bypassing the module
+ * cache. The service worker runs its own module instance that nothing primes
+ * and nothing resets, so a cached value there would outlive an account switch
+ * and hide a backoffice flip until the worker restarts; the per-account
+ * `database` handle makes a fresh read account-correct by construction.
+ */
+export async function readEventWriteFlagsFresh(database: ThreaDatabase, workspaceId: string): Promise<EventWriteFlags> {
+  const metadata = await database.workspaceMetadata.get(workspaceId)
+  return resolveEventWriteFlags(metadata?.featureFlags)
+}
+
 /** The viewer's `indexedMessagePatch` value, resolved through the same primed cache. */
 export async function isIndexedMessagePatchEnabled(database: ThreaDatabase, workspaceId: string): Promise<boolean> {
   return (await getEventWriteFlags(database, workspaceId)).indexedMessagePatch

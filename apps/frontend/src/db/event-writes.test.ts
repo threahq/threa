@@ -4,6 +4,7 @@ import { db, sequenceToNum, type CachedEvent } from "@/db"
 import {
   EVENT_BULK_PUT_LIMIT,
   isEventWriteChunkingEnabled,
+  readEventWriteFlagsFresh,
   primeEventWriteFlags,
   putEventsBounded,
   resetEventWriteFlags,
@@ -238,5 +239,19 @@ describe("isEventWriteChunkingEnabled", () => {
 
     expect(await inFlight).toBe(true)
     expect(await isEventWriteChunkingEnabled(db, "ws_1")).toBe(true)
+  })
+
+  it("readEventWriteFlagsFresh ignores the cache and re-reads the row every call", async () => {
+    await putMetadata({ workspace: { eventWriteChunking: "on", indexedMessagePatch: "on" }, user: {} })
+    primeEventWriteFlags("ws_1", { workspace: { eventWriteChunking: "off", indexedMessagePatch: "off" }, user: {} })
+
+    const first = await readEventWriteFlagsFresh(db, "ws_1")
+    await putMetadata({ workspace: { eventWriteChunking: "off", indexedMessagePatch: "on" }, user: {} })
+    const second = await readEventWriteFlagsFresh(db, "ws_1")
+
+    expect({ first, second }).toEqual({
+      first: { chunking: true, indexedMessagePatch: true },
+      second: { chunking: false, indexedMessagePatch: true },
+    })
   })
 })
