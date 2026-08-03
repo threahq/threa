@@ -32,7 +32,8 @@ import {
   type Activity,
 } from "@threa/types"
 import { assignmentId } from "@/hooks/use-labels"
-import { getAgentActivityForStream, __resetAgentActivityStore } from "@/stores/agent-activity-store"
+import { getAgentActivityForStream, getAgentSession, __resetAgentActivityStore } from "@/stores/agent-activity-store"
+import * as agentSubstep from "@/lib/crypto/agent-substep"
 import { getCachedWorkspaceTables, subscribeWorkspaceCache } from "@/stores/workspace-store"
 import type { Socket } from "socket.io-client"
 
@@ -4085,6 +4086,92 @@ describe("agent-activity sidebar socket handlers", () => {
     })
     expect(getAgentActivityForStream("ws_1", "stream_ch").map((s) => s.sessionId)).toEqual(["sess_p"])
 
+    cleanup()
+  })
+
+  it("folds live counts from progress ticks onto a tracked session", async () => {
+    await putStream("stream_ch", null)
+    const queryClient = new QueryClient()
+    const { socket, emitAsync } = createTestSocket()
+    const cleanup = registerWorkspaceSocketHandlers(socket, "ws_1", queryClient, handlerRefs)
+
+    await emitAsync("agent_session:started", {
+      workspaceId: "ws_1",
+      streamId: "stream_ch",
+      event: { payload: { sessionId: "sess_c", personaName: "Ariadne", startedAt: "2026-07-16T00:00:00.000Z" } },
+    })
+    // The join-time bootstrap tick: it lands before any board row mounts, so the
+    // counts must survive in the store for a late-mounting row to read.
+    await emitAsync("agent_session:progress", {
+      workspaceId: "ws_1",
+      streamId: "stream_ch",
+      sessionId: "sess_c",
+      personaName: "Ariadne",
+      stepCount: 5,
+      messageCount: 1,
+    })
+    expect(getAgentSession("ws_1", "sess_c")).toMatchObject({ stepCount: 5, messageCount: 1 })
+
+    await emitAsync("agent_session:substep", {
+      sessionId: "sess_c",
+      streamId: "stream_ch",
+      substep: "Reading the migration",
+      updatedAt: "2026-07-16T00:00:02.000Z",
+    })
+    expect(getAgentSession("ws_1", "sess_c")).toMatchObject({ substep: "Reading the migration" })
+
+    cleanup()
+  })
+
+  it("decrypts a sealed substep, and skips it when the session is locked", async () => {
+    await putStream("stream_ch", null)
+    const queryClient = new QueryClient()
+    const { socket, emitAsync } = createTestSocket()
+    const cleanup = registerWorkspaceSocketHandlers(socket, "ws_1", queryClient, handlerRefs)
+
+    await emitAsync("agent_session:started", {
+      workspaceId: "ws_1",
+      streamId: "stream_ch",
+      event: { payload: { sessionId: "sess_e", personaName: "Ariadne", startedAt: "2026-07-16T00:00:00.000Z" } },
+    })
+
+    const decrypt = vi.spyOn(agentSubstep, "decryptAgentSubstepText").mockResolvedValue("Planning queries…")
+    await emitAsync("agent_session:substep", {
+      workspaceId: "ws_1",
+      sessionId: "sess_e",
+      streamId: "stream_ch",
+      ciphertext: "c1",
+      envelope: { v: 1 },
+      updatedAt: "2026-07-16T00:00:02.000Z",
+    })
+    expect(getAgentSession("ws_1", "sess_e")).toMatchObject({ substep: "Planning queries…" })
+
+    // Locked session (or a failed open): the helper returns null and the ephemeral
+    // substep is skipped rather than blanking the applied one.
+    decrypt.mockResolvedValue(null)
+    await emitAsync("agent_session:substep", {
+      workspaceId: "ws_1",
+      sessionId: "sess_e",
+      streamId: "stream_ch",
+      ciphertext: "c2",
+      envelope: { v: 1 },
+      updatedAt: "2026-07-16T00:00:03.000Z",
+    })
+    expect(getAgentSession("ws_1", "sess_e")).toMatchObject({ substep: "Planning queries…" })
+
+    // A redelivery of the older substep (stream room + parent room) is dropped.
+    decrypt.mockResolvedValue("Evaluating results…")
+    await emitAsync("agent_session:substep", {
+      workspaceId: "ws_1",
+      sessionId: "sess_e",
+      streamId: "stream_ch",
+      ciphertext: "c1",
+      envelope: { v: 1 },
+      updatedAt: "2026-07-16T00:00:01.000Z",
+    })
+    expect(getAgentSession("ws_1", "sess_e")).toMatchObject({ substep: "Planning queries…" })
+
+    decrypt.mockRestore()
     cleanup()
   })
 })

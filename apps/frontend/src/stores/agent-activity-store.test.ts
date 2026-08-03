@@ -5,6 +5,8 @@ import {
   upsertAgentSession,
   removeAgentSession,
   getAgentActivityForStream,
+  getAgentSession,
+  updateAgentSessionProgress,
   __resetAgentActivityStore,
 } from "./agent-activity-store"
 
@@ -83,5 +85,67 @@ describe("agent-activity-store", () => {
     upsertAgentSession(WS, session({ sessionId: "s1", streamId: "stream_b" }))
     expect(getAgentActivityForStream(WS, "stream_a")).toEqual([])
     expect(getAgentActivityForStream(WS, "stream_b").map((s) => s.sessionId)).toEqual(["s1"])
+  })
+
+  it("folds a progress tick into a tracked session's live counts", () => {
+    upsertAgentSession(WS, session({ sessionId: "s1" }))
+    updateAgentSessionProgress(WS, "s1", { stepCount: 3, messageCount: 1 })
+    expect(getAgentSession(WS, "s1")).toEqual({
+      ...session({ sessionId: "s1" }),
+      stepCount: 3,
+      messageCount: 1,
+      substep: null,
+    })
+  })
+
+  it("ignores progress for a session it doesn't track (untracked stays absent)", () => {
+    updateAgentSessionProgress(WS, "ghost", { stepCount: 9 })
+    expect(getAgentSession(WS, "ghost")).toBeUndefined()
+  })
+
+  it("a later `started` upsert keeps counts a progress tick already delivered", () => {
+    upsertAgentSession(WS, session({ sessionId: "s1" }))
+    updateAgentSessionProgress(WS, "s1", { stepCount: 4, messageCount: 2, substep: "Reading docs" })
+    upsertAgentSession(WS, session({ sessionId: "s1", personaName: "Ada" }))
+    expect(getAgentSession(WS, "s1")).toMatchObject({ stepCount: 4, messageCount: 2, substep: "Reading docs" })
+  })
+
+  it("a step advance drops the previous step's substep", () => {
+    upsertAgentSession(WS, session({ sessionId: "s1" }))
+    updateAgentSessionProgress(WS, "s1", { stepCount: 1, substep: "Evaluating results" })
+    updateAgentSessionProgress(WS, "s1", { stepCount: 2, messageCount: 0 })
+    expect(getAgentSession(WS, "s1")).toMatchObject({ stepCount: 2, substep: null })
+  })
+
+  it("a tick on one session leaves another session's counts untouched", () => {
+    upsertAgentSession(WS, session({ sessionId: "s1" }))
+    upsertAgentSession(WS, session({ sessionId: "s2", streamId: "stream_b" }))
+    updateAgentSessionProgress(WS, "s1", { stepCount: 5 })
+    updateAgentSessionProgress(WS, "s2", { stepCount: 7 })
+    updateAgentSessionProgress(WS, "s1", { stepCount: 6 })
+    expect(getAgentSession(WS, "s2")).toMatchObject({ stepCount: 7 })
+  })
+
+  it("counts seeded by the join-time bootstrap tick survive until the next change", () => {
+    // The join emits a progress tick before any row mounts; a row mounting later
+    // must read the stored count, not 0.
+    upsertAgentSession(WS, session({ sessionId: "s1", stepCount: 8, messageCount: 3 }))
+    expect(getAgentSession(WS, "s1")).toMatchObject({ stepCount: 8, messageCount: 3 })
+  })
+
+  it("a reconnect re-seed keeps a still-running session's live progress", () => {
+    // Reconnect order: the rejoin's bootstrap tick lands first, THEN the workspace
+    // bootstrap re-seed. The bootstrap projection carries no progress fields, so a
+    // blind replace would blank the row back to "0 steps • 0 messages sent".
+    seedAgentActivity(WS, [session({ sessionId: "s1" })])
+    updateAgentSessionProgress(WS, "s1", { stepCount: 4, messageCount: 2, substep: "Evaluating results…" })
+
+    seedAgentActivity(WS, [session({ sessionId: "s1" })])
+
+    expect(getAgentSession(WS, "s1")).toMatchObject({
+      stepCount: 4,
+      messageCount: 2,
+      substep: "Evaluating results…",
+    })
   })
 })

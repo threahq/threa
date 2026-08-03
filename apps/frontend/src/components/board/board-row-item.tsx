@@ -12,8 +12,7 @@ import { DelegationEvent } from "@/components/timeline/delegation-event"
 import { CommandEvent } from "@/components/timeline/command-event"
 import { getSessionId } from "@/components/timeline/session-grouping"
 import { useSocket, useTrace } from "@/contexts"
-import { useWorkspaceUserId } from "@/hooks/use-workspaces"
-import { useAgentActivity, type MessageAgentActivity } from "@/hooks/use-agent-activity"
+import { useAgentSessionActivity } from "@/stores/agent-activity-store"
 import { LedgerEventGroup, LedgerEventRow, type LedgerEventDescriptor } from "@/components/board/ledger-row"
 import type { BoardEventRow } from "@/lib/board/board-event-rows"
 import { coalesceLedgerItems, ledgerEventContent, type LedgerItemKind } from "@/lib/board/ledger"
@@ -195,12 +194,38 @@ export function foldLedgerEventRows(rows: BoardRow[], fullTailStartMessageId: st
     const row = rows[index]
     const depth = row.displayDepth ?? 0
     if (segmentDepth !== null && depth !== segmentDepth) flush()
+    // A session with no terminal event is still running: it must keep its full
+    // card so the spinner and live counts render. Session rows sort at their
+    // START time, so once the agent replies the row falls into the ledger region
+    // — folding it (or burying it in a coalesced group) would drop the only live
+    // state on the card. Flush around it and emit it untouched.
+    if (isRunningSessionRow(row)) {
+      flush()
+      segmentDepth = null
+      out.push(row)
+      continue
+    }
     segmentDepth = depth
     segment.push(row)
   }
   flush()
   out.push(...rows.slice(end))
   return out
+}
+
+const SESSION_TERMINAL_EVENT_TYPES = new Set<string>([
+  "agent_session:completed",
+  "agent_session:failed",
+  "agent_session:deleted",
+])
+
+/** A session row whose group carries no completed/failed/deleted event. */
+export function isRunningSessionRow(row: BoardRow): boolean {
+  return (
+    row.kind === "event" &&
+    row.row.kind === "session" &&
+    !row.row.events.some((event) => SESSION_TERMINAL_EVENT_TYPES.has(event.eventType))
+  )
 }
 
 /** A board row as a coalescing item: only event rows can join a run. */
@@ -605,22 +630,15 @@ function LedgerMemoPreview({
   )
 }
 
-const SESSION_TERMINAL_EVENT_TYPES = new Set<string>([
-  "agent_session:completed",
-  "agent_session:failed",
-  "agent_session:deleted",
-])
-
 /**
  * An agent-session row on a board card / conversation panel. A terminal session
  * carries its final step + message counts in its own payload, so it renders the
  * shared card straight. A still-running session has no counts in its events — they
  * arrive as ephemeral `agent_session:progress` socket ticks — so it delegates to
- * {@link BoardRunningSessionRow}, which mounts the same live rail the timeline runs
- * (`useAgentActivity`, event-list.tsx). Without that subscription the card sits at
- * "0 steps" until the terminal event lands. Splitting keeps the subscription off
- * the many past-trace rows a board carries, and confines a progress-tick re-render
- * to this leaf instead of the whole card.
+ * {@link BoardRunningSessionRow}, which reads them from the module-level agent
+ * activity store. The store is fed by workspace-sync's single subscription, so a
+ * row mounted long after the join-time bootstrap tick (virtua recycle, card
+ * remount, reorder) still paints the live count instead of sitting at "0 steps".
  */
 function BoardAgentSessionRow({
   events,
@@ -649,25 +667,15 @@ function BoardRunningSessionRow({
   const streamId = events[0]!.streamId
   const stopAgentSession = useStopAgentSession(socket, workspaceId, streamId)
   const steerAgentSession = useSteerAgentSession(workspaceId, streamId)
-  const userId = useWorkspaceUserId(workspaceId)
-  const activity = useAgentActivity(events, socket, workspaceId, userId)
   const sessionId = events.reduce<string | null>((found, event) => found ?? getSessionId(event), null)
-  // `useAgentActivity` keys by trigger message and also carries socket-only
-  // sessions from other rows on the shared socket, so match this row's session by
-  // id — the same lookup event-list.tsx does off the activity map.
-  let live: MessageAgentActivity | undefined
-  if (sessionId != null) {
-    for (const entry of activity.values()) {
-      if (entry.sessionId === sessionId) {
-        live = entry
-        break
-      }
-    }
-  }
+  const live = useAgentSessionActivity(workspaceId, sessionId)
+  const hasCounts = live?.stepCount !== undefined || live?.messageCount !== undefined
   return (
     <AgentSessionEvent
       events={events}
-      liveCounts={live ? { stepCount: live.stepCount, messageCount: live.messageCount } : undefined}
+      liveCounts={
+        live && hasCounts ? { stepCount: live.stepCount ?? 0, messageCount: live.messageCount ?? 0 } : undefined
+      }
       liveSubstep={live?.substep ?? null}
       onStopSession={stopAgentSession}
       onRedirect={onRedirectSession}

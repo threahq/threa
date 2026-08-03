@@ -20,6 +20,7 @@ import * as userProfileModule from "@/components/user-profile"
 import * as syncEngineModule from "@/sync/sync-engine"
 import * as contextsModule from "@/contexts"
 import * as queueDraftModule from "@/hooks/use-queue-draft-message"
+import { seedAgentActivity, __resetAgentActivityStore } from "@/stores/agent-activity-store"
 
 const WS = "ws_1"
 const CONV = "conv_1"
@@ -93,6 +94,15 @@ function multiMemoEvent(id: string, seconds: number): CachedEvent {
         { memoId: "memo_2", title: "Two", knowledgeType: "fact", sourceMessageIds: ["r1"] },
       ],
     },
+    id
+  )
+}
+
+function sessionStartedEvent(id: string, seconds: number, sessionId: string, triggerMessageId: string): CachedEvent {
+  return event(
+    "agent_session:started",
+    seconds,
+    { sessionId, personaId: "persona_1", personaName: "Ariadne", triggerMessageId, startedAt: at(seconds) },
     id
   )
 }
@@ -172,6 +182,7 @@ const readValue = { state: () => "ungated" as const, markReadUpToHere: vi.fn(), 
 
 beforeEach(async () => {
   seq = 0
+  __resetAgentActivityStore()
   __clearBoardRailRegistry()
   __clearConversationGraphRegistry()
   await db.events.clear()
@@ -323,5 +334,89 @@ describe("BoardCard ledger events", () => {
     expect(await screen.findByText(/Saved to memory/)).toBeInTheDocument()
     expect(screen.getByRole("button", { name: "Postgres upserts need the index" })).toBeInTheDocument()
     expect(screen.queryByRole("button", { name: /^Memo: Postgres upserts need the index/ })).toBeNull()
+  })
+})
+
+/** The card header's reserved chip slot (INV-21) — empty when no agent runs. */
+function chipSlot(): HTMLElement | null {
+  return document.querySelector("[data-running-chip-slot]")
+}
+
+describe("BoardCard running agent sessions", () => {
+  const running = (overrides: Partial<Parameters<typeof seedAgentActivity>[1][number]> = {}) => ({
+    sessionId: "sess_1",
+    streamId: STREAM,
+    rootStreamId: STREAM,
+    personaName: "Ariadne",
+    startedAt: at(11),
+    ...overrides,
+  })
+
+  it("paints the stored step count on a row mounted after the progress tick", async () => {
+    // The regression: the row used to seed from the cached `started` event (no
+    // counts) and miss the join-time tick, so it sat at "0 steps" forever.
+    seedAgentActivity(WS, [running({ stepCount: 7, messageCount: 2 })])
+    await db.events.bulkPut([
+      messageEvent("r1", 10, "First reply."),
+      sessionStartedEvent("evt_sess", 11, "sess_1", "r1"),
+    ])
+    await db.conversations.put(post())
+    mount()
+
+    expect(await screen.findByText("Ariadne is working…")).toBeInTheDocument()
+    expect(screen.getByText("7 steps • 2 messages sent")).toBeInTheDocument()
+  })
+
+  it("keeps a running session a full row even once later replies push it into the ledger", async () => {
+    seedAgentActivity(WS, [running({ stepCount: 3, messageCount: 0 })])
+    await db.events.bulkPut([
+      messageEvent("r1", 10, "First reply."),
+      sessionStartedEvent("evt_sess", 11, "sess_1", "r1"),
+      messageEvent("r2", 12, "Second reply."),
+      messageEvent("r3", 13, "Third reply."),
+    ])
+    await db.conversations.put(post())
+    mount()
+
+    // Full card (title + live counts), not a thin ledger line and not swallowed
+    // by a coalesced group.
+    expect(await screen.findByText("Ariadne is working…")).toBeInTheDocument()
+    expect(screen.getByText("3 steps • 0 messages sent")).toBeInTheDocument()
+  })
+
+  it("shows a header chip for this conversation's running session and none when idle", async () => {
+    await db.events.bulkPut([
+      messageEvent("r1", 10, "First reply."),
+      sessionStartedEvent("evt_sess", 11, "sess_1", "r1"),
+    ])
+    await db.conversations.put(post())
+
+    const idle = mount()
+    expect(await screen.findByText("First reply.")).toBeInTheDocument()
+    expect(chipSlot()?.textContent).toBe("")
+    idle.unmount()
+
+    seedAgentActivity(WS, [running({ stepCount: 4 })])
+    mount()
+    await screen.findByText("First reply.")
+    const chip = within(chipSlot()!).getByRole("link", { name: /Ariadne is working — open agent trace/ })
+    expect(chip).toHaveTextContent(/Ariadne\s*· 4 steps/)
+    expect(chip).toHaveAttribute("href", expect.stringContaining("sess_1"))
+  })
+
+  it("does not light the chip for a sibling conversation's session on the same stream", async () => {
+    // Same stream, but its trigger message is not a member of this conversation,
+    // so the card resolves no session row for it.
+    seedAgentActivity(WS, [running({ sessionId: "sess_other" })])
+    await db.events.bulkPut([
+      messageEvent("r1", 10, "First reply."),
+      sessionStartedEvent("evt_other", 11, "sess_other", "msg_elsewhere"),
+    ])
+    await db.conversations.put(post())
+    mount()
+
+    expect(await screen.findByText("First reply.")).toBeInTheDocument()
+    expect(chipSlot()?.textContent).toBe("")
+    expect(screen.queryByText("Ariadne is working…")).toBeNull()
   })
 })

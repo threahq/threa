@@ -1,7 +1,7 @@
 import { Link } from "react-router-dom"
 import { Loader2 } from "lucide-react"
 import { cn } from "@/lib/utils"
-import { useTrace, useAgentActivitySummary } from "@/contexts"
+import { useTrace, useAgentActivitySummary, type AgentActivitySummaryEntry } from "@/contexts"
 
 /**
  * Top-bar chip shown while ≥1 agent session runs in the open stream (root or its
@@ -14,6 +14,24 @@ import { useTrace, useAgentActivitySummary } from "@/contexts"
  */
 export function AgentActivityHeaderChip({ compact = false }: { compact?: boolean }) {
   const summary = useAgentActivitySummary()
+  return <AgentRunningChip entries={summary} compact={compact} />
+}
+
+/**
+ * Presentational core of the chip, over a caller-supplied set of running
+ * sessions. The board card scopes its own set by session id (its conversation's
+ * rows) rather than by stream, so a sibling conversation's agent can't light it;
+ * the stream header passes the provider summary. Same copy either way — do not
+ * fork it.
+ */
+export function AgentRunningChip({
+  entries,
+  compact = false,
+}: {
+  entries: readonly AgentActivitySummaryEntry[]
+  compact?: boolean
+}) {
+  const summary = entries
   const { getTraceUrl } = useTrace()
 
   if (summary.length === 0) return null

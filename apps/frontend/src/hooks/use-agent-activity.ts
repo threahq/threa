@@ -15,9 +15,7 @@ import type {
 } from "@threa/types"
 import { THREAD_ANCHORABLE_EVENT_TYPES } from "@threa/types"
 import { getStepInlineLabel } from "@/lib/step-config"
-import { getE2eSessionState } from "@/stores/e2e-session-store"
-import { tryDecryptMessagePayload } from "@/lib/crypto/message-envelope"
-import { db } from "@/db"
+import { decryptAgentSubstepText } from "@/lib/crypto/agent-substep"
 
 export interface MessageAgentActivity {
   sessionId: string
@@ -296,20 +294,13 @@ export function useAgentActivity(
         return
       }
       if (typeof payload.ciphertext === "string" && payload.envelope) {
-        const session = getE2eSessionState(workspaceId, userId ?? "")
-        if (session.status !== "unlocked" || !session.privateKey || !session.keyId) return
-        const { privateKey, keyId } = session
         const { ciphertext, envelope, streamId: substepStreamId, sessionId, updatedAt } = payload
         void (async () => {
-          // The substep's stream may be a thread, which shares its root's SSK —
-          // resolve the key against the root.
-          const rootStreamId = (await db.streams.get(substepStreamId))?.rootStreamId ?? undefined
-          const decrypted = await tryDecryptMessagePayload(
-            { contentMarkdown: "", ciphertext, envelope },
-            { privateKey, recipientKeyId: keyId, workspaceId, streamId: substepStreamId, rootStreamId }
-          ).catch(() => null)
-          if (decrypted?.contentMarkdown)
-            applySubstep(sessionId, decrypted.contentMarkdown, updatedAt, stepCountAtArrival)
+          const text = await decryptAgentSubstepText(
+            { streamId: substepStreamId, ciphertext, envelope },
+            { workspaceId, userId: userId ?? "" }
+          )
+          if (text) applySubstep(sessionId, text, updatedAt, stepCountAtArrival)
         })()
       }
     },
