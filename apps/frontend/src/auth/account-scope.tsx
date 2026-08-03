@@ -9,6 +9,7 @@ import { setActiveDb } from "@/db/database"
 import { makeQueryClient } from "@/contexts/query-client"
 import { resetWorkspaceStoreCache } from "@/stores/workspace-store"
 import { resetWorkspaceTableRegistry } from "@/stores/workspace-table-registry"
+import { resetActorLookups } from "@/stores/actor-lookup"
 import { resetStreamStoreCache } from "@/stores/stream-store"
 import { resetDraftStoreCache } from "@/stores/draft-store"
 import { resetShareHandoffStoreCache } from "@/stores/share-handoff-store"
@@ -78,6 +79,7 @@ export function useAccountScopeOptional(): AccountScopeValue | null {
 function flushModuleStoreCaches(): void {
   resetWorkspaceStoreCache()
   resetWorkspaceTableRegistry()
+  resetActorLookups()
   resetRowConfirmations()
   resetStreamStoreCache()
   resetDraftStoreCache()

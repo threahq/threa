@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeAll, beforeEach, afterAll } from "vitest"
+import { describe, it, expect, vi, beforeAll, beforeEach, afterEach, afterAll } from "vitest"
 import { spyOnExport } from "@/test/spy"
 import { render, screen, act } from "@testing-library/react"
 import { MemoryRouter } from "react-router-dom"
@@ -6,6 +6,11 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { ServicesProvider, type SavedService } from "@/contexts"
 import { MessageEvent } from "./message-event"
+import { TimelineItemContent, type TimelineItemRenderContext } from "./event-list"
+import { clearWorkspaceActorTables, seedWorkspaceUser, workspaceUsersTable } from "@/test/workspace-rows"
+import { resetActorLookups } from "@/stores/actor-lookup"
+import { resetWorkspaceStoreCache } from "@/stores/workspace-store"
+import { resetWorkspaceTableRegistry, setWorkspaceReadMode } from "@/stores/workspace-table-registry"
 import { EditLastMessageContext } from "./edit-last-message-context"
 import * as editorModule from "@/components/editor"
 import * as hooksModule from "@/hooks"
@@ -613,5 +618,112 @@ describe("MessageEvent", () => {
 
       expect(screen.getByText("Editing unsent message")).toBeInTheDocument()
     })
+  })
+})
+
+describe("row-tree read fan-out", () => {
+  const workspaceId = "ws_123"
+  const streamId = "stream_123"
+
+  function makeCtx(): TimelineItemRenderContext {
+    return {
+      workspaceId,
+      streamId,
+      sessionLiveCounts: new Map(),
+      sessionLiveSubsteps: new Map(),
+      cancelledFollowUpIds: new Set(),
+      delegationStatusPatches: new Map(),
+      botAccessStatusPatches: new Map(),
+      callEndedPatches: new Map(),
+    }
+  }
+
+  const rowEvents = Array.from({ length: 50 }, (_, i) => createMessageEvent(`msg_${i}`, `row ${i}`))
+
+  beforeEach(async () => {
+    resetWorkspaceTableRegistry()
+    resetWorkspaceStoreCache()
+    resetActorLookups()
+    await clearWorkspaceActorTables()
+    await seedWorkspaceUser(workspaceId, "member_123")
+  })
+
+  afterEach(() => {
+    resetWorkspaceTableRegistry()
+    resetActorLookups()
+  })
+
+  it("a fifty-row window opens one users read, not fifty", async () => {
+    // The real lookup, not the suite's stub: this test is about what the row
+    // tree reads from IDB.
+    vi.spyOn(hooksModule, "useActors").mockRestore()
+    setWorkspaceReadMode("shared")
+    const where = vi.spyOn(workspaceUsersTable(), "where")
+
+    render(
+      <>
+        {rowEvents.map((event) => (
+          <MessageEvent key={event.id} event={event} workspaceId={workspaceId} streamId={streamId} />
+        ))}
+      </>,
+      { wrapper: Wrapper }
+    )
+    await screen.findAllByText("row 0")
+
+    expect(where).toHaveBeenCalledTimes(1)
+  })
+
+  it("fifty rows open one users read per consumer when sharing is off", async () => {
+    vi.spyOn(hooksModule, "useActors").mockRestore()
+    setWorkspaceReadMode("off")
+    const where = vi.spyOn(workspaceUsersTable(), "where")
+
+    render(
+      <>
+        {rowEvents.map((event) => (
+          <MessageEvent key={event.id} event={event} workspaceId={workspaceId} streamId={streamId} />
+        ))}
+      </>,
+      { wrapper: Wrapper }
+    )
+    await screen.findAllByText("row 0")
+
+    expect(where.mock.calls.length).toBeGreaterThan(50)
+  })
+
+  // Runs under the suite's stubbed `useActors`, so it covers the pre-existing
+  // per-item row memo (#835), not the actor-lookup registry.
+  it("an incoming message re-renders the new row only", async () => {
+    const renders = new Map<string, number>()
+    mockGetStatus = (id: string) => {
+      renders.set(id, (renders.get(id) ?? 0) + 1)
+      return null
+    }
+
+    const rows = (events: StreamEvent[], ctx: TimelineItemRenderContext) => (
+      <>
+        {events.map((event) => (
+          <TimelineItemContent
+            key={event.id}
+            item={{ type: "event", event }}
+            ctx={ctx}
+            deferSecondaryHydration={false}
+          />
+        ))}
+      </>
+    )
+
+    const { rerender } = render(rows(rowEvents, makeCtx()), { wrapper: Wrapper })
+    await screen.findAllByText("row 0")
+    const before = new Map(renders)
+
+    const incoming = createMessageEvent("msg_new", "row new")
+    // A fresh ctx per data tick is what production does — the memo compares
+    // per-item content, not container identity.
+    rerender(rows([...rowEvents, incoming], makeCtx()))
+    await screen.findByText("row new")
+
+    const rerendered = [...renders.entries()].filter(([id, count]) => count !== (before.get(id) ?? 0))
+    expect(rerendered.map(([id]) => id)).toEqual([incoming.id])
   })
 })
