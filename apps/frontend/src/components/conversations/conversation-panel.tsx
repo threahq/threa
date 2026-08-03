@@ -1039,9 +1039,9 @@ function ConversationPanelBody({
           to this container's bottom as the shared floating pill (same as the
           stream page) instead of sitting in the scrolled flow. */}
       <SidePanelContent ref={contentRef} className="relative flex flex-col">
-        <QuoteReplyProvider>
+        <QuoteReplyProvider disabled={!!archivedReason}>
           {/* Desktop text-selection → floating "Quote" button, scoped to this list. */}
-          <TextSelectionQuote streamId={conversation.streamId} containerRef={listRef} />
+          {!archivedReason && <TextSelectionQuote streamId={conversation.streamId} containerRef={listRef} />}
           {moveToSubtopic.moveDialog}
           <div
             ref={attachListRef}

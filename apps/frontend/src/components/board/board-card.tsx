@@ -1079,9 +1079,9 @@ export function BoardCard({
     // Scope quote reply to this card: a message row's "Quote reply" routes into
     // this card's own reply composer, not another card's.
     <ConversationReadProvider value={conversationReadValue}>
-      <QuoteReplyProvider>
+      <QuoteReplyProvider disabled={!!archivedReason}>
         {/* Desktop text-selection → floating "Quote" button, scoped to this card. */}
-        <TextSelectionQuote streamId={streamId} containerRef={cardRef} />
+        {!archivedReason && <TextSelectionQuote streamId={streamId} containerRef={cardRef} />}
         {moveToSubtopic.moveDialog}
         {/* Rest shadow lifts the card off the page — the light-mode card/bg
             lightness delta is ~1%, so the border alone left cards reading flat.

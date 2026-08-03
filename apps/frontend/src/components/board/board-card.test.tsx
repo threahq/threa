@@ -1409,6 +1409,7 @@ describe("BoardCard — archived gating with no anchor stream row", () => {
     await userEvent.click(screen.getAllByLabelText("Message actions")[0])
     const entries = (await screen.findAllByRole("menuitem")).map((el) => el.textContent)
     expect(entries.filter((t) => t?.includes("sub-topic"))).toEqual([])
+    expect(entries.filter((t) => t?.includes("Quote reply"))).toEqual([])
     expect(screen.queryByTestId("reply-composer-open")).toBeNull()
   })
 
@@ -1419,5 +1420,6 @@ describe("BoardCard — archived gating with no anchor stream row", () => {
     await userEvent.click(screen.getAllByLabelText("Message actions")[0])
     const entries = (await screen.findAllByRole("menuitem")).map((el) => el.textContent)
     expect(entries.filter((t) => t?.includes("sub-topic")).length).toBeGreaterThan(0)
+    expect(entries.filter((t) => t?.includes("Quote reply")).length).toBeGreaterThan(0)
   })
 })
