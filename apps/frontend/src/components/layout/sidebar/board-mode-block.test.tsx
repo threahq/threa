@@ -137,15 +137,24 @@ describe("BoardModeBlock", () => {
     stub()
     mountAt(`/w/${WS}/board?lens=mine&in=stream_1&label=label_a`)
 
-    const all = new URL(hrefOf("All"), "http://x")
-    expect(all.searchParams.get("lens")).toBe("all")
-    expect(all.searchParams.get("in")).toBe("stream_1")
-    expect(all.searchParams.get("label")).toBe("label_a")
-
     const mine = new URL(hrefOf("Mine"), "http://x")
     expect(mine.pathname).toBe(`/w/${WS}/board`)
     expect(mine.searchParams.get("lens")).toBe("mine")
     expect(mine.searchParams.get("in")).toBe("stream_1")
+  })
+
+  it("the All lens clears every filter while keeping unrelated URL state", () => {
+    stub()
+    mountAt(`/w/${WS}/board?lens=mine&in=stream_1&label=label_a&unread=true&archived=true&panel=p_1`)
+
+    const all = new URL(hrefOf("All"), "http://x")
+    expect(all.pathname).toBe(`/w/${WS}/board`)
+    expect(all.searchParams.get("lens")).toBe("all")
+    expect(all.searchParams.get("in")).toBeNull()
+    expect(all.searchParams.get("label")).toBeNull()
+    expect(all.searchParams.get("unread")).toBeNull()
+    expect(all.searchParams.get("archived")).toBeNull()
+    expect(all.searchParams.get("panel")).toBe("p_1")
   })
 
   it("every lens link carries an explicit ?lens=, never the bare entry alias", () => {
@@ -264,8 +273,21 @@ describe("BoardModeBlock", () => {
     const { updatePreferences } = stub({ boardDefaultLens: "all" })
     mountAt(`/w/${WS}/board?lens=all`)
 
-    await user.click(screen.getByRole("button", { name: "Set Mine as board home" }))
+    await user.click(screen.getByRole("button", { name: "Actions for Mine" }))
+    await user.click(await screen.findByRole("menuitem", { name: /Set as board home/ }))
     expect(updatePreferences).toHaveBeenCalledWith({ boardDefaultLens: "mine", boardDefaultViewId: null })
+  })
+
+  it("shows the filled pin glyph on the lens that is the board home", () => {
+    stub({ boardDefaultLens: "mine" })
+    mountAt(`/w/${WS}/board?lens=all`)
+
+    expect(screen.getByRole("link", { name: "Mine" }).querySelector("svg.fill-current")).not.toBeNull()
+    expect(screen.getByRole("link", { name: "All" }).querySelector("svg.fill-current")).toBeNull()
+    // Home state must live in the accessibility tree, not only the glyph: the
+    // actions trigger's label carries it for focus/AT users.
+    expect(screen.getByRole("button", { name: "Actions for Mine (board home)" })).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Actions for All" })).toBeInTheDocument()
   })
 
   it("pinning a saved view writes the home-view preference", async () => {

@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react"
 import { Link, useLocation, useSearchParams } from "react-router-dom"
 import { Archive, Bookmark, Check, MoreHorizontal, Pencil, Pin, Trash2 } from "lucide-react"
-import { BOARD_LENSES, type BoardLens, type BoardScopeStreamType } from "@threa/types"
+import { BOARD_LENSES, DEFAULT_BOARD_LENS, type BoardLens, type BoardScopeStreamType } from "@threa/types"
 import { useSidebar, usePreferencesOptional } from "@/contexts"
 import { cn } from "@/lib/utils"
 import { useBoardHome, useBoardViews, useDeleteBoardView, useUpdateBoardView } from "@/hooks/use-board-views"
@@ -31,6 +31,7 @@ import {
   BOARD_LABEL_PARAM,
   BOARD_SCOPE_PARAM,
   BOARD_TYPE_PARAM,
+  clearFiltersSearch,
   parseLensParam,
 } from "@/components/board/board-filter-params"
 import { BOARD_LENS_DEFS } from "@/lib/board/lens-defs"
@@ -190,7 +191,11 @@ export function BoardModeBlock({ workspaceId, lensTotals, unreadStreamCount }: B
               )}
             >
               <Link
-                to={lensHref(workspaceId, value, location.search)}
+                to={
+                  value === DEFAULT_BOARD_LENS
+                    ? `/w/${workspaceId}/board${clearFiltersSearch(location.search)}`
+                    : lensHref(workspaceId, value, location.search)
+                }
                 onClick={collapseOnMobile}
                 aria-current={active ? "true" : undefined}
                 className={cn(
@@ -198,7 +203,13 @@ export function BoardModeBlock({ workspaceId, lensTotals, unreadStreamCount }: B
                   !active && "text-muted-foreground"
                 )}
               >
-                <Icon className="h-4 w-4 shrink-0" />
+                {/* aria-hidden: the row's accessible name stays the lens label —
+                    home state is announced by the actions trigger's label. */}
+                {isHome ? (
+                  <Pin aria-hidden className="h-4 w-4 shrink-0 fill-current" />
+                ) : (
+                  <Icon className="h-4 w-4 shrink-0" />
+                )}
                 <span className="min-w-0 flex-1 truncate">{def.label}</span>
                 {count !== null && (
                   <span aria-hidden className="shrink-0 text-xs tabular-nums text-muted-foreground">
@@ -206,21 +217,25 @@ export function BoardModeBlock({ workspaceId, lensTotals, unreadStreamCount }: B
                   </span>
                 )}
               </Link>
-              {/* Always laid out, faint until home — pinning a lens as the board
-                  home mirrors the appearance-settings radio; silent per INV-63
-                  (the fill is the signal), fixed footprint per INV-21. */}
-              <button
-                type="button"
-                onClick={() => void prefs?.updatePreferences({ boardDefaultLens: value, boardDefaultViewId: null })}
-                aria-pressed={isHome}
-                aria-label={isHome ? `${def.label} is your board home` : `Set ${def.label} as board home`}
-                className={cn(
-                  "ml-1 shrink-0 rounded p-1 transition-colors",
-                  isHome ? "text-foreground" : "text-muted-foreground/40 hover:text-foreground"
-                )}
-              >
-                <Pin className={cn("h-3.5 w-3.5", isHome && "fill-current")} />
-              </button>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <button
+                    type="button"
+                    aria-label={isHome ? `Actions for ${def.label} (board home)` : `Actions for ${def.label}`}
+                    className="shrink-0 rounded p-1.5 text-muted-foreground/40 transition-colors hover:text-foreground focus-visible:text-foreground group-hover:text-muted-foreground data-[state=open]:text-foreground"
+                  >
+                    <MoreHorizontal className="h-4 w-4" />
+                  </button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  <DropdownMenuItem
+                    onClick={() => void prefs?.updatePreferences({ boardDefaultLens: value, boardDefaultViewId: null })}
+                  >
+                    <Pin className={cn("mr-2 h-4 w-4", isHome && "fill-current")} />
+                    {isHome ? "Board home" : "Set as board home"}
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
             </div>
           )
         })}
