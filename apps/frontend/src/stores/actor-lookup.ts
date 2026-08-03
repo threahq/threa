@@ -92,6 +92,7 @@ interface ActorRow {
 }
 
 interface ActorLookupEntry {
+  workspaceId: string
   personas: readonly ActorRow[]
   bots: readonly ActorRow[]
   toEmoji: (shortcode: string) => string | null
@@ -153,7 +154,16 @@ export function getActorLookup(
   toEmoji: (shortcode: string) => string | null
 ): ActorLookup {
   const cached = actorLookups.get(users)
-  if (cached && cached.personas === personas && cached.bots === bots && cached.toEmoji === toEmoji) {
+  // workspaceId must participate: pre-hydration every workspace passes the same
+  // EMPTY_ROWS singletons, and a rows-only hit would serve workspace A's lookup
+  // (A's id baked into getActorAvatar) to workspace B's first render.
+  if (
+    cached &&
+    cached.workspaceId === workspaceId &&
+    cached.personas === personas &&
+    cached.bots === bots &&
+    cached.toEmoji === toEmoji
+  ) {
     return cached.lookup
   }
 
@@ -235,7 +245,7 @@ export function getActorLookup(
   }
 
   const lookup: ActorLookup = { getActorName, getActorInitials, getActorAvatar, getUser, getPersona, getBot }
-  actorLookups.set(users, { personas, bots, toEmoji, lookup })
+  actorLookups.set(users, { workspaceId, personas, bots, toEmoji, lookup })
   return lookup
 }
 

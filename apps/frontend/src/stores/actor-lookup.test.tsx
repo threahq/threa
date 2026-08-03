@@ -180,7 +180,6 @@ describe("actor lookup", () => {
     await db.workspaceUsers.put(makeUser("usr_1", "Ada"))
     await db.workspaceMetadata.put(makeMetadata())
     const seen: Array<[unknown, unknown]> = []
-    ;(globalThis as never as { __dbg: string[] }).__dbg = []
 
     const { findByText, rerender } = render(<TwoConsumers tick={0} seen={seen} />)
     await findByText("Ada-Ada-0")
