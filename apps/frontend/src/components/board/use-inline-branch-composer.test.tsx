@@ -201,6 +201,28 @@ describe("useInlineBranchComposer ?stash= deep-link consumer", () => {
     await new Promise((resolve) => setTimeout(resolve, 50))
     expect(result.current.openComposer).toBeNull()
   })
+
+  it("stamps the parent conversation on both inline composers so a slash command chips onto this card", async () => {
+    const { result } = mountHook("draft_none")
+
+    act(() => result.current.openNewSubtopic("stream_9", "msg_fork"))
+    const subtopicForm = result.current.renderAfterMessage("msg_fork") as ReactElement<{
+      commandConversationId?: string
+    }>
+    expect(subtopicForm.props.commandConversationId).toBe(PARENT_ID)
+
+    const branch = {
+      conversationId: "conv_branch",
+      threadStreamId: "stream_thread_1",
+      forkMessageId: "msg_fork_b",
+      title: "Sub-topic",
+      messages: [],
+      pending: false,
+    } as unknown as BranchConversationView
+    act(() => result.current.openBranchReply(branch))
+    const branchForm = result.current.renderBranchTail(branch) as ReactElement<{ commandConversationId?: string }>
+    expect(branchForm.props.commandConversationId).toBe(PARENT_ID)
+  })
 })
 
 describe("useInlineBranchComposer pending→real hand-off", () => {

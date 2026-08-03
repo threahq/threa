@@ -278,8 +278,17 @@ export function buildBranchedBoardRows(
   const firstMs = earliestMessageMs(grouping.roots)
   const renderedForkIds = new Set<string>()
   const eventsByStream = new Map<string, BoardEventRow[]>()
+  // Command rows resolve to the conversation the command was typed into, not to
+  // the stream hosting them — a branch-reply command lives on the branch thread
+  // stream, which can be collapsed behind an overflow row. Anchoring them in the
+  // card's main flow keeps "the chip lands on the card you typed into" true.
+  const anchoredEvents: BoardEventRow[] = []
   for (const event of eventRows) {
     if (event.sortMs < firstMs) continue
+    if (event.kind === "command") {
+      anchoredEvents.push(event)
+      continue
+    }
     const list = eventsByStream.get(event.streamId)
     if (list) list.push(event)
     else eventsByStream.set(event.streamId, [event])
@@ -291,10 +300,11 @@ export function buildBranchedBoardRows(
     for (const child of node.children) collectStreamIds(child)
   }
   for (const node of grouping.roots) collectStreamIds(node)
-  const orphanEvents: BoardEventRow[] = []
+  const orphanEvents: BoardEventRow[] = [...anchoredEvents]
   for (const [streamId, list] of eventsByStream) {
     if (!groupedStreamIds.has(streamId)) orphanEvents.push(...list)
   }
+  orphanEvents.sort((a, b) => a.sortMs - b.sortMs)
 
   const out: BoardRow[] = []
 

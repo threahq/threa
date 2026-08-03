@@ -429,6 +429,7 @@ export function useInlineBranchComposer(params: {
             draftKey={boardSubtopicDraftKey(streamId, messageId)}
             placeholder="Start a sub-topic…"
             rejectE2e={E2E_SUBTOPIC_MESSAGE}
+            commandConversationId={conversationId}
             restoreStashedIdOnMount={openComposer.restoreStashedId ?? null}
             onSubmit={(sendInput) => submitNewSubtopic(streamId, messageId, sendInput)}
             onClose={closeComposer}
