@@ -1,6 +1,6 @@
 import { sql, type Querier } from "../../db"
 import { boardViewId } from "../../lib/id"
-import { BOARD_LENSES, type BoardView, type BoardLens, type BoardScopeStreamType } from "@threa/types"
+import { degradeBoardLens, type BoardView, type BoardLens, type BoardScopeStreamType } from "@threa/types"
 
 interface BoardViewRow {
   id: string
@@ -22,7 +22,7 @@ const SELECT =
  *  the single read boundary, so every consumer of a saved view (href,
  *  active-match, summary) sees a live lens. Mirrors `parseLensParam`. */
 function normalizeLens(value: string): BoardLens {
-  return (BOARD_LENSES as readonly string[]).includes(value) ? (value as BoardLens) : "all"
+  return degradeBoardLens(value)
 }
 
 function mapRow(row: BoardViewRow): BoardView {

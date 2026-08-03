@@ -3,7 +3,7 @@ import type { Request, Response } from "express"
 import type { BoardViewService } from "./service"
 import { validateRequest } from "../../lib/validation"
 import {
-  BOARD_LENSES,
+  degradeBoardLens,
   BOARD_SCOPE_STREAM_TYPES,
   MAX_BOARD_SCOPE_STREAMS,
   MAX_BOARD_SCOPE_LABELS,
@@ -12,13 +12,19 @@ import {
 
 const boardViewParamsSchema = z.object({ boardViewId: z.string().min(1) })
 
+/** A retired lens (`decisions`) degrades to the widest live lens instead of a
+ *  400: the frontend deploys before the backend and SW-cached bundles linger, so
+ *  an old bundle saving a view must get a saved view, not an error. Mirrors the
+ *  read-side `normalizeLens` and the conversations handler's degrade. */
+const baseLensSchema = z.string().transform(degradeBoardLens)
+
 const scopeStreamIdsSchema = z.array(z.string().min(1)).max(MAX_BOARD_SCOPE_STREAMS)
 const scopeStreamTypesSchema = z.array(z.enum(BOARD_SCOPE_STREAM_TYPES))
 const scopeLabelIdsSchema = z.array(z.string().min(1)).max(MAX_BOARD_SCOPE_LABELS)
 
 const createBoardViewSchema = z.object({
   name: z.string().trim().min(1).max(MAX_BOARD_VIEW_NAME_LENGTH),
-  baseLens: z.enum(BOARD_LENSES),
+  baseLens: baseLensSchema,
   scopeStreamIds: scopeStreamIdsSchema.optional().default([]),
   scopeStreamTypes: scopeStreamTypesSchema.optional().default([]),
   scopeLabelIds: scopeLabelIdsSchema.optional().default([]),
@@ -30,7 +36,7 @@ const createBoardViewSchema = z.object({
 const updateBoardViewSchema = z
   .object({
     name: z.string().trim().min(1).max(MAX_BOARD_VIEW_NAME_LENGTH).optional(),
-    baseLens: z.enum(BOARD_LENSES).optional(),
+    baseLens: baseLensSchema.optional(),
     scopeStreamIds: scopeStreamIdsSchema.optional(),
     scopeStreamTypes: scopeStreamTypesSchema.optional(),
     scopeLabelIds: scopeLabelIdsSchema.optional(),

@@ -470,15 +470,15 @@ describe("ConversationRepository", () => {
       }
     })
 
-    // A saved board view created before the status lenses were retired still holds
-    // `base_lens = 'active'` / `'needs-resolution'`. Those must degrade to `all`
+    // A saved board view created before the status/decisions lenses were retired
+    // still holds `base_lens = 'active'` / `'decisions'`. Those must degrade to `all`
     // (same rows, no filter, no throw), never to an empty board.
     test("a retired lens value still stored on a saved view returns exactly the `all` rows", async () => {
       const all = await ConversationRepository.findByWorkspaceForViewer(pool, testWorkspaceId, testUserId, {
         lens: "all",
         limit: 100,
       })
-      for (const retired of ["active", "needs-resolution"] as unknown as BoardLens[]) {
+      for (const retired of ["active", "needs-resolution", "decisions"] as unknown as BoardLens[]) {
         const rows = await ConversationRepository.findByWorkspaceForViewer(pool, testWorkspaceId, testUserId, {
           lens: retired,
           limit: 100,
@@ -518,19 +518,6 @@ describe("ConversationRepository", () => {
         { lens: "all", limit: 100 }
       )
       expect(strangerAll.map((r) => r.id)).toEqual(all.map((r) => r.id))
-    })
-
-    test("decisions lens keeps only conversations with an active captured memo", async () => {
-      const rows = await ConversationRepository.findByWorkspaceForViewer(pool, testWorkspaceId, testUserId, {
-        lens: "decisions",
-        limit: 100,
-      })
-      const ids = new Set(rows.map((r) => r.id))
-      expect(ids.has(decisionConv)).toBe(true)
-      expect(ids.has(activeConv)).toBe(false)
-      expect(ids.has(stalledConv)).toBe(false)
-      // An archived memo doesn't count — its conversation drops off.
-      expect(ids.has(archivedMemoConv)).toBe(false)
     })
   })
 

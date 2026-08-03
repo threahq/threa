@@ -43,6 +43,7 @@ describe("sanitizeBoardSearch", () => {
 
   it("degrades a retired lens value in a persisted last-location to `all`", () => {
     expect(sanitizeBoardSearch("?lens=needs-resolution&in=stream_a")).toBe("?lens=all&in=stream_a")
+    expect(sanitizeBoardSearch("?lens=decisions&in=stream_a")).toBe("?lens=all&in=stream_a")
   })
 
   it("strips panel, m, and unrelated params", () => {

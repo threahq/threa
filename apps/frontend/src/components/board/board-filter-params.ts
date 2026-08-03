@@ -1,5 +1,5 @@
 import {
-  BOARD_LENSES,
+  degradeBoardLens,
   BOARD_SCOPE_STREAM_TYPES,
   DEFAULT_BOARD_LENS,
   MAX_BOARD_SCOPE_STREAMS,
@@ -82,7 +82,7 @@ export const BOARD_FILTER_PARAMS = [
  *  preference renders the widest view rather than erroring or landing nowhere.
  *  The single degrade authority; `matchesBoardLens` mirrors it read-side. */
 export function parseLensParam(value: string | null): BoardLens {
-  return value && (BOARD_LENSES as readonly string[]).includes(value) ? (value as BoardLens) : DEFAULT_BOARD_LENS
+  return degradeBoardLens(value)
 }
 
 /**

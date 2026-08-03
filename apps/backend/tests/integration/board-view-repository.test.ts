@@ -37,7 +37,7 @@ describe("BoardViewRepository", () => {
       INSERT INTO board_views
         (id, workspace_id, user_id, name, base_lens, scope_stream_ids, scope_stream_types,
          scope_label_ids, exclude_stream_ids, exclude_stream_types, exclude_label_ids, sort_order)
-      VALUES (${id}, ${testWorkspaceId}, ${testUserId}, 'Legacy view', 'needs-resolution',
+      VALUES (${id}, ${testWorkspaceId}, ${testUserId}, 'Legacy view', 'decisions',
         '{}'::text[], '{}'::text[], '{}'::text[], '{}'::text[], '{}'::text[], '{}'::text[], 0)
     `)
 

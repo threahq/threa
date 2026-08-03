@@ -115,10 +115,18 @@ describe("Board view handlers", () => {
     expect(mockCreate).not.toHaveBeenCalled()
   })
 
-  test("create rejects an unknown lens with a 400", async () => {
-    await expect(handlers.create(mockReq({ body: { name: "x", baseLens: "bogus" } }), mockRes())).rejects.toMatchObject(
-      { status: 400 }
+  test("create degrades a retired lens to `all` instead of rejecting", async () => {
+    // An SW-cached bundle still saves `decisions`; a saved view, not a 400.
+    await handlers.create(mockReq({ body: { name: "x", baseLens: "decisions" } }), mockRes())
+    expect(mockCreate).toHaveBeenCalledWith(expect.objectContaining({ baseLens: "all" }))
+  })
+
+  test("update degrades a retired lens to `all` instead of rejecting", async () => {
+    await handlers.update(
+      mockReq({ params: { boardViewId: "boardview_1" }, body: { baseLens: "decisions" } }),
+      mockRes()
     )
+    expect(mockUpdate).toHaveBeenCalledWith("ws_1", "usr_1", "boardview_1", { baseLens: "all" })
   })
 
   test("update renames a view", async () => {

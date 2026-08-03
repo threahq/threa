@@ -70,12 +70,6 @@ import {
   type ConversationWithStaleness,
 } from "@threa/types"
 
-/** Lenses that always contain the viewer's own fresh post: `all` (everything)
- *  and `mine` (a self-authored conversation is `isMine`). `decisions` gates on a
- *  memo a brand-new post doesn't have yet, so posting from it routes back to All
- *  so the author's card always surfaces. */
-const SELF_POST_VISIBLE_LENSES = new Set<BoardLens>(["all", "mine"])
-
 /** Stable empty set so a fresh unread session never re-renders on identity alone. */
 const EMPTY_CLEARED_UNREAD: ReadonlySet<string> = new Set()
 
@@ -92,15 +86,11 @@ const REVEAL_PREWARM_CARDS = 12
  *  one skeleton-length beat beyond the skeleton's own appearance. */
 const SEED_COMMIT_TIMEOUT_MS = SKELETON_DELAY_MS * 2
 
-/** Empty-state copy per lens — an empty Decisions view isn't "nothing on the board". */
+/** Empty-state copy per lens — an empty Mine view isn't "nothing on the board". */
 const LENS_EMPTY_COPY: Record<BoardLens, { title: string; body: string }> = {
   all: {
     title: "Nothing on the board yet",
     body: "As your conversations build up, the topics worth returning to surface here, newest activity first.",
-  },
-  decisions: {
-    title: "No decisions captured yet",
-    body: "When a conversation produces a memo — a decision, a fact worth keeping — it surfaces here as settled knowledge.",
   },
   mine: {
     title: "Nothing here for you yet",
@@ -161,7 +151,7 @@ function groupByRecency(posts: BoardViewPost[], activityById: Map<string, number
  * message-led post) ordered by recent activity, grouped into recency sections.
  *
  * Route is `/w/:workspaceId/board`; the whole view is query state (INV-59). The
- * lens rides `?lens=` (`all`, `decisions`, `mine`
+ * lens rides `?lens=` (`all`, `mine`
  * — board-view-design.md § "Lenses"; absent or unknown degrades to `all`), the
  * stream scope rides `?in=`, and every rendered board URL carries an explicit
  * `?lens=`. The bare query-less `/board` is only an entry alias: it redirects
@@ -575,7 +565,7 @@ function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: Boar
 
   // Changing lens OR scope replaces the feed with a different (often much
   // shorter) subset, so jump to the top pre-paint — otherwise a viewer scrolled
-  // down the All wall who taps Decisions lands past the end of a one-card list.
+  // down the All wall who narrows the view lands past the end of a short list.
   const resetKey = `${lens}|${scopeKey}|${typeKey}|${excludeScopeKey}|${excludeTypeKey}|${labelKey}|${excludeLabelKey}|${showArchived ? "arch" : ""}|${unreadOnly ? "unread" : ""}`
   useLayoutEffect(() => {
     closeAllRevealWindows()
@@ -595,10 +585,10 @@ function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: Boar
 
   const navigate = useNavigate()
   // "Show everything" / the own-post-must-surface baseline is **All**, not the
-  // viewer's home: a fresh post is no Decision (and needn't be Active), so only
-  // the widest lens guarantees the author's own card appears (design § "your own
-  // action always surfaces"). Explicit `?lens=all` — never the bare entry alias —
-  // with the non-filter query state (an open `?panel=`) riding along.
+  // viewer's home: only the widest lens guarantees the author's own card appears
+  // (design § "your own action always surfaces"). Explicit `?lens=all` — never
+  // the bare entry alias — with the non-filter query state (an open `?panel=`)
+  // riding along.
   const boardEverything = {
     pathname: `/w/${workspaceId}/board`,
     search: clearFiltersSearch(searchParams.toString()),
@@ -630,12 +620,15 @@ function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: Boar
     // current view can contain it — an unfiltered `all`/`mine` lens — so stay
     // put there (a `mine` home shouldn't bounce the author off their own home),
     // but jump to the top so the prepended card and its flash are on-screen even
-    // if the viewer had scrolled down. Any other view (a status/memo lens, or an
-    // active scope filter) might not match the fresh post, so return to the All
+    // if the viewer had scrolled down. A filtered view might not match the fresh
+    // post, so return to the All
     // baseline; the optimistic card (written `_status: "pending"`) reveals itself
     // at top there via `reconcileStableView`, and `navigate` scrolls to top via
     // the `resetKey` layout effect.
-    const currentViewSurfacesOwnPost = SELF_POST_VISIBLE_LENSES.has(lens) && !hasFilterParams
+    // Every live lens contains the viewer's own fresh post (`all` shows
+    // everything, `mine` matches its author), so only an active scope filter can
+    // hide it.
+    const currentViewSurfacesOwnPost = !hasFilterParams
     if (currentViewSurfacesOwnPost) {
       closeAllRevealWindows()
       if (scrollerRef.current) scrollerRef.current.scrollTop = 0

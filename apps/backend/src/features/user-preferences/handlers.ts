@@ -40,7 +40,7 @@ import {
   BOARD_LEAD_LINE_LENGTH_MIN,
   BOARD_LEAD_LINE_LENGTH_MAX,
   BOARD_MASS_BADGE_MODES,
-  BOARD_LENSES,
+  degradeBoardLens,
 } from "@threa/types"
 import { workScheduleSchema, statusPresetsSchema } from "../../lib/schemas"
 import { validateRequest } from "../../lib/validation"
@@ -113,7 +113,10 @@ const updatePreferencesSchema = z.object({
   boardLedgerRows: z.number().int().min(BOARD_LEDGER_ROWS_MIN).max(BOARD_LEDGER_ROWS_MAX).optional(),
   boardLeadLineLength: z.number().int().min(BOARD_LEAD_LINE_LENGTH_MIN).max(BOARD_LEAD_LINE_LENGTH_MAX).optional(),
   boardMassBadge: z.enum(BOARD_MASS_BADGE_MODES).optional(),
-  boardDefaultLens: z.enum(BOARD_LENSES).optional(),
+  // Degrades retired lens values (`decisions`) instead of 400ing: an SW-cached
+  // old bundle pinning a retired lens must not have its whole preferences PATCH
+  // rejected and rolled back. Same authority as board-views' baseLens.
+  boardDefaultLens: z.string().transform(degradeBoardLens).optional(),
   // A saved board view id (`boardview_…`) or null to clear. Non-empty, matching
   // the board-view endpoints' own id validation (board-views/handlers.ts); a
   // well-formed but stale id is accepted and degrades to the default lens
