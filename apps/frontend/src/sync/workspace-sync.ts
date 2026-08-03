@@ -107,7 +107,7 @@ import {
   Visibilities,
   normalizeSidebarConfig,
 } from "@threa/types"
-import { isEventWriteChunkingEnabled, primeEventWriteChunking } from "@/db/event-writes"
+import { isEventWriteChunkingEnabled, primeEventWriteFlags } from "@/db/event-writes"
 import { applyStreamBootstrapInCurrentTransaction } from "./stream-sync"
 import { deleteStreamSlots, deleteSlotsForStreams } from "@/stores/slot-store"
 import { applyDraftDeleted, applyDraftUpserted } from "./draft-sync"
@@ -1673,7 +1673,7 @@ export function registerWorkspaceSocketHandlers(
     if (!patched) return
     const layers = queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap(workspaceId))?.featureFlags
     if (layers) {
-      primeEventWriteChunking(workspaceId, layers)
+      primeEventWriteFlags(workspaceId, layers)
       void db.workspaceMetadata.update(workspaceId, { featureFlags: layers })
     }
   }
@@ -2569,7 +2569,7 @@ export async function applyWorkspaceBootstrap(
 ): Promise<AppliedWorkspaceBootstrap> {
   const now = Date.now()
   const capture = getPerfCapture()
-  primeEventWriteChunking(workspaceId, bootstrap.featureFlags)
+  primeEventWriteFlags(workspaceId, bootstrap.featureFlags)
   const diffEnabled = resolveFeatureFlags(bootstrap.featureFlags ?? EMPTY_FLAG_LAYERS).bootstrapDiff === "on"
 
   // Build membership lookup for O(1) access when merging onto streams
@@ -3060,7 +3060,7 @@ export async function applyReconnectBootstrapBatch(
     fetchStartedAt,
   })
 
-  primeEventWriteChunking(workspaceId, finalBootstrap.featureFlags)
+  primeEventWriteFlags(workspaceId, finalBootstrap.featureFlags)
   const chunked = await isEventWriteChunkingEnabled(db, workspaceId)
   const diffEnabled = resolveFeatureFlags(finalBootstrap.featureFlags ?? EMPTY_FLAG_LAYERS).bootstrapDiff === "on"
 

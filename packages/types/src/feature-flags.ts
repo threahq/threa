@@ -58,6 +58,7 @@ export const FEATURE_FLAGS = {
   calls: defineFlag({ values: ["off", "on"], scopes: ["workspace"], default: "on" }),
   composeTraces: defineFlag({ values: ["off", "capture"], scopes: ["workspace"], default: "off" }),
   eventWriteChunking: defineFlag({ values: ["off", "on"], scopes: ["workspace", "user"], default: "off" }),
+  indexedMessagePatch: defineFlag({ values: ["off", "on"], scopes: ["workspace", "user"], default: "off" }),
   // Availability only: "available" offers the Diagnostics settings toggle. The
   // user's own opt-in preference is the consent, and the upload path re-checks
   // both server-side.

@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest"
 import type { StreamEvent } from "@threa/types"
 import { db } from "@/db"
-import { resetEventWriteChunking } from "@/db/event-writes"
+import { resetEventWriteFlags } from "@/db/event-writes"
 import {
   computeTimelineLoadState,
   filterEventsForDisplay,
@@ -231,7 +231,7 @@ describe("getEffectiveEvents", () => {
 
 describe("cacheToIndexedDB with eventWriteChunking on", () => {
   beforeEach(async () => {
-    resetEventWriteChunking()
+    resetEventWriteFlags()
     await db.events.clear()
     await db.workspaceMetadata.clear()
     await db.workspaceMetadata.put({

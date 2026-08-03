@@ -1,4 +1,4 @@
-import Dexie, { type EntityTable, type Table } from "dexie"
+import Dexie, { type EntityTable, type PromiseExtended, type Table } from "dexie"
 import type {
   Activity,
   AuthorType,
@@ -1083,6 +1083,8 @@ export class ThreaDatabase extends Dexie {
   slots!: Table<CachedSlot, [string, string]>
   streamContextItems!: EntityTable<CachedStreamContextItem, "key">
 
+  private upgradeRecoveryAvailable = true
+
   constructor(name: string) {
     super(name)
 
@@ -1552,8 +1554,68 @@ export class ThreaDatabase extends Dexie {
       conversationMessages: "messageId, conversationId, workspaceId",
     })
 
+    // v47: `payload.messageId` becomes a sparse dotted-key-path index so a
+    // message patch (reaction, edit, delete, move, link-preview resolve, thread
+    // heal) is a direct lookup instead of a cursor over the whole
+    // [streamId+"message_created"] range. No `.upgrade()` — the engine builds
+    // the index over existing rows; no row is rewritten.
+    // One-way door: once a client has opened at v47, code declaring only v46
+    // cannot open the database (IndexedDB refuses a version downgrade), so a
+    // revert of this bump is not available — reverting means a v48. The
+    // *lookup* that uses the index is flag-gated (`indexedMessagePatch`)
+    // instead, and that is what a rollback turns off.
+    this.version(47).stores({
+      events:
+        "id, workspaceId, streamId, sequence, [streamId+sequence], [streamId+_sequenceNum], eventType, [streamId+eventType], _clientId, _cachedAt, _status, payload.messageId",
+    })
+
     this.workspaceUsers = this.table(WORKSPACE_USERS_STORE) as EntityTable<CachedWorkspaceUser, "id">
+
+    // Another tab upgraded the shared per-account database. Dexie closes this
+    // connection but leaves auto-open on, so the next operation would reopen
+    // with the older schema against the newer physical DB and throw
+    // VersionError for the rest of the tab's life.
+    this.on("versionchange", () => {
+      this.close()
+      if (typeof window !== "undefined" && typeof window.location?.reload === "function") window.location.reload()
+      return false
+    })
   }
+
+  // Auto-open routes through here too (Dexie calls `db.open()` on first use),
+  // so this is the one seam every open failure crosses.
+  override open(): PromiseExtended<Dexie> {
+    return super.open().catch((error: unknown) => {
+      if (!this.upgradeRecoveryAvailable || !isRecoverableOpenFailure(error)) throw error
+      this.upgradeRecoveryAvailable = false
+      console.error(`[db] upgrade failed for ${this.name}; deleting the cache and reopening cold`, error)
+      this.close()
+      return Dexie.delete(this.name).then(() => this.open()) as PromiseExtended<Dexie>
+    })
+  }
+}
+
+const RECOVERABLE_OPEN_FAILURE_NAMES: ReadonlySet<string> = new Set([
+  "QuotaExceededError",
+  "AbortError",
+  "UpgradeError",
+])
+
+/**
+ * A failed version upgrade (quota abort mid index build) is retried on every
+ * open, so the app never reaches a working state. Everything in this database
+ * is a server-derived cache, so deleting it recovers to a cold start; the loud
+ * console.error plus the one-shot guard keep this a reported failure with a
+ * recovery, not a silent fallback (INV-11).
+ */
+function isRecoverableOpenFailure(error: unknown): boolean {
+  let current = error
+  for (let depth = 0; current && depth < 5; depth++) {
+    const name = (current as { name?: unknown }).name
+    if (typeof name === "string" && RECOVERABLE_OPEN_FAILURE_NAMES.has(name)) return true
+    current = (current as { inner?: unknown }).inner
+  }
+  return false
 }
 
 // The active account's database. AccountScope owns this pointer and is its

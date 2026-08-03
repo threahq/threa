@@ -4,9 +4,10 @@ import { db, sequenceToNum, type CachedEvent } from "@/db"
 import {
   EVENT_BULK_PUT_LIMIT,
   isEventWriteChunkingEnabled,
-  primeEventWriteChunking,
+  readEventWriteFlagsFresh,
+  primeEventWriteFlags,
   putEventsBounded,
-  resetEventWriteChunking,
+  resetEventWriteFlags,
   skipNoOpEventRewrites,
 } from "./event-writes"
 
@@ -33,7 +34,7 @@ function makePage(streamId: string, count: number): CachedEvent[] {
 }
 
 beforeEach(async () => {
-  resetEventWriteChunking()
+  resetEventWriteFlags()
   await db.events.clear()
   await db.workspaceMetadata.clear()
 })
@@ -209,16 +210,48 @@ describe("isEventWriteChunkingEnabled", () => {
   it("a primed value wins without reading the row", async () => {
     await putMetadata({ workspace: { eventWriteChunking: "off" }, user: {} })
     const get = vi.spyOn(db.workspaceMetadata, "get")
-    primeEventWriteChunking("ws_1", { workspace: {}, user: { eventWriteChunking: "on" } })
+    primeEventWriteFlags("ws_1", { workspace: {}, user: { eventWriteChunking: "on" } })
 
     expect(await isEventWriteChunkingEnabled(db, "ws_1")).toBe(true)
     expect(get).not.toHaveBeenCalled()
   })
 
-  it("resetEventWriteChunking clears the primed value", async () => {
-    primeEventWriteChunking("ws_1", { workspace: { eventWriteChunking: "on" }, user: {} })
-    resetEventWriteChunking()
+  it("resetEventWriteFlags clears the primed value", async () => {
+    primeEventWriteFlags("ws_1", { workspace: { eventWriteChunking: "on" }, user: {} })
+    resetEventWriteFlags()
 
     expect(await isEventWriteChunkingEnabled(db, "ws_1")).toBe(false)
+  })
+
+  it("a prime landing mid-read wins over the older persisted row", async () => {
+    await putMetadata({ workspace: { eventWriteChunking: "off" }, user: {} })
+    let release: () => void = () => {}
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const real = db.workspaceMetadata.get.bind(db.workspaceMetadata)
+    vi.spyOn(db.workspaceMetadata, "get").mockImplementation(((key: string) =>
+      gate.then(() => real(key))) as unknown as typeof db.workspaceMetadata.get)
+
+    const inFlight = isEventWriteChunkingEnabled(db, "ws_1")
+    primeEventWriteFlags("ws_1", { workspace: { eventWriteChunking: "on" }, user: {} })
+    release()
+
+    expect(await inFlight).toBe(true)
+    expect(await isEventWriteChunkingEnabled(db, "ws_1")).toBe(true)
+  })
+
+  it("readEventWriteFlagsFresh ignores the cache and re-reads the row every call", async () => {
+    await putMetadata({ workspace: { eventWriteChunking: "on", indexedMessagePatch: "on" }, user: {} })
+    primeEventWriteFlags("ws_1", { workspace: { eventWriteChunking: "off", indexedMessagePatch: "off" }, user: {} })
+
+    const first = await readEventWriteFlagsFresh(db, "ws_1")
+    await putMetadata({ workspace: { eventWriteChunking: "off", indexedMessagePatch: "on" }, user: {} })
+    const second = await readEventWriteFlagsFresh(db, "ws_1")
+
+    expect({ first, second }).toEqual({
+      first: { chunking: true, indexedMessagePatch: true },
+      second: { chunking: false, indexedMessagePatch: true },
+    })
   })
 })
