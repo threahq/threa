@@ -1017,7 +1017,9 @@ export function BoardCard({
   // clearing never restructures the row.
   const runningChip = (
     <span data-running-chip-slot className="flex shrink-0 items-center">
-      <AgentRunningChip entries={runningChipEntries} />
+      {/* Mounted only with entries: the chip reads useTrace, so the idle card
+          must not require a TraceProvider (and skips the component entirely). */}
+      {runningChipEntries.length > 0 && <AgentRunningChip entries={runningChipEntries} />}
     </span>
   )
   const massBadge = (

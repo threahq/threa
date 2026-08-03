@@ -454,7 +454,7 @@ describe("BoardCard agent activity", () => {
 
   it("shows Stop + Redirect on a running session, and Redirect opens the card composer in place", async () => {
     const user = userEvent.setup()
-    // A running session's row mounts the live progress rail (useAgentActivity),
+    // A running session's row reads live progress from the agent-activity store,
     // which reads the socket — give it a fake one.
     const { socket } = fakeSocket()
     vi.spyOn(contextsModule, "useSocket").mockReturnValue(socket)
