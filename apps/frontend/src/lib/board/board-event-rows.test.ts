@@ -321,6 +321,33 @@ describe("resolveBoardEventRows command chips", () => {
     ])
   })
 
+  it("joins a command_failed event to its dispatched row", () => {
+    const events = [
+      dispatched({ id: "cmd_evt_f", commandId: "cmd_fail", conversationId: CONV }),
+      cachedEvent({
+        id: "cmd_bad",
+        eventType: "command_failed",
+        createdAt: "2026-07-04T10:00:07Z",
+        actorId: ME,
+        payload: { commandId: "cmd_fail", error: "boom" },
+      }),
+    ]
+    const rows = resolveBoardEventRows(events, {
+      conversationId: CONV,
+      memberMessageIds: new Set(),
+      currentUserId: ME,
+    })
+    expect(rows).toEqual([
+      {
+        kind: "command",
+        key: "cmd_fail",
+        sortMs: new Date("2026-07-04T10:00:00Z").getTime(),
+        streamId: "stream_1",
+        events,
+      },
+    ])
+  })
+
   it("excludes another member's command", () => {
     const rows = resolveBoardEventRows(
       [dispatched({ commandId: "cmd_2", conversationId: CONV, actorId: "usr_other" })],
@@ -382,10 +409,20 @@ const COMMAND_FIXTURE: CachedEvent[] = [
   }),
 ]
 
+const COMMAND_FAILED_FIXTURE: CachedEvent[] = [
+  COMMAND_FIXTURE[0],
+  cachedEvent({
+    eventType: "command_failed",
+    createdAt: "2026-07-04T10:00:06Z",
+    actorId: USER,
+    payload: { commandId: "cmd_fixture", error: "boom" },
+  }),
+]
+
 const ROW_FIXTURES: Partial<Record<EventType, CachedEvent[]>> = {
   command_dispatched: COMMAND_FIXTURE,
   command_completed: COMMAND_FIXTURE,
-  command_failed: COMMAND_FIXTURE,
+  command_failed: COMMAND_FAILED_FIXTURE,
   "agent_session:started": SESSION_FIXTURE,
   "agent_session:completed": SESSION_FIXTURE,
   "agent_session:failed": SESSION_FIXTURE,
