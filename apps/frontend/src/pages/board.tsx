@@ -313,11 +313,18 @@ function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: Boar
   // per-card `rootArchived` flag can be stale forever — the server excludes
   // archived conversations from every fetch, so a row cached before its root was
   // archived is never reseeded — and this set is the fresher veto.
-  const archivedRootIds = useMemo(() => {
-    const ids = new Set<string>()
-    for (const stream of streams) if (stream.archivedAt) ids.add(stream.id)
-    return ids
+  // Memoized on a content signature: `streams` re-emits on every db.streams
+  // write (previews, read state), and this set feeds the filter → the full
+  // board view pipeline, which must not re-run unless membership changed.
+  const archivedRootSignature = useMemo(() => {
+    const ids: string[] = []
+    for (const stream of streams) if (stream.archivedAt) ids.push(stream.id)
+    return ids.sort().join(",")
   }, [streams])
+  const archivedRootIds = useMemo(
+    () => new Set<string>(archivedRootSignature ? archivedRootSignature.split(",") : []),
+    [archivedRootSignature]
+  )
 
   const filter = useMemo<BoardViewFilter>(
     () => ({

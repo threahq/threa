@@ -159,11 +159,18 @@ export function Sidebar({ workspaceId }: SidebarProps) {
   // and would otherwise still surface in the sidebar. A thread inherits its root
   // via `rootStreamId`, so one lookup hides every nested thread under an archived
   // root (scratchpad, channel, or any top-level stream).
-  const archivedStreamIds = useMemo(() => {
-    const ids = new Set<string>()
-    for (const stream of idbStreams) if (stream.archivedAt) ids.add(stream.id)
-    return ids
+  // Signature-memoized: `idbStreams` re-emits on every db.streams write, and
+  // this set now also feeds useBoardSidebarStats, whose aggregation must not
+  // re-run unless archived membership actually changed.
+  const archivedStreamIdSignature = useMemo(() => {
+    const ids: string[] = []
+    for (const stream of idbStreams) if (stream.archivedAt) ids.push(stream.id)
+    return ids.sort().join(",")
   }, [idbStreams])
+  const archivedStreamIds = useMemo(
+    () => new Set<string>(archivedStreamIdSignature ? archivedStreamIdSignature.split(",") : []),
+    [archivedStreamIdSignature]
+  )
 
   // Streams the user stepped away from with an unsent (loaded, non-stashed)
   // draft, surfaced as a per-row hint. `loadedDraftStreamIdSignature` (from the
