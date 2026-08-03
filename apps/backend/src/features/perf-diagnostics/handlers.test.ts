@@ -5,8 +5,12 @@ import { PERF_CAPTURE_MAX_SAMPLES } from "@threa/types"
 import { createPerfDiagnosticsHandlers, PERF_CAPTURE_MAX_BYTES } from "./handlers"
 import type { PerfDiagnosticsService } from "./service"
 
+const captured: unknown[] = []
 const service = {
-  createCapture: async () => ({ id: "perfcap_x" }),
+  createCapture: async (args: { capture: unknown }) => {
+    captured.push(args.capture)
+    return { id: "perfcap_x" }
+  },
 } as unknown as PerfDiagnosticsService
 
 const handlers = createPerfDiagnosticsHandlers({ perfDiagnosticsService: service })
@@ -55,9 +59,33 @@ describe("perf-capture create handler", () => {
     expect({ statusCode: res.statusCode, body: res.body }).toEqual({ statusCode: 201, body: { id: "perfcap_x" } })
   })
 
-  it("rejects an unknown mark name with a 400 VALIDATION_ERROR", async () => {
-    const err = await failure({ ...validCapture, samples: [{ name: "stream.secretPayload", at: 1 }] })
-    expect({ status: err.status, code: err.code }).toEqual({ status: 400, code: "VALIDATION_ERROR" })
+  it("drops samples with unknown mark names and stores the rest", async () => {
+    // A Pages deploy runs ahead of Railway, so a client one release ahead may
+    // send names this build's closed set doesn't know — the capture survives,
+    // the unknown samples never enter storage.
+    const res = response()
+    await handlers.create(
+      request({
+        ...validCapture,
+        samples: [
+          { name: "bootstrap.fetch", at: 1, value: 12 },
+          { name: "future.unknownMark", at: 2, value: 3 },
+        ],
+      }),
+      res
+    )
+    expect({
+      statusCode: res.statusCode,
+      samples: (captured.at(-1) as { samples: { name: string }[] }).samples.map((s) => s.name),
+    }).toEqual({ statusCode: 201, samples: ["bootstrap.fetch"] })
+  })
+
+  it("rejects a capture whose samples are all unknown as empty-invalid only if the schema requires samples", async () => {
+    // All-unknown samples degrade to an empty samples array; the schema decides
+    // whether that is acceptable — this pins the handler never 400s on names.
+    const res = response()
+    await handlers.create(request({ ...validCapture, samples: [{ name: "future.unknownMark", at: 2, value: 3 }] }), res)
+    expect(res.statusCode).toBe(201)
   })
 
   it("rejects a capture over the sample cap", async () => {

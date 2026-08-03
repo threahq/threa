@@ -151,6 +151,28 @@ describe("workspace table registry", () => {
     }).toEqual({ user_1: 0, user_2: true })
   })
 
+  it("a private entry tears down at zero grace after its consumer unmounts", async () => {
+    // The 5s grace exists so a SHARED entry survives a remount; a token-keyed
+    // entry has exactly one consumer, so retaining its whole-table liveQuery
+    // for 5s per unmount doubled the off-arm's subscriptions on navigation
+    // (whole-stack finding). Zero delay still absorbs a same-task remount.
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    try {
+      setWorkspaceReadMode("off")
+      await db.workspaceUsers.put(makeUser("user_1"))
+      const { findByText, unmount } = render(<ManyConsumers count={2} />)
+      await findByText("1")
+      const mounted = activeWorkspaceSubscriptionCount()
+      unmount()
+      await act(async () => {
+        vi.advanceTimersByTime(0)
+      })
+      expect({ mounted, afterUnmount: activeWorkspaceSubscriptionCount() }).toEqual({ mounted: 2, afterUnmount: 0 })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it("the last unsubscribe tears the query down after the grace window, and a re-subscribe inside it reuses the entry", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true })
     try {
@@ -301,6 +323,9 @@ describe("workspace table registry", () => {
         flush: async () => {},
       } as unknown as ReturnType<typeof perfCapture.getPerfCapture>)
 
+      // The mark measures the shared-arm economy only: in `off` mode the count
+      // tracks consumer mounts and would flood the capture ring, so nothing is
+      // emitted there (whole-stack finding).
       setWorkspaceReadMode("off")
       await db.workspaceUsers.put(makeUser("user_1"))
 
@@ -320,7 +345,7 @@ describe("workspace table registry", () => {
       const afterUnmount = mark.mock.calls.filter(([name]) => name === "store.tableSubscriptions").pop()
 
       expect({ afterMount: afterMount?.[1], afterFlip: afterFlip?.[1], afterUnmount: afterUnmount?.[1] }).toEqual({
-        afterMount: 3,
+        afterMount: undefined,
         afterFlip: 1,
         afterUnmount: 0,
       })

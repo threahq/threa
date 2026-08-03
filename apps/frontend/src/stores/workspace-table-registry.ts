@@ -137,6 +137,22 @@ function applyEmission(entryKey: string, incoming: IdentifiedRow[]): void {
   const entry = entries.get(entryKey)
   if (!entry) return
 
+  // Private (token-keyed) entries have exactly one consumer and match the
+  // pre-registry useLiveQuery behaviour: fresh rows, notify on every emission.
+  // The per-row semantic compare would be pure added cost there — for the
+  // metadata singleton it deep-walks the ~356KB emoji row once per consumer
+  // per reaction, and the rows genuinely changed so everyone re-renders anyway.
+  if (entryKey.split("|").length === 3) {
+    entry.byId = new Map(incoming.map((row) => [row.id, row]))
+    entry.rows = incoming
+    entry.resolved = true
+    for (const notify of entry.listeners) notify()
+    for (const keyed of entry.keyListeners.values()) {
+      for (const notify of keyed) notify()
+    }
+    return
+  }
+
   const previous = entry.rows
   const byId = new Map<string, IdentifiedRow>()
   const changedIds: string[] = []
@@ -187,6 +203,11 @@ function liveEntryCount(): number {
 }
 
 function markLiveEntries(): void {
+  // The mark measures the shared-arm subscription economy. In `off` mode the
+  // count tracks consumer mounts (~700 per window) — emitting it would flood
+  // the 2000-sample capture ring and evict the marks the A/B compares, and
+  // liveEntryCount() itself is O(entries) on a hot path.
+  if (mode !== "shared") return
   const count = liveEntryCount()
   if (count === lastMarkedLiveEntries) return
   lastMarkedLiveEntries = count
@@ -241,6 +262,11 @@ function releaseEntry(entryKey: string, immediate: boolean): void {
   const entry = entries.get(entryKey)
   if (!entry) return
   if (entry.refCount > 0 || entry.listeners.size > 0 || entry.keyListeners.size > 0) return
+  // Private (token-keyed) entries tear down immediately: their one consumer is
+  // gone, nobody else can adopt them, and the grace window would keep a
+  // whole-table liveQuery re-reading for 5s per unmounted consumer — a
+  // behaviour change vs the pre-registry useLiveQuery cleanup in the arm every
+  // user ships with. A StrictMode remount just re-creates the private query.
   if (immediate) {
     if (entry.teardown) clearTimeout(entry.teardown)
     entry.subscription.unsubscribe()
@@ -249,13 +275,20 @@ function releaseEntry(entryKey: string, immediate: boolean): void {
     return
   }
   if (entry.teardown) return
+  // Private (token-keyed) entries get a zero-delay grace: their one consumer is
+  // gone and nobody else can adopt them, so the 5s window would keep a
+  // whole-table liveQuery re-reading per unmounted consumer — a behaviour
+  // change vs the pre-registry useLiveQuery cleanup in the default arm. Zero
+  // delay still absorbs a same-task unsubscribe/resubscribe (StrictMode
+  // remount): the callback re-checks liveness and aborts.
+  const graceMs = entryKey.split("|").length === 3 ? 0 : TABLE_TEARDOWN_GRACE_MS
   entry.teardown = setTimeout(() => {
     const live = entries.get(entryKey)
     if (!live || live.refCount > 0 || live.listeners.size > 0 || live.keyListeners.size > 0) return
     live.subscription.unsubscribe()
     entries.delete(entryKey)
     markLiveEntries()
-  }, TABLE_TEARDOWN_GRACE_MS)
+  }, graceMs)
   markLiveEntries()
 }
 
