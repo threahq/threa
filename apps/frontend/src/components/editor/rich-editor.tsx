@@ -155,6 +155,13 @@ interface RichEditorProps {
    * current stream (thread or root); the backend resolves the thread root.
    */
   memoAnchorStreamId?: string
+  /**
+   * Scopes the `/` command palette to a stream the route can't name (the
+   * conversation panel is a `?panel=conv:` overlay). Supplying it at all — even
+   * as `null` — takes the route's `:streamId` out of play, so a panel over an
+   * unrelated stream can't inherit that stream's runtime commands.
+   */
+  commandStreamId?: string | null
   /** Whether @mentions should be parsed and autocompleted. */
   enableMentions?: boolean
   /** Whether #channel references should be parsed and autocompleted. */
@@ -245,6 +252,7 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
     onFocus: onFocusProp,
     streamContext,
     memoAnchorStreamId,
+    commandStreamId,
     enableMentions = true,
     enableChannels = true,
     enableCommands = true,
@@ -339,6 +347,7 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
     onOpenGiphy: () => setGiphyOpen(true),
     onOpenSnippet: openSnippetEditor,
     onCommandPicked: notifyCommandPicked,
+    commandStreamId,
   })
   const { suggestionConfig: memoConfig, renderMemoList } = useMemoSuggestion(memoAnchorStreamId)
 

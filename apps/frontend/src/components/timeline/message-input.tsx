@@ -27,11 +27,9 @@ import {
 import type { ComposerControlHandle } from "@/components/composer"
 import { useStreamName } from "@/hooks/use-stream-name"
 import { STREAM_ICONS } from "@/lib/streams"
-import { useScheduleMessage, useStreamBootstrap } from "@/hooks"
-import { useWorkspaceMetadata } from "@/stores/workspace-store"
+import { useScheduleMessage } from "@/hooks"
 import { EMPTY_DOC } from "@/lib/prosemirror-utils"
-import { extractCommandNode, extractCommandFromRawText, extractSteerDirective } from "@/lib/commands"
-import { serializeToMarkdown, parseMarkdown } from "@threa/prosemirror"
+import { parseMarkdown } from "@threa/prosemirror"
 import { useEditLastMessage } from "./edit-last-message-context"
 import { useQuoteReply, appendQuoteReplyNode, type QuoteReplyData } from "./quote-reply-context"
 import { useConversationReply, type ConversationReplyData } from "./conversation-reply-context"
@@ -40,9 +38,8 @@ import { usePanel, createConversationPanelId } from "@/contexts"
 import { consumeShareHandoff, consumePlaintextShareHandoff, subscribeShareHandoff } from "@/stores/share-handoff-store"
 import { consumeSnippetRequest, subscribeSnippetRequest } from "@/stores/snippet-request-store"
 import { requestConversationReplyOpen } from "@/stores/conversation-reply-open-store"
-import { useDiscussWithAriadne } from "@/hooks/use-discuss-with-ariadne"
-import { useCommandDispatchQueue } from "@/hooks/use-command-dispatch-queue"
-import { DISCUSS_WITH_ARIADNE_COMMAND, type JSONContent, type CommandInfo } from "@threa/types"
+import { useComposerCommandSend } from "@/components/composer/use-composer-command-send"
+import type { JSONContent } from "@threa/types"
 import type { PendingAttachment } from "@/hooks/use-attachments"
 import { ComposerEncryptionNotice } from "@/components/encryption/stream-encryption-affordance"
 
@@ -237,26 +234,13 @@ function MessageInputComponent({
   const navigate = useNavigate()
   const { preferences } = usePreferences()
   const { stream, sendMessage } = useStreamOrDraft(workspaceId, streamId)
-  const startDiscussWithAriadne = useDiscussWithAriadne(workspaceId)
   const scheduleMessageMutation = useScheduleMessage(workspaceId)
-  const { queueCommand } = useCommandDispatchQueue(workspaceId, streamId)
   const draftKey = getDraftMessageKey({ type: "stream", streamId })
 
-  // Resolve the effective command list for this stream so raw-text slash
-  // commands (e.g. `/model ` with a trailing space) can be dispatched even
-  // when the editor did not materialize a `slashCommand` node.
-  const metadata = useWorkspaceMetadata(workspaceId)
-  const { data: streamBootstrap } = useStreamBootstrap(workspaceId, streamId, { enabled: false })
-  const availableCommands = useMemo<CommandInfo[]>(() => {
-    return streamBootstrap?.commands ?? metadata?.commands ?? []
-  }, [streamBootstrap?.commands, metadata?.commands])
-  const availableCommandByName = useMemo(() => {
-    const map = new Map<string, CommandInfo>()
-    for (const cmd of availableCommands) {
-      map.set(cmd.name.toLowerCase(), cmd)
-    }
-    return map
-  }, [availableCommands])
+  // Send-time command routing (raw-text `/model ` included, even when the editor
+  // never materialized a `slashCommand` node), over the same effective command
+  // list the `/` palette reads.
+  const { planSend, dispatchCommand } = useComposerCommandSend(workspaceId, streamId)
 
   // Broadcast/mention filtering, member/bot allow-lists, and the admin gate
   // for bot invites all live in `useMentionStreamContext`. Threads route
@@ -566,70 +550,20 @@ function MessageInputComponent({
       const liveContent = editorContent ?? composer.content
       const normalizedContent = materializePendingAttachmentReferences(liveContent, pendingAttachments)
 
-      const steerDirective = availableCommandByName.has("steer") ? extractSteerDirective(normalizedContent) : null
-
-      // A bare `/steer` remains a command-only send. When any message content
-      // or attachment surrounds it, the authored content stays a normal message
-      // carrying `steer: true`; the backend writes the message and follow-up
-      // command in one transaction.
-      if (steerDirective && !steerDirective.hasMessageContent) {
-        composer.setContent(EMPTY_DOC)
-        composer.resolveDraft()
-        setExpanded(false)
-        try {
-          await queueCommand({ commandMarkdown: "/steer", commandName: "steer" })
-        } catch {
-          setError("Failed to queue command. Please try again.")
-        } finally {
-          composer.setIsSending(false)
-        }
-        return
-      }
-
-      // Dispatch as a command when the editor produced a slashCommand node,
-      // or when the message is raw text that matches an available slash command
-      // (e.g. `/model ` with a trailing space that never became a node). Plain
-      // text like "/s" that does not match a known command still sends normally.
-      // Embedded steer is the exception above: it stays on the message path.
-      const commandNode = steerDirective ? null : extractCommandNode(normalizedContent)
-      const rawTextCommand =
-        commandNode === null && !steerDirective ? extractCommandFromRawText(normalizedContent) : null
-      const resolvedCommand =
-        commandNode ?? (rawTextCommand ? (availableCommandByName.get(rawTextCommand.name) ?? null) : null)
-      if (resolvedCommand !== null) {
-        const commandName = commandNode?.name ?? rawTextCommand!.name
-        const clientActionId = commandNode?.clientActionId ?? resolvedCommand.clientActionId ?? null
-
+      // A bare `/steer`, a slashCommand node, or raw text matching an available
+      // command dispatches instead of sending. Embedded steer (message content
+      // around the directive) stays a normal message carrying `steer: true`;
+      // the backend writes the message and follow-up command in one transaction.
+      const sendPlan = planSend(normalizedContent)
+      if (sendPlan?.kind === "command") {
         // Clear input immediately for responsiveness — same reset the server
-        // path does. Either branch below consumes the command, so the user
-        // shouldn't see their chip linger after pressing send.
+        // path does. The dispatch consumes the command, so the user shouldn't
+        // see their chip linger after pressing send.
         composer.setContent(EMPTY_DOC)
         composer.resolveDraft()
         setExpanded(false)
-
-        // Client-action commands are routed locally — `/discuss-with-ariadne`
-        // creates a scratchpad + navigates; no backend dispatch. Matches the
-        // "type the command, press send" UX of server commands so the user
-        // isn't surprised by an action firing as they pick from autocomplete.
-        // The hook surfaces failure via a toast (shared with the context-menu
-        // entry point), so we intentionally don't set an inline composer
-        // error here — that would render the same failure twice.
-        if (clientActionId === DISCUSS_WITH_ARIADNE_COMMAND) {
-          try {
-            await startDiscussWithAriadne({ kind: "thread", sourceStreamId: streamId })
-          } catch {
-            /* hook already toasted; composer stays clean */
-          } finally {
-            composer.setIsSending(false)
-          }
-          return
-        }
-
-        const commandMarkdown = rawTextCommand
-          ? `/${commandName}${rawTextCommand.args ? ` ${rawTextCommand.args}` : ""}`
-          : serializeToMarkdown(normalizedContent).trim()
         try {
-          await queueCommand({ commandMarkdown, commandName })
+          await dispatchCommand(sendPlan)
         } catch {
           setError("Failed to queue command. Please try again.")
         } finally {
@@ -637,6 +571,7 @@ function MessageInputComponent({
         }
         return
       }
+      const steerDirective = sendPlan?.kind === "steer-message" ? sendPlan : null
 
       // Armed for "Reply in conversation" but not confirmed live in THIS stream
       // (thread-live, or the board-post projection hasn't resolved yet): filing
@@ -704,9 +639,8 @@ function MessageInputComponent({
       navigate,
       workspaceId,
       streamId,
-      startDiscussWithAriadne,
-      queueCommand,
-      availableCommandByName,
+      planSend,
+      dispatchCommand,
       conversationReply,
       conversationReplyLastActiveStreamId,
       redirectReplyToPanel,
@@ -808,6 +742,10 @@ function MessageInputComponent({
     contextRefs: composer.contextRefs,
     streamId,
     workspaceId,
+    // Explicit, not route-derived: the thread panel hosts this composer on
+    // routes with no `:streamId` (the board), where the palette would fall to
+    // workspace-only while dispatch held the thread's runtime commands.
+    commandStreamId: streamId,
     fileInputRef: composer.fileInputRef,
     onFileSelect: composer.handleFileSelect,
     onFileUpload: composer.uploadFile,

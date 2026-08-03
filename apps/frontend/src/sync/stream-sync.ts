@@ -26,6 +26,7 @@ import { commandsApi } from "@/api"
 import { workspaceKeys } from "@/hooks/use-workspaces"
 import { streamKeys } from "@/hooks/use-streams"
 import { delegationKeys } from "@/hooks/use-stream-delegations"
+import { commandKeys } from "@/hooks/use-stream-commands"
 import type { QueryClient } from "@tanstack/react-query"
 import { commitCounterMutation } from "./catch-up-batch"
 import { effectiveFreshness } from "./bootstrap-diff"
@@ -1842,6 +1843,10 @@ export function registerStreamSocketHandlers(
       queryClient.setQueryData<CachedStreamBootstrap>(streamKeys.bootstrap(workspaceId, streamId), (old) =>
         old ? { ...old, commands } : old
       )
+      // Composers off the bootstrap path (the conversation panel, board cards)
+      // read the fetched query, not the bootstrap — write both or a runtime
+      // coming online never reaches the palette there.
+      queryClient.setQueryData(commandKeys.forStream(workspaceId, streamId), commands)
     } catch {
       // Best-effort freshness — the next bootstrap converges the command set.
     }

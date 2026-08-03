@@ -204,6 +204,12 @@ function BoardOverlayComposerBody({
       onCancelAttachmentUpload={composer.handleCancelAttachmentUpload}
       workspaceId={workspaceId}
       streamId={selectedStream?.id}
+      // The overlay's target is decoupled from the route, so `null` keeps it
+      // from inheriting the route stream's runtime commands. It offers only the
+      // workspace list (pre-existing: those still post as text — the overlay has
+      // no dispatch path), and the whole palette stays on for /giphy, /snippet
+      // and memo search, which ride the same flag.
+      commandStreamId={null}
       fileInputRef={composer.fileInputRef}
       onFileSelect={composer.handleFileSelect}
       onFileUpload={composer.uploadFile}

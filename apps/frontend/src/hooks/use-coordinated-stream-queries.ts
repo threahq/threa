@@ -14,7 +14,7 @@ import { joinRoomBestEffort } from "@/lib/socket-room"
 import { applyStreamBootstrap, toCachedStreamBootstrap, type CachedStreamBootstrap } from "@/sync/stream-sync"
 import { streamKeys } from "./use-streams"
 
-function isDraftId(id: string): boolean {
+export function isDraftId(id: string): boolean {
   // Draft scratchpads use "draft_xxx" format, draft thread panels use "draft:xxx:xxx" format
   return id.startsWith("draft_") || id.startsWith("draft:")
 }

@@ -13,6 +13,7 @@ import {
   useFloatingComposerHeight,
   type ComposerControlHandle,
 } from "@/components/composer"
+import { useComposerCommandSend } from "@/components/composer/use-composer-command-send"
 import { useIsMobileOrCoarse } from "@/hooks/use-pointer"
 import { useInputMode } from "@/hooks/use-input-mode"
 import { appendQuoteReplyNode, type QuoteReplyData } from "@/components/timeline/quote-reply-context"
@@ -49,6 +50,9 @@ export interface InlineComposerSubmit {
    * reports the same thing. Absent unless the workspace is capturing.
    */
   composeTrace?: ComposeTrace
+  /** Persist the message first, then dispatch `/steer` in the same server
+   *  transaction — set when the author embedded `/steer` in the message. */
+  steer?: true
 }
 
 interface InlineComposerFormProps {
@@ -190,6 +194,7 @@ export function InlineComposerForm({
   // switching cards without hijacking the ambient draft slot.
   const stash = useStashComposer(composer, workspaceId, draftKey)
   const scheduleMessage = useScheduleMessage(workspaceId)
+  const { planSend, dispatchCommand } = useComposerCommandSend(workspaceId, streamId)
 
   // Check out the advertised stash row once (mount-captured; the guard ref, not
   // the effect deps, enforces once — `stash` is a fresh object every render).
@@ -381,7 +386,36 @@ export function InlineComposerForm({
     const pendingAttachments = composer.getPendingAttachmentsSnapshot()
     const liveContent = editorContent ?? composer.content
     const normalizedContent = materializePendingAttachmentReferences(liveContent, pendingAttachments)
-    const attachments = extractUploadedAttachments(normalizedContent)
+
+    // A slash command entered here dispatches against the conversation's own
+    // stream instead of posting as text (timeline parity). Unknown `/text` is
+    // not a command and falls through to the normal send.
+    const sendPlan = planSend(normalizedContent)
+    if (sendPlan?.kind === "command") {
+      // A dispatch finishes the composition like a send does — end the session
+      // so the next one can't inherit this one's openedAt/horizon.
+      void takeComposeTrace()
+      composer.setIsSending(true)
+      composer.setContent(EMPTY_DOC)
+      try {
+        await dispatchCommand(sendPlan)
+        await composer.resolveDraft()
+        onClose({ refocus: true, quiet: quietFocusOnSend })
+      } catch {
+        composer.setContent(normalizedContent)
+        toast.error("Failed to queue command. Please try again.")
+      } finally {
+        composer.setIsSending(false)
+      }
+      return
+    }
+
+    // Embedded `/steer` stays a message (timeline parity, message-input.tsx):
+    // the directive node is stripped from the content and the send carries
+    // `steer: true` so the server interrupts the agent in the same transaction.
+    const steerPlan = sendPlan?.kind === "steer-message" ? sendPlan : null
+    const messageContent = steerPlan?.content ?? normalizedContent
+    const attachments = extractUploadedAttachments(messageContent)
     const attachmentIds = attachments.map((a) => a.id)
 
     // Close the send window and clear BEFORE the trace's IDB read: a second
@@ -394,10 +428,11 @@ export function InlineComposerForm({
     const composeTrace = await takeComposeTrace()
     try {
       await onSubmit({
-        contentJson: normalizedContent,
+        contentJson: messageContent,
         attachmentIds: attachmentIds.length > 0 ? attachmentIds : undefined,
         attachments: attachments.length > 0 ? attachments : undefined,
         composeTrace,
+        ...(steerPlan && { steer: true as const }),
       })
       await composer.resolveDraft()
       composer.clearAttachments()
@@ -526,6 +561,10 @@ export function InlineComposerForm({
     workspaceId,
     streamId: hostStream?.id,
     memoAnchorStreamId,
+    // The prop, not `hostStream?.id`: a thread host is absent from the workspace
+    // cache, and falling through to the route's stream would offer (and dispatch)
+    // an unrelated stream's runtime commands.
+    commandStreamId: streamId ?? null,
     fileInputRef: composer.fileInputRef,
     onFileSelect: composer.handleFileSelect,
     onFileUpload: composer.uploadFile,
