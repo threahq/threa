@@ -45,10 +45,34 @@ function sameSession(a: ActiveAgentSession, b: ActiveAgentSession): boolean {
   )
 }
 
-function sameSnapshot(a: readonly ActiveAgentSession[], b: readonly ActiveAgentSession[]): boolean {
+/**
+ * Identity only — no progress fields. The stream-key snapshot compares with this
+ * so a progress/substep tick (several per second in a research loop) cannot churn
+ * the array every sidebar row subscribes to; by-id subscribers still get every
+ * tick through `notifySession`.
+ */
+function sameSessionIdentity(a: ActiveAgentSession, b: ActiveAgentSession): boolean {
+  return (
+    a.sessionId === b.sessionId &&
+    a.streamId === b.streamId &&
+    a.rootStreamId === b.rootStreamId &&
+    a.personaName === b.personaName
+  )
+}
+
+/** Exactly what a board card's running chip renders. */
+function sameSessionChip(a: ActiveAgentSession, b: ActiveAgentSession): boolean {
+  return a.sessionId === b.sessionId && a.personaName === b.personaName && a.stepCount === b.stepCount
+}
+
+function sameList(
+  a: readonly ActiveAgentSession[],
+  b: readonly ActiveAgentSession[],
+  equal: (x: ActiveAgentSession, y: ActiveAgentSession) => boolean
+): boolean {
   if (a.length !== b.length) return false
   for (let i = 0; i < a.length; i++) {
-    if (a[i] !== b[i] && !sameSession(a[i], b[i])) return false
+    if (a[i] !== b[i] && !equal(a[i], b[i])) return false
   }
   return true
 }
@@ -70,7 +94,7 @@ function recomputeKey(workspaceId: string, streamId: string): void {
     if (prev === undefined) return
     keySnapshots.delete(key)
   } else {
-    if (prev && sameSnapshot(prev, sessions)) return
+    if (prev && sameList(prev, sessions, sameSessionIdentity)) return
     keySnapshots.set(key, sessions)
   }
   for (const listener of keyListeners.get(key) ?? []) listener()
@@ -291,7 +315,7 @@ export function useAgentSessionActivities(
       cache.current = EMPTY
       return EMPTY
     }
-    if (sameSnapshot(cache.current, next)) return cache.current
+    if (sameList(cache.current, next, sameSessionChip)) return cache.current
     cache.current = next
     return next
   }, [workspaceId, ids])

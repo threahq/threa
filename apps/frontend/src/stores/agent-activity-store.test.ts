@@ -1,4 +1,5 @@
 import { describe, expect, it, beforeEach } from "vitest"
+import { renderHook, act } from "@testing-library/react"
 import type { ActiveAgentSession } from "@threa/types"
 import {
   seedAgentActivity,
@@ -7,6 +8,8 @@ import {
   getAgentActivityForStream,
   getAgentSession,
   updateAgentSessionProgress,
+  useAgentSessionActivities,
+  useAgentSessionActivity,
   __resetAgentActivityStore,
 } from "./agent-activity-store"
 
@@ -146,6 +149,45 @@ describe("agent-activity-store", () => {
       stepCount: 4,
       messageCount: 2,
       substep: "Evaluating results…",
+    })
+  })
+
+  describe("comparator scoping (a tick only invalidates what renders it)", () => {
+    it("a substep-only tick leaves the stream snapshot referentially identical", () => {
+      upsertAgentSession(WS, session({ sessionId: "s1" }))
+      const before = getAgentActivityForStream(WS, "stream_a")
+      act(() => updateAgentSessionProgress(WS, "s1", { substep: "Reading docs" }))
+      expect(getAgentActivityForStream(WS, "stream_a")).toBe(before)
+    })
+
+    it("a substep-only tick does not re-render the plural (chip) hook, but a stepCount change does", () => {
+      upsertAgentSession(WS, session({ sessionId: "s1", stepCount: 1 }))
+      let renders = 0
+      const { result } = renderHook(() => {
+        renders += 1
+        return useAgentSessionActivities(WS, ["s1"])
+      })
+      const initialRenders = renders
+      const first = result.current
+
+      act(() => updateAgentSessionProgress(WS, "s1", { substep: "Reading docs" }))
+      expect(renders).toBe(initialRenders)
+      expect(result.current).toBe(first)
+
+      act(() => updateAgentSessionProgress(WS, "s1", { stepCount: 2 }))
+      expect(renders).toBeGreaterThan(initialRenders)
+      expect(result.current[0]).toMatchObject({ stepCount: 2 })
+    })
+
+    it("the singular (row) hook sees both a substep tick and a stepCount change", () => {
+      upsertAgentSession(WS, session({ sessionId: "s1", stepCount: 1 }))
+      const { result } = renderHook(() => useAgentSessionActivity(WS, "s1"))
+
+      act(() => updateAgentSessionProgress(WS, "s1", { substep: "Reading docs" }))
+      expect(result.current).toMatchObject({ stepCount: 1, substep: "Reading docs" })
+
+      act(() => updateAgentSessionProgress(WS, "s1", { stepCount: 2, substep: "Evaluating" }))
+      expect(result.current).toMatchObject({ stepCount: 2, substep: "Evaluating" })
     })
   })
 })

@@ -441,7 +441,7 @@ describe("injectUnreadDivider", () => {
   })
 })
 
-function sessionEventRow(key: string, minute: number, opts: { terminal?: boolean } = {}): BoardEventRow {
+function foldSessionRow(key: string, minute: number, opts: { terminal?: boolean } = {}): BoardEventRow {
   const createdAt = `2026-07-04T10:${String(minute).padStart(2, "0")}:00Z`
   const events = [{ id: `${key}:started`, createdAt, eventType: "agent_session:started" }]
   if (opts.terminal) events.push({ id: `${key}:done`, createdAt, eventType: "agent_session:completed" })
@@ -478,7 +478,7 @@ describe("foldLedgerEventRows", () => {
 
   it("keeps a still-running session row fully rendered in the ledger region", () => {
     const folded = foldLedgerEventRows(
-      buildBoardRows([msg("a", "u1", 0), msg("b", "u1", 4)], [sessionEventRow("s1", 1)]),
+      buildBoardRows([msg("a", "u1", 0), msg("b", "u1", 4)], [foldSessionRow("s1", 1)]),
       "b"
     )
     expect(folded.map((r) => r.kind)).toEqual(["message", "event", "message"])
@@ -488,7 +488,7 @@ describe("foldLedgerEventRows", () => {
     const folded = foldLedgerEventRows(
       buildBoardRows(
         [msg("a", "u1", 0), msg("b", "u1", 6)],
-        [memoEventRow("e1", 1), sessionEventRow("s1", 2), memoEventRow("e2", 3), memoEventRow("e3", 4)]
+        [memoEventRow("e1", 1), foldSessionRow("s1", 2), memoEventRow("e2", 3), memoEventRow("e3", 4)]
       ),
       "b"
     )
@@ -501,7 +501,7 @@ describe("foldLedgerEventRows", () => {
     const folded = foldLedgerEventRows(
       buildBoardRows(
         [msg("a", "u1", 0), msg("b", "u1", 4)],
-        [memoEventRow("e1", 1), sessionEventRow("s1", 2, { terminal: true })]
+        [memoEventRow("e1", 1), foldSessionRow("s1", 2, { terminal: true })]
       ),
       "b"
     )

@@ -4174,6 +4174,72 @@ describe("agent-activity sidebar socket handlers", () => {
     decrypt.mockRestore()
     cleanup()
   })
+
+  it("skips the substep decrypt entirely for a session it doesn't track", async () => {
+    await putStream("stream_ch", null)
+    const queryClient = new QueryClient()
+    const { socket, emitAsync } = createTestSocket()
+    const cleanup = registerWorkspaceSocketHandlers(socket, "ws_1", queryClient, handlerRefs)
+
+    const decrypt = vi.spyOn(agentSubstep, "decryptAgentSubstepText").mockResolvedValue("Planning queries…")
+    await emitAsync("agent_session:substep", {
+      workspaceId: "ws_1",
+      sessionId: "sess_untracked",
+      streamId: "stream_ch",
+      ciphertext: "c1",
+      envelope: { v: 1 },
+      updatedAt: "2026-07-16T00:00:02.000Z",
+    })
+
+    expect(decrypt).not.toHaveBeenCalled()
+    decrypt.mockRestore()
+    cleanup()
+  })
+
+  it("applies a terminal event without waiting on a pending substep decrypt", async () => {
+    await putStream("stream_ch", null)
+    const queryClient = new QueryClient()
+    const { socket, emit, emitAsync } = createTestSocket()
+    const cleanup = registerWorkspaceSocketHandlers(socket, "ws_1", queryClient, handlerRefs)
+
+    await emitAsync("agent_session:started", {
+      workspaceId: "ws_1",
+      streamId: "stream_ch",
+      event: { payload: { sessionId: "sess_slow", personaName: "Ariadne", startedAt: "2026-07-16T00:00:00.000Z" } },
+    })
+
+    let resolveDecrypt: (text: string | null) => void = () => {}
+    const pending = new Promise<string | null>((resolve) => {
+      resolveDecrypt = resolve
+    })
+    const decrypt = vi.spyOn(agentSubstep, "decryptAgentSubstepText").mockReturnValue(pending)
+
+    emit("agent_session:substep", {
+      workspaceId: "ws_1",
+      sessionId: "sess_slow",
+      streamId: "stream_ch",
+      ciphertext: "c1",
+      envelope: { v: 1 },
+      updatedAt: "2026-07-16T00:00:02.000Z",
+    })
+
+    // The decrypt is still open; the terminal event must not queue behind it.
+    await emitAsync("agent_session:completed", {
+      workspaceId: "ws_1",
+      streamId: "stream_ch",
+      event: { payload: { sessionId: "sess_slow" } },
+    })
+    expect(getAgentSession("ws_1", "sess_slow")).toBeUndefined()
+
+    // The late decrypt lands on a removed session and is a no-op.
+    resolveDecrypt("Planning queries…")
+    await pending
+    await Promise.resolve()
+    expect(getAgentSession("ws_1", "sess_slow")).toBeUndefined()
+
+    decrypt.mockRestore()
+    cleanup()
+  })
 })
 
 /** A board row anchored in `streamId` under `rootStreamId`, as the board store writes it. */

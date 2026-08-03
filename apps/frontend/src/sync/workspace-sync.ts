@@ -1406,9 +1406,9 @@ export function registerWorkspaceSocketHandlers(
       })
     })
 
-  // `updatedAt` of the substep currently applied per session. The queue serializes
-  // the async decrypt below, but the same substep can arrive twice (stream room +
-  // parent room), so an older-or-equal stamp is dropped rather than re-applied.
+  // `updatedAt` of the substep currently applied per session. Decrypts run outside
+  // the queue and therefore race each other, so this stamp — not arrival order —
+  // decides: an older-or-equal stamp is dropped rather than applied.
   const appliedSubstepAt = new Map<string, string>()
 
   const applySubstepText = (sessionId: string, text: string, updatedAt: string): void => {
@@ -1421,21 +1421,28 @@ export function registerWorkspaceSocketHandlers(
   // Ephemeral phase text for the current step. An E2E session's substep is sealed
   // under the stream key, so decrypt it the same way the trace hook does; a locked
   // session or a failed open just skips (the substep is ephemeral).
-  const handleAgentSessionSubstep = (payload: AgentSessionSubstepPayload) =>
-    enqueueAgentActivity(async () => {
-      if (typeof payload.substep === "string" && payload.substep) {
-        applySubstepText(payload.sessionId, payload.substep, payload.updatedAt)
-        return
-      }
-      if (typeof payload.ciphertext !== "string" || !payload.envelope) return
-      const userId = refs.getCurrentUser()?.id
-      if (!userId) return
-      const text = await decryptAgentSubstepText(
-        { streamId: payload.streamId, ciphertext: payload.ciphertext, envelope: payload.envelope },
-        { workspaceId, userId }
-      )
-      if (text) applySubstepText(payload.sessionId, text, payload.updatedAt)
-    })
+  // The decrypt runs OUTSIDE `agentActivityQueue`: a chatty tool loop would
+  // otherwise backlog the serial queue and leave a terminal
+  // `agent_session:completed` waiting behind pending opens (spinner still lit
+  // after the agent finished). Only the synchronous apply is enqueued. An
+  // untracked session bails before any crypto.
+  const handleAgentSessionSubstep = async (payload: AgentSessionSubstepPayload): Promise<void> => {
+    if (!hasAgentSession(workspaceId, payload.sessionId)) return
+    const plaintext = payload.substep
+    if (typeof plaintext === "string" && plaintext) {
+      await enqueueAgentActivity(() => applySubstepText(payload.sessionId, plaintext, payload.updatedAt))
+      return
+    }
+    if (typeof payload.ciphertext !== "string" || !payload.envelope) return
+    const userId = refs.getCurrentUser()?.id
+    if (!userId) return
+    const text = await decryptAgentSubstepText(
+      { streamId: payload.streamId, ciphertext: payload.ciphertext, envelope: payload.envelope },
+      { workspaceId, userId }
+    )
+    if (!text) return
+    await enqueueAgentActivity(() => applySubstepText(payload.sessionId, text, payload.updatedAt))
+  }
 
   const handleAgentActivityEnded = (payload: AgentActivityEndedPayload) =>
     enqueueAgentActivity(() => {
