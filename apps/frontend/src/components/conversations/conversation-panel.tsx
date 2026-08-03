@@ -559,6 +559,7 @@ function ConversationPanelBody({
     index: structuralIndex,
     graph: conversationGraph,
     onArmBranchReply: armBranch,
+    archived: !!archivedReason,
   })
   const { derivePendingBranches, queueExistingBranchReply } = inlineComposer
 

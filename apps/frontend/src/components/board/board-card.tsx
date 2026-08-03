@@ -206,12 +206,22 @@ export function BoardCard({
   // sub-topic draft rails) the card must subscribe to as extra rails.
   const conversationGraph = useConversationGraph(workspaceId)
   const structuralIndex = useStreamStructuralIndex(workspaceId)
+  const streamId = conversation.streamId
+  // Archived cards are reachable under `?archived=true` — read-only (INV-62).
+  const cardStream = useStreamFromStore(streamId)
+  const archived = useEffectiveArchived({
+    stream: cardStream,
+    rootStreamId: cardStream?.rootStreamId ?? null,
+    fallbackRootArchived: post.rootArchived === true,
+  })
+  const archivedReason = conversationArchivedReason(archived)
   const inlineComposer = useInlineBranchComposer({
     workspaceId,
     conversationId: conversation.id,
     memberMessageIds: conversation.messageIds,
     index: structuralIndex,
     graph: conversationGraph,
+    archived: !!archivedReason,
   })
   const { derivePendingBranches } = inlineComposer
 
@@ -237,15 +247,6 @@ export function BoardCard({
     extraDraftPanelIds: inlineComposer.extraDraftPanelIds,
   })
 
-  const streamId = conversation.streamId
-  // Archived cards are reachable under `?archived=true` — read-only (INV-62).
-  const cardStream = useStreamFromStore(streamId)
-  const archived = useEffectiveArchived({
-    stream: cardStream,
-    rootStreamId: cardStream?.rootStreamId ?? null,
-    fallbackRootArchived: post.rootArchived === true,
-  })
-  const archivedReason = conversationArchivedReason(archived)
   // Leading visual matches the sidebar's stream row: a per-type glyph on a tinted
   // tile, except a DM shows the peer avatar over it (icon as the fallback). Shared
   // `streamTypeVisual` keeps board and sidebar in lockstep.
