@@ -1,7 +1,6 @@
-import { useCallback, useMemo } from "react"
 import { useWorkspaceMetadata } from "@/stores/workspace-store"
+import { getWorkspaceEmojiIndexes } from "@/stores/actor-lookup"
 import type { EmojiEntry } from "@threa/types"
-import { buildShortcodeIndex, stripShortcodeColons } from "@/lib/emoji-picker"
 
 interface WorkspaceEmojiData {
   /** All available emojis in the workspace */
@@ -16,49 +15,18 @@ interface WorkspaceEmojiData {
   toShortcode: (emoji: string) => string | null
 }
 
+const EMPTY_EMOJIS: EmojiEntry[] = []
+const EMPTY_WEIGHTS: Record<string, number> = {}
+
 /**
  * Hook to look up emojis from workspace data.
- * Reads from IndexedDB via useLiveQuery — reactive and offline-capable.
+ * Reads from IndexedDB via the shared workspace-table registry — reactive and
+ * offline-capable. The shortcode index and the reverse map are built once per
+ * emoji set (`stores/actor-lookup`), not once per consumer.
  */
 export function useWorkspaceEmoji(workspaceId: string): WorkspaceEmojiData {
   const metadata = useWorkspaceMetadata(workspaceId)
-
-  const emojis = useMemo(() => (metadata?.emojis ?? []) as EmojiEntry[], [metadata])
-  const emojiWeights = useMemo(() => metadata?.emojiWeights ?? {}, [metadata])
-
-  const emojiMap = useMemo(() => buildShortcodeIndex(emojis), [emojis])
-
-  const getEmoji = useCallback(
-    (shortcode: string): EmojiEntry | undefined => emojiMap.get(stripShortcodeColons(shortcode)),
-    [emojiMap]
-  )
-
-  const toEmoji = useCallback(
-    (shortcode: string): string | null => {
-      const entry = getEmoji(shortcode)
-      return entry?.emoji ?? null
-    },
-    [getEmoji]
-  )
-
-  const shortcodeMap = useMemo(() => {
-    const map = new Map<string, string>()
-    for (const entry of emojis) {
-      map.set(entry.emoji, entry.shortcode)
-    }
-    return map
-  }, [emojis])
-
-  const toShortcode = useCallback((emoji: string): string | null => shortcodeMap.get(emoji) ?? null, [shortcodeMap])
-
-  return useMemo(
-    () => ({
-      emojis,
-      emojiWeights,
-      toEmoji,
-      getEmoji,
-      toShortcode,
-    }),
-    [emojis, emojiWeights, toEmoji, getEmoji, toShortcode]
-  )
+  const emojis = (metadata?.emojis ?? EMPTY_EMOJIS) as EmojiEntry[]
+  const emojiWeights = metadata?.emojiWeights ?? EMPTY_WEIGHTS
+  return getWorkspaceEmojiIndexes(emojis, emojiWeights)
 }
