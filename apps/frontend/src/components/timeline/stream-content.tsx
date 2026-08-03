@@ -475,6 +475,23 @@ export function resolveUnreadMarkerOpen(args: {
   return "scroll"
 }
 
+/**
+ * Every full-window derivation between the raw event window and the rows virtua
+ * renders — grouping/annotation/injection, the message meta map, the filter and
+ * divider passes, and the zero-height patch collectors — times into one
+ * `timeline.derive` name, so the samples for one emission sum to the chain's
+ * cost. It is the control on the bounded-read win: if the read cost falls and
+ * this rises by as much, the cost moved rather than shrank.
+ */
+function timeDerive<T>(compute: () => T): T {
+  const stopDerive = getPerfCapture().time("timeline.derive")
+  try {
+    return compute()
+  } finally {
+    stopDerive()
+  }
+}
+
 const EMPTY_ACTIVITY_SUMMARY: AgentActivitySummaryEntry[] = []
 
 /** One running session collapsed from the per-message activity map. */
@@ -945,36 +962,33 @@ export function StreamContent({
   // broadcast chain (INV-61) renders as its own in-place loading row — see
   // useEvents' contiguity gate for how holes are detected and backfilled.
   const conversationOverlayModel = conversationOverlay?.model
-  const timelineItems = useMemo(() => {
-    // `timeline.derive` covers the grouping/annotation/injection chain through
-    // `visibleItems` — the work that runs per live-query emission over the whole
-    // rendered window. It is the control on the bounded-read win: if the read
-    // cost falls and this rises by as much, the cost moved rather than shrank.
-    const stopDerive = getPerfCapture().time("timeline.derive")
-    let items = annotateAuthorGroups(groupTimelineItems(displayEvents, currentWorkspaceUserId ?? undefined))
-    if (conversationOverlayModel && conversationOverlayModel.conversations.length > 0) {
-      items = annotateConversationRows(items, conversationOverlayModel)
-    }
-    // On-message provenance chips (board-view-design.md mechanism A): a late
-    // reply that revives a scattered topic gets a "↪ continues X · 3h ago" chip
-    // linking to the conversation panel. Always-on for the flat channel/DM
-    // timeline (never threads — thread replies are contiguous by construction,
-    // so nothing reads as a revival there).
-    if (supportsConversationOverlay) {
-      items = annotateConversationRevivals(items, conversationIdByMessageId, conversationsById)
-    }
-    const derived = injectGapItems(items, holes)
-    stopDerive()
-    return derived
-  }, [
-    displayEvents,
-    currentWorkspaceUserId,
-    holes,
-    conversationOverlayModel,
-    supportsConversationOverlay,
-    conversationIdByMessageId,
-    conversationsById,
-  ])
+  const timelineItems = useMemo(
+    () =>
+      timeDerive(() => {
+        let items = annotateAuthorGroups(groupTimelineItems(displayEvents, currentWorkspaceUserId ?? undefined))
+        if (conversationOverlayModel && conversationOverlayModel.conversations.length > 0) {
+          items = annotateConversationRows(items, conversationOverlayModel)
+        }
+        // On-message provenance chips (board-view-design.md mechanism A): a late
+        // reply that revives a scattered topic gets a "↪ continues X · 3h ago" chip
+        // linking to the conversation panel. Always-on for the flat channel/DM
+        // timeline (never threads — thread replies are contiguous by construction,
+        // so nothing reads as a revival there).
+        if (supportsConversationOverlay) {
+          items = annotateConversationRevivals(items, conversationIdByMessageId, conversationsById)
+        }
+        return injectGapItems(items, holes)
+      }),
+    [
+      displayEvents,
+      currentWorkspaceUserId,
+      holes,
+      conversationOverlayModel,
+      supportsConversationOverlay,
+      conversationIdByMessageId,
+      conversationsById,
+    ]
+  )
 
   // `order` is the position in the rendered timeline. Non-thread streams
   // happen to sort by sequence already, but threads re-sort by
@@ -982,17 +996,21 @@ export function StreamContent({
   // (assigned in the destination's event log) can diverge from their visual
   // position. Validating "target precedes selection" against `order` keeps
   // batch UI consistent with what the user sees.
-  const messageEventMeta = useMemo(() => {
-    const meta = new Map<string, { order: number; content: string }>()
-    let order = 0
-    for (const event of displayEvents) {
-      if (event.eventType !== "message_created") continue
-      const payload = event.payload as { messageId?: string; contentMarkdown?: string; deletedAt?: string }
-      if (!payload.messageId || payload.deletedAt) continue
-      meta.set(payload.messageId, { order: order++, content: payload.contentMarkdown ?? "" })
-    }
-    return meta
-  }, [displayEvents])
+  const messageEventMeta = useMemo(
+    () =>
+      timeDerive(() => {
+        const meta = new Map<string, { order: number; content: string }>()
+        let order = 0
+        for (const event of displayEvents) {
+          if (event.eventType !== "message_created") continue
+          const payload = event.payload as { messageId?: string; contentMarkdown?: string; deletedAt?: string }
+          if (!payload.messageId || payload.deletedAt) continue
+          meta.set(payload.messageId, { order: order++, content: payload.contentMarkdown ?? "" })
+        }
+        return meta
+      }),
+    [displayEvents]
+  )
 
   const selectedOrderFloor = useMemo(() => {
     let min: number | null = null
@@ -1375,16 +1393,17 @@ export function StreamContent({
   // reads — so adding them changes the first item's key and useTimelineScroll
   // passes `shift` to virtua for that render, holding the viewport exactly
   // like a real older-page prepend (INV-21).
-  const visibleItems = useMemo(() => {
-    const stopDerive = getPerfCapture().time("timeline.derive")
-    const filtered = useVirtualized ? filterVisibleItems(timelineItems, isChannel) : timelineItems
-    // Day dividers go on the post-filter list so a boundary lands above the
-    // first *visible* row of a day (INV-42), then skeletons prepend above all.
-    const base = injectDayDividers(filtered)
-    const items = showOlderSkeletons ? [...OLDER_SKELETON_ITEMS, ...base] : base
-    stopDerive()
-    return items
-  }, [timelineItems, useVirtualized, isChannel, showOlderSkeletons])
+  const visibleItems = useMemo(
+    () =>
+      timeDerive(() => {
+        const filtered = useVirtualized ? filterVisibleItems(timelineItems, isChannel) : timelineItems
+        // Day dividers go on the post-filter list so a boundary lands above the
+        // first *visible* row of a day (INV-42), then skeletons prepend above all.
+        const base = injectDayDividers(filtered)
+        return showOlderSkeletons ? [...OLDER_SKELETON_ITEMS, ...base] : base
+      }),
+    [timelineItems, useVirtualized, isChannel, showOlderSkeletons]
+  )
 
   const visibleItemCount = visibleItems.length
   useEffect(() => {
@@ -1396,21 +1415,30 @@ export function StreamContent({
   // reading `visibleItems` would never see a cancellation and a scheduled card
   // could never flip on the virtualized path. Passed into TimelineMessageList's
   // render context so every viewer's card reflects the cancel (survives reload).
-  const cancelledFollowUpIds = useMemo(() => collectCancelledFollowUpIds(timelineItems), [timelineItems])
+  const cancelledFollowUpIds = useMemo(
+    () => timeDerive(() => collectCancelledFollowUpIds(timelineItems)),
+    [timelineItems]
+  )
   // Same full-window read for delegation status patches (they're zero-height,
   // filtered out of `visibleItems`): the card must see claim/progress/terminal
   // patches to render the authoritative live status on the virtualized path.
-  const delegationStatusPatches = useMemo(() => collectDelegationStatusPatches(timelineItems), [timelineItems])
+  const delegationStatusPatches = useMemo(
+    () => timeDerive(() => collectDelegationStatusPatches(timelineItems)),
+    [timelineItems]
+  )
   // Same full-window read for bot-access request status patches (zero-height,
   // filtered out of `visibleItems`): the card must see the approve/deny
   // resolution to render the authoritative terminal state on the virtualized path.
-  const botAccessStatusPatches = useMemo(() => collectBotAccessStatusPatches(timelineItems), [timelineItems])
+  const botAccessStatusPatches = useMemo(
+    () => timeDerive(() => collectBotAccessStatusPatches(timelineItems)),
+    [timelineItems]
+  )
   // Same full-window read for `call_ended` patches (zero-height, filtered out of
   // `visibleItems`): the call card must see the end summary to render its ended
   // face on the virtualized path (roadmap 1.4).
-  const callEndedPatches = useMemo(() => collectCallEndedPatches(timelineItems), [timelineItems])
+  const callEndedPatches = useMemo(() => timeDerive(() => collectCallEndedPatches(timelineItems)), [timelineItems])
 
-  const dividerAnchorIds = useMemo(() => collectDividerAnchorIds(visibleItems), [visibleItems])
+  const dividerAnchorIds = useMemo(() => timeDerive(() => collectDividerAnchorIds(visibleItems)), [visibleItems])
 
   // Mirror of `visibleItems` for the long-lived scrollToMessage retry loop:
   // its closure is created once per scroll but runs for up to ~1.2s, during
