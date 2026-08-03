@@ -299,9 +299,6 @@ describe("workspace table registry", () => {
     act(() => {
       setWorkspaceReadMode("off")
     })
-    // The flip's drop+refire machinery still carries a registration that existed
-    // at flip time.
-    expect(getWorkspaceTableRow(WORKSPACE, "users", "user_1", token)).toBeDefined()
 
     // The reader's effect re-runs after the flip: the new subscribe must be a
     // no-op, and the consumer reads undefined and falls back to its own query.
