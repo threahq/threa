@@ -27,6 +27,7 @@ import {
   useStopAgentSession,
   useEditLastMessageTrigger,
   useKeyboardShortcuts,
+  useEffectiveArchived,
   streamKeys,
   workspaceKeys,
 } from "@/hooks"
@@ -666,32 +667,24 @@ export function StreamContent({
   const stream = streamFromProps ?? idbStream ?? bootstrap?.stream
   const isThread = stream?.type === StreamTypes.THREAD
   const isSystem = stream?.type === StreamTypes.SYSTEM
-  // A thread inherits its lifecycle from its root (INV-62): archiving marks
-  // only the root row, so the thread's own `archivedAt` can't tell the client
-  // it is sealed. The root's archived state is resolved from two sources,
-  // chosen by whether the root is resident in the workspace stream cache:
-  //
-  //   - root in `idbStreams` → use its `archivedAt` directly. This is live:
-  //     `stream:archived`/`stream:unarchived` are routed to the thread's room
-  //     too, so `handleStreamArchived`/`handleStreamUnarchived` update the
-  //     root's IDB row and this value re-renders without a refresh. Covers
-  //     live archive/unarchive and rapid toggling.
-  //   - root not in `idbStreams` → the cold-load deep-link case (the workspace
-  //     bootstrap excludes archived roots, so a thread under an already-
-  //     archived root has no root row to read). Fall back to the per-stream
-  //     bootstrap's `rootArchivedAt`, which the backend populates for threads.
-  //
-  // The two null meanings ("root active" vs "root unknown") must NOT be
-  // merged with `??` — that collapses them and lets a stale bootstrap value
-  // win after unarchive, which was the flicker/rapid-toggle bug.
+  // Archived state is root-inherited (INV-62); the shared hook owns the
+  // two-source resolution (root row in the stream cache, else the per-stream
+  // bootstrap's cold-load verdict).
   const rootStreamId = isThread ? (stream?.rootStreamId ?? null) : null
+  // The root row is resolved here, from the warm workspace-stream cache this
+  // component already reads, rather than left to the hook: a self-resolving
+  // read reports the root absent on the mount's first render, so a stale
+  // bootstrap verdict would flash the archived notice over the composer.
   const rootFromCache = useMemo(
     () => (rootStreamId ? (idbStreams.find((candidate) => candidate.id === rootStreamId) ?? null) : null),
     [idbStreams, rootStreamId]
   )
-  const rootArchivedAt =
-    rootFromCache !== null ? (rootFromCache.archivedAt ?? null) : (bootstrap?.rootArchivedAt ?? null)
-  const isArchived = stream?.archivedAt != null || rootArchivedAt != null
+  const { rootArchived, isArchived } = useEffectiveArchived({
+    stream,
+    rootStreamId,
+    rootStream: rootFromCache,
+    fallbackRootArchived: bootstrap?.rootArchivedAt,
+  })
 
   // Conversation overlay (channels/DMs): URL-derived so a refresh or shared
   // link restores the same view (INV-59). The stream header owns the toggle;
@@ -2242,7 +2235,7 @@ export function StreamContent({
     disabledReason = "System notifications are read-only."
   } else if (stream?.archivedAt) {
     disabledReason = "This thread has been sealed in the labyrinth. It can be read but not extended."
-  } else if (rootArchivedAt) {
+  } else if (rootArchived) {
     disabledReason = "The stream this thread belongs to has been archived. It can be read but not extended."
   }
 

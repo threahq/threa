@@ -14,3 +14,9 @@ export { StreamTargetPicker, type StreamTargetPickerProps } from "./stream-targe
 export { StreamSortToggle } from "./stream-sort-toggle"
 export { OverlayComposerShell, type OverlayComposerShellProps } from "./overlay-composer-shell"
 export { ConversationReplyStrip } from "./conversation-reply-strip"
+export {
+  ComposerDisabledNotice,
+  CONVERSATION_ARCHIVED_REASON,
+  CONVERSATION_ROOT_ARCHIVED_REASON,
+  conversationArchivedReason,
+} from "./composer-disabled-notice"

@@ -268,3 +268,4 @@ export {
 } from "./use-labels"
 
 export { useComposerActionSide, composerPopoverAlign } from "./use-composer-action-side"
+export { useEffectiveArchived, type EffectiveArchived } from "./use-effective-archived"

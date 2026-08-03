@@ -1668,3 +1668,98 @@ describe("hasUnknownMembers — backfill invalidation gate", () => {
     expect(hasUnknownMembers(["m1", "r1", "r2"], new Set(["m1", "r1"]))).toBe(true)
   })
 })
+
+describe("ConversationPanel — archived is read-only (INV-62)", () => {
+  /** Per-id stream rows, so the anchor and its root can differ. */
+  function seedStreams(rows: Record<string, Record<string, unknown>>) {
+    vi.spyOn(streamStoreModule, "useStreamFromStore").mockImplementation(((id: string | undefined) =>
+      id ? (rows[id] ?? undefined) : undefined) as never)
+  }
+
+  /** Captures the docked composer's gating props without mounting the editor. */
+  function captureComposer() {
+    const captured: { disabled?: boolean; disabledReason?: string } = {}
+    vi.spyOn(boardReplyComposerModule, "BoardReplyComposer").mockImplementation((props) => {
+      captured.disabled = props.disabled
+      captured.disabledReason = props.disabledReason
+      return props.disabled && props.disabledReason ? (
+        <div data-testid="composer-notice">{props.disabledReason}</div>
+      ) : (
+        <div data-testid="composer-form" />
+      )
+    })
+    return captured
+  }
+
+  it("gates the composer and the sub-topic affordance when the anchor stream is archived", async () => {
+    seedStreams({ stream_1: { id: "stream_1", type: "channel", archivedAt: "2026-01-01T00:00:00.000Z" } })
+    const captured = captureComposer()
+    const user = userEvent.setup()
+    mountPanel({ cached: asCached(makePost()) })
+    await screen.findByText("Opening message body.")
+
+    expect(captured.disabled).toBe(true)
+    expect(captured.disabledReason).toBe("This conversation has been archived. It can be read but not extended.")
+    expect(screen.getByTestId("composer-notice")).toBeTruthy()
+    expect(screen.queryByTestId("composer-form")).toBeNull()
+
+    await user.click(screen.getAllByRole("button", { name: "Message actions" })[0]!)
+    expect(screen.queryByText("New sub-topic")).toBeNull()
+  })
+
+  it("inherits the root's archived state for a conversation anchored in a thread", async () => {
+    seedStreams({
+      stream_1: { id: "stream_1", type: "thread", rootStreamId: "stream_root", archivedAt: null },
+      stream_root: { id: "stream_root", type: "channel", archivedAt: "2026-01-01T00:00:00.000Z" },
+    })
+    const captured = captureComposer()
+    mountPanel({ cached: asCached(makePost()) })
+    await screen.findByText("Opening message body.")
+
+    expect(captured.disabled).toBe(true)
+    expect(captured.disabledReason).toBe(
+      "The stream this conversation belongs to has been archived. It can be read but not extended."
+    )
+  })
+
+  it("falls back to the post's rootArchived verdict on a cold load with no root row", async () => {
+    seedStreams({ stream_1: { id: "stream_1", type: "thread", rootStreamId: "stream_root", archivedAt: null } })
+    const captured = captureComposer()
+    mountPanel({ cached: asCached({ ...makePost(), rootArchived: true }) })
+    await screen.findByText("Opening message body.")
+
+    expect(captured.disabled).toBe(true)
+    expect(captured.disabledReason).toBe(
+      "The stream this conversation belongs to has been archived. It can be read but not extended."
+    )
+  })
+
+  it("seals from the post's verdict when the anchor stream row is absent entirely", async () => {
+    // Cold load with no resolvable chain: an absent anchor means "unknown", so
+    // the post's effective-root verdict still applies.
+    seedStreams({})
+    const captured = captureComposer()
+    mountPanel({ cached: asCached({ ...makePost(), rootArchived: true }) })
+    await screen.findByText("Opening message body.")
+
+    expect(captured.disabled).toBe(true)
+    expect(captured.disabledReason).toBe(
+      "The stream this conversation belongs to has been archived. It can be read but not extended."
+    )
+  })
+
+  it("leaves an unarchived conversation writable", async () => {
+    seedStreams({ stream_1: { id: "stream_1", type: "channel", archivedAt: null } })
+    const captured = captureComposer()
+    const user = userEvent.setup()
+    mountPanel({ cached: asCached(makePost()) })
+    await screen.findByText("Opening message body.")
+
+    expect(captured.disabled).toBe(false)
+    expect(captured.disabledReason).toBeUndefined()
+    expect(screen.getByTestId("composer-form")).toBeTruthy()
+
+    await user.click(screen.getAllByRole("button", { name: "Message actions" })[0]!)
+    expect(screen.getByText("New sub-topic")).toBeTruthy()
+  })
+})

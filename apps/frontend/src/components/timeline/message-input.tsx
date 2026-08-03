@@ -18,6 +18,7 @@ import { useConnectionState } from "@/components/layout/connection-status"
 import {
   ConversationReplyStrip,
   FloatingComposerShell,
+  ComposerDisabledNotice,
   MessageComposer,
   OverlayComposerShell,
   ScheduledMessagesPicker,
@@ -784,9 +785,7 @@ function MessageInputComponent({
     // area and overlaps the first messages instead.
     return (
       <FloatingComposerShell ref={composerHeightRef} data-message-composer-root>
-        <div className="flex items-center justify-center py-3 px-4 rounded-md bg-muted/50">
-          <p className="text-sm text-muted-foreground text-center">{disabledReason}</p>
-        </div>
+        <ComposerDisabledNotice reason={disabledReason} />
       </FloatingComposerShell>
     )
   }

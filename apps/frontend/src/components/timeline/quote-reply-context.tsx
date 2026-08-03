@@ -21,7 +21,7 @@ interface QuoteReplyContextValue {
 
 const QuoteReplyCtx = createContext<QuoteReplyContextValue | null>(null)
 
-export function QuoteReplyProvider({ children }: { children: ReactNode }) {
+export function QuoteReplyProvider({ children, disabled }: { children: ReactNode; disabled?: boolean }) {
   const handlerRef = useRef<((data: QuoteReplyData) => void) | null>(null)
 
   const registerHandler = useCallback((handler: (data: QuoteReplyData) => void) => {
@@ -36,6 +36,11 @@ export function QuoteReplyProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const value = useMemo(() => ({ triggerQuoteReply, registerHandler }), [triggerQuoteReply, registerHandler])
+
+  // Disabled (e.g. archived conversations): render without the context so every
+  // quote affordance — row menu, long-press, selection button — disappears
+  // instead of routing into a composer that can't open.
+  if (disabled) return <>{children}</>
 
   return <QuoteReplyCtx.Provider value={value}>{children}</QuoteReplyCtx.Provider>
 }

@@ -4,6 +4,7 @@ import { useReplyToBoardPost } from "@/hooks/use-conversations"
 import { useIsMobile } from "@/hooks/use-mobile"
 import { useScopeDraftPreview } from "@/hooks"
 import { CollapsedComposerBar } from "@/components/composer/collapsed-composer-bar"
+import { ComposerDisabledNotice } from "@/components/composer/composer-disabled-notice"
 import { InlineComposerForm, type InlineComposerSubmit } from "@/components/board/board-inline-composer"
 import { boardReplyDraftKey } from "@/lib/board/draft-keys"
 import { cn } from "@/lib/utils"
@@ -52,6 +53,14 @@ interface BoardReplyComposerProps {
    * disarms. Ignored unless `alwaysDocked`.
    */
   armedReply?: ArmedReply
+  /**
+   * Writing is closed for this conversation (its stream, or the root it
+   * inherits from, is archived — INV-62). The notice replaces the composer
+   * entirely; the backend rejects the write regardless.
+   */
+  disabled?: boolean
+  /** Notice copy shown in place of the composer while `disabled`. */
+  disabledReason?: string
 }
 
 /** A sub-conversation the docked panel composer is armed to reply into. */
@@ -82,6 +91,7 @@ export function BoardReplyComposer(props: BoardReplyComposerProps) {
   const [open, setOpen] = useState(false)
   const buttonRef = useRef<HTMLButtonElement>(null)
   const alwaysDocked = props.alwaysDocked ?? false
+  const { disabled, disabledReason } = props
 
   // The scope's unsent draft, advertised on the resting button and — when it
   // isn't checked out on this device (stashed / roamed) — checked out by the
@@ -147,6 +157,11 @@ export function BoardReplyComposer(props: BoardReplyComposerProps) {
   // restore is consumed by the mounted form's own URL effect (no mount to hang
   // it on).
   const noopClose = useCallback(() => {}, [])
+
+  if (disabled && disabledReason) {
+    return <ComposerDisabledNotice reason={disabledReason} />
+  }
+
   if (alwaysDocked) {
     return (
       <BoardReplyComposerForm

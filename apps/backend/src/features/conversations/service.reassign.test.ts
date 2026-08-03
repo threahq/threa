@@ -14,15 +14,19 @@ const ACTOR_ID = "usr_1"
 
 // One root channel with a thread under it, plus a foreign root: the three
 // stream shapes the one-root rule must distinguish.
-const STREAMS: Record<string, { id: string; type: string; rootStreamId: string | null }> = {
+const STREAMS: Record<string, { id: string; type: string; rootStreamId: string | null; archivedAt?: Date }> = {
   chan_1: { id: "chan_1", type: "channel", rootStreamId: null },
   thread_1: { id: "thread_1", type: "thread", rootStreamId: "chan_1" },
   chan_2: { id: "chan_2", type: "channel", rootStreamId: null },
+  chan_arch: { id: "chan_arch", type: "channel", rootStreamId: null, archivedAt: new Date() },
+  thread_arch: { id: "thread_arch", type: "thread", rootStreamId: "chan_arch" },
 }
 
 const MESSAGES: Record<string, { streamId: string; authorId: string }> = {
   m1: { streamId: "chan_1", authorId: "usr_1" },
   m_thread: { streamId: "thread_1", authorId: "usr_2" },
+  m_arch: { streamId: "chan_arch", authorId: "usr_1" },
+  m_arch_thread: { streamId: "thread_arch", authorId: "usr_1" },
 }
 
 function makeConversation(overrides: Partial<Conversation> = {}): Conversation {
@@ -207,5 +211,48 @@ describe("ConversationService.reassignMessage", () => {
     expect(result.previousConversation).toBeNull()
     expect(spies.feedbackInsert).not.toHaveBeenCalled()
     expect(spies.outboxInsert).not.toHaveBeenCalled()
+  })
+})
+
+describe("ConversationService.reassignMessage archived streams", () => {
+  test("rejects a move inside an archived stream", async () => {
+    const convMain = makeConversation({ id: "conv_main", streamId: "chan_arch", messageIds: ["m_arch"] })
+    const convOther = makeConversation({ id: "conv_other", streamId: "chan_arch", messageIds: [] })
+    const spies = setup({
+      conversations: { conv_main: convMain, conv_other: convOther },
+      primaries: { m_arch: "conv_main" },
+    })
+
+    await expect(reassign("m_arch", "conv_other")).rejects.toMatchObject({ status: 403 })
+    expect(spies.removePrimaryMessage).not.toHaveBeenCalled()
+    expect(spies.addPrimaryMessage).not.toHaveBeenCalled()
+    expect(spies.feedbackInsert).not.toHaveBeenCalled()
+    expect(spies.outboxInsert).not.toHaveBeenCalled()
+  })
+
+  test("rejects a move in a thread whose root is archived (INV-62)", async () => {
+    const convMain = makeConversation({ id: "conv_main", streamId: "thread_arch", messageIds: ["m_arch_thread"] })
+    const convOther = makeConversation({ id: "conv_other", streamId: "thread_arch", messageIds: [] })
+    const spies = setup({
+      conversations: { conv_main: convMain, conv_other: convOther },
+      primaries: { m_arch_thread: "conv_main" },
+    })
+
+    await expect(reassign("m_arch_thread", "conv_other")).rejects.toMatchObject({ status: 403 })
+    expect(spies.addPrimaryMessage).not.toHaveBeenCalled()
+  })
+
+  test("an unarchived root still moves", async () => {
+    const convMain = makeConversation({ id: "conv_main", streamId: "thread_1", messageIds: ["m_thread"] })
+    const convOther = makeConversation({ id: "conv_other", streamId: "thread_1", messageIds: [] })
+    const spies = setup({
+      conversations: { conv_main: convMain, conv_other: convOther },
+      primaries: { m_thread: "conv_main" },
+    })
+
+    const result = await reassign("m_thread", "conv_other")
+
+    expect(result.conversation.id).toBe("conv_other")
+    expect(spies.addPrimaryMessage).toHaveBeenCalledTimes(1)
   })
 })

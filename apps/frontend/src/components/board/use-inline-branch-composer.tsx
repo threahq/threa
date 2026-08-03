@@ -129,6 +129,15 @@ export function useInlineBranchComposer(params: {
    * model. Pending branches always stay inline (no real conversation id to arm).
    */
   onArmBranchReply?: (target: ArmBranchTarget, restoreStashedId: string | null) => void
+  /**
+   * The surface is read-only (archived conversation/root — INV-62): it renders no
+   * inline composers, so an open one is dropped here rather than stranded — the
+   * form that would have called `onClose` is already unmounted, and a stranded
+   * `openComposer` keeps a dead draft-panel rail subscribed, force-pins its
+   * branch, and blocks the sub-topic-draft rescope effect. A `?stash=` deep link
+   * is likewise neither opened nor consumed, so it stays retryable elsewhere.
+   */
+  archived?: boolean
 }): {
   branchStreamIds: string[]
   extraDraftPanelIds: string[]
@@ -148,7 +157,7 @@ export function useInlineBranchComposer(params: {
    *  before the `conversation:created` echo hands rendering to the graph. */
   derivePendingBranches: (messagesById: Map<string, RenderableMessage>) => BranchConversationView[]
 } {
-  const { workspaceId, conversationId, memberMessageIds, index, graph, onArmBranchReply } = params
+  const { workspaceId, conversationId, memberMessageIds, index, graph, onArmBranchReply, archived = false } = params
   const { queueDraftMessage } = useQueueDraftMessage(workspaceId)
   const [openComposer, setOpenComposer] = useState<OpenInlineComposer | null>(null)
   // Draft panels of "new sub-topic" sends still in flight — kept subscribed until
@@ -157,6 +166,11 @@ export function useInlineBranchComposer(params: {
   const [pendingSubtopics, setPendingSubtopics] = useState<Array<{ streamId: string; messageId: string }>>([])
 
   const closeComposer = useCallback(() => setOpenComposer(null), [])
+
+  useEffect(() => {
+    if (archived) setOpenComposer(null)
+  }, [archived])
+
   const openNewSubtopic = useCallback(
     (streamId: string, messageId: string, restoreStashedId: string | null = null) =>
       setOpenComposer({ kind: "new-subtopic", streamId, messageId, restoreStashedId }),
@@ -216,6 +230,7 @@ export function useInlineBranchComposer(params: {
   const stashTarget = useStashParamDraftRow(workspaceId)
   const consumedStashRef = useRef<string | null>(null)
   useEffect(() => {
+    if (archived) return
     if (!stashTarget || consumedStashRef.current === stashTarget.draftId) return
     const parsed = parseBoardDraftKey(stashTarget.scope)
     if (!parsed || parsed.kind === "reply") return
@@ -243,7 +258,7 @@ export function useInlineBranchComposer(params: {
     if (graph.conversationIdByMemberMessageId.get(parsed.messageId) !== conversationId) return
     consumedStashRef.current = stashTarget.draftId
     setOpenComposer({ kind: "new-subtopic", streamId: parsed.streamId, messageId: parsed.messageId })
-  }, [stashTarget, graph, branchStreamIds, conversationId, onArmBranchReply])
+  }, [stashTarget, graph, branchStreamIds, conversationId, onArmBranchReply, archived])
 
   // The composer's own pending→graph hand-off: a pending branch is keyed by the
   // synthetic draft-panel id, so once the graph replaces it with the real child

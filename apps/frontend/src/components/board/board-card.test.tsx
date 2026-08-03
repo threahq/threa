@@ -27,6 +27,7 @@ import * as queueDraftModule from "@/hooks/use-queue-draft-message"
 import * as inlineComposerModule from "@/components/board/board-inline-composer"
 import * as inputModeModule from "@/hooks/use-input-mode"
 import * as boardStoreModule from "@/stores/board-store"
+import * as streamStoreModule from "@/stores/stream-store"
 import * as revealAnchorModule from "@/hooks/use-board-card-reveal-anchor"
 import { setBoardFlash, resetBoardFlashStoreCache } from "@/stores/board-flash-store"
 import { spyOnExport } from "@/test/spy"
@@ -1369,5 +1370,56 @@ describe("BoardCard backfill arming", () => {
     const [options] = beginReveal.mock.calls.at(-1) as [{ mode: string; landmark: HTMLElement | null }]
     expect(options.mode).toBe("scroll")
     expect(options.landmark).toBe(container.querySelector('[data-message-row][data-message-id="m_r2"]'))
+  })
+})
+
+describe("BoardCard — archived is read-only (INV-62)", () => {
+  it("replaces the reply affordance with the archived notice", async () => {
+    spyOnExport(streamStoreModule, "useStreamFromStore").mockReturnValue(((id: string | undefined) =>
+      id === STREAM ? { id: STREAM, type: "channel", archivedAt: "2026-06-23T12:00:00.000Z" } : undefined) as never)
+    mountCard()
+    expect(
+      await screen.findByText("This conversation has been archived. It can be read but not extended.")
+    ).toBeTruthy()
+    expect(screen.queryByRole("button", { name: "Write a reply…" })).toBeNull()
+  })
+
+  it("keeps the reply affordance on an unarchived card", async () => {
+    mountCard()
+    expect(await screen.findByRole("button", { name: "Write a reply…" })).toBeTruthy()
+    expect(screen.queryByText("This conversation has been archived. It can be read but not extended.")).toBeNull()
+  })
+})
+
+describe("BoardCard — archived gating with no anchor stream row", () => {
+  it("seals the card from the post's rootArchived verdict when the anchor row is absent", async () => {
+    mountCard({ ...makePost(), rootArchived: true } as BoardViewPost)
+    expect(
+      await screen.findByText(
+        "The stream this conversation belongs to has been archived. It can be read but not extended."
+      )
+    ).toBeTruthy()
+    expect(screen.queryByRole("button", { name: "Write a reply…" })).toBeNull()
+  })
+
+  it("offers no branch affordances on an archived card", async () => {
+    mountCard({ ...makePost(), rootArchived: true } as BoardViewPost)
+    await screen.findByText("Opening body.")
+
+    await userEvent.click(screen.getAllByLabelText("Message actions")[0])
+    const entries = (await screen.findAllByRole("menuitem")).map((el) => el.textContent)
+    expect(entries.filter((t) => t?.includes("sub-topic"))).toEqual([])
+    expect(entries.filter((t) => t?.includes("Quote reply"))).toEqual([])
+    expect(screen.queryByTestId("reply-composer-open")).toBeNull()
+  })
+
+  it("keeps the branch affordances on an unarchived card", async () => {
+    mountCard()
+    await screen.findByText("Opening body.")
+
+    await userEvent.click(screen.getAllByLabelText("Message actions")[0])
+    const entries = (await screen.findAllByRole("menuitem")).map((el) => el.textContent)
+    expect(entries.filter((t) => t?.includes("sub-topic")).length).toBeGreaterThan(0)
+    expect(entries.filter((t) => t?.includes("Quote reply")).length).toBeGreaterThan(0)
   })
 })

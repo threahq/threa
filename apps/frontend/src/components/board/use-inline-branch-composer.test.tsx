@@ -140,6 +140,59 @@ describe("useInlineBranchComposer ?stash= deep-link consumer", () => {
     expect(result.current.renderAfterMessage("msg_fork_b")).toBeNull()
   })
 
+  it("neither opens nor consumes a stash deep-link while the surface is archived", async () => {
+    const draftId = await seedDraft("board:branch-reply:conv_branch")
+    const { result, rerender } = renderHook(
+      ({ archived }: { archived: boolean }) =>
+        useInlineBranchComposer({
+          workspaceId,
+          conversationId: PARENT_ID,
+          memberMessageIds: ["msg_fork", "msg_fork_b"],
+          index,
+          graph: makeGraph(),
+          archived,
+        }),
+      { wrapper: wrapperWithStash(draftId), initialProps: { archived: true } }
+    )
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    expect(result.current.openComposer).toBeNull()
+
+    // The param was never consumed, so unarchiving still honours the deep link.
+    rerender({ archived: false })
+    await waitFor(() =>
+      expect(result.current.openComposer).toEqual({
+        kind: "branch-reply",
+        conversationId: "conv_branch",
+        threadStreamId: "stream_thread_1",
+      })
+    )
+  })
+
+  it("drops an open inline composer when the surface becomes archived mid-session", async () => {
+    const { result, rerender } = renderHook(
+      ({ archived }: { archived: boolean }) =>
+        useInlineBranchComposer({
+          workspaceId,
+          conversationId: PARENT_ID,
+          memberMessageIds: ["msg_fork", "msg_fork_b"],
+          index,
+          graph: makeGraph(),
+          archived,
+        }),
+      { wrapper: wrapperWithStash("draft_none"), initialProps: { archived: false } }
+    )
+    act(() => result.current.openNewSubtopic("stream_9", "msg_fork"))
+    expect(result.current.extraDraftPanelIds).toEqual([createDraftPanelId("stream_9", "msg_fork")])
+
+    rerender({ archived: true })
+    // No stranded state: no open composer, and no dead draft-panel rail left
+    // subscribed — so nothing stays force-pinned after an unarchive either.
+    await waitFor(() => expect(result.current.openComposer).toBeNull())
+    expect(result.current.extraDraftPanelIds).toEqual([])
+    rerender({ archived: false })
+    expect(result.current.openComposer).toBeNull()
+  })
+
   it("ignores stash rows belonging to the panel's own reply scope", async () => {
     // A reply-scope stash is the conversation panel's to consume, not this
     // surface's branch/sub-topic composers.
