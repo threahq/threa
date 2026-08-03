@@ -76,6 +76,7 @@ interface WorkspaceTableEntry {
   rows: IdentifiedRow[] | undefined
   byId: Map<string, IdentifiedRow>
   resolved: boolean
+  emissionSeq: number
   listeners: Set<() => void>
   keyListeners: Map<string, Set<() => void>>
   refCount: number
@@ -129,6 +130,8 @@ export function allocateWorkspaceTableToken(): number {
   return nextToken++
 }
 
+let emissionCounter = 0
+
 function entryKeyFor(workspaceId: string, tableKey: WorkspaceTableKey, token: number): string {
   return mode === "shared" ? `${workspaceId}|${tableKey}` : `${workspaceId}|${tableKey}|${token}`
 }
@@ -146,6 +149,7 @@ function applyEmission(entryKey: string, incoming: IdentifiedRow[]): void {
     entry.byId = new Map(incoming.map((row) => [row.id, row]))
     entry.rows = incoming
     entry.resolved = true
+    entry.emissionSeq = ++emissionCounter
     for (const notify of entry.listeners) notify()
     for (const keyed of entry.keyListeners.values()) {
       for (const notify of keyed) notify()
@@ -179,6 +183,7 @@ function applyEmission(entryKey: string, incoming: IdentifiedRow[]): void {
   const wasResolved = entry.resolved
   entry.byId = byId
   entry.resolved = true
+  entry.emissionSeq = ++emissionCounter
   // A snapshot reference that survives an emission is what keeps array
   // consumers from re-rendering when nothing they read changed.
   if (changed) entry.rows = next
@@ -236,6 +241,7 @@ function ensureEntry(
     rows: undefined,
     byId: new Map(),
     resolved: false,
+    emissionSeq: 0,
     listeners: new Set(),
     keyListeners: new Map(),
     refCount: 0,
@@ -249,6 +255,7 @@ function ensureEntry(
     created.rows = seed.rows
     created.byId = new Map(seed.byId)
     created.resolved = true
+    created.emissionSeq = seed.emissionSeq
   }
   entries.set(entryKey, created)
   created.subscription = liveQuery(() => WORKSPACE_TABLE_QUERIES[tableKey](workspaceId)).subscribe((rows) =>
@@ -415,9 +422,10 @@ function visibleSnapshot(entry: WorkspaceTableEntry | undefined, registration: R
  * moved to its new entry key synchronously, so the flag can arrive or change
  * mid-session without a single hook count changing (D5).
  *
- * The new entry is seeded from a resolved predecessor for the same
- * (workspace, table): the query is identical, so any resolved entry is a correct
- * snapshot. Publishing an unresolved entry instead would regress every consumer
+ * The new entry is seeded from the most recently emitted resolved predecessor
+ * for the same (workspace, table): the query is identical, but private entries
+ * emit independently, so an older resolved snapshot can still be sitting in the
+ * map and would republish rolled-back rows. Publishing an unresolved entry instead would regress every consumer
  * to its bootstrap-era cache fallback for a frame — and the flag itself is read
  * through this registry, so an unresolved metadata entry would flip the mode back
  * and loop.
@@ -436,7 +444,9 @@ export function setWorkspaceReadMode(next: WorkspaceReadMode): void {
   }
   for (const entry of entries.values()) {
     const seedKey = `${entry.workspaceId}|${entry.tableKey}`
-    if (entry.resolved && !seeds.has(seedKey)) seeds.set(seedKey, entry)
+    if (!entry.resolved) continue
+    const held = seeds.get(seedKey)
+    if (!held || entry.emissionSeq > held.emissionSeq) seeds.set(seedKey, entry)
   }
 
   mode = next

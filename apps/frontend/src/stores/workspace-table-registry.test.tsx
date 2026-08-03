@@ -353,4 +353,31 @@ describe("workspace table registry", () => {
       vi.useRealTimers()
     }
   })
+
+  it("an off to shared flip seeds the shared entry from the freshest private snapshot", async () => {
+    let dataset: CachedWorkspaceUser[] = [makeUser("user_1")]
+    vi.spyOn(db.workspaceUsers, "where").mockReturnValue({
+      equals: () => ({ toArray: async () => [...dataset] }),
+    } as unknown as ReturnType<typeof db.workspaceUsers.where>)
+
+    setWorkspaceReadMode("off")
+    const noop = () => {}
+    const staleToken = allocateWorkspaceTableToken()
+    subscribeWorkspaceTable(WORKSPACE, "users", staleToken, noop)
+    await vi.waitFor(() => expect(getWorkspaceTableSnapshot(WORKSPACE, "users", staleToken)).toHaveLength(1))
+
+    dataset = [makeUser("user_1"), makeUser("user_2")]
+    const freshToken = allocateWorkspaceTableToken()
+    subscribeWorkspaceTable(WORKSPACE, "users", freshToken, noop)
+    await vi.waitFor(() => expect(getWorkspaceTableSnapshot(WORKSPACE, "users", freshToken)).toHaveLength(2))
+
+    setWorkspaceReadMode("shared")
+
+    // Synchronously after the flip: the shared entry's own query has not emitted
+    // yet, so this reads exactly what the migration seeded.
+    expect(getWorkspaceTableSnapshot(WORKSPACE, "users", staleToken)?.map((row) => row.id)).toEqual([
+      "user_1",
+      "user_2",
+    ])
+  })
 })
