@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
-import { render, screen } from "@testing-library/react"
+import { render, screen, waitFor } from "@testing-library/react"
+import userEvent from "@testing-library/user-event"
 import { MemoryRouter } from "react-router-dom"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { StreamTypes } from "@threa/types"
@@ -204,7 +205,7 @@ beforeEach(async () => {
 afterEach(() => vi.restoreAllMocks())
 
 describe("BoardCard branches", () => {
-  it("renders the child conversation nested under a branch header inside the parent card", async () => {
+  it("collapses the child conversation to one ledger row, expanding it in place", async () => {
     await db.streams.bulkPut([
       cachedStream("stream_1", StreamTypes.CHANNEL),
       cachedStream("thread_child", StreamTypes.THREAD, {
@@ -238,16 +239,115 @@ describe("BoardCard branches", () => {
     await db.conversations.bulkPut([parent, child])
 
     mount(parent)
-    // Branch header carries the child topic and links to the child's panel.
-    const header = await screen.findByText("GPU budget")
-    expect(header.closest("a")?.getAttribute("href")).toContain("panel=conv%3Aconv_child")
-    // The child's own messages render nested INSIDE the parent card (one card,
-    // Reddit-style), indented under the header's left rail.
+    // Default collapsed: one row naming the branch, with its outcome lead — the
+    // branch's own bodies are not in the document.
+    const row = await screen.findByRole("button", { name: "GPU budget, 2 messages" })
+    expect(screen.queryByText("Child branch first message.")).toBeNull()
+    await userEvent.click(row)
+
+    // Expanded: the child's messages render nested INSIDE the parent card (one
+    // card, Reddit-style), indented under the header's left rail, and the header
+    // links to the child's panel.
     const nested = await screen.findByText("Child branch first message.")
     expect(await screen.findByText("Child branch second message.")).toBeTruthy()
     expect(nested.closest(".border-l-2")).not.toBeNull()
+    expect(screen.getByText("GPU budget").closest("a")?.getAttribute("href")).toContain("panel=conv%3Aconv_child")
     // The branch tail offers the inline Reply affordance (no navigation).
     expect(screen.getByRole("button", { name: "Reply…" })).toBeTruthy()
+
+    // Minimize returns to the collapsed row.
+    await userEvent.click(screen.getByRole("button", { name: "Collapse GPU budget" }))
+    expect(await screen.findByRole("button", { name: "GPU budget, 2 messages" })).toBeTruthy()
+    expect(screen.queryByText("Child branch first message.")).toBeNull()
+  })
+
+  it("shows the branch's message count and its LAST message as the outcome lead", async () => {
+    await db.streams.bulkPut([
+      cachedStream("stream_1", StreamTypes.CHANNEL),
+      cachedStream("thread_child", StreamTypes.THREAD, {
+        parentStreamId: "stream_1",
+        rootStreamId: "stream_1",
+        parentMessageId: "m_open",
+      }),
+    ])
+    const branchIds = ["c1", "c2", "c3", "c4", "c5", "c6"]
+    await db.events.bulkPut(
+      branchIds.map((id, i) =>
+        messageEvent(id, "thread_child", 10 + i, i === branchIds.length - 1 ? "We went with the 5090s." : `Body ${id}.`)
+      )
+    )
+    const parent = makePost({
+      id: "conv_parent",
+      streamId: "stream_1",
+      messageIds: ["m_open"],
+      opening: { id: "m_open", streamId: "stream_1", content: "Hardware refresh opening." },
+      streamIds: ["stream_1"],
+      rootStreamId: "stream_1",
+      topicSummary: "Hardware refresh",
+    })
+    const child = makePost({
+      id: "conv_child",
+      streamId: "thread_child",
+      messageIds: branchIds,
+      opening: { id: "m_open", streamId: "stream_1", content: "Hardware refresh opening." },
+      streamIds: ["thread_child"],
+      rootStreamId: "stream_1",
+      topicSummary: "GPU budget",
+    })
+    await db.conversations.bulkPut([parent, child])
+
+    mount(parent)
+    const row = await screen.findByRole("button", { name: "GPU budget, 6 messages" })
+    expect(row.textContent).toContain("6")
+    await waitFor(() => expect(row.textContent).toContain("We went with the 5090s."))
+    // No branch body is in the document while collapsed.
+    for (const id of branchIds) expect(screen.queryByText(`Body ${id}.`)).toBeNull()
+
+    // Expanding keeps the overflow link into the child's panel intact.
+    await userEvent.click(row)
+    const overflow = await screen.findByText("4 more replies")
+    expect(overflow.closest("a")?.getAttribute("href")).toContain("panel=conv%3Aconv_child")
+  })
+
+  it("carries the settling texture on a collapsed branch row", async () => {
+    await db.streams.bulkPut([
+      cachedStream("stream_1", StreamTypes.CHANNEL),
+      cachedStream("thread_child", StreamTypes.THREAD, {
+        parentStreamId: "stream_1",
+        rootStreamId: "stream_1",
+        parentMessageId: "m_open",
+      }),
+    ])
+    await db.events.bulkPut([messageEvent("c1", "thread_child", 10, "Still provisional here.")])
+    const parent = makePost({
+      id: "conv_parent",
+      streamId: "stream_1",
+      messageIds: ["m_open"],
+      opening: { id: "m_open", streamId: "stream_1", content: "Hardware refresh opening." },
+      streamIds: ["stream_1"],
+      rootStreamId: "stream_1",
+      topicSummary: "Hardware refresh",
+    })
+    const child = makePost({
+      id: "conv_child",
+      streamId: "thread_child",
+      messageIds: ["c1"],
+      opening: { id: "m_open", streamId: "stream_1", content: "Hardware refresh opening." },
+      streamIds: ["thread_child"],
+      rootStreamId: "stream_1",
+      topicSummary: "GPU budget",
+    })
+    // The child's provisional (still-settling) member — the branch row wears the
+    // same texture the settling message rows do.
+    ;(child as unknown as { settlingMessageIds: string[] }).settlingMessageIds = ["c1"]
+    await db.conversations.bulkPut([parent, child])
+
+    const { container } = mount(parent)
+    // The settling state is IN the accessible name: an aria-label overrides the
+    // button's content, so an sr-only span inside it would never be announced.
+    const row = await screen.findByRole("button", { name: "GPU budget, 1 message, still settling" })
+    expect(container.querySelector("[data-ledger-branch-row][data-settling]")).not.toBeNull()
+    expect(row.contains(screen.getByText(/Still settling/))).toBe(false)
   })
 
   it("shows a 'branched from' provenance row on the child card", async () => {

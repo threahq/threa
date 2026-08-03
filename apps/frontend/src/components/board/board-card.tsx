@@ -22,6 +22,7 @@ import {
   BranchProvenanceRow,
   BRANCH_SETTLING_RAIL_CLASS,
   BRANCH_ACCENTED_SETTLING_RAIL_CLASS,
+  type BranchExpansion,
 } from "@/components/board/branch-rows"
 import { resolveBoardEventRows } from "@/lib/board/board-event-rows"
 import { groupBranches, type BranchConversationView } from "@/lib/board/branch-grouping"
@@ -386,6 +387,45 @@ export function BoardCard({
     derivePendingBranches,
     messagesById,
   ])
+  // Pending→graph hand-off: a branch the user just created is pinned open only
+  // while it is pending, and the real conversation id it lands under was never in
+  // the expansion set — so without this the new sub-topic folds the moment its
+  // echo arrives, hiding the message just sent. Fork ids whose pending branch this
+  // card rendered are remembered, and the graph branch that replaces one is adopted
+  // into the expansion set. Post-render (a discarded render must not consume it).
+  const handoffForkIdsRef = useRef<Set<string>>(new Set())
+  useEffect(() => {
+    const handoff = handoffForkIdsRef.current
+    // A sub-topic started on a branch message materializes as a nested child, not
+    // a top-level group, so the whole rendered tree is scanned by fork id.
+    const byFork = new Map<string, BranchConversationView[]>()
+    const walk = (branches: BranchConversationView[]) => {
+      for (const branch of branches) {
+        const list = byFork.get(branch.forkMessageId)
+        if (list) list.push(branch)
+        else byFork.set(branch.forkMessageId, [branch])
+        walk(branch.children)
+      }
+    }
+    for (const branches of branchesByForkMessageId.values()) walk(branches)
+    const adopt: string[] = []
+    for (const [forkMessageId, branches] of byFork) {
+      if (branches.some((b) => b.pending)) {
+        handoff.add(forkMessageId)
+        continue
+      }
+      if (!handoff.delete(forkMessageId)) continue
+      for (const branch of branches) adopt.push(branch.conversationId)
+    }
+    if (adopt.length === 0) return
+    setLedgerExpansion((current) => {
+      const base = current.conversationId === conversation.id ? current.expanded : EMPTY_EXPANDED
+      if (adopt.every((id) => base.has(id))) return current
+      const expanded = new Set(base)
+      for (const id of adopt) expanded.add(id)
+      return { conversationId: conversation.id, expanded }
+    })
+  }, [branchesByForkMessageId, conversation.id])
   // Direct sub-topics under this conversation — the "↳" branch groups, counted
   // for the locator line and collapse pill. Top-level only (grandchildren nest
   // visually but don't inflate the card's headline count).
@@ -525,10 +565,10 @@ export function BoardCard({
         : { conversationId: conversation.id, messageId: firstFullTailId }
     )
   }, [conversation.id, firstFullTailId])
-  // `totalReplies` counts tombstones as zero, so the rendered rows are counted the
-  // same way — replies the rail hasn't synced at all are earlier mass too.
+  // `totalReplies` counts tombstones as zero, so BOTH sides count non-deleted
+  // only — replies the rail hasn't synced at all are earlier mass too.
   const unsyncedOlder = Math.max(0, totalReplies - displayedReplies.filter((m) => !m.deletedAt).length)
-  const earlierCount = hiddenOlder.length + unsyncedOlder
+  const earlierCount = hiddenOlder.filter((m) => !m.deletedAt).length + unsyncedOlder
   // The backfill can outrun the local rail while the head row stands for rows only
   // the server has; the wait and its retry take that same single row, so nothing
   // below them shifts through either state (INV-21). Both are gated on there being
@@ -779,6 +819,33 @@ export function BoardCard({
     )
   }
 
+  // A nested branch is a ledger line on the card: collapsed by default, expanding
+  // in place into the group above. It shares the card's ledger expansion set,
+  // keyed by the branch's conversation id (prefixed ULIDs, so it can't collide
+  // with the message ids in the same set) and reset on conversation switch with it.
+  // Two branches are never collapsible: a pending one (its sub-topic send is still
+  // in flight) and one whose inline composer is open — folding either would eat the
+  // affordance the user is composing into.
+  const openComposer = inlineComposer.openComposer
+  const branchSelfPinned = (branch: BranchConversationView) => {
+    if (branch.pending) return true
+    if (openComposer?.kind === "branch-reply") return openComposer.conversationId === branch.conversationId
+    if (openComposer?.kind === "new-subtopic") return branch.messages.some((m) => m.id === openComposer.messageId)
+    return false
+  }
+  // A descendant's pin pins its ancestors too: a nested branch is reachable only
+  // through them, so collapsing an ancestor would unmount the live composer AND
+  // strand `openComposer` non-null with no mounted UI.
+  const branchPinnedOpen = (branch: BranchConversationView): boolean =>
+    branchSelfPinned(branch) || branch.children.some(branchPinnedOpen)
+  const branchExpansion: BranchExpansion = {
+    workspaceId,
+    leadLineLength,
+    isExpanded: (branch) => branchPinnedOpen(branch) || expandedRowIds.has(branch.conversationId),
+    canCollapse: (branch) => !branchPinnedOpen(branch),
+    toggle: (branch) => toggleLedgerRow(branch.conversationId),
+  }
+
   // Header chrome shared by both header shapes (title-led and message-led), so
   // the chevron/dot/actions don't get duplicated across the two branches.
   const chevronToggle = (
@@ -989,6 +1056,7 @@ export function BoardCard({
                   onSplitThread={onSplitThread}
                   renderBranchMessage={renderBranchMessage}
                   renderBranchTail={inlineComposer.renderBranchTail}
+                  branchExpansion={branchExpansion}
                   renderAfterMessage={inlineComposer.renderAfterMessage}
                   onRedirectSession={openReplyComposer}
                 />
@@ -1007,6 +1075,7 @@ export function BoardCard({
                     onSplitThread={onSplitThread}
                     renderBranchMessage={renderBranchMessage}
                     renderBranchTail={inlineComposer.renderBranchTail}
+                    branchExpansion={branchExpansion}
                     renderAfterMessage={inlineComposer.renderAfterMessage}
                     onRedirectSession={openReplyComposer}
                   />
