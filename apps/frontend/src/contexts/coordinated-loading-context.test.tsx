@@ -879,6 +879,21 @@ describe("CoordinatedLoadingProvider store publication", () => {
     )
   }
 
+  /**
+   * The provider's ten table reads resolve in separate IndexedDB tasks, so one
+   * microtask tick leaves stragglers that would land inside the measured window
+   * and be counted as apply-driven renders. Drain until the count holds still.
+   */
+  async function settleStoreReads(renderCount: () => number): Promise<void> {
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      const before = renderCount()
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 0))
+      })
+      if (renderCount() === before) return
+    }
+  }
+
   function diffBootstrap(): WorkspaceBootstrap {
     return structuredClone(bootstrapBase)
   }
@@ -967,9 +982,7 @@ describe("CoordinatedLoadingProvider store publication", () => {
         <TestConsumer />
       </CoordinatedLoadingProvider>
     )
-    await act(async () => {
-      await Promise.resolve()
-    })
+    await settleStoreReads(() => providerRenders)
     const before = providerRenders
 
     await act(async () => {
@@ -994,9 +1007,7 @@ describe("CoordinatedLoadingProvider store publication", () => {
         <TestConsumer />
       </CoordinatedLoadingProvider>
     )
-    await act(async () => {
-      await Promise.resolve()
-    })
+    await settleStoreReads(() => providerRenders)
     const before = providerRenders
 
     const changed = diffBootstrap()

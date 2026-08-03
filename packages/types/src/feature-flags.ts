@@ -62,6 +62,7 @@ export const FEATURE_FLAGS = {
   // user's own opt-in preference is the consent, and the upload path re-checks
   // both server-side.
   perfDiagnostics: defineFlag({ values: ["off", "available"], scopes: ["workspace", "user"], default: "off" }),
+  sharedWorkspaceReads: defineFlag({ values: ["off", "on"], scopes: ["workspace", "user"], default: "off" }),
 } as const satisfies FeatureFlagRegistry
 
 export type FeatureFlagKey = keyof typeof FEATURE_FLAGS

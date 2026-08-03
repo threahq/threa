@@ -1,13 +1,16 @@
-import { describe, it, expect, beforeEach } from "vitest"
-import { renderHook, act, waitFor } from "@testing-library/react"
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest"
+import { renderHook, act, render, waitFor } from "@testing-library/react"
 import { LabelableResourceTypes } from "@threa/types"
-import { db, type CachedLabelAssignment, type CachedWorkspaceUser } from "@/db"
+import { db, type CachedLabelAssignment, type CachedStream, type CachedWorkspaceUser } from "@/db"
+import * as streamNameCache from "@/lib/crypto/stream-name-cache"
+import { resetWorkspaceTableRegistry, setWorkspaceReadMode } from "./workspace-table-registry"
 import {
   resetWorkspaceStoreCache,
   seedWorkspaceCache,
   upsertWorkspaceUserInCache,
   useWorkspaceLabelAssignments,
   useWorkspaceMetadata,
+  useWorkspaceStreams,
   useWorkspaceUsers,
 } from "./workspace-store"
 
@@ -62,6 +65,12 @@ function seedWithUsers(users: CachedWorkspaceUser[]): void {
 describe("workspace store cache subscriptions", () => {
   beforeEach(() => {
     resetWorkspaceStoreCache()
+    resetWorkspaceTableRegistry()
+  })
+
+  afterEach(() => {
+    resetWorkspaceTableRegistry()
+    vi.restoreAllMocks()
   })
 
   it("rerenders existing array readers when the workspace cache is seeded", () => {
@@ -225,5 +234,87 @@ describe("workspace store cache subscriptions", () => {
     })
 
     await waitFor(() => expect(result.current).toEqual([]))
+  })
+
+  it("an incremental socket delete still empties the hook", async () => {
+    // Same contract as the case above, re-asserted through the shared registry:
+    // an emptied IDB must win over the bootstrap cache, or a socket unassign is
+    // masked until the next bootstrap.
+    setWorkspaceReadMode("shared")
+    await db.labelAssignments.clear()
+    const assignment: CachedLabelAssignment = {
+      id: "workspace_1:stream:stream_9:label_9:user_1",
+      workspaceId: "workspace_1",
+      labelId: "label_9",
+      resourceType: LabelableResourceTypes.STREAM,
+      resourceId: "stream_9",
+      userId: "user_1",
+      assignedAt: "2026-03-01T10:00:00Z",
+      _cachedAt: Date.now(),
+    }
+    await db.labelAssignments.put(assignment)
+    act(() => {
+      seedWorkspaceCache("workspace_1", {
+        workspace: {
+          id: "workspace_1",
+          name: "Workspace",
+          slug: "workspace",
+          createdAt: "2026-03-01T10:00:00Z",
+          updatedAt: "2026-03-01T10:00:00Z",
+          _cachedAt: Date.now(),
+        },
+        users: [],
+        streams: [],
+        memberships: [],
+        dmPeers: [],
+        personas: [],
+        bots: [],
+        labelAssignments: [assignment],
+      })
+    })
+
+    const { result } = renderHook(() => useWorkspaceLabelAssignments("workspace_1"))
+    await waitFor(() => expect(result.current.map((a) => a.id)).toEqual([assignment.id]))
+
+    await act(async () => {
+      await db.labelAssignments.delete(assignment.id)
+    })
+
+    await waitFor(() => expect(result.current).toEqual([]))
+  })
+
+  it("the decrypted-name overlay is applied once per workspace, not once per consumer", async () => {
+    setWorkspaceReadMode("shared")
+    await db.streams.clear()
+    const stream: CachedStream = {
+      id: "stream_overlay",
+      workspaceId: "workspace_1",
+      type: "channel",
+      slug: "general",
+      displayName: "General",
+      _cachedAt: 1,
+    } as CachedStream
+    await db.streams.put(stream)
+
+    const overlay = vi.spyOn(streamNameCache, "applyDecryptedNameOverlay")
+
+    function TenConsumers() {
+      const rows: CachedStream[][] = []
+      for (let i = 0; i < 10; i++) {
+        rows.push(useWorkspaceStreams("workspace_1"))
+      }
+      return <div>{rows[0].length}</div>
+    }
+
+    const { findByText } = render(<TenConsumers />)
+    await findByText("1")
+    const afterMount = overlay.mock.calls.length
+
+    await act(async () => {
+      await db.streams.put({ ...stream, displayName: "Renamed", _cachedAt: 2 })
+    })
+    await waitFor(() => expect(overlay.mock.calls.length).toBeGreaterThan(afterMount))
+
+    expect(overlay.mock.calls.length - afterMount).toBe(1)
   })
 })
