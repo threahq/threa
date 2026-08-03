@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
-import { render, screen, act } from "@testing-library/react"
+import { cleanup, render, screen, act } from "@testing-library/react"
 import { MemoryRouter } from "react-router-dom"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import type { BoardPostMessage } from "@threa/types"
@@ -75,6 +75,10 @@ class FakeIntersectionObserver {
   }
 }
 
+// The card's ledger wants the whole conversation window, so it arms the backfill
+// whenever the local rail is short — the harness answers it (an absent method
+// would throw inside the query, off the test's own await path).
+const getBoardMessages = vi.fn().mockResolvedValue([])
 const markRead = vi.fn().mockResolvedValue({ streams: [] })
 const markUnread = vi.fn().mockResolvedValue({ streams: [] })
 
@@ -83,7 +87,7 @@ function mountCard(onSeen?: () => void) {
   render(
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>
-        <ServicesProvider services={{ conversations: { markRead, markUnread } as never }}>
+        <ServicesProvider services={{ conversations: { markRead, markUnread, getBoardMessages } as never }}>
           <MemoryRouter initialEntries={[`/w/${WS}/board`]}>
             <PanelProvider>
               <BoardCard
@@ -166,6 +170,10 @@ beforeEach(() => {
 })
 
 afterEach(() => {
+  // Unmount BEFORE the mocks are restored: the card's backfill settles
+  // asynchronously, and a still-mounted card re-rendering against restored (real)
+  // hooks blows up on the hook-count difference.
+  cleanup()
   vi.runOnlyPendingTimers()
   vi.useRealTimers()
   vi.unstubAllGlobals()
