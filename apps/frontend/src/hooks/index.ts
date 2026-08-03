@@ -181,7 +181,7 @@ export { usePanelLayout } from "./use-panel-layout"
 
 export { useResizeDrag } from "./use-resize-drag"
 
-export { useTypeToFocus, focusAtEnd } from "./use-type-to-focus"
+export { useTypeToFocus, focusAtEnd, findVisibleZoneEditor } from "./use-type-to-focus"
 
 export { useVisualViewport } from "./use-visual-viewport"
 

@@ -263,6 +263,11 @@ function BoardReplyComposerForm({
       placeholder="Write a reply…"
       contextChip={isMobile && contextChip ? `Replying in ${contextChip}` : undefined}
       docked={docked}
+      // A card reply is a beat in an ongoing conversation, not a completed act:
+      // the desktop in-place form stays open and focused after a send instead of
+      // collapsing to the resting bar (Kris, 2026-08). The mobile floating pill
+      // still dismisses (the prop is ignored while floating).
+      keepOpenAfterSend
       replyTarget={
         armedReply
           ? { title: armedReply.title, moveDraftToKey: rootReplyKey, onCancel: armedReply.onCancel }

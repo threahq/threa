@@ -7,7 +7,7 @@ import { ThreadPanelSlot, panelTakeoverClasses } from "@/components/layout"
 import { PanelHost } from "@/components/layout/panel-host"
 import { SidebarToggle } from "@/components/layout/sidebar-toggle"
 import { usePanel, usePreferencesOptional, useSidebar } from "@/contexts"
-import { usePanelLayout } from "@/hooks"
+import { usePanelLayout, useTypeToFocus } from "@/hooks"
 import { resolveStreamName } from "@/lib/streams"
 import { localStartOfDayMs } from "@/lib/dates"
 import {
@@ -201,6 +201,7 @@ export function BoardPage() {
 }
 
 function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: BoardLens }) {
+  useTypeToFocus()
   const { isMobile } = useSidebar()
   const { isPanelOpen, closePanel } = usePanel()
   // The board's filters live in the URL (INV-59) — six params, three dimensions
@@ -896,6 +897,7 @@ function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: Boar
             style={{ overflowAnchor: "none" }}
           >
             <main
+              data-editor-zone="main"
               className="mx-auto w-full max-w-[800px] px-2 sm:px-4"
               // Reserve space under the feed while a mobile floating composer is
               // open, so the reply target can scroll above the pill; 0 otherwise.

@@ -273,6 +273,29 @@ describe("BoardPage", () => {
     expect(await screen.findByText("Nothing on the board yet")).toBeTruthy()
   })
 
+  it("captures stray typing into the feed's composer zone (type-to-focus is mounted)", async () => {
+    mountBoard([makePost({}, { contentMarkdown: "Rotate the tokens before Friday." })])
+    await screen.findByText("Rotate the tokens before Friday.")
+
+    const zone = document.querySelector<HTMLElement>('main[data-editor-zone="main"]')
+    expect(zone).not.toBeNull()
+    const editor = document.createElement("div")
+    editor.setAttribute("contenteditable", "true")
+    // jsdom gives everything zero client rects; the zone lookup takes the last
+    // editor that is rendered AND on screen, so this stand-in has to report both.
+    Object.defineProperty(editor, "getClientRects", { value: () => [{ width: 10, height: 10 }] })
+    Object.defineProperty(editor, "getBoundingClientRect", {
+      value: () => ({ top: 100, bottom: 140, left: 0, right: 300 }),
+    })
+    zone!.appendChild(editor)
+
+    act(() => {
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "a", bubbles: true, cancelable: true }))
+    })
+
+    expect(document.activeElement).toBe(editor)
+  })
+
   it("renders the opening-message body", async () => {
     mountBoard([makePost({}, { contentMarkdown: "Rotate the tokens before Friday." })])
     expect(await screen.findByText("Rotate the tokens before Friday.")).toBeTruthy()

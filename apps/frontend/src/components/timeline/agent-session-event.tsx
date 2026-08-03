@@ -14,9 +14,8 @@ import type {
 import { useTrace } from "@/contexts"
 import { RelativeTime } from "@/components/relative-time"
 import { formatDuration } from "@/lib/dates"
-import { focusAtEnd } from "@/hooks"
+import { findVisibleZoneEditor, focusAtEnd } from "@/hooks"
 import { StopSessionButton, RedirectSessionButton } from "@/components/trace/session-action-buttons"
-import { findVisibleZoneEditor } from "./message-event"
 import { SessionEffectGrid } from "./session-effect-grid"
 import { unionSessionEffects } from "@/lib/effect-links"
 
