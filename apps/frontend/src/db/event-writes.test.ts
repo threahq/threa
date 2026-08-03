@@ -221,4 +221,22 @@ describe("isEventWriteChunkingEnabled", () => {
 
     expect(await isEventWriteChunkingEnabled(db, "ws_1")).toBe(false)
   })
+
+  it("a prime landing mid-read wins over the older persisted row", async () => {
+    await putMetadata({ workspace: { eventWriteChunking: "off" }, user: {} })
+    let release: () => void = () => {}
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const real = db.workspaceMetadata.get.bind(db.workspaceMetadata)
+    vi.spyOn(db.workspaceMetadata, "get").mockImplementation(((key: string) =>
+      gate.then(() => real(key))) as unknown as typeof db.workspaceMetadata.get)
+
+    const inFlight = isEventWriteChunkingEnabled(db, "ws_1")
+    primeEventWriteFlags("ws_1", { workspace: { eventWriteChunking: "on" }, user: {} })
+    release()
+
+    expect(await inFlight).toBe(true)
+    expect(await isEventWriteChunkingEnabled(db, "ws_1")).toBe(true)
+  })
 })

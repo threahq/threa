@@ -75,6 +75,7 @@ export function skipNoOpEventRewrites(
 type EventWriteFlags = { chunking: boolean; indexedMessagePatch: boolean }
 
 const flagsByWorkspace = new Map<string, EventWriteFlags>()
+let primeGeneration = 0
 
 function resolveEventWriteFlags(layers: FeatureFlagLayers | null | undefined): EventWriteFlags {
   const resolved = resolveFeatureFlags(coerceLayers(layers ?? null) ?? EMPTY_FLAG_LAYERS)
@@ -86,19 +87,25 @@ function resolveEventWriteFlags(layers: FeatureFlagLayers | null | undefined): E
 
 /** Seed the cache from freshly delivered layers (bootstrap response or flag-flip socket event). */
 export function primeEventWriteFlags(workspaceId: string, layers: FeatureFlagLayers | null | undefined): void {
+  primeGeneration += 1
   flagsByWorkspace.set(workspaceId, resolveEventWriteFlags(layers))
 }
 
 /** Test-only: drop the cache so each case resolves from its own prime/IDB row. */
 export function resetEventWriteFlags(): void {
+  primeGeneration += 1
   flagsByWorkspace.clear()
 }
 
 async function getEventWriteFlags(database: ThreaDatabase, workspaceId: string): Promise<EventWriteFlags> {
   const cached = flagsByWorkspace.get(workspaceId)
   if (cached !== undefined) return cached
+  // The persisted row is the warm-start fallback, so a prime that lands while
+  // this read is in flight is strictly newer and must win (INV-20).
+  const generation = primeGeneration
   const metadata = await database.workspaceMetadata.get(workspaceId)
   const flags = resolveEventWriteFlags(metadata?.featureFlags)
+  if (primeGeneration !== generation) return flagsByWorkspace.get(workspaceId) ?? flags
   flagsByWorkspace.set(workspaceId, flags)
   return flags
 }
