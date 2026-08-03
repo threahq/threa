@@ -88,6 +88,16 @@ describe("perf-capture create handler", () => {
     expect(res.statusCode).toBe(201)
   })
 
+  it("a malformed non-string sample name still 400s", async () => {
+    const err = await failure({ ...validCapture, samples: [{ name: 42, at: 1, value: 12 }] })
+    expect({ status: err.status, code: err.code }).toEqual({ status: 400, code: "VALIDATION_ERROR" })
+  })
+
+  it("a missing sample name still 400s", async () => {
+    const err = await failure({ ...validCapture, samples: [{ at: 1, value: 12 }] })
+    expect({ status: err.status, code: err.code }).toEqual({ status: 400, code: "VALIDATION_ERROR" })
+  })
+
   it("rejects a capture over the sample cap", async () => {
     const samples = Array.from({ length: PERF_CAPTURE_MAX_SAMPLES + 1 }, (_, i) => ({ name: "liveQuery.rerun", at: i }))
     const err = await failure({ ...validCapture, samples })

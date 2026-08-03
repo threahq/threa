@@ -25,10 +25,13 @@ export function createPerfDiagnosticsHandlers({ perfDiagnosticsService }: Depend
       const body = req.body as { samples?: unknown }
       if (Array.isArray(body?.samples)) {
         const known = new Set<string>(PERF_MARK_NAMES)
-        body.samples = body.samples.filter(
-          (sample) =>
-            typeof (sample as { name?: unknown })?.name === "string" && known.has((sample as { name: string }).name)
-        )
+        // Only a *string* name the set doesn't know is a deploy-window sample;
+        // a non-string name is malformed and stays loud — it flows to the
+        // schema and 400s as before.
+        body.samples = body.samples.filter((sample) => {
+          const name = (sample as { name?: unknown })?.name
+          return typeof name !== "string" || known.has(name)
+        })
       }
       const capture = validateRequest(performanceCaptureSchema, req.body)
 
