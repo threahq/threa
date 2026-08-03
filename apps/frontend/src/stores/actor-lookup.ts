@@ -48,6 +48,7 @@ export interface ActorLookup {
 }
 
 export interface WorkspaceEmojiIndexes {
+  workspaceId: string | null
   emojis: EmojiEntry[]
   emojiWeights: Record<string, number>
   toEmoji: (shortcode: string) => string | null
@@ -75,6 +76,8 @@ export function actorTypeFromId(id: string): AuthorType {
 const emojiIndexes = new WeakMap<EmojiEntry[], WorkspaceEmojiIndexes>()
 
 const EMPTY_EMOJI_INDEXES: WorkspaceEmojiIndexes = {
+  // Safe to share across workspaces: every accessor returns undefined/null.
+  workspaceId: null,
   emojis: Object.freeze([]) as unknown as EmojiEntry[],
   emojiWeights: Object.freeze({}) as Record<string, number>,
   getEmoji: () => undefined,
@@ -112,11 +115,16 @@ let actorLookups = new WeakMap<readonly ActorRow[], ActorLookupEntry>()
  * consumer of the same rows gets the same object identity.
  */
 export function getWorkspaceEmojiIndexes(
+  workspaceId: string,
   emojis: EmojiEntry[],
   emojiWeights: Record<string, number>
 ): WorkspaceEmojiIndexes {
+  // workspaceId and weights participate in the hit: `EMPTY_EMOJIS` is a module
+  // singleton shared across workspaces, so an emojis-only key would serve one
+  // workspace's weights (quick-bar ranking) to another whose metadata row also
+  // lacks an emoji set — the same cross-workspace class getActorLookup guards.
   const cached = emojiIndexes.get(emojis)
-  if (cached) return cached
+  if (cached && cached.workspaceId === workspaceId && cached.emojiWeights === emojiWeights) return cached
   // The pre-resolution empty set is every consumer's first read; indexing it
   // would be a build per mount for a map that can only be empty.
   if (emojis.length === 0 && Object.keys(emojiWeights).length === 0) return EMPTY_EMOJI_INDEXES
@@ -130,6 +138,7 @@ export function getWorkspaceEmojiIndexes(
   const getEmoji = (shortcode: string): EmojiEntry | undefined =>
     shortcodeIndex.get(emojiPicker.stripShortcodeColons(shortcode))
   const indexes: WorkspaceEmojiIndexes = {
+    workspaceId,
     emojis,
     emojiWeights,
     getEmoji,

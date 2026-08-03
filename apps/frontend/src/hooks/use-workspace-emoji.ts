@@ -28,5 +28,5 @@ export function useWorkspaceEmoji(workspaceId: string): WorkspaceEmojiData {
   const metadata = useWorkspaceMetadata(workspaceId)
   const emojis = (metadata?.emojis ?? EMPTY_EMOJIS) as EmojiEntry[]
   const emojiWeights = metadata?.emojiWeights ?? EMPTY_WEIGHTS
-  return getWorkspaceEmojiIndexes(emojis, emojiWeights)
+  return getWorkspaceEmojiIndexes(workspaceId, emojis, emojiWeights)
 }
