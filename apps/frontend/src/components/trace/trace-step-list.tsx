@@ -1,6 +1,7 @@
-import { useRef, useEffect, useState, type ReactNode } from "react"
-import { PI_TOOL_TRACE_FORMAT, type AgentSessionStep, type AgentStepType } from "@threa/types"
+import { useRef, useEffect, useMemo, useState, useSyncExternalStore, type ReactNode } from "react"
+import { PI_TOOL_TRACE_FORMAT, PiToolTraceSectionLabels, type AgentSessionStep, type AgentStepType } from "@threa/types"
 import type { StreamingSubstep } from "@/hooks/use-agent-trace"
+import { getCachedDecryption, getDecryptCacheVersion, subscribeDecryptCacheVersion } from "@/lib/crypto/decrypt-cache"
 import { TraceStep } from "./trace-step"
 import { cn } from "@/lib/utils"
 import { STEP_DISPLAY_CONFIG } from "@/lib/step-config"
@@ -17,7 +18,6 @@ const WORK_CONFIG = STEP_DISPLAY_CONFIG.tool_call
 const workHue = (alpha?: number) =>
   `hsl(${WORK_CONFIG.hue} ${WORK_CONFIG.saturation}% ${WORK_CONFIG.lightness}%${alpha === undefined ? "" : ` / ${alpha}`})`
 
-/** The row's own `N tool calls` carries the total, so the chips never need a "+N" tail. */
 const MAX_TOOL_CHIPS = 3
 /** A phone fits two chips on the wrapped line; a third truncates all of them to noise. */
 const MAX_TOOL_CHIPS_MOBILE = 2
@@ -50,6 +50,13 @@ export function TraceStepList({
   onSteerSession,
 }: TraceStepListProps) {
   const highlightRef = useRef<HTMLDivElement>(null)
+  // Grouping and the collapsed-row chips read a sealed step's plaintext out of
+  // the module-global decrypt cache (the same entry `TraceStep` fills a level
+  // down), so the list needs to re-render when one lands. One global-version
+  // subscription for the whole list, not one per step: a trace is a bounded
+  // list rendered inside a dialog, and per-key subscriptions here would fan out
+  // across every step for a value only the group summary reads.
+  useSyncExternalStore(subscribeDecryptCacheVersion, getDecryptCacheVersion, getDecryptCacheVersion)
   const displayItems = groupBotWorkByThinking(steps)
   let latestPhaseIndex = -1
   for (let index = displayItems.length - 1; index >= 0; index--) {
@@ -135,13 +142,19 @@ function BotWorkingSection({
   const [detailsOpen, setDetailsOpen] = useState(errorCount > 0)
   const open = containsHighlight || detailsOpen
   const lastTool = tools.at(-1)!
-  const preview = active ? toolPreview(lastTool.content) : null
+  const preview = active ? toolPreview(resolveStepContent(lastTool)) : null
 
   useEffect(() => {
     if (errorCount > 0) setDetailsOpen(true)
   }, [errorCount])
-  const toolLabel = `${tools.length} tool ${tools.length === 1 ? "call" : "calls"}`
-  const chips = tools.slice(0, isMobile ? MAX_TOOL_CHIPS_MOBILE : MAX_TOOL_CHIPS)
+  // A tool call is two steps on the wire (the use and its result), so the count
+  // and the chips are derived from paired calls, never from step rows.
+  const calls = useMemo(() => deriveToolCalls(tools), [tools])
+  const callCount = calls.length
+  const toolLabel = `${callCount} tool ${callCount === 1 ? "call" : "calls"}`
+  const allChips = dedupeChips(calls)
+  const chips = allChips.slice(0, isMobile ? MAX_TOOL_CHIPS_MOBILE : MAX_TOOL_CHIPS)
+  const hiddenChipCount = allChips.length - chips.length
 
   return (
     <div
@@ -188,9 +201,12 @@ function BotWorkingSection({
           )}
           {!preview && !open && (
             <span className="order-last flex min-w-0 basis-full items-center gap-1.5 overflow-hidden sm:order-none sm:basis-0 sm:flex-1">
-              {chips.map((step) => (
-                <ToolChip key={step.id} step={step} />
+              {chips.map((chip) => (
+                <ToolChip key={chip.key} chip={chip} />
               ))}
+              {hiddenChipCount > 0 && (
+                <span className="shrink-0 text-[10.5px] tabular-nums text-muted-foreground">+{hiddenChipCount}</span>
+              )}
             </span>
           )}
 
@@ -209,9 +225,9 @@ function BotWorkingSection({
   )
 }
 
-function ToolChip({ step }: { step: AgentSessionStep }) {
-  const isError = step.stepType === "tool_error"
-  const label = toolPreview(step.content)?.headline ?? "Tool call"
+function ToolChip({ chip }: { chip: ToolChipItem }) {
+  const isError = chip.isError
+  const label = chip.count > 1 ? `${chip.headline} ×${chip.count}` : chip.headline
   return (
     <span
       className={cn(
@@ -223,6 +239,96 @@ function ToolChip({ step }: { step: AgentSessionStep }) {
       {label}
     </span>
   )
+}
+
+interface ToolCall {
+  /** Identity for React keys: the id of the step that opened the call. */
+  key: string
+  headline: string
+  isError: boolean
+}
+
+type ToolChipItem = ToolCall & { count: number }
+
+/**
+ * One entry per tool call the agent actually made.
+ *
+ * A single call reaches the trace as TWO steps sharing one headline — the tool
+ * use and its result — so counting `tool_call` rows doubles the number the
+ * agent would recognise. The payload carries no tool id (the redactor strips
+ * arguments, not just values), so the pairing identity is the section label:
+ * Arguments/Details opens a call, Output/Error output closes the open one with
+ * the same headline. Steps carrying neither label (truncated or undecryptable
+ * traces) fall back to collapsing a consecutive same-headline run into one call.
+ */
+function deriveToolCalls(tools: AgentSessionStep[]): ToolCall[] {
+  const calls: ToolCall[] = []
+  // Parallel tool batches arrive as [useA, useB, resA, resB], so a single open
+  // slot mispairs them; results bind FIFO, headline match preferred.
+  const openIndices: number[] = []
+
+  for (const step of tools) {
+    const content = resolveStepContent(step)
+    const headline = toolPreview(content)?.headline ?? "Tool call"
+    const role = toolStepRole(content)
+    const isError = step.stepType === "tool_error"
+
+    if (role === "result" && openIndices.length > 0) {
+      const matchAt = openIndices.findIndex((index) => calls[index].headline === headline)
+      const [closedIndex] = openIndices.splice(matchAt >= 0 ? matchAt : 0, 1)
+      if (isError) calls[closedIndex].isError = true
+      continue
+    }
+    if (role === "unknown" && openIndices.length === 0) {
+      const last = calls.at(-1)
+      if (last && last.headline === headline) {
+        if (isError) last.isError = true
+        continue
+      }
+    }
+    calls.push({ key: step.id, headline, isError })
+    if (role === "use") openIndices.push(calls.length - 1)
+  }
+
+  return calls
+}
+
+/** Consecutive identical calls become one chip carrying how many times it ran. */
+function dedupeChips(calls: ToolCall[]): ToolChipItem[] {
+  const chips: ToolChipItem[] = []
+  for (const call of calls) {
+    const last = chips.at(-1)
+    if (last && last.headline === call.headline && last.isError === call.isError) {
+      last.count += 1
+      continue
+    }
+    chips.push({ ...call, count: 1 })
+  }
+  return chips
+}
+
+function toolStepRole(content: unknown): "use" | "result" | "unknown" {
+  const parsed = parseToolTrace(content)
+  const sections: unknown[] = Array.isArray(parsed?.sections) ? parsed.sections : []
+  for (const section of sections) {
+    if (!section || typeof section !== "object" || !("label" in section)) continue
+    const label = section.label
+    if (label === PiToolTraceSectionLabels.OUTPUT || label === PiToolTraceSectionLabels.ERROR_OUTPUT) return "result"
+    if (label === PiToolTraceSectionLabels.ARGUMENTS || label === PiToolTraceSectionLabels.DETAILS) return "use"
+  }
+  return "unknown"
+}
+
+/**
+ * A sealed step's `content` is undefined here — decryption happens inside
+ * `TraceStep`, a level below the grouping. Read the same module-global cache
+ * entry it fills so sealed traces group and chip like plaintext ones instead of
+ * silently falling out of the Working section.
+ */
+function resolveStepContent(step: AgentSessionStep): unknown {
+  if (step.content !== undefined && step.content !== null) return step.content
+  const cached = getCachedDecryption(step.id)
+  return cached?.status === "decrypted" ? cached.value?.contentMarkdown : undefined
 }
 
 function groupBotWorkByThinking(steps: AgentSessionStep[]): TraceStepDisplayItem[] {
@@ -252,7 +358,8 @@ function groupBotWorkByThinking(steps: AgentSessionStep[]): TraceStepDisplayItem
 function isLowLevelBotToolStep(step: AgentSessionStep): boolean {
   if (step.stepType !== "tool_call" && step.stepType !== "tool_error") return false
   if (!step.completedAt) return false
-  return parseToolTrace(step.content)?.format === PI_TOOL_TRACE_FORMAT || looksLikeTruncatedToolTrace(step.content)
+  const content = resolveStepContent(step)
+  return parseToolTrace(content)?.format === PI_TOOL_TRACE_FORMAT || looksLikeTruncatedToolTrace(content)
 }
 
 function toolPreview(content: unknown): { headline: string; detail: string | null } | null {

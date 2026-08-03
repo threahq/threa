@@ -5,6 +5,31 @@ import { MemoryRouter } from "react-router-dom"
 import { PI_TOOL_TRACE_FORMAT, PiToolTraceSectionLabels, type AgentSessionStep } from "@threa/types"
 import { TraceStepList } from "./trace-step-list"
 import * as relativeTimeModule from "@/components/relative-time"
+import { clearDecryptCache, seedDecryption } from "@/lib/crypto/decrypt-cache"
+
+function toolUse(id: string, stepNumber: number, headline: string): AgentSessionStep {
+  return createStep({
+    id,
+    stepNumber,
+    content: JSON.stringify({
+      format: PI_TOOL_TRACE_FORMAT,
+      headline,
+      sections: [{ label: PiToolTraceSectionLabels.ARGUMENTS, body: "Arguments omitted for safety.", lang: null }],
+    }),
+  })
+}
+
+function toolResult(id: string, stepNumber: number, headline: string): AgentSessionStep {
+  return createStep({
+    id,
+    stepNumber,
+    content: JSON.stringify({
+      format: PI_TOOL_TRACE_FORMAT,
+      headline,
+      sections: [{ label: PiToolTraceSectionLabels.OUTPUT, body: "Tool output omitted for safety.", lang: null }],
+    }),
+  })
+}
 
 function createStep(overrides: Partial<AgentSessionStep> = {}): AgentSessionStep {
   return {
@@ -48,6 +73,7 @@ function renderList(steps: AgentSessionStep[], isSessionRunning = false, highlig
 describe("TraceStepList", () => {
   beforeEach(() => {
     vi.restoreAllMocks()
+    clearDecryptCache()
     vi.spyOn(relativeTimeModule, "RelativeTime").mockImplementation((() => (
       <span>just now</span>
     )) as unknown as typeof relativeTimeModule.RelativeTime)
@@ -231,6 +257,119 @@ describe("TraceStepList", () => {
     expect(screen.getByText("Working")).toBeInTheDocument()
     expect(screen.getByText("2 tool calls")).toBeInTheDocument()
     expect(screen.queryByText("Thinking")).not.toBeInTheDocument()
+  })
+
+  it("counts paired use/result steps as one call each and collapses repeats into one chip", () => {
+    renderList([
+      toolUse("use_1", 1, "Running shell command"),
+      toolResult("res_1", 2, "Running shell command"),
+      toolUse("use_2", 3, "Running shell command"),
+      toolResult("res_2", 4, "Running shell command"),
+    ])
+
+    expect(screen.getByText("2 tool calls")).toBeInTheDocument()
+    expect(screen.getByText("Running shell command ×2")).toBeInTheDocument()
+    expect(screen.queryByText("Running shell command")).not.toBeInTheDocument()
+  })
+
+  it("keeps distinct tools as their own chips within a mixed run", () => {
+    renderList([
+      toolUse("use_1", 1, "Running shell command"),
+      toolResult("res_1", 2, "Running shell command"),
+      toolUse("use_2", 3, "Running shell command"),
+      toolResult("res_2", 4, "Running shell command"),
+      toolUse("use_3", 5, "Reading file src/app.ts"),
+      toolResult("res_3", 6, "Reading file src/app.ts"),
+    ])
+
+    expect(screen.getByText("3 tool calls")).toBeInTheDocument()
+    expect(screen.getByText("Running shell command ×2")).toBeInTheDocument()
+    expect(screen.getByText("Reading file src/app.ts")).toBeInTheDocument()
+  })
+
+  it("says one call and drops the repeat suffix for a single tool call", () => {
+    renderList([toolUse("use_1", 1, "Running shell command"), toolResult("res_1", 2, "Running shell command")])
+
+    expect(screen.getByText("1 tool call")).toBeInTheDocument()
+    expect(screen.getByText("Running shell command")).toBeInTheDocument()
+  })
+
+  it("shows the overflow affordance over deduped chips, not steps", () => {
+    const steps = ["alpha", "alpha", "bravo", "charlie", "delta"].flatMap((name, index) => [
+      toolUse(`use_${index}`, index * 2 + 1, `Running ${name}`),
+      toolResult(`res_${index}`, index * 2 + 2, `Running ${name}`),
+    ])
+    renderList(steps)
+
+    expect(screen.getByText("5 tool calls")).toBeInTheDocument()
+    expect(screen.getByText("Running alpha ×2")).toBeInTheDocument()
+    // 4 deduped chips, 3 shown → one hidden, even though 10 steps went in.
+    expect(screen.getByText("+1")).toBeInTheDocument()
+  })
+
+  it("counts a parallel batch of the same tool as one call per use", () => {
+    renderList([
+      toolUse("use_1", 1, "Running shell command"),
+      toolUse("use_2", 2, "Running shell command"),
+      toolResult("res_1", 3, "Running shell command"),
+      toolResult("res_2", 4, "Running shell command"),
+    ])
+
+    expect(screen.getByText("2 tool calls")).toBeInTheDocument()
+    expect(screen.getByText("Running shell command ×2")).toBeInTheDocument()
+  })
+
+  it("counts a parallel batch whose results come back out of order", () => {
+    renderList([
+      toolUse("use_1", 1, "Running shell command"),
+      toolUse("use_2", 2, "Reading file src/app.ts"),
+      toolResult("res_2", 3, "Reading file src/app.ts"),
+      toolResult("res_1", 4, "Running shell command"),
+    ])
+
+    expect(screen.getByText("2 tool calls")).toBeInTheDocument()
+  })
+
+  it("keeps a mixed parallel batch as one chip per distinct tool", () => {
+    renderList([
+      toolUse("use_1", 1, "Running shell command"),
+      toolUse("use_2", 2, "Reading file src/app.ts"),
+      toolResult("res_1", 3, "Running shell command"),
+      toolResult("res_2", 4, "Reading file src/app.ts"),
+    ])
+
+    expect(screen.getByText("2 tool calls")).toBeInTheDocument()
+    expect(screen.getByText("Running shell command")).toBeInTheDocument()
+    expect(screen.getByText("Reading file src/app.ts")).toBeInTheDocument()
+  })
+
+  it("binds a result whose headline degraded to the open call instead of fabricating one", () => {
+    renderList([toolUse("use_1", 1, "Running shell command"), toolResult("res_1", 2, "Used bash")])
+
+    expect(screen.getByText("1 tool call")).toBeInTheDocument()
+    expect(screen.getByText("Running shell command")).toBeInTheDocument()
+    expect(screen.queryByText("Used bash")).not.toBeInTheDocument()
+  })
+
+  it("groups and chips sealed steps from the decrypt cache", () => {
+    const sealedContent = (headline: string, label: string) =>
+      JSON.stringify({ format: PI_TOOL_TRACE_FORMAT, headline, sections: [{ label, body: "sealed", lang: null }] })
+    seedDecryption("sealed_use", {
+      contentMarkdown: sealedContent("Running shell command", PiToolTraceSectionLabels.ARGUMENTS),
+      contentJson: { type: "doc", content: [] },
+    })
+    seedDecryption("sealed_result", {
+      contentMarkdown: sealedContent("Running shell command", PiToolTraceSectionLabels.OUTPUT),
+      contentJson: { type: "doc", content: [] },
+    })
+
+    renderList([
+      createStep({ id: "sealed_use", stepNumber: 1, content: undefined }),
+      createStep({ id: "sealed_result", stepNumber: 2, content: undefined }),
+    ])
+
+    expect(screen.getByText("1 tool call")).toBeInTheDocument()
+    expect(screen.getByText("Running shell command")).toBeInTheDocument()
   })
 
   it("leaves non-bot tool steps as regular trace rows", () => {
