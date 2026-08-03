@@ -479,6 +479,18 @@ describe("MessageEvent", () => {
         0: { width: 1, height: 1 } as DOMRect,
       } as unknown as DOMRectList
       vi.spyOn(zoneEditor, "getClientRects").mockReturnValue(rects)
+      vi.spyOn(zoneEditor, "getBoundingClientRect").mockReturnValue({
+        top: 100,
+        bottom: 140,
+        left: 0,
+        right: 300,
+      } as DOMRect)
+      vi.spyOn(zoneEditor, "getBoundingClientRect").mockReturnValue({
+        top: 100,
+        bottom: 140,
+        left: 0,
+        right: 300,
+      } as DOMRect)
 
       await act(async () => {
         capturedHandler?.()
