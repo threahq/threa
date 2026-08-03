@@ -423,7 +423,7 @@ export function Sidebar({ workspaceId }: SidebarProps) {
   } else if (hasQuickLinksSection) {
     quickLinksSlot = (
       <>
-        <BoardLinkRow workspaceId={workspaceId} userId={user?.id ?? null} unreadStreamCount={unreadStreamCount} />
+        <BoardLinkRow workspaceId={workspaceId} userId={user?.id ?? null} />
         {quickLinks}
       </>
     )

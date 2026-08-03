@@ -89,11 +89,7 @@ export function BoardUnreadRow({
  * with `ChatsLinkRow`: both sit at the same spot (above the quick links) so the
  * cross-surface entry point doesn't move between modes.
  */
-export function BoardLinkRow({
-  workspaceId,
-  userId,
-  unreadStreamCount,
-}: ModeLinkRowProps & { unreadStreamCount: number }) {
+export function BoardLinkRow({ workspaceId, userId }: ModeLinkRowProps) {
   const { collapseOnMobile } = useSidebar()
   const streams = useWorkspaceStreams(workspaceId)
 
@@ -106,6 +102,8 @@ export function BoardLinkRow({
       )
     : `/w/${workspaceId}/board`
 
+  // No BoardUnreadRow here: the unread toggle is a board-mode filter
+  // (BoardModeFilters) — in chats mode this row is just the way over.
   return (
     <div className="mb-2 space-y-1">
       <Link to={boardHref} onClick={collapseOnMobile} className={ROW_CLASS}>
@@ -113,7 +111,6 @@ export function BoardLinkRow({
         Board
         <ArrowRight className="ml-auto h-4 w-4" />
       </Link>
-      <BoardUnreadRow workspaceId={workspaceId} unreadStreamCount={unreadStreamCount} />
     </div>
   )
 }
