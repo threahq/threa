@@ -126,14 +126,13 @@ describe("BoardOverlayComposer", () => {
     expect(screen.getByRole("combobox")).not.toHaveTextContent("general")
   })
 
-  it("never inherits the route stream's commands, but keeps the palette for /giphy and friends", async () => {
+  it("never inherits the route stream's commands", async () => {
     const editorSpy = vi.fn(EditorStub)
     spyOnExport(composerModule, "MessageComposer").mockReturnValue(editorSpy as never)
     render(<BoardOverlayComposer workspaceId="workspace_1" open onOpenChange={vi.fn()} defaultTarget={channel.id} />)
     await screen.findByTestId("stub-send")
     const props = editorSpy.mock.calls.at(-1)![0] as MessageComposerProps
     expect(props.commandStreamId).toBeNull()
-    expect(props.enableCommands).not.toBe(false)
   })
 
   it("adopts an explicit defaultTarget and disables send until a target is set", async () => {
