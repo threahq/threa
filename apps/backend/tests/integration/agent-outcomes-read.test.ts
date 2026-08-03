@@ -87,6 +87,7 @@ describe("agent outcomes read path", () => {
   let privateDelegationId: string
   let channelFollowUpId: string
   let channelDelegationId: string
+  let threadFollowUpEventId: string
 
   beforeAll(async () => {
     const streamService = new StreamService(pool)
@@ -162,9 +163,10 @@ describe("agent outcomes read path", () => {
       status: "running",
       statusChangedAt: new Date("2126-01-01T00:00:00.000Z"),
     })
+    threadFollowUpEventId = eventId()
     await withTransaction(pool, async (client) => {
       await StreamEventRepository.insert(client, {
-        id: eventId(),
+        id: threadFollowUpEventId,
         streamId: threadId,
         eventType: "agent:follow_up_scheduled",
         payload: { followUpId: threadFollowUpId, note: "Check the thread deploy" },
@@ -235,9 +237,10 @@ describe("agent outcomes read path", () => {
   test("resolves the anchor event a follow-up row deep-links to", async () => {
     const response = await service().list({ workspaceId: wsId, userId: memberId, state: "all", limit: 50 })
 
-    const followUp = response.items.find((i) => i.id === threadFollowUpId)
-    expect(followUp?.anchorEventId).toMatch(/^event_/)
-    expect(response.items.find((i) => i.id === channelFollowUpId)?.anchorEventId).toBeNull()
+    expect({
+      threadAnchor: response.items.find((i) => i.id === threadFollowUpId)?.anchorEventId,
+      channelAnchor: response.items.find((i) => i.id === channelFollowUpId)?.anchorEventId,
+    }).toEqual({ threadAnchor: threadFollowUpEventId, channelAnchor: null })
   })
 
   test("the outstanding count is opt-in and first-page only", async () => {

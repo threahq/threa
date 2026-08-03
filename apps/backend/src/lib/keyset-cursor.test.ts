@@ -17,6 +17,9 @@ describe("keyset cursor", () => {
     ["empty id", Buffer.from("2026-07-20T10:00:00.123456Z|", "utf8").toString("base64url")],
     ["empty timestamp", Buffer.from("|sctx_1", "utf8").toString("base64url")],
     ["unparseable timestamp", Buffer.from("yesterday|sctx_1", "utf8").toString("base64url")],
+    ["well-shaped but impossible date", Buffer.from("2026-99-99T00:00:00Z|sctx_1", "utf8").toString("base64url")],
+    ["day past the month's end", Buffer.from("2026-02-30T00:00:00Z|sctx_1", "utf8").toString("base64url")],
+    ["hour out of range", Buffer.from("2026-07-20T24:00:00Z|sctx_1", "utf8").toString("base64url")],
     ["not base64 at all", "!!!!"],
   ])("rejects a malformed cursor (%s) with a 400", (_label, raw) => {
     expect(() => decodeKeysetCursor(raw)).toThrow(

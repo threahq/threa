@@ -9,17 +9,13 @@ import { AGENT_OUTCOME_KINDS, AGENT_OUTCOME_STATES } from "./agent-outcomes"
 
 describe("agent outcome constants", () => {
   it("keeps both terminal sets a subset of their status list", () => {
-    expect(FOLLOW_UP_STATUSES).toEqual(
-      expect.arrayContaining(FOLLOW_UP_TERMINAL_STATUSES as unknown as string[]) as never
-    )
-    expect(DELEGATION_STATUSES).toEqual(
-      expect.arrayContaining(DELEGATION_TERMINAL_STATUSES as unknown as string[]) as never
-    )
+    expect([...FOLLOW_UP_STATUSES]).toEqual(expect.arrayContaining([...FOLLOW_UP_TERMINAL_STATUSES]))
+    expect([...DELEGATION_STATUSES]).toEqual(expect.arrayContaining([...DELEGATION_TERMINAL_STATUSES]))
   })
 
   it("leaves exactly the in-flight statuses outstanding", () => {
     const outstanding = FOLLOW_UP_STATUSES.filter(
-      (s) => !(FOLLOW_UP_TERMINAL_STATUSES as readonly string[]).includes(s)
+      (status) => !(FOLLOW_UP_TERMINAL_STATUSES as readonly string[]).includes(status)
     )
     expect(outstanding).toEqual(["pending"])
   })
