@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest"
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest"
 import { render } from "@testing-library/react"
 import { findVisibleZoneEditor, useTypeToFocus } from "./use-type-to-focus"
 
@@ -247,7 +247,7 @@ describe("useTypeToFocus", () => {
 
   it("main→panel: the panel's docked editor takes the key when the last click was in main and no card composer is open", () => {
     buildDom(
-      '<main data-editor-zone="main"><div id="feed"></div></main>' +
+      '<main data-editor-zone="main"><div data-type-capture-scope id="feed"></div></main>' +
         '<aside data-editor-zone="panel"><div contenteditable="true" id="p"></div></aside>'
     )
     const panel = document.getElementById("p") as HTMLElement
@@ -257,6 +257,290 @@ describe("useTypeToFocus", () => {
     press("a")
 
     expect(document.activeElement).toBe(panel)
+  })
+})
+
+describe("useTypeToFocus card scopes", () => {
+  /** Runs the hook's bounded rAF poll to completion. */
+  function runFrames(count = 25) {
+    for (let i = 0; i < count; i += 1) vi.advanceTimersByTime(16)
+  }
+
+  function clickIn(id: string) {
+    document.getElementById(id)!.dispatchEvent(new MouseEvent("click", { bubbles: true }))
+  }
+
+  let execCommand: ReturnType<typeof vi.fn>
+
+  beforeEach(() => {
+    vi.useFakeTimers()
+    execCommand = vi.fn(() => true)
+    Object.defineProperty(document, "execCommand", { configurable: true, value: execCommand })
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it("routes the key to the last-clicked card's editor, not the last card in the feed", () => {
+    buildDom(
+      '<main data-editor-zone="main">' +
+        '<div data-type-capture-scope id="cardA"><div id="rowA"></div><div contenteditable="true" id="a"></div></div>' +
+        '<div data-type-capture-scope id="cardB"><div contenteditable="true" id="b"></div></div>' +
+        "</main>"
+    )
+    const a = document.getElementById("a") as HTMLElement
+    const b = document.getElementById("b") as HTMLElement
+    setVisible(a, true)
+    setVisible(b, true)
+
+    clickIn("rowA")
+    press("x")
+
+    expect(document.activeElement).toBe(a)
+    expect(document.activeElement).not.toBe(b)
+  })
+
+  it("within one card, the card-level reply editor (last in DOM) beats an earlier open branch editor", () => {
+    buildDom(
+      '<main data-editor-zone="main">' +
+        '<div data-type-capture-scope id="cardA">' +
+        '<div id="rowA"></div>' +
+        '<div contenteditable="true" id="branch"></div>' +
+        '<div contenteditable="true" id="reply"></div>' +
+        "</div>" +
+        "</main>"
+    )
+    const branch = document.getElementById("branch") as HTMLElement
+    const reply = document.getElementById("reply") as HTMLElement
+    setVisible(branch, true)
+    setVisible(reply, true)
+
+    clickIn("rowA")
+    press("x")
+
+    expect(document.activeElement).toBe(reply)
+    expect(document.activeElement).not.toBe(branch)
+  })
+
+  it("opens the clicked card's resting composer and types the swallowed character into it", () => {
+    buildDom(
+      '<main data-editor-zone="main">' +
+        '<div data-type-capture-scope id="cardA"><div id="rowA"></div><button data-composer-opener id="opener"></button></div>' +
+        '<div data-type-capture-scope id="cardB"><div contenteditable="true" id="b"></div></div>' +
+        "</main>"
+    )
+    setVisible(document.getElementById("b") as HTMLElement, true)
+    const cardA = document.getElementById("cardA") as HTMLElement
+    const opener = document.getElementById("opener") as HTMLButtonElement
+    setVisible(opener, true)
+    // The real composer mounts on the opener's click, a frame or more later.
+    opener.addEventListener("click", () => {
+      opener.remove()
+      const editor = document.createElement("div")
+      editor.setAttribute("contenteditable", "true")
+      editor.id = "a"
+      cardA.appendChild(editor)
+      setVisible(editor, true)
+    })
+
+    clickIn("rowA")
+    const event = new KeyboardEvent("keydown", { key: "x", bubbles: true, cancelable: true })
+    document.dispatchEvent(event)
+    expect(event.defaultPrevented).toBe(true)
+    runFrames()
+
+    expect(document.activeElement).toBe(document.getElementById("a"))
+    expect(execCommand).toHaveBeenCalledWith("insertText", false, "x")
+    expect(document.activeElement).not.toBe(document.getElementById("b"))
+  })
+
+  it("gives up silently when the opener never mounts an editor", () => {
+    buildDom(
+      '<main data-editor-zone="main">' +
+        '<div data-type-capture-scope id="cardA"><div id="rowA"></div><button data-composer-opener id="opener"></button></div>' +
+        "</main>"
+    )
+    setVisible(document.getElementById("opener") as HTMLElement, true)
+
+    clickIn("rowA")
+    expect(() => {
+      press("x")
+      runFrames()
+    }).not.toThrow()
+
+    expect(document.activeElement).toBe(document.body)
+    expect(execCommand).not.toHaveBeenCalled()
+  })
+
+  it("an archived card (no editor, no opener) swallows the key instead of typing into another card", () => {
+    buildDom(
+      '<main data-editor-zone="main">' +
+        '<div data-type-capture-scope id="cardA"><div id="rowA"></div><p>Replies are closed.</p></div>' +
+        '<div data-type-capture-scope id="cardB"><div contenteditable="true" id="b"></div></div>' +
+        "</main>"
+    )
+    const b = document.getElementById("b") as HTMLElement
+    setVisible(b, true)
+
+    clickIn("rowA")
+    press("x")
+
+    expect(document.activeElement).not.toBe(b)
+    expect(document.activeElement).toBe(document.body)
+  })
+
+  it("opens the card's OWN reply bar, not a branch bar that comes earlier in the card", () => {
+    buildDom(
+      '<main data-editor-zone="main">' +
+        '<div data-type-capture-scope id="cardA">' +
+        '<div id="rowA"></div>' +
+        '<button id="branch"></button>' +
+        '<button data-composer-opener id="opener"></button>' +
+        "</div>" +
+        "</main>"
+    )
+    const branch = document.getElementById("branch") as HTMLButtonElement
+    const opener = document.getElementById("opener") as HTMLButtonElement
+    setVisible(branch, true)
+    setVisible(opener, true)
+    const branchClick = vi.fn()
+    branch.addEventListener("click", branchClick)
+    const openerClick = vi.fn()
+    opener.addEventListener("click", openerClick)
+
+    clickIn("rowA")
+    press("x")
+
+    expect(openerClick).toHaveBeenCalled()
+    expect(branchClick).not.toHaveBeenCalled()
+  })
+
+  it("an open panel with a live editor outranks the card scope the conversation was opened from", () => {
+    buildDom(
+      '<main data-editor-zone="main">' +
+        '<div data-type-capture-scope id="cardA"><div id="rowA"></div><button data-composer-opener id="opener"></button></div>' +
+        "</main>" +
+        '<aside data-editor-zone="panel"><div contenteditable="true" id="p"></div></aside>'
+    )
+    const opener = document.getElementById("opener") as HTMLButtonElement
+    const panel = document.getElementById("p") as HTMLElement
+    setVisible(opener, true)
+    setVisible(panel, true)
+    const openerClick = vi.fn()
+    opener.addEventListener("click", openerClick)
+
+    clickIn("rowA")
+    press("x")
+
+    expect(document.activeElement).toBe(panel)
+    expect(openerClick).not.toHaveBeenCalled()
+  })
+
+  it("swallows the key when the card's opener is scrolled off-screen, rather than yanking the feed to it", () => {
+    buildDom(
+      '<main data-editor-zone="main">' +
+        '<div data-type-capture-scope id="cardA"><div id="rowA"></div><button data-composer-opener id="opener"></button></div>' +
+        '<div data-type-capture-scope id="cardB"><div contenteditable="true" id="b"></div></div>' +
+        "</main>"
+    )
+    const opener = document.getElementById("opener") as HTMLButtonElement
+    setScrolledOffScreen(opener)
+    setVisible(document.getElementById("b") as HTMLElement, true)
+    const openerClick = vi.fn()
+    opener.addEventListener("click", openerClick)
+
+    clickIn("rowA")
+    press("x")
+    runFrames()
+
+    expect(openerClick).not.toHaveBeenCalled()
+    expect(document.activeElement).toBe(document.body)
+    expect(execCommand).not.toHaveBeenCalled()
+  })
+
+  it("accumulates keys pressed while the composer is still mounting and inserts them together", () => {
+    buildDom(
+      '<main data-editor-zone="main">' +
+        '<div data-type-capture-scope id="cardA"><div id="rowA"></div><button data-composer-opener id="opener"></button></div>' +
+        "</main>"
+    )
+    const cardA = document.getElementById("cardA") as HTMLElement
+    const opener = document.getElementById("opener") as HTMLButtonElement
+    setVisible(opener, true)
+    // Mounts only after a couple of frames, leaving a real typing window.
+    let framesUntilMount = 3
+    opener.addEventListener("click", () => {
+      const mount = () => {
+        framesUntilMount -= 1
+        if (framesUntilMount > 0) {
+          requestAnimationFrame(mount)
+          return
+        }
+        opener.remove()
+        const editor = document.createElement("div")
+        editor.setAttribute("contenteditable", "true")
+        editor.id = "a"
+        cardA.appendChild(editor)
+        setVisible(editor, true)
+      }
+      requestAnimationFrame(mount)
+    })
+
+    clickIn("rowA")
+    press("x")
+    const second = new KeyboardEvent("keydown", { key: "y", bubbles: true, cancelable: true })
+    document.dispatchEvent(second)
+    expect(second.defaultPrevented).toBe(true)
+    runFrames()
+
+    expect(document.activeElement).toBe(document.getElementById("a"))
+    expect(execCommand).toHaveBeenCalledTimes(1)
+    expect(execCommand).toHaveBeenCalledWith("insertText", false, "xy")
+  })
+
+  it("on a coarse pointer it only clicks the opener — the floating composer autofocuses itself", () => {
+    buildDom(
+      '<main data-editor-zone="main">' +
+        '<div data-type-capture-scope id="cardA"><div id="rowA"></div><button data-composer-opener id="opener"></button></div>' +
+        "</main>"
+    )
+    const opener = document.getElementById("opener") as HTMLButtonElement
+    setVisible(opener, true)
+    const openerClick = vi.fn()
+    opener.addEventListener("click", openerClick)
+    const originalMatchMedia = window.matchMedia
+    Object.defineProperty(window, "matchMedia", {
+      configurable: true,
+      writable: true,
+      value: (query: string) => ({ ...originalMatchMedia(query), matches: query === "(pointer: coarse)" }),
+    })
+
+    const event = new KeyboardEvent("keydown", { key: "x", bubbles: true, cancelable: true })
+    clickIn("rowA")
+    document.dispatchEvent(event)
+    runFrames()
+    Object.defineProperty(window, "matchMedia", { configurable: true, writable: true, value: originalMatchMedia })
+
+    expect(openerClick).toHaveBeenCalled()
+    expect(event.defaultPrevented).toBe(false)
+    expect(execCommand).not.toHaveBeenCalled()
+  })
+
+  it("a click outside any card scope keeps the zone-wide behavior", () => {
+    buildDom(
+      '<main data-editor-zone="main">' +
+        '<div id="header"></div>' +
+        '<div data-type-capture-scope id="cardB"><div contenteditable="true" id="b"></div></div>' +
+        "</main>"
+    )
+    const b = document.getElementById("b") as HTMLElement
+    setVisible(b, true)
+
+    clickIn("header")
+    press("x")
+
+    expect(document.activeElement).toBe(b)
   })
 })
 

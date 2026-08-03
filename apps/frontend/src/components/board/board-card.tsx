@@ -1093,6 +1093,9 @@ export function BoardCard({
             a keyboard user could otherwise focus into the dead conversation. */}
         <div
           ref={cardRef}
+          // Type-to-focus routes a keystroke to THIS card's composer when the
+          // last click landed anywhere inside it (see use-type-to-focus).
+          data-type-capture-scope=""
           className={cn(
             "board-card-hover rounded-xl border bg-card p-3 shadow-[0_1px_2px_rgb(0_0_0/0.04),0_4px_14px_-8px_rgb(0_0_0/0.10)] sm:p-4 dark:shadow-[0_1px_2px_rgb(0_0_0/0.4),0_6px_16px_-8px_rgb(0_0_0/0.5)]",
             flash && "board-post-flash",

@@ -1,4 +1,6 @@
 import { useEffect, useRef } from "react"
+import { MOBILE_VIEWPORT_QUERY } from "./use-mobile"
+import { COARSE_POINTER_QUERY } from "./use-pointer"
 
 /** Focus a contentEditable element with the cursor placed at the end of its content. */
 export function focusAtEnd(el: HTMLElement) {
@@ -46,6 +48,26 @@ export function findVisibleZoneEditor(zone: HTMLElement | null): HTMLElement | n
     }, null)
 }
 
+/**
+ * On-screen editor inside one card scope — LAST in document order, same rule as
+ * the zone-wide lookup: branch/sub-topic composers render above the card-level
+ * reply composer, and a click on the card body means the card's own composer,
+ * not a sub-conversation's (an open branch editor still wins by being focused —
+ * the already-typing guard runs before any lookup).
+ */
+function findScopeEditor(scope: HTMLElement): HTMLElement | null {
+  return findVisibleZoneEditor(scope)
+}
+
+const OPENER_POLL_FRAMES = 20
+
+/** Non-hook twin of `useIsMobileOrCoarse`, evaluated at keydown time. */
+function isMobileOrCoarse(): boolean {
+  return window.matchMedia(MOBILE_VIEWPORT_QUERY).matches || window.matchMedia(COARSE_POINTER_QUERY).matches
+}
+
+type PendingOpen = { scope: HTMLElement; chars: string }
+
 function zoneContainer(zone: "main" | "panel"): HTMLElement | null {
   return document.querySelector<HTMLElement>(`[data-editor-zone="${zone}"]`)
 }
@@ -59,15 +81,52 @@ function zoneContainer(zone: "main" | "panel"): HTMLElement | null {
  *
  * Priority:
  *  1. Active inline-edit editor (`[data-inline-edit] [contenteditable]`)
- *  2. Last-clicked zone's on-screen editor
- *  3. The other zone's on-screen editor
+ *  2. Last-clicked card scope (main zone): its editor → an open panel's editor
+ *     → its on-screen reply opener → swallow
+ *  3. Last-clicked zone's on-screen editor
+ *  4. The other zone's on-screen editor
  */
 export function useTypeToFocus() {
   const lastZoneRef = useRef<"main" | "panel">("main")
+  const lastScopeRef = useRef<HTMLElement | null>(null)
+  const pendingOpenRef = useRef<PendingOpen | null>(null)
 
   useEffect(() => {
+    /**
+     * Clicking a resting "Write a reply…" bar mounts the composer a frame or
+     * more later, so the keystrokes that triggered it are held in the latch and
+     * replayed once the editor exists. `insertText` (not a synthetic key event)
+     * is what ProseMirror observes as real typing.
+     */
+    function openAndCapture(scope: HTMLElement, opener: HTMLElement, char: string) {
+      opener.click()
+      // After the click: the click handler below clears any stale latch.
+      const pending: PendingOpen = { scope, chars: char }
+      pendingOpenRef.current = pending
+      let framesLeft = OPENER_POLL_FRAMES
+      const poll = () => {
+        if (pendingOpenRef.current !== pending) return
+        const editor = findScopeEditor(scope)
+        if (editor) {
+          pendingOpenRef.current = null
+          focusAtEnd(editor)
+          document.execCommand("insertText", false, pending.chars)
+          return
+        }
+        framesLeft -= 1
+        if (framesLeft > 0) {
+          requestAnimationFrame(poll)
+          return
+        }
+        pendingOpenRef.current = null
+      }
+      requestAnimationFrame(poll)
+    }
+
     function handleClick(e: MouseEvent) {
       const target = e.target as HTMLElement | null
+      pendingOpenRef.current = null
+      lastScopeRef.current = target?.closest<HTMLElement>("[data-type-capture-scope]") ?? null
       const zone = target?.closest<HTMLElement>("[data-editor-zone]")
       if (zone) {
         const value = zone.dataset.editorZone as "main" | "panel"
@@ -92,6 +151,16 @@ export function useTypeToFocus() {
         return
       }
 
+      // A composer is mid-mount for the scope the user is still typing into;
+      // keep accumulating rather than letting the key reach the zone-wide
+      // lookup and land in another card.
+      const pending = pendingOpenRef.current
+      if (pending && lastScopeRef.current === pending.scope) {
+        e.preventDefault()
+        pending.chars += e.key
+        return
+      }
+
       // If a dialog is open, focus its editor (full-screen editor) or bail out
       // (delete confirmation, command palette, etc.)
       const openDialog = document.querySelector<HTMLElement>('[role="dialog"][data-state="open"]')
@@ -106,6 +175,42 @@ export function useTypeToFocus() {
       const inlineEditor = document.querySelector<HTMLElement>("[data-inline-edit] [contenteditable='true']")
       if (inlineEditor) {
         focusAtEnd(inlineEditor)
+        return
+      }
+
+      // The board's main zone is a feed of independent cards; the keystroke
+      // belongs to the card the user last clicked, not to whichever card sits
+      // lowest in the DOM.
+      const scope = lastScopeRef.current
+      if (lastZoneRef.current === "main" && scope?.isConnected) {
+        const scopedEditor = findScopeEditor(scope)
+        if (scopedEditor) {
+          focusAtEnd(scopedEditor)
+          return
+        }
+        // Opening a conversation from inside a card records the scope, but the
+        // panel that just opened is where the typing belongs — with no visible
+        // editor in the card, an open panel's live editor outranks the opener.
+        const panelEditor = findVisibleZoneEditor(zoneContainer("panel"))
+        if (panelEditor) {
+          focusAtEnd(panelEditor)
+          return
+        }
+        const opener = scope.querySelector<HTMLElement>("[data-composer-opener]")
+        if (opener && isOnScreen(opener)) {
+          if (isMobileOrCoarse()) {
+            // The mobile composer is a floating pill portalled outside the
+            // scope that autofocuses itself, so there is nothing to poll for
+            // here and the triggering character is accepted as lost.
+            opener.click()
+          } else {
+            e.preventDefault()
+            openAndCapture(scope, opener, e.key)
+          }
+        }
+        // A scope that yields nothing (archived card, opener scrolled away)
+        // is a decision, not an absence: swallow rather than type into a
+        // different card.
         return
       }
 

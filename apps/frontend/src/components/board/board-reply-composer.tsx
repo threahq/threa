@@ -186,6 +186,7 @@ export function BoardReplyComposer(props: BoardReplyComposerProps) {
         className={cn("mt-3", quietFocus && "focus-visible:ring-0 focus-visible:ring-offset-0")}
         draft={scopeDraft}
         placeholder="Write a reply…"
+        typeCaptureOpener
         onClick={() => setOpen(true)}
       />
     )

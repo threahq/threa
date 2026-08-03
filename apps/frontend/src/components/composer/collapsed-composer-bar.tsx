@@ -42,15 +42,26 @@ export function CollapsedComposerBar({
   onClick,
   className,
   buttonRef,
+  typeCaptureOpener,
 }: {
   draft?: ScopeDraftPreview | null
   placeholder: string
   onClick: () => void
   className?: string
   buttonRef?: Ref<HTMLButtonElement>
+  /** Marks this bar as the card's reply target for type-to-focus. Only the
+   *  card-level reply bar sets it — a branch/sub-topic bar would win DOM order
+   *  and swallow the keystroke into a branch the user never chose. */
+  typeCaptureOpener?: boolean
 }) {
   return (
-    <button ref={buttonRef} type="button" onClick={onClick} className={cn(CARD_CLASS, className)}>
+    <button
+      ref={buttonRef}
+      type="button"
+      data-composer-opener={typeCaptureOpener ? "" : undefined}
+      onClick={onClick}
+      className={cn(CARD_CLASS, className)}
+    >
       <span className={ROW_CLASS}>
         {draft ? (
           <CollapsedDraftPreview draft={draft} />
