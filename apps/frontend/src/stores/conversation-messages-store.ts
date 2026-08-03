@@ -127,7 +127,7 @@ export function conversationMessagesPrimed(conversationIds: string[]): boolean {
 
 /** Drop the snapshot — for tests, so a module-level map can't leak rows across
  *  cases, and for a workspace switch (a different board, different ids). */
-export function __resetConversationMessageSnapshots(): void {
+export function resetConversationMessageSnapshots(): void {
   snapshotByConversation.clear()
 }
 
@@ -185,3 +185,6 @@ export function useBoardBackfillPrimed(conversationIds: string[]): boolean {
   }, [ids])
   return conversationMessagesPrimed(ids)
 }
+
+/** Test alias — suites reset beside their `db.conversationMessages.clear()`. */
+export const __resetConversationMessageSnapshots = resetConversationMessageSnapshots

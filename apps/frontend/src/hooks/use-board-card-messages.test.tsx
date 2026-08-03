@@ -12,7 +12,7 @@ import {
   __boardRailRegistrySize,
   type BoardCardMessages,
 } from "./use-board-card-messages"
-import { seedConversationMessages } from "@/stores/conversation-messages-store"
+import { seedConversationMessages, __resetConversationMessageSnapshots } from "@/stores/conversation-messages-store"
 
 const WS = "ws_1"
 const STREAM = "stream_1"
@@ -92,6 +92,7 @@ beforeEach(async () => {
   await db.events.clear()
   await db.streams.clear()
   await db.conversationMessages.clear()
+  __resetConversationMessageSnapshots()
 })
 
 describe("useBoardCardMessages", () => {
