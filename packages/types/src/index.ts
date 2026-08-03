@@ -980,6 +980,7 @@ export {
   defaultFeatureFlagValue,
   defaultFeatureFlags,
   resolveFeatureFlags,
+  coerceLayers,
 } from "./feature-flags"
 
 // Client performance capture (closed mark registry + wire schema)

@@ -1,4 +1,7 @@
-import { describe, expect, it } from "vitest"
+import { beforeEach, describe, expect, it } from "vitest"
+import type { StreamEvent } from "@threa/types"
+import { db } from "@/db"
+import { resetEventWriteChunking } from "@/db/event-writes"
 import {
   computeTimelineLoadState,
   filterEventsForDisplay,
@@ -9,6 +12,7 @@ import {
   getNextBootstrapFloorState,
   getOldestSequence,
   getRenderableEvents,
+  cacheToIndexedDB,
 } from "./use-events"
 
 describe("useEvents helpers", () => {
@@ -222,5 +226,58 @@ describe("getEffectiveEvents", () => {
 
   it("returns empty when IDB resolved empty and bootstrap has no events", () => {
     expect(getEffectiveEvents(true, [], [])).toEqual([])
+  })
+})
+
+describe("cacheToIndexedDB with eventWriteChunking on", () => {
+  beforeEach(async () => {
+    resetEventWriteChunking()
+    await db.events.clear()
+    await db.workspaceMetadata.clear()
+    await db.workspaceMetadata.put({
+      id: "ws_1",
+      workspaceId: "ws_1",
+      emojis: [],
+      emojiWeights: {},
+      commands: [],
+      featureFlags: { workspace: { eventWriteChunking: "on" }, user: {} },
+      _cachedAt: 1,
+    } as unknown as Parameters<typeof db.workspaceMetadata.put>[0])
+  })
+
+  function page(count: number, from: number): StreamEvent[] {
+    return Array.from({ length: count }, (_, i) => ({
+      id: `evt_${from + i}`,
+      streamId: "stream_1",
+      sequence: String(from + i),
+      eventType: "message_created" as const,
+      payload: { messageId: `evt_${from + i}`, contentMarkdown: "hi" },
+      actorId: "usr_1",
+      actorType: "user" as const,
+      createdAt: "2026-01-01T00:00:00.000Z",
+    })) as StreamEvent[]
+  }
+
+  it("an older page still lands in the timeline window after chunked writing", async () => {
+    await cacheToIndexedDB("ws_1", "stream_1", page(50, 100))
+    await cacheToIndexedDB("ws_1", "stream_1", page(50, 50))
+
+    const cached = await db.events.where("streamId").equals("stream_1").toArray()
+    expect(cached).toHaveLength(100)
+
+    const displayFloor = getDisplayFloor(getMinimumSequence(page(50, 100)), getMinimumSequence(page(50, 50)))
+    expect(getRenderableEvents(cached, displayFloor)).toHaveLength(100)
+  })
+
+  it("a page that heals thread stats still heals them when chunked", async () => {
+    await cacheToIndexedDB("ws_1", "stream_1", page(50, 100))
+    await db.events.update("evt_120", {
+      payload: { messageId: "evt_120", contentMarkdown: "hi", threadId: "str_t", replyCount: 3 },
+    })
+
+    await cacheToIndexedDB("ws_1", "stream_1", page(50, 100))
+
+    const healed = await db.events.get("evt_120")
+    expect(healed?.payload).toMatchObject({ threadId: "str_t", replyCount: 3 })
   })
 })

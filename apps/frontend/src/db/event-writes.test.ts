@@ -1,0 +1,213 @@
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest"
+import { liveQuery } from "dexie"
+import { db, sequenceToNum, type CachedEvent } from "@/db"
+import {
+  EVENT_BULK_PUT_LIMIT,
+  isEventWriteChunkingEnabled,
+  primeEventWriteChunking,
+  putEventsBounded,
+  resetEventWriteChunking,
+  skipNoOpEventRewrites,
+} from "./event-writes"
+
+function makeRow(streamId: string, index: number, overrides: Partial<CachedEvent> = {}): CachedEvent {
+  const sequence = String(1000 + index)
+  return {
+    id: `evt_${streamId}_${index}`,
+    workspaceId: "ws_1",
+    streamId,
+    sequence,
+    _sequenceNum: sequenceToNum(sequence),
+    eventType: "message_created",
+    payload: { messageId: `evt_${streamId}_${index}`, contentMarkdown: "hi" },
+    actorId: "usr_1",
+    actorType: "user",
+    createdAt: "2026-01-01T00:00:00.000Z",
+    _cachedAt: 1,
+    ...overrides,
+  } as CachedEvent
+}
+
+function makePage(streamId: string, count: number): CachedEvent[] {
+  return Array.from({ length: count }, (_, i) => makeRow(streamId, i))
+}
+
+beforeEach(async () => {
+  resetEventWriteChunking()
+  await db.events.clear()
+  await db.workspaceMetadata.clear()
+})
+
+async function putMetadata(featureFlags: unknown): Promise<void> {
+  await db.workspaceMetadata.put({
+    id: "ws_1",
+    workspaceId: "ws_1",
+    emojis: [],
+    emojiWeights: {},
+    commands: [],
+    featureFlags,
+    _cachedAt: 1,
+  } as unknown as Parameters<typeof db.workspaceMetadata.put>[0])
+}
+
+afterEach(() => {
+  vi.restoreAllMocks()
+})
+
+describe("putEventsBounded", () => {
+  it("a 50-row page is written as two sub-50 batches", async () => {
+    const rows = makePage("stream_a", 50)
+    const bulkPut = vi.spyOn(db.events, "bulkPut")
+
+    await putEventsBounded(db.events, rows, true)
+
+    expect(bulkPut).toHaveBeenCalledTimes(2)
+    expect(bulkPut.mock.calls.map((call) => (call[0] as CachedEvent[]).length)).toEqual([EVENT_BULK_PUT_LIMIT, 1])
+    expect(await db.events.where("streamId").equals("stream_a").count()).toBe(50)
+  })
+
+  it("writes a single bulkPut when chunking is off", async () => {
+    const bulkPut = vi.spyOn(db.events, "bulkPut")
+
+    await putEventsBounded(db.events, makePage("stream_a", 50), false)
+
+    expect(bulkPut).toHaveBeenCalledTimes(1)
+    expect(await db.events.where("streamId").equals("stream_a").count()).toBe(50)
+  })
+})
+
+describe("skipNoOpEventRewrites", () => {
+  it("re-writing an identical page writes nothing", async () => {
+    const rows = makePage("stream_a", 50)
+    await putEventsBounded(db.events, rows, true)
+
+    const existingRows = await db.events.bulkGet(rows.map((row) => row.id))
+    const existingById = new Map(
+      existingRows.filter((row): row is CachedEvent => row != null).map((row) => [row.id, row] as const)
+    )
+    const candidates = rows.map((row) => ({ ...row, _cachedAt: 999 }))
+    const bulkPut = vi.spyOn(db.events, "bulkPut")
+
+    await putEventsBounded(db.events, skipNoOpEventRewrites(existingById, candidates), true)
+
+    expect(bulkPut).toHaveBeenCalledTimes(0)
+    const after = await db.events.where("streamId").equals("stream_a").toArray()
+    expect(after.every((row) => row._cachedAt === 1)).toBe(true)
+  })
+
+  it("a row carrying optimistic _status is never skipped", async () => {
+    const optimistic = makeRow("stream_a", 0, { _status: "pending" })
+    await db.events.put(optimistic)
+
+    const candidate = { ...optimistic, _status: undefined } as CachedEvent
+    const kept = skipNoOpEventRewrites(new Map([[optimistic.id, optimistic]]), [candidate])
+
+    expect(kept).toEqual([candidate])
+  })
+
+  it("keeps a row whose payload changed and drops the unchanged neighbour", () => {
+    const unchanged = makeRow("stream_a", 0)
+    const changedBefore = makeRow("stream_a", 1)
+    const changedAfter = {
+      ...changedBefore,
+      payload: { ...(changedBefore.payload as Record<string, unknown>), contentMarkdown: "edited" },
+    }
+
+    const kept = skipNoOpEventRewrites(
+      new Map([
+        [unchanged.id, unchanged],
+        [changedBefore.id, changedBefore],
+      ]),
+      [{ ...unchanged, _cachedAt: 999 }, changedAfter]
+    )
+
+    expect(kept).toEqual([changedAfter])
+  })
+})
+
+describe("live-query wake set (D1)", () => {
+  async function countEmissions(run: () => Promise<void>): Promise<number> {
+    let emissions = 0
+    let firstEmission: (() => void) | undefined
+    const firstEmitted = new Promise<void>((resolve) => {
+      firstEmission = resolve
+    })
+    const subscription = liveQuery(() =>
+      db.events
+        .where("[streamId+_sequenceNum]")
+        .between(["stream_a", 0], ["stream_a", Number.MAX_SAFE_INTEGER])
+        .toArray()
+    ).subscribe(() => {
+      emissions += 1
+      firstEmission?.()
+    })
+    await firstEmitted
+    const baseline = emissions
+
+    await run()
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    subscription.unsubscribe()
+    return emissions - baseline
+  }
+
+  it("a 50-row page does not wake a live query ranged on another stream", async () => {
+    const chunkedEmissions = await countEmissions(async () => {
+      await putEventsBounded(db.events, makePage("stream_b", 50), true)
+    })
+    expect(chunkedEmissions).toBe(0)
+
+    await db.events.clear()
+
+    const unchunkedEmissions = await countEmissions(async () => {
+      await putEventsBounded(db.events, makePage("stream_b", 50), false)
+    })
+    expect(unchunkedEmissions).toBeGreaterThan(0)
+  })
+
+  it("a patch to a row the query returned still wakes it", async () => {
+    await db.events.put(makeRow("stream_a", 0))
+
+    const emissions = await countEmissions(async () => {
+      await putEventsBounded(
+        db.events,
+        [makeRow("stream_a", 0, { payload: { messageId: "evt_stream_a_0", contentMarkdown: "edited" } })],
+        true
+      )
+    })
+
+    expect(emissions).toBeGreaterThan(0)
+  })
+})
+
+describe("isEventWriteChunkingEnabled", () => {
+  it("resolves a persisted layered row and caches it", async () => {
+    await putMetadata({ workspace: { eventWriteChunking: "on" }, user: {} })
+    const get = vi.spyOn(db.workspaceMetadata, "get")
+
+    expect(await isEventWriteChunkingEnabled(db, "ws_1")).toBe(true)
+    expect(await isEventWriteChunkingEnabled(db, "ws_1")).toBe(true)
+    expect(get).toHaveBeenCalledTimes(1)
+  })
+
+  it("a pre-#1455 flat row neither throws nor enables", async () => {
+    await putMetadata({ eventWriteChunking: "on" })
+
+    expect(await isEventWriteChunkingEnabled(db, "ws_1")).toBe(false)
+  })
+
+  it("a primed value wins without reading the row", async () => {
+    await putMetadata({ workspace: { eventWriteChunking: "off" }, user: {} })
+    const get = vi.spyOn(db.workspaceMetadata, "get")
+    primeEventWriteChunking("ws_1", { workspace: {}, user: { eventWriteChunking: "on" } })
+
+    expect(await isEventWriteChunkingEnabled(db, "ws_1")).toBe(true)
+    expect(get).not.toHaveBeenCalled()
+  })
+
+  it("resetEventWriteChunking clears the primed value", async () => {
+    primeEventWriteChunking("ws_1", { workspace: { eventWriteChunking: "on" }, user: {} })
+    resetEventWriteChunking()
+
+    expect(await isEventWriteChunkingEnabled(db, "ws_1")).toBe(false)
+  })
+})

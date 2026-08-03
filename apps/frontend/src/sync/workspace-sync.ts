@@ -107,6 +107,7 @@ import {
   Visibilities,
   normalizeSidebarConfig,
 } from "@threa/types"
+import { isEventWriteChunkingEnabled, primeEventWriteChunking } from "@/db/event-writes"
 import { applyStreamBootstrapInCurrentTransaction } from "./stream-sync"
 import { deleteStreamSlots, deleteSlotsForStreams } from "@/stores/slot-store"
 import { applyDraftDeleted, applyDraftUpserted } from "./draft-sync"
@@ -1671,7 +1672,10 @@ export function registerWorkspaceSocketHandlers(
     }))
     if (!patched) return
     const layers = queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap(workspaceId))?.featureFlags
-    if (layers) void db.workspaceMetadata.update(workspaceId, { featureFlags: layers })
+    if (layers) {
+      primeEventWriteChunking(workspaceId, layers)
+      void db.workspaceMetadata.update(workspaceId, { featureFlags: layers })
+    }
   }
 
   const handleFeatureFlagsUpdated = (payload: FeatureFlagsUpdatedPayload) => {
@@ -2565,6 +2569,7 @@ export async function applyWorkspaceBootstrap(
 ): Promise<AppliedWorkspaceBootstrap> {
   const now = Date.now()
   const capture = getPerfCapture()
+  primeEventWriteChunking(workspaceId, bootstrap.featureFlags)
   const diffEnabled = resolveFeatureFlags(bootstrap.featureFlags ?? EMPTY_FLAG_LAYERS).bootstrapDiff === "on"
 
   // Build membership lookup for O(1) access when merging onto streams
@@ -3055,6 +3060,8 @@ export async function applyReconnectBootstrapBatch(
     fetchStartedAt,
   })
 
+  primeEventWriteChunking(workspaceId, finalBootstrap.featureFlags)
+  const chunked = await isEventWriteChunkingEnabled(db, workspaceId)
   const diffEnabled = resolveFeatureFlags(finalBootstrap.featureFlags ?? EMPTY_FLAG_LAYERS).bootstrapDiff === "on"
 
   const membershipByStream = new Map(finalBootstrap.streamMemberships.map((sm) => [sm.streamId, sm]))
@@ -3331,7 +3338,7 @@ export async function applyReconnectBootstrapBatch(
         // Carry the fetch window so a per-stream envelope's stale `readState`
         // never clobbers a frontier touched during the reconnect (same rule
         // the workspace map merge above applies).
-        await applyStreamBootstrapInCurrentTransaction(workspaceId, streamId, bootstrap, now, fetchStartedAt)
+        await applyStreamBootstrapInCurrentTransaction(workspaceId, streamId, bootstrap, now, chunked, fetchStartedAt)
       }
 
       if (terminalStreamIds.size > 0) {
@@ -3500,7 +3507,17 @@ async function cleanupStaleEntities(
   // can't ride the generic deleteStale (Amendment A4).
   const staleStreamIds = await staleEntityIds(db.streams, "workspaceId", workspaceId, bootstrapStreamIds, now)
 
-  const [, , staleUserIds, staleMembershipIds, staleDmPeerIds, stalePersonaIds, staleBotIds, staleLabelIds, staleLabelAssignmentIds] = await Promise.all([
+  const [
+    ,
+    ,
+    staleUserIds,
+    staleMembershipIds,
+    staleDmPeerIds,
+    stalePersonaIds,
+    staleBotIds,
+    staleLabelIds,
+    staleLabelAssignmentIds,
+  ] = await Promise.all([
     staleStreamIds.length > 0 ? db.streams.bulkDelete(staleStreamIds) : Promise.resolve(),
     deleteSlotsForStreams(db, staleStreamIds),
     deleteStale(db.workspaceUsers, "workspaceId", workspaceId, bootstrapUserIds, now),

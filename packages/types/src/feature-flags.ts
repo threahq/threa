@@ -57,6 +57,7 @@ export const FEATURE_FLAGS = {
   bootstrapDiff: defineFlag({ values: ["off", "on"], scopes: ["workspace", "user"], default: "off" }),
   calls: defineFlag({ values: ["off", "on"], scopes: ["workspace"], default: "on" }),
   composeTraces: defineFlag({ values: ["off", "capture"], scopes: ["workspace"], default: "off" }),
+  eventWriteChunking: defineFlag({ values: ["off", "on"], scopes: ["workspace", "user"], default: "off" }),
   // Availability only: "available" offers the Diagnostics settings toggle. The
   // user's own opt-in preference is the consent, and the upload path re-checks
   // both server-side.
@@ -125,6 +126,26 @@ export function resolveFeatureFlags(layers: FeatureFlagLayers): FeatureFlags {
 // The two functions below take the registry as a parameter so the scope and layering
 // rules stay testable: FEATURE_FLAGS is empty between rollouts, and an empty
 // registry resolves every input to {}.
+
+// Pre-#1455 clients stored `featureFlags` as the flat resolved map (typically
+// `{}`); read as layers, `layers.workspace`/`layers.user` are undefined and the
+// resolver throws on Object.entries — killing the first render until the row is
+// rewritten. Coerce any value missing a layer record to well-formed layers
+// (dropping the unlayerable flat keys — the next bootstrap re-persists the real
+// shape); a well-formed value passes through by reference so downstream memos hold.
+export function coerceLayers(layers: FeatureFlagLayers | null): FeatureFlagLayers | null {
+  if (!layers) return null
+  if (isLayerRecord(layers.workspace) && isLayerRecord(layers.user)) return layers
+  return {
+    workspace: isLayerRecord(layers.workspace) ? layers.workspace : {},
+    user: isLayerRecord(layers.user) ? layers.user : {},
+  }
+}
+
+function isLayerRecord(value: unknown): value is Record<string, string> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false
+  return Object.values(value).every((entry) => typeof entry === "string")
+}
 
 export function registryAllowsScope(registry: FeatureFlagRegistry, key: string, scope: FeatureFlagScope): boolean {
   return Object.hasOwn(registry, key) && registry[key].scopes.includes(scope)
