@@ -1552,6 +1552,21 @@ export class ThreaDatabase extends Dexie {
       conversationMessages: "messageId, conversationId, workspaceId",
     })
 
+    // v47: `payload.messageId` becomes a sparse dotted-key-path index so a
+    // message patch (reaction, edit, delete, move, link-preview resolve, thread
+    // heal) is a direct lookup instead of a cursor over the whole
+    // [streamId+"message_created"] range. No `.upgrade()` — the engine builds
+    // the index over existing rows; no row is rewritten.
+    // One-way door: once a client has opened at v47, code declaring only v46
+    // cannot open the database (IndexedDB refuses a version downgrade), so a
+    // revert of this bump is not available — reverting means a v48. The
+    // *lookup* that uses the index is flag-gated (`indexedMessagePatch`)
+    // instead, and that is what a rollback turns off.
+    this.version(47).stores({
+      events:
+        "id, workspaceId, streamId, sequence, [streamId+sequence], [streamId+_sequenceNum], eventType, [streamId+eventType], _clientId, _cachedAt, _status, payload.messageId",
+    })
+
     this.workspaceUsers = this.table(WORKSPACE_USERS_STORE) as EntityTable<CachedWorkspaceUser, "id">
   }
 }
