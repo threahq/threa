@@ -33,6 +33,7 @@ import {
 } from "@/hooks/use-conversation-graph"
 import {
   useBoardDraftsReady,
+  useBoardCheckedOutDraftScopes,
   useBoardScopeDraftIndex,
   useBoardSubtopicDraftIndex,
 } from "@/hooks/use-scope-draft-preview"
@@ -331,21 +332,32 @@ function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: Boar
   const draftsOnly = searchParams.get(BOARD_DRAFTS_PARAM) === BOARD_DRAFTS_ON
   const scopeDraftIndex = useBoardScopeDraftIndex(workspaceId)
   const subtopicDraftIndex = useBoardSubtopicDraftIndex(workspaceId)
+  // A scope checked out into a composer counts as a draft even with no payload:
+  // select-all + Backspace mid-rewrite must not yank the card out from under the
+  // focused composer. The row is deleted on send/discard — that is when it sheds.
+  const checkedOutDraftScopes = useBoardCheckedOutDraftScopes(workspaceId)
   // Signature-memoized like `archivedRootSignature`: the draft indexes get a new
   // Map identity on every keystroke, and these sets feed the feed filter.
   const draftConversationSignature = useMemo(() => {
-    const ids: string[] = []
-    for (const scope of scopeDraftIndex.keys()) {
+    const ids = new Set<string>()
+    for (const scope of [...scopeDraftIndex.keys(), ...checkedOutDraftScopes]) {
       const parsed = parseBoardDraftKey(scope)
-      if (parsed && (parsed.kind === "reply" || parsed.kind === "branch-reply")) ids.push(parsed.conversationId)
+      if (parsed && (parsed.kind === "reply" || parsed.kind === "branch-reply")) ids.add(parsed.conversationId)
     }
-    return ids.sort().join(",")
-  }, [scopeDraftIndex])
+    return [...ids].sort().join(",")
+  }, [scopeDraftIndex, checkedOutDraftScopes])
   const draftConversationIds = useMemo(
     () => new Set<string>(draftConversationSignature ? draftConversationSignature.split(",") : []),
     [draftConversationSignature]
   )
-  const subtopicMessageSignature = useMemo(() => [...subtopicDraftIndex.keys()].sort().join(","), [subtopicDraftIndex])
+  const subtopicMessageSignature = useMemo(() => {
+    const ids = new Set<string>(subtopicDraftIndex.keys())
+    for (const scope of checkedOutDraftScopes) {
+      const parsed = parseBoardDraftKey(scope)
+      if (parsed?.kind === "subtopic") ids.add(parsed.messageId)
+    }
+    return [...ids].sort().join(",")
+  }, [subtopicDraftIndex, checkedOutDraftScopes])
   const subtopicDraftMessageIds = useMemo(
     () => new Set<string>(subtopicMessageSignature ? subtopicMessageSignature.split(",") : []),
     [subtopicMessageSignature]

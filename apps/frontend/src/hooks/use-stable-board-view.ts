@@ -98,9 +98,12 @@ export interface BoardUnreadScope {
  * branch-reply draft, and messages carrying a sub-topic draft (a conversation
  * matches when any of its messages does).
  *
- * Unlike {@link BoardUnreadScope} there is no session floor and no re-check on
- * the committed view: sending or discarding a draft drops the card at the next
- * commit, never mid-read.
+ * Unlike {@link BoardUnreadScope} there is no session floor: the committed view
+ * is re-checked, so losing membership sheds the card immediately — sending or
+ * discarding a draft is the viewer's own act on that card. Clearing the text
+ * mid-rewrite is editing, not resolving, so a checked-out row keeps membership
+ * even with no payload and the card can't be yanked out from under a focused
+ * composer.
  */
 export interface BoardDraftScope {
   key: string
@@ -667,7 +670,8 @@ export function useStableBoardView(
       if (!matchesUnread(post, unread)) continue
       // Resolving a draft is the viewer's own act on that card, so the drafts
       // view sheds it immediately — unlike reading in the unread view, which the
-      // session floor holds in place.
+      // session floor holds in place. Emptying a checked-out draft is editing,
+      // not resolving: membership holds (see {@link BoardDraftScope}).
       if (!matchesDrafts(post, drafts)) continue
       if (rawIds !== null && !rawIds.has(id)) removed.add(id)
       out.push(post)

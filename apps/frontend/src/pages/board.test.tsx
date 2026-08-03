@@ -766,6 +766,30 @@ describe("BoardPage drafts view", () => {
     expect(screen.queryByText("No draft card")).toBeNull()
   })
 
+  it("keeps a card whose checked-out draft is emptied mid-rewrite, sheds it when the row goes", async () => {
+    const scope = boardReplyDraftKey("conv_reply")
+    await seedDraft("draft_reply", scope, "reply body")
+    await db.composerLoaded.put({ workspaceId: WORKSPACE_ID, scope, draftId: "draft_reply" } as never)
+
+    mountBoard(draftPosts(), { entry: DRAFTS_ENTRY })
+
+    expect(await screen.findByText("Reply draft card")).toBeTruthy()
+
+    const emptied = await db.drafts.get("draft_reply")
+    await db.drafts.put({
+      ...emptied!,
+      contentJson: { type: "doc", content: [{ type: "paragraph" }] },
+      clientUpdatedAt: 2000,
+    })
+
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    expect(screen.getByText("Reply draft card")).toBeTruthy()
+
+    await db.drafts.delete("draft_reply")
+
+    await waitFor(() => expect(screen.queryByText("Reply draft card")).toBeNull())
+  })
+
   it("shows nothing when no board draft matches a card", async () => {
     await seedDraft("draft_other", boardReplyDraftKey("conv_elsewhere"), "unrelated body")
 
