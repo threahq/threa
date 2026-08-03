@@ -942,6 +942,60 @@ describe("useStreamEvents with the bounded read armed", () => {
     }
   })
 
+  it("a replace-window bootstrap that raises the floor above the latch re-latches the tail", async () => {
+    // A long-offline reconnect resets the floor ratchet, so the floor can land
+    // ABOVE the latched tail floor. Keeping the old latch inverts the prefix
+    // range (permanently empty) and makes the tail re-read the whole
+    // pre-disconnect history on every message.
+    await seed(STREAM, 400)
+    const latched = 400 - TIMELINE_TAIL_EVENTS + 1
+    const raisedFloor = latched + 50
+
+    const { ranges, restore } = recordRanges()
+    try {
+      const seen: (CachedEvent[] | undefined)[] = []
+      const { result, rerender } = renderHook(
+        ({ floor }: { floor: number }) => {
+          const events = useStreamEvents(STREAM, floor, { boundedRead: true })
+          seen.push(events)
+          return events
+        },
+        { initialProps: { floor: 1 } }
+      )
+      await waitFor(() => expect(result.current?.length).toBe(400))
+
+      rerender({ floor: raisedFloor })
+      await waitFor(() => expect(result.current?.[0]?._sequenceNum).toBe(raisedFloor))
+
+      const tailLowerBounds = ranges
+        .filter((args) => Array.isArray(args[1]) && (args[1] as unknown[])[1] === Dexie.maxKey)
+        .map((args) => (args[0] as unknown[])[1])
+      expect({
+        window: result.current?.map((e) => e._sequenceNum),
+        reLatchedAtOrAboveFloor: tailLowerBounds[tailLowerBounds.length - 1],
+      }).toEqual({
+        window: Array.from({ length: 400 - raisedFloor + 1 }, (_, i) => raisedFloor + i),
+        reLatchedAtOrAboveFloor: raisedFloor,
+      })
+
+      // No emission after the floor rose ever dropped a row at or above the new
+      // floor that a previous emission had shown (the no-vanish property).
+      let covered = 0
+      for (const events of seen) {
+        if (!events) continue
+        const above = events.filter((e) => e._sequenceNum >= raisedFloor)
+        if (above.length === 0) continue
+        if (events[0]._sequenceNum >= raisedFloor) {
+          expect(above.length).toBeGreaterThanOrEqual(covered)
+          covered = above.length
+        }
+      }
+      expect(covered).toBe(400 - raisedFloor + 1)
+    } finally {
+      restore()
+    }
+  })
+
   // Bites the stale-stream guard as a whole; the tail half of that guard is
   // defensive only, since the anchor can only latch from a tail already stamped
   // for the current stream.

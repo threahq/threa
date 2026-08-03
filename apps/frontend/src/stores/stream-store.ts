@@ -247,7 +247,11 @@ export function stampStreamEvents(
   streamId: string | undefined,
   tailFloor: number | null = null
 ): StampedStreamEvents {
-  const stamped = events as StampedStreamEvents
+  // Copy before stamping: Dexie can hand two live queries the SAME result array
+  // when their ranges coincide (an unanchored prefix and tail read under the
+  // same floor do), and stamping in place would then rewrite the other read's
+  // stamp — composing a window that unions one array with itself.
+  const stamped = events.slice() as StampedStreamEvents
   if (streamId) stamped.__streamId = streamId
   stamped.__tailFloor = tailFloor
   return stamped
@@ -321,7 +325,15 @@ export function useStreamEvents(
   // the widened prefix read is in flight. Skew between the two live queries
   // therefore cannot uncover a range, and nothing rendered can vanish or
   // fabricate a hole (INV-61). A stream switch re-latches by construction.
-  const tailFloor = bounded && anchor !== null && anchor.streamId === streamId ? anchor.tailFloor : null
+  const latchedFloor = bounded && anchor !== null && anchor.streamId === streamId ? anchor.tailFloor : null
+  // ...except when the window floor rises ABOVE the latch: a `syncMode: "replace"`
+  // bootstrap (long-offline reconnect) resets the floor ratchet, and keeping the
+  // old latch would invert the prefix range `[floor, tailFloor)` (permanently
+  // empty) while the tail re-read the whole pre-disconnect history on every
+  // message. Dropping the latch re-runs the unanchored tail once, which re-latches
+  // through the effect below; `composeStreamWindow`'s stamp gate holds the previous
+  // window across the transition, so nothing narrows.
+  const tailFloor = latchedFloor !== null && floor !== null && floor > latchedFloor ? null : latchedFloor
   // Once anchored the tail range is independent of the window floor, so an older
   // page must not re-run it.
   const tailScanFloor = tailFloor === null ? floor : null
