@@ -170,6 +170,25 @@ export const BOARD_CARD_COLLAPSE_THRESHOLD_MIN = 0
 export const BOARD_CARD_COLLAPSE_THRESHOLD_MAX = 4000
 export const DEFAULT_BOARD_CARD_COLLAPSE_THRESHOLD = DEFAULT_BOARD_CARD_COLLAPSE_AT_HEIGHT
 
+// Board ledger: how a board card splits between fully rendered newest messages
+// and the compact ledger rows above them.
+export const BOARD_FULL_TAIL_COUNT_MIN = 0
+export const BOARD_FULL_TAIL_COUNT_MAX = 10
+export const DEFAULT_BOARD_FULL_TAIL_COUNT = 1
+export const BOARD_LEDGER_ROWS_MIN = 5
+export const BOARD_LEDGER_ROWS_MAX = 100
+export const DEFAULT_BOARD_LEDGER_ROWS = 15
+export const BOARD_LEAD_LINE_LENGTH_MIN = 40
+export const BOARD_LEAD_LINE_LENGTH_MAX = 300
+export const DEFAULT_BOARD_LEAD_LINE_LENGTH = 110
+
+// What the mass badge on a collapsed ledger head row reports:
+//   - "count-minutes" → message count plus an estimated read time
+//   - "count"         → message count only
+//   - "off"           → no badge
+export const BOARD_MASS_BADGE_MODES = ["count-minutes", "count", "off"] as const
+export type BoardMassBadge = (typeof BOARD_MASS_BADGE_MODES)[number]
+
 // Voice polish level: how aggressively the polish model rewrites a finalized
 // dictation transcript. The id flows through the wire format and is mirrored
 // by the backend prompt builder.
@@ -320,6 +339,14 @@ export interface UserPreferences {
   boardCardCollapseToHeight: number
   /** Legacy height setting retained for older clients. */
   boardCardCollapseThreshold: number
+  /** How many newest messages a board card renders in full. */
+  boardFullTailCount: number
+  /** Ledger rows shown on a board card before the head row takes over. */
+  boardLedgerRows: number
+  /** Lead-line truncation length (characters) for a ledger row. */
+  boardLeadLineLength: number
+  /** What the ledger head row's mass badge reports. */
+  boardMassBadge: BoardMassBadge
   /**
    * The lens the board lands on when the URL names no lens segment (bare
    * `/board`). Defaults to `all`. This only picks the home; every lens still has
@@ -420,6 +447,10 @@ export const DEFAULT_USER_PREFERENCES: Omit<UserPreferences, "workspaceId" | "us
   boardCardCollapseAtHeight: DEFAULT_BOARD_CARD_COLLAPSE_AT_HEIGHT,
   boardCardCollapseToHeight: DEFAULT_BOARD_CARD_COLLAPSE_TO_HEIGHT,
   boardCardCollapseThreshold: DEFAULT_BOARD_CARD_COLLAPSE_THRESHOLD,
+  boardFullTailCount: DEFAULT_BOARD_FULL_TAIL_COUNT,
+  boardLedgerRows: DEFAULT_BOARD_LEDGER_ROWS,
+  boardLeadLineLength: DEFAULT_BOARD_LEAD_LINE_LENGTH,
+  boardMassBadge: "count-minutes",
   boardDefaultLens: DEFAULT_BOARD_LENS,
   boardDefaultViewId: null,
   voiceTranscriptionModel: null,
@@ -461,6 +492,10 @@ export interface UpdateUserPreferencesInput {
   boardCardCollapseAtHeight?: number
   boardCardCollapseToHeight?: number
   boardCardCollapseThreshold?: number
+  boardFullTailCount?: number
+  boardLedgerRows?: number
+  boardLeadLineLength?: number
+  boardMassBadge?: BoardMassBadge
   boardDefaultLens?: BoardLens
   boardDefaultViewId?: string | null
   voiceTranscriptionModel?: string | null
