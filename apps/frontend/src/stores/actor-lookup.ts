@@ -98,7 +98,6 @@ interface ActorLookupEntry {
   workspaceId: string
   personas: readonly ActorRow[]
   bots: readonly ActorRow[]
-  toEmoji: (shortcode: string) => string | null
   lookup: ActorLookup
 }
 
@@ -106,8 +105,11 @@ interface ActorLookupEntry {
 // consumer holds its own render-stable rows array, so a single slot per
 // workspace would be evicted by the next consumer and never hit. One entry per
 // distinct rows identity means the shared arm shares an entry and the off arm
-// keeps one per consumer.
-let actorLookups = new WeakMap<readonly ActorRow[], ActorLookupEntry>()
+// keeps one per consumer. Nested by the emoji resolver because two consumers
+// can be handed the same rows array while holding their own emoji indexes (the
+// off arm's private live queries), and a single slot per array would then be
+// evicted by whichever consumer rendered last, on every render.
+let actorLookups = new WeakMap<readonly ActorRow[], WeakMap<(shortcode: string) => string | null, ActorLookupEntry>>()
 
 /**
  * The shortcode index, reverse emoji map and their accessors for one `emojis`
@@ -129,6 +131,8 @@ export function getWorkspaceEmojiIndexes(
   // would be a build per mount for a map that can only be empty.
   if (emojis.length === 0 && Object.keys(emojiWeights).length === 0) return EMPTY_EMOJI_INDEXES
 
+  // Times the emoji index build only — the sole producer of this sample, so one
+  // sample means one emoji-index rebuild.
   const stopTimer = perfCapture.getPerfCapture().time("actors.lookupBuild")
   const shortcodeIndex = emojiPicker.buildShortcodeIndex(emojis)
   const reverseIndex = new Map<string, string>()
@@ -162,25 +166,18 @@ export function getActorLookup(
   bots: readonly ActorRow[],
   toEmoji: (shortcode: string) => string | null
 ): ActorLookup {
-  const cached = actorLookups.get(users)
+  const byResolver = actorLookups.get(users)
+  const cached = byResolver?.get(toEmoji)
   // workspaceId must participate: pre-hydration every workspace passes the same
   // EMPTY_ROWS singletons, and a rows-only hit would serve workspace A's lookup
   // (A's id baked into getActorAvatar) to workspace B's first render.
-  if (
-    cached &&
-    cached.workspaceId === workspaceId &&
-    cached.personas === personas &&
-    cached.bots === bots &&
-    cached.toEmoji === toEmoji
-  ) {
+  if (cached && cached.workspaceId === workspaceId && cached.personas === personas && cached.bots === bots) {
     return cached.lookup
   }
 
-  const stopTimer = perfCapture.getPerfCapture().time("actors.lookupBuild")
   const userMap = new Map(users.map((u) => [u.id, u as User]))
   const personaMap = new Map(personas.map((p) => [p.id, p as Persona]))
   const botMap = new Map(bots.map((b) => [b.id, b as Bot]))
-  stopTimer()
 
   const getUser = (userId: string): User | undefined => userMap.get(userId)
   const getPersona = (personaId: string): Persona | undefined => personaMap.get(personaId)
@@ -254,7 +251,9 @@ export function getActorLookup(
   }
 
   const lookup: ActorLookup = { getActorName, getActorInitials, getActorAvatar, getUser, getPersona, getBot }
-  actorLookups.set(users, { workspaceId, personas, bots, toEmoji, lookup })
+  const resolvers = byResolver ?? new WeakMap<(shortcode: string) => string | null, ActorLookupEntry>()
+  resolvers.set(toEmoji, { workspaceId, personas, bots, lookup })
+  actorLookups.set(users, resolvers)
   return lookup
 }
 

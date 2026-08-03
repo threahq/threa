@@ -219,10 +219,12 @@ describe("actor lookup", () => {
     rerender(<TwoConsumers tick={2} seen={seen} />)
     await findByText("Ada-Ada-2")
 
-    // Two consumers, each building its own actor maps and emoji indexes while
-    // the rows resolve — a per-consumer constant, not a per-render one.
+    // One sample per emoji-index build (the only producer): two consumers each
+    // build their own while the rows resolve — a per-consumer constant, not a
+    // per-render one.
     expect({ settled, grew: builds() - settled }).toEqual({ settled, grew: 0 })
-    expect(settled).toBeLessThanOrEqual(12)
+    // One emoji-index build per consumer, and nothing else samples this timer.
+    expect(settled).toBe(2)
   })
 
   it("an unknown actor id falls back exactly as before", async () => {
