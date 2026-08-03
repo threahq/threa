@@ -6,6 +6,7 @@ import { db, sequenceToNum } from "@/db"
 import { isEventWriteChunkingEnabled, putEventsBounded, skipNoOpEventRewrites } from "@/db/event-writes"
 import { EVENT_PAGE_SIZE } from "@/lib/constants"
 import { useStreamEvents } from "@/stores/stream-store"
+import { useFeatureFlag } from "@/hooks/use-feature-flags"
 import { isTerminalBootstrapError, shouldSuppressBootstrapError } from "@/lib/query-load-state"
 import { computeTimelineHoles, holesSignature, type TimelineHole } from "@/sync/contiguity"
 import { useOptionalSyncEngine } from "@/sync/sync-engine"
@@ -454,7 +455,12 @@ export function useEvents(workspaceId: string, streamId: string, options?: { ena
   // cap for bounded initial load.
   const idbFloor = useMemo(() => getDisplayFloor(bootstrapFloor, olderFloor), [bootstrapFloor, olderFloor])
   const idbFloorNum = idbFloor !== null ? Number(idbFloor) : null
-  const idbEvents = useStreamEvents(streamId, idbFloorNum)
+  // The flag is resolved here — inside the providers, off the feature-flag hook
+  // layer — rather than in the store hook, so the four floorless `useStreamEvents`
+  // call sites keep their provider-free contract. `useStreamEvents` latches the
+  // value per (streamId, floor) window.
+  const boundedRead = useFeatureFlag(workspaceId, "boundedTimelineRead") === "on"
+  const idbEvents = useStreamEvents(streamId, idbFloorNum, { boundedRead })
 
   const idbResolved = idbEvents !== undefined
   const hasIdbEvents = idbResolved && idbEvents.length > 0

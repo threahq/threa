@@ -55,6 +55,7 @@ export function defineFlag<
  */
 export const FEATURE_FLAGS = {
   bootstrapDiff: defineFlag({ values: ["off", "on"], scopes: ["workspace", "user"], default: "off" }),
+  boundedTimelineRead: defineFlag({ values: ["off", "on"], scopes: ["workspace", "user"], default: "off" }),
   calls: defineFlag({ values: ["off", "on"], scopes: ["workspace"], default: "on" }),
   composeTraces: defineFlag({ values: ["off", "capture"], scopes: ["workspace"], default: "off" }),
   eventWriteChunking: defineFlag({ values: ["off", "on"], scopes: ["workspace", "user"], default: "off" }),

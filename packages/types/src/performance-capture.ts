@@ -38,6 +38,8 @@ export const PERF_MARK_NAMES = [
   "draft.stagedChars",
   "editor.externalSync",
   "timeline.windowItems",
+  "timeline.derive",
+  "timeline.tailLoad",
   "observer.longTask",
   "observer.eventDuration",
   "observer.frameGap",

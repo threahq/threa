@@ -1,7 +1,8 @@
 import { beforeEach, describe, expect, it } from "vitest"
 import type { StreamEvent } from "@threa/types"
-import { db } from "@/db"
+import { db, type CachedEvent } from "@/db"
 import { resetEventWriteFlags } from "@/db/event-writes"
+import { loadStreamPrefix, loadStreamTail, unionStreamRanges } from "@/stores/stream-store"
 import {
   computeTimelineLoadState,
   filterEventsForDisplay,
@@ -279,5 +280,59 @@ describe("cacheToIndexedDB with eventWriteChunking on", () => {
 
     const healed = await db.events.get("evt_120")
     expect(healed?.payload).toMatchObject({ threadId: "str_t", replyCount: 3 })
+  })
+})
+
+describe("bounded timeline read from the events hook's window", () => {
+  const STREAM = "stream_bounded_events"
+
+  function cachedEvent(sequence: number, streamId = STREAM): CachedEvent {
+    return {
+      id: `evt_${streamId}_${sequence}`,
+      workspaceId: "ws_1",
+      streamId,
+      sequence: String(sequence),
+      _sequenceNum: sequence,
+      eventType: "message_created",
+      payload: { messageId: `evt_${streamId}_${sequence}`, contentMarkdown: String(sequence) },
+      actorId: "usr_1",
+      actorType: "user",
+      createdAt: new Date(2026, 0, 1, 0, 0, sequence).toISOString(),
+      _cachedAt: 1,
+    }
+  }
+
+  async function seed(count: number, streamId = STREAM) {
+    await db.events.bulkPut(Array.from({ length: count }, (_, i) => cachedEvent(i + 1, streamId)))
+  }
+
+  beforeEach(async () => {
+    await db.events.clear()
+  })
+
+  it("paginating older widens the prefix and leaves the tail untouched", async () => {
+    await seed(400)
+    const tailFloor = 301
+
+    // The window floor drops one 50-event page: only the prefix range moves.
+    const prefixBefore = await loadStreamPrefix(STREAM, 200, tailFloor)
+    const tailBefore = await loadStreamTail(STREAM, tailFloor, null)
+    const prefixAfter = await loadStreamPrefix(STREAM, 150, tailFloor)
+    const tailAfter = await loadStreamTail(STREAM, tailFloor, null)
+
+    expect(prefixAfter).toHaveLength(prefixBefore.length + 50)
+    expect(tailAfter.map((e) => e.id)).toEqual(tailBefore.map((e) => e.id))
+    expect(unionStreamRanges(prefixAfter, tailAfter).map((e) => e._sequenceNum)).toEqual(
+      Array.from({ length: 251 }, (_, i) => i + 150)
+    )
+  })
+
+  it("a thread with two thousand replies renders every reply", async () => {
+    await seed(2000)
+
+    const union = unionStreamRanges(await loadStreamPrefix(STREAM, 1, 1801), await loadStreamTail(STREAM, 1801, null))
+
+    expect(union).toHaveLength(2000)
+    expect(union.map((e) => e._sequenceNum)).toEqual(Array.from({ length: 2000 }, (_, i) => i + 1))
   })
 })
