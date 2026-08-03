@@ -194,8 +194,9 @@ right, so split the dials in two:
 - **Active** — `status = active`: still in motion, not stalled or resolved.
 - **Needs resolution** — `status = stalled`, or high `temporalStaleness` with
   low `completenessScore`. Loose ends, things hanging.
-- **Decisions / Knowledge** — conversations with a captured memo
-  (`source_conversation_id`, `knowledgeType` decision/fact). What got settled.
+- ~~**Decisions / Knowledge**~~ — retired 2026-08-03 (unused in practice; memo
+  discovery lives in the memory explorer). Stored `decisions` values degrade to
+  All via `degradeBoardLens`.
 
 **Personal lenses (per-viewer — "matters to _you_"):**
 

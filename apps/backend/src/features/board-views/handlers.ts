@@ -8,7 +8,6 @@ import {
   MAX_BOARD_SCOPE_STREAMS,
   MAX_BOARD_SCOPE_LABELS,
   MAX_BOARD_VIEW_NAME_LENGTH,
-  type BoardLens,
 } from "@threa/types"
 
 const boardViewParamsSchema = z.object({ boardViewId: z.string().min(1) })
