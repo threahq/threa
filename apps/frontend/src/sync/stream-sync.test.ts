@@ -10,6 +10,7 @@ import {
   preserveBakedInAppData,
   registerStreamSocketHandlers,
   toCachedStreamBootstrap,
+  updateEventByAnchor,
   updateMessageEvent,
   updateMemoEmbedSummary,
   type CachedStreamBootstrap,
@@ -1207,7 +1208,7 @@ describe("updateMessageEvent", () => {
       _cachedAt: Date.now(),
     })
 
-    await updateMessageEvent(streamId, messageId, (p) => ({ ...p, replyCount: 5 }))
+    await updateMessageEvent(false, streamId, messageId, (p) => ({ ...p, replyCount: 5 }))
 
     const event = await db.events.get("evt_1")
     expect((event?.payload as Record<string, unknown>).replyCount).toBe(5)
@@ -1224,7 +1225,7 @@ describe("updateMessageEvent", () => {
       _cachedAt: before - 10000,
     })
 
-    await updateMessageEvent(streamId, messageId, (p) => ({ ...p, replyCount: 1 }))
+    await updateMessageEvent(false, streamId, messageId, (p) => ({ ...p, replyCount: 1 }))
 
     const event = await db.events.get("evt_patched")
     expect(event?._patchedAt).toBeDefined()
@@ -1246,12 +1247,12 @@ describe("updateMessageEvent", () => {
     // concurrently. With the old read-then-update implementation the last
     // write would overwrite earlier ones and lose fields.
     await Promise.all([
-      updateMessageEvent(streamId, messageId, (p) => ({
+      updateMessageEvent(false, streamId, messageId, (p) => ({
         ...p,
         replyCount: 3,
         threadSummary: { lastReplyContentMarkdown: "hi", participantIds: ["u1"] },
       })),
-      updateMessageEvent(streamId, messageId, (p) => ({
+      updateMessageEvent(false, streamId, messageId, (p) => ({
         ...p,
         threadId: "thread_123",
       })),
@@ -1262,6 +1263,278 @@ describe("updateMessageEvent", () => {
     expect(payload.threadId).toBe("thread_123")
     expect(payload.replyCount).toBe(3)
     expect(payload.threadSummary).toEqual({ lastReplyContentMarkdown: "hi", participantIds: ["u1"] })
+  })
+})
+
+describe("updateMessageEvent — indexed payload.messageId lookup (indexedMessagePatch)", () => {
+  function seedRow(overrides: {
+    id: string
+    streamId: string
+    sequence: string
+    payload: Record<string, unknown>
+    eventType?: StreamEvent["eventType"]
+  }): CachedEvent {
+    return {
+      ...makeEvent({
+        id: overrides.id,
+        streamId: overrides.streamId,
+        sequence: overrides.sequence,
+        payload: overrides.payload,
+        eventType: overrides.eventType ?? "message_created",
+      }),
+      workspaceId: "ws_1",
+      _sequenceNum: Number(overrides.sequence),
+      _cachedAt: Date.now(),
+    } as CachedEvent
+  }
+
+  /**
+   * Counts what each arm's cursor actually visits: `filter` predicate calls are
+   * the scan's per-row cost, `modify` callback calls are the rows the cursor
+   * yielded, and `written` is Dexie's own count of rows it re-put (the callback
+   * returning `false` is what keeps a guard-skipped row out of that count — so
+   * the wrapper must PROPAGATE the callback's return value, never swallow it).
+   * The indexed arm runs no `filter` at all.
+   */
+  const unsubscribes: Array<() => void> = []
+
+  function trackCursor() {
+    const counts = { indexes: [] as string[], filtered: 0, visited: 0, written: 0 }
+    // Dexie's `modify()` resolves to the number of rows the cursor MATCHED, not
+    // the number it wrote — the `updating` hook is what fires per actual put.
+    const onUpdating = () => {
+      counts.written += 1
+    }
+    db.events.hook("updating", onUpdating)
+    unsubscribes.push(() => db.events.hook("updating").unsubscribe(onUpdating))
+    const originalWhere = db.events.where.bind(db.events)
+    vi.spyOn(db.events, "where").mockImplementation(((key: string) => {
+      counts.indexes.push(String(key))
+      const clause = originalWhere(key as never) as unknown as {
+        equals: (value: unknown) => Record<string, unknown>
+      }
+      const originalEquals = clause.equals.bind(clause)
+      clause.equals = (value: unknown) => {
+        const collection = originalEquals(value) as unknown as {
+          filter: (fn: (row: CachedEvent) => boolean) => unknown
+          modify: (fn: (row: CachedEvent) => void | boolean) => PromiseLike<number>
+        }
+        const originalFilter = collection.filter.bind(collection)
+        const originalModify = collection.modify.bind(collection)
+        collection.filter = (fn) =>
+          originalFilter((row) => {
+            counts.filtered += 1
+            return fn(row)
+          })
+        collection.modify = (fn) =>
+          originalModify((row) => {
+            counts.visited += 1
+            return fn(row)
+          })
+        return collection as never
+      }
+      return clause as never
+    }) as never)
+    return counts
+  }
+
+  beforeEach(async () => {
+    await db.events.clear()
+  })
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+    while (unsubscribes.length > 0) unsubscribes.pop()?.()
+  })
+
+  async function seedLargeStream(streamId: string, count: number, targetMessageId: string): Promise<void> {
+    const rows: CachedEvent[] = []
+    for (let i = 0; i < count; i += 1) {
+      const messageId = i === count - 2 ? targetMessageId : `msg_bulk_${i}`
+      rows.push(
+        seedRow({
+          id: `evt_bulk_${i}`,
+          streamId,
+          sequence: String(i + 1),
+          payload: { messageId, contentMarkdown: "x" },
+        })
+      )
+    }
+    await db.events.bulkPut(rows)
+  }
+
+  it("a reaction patch touches one row in a thousand-event stream", async () => {
+    const streamId = "stream_big"
+    const messageId = "msg_target"
+    await seedLargeStream(streamId, 1000, messageId)
+
+    const indexed = trackCursor()
+    await updateMessageEvent(true, streamId, messageId, (p) => ({ ...p, reactions: ["👍"] }))
+    expect(indexed.indexes).toEqual(["payload.messageId"])
+    expect({ filtered: indexed.filtered, visited: indexed.visited }).toEqual({ filtered: 0, visited: 1 })
+    vi.restoreAllMocks()
+
+    const scanned = trackCursor()
+    await updateMessageEvent(false, streamId, messageId, (p) => ({ ...p, reactions: ["👍", "🎉"] }))
+    expect(scanned.indexes).toEqual(["[streamId+eventType]"])
+    expect({ filtered: scanned.filtered, visited: scanned.visited }).toEqual({ filtered: 1000, visited: 1 })
+
+    const patched = await db.events.get("evt_bulk_998")
+    expect((patched?.payload as Record<string, unknown>).reactions).toEqual(["👍", "🎉"])
+  }, 20000)
+
+  it("a patch for a message in another stream is not applied", async () => {
+    const messageId = "msg_shared"
+    await db.events.bulkPut([
+      seedRow({ id: "evt_here", streamId: "stream_here", sequence: "1", payload: { messageId, replyCount: 0 } }),
+      seedRow({ id: "evt_there", streamId: "stream_there", sequence: "1", payload: { messageId, replyCount: 0 } }),
+    ])
+
+    const counts = trackCursor()
+    await updateMessageEvent(true, "stream_here", messageId, (p) => ({ ...p, replyCount: 7 }))
+
+    const here = await db.events.get("evt_here")
+    const there = await db.events.get("evt_there")
+    expect({
+      here: (here?.payload as Record<string, unknown>).replyCount,
+      there: (there?.payload as Record<string, unknown>).replyCount,
+      therePatchedAt: there?._patchedAt,
+      visited: counts.visited,
+      written: counts.written,
+    }).toEqual({ here: 7, there: 0, therePatchedAt: undefined, visited: 2, written: 1 })
+  })
+
+  it("a same-id row of another event type is visited but not re-put", async () => {
+    const messageId = "msg_typed"
+    await db.events.bulkPut([
+      seedRow({ id: "evt_created", streamId: "stream_typed", sequence: "1", payload: { messageId, replyCount: 0 } }),
+      seedRow({
+        id: "evt_edited",
+        streamId: "stream_typed",
+        sequence: "2",
+        eventType: "message_edited",
+        payload: { messageId, replyCount: 0 },
+      }),
+    ])
+
+    const counts = trackCursor()
+    await updateMessageEvent(true, "stream_typed", messageId, (p) => ({ ...p, replyCount: 9 }))
+
+    const created = await db.events.get("evt_created")
+    const edited = await db.events.get("evt_edited")
+    expect({
+      created: (created?.payload as Record<string, unknown>).replyCount,
+      edited: (edited?.payload as Record<string, unknown>).replyCount,
+      editedPatchedAt: edited?._patchedAt,
+      visited: counts.visited,
+      written: counts.written,
+    }).toEqual({ created: 9, edited: 0, editedPatchedAt: undefined, visited: 2, written: 1 })
+  })
+
+  it("concurrent patches to the same message do not lose an update", async () => {
+    const messageId = "msg_race_indexed"
+    await db.events.put(
+      seedRow({ id: "evt_race_indexed", streamId: "stream_race", sequence: "1", payload: { messageId } })
+    )
+
+    await Promise.all([
+      updateMessageEvent(true, "stream_race", messageId, (p) => ({ ...p, replyCount: 3 })),
+      updateMessageEvent(true, "stream_race", messageId, (p) => ({ ...p, threadId: "thread_1" })),
+    ])
+
+    const event = await db.events.get("evt_race_indexed")
+    expect(event?.payload).toEqual({ messageId, replyCount: 3, threadId: "thread_1" })
+  })
+
+  it("an event whose payload carries no messageId is never matched", async () => {
+    await db.events.bulkPut([
+      seedRow({
+        id: "evt_no_message_id",
+        streamId: "stream_sparse",
+        sequence: "1",
+        eventType: "call_started",
+        payload: { callId: "call_1" },
+      }),
+      seedRow({
+        id: "evt_with_message_id",
+        streamId: "stream_sparse",
+        sequence: "2",
+        payload: { messageId: "msg_sparse" },
+      }),
+    ])
+
+    await updateMessageEvent(true, "stream_sparse", "msg_sparse", (p) => ({ ...p, replyCount: 1 }))
+
+    const untouched = await db.events.get("evt_no_message_id")
+    const patched = await db.events.get("evt_with_message_id")
+    expect({
+      untouched: untouched?.payload,
+      untouchedPatchedAt: untouched?._patchedAt,
+      patched: patched?.payload,
+    }).toEqual({
+      untouched: { callId: "call_1" },
+      untouchedPatchedAt: undefined,
+      patched: { messageId: "msg_sparse", replyCount: 1 },
+    })
+  })
+
+  it("the same message id in two streams patches only the caller's stream", async () => {
+    const messageId = "msg_moved"
+    await db.events.bulkPut([
+      seedRow({ id: "evt_old_stream", streamId: "stream_old", sequence: "1", payload: { messageId, tag: "old" } }),
+      seedRow({ id: "evt_new_stream", streamId: "stream_new", sequence: "1", payload: { messageId, tag: "new" } }),
+    ])
+
+    await updateMessageEvent(true, "stream_new", messageId, (p) => ({ ...p, tag: "patched" }))
+
+    const rows = await db.events.bulkGet(["evt_old_stream", "evt_new_stream"])
+    expect(rows.map((row) => (row?.payload as Record<string, unknown>).tag)).toEqual(["old", "patched"])
+  })
+
+  it("six payload shapes round-trip through the updater on the indexed path", async () => {
+    const streamId = "stream_callers"
+    await db.events.bulkPut([
+      seedRow({ id: "evt_edit", streamId, sequence: "1", payload: { messageId: "msg_edit" } }),
+      seedRow({ id: "evt_delete", streamId, sequence: "2", payload: { messageId: "msg_delete" } }),
+      seedRow({ id: "evt_move", streamId, sequence: "3", payload: { messageId: "msg_move" } }),
+      seedRow({ id: "evt_reaction", streamId, sequence: "4", payload: { messageId: "msg_reaction" } }),
+      seedRow({ id: "evt_preview", streamId, sequence: "5", payload: { messageId: "msg_preview" } }),
+      seedRow({ id: "evt_heal", streamId, sequence: "6", payload: { messageId: "msg_heal" } }),
+      seedRow({
+        id: "evt_card",
+        streamId,
+        sequence: "7",
+        eventType: "memos:captured",
+        payload: { memoId: "memo_1" },
+      }),
+    ])
+
+    await updateMessageEvent(true, streamId, "msg_edit", (p) => ({ ...p, contentMarkdown: "edited", editedAt: "t" }))
+    await updateMessageEvent(true, streamId, "msg_delete", (p) => ({ ...p, deletedAt: "t" }))
+    await updateMessageEvent(true, streamId, "msg_move", (p) => ({ ...p, movedToStreamId: "stream_other" }))
+    await updateMessageEvent(true, streamId, "msg_reaction", (p) => ({ ...p, reactions: ["👍"] }))
+    await updateMessageEvent(true, streamId, "msg_preview", (p) => ({ ...p, linkPreviews: [{ url: "u" }] }))
+    await updateEventByAnchor(true, streamId, "msg_heal", (p) => ({ ...p, threadId: "thread_healed" }))
+    await updateEventByAnchor(true, streamId, "evt_card", (p) => ({ ...p, threadId: "thread_card" }))
+
+    const rows = await db.events.bulkGet([
+      "evt_edit",
+      "evt_delete",
+      "evt_move",
+      "evt_reaction",
+      "evt_preview",
+      "evt_heal",
+      "evt_card",
+    ])
+    expect(rows.map((row) => row?.payload)).toEqual([
+      { messageId: "msg_edit", contentMarkdown: "edited", editedAt: "t" },
+      { messageId: "msg_delete", deletedAt: "t" },
+      { messageId: "msg_move", movedToStreamId: "stream_other" },
+      { messageId: "msg_reaction", reactions: ["👍"] },
+      { messageId: "msg_preview", linkPreviews: [{ url: "u" }] },
+      { messageId: "msg_heal", threadId: "thread_healed" },
+      { memoId: "memo_1", threadId: "thread_card" },
+    ])
   })
 })
 

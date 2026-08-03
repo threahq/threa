@@ -72,20 +72,35 @@ export function skipNoOpEventRewrites(
 // that Dexie must deserialize per read — so resolving the flag from it on every
 // event write costs more than the write. Resolve once per workspace per module
 // instance instead, primed from the network bootstrap and socket flag flips.
-const chunkingByWorkspace = new Map<string, boolean>()
+type EventWriteFlags = { chunking: boolean; indexedMessagePatch: boolean }
 
-function resolveChunking(layers: FeatureFlagLayers | null | undefined): boolean {
-  return resolveFeatureFlags(coerceLayers(layers ?? null) ?? EMPTY_FLAG_LAYERS).eventWriteChunking === "on"
+const flagsByWorkspace = new Map<string, EventWriteFlags>()
+
+function resolveEventWriteFlags(layers: FeatureFlagLayers | null | undefined): EventWriteFlags {
+  const resolved = resolveFeatureFlags(coerceLayers(layers ?? null) ?? EMPTY_FLAG_LAYERS)
+  return {
+    chunking: resolved.eventWriteChunking === "on",
+    indexedMessagePatch: resolved.indexedMessagePatch === "on",
+  }
 }
 
 /** Seed the cache from freshly delivered layers (bootstrap response or flag-flip socket event). */
-export function primeEventWriteChunking(workspaceId: string, layers: FeatureFlagLayers | null | undefined): void {
-  chunkingByWorkspace.set(workspaceId, resolveChunking(layers))
+export function primeEventWriteFlags(workspaceId: string, layers: FeatureFlagLayers | null | undefined): void {
+  flagsByWorkspace.set(workspaceId, resolveEventWriteFlags(layers))
 }
 
 /** Test-only: drop the cache so each case resolves from its own prime/IDB row. */
-export function resetEventWriteChunking(): void {
-  chunkingByWorkspace.clear()
+export function resetEventWriteFlags(): void {
+  flagsByWorkspace.clear()
+}
+
+async function getEventWriteFlags(database: ThreaDatabase, workspaceId: string): Promise<EventWriteFlags> {
+  const cached = flagsByWorkspace.get(workspaceId)
+  if (cached !== undefined) return cached
+  const metadata = await database.workspaceMetadata.get(workspaceId)
+  const flags = resolveEventWriteFlags(metadata?.featureFlags)
+  flagsByWorkspace.set(workspaceId, flags)
+  return flags
 }
 
 /**
@@ -94,10 +109,10 @@ export function resetEventWriteChunking(): void {
  * the pre-#1455 flat `featureFlags` shape rather than throwing on it.
  */
 export async function isEventWriteChunkingEnabled(database: ThreaDatabase, workspaceId: string): Promise<boolean> {
-  const cached = chunkingByWorkspace.get(workspaceId)
-  if (cached !== undefined) return cached
-  const metadata = await database.workspaceMetadata.get(workspaceId)
-  const chunked = resolveChunking(metadata?.featureFlags)
-  chunkingByWorkspace.set(workspaceId, chunked)
-  return chunked
+  return (await getEventWriteFlags(database, workspaceId)).chunking
+}
+
+/** The viewer's `indexedMessagePatch` value, resolved through the same primed cache. */
+export async function isIndexedMessagePatchEnabled(database: ThreaDatabase, workspaceId: string): Promise<boolean> {
+  return (await getEventWriteFlags(database, workspaceId)).indexedMessagePatch
 }

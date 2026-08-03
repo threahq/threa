@@ -4,9 +4,9 @@ import { db, sequenceToNum, type CachedEvent } from "@/db"
 import {
   EVENT_BULK_PUT_LIMIT,
   isEventWriteChunkingEnabled,
-  primeEventWriteChunking,
+  primeEventWriteFlags,
   putEventsBounded,
-  resetEventWriteChunking,
+  resetEventWriteFlags,
   skipNoOpEventRewrites,
 } from "./event-writes"
 
@@ -33,7 +33,7 @@ function makePage(streamId: string, count: number): CachedEvent[] {
 }
 
 beforeEach(async () => {
-  resetEventWriteChunking()
+  resetEventWriteFlags()
   await db.events.clear()
   await db.workspaceMetadata.clear()
 })
@@ -209,15 +209,15 @@ describe("isEventWriteChunkingEnabled", () => {
   it("a primed value wins without reading the row", async () => {
     await putMetadata({ workspace: { eventWriteChunking: "off" }, user: {} })
     const get = vi.spyOn(db.workspaceMetadata, "get")
-    primeEventWriteChunking("ws_1", { workspace: {}, user: { eventWriteChunking: "on" } })
+    primeEventWriteFlags("ws_1", { workspace: {}, user: { eventWriteChunking: "on" } })
 
     expect(await isEventWriteChunkingEnabled(db, "ws_1")).toBe(true)
     expect(get).not.toHaveBeenCalled()
   })
 
-  it("resetEventWriteChunking clears the primed value", async () => {
-    primeEventWriteChunking("ws_1", { workspace: { eventWriteChunking: "on" }, user: {} })
-    resetEventWriteChunking()
+  it("resetEventWriteFlags clears the primed value", async () => {
+    primeEventWriteFlags("ws_1", { workspace: { eventWriteChunking: "on" }, user: {} })
+    resetEventWriteFlags()
 
     expect(await isEventWriteChunkingEnabled(db, "ws_1")).toBe(false)
   })

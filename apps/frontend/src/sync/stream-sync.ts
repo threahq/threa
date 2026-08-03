@@ -1,5 +1,10 @@
 import { db, sequenceToNum, type CachedEvent } from "@/db"
-import { isEventWriteChunkingEnabled, isNoOpRewrite, putEventsBounded } from "@/db/event-writes"
+import {
+  isEventWriteChunkingEnabled,
+  isIndexedMessagePatchEnabled,
+  isNoOpRewrite,
+  putEventsBounded,
+} from "@/db/event-writes"
 import {
   StreamTypes,
   THREAD_ANCHORABLE_EVENT_TYPES,
@@ -922,31 +927,51 @@ export async function updateMemoEmbedSummary(streamId: string, summary: MemoEmbe
 }
 
 export async function updateMessageEvent(
+  indexed: boolean,
   streamId: string,
   messageId: string,
   updater: (payload: Record<string, unknown>) => Record<string, unknown>
 ): Promise<void> {
-  // Use compound index to narrow to message_created events for this stream,
-  // then filter by messageId in the payload (not indexed but over a small set).
   // modify() runs the callback inside a readwrite cursor so the read and write
   // are atomic. This prevents lost updates when multiple socket handlers
   // (messages:moved, stream:created, thread:updated) update the same parent
   // message concurrently — the second transaction sees the first's writes.
+  const patch = (event: CachedEvent) => {
+    const updatedPayload = updater(event.payload as Record<string, unknown>)
+    const now = Date.now()
+    event.payload = updatedPayload
+    event._cachedAt = now
+    // Freshness watermark — see `_patchedAt` doc on CachedEvent. Only
+    // bumped by socket-handler patches (and the optimistic helpers below
+    // that mirror them); bootstrap apply leaves it alone so a later
+    // bootstrap response can decide whether its enrichment is stale.
+    event._patchedAt = now
+  }
+
+  if (indexed) {
+    // The `payload.messageId` sparse index (v47) makes this a direct lookup.
+    // The stream/type guard stays inside the cursor so a message that moved
+    // streams is still not patched in its old stream — today's semantics.
+    // `false` (not a bare return) is what tells Dexie to SKIP the row: any
+    // other return value re-puts it, which would fire observability for every
+    // same-id row in another stream.
+    await db.events
+      .where("payload.messageId")
+      .equals(messageId)
+      .modify((event) => {
+        if (event.streamId !== streamId || event.eventType !== "message_created") return false
+        patch(event)
+      })
+    return
+  }
+
+  // Use compound index to narrow to message_created events for this stream,
+  // then filter by messageId in the payload (not indexed but over a small set).
   await db.events
     .where("[streamId+eventType]")
     .equals([streamId, "message_created"])
     .filter((e) => (e.payload as { messageId?: string })?.messageId === messageId)
-    .modify((event) => {
-      const updatedPayload = updater(event.payload as Record<string, unknown>)
-      const now = Date.now()
-      event.payload = updatedPayload
-      event._cachedAt = now
-      // Freshness watermark — see `_patchedAt` doc on CachedEvent. Only
-      // bumped by socket-handler patches (and the optimistic helpers below
-      // that mirror them); bootstrap apply leaves it alone so a later
-      // bootstrap response can decide whether its enrichment is stale.
-      event._patchedAt = now
-    })
+    .modify(patch)
 }
 
 /**
@@ -957,12 +982,13 @@ export async function updateMessageEvent(
  * for messages, event id for cards).
  */
 export async function updateEventByAnchor(
+  indexed: boolean,
   streamId: string,
   anchorId: string,
   updater: (payload: Record<string, unknown>) => Record<string, unknown>
 ): Promise<void> {
   if (anchorId.startsWith("msg_")) {
-    await updateMessageEvent(streamId, anchorId, updater)
+    await updateMessageEvent(indexed, streamId, anchorId, updater)
     return
   }
   await db.events
@@ -987,11 +1013,13 @@ export async function updateEventByAnchor(
  * anchor's canonical id so event-anchored (card) threads bump too.
  */
 export async function optimisticReplyCountUpdate(
+  workspaceId: string,
   parentStreamId: string,
   anchorId: string,
   threadId: string
 ): Promise<void> {
-  await updateEventByAnchor(parentStreamId, anchorId, (p) => ({
+  const indexed = await isIndexedMessagePatchEnabled(db, workspaceId)
+  await updateEventByAnchor(indexed, parentStreamId, anchorId, (p) => ({
     ...p,
     threadId,
     replyCount: ((p.replyCount as number) ?? 0) + 1,
@@ -1007,8 +1035,14 @@ export async function optimisticReplyCountUpdate(
  * created, we swap the threadId to the server-assigned one so navigation
  * targets the real thread.
  */
-export async function setParentThreadId(parentStreamId: string, anchorId: string, threadId: string): Promise<void> {
-  await updateEventByAnchor(parentStreamId, anchorId, (p) => ({
+export async function setParentThreadId(
+  workspaceId: string,
+  parentStreamId: string,
+  anchorId: string,
+  threadId: string
+): Promise<void> {
+  const indexed = await isIndexedMessagePatchEnabled(db, workspaceId)
+  await updateEventByAnchor(indexed, parentStreamId, anchorId, (p) => ({
     ...p,
     threadId,
   }))
@@ -1343,8 +1377,9 @@ export function registerStreamSocketHandlers(
     }
 
     const now = Date.now()
+    const indexed = await isIndexedMessagePatchEnabled(db, workspaceId)
     await db.transaction("rw", [db.events, db.slots], async () => {
-      await updateMessageEvent(streamId, editPayload.messageId, (p) => ({
+      await updateMessageEvent(indexed, streamId, editPayload.messageId, (p) => ({
         ...p,
         contentJson: editPayload.contentJson,
         contentMarkdown: editPayload.contentMarkdown,
@@ -1400,7 +1435,8 @@ export function registerStreamSocketHandlers(
 
   const handleMessageDeleted = async (payload: MessageDeletedPayload) => {
     if (payload.streamId !== streamId) return
-    await updateMessageEvent(streamId, payload.messageId, (p) => ({
+    const indexed = await isIndexedMessagePatchEnabled(db, workspaceId)
+    await updateMessageEvent(indexed, streamId, payload.messageId, (p) => ({
       ...p,
       deletedAt: payload.deletedAt,
     }))
@@ -1419,7 +1455,10 @@ export function registerStreamSocketHandlers(
     if (payload.sourceStreamId !== streamId && payload.destinationStreamId !== streamId) return
 
     const now = Date.now()
-    const chunked = await isEventWriteChunkingEnabled(db, workspaceId)
+    const [chunked, indexed] = await Promise.all([
+      isEventWriteChunkingEnabled(db, workspaceId),
+      isIndexedMessagePatchEnabled(db, workspaceId),
+    ])
     await db.transaction("rw", [db.events, db.streams, db.slots], async () => {
       if (payload.sourceStreamId === streamId) {
         await db.events.bulkDelete(payload.removedEventIds)
@@ -1441,7 +1480,7 @@ export function registerStreamSocketHandlers(
         // identical result. This makes `messages:moved` self-sufficient:
         // the thread card surfaces with the right count even if
         // `thread:updated` is delayed or lost.
-        await updateMessageEvent(streamId, payload.targetMessageId, (p) => ({
+        await updateMessageEvent(indexed, streamId, payload.targetMessageId, (p) => ({
           ...p,
           threadId: payload.thread.id,
           replyCount: payload.parentReplyCount,
@@ -1524,7 +1563,8 @@ export function registerStreamSocketHandlers(
 
   const handleReactionAdded = async (payload: ReactionPayload) => {
     if (payload.streamId !== streamId) return
-    await updateMessageEvent(streamId, payload.messageId, (p) => {
+    const indexed = await isIndexedMessagePatchEnabled(db, workspaceId)
+    await updateMessageEvent(indexed, streamId, payload.messageId, (p) => {
       const reactions = { ...((p.reactions as Record<string, string[]>) ?? {}) }
       const existing = reactions[payload.emoji] || []
       if (!existing.includes(payload.userId)) {
@@ -1543,7 +1583,8 @@ export function registerStreamSocketHandlers(
 
   const handleReactionRemoved = async (payload: ReactionPayload) => {
     if (payload.streamId !== streamId) return
-    await updateMessageEvent(streamId, payload.messageId, (p) => {
+    const indexed = await isIndexedMessagePatchEnabled(db, workspaceId)
+    await updateMessageEvent(indexed, streamId, payload.messageId, (p) => {
       const reactions = { ...((p.reactions as Record<string, string[]>) ?? {}) }
       if (reactions[payload.emoji]) {
         reactions[payload.emoji] = reactions[payload.emoji].filter((id) => id !== payload.userId)
@@ -1575,7 +1616,8 @@ export function registerStreamSocketHandlers(
     const anchorId = stream.parentAnchorId
     if (!anchorId) return
 
-    await updateEventByAnchor(streamId, anchorId, (p) => ({
+    const indexed = await isIndexedMessagePatchEnabled(db, workspaceId)
+    await updateEventByAnchor(indexed, streamId, anchorId, (p) => ({
       ...p,
       threadId: stream.id,
     }))
@@ -1606,7 +1648,8 @@ export function registerStreamSocketHandlers(
     // Heal only the fields the patch carries: the edit path omits replyCount
     // (summary-only refresh) so it can't overwrite a concurrent create/delete's
     // authoritative count.
-    await updateEventByAnchor(streamId, payload.anchorId, (p) => ({
+    const indexed = await isIndexedMessagePatchEnabled(db, workspaceId)
+    await updateEventByAnchor(indexed, streamId, payload.anchorId, (p) => ({
       ...p,
       ...(payload.replyCount !== undefined ? { replyCount: payload.replyCount } : {}),
       ...(payload.threadSummary !== undefined ? { threadSummary: payload.threadSummary } : {}),
@@ -1730,7 +1773,8 @@ export function registerStreamSocketHandlers(
 
   const handleLinkPreviewReady = async (payload: LinkPreviewReadyPayload) => {
     if (payload.streamId !== streamId) return
-    await updateMessageEvent(streamId, payload.messageId, (p) => ({
+    const indexed = await isIndexedMessagePatchEnabled(db, workspaceId)
+    await updateMessageEvent(indexed, streamId, payload.messageId, (p) => ({
       ...p,
       linkPreviews: preserveBakedInAppData(payload.previews, p.linkPreviews as LinkPreviewSummary[] | undefined),
     }))
