@@ -282,6 +282,9 @@ function BoardReplyComposerForm({
       scheduleTarget={
         armedReply ? armedReply.scheduleTarget : { streamId: rootStreamId, conversationId: post.conversation.id }
       }
+      // Always the parent conversation, armed branch replies included: chips
+      // render via resolveBoardEventRows, which only the parent surface runs.
+      commandConversationId={post.conversation.id}
       restoreStashedIdOnMount={restoreStashedId}
       autoFocus={autoFocus}
       focusSignal={focusSignal}

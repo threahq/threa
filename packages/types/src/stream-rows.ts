@@ -14,8 +14,10 @@ import { EVENT_TYPES, type EventType } from "./constants"
  *                        (memos:captured → `conversationId`,
  *                        agent:follow_up_scheduled → `sourceConversationId`).
  * - `none`             — never drawn on conversation surfaces (channel chrome like
- *                        member/description events, author-scoped command events,
- *                        and patch-style rows).
+ *                        member/description events, and patch-style rows).
+ *                        Command events moved to `source-conversation`: the
+ *                        dispatching composer stamps `payload.conversationId`,
+ *                        terminal events join by `commandId`.
  */
 export type ConversationRef = "self-message" | "trigger-message" | "source-conversation" | "none"
 
@@ -143,7 +145,9 @@ const COMMAND: StreamRowSpec = {
   authorGroupable: false,
   patchesRow: false,
   broadcastSlot: false,
-  conversationRef: "none",
+  // Only `command_dispatched` carries the id; `command_completed`/`command_failed`
+  // are refless and reach their row by `commandId` inside the group.
+  conversationRef: "source-conversation",
   bumps: false,
   threadable: false,
 }

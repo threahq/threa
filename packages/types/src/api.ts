@@ -1980,6 +1980,8 @@ export interface DispatchCommandInput {
   command: string
   streamId: string
   clientCommandId?: string
+  /** The conversation the dispatching composer writes into, when it has one. */
+  conversationId?: string
 }
 
 export interface DispatchCommandResponse {
@@ -2002,6 +2004,13 @@ export interface CommandDispatchedPayload {
   name: string
   args: string
   status: "dispatched"
+  /**
+   * The conversation the dispatching composer was writing into, when there is
+   * one. Stamped only by the board/panel composers — a stream-level dispatch
+   * (the timeline composer) carries none and stays off the cards. The lifecycle
+   * events that follow are refless; they join by `commandId`.
+   */
+  conversationId?: string
   /** Missing means legacy server command. */
   executionKind?: Extract<CommandKind, "server" | "bot-runtime">
 }

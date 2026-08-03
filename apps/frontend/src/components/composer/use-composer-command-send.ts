@@ -29,7 +29,16 @@ export type ComposerSendPlan = ComposerCommandPlan | ComposerSteerMessagePlan | 
  * so a command the palette just offered is always dispatchable and nothing the
  * palette doesn't know is intercepted — unknown `/text` still sends as text.
  */
-export function useComposerCommandSend(workspaceId: string, streamId: string | undefined) {
+export function useComposerCommandSend(
+  workspaceId: string,
+  streamId: string | undefined,
+  /**
+   * The conversation this composer writes into, stamped on the dispatch so the
+   * card can draw the chip. Absent for a stream-level composer (the timeline),
+   * whose commands stay off the board.
+   */
+  conversationId?: string
+) {
   const availableCommands = useStreamCommands(workspaceId, streamId)
   const startDiscussWithAriadne = useDiscussWithAriadne(workspaceId)
   const { queueCommand } = useCommandDispatchQueue(workspaceId, streamId ?? "")
@@ -90,9 +99,13 @@ export function useComposerCommandSend(workspaceId: string, streamId: string | u
         }
         return
       }
-      await queueCommand({ commandMarkdown: plan.commandMarkdown, commandName: plan.commandName })
+      await queueCommand({
+        commandMarkdown: plan.commandMarkdown,
+        commandName: plan.commandName,
+        ...(conversationId && { conversationId }),
+      })
     },
-    [queueCommand, startDiscussWithAriadne, streamId]
+    [conversationId, queueCommand, startDiscussWithAriadne, streamId]
   )
 
   return { availableCommands, planSend, dispatchCommand }

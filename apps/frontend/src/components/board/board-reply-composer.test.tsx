@@ -29,6 +29,7 @@ const FormStub = (props: InlineComposerFormProps) => (
     data-reply-target-title={props.replyTarget?.title ?? ""}
     data-reply-target-move={props.replyTarget?.moveDraftToKey ?? ""}
     data-schedule-conv={props.scheduleTarget?.conversationId ?? ""}
+    data-command-conv={props.commandConversationId ?? ""}
   />
 )
 
@@ -86,6 +87,9 @@ describe("BoardReplyComposer alwaysDocked (docked-composer semantics)", () => {
     const form = screen.getByTestId("form-stub")
     expect(form).toHaveAttribute("data-draft-key", "board:branch-reply:conv_branch")
     expect(form).toHaveAttribute("data-schedule-conv", "conv_branch")
+    // Commands stamp the PARENT conversation even when armed to a branch — the
+    // chip renders on the parent surface (resolveBoardEventRows runs there only).
+    expect(form).toHaveAttribute("data-command-conv", "conv_1")
     expect(form).toHaveAttribute("data-reply-target-title", "Sub-topic")
     // The × moves the branch draft back to the conversation's ROOT reply scope.
     expect(form).toHaveAttribute("data-reply-target-move", "board:reply:conv_1")

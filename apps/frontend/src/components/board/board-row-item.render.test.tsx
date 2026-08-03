@@ -6,6 +6,7 @@ import { BOARD_EVENT_ROW_TYPES, type EventType } from "@threa/types"
 // eslint-disable-next-line no-restricted-imports -- test builds the rail's own row type, not a component data read
 import type { CachedEvent } from "@/db"
 import * as hooksModule from "@/hooks"
+import * as contextsModule from "@/contexts"
 import { PanelProvider, TraceProvider } from "@/contexts"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { resolveBoardEventRows, type BoardEventRow } from "@/lib/board/board-event-rows"
@@ -48,7 +49,21 @@ const SESSION_FIXTURE: CachedEvent[] = [
   cachedEvent("agent_session:completed", { sessionId: "sess_1", stepCount: 3, duration: 1200, messageCount: 1 }),
 ]
 
+const COMMAND_FIXTURE: CachedEvent[] = [
+  cachedEvent("command_dispatched", {
+    commandId: "cmd_1",
+    name: "compact",
+    args: "",
+    status: "dispatched",
+    conversationId: CONV,
+  }),
+  cachedEvent("command_completed", { commandId: "cmd_1" }),
+]
+
 const ROW_FIXTURES: Partial<Record<EventType, CachedEvent[]>> = {
+  command_dispatched: COMMAND_FIXTURE,
+  command_completed: COMMAND_FIXTURE,
+  command_failed: COMMAND_FIXTURE,
   "agent_session:started": SESSION_FIXTURE,
   "agent_session:completed": SESSION_FIXTURE,
   "agent_session:failed": SESSION_FIXTURE,
@@ -80,7 +95,11 @@ const ROW_FIXTURES: Partial<Record<EventType, CachedEvent[]>> = {
 }
 
 function rowsFor(events: CachedEvent[]): BoardEventRow[] {
-  return resolveBoardEventRows(events, { conversationId: CONV, memberMessageIds: new Set([MEMBER_MESSAGE]) })
+  return resolveBoardEventRows(events, {
+    conversationId: CONV,
+    memberMessageIds: new Set([MEMBER_MESSAGE]),
+    currentUserId: "persona_1",
+  })
 }
 
 function renderRow(row: BoardEventRow) {
@@ -107,6 +126,9 @@ beforeEach(() => {
   } as unknown as ReturnType<typeof hooksModule.useActors>)
   vi.spyOn(hooksModule, "useTouchCapable").mockReturnValue(false)
   vi.spyOn(hooksModule, "useInputMode").mockReturnValue("mouse")
+  vi.spyOn(contextsModule, "usePreferences").mockReturnValue({
+    preferences: { timezone: "UTC", locale: "en-US" },
+  } as unknown as ReturnType<typeof contextsModule.usePreferences>)
 })
 
 describe("BoardEventRowItem renders every spec-declared board row", () => {
@@ -134,6 +156,9 @@ describe("BoardEventRowItem renders every spec-declared board row", () => {
       "memos:captured": ["memo"],
       "agent:follow_up_scheduled": ["followUp"],
       "delegation:created": ["delegation"],
+      command_dispatched: ["command"],
+      command_completed: ["command"],
+      command_failed: ["command"],
     })
     // A kind that renders nothing produces `[]`, and `[]` can be pasted into the
     // expectation above to make it green. This half names the offending type and

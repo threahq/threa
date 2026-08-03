@@ -111,7 +111,7 @@ export function useCommandDispatchQueue(workspaceId: string, streamId: string) {
   )
 
   const queueCommand = useCallback(
-    async (params: { commandMarkdown: string; commandName: string }) => {
+    async (params: { commandMarkdown: string; commandName: string; conversationId?: string }) => {
       if (!currentUserId) {
         throw new Error("Cannot dispatch command: user identity not resolved yet")
       }
@@ -134,6 +134,7 @@ export function useCommandDispatchQueue(workspaceId: string, streamId: string) {
             name: params.commandName,
             args: parseCommandArgs(params.commandMarkdown),
             status: "dispatched",
+            ...(params.conversationId && { conversationId: params.conversationId }),
             executionKind: CommandKinds.BOT_RUNTIME,
           },
           actorId: currentUserId,
@@ -152,6 +153,7 @@ export function useCommandDispatchQueue(workspaceId: string, streamId: string) {
           streamId,
           command: params.commandMarkdown,
           optimisticEventId,
+          ...(params.conversationId && { conversationId: params.conversationId }),
         })
       })
 

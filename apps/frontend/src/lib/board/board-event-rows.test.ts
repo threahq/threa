@@ -275,6 +275,108 @@ describe("resolveBoardEventRows", () => {
   })
 })
 
+describe("resolveBoardEventRows command chips", () => {
+  const ME = "usr_me"
+
+  function dispatched(overrides: { id?: string; commandId: string; conversationId?: string; actorId?: string }) {
+    return cachedEvent({
+      id: overrides.id,
+      eventType: "command_dispatched",
+      createdAt: "2026-07-04T10:00:00Z",
+      actorId: overrides.actorId ?? ME,
+      payload: {
+        commandId: overrides.commandId,
+        name: "compact",
+        args: "",
+        status: "dispatched",
+        ...(overrides.conversationId ? { conversationId: overrides.conversationId } : {}),
+      },
+    })
+  }
+
+  it("groups a dispatched+completed pair into one row on the conversation the dispatch names", () => {
+    const events = [
+      dispatched({ id: "cmd_evt", commandId: "cmd_1", conversationId: CONV }),
+      cachedEvent({
+        id: "cmd_done",
+        eventType: "command_completed",
+        createdAt: "2026-07-04T10:00:09Z",
+        actorId: ME,
+        payload: { commandId: "cmd_1" },
+      }),
+    ]
+    const rows = resolveBoardEventRows(events, {
+      conversationId: CONV,
+      memberMessageIds: new Set(),
+      currentUserId: ME,
+    })
+    expect(rows).toEqual([
+      {
+        kind: "command",
+        key: "cmd_1",
+        sortMs: new Date("2026-07-04T10:00:00Z").getTime(),
+        streamId: "stream_1",
+        events,
+      },
+    ])
+  })
+
+  it("joins a command_failed event to its dispatched row", () => {
+    const events = [
+      dispatched({ id: "cmd_evt_f", commandId: "cmd_fail", conversationId: CONV }),
+      cachedEvent({
+        id: "cmd_bad",
+        eventType: "command_failed",
+        createdAt: "2026-07-04T10:00:07Z",
+        actorId: ME,
+        payload: { commandId: "cmd_fail", error: "boom" },
+      }),
+    ]
+    const rows = resolveBoardEventRows(events, {
+      conversationId: CONV,
+      memberMessageIds: new Set(),
+      currentUserId: ME,
+    })
+    expect(rows).toEqual([
+      {
+        kind: "command",
+        key: "cmd_fail",
+        sortMs: new Date("2026-07-04T10:00:00Z").getTime(),
+        streamId: "stream_1",
+        events,
+      },
+    ])
+  })
+
+  it("excludes another member's command", () => {
+    const rows = resolveBoardEventRows(
+      [dispatched({ commandId: "cmd_2", conversationId: CONV, actorId: "usr_other" })],
+      {
+        conversationId: CONV,
+        memberMessageIds: new Set(),
+        currentUserId: ME,
+      }
+    )
+    expect(rows).toEqual([])
+  })
+
+  it("draws nothing for a stream-level (refless) dispatch — the timeline composer's commands stay off cards", () => {
+    const rows = resolveBoardEventRows(
+      [
+        dispatched({ commandId: "cmd_3" }),
+        cachedEvent({
+          eventType: "command_completed",
+          createdAt: "2026-07-04T10:00:09Z",
+          actorId: ME,
+          payload: { commandId: "cmd_3" },
+        }),
+      ],
+      { conversationId: CONV, memberMessageIds: new Set(), currentUserId: ME }
+    )
+    expect(rows).toEqual([])
+  })
+})
+
 const MEMBER_MESSAGE = "msg_member"
 
 /**
@@ -290,7 +392,37 @@ const SESSION_FIXTURE: CachedEvent[] = [
   }),
 ]
 
+const USER = "usr_me"
+
+const COMMAND_FIXTURE: CachedEvent[] = [
+  cachedEvent({
+    eventType: "command_dispatched",
+    createdAt: "2026-07-04T10:00:00Z",
+    actorId: USER,
+    payload: { commandId: "cmd_fixture", name: "compact", args: "", status: "dispatched", conversationId: CONV },
+  }),
+  cachedEvent({
+    eventType: "command_completed",
+    createdAt: "2026-07-04T10:00:05Z",
+    actorId: USER,
+    payload: { commandId: "cmd_fixture" },
+  }),
+]
+
+const COMMAND_FAILED_FIXTURE: CachedEvent[] = [
+  COMMAND_FIXTURE[0],
+  cachedEvent({
+    eventType: "command_failed",
+    createdAt: "2026-07-04T10:00:06Z",
+    actorId: USER,
+    payload: { commandId: "cmd_fixture", error: "boom" },
+  }),
+]
+
 const ROW_FIXTURES: Partial<Record<EventType, CachedEvent[]>> = {
+  command_dispatched: COMMAND_FIXTURE,
+  command_completed: COMMAND_FIXTURE,
+  command_failed: COMMAND_FAILED_FIXTURE,
   "agent_session:started": SESSION_FIXTURE,
   "agent_session:completed": SESSION_FIXTURE,
   "agent_session:failed": SESSION_FIXTURE,
@@ -326,6 +458,7 @@ describe("resolveBoardEventRows covers every spec-declared board row type", () =
       resolved[type] = resolveBoardEventRows(events, {
         conversationId: CONV,
         memberMessageIds: new Set([MEMBER_MESSAGE]),
+        currentUserId: USER,
       }).map((row) => row.kind)
     }
     expect(resolved).toEqual({
@@ -337,6 +470,9 @@ describe("resolveBoardEventRows covers every spec-declared board row type", () =
       "memos:captured": ["memo"],
       "agent:follow_up_scheduled": ["followUp"],
       "delegation:created": ["delegation"],
+      command_dispatched: ["command"],
+      command_completed: ["command"],
+      command_failed: ["command"],
     })
     // The object comparison above pins WHICH kind each type resolves to, but it
     // stays satisfiable by pasting the produced diff back in — a type whose

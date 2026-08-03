@@ -338,8 +338,8 @@ export function BoardCard({
     return set
   }, [conversation.messageIds, knownMessages])
   const eventRows = useMemo(
-    () => resolveBoardEventRows(railEvents, { conversationId: conversation.id, memberMessageIds }),
-    [railEvents, conversation.id, memberMessageIds]
+    () => resolveBoardEventRows(railEvents, { conversationId: conversation.id, memberMessageIds, currentUserId }),
+    [railEvents, conversation.id, memberMessageIds, currentUserId]
   )
 
   // Per-thread-boundary grouping: soft-thread seams, nested branch conversations,

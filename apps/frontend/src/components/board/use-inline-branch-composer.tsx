@@ -429,6 +429,7 @@ export function useInlineBranchComposer(params: {
             draftKey={boardSubtopicDraftKey(streamId, messageId)}
             placeholder="Start a sub-topic…"
             rejectE2e={E2E_SUBTOPIC_MESSAGE}
+            commandConversationId={conversationId}
             restoreStashedIdOnMount={openComposer.restoreStashedId ?? null}
             onSubmit={(sendInput) => submitNewSubtopic(streamId, messageId, sendInput)}
             onClose={closeComposer}
@@ -488,6 +489,10 @@ export function useInlineBranchComposer(params: {
             scheduleTarget={
               branch.pending ? undefined : { streamId: branch.threadStreamId, conversationId: branch.conversationId }
             }
+            // The PARENT conversation, not the branch: command chips render via
+            // resolveBoardEventRows, which only the parent card/panel runs — a
+            // child-stamped chip would land on no visible surface.
+            commandConversationId={conversationId}
             restoreStashedIdOnMount={openComposer.restoreStashedId ?? null}
             onSubmit={(sendInput) => submitBranchReply(branch, sendInput)}
             onClose={closeComposer}

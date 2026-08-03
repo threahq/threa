@@ -4,6 +4,7 @@ import type { Pool, PoolClient } from "pg"
 import { CommandKinds } from "@threa/types"
 import { createCommandHandlers } from "./handlers"
 import { CommandDispatchRepository } from "./repository"
+import { OutboxRepository } from "../../lib/outbox"
 import { StreamEventRepository } from "../streams"
 import * as streamsModule from "../streams"
 
@@ -146,5 +147,36 @@ describe("command dispatch idempotency", () => {
       status: 202,
       commandId: "cmd_existing",
     })
+  })
+  it("stamps the dispatching conversation onto a fresh server-command event", async () => {
+    spyOn(streamsModule, "checkStreamAccess").mockResolvedValue({ id: "stream_1" } as never)
+    spyOn(CommandDispatchRepository, "findByClientId").mockResolvedValue(null)
+    spyOn(CommandDispatchRepository, "claim").mockResolvedValue(true)
+    const insert = spyOn(StreamEventRepository, "insert").mockResolvedValue(event)
+    spyOn(OutboxRepository, "insert").mockResolvedValue(undefined as never)
+    const handlers = createCommandHandlers({
+      pool: makePool(),
+      commandAvailabilityService: {
+        resolveCommand: mock(async () => ({ executionKind: CommandKinds.SERVER, info: {} })),
+        listStreamCommands: mock(async () => []),
+        listWorkspaceCommands: mock(() => []),
+      } as never,
+      botRuntimeService: {} as never,
+    })
+    const req = {
+      user: { id: "usr_1" },
+      workspaceId: "ws_1",
+      body: {
+        streamId: "stream_1",
+        command: "/stop",
+        clientCommandId: "temp_cmd_1",
+        conversationId: "conv_1",
+      },
+    } as Request
+    const res = makeResponse()
+
+    await handlers.dispatch(req, res)
+
+    expect((insert.mock.calls[0][1].payload as { conversationId?: string }).conversationId).toBe("conv_1")
   })
 })

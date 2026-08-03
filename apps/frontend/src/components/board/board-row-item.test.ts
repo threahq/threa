@@ -38,6 +38,30 @@ function memoEventRow(key: string, minute: number, streamId = "root"): BoardEven
   } as BoardEventRow
 }
 
+function commandEventRow(key: string, minute: number, streamId: string): BoardEventRow {
+  const createdAt = `2026-07-04T10:${String(minute).padStart(2, "0")}:00Z`
+  return {
+    kind: "command",
+    key,
+    sortMs: new Date(createdAt).getTime(),
+    streamId,
+    events: [{ id: key, createdAt }],
+  } as BoardEventRow
+}
+
+function sessionEventRow(key: string, minute: number, streamId: string): BoardEventRow {
+  const createdAt = `2026-07-04T10:${String(minute).padStart(2, "0")}:00Z`
+  return {
+    kind: "session",
+    key,
+    sortMs: new Date(createdAt).getTime(),
+    streamId,
+    events: [{ id: key, createdAt }],
+  } as BoardEventRow
+}
+
+const rowKinds = (rows: BoardRow[]) => rows.map((r) => r.kind)
+
 describe("buildBoardRows", () => {
   it("groups consecutive same-author messages as continuations", () => {
     const rows = buildBoardRows([msg("a", "u1", 0), msg("b", "u1", 1), msg("c", "u2", 2)], [])
@@ -250,6 +274,32 @@ describe("buildBranchedBoardRows continuation", () => {
     expect(rows.map((r) => (r.kind === "message" ? r.message.id : r.kind))).toEqual(["a", "event", "b"])
     const orphanRow = rows[1]
     expect(orphanRow.kind === "event" && orphanRow.displayDepth).toBe(0)
+  })
+
+  it("a command row hosted on an overflowed branch still lands at depth 0 (session rows keep today's shape)", () => {
+    // A slash command typed into a deeply nested branch reply is hosted on that
+    // branch's thread stream, which collapses into a `continue-thread` row. The
+    // chip anchors to the conversation, not the host stream, so it must survive.
+    const streams = new Map([
+      ["root", streamNode(null, null, null)],
+      ["t1", streamNode("root", "root", "a")],
+      ["t2", streamNode("t1", "root", "m1")],
+      ["t3", streamNode("t2", "root", "m2")],
+    ])
+    const grouping = groupBranches(
+      [msg("a", "u1", 0, "root"), msg("m1", "u1", 1, "t1"), msg("m2", "u1", 2, "t2"), msg("m3", "u1", 3, "t3")],
+      { streams, conversation: { streamId: "root" } }
+    )
+    expect(rowKinds(buildBranchedBoardRows(grouping, [], new Map()))).toContain("continue-thread")
+
+    const rows = buildBranchedBoardRows(
+      grouping,
+      [commandEventRow("cmd", 4, "t3"), sessionEventRow("sess", 5, "t3")],
+      new Map()
+    )
+    const eventRows = rows.filter((r) => r.kind === "event")
+    expect(eventRows.map((r) => (r.kind === "event" ? r.row.key : ""))).toEqual(["cmd"])
+    expect(eventRows[0].kind === "event" && eventRows[0].displayDepth).toBe(0)
   })
 
   it("splits orphan events across a soft seam by time", () => {
