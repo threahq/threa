@@ -1,15 +1,12 @@
 import { useCallback, useMemo, useRef } from "react"
 import { useParams } from "react-router-dom"
-import { useQuery, useQueryClient } from "@tanstack/react-query"
 import type { Editor } from "@tiptap/react"
-import { DISCUSS_WITH_ARIADNE_COMMAND, type CommandInfo } from "@threa/types"
+import { DISCUSS_WITH_ARIADNE_COMMAND } from "@threa/types"
 import type { CommandItem } from "./types"
 import { CommandList } from "./command-list"
 import { MEMO_SEARCH_SLASH_ACTION, GIPHY_SLASH_ACTION, SNIPPET_SLASH_ACTION } from "./command-extension"
-import { useWorkspaceMetadata } from "@/stores/workspace-store"
 import { rankMatches } from "@/lib/match-score"
-import { streamKeys } from "@/hooks/use-streams"
-import type { CachedStreamBootstrap } from "@/sync/stream-sync"
+import { useStreamCommands } from "@/hooks/use-stream-commands"
 import { useSuggestion } from "./use-suggestion"
 
 /**
@@ -35,13 +32,6 @@ export function filterCommands(items: CommandItem[], query: string, editor?: Edi
   const opensMessage = slashOpensMessage(editor, query)
   const placed = items.filter((item) => item.placement === "inline" || opensMessage)
   return rankMatches(placed, query, (item) => ({ labels: [item.name], keywords: [item.description] }))
-}
-
-export function resolveEffectiveCommandInfos(
-  workspaceCommands: readonly CommandInfo[] | undefined,
-  streamCommands: readonly CommandInfo[] | undefined
-): readonly CommandInfo[] {
-  return streamCommands ?? workspaceCommands ?? []
 }
 
 /**
@@ -97,6 +87,7 @@ export function useCommandSuggestion({
   onOpenGiphy,
   onOpenSnippet,
   onCommandPicked,
+  commandStreamId,
 }: {
   includeMemoSearch?: boolean
   includeGiphy?: boolean
@@ -109,8 +100,17 @@ export function useCommandSuggestion({
    * advertise `args[].suggestions` (e.g. `/model`).
    */
   onCommandPicked?: (item: CommandItem) => void
+  /**
+   * Scopes the palette to a stream the route can't name — the conversation panel
+   * is a `?panel=conv:` overlay, so its commands come from the conversation's own
+   * stream, not the host route's. Supplying the prop AT ALL (even as `null`,
+   * meaning "no stream yet") takes the route param out of play: a panel opened
+   * over an unrelated stream must never inherit that stream's runtime commands.
+   */
+  commandStreamId?: string | null
 } = {}) {
-  const { workspaceId, streamId } = useParams<{ workspaceId: string; streamId: string }>()
+  const { workspaceId, streamId: routeStreamId } = useParams<{ workspaceId: string; streamId: string }>()
+  const streamId = commandStreamId !== undefined ? (commandStreamId ?? undefined) : routeStreamId
   // Held in a ref so the `renderList` callback stays referentially stable (the
   // TipTap extension captures it once) even as the host re-renders.
   const onOpenGiphyRef = useRef(onOpenGiphy)
@@ -119,20 +119,10 @@ export function useCommandSuggestion({
   onOpenSnippetRef.current = onOpenSnippet
   const onCommandPickedRef = useRef(onCommandPicked)
   onCommandPickedRef.current = onCommandPicked
-  const metadata = useWorkspaceMetadata(workspaceId)
-  const queryClient = useQueryClient()
-  const streamBootstrapKey = workspaceId && streamId ? streamKeys.bootstrap(workspaceId, streamId) : null
-  const { data: streamBootstrap } = useQuery({
-    queryKey: streamBootstrapKey ?? ["streams", "bootstrap", workspaceId ?? "", ""],
-    queryFn: () =>
-      streamBootstrapKey ? (queryClient.getQueryData<CachedStreamBootstrap>(streamBootstrapKey) ?? null) : null,
-    enabled: false,
-    staleTime: Infinity,
-  })
+  const effectiveCommands = useStreamCommands(workspaceId, streamId)
 
   const commands = useMemo<CommandItem[]>(() => {
-    const effective = resolveEffectiveCommandInfos(metadata?.commands, streamBootstrap?.commands)
-    const serverCommands = effective
+    const serverCommands = effectiveCommands
       .filter((cmd) => {
         // Gate discuss-with-ariadne on there being a source stream to reference.
         if (cmd.clientActionId === DISCUSS_WITH_ARIADNE_COMMAND) return !!streamId
@@ -153,7 +143,7 @@ export function useCommandSuggestion({
       ...(includeSnippet ? [SNIPPET_SLASH_ITEM] : []),
       ...serverCommands,
     ]
-  }, [metadata?.commands, streamBootstrap?.commands, streamId, includeMemoSearch, includeGiphy, includeSnippet])
+  }, [effectiveCommands, streamId, includeMemoSearch, includeGiphy, includeSnippet])
 
   const renderList = useCallback(
     (props: {

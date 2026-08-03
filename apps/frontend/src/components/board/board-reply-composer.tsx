@@ -231,7 +231,7 @@ function BoardReplyComposerForm({
   const rootReplyKey = boardReplyDraftKey(post.conversation.id)
 
   const onRootSubmit = useCallback(
-    async ({ contentJson, attachmentIds, attachments, composeTrace }: InlineComposerSubmit) => {
+    async ({ contentJson, attachmentIds, attachments, composeTrace, steer }: InlineComposerSubmit) => {
       await reply.mutateAsync({
         conversation: post.conversation,
         openingMessageId: post.openingMessage?.id ?? null,
@@ -242,6 +242,7 @@ function BoardReplyComposerForm({
         attachmentIds,
         attachments,
         composeTrace,
+        steer,
       })
     },
     [reply, post.conversation, post.openingMessage, hostStreamType, lastActiveStreamId]

@@ -7,6 +7,7 @@ import { InlineComposerForm } from "./board-inline-composer"
 import { FloatingComposerAnchorProvider, FLOATING_COMPOSER_HEIGHT_VAR } from "@/components/composer"
 import { spyOnExport } from "@/test"
 import * as composerModule from "@/components/composer"
+import * as commandSendModule from "@/components/composer/use-composer-command-send"
 import * as usePointerModule from "@/hooks/use-pointer"
 import * as inputModeModule from "@/hooks/use-input-mode"
 import * as hooksModule from "@/hooks"
@@ -111,6 +112,14 @@ beforeEach(() => {
   vi.spyOn(workspaceStoreModule, "useWorkspaceUsers").mockReturnValue([] as never)
   vi.spyOn(workspaceStoreModule, "useWorkspaceDmPeers").mockReturnValue([] as never)
   vi.spyOn(streamStoreModule, "useStreamFromStore").mockReturnValue(undefined as never)
+  // Send-time command routing reaches for app-wide services (stream creation for
+  // `/discuss-with-ariadne`, the dispatch queue's Dexie tables). Inert by
+  // default — the dispatch describe below drives it directly.
+  spyOnExport(commandSendModule, "useComposerCommandSend").mockReturnValue((() => ({
+    availableCommands: [],
+    planSend: () => null,
+    dispatchCommand: vi.fn(),
+  })) as never)
 })
 
 /** Anchor container + provider, the shape the board page / panel supply. */
@@ -509,5 +518,92 @@ describe("InlineComposerForm compose trace", () => {
       resumedDraft: true,
       afterHydration: true,
     })
+  })
+})
+
+describe("InlineComposerForm slash-command dispatch", () => {
+  const SendingEditorStub = (props: MessageComposerProps) => (
+    <button type="button" data-testid="send" onClick={() => void props.onSubmit()}>
+      send
+    </button>
+  )
+
+  let planSend: ReturnType<typeof vi.fn>
+  let dispatchCommand: ReturnType<typeof vi.fn>
+  let commandStreamIds: Array<string | undefined>
+
+  beforeEach(() => {
+    editorSpy = vi.fn(SendingEditorStub)
+    spyOnExport(composerModule, "MessageComposer").mockReturnValue(editorSpy as never)
+    planSend = vi.fn().mockReturnValue(null)
+    dispatchCommand = vi.fn().mockResolvedValue(undefined)
+    commandStreamIds = []
+    spyOnExport(commandSendModule, "useComposerCommandSend").mockReturnValue(((
+      _workspaceId: string,
+      streamId: string | undefined
+    ) => {
+      commandStreamIds.push(streamId)
+      return { availableCommands: [], planSend, dispatchCommand }
+    }) as never)
+    composerStub.canSend = true
+  })
+
+  it("dispatches a command against the conversation's stream instead of posting text", async () => {
+    planSend.mockReturnValue({
+      kind: "command",
+      commandName: "compact",
+      clientActionId: null,
+      commandMarkdown: "/compact",
+    })
+    const onSubmit = vi.fn().mockResolvedValue(undefined)
+    render(<Anchored>{form({ onSubmit, streamId: "stream_conversation" })}</Anchored>)
+
+    await userEvent.click(screen.getByTestId("send"))
+
+    await waitFor(() => expect(dispatchCommand).toHaveBeenCalled())
+    expect({
+      dispatched: dispatchCommand.mock.calls[0][0].commandName,
+      againstStream: commandStreamIds[0],
+      sentAsText: onSubmit.mock.calls.length,
+    }).toEqual({ dispatched: "compact", againstStream: "stream_conversation", sentAsText: 0 })
+  })
+
+  it("embedded /steer sends as a flagged message with the directive node stripped", async () => {
+    const steeredContent = {
+      type: "doc",
+      content: [{ type: "paragraph", content: [{ type: "text", text: "go left" }] }],
+    }
+    planSend.mockReturnValue({ kind: "steer-message", content: steeredContent })
+    const onSubmit = vi.fn().mockResolvedValue(undefined)
+    render(<Anchored>{form({ onSubmit, streamId: "stream_conversation" })}</Anchored>)
+
+    await userEvent.click(screen.getByTestId("send"))
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalled())
+    expect({
+      steer: onSubmit.mock.calls[0][0].steer,
+      contentJson: onSubmit.mock.calls[0][0].contentJson,
+      dispatched: dispatchCommand.mock.calls.length,
+    }).toEqual({ steer: true, contentJson: steeredContent, dispatched: 0 })
+  })
+
+  it("still sends plain text through the surface's own routing", async () => {
+    const onSubmit = vi.fn().mockResolvedValue(undefined)
+    render(<Anchored>{form({ onSubmit })}</Anchored>)
+
+    await userEvent.click(screen.getByTestId("send"))
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalled())
+    expect(dispatchCommand).not.toHaveBeenCalled()
+  })
+
+  it("scopes the palette to the conversation's stream, never the host route's", () => {
+    render(<Anchored>{form({ streamId: "stream_conversation" })}</Anchored>)
+    expect(editorSpy.mock.calls[0][0].commandStreamId).toBe("stream_conversation")
+  })
+
+  it("claims scoping even when the stream is unresolved, so the route can't stand in", () => {
+    render(<Anchored>{form({ streamId: undefined })}</Anchored>)
+    expect(editorSpy.mock.calls[0][0].commandStreamId).toBeNull()
   })
 })

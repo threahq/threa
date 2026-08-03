@@ -190,6 +190,19 @@ export interface MessageComposerProps {
    * the root.
    */
   memoAnchorStreamId?: string
+  /**
+   * Scopes the `/` command palette to this composer's stream instead of the
+   * route's. Conversation surfaces (board card / panel) pass their own stream —
+   * `null` when it isn't resolved yet, which is still a scoping claim: the route
+   * must not stand in for it.
+   */
+  commandStreamId?: string | null
+  /**
+   * Offer the `/` command palette. Off for a composer with no dispatch path of
+   * its own (the board's global new-post overlay), where a picked command would
+   * post as literal text.
+   */
+  enableCommands?: boolean
   /** Workspace id; required only when `contextRefs` is non-empty so the strip can fetch source metadata. */
   workspaceId?: string
   fileInputRef: RefObject<HTMLInputElement | null>
@@ -315,6 +328,8 @@ export function MessageComposer({
   contextRefs,
   streamId,
   memoAnchorStreamId = streamId,
+  commandStreamId,
+  enableCommands = true,
   workspaceId,
   fileInputRef,
   onFileSelect,
@@ -780,6 +795,8 @@ export function MessageComposer({
       blurOnEscape
       streamContext={streamContext}
       memoAnchorStreamId={memoAnchorStreamId}
+      commandStreamId={commandStreamId}
+      enableCommands={enableCommands}
     />
   )
 
@@ -962,6 +979,8 @@ export function MessageComposer({
                 onEscapeBlur={focusExpandedShell}
                 streamContext={streamContext}
                 memoAnchorStreamId={memoAnchorStreamId}
+                commandStreamId={commandStreamId}
+                enableCommands={enableCommands}
                 belowToolbarContent={
                   pendingAttachments.length > 0 || (contextRefs && contextRefs.length > 0) ? (
                     <div className="pt-1 pb-2 border-b border-border/50 [&>div]:mb-0">

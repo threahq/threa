@@ -204,6 +204,12 @@ function BoardOverlayComposerBody({
       onCancelAttachmentUpload={composer.handleCancelAttachmentUpload}
       workspaceId={workspaceId}
       streamId={selectedStream?.id}
+      // The overlay posts through the board path and has no command dispatch of
+      // its own, so a picked command would post as literal text — don't offer
+      // any. `null` kills the route-stream fallback too, so re-enabling the
+      // palette later can't leak another stream's runtime commands.
+      enableCommands={false}
+      commandStreamId={null}
       fileInputRef={composer.fileInputRef}
       onFileSelect={composer.handleFileSelect}
       onFileUpload={composer.uploadFile}

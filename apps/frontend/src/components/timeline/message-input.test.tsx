@@ -21,6 +21,8 @@ import {
 import * as composerModule from "@/components/composer"
 import * as discussModule from "@/hooks/use-discuss-with-ariadne"
 import * as streamContextBagModule from "@/hooks/use-stream-context-bag"
+import * as streamCommandsModule from "@/hooks/use-stream-commands"
+import { spyOnExport } from "@/test"
 import { toast } from "sonner"
 import { MessageInput, materializePendingAttachmentReferences } from "./message-input"
 import type { JSONContent } from "@threa/types"
@@ -159,6 +161,9 @@ beforeEach(() => {
   vi.spyOn(hooksModule, "useStreamBootstrap").mockReturnValue({
     data: undefined,
   } as unknown as ReturnType<typeof hooksModule.useStreamBootstrap>)
+  // The effective command list the composer dispatches against (bootstrap cache
+  // or a stream-scoped fetch) — empty unless a test declares commands.
+  spyOnExport(streamCommandsModule, "useStreamCommands").mockReturnValue((() => []) as never)
   // useMentionStreamContext composes useStreamBootstrap + useUser + workspace
   // user role lookups; tests only care that the editor receives *some* context,
   // so stub to undefined which falls through to "no broadcast filter applied".
@@ -471,11 +476,9 @@ describe("MessageInput", () => {
       content.content![0].content![1].text = " I want option 2 /steer and also pizza"
       mockComposerState.canSend = true
       mockComposerState.content = content
-      vi.mocked(hooksModule.useStreamBootstrap).mockReturnValue({
-        data: {
-          commands: [{ name: "steer", description: "Steer", kind: "bot-runtime", scope: "stream" }],
-        },
-      } as unknown as ReturnType<typeof hooksModule.useStreamBootstrap>)
+      spyOnExport(streamCommandsModule, "useStreamCommands").mockReturnValue((() => [
+        { name: "steer", description: "Steer", kind: "bot-runtime", scope: "stream" },
+      ]) as unknown as never)
 
       render$(<MessageInput workspaceId={workspaceId} streamId={streamId} />)
       await userEvent.click(screen.getByRole("button", { name: /send/i }))
