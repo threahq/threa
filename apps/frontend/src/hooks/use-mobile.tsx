@@ -2,11 +2,11 @@ import { useSyncExternalStore } from "react"
 
 export const MOBILE_BREAKPOINT = 640
 
-const mobileQuery = `(max-width: ${MOBILE_BREAKPOINT - 1}px)`
+export const MOBILE_VIEWPORT_QUERY = `(max-width: ${MOBILE_BREAKPOINT - 1}px)`
 
 // Shared subscription — one matchMedia listener regardless of how many
 // components call useIsMobile (avoids N listeners in long message lists).
-const mql = typeof window !== "undefined" ? window.matchMedia(mobileQuery) : null
+const mql = typeof window !== "undefined" ? window.matchMedia(MOBILE_VIEWPORT_QUERY) : null
 
 function subscribe(onChange: () => void) {
   mql?.addEventListener("change", onChange)

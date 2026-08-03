@@ -10,10 +10,10 @@ import { useIsMobile } from "./use-mobile"
 // device-class layout/mode decisions (e.g. the overlay-vs-pinned sidebar); use
 // `useTouchCapable` to additively enable touch gestures, and `useInputMode` for
 // affordances that follow whichever input the user is actively driving.
-const coarseQuery = "(pointer: coarse)"
+export const COARSE_POINTER_QUERY = "(pointer: coarse)"
 
 // Shared subscription — one matchMedia listener regardless of how many callers.
-const coarseMql = typeof window !== "undefined" ? window.matchMedia(coarseQuery) : null
+const coarseMql = typeof window !== "undefined" ? window.matchMedia(COARSE_POINTER_QUERY) : null
 
 function subscribe(onChange: () => void) {
   coarseMql?.addEventListener("change", onChange)
