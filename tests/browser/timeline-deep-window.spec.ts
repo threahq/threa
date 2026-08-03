@@ -114,9 +114,15 @@ test.describe("Bounded timeline read", () => {
     await expect
       .poll(
         async () =>
+          // evaluateAll over every `main`: the page can mount two (timeline +
+          // panel), and a direct evaluate() on the role locator strict-fails.
+          // Any main containing the text still excludes the sidebar preview.
           await page
             .getByRole("main")
-            .evaluate((el, text) => (el as HTMLElement).innerText.includes(text), `${prefix} msg-9999 arrival`),
+            .evaluateAll(
+              (els, text) => els.some((el) => (el as HTMLElement).innerText.includes(text)),
+              `${prefix} msg-9999 arrival`
+            ),
         { timeout: 30_000, message: "the arriving message should reach this client's timeline" }
       )
       .toBe(true)
