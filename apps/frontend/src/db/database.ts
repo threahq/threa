@@ -1,4 +1,4 @@
-import Dexie, { type EntityTable, type Table } from "dexie"
+import Dexie, { type EntityTable, type PromiseExtended, type Table } from "dexie"
 import type {
   Activity,
   AuthorType,
@@ -1083,6 +1083,8 @@ export class ThreaDatabase extends Dexie {
   slots!: Table<CachedSlot, [string, string]>
   streamContextItems!: EntityTable<CachedStreamContextItem, "key">
 
+  private upgradeRecoveryAvailable = true
+
   constructor(name: string) {
     super(name)
 
@@ -1568,7 +1570,52 @@ export class ThreaDatabase extends Dexie {
     })
 
     this.workspaceUsers = this.table(WORKSPACE_USERS_STORE) as EntityTable<CachedWorkspaceUser, "id">
+
+    // Another tab upgraded the shared per-account database. Dexie closes this
+    // connection but leaves auto-open on, so the next operation would reopen
+    // with the older schema against the newer physical DB and throw
+    // VersionError for the rest of the tab's life.
+    this.on("versionchange", () => {
+      this.close()
+      if (typeof window !== "undefined" && typeof window.location?.reload === "function") window.location.reload()
+      return false
+    })
   }
+
+  // Auto-open routes through here too (Dexie calls `db.open()` on first use),
+  // so this is the one seam every open failure crosses.
+  override open(): PromiseExtended<Dexie> {
+    return super.open().catch((error: unknown) => {
+      if (!this.upgradeRecoveryAvailable || !isRecoverableOpenFailure(error)) throw error
+      this.upgradeRecoveryAvailable = false
+      console.error(`[db] upgrade failed for ${this.name}; deleting the cache and reopening cold`, error)
+      this.close()
+      return Dexie.delete(this.name).then(() => this.open()) as PromiseExtended<Dexie>
+    })
+  }
+}
+
+const RECOVERABLE_OPEN_FAILURE_NAMES: ReadonlySet<string> = new Set([
+  "QuotaExceededError",
+  "AbortError",
+  "UpgradeError",
+])
+
+/**
+ * A failed version upgrade (quota abort mid index build) is retried on every
+ * open, so the app never reaches a working state. Everything in this database
+ * is a server-derived cache, so deleting it recovers to a cold start; the loud
+ * console.error plus the one-shot guard keep this a reported failure with a
+ * recovery, not a silent fallback (INV-11).
+ */
+function isRecoverableOpenFailure(error: unknown): boolean {
+  let current = error
+  for (let depth = 0; current && depth < 5; depth++) {
+    const name = (current as { name?: unknown }).name
+    if (typeof name === "string" && RECOVERABLE_OPEN_FAILURE_NAMES.has(name)) return true
+    current = (current as { inner?: unknown }).inner
+  }
+  return false
 }
 
 // The active account's database. AccountScope owns this pointer and is its

@@ -1,4 +1,8 @@
-import { describe, it, expect } from "vitest"
+import { afterEach, describe, it, expect, vi } from "vitest"
+
+afterEach(() => {
+  vi.restoreAllMocks()
+})
 import Dexie from "dexie"
 import { ThreaDatabase } from "./database"
 
@@ -64,5 +68,53 @@ describe("v47 payload.messageId index", () => {
 
     db.close()
     await Dexie.delete(name)
+  })
+})
+
+describe("one-way-door recovery", () => {
+  it("a versionchange from another tab closes the connection and reloads", async () => {
+    const name = `threa_test_${Math.random().toString(36).slice(2)}`
+    const db = new ThreaDatabase(name)
+    await db.open()
+    const reload = vi.fn()
+    vi.spyOn(window, "location", "get").mockReturnValue({ reload } as unknown as Location)
+
+    db.on("versionchange").fire({ newVersion: 480 } as IDBVersionChangeEvent)
+
+    expect({ open: db.isOpen(), reloaded: reload.mock.calls.length }).toEqual({ open: false, reloaded: 1 })
+    await Dexie.delete(name)
+  })
+
+  it("a quota-aborted upgrade deletes the cache and reopens once, then rethrows", async () => {
+    const name = `threa_test_${Math.random().toString(36).slice(2)}`
+    const db = new ThreaDatabase(name)
+    const quota = Object.assign(new Error("upgrade aborted"), { name: "AbortError" })
+    const wrapped = Object.assign(new Error("wrapped"), { name: "OpenFailedError", inner: quota })
+    const open = vi
+      .spyOn(Dexie.prototype, "open")
+      .mockImplementation(() => Promise.reject(wrapped) as unknown as ReturnType<Dexie["open"]>)
+    const del = vi.spyOn(Dexie, "delete").mockResolvedValue(undefined)
+    vi.spyOn(console, "error").mockImplementation(() => {})
+
+    await expect(db.open()).rejects.toBe(wrapped)
+
+    expect({ deleted: del.mock.calls.map(([n]) => n), superOpens: open.mock.calls.length }).toEqual({
+      deleted: [name],
+      superOpens: 2,
+    })
+  })
+
+  it("an unrelated open failure rethrows without deleting the cache", async () => {
+    const name = `threa_test_${Math.random().toString(36).slice(2)}`
+    const db = new ThreaDatabase(name)
+    const other = Object.assign(new Error("nope"), { name: "InvalidStateError" })
+    vi.spyOn(Dexie.prototype, "open").mockImplementation(
+      () => Promise.reject(other) as unknown as ReturnType<Dexie["open"]>
+    )
+    const del = vi.spyOn(Dexie, "delete").mockResolvedValue(undefined)
+
+    await expect(db.open()).rejects.toBe(other)
+
+    expect(del).not.toHaveBeenCalled()
   })
 })
