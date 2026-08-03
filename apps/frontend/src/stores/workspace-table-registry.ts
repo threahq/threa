@@ -337,6 +337,11 @@ export function subscribeWorkspaceTableRow(
   token: number,
   listener: () => void
 ): () => void {
+  // Row reads are a shared-mode feature: a shared→off flip landing between a
+  // reader's render and this subscribe effect would otherwise mint one private
+  // whole-table query per reader that no drop machinery unwinds. The off arm's
+  // consumer falls back to its own live query.
+  if (mode !== "shared") return () => {}
   const entryKey = entryKeyFor(workspaceId, tableKey, token)
   const entry = ensureEntry(entryKey, workspaceId, tableKey)
   let keyed = entry.keyListeners.get(rowId)

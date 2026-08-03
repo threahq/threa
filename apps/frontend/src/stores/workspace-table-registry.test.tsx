@@ -286,31 +286,50 @@ describe("workspace table registry", () => {
     }).toEqual({ rows: before, extraRenders: 0, ids: ["user_1", "user_2"] })
   })
 
-  it("a row subscriber keeps working across a flip", async () => {
-    setWorkspaceReadMode("off")
+  it("a row registration survives a flip, but a re-subscribe in off mode mints nothing", async () => {
+    setWorkspaceReadMode("shared")
     await db.workspaceUsers.bulkPut([makeUser("user_1"), makeUser("user_2")])
+    const token = allocateWorkspaceTableToken()
+    const notify = vi.fn()
 
-    function RowProbe() {
-      const [token] = useState(allocateWorkspaceTableToken)
-      const row = useSyncExternalStore(
-        (listener) => subscribeWorkspaceTableRow(WORKSPACE, "users", "user_1", token, listener),
-        () => getWorkspaceTableRow(WORKSPACE, "users", "user_1", token),
-        () => getWorkspaceTableRow(WORKSPACE, "users", "user_1", token)
-      )
-      return <span data-testid="row">{row?.name ?? "-"}</span>
-    }
+    let unsubscribe = subscribeWorkspaceTableRow(WORKSPACE, "users", "user_1", token, notify)
+    await waitFor(() => expect(getWorkspaceTableRow(WORKSPACE, "users", "user_1", token)?.name).toBe("user_1"))
+    const sharedEntries = activeWorkspaceSubscriptionCount()
 
-    const { findByText } = render(<RowProbe />)
-    await findByText("user_1")
+    act(() => {
+      setWorkspaceReadMode("off")
+    })
+    // The flip's drop+refire machinery still carries a registration that existed
+    // at flip time.
+    expect(getWorkspaceTableRow(WORKSPACE, "users", "user_1", token)).toBeDefined()
+
+    // The reader's effect re-runs after the flip: the new subscribe must be a
+    // no-op, and the consumer reads undefined and falls back to its own query.
+    unsubscribe()
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+    const afterDrop = activeWorkspaceSubscriptionCount()
+    const noop = subscribeWorkspaceTableRow(WORKSPACE, "users", "user_1", token, notify)
+    noop()
+
+    expect({
+      minted: activeWorkspaceSubscriptionCount() - afterDrop,
+      row: getWorkspaceTableRow(WORKSPACE, "users", "user_1", token),
+    }).toEqual({ minted: 0, row: undefined })
 
     act(() => {
       setWorkspaceReadMode("shared")
     })
+    unsubscribe = subscribeWorkspaceTableRow(WORKSPACE, "users", "user_1", token, notify)
+    await waitFor(() => expect(getWorkspaceTableRow(WORKSPACE, "users", "user_1", token)?.name).toBe("user_1"))
+    expect(activeWorkspaceSubscriptionCount()).toBe(sharedEntries)
 
     await act(async () => {
       await db.workspaceUsers.put(makeUser("user_1", { name: "Renamed" }))
     })
-    await findByText("Renamed")
+    await waitFor(() => expect(getWorkspaceTableRow(WORKSPACE, "users", "user_1", token)?.name).toBe("Renamed"))
+    unsubscribe()
   })
 
   it("the subscription-count mark tracks entry lifecycle", async () => {
