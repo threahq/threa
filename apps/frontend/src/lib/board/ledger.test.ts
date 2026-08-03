@@ -205,7 +205,7 @@ describe("coalesceLedgerItems", () => {
 })
 
 describe("ledgerEventContent", () => {
-  const ctx = { workspaceId: "ws_1", traceUrl: (sessionId: string) => `/w/ws_1/trace/${sessionId}` }
+  const ctx = { traceUrl: (sessionId: string) => `/w/ws_1/trace/${sessionId}` }
 
   function event(eventType: string, payload: unknown): CachedEvent {
     return {
@@ -254,7 +254,7 @@ describe("ledgerEventContent", () => {
     expect(ledgerEventContent(row, ctx).meta).toBe("running")
   })
 
-  it("carries a capture's TITLE and its memo deep link, never the memo content", () => {
+  it("carries a capture's TITLE and its memo descriptor (no href — the row previews in place)", () => {
     const row: BoardEventRow = {
       kind: "memo",
       key: "evt_1",
@@ -276,11 +276,11 @@ describe("ledgerEventContent", () => {
       key: "evt_1",
       kind: "memo",
       label: "Memo: Postgres upserts need the index",
-      href: "/w/ws_1/memory?memo=memo_9",
+      memo: { memoId: "memo_9", title: "Postgres upserts need the index" },
     })
   })
 
-  it("leaves a multi-memo capture without a link (no single target to open)", () => {
+  it("leaves a multi-memo capture without a preview target (no single memo to open)", () => {
     const row: BoardEventRow = {
       kind: "memo",
       key: "evt_1",
@@ -298,7 +298,7 @@ describe("ledgerEventContent", () => {
       key: "evt_1",
       kind: "memo",
       label: "Memo: One, Two",
-      href: undefined,
+      memo: undefined,
     })
   })
 

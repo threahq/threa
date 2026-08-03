@@ -17,7 +17,6 @@ import type { BoardEventRow } from "@/lib/board/board-event-rows"
 import { DELEGATION_STATUS_LABEL } from "@/lib/delegation-display"
 import { formatDuration, formatFireTime } from "@/lib/dates"
 import { resolveEmojiShortcodes, stripMarkdownKeepingCode, truncateInline } from "@/lib/markdown/strip"
-import { memoDeepLink } from "@/lib/memo-url"
 
 /** Characters of prose one reading-minute covers. */
 const CHARS_PER_MINUTE = 1100
@@ -103,7 +102,8 @@ function hostname(url: string): string {
 /**
  * The renderable content of one ledger event line — everything the thin row
  * shows, plus the in-app detail target when the kind has one. Data only: the
- * surface picks the icon and turns `href` into a `<Link>` (INV-40).
+ * surface picks the icon, turns `href` into a `<Link>` (INV-40), and maps
+ * `memo` onto the same in-place `MemoPreviewDialog` the full capture row opens.
  */
 export interface LedgerEventContent {
   key: string
@@ -111,10 +111,11 @@ export interface LedgerEventContent {
   label: string
   meta?: string
   href?: string
+  /** The single memo a capture line previews in place. */
+  memo?: { memoId: string; title: string }
 }
 
 export interface LedgerEventContentCtx {
-  workspaceId: string
   /** The session's trace-view URL, from the surface's `useTrace`. */
   traceUrl: (sessionId: string) => string
 }
@@ -126,7 +127,7 @@ function stepsLabel(count: number): string {
 /**
  * A board event row compressed to its ledger line. Titles and counts only —
  * a capture line carries its memos' TITLES, never their content (INV-62): the
- * memo body is the memory explorer's, one deep link away.
+ * memo body is the preview dialog's, one tap away.
  */
 export function ledgerEventContent(row: BoardEventRow, ctx: LedgerEventContentCtx): LedgerEventContent {
   switch (row.kind) {
@@ -183,7 +184,7 @@ export function ledgerEventContent(row: BoardEventRow, ctx: LedgerEventContentCt
         label: titles.length === 0 ? "Memo captured" : `Memo: ${titles.join(", ")}`,
         // One memo has an unambiguous target; a batch would have to pick one, so
         // it stays a plain line and the reader opens what they want in the panel.
-        href: memos.length === 1 ? memoDeepLink(ctx.workspaceId, memos[0].memoId) : undefined,
+        memo: memos.length === 1 ? { memoId: memos[0].memoId, title: memos[0].title } : undefined,
       }
     }
     case "followUp": {

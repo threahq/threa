@@ -575,6 +575,7 @@ export function LedgerEventRow({
   label,
   meta,
   href,
+  onOpen,
   onToggle,
   expanded,
 }: {
@@ -583,6 +584,8 @@ export function LedgerEventRow({
   meta?: string
   /** The kind's own detail target — the row navigates instead of toggling (INV-40). */
   href?: string
+  /** Opens the kind's in-place preview (a dialog) instead of navigating. */
+  onOpen?: () => void
   onToggle?: () => void
   expanded?: boolean
 }) {
@@ -595,16 +598,31 @@ export function LedgerEventRow({
       {meta && <span className="shrink-0 text-muted-foreground/70">· {meta}</span>}
     </>
   )
-  const className = "flex w-full items-center gap-1.5 py-px text-left text-xs text-muted-foreground"
+  // The text stays hair-thin (`text-xs`); an interactive row grows only its
+  // PADDING, so its hit area matches a message ledger row's instead of the ~18px
+  // a `py-px` line leaves for a thumb.
+  const className = "flex w-full items-center gap-1.5 text-left text-xs text-muted-foreground"
+  const interactive = cn(className, "py-0.5")
   if (href)
     return (
-      <Link to={href} className={cn(className, "no-underline transition-colors hover:text-foreground")}>
+      <Link to={href} className={cn(interactive, "no-underline transition-colors hover:text-foreground")}>
         {content}
       </Link>
     )
-  if (!onToggle) return <div className={className}>{content}</div>
+  if (onOpen)
+    return (
+      <button
+        type="button"
+        onClick={onOpen}
+        aria-haspopup="dialog"
+        className={cn(interactive, "transition-colors hover:text-foreground")}
+      >
+        {content}
+      </button>
+    )
+  if (!onToggle) return <div className={cn(className, "py-px")}>{content}</div>
   return (
-    <button type="button" onClick={onToggle} aria-expanded={expanded ?? false} className={className}>
+    <button type="button" onClick={onToggle} aria-expanded={expanded ?? false} className={interactive}>
       {content}
     </button>
   )
@@ -616,6 +634,7 @@ export interface LedgerEventDescriptor {
   label: string
   meta?: string
   href?: string
+  onOpen?: () => void
 }
 
 /**
@@ -650,7 +669,14 @@ export function LedgerEventGroup({
           expanded
         />
         {events.map((event) => (
-          <LedgerEventRow key={event.key} icon={event.icon} label={event.label} meta={event.meta} href={event.href} />
+          <LedgerEventRow
+            key={event.key}
+            icon={event.icon}
+            label={event.label}
+            meta={event.meta}
+            href={event.href}
+            onOpen={event.onOpen}
+          />
         ))}
       </div>
     )
