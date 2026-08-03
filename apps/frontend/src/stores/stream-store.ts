@@ -239,10 +239,10 @@ export function unionStreamRanges(prefix: CachedEvent[], tail: CachedEvent[]): C
   return combined.some((event) => event._status != null) ? orderStreamEvents(combined) : combined
 }
 
-/** A stamped read result: the streamId, and for the prefix the tail floor it used. */
-type StampedStreamEvents = CachedEvent[] & { __streamId?: string; __tailFloor?: number | null }
+/** A stamped read result: the streamId, and the tail floor the read was made under. */
+export type StampedStreamEvents = CachedEvent[] & { __streamId?: string; __tailFloor?: number | null }
 
-function stampStreamEvents(
+export function stampStreamEvents(
   events: CachedEvent[],
   streamId: string | undefined,
   tailFloor: number | null = null
@@ -251,6 +251,34 @@ function stampStreamEvents(
   if (streamId) stamped.__streamId = streamId
   stamped.__tailFloor = tailFloor
   return stamped
+}
+
+/**
+ * Compose the rendered window from the two stamped reads, gating on BOTH stamps
+ * rather than on the current anchor. Each arm records the tail floor it was read
+ * under, and only two results read under the SAME floor abut: prefix `[floor,
+ * F)` + tail `[F, max]`.
+ *
+ * Pre-latch (`F === null`) the prefix is today's whole floored read and the tail
+ * is the unanchored capped scan that exists only to pick `F` — so the prefix
+ * alone is the complete window, and unioning would duplicate.
+ *
+ * The gate that matters is the mid-latch skew: an unanchored tail's lower bound
+ * moves with every arriving message, so pairing an anchored prefix `[floor, F)`
+ * with a tail re-read as `[F+1, max]` drops sequence `F` and fabricates a hole
+ * (INV-61). Unequal stamps mean the pair does not abut — hold the last complete
+ * window instead, which is stale but contiguous.
+ */
+export function composeStreamWindow(
+  prefix: StampedStreamEvents | undefined,
+  tail: StampedStreamEvents | null,
+  previousWindow: CachedEvent[] | null
+): CachedEvent[] | undefined {
+  if (!prefix) return undefined
+  const prefixFloor = prefix.__tailFloor ?? null
+  if (prefixFloor === null) return prefix
+  if (!tail || (tail.__tailFloor ?? null) !== prefixFloor) return previousWindow ?? undefined
+  return unionStreamRanges(prefix, tail)
 }
 
 /** The tail floor latched for one stream visit. */
@@ -303,7 +331,7 @@ export function useStreamEvents(
     const stopLoad = getPerfCapture().time("timeline.tailLoad")
     const events = await loadStreamTail(streamId, tailFloor, tailScanFloor)
     stopLoad()
-    return stampStreamEvents(events, streamId)
+    return stampStreamEvents(events, streamId, tailFloor)
   }, [streamId, tailFloor, tailScanFloor, bounded])
 
   const result = useLiveQuery(async () => {
@@ -326,7 +354,7 @@ export function useStreamEvents(
   // whether the previous result happened to be non-empty or empty.
   const resultStreamId = result?.__streamId
   const tailStreamId = tail?.__streamId
-  const tailForStream = bounded && streamId && tailStreamId === streamId ? tail : null
+  const tailForStream = bounded && streamId && tailStreamId === streamId ? (tail ?? null) : null
 
   useEffect(() => {
     if (!bounded || !streamId || !tailForStream || tailFloor !== null) return
@@ -335,19 +363,11 @@ export function useStreamEvents(
     setAnchor({ streamId, tailFloor: oldestPersisted._sequenceNum })
   }, [bounded, streamId, tailForStream, tailFloor])
 
-  // Union on the PREFIX's own stamp, not the current anchor: an unstamped prefix
-  // is today's whole floored read (the pre-anchor emission, and the one the tail
-  // is only used to pick a floor from), so unioning it with the tail would
-  // duplicate. A stamped prefix is bounded above by the visit's single tail
-  // floor, and the tail is `[thatFloor, max]` under either stamp — so a
-  // mid-latch emission from either arm composes to the same complete window.
-  const union = useMemo(() => {
-    if (!result) return undefined
-    if (result.__tailFloor == null || !tailForStream) return result
-    return unionStreamRanges(result, tailForStream)
-  }, [result, tailForStream])
-
   const prevRef = useRef<{ streamId: string; array: CachedEvent[] } | null>(null)
+  const prevArray = prevRef.current?.streamId === streamId ? (prevRef.current?.array ?? null) : null
+
+  const union = useMemo(() => composeStreamWindow(result, tailForStream, prevArray), [result, tailForStream, prevArray])
+
   // Both reads must be stamped for the current stream before anything is
   // returned: a union built from one fresh and one stale range is a window with
   // a hole in it, which INV-61's contiguity gate would read as a real gap.

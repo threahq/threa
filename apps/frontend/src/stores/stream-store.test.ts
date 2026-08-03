@@ -5,6 +5,8 @@ import { db, sequenceToNum, type CachedEvent, type CachedStream } from "@/db"
 import { computeTimelineHoles } from "@/sync/contiguity"
 import {
   TIMELINE_TAIL_EVENTS,
+  composeStreamWindow,
+  stampStreamEvents,
   loadStreamEvents,
   loadStreamPrefix,
   loadStreamTail,
@@ -786,6 +788,56 @@ describe("bounded timeline read — tail and prefix", () => {
       unionStreamRanges(await loadStreamPrefix(STREAM, 200, tailFloor), raisedTail).map((e) => e.id)
     )
     expect(renderedIds.filter((id) => !raisedIds.has(id)).length).toBeGreaterThan(0)
+  })
+
+  it("a message arriving mid-latch never composes a window with a hole in it", async () => {
+    // The pre-latch tail is the UNANCHORED capped read, whose lower bound moves
+    // with every arriving message. Pairing it with an anchored prefix drops the
+    // sequence at the tail floor, so the composition gates on both stamps.
+    await db.events.bulkPut(
+      Array.from({ length: 260 }, (_, i) => makeBroadcastEvent(STREAM, String(i + 1), String(i + 1)))
+    )
+    const holesAt: unknown[][] = []
+    const track = (window: CachedEvent[] | undefined) => {
+      if (window) holesAt.push(computeTimelineHoles(window))
+      return window ?? null
+    }
+
+    // 1. Pre-latch: unstamped prefix (today's whole floored read) + unanchored tail.
+    const prefixPre = stampStreamEvents(await loadStreamEvents(STREAM, 1), STREAM, null)
+    const tailPre = stampStreamEvents(await loadStreamTail(STREAM, null, 1), STREAM, null)
+    const windowPre = track(composeStreamWindow(prefixPre, tailPre, null))
+
+    // 2. The tail floor latches at the oldest persisted row of that emission.
+    const tailFloor = tailPre[0]._sequenceNum
+    expect(tailFloor).toBe(61)
+
+    // 3. A message arrives before the anchored reads resolve, so the still-live
+    //    unanchored query re-emits shifted up by one: `[62..261]`, not `[61..261]`.
+    await db.events.put(makeBroadcastEvent(STREAM, "261", "261"))
+    const tailStale = stampStreamEvents(await loadStreamTail(STREAM, null, 1), STREAM, null)
+    expect(tailStale[0]._sequenceNum).toBe(62)
+
+    // 4. The anchored prefix resolves first — the exact interleave. Composing it
+    //    with the stale tail would omit sequence 61.
+    const prefixAnchored = stampStreamEvents(await loadStreamPrefix(STREAM, 1, tailFloor), STREAM, tailFloor)
+    const windowSkewed = track(composeStreamWindow(prefixAnchored, tailStale, windowPre))
+    expect(windowSkewed).toBe(windowPre)
+
+    // 5. The anchored tail resolves; both stamps agree and the window settles.
+    const tailAnchored = stampStreamEvents(await loadStreamTail(STREAM, tailFloor, null), STREAM, tailFloor)
+    const windowFinal = track(composeStreamWindow(prefixAnchored, tailAnchored, windowSkewed))
+
+    expect(windowFinal?.map((e) => e._sequenceNum)).toEqual(Array.from({ length: 261 }, (_, i) => i + 1))
+    expect(holesAt).toEqual([[], [], []])
+
+    // Neutralisation: without the tail's own stamp the gate can only compare the
+    // prefix, so the skewed step composes and sequence 61 goes missing.
+    const ungated = unionStreamRanges(prefixAnchored, tailStale)
+    expect(ungated.map((e) => e._sequenceNum)).not.toContain(61)
+    expect(computeTimelineHoles(ungated)).toEqual([
+      { afterEventId: `evt_${STREAM}_60`, afterSequence: "60", missingCount: 1 },
+    ])
   })
 
   it("a hole in the broadcast chain is still detected across the tail/prefix boundary", async () => {
