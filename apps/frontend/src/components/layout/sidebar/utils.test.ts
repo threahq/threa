@@ -1,6 +1,12 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest"
 import { AuthorTypes, StreamTypes, Visibilities, type AuthorType, type StreamWithPreview } from "@threa/types"
-import { buildVirtualDmDrafts, calculateUrgency, categorizeStream, isSidebarStreamVisible } from "./utils"
+import {
+  buildVirtualDmDrafts,
+  calculateUrgency,
+  categorizeStream,
+  isSidebarStreamVisible,
+  truncateContent,
+} from "./utils"
 
 function makeStream(overrides: Partial<StreamWithPreview> = {}): StreamWithPreview {
   return {
@@ -272,5 +278,21 @@ describe("buildVirtualDmDrafts", () => {
 
   it("returns [] when there is no current user", () => {
     expect(buildVirtualDmDrafts({ ...baseArgs, isBoardMode: false, currentUserId: null })).toEqual([])
+  })
+})
+
+describe("truncateContent", () => {
+  it("returns short content unchanged", () => {
+    expect(truncateContent("hello", 50)).toBe("hello")
+  })
+
+  it("does not truncate at exactly maxLength", () => {
+    expect(truncateContent("abcde", 5)).toBe("abcde")
+  })
+
+  it("cuts on code points, never mid-emoji", () => {
+    const out = truncateContent(`${"a".repeat(39)}😀 rest`, 40)
+    expect(out).toBe(`${"a".repeat(39)}😀...`)
+    expect([...out].every((c) => c.codePointAt(0)! < 0xd800 || c.codePointAt(0)! > 0xdfff)).toBe(true)
   })
 })
