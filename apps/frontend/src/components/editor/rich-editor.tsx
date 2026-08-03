@@ -17,6 +17,7 @@ import {
 } from "./editor-markdown"
 import { serializeClipboardSlice } from "./clipboard-copy"
 import { insertPlainText, isPlainTextPaste } from "./plain-text-paste"
+import { handleBeforeInputLinkPaste, pasteLinkOverSelection } from "./paste-link-over-selection"
 import {
   useMentionSuggestion,
   useChannelSuggestion,
@@ -693,6 +694,11 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
           return false
         }
 
+        if (!pasteAsPlainText && pasteLinkOverSelection(editorRef.current, text)) {
+          event.preventDefault()
+          return true
+        }
+
         // A bare memo link pastes as an embed card rather than a plain URL.
         if (!pasteAsPlainText && enableMemoEmbed) {
           const memoId = parseMemoUrl(text.trim())
@@ -754,10 +760,11 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
             return true
           }
 
-          // Gboard / SwiftKey clipboard-bar paste of a bare in-app link arrives
-          // as insertText (not a paste event), so chip it here too — otherwise
-          // mobile pastes would keep the raw URL the desktop path replaces.
+          // Gboard / SwiftKey clipboard-bar pastes can bypass the paste event.
           const inputEvent = event as InputEvent
+          if (handleBeforeInputLinkPaste(editor, inputEvent)) {
+            return true
+          }
           if (
             inputEvent.inputType === "insertText" &&
             !editor.view.composing &&
