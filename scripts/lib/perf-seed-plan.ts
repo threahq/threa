@@ -15,6 +15,7 @@ export const PERF_SEED_FIXED_PROFILES = [
   "thread-2000",
   "drafts",
   "board-large",
+  "workspace-wide",
 ] as const
 
 export type PerfSeedFixedProfile = (typeof PERF_SEED_FIXED_PROFILES)[number]
@@ -45,6 +46,21 @@ export const BOARD_LARGE_MESSAGES_PER_STREAM = 3
  * width — the thing under observation.
  */
 export const BOARD_LARGE_STREAM_COUNT = 24
+
+/**
+ * Channels seeded by `workspace-wide`. Above 50 so a bootstrap apply crosses
+ * Dexie 4.4.2's FULL_RANGE threshold (`dist/dexie.js:5736`) in `streams` AND in
+ * `streamMemberships` — a `bulkPut` of ≥50 values invalidates every key range on
+ * the table, waking every live query. `board-large`'s 24 never crosses it, so no
+ * existing profile can show the bootstrap diff removing that amplifier.
+ */
+export const WORKSPACE_WIDE_STREAM_COUNT = 60
+
+/**
+ * One message per `workspace-wide` channel, so every stream row carries a
+ * `lastMessagePreview` — the field D16 names as the diff's honest floor.
+ */
+export const WORKSPACE_WIDE_MESSAGES_PER_STREAM = 1
 
 export interface ParsedProfile {
   readonly name: PerfSeedFixedProfile | typeof PERF_SEED_PARAMETERISED_PROFILE
@@ -200,6 +216,16 @@ export function seedSpec(profile: ParsedProfile): PerfSeedSpec {
           key: `perf-board-${String(i + 1).padStart(2, "0")}`,
           kind: "channel" as const,
           messageTarget: BOARD_LARGE_MESSAGES_PER_STREAM,
+        })),
+        drafts: [],
+      }
+    case "workspace-wide":
+      return {
+        profile: "workspace-wide",
+        slots: Array.from({ length: WORKSPACE_WIDE_STREAM_COUNT }, (_, i) => ({
+          key: `perf-wide-${String(i + 1).padStart(2, "0")}`,
+          kind: "channel" as const,
+          messageTarget: WORKSPACE_WIDE_MESSAGES_PER_STREAM,
         })),
         drafts: [],
       }

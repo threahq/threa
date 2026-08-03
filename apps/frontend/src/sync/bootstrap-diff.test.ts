@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest"
-import { diffRows, diffSingleton, semanticEqual } from "./bootstrap-diff"
+import { SERVER_STAMP_IGNORED_KEYS, diffRows, diffSingleton, semanticEqual } from "./bootstrap-diff"
 
 describe("bootstrap diff", () => {
   it("equal rows differing only in _cachedAt are unchanged", () => {
@@ -67,6 +67,12 @@ describe("bootstrap diff", () => {
     expect(result.toWrite).toEqual([])
     expect(result.merged).toEqual([candidate])
     expect(result.merged).not.toContain(orphan)
+  })
+
+  it("a caller's ignore set applies to the top level only", () => {
+    const withNested = (top: string, nested: string) => ({ id: "x", updatedAt: top, nested: { updatedAt: nested } })
+    expect(semanticEqual(withNested("A", "A"), withNested("B", "A"), SERVER_STAMP_IGNORED_KEYS)).toBe(true)
+    expect(semanticEqual(withNested("A", "A"), withNested("B", "B"), SERVER_STAMP_IGNORED_KEYS)).toBe(false)
   })
 
   it("diffSingleton reports write:false and returns the existing object", () => {

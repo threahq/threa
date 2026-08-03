@@ -1,11 +1,11 @@
 # Performance reproduction matrix
 
-Twelve scenarios, each with the exact `perf-seed` invocation that builds its
+Thirteen scenarios, each with the exact `perf-seed` invocation that builds its
 fixture and the capture marks that prove it ran. Operator-run: nothing here is
 asserted in CI, because every threshold worth measuring is device-dependent.
 
-Two things are automated: `scripts/perf-seed-plan.test.ts` (32 unit tests over
-the pure planning logic) and `tests/browser/perf-capture.spec.ts`, which proves
+Two things are automated: `scripts/perf-seed-plan.test.ts` (unit tests over the
+pure planning logic) and `tests/browser/perf-capture.spec.ts`, which proves
 the capture plumbing works end to end and carries no content. Neither asserts
 timings.
 
@@ -44,13 +44,14 @@ measures locally and never uploads — upload requires the consent preference.
 
 ## Profiles
 
-| Profile                                     | Builds                                                                                                                        |
-| ------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
-| `large-stream`                              | `#perf-large-stream` with 5,000 messages                                                                                      |
-| `thread-100` / `thread-500` / `thread-2000` | a channel with one anchor message, and a thread under it with N replies                                                       |
-| `missed-entries=<N>`                        | advances the sync log by at least N entries (batches overshoot; the printed delta is authoritative) in `#perf-missed-entries` |
-| `drafts`                                    | four empty channels, each holding a staged draft of 1 KB / 10 KB / 100 KB / 256 KB                                            |
-| `board-large`                               | 24 channels (four full `BOARD_SYNC_CONCURRENCY = 6` waves), 3 messages each                                                   |
+| Profile                                     | Builds                                                                                                                            |
+| ------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| `large-stream`                              | `#perf-large-stream` with 5,000 messages                                                                                          |
+| `thread-100` / `thread-500` / `thread-2000` | a channel with one anchor message, and a thread under it with N replies                                                           |
+| `missed-entries=<N>`                        | advances the sync log by at least N entries (batches overshoot; the printed delta is authoritative) in `#perf-missed-entries`     |
+| `drafts`                                    | four empty channels, each holding a staged draft of 1 KB / 10 KB / 100 KB / 256 KB                                                |
+| `board-large`                               | 24 channels (four full `BOARD_SYNC_CONCURRENCY = 6` waves), 3 messages each                                                       |
+| `workspace-wide`                            | 60 channels (`WORKSPACE_WIDE_STREAM_COUNT`, above Dexie's 50-row FULL_RANGE threshold), 1 message each so every row has a preview |
 
 ### Hitting a missed-entry boundary
 
@@ -73,22 +74,71 @@ Seed while the client under test is disconnected (close the tab, or seed from a
 terminal while parked on another workspace), or the entries arrive live and
 there is no gap to catch up on.
 
-## The twelve scenarios
+## The thirteen scenarios
 
-| #   | Scenario                                                  | Seed                                                                  | Marks that prove it                                                                                                                         |
-| --- | --------------------------------------------------------- | --------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1   | Warm cached hard refresh, no gap                          | `--profile large-stream`                                              | `bootstrap.fetch`, `bootstrap.preRead`, `bootstrap.tx`, `bootstrap.cleanup`, `bootstrap.seed`, `bootstrap.publish`, `bootstrap.rowsWritten` |
-| 2   | Warm refresh with 10 / 50 / 199 / 200 missed entries      | `--profile missed-entries=10` (then 50, 199, 200)                     | `catchup.entryApply`, `catchup.replay`, `catchup.collapse`, `catchup.serialReplay` — collapse should appear only at the boundary case       |
-| 3   | Cold start, empty IDB                                     | `--profile large-stream`, then clear site data                        | `bootstrap.*` (all phases), `bootstrap.rowsWritten`                                                                                         |
-| 4   | Live 10 msg/s burst while typing                          | `--profile large-stream`, then post from a second client while typing | `stream.eventApply`, `stream.idbTransaction`, `draft.staging`, `observer.eventDuration`, `observer.frameGap`                                |
-| 5   | Drafts 1 KB / 10 KB / 100 KB / 256 KB                     | `--profile drafts`, then type into each channel's composer            | `draft.staging`, `draft.stagedChars` (absent above the staging cap — that is the signal, not a gap), `editor.externalSync`                  |
-| 6   | Shallow vs deep retained history                          | `--profile large-stream` vs a freshly created channel                 | `bootstrap.fetch`, `bootstrap.tx`, `bootstrap.rowsWritten`                                                                                  |
-| 7   | Threads 100 / 500 / 2000 events                           | `--profile thread-100` / `thread-500` / `thread-2000`                 | `timeline.windowItems` (must stay viewport-bounded as N grows), `stream.eventApply`, `liveQuery.load`                                       |
-| 8   | Board, small vs large stream sets                         | `--profile board-large` vs the default workspace                      | `stream.subscriptions`, `liveQuery.rerun`, `catchup.replay`                                                                                 |
-| 9   | Resume with keyboard open, board and panels mounted       | `--profile board-large`                                               | `observer.frameGap`, `observer.eventDuration`, `timeline.windowItems`                                                                       |
-| 10  | First code-heavy message vs warmed highlighter            | none — paste a large fenced code block by hand                        | `observer.longTask` (the first paint should be the outlier), `timeline.windowItems`                                                         |
-| 11  | Large stash restore through real TipTap                   | `--profile drafts`, reload on the 256 KB channel, then type into it   | `editor.externalSync`, `draft.staging`, `observer.longTask`                                                                                 |
-| 12  | Restore → switch stream → return → navigate away and back | `--profile drafts` plus `--profile large-stream`                      | `editor.externalSync`, `stream.subscriptions`, `liveQuery.rerun`, `bootstrap.publish`                                                       |
+| #   | Scenario                                                  | Seed                                                                                           | Marks that prove it                                                                                                                                                                                       |
+| --- | --------------------------------------------------------- | ---------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | Warm cached hard refresh, no gap                          | `--profile large-stream`                                                                       | `bootstrap.fetch`, `bootstrap.preRead`, `bootstrap.tx`, `bootstrap.cleanup`, `bootstrap.seed`, `bootstrap.publish`, `bootstrap.rowsWritten`                                                               |
+| 2   | Warm refresh with 10 / 50 / 199 / 200 missed entries      | `--profile missed-entries=10` (then 50, 199, 200)                                              | `catchup.entryApply`, `catchup.replay`, `catchup.collapse`, `catchup.serialReplay` — collapse should appear only at the boundary case                                                                     |
+| 3   | Cold start, empty IDB                                     | `--profile large-stream`, then clear site data                                                 | `bootstrap.*` (all phases), `bootstrap.rowsWritten`                                                                                                                                                       |
+| 4   | Live 10 msg/s burst while typing                          | `--profile large-stream`, then post from a second client while typing                          | `stream.eventApply`, `stream.idbTransaction`, `draft.staging`, `observer.eventDuration`, `observer.frameGap`                                                                                              |
+| 5   | Drafts 1 KB / 10 KB / 100 KB / 256 KB                     | `--profile drafts`, then type into each channel's composer                                     | `draft.staging`, `draft.stagedChars` (absent above the staging cap — that is the signal, not a gap), `editor.externalSync`                                                                                |
+| 6   | Shallow vs deep retained history                          | `--profile large-stream` vs a freshly created channel                                          | `bootstrap.fetch`, `bootstrap.tx`, `bootstrap.rowsWritten`                                                                                                                                                |
+| 7   | Threads 100 / 500 / 2000 events                           | `--profile thread-100` / `thread-500` / `thread-2000`                                          | `timeline.windowItems` (must stay viewport-bounded as N grows), `stream.eventApply`, `liveQuery.load`                                                                                                     |
+| 8   | Board, small vs large stream sets                         | `--profile board-large` vs the default workspace                                               | `stream.subscriptions`, `liveQuery.rerun`, `catchup.replay`                                                                                                                                               |
+| 9   | Resume with keyboard open, board and panels mounted       | `--profile board-large`                                                                        | `observer.frameGap`, `observer.eventDuration`, `timeline.windowItems`                                                                                                                                     |
+| 10  | First code-heavy message vs warmed highlighter            | none — paste a large fenced code block by hand                                                 | `observer.longTask` (the first paint should be the outlier), `timeline.windowItems`                                                                                                                       |
+| 11  | Large stash restore through real TipTap                   | `--profile drafts`, reload on the 256 KB channel, then type into it                            | `editor.externalSync`, `draft.staging`, `observer.longTask`                                                                                                                                               |
+| 12  | Restore → switch stream → return → navigate away and back | `--profile drafts` plus `--profile large-stream`                                               | `editor.externalSync`, `stream.subscriptions`, `liveQuery.rerun`, `bootstrap.publish`                                                                                                                     |
+| 13  | Unchanged warm refresh, wide workspace                    | `--profile workspace-wide`, then hard-refresh twice with no new messages (read the third load) | `bootstrap.preRead` + `bootstrap.tx` (the comparable number), `bootstrap.rowsWritten`, `bootstrap.rowsSkipped`, `bootstrap.diff`, `bootstrap.storePublish`, `bootstrap.cachePublish`, `bootstrap.cleanup` |
+
+### Scenario 13 — reading the unchanged warm refresh
+
+`workspace-wide` is the only profile that crosses Dexie's 50-row threshold in
+`streams` and `streamMemberships`, which is the amplifier the bootstrap diff
+removes. Run it as an A/B on one device, same fixture and same workspace in both
+arms — `bootstrapDiff` defaults to `off`, so the arms are a flag flip, not a
+build swap:
+
+```bash
+# BEFORE — flag off (the default). Load, hard-refresh, hard-refresh again, then idle.
+open 'http://localhost:4004/w/<workspaceId>?perfCapture=1'
+#    devtools console, on the third load: copy(JSON.stringify(__threaPerfCapture.export()))
+
+# AFTER — open the backoffice the stack recipe already boots on :4006, pick the
+# workspace, Feature flags → bootstrapDiff = on (it propagates live), then repeat
+# the three loads above unchanged. Set it back to off before re-running BEFORE.
+open 'http://localhost:4006'
+```
+
+What to read — the _third_ load's samples. Load 2 still writes: the first load's
+read watermark and `counterTouchedAt` settle against the previous fetch window,
+so its rows differ for a real reason; load 3 is the honest unchanged arm.
+
+| Claim                                  | Mark                                 | Expected                                   |
+| -------------------------------------- | ------------------------------------ | ------------------------------------------ |
+| Zero semantic row writes               | `bootstrap.rowsWritten`              | `0`                                        |
+| The skip is real, not an empty payload | `bootstrap.rowsSkipped`              | ≈ the payload's row count                  |
+| Transaction cost collapses             | `bootstrap.preRead` + `bootstrap.tx` | reads only; see the caveat below           |
+| The diff is not the new cost           | `bootstrap.diff`                     | small relative to the `tx` delta           |
+| No coarse cache publication            | `bootstrap.storePublish`             | absent                                     |
+| No TanStack bootstrap replacement      | `bootstrap.cachePublish`             | absent                                     |
+| Cleanup untouched                      | `bootstrap.cleanup`                  | unchanged between arms — a change is a bug |
+
+Three caveats, all load-bearing:
+
+- **Read the third load, not the second.** Reading load 2 reports settling as a
+  regression and hides the steady state the flag is supposed to reach.
+
+- **`preRead + tx` is the comparable number.** With the diff on, every table's
+  read moves inside the `rw` transaction so read → compare → write is atomic, so
+  `bootstrap.preRead` folds into `bootstrap.tx`. Comparing `tx` alone across the
+  arms compares different spans.
+- **"Unchanged" means no new messages since the previous apply.** A stream row's
+  `lastMessagePreview` is written at a different fidelity by the socket path than
+  by the bootstrap payload, so a workspace with activity since the last apply
+  genuinely rewrites those rows — a heal, not a false diff. On a live workspace
+  expect a large reduction, not a zero.
 
 Scenario 10 has no profile on purpose: what it exercises is one pasted document,
 not a seeded shape.
