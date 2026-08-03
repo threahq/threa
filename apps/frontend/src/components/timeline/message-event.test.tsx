@@ -1,16 +1,32 @@
 import { describe, it, expect, vi, beforeAll, beforeEach, afterEach, afterAll } from "vitest"
 import { spyOnExport } from "@/test/spy"
-import { render, screen, act } from "@testing-library/react"
+import { render, screen, act, waitFor } from "@testing-library/react"
+import * as e2eSessionModule from "@/stores/e2e-session-store"
+import * as decryptCacheModule from "@/lib/crypto/decrypt-cache"
 import { MemoryRouter } from "react-router-dom"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { ServicesProvider, type SavedService } from "@/contexts"
 import { MessageEvent } from "./message-event"
 import { TimelineItemContent, type TimelineItemRenderContext } from "./event-list"
-import { clearWorkspaceActorTables, seedWorkspaceUser, workspaceUsersTable } from "@/test/workspace-rows"
+import {
+  clearStreams,
+  clearWorkspaceActorTables,
+  seedStream,
+  seedWorkspaceUser,
+  streamsTable,
+  workspaceUsersTable,
+} from "@/test/workspace-rows"
+import { useStreamFromStore } from "@/stores/stream-store"
 import { resetActorLookups } from "@/stores/actor-lookup"
 import { resetWorkspaceStoreCache } from "@/stores/workspace-store"
-import { resetWorkspaceTableRegistry, setWorkspaceReadMode } from "@/stores/workspace-table-registry"
+import {
+  allocateWorkspaceTableToken,
+  getWorkspaceTableSnapshot,
+  resetWorkspaceTableRegistry,
+  setWorkspaceReadMode,
+  subscribeWorkspaceTable,
+} from "@/stores/workspace-table-registry"
 import { EditLastMessageContext } from "./edit-last-message-context"
 import * as editorModule from "@/components/editor"
 import * as hooksModule from "@/hooks"
@@ -725,5 +741,111 @@ describe("row-tree read fan-out", () => {
 
     const rerendered = [...renders.entries()].filter(([id, count]) => count !== (before.get(id) ?? 0))
     expect(rerendered.map(([id]) => id)).toEqual([incoming.id])
+  })
+})
+
+describe("MessageEvent stream-row reads", () => {
+  const workspaceId = "ws_123"
+  const streamId = "stream_123"
+
+  function StreamRowProbe() {
+    return <span data-testid="stream-row-probe">{useStreamFromStore(streamId)?.displayName ?? "unresolved"}</span>
+  }
+
+  const rootStreamId = "stream_root"
+
+  async function primeStreamRegistry(): Promise<() => void> {
+    const token = allocateWorkspaceTableToken()
+    const unsubscribe = subscribeWorkspaceTable(workspaceId, "streams", token, () => {})
+    await waitFor(() => expect(getWorkspaceTableSnapshot(workspaceId, "streams", token)).toBeDefined())
+    return unsubscribe
+  }
+
+  function sealedEvent(): StreamEvent {
+    return {
+      id: "event_sealed",
+      streamId,
+      sequence: "1",
+      eventType: "message_created",
+      actorType: "user",
+      actorId: "member_123",
+      createdAt: new Date().toISOString(),
+      payload: {
+        messageId: "msg_sealed",
+        ciphertext: "abc",
+        envelope: { v: 2, keyGeneration: 1, iv: "x", aad: "y" },
+        contentMarkdown: "",
+      },
+    }
+  }
+
+  let release: (() => void) | null = null
+
+  beforeEach(async () => {
+    resetWorkspaceTableRegistry()
+    resetWorkspaceStoreCache()
+    resetActorLookups()
+    await clearWorkspaceActorTables()
+    await seedWorkspaceUser(workspaceId, "member_123")
+    await clearStreams()
+    setWorkspaceReadMode("shared")
+  })
+
+  afterEach(() => {
+    release?.()
+    release = null
+    resetWorkspaceTableRegistry()
+    resetActorLookups()
+  })
+
+  it("a fifty-row window opens no per-row db.streams.get", async () => {
+    await seedStream(workspaceId, streamId, { displayName: "Seeded Channel" })
+    release = await primeStreamRegistry()
+    const get = vi.spyOn(streamsTable(), "get")
+
+    const events = Array.from({ length: 50 }, (_, i) => createMessageEvent(`msg_${i}`, `row ${i}`))
+    render(
+      <>
+        <StreamRowProbe />
+        {events.map((event) => (
+          <MessageEvent key={event.id} event={event} workspaceId={workspaceId} streamId={streamId} />
+        ))}
+      </>,
+      { wrapper: Wrapper }
+    )
+    await screen.findAllByText("row 0")
+
+    // Stream-derived output, so a hook that resolved nothing fails this test on
+    // correctness rather than passing it on a vacuous zero read count.
+    expect(await screen.findByTestId("stream-row-probe")).toHaveTextContent("Seeded Channel")
+    expect(get).not.toHaveBeenCalled()
+  })
+
+  it("an E2E row still holds at pending until its stream row hydrates", async () => {
+    release = await primeStreamRegistry()
+    vi.spyOn(e2eSessionModule, "useE2eSession").mockReturnValue({
+      status: "unlocked",
+      privateKey: {} as CryptoKey,
+      keyId: "key_1",
+    } as unknown as ReturnType<typeof e2eSessionModule.useE2eSession>)
+    vi.spyOn(decryptCacheModule, "getCachedDecryption").mockReturnValue(undefined)
+    const requestDecryption = vi
+      .spyOn(decryptCacheModule, "requestDecryption")
+      .mockResolvedValue(undefined as unknown as never)
+
+    const { container } = render(<MessageEvent event={sealedEvent()} workspaceId={workspaceId} streamId={streamId} />, {
+      wrapper: Wrapper,
+    })
+
+    // Row absent from the registry AND from IDB: the only correct answer is
+    // "hold" — a decrypt against the bare stream id caches its failure forever.
+    await waitFor(() => expect(container.querySelector('[aria-hidden="true"]')).toBeInTheDocument())
+    expect(container.querySelector(".message-item")).not.toBeInTheDocument()
+    expect(requestDecryption).not.toHaveBeenCalled()
+
+    await seedStream(workspaceId, streamId, { rootStreamId })
+
+    await waitFor(() => expect(requestDecryption).toHaveBeenCalled())
+    expect(requestDecryption.mock.calls[0][2]).toMatchObject({ streamId, rootStreamId })
   })
 })
