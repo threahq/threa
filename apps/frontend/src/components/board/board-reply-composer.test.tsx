@@ -144,3 +144,31 @@ describe("BoardReplyComposer alwaysDocked (docked-composer semantics)", () => {
     expect(screen.getByTestId("form-stub")).toHaveAttribute("data-restore", "draft_adv")
   })
 })
+
+describe("BoardReplyComposer archived (read-only conversation)", () => {
+  it("replaces the docked form with the notice", () => {
+    vi.spyOn(useMobileModule, "useIsMobile").mockReturnValue(false)
+    mount({
+      alwaysDocked: true,
+      disabled: true,
+      disabledReason: "This conversation has been archived. It can be read but not extended.",
+    })
+    expect(
+      screen.getByText("This conversation has been archived. It can be read but not extended.")
+    ).toBeInTheDocument()
+    expect(screen.queryByTestId("form-stub")).toBeNull()
+  })
+
+  it("replaces the resting affordance with the notice", () => {
+    vi.spyOn(useMobileModule, "useIsMobile").mockReturnValue(false)
+    mount({
+      disabled: true,
+      disabledReason: "The stream this conversation belongs to has been archived. It can be read but not extended.",
+    })
+    expect(
+      screen.getByText("The stream this conversation belongs to has been archived. It can be read but not extended.")
+    ).toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: "Write a reply…" })).toBeNull()
+    expect(screen.queryByTestId("form-stub")).toBeNull()
+  })
+})

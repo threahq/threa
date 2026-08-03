@@ -215,6 +215,25 @@ export interface ApplySplitResult {
 }
 
 /**
+ * Re-filing a message is a write to its stream, so it obeys the same archived
+ * rule as sending one (`StreamService.resolveWritableMessageStream`): the
+ * effective root's `archivedAt` seals every thread under it (INV-62), and the
+ * anchor's own row seals it directly.
+ */
+async function assertStreamNotArchived(client: Querier, streamId: string): Promise<void> {
+  const stream = await StreamRepository.findById(client, streamId)
+  if (stream?.archivedAt) {
+    throw new HttpError("Cannot move messages in an archived stream", { status: 403 })
+  }
+  if (stream?.rootStreamId) {
+    const root = await StreamRepository.findById(client, stream.rootStreamId)
+    if (root?.archivedAt) {
+      throw new HttpError("Cannot move messages in a thread under an archived stream", { status: 403 })
+    }
+  }
+}
+
+/**
  * Public interface for querying conversations.
  * Computes temporal staleness on read.
  */
@@ -557,6 +576,9 @@ export class ConversationService {
           })
         }
       }
+
+      await assertStreamNotArchived(client, message.streamId)
+      if (target.streamId !== message.streamId) await assertStreamNotArchived(client, target.streamId)
 
       const previous = await ConversationRepository.findPrimaryByMessageId(client, workspaceId, messageId)
       if (previous?.id === target.id) {
@@ -974,6 +996,10 @@ export class ConversationService {
     const { workspaceId, streamId, messageIds, target, actorUserId } = params
 
     return withTransaction(this.pool, async (client) => {
+      // Every moving message and an existing destination are pinned to this
+      // stream below, so one archived check covers the whole batch.
+      await assertStreamNotArchived(client, streamId)
+
       const uniqueIds = [...new Set(messageIds)]
 
       // Unlocked peek: chooses the conversation lock set only. The authoritative

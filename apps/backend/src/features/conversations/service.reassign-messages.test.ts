@@ -338,3 +338,32 @@ describe("ConversationService.reassignMessagesToConversation", () => {
     })
   })
 })
+
+describe("ConversationService.reassignMessagesToConversation archived streams", () => {
+  afterEach(() => mock.restore())
+
+  test("rejects the batch when the stream's effective root is archived (INV-62)", async () => {
+    const convA = makeConversation({ id: "conv_a" })
+    const spies = setup({ conversations: { conv_a: convA }, primaries: { m1: "conv_a", m2: "conv_a" } })
+    spyOn(StreamRepository, "findById").mockImplementation(
+      async (_c: unknown, id: string) =>
+        (id === "chan_1"
+          ? { id: "chan_1", type: "thread", rootStreamId: "chan_root" }
+          : { id: "chan_root", type: "channel", rootStreamId: null, archivedAt: new Date() }) as never
+    )
+
+    await expect(reassign(["m1", "m2"], { kind: "new" })).rejects.toMatchObject({ status: 403 })
+    expect(spies.insert).not.toHaveBeenCalled()
+    expect(spies.addPrimaryMessages).not.toHaveBeenCalled()
+    expect(spies.outboxInsert).not.toHaveBeenCalled()
+  })
+
+  test("an unarchived stream still moves the batch", async () => {
+    const convA = makeConversation({ id: "conv_a" })
+    const spies = setup({ conversations: { conv_a: convA }, primaries: { m1: "conv_a", m2: "conv_a" } })
+
+    await reassign(["m1", "m2"], { kind: "new" })
+
+    expect(spies.addPrimaryMessages).toHaveBeenCalledTimes(1)
+  })
+})

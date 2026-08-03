@@ -47,7 +47,9 @@ import {
 import { DeletedMessageEvent } from "@/components/timeline/deleted-message-event"
 import { QuoteReplyProvider } from "@/components/timeline/quote-reply-context"
 import { TextSelectionQuote } from "@/components/timeline/text-selection-quote"
-import { useActors, useVisibleStreams } from "@/hooks"
+import { useActors, useVisibleStreams, useEffectiveArchived } from "@/hooks"
+import { useStreamFromStore } from "@/stores/stream-store"
+import { conversationArchivedReason } from "@/components/composer/composer-disabled-notice"
 import { useWorkspaceUserId } from "@/hooks/use-workspaces"
 import { useBoardFlash } from "@/stores/board-flash-store"
 import { boardUnreadLatchStorage } from "@/stores/board-unread-latch-store"
@@ -236,6 +238,14 @@ export function BoardCard({
   })
 
   const streamId = conversation.streamId
+  // Archived cards are reachable under `?archived=true` — read-only (INV-62).
+  const cardStream = useStreamFromStore(streamId)
+  const archived = useEffectiveArchived({
+    stream: cardStream,
+    rootStreamId: cardStream?.rootStreamId ?? null,
+    fallbackRootArchived: post.rootArchived === true,
+  })
+  const archivedReason = conversationArchivedReason(archived)
   // Leading visual matches the sidebar's stream row: a per-type glyph on a tinted
   // tile, except a DM shows the peer avatar over it (icon as the fallback). Shared
   // `streamTypeVisual` keeps board and sidebar in lockstep.
@@ -806,11 +816,13 @@ export function BoardCard({
           conversationId={conversation.id}
           conversationRootStreamId={conversation.streamId}
           onNewSubtopic={
-            structuralIndex.threadsByAnchorId.has(message.id)
+            structuralIndex.threadsByAnchorId.has(message.id) || archivedReason
               ? undefined
               : () => inlineComposer.openNewSubtopic(message.streamId ?? streamId, message.id)
           }
-          onMoveToSubtopic={moveToSubtopic.moveHandlerFor(message.id, conversation.id, message.settling)}
+          onMoveToSubtopic={
+            archivedReason ? undefined : moveToSubtopic.moveHandlerFor(message.id, conversation.id, message.settling)
+          }
         />
       )
     // Mirrors the panel: a deleted row is a tombstone, never a blank MessageItem
@@ -851,8 +863,12 @@ export function BoardCard({
         // so an actor accent fills to the card edges (stream-view look) with rows aligned.
         surfaceClassName="bg-card px-3 sm:px-4"
         rowInsetClassName="-mx-3 sm:-mx-4"
-        onNewSubtopic={canBranch ? () => inlineComposer.openNewSubtopic(rowStreamId, message.id) : undefined}
-        onMoveToSubtopic={moveToSubtopic.moveHandlerFor(message.id, conversation.id, message.settling)}
+        onNewSubtopic={
+          canBranch && !archivedReason ? () => inlineComposer.openNewSubtopic(rowStreamId, message.id) : undefined
+        }
+        onMoveToSubtopic={
+          archivedReason ? undefined : moveToSubtopic.moveHandlerFor(message.id, conversation.id, message.settling)
+        }
       />
     )
   }
@@ -887,12 +903,12 @@ export function BoardCard({
           settlingRailClassName={rail ? BRANCH_ACCENTED_SETTLING_RAIL_CLASS : BRANCH_SETTLING_RAIL_CLASS}
           suppressRowAccent
           onNewSubtopic={
-            canBranch
+            canBranch && !archivedReason
               ? () => inlineComposer.openNewSubtopic(message.streamId ?? branch.threadStreamId, message.id)
               : undefined
           }
           onMoveToSubtopic={
-            branch.pending
+            branch.pending || archivedReason
               ? undefined
               : moveToSubtopic.moveHandlerFor(message.id, branch.conversationId, message.settling)
           }
@@ -1177,9 +1193,9 @@ export function BoardCard({
                   continueThreadTo={continueThreadTo}
                   onSplitThread={onSplitThread}
                   renderBranchMessage={renderBranchMessage}
-                  renderBranchTail={inlineComposer.renderBranchTail}
+                  renderBranchTail={archivedReason ? undefined : inlineComposer.renderBranchTail}
                   branchExpansion={branchExpansion}
-                  renderAfterMessage={inlineComposer.renderAfterMessage}
+                  renderAfterMessage={archivedReason ? undefined : inlineComposer.renderAfterMessage}
                   onRedirectSession={openReplyComposer}
                   ledgerEventExpansion={ledgerEventExpansion}
                 />
@@ -1192,16 +1208,16 @@ export function BoardCard({
                     continueThreadTo={continueThreadTo}
                     onSplitThread={onSplitThread}
                     renderBranchMessage={renderBranchMessage}
-                    renderBranchTail={inlineComposer.renderBranchTail}
+                    renderBranchTail={archivedReason ? undefined : inlineComposer.renderBranchTail}
                     branchExpansion={branchExpansion}
-                    renderAfterMessage={inlineComposer.renderAfterMessage}
+                    renderAfterMessage={archivedReason ? undefined : inlineComposer.renderAfterMessage}
                     onRedirectSession={openReplyComposer}
                     ledgerEventExpansion={ledgerEventExpansion}
                   />
                   {openingMessage && renderMessage(openingMessage, false)}
                   {/* The opening renders outside the row builder here, so its inline
                     "new sub-topic" composer slot must be placed explicitly. */}
-                  {openingMessage && inlineComposer.renderAfterMessage(openingMessage.id)}
+                  {openingMessage && !archivedReason && inlineComposer.renderAfterMessage(openingMessage.id)}
                   {ledgerHeadRow}
                   <BranchedBoardRows
                     rows={ledgerBranchRows(visibleReplies)}
@@ -1210,9 +1226,9 @@ export function BoardCard({
                     continueThreadTo={continueThreadTo}
                     onSplitThread={onSplitThread}
                     renderBranchMessage={renderBranchMessage}
-                    renderBranchTail={inlineComposer.renderBranchTail}
+                    renderBranchTail={archivedReason ? undefined : inlineComposer.renderBranchTail}
                     branchExpansion={branchExpansion}
-                    renderAfterMessage={inlineComposer.renderAfterMessage}
+                    renderAfterMessage={archivedReason ? undefined : inlineComposer.renderAfterMessage}
                     onRedirectSession={openReplyComposer}
                     ledgerEventExpansion={ledgerEventExpansion}
                   />
@@ -1238,6 +1254,8 @@ export function BoardCard({
                 // freshest activity. Falls back to the conversation's own stream — NOT the
                 // opening message's, which for a thread post is the parent-stream message.
                 lastActiveStreamId={displayedReplies.at(-1)?.streamId ?? streamId}
+                disabled={!!archivedReason}
+                disabledReason={archivedReason}
               />
             )}
           </div>

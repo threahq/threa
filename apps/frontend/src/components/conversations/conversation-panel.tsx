@@ -63,11 +63,12 @@ import {
   useFloatingComposerAnchor,
   useFloatingComposerHeight,
   FLOATING_COMPOSER_HEIGHT_VAR,
+  conversationArchivedReason,
 } from "@/components/composer"
 import { QuoteReplyProvider } from "@/components/timeline/quote-reply-context"
 import { TextSelectionQuote } from "@/components/timeline/text-selection-quote"
 import { SidebarToggle } from "@/components/layout"
-import { useActors, useVisibleStreams } from "@/hooks"
+import { useActors, useVisibleStreams, useEffectiveArchived } from "@/hooks"
 import { useStashedDrafts } from "@/hooks/use-stashed-drafts"
 import { boardReplyDraftKey, boardBranchReplyDraftKey } from "@/lib/board/draft-keys"
 import { useWorkspaceUserId } from "@/hooks/use-workspaces"
@@ -377,6 +378,15 @@ export function ConversationPanel({ workspaceId, onClose }: ConversationPanelPro
   const hostStream = useStreamFromStore(anchorStreamId)
   const hostStreamType = hostStream?.type
   const locator = useStreamName(workspaceId, anchorStreamId ?? "", "generic") ?? "Conversation"
+  // Archived conversations are read-only (INV-62): the anchor stream's own
+  // state, else the root it inherits from, else the board post's cold-load
+  // verdict (kept live by `setBoardRootArchived`).
+  const archived = useEffectiveArchived({
+    stream: hostStream,
+    rootStreamId: hostStream?.rootStreamId ?? null,
+    fallbackRootArchived: post?.rootArchived === true,
+  })
+  const archivedReason = conversationArchivedReason(archived)
 
   // The pre-`post` half of the same machine: blank while the fetch is young, the
   // panel's own skeleton once it is genuinely slow. The latch is what lets the
@@ -412,6 +422,7 @@ export function ConversationPanel({ workspaceId, onClose }: ConversationPanelPro
             workspaceId={workspaceId}
             post={post}
             hostStreamType={hostStreamType}
+            archivedReason={archivedReason}
             openReplySignal={openReplySignal}
             contentRef={setFloatingAnchorEl}
             skeletonAlreadyVisible={skeletonShownRef.current.shown}
@@ -463,6 +474,9 @@ interface ConversationPanelBodyProps {
   workspaceId: string
   post: BoardViewPost
   hostStreamType: string | undefined
+  /** Set when the conversation is archived: the composer and the branch affordances
+   *  are replaced by this notice (read-only, INV-62). */
+  archivedReason: string | undefined
   /** Bumped each time the panel is opened via "Reply in conversation" — opens the composer. */
   openReplySignal: number
   /** Rendered here, not by the parent, so it flips on the same `phase` the rows do. */
@@ -484,6 +498,7 @@ function ConversationPanelBody({
   workspaceId,
   post,
   hostStreamType,
+  archivedReason,
   openReplySignal,
   header,
   contentRef,
@@ -827,8 +842,12 @@ function ConversationPanelBody({
         // aligned — matching the board card and timeline.
         surfaceClassName="bg-background px-3 sm:px-6"
         rowInsetClassName="-mx-3 sm:-mx-6"
-        onNewSubtopic={canBranch ? () => inlineComposer.openNewSubtopic(rowStreamId, message.id) : undefined}
-        onMoveToSubtopic={moveToSubtopic.moveHandlerFor(message.id, conversation.id, message.settling)}
+        onNewSubtopic={
+          canBranch && !archivedReason ? () => inlineComposer.openNewSubtopic(rowStreamId, message.id) : undefined
+        }
+        onMoveToSubtopic={
+          archivedReason ? undefined : moveToSubtopic.moveHandlerFor(message.id, conversation.id, message.settling)
+        }
       />
     )
   }
@@ -857,12 +876,12 @@ function ConversationPanelBody({
           settlingRailClassName={rail ? BRANCH_ACCENTED_SETTLING_RAIL_CLASS : BRANCH_SETTLING_RAIL_CLASS}
           suppressRowAccent
           onNewSubtopic={
-            canBranch
+            canBranch && !archivedReason
               ? () => inlineComposer.openNewSubtopic(message.streamId ?? branch.threadStreamId, message.id)
               : undefined
           }
           onMoveToSubtopic={
-            branch.pending
+            branch.pending || archivedReason
               ? undefined
               : moveToSubtopic.moveHandlerFor(message.id, branch.conversationId, message.settling)
           }
@@ -1051,8 +1070,8 @@ function ConversationPanelBody({
                     splitThread.mutate({ conversationId: conversation.id, threadStreamId })
                   }
                   renderBranchMessage={renderBranchMessage}
-                  renderBranchTail={inlineComposer.renderBranchTail}
-                  renderAfterMessage={inlineComposer.renderAfterMessage}
+                  renderBranchTail={archivedReason ? undefined : inlineComposer.renderBranchTail}
+                  renderAfterMessage={archivedReason ? undefined : inlineComposer.renderAfterMessage}
                   onRedirectSession={() => setFocusSeq((n) => n + 1)}
                 />
               )}
@@ -1136,6 +1155,8 @@ function ConversationPanelBody({
               // a sub-conversation when a branch reply is armed.
               alwaysDocked
               armedReply={armedReply}
+              disabled={!!archivedReason}
+              disabledReason={archivedReason}
             />
           </FloatingComposerShell>
         </QuoteReplyProvider>
