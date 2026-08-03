@@ -119,6 +119,12 @@ interface InlineComposerFormProps {
    */
   scheduleTarget?: { streamId: string; conversationId: string }
   /**
+   * The conversation a slash command dispatched from here belongs to — the card
+   * draws the command chip on it. Omitted where the target doesn't exist yet (a
+   * new sub-topic, a still-pending branch), and the command stays stream-level.
+   */
+  commandConversationId?: string
+  /**
    * Stash row to check out once the composer mounts. Set by a resting
    * affordance that advertised a stashed/roamed draft (the loaded pointer is
    * device-local, so the row won't hydrate by itself) — opening must surface
@@ -166,6 +172,7 @@ export function InlineComposerForm({
   onQuoteConsumed,
   rejectE2e,
   scheduleTarget,
+  commandConversationId,
   restoreStashedIdOnMount,
   focusSignal,
   onSubmit,
@@ -203,7 +210,7 @@ export function InlineComposerForm({
   // switching cards without hijacking the ambient draft slot.
   const stash = useStashComposer(composer, workspaceId, draftKey)
   const scheduleMessage = useScheduleMessage(workspaceId)
-  const { planSend, dispatchCommand } = useComposerCommandSend(workspaceId, streamId)
+  const { planSend, dispatchCommand } = useComposerCommandSend(workspaceId, streamId, commandConversationId)
 
   // Check out the advertised stash row once (mount-captured; the guard ref, not
   // the effect deps, enforces once — `stash` is a fresh object every render).

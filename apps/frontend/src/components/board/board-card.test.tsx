@@ -128,6 +128,28 @@ function sessionEvent(
   }
 }
 
+/** A command lifecycle event on the card's stream, author-scoped like the wire. */
+function commandEvent(
+  eventType: "command_dispatched" | "command_completed" | "command_failed",
+  seconds: number,
+  actorId: string,
+  payload: Record<string, unknown>
+): CachedEvent {
+  return {
+    id: `${eventType}_${seconds}`,
+    workspaceId: WS,
+    streamId: STREAM,
+    sequence: String(seconds),
+    _sequenceNum: seconds,
+    eventType,
+    payload,
+    actorId,
+    actorType: "user",
+    createdAt: `2026-06-22T12:00:${String(seconds).padStart(2, "0")}.000Z`,
+    _cachedAt: seconds,
+  }
+}
+
 /** A socket that records its listeners so a test can fire an ephemeral event
  *  (`agent_session:progress`) the way the backend's trace-emitter does. */
 function fakeSocket() {
@@ -275,6 +297,30 @@ describe("BoardCard agent activity", () => {
     ])
     mountCard()
     expect(await screen.findByText("Session complete")).toBeTruthy()
+  })
+
+  it("renders the command chip for a command dispatched into this conversation, and drops another member's", async () => {
+    await db.events.bulkPut([
+      commandEvent("command_dispatched", 50, "usr_me", {
+        commandId: "cmd_1",
+        name: "compact",
+        args: "",
+        status: "dispatched",
+        conversationId: "conv_1",
+      }),
+      commandEvent("command_completed", 51, "usr_me", { commandId: "cmd_1" }),
+      commandEvent("command_dispatched", 52, "usr_other", {
+        commandId: "cmd_other",
+        name: "kick",
+        args: "",
+        status: "dispatched",
+        conversationId: "conv_1",
+      }),
+    ])
+    mountCard()
+    expect(await screen.findByText("/compact")).toBeTruthy()
+    expect(screen.getByText("completed")).toBeTruthy()
+    expect(screen.queryByText("/kick")).toBeNull()
   })
 
   it("live-updates a running session's step count from agent_session:progress", async () => {

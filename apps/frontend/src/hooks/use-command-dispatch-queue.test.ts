@@ -97,6 +97,36 @@ describe("cancelCommandDispatch", () => {
     expect((await db.events.get(`${commandId}:failed`))?._anchorSequenceNum).toBe(4)
   })
 
+  it("forwards the queued conversation ref to the dispatch request", async () => {
+    const dispatched = commandEvent(commandId, "command_dispatched")
+    dispatched._status = "pending"
+    await db.events.put(dispatched)
+    await db.pendingOperations.add({
+      id: "op_conv",
+      workspaceId: "ws_1",
+      type: "dispatch_command",
+      payload: { streamId, command: "/thinking low", optimisticEventId: commandId, conversationId: "conv_1" },
+      createdAt: 1,
+      retryCount: 0,
+    })
+    const dispatch = vi.spyOn(commandsApi, "dispatch").mockResolvedValue({ success: false, error: "Unknown command" })
+
+    await processOperationQueue(
+      { update: vi.fn(), delete: vi.fn() },
+      { add: vi.fn(), remove: vi.fn() },
+      undefined,
+      undefined,
+      () => true
+    )
+
+    expect(dispatch.mock.calls[0][1]).toEqual({
+      streamId,
+      command: "/thinking low",
+      clientCommandId: commandId,
+      conversationId: "conv_1",
+    })
+  })
+
   it("refuses cancellation after an ambiguous transient failure", async () => {
     const dispatched = commandEvent(commandId, "command_dispatched")
     dispatched._status = "pending"

@@ -644,8 +644,8 @@ function ConversationPanelBody({
     return set
   }, [conversation.messageIds, all])
   const eventRows = useMemo(
-    () => resolveBoardEventRows(railEvents, { conversationId: conversation.id, memberMessageIds }),
-    [railEvents, conversation.id, memberMessageIds]
+    () => resolveBoardEventRows(railEvents, { conversationId: conversation.id, memberMessageIds, currentUserId }),
+    [railEvents, conversation.id, memberMessageIds, currentUserId]
   )
 
   // Per-thread-boundary grouping — same derivation as the board card (the panel

@@ -234,6 +234,7 @@ async function executeOperation(
           streamId: payload.streamId as string,
           command: payload.command as string,
           clientCommandId: optimisticEventId,
+          ...(payload.conversationId ? { conversationId: payload.conversationId as string } : {}),
         })
         if (!result.success) throw new ApiError(400, "COMMAND_DISPATCH_FAILED", result.error)
         await db.transaction("rw", [db.events, db.pendingOperations], async () => {

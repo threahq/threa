@@ -9,7 +9,9 @@ import type { BoardViewPost } from "./use-stable-board-view"
 
 /**
  * Event types the board rail reads alongside `message_created`: the non-message
- * rows the board draws (agent sessions, memo captures, follow-ups, delegations —
+ * rows the board draws (agent sessions, memo captures, follow-ups, delegations,
+ * command chips — the whole command lifecycle derives, so completed/failed reach
+ * the card that its dispatch named —
  * derived from the shared STREAM_ROW_SPEC) plus the two patches that carry no row
  * of their own: `agent:follow_up_cancelled` flips a scheduled card to "Cancelled",
  * `delegation:status_changed` advances a delegation card's status. Registering a

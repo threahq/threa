@@ -17,6 +17,7 @@ const dispatchCommandSchema = z.object({
   command: z.string().min(1, "command is required"),
   streamId: z.string().min(1, "streamId is required"),
   clientCommandId: z.string().min(1).max(255).optional(),
+  conversationId: z.string().min(1).optional(),
 })
 
 interface Dependencies {
@@ -136,7 +137,7 @@ export function createCommandHandlers({ pool, commandAvailabilityService, botRun
         })
       }
 
-      const { command: commandString, streamId, clientCommandId } = result.data
+      const { command: commandString, streamId, clientCommandId, conversationId } = result.data
       const parsed = parseCommand(commandString)
       if (!parsed) {
         return res.status(400).json({
@@ -214,6 +215,7 @@ export function createCommandHandlers({ pool, commandAvailabilityService, botRun
             eventId: evtId,
             name: parsed.name,
             args: parsed.args,
+            conversationId,
             executionKind: CommandKinds.SERVER,
           })
           return { commandId: cmdId, command: parsed.name, args: parsed.args, event }
@@ -246,6 +248,7 @@ export function createCommandHandlers({ pool, commandAvailabilityService, botRun
           eventId: evtId,
           name: parsed.name,
           args: parsed.args,
+          conversationId,
           executionKind: CommandKinds.BOT_RUNTIME,
         })
 

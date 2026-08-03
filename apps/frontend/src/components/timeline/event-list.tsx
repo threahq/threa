@@ -1,17 +1,13 @@
 import { memo, useMemo } from "react"
 import {
-  COMMAND_EVENT_TYPES,
   ConversationStatuses,
-  type CommandEventType,
   type StreamEvent,
-  type CommandDispatchedPayload,
-  type CommandCompletedPayload,
-  type CommandFailedPayload,
   type DelegationStatusChangedEventPayload,
   type BotAccessStatusChangedEventPayload,
   type CallEndedEventPayload,
 } from "@threa/types"
 import { getSessionId, getSessionSlotKey, getTriggerMessageId } from "./session-grouping"
+import { getCommandId, isOwnCommandEvent } from "./command-grouping"
 import type { MessageAgentActivity } from "@/hooks"
 import { useSocket, useCoordinatedLoading } from "@/contexts"
 import { useSteerAgentSession, useStopAgentSession } from "@/hooks"
@@ -75,16 +71,6 @@ export interface BatchTimelineState {
   hoveredTargetId: string | null
   /** Toggles one message in the current selection. */
   onToggleMessage: (messageId: string) => void
-}
-
-function isCommandEvent(event: StreamEvent): boolean {
-  return COMMAND_EVENT_TYPES.includes(event.eventType as CommandEventType)
-}
-
-function getCommandId(event: StreamEvent): string | null {
-  if (!isCommandEvent(event)) return null
-  const payload = event.payload as CommandDispatchedPayload | CommandCompletedPayload | CommandFailedPayload
-  return payload.commandId
 }
 
 /**
@@ -691,7 +677,7 @@ export function groupTimelineItems(events: StreamEvent[], currentUserId: string 
 
     if (commandId) {
       // Skip command events that aren't from the current user
-      if (event.actorId !== currentUserId) continue
+      if (!isOwnCommandEvent(event, currentUserId)) continue
 
       if (!commandGroups.has(commandId)) {
         commandGroups.set(commandId, [])

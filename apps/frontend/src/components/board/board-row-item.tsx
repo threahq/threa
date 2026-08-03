@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from "react"
-import { Bot, Clock, Sparkles, TerminalSquare } from "lucide-react"
+import { Bot, Clock, Sparkles, SquareSlash, TerminalSquare } from "lucide-react"
 import type { StreamEvent } from "@threa/types"
 import { useSteerAgentSession, useStopAgentSession } from "@/hooks"
 import { isContinuation } from "@/lib/message-grouping"
@@ -9,6 +9,7 @@ import { MemoCapturedEvent } from "@/components/timeline/memo-captured-event"
 import { MemoPreviewDialog } from "@/components/memo/memo-preview-dialog"
 import { FollowUpScheduledEvent } from "@/components/timeline/follow-up-event"
 import { DelegationEvent } from "@/components/timeline/delegation-event"
+import { CommandEvent } from "@/components/timeline/command-event"
 import { getSessionId } from "@/components/timeline/session-grouping"
 import { useSocket, useTrace } from "@/contexts"
 import { useWorkspaceUserId } from "@/hooks/use-workspaces"
@@ -460,6 +461,14 @@ export function BoardEventRowItem({
           />
         </div>
       )
+    case "command":
+      // Same horizontal inset the timeline gives the chip (event-list wraps it
+      // in px-3 sm:px-6) — bare, its hover highlight bleeds past the content column.
+      return (
+        <div className="px-3 sm:px-6">
+          <CommandEvent events={row.events as StreamEvent[]} />
+        </div>
+      )
     case "memo":
       return <MemoCapturedEvent event={row.event as StreamEvent} workspaceId={workspaceId} />
     case "followUp":
@@ -488,6 +497,7 @@ export function BoardEventRowItem({
 
 const LEDGER_EVENT_ICONS: Record<BoardEventRow["kind"], ReactNode> = {
   session: <Bot className="size-3" />,
+  command: <SquareSlash className="size-3" />,
   memo: <Sparkles className="size-3 text-amber-500" />,
   followUp: <Clock className="size-3" />,
   delegation: <TerminalSquare className="size-3" />,

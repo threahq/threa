@@ -488,6 +488,10 @@ export function useInlineBranchComposer(params: {
             scheduleTarget={
               branch.pending ? undefined : { streamId: branch.threadStreamId, conversationId: branch.conversationId }
             }
+            // The PARENT conversation, not the branch: command chips render via
+            // resolveBoardEventRows, which only the parent card/panel runs — a
+            // child-stamped chip would land on no visible surface.
+            commandConversationId={conversationId}
             restoreStashedIdOnMount={openComposer.restoreStashedId ?? null}
             onSubmit={(sendInput) => submitBranchReply(branch, sendInput)}
             onClose={closeComposer}

@@ -33,8 +33,8 @@ function doc(...content: JSONContent[]): JSONContent {
   return { type: "doc", content: [{ type: "paragraph", content }] }
 }
 
-function hook(streamId: string | undefined = "stream_conversation") {
-  return renderHook(() => useComposerCommandSend("ws_1", streamId)).result
+function hook(streamId: string | undefined = "stream_conversation", conversationId?: string) {
+  return renderHook(() => useComposerCommandSend("ws_1", streamId, conversationId)).result
 }
 
 describe("useComposerCommandSend planSend", () => {
@@ -84,6 +84,21 @@ describe("useComposerCommandSend dispatchCommand", () => {
     expect({ queuedFor: queuedFor[0], call: queueCommand.mock.calls[0][0] }).toEqual({
       queuedFor: "stream_conversation",
       call: { commandMarkdown: "/compact", commandName: "compact" },
+    })
+  })
+
+  it("stamps the composer's conversation on the dispatch so the card can draw the chip", async () => {
+    const result = hook("stream_conversation", "conv_1")
+    await result.current.dispatchCommand({
+      kind: "command",
+      commandName: "compact",
+      clientActionId: null,
+      commandMarkdown: "/compact",
+    })
+    expect(queueCommand.mock.calls[0][0]).toEqual({
+      commandMarkdown: "/compact",
+      commandName: "compact",
+      conversationId: "conv_1",
     })
   })
 })

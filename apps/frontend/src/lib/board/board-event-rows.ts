@@ -1,6 +1,7 @@
 import { STREAM_ROW_SPEC, type DelegationStatusChangedEventPayload, type MemosCapturedEventPayload } from "@threa/types"
 import type { CachedEvent } from "@/db"
 import { getSessionId, getSessionSlotKey, getTriggerMessageId } from "@/components/timeline/session-grouping"
+import { getCommandId, isOwnCommandEvent } from "@/components/timeline/command-grouping"
 
 /**
  * A non-message stream event, resolved to the conversation it should draw on for
@@ -14,6 +15,7 @@ export type BoardEventRow =
   | { kind: "session"; key: string; sortMs: number; streamId: string; events: CachedEvent[] }
   | { kind: "memo"; key: string; sortMs: number; streamId: string; event: CachedEvent }
   | { kind: "followUp"; key: string; sortMs: number; streamId: string; event: CachedEvent; cancelled: boolean }
+  | { kind: "command"; key: string; sortMs: number; streamId: string; events: CachedEvent[] }
   | {
       kind: "delegation"
       key: string
@@ -33,6 +35,12 @@ export interface ResolveBoardEventRowsCtx {
    * design specifies for showing traces without new delivery.
    */
   memberMessageIds: Set<string>
+  /**
+   * Whose commands the card may draw. Command events are stream-scoped over the
+   * socket, so without this every member's IDB would render everyone's
+   * invocations — the same author rule the timeline applies.
+   */
+  currentUserId?: string | null
 }
 
 function timeMs(event: CachedEvent): number {
@@ -48,6 +56,9 @@ function timeMs(event: CachedEvent): number {
  *   the conversation id their payload names.
  * - `trigger-message` rows (agent sessions) are grouped by session id; the group
  *   shows iff the session's `started` event names a trigger that is a member.
+ * - command events are grouped by `commandId` into one chip row, author-scoped,
+ *   placed on the conversation the dispatch names (a stream-level dispatch names
+ *   none and draws nowhere).
  * - `agent:follow_up_cancelled` is a patch, not a row: it flips the matching
  *   scheduled card's `cancelled` flag (mirrors the timeline's cancel handling).
  * - `delegation:status_changed` is likewise a patch: the latest one per
@@ -72,9 +83,29 @@ export function resolveBoardEventRows(events: CachedEvent[], ctx: ResolveBoardEv
   }
 
   const sessions = new Map<string, { events: CachedEvent[]; trigger: string | null }>()
+  const commands = new Map<
+    string,
+    { events: CachedEvent[]; dispatched: CachedEvent | null; conversation: string | null }
+  >()
   const rows: BoardEventRow[] = []
 
   for (const event of events) {
+    if (STREAM_ROW_SPEC[event.eventType].grouping === "command") {
+      const commandId = getCommandId(event)
+      if (!commandId) continue
+      if (!isOwnCommandEvent(event, ctx.currentUserId)) continue
+      let command = commands.get(commandId)
+      if (!command) {
+        command = { events: [], dispatched: null, conversation: null }
+        commands.set(commandId, command)
+      }
+      command.events.push(event)
+      if (event.eventType === "command_dispatched") {
+        command.dispatched = event
+        command.conversation = (event.payload as { conversationId?: string })?.conversationId ?? null
+      }
+      continue
+    }
     const ref = STREAM_ROW_SPEC[event.eventType].conversationRef
     if (ref === "trigger-message") {
       const sessionId = getSessionId(event)
@@ -154,6 +185,21 @@ export function resolveBoardEventRows(events: CachedEvent[], ctx: ResolveBoardEv
       sortMs: timeMs(slot.events[0]),
       streamId: slot.events[0].streamId,
       events: slot.events,
+    })
+  }
+
+  // A command lands on the card its dispatch names. `command_completed` /
+  // `command_failed` carry no conversation at all — they reach the row through
+  // the group's `commandId`, which is why the group, not the event, is placed.
+  for (const [commandId, command] of commands) {
+    if (!command.dispatched || command.conversation !== ctx.conversationId) continue
+    const ordered = [...command.events].sort((a, b) => timeMs(a) - timeMs(b))
+    rows.push({
+      kind: "command",
+      key: commandId,
+      sortMs: timeMs(command.dispatched),
+      streamId: command.dispatched.streamId,
+      events: ordered,
     })
   }
 

@@ -7,6 +7,7 @@ import {
   type AgentSessionFailedPayload,
   type AgentSessionStartedPayload,
   type AttachmentSummary,
+  type CommandDispatchedPayload,
   type DelegationCreatedEventPayload,
   type LinkPreviewContentType,
   type LinkPreviewSummary,
@@ -219,6 +220,19 @@ export function ledgerEventContent(row: BoardEventRow, ctx: LedgerEventContentCt
         label: personaName ?? "Agent",
         meta,
         href: sessionId ? ctx.traceUrl(sessionId) : undefined,
+      }
+    }
+    case "command": {
+      const dispatched = row.events.find((event) => event.eventType === "command_dispatched")
+      const name = (dispatched?.payload as CommandDispatchedPayload | undefined)?.name
+      let meta = "running"
+      if (row.events.some((event) => event.eventType === "command_failed")) meta = "failed"
+      else if (row.events.some((event) => event.eventType === "command_completed")) meta = "completed"
+      return {
+        key: row.key,
+        kind: "command",
+        label: name ? `/${name}` : "Command",
+        meta,
       }
     }
     case "memo": {

@@ -63,6 +63,8 @@ export async function insertCommandDispatchedEvent(
     eventId?: string
     name: string
     args: string
+    /** The conversation the dispatching composer wrote into, when it had one. */
+    conversationId?: string
     executionKind?: "server" | "bot-runtime"
   }
 ): Promise<StreamEvent> {
@@ -76,6 +78,7 @@ export async function insertCommandDispatchedEvent(
       name: params.name,
       args: params.args,
       status: "dispatched",
+      ...(params.conversationId && { conversationId: params.conversationId }),
       ...(params.executionKind && { executionKind: params.executionKind }),
     } satisfies CommandDispatchedPayload,
     actorId: params.userId,
