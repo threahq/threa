@@ -506,6 +506,7 @@ function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: Boar
     hasRawPosts,
     removedIds,
     removedSuccessorById,
+    draftResolvedIds,
   } = useStableBoardView(workspaceId, filter, exclusions, seed, seenCardsRef)
   // After a refetch settles, `isLoading` is already false but the seed effect
   // writes IDB on the next tick, so the IDB feed can be momentarily empty while
@@ -806,6 +807,7 @@ function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: Boar
                 streamType={streamType}
                 dmPeerUserId={dmPeerUserId}
                 successor={removedSuccessorById.get(row.post.conversation.id) ?? null}
+                emptyLabel={draftResolvedIds.has(row.post.conversation.id) ? "No longer a draft." : undefined}
               />
             </div>
           )
@@ -831,6 +833,7 @@ function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: Boar
       labelsFor,
       removedIds,
       removedSuccessorById,
+      draftResolvedIds,
       isFetchNextPageError,
       isFetchingNextPage,
       fetchNextPage,

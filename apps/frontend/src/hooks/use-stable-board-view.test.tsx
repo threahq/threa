@@ -1029,7 +1029,7 @@ describe("useStableBoardView — drafts filter", () => {
     expect(result.current.posts.map((p) => p.id)).toEqual(["a"])
   })
 
-  it("drops a committed card as soon as its draft resolves, keeping one that still has a draft", () => {
+  it("renders a resolved-draft card with the removal treatment in place, then drops it on the next commit", () => {
     mockLive(feed(post("a", 300), post("b", 200)))
     const { result, rerender } = renderHook(
       ({ filter }) => useStableBoardView("ws_1", filter, undefined, undefined, undefined),
@@ -1037,14 +1037,20 @@ describe("useStableBoardView — drafts filter", () => {
     )
     expect(result.current.posts.map((p) => p.id)).toEqual(["a", "b"])
 
-    // "a"'s draft is sent — resolving it is the viewer's own act on that card,
-    // so it sheds immediately (unlike reading in the unread view). "b" still
-    // carries a draft and never moves.
+    // "a"'s draft resolves DURING the send: it sheds immediately, but through
+    // the removal path — the row keeps its slot and its mounted subtree (the
+    // composer that is still sending) instead of vanishing mid-send. "b" still
+    // carries a draft and stays live.
     rerender({ filter: draftsFilter(["b"]) })
-    expect(result.current.posts.map((p) => p.id)).toEqual(["b"])
+    expect(result.current.posts.map((p) => p.id)).toEqual(["a", "b"])
+    expect([...result.current.removedIds]).toEqual(["a"])
+    expect([...result.current.draftResolvedIds]).toEqual(["a"])
+    // Still in the raw feed, so no merge successor is claimed for it.
+    expect(result.current.removedSuccessorById.has("a")).toBe(false)
 
     act(() => result.current.commit())
     expect(result.current.posts.map((p) => p.id)).toEqual(["b"])
+    expect(result.current.removedIds.size).toBe(0)
   })
 
   it("a drafts re-resolution (same `?drafts=true` selection) never resets the frozen view", () => {

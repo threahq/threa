@@ -766,7 +766,7 @@ describe("BoardPage drafts view", () => {
     expect(screen.queryByText("No draft card")).toBeNull()
   })
 
-  it("keeps a card whose checked-out draft is emptied mid-rewrite, sheds it when the row goes", async () => {
+  it("keeps a card whose checked-out draft is emptied mid-rewrite, marks it removed in place when the row goes", async () => {
     const scope = boardReplyDraftKey("conv_reply")
     await seedDraft("draft_reply", scope, "reply body")
     await db.composerLoaded.put({ workspaceId: WORKSPACE_ID, scope, draftId: "draft_reply" } as never)
@@ -787,7 +787,10 @@ describe("BoardPage drafts view", () => {
 
     await db.drafts.delete("draft_reply")
 
-    await waitFor(() => expect(screen.queryByText("Reply draft card")).toBeNull())
+    // Shed through the removal path: the card keeps its slot (and its mounted
+    // composer subtree) under the removed overlay, which names the reason.
+    await waitFor(() => expect(screen.getByText("No longer a draft.")).toBeTruthy())
+    expect(screen.getByText("Reply draft card")).toBeTruthy()
   })
 
   it("shows nothing when no board draft matches a card", async () => {

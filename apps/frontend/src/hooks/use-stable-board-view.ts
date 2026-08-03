@@ -416,7 +416,9 @@ export interface StableBoardView {
    * so the conversation no longer exists rather than merely falling out of the
    * active filters. They keep their slot: the retained copy still renders, inert,
    * at its full height under an overlay, so nothing below it shifts.
-   * Empty while the feed is still loading.
+   * Empty while the feed is still loading. Also carries cards shed by the drafts
+   * view once their draft resolved (see {@link draftResolvedIds}) — same
+   * treatment, different reason.
    */
   removedIds: ReadonlySet<string>
   /**
@@ -426,6 +428,13 @@ export interface StableBoardView {
    * subscription behind every stub.
    */
   removedSuccessorById: ReadonlyMap<string, RemovedSuccessor | null>
+  /**
+   * The subset of {@link removedIds} shed because their draft resolved, not
+   * because the conversation is gone — the card is still real, it just left the
+   * `?drafts=true` view. Distinguished so the removed-card overlay says so
+   * instead of claiming the conversation left the board.
+   */
+  draftResolvedIds: ReadonlySet<string>
 }
 
 /**
@@ -646,7 +655,7 @@ export function useStableBoardView(
     for (const id of [...retainedRef.current.keys()]) if (!keep.has(id)) retainedRef.current.delete(id)
   }, [])
 
-  const { posts, removedIds, removedSuccessorById } = useMemo(() => {
+  const { posts, removedIds, removedSuccessorById, draftResolvedIds } = useMemo(() => {
     const liveById = new Map((live ?? []).map((post) => [postId(post), post]))
     // Raw membership, not the filtered subset: a card the filters (or the
     // nested-view fold) dropped is still a real conversation, while one absent
@@ -654,6 +663,8 @@ export function useStableBoardView(
     const rawIds = rawLive ? new Set(rawLive.map(postId)) : null
     const out: CachedBoardPost[] = []
     const removed = new Set<string>()
+    const gone = new Set<string>()
+    const draftResolved = new Set<string>()
     for (const id of committed.order) {
       const post = liveById.get(id) ?? retainedRef.current.get(id)
       if (!post) continue
@@ -672,15 +683,26 @@ export function useStableBoardView(
       // view sheds it immediately — unlike reading in the unread view, which the
       // session floor holds in place. Emptying a checked-out draft is editing,
       // not resolving: membership holds (see {@link BoardDraftScope}).
-      if (!matchesDrafts(post, drafts)) continue
-      if (rawIds !== null && !rawIds.has(id)) removed.add(id)
+      // Shedding goes through the REMOVAL path, never a drop from `posts`: the
+      // draft resolves DURING the send (`resolveDraft` runs on submit and on
+      // slash-command dispatch), so dropping the row here would unmount the
+      // composer that is still sending, strand focus, and swallow the optimistic
+      // reply. Retained + inert holds the subtree until the next commit().
+      if (!matchesDrafts(post, drafts)) {
+        draftResolved.add(id)
+        removed.add(id)
+      }
+      if (rawIds !== null && !rawIds.has(id)) {
+        gone.add(id)
+        removed.add(id)
+      }
       out.push(post)
     }
     // Successor resolution runs here, once, off the same raw feed — and only when
     // something was actually removed (the common case scans nothing).
     const successorById = new Map<string, RemovedSuccessor | null>()
-    if (removed.size > 0 && rawLive) {
-      const removedPosts = out.filter((post) => removed.has(postId(post)))
+    if (gone.size > 0 && rawLive) {
+      const removedPosts = out.filter((post) => gone.has(postId(post)))
       for (const post of removedPosts) {
         const openingId = post.openingMessage?.id ?? null
         const successor = openingId
@@ -698,6 +720,7 @@ export function useStableBoardView(
       posts: out,
       removedIds: removed as ReadonlySet<string>,
       removedSuccessorById: successorById as ReadonlyMap<string, RemovedSuccessor | null>,
+      draftResolvedIds: draftResolved as ReadonlySet<string>,
     }
   }, [committed, live, rawLive, unread, drafts, isExcluded])
 
@@ -710,5 +733,6 @@ export function useStableBoardView(
     hasRawPosts: (rawLive?.length ?? 0) > 0,
     removedIds,
     removedSuccessorById,
+    draftResolvedIds,
   }
 }
