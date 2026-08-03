@@ -87,6 +87,19 @@ describe("aggregateBoardSidebarStats", () => {
     expect(byStream.get("chan_a")?.topics).toBe(1)
   })
 
+  it("excludes a stale card whose root is archived in the local stream index", () => {
+    const { byStream, lensTotals } = aggregateBoardSidebarStats(
+      [
+        post("c1", { streamId: "chan_a", rootArchived: false }),
+        post("c2", { streamId: "chan_b", rootArchived: false }),
+      ],
+      new Set(["chan_a"])
+    )
+    expect(byStream.get("chan_a")).toBeUndefined()
+    expect(byStream.get("chan_b")?.topics).toBe(1)
+    expect(lensTotals.all).toBe(1)
+  })
+
   it("computes per-lens totals via matchesBoardLens, keyed by exactly the three lenses", () => {
     const { lensTotals } = aggregateBoardSidebarStats([
       post("c1", { streamId: "chan_a", status: "active", isMine: true }),

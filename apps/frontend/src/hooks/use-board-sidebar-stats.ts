@@ -38,17 +38,23 @@ export const ZERO_BOARD_STREAM_STATS: BoardStreamStats = { topics: 0 }
  * (`rootStreamId ?? conversation.streamId` — the same COALESCE the board's scope
  * filter uses), unless it's an emptied shell (no messages — mirrors the server's
  * `cardinality(message_ids) > 0` board filter and `mergeBoardConversation`'s
- * delete-on-empty) or its root is archived (hidden on the board by default). Lens
+ * delete-on-empty) or its root is archived (hidden on the board by default) —
+ * per the post's own `rootArchived` flag or, for a card cached before its root
+ * was archived, the fresher `archivedRootIds` index the board vetoes with. Lens
  * totals reuse `matchesBoardLens`, the same read-side lens authority the board
  * card filters with, so the two surfaces can't drift.
  */
-export function aggregateBoardSidebarStats(posts: CachedBoardPost[]): BoardSidebarStats {
+export function aggregateBoardSidebarStats(
+  posts: CachedBoardPost[],
+  archivedRootIds: ReadonlySet<string> = new Set()
+): BoardSidebarStats {
   const byStream = new Map<string, BoardStreamStats>()
   const lensTotals = Object.fromEntries(BOARD_LENSES.map((lens) => [lens, 0])) as Record<BoardLens, number>
   for (const post of posts) {
     if (post.conversation.messageIds.length === 0) continue
     if (post.rootArchived === true) continue
     const rootId = post.rootStreamId ?? post.conversation.streamId
+    if (archivedRootIds.has(rootId)) continue
     let entry = byStream.get(rootId)
     if (!entry) {
       entry = { topics: 0 }
@@ -73,7 +79,11 @@ export function aggregateBoardSidebarStats(posts: CachedBoardPost[]): BoardSideb
  * is the ONLY subscription — call it once at the sidebar level and thread the
  * result to the rows via the board-mode descriptor, never a `liveQuery` per row.
  */
-export function useBoardSidebarStats(workspaceId: string, enabled: boolean): BoardSidebarStats | null {
+export function useBoardSidebarStats(
+  workspaceId: string,
+  enabled: boolean,
+  archivedRootIds: ReadonlySet<string>
+): BoardSidebarStats | null {
   const posts = useLiveQuery(async () => {
     // Off board mode, return before any table read so `useLiveQuery` subscribes
     // to nothing — chats mode pays zero cost.
@@ -83,5 +93,5 @@ export function useBoardSidebarStats(workspaceId: string, enabled: boolean): Boa
       .between([workspaceId, Dexie.minKey], [workspaceId, Dexie.maxKey])
       .toArray()
   }, [enabled, workspaceId])
-  return useMemo(() => (posts ? aggregateBoardSidebarStats(posts) : null), [posts])
+  return useMemo(() => (posts ? aggregateBoardSidebarStats(posts, archivedRootIds) : null), [posts, archivedRootIds])
 }

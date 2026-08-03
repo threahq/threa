@@ -307,6 +307,18 @@ function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: Boar
     [labelAssignments, excludeLabelIds]
   )
 
+  const streams = useWorkspaceStreams(workspaceId)
+  // Archived roots straight from the local stream index (the bootstrap ships
+  // archived rows since #1420), mirroring the sidebar's index. The board's
+  // per-card `rootArchived` flag can be stale forever — the server excludes
+  // archived conversations from every fetch, so a row cached before its root was
+  // archived is never reseeded — and this set is the fresher veto.
+  const archivedRootIds = useMemo(() => {
+    const ids = new Set<string>()
+    for (const stream of streams) if (stream.archivedAt) ids.add(stream.id)
+    return ids
+  }, [streams])
+
   const filter = useMemo<BoardViewFilter>(
     () => ({
       lens,
@@ -320,6 +332,7 @@ function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: Boar
         ? { key: BOARD_UNREAD_ON, streamIds: unreadStreamIds, clearedConversationIds: clearedUnreadIds }
         : null,
       showArchived,
+      archivedRootIds,
     }),
     [
       lens,
@@ -338,6 +351,7 @@ function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: Boar
       unreadStreamIds,
       clearedUnreadIds,
       showArchived,
+      archivedRootIds,
     ]
   )
   const {
@@ -511,7 +525,6 @@ function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: Boar
   // genuinely slow. The board's readiness is derived rather than latched, so a
   // later filter change earns its own skeleton.
   const skeletonVisible = useCoordinatedPhase({ isLoading: loading, isReady: !loading }) === "skeleton"
-  const streams = useWorkspaceStreams(workspaceId)
   const users = useWorkspaceUsers(workspaceId)
   const dmPeers = useWorkspaceDmPeers(workspaceId)
   const streamById = useMemo(() => new Map(streams.map((s) => [s.id, s])), [streams])

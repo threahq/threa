@@ -340,7 +340,7 @@ export function Sidebar({ workspaceId }: SidebarProps) {
   // The single reactive topic-stats pass — one subscription for the whole board
   // sidebar (rows + Lenses counts), gated on board mode so chats mode subscribes
   // to nothing (perf contract in the exploration doc).
-  const boardSidebarStats = useBoardSidebarStats(workspaceId, isBoardPage)
+  const boardSidebarStats = useBoardSidebarStats(workspaceId, isBoardPage, archivedStreamIds)
   const boardMode = useMemo<SidebarBoardMode | null>(() => {
     if (!isBoardPage) return null
     return {
