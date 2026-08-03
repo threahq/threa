@@ -533,7 +533,9 @@ export function useStableBoardView(
   // `archivedRootIds` is deliberately NOT in this key: the veto drops at render
   // (`isExcluded` runs over committed cards too), so a root archived mid-view
   // loses its card immediately without resetting the reader's frozen view. On
-  // unarchive (with archived shown) the cards return behind the "N new" pill
+  // unarchive, a card archived DURING this view keeps its committed slot and
+  // restores in place (it vanished there; no reorder under the reader), while
+  // cards archived before the view committed arrive behind the "N new" pill
   // like any other new content.
   const viewKey = `${workspaceId}|${lens}|${scope?.key ?? ""}|${types?.key ?? ""}|${excludeStreams?.key ?? ""}|${excludeTypes?.key ?? ""}|${labels?.key ?? ""}|${excludeLabels?.key ?? ""}|${unread?.key ?? ""}|${showArchived ? "arch" : ""}`
   const viewKeyRef = useRef(viewKey)
