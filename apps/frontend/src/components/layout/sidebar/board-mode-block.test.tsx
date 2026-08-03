@@ -96,7 +96,7 @@ function mountAt(path: string, props: Partial<Parameters<typeof BoardModeBlock>[
   return render(
     <MemoryRouter initialEntries={[path]}>
       <LocationProbe />
-      <BoardModeBlock workspaceId={WS} {...props} />
+      <BoardModeBlock workspaceId={WS} unreadStreamCount={0} {...props} />
     </MemoryRouter>
   )
 }
@@ -237,15 +237,16 @@ describe("BoardModeBlock", () => {
     expect(await screen.findByPlaceholderText("Find a stream")).toBeInTheDocument()
   })
 
-  it("the Unread only toggle flips ?unread=true and back", async () => {
+  it("the Unread row navigates ?unread=true on and back off", async () => {
     const user = userEvent.setup()
     stub()
-    mountAt(`/w/${WS}/board?lens=all`)
+    mountAt(`/w/${WS}/board?lens=all`, { unreadStreamCount: 3 })
 
-    await user.click(screen.getByRole("button", { name: "Unread only" }))
+    expect(hrefOf(/Unread/)).toBe(`/w/${WS}/board?lens=all&unread=true`)
+    await user.click(screen.getByRole("link", { name: /Unread/ }))
     expect(new URL(currentLoc(), "http://x").searchParams.get("unread")).toBe("true")
 
-    await user.click(screen.getByRole("button", { name: "Unread only" }))
+    await user.click(screen.getByRole("link", { name: /Unread/ }))
     expect(new URL(currentLoc(), "http://x").searchParams.get("unread")).toBeNull()
   })
 

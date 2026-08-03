@@ -141,7 +141,12 @@ export function useConversationUnreadMarker({
   if (latchStorage && latch.dimmed && latch.messageId !== null && firstUnreadId !== null) {
     const latchedIndex = rows.findIndex((row) => row.id === latch.messageId)
     const firstUnreadIndex = rows.findIndex((row) => row.id === firstUnreadId)
-    if (latchedIndex >= 0 && firstUnreadIndex > latchedIndex) {
+    // A settled anchor that left `rows` entirely (deleted, or re-filed out of
+    // the conversation) can never satisfy the strictly-after check — without
+    // the `< 0` arm the wedged entry pins "no divider" for the whole visit
+    // while the badge counts the arrivals. Hidden-older anchors are NOT this
+    // case: they stay in `rows`, so the deliberate draw-nothing hold survives.
+    if (latchedIndex < 0 || firstUnreadIndex > latchedIndex) {
       latch = { messageId: null, dimmed: false }
       latchStorage.set(conversationId, latch)
     }

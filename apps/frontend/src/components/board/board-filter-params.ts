@@ -259,6 +259,14 @@ export function unreadFocusSearch(search: string): string {
   return toSearch(params)
 }
 
+/** The mirror of {@link unreadFocusSearch}: drop the unread narrowing, leaving
+ *  every other axis untouched. */
+export function clearUnreadSearch(search: string): string {
+  const params = new URLSearchParams(search)
+  params.delete(BOARD_UNREAD_PARAM)
+  return toSearch(params)
+}
+
 /** Remove one value from any single filter axis (a chip's X). Works for every
  *  id/type list param — the value is dropped, order and the other params kept. */
 export function removeAxisValueSearch(search: string, param: string, value: string): string {

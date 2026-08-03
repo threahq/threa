@@ -283,6 +283,14 @@ export function Sidebar({ workspaceId }: SidebarProps) {
     return ids
   }, [hasUnreadSection, processedStreams, getUnreadCount])
 
+  // The Unread affordance's badge: unread (unmuted) streams workspace-wide — the
+  // same predicate the Unread section's membership uses, ungated by the layout
+  // since the board row exists regardless of whether that section is configured.
+  const unreadStreamCount = useMemo(
+    () => processedStreams.filter((stream) => isUnreadStream(stream, getUnreadCount(stream.id))).length,
+    [processedStreams, getUnreadCount]
+  )
+
   // For Unread rows (drawn out of their home), a "· home" hint naming the custom
   // section or pinned label the stream lives in. Custom filing trumps a label,
   // matching the resolver's precedence.
@@ -394,13 +402,17 @@ export function Sidebar({ workspaceId }: SidebarProps) {
       <>
         <ChatsLinkRow workspaceId={workspaceId} userId={user?.id ?? null} />
         {quickLinks}
-        <BoardModeBlock workspaceId={workspaceId} lensTotals={boardMode?.lensTotals ?? null} />
+        <BoardModeBlock
+          workspaceId={workspaceId}
+          lensTotals={boardMode?.lensTotals ?? null}
+          unreadStreamCount={unreadStreamCount}
+        />
       </>
     )
   } else if (hasQuickLinksSection) {
     quickLinksSlot = (
       <>
-        <BoardLinkRow workspaceId={workspaceId} userId={user?.id ?? null} />
+        <BoardLinkRow workspaceId={workspaceId} userId={user?.id ?? null} unreadStreamCount={unreadStreamCount} />
         {quickLinks}
       </>
     )
