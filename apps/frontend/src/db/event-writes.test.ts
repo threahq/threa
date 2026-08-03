@@ -164,6 +164,17 @@ describe("live-query wake set (D1)", () => {
     expect(unchunkedEmissions).toBeGreaterThan(0)
   })
 
+  it("a page written inside one wrapping transaction still does not wake another stream's query", async () => {
+    const emissions = await countEmissions(async () => {
+      await db.transaction("rw", [db.events], async () => {
+        await putEventsBounded(db.events, makePage("stream_b", 50), true)
+      })
+    })
+
+    expect(emissions).toBe(0)
+    expect(await db.events.where("streamId").equals("stream_b").count()).toBe(50)
+  })
+
   it("a patch to a row the query returned still wakes it", async () => {
     await db.events.put(makeRow("stream_a", 0))
 
