@@ -301,6 +301,28 @@ describe("useTypeToFocus card scopes", () => {
     expect(document.activeElement).not.toBe(b)
   })
 
+  it("within one card, the card-level reply editor (last in DOM) beats an earlier open branch editor", () => {
+    buildDom(
+      '<main data-editor-zone="main">' +
+        '<div data-type-capture-scope id="cardA">' +
+        '<div id="rowA"></div>' +
+        '<div contenteditable="true" id="branch"></div>' +
+        '<div contenteditable="true" id="reply"></div>' +
+        "</div>" +
+        "</main>"
+    )
+    const branch = document.getElementById("branch") as HTMLElement
+    const reply = document.getElementById("reply") as HTMLElement
+    setVisible(branch, true)
+    setVisible(reply, true)
+
+    clickIn("rowA")
+    press("x")
+
+    expect(document.activeElement).toBe(reply)
+    expect(document.activeElement).not.toBe(branch)
+  })
+
   it("opens the clicked card's resting composer and types the swallowed character into it", () => {
     buildDom(
       '<main data-editor-zone="main">' +

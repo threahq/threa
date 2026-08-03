@@ -48,13 +48,15 @@ export function findVisibleZoneEditor(zone: HTMLElement | null): HTMLElement | n
     }, null)
 }
 
-/** First on-screen editor inside one card scope, skipping inline-edit editors. */
+/**
+ * On-screen editor inside one card scope — LAST in document order, same rule as
+ * the zone-wide lookup: branch/sub-topic composers render above the card-level
+ * reply composer, and a click on the card body means the card's own composer,
+ * not a sub-conversation's (an open branch editor still wins by being focused —
+ * the already-typing guard runs before any lookup).
+ */
 function findScopeEditor(scope: HTMLElement): HTMLElement | null {
-  return (
-    Array.from(scope.querySelectorAll<HTMLElement>('[contenteditable="true"]')).find(
-      (element) => !element.closest("[data-inline-edit]") && isOnScreen(element)
-    ) ?? null
-  )
+  return findVisibleZoneEditor(scope)
 }
 
 const OPENER_POLL_FRAMES = 20
@@ -187,8 +189,8 @@ export function useTypeToFocus() {
           return
         }
         // Opening a conversation from inside a card records the scope, but the
-        // panel that just opened is where the typing belongs — an open panel
-        // with a live editor always outranks the card it was opened from.
+        // panel that just opened is where the typing belongs — with no visible
+        // editor in the card, an open panel's live editor outranks the opener.
         const panelEditor = findVisibleZoneEditor(zoneContainer("panel"))
         if (panelEditor) {
           focusAtEnd(panelEditor)
