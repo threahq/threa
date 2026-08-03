@@ -78,6 +78,14 @@ interface InlineComposerFormProps {
    */
   docked?: boolean
   /**
+   * Keep the form mounted and the editor focused after a successful send,
+   * instead of collapsing back to the host's resting affordance — the card
+   * reply's model on an in-place (desktop) form, where a send is a beat in an
+   * ongoing conversation rather than a completed act. Implied by `docked`, and
+   * ignored while the form floats (mobile keeps its pill-dismissing model).
+   */
+  keepOpenAfterSend?: boolean
+  /**
    * Dismissible reply-target strip (timeline `conversationReplyStrip` parity):
    * arms this composer to a sub-conversation. The × flushes the live buffer,
    * moves the draft rows from this scope to `moveDraftToKey` (the root reply
@@ -150,6 +158,7 @@ export function InlineComposerForm({
   placeholder,
   contextChip,
   docked,
+  keepOpenAfterSend,
   replyTarget,
   restoreOnSignal,
   autoFocus = true,
@@ -254,6 +263,7 @@ export function InlineComposerForm({
   // composer use, so a long reply gets the same full-document editor instead of
   // being stuck in the compact card-reply box.
   const [expanded, setExpanded] = useState(false)
+  const pendingRefocusRef = useRef(false)
   const overlayStreamName = useStreamName(workspaceId, streamId ?? "")
   const OverlayStreamGlyph = hostStream ? STREAM_ICONS[hostStream.type] : null
 
@@ -375,6 +385,50 @@ export function InlineComposerForm({
     })
   }, [onClose])
 
+  // After a successful send: an in-place form that stays open returns focus to
+  // its own editor (a button-click send otherwise strands focus on the button),
+  // while a collapsing one hands focus back to the host's resting affordance.
+  // Focus is only reclaimed if the user hasn't moved it out of this form.
+  const staysOpenOnSend = (docked === true || keepOpenAfterSend === true) && !floating
+  const finishSend = () => {
+    // The overlay is a presentation of this same form, not a separate one: with
+    // the form staying mounted, nothing else closes it after a send.
+    setExpanded(false)
+    if (!staysOpenOnSend) {
+      onClose({ refocus: true, quiet: quietFocusOnSend })
+      return
+    }
+    // A finger-driven send keeps the keyboard-dismissing behavior — refocusing
+    // the editor would re-raise the soft keyboard the tap just put away.
+    if (quietFocusOnSend) return
+    const active = document.activeElement
+    if (
+      active &&
+      active !== document.body &&
+      !containerRef.current?.contains(active) &&
+      // The schedule picker's popover portals outside the container, so focus
+      // sitting in it still means "the user hasn't left this form".
+      !active.closest(COMPOSER_POPOVER_SELECTOR)
+    ) {
+      return
+    }
+    // Both instances write `composerControlRef`, and MessageComposer.focus()
+    // defers a frame: focusing now would run against the overlay handle after
+    // the overlay has unmounted. Wait for `expanded === false` to commit, so the
+    // ref holds the surviving in-place editor.
+    if (expanded) {
+      pendingRefocusRef.current = true
+      return
+    }
+    composerControlRef.current?.focus()
+  }
+
+  useEffect(() => {
+    if (expanded || !pendingRefocusRef.current) return
+    pendingRefocusRef.current = false
+    composerControlRef.current?.focus()
+  }, [expanded])
+
   const handleSubmit = async (editorContent?: JSONContent) => {
     if (!composer.canSend) return
 
@@ -400,7 +454,7 @@ export function InlineComposerForm({
       try {
         await dispatchCommand(sendPlan)
         await composer.resolveDraft()
-        onClose({ refocus: true, quiet: quietFocusOnSend })
+        finishSend()
       } catch {
         composer.setContent(normalizedContent)
         toast.error("Failed to queue command. Please try again.")
@@ -436,7 +490,7 @@ export function InlineComposerForm({
       })
       await composer.resolveDraft()
       composer.clearAttachments()
-      onClose({ refocus: true, quiet: quietFocusOnSend })
+      finishSend()
     } catch {
       composer.setContent(normalizedContent)
       toast.error("Couldn't post. Please try again.")
@@ -480,7 +534,7 @@ export function InlineComposerForm({
       })
       await composer.resolveDraft()
       composer.clearAttachments()
-      onClose({ refocus: true, quiet: quietFocusOnSend })
+      finishSend()
     } catch {
       composer.setContent(normalizedContent)
       toast.error("Couldn't schedule. Please try again.")
@@ -632,6 +686,7 @@ export function InlineComposerForm({
       <div className="min-h-0 flex-1">
         <MessageComposer
           {...sharedComposerProps}
+          composerRef={composerControlRef}
           expanded
           hideExpandedClose
           onCollapse={() => setExpanded(false)}

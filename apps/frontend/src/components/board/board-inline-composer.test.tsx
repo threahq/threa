@@ -1,6 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { describe, it, expect, vi, beforeEach } from "vitest"
-import { useEffect, useState, type ReactElement, type ReactNode } from "react"
+import { useEffect, useRef, useState, type ReactElement, type ReactNode } from "react"
 import { render, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { InlineComposerForm } from "./board-inline-composer"
@@ -24,21 +24,56 @@ import { workspaceKeys } from "@/hooks/use-workspaces"
 // The behavior under test is the floating-anchor layer (portal placement,
 // slot exclusivity, close semantics, height publication) — not editor
 // mechanics — so the heavy tiptap editor is swapped for a marker div.
-const EditorStub = (props: MessageComposerProps) => (
-  <div
-    data-testid="editor-stub"
-    data-expanded={String(!!props.expanded)}
-    data-has-stash={String(!!props.stashedDraftsTrigger && !!props.stashedDraftsTriggerFab && !!props.onStashDraft)}
-    data-has-schedule={String(!!props.scheduledMessagesTrigger && !!props.scheduledMessagesTriggerFab)}
-  >
-    {props.placeholder}
-    {props.onExpandClick && (
-      <button type="button" onClick={props.onExpandClick}>
-        Expand
-      </button>
-    )}
-  </div>
-)
+const EditorStub = (props: MessageComposerProps) => {
+  // The imperative focus bridge the form uses to return focus to the editor
+  // after a send that keeps the form mounted.
+  const { composerRef } = props
+  // Mirrors MessageComposer.focus(): it defers a frame and no-ops once its own
+  // editor is gone — so a handle focused just before its instance unmounts
+  // records nothing, which is exactly the overlay-send bug.
+  const instance = useRef({ kind: props.expanded ? "overlay" : "inplace", mounted: true })
+  useEffect(() => {
+    const self = instance.current
+    self.mounted = true
+    return () => {
+      self.mounted = false
+    }
+  }, [])
+  useEffect(() => {
+    if (!composerRef) return
+    composerRef.current = {
+      focus: () => {
+        const self = instance.current
+        requestAnimationFrame(() => {
+          if (!self.mounted) return
+          composerFocus(self.kind)
+        })
+      },
+      focusAfterQuoteReply: vi.fn(),
+      getEditor: () => null,
+      openSnippetEditor: vi.fn(),
+    }
+    return () => {
+      composerRef.current = null
+    }
+  }, [composerRef])
+  return (
+    <div
+      data-testid="editor-stub"
+      data-expanded={String(!!props.expanded)}
+      data-has-stash={String(!!props.stashedDraftsTrigger && !!props.stashedDraftsTriggerFab && !!props.onStashDraft)}
+      data-has-schedule={String(!!props.scheduledMessagesTrigger && !!props.scheduledMessagesTriggerFab)}
+    >
+      {props.placeholder}
+      {props.onExpandClick && (
+        <button type="button" onClick={props.onExpandClick}>
+          Expand
+        </button>
+      )}
+      <button type="button" aria-label="Send" onClick={() => props.onSubmit()} />
+    </div>
+  )
+}
 
 const EMPTY_DOC: JSONContent = { type: "doc", content: [] }
 
@@ -80,9 +115,12 @@ let stashStub: ReturnType<typeof stashComposerStub>
 let scheduleMutateAsync: ReturnType<typeof vi.fn>
 // vi.fn wrapper so tests can read the props the form rendered the editor with.
 let editorSpy: ReturnType<typeof vi.fn>
+// Focus calls the form makes through the composer control handle.
+let composerFocus: ReturnType<typeof vi.fn<(kind: string) => void>>
 
 beforeEach(() => {
   Element.prototype.scrollIntoView ??= () => {}
+  composerFocus = vi.fn<(kind: string) => void>()
   editorSpy = vi.fn(EditorStub)
   spyOnExport(composerModule, "MessageComposer").mockReturnValue(editorSpy as never)
   const stub = draftComposerStub()
@@ -369,6 +407,104 @@ describe("InlineComposerForm refocus-after-send", () => {
     lastComposerProps().onSubmit()
 
     await waitFor(() => expect(onClose).toHaveBeenCalledWith({ refocus: true, quiet: true }))
+  })
+
+  it("keepOpenAfterSend: the form stays mounted and takes focus back instead of collapsing", async () => {
+    const onClose = vi.fn()
+    render(<Anchored>{form({ onClose, keepOpenAfterSend: true })}</Anchored>)
+
+    lastComposerProps().onSubmit()
+
+    await waitFor(() => expect(composerFocus).toHaveBeenCalled())
+    expect(onClose).not.toHaveBeenCalled()
+    expect(screen.getByTestId("editor-stub")).toBeInTheDocument()
+  })
+
+  it("keepOpenAfterSend: a send driven by clicking the send button lands focus back in the editor, not on the button", async () => {
+    const onClose = vi.fn()
+    render(<Anchored>{form({ onClose, keepOpenAfterSend: true })}</Anchored>)
+
+    await userEvent.click(screen.getByRole("button", { name: "Send" }))
+
+    await waitFor(() => expect(composerFocus).toHaveBeenCalled())
+    expect(onClose).not.toHaveBeenCalled()
+  })
+
+  it("keepOpenAfterSend: scheduling also keeps the editor", async () => {
+    const onClose = vi.fn()
+    render(
+      <Anchored>
+        {form({ onClose, keepOpenAfterSend: true, scheduleTarget: { streamId: "stream_1", conversationId: "conv_1" } })}
+      </Anchored>
+    )
+
+    const trigger = lastComposerProps().scheduledMessagesTrigger as ReactElement<{
+      onSchedule: (when: Date) => Promise<void>
+    }>
+    // The real picker's popover is a Radix portal outside the form's container
+    // and holds focus while Schedule is clicked — the containment guard must
+    // read that as "still in this form" or the editor is never refocused.
+    const popover = document.createElement("div")
+    popover.setAttribute("data-radix-popper-content-wrapper", "")
+    const confirm = document.createElement("button")
+    popover.appendChild(confirm)
+    document.body.appendChild(popover)
+    confirm.focus()
+    expect(document.activeElement).toBe(confirm)
+
+    await trigger.props.onSchedule(new Date("2030-01-02T10:00:00.000Z"))
+
+    await waitFor(() => expect(composerFocus).toHaveBeenCalled())
+    expect(onClose).not.toHaveBeenCalled()
+    popover.remove()
+  })
+
+  it("keepOpenAfterSend: a send from the fullscreen overlay closes it and lands focus back in the editor", async () => {
+    const onClose = vi.fn()
+    render(<Anchored>{form({ onClose, keepOpenAfterSend: true })}</Anchored>)
+
+    await userEvent.click(screen.getByRole("button", { name: "Expand" }))
+    expect(screen.getByTestId("editor-stub")).toHaveAttribute("data-expanded", "true")
+
+    lastComposerProps().onSubmit()
+
+    await waitFor(() => expect(screen.getByTestId("editor-stub")).toHaveAttribute("data-expanded", "false"))
+    // The surviving in-place instance, not the overlay handle that is about to unmount.
+    await waitFor(() => expect(composerFocus).toHaveBeenCalledWith("inplace"))
+    expect(onClose).not.toHaveBeenCalled()
+  })
+
+  it("docked on touch: a tap-send leaves the keyboard dismissed instead of refocusing the editor", async () => {
+    vi.spyOn(inputModeModule, "useInputMode").mockReturnValue("touch")
+    const onClose = vi.fn()
+    render(<Anchored>{form({ onClose, docked: true })}</Anchored>)
+
+    lastComposerProps().onSubmit()
+
+    await waitFor(() => expect(composerStub.resolveDraft).toHaveBeenCalled())
+    expect(composerFocus).not.toHaveBeenCalled()
+    expect(onClose).not.toHaveBeenCalled()
+  })
+
+  it("docked: a send keeps the permanently mounted editor focused", async () => {
+    const onClose = vi.fn()
+    render(<Anchored>{form({ onClose, docked: true })}</Anchored>)
+
+    lastComposerProps().onSubmit()
+
+    await waitFor(() => expect(composerFocus).toHaveBeenCalled())
+    expect(onClose).not.toHaveBeenCalled()
+  })
+
+  it("mobile floating pill still dismisses after a send even with keepOpenAfterSend", async () => {
+    vi.spyOn(usePointerModule, "useIsMobileOrCoarse").mockReturnValue(true)
+    const onClose = vi.fn()
+    render(<Anchored>{form({ onClose, keepOpenAfterSend: true })}</Anchored>)
+
+    lastComposerProps().onSubmit()
+
+    await waitFor(() => expect(onClose).toHaveBeenCalledWith({ refocus: true, quiet: false }))
+    expect(composerFocus).not.toHaveBeenCalled()
   })
 })
 

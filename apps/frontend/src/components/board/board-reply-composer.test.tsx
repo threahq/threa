@@ -24,6 +24,7 @@ const FormStub = (props: InlineComposerFormProps) => (
     data-auto-focus={String(props.autoFocus ?? true)}
     data-restore={props.restoreStashedIdOnMount ?? ""}
     data-docked={String(!!props.docked)}
+    data-keep-open={String(!!props.keepOpenAfterSend)}
     data-draft-key={props.draftKey}
     data-reply-target-title={props.replyTarget?.title ?? ""}
     data-reply-target-move={props.replyTarget?.moveDraftToKey ?? ""}
@@ -128,6 +129,13 @@ describe("BoardReplyComposer alwaysDocked (docked-composer semantics)", () => {
     const resting = screen.getByRole("button", { name: "Write a reply…" })
     expect(document.activeElement).toBe(resting)
     expect(resting.className).not.toContain("focus-visible:ring-0")
+  })
+
+  it("card path: the opened form keeps the editor after a send instead of collapsing to the resting bar", async () => {
+    vi.spyOn(useMobileModule, "useIsMobile").mockReturnValue(false)
+    mount()
+    await userEvent.click(screen.getByRole("button", { name: "Write a reply…" }))
+    expect(screen.getByTestId("form-stub")).toHaveAttribute("data-keep-open", "true")
   })
 
   it("board-card default: collapsed, and opening carries the advertised stash row for check-out", async () => {

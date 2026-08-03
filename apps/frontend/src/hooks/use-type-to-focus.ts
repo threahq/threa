@@ -17,6 +17,40 @@ export function focusAtEnd(el: HTMLElement) {
 }
 
 /**
+ * Rendered AND within the visual viewport. The board's main zone hosts one
+ * composer per open card, so "last in the zone" alone would hand the keystroke
+ * to whichever card sits lowest in the DOM — scroll-jumping the feed to a card
+ * the user can't see.
+ */
+function isOnScreen(element: HTMLElement): boolean {
+  if (element.getClientRects().length === 0) return false
+  const rect = element.getBoundingClientRect()
+  // Layout-viewport bounds, matching the rect: visualViewport shrinks under
+  // pinch-zoom / soft keyboard and would judge a visible editor off-screen.
+  return rect.bottom > 0 && rect.right > 0 && rect.top < window.innerHeight && rect.left < window.innerWidth
+}
+
+/**
+ * Last on-screen composer editor in the zone, skipping inline-edit editors.
+ * Shared with the agent session card's Redirect action, which needs to know
+ * whether the surface has a composer at all before promising the user their
+ * message will reach the running session.
+ */
+export function findVisibleZoneEditor(zone: HTMLElement | null): HTMLElement | null {
+  if (!zone) return null
+  return Array.from(zone.querySelectorAll<HTMLElement>('[contenteditable="true"]'))
+    .filter((element) => !element.closest("[data-inline-edit]"))
+    .reduceRight<HTMLElement | null>((match, element) => {
+      if (match) return match
+      return isOnScreen(element) ? element : null
+    }, null)
+}
+
+function zoneContainer(zone: "main" | "panel"): HTMLElement | null {
+  return document.querySelector<HTMLElement>(`[data-editor-zone="${zone}"]`)
+}
+
+/**
  * Enables Slack-like "type anywhere to focus" behavior.
  *
  * Tracks which editor zone (main / panel) was last clicked,
@@ -25,8 +59,8 @@ export function focusAtEnd(el: HTMLElement) {
  *
  * Priority:
  *  1. Active inline-edit editor (`[data-inline-edit] [contenteditable]`)
- *  2. Last-clicked zone's editor
- *  3. Main zone fallback
+ *  2. Last-clicked zone's on-screen editor
+ *  3. The other zone's on-screen editor
  */
 export function useTypeToFocus() {
   const lastZoneRef = useRef<"main" | "panel">("main")
@@ -45,6 +79,9 @@ export function useTypeToFocus() {
 
     function handleKeyDown(e: KeyboardEvent) {
       if (e.key.length !== 1 || e.metaKey || e.ctrlKey || e.altKey) return
+      // An IME composition already owns the keystroke, and a handler that
+      // called preventDefault has claimed it for something else.
+      if (e.isComposing || e.defaultPrevented) return
 
       const active = document.activeElement
       if (
@@ -72,19 +109,25 @@ export function useTypeToFocus() {
         return
       }
 
-      const zoneSelector = `[data-editor-zone="${lastZoneRef.current}"] [contenteditable="true"]`
-      const zoneEditor = document.querySelector<HTMLElement>(zoneSelector)
-      if (zoneEditor) {
-        focusAtEnd(zoneEditor)
+      // Last-clicked zone first, then the other one — the fallback runs both
+      // ways: opening a conversation from a board card leaves the last click in
+      // main, and the panel that just opened is where typing must land.
+      //
+      // Except: a rendered panel with no editor is a decision, not an absence
+      // (an archived conversation renders ComposerDisabledNotice). Falling
+      // through then appends the keystroke to some board card's open draft and
+      // scrolls the feed to it. Main is a feed of zero-or-many card composers,
+      // so its emptiness carries no such meaning and still falls through.
+      const panelPresent = zoneContainer("panel") !== null
+      if (lastZoneRef.current === "panel" && panelPresent) {
+        const editor = findVisibleZoneEditor(zoneContainer("panel"))
+        if (editor) focusAtEnd(editor)
         return
       }
-
-      if (lastZoneRef.current !== "main") {
-        const mainEditor = document.querySelector<HTMLElement>('[data-editor-zone="main"] [contenteditable="true"]')
-        if (mainEditor) {
-          focusAtEnd(mainEditor)
-        }
-      }
+      const other = lastZoneRef.current === "main" ? "panel" : "main"
+      const editor =
+        findVisibleZoneEditor(zoneContainer(lastZoneRef.current)) ?? findVisibleZoneEditor(zoneContainer(other))
+      if (editor) focusAtEnd(editor)
     }
 
     // Capture phase for clicks so we track zone before any stopPropagation
