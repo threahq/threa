@@ -666,6 +666,24 @@ describe("bounded timeline read — tail and prefix", () => {
     expect(tail.map((e) => e._sequenceNum)).toEqual(Array.from({ length: TIMELINE_TAIL_EVENTS }, (_, i) => 121 + i))
   })
 
+  it("the two ranges are disjoint — a boundary row appears once and the union never duplicates an id", async () => {
+    // The union is a bare concat with no dedupe: safety rests on the prefix's
+    // exclusive upper bound `[floor, tailFloor)` never overlapping the tail's
+    // inclusive `[tailFloor, max]`. This pins it — a future write path that
+    // re-stamps `_sequenceNum` (or a bounds change to inclusive/inclusive)
+    // would surface here as a duplicate React key, not in production.
+    await seed(30)
+    const tailFloor = 15
+    const union = await readUnion(STREAM, 1, tailFloor)
+    const boundary = union.filter((e) => e._sequenceNum === tailFloor)
+    const ids = union.map((e) => e.id)
+    expect({ boundaryCount: boundary.length, unique: new Set(ids).size, total: ids.length }).toEqual({
+      boundaryCount: 1,
+      unique: 30,
+      total: 30,
+    })
+  })
+
   it("the union of tail and prefix equals today's single floored read", async () => {
     // The acceptance test: same fixture, both arms, deep-equal.
     await seed(TIMELINE_TAIL_EVENTS + 300)
