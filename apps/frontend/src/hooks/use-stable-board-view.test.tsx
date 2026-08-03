@@ -74,14 +74,12 @@ function lensPost(
   opts: {
     status?: "active" | "stalled" | "resolved"
     completenessScore?: number
-    hasCapturedMemo?: boolean
     isMine?: boolean
   }
 ): CachedBoardPost {
   const base = post(id, activityMs)
   return {
     ...base,
-    hasCapturedMemo: opts.hasCapturedMemo ?? false,
     isMine: opts.isMine ?? false,
     conversation: {
       ...base.conversation,
@@ -284,15 +282,15 @@ describe("useStableBoardView", () => {
   })
 
   it("does not mark a committed card that is merely filtered out of the live subset", () => {
-    const withMemo = { ...post("m", 300), hasCapturedMemo: true } as CachedBoardPost
-    const plain = { ...post("a", 200), hasCapturedMemo: true } as CachedBoardPost
-    mockLive(feed(withMemo, plain))
+    const mine = { ...post("m", 300), isMine: true } as CachedBoardPost
+    const plain = { ...post("a", 200), isMine: true } as CachedBoardPost
+    mockLive(feed(mine, plain))
     const { result, rerender } = renderHook(() =>
-      useStableBoardView("ws_1", lensFilter("decisions"), undefined, undefined, undefined)
+      useStableBoardView("ws_1", lensFilter("mine"), undefined, undefined, undefined)
     )
     expect(result.current.posts.map((p) => p.id)).toEqual(["m", "a"])
     // "a" stops matching the lens but its row is still in the raw feed.
-    act(() => mockLive(feed(withMemo, { ...plain, hasCapturedMemo: false } as CachedBoardPost)))
+    act(() => mockLive(feed(mine, { ...plain, isMine: false } as CachedBoardPost)))
     rerender()
     expect(result.current.posts.map((p) => p.id)).toEqual(["m", "a"])
     expect([...result.current.removedIds]).toEqual([])
@@ -310,20 +308,18 @@ describe("useStableBoardView", () => {
     expect(result.current.posts.map((p) => p.id)).toEqual(["z"])
   })
 
-  it("shows only the lens's matching cards — decisions keeps captured-memo posts", () => {
-    const withMemo = { ...post("m", 300), hasCapturedMemo: true } as CachedBoardPost
-    const without = { ...post("n", 200), hasCapturedMemo: false } as CachedBoardPost
-    mockLive(feed(withMemo, without))
-    const { result } = renderHook(() =>
-      useStableBoardView("ws_1", lensFilter("decisions"), undefined, undefined, undefined)
-    )
+  it("shows only the lens's matching cards — mine keeps the viewer's own posts", () => {
+    const mine = { ...post("m", 300), isMine: true } as CachedBoardPost
+    const other = { ...post("n", 200), isMine: false } as CachedBoardPost
+    mockLive(feed(mine, other))
+    const { result } = renderHook(() => useStableBoardView("ws_1", lensFilter("mine"), undefined, undefined, undefined))
     expect(result.current.posts.map((p) => p.id)).toEqual(["m"])
   })
 
   it("resets the committed view when the lens changes", () => {
-    const withMemo = { ...post("m", 300), hasCapturedMemo: true } as CachedBoardPost
-    const plain = { ...post("a", 250), hasCapturedMemo: false } as CachedBoardPost
-    mockLive(feed(withMemo, plain))
+    const mine = { ...post("m", 300), isMine: true } as CachedBoardPost
+    const plain = { ...post("a", 250), isMine: false } as CachedBoardPost
+    mockLive(feed(mine, plain))
     const { result, rerender } = renderHook(
       ({ lens }) => useStableBoardView("ws_1", lensFilter(lens), undefined, undefined, undefined),
       {
@@ -331,60 +327,61 @@ describe("useStableBoardView", () => {
       }
     )
     expect(result.current.posts.map((p) => p.id)).toEqual(["m", "a"])
-    rerender({ lens: "decisions" })
-    // Fresh frozen view for the new lens — only the captured-memo card, not the
+    rerender({ lens: "mine" })
+    // Fresh frozen view for the new lens — only the viewer's own card, not the
     // previous lens's committed order.
     expect(result.current.posts.map((p) => p.id)).toEqual(["m"])
   })
 
-  it("commits the new lens's feed wholesale across disjoint subsets — no stranding behind the pill", () => {
-    // The bug this guards: switching between two lenses with disjoint subsets where
-    // a fresh card of the new lens sits ABOVE the old lens's committed floor. `s`
-    // is the only Mine card (floor 300); `d` is a Decisions card above it (400)
-    // that isn't a Mine card. Reconciling `d` against the stale `{s}` committed
-    // strands it behind an empty "N new" pill; folding the reset into the
-    // reconcile input commits `d` immediately instead.
-    const mine = lensPost("s", 300, { isMine: true })
-    const decision = lensPost("d", 400, { hasCapturedMemo: true })
-    mockLive(feed(mine, decision))
+  it("commits the new view's feed wholesale across disjoint subsets — no stranding behind the pill", () => {
+    // The bug this guards: switching between two views with disjoint subsets where
+    // a fresh card of the new view sits ABOVE the old view's committed floor. `s`
+    // is the only Mine card (floor 300, in chan_a); `d` sits above it (400) in
+    // chan_b and isn't a Mine card. Reconciling `d` against the stale `{s}`
+    // committed strands it behind an empty "N new" pill; folding the reset into
+    // the reconcile input commits `d` immediately instead.
+    const mine = { ...lensPost("s", 300, { isMine: true }), rootStreamId: "chan_a" } as CachedBoardPost
+    const other = { ...lensPost("d", 400, {}), rootStreamId: "chan_b" } as CachedBoardPost
+    mockLive(feed(mine, other))
     const { result, rerender } = renderHook(
-      ({ lens }) => useStableBoardView("ws_1", lensFilter(lens), undefined, undefined, undefined),
+      ({ filter }) => useStableBoardView("ws_1", filter, undefined, undefined, undefined),
       {
-        initialProps: { lens: "mine" as BoardLens },
+        initialProps: { filter: lensFilter("mine") },
       }
     )
     expect(result.current.posts.map((p) => p.id)).toEqual(["s"])
-    rerender({ lens: "decisions" })
+    rerender({ filter: scopeFilter(["chan_b"]) })
     expect(result.current.posts.map((p) => p.id)).toEqual(["d"])
     expect(result.current.newCount).toBe(0)
   })
 
-  it("buffers a fresh new-lens arrival after a mixing-prone switch — no phantom absorption", () => {
-    // Guards the "mixing ids" path the fix names: on the switch a new-lens card
-    // sits BELOW the old lens's floor, so reconciling against the STALE committed
+  it("buffers a fresh new-view arrival after a mixing-prone switch — no phantom absorption", () => {
+    // Guards the "mixing ids" path the fix names: on the switch a new-view card
+    // sits BELOW the old view's floor, so reconciling against the STALE committed
     // (the pre-fix bug) mixes the old id into `committed.order`. That phantom id
     // then silently absorbs the SAME conversation when it later qualifies for the
-    // new lens (classified "already committed"), so its fresh arrival never shows
+    // new view (classified "already committed"), so its fresh arrival never shows
     // behind the "N new" pill. Feeding the reset (EMPTY_VIEW) into the reconcile
     // leaves no phantom, so the later arrival buffers. Fails on the pre-fix code.
-    const mine = lensPost("s", 300, { isMine: true }) // mine only
-    const decisionLow = lensPost("x", 200, { hasCapturedMemo: true }) // decisions, below s's floor
-    mockLive(feed(mine, decisionLow))
+    const scoped = { ...lensPost("s", 300, {}), rootStreamId: "chan_a" } as CachedBoardPost // chan_a only
+    const mineLow = { ...lensPost("x", 200, { isMine: true }), rootStreamId: "chan_b" } as CachedBoardPost // mine, below s's floor
+    mockLive(feed(scoped, mineLow))
     const { result, rerender } = renderHook(
-      ({ lens }) => useStableBoardView("ws_1", lensFilter(lens), undefined, undefined, undefined),
+      ({ filter }) => useStableBoardView("ws_1", filter, undefined, undefined, undefined),
       {
-        initialProps: { lens: "mine" as BoardLens },
+        initialProps: { filter: scopeFilter(["chan_a"]) },
       }
     )
     expect(result.current.posts.map((p) => p.id)).toEqual(["s"])
 
-    rerender({ lens: "decisions" })
+    rerender({ filter: lensFilter("mine") })
     expect(result.current.posts.map((p) => p.id)).toEqual(["x"])
 
-    // `s` gains a memo with fresh activity — a genuine new arrival on decisions.
-    const mineWithMemo = lensPost("s", 500, { isMine: true, hasCapturedMemo: true })
-    act(() => mockLive(feed(mineWithMemo, decisionLow)))
-    rerender({ lens: "decisions" })
+    // The viewer is `@`-mentioned on `s` with fresh activity — a genuine new
+    // arrival on Mine.
+    const nowMine = { ...lensPost("s", 500, { isMine: true }), rootStreamId: "chan_a" } as CachedBoardPost
+    act(() => mockLive(feed(nowMine, mineLow)))
+    rerender({ filter: lensFilter("mine") })
     // The fresh `s` waits behind the pill; it is not absorbed in-place.
     expect(result.current.newCount).toBe(1)
     expect(result.current.posts.map((p) => p.id)).toEqual(["x"])
@@ -392,19 +389,19 @@ describe("useStableBoardView", () => {
 
   it("keeps an acted-on card in place when it stops matching the lens (never yanked)", () => {
     // The steer this encodes: a card can stop MATCHING the lens after an update
-    // (here its memo is archived, so it leaves Decisions) — but a filter must
-    // never yank what's on screen. The committed card keeps rendering (retained)
-    // until the viewer commits a fresh view themselves.
-    const decision = lensPost("s", 300, { hasCapturedMemo: true })
-    const idle = lensPost("i", 200, { hasCapturedMemo: true })
-    mockLive(feed(decision, idle))
+    // (here the mention that made it the viewer's is deleted, so it leaves Mine)
+    // — but a filter must never yank what's on screen. The committed card keeps
+    // rendering (retained) until the viewer commits a fresh view themselves.
+    const mine = lensPost("s", 300, { isMine: true })
+    const idle = lensPost("i", 200, { isMine: true })
+    mockLive(feed(mine, idle))
     const { result, rerender } = renderHook(() =>
-      useStableBoardView("ws_1", lensFilter("decisions"), undefined, undefined, undefined)
+      useStableBoardView("ws_1", lensFilter("mine"), undefined, undefined, undefined)
     )
     expect(result.current.posts.map((p) => p.id)).toEqual(["s", "i"])
 
-    // `s`'s memo is archived with fresh activity — it no longer matches the lens.
-    act(() => mockLive(feed(lensPost("s", 900, { hasCapturedMemo: false }), idle)))
+    // The mention on `s` is deleted with fresh activity — it no longer matches.
+    act(() => mockLive(feed(lensPost("s", 900, { isMine: false }), idle)))
     rerender()
     // Still rendered in place, and not counted as "new".
     expect(result.current.posts.map((p) => p.id)).toEqual(["s", "i"])
@@ -419,21 +416,21 @@ describe("useStableBoardView", () => {
     // Posting from a filtered board navigates back to the All home (the new post
     // might not match the filter); the pending optimistic card reveals itself at
     // top there via reconcile, no arm to carry across the reset.
-    const decision = lensPost("s", 300, { hasCapturedMemo: true })
-    mockLive(feed(decision))
+    const mine = lensPost("s", 300, { isMine: true })
+    mockLive(feed(mine))
     const { result, rerender } = renderHook(
       ({ filter }) => useStableBoardView("ws_1", filter, undefined, undefined, undefined),
       {
-        initialProps: { filter: lensFilter("decisions") },
+        initialProps: { filter: lensFilter("mine") },
       }
     )
     expect(result.current.posts.map((p) => p.id)).toEqual(["s"])
 
     // Navigate to All, then the authored card lands after the fresh view's commit.
     rerender({ filter: ALL })
-    act(() => mockLive(feed(pendingPost("mine", 900), decision)))
+    act(() => mockLive(feed(pendingPost("own", 900), mine)))
     rerender({ filter: ALL })
-    expect(result.current.posts.map((p) => p.id)).toEqual(["mine", "s"])
+    expect(result.current.posts.map((p) => p.id)).toEqual(["own", "s"])
     expect(result.current.newCount).toBe(0)
   })
 
@@ -1089,7 +1086,7 @@ describe("useStableBoardView seed gate", () => {
   it("commits a filter switch instantly once this workspace has committed (the gate is per-workspace)", () => {
     mockLive(
       feed(
-        lensPost("decided", 300, { hasCapturedMemo: true }),
+        lensPost("decided", 300, { isMine: true }),
         lensPost("plain", 200, { status: "active", completenessScore: 5 })
       )
     )
@@ -1100,7 +1097,7 @@ describe("useStableBoardView seed gate", () => {
     expect(result.current.posts.map((p) => p.id)).toEqual(["decided", "plain"])
 
     // The new lens's query is still fetching — the lens must still switch now.
-    rerender({ lens: "decisions" as BoardLens, seed: { settled: false, newest: { id: "x", activityMs: 1 } } })
+    rerender({ lens: "mine" as BoardLens, seed: { settled: false, newest: { id: "x", activityMs: 1 } } })
     expect(result.current.posts.map((p) => p.id)).toEqual(["decided"])
     expect(result.current.isLoading).toBe(false)
   })

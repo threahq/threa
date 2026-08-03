@@ -53,8 +53,9 @@ describe("updatePreferencesSchema boardDefaultLens", () => {
     expect(updatePreferencesSchema.parse({ boardDefaultLens: "mine" }).boardDefaultLens).toBe("mine")
   })
 
-  it("rejects an unknown lens", () => {
-    expect(updatePreferencesSchema.safeParse({ boardDefaultLens: "everything" }).success).toBe(false)
+  it("degrades a retired or unknown lens to the default instead of rejecting the PATCH", () => {
+    expect(updatePreferencesSchema.parse({ boardDefaultLens: "decisions" }).boardDefaultLens).toBe("all")
+    expect(updatePreferencesSchema.parse({ boardDefaultLens: "everything" }).boardDefaultLens).toBe("all")
   })
 
   it("treats the field as optional", () => {

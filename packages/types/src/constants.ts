@@ -483,10 +483,11 @@ export const MAX_BOARD_VIEW_NAME_LENGTH = 60
  * the dials, it doesn't decide what matters. `all` is the default and always
  * available: the board's job is to SURFACE, so the home view shows everything
  * and a lens is an optional narrowing the viewer opts into, never a mode they
- * must opt out of. Same signal for every viewer (personal lenses like Mine
- * come later). Ordered as they render in the lens picker.
+ * must opt out of. Ordered as they render in the lens picker. Retired values
+ * (`decisions`) may still sit in saved views and persisted URLs — every read
+ * boundary degrades them to `all` rather than throwing.
  */
-export const BOARD_LENSES = ["all", "decisions", "mine"] as const
+export const BOARD_LENSES = ["all", "mine"] as const
 export type BoardLens = (typeof BOARD_LENSES)[number]
 
 /** The board's home view: everything, newest activity first, nothing hidden. */

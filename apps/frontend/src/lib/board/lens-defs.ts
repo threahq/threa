@@ -1,5 +1,5 @@
 import type { LucideIcon } from "lucide-react"
-import { BookMarked, LayoutGrid, User } from "lucide-react"
+import { LayoutGrid, User } from "lucide-react"
 import { type BoardLens } from "@threa/types"
 
 export interface BoardLensDef {
@@ -17,12 +17,6 @@ export interface BoardLensDef {
  */
 export const BOARD_LENS_DEFS: Record<BoardLens, BoardLensDef> = {
   all: { value: "all", label: "All", description: "Everything, newest activity first", icon: LayoutGrid },
-  decisions: {
-    value: "decisions",
-    label: "Decisions",
-    description: "Settled — captured as a memo",
-    icon: BookMarked,
-  },
   mine: {
     value: "mine",
     label: "Mine",

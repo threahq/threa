@@ -34,18 +34,6 @@ function boardLensCondSql(lens: BoardLens | undefined, userId: string) {
       )
     )`
   }
-  if (lens === "decisions") {
-    // Workspace-scoped (INV-8) and active-only, matching
-    // `MemoRepository.findConversationIdsWithMemos` and the file's
-    // `findActiveBySourceConversation` — an archived/superseded memo is no longer
-    // captured knowledge, so it must drop the conversation from the lens.
-    return composeSql`AND EXISTS (
-      SELECT 1 FROM memos
-      WHERE memos.source_conversation_id = conversations.id
-        AND memos.workspace_id = conversations.workspace_id
-        AND memos.status = 'active'
-    )`
-  }
   return sql``
 }
 

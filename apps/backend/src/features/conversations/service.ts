@@ -384,9 +384,10 @@ export class ConversationService {
       [...hydrateIds].map((id) => messageById.get(id)).filter((m): m is Message => Boolean(m))
     )
 
-    // The Decisions/Knowledge lens signal: which of these conversations produced a
-    // captured memo. One batch presence read (INV-56); a board-level field, not on
-    // the conversation aggregate the `conversation:*` events carry.
+    // `hasCapturedMemo` is kept for clients still running the retired Decisions
+    // lens from an SW-cached bundle — they filter on it client-side, so dropping
+    // it during the deploy window would blank their board. Removable next release.
+    // One batch presence read (INV-56).
     const conversationIdsWithMemos = await MemoRepository.findConversationIdsWithMemos(
       this.pool,
       workspaceId,

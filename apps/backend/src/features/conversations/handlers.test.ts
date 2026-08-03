@@ -156,8 +156,8 @@ describe("Conversation Handlers", () => {
     })
 
     test("threads the validated lens through to the service", async () => {
-      await handlers.listByWorkspace(mockReq({ query: { lens: "decisions" } }), mockRes())
-      expect(mockListByWorkspace).toHaveBeenCalledWith("ws_1", "usr_1", expect.objectContaining({ lens: "decisions" }))
+      await handlers.listByWorkspace(mockReq({ query: { lens: "mine" } }), mockRes())
+      expect(mockListByWorkspace).toHaveBeenCalledWith("ws_1", "usr_1", expect.objectContaining({ lens: "mine" }))
     })
 
     test("accepts the all lens as an explicit no-op filter", async () => {
@@ -166,7 +166,7 @@ describe("Conversation Handlers", () => {
     })
 
     test("degrades a retired lens to no lens condition instead of a 400", async () => {
-      await handlers.listByWorkspace(mockReq({ query: { lens: "needs-resolution" } }), mockRes())
+      await handlers.listByWorkspace(mockReq({ query: { lens: "decisions" } }), mockRes())
       expect(mockListByWorkspace).toHaveBeenCalledWith("ws_1", "usr_1", expect.objectContaining({ lens: undefined }))
     })
 

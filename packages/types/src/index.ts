@@ -335,7 +335,7 @@ export {
 } from "./markdown-strip"
 
 // Board lens predicate (shared FE filter / BE seed, board-view-design.md § "Lenses")
-export { matchesBoardLens } from "./board-lens"
+export { matchesBoardLens, degradeBoardLens } from "./board-lens"
 
 // Domain entities (wire format)
 export { getAvatarUrl, getBotAvatarUrl, getPersonaAvatarUrl } from "./domain"

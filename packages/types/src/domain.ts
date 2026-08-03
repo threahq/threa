@@ -832,16 +832,10 @@ export interface BoardPost {
    */
   streamIds: string[]
   /**
-   * Whether this conversation has at least one active captured memo — the
-   * Decisions/Knowledge lens signal (board-view-design.md § "Lenses"). A
-   * board-level field, not part of the conversation aggregate, because it comes
-   * from a memos join the pure `conversation:*` event payload never carries, so
-   * the board card preserves it across live merges. It's therefore only as fresh
-   * as the last fetch: a newly-captured memo surfaces on Decisions after a refetch
-   * (board refetches on mount/reconnect), and — the reverse — a memo leaving
-   * `active` (archive/supersede, not currently user-reachable) leaves a stale
-   * `true` until a lens fetch that still returns the row reseeds it. Both are the
-   * accepted staleness window until a live memo→board signal lands.
+   * Whether this conversation has at least one active captured memo. Was the
+   * retired Decisions lens's signal; kept one release so SW-cached bundles that
+   * still filter that lens client-side keep working — removable next release
+   * (see the memo batch read in conversations/service.ts).
    */
   hasCapturedMemo: boolean
   /**

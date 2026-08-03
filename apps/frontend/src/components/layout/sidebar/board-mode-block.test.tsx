@@ -121,7 +121,7 @@ describe("BoardModeBlock", () => {
     mountAt(`/w/${WS}/board`)
 
     expect(screen.getByText("Lenses")).toBeInTheDocument()
-    for (const label of ["All", "Decisions", "Mine"]) {
+    for (const label of ["All", "Mine"]) {
       expect(screen.getByRole("link", { name: label })).toBeInTheDocument()
     }
   })
@@ -142,10 +142,10 @@ describe("BoardModeBlock", () => {
     expect(all.searchParams.get("in")).toBe("stream_1")
     expect(all.searchParams.get("label")).toBe("label_a")
 
-    const decisions = new URL(hrefOf("Decisions"), "http://x")
-    expect(decisions.pathname).toBe(`/w/${WS}/board`)
-    expect(decisions.searchParams.get("lens")).toBe("decisions")
-    expect(decisions.searchParams.get("in")).toBe("stream_1")
+    const mine = new URL(hrefOf("Mine"), "http://x")
+    expect(mine.pathname).toBe(`/w/${WS}/board`)
+    expect(mine.searchParams.get("lens")).toBe("mine")
+    expect(mine.searchParams.get("in")).toBe("stream_1")
   })
 
   it("every lens link carries an explicit ?lens=, never the bare entry alias", () => {
@@ -203,7 +203,7 @@ describe("BoardModeBlock", () => {
   it("renders per-lens counts from lensTotals, right-aligned inside each lens row", () => {
     stub()
     mountAt(`/w/${WS}/board`, {
-      lensTotals: { all: 14, decisions: 3, mine: 0 },
+      lensTotals: { all: 14, mine: 0 },
     })
 
     const all = screen.getByRole("link", { name: "All" })
@@ -216,7 +216,7 @@ describe("BoardModeBlock", () => {
     stub()
     mountAt(`/w/${WS}/board`, { lensTotals: null })
 
-    expect(screen.getByRole("link", { name: "Decisions" })).toHaveTextContent(/^Decisions$/)
+    expect(screen.getByRole("link", { name: "Mine" })).toHaveTextContent(/^Mine$/)
   })
 
   it("renders the Filters group with the stream and type pickers", () => {

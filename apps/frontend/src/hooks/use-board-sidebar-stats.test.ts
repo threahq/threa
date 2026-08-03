@@ -100,19 +100,19 @@ describe("aggregateBoardSidebarStats", () => {
     expect(lensTotals.all).toBe(1)
   })
 
-  it("computes per-lens totals via matchesBoardLens, keyed by exactly the three lenses", () => {
+  it("computes per-lens totals via matchesBoardLens, keyed by exactly the live lenses", () => {
     const { lensTotals } = aggregateBoardSidebarStats([
       post("c1", { streamId: "chan_a", status: "active", isMine: true }),
       post("c2", { streamId: "chan_a", status: "stalled", completenessScore: 1, idleHours: 0 }),
       post("c3", { streamId: "chan_a", status: "resolved", hasCapturedMemo: true }),
       post("c4", { streamId: "chan_b", status: "active", idleHours: 100, completenessScore: 1 }),
     ])
-    expect(lensTotals).toEqual({ all: 4, decisions: 1, mine: 1 })
+    expect(lensTotals).toEqual({ all: 4, mine: 1 })
   })
 
   it("returns empty tallies for an empty feed", () => {
     const { byStream, lensTotals } = aggregateBoardSidebarStats([])
     expect(byStream.size).toBe(0)
-    expect(lensTotals).toEqual({ all: 0, decisions: 0, mine: 0 })
+    expect(lensTotals).toEqual({ all: 0, mine: 0 })
   })
 })
