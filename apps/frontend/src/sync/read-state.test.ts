@@ -12,6 +12,7 @@ import {
   resolveReadAllFrontiers,
   type ReadStateSnapshot,
 } from "./read-state"
+import { recordRowConfirmation, resetRowConfirmations } from "./bootstrap-diff"
 
 function snapshot(overrides: Partial<ReadStateSnapshot> = {}): ReadStateSnapshot {
   return {
@@ -71,6 +72,7 @@ async function seedMembership() {
 
 describe("applyReadStateSnapshotsIdb", () => {
   beforeEach(async () => {
+    resetRowConfirmations()
     await Promise.all([
       db.unreadState.clear(),
       db.streamMemberships.clear(),
@@ -146,6 +148,7 @@ describe("applyReadStateSnapshotsIdb — startedAt freshness guard", () => {
   // unread — operation order (touched-at), not sequence max, decides.
 
   beforeEach(async () => {
+    resetRowConfirmations()
     await Promise.all([
       db.unreadState.clear(),
       db.streamMemberships.clear(),
@@ -218,6 +221,30 @@ describe("applyReadStateSnapshotsIdb — startedAt freshness guard", () => {
     })
     const state = await db.unreadState.get("ws_1")
     expect(state?.readMessageIds?.stream_1).toEqual(["msg_5", "msg_7"])
+  })
+
+  it("counts a diff-confirmed row as touched even though its _cachedAt was never rewritten", async () => {
+    await seedUnreadState()
+    await seedMembership()
+
+    const startedAt = Date.now()
+    await db.streamReadState.put({
+      id: "ws_1:stream_1",
+      workspaceId: "ws_1",
+      streamId: "stream_1",
+      lastReadEventId: "evt_10",
+      lastReadSequence: "100",
+      lastReadAt: "2026-01-01T00:00:10.000Z",
+      _cachedAt: startedAt - 5000,
+    })
+    recordRowConfirmation("ws_1", "streamReadState", "ws_1:stream_1", startedAt + 1000)
+
+    await applyReadStateSnapshotsIdb("ws_1", [snapshot()], startedAt)
+
+    expect(await db.streamReadState.get("ws_1:stream_1")).toMatchObject({
+      lastReadEventId: "evt_10",
+      lastReadSequence: "100",
+    })
   })
 
   it("applies normally when no frontier row exists yet", async () => {

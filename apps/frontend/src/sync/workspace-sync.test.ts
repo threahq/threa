@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from "vitest"
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest"
 import { db } from "@/db"
 import { QueryClient } from "@tanstack/react-query"
 import { workspaceKeys } from "@/hooks/use-workspaces"
@@ -10,6 +10,8 @@ import {
   registerWorkspaceSocketHandlers,
 } from "./workspace-sync"
 import { SocketEventGate } from "./socket-event-gate"
+import { resetRowConfirmations, rowConfirmedAt } from "./bootstrap-diff"
+import { PerfCapture, armPerfCapture, NO_CAPTURE } from "@/lib/perf/capture"
 import { savedKeys } from "@/hooks/use-saved"
 import { scheduledKeys } from "@/hooks/use-scheduled"
 import { memoKeys } from "@/hooks/use-memos"
@@ -786,6 +788,398 @@ describe("applyWorkspaceBootstrap (real IndexedDB)", () => {
     expect(await db.streamReadState.get("ws_1:stream_live")).toMatchObject({
       lastReadEventId: "evt_live",
       lastReadSequence: "99",
+    })
+  })
+
+  describe("bootstrapDiff", () => {
+    interface DiffTable {
+      name: string
+      toArray: () => Promise<Array<{ id: string; _cachedAt: number }>>
+      bulkPut: (rows: Array<{ id: string; _cachedAt: number }>) => Promise<unknown>
+    }
+
+    function diffTables(): DiffTable[] {
+      return [
+        db.workspaces,
+        db.workspaceUsers,
+        db.streams,
+        db.streamMemberships,
+        db.streamReadState,
+        db.dmPeers,
+        db.personas,
+        db.bots,
+        db.labels,
+        db.labelAssignments,
+        db.unreadState,
+        db.userPreferences,
+        db.sidebarConfigs,
+        db.workspaceMetadata,
+      ] as unknown as DiffTable[]
+    }
+
+    async function stampCachedAt(value: number): Promise<void> {
+      for (const table of diffTables()) {
+        const rows = await table.toArray()
+        if (rows.length > 0) await table.bulkPut(rows.map((row) => ({ ...row, _cachedAt: value })))
+      }
+    }
+
+    async function cachedAtSnapshot(): Promise<Record<string, number>> {
+      const snapshot: Record<string, number> = {}
+      for (const table of diffTables()) {
+        for (const row of await table.toArray()) snapshot[`${table.name}:${row.id}`] = row._cachedAt
+      }
+      return snapshot
+    }
+
+    let diffBase: WorkspaceBootstrap | undefined
+
+    function diffBootstrap(overrides: Partial<WorkspaceBootstrap> = {}): WorkspaceBootstrap {
+      diffBase ??= makeBootstrap({
+        featureFlags: { workspace: { bootstrapDiff: "on" }, user: {} },
+        users: [makeWorkspaceUser()],
+        streams: [
+          { ...makeStream("stream_d1"), lastMessagePreview: null },
+          { ...makeStream("stream_d2"), lastMessagePreview: null },
+        ] as WorkspaceBootstrap["streams"],
+        streamMemberships: [
+          { streamId: "stream_d1", memberId: "member_1", notificationLevel: null, joinedAt: "2026-01-01T00:00:00Z" },
+        ],
+        streamReadState: {
+          stream_d1: { lastReadEventId: "evt_1", lastReadSequence: "3", lastReadAt: "2026-01-01T00:00:00Z" },
+        },
+        dmPeers: [{ userId: "member_1", streamId: "stream_d2" }],
+        personas: [
+          {
+            id: "persona_d1",
+            workspaceId: "ws_1",
+            slug: "ariadne",
+            name: "Ariadne",
+            description: null,
+            avatarEmoji: null,
+            avatarUrl: null,
+            systemPrompt: null,
+            model: "openrouter:anthropic/claude-sonnet-5",
+            temperature: null,
+            maxTokens: null,
+            enabledTools: null,
+            managedBy: "workspace",
+            ownerUserId: null,
+            status: "active",
+            createdAt: "2026-01-01T00:00:00Z",
+            updatedAt: "2026-01-01T00:00:00Z",
+          },
+        ],
+        bots: [
+          {
+            id: "bot_d1",
+            workspaceId: "ws_1",
+            type: "shared",
+            ownerUserId: null,
+            traits: [],
+            slug: "helper",
+            name: "Helper",
+            description: null,
+            avatarEmoji: null,
+            avatarUrl: null,
+            archivedAt: null,
+            createdAt: "2026-01-01T00:00:00Z",
+            updatedAt: "2026-01-01T00:00:00Z",
+          },
+        ],
+        labels: [
+          {
+            id: "label_d1",
+            workspaceId: "ws_1",
+            creatorActorType: "user",
+            creatorUserId: "member_1",
+            name: "Focus",
+            slug: "focus",
+            color: "blue",
+            emoji: null,
+            description: null,
+            createdAt: "2026-01-01T00:00:00Z",
+            updatedAt: "2026-01-01T00:00:00Z",
+            archivedAt: null,
+          },
+        ],
+        labelAssignments: [
+          {
+            labelId: "label_d1",
+            resourceType: "stream",
+            resourceId: "stream_d1",
+            actorType: "user",
+            userId: "member_1",
+            workspaceId: "ws_1",
+            assignedAt: "2026-01-01T00:00:00Z",
+          },
+        ],
+        unreadCounts: { stream_d1: 2 },
+        mentionCounts: { stream_d1: 1 },
+        activityCounts: { stream_d1: 2 },
+        unreadActivityCount: 2,
+      })
+      return { ...structuredClone(diffBase), ...overrides }
+    }
+
+    beforeEach(async () => {
+      resetRowConfirmations()
+      await Promise.all([db.labels.clear(), db.labelAssignments.clear()])
+    })
+
+    afterEach(() => {
+      armPerfCapture(NO_CAPTURE)
+    })
+
+    it("a second identical bootstrap writes no rows", async () => {
+      await applyWorkspaceBootstrap("ws_1", diffBootstrap(), Date.now() - 5000)
+      await stampCachedAt(1)
+      const before = await cachedAtSnapshot()
+
+      await applyWorkspaceBootstrap("ws_1", diffBootstrap(), Date.now())
+
+      expect(await cachedAtSnapshot()).toEqual(before)
+      expect(Object.values(before).every((value) => value === 1)).toBe(true)
+      expect(await db.streams.get("stream_d1")).toBeDefined()
+      expect(await db.streams.get("stream_d2")).toBeDefined()
+    })
+
+    it("a second identical bootstrap reports rowsWritten 0", async () => {
+      await applyWorkspaceBootstrap("ws_1", diffBootstrap(), Date.now() - 5000)
+      const rowCount = Object.keys(await cachedAtSnapshot()).length
+
+      const capture = new PerfCapture()
+      armPerfCapture(capture)
+      await applyWorkspaceBootstrap("ws_1", diffBootstrap(), Date.now())
+
+      const samples = capture.snapshot()
+      expect(samples.filter((s) => s.name === "bootstrap.rowsWritten").map((s) => s.value)).toEqual([0])
+      expect(samples.filter((s) => s.name === "bootstrap.rowsSkipped").map((s) => s.value)).toEqual([rowCount])
+    })
+
+    it("the stale sweep drops a deleted row's confirmation", async () => {
+      await applyWorkspaceBootstrap("ws_1", diffBootstrap(), Date.now() - 5000)
+      await stampCachedAt(1)
+      await applyWorkspaceBootstrap("ws_1", diffBootstrap(), Date.now())
+      expect(rowConfirmedAt("ws_1", "streams", "stream_d2")).toBeDefined()
+
+      await applyWorkspaceBootstrap(
+        "ws_1",
+        diffBootstrap({
+          streams: [{ ...makeStream("stream_d1"), lastMessagePreview: null }] as WorkspaceBootstrap["streams"],
+        }),
+        Date.now()
+      )
+
+      expect(await db.streams.get("stream_d2")).toBeUndefined()
+      expect(rowConfirmedAt("ws_1", "streams", "stream_d2")).toBeUndefined()
+    })
+
+    it("a changed row is written and its neighbours are not", async () => {
+      await applyWorkspaceBootstrap("ws_1", diffBootstrap(), Date.now() - 5000)
+      await stampCachedAt(1)
+
+      const base = diffBootstrap()
+      const changed = diffBootstrap({
+        streams: base.streams.map((s) => (s.id === "stream_d1" ? { ...s, displayName: "Renamed" } : s)),
+      })
+      await applyWorkspaceBootstrap("ws_1", changed, Date.now())
+
+      expect((await db.streams.get("stream_d1"))?.displayName).toBe("Renamed")
+      expect((await db.streams.get("stream_d1"))?._cachedAt).toBeGreaterThan(1)
+      expect((await db.streams.get("stream_d2"))?._cachedAt).toBe(1)
+      expect((await db.workspaceUsers.get("member_1"))?._cachedAt).toBe(1)
+    })
+
+    it("a row present in the bootstrap but skipped by the diff is never swept", async () => {
+      await applyWorkspaceBootstrap("ws_1", diffBootstrap(), Date.now() - 5000)
+      await stampCachedAt(1)
+
+      const fetchStartedAt = Date.now()
+      await applyWorkspaceBootstrap("ws_1", diffBootstrap(), fetchStartedAt)
+
+      expect(await db.streams.get("stream_d1")).toBeDefined()
+      expect(await db.streams.get("stream_d2")).toBeDefined()
+      expect(await db.workspaceUsers.get("member_1")).toBeDefined()
+      expect(await db.streamMemberships.get("ws_1:stream_d1")).toBeDefined()
+      expect((await db.streams.get("stream_d1"))?._cachedAt).toBe(1)
+    })
+
+    it("a stream written by a socket handler during the fetch window and absent from the snapshot still survives", async () => {
+      const fetchStartedAt = Date.now() - 500
+      await db.streams.put({ ...makeStream("stream_socket_diff"), _cachedAt: fetchStartedAt + 100 })
+
+      await applyWorkspaceBootstrap("ws_1", diffBootstrap(), fetchStartedAt)
+
+      expect(await db.streams.get("stream_socket_diff")).toBeDefined()
+    })
+
+    it("a socket write during the fetch window that the snapshot contradicts is still healed by the snapshot", async () => {
+      const fetchStartedAt = Date.now() - 500
+      await db.streams.put({
+        ...makeStream("stream_d1"),
+        displayName: "Local socket name",
+        _cachedAt: fetchStartedAt + 100,
+      })
+
+      await applyWorkspaceBootstrap("ws_1", diffBootstrap(), fetchStartedAt)
+
+      expect((await db.streams.get("stream_d1"))?.displayName).toBe("Stream stream_d1")
+    })
+
+    it("userPreferences does not false-diff on the seed-only sendMode field", async () => {
+      await applyWorkspaceBootstrap("ws_1", diffBootstrap(), Date.now() - 5000)
+      await stampCachedAt(1)
+
+      await applyWorkspaceBootstrap("ws_1", diffBootstrap(), Date.now())
+
+      expect((await db.userPreferences.get("ws_1"))?._cachedAt).toBe(1)
+      expect((await db.userPreferences.get("ws_1")) as unknown as { sendMode?: string }).not.toHaveProperty("sendMode")
+    })
+
+    it("archived roots ride the single diffed streams write", async () => {
+      const archivedRoot = makeStream("stream_arch_diff", { archivedAt: "2026-01-01T00:00:00Z" })
+      await db.streams.put({
+        ...archivedRoot,
+        lastMessagePreview: {
+          authorId: "user_1",
+          authorType: "user",
+          content: "kept",
+          createdAt: "2026-01-01T00:00:00Z",
+        },
+        _cachedAt: Date.now() - 90000,
+      })
+
+      await applyWorkspaceBootstrap("ws_1", diffBootstrap({ archivedStreams: [archivedRoot] }), Date.now() - 5000)
+      await stampCachedAt(1)
+
+      await applyWorkspaceBootstrap("ws_1", diffBootstrap({ archivedStreams: [archivedRoot] }), Date.now())
+
+      const row = await db.streams.get("stream_arch_diff")
+      expect(row?._cachedAt).toBe(1)
+      expect(row?.lastMessagePreview?.content).toBe("kept")
+    })
+
+    it("unreadState is not rewritten when counters and touch maps are unchanged", async () => {
+      await applyWorkspaceBootstrap("ws_1", diffBootstrap(), Date.now() - 5000)
+      await stampCachedAt(1)
+
+      await applyWorkspaceBootstrap("ws_1", diffBootstrap(), Date.now())
+
+      expect((await db.unreadState.get("ws_1"))?._cachedAt).toBe(1)
+    })
+
+    it("reconnect apply writes no rows for an unchanged workspace snapshot", async () => {
+      await applyReconnectBootstrapBatch("ws_1", diffBootstrap(), new Map(), new Set(), new Set(), Date.now() - 5000)
+      await stampCachedAt(1)
+      const before = await cachedAtSnapshot()
+
+      await applyReconnectBootstrapBatch("ws_1", diffBootstrap(), new Map(), new Set(), new Set(), Date.now())
+
+      expect(await cachedAtSnapshot()).toEqual(before)
+    })
+
+    async function warmThenOlderReconnect(
+      flagOn: boolean,
+      reconnectOverrides: Partial<WorkspaceBootstrap>
+    ): Promise<void> {
+      const flags: WorkspaceBootstrap["featureFlags"] = flagOn
+        ? { workspace: { bootstrapDiff: "on" }, user: {} }
+        : { workspace: {}, user: {} }
+      const warm = (): WorkspaceBootstrap =>
+        diffBootstrap({
+          featureFlags: flags,
+          streamReadState: {
+            stream_d1: { lastReadEventId: "evt_9", lastReadSequence: "9", lastReadAt: "2026-01-02T00:00:00Z" },
+          },
+        })
+
+      await applyWorkspaceBootstrap("ws_1", warm(), Date.now() - 5000)
+      await stampCachedAt(1)
+      const warmAppliedAt = Date.now()
+      await applyWorkspaceBootstrap("ws_1", warm(), warmAppliedAt)
+
+      await applyReconnectBootstrapBatch(
+        "ws_1",
+        diffBootstrap({ featureFlags: flags, ...reconnectOverrides }),
+        new Map(),
+        new Set(),
+        new Set(),
+        warmAppliedAt - 1000
+      )
+    }
+
+    it("a warm apply carrying an older frontier cannot regress a row the diff just confirmed", async () => {
+      await applyWorkspaceBootstrap("ws_1", diffBootstrap(), Date.now() - 5000)
+      await stampCachedAt(1)
+
+      const fetchStartedAt = Date.now() - 1000
+      await applyWorkspaceBootstrap("ws_1", diffBootstrap(), Date.now())
+
+      const stale = diffBootstrap({
+        streamReadState: {
+          stream_d1: { lastReadEventId: "evt_old", lastReadSequence: "2", lastReadAt: "2025-01-01T00:00:00Z" },
+        },
+      })
+      await applyWorkspaceBootstrap("ws_1", stale, fetchStartedAt)
+
+      expect((await db.streamReadState.get("ws_1:stream_d1"))?.lastReadSequence).toBe("3")
+    })
+
+    it("a reconnect carrying an older frontier cannot regress a row the diff just confirmed", async () => {
+      await warmThenOlderReconnect(true, {
+        streamReadState: {
+          stream_d1: { lastReadEventId: "evt_2", lastReadSequence: "2", lastReadAt: "2026-01-01T00:00:00Z" },
+        },
+      })
+
+      expect((await db.streamReadState.get("ws_1:stream_d1"))?.lastReadSequence).toBe("9")
+    })
+
+    it("with bootstrapDiff off, an older reconnect frontier still loses to the freshly written row", async () => {
+      await warmThenOlderReconnect(false, {
+        streamReadState: {
+          stream_d1: { lastReadEventId: "evt_2", lastReadSequence: "2", lastReadAt: "2026-01-01T00:00:00Z" },
+        },
+      })
+
+      expect((await db.streamReadState.get("ws_1:stream_d1"))?.lastReadSequence).toBe("9")
+    })
+
+    it("a reconnect carrying an older displayName cannot clobber a stream row the diff just confirmed", async () => {
+      const base = diffBootstrap()
+      await warmThenOlderReconnect(true, {
+        streams: base.streams.map((s) => (s.id === "stream_d1" ? { ...s, displayName: "Older Name" } : s)),
+      })
+
+      expect((await db.streams.get("stream_d1"))?.displayName).toBe("Stream stream_d1")
+    })
+
+    it("a reconnect carrying an older notificationLevel cannot clobber a membership row the diff just confirmed", async () => {
+      await warmThenOlderReconnect(true, {
+        streamMemberships: [
+          {
+            streamId: "stream_d1",
+            memberId: "member_1",
+            notificationLevel: "mentions",
+            joinedAt: "2026-01-01T00:00:00Z",
+          },
+        ],
+      })
+
+      expect((await db.streamMemberships.get("ws_1:stream_d1"))?.notificationLevel).toBeNull()
+    })
+
+    it("with bootstrapDiff off, every row is rewritten", async () => {
+      const off = (): WorkspaceBootstrap => diffBootstrap({ featureFlags: { workspace: {}, user: {} } })
+      await applyWorkspaceBootstrap("ws_1", off(), Date.now() - 5000)
+      await stampCachedAt(1)
+
+      await applyWorkspaceBootstrap("ws_1", off(), Date.now())
+
+      const snapshot = await cachedAtSnapshot()
+      expect(Object.keys(snapshot).length).toBeGreaterThan(0)
+      expect(Object.entries(snapshot).filter(([, value]) => value === 1)).toEqual([])
     })
   })
 })

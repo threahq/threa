@@ -19,6 +19,8 @@ export const PERF_MARK_NAMES = [
   "bootstrap.seed",
   "bootstrap.publish",
   "bootstrap.rowsWritten",
+  "bootstrap.rowsSkipped",
+  "bootstrap.diff",
   "catchup.entryApply",
   "catchup.replay",
   "catchup.collapse",

@@ -28,6 +28,7 @@ import { streamKeys } from "@/hooks/use-streams"
 import { delegationKeys } from "@/hooks/use-stream-delegations"
 import type { QueryClient } from "@tanstack/react-query"
 import { commitCounterMutation } from "./catch-up-batch"
+import { effectiveFreshness } from "./bootstrap-diff"
 import { mergeReadStateIntoBootstrapCache, putReadStateIdb, toStreamReadFrontier } from "./read-state"
 import {
   applyMovedSourceOrdinal,
@@ -570,7 +571,11 @@ async function persistBootstrapReadState(
 ): Promise<StreamReadFrontier | undefined> {
   if (bootstrap.readState === undefined) return undefined
   const existingRow = await db.streamReadState.get(`${workspaceId}:${streamId}`)
-  if (fetchStartedAt !== undefined && existingRow && existingRow._cachedAt >= fetchStartedAt) {
+  if (
+    fetchStartedAt !== undefined &&
+    existingRow &&
+    effectiveFreshness(workspaceId, "streamReadState", existingRow.id, existingRow._cachedAt) >= fetchStartedAt
+  ) {
     return toStreamReadFrontier(existingRow)
   }
   if (bootstrap.readState === null) {
