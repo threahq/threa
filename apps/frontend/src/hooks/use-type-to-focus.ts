@@ -25,9 +25,9 @@ export function focusAtEnd(el: HTMLElement) {
 function isOnScreen(element: HTMLElement): boolean {
   if (element.getClientRects().length === 0) return false
   const rect = element.getBoundingClientRect()
-  const width = window.visualViewport?.width ?? window.innerWidth
-  const height = window.visualViewport?.height ?? window.innerHeight
-  return rect.bottom > 0 && rect.right > 0 && rect.top < height && rect.left < width
+  // Layout-viewport bounds, matching the rect: visualViewport shrinks under
+  // pinch-zoom / soft keyboard and would judge a visible editor off-screen.
+  return rect.bottom > 0 && rect.right > 0 && rect.top < window.innerHeight && rect.left < window.innerWidth
 }
 
 /**
@@ -46,8 +46,8 @@ export function findVisibleZoneEditor(zone: HTMLElement | null): HTMLElement | n
     }, null)
 }
 
-function zoneEditor(zone: "main" | "panel"): HTMLElement | null {
-  return findVisibleZoneEditor(document.querySelector<HTMLElement>(`[data-editor-zone="${zone}"]`))
+function zoneContainer(zone: "main" | "panel"): HTMLElement | null {
+  return document.querySelector<HTMLElement>(`[data-editor-zone="${zone}"]`)
 }
 
 /**
@@ -112,8 +112,21 @@ export function useTypeToFocus() {
       // Last-clicked zone first, then the other one — the fallback runs both
       // ways: opening a conversation from a board card leaves the last click in
       // main, and the panel that just opened is where typing must land.
+      //
+      // Except: a rendered panel with no editor is a decision, not an absence
+      // (an archived conversation renders ComposerDisabledNotice). Falling
+      // through then appends the keystroke to some board card's open draft and
+      // scrolls the feed to it. Main is a feed of zero-or-many card composers,
+      // so its emptiness carries no such meaning and still falls through.
+      const panelPresent = zoneContainer("panel") !== null
+      if (lastZoneRef.current === "panel" && panelPresent) {
+        const editor = findVisibleZoneEditor(zoneContainer("panel"))
+        if (editor) focusAtEnd(editor)
+        return
+      }
       const other = lastZoneRef.current === "main" ? "panel" : "main"
-      const editor = zoneEditor(lastZoneRef.current) ?? zoneEditor(other)
+      const editor =
+        findVisibleZoneEditor(zoneContainer(lastZoneRef.current)) ?? findVisibleZoneEditor(zoneContainer(other))
       if (editor) focusAtEnd(editor)
     }
 

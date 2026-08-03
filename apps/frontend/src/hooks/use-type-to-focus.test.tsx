@@ -171,10 +171,60 @@ describe("useTypeToFocus", () => {
     press("a")
     expect(document.activeElement).toBe(panel)
 
-    panel.remove()
+    // The whole panel goes away (the conversation closed), not just its editor —
+    // a rendered panel without an editor deliberately keeps the keystroke.
+    document.querySelector("aside")!.remove()
     main.blur()
     press("a")
     expect(document.activeElement).toBe(main)
+  })
+
+  it("a rendered panel with no composer (archived: the disabled notice) swallows the key instead of typing into a board card", () => {
+    buildDom(
+      '<main data-editor-zone="main"><div contenteditable="true" id="m"></div></main>' +
+        '<aside data-editor-zone="panel"><p>Replies are closed on an archived conversation.</p></aside>'
+    )
+    const main = document.getElementById("m") as HTMLElement
+    setVisible(main, true)
+
+    document.querySelector("aside")!.dispatchEvent(new MouseEvent("click", { bubbles: true }))
+    press("a")
+
+    expect(document.activeElement).not.toBe(main)
+    expect(document.activeElement).toBe(document.body)
+  })
+
+  it("no panel at all: the key still falls back to main's editor", () => {
+    buildDom(
+      '<aside data-editor-zone="panel"><div contenteditable="true" id="p"></div></aside>' +
+        '<main data-editor-zone="main"><div contenteditable="true" id="m"></div></main>'
+    )
+    const panel = document.getElementById("p") as HTMLElement
+    const main = document.getElementById("m") as HTMLElement
+    setVisible(panel, true)
+    setVisible(main, true)
+
+    document.querySelector("aside")!.dispatchEvent(new MouseEvent("click", { bubbles: true }))
+    document.querySelector("aside")!.remove()
+    press("a")
+
+    expect(document.activeElement).toBe(main)
+  })
+
+  it("a visible editor stays eligible when the visual viewport shrinks under the layout viewport (pinch-zoom / soft keyboard)", () => {
+    buildDom('<main data-editor-zone="main"><div contenteditable="true" id="m"></div></main>')
+    const main = document.getElementById("m") as HTMLElement
+    setVisible(main, true)
+    const original = window.visualViewport
+    Object.defineProperty(window, "visualViewport", {
+      configurable: true,
+      value: { width: 50, height: 50 },
+    })
+
+    press("a")
+
+    expect(document.activeElement).toBe(main)
+    Object.defineProperty(window, "visualViewport", { configurable: true, value: original })
   })
 
   it("skips an open card composer scrolled out of the viewport, taking the on-screen one instead", () => {

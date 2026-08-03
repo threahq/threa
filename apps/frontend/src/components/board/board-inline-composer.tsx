@@ -263,6 +263,7 @@ export function InlineComposerForm({
   // composer use, so a long reply gets the same full-document editor instead of
   // being stuck in the compact card-reply box.
   const [expanded, setExpanded] = useState(false)
+  const pendingRefocusRef = useRef(false)
   const overlayStreamName = useStreamName(workspaceId, streamId ?? "")
   const OverlayStreamGlyph = hostStream ? STREAM_ICONS[hostStream.type] : null
 
@@ -411,8 +412,22 @@ export function InlineComposerForm({
     ) {
       return
     }
+    // Both instances write `composerControlRef`, and MessageComposer.focus()
+    // defers a frame: focusing now would run against the overlay handle after
+    // the overlay has unmounted. Wait for `expanded === false` to commit, so the
+    // ref holds the surviving in-place editor.
+    if (expanded) {
+      pendingRefocusRef.current = true
+      return
+    }
     composerControlRef.current?.focus()
   }
+
+  useEffect(() => {
+    if (expanded || !pendingRefocusRef.current) return
+    pendingRefocusRef.current = false
+    composerControlRef.current?.focus()
+  }, [expanded])
 
   const handleSubmit = async (editorContent?: JSONContent) => {
     if (!composer.canSend) return

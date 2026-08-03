@@ -1,6 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { describe, it, expect, vi, beforeEach } from "vitest"
-import { useEffect, useState, type ReactElement, type ReactNode } from "react"
+import { useEffect, useRef, useState, type ReactElement, type ReactNode } from "react"
 import { render, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { InlineComposerForm } from "./board-inline-composer"
@@ -28,10 +28,27 @@ const EditorStub = (props: MessageComposerProps) => {
   // The imperative focus bridge the form uses to return focus to the editor
   // after a send that keeps the form mounted.
   const { composerRef } = props
+  // Mirrors MessageComposer.focus(): it defers a frame and no-ops once its own
+  // editor is gone — so a handle focused just before its instance unmounts
+  // records nothing, which is exactly the overlay-send bug.
+  const instance = useRef({ kind: props.expanded ? "overlay" : "inplace", mounted: true })
+  useEffect(() => {
+    const self = instance.current
+    self.mounted = true
+    return () => {
+      self.mounted = false
+    }
+  }, [])
   useEffect(() => {
     if (!composerRef) return
     composerRef.current = {
-      focus: composerFocus,
+      focus: () => {
+        const self = instance.current
+        requestAnimationFrame(() => {
+          if (!self.mounted) return
+          composerFocus(self.kind)
+        })
+      },
       focusAfterQuoteReply: vi.fn(),
       getEditor: () => null,
       openSnippetEditor: vi.fn(),
@@ -99,11 +116,11 @@ let scheduleMutateAsync: ReturnType<typeof vi.fn>
 // vi.fn wrapper so tests can read the props the form rendered the editor with.
 let editorSpy: ReturnType<typeof vi.fn>
 // Focus calls the form makes through the composer control handle.
-let composerFocus: ReturnType<typeof vi.fn<() => void>>
+let composerFocus: ReturnType<typeof vi.fn<(kind: string) => void>>
 
 beforeEach(() => {
   Element.prototype.scrollIntoView ??= () => {}
-  composerFocus = vi.fn<() => void>()
+  composerFocus = vi.fn<(kind: string) => void>()
   editorSpy = vi.fn(EditorStub)
   spyOnExport(composerModule, "MessageComposer").mockReturnValue(editorSpy as never)
   const stub = draftComposerStub()
@@ -452,7 +469,8 @@ describe("InlineComposerForm refocus-after-send", () => {
     lastComposerProps().onSubmit()
 
     await waitFor(() => expect(screen.getByTestId("editor-stub")).toHaveAttribute("data-expanded", "false"))
-    expect(composerFocus).toHaveBeenCalled()
+    // The surviving in-place instance, not the overlay handle that is about to unmount.
+    await waitFor(() => expect(composerFocus).toHaveBeenCalledWith("inplace"))
     expect(onClose).not.toHaveBeenCalled()
   })
 
