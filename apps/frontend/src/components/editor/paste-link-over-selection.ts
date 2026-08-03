@@ -29,22 +29,52 @@ function pastedLinkHref(text: string): string | null {
   return link.href
 }
 
+function selectionLinkConflicts(editor: Editor): Set<string> | null {
+  const { from, to } = editor.state.selection
+  const linkType = editor.state.schema.marks.link
+  const conflictingMarks = new Set<string>()
+  let hasText = false
+  let unsupported = false
+
+  editor.state.doc.nodesBetween(from, to, (node, _pos, parent) => {
+    if (node.isInline && !node.isText) {
+      unsupported = true
+      return false
+    }
+    if (!node.isText) return true
+
+    hasText = true
+    if (!parent?.type.allowsMarkType(linkType)) {
+      unsupported = true
+      return false
+    }
+    for (const mark of node.marks) {
+      if (mark.type.excludes(linkType) || linkType.excludes(mark.type)) conflictingMarks.add(mark.type.name)
+    }
+    return true
+  })
+
+  return hasText && !unsupported ? conflictingMarks : null
+}
+
 export function pasteLinkOverSelection(editor: Editor, text: string): boolean {
-  const { from, to, empty } = editor.state.selection
-  if (empty || !editor.state.doc.textBetween(from, to)) return false
+  if (editor.state.selection.empty) return false
 
   const href = pastedLinkHref(text)
-  if (!href) return false
+  const conflictingMarks = selectionLinkConflicts(editor)
+  if (!href || !conflictingMarks) return false
 
-  return editor.commands.setLink({ href })
+  const chain = editor.chain()
+  for (const mark of conflictingMarks) chain.unsetMark(mark)
+  return chain.setLink({ href }).run()
 }
 
 export function handleBeforeInputLinkPaste(editor: Editor, event: InputEvent): boolean {
-  const isReplacement = event.inputType === "insertReplacementText"
-  const targetRanges = typeof event.getTargetRanges === "function" ? event.getTargetRanges() : []
-  const replacesTargetRange = isReplacement && targetRanges.some((range) => !range.collapsed)
-  const canBePaste = event.inputType === "insertText" || event.inputType === "insertFromPaste" || isReplacement
-  if (!canBePaste || replacesTargetRange || editor.view.composing) return false
+  const canBePaste =
+    event.inputType === "insertText" ||
+    event.inputType === "insertFromPaste" ||
+    event.inputType === "insertReplacementText"
+  if (!canBePaste || editor.view.composing) return false
 
   const text = event.data ?? event.dataTransfer?.getData("text/plain")
   if (!text || !pasteLinkOverSelection(editor, text)) return false

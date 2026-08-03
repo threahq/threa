@@ -13,7 +13,13 @@ afterEach(() => {
 function createTestEditor(markdown: string): Editor {
   const editor = new Editor({
     element: document.createElement("div"),
-    extensions: createEditorExtensions({ placeholder: "Type a message..." }),
+    extensions: createEditorExtensions({
+      placeholder: "Type a message...",
+      mentionSuggestion: {
+        items: () => [],
+        render: () => ({ onStart: () => {}, onUpdate: () => {}, onExit: () => {}, onKeyDown: () => false }),
+      },
+    }),
     content: parseMarkdown(markdown),
   })
   openEditors.push(editor)
@@ -39,6 +45,22 @@ describe("pasteLinkOverSelection", () => {
 
     expect(pasteLinkOverSelection(editor, "https://example.com/docs")).toBe(true)
     expect(serializeToMarkdown(editor.getJSON())).toBe("Read **[the docs](https://example.com/docs)** today")
+  })
+
+  it("links a mixed inline-code selection as one phrase by dropping the incompatible code mark", () => {
+    const editor = createTestEditor("plain `code` tail")
+    editor.commands.setTextSelection({ from: 1, to: editor.state.doc.content.size - 1 })
+
+    expect(pasteLinkOverSelection(editor, "https://example.com")).toBe(true)
+    expect(serializeToMarkdown(editor.getJSON())).toBe("[plain code tail](https://example.com)")
+  })
+
+  it("declines selections containing inline atoms instead of creating nested links", () => {
+    const editor = createTestEditor("ask [@alice](user:usr_01) docs")
+    editor.commands.setTextSelection({ from: 1, to: editor.state.doc.content.size - 1 })
+
+    expect(pasteLinkOverSelection(editor, "https://example.com")).toBe(false)
+    expect(serializeToMarkdown(editor.getJSON())).toBe("ask [@alice](user:usr_01) docs")
   })
 
   it("normalizes bare domains and email addresses without misclassifying URLs with userinfo", () => {
@@ -89,23 +111,23 @@ describe("handleBeforeInputLinkPaste", () => {
   }
 
   it.each([
-    ["insertText", "https://example.com", ""],
-    ["insertFromPaste", "https://example.com", ""],
-    ["insertFromPaste", null, "https://example.com"],
-    ["insertReplacementText", "https://example.com", ""],
-  ])("links selected text for %s beforeinput events", (inputType, data, dataTransferText) => {
+    ["insertText", "https://example.com", "", true],
+    ["insertFromPaste", "https://example.com", "", true],
+    ["insertFromPaste", null, "https://example.com", true],
+    ["insertReplacementText", "https://example.com", "", false],
+  ])("links selected text for %s beforeinput events", (inputType, data, dataTransferText, collapsed) => {
     const editor = createTestEditor("selected text")
     selectText(editor, "selected")
-    const inputEvent = event(inputType, data, dataTransferText)
+    const inputEvent = event(inputType, data, dataTransferText, collapsed)
 
     expect(handleBeforeInputLinkPaste(editor, inputEvent)).toBe(true)
     expect(inputEvent.preventDefault).toHaveBeenCalledOnce()
     expect(serializeToMarkdown(editor.getJSON())).toBe("[selected](https://example.com) text")
   })
 
-  it("leaves spellcheck replacement ranges to the browser", () => {
+  it("leaves spellcheck replacement ranges to the browser when the editor selection is collapsed", () => {
     const editor = createTestEditor("selected text")
-    selectText(editor, "selected")
+    editor.commands.focus("end")
     const inputEvent = event("insertReplacementText", "https://example.com", "", false)
 
     expect(handleBeforeInputLinkPaste(editor, inputEvent)).toBe(false)
