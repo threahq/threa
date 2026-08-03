@@ -65,6 +65,20 @@ function createWrapper(
   }
 }
 
+/**
+ * The store hooks read IndexedDB and fall back to the in-memory cache only until
+ * the live query resolves — seeding the cache alone means the first emission
+ * clears the seeded identity again. Mirror the rows those hooks re-read.
+ */
+async function seedWorkspaceCacheAndIdb(
+  workspaceId: string,
+  seed: Parameters<typeof seedWorkspaceCache>[1]
+): Promise<void> {
+  seedWorkspaceCache(workspaceId, seed)
+  await db.workspaceUsers.bulkPut(seed.users)
+  if (seed.dmPeers.length > 0) await db.dmPeers.bulkPut(seed.dmPeers)
+}
+
 describe("useStreamOrDraft real stream send", () => {
   beforeEach(async () => {
     await clearAllCachedData()
@@ -93,7 +107,7 @@ describe("useStreamOrDraft real stream send", () => {
       lastMessagePreview: null,
     }
 
-    seedWorkspaceCache("ws_1", {
+    await seedWorkspaceCacheAndIdb("ws_1", {
       workspace: {
         id: "ws_1",
         name: "Workspace",
@@ -328,7 +342,7 @@ describe("useStreamOrDraft draft DM send", () => {
       createdAt,
     })
 
-    seedWorkspaceCache("ws_1", {
+    await seedWorkspaceCacheAndIdb("ws_1", {
       workspace: {
         id: "ws_1",
         name: "Workspace",
@@ -539,7 +553,7 @@ describe("useStreamOrDraft scratchpad rename (top-bar editor path)", () => {
       _cachedAt: Date.now(),
       ...streamOverrides,
     }
-    seedWorkspaceCache("ws_1", {
+    await seedWorkspaceCacheAndIdb("ws_1", {
       workspace: {
         id: "ws_1",
         name: "Workspace",

@@ -106,12 +106,19 @@ function publishWorkspaceCache(workspaceId: string): void {
   emitWorkspaceCacheChange(workspaceId)
 }
 
-function useWorkspaceCacheSignal(workspaceId: string | undefined): number {
-  return useSyncExternalStore(
-    (listener) => subscribeWorkspaceCache(workspaceId, listener),
-    () => getWorkspaceCacheSnapshot(workspaceId),
-    () => getWorkspaceCacheSnapshot(workspaceId)
+/**
+ * Wake the caller on in-memory cache publications, but only while it still reads
+ * the cache — once the table's live query has resolved, the cache no longer
+ * contributes to the returned value, and waking for it re-renders every reader a
+ * second time for one change (the emission already woke them).
+ */
+function useWorkspaceCacheSignal(workspaceId: string | undefined, active: boolean): number {
+  const subscribe = useCallback(
+    (listener: () => void) => (active ? subscribeWorkspaceCache(workspaceId, listener) : () => {}),
+    [workspaceId, active]
   )
+  const getSnapshot = useCallback(() => (active ? getWorkspaceCacheSnapshot(workspaceId) : 0), [workspaceId, active])
+  return useSyncExternalStore(subscribe, getSnapshot, getSnapshot)
 }
 
 export function hasSeededWorkspaceCache(workspaceId: string): boolean {
@@ -360,7 +367,9 @@ function useWorkspaceTable<K extends WorkspaceTableKey>(
     () => (workspaceId ? getWorkspaceTableSnapshot(workspaceId, tableKey, token) : undefined),
     [workspaceId, tableKey, token]
   )
-  return useSyncExternalStore(subscribe, getSnapshot, getSnapshot)
+  const live = useSyncExternalStore(subscribe, getSnapshot, getSnapshot)
+  useWorkspaceCacheSignal(workspaceId, live === undefined)
+  return live
 }
 
 function useArrayStoreHook<K extends WorkspaceTableKey>(
@@ -384,13 +393,11 @@ function useSingletonStoreHook<K extends WorkspaceTableKey>(
 }
 
 export function useWorkspaceFromStore(workspaceId: string | undefined): CachedWorkspace | undefined {
-  useWorkspaceCacheSignal(workspaceId)
   const cached = workspaceId ? cache.workspaces.get(workspaceId) : undefined
   return useSingletonStoreHook(workspaceId, "workspace", cached)
 }
 
 export function useWorkspaceUsers(workspaceId: string | undefined): CachedWorkspaceUser[] {
-  useWorkspaceCacheSignal(workspaceId)
   const cached = workspaceId ? (cache.users.get(workspaceId) ?? EMPTY_ROWS) : EMPTY_ROWS
   return useArrayStoreHook(workspaceId, "users", cached)
 }
@@ -402,7 +409,6 @@ export function useWorkspaceUsers(workspaceId: string | undefined): CachedWorksp
  * to the post-overlay hook would re-run it on every name that lands.
  */
 export function useWorkspaceStreamsRaw(workspaceId: string | undefined): CachedStream[] {
-  useWorkspaceCacheSignal(workspaceId)
   const cached = workspaceId ? (cache.streams.get(workspaceId) ?? EMPTY_ROWS) : EMPTY_ROWS
   return useArrayStoreHook(workspaceId, "streams", cached)
 }
@@ -440,19 +446,16 @@ export function useWorkspaceStreams(workspaceId: string | undefined): CachedStre
 }
 
 export function useWorkspaceStreamMemberships(workspaceId: string | undefined): CachedStreamMembership[] {
-  useWorkspaceCacheSignal(workspaceId)
   const cached = workspaceId ? (cache.memberships.get(workspaceId) ?? EMPTY_ROWS) : EMPTY_ROWS
   return useArrayStoreHook(workspaceId, "memberships", cached)
 }
 
 export function useWorkspaceStreamReadStates(workspaceId: string | undefined): CachedStreamReadState[] {
-  useWorkspaceCacheSignal(workspaceId)
   const cached = workspaceId ? (cache.readStates.get(workspaceId) ?? EMPTY_ROWS) : EMPTY_ROWS
   return useArrayStoreHook(workspaceId, "readStates", cached)
 }
 
 export function useWorkspaceDmPeers(workspaceId: string | undefined): CachedDmPeer[] {
-  useWorkspaceCacheSignal(workspaceId)
   const cached = workspaceId ? (cache.dmPeers.get(workspaceId) ?? EMPTY_ROWS) : EMPTY_ROWS
   return useArrayStoreHook(workspaceId, "dmPeers", cached)
 }
@@ -475,49 +478,41 @@ export function upsertWorkspacePersonaCache(workspaceId: string, persona: Cached
 }
 
 export function useWorkspacePersonas(workspaceId: string | undefined): CachedPersona[] {
-  useWorkspaceCacheSignal(workspaceId)
   const cached = workspaceId ? (cache.personas.get(workspaceId) ?? EMPTY_ROWS) : EMPTY_ROWS
   return useArrayStoreHook(workspaceId, "personas", cached)
 }
 
 export function useWorkspaceBots(workspaceId: string | undefined): CachedBot[] {
-  useWorkspaceCacheSignal(workspaceId)
   const cached = workspaceId ? (cache.bots.get(workspaceId) ?? EMPTY_ROWS) : EMPTY_ROWS
   return useArrayStoreHook(workspaceId, "bots", cached)
 }
 
 export function useWorkspaceLabels(workspaceId: string | undefined): CachedLabel[] {
-  useWorkspaceCacheSignal(workspaceId)
   const cached = workspaceId ? (cache.labels.get(workspaceId) ?? EMPTY_ROWS) : EMPTY_ROWS
   return useArrayStoreHook(workspaceId, "labels", cached)
 }
 
 export function useWorkspaceLabelAssignments(workspaceId: string | undefined): CachedLabelAssignment[] {
-  useWorkspaceCacheSignal(workspaceId)
   const cached = workspaceId ? (cache.labelAssignments.get(workspaceId) ?? EMPTY_ROWS) : EMPTY_ROWS
   return useArrayStoreHook(workspaceId, "labelAssignments", cached)
 }
 
 export function useWorkspaceUnreadState(workspaceId: string | undefined): CachedUnreadState | undefined {
-  useWorkspaceCacheSignal(workspaceId)
   const cached = workspaceId ? cache.unreadState.get(workspaceId) : undefined
   return useSingletonStoreHook(workspaceId, "unreadState", cached)
 }
 
 export function useWorkspaceUserPreferences(workspaceId: string | undefined): CachedUserPreferences | undefined {
-  useWorkspaceCacheSignal(workspaceId)
   const cached = workspaceId ? cache.userPreferences.get(workspaceId) : undefined
   return useSingletonStoreHook(workspaceId, "userPreferences", cached)
 }
 
 export function useWorkspaceSidebarConfig(workspaceId: string | undefined): CachedSidebarConfig | undefined {
-  useWorkspaceCacheSignal(workspaceId)
   const cached = workspaceId ? cache.sidebarConfig.get(workspaceId) : undefined
   return useSingletonStoreHook(workspaceId, "sidebarConfig", cached)
 }
 
 export function useWorkspaceMetadata(workspaceId: string | undefined): CachedWorkspaceMetadata | undefined {
-  useWorkspaceCacheSignal(workspaceId)
   const cached = workspaceId ? cache.metadata.get(workspaceId) : undefined
   return useSingletonStoreHook(workspaceId, "metadata", cached)
 }
