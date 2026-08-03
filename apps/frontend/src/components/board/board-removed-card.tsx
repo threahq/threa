@@ -13,6 +13,8 @@ interface BoardRemovedCardProps {
   dmPeerUserId?: string | null
   /** The conversation that now holds the opening message, or null when none does. */
   successor: RemovedSuccessor | null
+  /** Overlay copy when there is no successor. Defaults to the left-the-board wording. */
+  emptyLabel?: string
 }
 
 /**
@@ -30,6 +32,7 @@ export function BoardRemovedCard({
   streamType,
   dmPeerUserId,
   successor,
+  emptyLabel = "No longer on your board.",
 }: BoardRemovedCardProps) {
   const { getPanelUrl } = usePanel()
 
@@ -58,7 +61,7 @@ export function BoardRemovedCard({
               </Link>
             </span>
           ) : (
-            <span>No longer on your board.</span>
+            <span>{emptyLabel}</span>
           )}
         </div>
       </div>

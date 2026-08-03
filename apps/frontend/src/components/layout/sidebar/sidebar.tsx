@@ -71,6 +71,7 @@ import {
   toggleIncludeSearch,
   typeFocusSearch,
   unreadFocusSearch,
+  clearAxisSearch,
 } from "@/components/board/board-filter-params"
 import { isBoardPath, type SidebarBoardMode } from "./board-sidebar-mode"
 import { useBoardSidebarStats, ZERO_BOARD_STREAM_STATS } from "@/hooks/use-board-sidebar-stats"
@@ -362,6 +363,7 @@ export function Sidebar({ workspaceId }: SidebarProps) {
       labelFocusHref: (labelId) => `${location.pathname}${labelFocusSearch(boardSearch, labelId)}`,
       typeFocusHref: (type) => `${location.pathname}${typeFocusSearch(boardSearch, type)}`,
       unreadFocusHref: () => `${location.pathname}${unreadFocusSearch(boardSearch)}`,
+      clearAxisHref: (param) => `${location.pathname}${clearAxisSearch(boardSearch, param)}`,
       setMuted: (streamId, mute) => (mute ? muteStream.mutate(streamId) : unmuteStream.mutate(streamId)),
       statsForStream: (streamId) =>
         boardSidebarStats ? (boardSidebarStats.byStream.get(streamId) ?? ZERO_BOARD_STREAM_STATS) : null,

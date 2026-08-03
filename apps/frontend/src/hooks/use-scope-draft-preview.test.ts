@@ -5,6 +5,7 @@ import { db } from "@/db"
 import {
   useScopeDraftPreview,
   useBoardSubtopicDraftIndex,
+  useBoardCheckedOutDraftScopes,
   useBoardDraftsReady,
   __clearBoardDraftsRegistry,
 } from "./use-scope-draft-preview"
@@ -89,5 +90,32 @@ describe("useBoardSubtopicDraftIndex", () => {
       preview: "subtopic body",
       isCheckedOut: false,
     })
+  })
+})
+
+describe("useBoardCheckedOutDraftScopes", () => {
+  it("holds an emptied checked-out scope the preview index drops, and releases it when the row goes", async () => {
+    await seed("draft_1", scope, "body", 1000)
+    await db.composerLoaded.put({ scope, workspaceId, draftId: "draft_1" })
+
+    const { result } = renderHook(() => useBoardCheckedOutDraftScopes(workspaceId))
+    const preview = renderHook(() => useScopeDraftPreview(workspaceId, scope))
+    await waitFor(() => expect([...result.current]).toEqual([scope]))
+
+    const row = await db.drafts.get("draft_1")
+    await db.drafts.put({ ...row!, contentJson: doc(""), clientUpdatedAt: 2000 })
+    await waitFor(() => expect(preview.result.current).toBeNull())
+    expect([...result.current]).toEqual([scope])
+
+    await db.drafts.delete("draft_1")
+    await waitFor(() => expect([...result.current]).toEqual([]))
+  })
+
+  it("excludes a scope with no loaded pointer", async () => {
+    await seed("draft_1", scope, "body", 1000)
+    const { result } = renderHook(() => useBoardCheckedOutDraftScopes(workspaceId))
+    const ready = renderHook(() => useBoardDraftsReady(workspaceId))
+    await waitFor(() => expect(ready.result.current).toBe(true))
+    expect([...result.current]).toEqual([])
   })
 })

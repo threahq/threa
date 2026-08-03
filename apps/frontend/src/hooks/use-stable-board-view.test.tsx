@@ -24,6 +24,7 @@ function filterOf(over: Partial<BoardViewFilter> = {}): BoardViewFilter {
     labels: null,
     excludeLabels: null,
     unread: null,
+    drafts: null,
     showArchived: false,
     archivedRootIds: new Set<string>(),
     ...over,
@@ -47,6 +48,22 @@ function typesFilter(types: BoardScopeStreamType[]): BoardViewFilter {
 
 function unreadFilter(streamIds: string[]): BoardViewFilter {
   return filterOf({ unread: { key: "true", streamIds: new Set(streamIds) } })
+}
+
+function draftsFilter(conversationIds: string[], subtopicMessageIds: string[] = []): BoardViewFilter {
+  return filterOf({
+    drafts: {
+      key: "true",
+      conversationIds: new Set(conversationIds),
+      subtopicMessageIds: new Set(subtopicMessageIds),
+    },
+  })
+}
+
+/** A post whose conversation carries these message ids (sub-topic draft match). */
+function messagesPost(id: string, activityMs: number, messageIds: string[]): CachedBoardPost {
+  const base = post(id, activityMs)
+  return { ...base, conversation: { ...base.conversation, messageIds } } as unknown as CachedBoardPost
 }
 
 function post(id: string, activityMs: number): CachedBoardPost {
@@ -985,6 +1002,71 @@ describe("useStableBoardView — unread filter", () => {
     // key, mirroring the label-scope re-resolution guarantee.
     rerender({ filter: unreadFilter(["stream_x", "stream_other"]) })
     expect(result.current.posts.map((p) => p.id)).toEqual(["a"])
+  })
+})
+
+describe("useStableBoardView — drafts filter", () => {
+  let liveValue: CachedBoardPost[] | undefined
+  function mockLive(value: CachedBoardPost[] | undefined) {
+    liveValue = value
+    vi.spyOn(boardStoreModule, "useBoardPosts").mockImplementation(() => liveValue)
+  }
+  afterEach(() => vi.restoreAllMocks())
+
+  it("shows only conversations carrying a draft", () => {
+    mockLive(feed(post("a", 300), post("b", 200)))
+    const { result } = renderHook(() =>
+      useStableBoardView("ws_1", draftsFilter(["a"]), undefined, undefined, undefined)
+    )
+    expect(result.current.posts.map((p) => p.id)).toEqual(["a"])
+  })
+
+  it("matches a conversation whose message carries a sub-topic draft", () => {
+    mockLive(feed(messagesPost("a", 300, ["msg_1", "msg_2"]), messagesPost("b", 200, ["msg_3"])))
+    const { result } = renderHook(() =>
+      useStableBoardView("ws_1", draftsFilter([], ["msg_2"]), undefined, undefined, undefined)
+    )
+    expect(result.current.posts.map((p) => p.id)).toEqual(["a"])
+  })
+
+  it("renders a resolved-draft card with the removal treatment in place, then drops it on the next commit", () => {
+    mockLive(feed(post("a", 300), post("b", 200)))
+    const { result, rerender } = renderHook(
+      ({ filter }) => useStableBoardView("ws_1", filter, undefined, undefined, undefined),
+      { initialProps: { filter: draftsFilter(["a", "b"]) } }
+    )
+    expect(result.current.posts.map((p) => p.id)).toEqual(["a", "b"])
+
+    // "a"'s draft resolves DURING the send: it sheds immediately, but through
+    // the removal path — the row keeps its slot and its mounted subtree (the
+    // composer that is still sending) instead of vanishing mid-send. "b" still
+    // carries a draft and stays live.
+    rerender({ filter: draftsFilter(["b"]) })
+    expect(result.current.posts.map((p) => p.id)).toEqual(["a", "b"])
+    expect([...result.current.removedIds]).toEqual(["a"])
+    expect([...result.current.draftResolvedIds]).toEqual(["a"])
+    // Still in the raw feed, so no merge successor is claimed for it.
+    expect(result.current.removedSuccessorById.has("a")).toBe(false)
+
+    act(() => result.current.commit())
+    expect(result.current.posts.map((p) => p.id)).toEqual(["b"])
+    expect(result.current.removedIds.size).toBe(0)
+  })
+
+  it("a drafts re-resolution (same `?drafts=true` selection) never resets the frozen view", () => {
+    mockLive(feed(post("a", 300)))
+    const { result, rerender } = renderHook(
+      ({ filter }) => useStableBoardView("ws_1", filter, undefined, undefined, undefined),
+      { initialProps: { filter: draftsFilter(["a"]) } }
+    )
+    act(() => result.current.commit())
+
+    act(() => mockLive(feed(post("new", 500), post("a", 300))))
+    rerender({ filter: draftsFilter(["a", "new"]) })
+    // Still frozen: the newcomer waits behind the pill instead of a view reset
+    // committing it wholesale.
+    expect(result.current.posts.map((p) => p.id)).toEqual(["a"])
+    expect(result.current.newCount).toBe(1)
   })
 })
 

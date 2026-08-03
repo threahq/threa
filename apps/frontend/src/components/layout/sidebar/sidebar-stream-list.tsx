@@ -9,7 +9,17 @@ import {
   type DragEndEvent,
   type DragStartEvent,
 } from "@dnd-kit/core"
+import { useLocation } from "react-router-dom"
+import { MAX_BOARD_SCOPE_STREAMS } from "@threa/types"
 import { useSidebar, type CollapseState } from "@/contexts"
+import { useBoardSelection } from "@/hooks/use-board-selection"
+import {
+  BOARD_LABEL_PARAM,
+  BOARD_SCOPE_PARAM,
+  BOARD_TYPE_PARAM,
+  BOARD_UNREAD_PARAM,
+  BOARD_UNREAD_ON,
+} from "@/components/board/board-filter-params"
 import { Button } from "@/components/ui/button"
 import { LabelChip } from "@/components/labels/label-chip"
 import { useInputMode } from "@/hooks/use-input-mode"
@@ -37,6 +47,19 @@ const MORE_DEFAULT: CollapseState = "collapsed"
 /** Key for the inline "more" expander of a parent section. */
 function moreKey(parent: string): string {
   return `${parent}:more`
+}
+
+/** The board's axis is filtered to exactly this one value — what makes a section
+ *  header's filter read as active (and its click un-toggle). */
+function isSoleValue<T>(selected: readonly T[], value: T): boolean {
+  return selected.length === 1 && selected[0] === value
+}
+
+/** The board's `?in=` scope is exactly this section's streams, order-insensitive. */
+function sameMembers(selected: readonly string[], ids: readonly string[]): boolean {
+  const wanted = new Set(ids)
+  if (selected.length !== wanted.size || wanted.size === 0) return false
+  return selected.every((id) => wanted.has(id))
 }
 
 interface AddWiring {
@@ -153,6 +176,11 @@ export function SidebarStreamList({
   // Opening a label from its section header should close the sidebar on mobile,
   // matching stream rows and quick links (no-op on desktop).
   const { collapseOnMobile } = useSidebar()
+  // The live board selection, so a section header can tell whether the board is
+  // already filtered to its own axis (INV-35: the same derivation the board block
+  // and the filter chips read).
+  const { selection } = useBoardSelection()
+  const unreadFilterOn = new URLSearchParams(useLocation().search).get(BOARD_UNREAD_PARAM) === BOARD_UNREAD_ON
   const [draggingStreamId, setDraggingStreamId] = useState<string | null>(null)
   // Distance constraint so a click still navigates the row's link — a drag only
   // begins once the pointer has moved past the threshold.
@@ -269,20 +297,31 @@ export function SidebarStreamList({
           // § "Feature parity").
           let titleHref = label ? `/w/${workspaceId}/labels/${label.id}` : undefined
           let titleActionLabel: string | undefined = undefined
+          // Board mode: the affordance is a FILTER, so it also un-toggles —
+          // when the board is already filtered to exactly this section's axis the
+          // link points at the clearing URL and the icon reads active.
+          let filterActive = false
           if (label && boardMode) {
-            titleHref = boardMode.labelFocusHref(label.id)
-            titleActionLabel = `Filter board by ${label.name}`
+            filterActive = isSoleValue(selection.scopeLabelIds, label.id)
+            titleHref = filterActive ? boardMode.clearAxisHref(BOARD_LABEL_PARAM) : boardMode.labelFocusHref(label.id)
+            titleActionLabel = filterActive ? `Clear board filter ${label.name}` : `Filter board by ${label.name}`
           }
           // Board mode only, mirroring the label case above: a type section
           // (Channels/DMs/Scratchpads) focuses the board's type axis (`?is=`),
           // and Unread focuses the unread axis (`?unread=true`) — both live
           // aggregate filters, not a one-time snapshot of the current ids.
           if (boardMode && section.spec.kind === "type") {
-            titleHref = boardMode.typeFocusHref(section.spec.streamType)
-            titleActionLabel = `Filter board by ${presentation.label}`
+            filterActive = isSoleValue(selection.scopeStreamTypes, section.spec.streamType)
+            titleHref = filterActive
+              ? boardMode.clearAxisHref(BOARD_TYPE_PARAM)
+              : boardMode.typeFocusHref(section.spec.streamType)
+            titleActionLabel = filterActive
+              ? `Clear board filter ${presentation.label}`
+              : `Filter board by ${presentation.label}`
           } else if (boardMode && section.spec.kind === "unread") {
-            titleHref = boardMode.unreadFocusHref()
-            titleActionLabel = "Filter board by unread"
+            filterActive = unreadFilterOn
+            titleHref = filterActive ? boardMode.clearAxisHref(BOARD_UNREAD_PARAM) : boardMode.unreadFocusHref()
+            titleActionLabel = filterActive ? "Clear board unread filter" : "Filter board by unread"
           }
           const headerLabel = label ? label.name : presentation.label
 
@@ -294,7 +333,27 @@ export function SidebarStreamList({
           // equivalent, so scoping to a frozen id snapshot would be a downgrade.
           const canScopeAll =
             !!boardMode && (section.spec.kind === "smart" || section.spec.kind === "custom") && items.length > 0
-          const scopeAllHref = canScopeAll ? boardMode.scopeAllHref(items.map(boardScopeStreamId)) : undefined
+          // Normalize exactly as scopeAllSearch does (dedupe, keep-first cap) so
+          // the active check compares against the ids the URL can actually hold —
+          // an uncapped comparison never matches for an oversized section.
+          const dedupedScopeIds = canScopeAll ? Array.from(new Set(items.map(boardScopeStreamId).filter(Boolean))) : []
+          const dedupedScopeIdCount = dedupedScopeIds.length
+          const scopeIds = dedupedScopeIds.slice(0, MAX_BOARD_SCOPE_STREAMS)
+          const scopeAllActive = canScopeAll && sameMembers(selection.scopeStreamIds, scopeIds)
+          if (scopeAllActive) filterActive = true
+          let scopeAllHref: string | undefined = undefined
+          if (canScopeAll) {
+            scopeAllHref = scopeAllActive
+              ? boardMode.clearAxisHref(BOARD_SCOPE_PARAM)
+              : boardMode.scopeAllHref(scopeIds)
+          }
+          // Active, the link CLEARS — name it for what it does. Otherwise the
+          // scope caps at MAX_BOARD_SCOPE_STREAMS; say so rather than silently
+          // scoping to a prefix of the section.
+          let scopeAllTitle: string | undefined = undefined
+          if (scopeAllActive) scopeAllTitle = `Clear board scope ${headerLabel}`
+          else if (canScopeAll && dedupedScopeIdCount > MAX_BOARD_SCOPE_STREAMS)
+            scopeAllTitle = `Scope board to the first ${MAX_BOARD_SCOPE_STREAMS} of ${dedupedScopeIdCount} streams`
 
           const state = getSectionState(section.id, presentation.defaultCollapse)
           const onToggle = () => toggleSectionState(section.id, presentation.defaultCollapse)
@@ -319,6 +378,9 @@ export function SidebarStreamList({
               titleActionLabel={titleActionLabel}
               onTitleNavigate={collapseOnMobile}
               scopeAllHref={scopeAllHref}
+              scopeAllTitle={scopeAllTitle}
+              filterAffordance={!!boardMode}
+              filterActive={filterActive}
               icon={presentation.icon}
               items={items}
               allStreams={processedStreams}
@@ -347,6 +409,9 @@ export function SidebarStreamList({
               titleActionLabel={titleActionLabel}
               onTitleNavigate={collapseOnMobile}
               scopeAllHref={scopeAllHref}
+              scopeAllTitle={scopeAllTitle}
+              filterAffordance={!!boardMode}
+              filterActive={filterActive}
               icon={presentation.icon}
               items={items}
               allStreams={processedStreams}

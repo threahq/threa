@@ -43,6 +43,24 @@ interface SectionHeaderProps {
    * don't scope (smart/type/label).
    */
   scopeAllHref?: string
+  /** Overrides the default "Scope board to …" name/tooltip — the cap signal when
+   *  a section holds more streams than the scope can carry. */
+  scopeAllTitle?: string
+  /**
+   * Board mode: make the filter affordance (`scopeAllHref`/`titleHref`) a
+   * PERSISTENT, always-visible control instead of the hover-revealed one. Touch
+   * has no hover, so the hover-only treatment made the board's per-section
+   * filters undiscoverable on the surface they matter most; and the icon becomes
+   * `ListFilter` for both, since the affordance filters the board rather than
+   * navigating anywhere. Chats mode leaves it unset and renders unchanged.
+   */
+  filterAffordance?: boolean
+  /**
+   * The section's filter is the board's CURRENT selection. Tints the affordance
+   * (the same `bg-primary/10` + `aria-current` an active board row uses); the
+   * caller points the href at the clearing URL, so the same control un-toggles.
+   */
+  filterActive?: boolean
   /** Current collapse state. If omitted, header renders as static (non-clickable). */
   state?: CollapseState
   /** Toggle callback. If omitted, header renders as static. */
@@ -82,6 +100,9 @@ export function SectionHeader({
   titleActionLabel,
   onTitleNavigate,
   scopeAllHref,
+  scopeAllTitle: scopeAllTitleOverride,
+  filterAffordance = false,
+  filterActive = false,
   state,
   onToggle,
   unreadAggregate = 0,
@@ -149,8 +170,17 @@ export function SectionHeader({
   // through the React tree — without this guard, clicking (or pressing
   // Enter/Space on) a menu item bubbles up to the header's `onToggle` and
   // collapses the section as a side effect.
-  const scopeAllTitle = label ? `Scope board to ${label} streams` : "Scope board to these streams"
+  const scopeAllTitle =
+    scopeAllTitleOverride ?? (label ? `Scope board to ${label} streams` : "Scope board to these streams")
   const titleLinkLabel = titleActionLabel ?? (label ? `Open ${label}` : "Open")
+  // Same footprint in every state (INV-21): only the icon's opacity/tint change.
+  const actionClass = filterAffordance
+    ? cn(
+        "h-5 w-5 max-sm:h-8 max-sm:w-8 flex items-center justify-center rounded transition-opacity",
+        filterActive ? "bg-primary/10 text-primary opacity-100" : "opacity-60 hover:opacity-100 hover:bg-muted"
+      )
+    : "h-5 w-5 max-sm:h-8 max-sm:w-8 flex items-center justify-center rounded reveal-actions hover:bg-muted"
+  const TitleIcon = filterAffordance ? ListFilter : ArrowUpRight
 
   const rightContent = (
     <div
@@ -163,7 +193,8 @@ export function SectionHeader({
         <Link
           to={scopeAllHref}
           onClick={onTitleNavigate}
-          className="h-5 w-5 max-sm:h-8 max-sm:w-8 flex items-center justify-center rounded reveal-actions hover:bg-muted"
+          className={actionClass}
+          aria-current={filterActive ? "true" : undefined}
           title={scopeAllTitle}
           aria-label={scopeAllTitle}
         >
@@ -174,11 +205,12 @@ export function SectionHeader({
         <Link
           to={titleHref}
           onClick={onTitleNavigate}
-          className="h-5 w-5 max-sm:h-8 max-sm:w-8 flex items-center justify-center rounded reveal-actions hover:bg-muted"
+          className={actionClass}
+          aria-current={filterActive ? "true" : undefined}
           title={titleLinkLabel}
           aria-label={titleLinkLabel}
         >
-          <ArrowUpRight className="h-3.5 w-3.5" />
+          <TitleIcon className="h-3.5 w-3.5" />
         </Link>
       )}
       {hasAggregate && (
@@ -328,6 +360,12 @@ interface StreamSectionProps {
   /** Board mode only: "Scope all" header link scoping `?in=` to every stream in
    *  this section (Unread / custom sections). Forwarded to SectionHeader. */
   scopeAllHref?: string
+  /** Overrides the "Scope all" name/tooltip (the cap signal). Forwarded to SectionHeader. */
+  scopeAllTitle?: string
+  /** Board mode: persistent, always-visible filter affordance. Forwarded to SectionHeader. */
+  filterAffordance?: boolean
+  /** Board mode: this section's filter is the board's current selection. Forwarded to SectionHeader. */
+  filterActive?: boolean
   items: StreamItemData[]
   allStreams: StreamItemData[]
   workspaceId: string
@@ -370,6 +408,9 @@ export function StreamSection({
   titleActionLabel,
   onTitleNavigate,
   scopeAllHref,
+  scopeAllTitle,
+  filterAffordance,
+  filterActive,
   items,
   allStreams,
   workspaceId,
@@ -418,6 +459,9 @@ export function StreamSection({
         titleActionLabel={titleActionLabel}
         onTitleNavigate={onTitleNavigate}
         scopeAllHref={scopeAllHref}
+        scopeAllTitle={scopeAllTitle}
+        filterAffordance={filterAffordance}
+        filterActive={filterActive}
         state={state}
         onToggle={onToggle}
         unreadAggregate={unreadAggregate}
@@ -471,6 +515,9 @@ export function TieredStreamSection({
   titleActionLabel,
   onTitleNavigate,
   scopeAllHref,
+  scopeAllTitle,
+  filterAffordance,
+  filterActive,
   items,
   allStreams,
   workspaceId,
@@ -533,6 +580,9 @@ export function TieredStreamSection({
         titleActionLabel={titleActionLabel}
         onTitleNavigate={onTitleNavigate}
         scopeAllHref={scopeAllHref}
+        scopeAllTitle={scopeAllTitle}
+        filterAffordance={filterAffordance}
+        filterActive={filterActive}
         state={state}
         onToggle={onToggle}
         unreadAggregate={unreadAggregate}

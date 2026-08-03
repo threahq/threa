@@ -91,6 +91,26 @@ export interface BoardUnreadScope {
   clearedConversationIds?: ReadonlySet<string>
 }
 
+/**
+ * The board's drafts narrowing (`?drafts=true`). `key` is the SELECTION (just
+ * "true" while active) — the view-reset key — while the two sets are the live
+ * resolution off the shared board-drafts snapshot: conversations with a reply or
+ * branch-reply draft, and messages carrying a sub-topic draft (a conversation
+ * matches when any of its messages does).
+ *
+ * Unlike {@link BoardUnreadScope} there is no session floor: the committed view
+ * is re-checked, so losing membership sheds the card immediately — sending or
+ * discarding a draft is the viewer's own act on that card. Clearing the text
+ * mid-rewrite is editing, not resolving, so a checked-out row keeps membership
+ * even with no payload and the card can't be yanked out from under a focused
+ * composer.
+ */
+export interface BoardDraftScope {
+  key: string
+  conversationIds: ReadonlySet<string>
+  subtopicMessageIds: ReadonlySet<string>
+}
+
 export interface BoardViewFilter {
   lens: BoardLens
   /** Root-stream scope, or null when unscoped (the whole workspace). */
@@ -108,6 +128,9 @@ export interface BoardViewFilter {
   /** Unread-only narrowing, or null when every conversation shows regardless of
    *  read state. */
   unread: BoardUnreadScope | null
+  /** Drafts-only narrowing, or null when every conversation shows regardless of
+   *  unsent drafts. */
+  drafts: BoardDraftScope | null
   /**
    * Viewer opted into archived cards (`?archived=true`). A view SELECTION like
    * lens/scope — it rides the view-reset key, so toggling it re-commits the feed
@@ -222,6 +245,12 @@ function matchesUnread(post: CachedBoardPost, unread: BoardUnreadScope | null): 
   if (!unread) return true
   if (unread.clearedConversationIds?.has(post.conversation.id)) return false
   return unread.streamIds.has(post.rootStreamId ?? post.conversation.streamId)
+}
+
+function matchesDrafts(post: CachedBoardPost, drafts: BoardDraftScope | null): boolean {
+  if (!drafts) return true
+  if (drafts.conversationIds.has(post.conversation.id)) return true
+  return post.conversation.messageIds?.some((id) => drafts.subtopicMessageIds.has(id)) ?? false
 }
 
 function postId(post: CachedBoardPost): string {
@@ -387,7 +416,9 @@ export interface StableBoardView {
    * so the conversation no longer exists rather than merely falling out of the
    * active filters. They keep their slot: the retained copy still renders, inert,
    * at its full height under an overlay, so nothing below it shifts.
-   * Empty while the feed is still loading.
+   * Empty while the feed is still loading. Also carries cards shed by the drafts
+   * view once their draft resolved (see {@link draftResolvedIds}) — same
+   * treatment, different reason.
    */
   removedIds: ReadonlySet<string>
   /**
@@ -397,6 +428,13 @@ export interface StableBoardView {
    * subscription behind every stub.
    */
   removedSuccessorById: ReadonlyMap<string, RemovedSuccessor | null>
+  /**
+   * The subset of {@link removedIds} shed because their draft resolved, not
+   * because the conversation is gone — the card is still real, it just left the
+   * `?drafts=true` view. Distinguished so the removed-card overlay says so
+   * instead of claiming the conversation left the board.
+   */
+  draftResolvedIds: ReadonlySet<string>
 }
 
 /**
@@ -441,6 +479,7 @@ export function useStableBoardView(
     labels,
     excludeLabels,
     unread,
+    drafts,
     showArchived,
     archivedRootIds,
   } = filter
@@ -499,11 +538,26 @@ export function useStableBoardView(
                 matchesLabelScope(post, labels) &&
                 matchesExcludedLabels(post, excludeLabels) &&
                 matchesUnread(post, unread) &&
+                matchesDrafts(post, drafts) &&
                 !isExcluded(post)
             ),
             (conversationId) => branchParentConversationId(conversationId, index, graph)
           ),
-    [rawLive, lens, scope, types, excludeStreams, excludeTypes, labels, excludeLabels, unread, isExcluded, graph, index]
+    [
+      rawLive,
+      lens,
+      scope,
+      types,
+      excludeStreams,
+      excludeTypes,
+      labels,
+      excludeLabels,
+      unread,
+      drafts,
+      isExcluded,
+      graph,
+      index,
+    ]
   )
   const [committed, setCommitted] = useState<CommittedView>(EMPTY_VIEW)
   const [buffered, setBuffered] = useState<string[]>([])
@@ -537,7 +591,7 @@ export function useStableBoardView(
   // restores in place (it vanished there; no reorder under the reader), while
   // cards archived before the view committed arrive behind the "N new" pill
   // like any other new content.
-  const viewKey = `${workspaceId}|${lens}|${scope?.key ?? ""}|${types?.key ?? ""}|${excludeStreams?.key ?? ""}|${excludeTypes?.key ?? ""}|${labels?.key ?? ""}|${excludeLabels?.key ?? ""}|${unread?.key ?? ""}|${showArchived ? "arch" : ""}`
+  const viewKey = `${workspaceId}|${lens}|${scope?.key ?? ""}|${types?.key ?? ""}|${excludeStreams?.key ?? ""}|${excludeTypes?.key ?? ""}|${labels?.key ?? ""}|${excludeLabels?.key ?? ""}|${unread?.key ?? ""}|${drafts?.key ?? ""}|${showArchived ? "arch" : ""}`
   const viewKeyRef = useRef(viewKey)
   let committedInput = committed
   let bufferedInput = buffered
@@ -601,7 +655,7 @@ export function useStableBoardView(
     for (const id of [...retainedRef.current.keys()]) if (!keep.has(id)) retainedRef.current.delete(id)
   }, [])
 
-  const { posts, removedIds, removedSuccessorById } = useMemo(() => {
+  const { posts, removedIds, removedSuccessorById, draftResolvedIds } = useMemo(() => {
     const liveById = new Map((live ?? []).map((post) => [postId(post), post]))
     // Raw membership, not the filtered subset: a card the filters (or the
     // nested-view fold) dropped is still a real conversation, while one absent
@@ -609,6 +663,8 @@ export function useStableBoardView(
     const rawIds = rawLive ? new Set(rawLive.map(postId)) : null
     const out: CachedBoardPost[] = []
     const removed = new Set<string>()
+    const gone = new Set<string>()
+    const draftResolved = new Set<string>()
     for (const id of committed.order) {
       const post = liveById.get(id) ?? retainedRef.current.get(id)
       if (!post) continue
@@ -623,14 +679,30 @@ export function useStableBoardView(
       // {@link BoardUnreadScope}).
       if (isExcluded(post)) continue
       if (!matchesUnread(post, unread)) continue
-      if (rawIds !== null && !rawIds.has(id)) removed.add(id)
+      // Resolving a draft is the viewer's own act on that card, so the drafts
+      // view sheds it immediately — unlike reading in the unread view, which the
+      // session floor holds in place. Emptying a checked-out draft is editing,
+      // not resolving: membership holds (see {@link BoardDraftScope}).
+      // Shedding goes through the REMOVAL path, never a drop from `posts`: the
+      // draft resolves DURING the send (`resolveDraft` runs on submit and on
+      // slash-command dispatch), so dropping the row here would unmount the
+      // composer that is still sending, strand focus, and swallow the optimistic
+      // reply. Retained + inert holds the subtree until the next commit().
+      if (!matchesDrafts(post, drafts)) {
+        draftResolved.add(id)
+        removed.add(id)
+      }
+      if (rawIds !== null && !rawIds.has(id)) {
+        gone.add(id)
+        removed.add(id)
+      }
       out.push(post)
     }
     // Successor resolution runs here, once, off the same raw feed — and only when
     // something was actually removed (the common case scans nothing).
     const successorById = new Map<string, RemovedSuccessor | null>()
-    if (removed.size > 0 && rawLive) {
-      const removedPosts = out.filter((post) => removed.has(postId(post)))
+    if (gone.size > 0 && rawLive) {
+      const removedPosts = out.filter((post) => gone.has(postId(post)))
       for (const post of removedPosts) {
         const openingId = post.openingMessage?.id ?? null
         const successor = openingId
@@ -648,8 +720,9 @@ export function useStableBoardView(
       posts: out,
       removedIds: removed as ReadonlySet<string>,
       removedSuccessorById: successorById as ReadonlyMap<string, RemovedSuccessor | null>,
+      draftResolvedIds: draftResolved as ReadonlySet<string>,
     }
-  }, [committed, live, rawLive, unread, isExcluded])
+  }, [committed, live, rawLive, unread, drafts, isExcluded])
 
   return {
     posts,
@@ -660,5 +733,6 @@ export function useStableBoardView(
     hasRawPosts: (rawLive?.length ?? 0) > 0,
     removedIds,
     removedSuccessorById,
+    draftResolvedIds,
   }
 }

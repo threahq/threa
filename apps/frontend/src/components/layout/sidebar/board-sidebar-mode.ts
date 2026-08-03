@@ -61,6 +61,10 @@ export interface SidebarBoardMode {
    *  it keeps matching as things get read/unread instead of freezing the ids
    *  that were unread at click time. */
   unreadFocusHref: () => string
+  /** Board URL with ONE filter axis dropped — the un-toggle behind an already-
+   *  active section-header filter, so the same control turns it back off. Takes a
+   *  `board-filter-params` param name. */
+  clearAxisHref: (param: string) => string
   /** Mute / unmute a root stream on the board. */
   setMuted: (streamId: string, mute: boolean) => void
   /** Per-root-stream topic tally for the row's board-mode preview line. `null`

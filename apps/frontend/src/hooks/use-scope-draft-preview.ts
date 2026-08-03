@@ -52,11 +52,15 @@ function bestRow(rows: CachedDraft[], loadedDraftId: string | null): CachedDraft
 interface BoardDraftsSnapshot {
   previewByScope: Map<string, ScopeDraftPreview>
   subtopicByMessageId: Map<string, SubtopicDraftEntry>
+  /** Scopes whose row is checked out into this device's composer, payload or
+   *  not — an empty checked-out row is a composer mid-edit, not a resolved one. */
+  checkedOutScopes: Set<string>
 }
 
 const EMPTY_SNAPSHOT: BoardDraftsSnapshot = {
   previewByScope: new Map(),
   subtopicByMessageId: new Map(),
+  checkedOutScopes: new Set(),
 }
 
 interface BoardDraftsEntry {
@@ -78,8 +82,10 @@ function buildSnapshot(rows: CachedDraft[], loadedByScope: Map<string, string | 
   }
   const previewByScope = new Map<string, ScopeDraftPreview>()
   const subtopicByMessageId = new Map<string, SubtopicDraftEntry>()
+  const checkedOutScopes = new Set<string>()
   for (const [scope, scopeRows] of byScope) {
     const loadedDraftId = loadedByScope.get(scope) ?? null
+    if (loadedDraftId !== null && scopeRows.some((row) => row.id === loadedDraftId)) checkedOutScopes.add(scope)
     const best = bestRow(scopeRows, loadedDraftId)
     if (!best) continue
     const preview = toPreview(best, loadedDraftId)
@@ -94,7 +100,7 @@ function buildSnapshot(rows: CachedDraft[], loadedByScope: Map<string, string | 
       })
     }
   }
-  return { previewByScope, subtopicByMessageId }
+  return { previewByScope, subtopicByMessageId, checkedOutScopes }
 }
 
 // INV-9 exception: one shared board-drafts liveQuery per workspace, ref-counted
@@ -206,6 +212,22 @@ export function useBoardSubtopicDraftIndex(workspaceId: string): Map<string, Sub
   const subscribe = useBoardDraftsSubscription(workspaceId)
   const getSnapshot = useCallback(
     () => boardDraftsRegistry.get(workspaceId)?.snapshot.subtopicByMessageId ?? EMPTY_SNAPSHOT.subtopicByMessageId,
+    [workspaceId]
+  )
+  return useSyncExternalStore(subscribe, getSnapshot)
+}
+
+/**
+ * Board scopes whose draft row is checked out into this device's composer,
+ * whether or not it currently holds anything. Membership surfaces (the drafts
+ * view) union this with {@link useBoardScopeDraftIndex}: clearing the text
+ * mid-rewrite empties the payload but the row survives until the draft is sent
+ * or discarded, and only then should the card shed.
+ */
+export function useBoardCheckedOutDraftScopes(workspaceId: string): ReadonlySet<string> {
+  const subscribe = useBoardDraftsSubscription(workspaceId)
+  const getSnapshot = useCallback(
+    () => boardDraftsRegistry.get(workspaceId)?.snapshot.checkedOutScopes ?? EMPTY_SNAPSHOT.checkedOutScopes,
     [workspaceId]
   )
   return useSyncExternalStore(subscribe, getSnapshot)
