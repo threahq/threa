@@ -10,6 +10,7 @@ import { makeQueryClient } from "@/contexts/query-client"
 import { resetWorkspaceStoreCache } from "@/stores/workspace-store"
 import { resetWorkspaceTableRegistry } from "@/stores/workspace-table-registry"
 import { resetActorLookups } from "@/stores/actor-lookup"
+import { resetEventWriteFlags } from "@/db/event-writes"
 import { resetStreamStoreCache } from "@/stores/stream-store"
 import { resetDraftStoreCache } from "@/stores/draft-store"
 import { resetShareHandoffStoreCache } from "@/stores/share-handoff-store"
@@ -80,6 +81,7 @@ function flushModuleStoreCaches(): void {
   resetWorkspaceStoreCache()
   resetWorkspaceTableRegistry()
   resetActorLookups()
+  resetEventWriteFlags()
   resetRowConfirmations()
   resetStreamStoreCache()
   resetDraftStoreCache()
