@@ -9,6 +9,7 @@ import {
   DEFAULT_BOARD_FULL_TAIL_COUNT,
   DEFAULT_BOARD_LEDGER_ROWS,
   DEFAULT_BOARD_LEAD_LINE_LENGTH,
+  DEFAULT_USER_PREFERENCES,
 } from "@threa/types"
 import { RelativeTime } from "@/components/relative-time"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
@@ -49,6 +50,7 @@ import { TextSelectionQuote } from "@/components/timeline/text-selection-quote"
 import { useActors, useVisibleStreams } from "@/hooks"
 import { useWorkspaceUserId } from "@/hooks/use-workspaces"
 import { useBoardFlash } from "@/stores/board-flash-store"
+import { boardUnreadLatchStorage } from "@/stores/board-unread-latch-store"
 import { usePanel, createConversationPanelId, usePreferences } from "@/contexts"
 import { useBoardCardCollapse } from "@/hooks/use-board-card-collapse"
 import { useSplitThread } from "@/hooks/use-conversations"
@@ -57,6 +59,7 @@ import { useConversationBackfill } from "@/hooks/use-conversation-backfill"
 import { useInlineBranchComposer } from "@/components/board/use-inline-branch-composer"
 import { useBoardCardRevealAnchor } from "@/hooks/use-board-card-reveal-anchor"
 import { LedgerRow } from "@/components/board/ledger-row"
+import { isEffectivelyUnread, unreadMass, type EffectiveUnreadCtx } from "@/lib/board/ledger"
 import { useFormattedDate } from "@/hooks/use-formatted-date"
 import { localStartOfDayMs } from "@/lib/dates"
 import type { BoardViewPost } from "@/hooks/use-stable-board-view"
@@ -550,6 +553,22 @@ export function BoardCard({
     (m) => !m.deletedAt
   )
   const readStateResolved = useConversationReadStateDecidable(workspaceId, readableRows, streamId)
+  // ONE effective-unread derivation for the whole card (INV-35): the ledger
+  // lead's tint and the header's mass badge both read it, so a row can never be
+  // tinted but uncounted. Live off the overlay + frontiers, never the latched
+  // divider position.
+  const unreadCtx: EffectiveUnreadCtx = {
+    currentUserId,
+    fallbackStreamId: streamId,
+    state: conversationReadValue.state,
+  }
+  // Counted over `readableRows`, which INCLUDES the mass hidden behind the head
+  // row — off-card unread is exactly what the badge signals, since the divider
+  // deliberately draws nothing there. Boundary: replies the rail has never
+  // synced are outside the count and contribute no minutes; only known rows are
+  // reported, so the number never outruns what the card can account for.
+  const unread = unreadMass(readableRows, unreadCtx)
+  const massBadgeMode = preferences?.boardMassBadge ?? DEFAULT_USER_PREFERENCES.boardMassBadge
   // The reply region IS the ledger: the newest `fullTailCount` replies keep the
   // full message row (reactions, actions, settling affordances); everything older
   // that fits in `ledgerRowLimit` renders as a collapsed ledger line, and the mass
@@ -597,6 +616,10 @@ export function BoardCard({
     currentUserId,
     readStateResolved,
     renderedMessageIds,
+    // virtua unmounts this card past its scroll buffer; a component-local latch
+    // would re-decide on remount against read state auto-read has cleared and
+    // drop the divider mid-visit. The registry makes the decision board-scoped.
+    latchStorage: boardUnreadLatchStorage,
   })
   const ledgerBranchRows = (messages: RenderableMessage[]) =>
     injectUnreadDivider(foldedBranchRows(messages), markerMessageId, isDimmed)
@@ -770,15 +793,7 @@ export function BoardCard({
           onToggle={() => toggleLedgerRow(message.id)}
           // Live effective read state, not the latched divider position: the tint
           // decays as auto-read clears rows, the way the header dot does.
-          unread={
-            message.authorId !== currentUserId &&
-            conversationReadValue.state(
-              message.streamId ?? streamId,
-              message.id,
-              message.sequence,
-              message.createdAt
-            ) === "unread"
-          }
+          unread={isEffectivelyUnread(message, unreadCtx)}
           leadLineLength={leadLineLength}
           conversationId={conversation.id}
           conversationRootStreamId={conversation.streamId}
@@ -939,6 +954,23 @@ export function BoardCard({
       {cardHasUnread && <span className="h-2 w-2 rounded-full bg-primary" />}
     </span>
   )
+  // How much new reading this card holds — an aggregate, never a "when": the
+  // count (and, per preference, the estimated minutes) of the same effectively
+  // unread rows the leads tint. Display-only. The slot is always in the header
+  // (INV-21) so the badge arriving or clearing never restructures it; the pill
+  // borrows the sidebar unread badge's visual language, destructive-tinted like
+  // the lead tint it summarizes.
+  const massBadgeLabel =
+    massBadgeMode === "count-minutes" ? `${unread.count} new · ~${unread.minutes} min` : `${unread.count} new`
+  const massBadge = (
+    <span data-mass-badge-slot className="flex shrink-0 items-center">
+      {massBadgeMode !== "off" && unread.count > 0 && (
+        <span className="inline-flex h-4 items-center rounded-full bg-destructive px-1.5 text-[10px] font-medium whitespace-nowrap text-destructive-foreground">
+          {massBadgeLabel}
+        </span>
+      )}
+    </span>
+  )
   const headerActions = (
     <>
       {/* Open the whole conversation in the side panel (Mechanism B) — reads it
@@ -1064,6 +1096,7 @@ export function BoardCard({
                   >
                     {conversation.topicSummary}
                   </span>
+                  {massBadge}
                   {unreadDot}
                   {headerActions}
                 </div>
@@ -1080,6 +1113,7 @@ export function BoardCard({
                 {locatorLink("sm")}
                 {subtopicLabel}
                 <div className="ml-auto flex items-center gap-1.5">
+                  {massBadge}
                   {unreadDot}
                   <RelativeTime date={conversation.lastActivityAt} terse className="shrink-0" />
                   {headerActions}
