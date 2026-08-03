@@ -3,6 +3,7 @@ import { useStreamBootstrap } from "./use-streams"
 import { useStreamService } from "@/contexts"
 import { useQueryClient, useInfiniteQuery } from "@tanstack/react-query"
 import { db, sequenceToNum } from "@/db"
+import { isEventWriteChunkingEnabled, putEventsBounded, skipNoOpEventRewrites } from "@/db/event-writes"
 import { EVENT_PAGE_SIZE } from "@/lib/constants"
 import { useStreamEvents } from "@/stores/stream-store"
 import { isTerminalBootstrapError, shouldSuppressBootstrapError } from "@/lib/query-load-state"
@@ -272,32 +273,37 @@ function dedupeAndSort(eventArrays: StreamEvent[][]): StreamEvent[] {
  *  healed card/message (chip vanishes, Discuss reappears). Preserve them. */
 const HEALED_THREAD_STAT_KEYS = ["threadId", "replyCount", "threadSummary"] as const
 
-async function cacheToIndexedDB(workspaceId: string, streamId: string, events: StreamEvent[], carrier?: SlotCarrier) {
+export async function cacheToIndexedDB(
+  workspaceId: string,
+  streamId: string,
+  events: StreamEvent[],
+  carrier?: SlotCarrier
+) {
   const now = Date.now()
+  const chunked = await isEventWriteChunkingEnabled(db, workspaceId)
   await db.transaction("rw", [db.events, db.slots], async () => {
     if (events.length > 0) {
       const existingRows = await db.events.bulkGet(events.map((e) => e.id))
       const existingById = new Map(
         existingRows.filter((row): row is NonNullable<typeof row> => row != null).map((row) => [row.id, row] as const)
       )
-      await db.events.bulkPut(
-        events.map((e) => {
-          const base = { ...e, workspaceId, _sequenceNum: sequenceToNum(e.sequence), _cachedAt: now }
-          const existing = existingById.get(e.id)
-          if (!existing) return base
-          const existingPayload = existing.payload as Record<string, unknown>
-          const healed: Record<string, unknown> = {}
-          for (const key of HEALED_THREAD_STAT_KEYS) {
-            if (existingPayload[key] !== undefined) healed[key] = existingPayload[key]
-          }
-          if (Object.keys(healed).length === 0) return base
-          return {
-            ...base,
-            payload: { ...(base.payload as Record<string, unknown>), ...healed },
-            _patchedAt: existing._patchedAt,
-          }
-        })
-      )
+      const candidates = events.map((e) => {
+        const base = { ...e, workspaceId, _sequenceNum: sequenceToNum(e.sequence), _cachedAt: now }
+        const existing = existingById.get(e.id)
+        if (!existing) return base
+        const existingPayload = existing.payload as Record<string, unknown>
+        const healed: Record<string, unknown> = {}
+        for (const key of HEALED_THREAD_STAT_KEYS) {
+          if (existingPayload[key] !== undefined) healed[key] = existingPayload[key]
+        }
+        if (Object.keys(healed).length === 0) return base
+        return {
+          ...base,
+          payload: { ...(base.payload as Record<string, unknown>), ...healed },
+          _patchedAt: existing._patchedAt,
+        }
+      })
+      await putEventsBounded(db.events, chunked ? skipNoOpEventRewrites(existingById, candidates) : candidates, chunked)
     }
     // Persist the page's slot carrier alongside its events so pointers in pages
     // older than the bootstrap window hydrate from the store (Amendment A2).
