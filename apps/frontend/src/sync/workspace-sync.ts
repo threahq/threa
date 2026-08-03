@@ -30,8 +30,10 @@ import {
   upsertAgentSession,
   removeAgentSession,
   hasAgentSession,
+  updateAgentSessionProgress,
 } from "@/stores/agent-activity-store"
 import { seedActiveCalls, upsertActiveCall, removeActiveCall } from "@/stores/active-calls-store"
+import { decryptAgentSubstepText } from "@/lib/crypto/agent-substep"
 import type { CallStartedEventPayload } from "@threa/types"
 import type { SyncEventSource } from "./socket-event-gate"
 import type { QueryClient } from "@tanstack/react-query"
@@ -56,6 +58,7 @@ import type {
   Activity,
   AgentSessionStartedPayload,
   AgentSessionProgressPayload,
+  AgentSessionSubstepPayload,
   AgentActivityStartedPayload,
   AgentActivityEndedPayload,
   ActivityCreatedPayload,
@@ -1366,7 +1369,16 @@ export function registerWorkspaceSocketHandlers(
       // has joined (trace-emitter emits to streamRoom + parentRoom, never workspace-
       // wide). Once the session is tracked, nothing the sidebar renders changes —
       // skip the IDB lookup and the no-op upsert entirely.
-      if (hasAgentSession(workspaceId, payload.sessionId)) return
+      // Once tracked, only the live counts change — fold them in without the IDB
+      // lookup. The board's running-session rows read them from here, so a row
+      // mounted after the join-time bootstrap tick still paints a real step count.
+      if (hasAgentSession(workspaceId, payload.sessionId)) {
+        updateAgentSessionProgress(workspaceId, payload.sessionId, {
+          stepCount: payload.stepCount,
+          messageCount: payload.messageCount,
+        })
+        return
+      }
       const rootStreamId = await resolveRootStreamId(payload.streamId)
       if (!rootStreamId) return
       upsertAgentSession(workspaceId, {
@@ -1376,6 +1388,8 @@ export function registerWorkspaceSocketHandlers(
         personaName: payload.personaName,
         // Progress carries no start time; anchor sort order to arrival.
         startedAt: new Date().toISOString(),
+        stepCount: payload.stepCount,
+        messageCount: payload.messageCount,
       })
     })
 
@@ -1392,8 +1406,49 @@ export function registerWorkspaceSocketHandlers(
       })
     })
 
+  // `updatedAt` of the substep currently applied per session. Decrypts run outside
+  // the queue and therefore race each other, so this stamp — not arrival order —
+  // decides: an older-or-equal stamp is dropped rather than applied.
+  const appliedSubstepAt = new Map<string, string>()
+
+  const applySubstepText = (sessionId: string, text: string, updatedAt: string): void => {
+    const applied = appliedSubstepAt.get(sessionId)
+    if (applied !== undefined && updatedAt <= applied) return
+    appliedSubstepAt.set(sessionId, updatedAt)
+    updateAgentSessionProgress(workspaceId, sessionId, { substep: text })
+  }
+
+  // Ephemeral phase text for the current step. An E2E session's substep is sealed
+  // under the stream key, so decrypt it the same way the trace hook does; a locked
+  // session or a failed open just skips (the substep is ephemeral).
+  // The decrypt runs OUTSIDE `agentActivityQueue`: a chatty tool loop would
+  // otherwise backlog the serial queue and leave a terminal
+  // `agent_session:completed` waiting behind pending opens (spinner still lit
+  // after the agent finished). Only the synchronous apply is enqueued. An
+  // untracked session bails before any crypto.
+  const handleAgentSessionSubstep = async (payload: AgentSessionSubstepPayload): Promise<void> => {
+    if (!hasAgentSession(workspaceId, payload.sessionId)) return
+    const plaintext = payload.substep
+    if (typeof plaintext === "string" && plaintext) {
+      await enqueueAgentActivity(() => applySubstepText(payload.sessionId, plaintext, payload.updatedAt))
+      return
+    }
+    if (typeof payload.ciphertext !== "string" || !payload.envelope) return
+    const userId = refs.getCurrentUser()?.id
+    if (!userId) return
+    const text = await decryptAgentSubstepText(
+      { streamId: payload.streamId, ciphertext: payload.ciphertext, envelope: payload.envelope },
+      { workspaceId, userId }
+    )
+    if (!text) return
+    await enqueueAgentActivity(() => applySubstepText(payload.sessionId, text, payload.updatedAt))
+  }
+
   const handleAgentActivityEnded = (payload: AgentActivityEndedPayload) =>
-    enqueueAgentActivity(() => removeAgentSession(workspaceId, payload.sessionId))
+    enqueueAgentActivity(() => {
+      appliedSubstepAt.delete(payload.sessionId)
+      removeAgentSession(workspaceId, payload.sessionId)
+    })
 
   // agent_session:completed/failed reach this socket in two shapes: the
   // stream-scoped outbox form `{ workspaceId, streamId, event }`, and a flat
@@ -1410,7 +1465,9 @@ export function registerWorkspaceSocketHandlers(
     enqueueAgentActivity(() => {
       if (payload.workspaceId !== undefined && payload.workspaceId !== workspaceId) return
       const sessionId = (payload.event?.payload as { sessionId?: string } | undefined)?.sessionId ?? payload.sessionId
-      if (sessionId) removeAgentSession(workspaceId, sessionId)
+      if (!sessionId) return
+      appliedSubstepAt.delete(sessionId)
+      removeAgentSession(workspaceId, sessionId)
     })
 
   // Handle stream display name updated (from auto-naming service)
@@ -2276,6 +2333,7 @@ export function registerWorkspaceSocketHandlers(
   socket.on("agent_session:started", handleAgentSessionStartedActivity)
   socket.on("agent_session:progress", handleAgentSessionProgressActivity)
   socket.on("agent_session:activity_started", handleAgentActivityStarted)
+  socket.on("agent_session:substep", handleAgentSessionSubstep)
   socket.on("agent_session:activity_ended", handleAgentActivityEnded)
   socket.on("agent_session:completed", handleAgentSessionEndedActivity)
   socket.on("agent_session:failed", handleAgentSessionEndedActivity)
@@ -2346,6 +2404,7 @@ export function registerWorkspaceSocketHandlers(
     socket.off("agent_session:started", handleAgentSessionStartedActivity)
     socket.off("agent_session:progress", handleAgentSessionProgressActivity)
     socket.off("agent_session:activity_started", handleAgentActivityStarted)
+    socket.off("agent_session:substep", handleAgentSessionSubstep)
     socket.off("agent_session:activity_ended", handleAgentActivityEnded)
     socket.off("agent_session:completed", handleAgentSessionEndedActivity)
     socket.off("agent_session:failed", handleAgentSessionEndedActivity)

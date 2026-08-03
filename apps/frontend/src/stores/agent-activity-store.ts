@@ -1,4 +1,4 @@
-import { useCallback, useSyncExternalStore } from "react"
+import { useCallback, useMemo, useRef, useSyncExternalStore } from "react"
 import type { ActiveAgentSession } from "@threa/types"
 
 /**
@@ -24,6 +24,8 @@ const workspaces = new Map<string, Map<string, ActiveAgentSession>>()
 const keyListeners = new Map<string, Set<() => void>>()
 // Content-stable snapshot per key (referential stability for useSyncExternalStore)
 const keySnapshots = new Map<string, ActiveAgentSession[]>()
+// `${workspaceId}:${sessionId}` -> listeners subscribed to that one session
+const sessionListeners = new Map<string, Set<() => void>>()
 
 const EMPTY: readonly ActiveAgentSession[] = Object.freeze([])
 
@@ -31,12 +33,52 @@ function subKey(workspaceId: string, streamId: string): string {
   return `${workspaceId}:${streamId}`
 }
 
-function sameSnapshot(a: readonly ActiveAgentSession[], b: readonly ActiveAgentSession[]): boolean {
+function sameSession(a: ActiveAgentSession, b: ActiveAgentSession): boolean {
+  return (
+    a.sessionId === b.sessionId &&
+    a.streamId === b.streamId &&
+    a.rootStreamId === b.rootStreamId &&
+    a.personaName === b.personaName &&
+    a.stepCount === b.stepCount &&
+    a.messageCount === b.messageCount &&
+    a.substep === b.substep
+  )
+}
+
+/**
+ * Identity only — no progress fields. The stream-key snapshot compares with this
+ * so a progress/substep tick (several per second in a research loop) cannot churn
+ * the array every sidebar row subscribes to; by-id subscribers still get every
+ * tick through `notifySession`.
+ */
+function sameSessionIdentity(a: ActiveAgentSession, b: ActiveAgentSession): boolean {
+  return (
+    a.sessionId === b.sessionId &&
+    a.streamId === b.streamId &&
+    a.rootStreamId === b.rootStreamId &&
+    a.personaName === b.personaName
+  )
+}
+
+/** Exactly what a board card's running chip renders. */
+function sameSessionChip(a: ActiveAgentSession, b: ActiveAgentSession): boolean {
+  return a.sessionId === b.sessionId && a.personaName === b.personaName && a.stepCount === b.stepCount
+}
+
+function sameList(
+  a: readonly ActiveAgentSession[],
+  b: readonly ActiveAgentSession[],
+  equal: (x: ActiveAgentSession, y: ActiveAgentSession) => boolean
+): boolean {
   if (a.length !== b.length) return false
   for (let i = 0; i < a.length; i++) {
-    if (a[i].sessionId !== b[i].sessionId || a[i].personaName !== b[i].personaName) return false
+    if (a[i] !== b[i] && !equal(a[i], b[i])) return false
   }
   return true
+}
+
+function notifySession(workspaceId: string, sessionId: string): void {
+  for (const listener of sessionListeners.get(subKey(workspaceId, sessionId)) ?? []) listener()
 }
 
 /** Recompute the cached snapshot for one stream key and notify iff its content changed. */
@@ -52,29 +94,50 @@ function recomputeKey(workspaceId: string, streamId: string): void {
     if (prev === undefined) return
     keySnapshots.delete(key)
   } else {
-    if (prev && sameSnapshot(prev, sessions)) return
+    if (prev && sameList(prev, sessions, sameSessionIdentity)) return
     keySnapshots.set(key, sessions)
   }
   for (const listener of keyListeners.get(key) ?? []) listener()
 }
 
-/** Replace the whole running set for a workspace (bootstrap / reconnect re-seed). */
+/**
+ * Replace the whole running set for a workspace (bootstrap / reconnect re-seed).
+ * Membership is authoritative — an entry absent from the seed is dropped (INV-53).
+ * Progress the seed doesn't carry (the bootstrap projection has no
+ * `stepCount`/`messageCount`/`substep`) keeps the tracked value, so a reconnect
+ * re-seed can't reset a still-running session's counts to undefined.
+ */
 export function seedAgentActivity(workspaceId: string, sessions: ActiveAgentSession[]): void {
   const previous = workspaces.get(workspaceId)
   const affectedStreams = new Set<string>()
   for (const entry of previous?.values() ?? []) affectedStreams.add(entry.streamId)
 
   const next = new Map<string, ActiveAgentSession>()
+  const affectedSessions = new Set<string>(previous?.keys() ?? [])
   for (const session of sessions) {
-    next.set(session.sessionId, { ...session })
+    const existing = previous?.get(session.sessionId)
+    next.set(session.sessionId, {
+      ...session,
+      stepCount: session.stepCount ?? existing?.stepCount,
+      messageCount: session.messageCount ?? existing?.messageCount,
+      substep: session.substep ?? existing?.substep,
+    })
     affectedStreams.add(session.streamId)
+    affectedSessions.add(session.sessionId)
   }
   workspaces.set(workspaceId, next)
 
   for (const streamId of affectedStreams) recomputeKey(workspaceId, streamId)
+  for (const sessionId of affectedSessions) notifySession(workspaceId, sessionId)
 }
 
-/** Add or refresh one running session (live `started`/`progress`). */
+/**
+ * Add or refresh one running session (live `started`/`progress`). Progress fields
+ * the incoming event doesn't carry (`stepCount`/`messageCount`/`substep` are
+ * absent on `started`/`activity_started` and on the bootstrap projection) keep the
+ * value already tracked, so a late `started` can't wipe counts a progress tick
+ * already delivered.
+ */
 export function upsertAgentSession(workspaceId: string, session: ActiveAgentSession): void {
   let ws = workspaces.get(workspaceId)
   if (!ws) {
@@ -82,19 +145,50 @@ export function upsertAgentSession(workspaceId: string, session: ActiveAgentSess
     workspaces.set(workspaceId, ws)
   }
   const existing = ws.get(session.sessionId)
-  if (
-    existing &&
-    existing.rootStreamId === session.rootStreamId &&
-    existing.personaName === session.personaName &&
-    existing.streamId === session.streamId
-  ) {
-    return
+  const next: ActiveAgentSession = {
+    ...session,
+    stepCount: session.stepCount ?? existing?.stepCount,
+    messageCount: session.messageCount ?? existing?.messageCount,
+    substep: session.substep ?? existing?.substep,
   }
-  ws.set(session.sessionId, { ...session })
-  if (existing && existing.streamId !== session.streamId) {
+  if (existing && sameSession(existing, next)) return
+  ws.set(session.sessionId, next)
+  if (existing && existing.streamId !== next.streamId) {
     recomputeKey(workspaceId, existing.streamId)
   }
-  recomputeKey(workspaceId, session.streamId)
+  recomputeKey(workspaceId, next.streamId)
+  notifySession(workspaceId, next.sessionId)
+}
+
+/**
+ * Fold a live progress tick into an already-tracked session. No-op for an
+ * untracked id — the caller upserts in that case (it needs the resolved root
+ * stream, which this path deliberately avoids re-reading per step). A step
+ * advance drops the previous step's substep, which is stale by definition.
+ */
+export function updateAgentSessionProgress(
+  workspaceId: string,
+  sessionId: string,
+  progress: { stepCount?: number; messageCount?: number; substep?: string | null }
+): void {
+  const ws = workspaces.get(workspaceId)
+  const existing = ws?.get(sessionId)
+  if (!ws || !existing) return
+  const stepCount = progress.stepCount ?? existing.stepCount
+  const stepAdvanced = progress.stepCount !== undefined && progress.stepCount !== existing.stepCount
+  let substep = existing.substep
+  if (progress.substep !== undefined) substep = progress.substep
+  else if (stepAdvanced) substep = null
+  const next: ActiveAgentSession = {
+    ...existing,
+    stepCount,
+    messageCount: progress.messageCount ?? existing.messageCount,
+    substep,
+  }
+  if (sameSession(existing, next)) return
+  ws.set(sessionId, next)
+  recomputeKey(workspaceId, next.streamId)
+  notifySession(workspaceId, sessionId)
 }
 
 /** Remove a session by id on any terminal signal. */
@@ -104,6 +198,7 @@ export function removeAgentSession(workspaceId: string, sessionId: string): void
   if (!ws || !existing) return
   ws.delete(sessionId)
   recomputeKey(workspaceId, existing.streamId)
+  notifySession(workspaceId, sessionId)
 }
 
 /** True if a session with this id is already tracked in the workspace. */
@@ -149,9 +244,88 @@ export function useAgentActivityForStream(
   return useSyncExternalStore(subscribe, getSnapshot)
 }
 
+/** Non-reactive read of one running session by id; undefined when not running. */
+export function getAgentSession(workspaceId: string, sessionId: string): ActiveAgentSession | undefined {
+  return workspaces.get(workspaceId)?.get(sessionId)
+}
+
+function subscribeSessions(workspaceId: string | undefined, sessionIds: readonly string[]) {
+  return (onChange: () => void) => {
+    if (!workspaceId) return () => {}
+    const keys = sessionIds.map((id) => subKey(workspaceId, id))
+    for (const key of keys) {
+      let set = sessionListeners.get(key)
+      if (!set) {
+        set = new Set()
+        sessionListeners.set(key, set)
+      }
+      set.add(onChange)
+    }
+    return () => {
+      for (const key of keys) {
+        const set = sessionListeners.get(key)
+        if (!set) continue
+        set.delete(onChange)
+        if (set.size === 0) sessionListeners.delete(key)
+      }
+    }
+  }
+}
+
+/**
+ * Reactive read of ONE session's live state by id — the board's running-session
+ * row reads its own session here instead of keeping a workspace-wide subscription
+ * per row, so an unrelated session's tick doesn't re-render it.
+ */
+export function useAgentSessionActivity(
+  workspaceId: string | undefined,
+  sessionId: string | null | undefined
+): ActiveAgentSession | undefined {
+  const ids = useMemo(() => (sessionId ? [sessionId] : []), [sessionId])
+  const subscribe = useMemo(() => subscribeSessions(workspaceId, ids), [workspaceId, ids])
+  const getSnapshot = useCallback(
+    () => (workspaceId && sessionId ? getAgentSession(workspaceId, sessionId) : undefined),
+    [workspaceId, sessionId]
+  )
+  return useSyncExternalStore(subscribe, getSnapshot)
+}
+
+/**
+ * Reactive read of a caller-chosen SET of sessions (a board card's own
+ * conversation rows), most recently started first, skipping ids that aren't
+ * running. Scoping by id — not by stream — is what keeps a sibling conversation's
+ * agent off this card.
+ */
+export function useAgentSessionActivities(
+  workspaceId: string | undefined,
+  sessionIds: readonly string[]
+): readonly ActiveAgentSession[] {
+  const key = sessionIds.join(",")
+  const ids = useMemo(() => (key ? key.split(",") : []), [key])
+  const subscribe = useMemo(() => subscribeSessions(workspaceId, ids), [workspaceId, ids])
+  const cache = useRef<readonly ActiveAgentSession[]>(EMPTY)
+  const getSnapshot = useCallback(() => {
+    const next = workspaceId
+      ? ids
+          .map((id) => getAgentSession(workspaceId, id))
+          .filter((entry): entry is ActiveAgentSession => entry !== undefined)
+          .sort((a, b) => b.startedAt.localeCompare(a.startedAt))
+      : []
+    if (next.length === 0) {
+      cache.current = EMPTY
+      return EMPTY
+    }
+    if (sameList(cache.current, next, sameSessionChip)) return cache.current
+    cache.current = next
+    return next
+  }, [workspaceId, ids])
+  return useSyncExternalStore(subscribe, getSnapshot)
+}
+
 /** Test-only: wipe all state between cases. */
 export function __resetAgentActivityStore(): void {
   workspaces.clear()
   keyListeners.clear()
   keySnapshots.clear()
+  sessionListeners.clear()
 }

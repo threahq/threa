@@ -441,6 +441,13 @@ describe("injectUnreadDivider", () => {
   })
 })
 
+function foldSessionRow(key: string, minute: number, opts: { terminal?: boolean } = {}): BoardEventRow {
+  const createdAt = `2026-07-04T10:${String(minute).padStart(2, "0")}:00Z`
+  const events = [{ id: `${key}:started`, createdAt, eventType: "agent_session:started" }]
+  if (opts.terminal) events.push({ id: `${key}:done`, createdAt, eventType: "agent_session:completed" })
+  return { kind: "session", key, sortMs: new Date(createdAt).getTime(), streamId: "root", events } as BoardEventRow
+}
+
 describe("foldLedgerEventRows", () => {
   const rows = () =>
     buildBoardRows([msg("a", "u1", 0), msg("b", "u1", 4)], [memoEventRow("e1", 1), memoEventRow("e2", 2)])
@@ -467,6 +474,38 @@ describe("foldLedgerEventRows", () => {
       "b"
     )
     expect(folded.map((r) => r.kind)).toEqual(["message", "message", "event", "event"])
+  })
+
+  it("keeps a still-running session row fully rendered in the ledger region", () => {
+    const folded = foldLedgerEventRows(
+      buildBoardRows([msg("a", "u1", 0), msg("b", "u1", 4)], [foldSessionRow("s1", 1)]),
+      "b"
+    )
+    expect(folded.map((r) => r.kind)).toEqual(["message", "event", "message"])
+  })
+
+  it("hoists a running session out of an adjacent run, still grouping the rest", () => {
+    const folded = foldLedgerEventRows(
+      buildBoardRows(
+        [msg("a", "u1", 0), msg("b", "u1", 6)],
+        [memoEventRow("e1", 1), foldSessionRow("s1", 2), memoEventRow("e2", 3), memoEventRow("e3", 4)]
+      ),
+      "b"
+    )
+    expect(folded.map((r) => r.kind)).toEqual(["message", "ledger-event", "event", "ledger-event-group", "message"])
+    const group = folded[3]
+    expect(group.kind === "ledger-event-group" && group.rows.map((r) => r.key)).toEqual(["e2", "e3"])
+  })
+
+  it("still folds a terminated session row into the ledger", () => {
+    const folded = foldLedgerEventRows(
+      buildBoardRows(
+        [msg("a", "u1", 0), msg("b", "u1", 4)],
+        [memoEventRow("e1", 1), foldSessionRow("s1", 2, { terminal: true })]
+      ),
+      "b"
+    )
+    expect(folded.map((r) => r.kind)).toEqual(["message", "ledger-event-group", "message"])
   })
 
   it("is a no-op when the whole card is the full tail", () => {

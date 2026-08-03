@@ -6,7 +6,11 @@ import type { StreamEvent } from "@threa/types"
 import type { BoardEventRow } from "@/lib/board/board-event-rows"
 import * as contextsModule from "@/contexts"
 import * as hooksModule from "@/hooks"
-import * as agentActivityModule from "@/hooks/use-agent-activity"
+import {
+  upsertAgentSession,
+  updateAgentSessionProgress,
+  __resetAgentActivityStore,
+} from "@/stores/agent-activity-store"
 import * as workspacesModule from "@/hooks/use-workspaces"
 import * as relativeTimeModule from "@/components/relative-time"
 import { BoardEventRowItem } from "./board-row-item"
@@ -76,8 +80,9 @@ describe("BoardEventRowItem session effects", () => {
 })
 
 // A RUNNING board session is the same live card the timeline mounts — same
-// component, same live counts/substep off `useAgentActivity`, same stop/steer
-// affordances — not a board-only summary that only catches up at completion.
+// component, live counts/substep read from the agent-activity store by session
+// id, same stop/steer affordances — not a board-only summary that only catches
+// up at completion.
 describe("BoardEventRowItem running session", () => {
   const started = sessionEvent("agent_session:started", {
     sessionId: "session_live",
@@ -96,6 +101,7 @@ describe("BoardEventRowItem running session", () => {
 
   beforeEach(() => {
     vi.restoreAllMocks()
+    __resetAgentActivityStore()
     vi.spyOn(contextsModule, "useTrace").mockReturnValue({
       getTraceUrl: (sessionId: string) => `/trace/${sessionId}`,
     } as ReturnType<typeof contextsModule.useTrace>)
@@ -118,19 +124,18 @@ describe("BoardEventRowItem running session", () => {
   }
 
   it("streams the session's live progress instead of waiting for the terminal event", () => {
-    vi.spyOn(agentActivityModule, "useAgentActivity").mockReturnValue(
-      new Map([
-        [
-          "msg_1",
-          {
-            sessionId: "session_live",
-            stepCount: 4,
-            messageCount: 1,
-            substep: "Updating your notification settings",
-          },
-        ],
-      ]) as never
-    )
+    upsertAgentSession("ws_1", {
+      sessionId: "session_live",
+      streamId: "stream_1",
+      rootStreamId: "stream_1",
+      personaName: "Ariadne",
+      startedAt: "2026-02-19T18:00:00.000Z",
+    })
+    updateAgentSessionProgress("ws_1", "session_live", {
+      stepCount: 4,
+      messageCount: 1,
+      substep: "Updating your notification settings",
+    })
     const stop = vi.fn()
     vi.spyOn(hooksModule, "useStopAgentSession").mockReturnValue(stop as never)
     vi.spyOn(hooksModule, "useSteerAgentSession").mockReturnValue(vi.fn() as never)
@@ -145,7 +150,6 @@ describe("BoardEventRowItem running session", () => {
   })
 
   it("stops the running session through the board's own wiring", async () => {
-    vi.spyOn(agentActivityModule, "useAgentActivity").mockReturnValue(new Map() as never)
     const stop = vi.fn()
     vi.spyOn(hooksModule, "useStopAgentSession").mockReturnValue(stop as never)
     vi.spyOn(hooksModule, "useSteerAgentSession").mockReturnValue(vi.fn() as never)

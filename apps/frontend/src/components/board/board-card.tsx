@@ -26,6 +26,9 @@ import {
   type BranchExpansion,
 } from "@/components/board/branch-rows"
 import { resolveBoardEventRows } from "@/lib/board/board-event-rows"
+import { AgentRunningChip } from "@/components/timeline/agent-activity-header-chip"
+import { getSessionId } from "@/components/timeline/session-grouping"
+import { useAgentSessionActivities } from "@/stores/agent-activity-store"
 import { groupBranches, type BranchConversationView } from "@/lib/board/branch-grouping"
 import {
   useConversationGraph,
@@ -340,6 +343,31 @@ export function BoardCard({
   const eventRows = useMemo(
     () => resolveBoardEventRows(railEvents, { conversationId: conversation.id, memberMessageIds, currentUserId }),
     [railEvents, conversation.id, memberMessageIds, currentUserId]
+  )
+
+  // The card's own running agent sessions: session ids come from the rows the
+  // card already resolved (conversation-scoped by construction — a sibling
+  // conversation's session on the same stream is not among them), live counts from
+  // the activity store. Covers the long-running session whose `started` event has
+  // scrolled above the card's "N earlier" boundary.
+  const cardSessionIds = useMemo(
+    () =>
+      eventRows.flatMap((row) => {
+        if (row.kind !== "session") return []
+        const sessionId = row.events.reduce<string | null>((found, event) => found ?? getSessionId(event), null)
+        return sessionId ? [sessionId] : []
+      }),
+    [eventRows]
+  )
+  const runningSessions = useAgentSessionActivities(workspaceId, cardSessionIds)
+  const runningChipEntries = useMemo(
+    () =>
+      runningSessions.map((session) => ({
+        sessionId: session.sessionId,
+        personaName: session.personaName,
+        stepCount: session.stepCount ?? 0,
+      })),
+    [runningSessions]
   )
 
   // Per-thread-boundary grouping: soft-thread seams, nested branch conversations,
@@ -984,6 +1012,16 @@ export function BoardCard({
   // (INV-21) so the badge arriving or clearing never restructures it; the pill
   // borrows the sidebar unread badge's visual language, destructive-tinted like
   // the lead tint it summarizes.
+  // Live "an agent is working on this conversation" pill, mirroring the stream
+  // header chip. Its slot is always in the header (INV-21) so arriving or
+  // clearing never restructures the row.
+  const runningChip = (
+    <span data-running-chip-slot className="flex shrink-0 items-center">
+      {/* Mounted only with entries: the chip reads useTrace, so the idle card
+          must not require a TraceProvider (and skips the component entirely). */}
+      {runningChipEntries.length > 0 && <AgentRunningChip entries={runningChipEntries} />}
+    </span>
+  )
   const massBadge = (
     <span data-mass-badge-slot className="flex shrink-0 items-center">
       {massBadgeMode !== "off" && unread.count > 0 && (
@@ -1139,6 +1177,7 @@ export function BoardCard({
                   >
                     {conversation.topicSummary}
                   </span>
+                  {runningChip}
                   {massBadge}
                   {unreadDot}
                   {headerActions}
@@ -1156,6 +1195,7 @@ export function BoardCard({
                 {locatorLink("sm")}
                 {subtopicLabel}
                 <div className="ml-auto flex items-center gap-1.5">
+                  {runningChip}
                   {massBadge}
                   {unreadDot}
                   <RelativeTime date={conversation.lastActivityAt} terse className="shrink-0" />

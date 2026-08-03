@@ -1784,6 +1784,10 @@ export interface WorkspaceBootstrap {
  * thread) whose sidebar row lights up; `rootStreamId` is its non-thread ancestor
  * used for access filtering (`COALESCE(streams.root_stream_id, streams.id)`).
  * `personaName` is the persona or bot display name driving the session.
+ *
+ * `stepCount` / `messageCount` / `substep` are live progress, folded in from the
+ * `agent_session:progress` and `agent_session:substep` room events; the bootstrap
+ * projection omits them, so they read 0 / null until the first tick.
  */
 export interface ActiveAgentSession {
   sessionId: string
@@ -1791,6 +1795,9 @@ export interface ActiveAgentSession {
   rootStreamId: string
   personaName: string
   startedAt: string
+  stepCount?: number
+  messageCount?: number
+  substep?: string | null
 }
 
 /**

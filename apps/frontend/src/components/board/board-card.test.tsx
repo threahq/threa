@@ -14,6 +14,11 @@ import { TooltipProvider } from "@/components/ui/tooltip"
 import { __clearBoardRailRegistry } from "@/hooks/use-board-card-messages"
 import { __clearConversationGraphRegistry } from "@/hooks/use-conversation-graph"
 import { __resetCollapseCacheForTests } from "@/lib/markdown/collapse-cache"
+import {
+  upsertAgentSession,
+  updateAgentSessionProgress,
+  __resetAgentActivityStore,
+} from "@/stores/agent-activity-store"
 // eslint-disable-next-line no-restricted-imports -- test seeds IDB directly to drive the real rail read path
 import { db, type CachedEvent, type CachedStream } from "@/db"
 import * as conversationReadModule from "@/components/message/conversation-read-context"
@@ -196,6 +201,7 @@ function fakeSocket() {
 const readValue = { state: () => "ungated" as const, markReadUpToHere: vi.fn(), markUnread: vi.fn() }
 
 beforeEach(async () => {
+  __resetAgentActivityStore()
   __clearBoardRailRegistry()
   __clearConversationGraphRegistry()
   __resetCollapseCacheForTests()
@@ -387,13 +393,12 @@ describe("BoardCard agent activity", () => {
     expect(screen.getByText(/completed/)).toBeTruthy()
   })
 
-  it("live-updates a running session's step count from agent_session:progress", async () => {
+  it("live-updates a running session's step count from the agent activity store", async () => {
     // A session started from the card's opening message but not yet terminal: its
-    // events carry no counts, so the card rides the same ephemeral progress rail
-    // the timeline does (useAgentActivity). Without it the card sat at "0 steps"
-    // for the whole run.
-    const { socket, handlers } = fakeSocket()
-    vi.spyOn(contextsModule, "useSocket").mockReturnValue(socket)
+    // events carry no counts. They arrive as `agent_session:progress` ticks, folded
+    // into the module store by workspace-sync's single subscription — the row reads
+    // them there, so it is live whenever it mounts, not only when it was mounted at
+    // room-join time. Without it the card sat at "0 steps" for the whole run.
     await db.events.bulkPut([
       sessionEvent("agent_session:started", 30, {
         sessionId: "sess_C",
@@ -403,24 +408,22 @@ describe("BoardCard agent activity", () => {
         messageCount: 0,
       }),
     ])
+    upsertAgentSession(WS, {
+      sessionId: "sess_C",
+      streamId: STREAM,
+      rootStreamId: STREAM,
+      personaName: "Ariadne",
+      startedAt: "2026-06-22T12:00:30.000Z",
+    })
     mountCard()
 
-    expect(await screen.findByText(/0 steps/)).toBeTruthy()
+    expect(await screen.findByText("0 steps • 0 messages sent")).toBeTruthy()
 
     act(() => {
-      handlers.get("agent_session:progress")?.({
-        workspaceId: WS,
-        streamId: STREAM,
-        sessionId: "sess_C",
-        triggerMessageId: "m_open",
-        personaName: "Ariadne",
-        stepCount: 3,
-        messageCount: 1,
-        currentStepType: "tool_call",
-      })
+      updateAgentSessionProgress(WS, "sess_C", { stepCount: 3, messageCount: 1 })
     })
 
-    expect(await screen.findByText(/3 steps/)).toBeTruthy()
+    expect(await screen.findByText("3 steps • 1 message sent")).toBeTruthy()
   })
 
   it("shows 'Interrupted, retrying…' from a persisted interrupted event (survives refresh)", async () => {
@@ -451,7 +454,7 @@ describe("BoardCard agent activity", () => {
 
   it("shows Stop + Redirect on a running session, and Redirect opens the card composer in place", async () => {
     const user = userEvent.setup()
-    // A running session's row mounts the live progress rail (useAgentActivity),
+    // A running session's row reads live progress from the agent-activity store,
     // which reads the socket — give it a fake one.
     const { socket } = fakeSocket()
     vi.spyOn(contextsModule, "useSocket").mockReturnValue(socket)
