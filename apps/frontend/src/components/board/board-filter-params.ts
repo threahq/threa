@@ -64,6 +64,15 @@ export const BOARD_UNREAD_PARAM = "unread"
 /** The `?unread=` value that opts into the unread-only narrowing. */
 export const BOARD_UNREAD_ON = "true"
 
+/** Drafts opt-in (`?drafts=true`) — narrows to conversations carrying an unsent
+ *  board draft (a card reply, a nested branch reply, or a sub-topic draft on one
+ *  of the conversation's messages). Client-resolved off the shared board-drafts
+ *  snapshot, so it stays live as drafts are written instead of snapshotting ids. */
+export const BOARD_DRAFTS_PARAM = "drafts"
+
+/** The `?drafts=` value that opts into the drafts-only narrowing. */
+export const BOARD_DRAFTS_ON = "true"
+
 /** Every board filter param, for clear-all sweeps. */
 export const BOARD_FILTER_PARAMS = [
   BOARD_SCOPE_PARAM,
@@ -74,6 +83,7 @@ export const BOARD_FILTER_PARAMS = [
   BOARD_EXCLUDE_LABEL_PARAM,
   BOARD_ARCHIVED_PARAM,
   BOARD_UNREAD_PARAM,
+  BOARD_DRAFTS_PARAM,
 ] as const
 
 /** Parse a stored or URL-supplied lens value: a valid lens, anything else
@@ -259,12 +269,35 @@ export function unreadFocusSearch(search: string): string {
   return toSearch(params)
 }
 
+/** Drop ONE filter axis entirely, leaving every other axis (and unrelated URL
+ *  state) untouched — the un-toggle behind an already-active filter affordance.
+ *  One builder for every axis so the affordances can't drift (INV-35). */
+export function clearAxisSearch(search: string, param: string): string {
+  const params = new URLSearchParams(search)
+  params.delete(param)
+  return toSearch(params)
+}
+
 /** The mirror of {@link unreadFocusSearch}: drop the unread narrowing, leaving
  *  every other axis untouched. */
 export function clearUnreadSearch(search: string): string {
+  return clearAxisSearch(search, BOARD_UNREAD_PARAM)
+}
+
+/**
+ * The board-mode Drafts verb: FOCUS the board on conversations carrying an
+ * unsent draft (`?drafts=true`), leaving every other axis untouched.
+ */
+export function draftsFocusSearch(search: string): string {
   const params = new URLSearchParams(search)
-  params.delete(BOARD_UNREAD_PARAM)
+  params.set(BOARD_DRAFTS_PARAM, BOARD_DRAFTS_ON)
   return toSearch(params)
+}
+
+/** The mirror of {@link draftsFocusSearch}: drop the drafts narrowing, leaving
+ *  every other axis untouched. */
+export function clearDraftsSearch(search: string): string {
+  return clearAxisSearch(search, BOARD_DRAFTS_PARAM)
 }
 
 /** Remove one value from any single filter axis (a chip's X). Works for every

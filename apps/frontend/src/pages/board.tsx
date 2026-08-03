@@ -31,7 +31,12 @@ import {
   useStreamStructuralIndex,
   collectBranchThreadStreamIds,
 } from "@/hooks/use-conversation-graph"
-import { useBoardDraftsReady } from "@/hooks/use-scope-draft-preview"
+import {
+  useBoardDraftsReady,
+  useBoardScopeDraftIndex,
+  useBoardSubtopicDraftIndex,
+} from "@/hooks/use-scope-draft-preview"
+import { parseBoardDraftKey } from "@/lib/board/draft-keys"
 import { SKELETON_DELAY_MS, useCoordinatedPhase } from "@/contexts/coordinated-loading-context"
 import { FloatingComposerAnchorProvider, FLOATING_COMPOSER_HEIGHT_VAR } from "@/components/composer"
 import { BoardCard, BoardCardSkeleton } from "@/components/board/board-card"
@@ -57,6 +62,8 @@ import {
   BOARD_ARCHIVED_ON,
   BOARD_UNREAD_PARAM,
   BOARD_UNREAD_ON,
+  BOARD_DRAFTS_PARAM,
+  BOARD_DRAFTS_ON,
   clearFiltersSearch,
   parseIdListParam,
   parseLensParam,
@@ -317,6 +324,33 @@ function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: Boar
     [archivedRootSignature]
   )
 
+  // Drafts is a narrowing opt-in (`?drafts=true`), resolved client-side off the
+  // shared board-drafts snapshot the card affordances already read — live as
+  // drafts are written, no refetch. No fail-open gate: the board's reveal holds
+  // first paint on `useBoardDraftsReady`, so the snapshot is settled by then.
+  const draftsOnly = searchParams.get(BOARD_DRAFTS_PARAM) === BOARD_DRAFTS_ON
+  const scopeDraftIndex = useBoardScopeDraftIndex(workspaceId)
+  const subtopicDraftIndex = useBoardSubtopicDraftIndex(workspaceId)
+  // Signature-memoized like `archivedRootSignature`: the draft indexes get a new
+  // Map identity on every keystroke, and these sets feed the feed filter.
+  const draftConversationSignature = useMemo(() => {
+    const ids: string[] = []
+    for (const scope of scopeDraftIndex.keys()) {
+      const parsed = parseBoardDraftKey(scope)
+      if (parsed && (parsed.kind === "reply" || parsed.kind === "branch-reply")) ids.push(parsed.conversationId)
+    }
+    return ids.sort().join(",")
+  }, [scopeDraftIndex])
+  const draftConversationIds = useMemo(
+    () => new Set<string>(draftConversationSignature ? draftConversationSignature.split(",") : []),
+    [draftConversationSignature]
+  )
+  const subtopicMessageSignature = useMemo(() => [...subtopicDraftIndex.keys()].sort().join(","), [subtopicDraftIndex])
+  const subtopicDraftMessageIds = useMemo(
+    () => new Set<string>(subtopicMessageSignature ? subtopicMessageSignature.split(",") : []),
+    [subtopicMessageSignature]
+  )
+
   const filter = useMemo<BoardViewFilter>(
     () => ({
       lens,
@@ -328,6 +362,13 @@ function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: Boar
       excludeLabels: excludeLabelStreamIds ? { key: excludeLabelKey, streamIds: excludeLabelStreamIds } : null,
       unread: unreadStreamIds
         ? { key: BOARD_UNREAD_ON, streamIds: unreadStreamIds, clearedConversationIds: clearedUnreadIds }
+        : null,
+      drafts: draftsOnly
+        ? {
+            key: BOARD_DRAFTS_ON,
+            conversationIds: draftConversationIds,
+            subtopicMessageIds: subtopicDraftMessageIds,
+          }
         : null,
       showArchived,
       archivedRootIds,
@@ -348,6 +389,9 @@ function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: Boar
       excludeLabelStreamIds,
       unreadStreamIds,
       clearedUnreadIds,
+      draftsOnly,
+      draftConversationIds,
+      subtopicDraftMessageIds,
       showArchived,
       archivedRootIds,
     ]
@@ -566,7 +610,7 @@ function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: Boar
   // Changing lens OR scope replaces the feed with a different (often much
   // shorter) subset, so jump to the top pre-paint — otherwise a viewer scrolled
   // down the All wall who narrows the view lands past the end of a short list.
-  const resetKey = `${lens}|${scopeKey}|${typeKey}|${excludeScopeKey}|${excludeTypeKey}|${labelKey}|${excludeLabelKey}|${showArchived ? "arch" : ""}|${unreadOnly ? "unread" : ""}`
+  const resetKey = `${lens}|${scopeKey}|${typeKey}|${excludeScopeKey}|${excludeTypeKey}|${labelKey}|${excludeLabelKey}|${showArchived ? "arch" : ""}|${unreadOnly ? "unread" : ""}|${draftsOnly ? "drafts" : ""}`
   useLayoutEffect(() => {
     closeAllRevealWindows()
     if (scrollerRef.current) scrollerRef.current.scrollTop = 0
@@ -600,7 +644,8 @@ function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: Boar
     excludeStreamTypes.length > 0 ||
     scopeLabelIds.length > 0 ||
     excludeLabelIds.length > 0 ||
-    unreadOnly
+    unreadOnly ||
+    draftsOnly
   // The viewer's own just-posted card gets a brief gold-thread flash (the golden
   // thread motif, on the primary action). The flashed id lives in a module store
   // (`setBoardFlash`) that each card subscribes to by its own id, not in page
@@ -826,7 +871,9 @@ function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: Boar
           excludeStreamIds,
           excludeStreamTypes,
           excludeLabelIds,
-        }) || unreadOnly
+        }) ||
+        unreadOnly ||
+        draftsOnly
       const copy = scoped ? SCOPED_EMPTY_COPY : LENS_EMPTY_COPY[lens]
       stateContent = (
         <div className="flex flex-col items-center justify-center gap-3 px-6 py-16 text-center">

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
-import { act, render, screen } from "@testing-library/react"
+import { act, render, screen, waitFor } from "@testing-library/react"
 import { Fragment, createElement } from "react"
 import * as boardFeedListModule from "@/components/board/board-feed-list"
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom"
@@ -22,6 +22,8 @@ import * as panelHostModule from "@/components/layout/panel-host"
 // eslint-disable-next-line no-restricted-imports -- test seeds IDB directly to drive the real rail read path
 import { db } from "@/db"
 import { __resetConversationMessageSnapshots, seedConversationMessages } from "@/stores/conversation-messages-store"
+import { __clearBoardDraftsRegistry } from "@/hooks/use-scope-draft-preview"
+import { boardReplyDraftKey, boardBranchReplyDraftKey, boardSubtopicDraftKey } from "@/lib/board/draft-keys"
 
 const WORKSPACE_ID = "ws_1"
 
@@ -714,5 +716,64 @@ describe("BoardPage unread view", () => {
     mountBoard([makePost()])
     await screen.findByText("CC Teams tokens")
     expect(screen.queryByRole("button", { name: "Clear from unread" })).toBeNull()
+  })
+})
+
+describe("BoardPage drafts view", () => {
+  const DRAFTS_ENTRY = `/w/${WORKSPACE_ID}/board?drafts=true`
+
+  async function seedDraft(id: string, scope: string, text: string) {
+    await db.drafts.add({
+      id,
+      workspaceId: WORKSPACE_ID,
+      scope,
+      contentJson: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text }] }] },
+      attachments: [],
+      clientUpdatedAt: 1000,
+    } as never)
+  }
+
+  beforeEach(async () => {
+    __clearBoardDraftsRegistry()
+    await db.drafts.clear()
+    await db.composerLoaded.clear()
+  })
+
+  afterEach(async () => {
+    __clearBoardDraftsRegistry()
+    await db.drafts.clear()
+  })
+
+  function draftPosts(): BoardPost[] {
+    return [
+      makePost({ id: "conv_reply", topicSummary: "Reply draft card", messageIds: ["m_r"] }, { id: "m_r" }),
+      makePost({ id: "conv_branch", topicSummary: "Branch draft card", messageIds: ["m_b"] }, { id: "m_b" }),
+      makePost({ id: "conv_sub", topicSummary: "Subtopic draft card", messageIds: ["msg_fork"] }, { id: "msg_fork" }),
+      makePost({ id: "conv_none", topicSummary: "No draft card", messageIds: ["m_n"] }, { id: "m_n" }),
+    ]
+  }
+
+  it("keeps only the cards a board draft key resolves to", async () => {
+    await seedDraft("draft_reply", boardReplyDraftKey("conv_reply"), "reply body")
+    await seedDraft("draft_branch", boardBranchReplyDraftKey("conv_branch"), "branch body")
+    await seedDraft("draft_sub", boardSubtopicDraftKey("stream_1", "msg_fork"), "subtopic body")
+
+    mountBoard(draftPosts(), { entry: DRAFTS_ENTRY })
+
+    expect(await screen.findByText("Reply draft card")).toBeTruthy()
+    await waitFor(() => expect(screen.getByText("Branch draft card")).toBeTruthy())
+    expect(screen.getByText("Subtopic draft card")).toBeTruthy()
+    expect(screen.queryByText("No draft card")).toBeNull()
+  })
+
+  it("shows nothing when no board draft matches a card", async () => {
+    await seedDraft("draft_other", boardReplyDraftKey("conv_elsewhere"), "unrelated body")
+
+    mountBoard(draftPosts(), { entry: DRAFTS_ENTRY })
+
+    await waitFor(() => expect(screen.queryByText("Reply draft card")).toBeNull())
+    expect(screen.queryByText("Branch draft card")).toBeNull()
+    expect(screen.queryByText("Subtopic draft card")).toBeNull()
+    expect(screen.queryByText("No draft card")).toBeNull()
   })
 })

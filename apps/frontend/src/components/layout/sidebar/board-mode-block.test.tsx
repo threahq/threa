@@ -268,6 +268,18 @@ describe("BoardModeBlock", () => {
     expect(new URL(currentLoc(), "http://x").searchParams.get("archived")).toBe("true")
   })
 
+  it("the With drafts toggle flips ?drafts=true and back off", async () => {
+    const user = userEvent.setup()
+    stub()
+    mountAt(`/w/${WS}/board?lens=all`)
+
+    await user.click(screen.getByRole("button", { name: "With drafts" }))
+    expect(new URL(currentLoc(), "http://x").searchParams.get("drafts")).toBe("true")
+
+    await user.click(screen.getByRole("button", { name: "With drafts" }))
+    expect(new URL(currentLoc(), "http://x").searchParams.get("drafts")).toBeNull()
+  })
+
   it("pinning a lens writes the home-lens preference and clears any view home", async () => {
     const user = userEvent.setup()
     const { updatePreferences } = stub({ boardDefaultLens: "all" })

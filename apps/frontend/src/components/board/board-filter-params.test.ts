@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest"
 import { MAX_BOARD_SCOPE_STREAMS } from "@threa/types"
 import {
+  clearAxisSearch,
+  clearDraftsSearch,
   clearFiltersSearch,
+  draftsFocusSearch,
   focusScopeSearch,
   isSoleInclude,
   labelFocusSearch,
@@ -178,5 +181,30 @@ describe("removeAxisValueSearch", () => {
   it("drops one value from a list param and keeps the others and unrelated params", () => {
     expect(removeAxisValueSearch("?in=a,b,c&is=dm", "in", "b")).toBe("?in=a%2Cc&is=dm")
     expect(removeAxisValueSearch("?not-label=l1&panel=x", "not-label", "l1")).toBe("?panel=x")
+  })
+})
+
+describe("drafts filter", () => {
+  it("focuses the drafts axis without touching any other", () => {
+    expect(draftsFocusSearch("?lens=mine&in=a&panel=x")).toBe("?lens=mine&in=a&panel=x&drafts=true")
+  })
+
+  it("is idempotent — re-focusing an already-on drafts filter changes nothing", () => {
+    expect(draftsFocusSearch("?drafts=true&lens=all")).toBe("?drafts=true&lens=all")
+  })
+
+  it("clears only the drafts axis", () => {
+    expect(clearDraftsSearch("?lens=all&drafts=true&unread=true")).toBe("?lens=all&unread=true")
+  })
+
+  it("is swept by clearFiltersSearch", () => {
+    expect(clearFiltersSearch("?lens=mine&drafts=true&panel=x")).toBe("?lens=all&panel=x")
+  })
+})
+
+describe("clearAxisSearch", () => {
+  it("drops one axis and keeps everything else", () => {
+    expect(clearAxisSearch("?lens=all&label=l1&is=dm", "label")).toBe("?lens=all&is=dm")
+    expect(clearAxisSearch("?in=a", "in")).toBe("")
   })
 })

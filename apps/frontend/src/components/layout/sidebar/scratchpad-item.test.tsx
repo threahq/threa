@@ -374,6 +374,7 @@ describe("ScratchpadItem", () => {
       labelFocusHref: (labelId) => `/w/workspace_1/board?label=${labelId}`,
       typeFocusHref: (type) => `/w/workspace_1/board?is=${type}`,
       unreadFocusHref: () => `/w/workspace_1/board?unread=true`,
+      clearAxisHref: (param: string) => `/w/workspace_1/board?cleared=${param}`,
       setMuted: vi.fn(),
       statsForStream: () => null,
       lensTotals: null,

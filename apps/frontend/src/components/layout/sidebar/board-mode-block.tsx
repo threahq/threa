@@ -25,6 +25,8 @@ import {
 import {
   BOARD_ARCHIVED_ON,
   BOARD_ARCHIVED_PARAM,
+  BOARD_DRAFTS_ON,
+  BOARD_DRAFTS_PARAM,
   BOARD_EXCLUDE_LABEL_PARAM,
   BOARD_EXCLUDE_SCOPE_PARAM,
   BOARD_EXCLUDE_TYPE_PARAM,
@@ -281,6 +283,7 @@ function BoardModeFilters({ workspaceId, unreadStreamCount }: { workspaceId: str
   const unmuteStream = useUnmuteStream(workspaceId)
 
   const showArchived = searchParams.get(BOARD_ARCHIVED_PARAM) === BOARD_ARCHIVED_ON
+  const draftsOnly = searchParams.get(BOARD_DRAFTS_PARAM) === BOARD_DRAFTS_ON
 
   const labelFor = (streamId: string) =>
     resolveStreamName(streamId, { streams, users, dmPeers }, "generic") ?? "Unknown stream"
@@ -354,6 +357,12 @@ function BoardModeFilters({ workspaceId, unreadStreamCount }: { workspaceId: str
         label="Archived"
         active={showArchived}
         onToggle={() => setParamLists([[BOARD_ARCHIVED_PARAM, showArchived ? [] : [BOARD_ARCHIVED_ON]]])}
+      />
+      <FilterToggleRow
+        icon={Pencil}
+        label="With drafts"
+        active={draftsOnly}
+        onToggle={() => setParamLists([[BOARD_DRAFTS_PARAM, draftsOnly ? [] : [BOARD_DRAFTS_ON]]])}
       />
     </div>
   )
