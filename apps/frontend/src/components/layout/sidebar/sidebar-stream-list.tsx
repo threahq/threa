@@ -336,9 +336,9 @@ export function SidebarStreamList({
           // Normalize exactly as scopeAllSearch does (dedupe, keep-first cap) so
           // the active check compares against the ids the URL can actually hold —
           // an uncapped comparison never matches for an oversized section.
-          const scopeIds = canScopeAll
-            ? Array.from(new Set(items.map(boardScopeStreamId).filter(Boolean))).slice(0, MAX_BOARD_SCOPE_STREAMS)
-            : []
+          const dedupedScopeIds = canScopeAll ? Array.from(new Set(items.map(boardScopeStreamId).filter(Boolean))) : []
+          const dedupedScopeIdCount = dedupedScopeIds.length
+          const scopeIds = dedupedScopeIds.slice(0, MAX_BOARD_SCOPE_STREAMS)
           const scopeAllActive = canScopeAll && sameMembers(selection.scopeStreamIds, scopeIds)
           if (scopeAllActive) filterActive = true
           let scopeAllHref: string | undefined = undefined
@@ -352,8 +352,8 @@ export function SidebarStreamList({
           // scoping to a prefix of the section.
           let scopeAllTitle: string | undefined = undefined
           if (scopeAllActive) scopeAllTitle = `Clear board scope ${headerLabel}`
-          else if (canScopeAll && items.length > MAX_BOARD_SCOPE_STREAMS)
-            scopeAllTitle = `Scope board to the first ${MAX_BOARD_SCOPE_STREAMS} of ${items.length} streams`
+          else if (canScopeAll && dedupedScopeIdCount > MAX_BOARD_SCOPE_STREAMS)
+            scopeAllTitle = `Scope board to the first ${MAX_BOARD_SCOPE_STREAMS} of ${dedupedScopeIdCount} streams`
 
           const state = getSectionState(section.id, presentation.defaultCollapse)
           const onToggle = () => toggleSectionState(section.id, presentation.defaultCollapse)

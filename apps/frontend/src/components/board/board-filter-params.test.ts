@@ -205,6 +205,12 @@ describe("drafts filter", () => {
 describe("clearAxisSearch", () => {
   it("drops one axis and keeps everything else", () => {
     expect(clearAxisSearch("?lens=all&label=l1&is=dm", "label")).toBe("?lens=all&is=dm")
-    expect(clearAxisSearch("?in=a", "in")).toBe("")
+  })
+
+  it("never yields a bare search — clearing the last axis pins an explicit lens", () => {
+    // An empty search is the board's home-redirect alias; a saved home would
+    // teleport the user instead of showing the unfiltered board.
+    expect(clearAxisSearch("?in=a", "in")).toBe("?lens=all")
+    expect(clearAxisSearch("?lens=mine&in=a", "in")).toBe("?lens=mine")
   })
 })

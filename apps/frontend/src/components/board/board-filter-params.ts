@@ -275,6 +275,9 @@ export function unreadFocusSearch(search: string): string {
 export function clearAxisSearch(search: string, param: string): string {
   const params = new URLSearchParams(search)
   params.delete(param)
+  // Clearing the LAST axis must never yield a bare `/board` — that's the home
+  // redirect (a saved home would teleport the user). Keep the lens explicit.
+  if (!params.has(BOARD_LENS_PARAM)) params.set(BOARD_LENS_PARAM, DEFAULT_BOARD_LENS)
   return toSearch(params)
 }
 
