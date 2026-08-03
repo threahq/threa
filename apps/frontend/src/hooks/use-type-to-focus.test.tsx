@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest"
 import { render } from "@testing-library/react"
-import { useTypeToFocus } from "./use-type-to-focus"
+import { findVisibleZoneEditor, useTypeToFocus } from "./use-type-to-focus"
 
 function Harness() {
   useTypeToFocus()
@@ -257,5 +257,29 @@ describe("useTypeToFocus", () => {
     press("a")
 
     expect(document.activeElement).toBe(panel)
+  })
+})
+
+describe("findVisibleZoneEditor", () => {
+  it("skips a later visible inline-edit editor in favor of the standard composer", () => {
+    buildDom(
+      '<main data-editor-zone="main">' +
+        '<div contenteditable="true" id="composer"></div>' +
+        '<div data-inline-edit><div contenteditable="true" id="edit"></div></div>' +
+        "</main>"
+    )
+    const composer = document.getElementById("composer") as HTMLElement
+    const edit = document.getElementById("edit") as HTMLElement
+    setVisible(composer, true)
+    setVisible(edit, true)
+
+    expect(findVisibleZoneEditor(document.querySelector<HTMLElement>('[data-editor-zone="main"]'))).toBe(composer)
+  })
+
+  it("returns null for an absent zone container", () => {
+    buildDom('<main data-editor-zone="main"><div contenteditable="true" id="c"></div></main>')
+    setVisible(document.getElementById("c")!, true)
+
+    expect(findVisibleZoneEditor(document.querySelector<HTMLElement>('[data-editor-zone="panel"]'))).toBeNull()
   })
 })
