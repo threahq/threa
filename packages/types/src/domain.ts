@@ -889,7 +889,8 @@ export interface BoardPost {
    * them when the viewer opts in (`?archived=true`), so this pins exactly the
    * cards the client must drop again when the viewer toggles archived back off —
    * a per-card signal that survives in IDB, unlike a workspace-streams lookup
-   * (the bootstrap seeds active streams only). Optional because cached rows
+   * (which needs the root row resolved; the client vetoes with that index too,
+   * as the fresher signal when this flag is stale). Optional because cached rows
    * predate the field; the client fails OPEN (surfaces the post) until reseed.
    */
   rootArchived?: boolean

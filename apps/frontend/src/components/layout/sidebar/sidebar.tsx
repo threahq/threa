@@ -159,11 +159,18 @@ export function Sidebar({ workspaceId }: SidebarProps) {
   // and would otherwise still surface in the sidebar. A thread inherits its root
   // via `rootStreamId`, so one lookup hides every nested thread under an archived
   // root (scratchpad, channel, or any top-level stream).
-  const archivedStreamIds = useMemo(() => {
-    const ids = new Set<string>()
-    for (const stream of idbStreams) if (stream.archivedAt) ids.add(stream.id)
-    return ids
+  // Signature-memoized: `idbStreams` re-emits on every db.streams write, and
+  // this set now also feeds useBoardSidebarStats, whose aggregation must not
+  // re-run unless archived membership actually changed.
+  const archivedStreamIdSignature = useMemo(() => {
+    const ids: string[] = []
+    for (const stream of idbStreams) if (stream.archivedAt) ids.push(stream.id)
+    return ids.sort().join(",")
   }, [idbStreams])
+  const archivedStreamIds = useMemo(
+    () => new Set<string>(archivedStreamIdSignature ? archivedStreamIdSignature.split(",") : []),
+    [archivedStreamIdSignature]
+  )
 
   // Streams the user stepped away from with an unsent (loaded, non-stashed)
   // draft, surfaced as a per-row hint. `loadedDraftStreamIdSignature` (from the
@@ -340,7 +347,7 @@ export function Sidebar({ workspaceId }: SidebarProps) {
   // The single reactive topic-stats pass — one subscription for the whole board
   // sidebar (rows + Lenses counts), gated on board mode so chats mode subscribes
   // to nothing (perf contract in the exploration doc).
-  const boardSidebarStats = useBoardSidebarStats(workspaceId, isBoardPage)
+  const boardSidebarStats = useBoardSidebarStats(workspaceId, isBoardPage, archivedStreamIds)
   const boardMode = useMemo<SidebarBoardMode | null>(() => {
     if (!isBoardPage) return null
     return {
@@ -416,7 +423,7 @@ export function Sidebar({ workspaceId }: SidebarProps) {
   } else if (hasQuickLinksSection) {
     quickLinksSlot = (
       <>
-        <BoardLinkRow workspaceId={workspaceId} userId={user?.id ?? null} unreadStreamCount={unreadStreamCount} />
+        <BoardLinkRow workspaceId={workspaceId} userId={user?.id ?? null} />
         {quickLinks}
       </>
     )

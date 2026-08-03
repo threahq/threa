@@ -53,10 +53,19 @@ describe("BoardLinkRow", () => {
   it("falls back to the bare board route when no board state was retained", () => {
     render(
       <MemoryRouter>
-        <BoardLinkRow workspaceId={WS} userId={USER} unreadStreamCount={0} />
+        <BoardLinkRow workspaceId={WS} userId={USER} />
       </MemoryRouter>
     )
     expect(hrefOf("Board")).toBe(`/w/${WS}/board`)
+  })
+
+  it("carries no unread toggle — that's a board-mode filter, not a chats-mode row", () => {
+    render(
+      <MemoryRouter>
+        <BoardLinkRow workspaceId={WS} userId={USER} />
+      </MemoryRouter>
+    )
+    expect(screen.queryByText("Unread")).toBeNull()
   })
 })
 

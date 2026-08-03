@@ -25,6 +25,7 @@ function filterOf(over: Partial<BoardViewFilter> = {}): BoardViewFilter {
     excludeLabels: null,
     unread: null,
     showArchived: false,
+    archivedRootIds: new Set<string>(),
     ...over,
   }
 }
@@ -766,6 +767,11 @@ describe("useStableBoardView — hide & mute exclusions", () => {
     return { ...streamPost(id, activityMs, rootStreamId), rootArchived: true } as unknown as CachedBoardPost
   }
 
+  /** A card cached while its root was still active — the stale-flag shape. */
+  function staleActivePost(id: string, activityMs: number, rootStreamId: string): CachedBoardPost {
+    return { ...streamPost(id, activityMs, rootStreamId), rootArchived: false } as unknown as CachedBoardPost
+  }
+
   const NO_EXCL = exclOf()
 
   it("drops a hidden card immediately — even after it was committed and retained (the crux)", () => {
@@ -840,6 +846,78 @@ describe("useStableBoardView — hide & mute exclusions", () => {
 
     rerender({ filter: ALL })
     expect(result.current.posts.map((p) => p.id)).toEqual(["b"])
+  })
+
+  it("vetoes a stale card whose root is archived in the local stream index", () => {
+    // `rootArchived: undefined` (cached before the flag existed) and
+    // `rootArchived: false` (cached before the root was archived) both fail open
+    // on the per-card flag alone — the server never re-seeds an archived
+    // conversation, so the veto has to come from the fresher stream index.
+    mockLive(
+      feed(streamPost("a", 300, "stream_x"), staleActivePost("b", 200, "stream_y"), streamPost("c", 100, "stream_z"))
+    )
+    const { result } = renderHook(() =>
+      useStableBoardView(
+        "ws_1",
+        filterOf({ archivedRootIds: new Set(["stream_x", "stream_y"]) }),
+        undefined,
+        undefined,
+        undefined
+      )
+    )
+    expect(result.current.posts.map((p) => p.id)).toEqual(["c"])
+  })
+
+  it("keeps stale-flag cards whose root is archived once showArchived opts in", () => {
+    mockLive(feed(streamPost("a", 300, "stream_x"), staleActivePost("b", 200, "stream_y")))
+    const { result } = renderHook(() =>
+      useStableBoardView(
+        "ws_1",
+        filterOf({ showArchived: true, archivedRootIds: new Set(["stream_x", "stream_y"]) }),
+        undefined,
+        undefined,
+        undefined
+      )
+    )
+    expect(result.current.posts.map((p) => p.id)).toEqual(["a", "b"])
+  })
+
+  it("keeps a `rootArchived: false` card whose root is not in the archived index", () => {
+    mockLive(feed(staleActivePost("a", 300, "stream_x")))
+    const { result } = renderHook(() =>
+      useStableBoardView(
+        "ws_1",
+        filterOf({ archivedRootIds: new Set(["stream_other"]) }),
+        undefined,
+        undefined,
+        undefined
+      )
+    )
+    expect(result.current.posts.map((p) => p.id)).toEqual(["a"])
+  })
+
+  it("drops a committed card the instant its root joins the archived index", () => {
+    mockLive(feed(streamPost("a", 300, "stream_x"), streamPost("b", 200, "stream_y")))
+    const { result, rerender } = renderHook(
+      ({ filter }) => useStableBoardView("ws_1", filter, undefined, undefined, undefined),
+      { initialProps: { filter: filterOf() } }
+    )
+    expect(result.current.posts.map((p) => p.id)).toEqual(["a", "b"])
+
+    // A fresh arrival waits behind the "N new" pill — the reader's view is frozen.
+    act(() =>
+      mockLive(
+        feed(streamPost("new", 500, "stream_y"), streamPost("a", 300, "stream_x"), streamPost("b", 200, "stream_y"))
+      )
+    )
+    rerender({ filter: filterOf() })
+    expect(result.current.newCount).toBe(1)
+
+    rerender({ filter: filterOf({ archivedRootIds: new Set(["stream_x"]) }) })
+    // Dropped instantly, and the frozen view is NOT reset: the buffered card is
+    // still behind the pill (a view-key reset would have committed it).
+    expect(result.current.posts.map((p) => p.id)).toEqual(["b"])
+    expect(result.current.newCount).toBe(1)
   })
 
   it("reports hasRawPosts when the feed is seeded but every card is excluded (empty view, not loading)", () => {
