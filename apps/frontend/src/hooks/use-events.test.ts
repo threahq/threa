@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest"
 import type { StreamEvent } from "@threa/types"
-import { db } from "@/db"
+import { db, type CachedEvent } from "@/db"
 import { resetEventWriteFlags } from "@/db/event-writes"
 import { loadStreamPrefix, loadStreamTail, unionStreamRanges } from "@/stores/stream-store"
 import {
@@ -286,7 +286,7 @@ describe("cacheToIndexedDB with eventWriteChunking on", () => {
 describe("bounded timeline read from the events hook's window", () => {
   const STREAM = "stream_bounded_events"
 
-  function cachedEvent(sequence: number, streamId = STREAM) {
+  function cachedEvent(sequence: number, streamId = STREAM): CachedEvent {
     return {
       id: `evt_${streamId}_${sequence}`,
       workspaceId: "ws_1",
@@ -303,11 +303,7 @@ describe("bounded timeline read from the events hook's window", () => {
   }
 
   async function seed(count: number, streamId = STREAM) {
-    await db.events.bulkPut(
-      Array.from({ length: count }, (_, i) => cachedEvent(i + 1, streamId)) as unknown as Parameters<
-        typeof db.events.bulkPut
-      >[0]
-    )
+    await db.events.bulkPut(Array.from({ length: count }, (_, i) => cachedEvent(i + 1, streamId)))
   }
 
   beforeEach(async () => {

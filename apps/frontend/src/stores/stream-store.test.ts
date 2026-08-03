@@ -645,12 +645,15 @@ describe("bounded timeline read — tail and prefix", () => {
       emissions += 1
       resolveFirst?.()
     })
-    await first
-    const baseline = emissions
-    await run()
-    await new Promise((resolve) => setTimeout(resolve, 50))
-    subscription.unsubscribe()
-    return emissions - baseline
+    try {
+      await first
+      const baseline = emissions
+      await run()
+      await new Promise((resolve) => setTimeout(resolve, 50))
+      return emissions - baseline
+    } finally {
+      subscription.unsubscribe()
+    }
   }
 
   beforeEach(async () => {
