@@ -300,6 +300,7 @@ export function deriveBranchConversations(params: {
         displayDepth: depth,
         overflow,
         messages: markedMessages,
+        memberMessageIds: [...new Set([...childMemberIds, ...markedMessages.map((m) => m.id)])],
         settlingMessageIds,
         hiddenCount,
         children,

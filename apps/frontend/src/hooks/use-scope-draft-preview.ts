@@ -183,6 +183,20 @@ export function useScopeDraftPreview(workspaceId: string, scope: string): ScopeD
 }
 
 /**
+ * Every board draft in the workspace keyed by scope — for a surface that must
+ * test MANY scopes at once (a collapsed branch rolling its whole subtree up),
+ * where one {@link useScopeDraftPreview} per scope would be a hook in a loop.
+ */
+export function useBoardScopeDraftIndex(workspaceId: string): Map<string, ScopeDraftPreview> {
+  const subscribe = useBoardDraftsSubscription(workspaceId)
+  const getSnapshot = useCallback(
+    () => boardDraftsRegistry.get(workspaceId)?.snapshot.previewByScope ?? EMPTY_SNAPSHOT.previewByScope,
+    [workspaceId]
+  )
+  return useSyncExternalStore(subscribe, getSnapshot)
+}
+
+/**
  * Every new-sub-topic draft in the workspace, keyed by its fork message id —
  * so a conversation surface can mark the message rows that carry an unsent
  * sub-topic draft while the gesture's composer is unmounted. Same shared

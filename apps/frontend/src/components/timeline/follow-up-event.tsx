@@ -4,7 +4,7 @@ import { Clock, Check, Loader2 } from "lucide-react"
 import type { AgentFollowUpScheduledEventPayload, StreamEvent } from "@threa/types"
 import { agentFollowUpsApi } from "@/api"
 import { useActors } from "@/hooks"
-import { formatTime, formatFullDateTime } from "@/lib/dates"
+import { formatFireTime, formatFullDateTime } from "@/lib/dates"
 import { cn } from "@/lib/utils"
 
 interface FollowUpScheduledEventProps {
@@ -16,12 +16,6 @@ interface FollowUpScheduledEventProps {
    * one who clicked) sees the card as cancelled, and it survives a reload.
    */
   cancelledByEvent?: boolean
-}
-
-/** Compact fire time in the viewer's local zone (INV-42): "Wed, Jul 8 at 2:30 PM". */
-function formatFireTime(date: Date): string {
-  const day = date.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" })
-  return `${day} at ${formatTime(date)}`
 }
 
 /**

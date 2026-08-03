@@ -16,7 +16,7 @@ import { Button } from "@/components/ui/button"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { MessageItem, type RenderableMessage } from "@/components/message/message-item"
 import { actorRowTheme } from "@/components/message/actor-row-theme"
-import { buildBranchedBoardRows } from "@/components/board/board-row-item"
+import { buildBranchedBoardRows, foldLedgerEventRows } from "@/components/board/board-row-item"
 import {
   BranchedBoardRows,
   BranchProvenanceRow,
@@ -556,6 +556,13 @@ export function BoardCard({
   const ledgerIds = new Set(ledgerReplies.map((m) => m.id))
   const visibleReplies = [...ledgerReplies, ...fullTailReplies]
   const firstFullTailId = fullTailReplies[0]?.id ?? null
+  // Events interleave at their own timeline positions; those landing among the
+  // ledger rows compress to the same hair-thin line the messages do, coalescing
+  // adjacent runs. A card with no ledger rows is all full detail, so nothing folds.
+  const ledgerBranchRows = (messages: RenderableMessage[]) => {
+    const rows = branchRows(messages)
+    return ledgerReplies.length > 0 ? foldLedgerEventRows(rows, firstFullTailId) : rows
+  }
   // Commit the partition's first row after render, never during it.
   useEffect(() => {
     if (firstFullTailId === null) return
@@ -838,6 +845,12 @@ export function BoardCard({
   // strand `openComposer` non-null with no mounted UI.
   const branchPinnedOpen = (branch: BranchConversationView): boolean =>
     branchSelfPinned(branch) || branch.children.some(branchPinnedOpen)
+  // A coalesced event group shares the same expansion set, keyed by its row key
+  // (`ledger-events:<first event key>`) — reset on conversation switch with it.
+  const ledgerEventExpansion = {
+    isExpanded: (key: string) => expandedRowIds.has(key),
+    toggle: toggleLedgerRow,
+  }
   const branchExpansion: BranchExpansion = {
     workspaceId,
     leadLineLength,
@@ -1049,7 +1062,7 @@ export function BoardCard({
               )}
               {contiguous ? (
                 <BranchedBoardRows
-                  rows={branchRows(openingMessage ? [openingMessage, ...visibleReplies] : visibleReplies)}
+                  rows={ledgerBranchRows(openingMessage ? [openingMessage, ...visibleReplies] : visibleReplies)}
                   workspaceId={workspaceId}
                   renderMessage={renderMessage}
                   continueThreadTo={continueThreadTo}
@@ -1059,6 +1072,7 @@ export function BoardCard({
                   branchExpansion={branchExpansion}
                   renderAfterMessage={inlineComposer.renderAfterMessage}
                   onRedirectSession={openReplyComposer}
+                  ledgerEventExpansion={ledgerEventExpansion}
                 />
               ) : (
                 <>
@@ -1068,7 +1082,7 @@ export function BoardCard({
                   {openingMessage && inlineComposer.renderAfterMessage(openingMessage.id)}
                   {ledgerHeadRow}
                   <BranchedBoardRows
-                    rows={branchRows(visibleReplies)}
+                    rows={ledgerBranchRows(visibleReplies)}
                     workspaceId={workspaceId}
                     renderMessage={renderMessage}
                     continueThreadTo={continueThreadTo}
@@ -1078,6 +1092,7 @@ export function BoardCard({
                     branchExpansion={branchExpansion}
                     renderAfterMessage={inlineComposer.renderAfterMessage}
                     onRedirectSession={openReplyComposer}
+                    ledgerEventExpansion={ledgerEventExpansion}
                   />
                 </>
               )}

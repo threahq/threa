@@ -245,6 +245,28 @@ export function useInlineBranchComposer(params: {
     setOpenComposer({ kind: "new-subtopic", streamId: parsed.streamId, messageId: parsed.messageId })
   }, [stashTarget, graph, branchStreamIds, conversationId, onArmBranchReply])
 
+  // The composer's own pending→graph hand-off: a pending branch is keyed by the
+  // synthetic draft-panel id, so once the graph replaces it with the real child
+  // an untouched `openComposer` matches no rendered branch — `renderBranchTail`
+  // unmounts the live editor and the branch's pin drops. Re-key it onto the real
+  // conversation/thread. Declared BEFORE the drop effect below so the pending
+  // entry it reads is still registered on the commit that materializes.
+  useEffect(() => {
+    if (openComposer?.kind !== "branch-reply") return
+    const openConversationId = openComposer.conversationId
+    const pending = pendingSubtopics.find((p) => createDraftPanelId(p.streamId, p.messageId) === openConversationId)
+    if (!pending) return
+    const threadId = index.threadsByAnchorId.get(pending.messageId)?.id
+    if (!threadId) return
+    const childPost = graph.conversationByAnchorStreamId.get(threadId)
+    if (!childPost) return
+    setOpenComposer((current) =>
+      current?.kind === "branch-reply" && current.conversationId === openConversationId
+        ? { ...current, conversationId: childPost.id, threadStreamId: threadId }
+        : current
+    )
+  }, [openComposer, pendingSubtopics, index, graph])
+
   // A pending sub-topic is handed to the graph path only once BOTH its thread
   // stream exists (promotion) AND the child conversation is cached — dropping it
   // at thread creation alone would blank the message for the beat until the
@@ -297,6 +319,7 @@ export function useInlineBranchComposer(params: {
           displayDepth: 1,
           overflow: false,
           messages: rows,
+          memberMessageIds: rows.map((m) => m.id),
           hiddenCount: 0,
           children: [],
           pending: true,

@@ -249,6 +249,10 @@ export interface BranchConversationView {
   /** The child conversation's own messages, resolved through the parent card's rail
    *  (already sliced to the collapsed window when the card is collapsed). */
   messages: RenderableMessage[]
+  /** Every member message id of the child conversation — the full set, not the
+   *  collapsed-window slice {@link messages} carries. Draft/collapse rollups scope
+   *  by message id, so they must see members outside the preview window too. */
+  memberMessageIds: string[]
   /** The child conversation's own provisional (still-settling) member ids —
    *  already stamped onto {@link messages}; kept so a surface re-deriving rows
    *  from this view marks them the same way. */

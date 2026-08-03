@@ -1,7 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from "vitest"
-import { fireEvent, render, renderHook, screen, waitFor } from "@testing-library/react"
+import { act, fireEvent, render, renderHook, screen, waitFor } from "@testing-library/react"
 import { MemoryRouter } from "react-router-dom"
-import { createElement, type ReactNode } from "react"
+import { createElement, type ReactElement, type ReactNode } from "react"
+import { createDraftPanelId } from "@/contexts"
+import type { BranchConversationView } from "@/lib/board/branch-grouping"
 import { resetDraftStoreCache } from "@/stores/draft-store"
 import * as queueDraftModule from "@/hooks/use-queue-draft-message"
 import { upsertLoadedDraft, purgeScopeDrafts, stashLoadedDraft } from "@/hooks/use-draft-message"
@@ -145,6 +147,88 @@ describe("useInlineBranchComposer ?stash= deep-link consumer", () => {
     const { result } = mountHook(draftId)
     await new Promise((resolve) => setTimeout(resolve, 50))
     expect(result.current.openComposer).toBeNull()
+  })
+})
+
+describe("useInlineBranchComposer pending→real hand-off", () => {
+  beforeEach(async () => {
+    vi.restoreAllMocks()
+    resetDraftStoreCache()
+    await purgeScopeDrafts(workspaceId, "board:subtopic:stream_9:msg_new")
+    vi.spyOn(queueDraftModule, "useQueueDraftMessage").mockReturnValue({
+      queueDraftMessage: vi.fn().mockResolvedValue(undefined),
+      currentUserId: "usr_me",
+    } as unknown as ReturnType<typeof queueDraftModule.useQueueDraftMessage>)
+  })
+
+  const emptyIndex = { threadsByAnchorId: new Map() } as unknown as StreamStructuralIndex
+  const emptyGraph = {
+    conversationByAnchorStreamId: new Map(),
+    conversationIdByMemberMessageId: new Map([["msg_new", PARENT_ID]]),
+    conversationById: new Map(),
+  } as unknown as ConversationGraph
+  const materializedIndex = {
+    threadsByAnchorId: new Map([["msg_new", { id: "stream_thread_new" }]]),
+  } as unknown as StreamStructuralIndex
+  const materializedGraph = {
+    conversationByAnchorStreamId: new Map([
+      [
+        "stream_thread_new",
+        { id: "conv_new", conversation: { id: "conv_new", streamId: "stream_thread_new", messageIds: ["m_real"] } },
+      ],
+    ]),
+    conversationIdByMemberMessageId: new Map([["msg_new", PARENT_ID]]),
+    conversationById: new Map(),
+  } as unknown as ConversationGraph
+
+  it("re-keys an open branch-tail composer onto the real conversation when the graph replaces the pending branch", async () => {
+    const draftPanelId = createDraftPanelId("stream_9", "msg_new")
+    const { result, rerender } = renderHook(
+      ({ index: i, graph: g }: { index: StreamStructuralIndex; graph: ConversationGraph }) =>
+        useInlineBranchComposer({
+          workspaceId,
+          conversationId: PARENT_ID,
+          memberMessageIds: ["msg_new"],
+          index: i,
+          graph: g,
+        }),
+      { wrapper: wrapperWithStash("draft_none"), initialProps: { index: emptyIndex, graph: emptyGraph } }
+    )
+
+    // Send the sub-topic through the gesture's own form (its `onSubmit` is the
+    // only path that registers the pending entry).
+    act(() => result.current.openNewSubtopic("stream_9", "msg_new"))
+    const form = result.current.renderAfterMessage("msg_new") as ReactElement<{
+      onSubmit: (input: unknown) => Promise<void>
+    }>
+    await act(() => form.props.onSubmit({ contentJson: { type: "doc", content: [] } }))
+
+    const optimistic = { id: "m_opt", streamId: draftPanelId, createdAt: "2026-07-28T10:00:00.000Z" }
+    const pendingBranch = result.current.derivePendingBranches(
+      new Map([["m_opt", optimistic as never]])
+    )[0] as BranchConversationView
+    expect(pendingBranch.pending).toBe(true)
+    act(() => result.current.openBranchReply(pendingBranch))
+    expect(result.current.openComposer).toMatchObject({ kind: "branch-reply", conversationId: draftPanelId })
+
+    // The echo lands: the graph's real branch replaces the synthetic one.
+    rerender({ index: materializedIndex, graph: materializedGraph })
+    await waitFor(() =>
+      expect(result.current.openComposer).toMatchObject({
+        kind: "branch-reply",
+        conversationId: "conv_new",
+        threadStreamId: "stream_thread_new",
+      })
+    )
+    // …and the real branch's tail still renders the mounted composer (the
+    // affordance has no `onSubmit`), so the editor never unmounted.
+    const tail = result.current.renderBranchTail({
+      ...pendingBranch,
+      conversationId: "conv_new",
+      threadStreamId: "stream_thread_new",
+      pending: false,
+    }) as ReactElement<Record<string, unknown>>
+    expect(tail.props).toHaveProperty("onSubmit")
   })
 })
 

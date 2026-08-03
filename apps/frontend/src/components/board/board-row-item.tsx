@@ -1,3 +1,5 @@
+import type { ReactNode } from "react"
+import { Bot, Clock, Sparkles, TerminalSquare } from "lucide-react"
 import type { StreamEvent } from "@threa/types"
 import { useSteerAgentSession, useStopAgentSession } from "@/hooks"
 import { isContinuation } from "@/lib/message-grouping"
@@ -7,10 +9,12 @@ import { MemoCapturedEvent } from "@/components/timeline/memo-captured-event"
 import { FollowUpScheduledEvent } from "@/components/timeline/follow-up-event"
 import { DelegationEvent } from "@/components/timeline/delegation-event"
 import { getSessionId } from "@/components/timeline/session-grouping"
-import { useSocket } from "@/contexts"
+import { useSocket, useTrace } from "@/contexts"
 import { useWorkspaceUserId } from "@/hooks/use-workspaces"
 import { useAgentActivity, type MessageAgentActivity } from "@/hooks/use-agent-activity"
+import { LedgerEventGroup, LedgerEventRow, type LedgerEventDescriptor } from "@/components/board/ledger-row"
 import type { BoardEventRow } from "@/lib/board/board-event-rows"
+import { coalesceLedgerItems, ledgerEventContent, type LedgerItemKind } from "@/lib/board/ledger"
 import type { BranchGrouping, BranchNode, BranchConversationView } from "@/lib/board/branch-grouping"
 import { localStartOfDayMs } from "@/lib/dates"
 
@@ -29,6 +33,8 @@ import { localStartOfDayMs } from "@/lib/dates"
 export type BoardRow =
   | { kind: "message"; key: string; message: RenderableMessage; continuation: boolean; displayDepth?: number }
   | { kind: "event"; key: string; row: BoardEventRow; displayDepth?: number }
+  | { kind: "ledger-event"; key: string; row: BoardEventRow; displayDepth?: number }
+  | { kind: "ledger-event-group"; key: string; rows: BoardEventRow[]; displayDepth?: number }
   | { kind: "seam"; key: string; streamId: string; direction: "down" | "up"; displayDepth?: number }
   | { kind: "branch-group"; key: string; branch: BranchConversationView; displayDepth?: number }
   | { kind: "continue-thread"; key: string; streamId: string; hiddenCount: number; displayDepth?: number }
@@ -139,6 +145,66 @@ export function buildBoardRows(messages: RenderableMessage[], eventRows: BoardEv
     }
   }
   return rows
+}
+
+/**
+ * Fold the event rows of the card's LEDGER region into hair-thin ledger lines,
+ * coalescing adjacent runs of two or more into one expandable group
+ * (`coalesceLedgerItems`). The region ends at the first full-tail message row —
+ * below it the reader is in full-detail mode, so those events keep their full
+ * rendering (session cards, delegation cards).
+ *
+ * Runs are cut at every indent change, so a spanning thread's event never
+ * coalesces with a base-level one. Events above the card's window are not
+ * represented at all: they are render-only (`bumps: false`) and the head row
+ * counts messages, so folding them into it would inflate a message count.
+ */
+export function foldLedgerEventRows(rows: BoardRow[], fullTailStartMessageId: string | null): BoardRow[] {
+  const boundary = rows.findIndex((row) => row.kind === "message" && row.message.id === fullTailStartMessageId)
+  const end = boundary < 0 ? rows.length : boundary
+  if (end === 0) return rows
+
+  const out: BoardRow[] = []
+  let segment: BoardRow[] = []
+  let segmentDepth: number | null = null
+
+  const flush = () => {
+    if (segment.length === 0) return
+    const depth = segmentDepth ?? 0
+    for (const item of coalesceLedgerItems(segment.map(ledgerItem))) {
+      if (item.kind === "event-group") {
+        out.push({
+          kind: "ledger-event-group",
+          key: `ledger-events:${item.events[0].source.key}`,
+          rows: item.events.flatMap((event) => (event.row ? [event.row] : [])),
+          displayDepth: depth,
+        })
+        continue
+      }
+      const { source } = item
+      if (source.kind === "event")
+        out.push({ kind: "ledger-event", key: source.key, row: source.row, displayDepth: depth })
+      else out.push(source)
+    }
+    segment = []
+  }
+
+  for (let index = 0; index < end; index++) {
+    const row = rows[index]
+    const depth = row.displayDepth ?? 0
+    if (segmentDepth !== null && depth !== segmentDepth) flush()
+    segmentDepth = depth
+    segment.push(row)
+  }
+  flush()
+  out.push(...rows.slice(end))
+  return out
+}
+
+/** A board row as a coalescing item: only event rows can join a run. */
+function ledgerItem(row: BoardRow): { kind: LedgerItemKind; source: BoardRow; row?: BoardEventRow } {
+  if (row.kind === "event") return { kind: "event", source: row, row: row.row }
+  return { kind: "message", source: row }
 }
 
 function messageMs(message: RenderableMessage): number {
@@ -417,6 +483,60 @@ export function BoardEventRowItem({
       return exhaustive
     }
   }
+}
+
+const LEDGER_EVENT_ICONS: Record<BoardEventRow["kind"], ReactNode> = {
+  session: <Bot className="size-3" />,
+  memo: <Sparkles className="size-3 text-amber-500" />,
+  followUp: <Clock className="size-3" />,
+  delegation: <TerminalSquare className="size-3" />,
+}
+
+function ledgerDescriptor(row: BoardEventRow, workspaceId: string, traceUrl: (sessionId: string) => string) {
+  const content = ledgerEventContent(row, { workspaceId, traceUrl })
+  return {
+    key: content.key,
+    icon: LEDGER_EVENT_ICONS[content.kind],
+    label: content.label,
+    meta: content.meta,
+    href: content.href,
+  } satisfies LedgerEventDescriptor
+}
+
+/**
+ * One event compressed to a ledger line. Its tap affordance is the kind's own:
+ * a session opens the trace view its full card links to, a single capture deep-
+ * links to the memo in the memory explorer. Follow-ups and delegations act only
+ * through buttons on their full cards, so their lines are non-interactive.
+ */
+export function LedgerBoardEventRow({ row, workspaceId }: { row: BoardEventRow; workspaceId: string }) {
+  const { getTraceUrl } = useTrace()
+  const descriptor = ledgerDescriptor(row, workspaceId, getTraceUrl)
+  return (
+    <LedgerEventRow icon={descriptor.icon} label={descriptor.label} meta={descriptor.meta} href={descriptor.href} />
+  )
+}
+
+/** A coalesced run of ledger event lines, expanding in place. */
+export function LedgerBoardEventGroup({
+  rows,
+  workspaceId,
+  expanded,
+  onToggle,
+}: {
+  rows: BoardEventRow[]
+  workspaceId: string
+  expanded: boolean
+  onToggle: () => void
+}) {
+  const { getTraceUrl } = useTrace()
+  return (
+    <LedgerEventGroup
+      events={rows.map((row) => ledgerDescriptor(row, workspaceId, getTraceUrl))}
+      expanded={expanded}
+      onToggle={onToggle}
+    />
+  )
 }
 
 const SESSION_TERMINAL_EVENT_TYPES = new Set<string>([

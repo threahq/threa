@@ -14,7 +14,12 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog"
-import { BoardEventRowItem, type BoardRow } from "@/components/board/board-row-item"
+import {
+  BoardEventRowItem,
+  LedgerBoardEventGroup,
+  LedgerBoardEventRow,
+  type BoardRow,
+} from "@/components/board/board-row-item"
 import { LedgerBranchRow } from "@/components/board/ledger-row"
 import { DayDivider } from "@/components/timeline/day-divider"
 import { UnreadDivider } from "@/components/timeline/unread-divider"
@@ -143,6 +148,31 @@ interface BranchGroupProps {
 export const BRANCH_SETTLING_RAIL_CLASS = "-left-2.5 sm:-left-3.5"
 export const BRANCH_ACCENTED_SETTLING_RAIL_CLASS = "left-0"
 
+/**
+ * Roll a branch's draft/settling inputs up over its whole subtree — collapsing
+ * hides descendants too, so a grandchild's unsent draft or provisional message
+ * must surface on the ancestor's one remaining row. Mirrors the pin walk
+ * (`branchPinnedOpen`); pure, so no hook runs per descendant.
+ */
+function collectBranchSubtree(branch: BranchConversationView): {
+  conversationIds: string[]
+  messageIds: string[]
+  settling: boolean
+} {
+  const conversationIds = [branch.conversationId]
+  // Full members, not the preview slice: a sub-topic draft anchored on a branch
+  // message outside the collapsed window still has to surface on this row.
+  const messageIds = [...branch.memberMessageIds]
+  let settling = branch.messages.some((m) => m.settling) || (branch.settlingMessageIds?.length ?? 0) > 0
+  for (const child of branch.children) {
+    const sub = collectBranchSubtree(child)
+    conversationIds.push(...sub.conversationIds)
+    messageIds.push(...sub.messageIds)
+    settling = settling || sub.settling
+  }
+  return { conversationIds, messageIds, settling }
+}
+
 export function BranchGroup({
   branch,
   expansion,
@@ -153,16 +183,17 @@ export function BranchGroup({
   const { getPanelUrl } = usePanel()
   const panelUrl = getPanelUrl(createConversationPanelId(branch.conversationId))
   if (expansion && !expansion.isExpanded(branch)) {
+    const subtree = collectBranchSubtree(branch)
     return (
       <LedgerBranchRow
         workspaceId={expansion.workspaceId}
         title={branch.title}
-        conversationId={branch.conversationId}
-        messageIds={branch.messages.map((m) => m.id)}
+        conversationIds={subtree.conversationIds}
+        messageIds={subtree.messageIds}
         messageCount={branch.messages.length + branch.hiddenCount}
         lastMessage={branch.messages.at(-1) ?? null}
         leadLineLength={expansion.leadLineLength}
-        settling={branch.messages.some((m) => m.settling) || (branch.settlingMessageIds?.length ?? 0) > 0}
+        settling={subtree.settling}
         onToggle={() => expansion.toggle(branch)}
       />
     )
@@ -307,6 +338,9 @@ interface BranchedBoardRowsProps {
   branchExpansion?: BranchExpansion
   /** Open + focus the surface's reply composer for a running session's Redirect. */
   onRedirectSession?: () => void
+  /** Expansion state for coalesced ledger event groups, keyed by the group's row
+   *  key — the surface's own ledger expansion set. Absent ⇒ always coalesced. */
+  ledgerEventExpansion?: { isExpanded: (key: string) => boolean; toggle: (key: string) => void }
 }
 
 function renderRowContent(row: BoardRow, props: BranchedBoardRowsProps): ReactNode {
@@ -336,6 +370,18 @@ function renderRowContent(row: BoardRow, props: BranchedBoardRowsProps): ReactNo
           row={row.row}
           workspaceId={workspaceId}
           onRedirectSession={onRedirectSession}
+        />
+      )
+    case "ledger-event":
+      return <LedgerBoardEventRow key={row.key} row={row.row} workspaceId={workspaceId} />
+    case "ledger-event-group":
+      return (
+        <LedgerBoardEventGroup
+          key={row.key}
+          rows={row.rows}
+          workspaceId={workspaceId}
+          expanded={props.ledgerEventExpansion?.isExpanded(row.key) ?? false}
+          onToggle={() => props.ledgerEventExpansion?.toggle(row.key)}
         />
       )
     case "seam":

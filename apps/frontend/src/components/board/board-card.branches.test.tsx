@@ -10,6 +10,8 @@ import { ServicesProvider, PanelProvider, TraceProvider, MediaGalleryProvider } 
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { __clearBoardRailRegistry } from "@/hooks/use-board-card-messages"
 import { __clearConversationGraphRegistry } from "@/hooks/use-conversation-graph"
+import { __clearBoardDraftsRegistry } from "@/hooks/use-scope-draft-preview"
+import { boardBranchReplyDraftKey, boardSubtopicDraftKey } from "@/lib/board/draft-keys"
 // eslint-disable-next-line no-restricted-imports -- test seeds IDB directly to drive the real rail + graph read paths
 import { db, type CachedEvent, type CachedStream, type CachedBoardPost } from "@/db"
 import * as conversationReadModule from "@/components/message/conversation-read-context"
@@ -164,6 +166,9 @@ const readValue = { state: () => "ungated" as const, markReadUpToHere: vi.fn(), 
 beforeEach(async () => {
   __clearBoardRailRegistry()
   __clearConversationGraphRegistry()
+  __clearBoardDraftsRegistry()
+  await db.drafts.clear()
+  await db.composerLoaded.clear()
   await db.events.clear()
   await db.streams.clear()
   await db.conversations.clear()
@@ -243,6 +248,7 @@ describe("BoardCard branches", () => {
     // branch's own bodies are not in the document.
     const row = await screen.findByRole("button", { name: "GPU budget, 2 messages" })
     expect(screen.queryByText("Child branch first message.")).toBeNull()
+    const collapsedWrapperClass = row.closest("[data-ledger-branch-row]")!.className
     await userEvent.click(row)
 
     // Expanded: the child's messages render nested INSIDE the parent card (one
@@ -251,7 +257,11 @@ describe("BoardCard branches", () => {
     const nested = await screen.findByText("Child branch first message.")
     expect(await screen.findByText("Child branch second message.")).toBeTruthy()
     expect(nested.closest(".border-l-2")).not.toBeNull()
-    expect(screen.getByText("GPU budget").closest("a")?.getAttribute("href")).toContain("panel=conv%3Aconv_child")
+    const header = screen.getByText("GPU budget").closest("a")
+    expect(header?.getAttribute("href")).toContain("panel=conv%3Aconv_child")
+    // The two states share one wrapper box, so toggling never shifts the branch's
+    // leading edge (INV-21) — a stray `ml-3` on either side moves the ↳ 0.75rem.
+    expect(header!.parentElement!.parentElement!.className).toBe(collapsedWrapperClass)
     // The branch tail offers the inline Reply affordance (no navigation).
     expect(screen.getByRole("button", { name: "Reply…" })).toBeTruthy()
 
@@ -348,6 +358,133 @@ describe("BoardCard branches", () => {
     const row = await screen.findByRole("button", { name: "GPU budget, 1 message, still settling" })
     expect(container.querySelector("[data-ledger-branch-row][data-settling]")).not.toBeNull()
     expect(row.contains(screen.getByText(/Still settling/))).toBe(false)
+  })
+
+  async function seedNestedBranches() {
+    await db.streams.bulkPut([
+      cachedStream("stream_1", StreamTypes.CHANNEL),
+      cachedStream("thread_a", StreamTypes.THREAD, {
+        parentStreamId: "stream_1",
+        rootStreamId: "stream_1",
+        parentMessageId: "m_open",
+      }),
+      cachedStream("thread_c", StreamTypes.THREAD, {
+        parentStreamId: "thread_a",
+        rootStreamId: "stream_1",
+        parentMessageId: "a1",
+      }),
+    ])
+    await db.events.bulkPut([
+      messageEvent("a1", "thread_a", 10, "Branch A message."),
+      messageEvent("c1", "thread_c", 11, "Grandchild C message."),
+    ])
+    const parent = makePost({
+      id: "conv_parent",
+      streamId: "stream_1",
+      messageIds: ["m_open"],
+      opening: { id: "m_open", streamId: "stream_1", content: "Hardware refresh opening." },
+      streamIds: ["stream_1"],
+      rootStreamId: "stream_1",
+      topicSummary: "Hardware refresh",
+    })
+    const branchA = makePost({
+      id: "conv_a",
+      streamId: "thread_a",
+      messageIds: ["a1"],
+      opening: { id: "m_open", streamId: "stream_1", content: "Hardware refresh opening." },
+      streamIds: ["thread_a"],
+      rootStreamId: "stream_1",
+      topicSummary: "GPU budget",
+    })
+    const branchC = makePost({
+      id: "conv_c",
+      streamId: "thread_c",
+      messageIds: ["c1"],
+      opening: { id: "m_open", streamId: "stream_1", content: "Hardware refresh opening." },
+      streamIds: ["thread_c"],
+      rootStreamId: "stream_1",
+      topicSummary: "Cooling",
+    })
+    return { parent, branchA, branchC }
+  }
+
+  it("rolls a grandchild branch's unsent draft up onto the collapsed ancestor row", async () => {
+    const { parent, branchA, branchC } = await seedNestedBranches()
+    await db.conversations.bulkPut([parent, branchA, branchC])
+    await db.drafts.add({
+      id: "draft_c",
+      workspaceId: WS,
+      scope: boardBranchReplyDraftKey("conv_c"),
+      contentJson: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "half a reply" }] }] },
+      attachments: [],
+      clientUpdatedAt: 1000,
+    } as never)
+
+    const { container } = mount(parent)
+    // A is collapsed, so C is not in the document at all — its draft is invisible
+    // unless A's one remaining row speaks for the whole subtree.
+    await screen.findByRole("button", { name: /^GPU budget, 1 message/ })
+    expect(screen.queryByText("Grandchild C message.")).toBeNull()
+    await waitFor(() => expect(container.querySelector("[data-branch-draft-chip]")).not.toBeNull())
+    expect(screen.getByRole("button", { name: "GPU budget, 1 message, unsent draft" })).toBeInTheDocument()
+  })
+
+  it("shows the draft chip for a sub-topic draft on a branch message outside the preview window", async () => {
+    await db.streams.bulkPut([
+      cachedStream("stream_1", StreamTypes.CHANNEL),
+      cachedStream("thread_child", StreamTypes.THREAD, {
+        parentStreamId: "stream_1",
+        rootStreamId: "stream_1",
+        parentMessageId: "m_open",
+      }),
+    ])
+    const branchIds = ["c1", "c2", "c3", "c4"]
+    await db.events.bulkPut(branchIds.map((id, i) => messageEvent(id, "thread_child", 10 + i, `Body ${id}.`)))
+    const parent = makePost({
+      id: "conv_parent",
+      streamId: "stream_1",
+      messageIds: ["m_open"],
+      opening: { id: "m_open", streamId: "stream_1", content: "Hardware refresh opening." },
+      streamIds: ["stream_1"],
+      rootStreamId: "stream_1",
+      topicSummary: "Hardware refresh",
+    })
+    const child = makePost({
+      id: "conv_child",
+      streamId: "thread_child",
+      messageIds: branchIds,
+      opening: { id: "m_open", streamId: "stream_1", content: "Hardware refresh opening." },
+      streamIds: ["thread_child"],
+      rootStreamId: "stream_1",
+      topicSummary: "GPU budget",
+    })
+    await db.conversations.bulkPut([parent, child])
+    // `c1` is the OLDEST member — outside the 2-message preview window the
+    // collapsed row's lead is built from.
+    await db.drafts.add({
+      id: "draft_old",
+      workspaceId: WS,
+      scope: boardSubtopicDraftKey("thread_child", "c1"),
+      contentJson: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "a sub-topic" }] }] },
+      attachments: [],
+      clientUpdatedAt: 1000,
+    } as never)
+
+    const { container } = mount(parent)
+    await screen.findByRole("button", { name: /^GPU budget, 4 messages/ })
+    await waitFor(() => expect(container.querySelector("[data-branch-draft-chip]")).not.toBeNull())
+    expect(screen.getByRole("button", { name: "GPU budget, 4 messages, unsent draft" })).toBeInTheDocument()
+  })
+
+  it("rolls a grandchild branch's settling state up onto the collapsed ancestor row", async () => {
+    const { parent, branchA, branchC } = await seedNestedBranches()
+    ;(branchC as unknown as { settlingMessageIds: string[] }).settlingMessageIds = ["c1"]
+    await db.conversations.bulkPut([parent, branchA, branchC])
+
+    const { container } = mount(parent)
+    const row = await screen.findByRole("button", { name: "GPU budget, 1 message, still settling" })
+    expect(row).toBeInTheDocument()
+    await waitFor(() => expect(container.querySelector("[data-ledger-branch-row][data-settling]")).not.toBeNull())
   })
 
   it("shows a 'branched from' provenance row on the child card", async () => {

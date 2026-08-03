@@ -4,6 +4,7 @@ import type { BoardEventRow } from "@/lib/board/board-event-rows"
 import {
   buildBoardRows,
   buildBranchedBoardRows,
+  foldLedgerEventRows,
   injectBoardDayDividers,
   injectUnreadDivider,
   type BoardRow,
@@ -204,6 +205,7 @@ describe("buildBranchedBoardRows continuation", () => {
       displayDepth: 1,
       overflow: false,
       messages: [msg("c1", "u2", 2, "thread_x")],
+      memberMessageIds: ["c1"],
       hiddenCount: 0,
       children: [],
     }
@@ -227,6 +229,7 @@ describe("buildBranchedBoardRows continuation", () => {
       displayDepth: 1,
       overflow: false,
       messages: [msg("c1", "u2", 2, "thread_x")],
+      memberMessageIds: ["c1"],
       hiddenCount: 0,
       children: [],
     }
@@ -385,5 +388,44 @@ describe("injectUnreadDivider", () => {
     const input = [messageRow("a", day1Morning), messageRow("b", day1Evening)]
     expect(injectUnreadDivider(input, "missing")).toEqual(input)
     expect(injectUnreadDivider(input, null)).toEqual(input)
+  })
+})
+
+describe("foldLedgerEventRows", () => {
+  const rows = () =>
+    buildBoardRows([msg("a", "u1", 0), msg("b", "u1", 4)], [memoEventRow("e1", 1), memoEventRow("e2", 2)])
+
+  it("coalesces a run in the ledger region into one group row", () => {
+    const folded = foldLedgerEventRows(rows(), "b")
+    expect(folded.map((r) => r.kind)).toEqual(["message", "ledger-event-group", "message"])
+    const group = folded[1]
+    expect(group.kind === "ledger-event-group" && group.key).toBe("ledger-events:e1")
+    expect(group.kind === "ledger-event-group" && group.rows.map((r) => r.key)).toEqual(["e1", "e2"])
+  })
+
+  it("thins a lone ledger-region event without grouping it", () => {
+    const folded = foldLedgerEventRows(
+      buildBoardRows([msg("a", "u1", 0), msg("b", "u1", 4)], [memoEventRow("e1", 1)]),
+      "b"
+    )
+    expect(folded.map((r) => r.kind)).toEqual(["message", "ledger-event", "message"])
+  })
+
+  it("leaves events at or below the full-tail boundary fully rendered", () => {
+    const folded = foldLedgerEventRows(
+      buildBoardRows([msg("a", "u1", 0), msg("b", "u1", 1)], [memoEventRow("e1", 2), memoEventRow("e2", 3)]),
+      "b"
+    )
+    expect(folded.map((r) => r.kind)).toEqual(["message", "message", "event", "event"])
+  })
+
+  it("is a no-op when the whole card is the full tail", () => {
+    const input = rows()
+    expect(foldLedgerEventRows(input, "a")).toBe(input)
+  })
+
+  it("folds every event when there is no full tail row at all", () => {
+    const folded = foldLedgerEventRows(rows(), null)
+    expect(folded.map((r) => r.kind)).toEqual(["message", "ledger-event-group", "message"])
   })
 })

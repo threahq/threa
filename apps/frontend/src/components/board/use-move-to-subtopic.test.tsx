@@ -18,6 +18,7 @@ function branch(overrides: Partial<BranchConversationView>): BranchConversationV
     displayDepth: 1,
     overflow: false,
     messages: [],
+    memberMessageIds: [],
     hiddenCount: 0,
     children: [],
     ...overrides,
