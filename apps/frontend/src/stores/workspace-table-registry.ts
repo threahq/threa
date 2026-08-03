@@ -73,6 +73,11 @@ export type WorkspaceReadMode = "shared" | "off"
 interface WorkspaceTableEntry {
   workspaceId: string
   tableKey: WorkspaceTableKey
+  // Set from the key form at creation, not re-derived from the current mode: a
+  // token-keyed entry can outlive an off→shared flip inside the teardown grace,
+  // and `findSharedRowWorkspace` must not report ownership under a key a
+  // tokenless reader cannot resolve.
+  shared: boolean
   rows: IdentifiedRow[] | undefined
   byId: Map<string, IdentifiedRow>
   resolved: boolean
@@ -132,8 +137,12 @@ export function allocateWorkspaceTableToken(): number {
 
 let emissionCounter = 0
 
+function sharedEntryKeyFor(workspaceId: string, tableKey: WorkspaceTableKey): string {
+  return `${workspaceId}|${tableKey}`
+}
+
 function entryKeyFor(workspaceId: string, tableKey: WorkspaceTableKey, token: number): string {
-  return mode === "shared" ? `${workspaceId}|${tableKey}` : `${workspaceId}|${tableKey}|${token}`
+  return mode === "shared" ? sharedEntryKeyFor(workspaceId, tableKey) : `${workspaceId}|${tableKey}|${token}`
 }
 
 function applyEmission(entryKey: string, incoming: IdentifiedRow[]): void {
@@ -238,6 +247,7 @@ function ensureEntry(
   const created: WorkspaceTableEntry = {
     workspaceId,
     tableKey,
+    shared: entryKey === sharedEntryKeyFor(workspaceId, tableKey),
     rows: undefined,
     byId: new Map(),
     resolved: false,
@@ -390,6 +400,38 @@ export function getWorkspaceTableRow<K extends WorkspaceTableKey>(
   return entry?.byId.get(rowId) as WorkspaceTableRowTypes[K] | undefined
 }
 
+/**
+ * The workspace whose **shared** entry currently holds `rowId`, or `undefined`.
+ *
+ * For consumers that know a row id but not its workspace (`useStreamFromStore`).
+ * Only shared entries qualify: with the mode `off` an entry is keyed by its
+ * subscriber's token, so a tokenless consumer would open a private live query of
+ * its own — the very cost the fast path removes — and the caller must fall back
+ * to a per-key read instead (D5, D7).
+ */
+export function findSharedRowWorkspace(tableKey: WorkspaceTableKey, rowId: string): string | undefined {
+  if (mode !== "shared") return undefined
+  for (const entry of entries.values()) {
+    if (!entry.shared) continue
+    if (entry.tableKey !== tableKey) continue
+    if (entry.byId.has(rowId)) return entry.workspaceId
+  }
+  return undefined
+}
+
+/**
+ * True when the shared (workspace, table) entry is live and has resolved.
+ *
+ * Lets a reader tell a row's genuine removal — that entry still answering, just
+ * without the id — from an ownership drop (mode flip, teardown), where the row
+ * is unchanged and only the reader's route to it went away.
+ */
+export function hasResolvedSharedEntry(workspaceId: string, tableKey: WorkspaceTableKey): boolean {
+  if (mode !== "shared") return false
+  const entry = entries.get(sharedEntryKeyFor(workspaceId, tableKey))
+  return Boolean(entry?.shared && entry.resolved && !entry.teardown)
+}
+
 function detach(entry: WorkspaceTableEntry, registration: Registration): void {
   if (registration.kind === "table") {
     entry.listeners.delete(registration.listener)
@@ -423,30 +465,43 @@ function visibleSnapshot(entry: WorkspaceTableEntry | undefined, registration: R
 }
 
 /**
- * Flip sharing on or off. Every live registration — array and row alike — is
- * moved to its new entry key synchronously, so the flag can arrive or change
- * mid-session without a single hook count changing (D5).
+ * Flip sharing on or off. Every live **table** registration is moved to its new
+ * entry key synchronously, so the flag can arrive or change mid-session without
+ * a single hook count changing (D5).
+ *
+ * Row registrations are DROPPED instead of moved. They belong to readers that
+ * found the entry by id rather than by token (`useStreamFromStore`), and there
+ * are several per rendered message row — migrating them would open one private
+ * whole-table live query per registration on the very flip that exists to kill
+ * whole-table reads, and the seeded rows being identity-equal means no listener
+ * would ever fire to unwind it. Each dropped listener is fired unconditionally
+ * so its reader re-renders, finds no shared owner, and falls back to its own
+ * per-key read; the registration is deleted, so its `unsubscribe` closure is a
+ * no-op and a fresh subscribe from the same reader starts clean.
  *
  * The new entry is seeded from the most recently emitted resolved predecessor
  * for the same (workspace, table): the query is identical, but private entries
  * emit independently, so an older resolved snapshot can still be sitting in the
- * map and would republish rolled-back rows. Publishing an unresolved entry instead would regress every consumer
- * to its bootstrap-era cache fallback for a frame — and the flag itself is read
+ * map and would republish rolled-back rows. Publishing an unresolved entry
+ * instead would regress every consumer to its bootstrap-era cache fallback for a frame — and the flag itself is read
  * through this registry, so an unresolved metadata entry would flip the mode back
  * and loop.
  */
 export function setWorkspaceReadMode(next: WorkspaceReadMode): void {
   if (next === mode) return
-  const active = [...registrations.entries()]
+  const all = [...registrations.entries()]
+  const active = all.filter(([, registration]) => registration.kind === "table")
+  const dropped = all.filter(([, registration]) => registration.kind === "row")
   const before = new Map<number, unknown>()
   const seeds = new Map<string, WorkspaceTableEntry>()
 
-  for (const [id, registration] of active) {
+  for (const [id, registration] of all) {
     const entry = entries.get(registration.entryKey)
     before.set(id, visibleSnapshot(entry, registration))
     if (!entry) continue
     detach(entry, registration)
   }
+  for (const [id] of dropped) registrations.delete(id)
   for (const entry of entries.values()) {
     const seedKey = `${entry.workspaceId}|${entry.tableKey}`
     if (!entry.resolved) continue
@@ -467,13 +522,14 @@ export function setWorkspaceReadMode(next: WorkspaceReadMode): void {
     attach(entry, registration)
     registrations.set(id, { ...registration, entryKey })
   }
-  for (const [, registration] of active) releaseEntry(registration.entryKey, true)
+  for (const [, registration] of all) releaseEntry(registration.entryKey, true)
 
   for (const [id] of active) {
     const current = registrations.get(id)
     if (!current) continue
     if (visibleSnapshot(entries.get(current.entryKey), current) !== before.get(id)) current.listener()
   }
+  for (const [, registration] of dropped) registration.listener()
 }
 
 /** Live Dexie subscriptions on workspace tables, teardown-grace ones included. */

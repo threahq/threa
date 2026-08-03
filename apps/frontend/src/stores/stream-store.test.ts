@@ -1,6 +1,15 @@
-import { describe, it, expect, beforeEach } from "vitest"
-import { db, sequenceToNum, type CachedEvent } from "@/db"
-import { loadStreamEvents, orderStreamEvents, shareEventIdentities } from "./stream-store"
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest"
+import { act, renderHook, waitFor } from "@testing-library/react"
+import { db, sequenceToNum, type CachedEvent, type CachedStream } from "@/db"
+import { loadStreamEvents, orderStreamEvents, shareEventIdentities, useStreamFromStore } from "./stream-store"
+import {
+  allocateWorkspaceTableToken,
+  getWorkspaceTableSnapshot,
+  resetWorkspaceTableRegistry,
+  setWorkspaceReadMode,
+  subscribeWorkspaceTable,
+} from "./workspace-table-registry"
+import { makeCachedStream } from "@/test/workspace-rows"
 import { bumpLaterOptimisticAnchors } from "@/sync/stream-sync"
 
 const WORKSPACE_ID = "ws_1"
@@ -416,5 +425,177 @@ describe("shareEventIdentities", () => {
   it("passes the array through when there is no previous emission", () => {
     const next = [makeRealEvent("stream_1", "100")]
     expect(shareEventIdentities(null, next)).toBe(next)
+  })
+})
+
+describe("useStreamFromStore", () => {
+  const REGISTRY_WORKSPACE = "ws_registry"
+  const OTHER_WORKSPACE = "ws_other"
+
+  function makeStream(id: string, workspaceId: string, overrides: Partial<CachedStream> = {}): CachedStream {
+    return makeCachedStream(workspaceId, id, overrides)
+  }
+
+  /** Bring up the shared registry entry the fast path reads, and wait for its first emission. */
+  async function primeRegistry(workspaceId: string): Promise<() => void> {
+    const token = allocateWorkspaceTableToken()
+    const unsubscribe = subscribeWorkspaceTable(workspaceId, "streams", token, () => {})
+    await waitFor(() => expect(getWorkspaceTableSnapshot(workspaceId, "streams", token)).toBeDefined())
+    return unsubscribe
+  }
+
+  /**
+   * Wait until a render counter stops moving. The fallback live query emits its
+   * "registry owns this" marker asynchronously after mount, so a count sampled
+   * right after the first resolve can still take one more render that has
+   * nothing to do with the write under test.
+   */
+  async function settle(count: () => number): Promise<void> {
+    let last = -1
+    await waitFor(() => {
+      const current = count()
+      const stable = current === last
+      last = current
+      expect(stable).toBe(true)
+    })
+  }
+
+  let releaseRegistry: (() => void) | null = null
+
+  beforeEach(async () => {
+    resetWorkspaceTableRegistry()
+    await db.streams.clear()
+    setWorkspaceReadMode("shared")
+  })
+
+  afterEach(() => {
+    releaseRegistry?.()
+    releaseRegistry = null
+    resetWorkspaceTableRegistry()
+    vi.restoreAllMocks()
+  })
+
+  it("a stream row present in the workspace registry resolves without a per-key live query", async () => {
+    await db.streams.bulkPut([makeStream("stream_a", REGISTRY_WORKSPACE), makeStream("stream_b", REGISTRY_WORKSPACE)])
+    releaseRegistry = await primeRegistry(REGISTRY_WORKSPACE)
+    const get = vi.spyOn(db.streams, "get")
+
+    const { result } = renderHook(() => useStreamFromStore("stream_a"))
+
+    await waitFor(() => expect(result.current?.id).toBe("stream_a"))
+    expect(get).not.toHaveBeenCalled()
+  })
+
+  it("a stream row absent from the registry falls back to the per-key read", async () => {
+    await db.streams.put(makeStream("stream_registry", REGISTRY_WORKSPACE))
+    releaseRegistry = await primeRegistry(REGISTRY_WORKSPACE)
+    // A socket write that landed before its workspace bootstrapped: in IDB, in no
+    // registry entry.
+    await db.streams.put(makeStream("stream_socket", OTHER_WORKSPACE))
+    const get = vi.spyOn(db.streams, "get")
+
+    const { result } = renderHook(() => useStreamFromStore("stream_socket"))
+
+    await waitFor(() => expect(result.current?.id).toBe("stream_socket"))
+    expect(get).toHaveBeenCalledWith("stream_socket")
+  })
+
+  it("a change to one stream re-renders only its readers", async () => {
+    await db.streams.bulkPut([makeStream("stream_a", REGISTRY_WORKSPACE), makeStream("stream_b", REGISTRY_WORKSPACE)])
+    releaseRegistry = await primeRegistry(REGISTRY_WORKSPACE)
+
+    let rendersA = 0
+    let rendersB = 0
+    const readerA = renderHook(() => {
+      rendersA += 1
+      return useStreamFromStore("stream_a")
+    })
+    const readerB = renderHook(() => {
+      rendersB += 1
+      return useStreamFromStore("stream_b")
+    })
+    await waitFor(() => expect(readerA.result.current?.id).toBe("stream_a"))
+    await waitFor(() => expect(readerB.result.current?.id).toBe("stream_b"))
+    await settle(() => rendersB)
+    const rendersBBefore = rendersB
+
+    await db.streams.put(makeStream("stream_a", REGISTRY_WORKSPACE, { displayName: "renamed" }))
+
+    await waitFor(() => expect(readerA.result.current?.displayName).toBe("renamed"))
+    expect(rendersB).toBe(rendersBBefore)
+    expect(rendersA).toBeGreaterThan(0)
+  })
+
+  it("the row reference is stable across an unrelated streams write", async () => {
+    await db.streams.bulkPut([makeStream("stream_a", REGISTRY_WORKSPACE), makeStream("stream_b", REGISTRY_WORKSPACE)])
+    releaseRegistry = await primeRegistry(REGISTRY_WORKSPACE)
+
+    const readerA = renderHook(() => useStreamFromStore("stream_a"))
+    const readerB = renderHook(() => useStreamFromStore("stream_b"))
+    await waitFor(() => expect(readerA.result.current?.id).toBe("stream_a"))
+    await waitFor(() => expect(readerB.result.current?.id).toBe("stream_b"))
+    const rowA = readerA.result.current
+
+    await db.streams.put(makeStream("stream_b", REGISTRY_WORKSPACE, { displayName: "renamed" }))
+
+    await waitFor(() => expect(readerB.result.current?.displayName).toBe("renamed"))
+    expect(readerA.result.current).toBe(rowA)
+  })
+
+  it("a row removed from the registry resolves to undefined, never a stale or sentinel value", async () => {
+    await db.streams.bulkPut([makeStream("stream_a", REGISTRY_WORKSPACE), makeStream("stream_b", REGISTRY_WORKSPACE)])
+    releaseRegistry = await primeRegistry(REGISTRY_WORKSPACE)
+
+    const observed: unknown[] = []
+    const { result } = renderHook(() => {
+      const row = useStreamFromStore("stream_a")
+      observed.push(row)
+      return row
+    })
+    await waitFor(() => expect(result.current?.id).toBe("stream_a"))
+
+    // Pin the fallback read open: the removal must resolve to `undefined` off the
+    // registry emission alone, not by waiting for a per-key re-read.
+    vi.spyOn(db.streams, "get").mockReturnValue(new Promise(() => {}) as never)
+    await db.streams.delete("stream_a")
+
+    await waitFor(() => expect(result.current).toBeUndefined())
+    for (const value of observed) {
+      if (value === undefined) continue
+      expect(typeof value).toBe("object")
+      expect((value as CachedStream).id).toBe("stream_a")
+    }
+  })
+
+  it("an on→off flip holds the resolved row and opens no whole-table read per reader", async () => {
+    await db.streams.put(makeStream("stream_a", REGISTRY_WORKSPACE, { displayName: "Held Channel" }))
+    releaseRegistry = await primeRegistry(REGISTRY_WORKSPACE)
+
+    const observed: (CachedStream | undefined)[] = []
+    const readers = [0, 1, 2].map(() =>
+      renderHook(() => {
+        const row = useStreamFromStore("stream_a")
+        observed.push(row)
+        return row
+      })
+    )
+    for (const reader of readers) await waitFor(() => expect(reader.result.current?.id).toBe("stream_a"))
+    const held = readers.map((reader) => reader.result.current)
+
+    const where = vi.spyOn(db.streams, "where")
+    await act(async () => {
+      setWorkspaceReadMode("off")
+    })
+
+    readers.forEach((reader, index) => expect(reader.result.current).toBe(held[index]))
+    for (const reader of readers) {
+      await waitFor(() => expect(reader.result.current?.displayName).toBe("Held Channel"))
+    }
+    expect(observed).not.toContain(undefined)
+    // The flip must not migrate the readers' row registrations into private
+    // entries: that opens one whole-table streams query PER READER — the cost the
+    // kill switch exists to remove. The one expected call is the table
+    // subscriber's own re-key.
+    expect(where.mock.calls.length).toBe(1)
   })
 })
