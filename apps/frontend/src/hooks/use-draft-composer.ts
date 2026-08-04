@@ -4,6 +4,31 @@ import { useAttachments, type PendingAttachment, type UploadResult } from "./use
 import type { JSONContent } from "@threa/types"
 import { EMPTY_DOC } from "@/lib/prosemirror-utils"
 import type { DraftContextRef } from "@/lib/context-bag/types"
+import type { DraftAttachment } from "@/db"
+import { wasDraftResolvedLocally } from "@/sync/draft-resolution-guard"
+
+// Mounted composers per draft scope. More than one live composer on a scope is a
+// precondition for the rescue below: with only this one, a vanishing loaded
+// pointer is always this composer's own teardown. Ref-counted like
+// `boardDraftsRegistry` in `use-scope-draft-preview.ts` (INV-9 exception:
+// process-wide by construction).
+const mountedComposersByScope = new Map<string, number>()
+
+function registerComposer(key: string): () => void {
+  mountedComposersByScope.set(key, (mountedComposersByScope.get(key) ?? 0) + 1)
+  return () => {
+    const next = (mountedComposersByScope.get(key) ?? 1) - 1
+    if (next <= 0) mountedComposersByScope.delete(key)
+    else mountedComposersByScope.set(key, next)
+  }
+}
+
+/** Uploaded (non-temp, non-failed) attachments in the shape the draft row stores. */
+function persistableAttachments(pending: PendingAttachment[]): DraftAttachment[] {
+  return pending
+    .filter((a) => a.status !== "error" && !a.id.startsWith("temp_"))
+    .map((a) => ({ id: a.id, filename: a.filename, mimeType: a.mimeType, sizeBytes: a.sizeBytes }))
+}
 
 export interface UseDraftComposerOptions {
   workspaceId: string
@@ -181,6 +206,9 @@ export function useDraftComposer({
   const savedAttachmentsRef = useRef(savedAttachments)
   savedAttachmentsRef.current = savedAttachments
 
+  const scopeRegistryKey = `${workspaceId} ${draftKey}`
+  useEffect(() => registerComposer(scopeRegistryKey), [scopeRegistryKey])
+
   // Persist the live editor content into the loaded draft row immediately
   // (sealed for E2E), but ONLY when it is non-empty. A stash/restore can fire
   // while the editor is still mid-hydration (transiently empty) — taking the
@@ -320,18 +348,33 @@ export function useDraftComposer({
   useEffect(() => {
     const prev = prevLoadedIdRef.current
     prevLoadedIdRef.current = loadedDraftId ?? null
-    if (prev && !loadedDraftId && !(userEngagedRef.current && hasDocContent(contentRef.current))) {
-      userEngagedRef.current = false
-      setContent(initialContent)
-      clearAttachments()
+    if (!prev || loadedDraftId) return
+    if (userEngagedRef.current && hasDocContent(contentRef.current)) {
+      // With another composer live on this scope, the vanishing pointer can be
+      // THAT editor's send resolving the shared row while this one holds newer
+      // unsent text that exists only in React state — persist it rather than
+      // merely declining to blank. Both conditions are load-bearing: alone on the
+      // scope the null is a deliberate teardown (relocate/stash/clear/purge), and
+      // only a local resolve-on-send marks the id, so a remote `draft:deleted`
+      // reads false and stays deleted instead of being resurrected by whichever
+      // device happens to hold the composer open.
+      if ((mountedComposersByScope.get(scopeRegistryKey) ?? 0) > 1 && wasDraftResolvedLocally(prev)) {
+        saveDraft(contentRef.current, persistableAttachments(getPendingAttachmentsSnapshot())).catch((err) => {
+          console.error("Failed to persist draft rescued from a resolved row", err)
+        })
+      }
+      return
     }
-  }, [loadedDraftId, initialContent, clearAttachments])
+    userEngagedRef.current = false
+    setContent(initialContent)
+    clearAttachments()
+  }, [loadedDraftId, initialContent, clearAttachments, saveDraft, scopeRegistryKey, getPendingAttachmentsSnapshot])
 
   // When attachments change, persist to draft storage. Reserved-but-still-
   // uploading attachments persist too: their id is already real, and a draft
   // restore after a reload re-claims the resumed upload job by that id.
   useEffect(() => {
-    const uploaded = pendingAttachments.filter((a) => a.status !== "error" && !a.id.startsWith("temp_"))
+    const uploaded = persistableAttachments(pendingAttachments)
 
     // After a scope change, keep skipping persistence until we have stopped
     // seeing any uploaded attachments that belonged to the previous scope.
@@ -351,12 +394,7 @@ export function useDraftComposer({
     if (hasInitialized.current && uploadedToPersist.length > 0) {
       // Sync each attachment to draft storage
       for (const a of uploadedToPersist) {
-        addDraftAttachment({
-          id: a.id,
-          filename: a.filename,
-          mimeType: a.mimeType,
-          sizeBytes: a.sizeBytes,
-        })
+        addDraftAttachment(a)
       }
     }
   }, [pendingAttachments, addDraftAttachment])
