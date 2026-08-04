@@ -113,12 +113,11 @@ function findLatestMessageEvent(events: StreamEvent[]): StreamEvent | null {
 }
 
 function buildPreviewFromEvent(event: StreamEvent): LastMessagePreview {
-  const payload = (event.payload ?? {}) as { contentJson?: unknown; contentMarkdown?: string }
+  const payload = (event.payload ?? {}) as { contentMarkdown?: string }
   return {
     authorId: event.actorId ?? "",
     authorType: event.actorType ?? AuthorTypes.USER,
-    // Sidebar's truncateContent accepts either JSONContent or a markdown string.
-    content: (payload.contentJson ?? payload.contentMarkdown ?? "") as string,
+    content: payload.contentMarkdown ?? "",
     createdAt: event.createdAt,
   }
 }
