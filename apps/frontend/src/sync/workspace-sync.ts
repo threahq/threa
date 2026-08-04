@@ -714,7 +714,7 @@ export function registerWorkspaceSocketHandlers(
    *  AFTER a newer immediate commit and overwrite it in cache and IDB. */
   const commitImmediate = (commit: () => void): void => {
     const pending = refs.getLiveCommitBatch?.() ?? null
-    if (pending?.hasPending()) {
+    if (pending?.hasPending() || pending?.isFlushing()) {
       void pending
         .flush()
         .catch(() => {})

@@ -201,7 +201,8 @@ type Harness = {
 }
 
 /** Registers the workspace handlers exactly as the SyncEngine does, with the
- *  flag primed and the async seam read already resolved. */
+ *  flag primed. `commitCounter`/`commitPreview` read the flag synchronously per
+ *  event, so a mid-task flip takes effect on the next event with no reconnect. */
 async function register(queryClient: QueryClient, coalesced: boolean): Promise<Harness> {
   primeEventWriteFlags(WORKSPACE_ID, {
     workspace: { coalescedLiveCommit: coalesced ? "on" : "off" },
@@ -217,9 +218,6 @@ async function register(queryClient: QueryClient, coalesced: boolean): Promise<H
     getCatchUpBatch: () => catchUpBatch,
     getLiveCommitBatch: () => liveBatch,
   })
-  // The seam resolves the flag from the primed map on a microtask.
-  await Promise.resolve()
-  await Promise.resolve()
   return {
     emit,
     cleanup: () => {
@@ -682,6 +680,43 @@ describe("LiveCommitBatch", () => {
     harness.emit("stream:activity", activity("stream_1", 6))
     primeEventWriteFlags(WORKSPACE_ID, { workspace: { coalescedLiveCommit: "off" }, user: {} })
     harness.emit("stream:activity", activity("stream_1", 7))
+    await settle()
+
+    expect({
+      cachePreview: bootstrapOf(queryClient)?.streams.find((s) => s.id === "stream_1")?.lastMessagePreview?.content,
+      idbPreview: (await db.streams.get("stream_1"))?.lastMessagePreview?.content,
+    }).toEqual({ cachePreview: "message 7", idbPreview: "message 7" })
+
+    harness.cleanup()
+  })
+
+  it("flipping the flag off drains a fold that is already in flight", async () => {
+    const queryClient = new QueryClient()
+    await seedFixture(queryClient, ["stream_1"])
+    const harness = await register(queryClient, true)
+
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const realTransaction = Dexie.prototype.transaction
+    vi.spyOn(Dexie.prototype, "transaction").mockImplementationOnce(function (this: Dexie, ...args: unknown[]) {
+      const running = (realTransaction as (...a: unknown[]) => Promise<unknown>).apply(this, args)
+      return gate.then(() => running) as never
+    })
+
+    // A is buffered and its commit begins: the buffers are already empty and the
+    // transaction is awaiting, so `hasPending()` alone reads false here.
+    harness.emit("stream:activity", activity("stream_1", 6))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect({ pending: harness.liveBatch.hasPending(), flushing: harness.liveBatch.isFlushing() }).toEqual({
+      pending: false,
+      flushing: true,
+    })
+
+    primeEventWriteFlags(WORKSPACE_ID, { workspace: { coalescedLiveCommit: "off" }, user: {} })
+    harness.emit("stream:activity", activity("stream_1", 7))
+    release()
     await settle()
 
     expect({
