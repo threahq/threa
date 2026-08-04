@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react"
 import { FileEdit, FilePlus, Trash2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Popover, PopoverAnchor, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
@@ -34,6 +34,11 @@ interface StashedDraftsPickerProps {
   onRestore: (id: string) => void
   /** Called when the user clicks the trash icon on a row. */
   onDelete: (id: string) => void
+  /**
+   * Called when the popover opens/closes. The host latches pile membership while
+   * it is open, so a row can't vanish mid-pick when its landing stream moves.
+   */
+  onOpenChange?: (open: boolean) => void
   /** When `controlsDisabled`, the trigger button is disabled (e.g. composer is sending). */
   controlsDisabled?: boolean
   /**
@@ -71,10 +76,12 @@ export function StashedDraftsPicker({
   onStashCurrent,
   onRestore,
   onDelete,
+  onOpenChange,
   controlsDisabled = false,
   size = "compact",
 }: StashedDraftsPickerProps) {
   const [open, setOpen] = useState(false)
+  useEffect(() => onOpenChange?.(open), [open, onOpenChange])
   const [draftToDelete, setDraftToDelete] = useState<string | null>(null)
   const closeFabDrawer = useFabDrawerClose()
   const bridge = useStashedDraftsBridge()

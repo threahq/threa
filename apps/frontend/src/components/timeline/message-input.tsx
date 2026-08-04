@@ -269,8 +269,8 @@ function MessageInputComponent({
   // shared cache; plaintext rows resolve from contentJson). All entries share
   // this stream's encrypted root.
   const stashPreviewInputs = useMemo(
-    () => stash.drafts.map((draft) => ({ draft, rootStreamId: e2eRootStreamId })),
-    [stash.drafts, e2eRootStreamId]
+    () => stash.claimableDrafts.map((draft) => ({ draft, rootStreamId: e2eRootStreamId })),
+    [stash.claimableDrafts, e2eRootStreamId]
   )
   const stashPreviews = useDecryptedDraftPreviews(workspaceId, stashPreviewInputs)
 
@@ -789,23 +789,25 @@ function MessageInputComponent({
     onStashDraft: stash.handleStashDraft,
     stashedDraftsTrigger: (
       <StashedDraftsPicker
-        drafts={stash.drafts}
+        drafts={stash.claimableDrafts}
         previewById={stashPreviews}
         canStashCurrent={composer.canSend}
         onStashCurrent={stash.handleStashDraft}
         onRestore={stash.handleRestoreStashed}
         onDelete={stash.handleDeleteStashed}
+        onOpenChange={stash.setPileOpen}
         controlsDisabled={composer.isSending}
       />
     ),
     stashedDraftsTriggerFab: (
       <StashedDraftsPicker
-        drafts={stash.drafts}
+        drafts={stash.claimableDrafts}
         previewById={stashPreviews}
         canStashCurrent={composer.canSend}
         onStashCurrent={stash.handleStashDraft}
         onRestore={stash.handleRestoreStashed}
         onDelete={stash.handleDeleteStashed}
+        onOpenChange={stash.setPileOpen}
         controlsDisabled={composer.isSending}
         size="fab"
       />
