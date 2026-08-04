@@ -1262,7 +1262,10 @@ describe("applyWorkspaceBootstrap (real IndexedDB)", () => {
     })
 
     it("with bootstrapDiff off, every row is rewritten", async () => {
-      const off = (): WorkspaceBootstrap => diffBootstrap({ featureFlags: { workspace: {}, user: {} } })
+      // Explicit off override — the registry default is "on" since the go-live
+      // flip, so empty layers no longer select this arm.
+      const off = (): WorkspaceBootstrap =>
+        diffBootstrap({ featureFlags: { workspace: { bootstrapDiff: "off" }, user: {} } })
       await applyWorkspaceBootstrap("ws_1", off(), Date.now() - 5000)
       await stampCachedAt(1)
 

@@ -201,10 +201,13 @@ describe("isEventWriteChunkingEnabled", () => {
     expect(get).toHaveBeenCalledTimes(1)
   })
 
-  it("a pre-#1455 flat row neither throws nor enables", async () => {
-    await putMetadata({ eventWriteChunking: "on" })
+  it("a pre-#1455 flat row neither throws nor overrides the registry default", async () => {
+    // A flat legacy row is IGNORED (coerced away), so the resolved value is the
+    // registry default — "on" since the go-live flip — never the flat row's own
+    // field, and never a crash.
+    await putMetadata({ eventWriteChunking: "off" })
 
-    expect(await isEventWriteChunkingEnabled(db, "ws_1")).toBe(false)
+    expect(await isEventWriteChunkingEnabled(db, "ws_1")).toBe(true)
   })
 
   it("a primed value wins without reading the row", async () => {
@@ -217,10 +220,13 @@ describe("isEventWriteChunkingEnabled", () => {
   })
 
   it("resetEventWriteFlags clears the primed value", async () => {
-    primeEventWriteFlags("ws_1", { workspace: { eventWriteChunking: "on" }, user: {} })
+    // Primed "off" (an explicit override), then reset: with no persisted row
+    // the resolve falls back to the registry default "on" — proving the primed
+    // override was dropped, not retained.
+    primeEventWriteFlags("ws_1", { workspace: { eventWriteChunking: "off" }, user: {} })
     resetEventWriteFlags()
 
-    expect(await isEventWriteChunkingEnabled(db, "ws_1")).toBe(false)
+    expect(await isEventWriteChunkingEnabled(db, "ws_1")).toBe(true)
   })
 
   it("a prime landing mid-read wins over the older persisted row", async () => {

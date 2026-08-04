@@ -54,17 +54,17 @@ export function defineFlag<
  * the moment the rollout is done. A flag that survives long here is a smell.
  */
 export const FEATURE_FLAGS = {
-  bootstrapDiff: defineFlag({ values: ["off", "on"], scopes: ["workspace", "user"], default: "off" }),
-  boundedTimelineRead: defineFlag({ values: ["off", "on"], scopes: ["workspace", "user"], default: "off" }),
+  bootstrapDiff: defineFlag({ values: ["off", "on"], scopes: ["workspace", "user"], default: "on" }),
+  boundedTimelineRead: defineFlag({ values: ["off", "on"], scopes: ["workspace", "user"], default: "on" }),
   calls: defineFlag({ values: ["off", "on"], scopes: ["workspace"], default: "on" }),
   composeTraces: defineFlag({ values: ["off", "capture"], scopes: ["workspace"], default: "off" }),
-  eventWriteChunking: defineFlag({ values: ["off", "on"], scopes: ["workspace", "user"], default: "off" }),
-  indexedMessagePatch: defineFlag({ values: ["off", "on"], scopes: ["workspace", "user"], default: "off" }),
+  eventWriteChunking: defineFlag({ values: ["off", "on"], scopes: ["workspace", "user"], default: "on" }),
+  indexedMessagePatch: defineFlag({ values: ["off", "on"], scopes: ["workspace", "user"], default: "on" }),
   // Availability only: "available" offers the Diagnostics settings toggle. The
   // user's own opt-in preference is the consent, and the upload path re-checks
   // both server-side.
   perfDiagnostics: defineFlag({ values: ["off", "available"], scopes: ["workspace", "user"], default: "off" }),
-  sharedWorkspaceReads: defineFlag({ values: ["off", "on"], scopes: ["workspace", "user"], default: "off" }),
+  sharedWorkspaceReads: defineFlag({ values: ["off", "on"], scopes: ["workspace", "user"], default: "on" }),
 } as const satisfies FeatureFlagRegistry
 
 export type FeatureFlagKey = keyof typeof FEATURE_FLAGS
