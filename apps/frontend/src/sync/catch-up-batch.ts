@@ -149,6 +149,7 @@ export class LiveCommitBatch {
   /** Flushes run one at a time and in schedule order, so an awaited `flush()`
    *  drains everything buffered before it (the catch-up window's guarantee). */
   private chain: Promise<void> = Promise.resolve()
+  private flushing = false
 
   constructor(
     private readonly queryClient: QueryClient,
@@ -193,6 +194,13 @@ export class LiveCommitBatch {
     return this.counterMutators.length > 0 || this.streamPreviews.size > 0 || this.readAllSnapshots.length > 0
   }
 
+  /** Whether a commit has emptied the buffers but not yet published. Immediate
+   *  callers drain on this too: `hasPending()` alone is false in that window, so
+   *  an older in-flight fold would publish on top of a newer direct commit. */
+  isFlushing(): boolean {
+    return this.flushing
+  }
+
   /** Commit everything buffered so far. Awaited by the engine when a catch-up
    *  window opens, so a live fold can never interleave into a replay fold. */
   flush(): Promise<void> {
@@ -227,6 +235,15 @@ export class LiveCommitBatch {
   }
 
   private async commit(): Promise<void> {
+    this.flushing = true
+    try {
+      await this.runCommit()
+    } finally {
+      this.flushing = false
+    }
+  }
+
+  private async runCommit(): Promise<void> {
     const mutators = this.counterMutators
     const previews = this.streamPreviews
     const snapshots = this.readAllSnapshots
