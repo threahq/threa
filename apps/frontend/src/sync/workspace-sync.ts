@@ -110,7 +110,7 @@ import {
   Visibilities,
   normalizeSidebarConfig,
 } from "@threa/types"
-import { isCoalescedLiveCommitEnabled, isEventWriteChunkingEnabled, primeEventWriteFlags } from "@/db/event-writes"
+import { isCoalescedLiveCommitEnabledSync, isEventWriteChunkingEnabled, primeEventWriteFlags } from "@/db/event-writes"
 import { applyStreamBootstrapInCurrentTransaction } from "./stream-sync"
 import { deleteStreamSlots, deleteSlotsForStreams } from "@/stores/slot-store"
 import { applyDraftDeleted, applyDraftUpserted } from "./draft-sync"
@@ -699,14 +699,6 @@ export function registerWorkspaceSocketHandlers(
 ): () => void {
   const abortController = new AbortController()
 
-  // Resolved once per registration rather than per event: the seams are
-  // synchronous, and an unresolved read simply takes today's immediate path,
-  // which costs the coalescing for the first events and never correctness.
-  let coalescedLiveCommit = false
-  void isCoalescedLiveCommitEnabled(db, workspaceId).then((enabled) => {
-    coalescedLiveCommit = enabled
-  })
-
   // The seams every flickering write routes through: fold into the catch-up
   // batch when one is active, else commit immediately (live). Read-pointer
   // mirrors and feed invalidations are not coalesced — they stay on their own
@@ -717,7 +709,9 @@ export function registerWorkspaceSocketHandlers(
       batch.applyCounter(mutate)
       return
     }
-    const live = coalescedLiveCommit ? (refs.getLiveCommitBatch?.() ?? null) : null
+    // Re-read per event: a backoffice flip re-primes the flag map, so turning
+    // the flag off disarms every connected client on its next event.
+    const live = isCoalescedLiveCommitEnabledSync(workspaceId) ? (refs.getLiveCommitBatch?.() ?? null) : null
     if (live) {
       live.applyCounter(mutate)
       return
@@ -731,7 +725,9 @@ export function registerWorkspaceSocketHandlers(
       batch.setStreamPreview(streamId, preview)
       return
     }
-    const live = coalescedLiveCommit ? (refs.getLiveCommitBatch?.() ?? null) : null
+    // Re-read per event: a backoffice flip re-primes the flag map, so turning
+    // the flag off disarms every connected client on its next event.
+    const live = isCoalescedLiveCommitEnabledSync(workspaceId) ? (refs.getLiveCommitBatch?.() ?? null) : null
     if (live) {
       live.setStreamPreview(streamId, preview)
       return

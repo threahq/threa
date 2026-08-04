@@ -1666,21 +1666,19 @@ describe("SyncEngine sync cursor (active mode)", () => {
     await engine.onConnect(asSocket(new MockSocket()))
     await vi.waitFor(() => expect(deps.workspaceService.bootstrap).toHaveBeenCalledTimes(1))
 
-    const liveBatch = (engine as unknown as { liveCommitBatch: { setStreamPreview: (id: string, p: unknown) => void } })
-      .liveCommitBatch
-    vi.spyOn(db.streams, "update").mockRejectedValue(new Error("QuotaExceeded") as never)
-    liveBatch.setStreamPreview("stream_x", {
-      authorId: "member_other",
-      authorType: "user",
-      content: "dropped",
-      createdAt: new Date().toISOString(),
-    })
+    const liveBatch = (
+      engine as unknown as { liveCommitBatch: { applyCounter: (mutate: (state: never) => never) => void } }
+    ).liveCommitBatch
+    vi.spyOn(db.unreadState, "get").mockRejectedValue(new Error("QuotaExceeded") as never)
+    // A counter fold, not a preview: only a dropped counter fold can hold a
+    // held-set insert, so only it asks the engine to reseed.
+    liveBatch.applyCounter((state) => state)
 
     await vi.waitFor(() => {
       expect(deps.workspaceService.bootstrap).toHaveBeenCalledTimes(2)
     })
 
-    vi.mocked(db.streams.update).mockRestore?.()
+    vi.mocked(db.unreadState.get).mockRestore?.()
     errorSpy.mockRestore()
     engine.destroy()
   })

@@ -163,9 +163,14 @@ export async function isSinglePreviewWriterEnabled(database: ThreaDatabase, work
   return (await getEventWriteFlags(database, workspaceId)).singlePreviewWriter
 }
 
-/** The viewer's `coalescedLiveCommit` value, resolved through the same primed cache. */
-export async function isCoalescedLiveCommitEnabled(database: ThreaDatabase, workspaceId: string): Promise<boolean> {
-  return (await getEventWriteFlags(database, workspaceId)).coalescedLiveCommit
+/**
+ * The viewer's `coalescedLiveCommit` value, read only from the primed map so the
+ * synchronous commit seams can re-read it per event. A backoffice flip re-primes
+ * the map, so arming and disarming both take effect on the next event; an
+ * unprimed read takes the immediate path rather than guessing.
+ */
+export function isCoalescedLiveCommitEnabledSync(workspaceId: string): boolean {
+  return flagsByWorkspace.get(workspaceId)?.coalescedLiveCommit ?? false
 }
 
 /**
