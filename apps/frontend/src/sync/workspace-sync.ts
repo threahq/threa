@@ -703,20 +703,39 @@ export function registerWorkspaceSocketHandlers(
   // batch when one is active, else commit immediately (live). Read-pointer
   // mirrors and feed invalidations are not coalesced — they stay on their own
   // immediate paths in the handlers below.
+  /** The live batch when the flag is armed, else null. Re-read per event: a
+   *  backoffice flip re-primes the flag map, so arming and disarming both take
+   *  effect on the next event. */
+  const armedLiveBatch = (): LiveCommitBatch | null =>
+    isCoalescedLiveCommitEnabledSync(workspaceId) ? (refs.getLiveCommitBatch?.() ?? null) : null
+
+  /** Run an immediate (unbatched) commit, draining a still-pending fold first.
+   *  Without this, an off-flip mid-task lets an older buffered preview flush
+   *  AFTER a newer immediate commit and overwrite it in cache and IDB. */
+  const commitImmediate = (commit: () => void): void => {
+    const pending = refs.getLiveCommitBatch?.() ?? null
+    if (pending?.hasPending()) {
+      void pending
+        .flush()
+        .catch(() => {})
+        .then(commit)
+      return
+    }
+    commit()
+  }
+
   const commitCounter = (mutate: CounterMutator): void => {
     const batch = refs.getCatchUpBatch?.() ?? null
     if (batch) {
       batch.applyCounter(mutate)
       return
     }
-    // Re-read per event: a backoffice flip re-primes the flag map, so turning
-    // the flag off disarms every connected client on its next event.
-    const live = isCoalescedLiveCommitEnabledSync(workspaceId) ? (refs.getLiveCommitBatch?.() ?? null) : null
+    const live = armedLiveBatch()
     if (live) {
       live.applyCounter(mutate)
       return
     }
-    commitCounterMutation(queryClient, workspaceId, mutate)
+    commitImmediate(() => commitCounterMutation(queryClient, workspaceId, mutate))
   }
 
   const commitPreview = (streamId: string, preview: LastMessagePreview | null): void => {
@@ -725,14 +744,12 @@ export function registerWorkspaceSocketHandlers(
       batch.setStreamPreview(streamId, preview)
       return
     }
-    // Re-read per event: a backoffice flip re-primes the flag map, so turning
-    // the flag off disarms every connected client on its next event.
-    const live = isCoalescedLiveCommitEnabledSync(workspaceId) ? (refs.getLiveCommitBatch?.() ?? null) : null
+    const live = armedLiveBatch()
     if (live) {
       live.setStreamPreview(streamId, preview)
       return
     }
-    commitStreamPreview(queryClient, workspaceId, streamId, preview)
+    commitImmediate(() => commitStreamPreview(queryClient, workspaceId, streamId, preview))
   }
 
   // Activity-feed invalidation seam. During catch-up it marks the feed stale on
@@ -1195,12 +1212,16 @@ export function registerWorkspaceSocketHandlers(
     // replay touched), else committed live through commitReadAll. The additive
     // `frontiers` snapshot carries each updated stream's post-write watermark;
     // legacy payloads omit it — counter behavior only, frontier rows untouched.
-    const batch = refs.getCatchUpBatch?.() ?? null
+    // The live batch takes the same pair, so a read-all and the events before it
+    // commit from ONE ordered buffer: routing it around the batch would open its
+    // transaction at handler time and drop held rows BEFORE the buffered fold
+    // inserts them, resurrecting an already-read mention.
+    const batch = refs.getCatchUpBatch?.() ?? armedLiveBatch()
     if (batch) {
       batch.applyCounter((state) => applyStreamsReadAllOrdinals(state, payload.reads))
       batch.applyReadAllFrontiers(payload.frontiers)
     } else {
-      void commitReadAll(queryClient, workspaceId, payload.reads, payload.frontiers)
+      commitImmediate(() => void commitReadAll(queryClient, workspaceId, payload.reads, payload.frontiers))
     }
 
     // Standalone frontier (read cutover): read_all carries ordinals, no event
