@@ -9,6 +9,7 @@ import {
   Hash,
   LayoutGrid,
   ListTodo,
+  ListChecks,
   Paperclip,
   PenSquare,
   Search,
@@ -25,6 +26,7 @@ import { SETTINGS_TABS, type SettingsTab } from "@threa/types"
 import { SETTINGS_TAB_CONFIG } from "@/components/settings/tab-config"
 import type { WorkspaceSettingsTab } from "@/components/workspace-settings/tab-config"
 import type { ExplorerFilters } from "@/components/attachment-explorer"
+import type { OutcomesFilters } from "@/components/agent-outcomes"
 
 /**
  * Commands can request an input prompt via this interface.
@@ -60,6 +62,8 @@ export interface CommandContext {
   /** Open the workspace settings dialog at a tab (URL-param driven, like openSettings). */
   openWorkspaceSettings: (tab: WorkspaceSettingsTab) => void
   openExplorer: (overrides?: Partial<ExplorerFilters>) => void
+  /** Open the outcomes view (follow-ups + delegated tasks) over the current route. */
+  openOutcomes: (overrides?: Partial<OutcomesFilters>) => void
   /**
    * The stream currently in view (route param), or null on non-stream routes.
    * Contextual stream commands (archive, settings, files, labels) read this to
@@ -267,6 +271,16 @@ export const commands: Command[] = [
     action: ({ closeDialog, openExplorer }) => {
       closeDialog()
       openExplorer({ streamIds: [] })
+    },
+  },
+  {
+    id: "view-agenda",
+    label: "View Agent Agenda",
+    icon: ListChecks,
+    keywords: ["follow-up", "follow ups", "delegation", "delegated", "agent", "tasks", "agenda", "outcomes"],
+    action: ({ closeDialog, openOutcomes }) => {
+      closeDialog()
+      openOutcomes({ streamIds: [] })
     },
   },
   {

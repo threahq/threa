@@ -146,6 +146,7 @@ export function Sidebar({ workspaceId }: SidebarProps) {
   const unmuteStream = useUnmuteStream(workspaceId)
   const isMemoryPage = splat === "memory" || location.pathname.endsWith("/memory")
   const isFilesPage = splat === "files" || location.pathname.endsWith("/files")
+  const isAgendaPage = splat === "agenda" || location.pathname.endsWith("/agenda")
   const isLabelsPage = splat === "labels" || location.pathname.includes("/labels")
 
   const memberStreamIds = useMemo(() => {
@@ -400,6 +401,7 @@ export function Sidebar({ workspaceId }: SidebarProps) {
       isActivityPage={isActivityPage}
       isMemoryPage={isMemoryPage}
       isFilesPage={isFilesPage}
+      isAgendaPage={isAgendaPage}
       isLabelsPage={isLabelsPage}
       unreadActivityCount={unreadActivityCount}
     />

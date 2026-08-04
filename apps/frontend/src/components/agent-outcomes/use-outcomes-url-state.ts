@@ -90,6 +90,17 @@ export function writeOutcomesFiltersToParams(params: URLSearchParams, next: Part
 const OUTCOMES_KEYS = [OUTCOMES_PARAM, STREAMS_PARAM, STATE_PARAM, KIND_PARAM, QUERY_PARAM, SELECTED_PARAM]
 
 /**
+ * The search string that opens this surface, for the entry points that are
+ * navigation rather than an action — a `<Link>` on a card, not a menu item
+ * (INV-40). Same writer as `open()`, so the two produce identical URLs.
+ */
+export function outcomesSearch(current: URLSearchParams, overrides: Partial<OutcomesFilters> = {}): string {
+  const next = writeOutcomesFiltersToParams(current, overrides)
+  next.set(OUTCOMES_PARAM, "")
+  return `?${next.toString()}`
+}
+
+/**
  * Outcomes view state lives entirely in URL search params (INV-59) so refresh,
  * back/forward, and a shared link all land on the same view. Mirrors
  * `use-explorer-url-state` — same open/close/update contract, and `close` strips

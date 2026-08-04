@@ -83,6 +83,7 @@ describe("commands", () => {
     function makeContext() {
       const navigate = vi.fn()
       const openExplorer = vi.fn()
+      const openOutcomes = vi.fn()
       const context = {
         workspaceId: WORKSPACE_ID,
         navigate,
@@ -96,12 +97,13 @@ describe("commands", () => {
         openSettings: vi.fn(),
         openWorkspaceSettings: vi.fn(),
         openExplorer,
+        openOutcomes,
         openStreamSettings: vi.fn(),
         requestArchiveStream: vi.fn(),
         openLabelPicker: vi.fn(),
         createSavedTodo: vi.fn(async () => {}),
       } as unknown as CommandContext
-      return { context, navigate, openExplorer }
+      return { context, navigate, openExplorer, openOutcomes }
     }
 
     /** The palette destination each sidebar quick link must be reachable through. */
@@ -109,6 +111,7 @@ describe("commands", () => {
       drafts: ({ navigate }) => expect(navigate).toHaveBeenCalledWith(`/w/${WORKSPACE_ID}/drafts`),
       saved: ({ navigate }) => expect(navigate).toHaveBeenCalledWith(`/w/${WORKSPACE_ID}/saved`),
       files: ({ openExplorer }) => expect(openExplorer).toHaveBeenCalled(),
+      agenda: ({ openOutcomes }) => expect(openOutcomes).toHaveBeenCalled(),
       scheduled: ({ navigate }) => expect(navigate).toHaveBeenCalledWith(`/w/${WORKSPACE_ID}/scheduled`),
       memory: ({ navigate }) => expect(navigate).toHaveBeenCalledWith(`/w/${WORKSPACE_ID}/memory`),
       labels: ({ navigate }) => expect(navigate).toHaveBeenCalledWith(`/w/${WORKSPACE_ID}/labels`),

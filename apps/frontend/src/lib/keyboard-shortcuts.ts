@@ -67,6 +67,14 @@ export const SHORTCUT_ACTIONS: ShortcutAction[] = [
     global: true,
   },
   {
+    id: "openAgentAgenda",
+    label: "Agent Agenda",
+    description: "Open follow-ups and delegated tasks",
+    defaultKey: "mod+shift+o",
+    category: "navigation",
+    global: true,
+  },
+  {
     id: "copyStreamLink",
     label: "Copy Link",
     // Default avoids plain mod+L — browsers reserve that to focus the address

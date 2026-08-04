@@ -50,6 +50,24 @@ describe("FollowUpScheduledEvent", () => {
     expect(screen.getByRole("button", { name: "Cancel" })).toBeInTheDocument()
   })
 
+  it("links the note into the agent agenda, at this follow-up", () => {
+    render(
+      <MemoryRouter>
+        <FollowUpScheduledEvent event={scheduledEvent(SCHEDULED_PAYLOAD)} workspaceId="ws_1" />
+      </MemoryRouter>
+    )
+
+    const link = screen.getByRole("link", { name: "check the deploy went green" })
+    const search = new URLSearchParams(link.getAttribute("href")!.split("?")[1])
+
+    expect({
+      open: search.has("agenda"),
+      stream: search.get("aStreams"),
+      state: search.get("aState"),
+      selected: search.get("aSelected"),
+    }).toEqual({ open: true, stream: "stream_1", state: "all", selected: "agfu_1" })
+  })
+
   it("cancels via the API and flips the same button to Cancelled (INV-63: no success toast)", async () => {
     const cancel = vi.spyOn(agentFollowUpsApi, "cancel").mockResolvedValue({ cancelled: true })
 
