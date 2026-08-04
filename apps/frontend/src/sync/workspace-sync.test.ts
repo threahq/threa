@@ -3511,6 +3511,30 @@ describe("unread counter events (absolute payloads, sync phase 2c)", () => {
     cleanup()
   })
 
+  it("stream:activity records one activityApply sample per event", async () => {
+    const queryClient = new QueryClient()
+    await seedCounterFixture(queryClient)
+    const { emit, cleanup } = register(queryClient)
+    const capture = new PerfCapture()
+    armPerfCapture(capture)
+
+    emit("stream:activity", {
+      workspaceId: "ws_1",
+      streamId: "stream_1",
+      authorId: "member_2",
+      sequence: "9",
+      messageOrdinal: 6,
+      lastMessagePreview: preview,
+    })
+
+    const samples = capture.snapshot().filter((s) => s.name === "stream.activityApply")
+    expect(samples).toHaveLength(1)
+    expect(samples[0].value).toBeTypeOf("number")
+
+    armPerfCapture(NO_CAPTURE)
+    cleanup()
+  })
+
   it("advances the read position for own messages instead of skipping the event", async () => {
     const queryClient = new QueryClient()
     await seedCounterFixture(queryClient)
