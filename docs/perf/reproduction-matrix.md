@@ -92,7 +92,7 @@ there is no gap to catch up on.
 | 12  | Restore → switch stream → return → navigate away and back | `--profile drafts` plus `--profile large-stream`                                               | `editor.externalSync`, `stream.subscriptions`, `liveQuery.rerun`, `bootstrap.publish`                                                                                                                                                                         |
 | 13  | Unchanged warm refresh, wide workspace                    | `--profile workspace-wide`, then hard-refresh twice with no new messages (read the third load) | `bootstrap.preRead` + `bootstrap.tx` (the comparable number), `bootstrap.rowsWritten`, `bootstrap.rowsSkipped`, `bootstrap.diff`, `bootstrap.storePublish`, `bootstrap.cachePublish`, `bootstrap.cleanup`                                                     |
 | 14  | One incoming message into a deep scroll-back window       | `--profile large-stream`, scroll up ten pages, then post from a second client                  | `timeline.tailLoad` (bounded and flat as the scroll-back deepens), `liveQuery.load`, `timeline.derive` (samples sum to the whole derivation chain — one per memo in it), `timeline.windowItems` (identical between arms — a change here is a correctness bug) |
-| 15  | One incoming message into an open member stream           | `--profile large-stream`, open the channel, then post from a second client (phone)             | `stream.eventApply`, `stream.eventTx`, `stream.contextRows`, `stream.previewWrite`, `stream.activityApply`, `stream.eventDuplicate`, `stream.idbTransaction`                                                                                                  |
+| 15  | One incoming message into an open member stream           | `--profile large-stream`, open the channel, then post from a second client (phone)             | `stream.eventApply`, `stream.eventTx`, `stream.contextRows`, `stream.previewWrite`, `stream.activityApply`, `stream.liveCommitFold`, `stream.eventDuplicate`, `stream.idbTransaction`                                                                         |
 
 ### Reading `liveQuery.rerun` / `liveQuery.load` (scenarios 7, 8, 14)
 
@@ -119,11 +119,25 @@ transaction (`putLocalContextRows`), and the counter and preview commits
 It does not count catch-up flushes — those are per window, not per message — so
 read it only in a live-delivery scenario.
 
-`stream.activityApply` moves with the flag. With `coalescedLiveCommit` off it
-times `handleStreamActivity`'s body, which does the commits inline; with it on
-the commits are buffered and the mark is emitted by `LiveCommitBatch.commit`
-around the fold's persist and publish. Both arms therefore measure the same
-work — the transaction plus the bootstrap publication — and are comparable.
+`stream.activityApply` is the handler body in BOTH arms — one sample per
+`stream:activity`. It is not the same work in each: with `coalescedLiveCommit`
+off it covers two synchronous `setQueryData` calls plus the _setup_ of two
+fire-and-forget IDB transactions (`void db.transaction(...)` — the sample stops
+before the persist settles); with the flag on those calls are replaced by two
+buffer pushes, so the sample is near zero. Read it as "what the handler costs
+the task", never as the cost of the write.
+
+The fold has its own name, `stream.liveCommitFold`, emitted only in the on arm —
+one sample per flush, covering the awaited transaction and the single bootstrap
+publication. Its presence proves the flag armed; its count against the
+`stream.activityApply` count is the coalescing ratio. The two names are separate
+populations on purpose: mixed under one name, N near-zero handler samples plus
+one awaited fold sample makes the arm look faster or slower depending on which
+statistic the reader takes.
+
+Caveat for scenario 15 with `sharedStreamRegistration` on: the cheap duplicate
+apply disappears, so the mean of `stream.eventApply` **rises** even though the
+total work halves. Compare sample counts × mean, not means.
 
 ### Scenario 13 — reading the unchanged warm refresh
 

@@ -36,6 +36,7 @@ export const PERF_MARK_NAMES = [
   "stream.contextRows",
   "stream.previewWrite",
   "stream.activityApply",
+  "stream.liveCommitFold",
   "stream.eventDuplicate",
   "liveQuery.rerun",
   "liveQuery.load",
