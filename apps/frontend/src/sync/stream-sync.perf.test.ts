@@ -108,6 +108,15 @@ describe("message:created sub-marks", () => {
     expect(samplesNamed(capture, "stream.eventDuplicate")).toEqual([])
   })
 
+  it("the message path counts one idbTransaction per write transaction it opens", async () => {
+    const capture = new PerfCapture()
+    armPerfCapture(capture)
+
+    await deliver("stream_perf", ["evt_count"])
+
+    expect(samplesNamed(capture, "stream.idbTransaction")).toHaveLength(1)
+  })
+
   it("a re-delivered message records eventDuplicate", async () => {
     const capture = new PerfCapture()
     armPerfCapture(capture)

@@ -1,6 +1,7 @@
 import type { QueryClient } from "@tanstack/react-query"
 import type { LastMessagePreview, StreamReadFrontierSnapshot, WorkspaceBootstrap } from "@threa/types"
 import { db } from "@/db"
+import { getPerfCapture } from "@/lib/perf/capture"
 import { workspaceKeys } from "@/hooks/use-workspaces"
 import { activityKeys } from "@/hooks/use-activity"
 import { diffCounterStreams, toCounterState, withCounterState, type UnreadCounterState } from "./unread-counters"
@@ -101,6 +102,7 @@ async function putPreviewsIdb(previews: Map<string, LastMessagePreview | null>):
 export function commitCounterMutation(queryClient: QueryClient, workspaceId: string, mutate: CounterMutator): void {
   const mutators = [mutate]
   applyCountersToCache(queryClient, workspaceId, mutators)
+  getPerfCapture().count("stream.idbTransaction")
   void db.transaction("rw", [db.unreadState], () => putCountersIdb(workspaceId, mutators))
 }
 
@@ -113,6 +115,7 @@ export function commitStreamPreview(
 ): void {
   const previews = new Map([[streamId, preview]])
   applyPreviewsToCache(queryClient, workspaceId, previews)
+  getPerfCapture().count("stream.idbTransaction")
   void db.transaction("rw", [db.streams], () => putPreviewsIdb(previews))
 }
 
@@ -135,6 +138,8 @@ export class LiveCommitBatch {
   private streamPreviews = new Map<string, LastMessagePreview | null>()
   private scheduled = false
   private destroyed = false
+  /** Latches the engine reseed request until a flush succeeds. */
+  private reseedRequested = false
   /** Flushes run one at a time and in schedule order, so an awaited `flush()`
    *  drains everything buffered before it (the catch-up window's guarantee). */
   private chain: Promise<void> = Promise.resolve()
@@ -201,19 +206,37 @@ export class LiveCommitBatch {
     if (this.destroyed) return
     if (mutators.length === 0 && previews.size === 0) return
 
+    // The fold runs after the handler returns, so `stream.activityApply` timed
+    // inside the handler no longer covers it — time it here so the coalesced arm
+    // stays comparable with the immediate arm's sample.
+    const stopActivityApply = getPerfCapture().time("stream.activityApply")
     try {
+      getPerfCapture().count("stream.idbTransaction")
       await db.transaction("rw", [db.streams, db.unreadState], async () => {
         await putCountersIdb(this.workspaceId, mutators)
         await putPreviewsIdb(previews)
       })
     } catch (error) {
+      stopActivityApply()
       console.error("Live commit batch flush failed", { workspaceId: this.workspaceId, error })
-      this.onFlushFailed?.()
+      // At most one reseed until a flush succeeds: a persistently failing IDB
+      // would otherwise turn every message into a forced full bootstrap, each of
+      // which fails the same way. Only a dropped counter fold needs the reseed —
+      // a dropped preview is non-critical and the next bootstrap carries it.
+      if (mutators.length > 0 && !this.reseedRequested) {
+        this.reseedRequested = true
+        this.onFlushFailed?.()
+      }
       return
     }
 
-    if (this.destroyed) return
-    this.publish(mutators, previews)
+    try {
+      this.reseedRequested = false
+      if (this.destroyed) return
+      this.publish(mutators, previews)
+    } finally {
+      stopActivityApply()
+    }
   }
 
   /** One bootstrap replacement for the whole fold. Falls back to the helpers
