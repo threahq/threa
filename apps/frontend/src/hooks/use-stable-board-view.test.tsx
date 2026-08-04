@@ -6,12 +6,24 @@ import * as graphModule from "./use-conversation-graph"
 import type { CachedBoardPost } from "@/db"
 import {
   reconcileStableView,
-  useStableBoardView,
+  useStableBoardView as useStableBoardViewImpl,
   type BoardExclusionState,
   type BoardViewFilter,
   type BoardSeedState,
   type CommittedView,
 } from "./use-stable-board-view"
+
+/** Keeps the existing call sites focused on their own axis while the retired
+ * viewport-seen input remains accepted only inside this test file. */
+function useStableBoardView(
+  workspaceId: string,
+  filter: BoardViewFilter,
+  exclusions: BoardExclusionState | undefined,
+  seed: BoardSeedState | undefined,
+  _retiredSeenRef?: { readonly current: ReadonlySet<string> }
+) {
+  return useStableBoardViewImpl(workspaceId, filter, exclusions, seed)
+}
 
 /** Build a full filter from overrides — every axis off unless named. */
 function filterOf(over: Partial<BoardViewFilter> = {}): BoardViewFilter {
@@ -1192,131 +1204,23 @@ describe("useStableBoardView seed gate", () => {
   })
 })
 
-describe("useStableBoardView — unseen re-buffering", () => {
+describe("useStableBoardView — existing-card activity", () => {
   let liveValue: CachedBoardPost[] | undefined
   function mockLive(value: CachedBoardPost[] | undefined) {
     liveValue = value
     vi.spyOn(boardStoreModule, "useBoardPosts").mockImplementation(() => liveValue)
   }
-  function seenRefOf(...ids: string[]): { current: ReadonlySet<string> } {
-    return { current: new Set(ids) }
-  }
 
   afterEach(() => vi.restoreAllMocks())
 
-  it("re-buffers an UNSEEN committed card that gains activity, and reveals it at its live position", () => {
+  it("counts only new conversations, never activity on an already-committed card", () => {
     mockLive(feed(post("a", 300), post("b", 200)))
-    const seen = seenRefOf("a")
-    const { result, rerender } = renderHook(() => useStableBoardView("ws_1", ALL, undefined, undefined, seen))
+    const { result, rerender } = renderHook(() => useStableBoardView("ws_1", ALL, undefined, undefined))
+
+    act(() => mockLive(feed(post("b", 900), post("new", 700), post("a", 300))))
+    rerender()
+
     expect(result.current.posts.map((p) => p.id)).toEqual(["a", "b"])
-
-    act(() => mockLive(feed(post("b", 900), post("a", 300))))
-    rerender()
-    expect(result.current.posts.map((p) => p.id)).toEqual(["a"])
-    expect(result.current.newCount).toBe(1)
-
-    act(() => result.current.commit())
-    expect(result.current.posts.map((p) => p.id)).toEqual(["b", "a"])
-    expect(result.current.newCount).toBe(0)
-  })
-
-  it("freezes a SEEN committed card that gains activity — no motion under the eye, no count", () => {
-    mockLive(feed(post("a", 300), post("b", 200)))
-    const seen = seenRefOf("a", "b")
-    const { result, rerender } = renderHook(() => useStableBoardView("ws_1", ALL, undefined, undefined, seen))
-    act(() => mockLive(feed(post("b", 900), post("a", 300))))
-    rerender()
-    expect(result.current.posts.map((p) => p.id)).toEqual(["a", "b"])
-    expect(result.current.newCount).toBe(0)
-  })
-
-  it("keeps an UNSEEN committed card whose activity is unchanged — presence alone never re-buffers", () => {
-    mockLive(feed(post("a", 300), post("b", 200)))
-    const seen = seenRefOf("a")
-    const { result, rerender } = renderHook(() => useStableBoardView("ws_1", ALL, undefined, undefined, seen))
-    act(() => mockLive(feed(post("a", 300), post("b", 200))))
-    rerender()
-    expect(result.current.posts.map((p) => p.id)).toEqual(["a", "b"])
-    expect(result.current.newCount).toBe(0)
-  })
-
-  it("never re-buffers the viewer's own pending post, seen or not", () => {
-    mockLive(feed(post("a", 300)))
-    const seen = seenRefOf("a")
-    const { result, rerender } = renderHook(() => useStableBoardView("ws_1", ALL, undefined, undefined, seen))
-    act(() => mockLive(feed(pendingPost("mine", 600), post("a", 300))))
-    rerender()
-    expect(result.current.posts.map((p) => p.id)).toEqual(["mine", "a"])
-    expect(result.current.newCount).toBe(0)
-    // The pending card is committed but unseen; a later bump must not pull it back.
-    act(() => mockLive(feed(pendingPost("mine", 900), post("a", 300))))
-    rerender()
-    expect(result.current.posts.map((p) => p.id)).toEqual(["mine", "a"])
-    expect(result.current.newCount).toBe(0)
-  })
-
-  it("does not re-buffer a card that left the raw feed (a removed stub, not activity)", () => {
-    mockLive(feed(post("a", 300), post("b", 200)))
-    const seen = seenRefOf("a")
-    const { result, rerender } = renderHook(() => useStableBoardView("ws_1", ALL, undefined, undefined, seen))
-    act(() => mockLive(feed(post("a", 300))))
-    rerender()
-    expect(result.current.posts.map((p) => p.id)).toEqual(["a", "b"])
-    expect([...result.current.removedIds]).toEqual(["b"])
-    expect(result.current.newCount).toBe(0)
-  })
-
-  it("behaves exactly as today when no seenRef is passed (back-compat)", () => {
-    mockLive(feed(post("a", 300), post("b", 200)))
-    const { result, rerender } = renderHook(() => useStableBoardView("ws_1", ALL, undefined, undefined, undefined))
-    act(() => mockLive(feed(post("b", 900), post("a", 300))))
-    rerender()
-    expect(result.current.posts.map((p) => p.id)).toEqual(["a", "b"])
-    expect(result.current.newCount).toBe(0)
-  })
-
-  it("keeps the paged/buffered floor at the ORIGINAL committed window when a card is re-buffered", () => {
-    mockLive(feed(post("a", 300), post("b", 200)))
-    const seen = seenRefOf("a")
-    const { result, rerender } = renderHook(() => useStableBoardView("ws_1", ALL, undefined, undefined, seen))
-    expect(result.current.posts.map((p) => p.id)).toEqual(["a", "b"])
-
-    // b (unseen) is re-buffered out of the order. c:250 is above the committed
-    // floor (200), so it stays behind the pill; a floor that rose to a's 300 when
-    // b left would page c in below the frozen window instead.
-    act(() => mockLive(feed(post("b", 900), post("a", 300), post("c", 250))))
-    rerender()
-    expect(result.current.posts.map((p) => p.id)).toEqual(["a"])
-    expect(result.current.newCount).toBe(2)
-  })
-
-  it("skips re-buffering entirely when it would empty the order (an empty order re-arms the first commit)", () => {
-    mockLive(feed(post("a", 300), post("b", 200)))
-    const seen = seenRefOf()
-    const { result, rerender } = renderHook(() => useStableBoardView("ws_1", ALL, undefined, undefined, seen))
-    act(() => mockLive(feed(post("b", 900), post("a", 800))))
-    rerender()
-    expect(result.current.posts.map((p) => p.id)).toEqual(["a", "b"])
-    expect(result.current.newCount).toBe(0)
-  })
-
-  it("arms only when a seenRef is passed — a bump that happened pre-paint re-buffers at the first armed reconcile", () => {
-    mockLive(feed(post("a", 300), post("b", 200)))
-    const seen = seenRefOf("a")
-    const { result, rerender } = renderHook(
-      ({ armed }: { armed: boolean }) =>
-        useStableBoardView("ws_1", ALL, undefined, undefined, armed ? seen : undefined),
-      { initialProps: { armed: false } }
-    )
-    act(() => mockLive(feed(post("b", 900), post("a", 300))))
-    rerender({ armed: false })
-    expect(result.current.posts.map((p) => p.id)).toEqual(["a", "b"])
-    expect(result.current.newCount).toBe(0)
-
-    // Arming compares live against the (unchanged) committed activity, so the
-    // pre-paint bump is picked up now — b is genuinely unseen, so that is correct.
-    rerender({ armed: true })
-    expect(result.current.posts.map((p) => p.id)).toEqual(["a"])
     expect(result.current.newCount).toBe(1)
   })
 })

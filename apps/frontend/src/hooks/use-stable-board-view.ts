@@ -290,26 +290,17 @@ function sameIds(a: string[], b: string[]): boolean {
  *    Revealing ONLY the pending card leaves unrelated arrivals still buffered, so
  *    posting never reorders the cards the viewer was reading (board-view-design.md
  *    "don't move shit on me").
- *  - **Any other at-or-above-floor arrival** — a new conversation from someone
- *    else, or a card bumped up. Revealing it would reorder the view, so it waits
- *    in the buffer and is surfaced as the "N new" pill count instead.
- *
- * A COMMITTED card the viewer has not yet SEEN this session (`seen`) and whose
- * live activity has passed its committed value is pulled back out of the order
- * and re-buffered, so replies to an old card count behind the pill instead of
- * reading as nothing. Safe because a committed-but-unseen card is strictly BELOW
- * the viewport — anything at or above it has intersected and is therefore seen —
- * so removing it shifts nothing on screen. (An ultra-fast fling can outrun the
- * intersection callbacks; those cards weren't meaningfully seen, and re-buffering
- * them is the correct outcome.) A seen card never moves and never counts.
+ *  - **Any other at-or-above-floor NEW conversation** — waits in the buffer so
+ *    revealing it cannot reorder the view under the reader. Activity on a
+ *    committed card updates that card in place and never contributes to the pill;
+ *    the control must always reveal a genuinely new card when tapped.
  *
  * Returns the same `committed` reference when nothing pages in or reveals, so the
  * caller can skip a state write.
  */
 export function reconcileStableView(
   committed: CommittedView,
-  live: CachedBoardPost[],
-  seen?: ReadonlySet<string>
+  live: CachedBoardPost[]
 ): { committed: CommittedView; buffered: string[] } {
   // First snapshot (initial load, or after a workspace reset): commit wholesale.
   // An empty feed has nothing to commit — keep the (empty) committed reference so
@@ -319,67 +310,32 @@ export function reconcileStableView(
   }
 
   const committedSet = new Set(committed.order)
-  // Unseen committed cards that gained activity leave the frozen order and go
-  // back behind the pill (see the safety invariant above). Armed only once at
-  // least one card of THIS committed view has been seen: observers report a
-  // beat after paint (IO records land after layout, later than React's effect
-  // flush), so "no committed card seen yet" means the view hasn't had a
-  // seeable frame — re-buffering then would strip cards the viewer never had a
-  // chance to see. Self-re-arms on every view reset by construction.
-  const rebuffered = new Set<string>()
-  const armed = seen !== undefined && seen.size > 0 && committed.order.some((id) => seen.has(id))
-  if (seen && armed) {
-    for (const post of live) {
-      const id = postId(post)
-      if (!committedSet.has(id) || seen.has(id) || post._status === "pending") continue
-      const committedMs = committed.activityById.get(id)
-      if (committedMs !== undefined && postMs(post) > committedMs) rebuffered.add(id)
-    }
-  }
-  // Floor comes from the whole committed window — every activity entry, including
-  // cards a previous pass re-buffered out of the order — because "older than the
-  // frozen window" is a property of what the viewer committed, not of which cards
-  // happen to have left it.
   let floor = Infinity
   for (const ms of committed.activityById.values()) if (ms < floor) floor = ms
-
-  // Removing every committed card would leave an empty order, which re-arms the
-  // wholesale-commit branch on the next pass — discarding the frozen view and
-  // silently clearing the pill. Skip the removals entirely; they re-evaluate on
-  // the next reconcile.
-  if (rebuffered.size > 0 && rebuffered.size >= committed.order.length) rebuffered.clear()
-  const order = rebuffered.size === 0 ? committed.order : committed.order.filter((id) => !rebuffered.has(id))
 
   const paged: CachedBoardPost[] = []
   const revealed: CachedBoardPost[] = []
   const buffered: string[] = []
   for (const post of live) {
     const id = postId(post)
-    if (committedSet.has(id) && !rebuffered.has(id)) continue
+    if (committedSet.has(id)) continue
     if (post._status === "pending") revealed.push(post)
-    else if (rebuffered.has(id)) buffered.push(id)
     else if (postMs(post) < floor) paged.push(post)
     else buffered.push(id)
   }
 
-  if (paged.length === 0 && revealed.length === 0 && rebuffered.size === 0) {
-    return { committed, buffered }
-  }
+  if (paged.length === 0 && revealed.length === 0) return { committed, buffered }
 
   // The viewer's own pending posts prepend at top (newest); paged-in older rows
   // append below the frozen window. Both activity-desc; the committed cards
   // between keep their frozen positions.
   revealed.sort((a, b) => postMs(b) - postMs(a))
   paged.sort((a, b) => postMs(b) - postMs(a))
-  // A re-buffered card keeps its committed activity entry even though it left the
-  // order: that entry is what holds the window's floor still, so the next pass
-  // classifies arrivals against the window the viewer committed rather than one
-  // that rose when the card departed. It is dropped at the next `commit()`.
   const activityById = new Map(committed.activityById)
   for (const post of [...revealed, ...paged]) activityById.set(postId(post), postMs(post))
   return {
     committed: {
-      order: [...revealed.map(postId), ...order, ...paged.map(postId)],
+      order: [...revealed.map(postId), ...committed.order, ...paged.map(postId)],
       activityById,
     },
     buffered,
@@ -463,12 +419,7 @@ export function useStableBoardView(
   workspaceId: string,
   filter: BoardViewFilter,
   exclusions: BoardExclusionState = NO_EXCLUSIONS,
-  seed: BoardSeedState | undefined,
-  // A REF, not a Set: seen-ness is written by intersection callbacks and read at
-  // reconcile time, and must never force a re-render of the feed. REQUIRED so a
-  // caller that wants no re-buffering has to say `undefined` on purpose —
-  // dropping the argument silently was how the wiring went missing.
-  seenRef: { readonly current: ReadonlySet<string> } | undefined
+  seed: BoardSeedState | undefined
 ): StableBoardView {
   const {
     lens,
@@ -637,8 +588,8 @@ export function useStableBoardView(
     liveRef.current = live
     for (const post of live) retainedRef.current.set(postId(post), post)
     // `reconcileStableView` reveals the viewer's own pending post (at top) and
-    // paged-in older rows; everything else stays buffered behind the pill.
-    const next = reconcileStableView(committedInput, live, seenRef?.current)
+    // paged-in older rows; only genuinely new conversations stay buffered.
+    const next = reconcileStableView(committedInput, live)
     if (next.committed !== committedInput) {
       hasCommittedForWorkspaceRef.current = true
       setCommitted(next.committed)

@@ -458,10 +458,6 @@ function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: Boar
   // escape hatch — `newest: null` then means "commit whatever you have".
   const [seedTimedOut, setSeedTimedOut] = useState(false)
   const seedWorkspaceRef = useRef(workspaceId)
-  // Cards the viewer has laid eyes on this session (first intersection, per card).
-  // Per-session and per-workspace, never persisted: a seen card stays frozen, an
-  // unseen one that gains activity goes back behind the "N new" pill.
-  const seenCardsRef = useRef<Set<string>>(new Set())
   // A fresh board visit is a fresh "open": drop last visit's divider latches
   // before any card renders (parents render first, so this beats an effect).
   const visitRef = useRef(false)
@@ -474,7 +470,6 @@ function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: Boar
   let timedOut = seedTimedOut
   if (seedWorkspaceRef.current !== workspaceId) {
     seedWorkspaceRef.current = workspaceId
-    seenCardsRef.current = new Set()
     resetBoardUnreadLatches()
     timedOut = false
     if (seedTimedOut) setSeedTimedOut(false)
@@ -507,7 +502,7 @@ function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: Boar
     removedIds,
     removedSuccessorById,
     draftResolvedIds,
-  } = useStableBoardView(workspaceId, filter, exclusions, seed, seenCardsRef)
+  } = useStableBoardView(workspaceId, filter, exclusions, seed)
   // After a refetch settles, `isLoading` is already false but the seed effect
   // writes IDB on the next tick, so the IDB feed can be momentarily empty while
   // the query already holds posts. Treat that window as loading so the feed
@@ -593,9 +588,6 @@ function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: Boar
   // its ref to the Virtualizer via `scrollRef`, exactly like the timeline —
   // virtua then maintains scroll position across item measurement and above-fold
   // reflow, which is what the hand-rolled `useBoardScrollAnchor` used to do.
-  const markCardSeen = useCallback((conversationId: string) => {
-    seenCardsRef.current.add(conversationId)
-  }, [])
   const scrollerRef = useRef<HTMLDivElement | null>(null)
   const listRef = useRef<VirtualizerHandle | null>(null)
   const registerScroller = useCallback((node: HTMLDivElement | null) => {
@@ -822,7 +814,6 @@ function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: Boar
               dmPeerUserId={dmPeerUserId}
               scrollerRef={scrollerRef}
               listRef={listRef}
-              onSeen={() => markCardSeen(row.post.conversation.id)}
               onClearUnread={unreadOnly ? () => clearUnreadCard(row.post.conversation.id) : undefined}
             />
           </div>
@@ -839,7 +830,6 @@ function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: Boar
       fetchNextPage,
       loadMoreLabel,
       workspaceId,
-      markCardSeen,
       unreadOnly,
       clearUnreadCard,
     ]

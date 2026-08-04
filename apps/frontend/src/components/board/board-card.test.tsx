@@ -1379,9 +1379,15 @@ describe("BoardCard ledger", () => {
 /** Installs a controllable IntersectionObserver: jsdom ships none, and the card
  *  fails open without one. Returns a setter that drives every live observer. */
 function stubIntersectionObserver(initiallyIntersecting: boolean) {
-  type Entry = { isIntersecting: boolean; target: Element }
+  type Entry = {
+    isIntersecting: boolean
+    target: Element
+    boundingClientRect: { top: number }
+    rootBounds: { top: number }
+  }
   const live = new Set<{ cb: (entries: Entry[]) => void; targets: Set<Element> }>()
   let intersecting = initiallyIntersecting
+  let targetTop = 0
   class Stub {
     private entry = { cb: (_: Entry[]) => {}, targets: new Set<Element>() }
     constructor(cb: (entries: Entry[]) => void) {
@@ -1390,7 +1396,9 @@ function stubIntersectionObserver(initiallyIntersecting: boolean) {
     }
     observe(target: Element) {
       this.entry.targets.add(target)
-      this.entry.cb([{ isIntersecting: intersecting, target }])
+      this.entry.cb([
+        { isIntersecting: intersecting, target, boundingClientRect: { top: targetTop }, rootBounds: { top: 0 } },
+      ])
     }
     unobserve(target: Element) {
       this.entry.targets.delete(target)
@@ -1400,13 +1408,47 @@ function stubIntersectionObserver(initiallyIntersecting: boolean) {
     }
   }
   vi.stubGlobal("IntersectionObserver", Stub)
-  return (next: boolean) => {
+  return (next: boolean, nextTargetTop = next ? 0 : 1) => {
     intersecting = next
+    targetTop = nextTargetTop
     act(() => {
-      for (const { cb, targets } of live) cb([...targets].map((target) => ({ isIntersecting: next, target })))
+      for (const { cb, targets } of live)
+        cb(
+          [...targets].map((target) => ({
+            isIntersecting: next,
+            target,
+            boundingClientRect: { top: targetTop },
+            rootBounds: { top: 0 },
+          }))
+        )
     })
   }
 }
+
+describe("BoardCard sticky header", () => {
+  afterEach(() => vi.unstubAllGlobals())
+
+  it("pins on phone widths and trims only the pinned mobile header", async () => {
+    const setIntersecting = stubIntersectionObserver(true)
+    mountCard(makePost())
+
+    await screen.findByText("Opening body.")
+    const header = document.querySelector<HTMLElement>("[data-board-card-header]")
+    expect(header).not.toBeNull()
+    expect(header?.className).toContain("sticky")
+    expect(header?.className).toContain("top-0")
+    expect(header?.className).not.toContain("pt-2")
+
+    setIntersecting(false)
+    expect(header?.className).not.toContain("pt-2")
+
+    setIntersecting(false, -1)
+    expect(header?.className).toContain("pt-2")
+    expect(header?.className).toContain("pb-1.5")
+    expect(header?.className).toContain("mb-1.5")
+    expect(header?.className).toContain("sm:pt-4")
+  })
+})
 
 describe("BoardCard backfill arming", () => {
   afterEach(() => vi.unstubAllGlobals())
