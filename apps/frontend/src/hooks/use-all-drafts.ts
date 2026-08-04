@@ -1,6 +1,7 @@
 import { useLiveQuery } from "dexie-react-hooks"
 import { useCallback, useMemo } from "react"
 import { db, type CachedBoardPost, type CachedDraft, type CachedStream } from "@/db"
+import { draftScopesSignature, useBoardDraftContext } from "./use-board-draft-context"
 import { createConversationPanelId } from "@/contexts"
 import { parseBoardDraftKey, type ParsedBoardDraftKey } from "@/lib/board/draft-keys"
 import { THREAD_ANCHORABLE_EVENT_TYPES, type CompanionMode } from "@threa/types"
@@ -401,11 +402,7 @@ export function useAllDrafts(workspaceId: string) {
   // below (gated on the board-scoped ids they reference) don't re-fire on every
   // unrelated draft write — `useDraftsFromStore` hands back a fresh array
   // reference each time.
-  const scopesSignature = useMemo(() => {
-    const scopes = new Set<string>()
-    for (const draft of allDrafts) scopes.add(draft.scope)
-    return [...scopes].sort().join("|")
-  }, [allDrafts])
+  const scopesSignature = useMemo(() => draftScopesSignature(allDrafts.map((draft) => draft.scope)), [allDrafts])
 
   // Build a map of stream ID -> stream for quick lookup
   const streamMap = useMemo(() => {
@@ -424,104 +421,11 @@ export function useAllDrafts(workspaceId: string) {
     return ids
   }, [cachedStreams])
 
-  // Conversations referenced by board-scoped drafts (`board:reply:` /
-  // `board:branch-reply:`), for location resolution. Keyed on the id set (not
-  // the drafts array) so a body keystroke doesn't re-fire the query.
-  const boardConversationIdKey = useMemo(() => {
-    const ids = new Set<string>()
-    for (const scope of scopesSignature.split("|")) {
-      const parsed = parseBoardDraftKey(scope)
-      if (parsed && parsed.kind !== "subtopic") ids.add(parsed.conversationId)
-    }
-    return [...ids].sort().join(",")
-  }, [scopesSignature])
-
-  const boardBranchConversationIdKey = useMemo(() => {
-    const ids = new Set<string>()
-    for (const scope of scopesSignature.split("|")) {
-      const parsed = parseBoardDraftKey(scope)
-      if (parsed?.kind === "branch-reply") ids.add(parsed.conversationId)
-    }
-    return [...ids].sort().join(",")
-  }, [scopesSignature])
-
-  // Sub-topic drafts name only their fork message; branch drafts name a child
-  // conversation whose parent must be derived structurally (its anchor thread's
-  // parent message → the conversation holding it — sub-topic conversations
-  // carry no `parentConversationId`). Both resolve to the HOSTING conversation
-  // the explorer deep-links to, since that surface hosts the draft's composer.
-  const subtopicMessageIdKey = useMemo(() => {
-    const ids = new Set<string>()
-    for (const scope of scopesSignature.split("|")) {
-      const parsed = parseBoardDraftKey(scope)
-      if (parsed?.kind === "subtopic") ids.add(parsed.messageId)
-    }
-    return [...ids].sort().join(",")
-  }, [scopesSignature])
-
-  const emptyBoardContext = useMemo(
-    () => ({
-      posts: [] as CachedBoardPost[],
-      hostPostByMessageId: new Map<string, CachedBoardPost>(),
-      parentPostByBranchConversationId: new Map<string, CachedBoardPost>(),
-    }),
-    []
-  )
-
-  const boardDraftContext = useLiveQuery(
-    async () => {
-      if (!boardConversationIdKey && !subtopicMessageIdKey) return emptyBoardContext
-      const convIds = boardConversationIdKey ? boardConversationIdKey.split(",") : []
-      const branchIds = new Set(boardBranchConversationIdKey ? boardBranchConversationIdKey.split(",") : [])
-      const referencedRows = convIds.length > 0 ? await db.conversations.bulkGet(convIds) : []
-      const referenced = referencedRows.filter(
-        (row): row is CachedBoardPost => row !== undefined && row.workspaceId === workspaceId
-      )
-
-      const forkMessageIds = new Set(subtopicMessageIdKey ? subtopicMessageIdKey.split(",") : [])
-      const branchPosts = referenced.filter((row) => branchIds.has(row.id))
-      const threadRows =
-        branchPosts.length > 0 ? await db.streams.bulkGet(branchPosts.map((row) => row.conversation.streamId)) : []
-      const forkByBranchConversationId = new Map<string, string>()
-      branchPosts.forEach((row, i) => {
-        const forkAnchorId = threadRows[i]?.parentAnchorId ?? threadRows[i]?.parentMessageId
-        if (forkAnchorId) {
-          forkByBranchConversationId.set(row.id, forkAnchorId)
-          forkMessageIds.add(forkAnchorId)
-        }
-      })
-
-      const hostPostByMessageId = new Map<string, CachedBoardPost>()
-      let hostRows: CachedBoardPost[] = []
-      if (forkMessageIds.size > 0) {
-        const rows = await db.conversations.where("workspaceId").equals(workspaceId).toArray()
-        hostRows = rows.filter((row) => row.conversation.messageIds?.some((id: string) => forkMessageIds.has(id)))
-        for (const post of hostRows) {
-          for (const id of post.conversation.messageIds ?? []) {
-            if (forkMessageIds.has(id)) hostPostByMessageId.set(id, post)
-          }
-        }
-      }
-      const parentPostByBranchConversationId = new Map<string, CachedBoardPost>()
-      for (const [branchId, forkId] of forkByBranchConversationId) {
-        const host = hostPostByMessageId.get(forkId)
-        if (host) parentPostByBranchConversationId.set(branchId, host)
-      }
-      return { posts: [...referenced, ...hostRows], hostPostByMessageId, parentPostByBranchConversationId }
-    },
-    [boardConversationIdKey, boardBranchConversationIdKey, subtopicMessageIdKey, workspaceId, emptyBoardContext],
-    emptyBoardContext
-  )
-
-  const cachedBoardPosts = boardDraftContext.posts
-  const subtopicHostByMessageId = boardDraftContext.hostPostByMessageId
-  const parentPostByBranchConversationId = boardDraftContext.parentPostByBranchConversationId
-
-  const boardPostMap = useMemo(() => {
-    const map = new Map<string, CachedBoardPost>()
-    for (const post of cachedBoardPosts ?? []) map.set(post.id, post)
-    return map
-  }, [cachedBoardPosts])
+  const {
+    boardPostMap,
+    hostPostByMessageId: subtopicHostByMessageId,
+    parentPostByBranchConversationId,
+  } = useBoardDraftContext(workspaceId, scopesSignature)
 
   // Parent-message → host-stream map for thread drafts (shared with the sidebar
   // badge so both resolve thread-draft location/archival identically).
