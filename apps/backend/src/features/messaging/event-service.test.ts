@@ -2207,7 +2207,7 @@ describe("message:created has exactly one outbox emit site", () => {
     const { Glob } = await import("bun")
     const counts: Record<string, number> = {}
     for await (const file of new Glob("**/*.ts").scan({ cwd: root, absolute: true })) {
-      if (file.endsWith(".test.ts")) continue
+      if (file.endsWith(".test.ts") || file.endsWith(".spec.ts")) continue
       const source = await Bun.file(file).text()
       const matches = source.match(/OutboxRepository\.insert\(\s*[^,]+,\s*"message:created"/g)
       if (matches) counts[file.slice(root.length + 1)] = matches.length
