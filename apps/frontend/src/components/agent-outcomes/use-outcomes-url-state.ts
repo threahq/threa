@@ -117,12 +117,16 @@ export function useOutcomesUrlState() {
     setSearchParams(next, { replace: true })
   }, [searchParams, setSearchParams])
 
+  // Applied to the CURRENT params, not the ones captured at render: two writes
+  // in the same tick both resolve against the snapshot, so the later one drops
+  // the earlier one's filter.
   const update = useCallback(
     (overrides: Partial<OutcomesFilters>, options: { history?: "push" | "replace" } = {}) => {
-      const next = writeOutcomesFiltersToParams(searchParams, overrides)
-      setSearchParams(next, { replace: options.history !== "push" })
+      setSearchParams((prev) => writeOutcomesFiltersToParams(prev, overrides), {
+        replace: options.history !== "push",
+      })
     },
-    [searchParams, setSearchParams]
+    [setSearchParams]
   )
 
   return { isOpen, filters, open, close, update }

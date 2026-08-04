@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { ArrowLeft, Search, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -47,10 +47,19 @@ export function OutcomesShell({ workspaceId, mode, enabled }: OutcomesShellProps
     { enabled }
   )
 
-  const items = useMemo(
-    () => toOutcomeItems(workspaceId, query.data?.pages.flatMap((page) => page.items) ?? []),
-    [workspaceId, query.data]
-  )
+  // Deduped by id across pages: the keyset orders on `occurs_at`, which for a
+  // delegation IS its last transition — a row that changes status between two
+  // page fetches moves past the cursor and comes back on the next page. The
+  // list keys on id, so without this the reader sees the same outcome twice.
+  const items = useMemo(() => {
+    const seen = new Set<string>()
+    const rows = (query.data?.pages.flatMap((page) => page.items) ?? []).filter((row) => {
+      if (seen.has(row.id)) return false
+      seen.add(row.id)
+      return true
+    })
+    return toOutcomeItems(workspaceId, rows)
+  }, [workspaceId, query.data])
 
   const { draft: queryDraft, setDraft: handleQueryChange } = useDebouncedUrlText({
     value: filters.queryText,
@@ -58,10 +67,35 @@ export function OutcomesShell({ workspaceId, mode, enabled }: OutcomesShellProps
     delayMs: QUERY_DEBOUNCE_MS,
   })
 
+  // The detail pane never sits empty in the split layout — same affordance the
+  // explorer shell this copies has. The default is DERIVED, not written to the
+  // URL: a write here races every filter chip (both land in one tick, and the
+  // later one resolves against pre-click params), and a default nobody picked
+  // is not view state worth a history entry. Only the split layout defaults —
+  // below it the detail REPLACES the list, so a default would hide the list.
   const selectedItem = useMemo(() => {
-    if (!filters.selectedOutcomeId) return null
-    return items.find((item) => item.id === filters.selectedOutcomeId) ?? null
-  }, [filters.selectedOutcomeId, items])
+    if (filters.selectedOutcomeId) return items.find((item) => item.id === filters.selectedOutcomeId) ?? null
+    return isSplitCapable ? (items[0] ?? null) : null
+  }, [filters.selectedOutcomeId, isSplitCapable, items])
+
+  useEffect(() => {
+    if (!enabled) return
+    const handler = (e: KeyboardEvent) => {
+      if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return
+      const target = e.target instanceof HTMLElement ? e.target : null
+      // Scoped to this surface: on /agenda it shares the window with the
+      // sidebar, where the arrows keep their default behaviour.
+      if (!target || !shellRef.current?.contains(target)) return
+      if (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable) return
+      if (items.length === 0) return
+      const index = items.findIndex((item) => item.id === selectedItem?.id)
+      e.preventDefault()
+      const next = e.key === "ArrowDown" ? items[Math.min(index + 1, items.length - 1)] : items[Math.max(index - 1, 0)]
+      if (next) update({ selectedOutcomeId: next.id })
+    }
+    window.addEventListener("keydown", handler)
+    return () => window.removeEventListener("keydown", handler)
+  }, [enabled, items, selectedItem, update])
 
   const hasFilters =
     filters.streamIds.length > 0 ||
@@ -72,8 +106,9 @@ export function OutcomesShell({ workspaceId, mode, enabled }: OutcomesShellProps
   const clearFilters = () => update({ streamIds: [], kind: null, state: "all", queryText: "" })
   const widenScope = () => update({ streamIds: [] })
 
-  const showDetailOnly = !isSplitCapable && Boolean(selectedItem)
+  const showDetailOnly = !isSplitCapable && Boolean(filters.selectedOutcomeId && selectedItem)
 
+  const shellRef = useRef<HTMLDivElement | null>(null)
   const splitContainerRef = useRef<HTMLDivElement | null>(null)
   const [detailWidth, setDetailWidth] = useState(DEFAULT_DETAIL_WIDTH)
 
@@ -106,13 +141,17 @@ export function OutcomesShell({ workspaceId, mode, enabled }: OutcomesShellProps
   const maxDetailWidth = Math.max(MIN_DETAIL_WIDTH, (splitContainerRef.current?.offsetWidth ?? 0) - MIN_LIST_WIDTH)
 
   return (
-    <div className="flex h-full min-w-0 flex-col" data-testid="outcomes-shell">
+    <div ref={shellRef} className="flex h-full min-w-0 flex-col" data-testid="outcomes-shell">
       <div className="flex items-center gap-2 border-b px-3 py-2">
         {showDetailOnly ? (
           <Button
             size="icon"
             variant="ghost"
-            onClick={() => window.history.back()}
+            // Clears the selection rather than popping history: a deep link
+            // (the timeline's follow-up card) opens straight into the detail
+            // with no list entry behind it, and `history.back()` would close
+            // the whole surface — the one thing this arrow must not do.
+            onClick={() => update({ selectedOutcomeId: null })}
             aria-label="Back to the agenda list"
             className="h-7 w-7"
           >
