@@ -38,7 +38,7 @@ import { buildContextRefSourceHref } from "@/lib/context-bag/source-link"
 import { stripMarkdownToInline } from "@/lib/markdown/strip"
 import { useDecryptedStepContent } from "@/hooks/use-decrypted-step-content"
 import { useOptionalSettings } from "@/contexts"
-import { EffectRowContent, resolveEffectPath } from "@/lib/effect-links"
+import { EffectRow } from "@/lib/effect-links"
 import { RedirectSessionButton, StopSessionButton } from "./session-action-buttons"
 
 interface TraceStepProps {
@@ -246,23 +246,15 @@ function StepEffectList({ effects, workspaceId }: { effects: AgentToolEffect[]; 
 
   return (
     <div className="mt-3 space-y-1 text-[12px]">
-      {effects.map((effect, index) => {
-        const path = resolveEffectPath(effect, { workspaceId, getSettingsUrl: settings?.getSettingsUrl })
-        const body = <EffectRowContent effect={effect} />
-        const key = `${effect.kind}-${effect.target ?? ""}-${index}`
-        return path ? (
-          <Link key={key} to={path} className="flex min-w-0 items-center gap-1.5 text-primary hover:underline">
-            {body}
-            <span aria-hidden className="shrink-0 text-muted-foreground/60">
-              ›
-            </span>
-          </Link>
-        ) : (
-          <div key={key} className="flex min-w-0 items-center gap-1.5 text-muted-foreground">
-            {body}
-          </div>
-        )
-      })}
+      {effects.map((effect, index) => (
+        <EffectRow
+          key={`${effect.kind}-${effect.target ?? ""}-${index}`}
+          effect={effect}
+          workspaceId={workspaceId}
+          getSettingsUrl={settings?.getSettingsUrl}
+          variant="list"
+        />
+      ))}
     </div>
   )
 }

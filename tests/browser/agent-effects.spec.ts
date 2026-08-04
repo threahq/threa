@@ -140,13 +140,38 @@ test.describe("agent effect surfaces", () => {
   // session card's own <a>. That is the structural claim the whole in-stream
   // design rests on, and invalid nesting renders fine while breaking keyboard
   // and screen-reader navigation.
-  test("no effect row is nested inside another anchor", async ({ page }) => {
+  test("no effect row is nested inside another anchor or button", async ({ page }) => {
     await runCompanionTurn(page)
 
+    // The memo row is a <button>, so the card link can trap that too.
     const nested = await page.evaluate(
-      () => Array.from(document.querySelectorAll("a")).filter((a) => a.querySelector("a")).length
+      () => Array.from(document.querySelectorAll("a")).filter((a) => a.querySelector("a, button")).length
     )
     expect(nested).toBe(0)
+  })
+
+  // A memo has to open ON TOP of the stream, not navigate to the memory
+  // explorer — the rule `memo-captured-event.tsx` already follows. Route and
+  // stacking are both things only a real browser can settle.
+  test("a memo effect opens over the stream instead of navigating away", async ({ page }) => {
+    await runCompanionTurn(page)
+    const before = page.url()
+
+    await effectGrid(page)
+      .getByRole("button", { name: /User test run/ })
+      .click()
+
+    const dialog = page.getByRole("dialog").first()
+    await expect(dialog).toBeVisible()
+    expect(page.url()).toBe(before)
+
+    // On top of the timeline, not tucked behind it.
+    const overTimeline = await dialog.evaluate((el) => {
+      const box = el.getBoundingClientRect()
+      const hit = document.elementFromPoint(box.x + box.width / 2, box.y + box.height / 2)
+      return el.contains(hit)
+    })
+    expect(overTimeline).toBe(true)
   })
 
   // A follow-up has no route anywhere in the app, so its row must be inert
