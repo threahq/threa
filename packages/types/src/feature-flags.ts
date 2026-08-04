@@ -66,6 +66,7 @@ export const FEATURE_FLAGS = {
   perfDiagnostics: defineFlag({ values: ["off", "available"], scopes: ["workspace", "user"], default: "off" }),
   sharedStreamRegistration: defineFlag({ values: ["off", "on"], scopes: ["workspace", "user"], default: "off" }),
   sharedWorkspaceReads: defineFlag({ values: ["off", "on"], scopes: ["workspace", "user"], default: "on" }),
+  singlePreviewWriter: defineFlag({ values: ["off", "on"], scopes: ["workspace", "user"], default: "off" }),
 } as const satisfies FeatureFlagRegistry
 
 export type FeatureFlagKey = keyof typeof FEATURE_FLAGS
