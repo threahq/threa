@@ -553,7 +553,7 @@ export function InlineComposerForm({
   // Inline drafts are plaintext (no `e2eStreamId` on the composer above), so the
   // picker's own `contentJson` fallback previews suffice — no decrypt pass.
   const stashPickerProps = {
-    drafts: stash.drafts,
+    drafts: stash.claimableDrafts,
     canStashCurrent: composer.canSend,
     // Stashing disposes of the current composition — end the compose session so
     // the next one can't inherit its openedAt/horizon (trace discarded).
@@ -563,6 +563,7 @@ export function InlineComposerForm({
     },
     onRestore: stash.handleRestoreStashed,
     onDelete: stash.handleDeleteStashed,
+    onOpenChange: stash.setPileOpen,
     controlsDisabled: composer.isSending,
   } as const
 

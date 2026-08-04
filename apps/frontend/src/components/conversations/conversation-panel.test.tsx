@@ -31,7 +31,6 @@ import * as discussModule from "@/hooks/use-discuss-with-ariadne"
 import * as shareHandoffModule from "@/stores/share-handoff-store"
 import * as boardReplyComposerModule from "@/components/board/board-reply-composer"
 import * as queueDraftModule from "@/hooks/use-queue-draft-message"
-import * as stashedDraftsModule from "@/hooks/use-stashed-drafts"
 import { boardReplyDraftKey } from "@/lib/board/draft-keys"
 import {
   FLOATING_COMPOSER_HEIGHT_VAR,
@@ -49,6 +48,18 @@ import { registerWorkspaceSocketHandlers } from "@/sync/workspace-sync"
 
 const WORKSPACE_ID = "ws_1"
 const CONVERSATION_ID = "conv_1"
+
+/** A stashed draft row on disk — what a `?stash=` deep link points at. */
+function seedStashRow(id: string, scope: string) {
+  return db.drafts.put({
+    id,
+    workspaceId: WORKSPACE_ID,
+    scope,
+    contentJson: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "x" }] }] },
+    attachments: [],
+    clientUpdatedAt: 1000,
+  } as never)
+}
 
 function makeMessage(overrides: Partial<BoardPostMessage> = {}): BoardPostMessage {
   return {
@@ -252,6 +263,7 @@ beforeEach(async () => {
   // The panel seeds its backfill into IDB now, so a leaked conversation's rows
   // would widen the next test's member set.
   await db.conversationMessages.clear()
+  await db.drafts.clear()
   __resetConversationMessageSnapshots()
   // Default composer stub: the real form (desktop always-open since the
   // thread-semantics ruling) pulls auth/mention providers this harness doesn't
@@ -453,14 +465,7 @@ describe("ConversationPanel", () => {
     // The drafts explorer deep-links a stashed board reply to the panel; the
     // collapsed resting affordance mounts no composer, so the panel itself must
     // open the form for the stash restore to have a consumer.
-    vi.spyOn(stashedDraftsModule, "useStashedDrafts").mockImplementation(
-      (_ws, scope) =>
-        ({
-          drafts: scope === boardReplyDraftKey(CONVERSATION_ID) ? [{ id: "draft_owned" }] : [],
-          isLoaded: true,
-          deleteStashedDraft: vi.fn(),
-        }) as unknown as ReturnType<typeof stashedDraftsModule.useStashedDrafts>
-    )
+    await seedStashRow("draft_owned", boardReplyDraftKey(CONVERSATION_ID))
     let captured: number | undefined
     vi.spyOn(boardReplyComposerModule, "BoardReplyComposer").mockImplementation((props) => {
       captured = props.openReplySignal
@@ -474,11 +479,7 @@ describe("ConversationPanel", () => {
   it("ignores a ?stash= param whose row is not in its reply scope's pile", async () => {
     // A foreign scope's stash id (e.g. a thread draft on the same route) must be
     // left for its own host — opening here would strand the restore.
-    vi.spyOn(stashedDraftsModule, "useStashedDrafts").mockReturnValue({
-      drafts: [],
-      isLoaded: true,
-      deleteStashedDraft: vi.fn(),
-    } as unknown as ReturnType<typeof stashedDraftsModule.useStashedDrafts>)
+    await seedStashRow("draft_foreign", "thread:msg_9")
     let captured: number | undefined
     vi.spyOn(boardReplyComposerModule, "BoardReplyComposer").mockImplementation((props) => {
       captured = props.openReplySignal
@@ -486,6 +487,11 @@ describe("ConversationPanel", () => {
     })
     mountPanel({ cached: asCached(makePost()), stashParam: "draft_foreign" })
     await screen.findByText("Opening message body.")
+    // The row read is an IDB point query — give it time to land, or a panel that
+    // opened on ANY param would still read 0 here.
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 60))
+    })
     expect(captured).toBe(0)
   })
 

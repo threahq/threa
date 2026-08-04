@@ -207,31 +207,33 @@ export function StreamPanel({ workspaceId, onClose }: StreamPanelProps) {
   // Decrypt-on-read previews for the pile (sealed rows via the shared cache,
   // plaintext from contentJson); every entry shares this thread's encrypted root.
   const stashPreviewInputs = useMemo(
-    () => stash.drafts.map((draft) => ({ draft, rootStreamId: e2eRoot })),
-    [stash.drafts, e2eRoot]
+    () => stash.claimableDrafts.map((draft) => ({ draft, rootStreamId: e2eRoot })),
+    [stash.claimableDrafts, e2eRoot]
   )
   const stashPreviews = useDecryptedDraftPreviews(workspaceId, stashPreviewInputs)
 
   const stashedDraftsTrigger = stashScope ? (
     <StashedDraftsPicker
-      drafts={stash.drafts}
+      drafts={stash.claimableDrafts}
       previewById={stashPreviews}
       canStashCurrent={composer.canSend}
       onStashCurrent={stash.handleStashDraft}
       onRestore={stash.handleRestoreStashed}
       onDelete={stash.handleDeleteStashed}
+      onOpenChange={stash.setPileOpen}
       controlsDisabled={composer.isSending}
     />
   ) : undefined
 
   const stashedDraftsTriggerFab = stashScope ? (
     <StashedDraftsPicker
-      drafts={stash.drafts}
+      drafts={stash.claimableDrafts}
       previewById={stashPreviews}
       canStashCurrent={composer.canSend}
       onStashCurrent={stash.handleStashDraft}
       onRestore={stash.handleRestoreStashed}
       onDelete={stash.handleDeleteStashed}
+      onOpenChange={stash.setPileOpen}
       controlsDisabled={composer.isSending}
       size="fab"
     />

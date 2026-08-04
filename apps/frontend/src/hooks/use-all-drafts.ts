@@ -102,7 +102,7 @@ function truncatePreview(content: string, maxLength: number = 80): string {
  * qualification predicate shared by the explorer build and the sidebar summary
  * so a draft counts identically in both — the badge can't drift from the list.
  */
-function draftHasPayload(draft: CachedDraft): boolean {
+export function draftHasPayload(draft: CachedDraft): boolean {
   return draft.ciphertext != null || !isEmptyContent(draft.contentJson) || (draft.attachments?.length ?? 0) > 0
 }
 
@@ -144,7 +144,7 @@ function resolveRootStreamId(
  * or a stream not in cache) is treated as not-archived, so a draft is never
  * hidden on missing data.
  */
-function isStreamArchived(
+export function isStreamArchived(
   streamId: string | null,
   streamMap: Map<string, CachedStream>,
   archivedStreamIds: ReadonlySet<string>

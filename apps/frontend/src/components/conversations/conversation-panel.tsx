@@ -69,7 +69,7 @@ import { QuoteReplyProvider } from "@/components/timeline/quote-reply-context"
 import { TextSelectionQuote } from "@/components/timeline/text-selection-quote"
 import { SidebarToggle } from "@/components/layout"
 import { useActors, useVisibleStreams, useEffectiveArchived } from "@/hooks"
-import { useStashedDrafts } from "@/hooks/use-stashed-drafts"
+import { useStashParamDraftRow } from "@/hooks/use-stash-composer"
 import { boardReplyDraftKey, boardBranchReplyDraftKey } from "@/lib/board/draft-keys"
 import { useWorkspaceUserId } from "@/hooks/use-workspaces"
 import { useStreamName } from "@/hooks/use-stream-name"
@@ -302,18 +302,23 @@ export function ConversationPanel({ workspaceId, onClose }: ConversationPanelPro
   // consumes the restore and strips the param — this bump only FOCUSES the
   // footer so the restored draft is where the user is looking. Ownership-checked
   // so a foreign scope's param (e.g. a thread draft on the same route) is left
-  // for its own host.
-  const [searchParams] = useSearchParams()
-  const stashParam = searchParams.get("stash")
+  // for its own host. The test is the deep-linked row's own scope — the same
+  // claim boundary the footer's restore uses — not pile membership, which is now
+  // landing-site-wide and would focus this footer for a draft belonging to the
+  // timeline composer.
+  const stashParamRow = useStashParamDraftRow(workspaceId)
+  const stashParam = stashParamRow?.draftId ?? null
   const replyScope = conversationId ? boardReplyDraftKey(conversationId) : undefined
-  const stashedReplyDrafts = useStashedDrafts(workspaceId, stashParam ? replyScope : undefined)
   const stashOpenedRef = useRef<string | null>(null)
   useEffect(() => {
     if (!stashParam || stashOpenedRef.current === stashParam) return
-    if (!stashedReplyDrafts.drafts.some((draft) => draft.id === stashParam)) return
+    if (!replyScope || stashParamRow?.scope !== replyScope) return
+    // Already checked out here — the deep link has nothing left to restore, so
+    // revisiting the URL must not pop the composer open again.
+    if (stashParamRow.isLoadedForScope) return
     stashOpenedRef.current = stashParam
     setOpenReplySignal((n) => n + 1)
-  }, [stashParam, stashedReplyDrafts.drafts])
+  }, [stashParam, stashParamRow?.scope, stashParamRow?.isLoadedForScope, replyScope])
 
   // Keep the conversation's streams (root + threads) caught up + joined while the
   // panel is open, so the rail is live and offline-first. Its own SyncEngine slot,

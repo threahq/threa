@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useRef, type ChangeEvent, type RefObject } from "react"
+import { useState, useCallback, useEffect, useRef, useSyncExternalStore, type ChangeEvent, type RefObject } from "react"
 import { useDraftMessage } from "./use-draft-message"
 import { useAttachments, type PendingAttachment, type UploadResult } from "./use-attachments"
 import type { JSONContent } from "@threa/types"
@@ -7,21 +7,53 @@ import type { DraftContextRef } from "@/lib/context-bag/types"
 import type { DraftAttachment } from "@/db"
 import { wasDraftResolvedLocally } from "@/sync/draft-resolution-guard"
 
-// Mounted composers per draft scope. More than one live composer on a scope is a
-// precondition for the rescue below: with only this one, a vanishing loaded
-// pointer is always this composer's own teardown. Ref-counted like
-// `boardDraftsRegistry` in `use-scope-draft-preview.ts` (INV-9 exception:
-// process-wide by construction).
-const mountedComposersByScope = new Map<string, number>()
+// Mounted composers per draft scope, in mount order. More than one live composer
+// on a scope is a precondition for the rescue below: with only this one, a
+// vanishing loaded pointer is always this composer's own teardown. The order is
+// what makes the `?stash=` claim single-valued — the first still-mounted composer
+// on a scope owns the param, so a board card and a conversation panel on the same
+// scope can't both restore it. Registry like `boardDraftsRegistry` in
+// `use-scope-draft-preview.ts` (INV-9 exception: process-wide by construction).
+const mountedComposersByScope = new Map<string, string[]>()
+const composerRegistryListeners = new Set<() => void>()
 
-function registerComposer(key: string): () => void {
-  mountedComposersByScope.set(key, (mountedComposersByScope.get(key) ?? 0) + 1)
+function mountedComposerCount(key: string): number {
+  return mountedComposersByScope.get(key)?.length ?? 0
+}
+
+function registerComposer(key: string, token: string): () => void {
+  const tokens = mountedComposersByScope.get(key)
+  if (tokens) tokens.push(token)
+  else mountedComposersByScope.set(key, [token])
+  for (const notify of composerRegistryListeners) notify()
   return () => {
-    const next = (mountedComposersByScope.get(key) ?? 1) - 1
-    if (next <= 0) mountedComposersByScope.delete(key)
-    else mountedComposersByScope.set(key, next)
+    const live = mountedComposersByScope.get(key)
+    if (!live) return
+    const at = live.indexOf(token)
+    if (at >= 0) live.splice(at, 1)
+    if (live.length === 0) mountedComposersByScope.delete(key)
+    for (const notify of composerRegistryListeners) notify()
   }
 }
+
+function subscribeComposerRegistry(listener: () => void): () => void {
+  composerRegistryListeners.add(listener)
+  return () => composerRegistryListeners.delete(listener)
+}
+
+/**
+ * Whether this composer is the one host that consumes a `?stash=` deep link for
+ * its scope. Exactly one mounted composer per scope answers true; the rest defer,
+ * leaving the param for the claimant rather than each restoring it.
+ */
+function useIsStashClaimant(scopeRegistryKey: string, token: string): boolean {
+  return useSyncExternalStore(
+    subscribeComposerRegistry,
+    () => mountedComposersByScope.get(scopeRegistryKey)?.[0] === token
+  )
+}
+
+let composerTokenSeq = 0
 
 /** Uploaded (non-temp, non-failed) attachments in the shape the draft row stores. */
 function persistableAttachments(pending: PendingAttachment[]): DraftAttachment[] {
@@ -118,6 +150,13 @@ export interface DraftComposerState {
   isDecrypting: boolean
   /** An E2E draft whose sealed body couldn't be decrypted (wrong recipient / garbled). */
   decryptFailed: boolean
+  /**
+   * True for the single host that consumes a `?stash=<id>` deep link for this
+   * scope. Several composers can mount one scope (a board card and the
+   * conversation panel's footer are the standing case) — only the first one
+   * mounted restores the deep-linked row.
+   */
+  isStashClaimant: boolean
 }
 
 export function useDraftComposer({
@@ -207,7 +246,11 @@ export function useDraftComposer({
   savedAttachmentsRef.current = savedAttachments
 
   const scopeRegistryKey = `${workspaceId} ${draftKey}`
-  useEffect(() => registerComposer(scopeRegistryKey), [scopeRegistryKey])
+  const composerTokenRef = useRef<string | null>(null)
+  if (composerTokenRef.current === null) composerTokenRef.current = `composer_${++composerTokenSeq}`
+  const composerToken = composerTokenRef.current
+  useEffect(() => registerComposer(scopeRegistryKey, composerToken), [scopeRegistryKey, composerToken])
+  const isStashClaimant = useIsStashClaimant(scopeRegistryKey, composerToken)
 
   // Persist the live editor content into the loaded draft row immediately
   // (sealed for E2E), but ONLY when it is non-empty. A stash/restore can fire
@@ -358,7 +401,7 @@ export function useDraftComposer({
       // only a local resolve-on-send marks the id, so a remote `draft:deleted`
       // reads false and stays deleted instead of being resurrected by whichever
       // device happens to hold the composer open.
-      if ((mountedComposersByScope.get(scopeRegistryKey) ?? 0) > 1 && wasDraftResolvedLocally(prev)) {
+      if (mountedComposerCount(scopeRegistryKey) > 1 && wasDraftResolvedLocally(prev)) {
         saveDraft(contentRef.current, persistableAttachments(getPendingAttachmentsSnapshot())).catch((err) => {
           console.error("Failed to persist draft rescued from a resolved row", err)
         })
@@ -498,5 +541,6 @@ export function useDraftComposer({
     isLoaded: isDraftLoaded,
     isDecrypting,
     decryptFailed,
+    isStashClaimant,
   }
 }
