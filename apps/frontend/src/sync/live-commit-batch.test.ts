@@ -11,7 +11,7 @@ import {
 import type { Socket } from "socket.io-client"
 import Dexie from "dexie"
 import { db } from "@/db"
-import { primeEventWriteFlags, resetEventWriteFlags } from "@/db/event-writes"
+import { bumpAccountGeneration, primeEventWriteFlags, resetEventWriteFlags } from "@/db/event-writes"
 import { NO_CAPTURE, PerfCapture, armPerfCapture } from "@/lib/perf/capture"
 import { workspaceKeys } from "@/hooks/use-workspaces"
 import { CatchUpBatch, LiveCommitBatch } from "./catch-up-batch"
@@ -556,7 +556,33 @@ describe("LiveCommitBatch", () => {
     expect({ off: await counts(false), on: await counts(true) }).toEqual({ off: 2, on: 1 })
   })
 
-  it("the coalesced arm still records one stream.activityApply per fold, around the persist and publish", async () => {
+  it("the fold has its own mark: stream.activityApply stays one handler sample per event in both arms", async () => {
+    const marks = async (coalesced: boolean) => {
+      const queryClient = new QueryClient()
+      await seedFixture(queryClient, ["stream_1"])
+      const harness = await register(queryClient, coalesced)
+      const capture = new PerfCapture()
+      armPerfCapture(capture)
+
+      for (const ordinal of [6, 7, 8]) harness.emit("stream:activity", activity("stream_1", ordinal))
+      await settle()
+
+      armPerfCapture(NO_CAPTURE)
+      harness.cleanup()
+      const of = (name: string) => capture.snapshot().filter((sample) => sample.name === name)
+      return { apply: of("stream.activityApply").length, fold: of("stream.liveCommitFold").length }
+    }
+
+    // One handler sample per event in each arm — the same population, so the
+    // arms are readable against each other. The fold's persist-and-publish is a
+    // separate name emitted once per flush, and only when the flag is armed.
+    expect({ off: await marks(false), on: await marks(true) }).toEqual({
+      off: { apply: 3, fold: 0 },
+      on: { apply: 3, fold: 1 },
+    })
+  })
+
+  it("the fold's own mark carries a duration", async () => {
     const queryClient = new QueryClient()
     await seedFixture(queryClient, ["stream_1"])
     const harness = await register(queryClient, true)
@@ -564,18 +590,124 @@ describe("LiveCommitBatch", () => {
     armPerfCapture(capture)
 
     harness.emit("stream:activity", activity("stream_1", 6))
-    const beforeFlush = capture.snapshot().filter((sample) => sample.name === "stream.activityApply").length
+    const beforeFlush = capture.snapshot().filter((sample) => sample.name === "stream.liveCommitFold").length
     await settle()
-    const samples = capture.snapshot().filter((sample) => sample.name === "stream.activityApply")
+    const samples = capture.snapshot().filter((sample) => sample.name === "stream.liveCommitFold")
 
     armPerfCapture(NO_CAPTURE)
-    // The handler-body sample is chunk 1's; the fold's is the one that covers
-    // the transaction and the publication, so it lands only after the flush.
     expect({ beforeFlush, afterFlush: samples.length, valued: typeof samples.at(-1)?.value }).toEqual({
-      beforeFlush: 1,
-      afterFlush: 2,
+      beforeFlush: 0,
+      afterFlush: 1,
       valued: "number",
     })
+
+    harness.cleanup()
+  })
+
+  it("a read_all delivered after a held activity in the same drain does not leave the activity behind", async () => {
+    const queryClient = new QueryClient()
+    await seedFixture(queryClient, ["stream_1"])
+    const harness = await register(queryClient, true)
+
+    // One drain, delivery order preserved: the mention lands, then the user's
+    // other device marks everything read. Routed around the batch, read-all's
+    // transaction opens at handler time and drops nothing (the row is still
+    // buffered), so the mention is resurrected and then sticks.
+    harness.emit("activity:created", {
+      workspaceId: WORKSPACE_ID,
+      targetUserId: "member_1",
+      activity: {
+        id: "act_new",
+        activityType: "mention",
+        streamId: "stream_1",
+        messageId: "msg_new",
+        actorId: "member_2",
+        actorType: "user",
+        context: {},
+        createdAt: "2026-08-04T10:00:00.000Z",
+        isSelf: false,
+        emoji: null,
+      },
+    })
+    harness.emit("stream:read_all", {
+      workspaceId: WORKSPACE_ID,
+      authorId: "member_1",
+      streamIds: ["stream_1"],
+      reads: [{ streamId: "stream_1", lastReadOrdinal: 5 }],
+    })
+    await settle()
+
+    expect({
+      idb: (await db.unreadState.get(WORKSPACE_ID))?.unreadActivities?.map((row) => row.id),
+      cache: bootstrapOf(queryClient)?.unreadActivities?.map((row) => row.id),
+    }).toEqual({ idb: [], cache: [] })
+
+    harness.cleanup()
+  })
+
+  it("a publish failure reseeds like a persist failure, once per successful commit", async () => {
+    const queryClient = new QueryClient()
+    await seedFixture(queryClient, ["stream_1"])
+    const onFlushFailed = vi.fn()
+    const batch = new LiveCommitBatch(queryClient, WORKSPACE_ID, onFlushFailed)
+    vi.spyOn(console, "error").mockImplementation(() => {})
+    const setQueryData = vi.spyOn(queryClient, "setQueryData").mockImplementationOnce(() => {
+      throw new TypeError("bad bootstrap shape")
+    })
+
+    batch.applyCounter((state) => ({ ...state, unreadCounts: { ...state.unreadCounts, stream_1: 3 } }))
+    await settle()
+    const afterFirst = onFlushFailed.mock.calls.length
+
+    // A successful commit clears the latch, so a later publish failure reseeds again.
+    batch.applyCounter((state) => ({ ...state, unreadCounts: { ...state.unreadCounts, stream_1: 4 } }))
+    await settle()
+    setQueryData.mockImplementationOnce(() => {
+      throw new TypeError("bad bootstrap shape")
+    })
+    batch.applyCounter((state) => ({ ...state, unreadCounts: { ...state.unreadCounts, stream_1: 5 } }))
+    await settle()
+
+    expect({ afterFirst, total: onFlushFailed.mock.calls.length }).toEqual({ afterFirst: 1, total: 2 })
+    batch.destroy()
+  })
+
+  it("flipping the flag off drains the pending fold before the next immediate commit", async () => {
+    const queryClient = new QueryClient()
+    await seedFixture(queryClient, ["stream_1"])
+    const harness = await register(queryClient, true)
+
+    // Buffered under the armed flag; the flip lands in the same task, so the
+    // newer immediate commit must not be overwritten by the older fold.
+    harness.emit("stream:activity", activity("stream_1", 6))
+    primeEventWriteFlags(WORKSPACE_ID, { workspace: { coalescedLiveCommit: "off" }, user: {} })
+    harness.emit("stream:activity", activity("stream_1", 7))
+    await settle()
+
+    expect({
+      cachePreview: bootstrapOf(queryClient)?.streams.find((s) => s.id === "stream_1")?.lastMessagePreview?.content,
+      idbPreview: (await db.streams.get("stream_1"))?.lastMessagePreview?.content,
+    }).toEqual({ cachePreview: "message 7", idbPreview: "message 7" })
+
+    harness.cleanup()
+  })
+
+  it("a fold buffered before an account switch writes nothing after it", async () => {
+    const queryClient = new QueryClient()
+    await seedFixture(queryClient, ["stream_1"])
+    const harness = await register(queryClient, true)
+    const before = bootstrapOf(queryClient)
+
+    harness.emit("stream:activity", activity("stream_1", 6))
+    // What flushModuleStoreCaches does on a switch, before `db` is repointed.
+    bumpAccountGeneration()
+    await settle()
+
+    expect({
+      bootstrapUnchanged: bootstrapOf(queryClient) === before,
+      idbOrdinal: (await db.unreadState.get(WORKSPACE_ID))?.latestOrdinals?.stream_1,
+      preview: (await db.streams.get("stream_1"))?.lastMessagePreview,
+    }).toEqual({ bootstrapUnchanged: true, idbOrdinal: 5, preview: null })
 
     harness.cleanup()
   })

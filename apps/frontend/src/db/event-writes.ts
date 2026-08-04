@@ -82,6 +82,22 @@ type EventWriteFlags = {
 
 const flagsByWorkspace = new Map<string, EventWriteFlags>()
 let primeGeneration = 0
+let accountGeneration = 0
+
+/**
+ * Bumped on every account switch (the `flushModuleStoreCaches` site), so a
+ * deferred writer that captured the generation can tell that the global `db`
+ * proxy was repointed under it and refuse to write account A's rows into
+ * account B's database.
+ */
+export function bumpAccountGeneration(): void {
+  accountGeneration += 1
+}
+
+/** The current account generation — capture it before deferring a write. */
+export function getAccountGeneration(): number {
+  return accountGeneration
+}
 
 function resolveEventWriteFlags(layers: FeatureFlagLayers | null | undefined): EventWriteFlags {
   const resolved = resolveFeatureFlags(coerceLayers(layers ?? null) ?? EMPTY_FLAG_LAYERS)
