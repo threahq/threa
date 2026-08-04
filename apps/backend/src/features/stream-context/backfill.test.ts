@@ -130,6 +130,29 @@ describe("stream-context backfill plan", () => {
     ])
   })
 
+  it("plans one follow_ups chunk per stream with rows, and none for a sealed stream", async () => {
+    const { ctx } = fakePool([
+      // `stream_sealed` is absent from the plan query's result — sealed streams
+      // are excluded there — so its follow-ups are never asked for either.
+      {
+        match: /FROM streams s/,
+        rows: [
+          { id: "stream_a", root_stream_id: "stream_a" },
+          { id: "stream_b", root_stream_id: "stream_a" },
+        ],
+      },
+      { match: /SELECT id, stream_id FROM messages/, rows: [] },
+      { match: /FROM memos mo/, rows: [] },
+      { match: /FROM delegated_tasks/, rows: [] },
+      { match: /FROM agent_follow_ups/, rows: [{ stream_id: "stream_b" }] },
+      { match: /SELECT DISTINCT parent_stream_id/, rows: [] },
+    ])
+
+    const chunks = await plan(ctx, "ws_1")
+
+    expect(chunks).toEqual([{ kind: "follow_ups", streamId: "stream_b", rootStreamId: "stream_a" }])
+  })
+
   it("plans nothing when the workspace has no indexable stream", async () => {
     const { ctx } = fakePool([{ match: /FROM streams s/, rows: [] }])
 
@@ -529,6 +552,58 @@ describe("stream-context backfill — memos, delegations, threads", () => {
       detail: { title: "Ship it" },
       snippet: "Ship it",
     })
+  })
+
+  it("indexes follow-ups at their created_at under the write path's identity key", async () => {
+    const { ctx, inserted } = fakePool([
+      {
+        match: /FROM agent_follow_ups/,
+        rows: [{ id: "agfu_1", note: "check the deploy", created_at: new Date("2026-07-20T12:00:00.000Z") }],
+      },
+    ])
+    const captured: any[] = []
+    const originalQuery = (ctx.pool as any).query.bind(ctx.pool)
+    ;(ctx.pool as any).query = async (config: any) => {
+      if (typeof config !== "string" && config.text.includes("INSERT INTO stream_context_items")) {
+        captured.push(config.values)
+      }
+      return originalQuery(config)
+    }
+
+    await processChunk(ctx, "ws_1", { kind: "follow_ups", streamId: "stream_a", rootStreamId: "stream_root" })
+
+    const [values] = captured
+    expect({
+      rootStreamId: values[3][0],
+      category: values[4][0],
+      refKind: values[5][0],
+      refId: values[6][0],
+      groupKey: values[7][0],
+      sourceMessageId: values[8][0],
+      authorId: values[9][0],
+      occurredAt: values[10][0],
+      sequence: values[11][0],
+      snippet: values[12][0],
+      detail: JSON.parse(values[13][0]),
+    }).toEqual({
+      rootStreamId: "stream_root",
+      category: "follow_up",
+      refKind: "follow_up",
+      refId: "agfu_1",
+      groupKey: "agfu_1",
+      sourceMessageId: null,
+      authorId: null,
+      occurredAt: new Date("2026-07-20T12:00:00.000Z"),
+      sequence: null,
+      snippet: "check the deploy",
+      // Status and scheduled_for are joined live on read, never stored.
+      detail: { note: "check the deploy" },
+    })
+    // The identity key the write path produces: (stream, category, ref, "").
+    expect([...inserted.keys()]).toEqual(["stream_a:follow_up:agfu_1:"])
+
+    await processChunk(ctx, "ws_1", { kind: "follow_ups", streamId: "stream_a", rootStreamId: "stream_root" })
+    expect([...inserted.keys()]).toEqual(["stream_a:follow_up:agfu_1:"])
   })
 
   it("places a thread row on the parent stream at its anchor message", async () => {

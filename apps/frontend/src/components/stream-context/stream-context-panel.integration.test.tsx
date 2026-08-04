@@ -19,6 +19,7 @@ import * as storeModule from "@/stores/stream-context-store"
 import {
   streamContextItemKey,
   type AgentOutcomeSummary,
+  type DelegationSummary,
   type ListStreamContextResponse,
   type StreamContextItem,
 } from "@threa/types"
@@ -83,14 +84,21 @@ function LocationProbe() {
   return <span data-testid="location">{`${location.search}|${seen.current}`}</span>
 }
 
-function renderPanel(options: { entry?: string; memberIds?: string[]; outcomes?: AgentOutcomeSummary[] } = {}) {
+function renderPanel(
+  options: {
+    entry?: string
+    memberIds?: string[]
+    outcomes?: AgentOutcomeSummary[]
+    delegations?: DelegationSummary[]
+  } = {}
+) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   if (options.memberIds) {
     queryClient.setQueryData(streamKeys.bootstrap(WS, STREAM), {
       members: options.memberIds.map((memberId) => ({ streamId: STREAM, memberId })),
     })
   }
-  queryClient.setQueryData(delegationKeys.stream(WS, STREAM), { delegations: [] })
+  queryClient.setQueryData(delegationKeys.stream(WS, STREAM), { delegations: options.delegations ?? [] })
   queryClient.setQueryData(agentOutcomeKeys.stream(WS, STREAM), {
     items: options.outcomes ?? [],
     nextCursor: null,
@@ -205,7 +213,6 @@ describe("StreamContextPanel", () => {
     await userEvent.click(screen.getByRole("button", { name: "Go to follow-up Check the staging deploy" }))
     expect(onJumpToMessage).toHaveBeenCalledWith("event_followup")
   })
-
 
   it("renders rows from IDB and appends the next page when the sentinel intersects", async () => {
     await db.streamContextItems.bulkPut([
@@ -925,5 +932,157 @@ describe("StreamContextPanel", () => {
     expect(await screen.findByText("Cached")).toBeInTheDocument()
     const boundary = await screen.findByText(/Offline — showing what's cached/)
     expect(within(boundary.parentElement!).getByText(/reconnect/)).toBeInTheDocument()
+  })
+})
+
+/**
+ * The Agent chip is one control over TWO categories, and a sealed stream renders
+ * it from the derive path instead of the index, so both paths are exercised —
+ * one proves nothing about the other.
+ */
+describe("StreamContextPanel — the Agent chip", () => {
+  const followUp: AgentOutcomeSummary = {
+    id: "afu_1",
+    kind: "follow_up",
+    streamId: STREAM,
+    title: "Check the staging deploy",
+    status: "pending",
+    scheduledFor: "2026-06-25T09:00:00.000Z",
+    claimedByLabel: null,
+    statusNote: null,
+    resultMessageId: null,
+    actorType: "persona",
+    actorId: "persona_1",
+    createdAt: "2026-06-24T10:00:00.000Z",
+    statusChangedAt: "2026-06-24T10:00:00.000Z",
+    occursAt: "2026-06-25T09:00:00.000Z",
+    anchorEventId: "event_followup",
+  }
+  const delegation: DelegationSummary = {
+    id: "deleg_1",
+    streamId: STREAM,
+    title: "Run the migration locally",
+    status: "open",
+    claimedByLabel: null,
+    resultMessageId: null,
+    statusNote: null,
+    createdEventId: "event_delegation",
+    createdAt: "2026-06-24T11:00:00.000Z",
+    statusChangedAt: "2026-06-24T11:00:00.000Z",
+  }
+
+  it("derived panel: sums both categories and shows both when selected", async () => {
+    await db.streams.put({ id: STREAM, workspaceId: WS, rootStreamId: null, e2eEnabled: true } as never)
+    vi.spyOn(streamContextApi, "list").mockResolvedValue(listResponse({ counts: null, mode: "client" }))
+
+    renderPanel({ outcomes: [followUp], delegations: [delegation] })
+
+    const chip = await screen.findByRole("button", { name: /^Agent/ })
+    expect(chip.textContent).toBe("Agent2")
+
+    await userEvent.click(chip)
+
+    expect(await screen.findByText("Check the staging deploy")).toBeInTheDocument()
+    expect(screen.getByText("Run the migration locally")).toBeInTheDocument()
+    expect(chip).toHaveAttribute("aria-pressed", "true")
+  })
+
+  it("indexed panel: selects both categories on one request and shows both rows", async () => {
+    await db.streamContextItems.bulkPut([
+      cachedRow(
+        serverItem({
+          category: "follow_up",
+          refKind: "follow_up",
+          refId: "afu_1",
+          sourceMessageId: null,
+          anchorEventId: "event_followup",
+          snippet: "Check the staging deploy",
+          detail: { note: "Check the staging deploy", status: "pending", scheduledFor: "2026-06-25T09:00:00.000Z" },
+        })
+      ),
+      cachedRow(
+        serverItem({
+          category: "delegation",
+          refKind: "delegation",
+          refId: "deleg_1",
+          sourceMessageId: null,
+          anchorEventId: "event_delegation",
+          detail: { title: "Run the migration locally", status: "open" },
+        })
+      ),
+      cachedRow(
+        serverItem({
+          category: "link",
+          refId: "https://a.example",
+          detail: { url: "https://a.example", title: "Alpha" },
+        })
+      ),
+    ])
+    const list = vi
+      .spyOn(streamContextApi, "list")
+      .mockResolvedValue(listResponse({ counts: { ...EMPTY_COUNTS, link: 1, delegation: 1, follow_up: 1 } }))
+
+    renderPanel()
+
+    const chip = await screen.findByRole("button", { name: /^Agent/ })
+    expect(chip.textContent).toBe("Agent2")
+
+    await userEvent.click(chip)
+
+    expect(screen.getByText("Check the staging deploy")).toBeInTheDocument()
+    expect(screen.getByText("Run the migration locally")).toBeInTheDocument()
+    expect(screen.queryByText("Alpha")).not.toBeInTheDocument()
+    await waitFor(() => expect(list.mock.calls.at(-1)?.[2]).toMatchObject({ categories: ["follow_up", "delegation"] }))
+  })
+
+  it("indexed panel: a ?context=follow_up deep link survives the arrival of server counts", async () => {
+    await db.streamContextItems.put(
+      cachedRow(
+        serverItem({
+          category: "follow_up",
+          refKind: "follow_up",
+          refId: "afu_1",
+          sourceMessageId: null,
+          anchorEventId: "event_followup",
+          snippet: "Check the staging deploy",
+          detail: { note: "Check the staging deploy", status: "pending", scheduledFor: "2026-06-25T09:00:00.000Z" },
+        })
+      )
+    )
+    vi.spyOn(streamContextApi, "list").mockResolvedValue(
+      listResponse({ counts: { ...EMPTY_COUNTS, link: 4, follow_up: 1 } })
+    )
+
+    renderPanel({ entry: "/s?context=follow_up" })
+
+    expect(await screen.findByText("Check the staging deploy")).toBeInTheDocument()
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /^Follow-ups/ })).toHaveAttribute("aria-pressed", "true")
+    )
+    expect(screen.getByRole("button", { name: /^All/ })).toHaveAttribute("aria-pressed", "false")
+  })
+
+  it("indexed panel: a ?context=agent deep link survives the arrival of server counts", async () => {
+    await db.streamContextItems.put(
+      cachedRow(
+        serverItem({
+          category: "follow_up",
+          refKind: "follow_up",
+          refId: "afu_1",
+          sourceMessageId: null,
+          anchorEventId: "event_followup",
+          snippet: "Check the staging deploy",
+          detail: { note: "Check the staging deploy", status: "pending", scheduledFor: "2026-06-25T09:00:00.000Z" },
+        })
+      )
+    )
+    vi.spyOn(streamContextApi, "list").mockResolvedValue(
+      listResponse({ counts: { ...EMPTY_COUNTS, link: 4, follow_up: 1 } })
+    )
+
+    renderPanel({ entry: "/s?context=agent" })
+
+    expect(await screen.findByText("Check the staging deploy")).toBeInTheDocument()
+    await waitFor(() => expect(screen.getByRole("button", { name: /^Agent/ })).toHaveAttribute("aria-pressed", "true"))
   })
 })

@@ -5,7 +5,9 @@ import { AgentFollowUpService } from "./follow-up-service"
 import { AgentFollowUpRepository, type AgentFollowUp } from "./follow-up-repository"
 import { JobQueues, QueueRepository } from "../../lib/queue"
 import { OutboxRepository } from "../../lib/outbox"
-import { StreamEventRepository } from "../streams"
+import { logger } from "../../lib/logger"
+import { StreamEventRepository, StreamRepository } from "../streams"
+import { StreamContextRepository } from "../stream-context"
 import * as dbModule from "../../db"
 import { DEFAULT_MAX_PENDING_FOLLOW_UPS } from "./config"
 
@@ -18,6 +20,12 @@ function stubEventAppend() {
   const insertEvent = spyOn(StreamEventRepository, "insert").mockResolvedValue({} as never)
   const insertOutbox = spyOn(OutboxRepository, "insert").mockResolvedValue({} as never)
   return { insertEvent, insertOutbox }
+}
+
+/** Stub the stream lookup + "In this stream" projection write the schedule path performs. */
+function stubContextIndex(stream: Record<string, unknown> | null = { id: "stream_1", rootStreamId: null }) {
+  spyOn(StreamRepository, "findById").mockResolvedValue(stream as never)
+  return spyOn(StreamContextRepository, "insertMany").mockResolvedValue(0)
 }
 
 const NOW = new Date("2026-07-02T12:00:00.000Z")
@@ -71,6 +79,7 @@ describe("AgentFollowUpService.schedule", () => {
     spyOn(AgentFollowUpRepository, "countPending").mockResolvedValue(1)
     const queueInsert = spyOn(QueueRepository, "insert").mockResolvedValue({} as never)
     stubEventAppend()
+    stubContextIndex()
 
     const result = await makeService().schedule(scheduleParams)
 
@@ -94,6 +103,7 @@ describe("AgentFollowUpService.schedule", () => {
     spyOn(AgentFollowUpRepository, "countPending").mockResolvedValue(1)
     spyOn(QueueRepository, "insert").mockResolvedValue({} as never)
     const { insertEvent, insertOutbox } = stubEventAppend()
+    stubContextIndex()
 
     await makeService().schedule(scheduleParams)
 
@@ -142,12 +152,84 @@ describe("AgentFollowUpService.schedule", () => {
     spyOn(AgentFollowUpRepository, "countPending").mockResolvedValue(1)
     spyOn(QueueRepository, "insert").mockResolvedValue({} as never)
     stubEventAppend()
+    stubContextIndex()
 
     const result = await makeService(workspaceLimit).schedule(scheduleParams)
 
     expect(result).toMatchObject({ ok: true, limit: workspaceLimit })
     // The guarded insert enforces the resolved cap, not DEFAULT_MAX_PENDING_FOLLOW_UPS.
     expect(insertIfUnderCap.mock.calls[0]?.[2]).toBe(workspaceLimit)
+  })
+
+  it("projects the follow-up into the context index on the schedule transaction's client", async () => {
+    const client = { id: "the-tx-client" } as unknown as PoolClient
+    spyOn(dbModule, "withTransaction").mockImplementation(async (_pool: any, fn: any) => fn(client))
+    spyOn(AgentFollowUpRepository, "acquireStreamCapLock").mockResolvedValue(undefined)
+    spyOn(AgentFollowUpRepository, "insertIfUnderCap").mockResolvedValue(fakeFollowUp())
+    spyOn(AgentFollowUpRepository, "setQueueMessageId").mockResolvedValue(undefined)
+    spyOn(AgentFollowUpRepository, "countPending").mockResolvedValue(1)
+    spyOn(QueueRepository, "insert").mockResolvedValue({} as never)
+    stubEventAppend()
+    const insertMany = stubContextIndex({ id: "stream_1", rootStreamId: "stream_root", e2eEnabled: false })
+
+    await makeService().schedule(scheduleParams)
+
+    expect(insertMany.mock.calls[0]?.[0]).toBe(client)
+    const [row] = insertMany.mock.calls[0]?.[1] ?? []
+    expect(row).toEqual(
+      expect.objectContaining({
+        workspaceId: "ws_1",
+        streamId: "stream_1",
+        rootStreamId: "stream_root",
+        category: "follow_up",
+        refKind: "follow_up",
+        refId: "agfu_01",
+        groupKey: "agfu_01",
+        sourceMessageId: null,
+        authorId: null,
+        occurredAt: NOW,
+        sequence: null,
+        snippet: "check back on the deploy",
+        // Status and scheduledFor are mutable — joined live on read, never stored.
+        detail: { note: "check back on the deploy" },
+      })
+    )
+  })
+
+  it("writes no projection row for a sealed stream", async () => {
+    spyOn(dbModule, "withTransaction").mockImplementation(async (_pool: any, fn: any) => fn({} as PoolClient))
+    spyOn(AgentFollowUpRepository, "acquireStreamCapLock").mockResolvedValue(undefined)
+    spyOn(AgentFollowUpRepository, "insertIfUnderCap").mockResolvedValue(fakeFollowUp())
+    spyOn(AgentFollowUpRepository, "setQueueMessageId").mockResolvedValue(undefined)
+    spyOn(AgentFollowUpRepository, "countPending").mockResolvedValue(1)
+    spyOn(QueueRepository, "insert").mockResolvedValue({} as never)
+    stubEventAppend()
+    const insertMany = stubContextIndex({ id: "stream_1", rootStreamId: null, e2eEnabled: true })
+
+    const result = await makeService().schedule(scheduleParams)
+
+    expect(result).toMatchObject({ ok: true })
+    expect(insertMany).not.toHaveBeenCalled()
+  })
+
+  it("logs and skips the projection when the stream row is missing, still scheduling", async () => {
+    spyOn(dbModule, "withTransaction").mockImplementation(async (_pool: any, fn: any) => fn({} as PoolClient))
+    spyOn(AgentFollowUpRepository, "acquireStreamCapLock").mockResolvedValue(undefined)
+    spyOn(AgentFollowUpRepository, "insertIfUnderCap").mockResolvedValue(fakeFollowUp())
+    spyOn(AgentFollowUpRepository, "setQueueMessageId").mockResolvedValue(undefined)
+    spyOn(AgentFollowUpRepository, "countPending").mockResolvedValue(1)
+    spyOn(QueueRepository, "insert").mockResolvedValue({} as never)
+    stubEventAppend()
+    const insertMany = stubContextIndex(null)
+    const warn = spyOn(logger, "warn").mockImplementation(() => undefined as never)
+
+    const result = await makeService().schedule(scheduleParams)
+
+    expect(result).toMatchObject({ ok: true })
+    expect(insertMany).not.toHaveBeenCalled()
+    expect(warn.mock.calls[0]?.[0]).toEqual(
+      expect.objectContaining({ workspaceId: "ws_1", streamId: "stream_1", followUpId: "agfu_01" })
+    )
   })
 })
 

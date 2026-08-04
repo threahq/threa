@@ -19,6 +19,10 @@ export interface StreamContextFeedFilters {
   streamId: string
   scope: StreamContextScope
   category?: ContextCategory
+  /** Multi-category narrowing (the Agent chip's two categories). Applied on top
+   *  of `category`, which stays the single-category form the occurrences read
+   *  requires. */
+  categories?: ContextCategory[]
   queryText?: string
   authorId?: string
   /** Exclusive upper bound on `occurred_at`. */
@@ -83,6 +87,10 @@ interface DbRow {
   task_status_note: string | null
   task_result_message_id: string | null
   delegation_event_id: string | null
+  follow_up_note: string | null
+  follow_up_status: string | null
+  follow_up_scheduled_for: Date | null
+  follow_up_event_id: string | null
   thread_name: string | null
   thread_reply_count: number | null
   thread_last_reply_at: Date | null
@@ -136,9 +144,9 @@ function detailFor(row: DbRow): StreamContextItemDetail {
       }
     case "follow_up":
       return {
-        note: stringOrNull(row.detail.note) ?? row.snippet,
-        status: (stringOrNull(row.detail.status) ?? "pending") as FollowUpStatus,
-        scheduledFor: stringOrNull(row.detail.scheduledFor),
+        note: row.follow_up_note ?? stringOrNull(row.detail.note) ?? row.snippet,
+        status: (row.follow_up_status ?? "pending") as FollowUpStatus,
+        scheduledFor: row.follow_up_scheduled_for?.toISOString() ?? null,
       }
     case "thread":
       return {
@@ -152,11 +160,13 @@ function detailFor(row: DbRow): StreamContextItemDetail {
 
 /**
  * The event a row deep-links to when it has no source message: the delegation's
- * created card, or the anchor a card-anchored thread hangs under. Null for every
+ * created card, the follow-up's scheduled card, or the anchor a card-anchored
+ * thread hangs under. Null for every
  * artifact that lives in a message — those jump by `sourceMessageId`.
  */
 function anchorEventIdFor(row: DbRow): string | null {
   if (row.category === "delegation") return row.delegation_event_id
+  if (row.category === "follow_up") return row.follow_up_event_id
   if (row.category === "thread") {
     const anchor = stringOrNull(row.detail.anchorEventId) ?? row.thread_anchor_event_id
     return anchor?.startsWith("event_") ? anchor : null
@@ -239,6 +249,10 @@ function scopedSql(filters: StreamContextFeedFilters, extra?: { groupKey?: strin
       dt.status_note AS task_status_note,
       dt.result_message_id AS task_result_message_id,
       de.id AS delegation_event_id,
+      afu.note AS follow_up_note,
+      afu.status AS follow_up_status,
+      afu.scheduled_for AS follow_up_scheduled_for,
+      fue.id AS follow_up_event_id,
       th.display_name AS thread_name,
       th.reply_count AS thread_reply_count,
       th.last_reply_at AS thread_last_reply_at,
@@ -265,6 +279,15 @@ function scopedSql(filters: StreamContextFeedFilters, extra?: { groupKey?: strin
      AND de.stream_id = sci.stream_id
      AND de.event_type = 'delegation:created'
      AND de.payload->>'delegationId' = sci.ref_id
+    LEFT JOIN agent_follow_ups afu
+      ON sci.category = 'follow_up'
+     AND afu.workspace_id = sci.workspace_id
+     AND afu.id = sci.ref_id
+    LEFT JOIN stream_events fue
+      ON sci.category = 'follow_up'
+     AND fue.stream_id = sci.stream_id
+     AND fue.event_type = 'agent:follow_up_scheduled'
+     AND fue.payload->>'followUpId' = sci.ref_id
     LEFT JOIN streams th
       ON sci.category = 'thread'
      AND th.workspace_id = sci.workspace_id
@@ -275,6 +298,7 @@ function scopedSql(filters: StreamContextFeedFilters, extra?: { groupKey?: strin
         OR (${!isTree} AND sci.stream_id = ${filters.streamId})
       )
       AND (${filters.category === undefined} OR sci.category = ${filters.category ?? ""})
+      AND (${filters.categories === undefined} OR sci.category = ANY(${filters.categories ?? [""]}))
       AND (${extra?.groupKey === undefined} OR sci.group_key = ${extra?.groupKey ?? ""})
       AND (${filters.authorId === undefined} OR sci.author_id = ${filters.authorId ?? ""})
       AND (${filters.before === undefined} OR sci.occurred_at < ${filters.before ?? EPOCH}::timestamptz)
@@ -288,6 +312,7 @@ function scopedSql(filters: StreamContextFeedFilters, extra?: { groupKey?: strin
         OR att.filename ILIKE ${likePattern}
         OR mem.title ILIKE ${likePattern}
         OR dt.title ILIKE ${likePattern}
+        OR afu.note ILIKE ${likePattern}
         OR th.display_name ILIKE ${likePattern}
       )
   `

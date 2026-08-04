@@ -23,6 +23,7 @@ export interface ListStreamContextParams {
   streamId: string
   scope: StreamContextScope
   category?: ContextCategory
+  categories?: ContextCategory[]
   queryText?: string
   authorId?: string
   before?: Date
@@ -98,6 +99,7 @@ export function createStreamContextService({ pool }: Dependencies) {
         streamId: params.streamId,
         scope: params.scope,
         category: params.category,
+        categories: params.categories,
         queryText: params.queryText,
         authorId: params.authorId,
         before: params.before,
@@ -109,7 +111,11 @@ export function createStreamContextService({ pool }: Dependencies) {
       // selector must not narrow them — every other chip would read 0.
       const counts = cursor
         ? null
-        : await StreamContextReadRepository.countsByCategory(pool, { ...filters, category: undefined })
+        : await StreamContextReadRepository.countsByCategory(pool, {
+            ...filters,
+            category: undefined,
+            categories: undefined,
+          })
       return { ...page(rows, params.limit), counts, mode: "index" }
     },
 

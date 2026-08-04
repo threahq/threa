@@ -36,6 +36,8 @@ import { useStreamContextFeed } from "./use-stream-context-feed"
 import {
   chipsFromCounts,
   ContextChipRow,
+  filterCategories,
+  filterCount,
   ContextEmpty,
   ContextPanelHeader,
   ContextSkeleton,
@@ -118,12 +120,16 @@ export function StreamContextIndexPanel(props: StreamContextPanelProps) {
   // out) must not strand the panel on a filter the scope has nothing for — fall
   // back to "all" once the server-owned counts say so, for the query and the
   // chip row alike.
-  const effectiveFilter: Filter = filter !== "all" && serverCounts?.[filter] === 0 ? "all" : filter
+  // `filterCount` reads the Agent chip as the SUM of its two categories, so a
+  // `?context=agent` link survives once counts land as long as either has rows —
+  // `counts["agent"]` is not a key and indexing for it would read `undefined`.
+  const effectiveFilter: Filter =
+    filter !== "all" && serverCounts !== null && filterCount(serverCounts, filter, 0) === 0 ? "all" : filter
 
-  const category: ContextCategory | undefined = effectiveFilter === "all" ? undefined : effectiveFilter
+  const categories = useMemo(() => filterCategories(effectiveFilter), [effectiveFilter])
   const feed = useStreamContextFeed(workspaceId, streamId, rootStreamId, {
     scope: "tree",
-    category,
+    categories,
     q: debounced.parsed.text || undefined,
     from: debounced.authorId ?? undefined,
     before: debounced.before,
@@ -158,14 +164,14 @@ export function StreamContextIndexPanel(props: StreamContextPanelProps) {
     () =>
       collapseContextRows(
         filterContextRows(rows ?? [], {
-          category,
+          categories,
           terms: searchTerms,
           authorId: authorId ?? undefined,
           before,
           after,
         })
       ),
-    [rows, category, searchTerms, authorId, before, after]
+    [rows, categories, searchTerms, authorId, before, after]
   )
   // Counts are whole-scope facts the server owns; the local tally is the
   // offline/first-paint fallback: computed over the same search/author/date
@@ -222,7 +228,7 @@ export function StreamContextIndexPanel(props: StreamContextPanelProps) {
   const jumpGeneration = useRef(0)
   useEffect(() => {
     jumpGeneration.current += 1
-  }, [category, searchTerms, authorId, before, after])
+  }, [categories, searchTerms, authorId, before, after])
   const jumpToDate = useCallback(
     async (date: Date) => {
       const generation = (jumpGeneration.current += 1)
@@ -245,7 +251,7 @@ export function StreamContextIndexPanel(props: StreamContextPanelProps) {
         const fresh = await readStreamContextRows(workspaceId, streamId, rootStreamId, "tree")
         const rebuilt = collapseContextRows(
           filterContextRows(fresh, {
-            category,
+            categories,
             terms: searchTerms,
             authorId: authorId ?? undefined,
             before,
@@ -272,7 +278,7 @@ export function StreamContextIndexPanel(props: StreamContextPanelProps) {
       // keep tabbing from where they landed.
       scrollerRef.current?.focus({ preventScroll: true })
     },
-    [items, feed, workspaceId, streamId, rootStreamId, category, searchTerms, authorId, before, after]
+    [items, feed, workspaceId, streamId, rootStreamId, categories, searchTerms, authorId, before, after]
   )
   const { hasNextPage, isFetchingNextPage, fetchNextPage } = feed
   useEffect(() => {

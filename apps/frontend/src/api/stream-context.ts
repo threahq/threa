@@ -20,6 +20,8 @@ export interface StreamContextFilters {
 export interface ListStreamContextRequest extends StreamContextFilters {
   scope?: StreamContextScope
   category?: ContextCategory
+  /** Serialized comma-separated; for a chip standing for more than one category. */
+  categories?: ContextCategory[]
   cursor?: string
   limit?: number
 }
@@ -32,10 +34,14 @@ export interface ListStreamContextOccurrencesRequest extends StreamContextFilter
   limit?: number
 }
 
-function toQueryString(params: Record<string, string | number | undefined>): string {
+function toQueryString(params: Record<string, string | number | string[] | undefined>): string {
   const search = new URLSearchParams()
   for (const [key, value] of Object.entries(params)) {
     if (value === undefined || value === "") continue
+    if (Array.isArray(value)) {
+      if (value.length > 0) search.set(key, value.join(","))
+      continue
+    }
     search.set(key, String(value))
   }
   const serialized = search.toString()

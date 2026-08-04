@@ -26,6 +26,13 @@ const filterQuerySchema = z.object({
 
 const listQuerySchema = baseQuerySchema.merge(filterQuerySchema).extend({
   category: z.enum(CONTEXT_CATEGORIES).optional(),
+  /** Comma-separated, for a chip that stands for more than one category. */
+  categories: z
+    .string()
+    .min(1)
+    .transform((raw) => raw.split(","))
+    .pipe(z.array(z.enum(CONTEXT_CATEGORIES)).min(1))
+    .optional(),
 })
 
 const occurrencesQuerySchema = baseQuerySchema.merge(filterQuerySchema).extend({
@@ -47,6 +54,7 @@ export function createStreamContextHandlers({ streamContextService }: Dependenci
         streamId: req.params.streamId!,
         scope: query.scope,
         category: query.category,
+        categories: query.categories,
         queryText: query.q,
         authorId: query.from,
         before: query.before ? new Date(query.before) : undefined,
