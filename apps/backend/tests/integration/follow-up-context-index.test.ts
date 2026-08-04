@@ -28,7 +28,10 @@ describe("follow-up context index against the real schema", () => {
   let contextService: ReturnType<typeof createStreamContextService>
 
   const wsId = workspaceId()
-  const scheduledFor = new Date("2026-08-01T09:00:00.000Z")
+  // Relative, not a literal: a fixed instant goes stale the day it passes, and
+  // then the firing worker fires this row before the cancel test reaches it —
+  // `cancel` no-ops on a fired follow-up and the suite starts failing on a date.
+  const scheduledFor = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000)
   let ownerId: string
   let channelId: string
   let followUpId: string
