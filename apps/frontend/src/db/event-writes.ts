@@ -77,6 +77,7 @@ type EventWriteFlags = {
   indexedMessagePatch: boolean
   sharedStreamRegistration: boolean
   singlePreviewWriter: boolean
+  coalescedLiveCommit: boolean
 }
 
 const flagsByWorkspace = new Map<string, EventWriteFlags>()
@@ -89,6 +90,7 @@ function resolveEventWriteFlags(layers: FeatureFlagLayers | null | undefined): E
     indexedMessagePatch: resolved.indexedMessagePatch === "on",
     sharedStreamRegistration: resolved.sharedStreamRegistration === "on",
     singlePreviewWriter: resolved.singlePreviewWriter === "on",
+    coalescedLiveCommit: resolved.coalescedLiveCommit === "on",
   }
 }
 
@@ -159,6 +161,11 @@ export async function isIndexedMessagePatchEnabled(database: ThreaDatabase, work
 /** The viewer's `singlePreviewWriter` value, resolved through the same primed cache. */
 export async function isSinglePreviewWriterEnabled(database: ThreaDatabase, workspaceId: string): Promise<boolean> {
   return (await getEventWriteFlags(database, workspaceId)).singlePreviewWriter
+}
+
+/** The viewer's `coalescedLiveCommit` value, resolved through the same primed cache. */
+export async function isCoalescedLiveCommitEnabled(database: ThreaDatabase, workspaceId: string): Promise<boolean> {
+  return (await getEventWriteFlags(database, workspaceId)).coalescedLiveCommit
 }
 
 /**
