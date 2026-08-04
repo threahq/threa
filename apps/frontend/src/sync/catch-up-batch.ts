@@ -1,6 +1,7 @@
 import type { QueryClient } from "@tanstack/react-query"
 import type { LastMessagePreview, StreamReadFrontierSnapshot, WorkspaceBootstrap } from "@threa/types"
 import { db } from "@/db"
+import { getAccountGeneration } from "@/db/event-writes"
 import { getPerfCapture } from "@/lib/perf/capture"
 import { workspaceKeys } from "@/hooks/use-workspaces"
 import { activityKeys } from "@/hooks/use-activity"
@@ -136,8 +137,13 @@ export function commitStreamPreview(
 export class LiveCommitBatch {
   private counterMutators: CounterMutator[] = []
   private streamPreviews = new Map<string, LastMessagePreview | null>()
+  private readAllSnapshots: StreamReadFrontierSnapshot[] = []
   private scheduled = false
   private destroyed = false
+  /** The account this batch belongs to. `db` is a proxy repointed on an account
+   *  switch, so a flush resolving after one would write these rows into the
+   *  other account's database. */
+  private readonly accountGeneration = getAccountGeneration()
   /** Latches the engine reseed request until a flush succeeds. */
   private reseedRequested = false
   /** Flushes run one at a time and in schedule order, so an awaited `flush()`
@@ -166,6 +172,27 @@ export class LiveCommitBatch {
     this.schedule()
   }
 
+  /** Buffer one read-all payload's additive frontier snapshots, resolved and
+   *  persisted at flush time inside the same transaction as the counter fold —
+   *  the live mirror of {@link CatchUpBatch.applyReadAllFrontiers}. The counter
+   *  half arrives through {@link applyCounter}, so a read-all and the activity
+   *  that preceded it fold in DELIVERY order: routing read-all around this
+   *  buffer would let its drop-held-rows transaction open at handler time and
+   *  run BEFORE the fold that inserts the held activity, resurrecting a mention
+   *  the user already read. */
+  applyReadAllFrontiers(frontiers: StreamReadFrontierSnapshot[] | undefined): void {
+    if (this.destroyed || !frontiers || frontiers.length === 0) return
+    this.readAllSnapshots.push(...frontiers)
+    this.schedule()
+  }
+
+  /** Whether anything is buffered and not yet committed. Callers taking the
+   *  immediate path (the flag flipped off mid-task) drain first, so a pending
+   *  fold can't land on top of a newer immediate commit. */
+  hasPending(): boolean {
+    return this.counterMutators.length > 0 || this.streamPreviews.size > 0 || this.readAllSnapshots.length > 0
+  }
+
   /** Commit everything buffered so far. Awaited by the engine when a catch-up
    *  window opens, so a live fold can never interleave into a replay fold. */
   flush(): Promise<void> {
@@ -186,6 +213,7 @@ export class LiveCommitBatch {
     this.destroyed = true
     this.counterMutators = []
     this.streamPreviews.clear()
+    this.readAllSnapshots = []
   }
 
   private schedule(): void {
@@ -201,41 +229,66 @@ export class LiveCommitBatch {
   private async commit(): Promise<void> {
     const mutators = this.counterMutators
     const previews = this.streamPreviews
+    const snapshots = this.readAllSnapshots
     this.counterMutators = []
     this.streamPreviews = new Map()
+    this.readAllSnapshots = []
     if (this.destroyed) return
-    if (mutators.length === 0 && previews.size === 0) return
+    if (getAccountGeneration() !== this.accountGeneration) return
+    if (mutators.length === 0 && previews.size === 0 && snapshots.length === 0) return
 
-    // The fold runs after the handler returns, so `stream.activityApply` timed
-    // inside the handler no longer covers it — time it here so the coalesced arm
-    // stays comparable with the immediate arm's sample.
-    const stopActivityApply = getPerfCapture().time("stream.activityApply")
+    // Its OWN mark, never the handler's: the handler-body `stream.activityApply`
+    // fires per event in both arms, so folding this sample into that name would
+    // mix an N-sample buffer-push population with one persist-and-publish sample
+    // and make the arms unreadable.
+    const stopFold = getPerfCapture().time("stream.liveCommitFold")
+    const haveFrontiers = snapshots.length > 0
+    let resolved: ResolvedReadAllFrontier[] = []
     try {
       getPerfCapture().count("stream.idbTransaction")
-      await db.transaction("rw", [db.streams, db.unreadState], async () => {
-        await putCountersIdb(this.workspaceId, mutators)
-        await putPreviewsIdb(previews)
-      })
+      await db.transaction(
+        "rw",
+        haveFrontiers ? [db.streams, db.unreadState, db.streamReadState] : [db.streams, db.unreadState],
+        async () => {
+          await putCountersIdb(this.workspaceId, mutators)
+          await putPreviewsIdb(previews)
+          if (haveFrontiers) {
+            resolved = await resolveReadAllFrontiers(this.queryClient, this.workspaceId, snapshots)
+            await putReadAllFrontiersIdb(this.workspaceId, resolved)
+          }
+        }
+      )
     } catch (error) {
-      stopActivityApply()
-      console.error("Live commit batch flush failed", { workspaceId: this.workspaceId, error })
-      // At most one reseed until a flush succeeds: a persistently failing IDB
-      // would otherwise turn every message into a forced full bootstrap, each of
-      // which fails the same way. Only a dropped counter fold needs the reseed —
-      // a dropped preview is non-critical and the next bootstrap carries it.
-      if (mutators.length > 0 && !this.reseedRequested) {
-        this.reseedRequested = true
-        this.onFlushFailed?.()
-      }
+      stopFold()
+      this.reportFailure(error, mutators.length > 0)
       return
     }
 
     try {
-      this.reseedRequested = false
       if (this.destroyed) return
+      if (getAccountGeneration() !== this.accountGeneration) return
       this.publish(mutators, previews)
+      publishReadAllFrontiersToCache(this.queryClient, this.workspaceId, resolved)
+      this.reseedRequested = false
+    } catch (error) {
+      // A publish failure drops the fold just as a transaction failure does, and
+      // a held-set `upsertActivity` cannot self-heal from the next event — so it
+      // takes the same one-shot reseed rather than being left as a residual.
+      this.reportFailure(error, mutators.length > 0)
     } finally {
-      stopActivityApply()
+      stopFold()
+    }
+  }
+
+  /** One-shot reseed latch: a persistently failing IDB would otherwise turn
+   *  every message into a forced full bootstrap, each of which fails the same
+   *  way. Only a dropped counter fold needs it — a dropped preview is
+   *  non-critical and the next bootstrap carries it. */
+  private reportFailure(error: unknown, hadCounters: boolean): void {
+    console.error("Live commit batch flush failed", { workspaceId: this.workspaceId, error })
+    if (hadCounters && !this.reseedRequested) {
+      this.reseedRequested = true
+      this.onFlushFailed?.()
     }
   }
 
