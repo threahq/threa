@@ -13,9 +13,15 @@ import * as hooks from "@/hooks"
 import * as connectionStatus from "@/components/layout/connection-status"
 import { streamKeys } from "@/hooks/use-streams"
 import { delegationKeys } from "@/hooks/use-stream-delegations"
+import { agentOutcomeKeys } from "@/hooks/use-agent-outcomes"
 import * as streamContextListModule from "@/components/stream-context/stream-context-list"
 import * as storeModule from "@/stores/stream-context-store"
-import { streamContextItemKey, type ListStreamContextResponse, type StreamContextItem } from "@threa/types"
+import {
+  streamContextItemKey,
+  type AgentOutcomeSummary,
+  type ListStreamContextResponse,
+  type StreamContextItem,
+} from "@threa/types"
 import { StreamContextIndexPanel } from "./stream-context-index-panel"
 
 const WS = "ws_1"
@@ -23,7 +29,7 @@ const STREAM = "stream_root"
 const THREAD = "stream_thread"
 const WORKOS_ME = "workos_me"
 
-const EMPTY_COUNTS = { link: 0, media: 0, file: 0, memo: 0, delegation: 0, thread: 0 }
+const EMPTY_COUNTS = { link: 0, media: 0, file: 0, memo: 0, delegation: 0, follow_up: 0, thread: 0 }
 
 /** jsdom has no IntersectionObserver; capture the callbacks so a test can fire them. */
 let observerCallbacks: IntersectionObserverCallback[] = []
@@ -77,7 +83,7 @@ function LocationProbe() {
   return <span data-testid="location">{`${location.search}|${seen.current}`}</span>
 }
 
-function renderPanel(options: { entry?: string; memberIds?: string[] } = {}) {
+function renderPanel(options: { entry?: string; memberIds?: string[]; outcomes?: AgentOutcomeSummary[] } = {}) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   if (options.memberIds) {
     queryClient.setQueryData(streamKeys.bootstrap(WS, STREAM), {
@@ -85,6 +91,11 @@ function renderPanel(options: { entry?: string; memberIds?: string[] } = {}) {
     })
   }
   queryClient.setQueryData(delegationKeys.stream(WS, STREAM), { delegations: [] })
+  queryClient.setQueryData(agentOutcomeKeys.stream(WS, STREAM), {
+    items: options.outcomes ?? [],
+    nextCursor: null,
+    outstandingCount: options.outcomes?.length ?? 0,
+  })
   const onJumpToMessage = vi.fn()
   const onOpenThread = vi.fn()
   const panel = (
@@ -166,6 +177,36 @@ afterEach(() => {
 })
 
 describe("StreamContextPanel", () => {
+  it("renders a follow-up row with its status and jumps to the scheduled event, on the local path", async () => {
+    vi.spyOn(streamContextApi, "list").mockResolvedValue(listResponse({ counts: null, mode: "client" }))
+    const followUp: AgentOutcomeSummary = {
+      id: "afu_1",
+      kind: "follow_up",
+      streamId: STREAM,
+      title: "Check the staging deploy",
+      status: "pending",
+      scheduledFor: "2026-06-25T09:00:00.000Z",
+      claimedByLabel: null,
+      statusNote: null,
+      resultMessageId: null,
+      actorType: "persona",
+      actorId: "persona_1",
+      createdAt: "2026-06-24T10:00:00.000Z",
+      statusChangedAt: "2026-06-24T10:00:00.000Z",
+      occursAt: "2026-06-25T09:00:00.000Z",
+      anchorEventId: "event_followup",
+    }
+
+    const { onJumpToMessage } = renderPanel({ outcomes: [followUp] })
+
+    expect(await screen.findByText("Check the staging deploy")).toBeInTheDocument()
+    expect(screen.getByText("Scheduled")).toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole("button", { name: "Go to follow-up Check the staging deploy" }))
+    expect(onJumpToMessage).toHaveBeenCalledWith("event_followup")
+  })
+
+
   it("renders rows from IDB and appends the next page when the sentinel intersects", async () => {
     await db.streamContextItems.bulkPut([
       cachedRow(

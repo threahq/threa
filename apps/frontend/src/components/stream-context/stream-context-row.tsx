@@ -11,6 +11,7 @@ import {
   MessagesSquare,
   Play,
   TerminalSquare,
+  Timer,
 } from "lucide-react"
 import { attachmentContentUrl } from "@/api"
 import { HighlightedText } from "@/components/search/highlight"
@@ -19,6 +20,7 @@ import { useFormattedDate } from "@/hooks"
 import { formatFileSize } from "@/lib/file-size"
 import { getKnowledgeConfig, memoLabel } from "@/lib/memo-display"
 import { DELEGATION_STATUS_LABEL, DELEGATION_TERMINAL, delegationStatusPillClass } from "@/lib/delegation-display"
+import { FOLLOW_UP_STATUS_LABEL, FOLLOW_UP_TERMINAL, followUpStatusPillClass } from "@/lib/follow-up-display"
 import { cn } from "@/lib/utils"
 import { resolveInternalAppPath } from "@/lib/internal-url"
 import { giphyGalleryId } from "@/components/gallery/giphy-gallery-id"
@@ -304,6 +306,45 @@ export function StreamContextRow({
           className="absolute inset-0 z-10 rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         >
           <span className="sr-only">Go to delegation {primaryText}</span>
+        </button>
+      ) : null
+      break
+    }
+    case "follow_up": {
+      const terminal = FOLLOW_UP_TERMINAL.has(item.status)
+      leading = (
+        <div
+          className={cn(
+            "flex size-10 shrink-0 items-center justify-center rounded-md",
+            terminal ? "bg-muted text-muted-foreground" : "bg-primary/10 text-primary"
+          )}
+        >
+          <Timer className="size-4" />
+        </div>
+      )
+      primaryText = item.note
+      badge = (
+        <span
+          className={cn(
+            "shrink-0 rounded px-1 py-px text-[10px] font-semibold uppercase tracking-wide",
+            followUpStatusPillClass(item.status)
+          )}
+        >
+          {FOLLOW_UP_STATUS_LABEL[item.status]}
+        </span>
+      )
+      secondaryText = item.scheduledFor ? formatRelative(new Date(item.scheduledFor)) : "Follow-up"
+      // Same precedent as the delegation row: the anchor event can be missing,
+      // and an inert row beats a focusable button whose click silently no-ops.
+      const followUpTarget = item.sourceMessageId
+      jumpTarget = null
+      primaryAction = followUpTarget ? (
+        <button
+          type="button"
+          onClick={() => onJumpToMessage(followUpTarget)}
+          className="absolute inset-0 z-10 rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          <span className="sr-only">Go to follow-up {primaryText}</span>
         </button>
       ) : null
       break

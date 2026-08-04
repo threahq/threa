@@ -3,11 +3,9 @@ export { StreamContextReadRepository } from "./read-repository"
 export type {
   ListFeedParams,
   ListOccurrencesParams,
-  StreamContextCursor,
   StreamContextFeedFilters,
   StreamContextFeedRow,
 } from "./read-repository"
-export { encodeContextCursor, decodeContextCursor } from "./cursor"
 export { createStreamContextService, type StreamContextService } from "./service"
 export { createStreamContextHandlers } from "./handlers"
 export { contextRowsForMessage, contextSnippet } from "./extract"

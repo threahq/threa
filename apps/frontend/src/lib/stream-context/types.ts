@@ -1,13 +1,21 @@
-import type { AttachmentCategory, DelegationStatus, KnowledgeType } from "@threa/types"
+import type { AttachmentCategory, DelegationStatus, FollowUpStatus, KnowledgeType } from "@threa/types"
 
 /**
  * The buckets the "In this stream" panel groups derived context into. `"all"`
  * is a virtual category (the interleaved recency feed), not a member of any
  * single item.
  */
-export type ContextCategory = "link" | "media" | "file" | "memo" | "delegation" | "thread"
+export type ContextCategory = "link" | "media" | "file" | "memo" | "delegation" | "follow_up" | "thread"
 
-export const CONTEXT_CATEGORIES: ContextCategory[] = ["link", "media", "file", "memo", "delegation", "thread"]
+export const CONTEXT_CATEGORIES: ContextCategory[] = [
+  "link",
+  "media",
+  "file",
+  "memo",
+  "delegation",
+  "follow_up",
+  "thread",
+]
 
 interface ContextItemBase {
   /** Stable React key, also the dedup identity within its category. */
@@ -85,6 +93,16 @@ export interface DelegationContextItem extends ContextItemBase {
   resultMessageId: string | null
 }
 
+export interface FollowUpContextItem extends ContextItemBase {
+  category: "follow_up"
+  followUpId: string
+  note: string
+  /** Live status from the authoritative outcomes read — there is no `fired` event. */
+  status: FollowUpStatus
+  /** ISO firing time; in the future while the follow-up is pending. */
+  scheduledFor: string | null
+}
+
 export interface ThreadContextItem extends ContextItemBase {
   category: "thread"
   /** The thread's stream id — open it with `getPanelUrl(threadId)`. */
@@ -99,6 +117,7 @@ export type ContextItem =
   | FileContextItem
   | MemoContextItem
   | DelegationContextItem
+  | FollowUpContextItem
   | ThreadContextItem
 
 export interface DerivedStreamContext {

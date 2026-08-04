@@ -724,6 +724,9 @@ export const AgentTriggers = {
 export const FOLLOW_UP_STATUSES = ["pending", "fired", "cancelled", "failed"] as const
 export type FollowUpStatus = (typeof FOLLOW_UP_STATUSES)[number]
 
+/** Terminal follow-up statuses — no further transitions. */
+export const FOLLOW_UP_TERMINAL_STATUSES = ["fired", "cancelled", "failed"] as const satisfies readonly FollowUpStatus[]
+
 export const FollowUpStatuses = {
   PENDING: "pending",
   FIRED: "fired",

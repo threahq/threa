@@ -520,8 +520,62 @@ describe("stream context feed: collapse, display joins, filters", () => {
 
     expect({ items: response.items.map((item) => item.refId), counts: response.counts }).toEqual({
       items: [memoRefId],
-      counts: { link: 2, media: 1, file: 0, memo: 1, delegation: 0, thread: 0 },
+      counts: { link: 2, media: 1, file: 0, memo: 1, delegation: 0, follow_up: 0, thread: 0 },
     })
+  })
+
+  test("the feed pages across rows written in one statement, sharing a microsecond", async () => {
+    // The keyset boundary is produced by the database's own NOW() inside one
+    // statement, so all five rows share a microsecond-bearing occurred_at. A
+    // cursor that round-trips through a JS Date lands below that boundary and
+    // page two comes back empty (INV-66); hand-written .000Z fixtures could
+    // never show it.
+    const pagingWsId = workspaceId()
+    await withTransaction(pool, async (client) => {
+      await WorkspaceRepository.insert(client, {
+        id: pagingWsId,
+        name: "Paging WS",
+        slug: `paging-ws-${pagingWsId}`,
+        createdBy: authorA,
+      })
+      await addTestMember(client, pagingWsId, authorA)
+    })
+    const pagingChannel = await new StreamService(pool).create({
+      workspaceId: pagingWsId,
+      type: StreamTypes.CHANNEL,
+      name: "paging-channel",
+      slug: `paging-channel-${pagingWsId.slice(-8)}`,
+      visibility: Visibilities.PUBLIC,
+      createdBy: authorA,
+    })
+    const refIds = Array.from({ length: 5 }, (_, i) => `https://example.com/paging-${i}`)
+    await pool.query(sql`
+      INSERT INTO stream_context_items
+        (id, workspace_id, stream_id, root_stream_id, category, ref_kind, ref_id, group_key, occurred_at, snippet, detail)
+      SELECT
+        ${`sctx_${pagingWsId.slice(-10)}`} || ord::text, ${pagingWsId}, ${pagingChannel.id}, ${pagingChannel.id},
+        'link', 'url', ref, ref, NOW(), 'paging', '{}'::jsonb
+      FROM unnest(${refIds}::text[]) WITH ORDINALITY AS t(ref, ord)
+    `)
+
+    const seen: string[] = []
+    let cursor: string | undefined
+    for (let page = 0; page < 10; page++) {
+      const response = await service.list({
+        workspaceId: pagingWsId,
+        userId: authorA,
+        streamId: pagingChannel.id,
+        scope: "stream",
+        category: "link",
+        cursor,
+        limit: 2,
+      })
+      seen.push(...response.items.map((item) => item.refId))
+      if (!response.nextCursor) break
+      cursor = response.nextCursor
+    }
+
+    expect(seen.slice().sort()).toEqual(refIds.slice().sort())
   })
 
   test("listOccurrences returns the uncollapsed rows behind one collapsed item", async () => {

@@ -3,7 +3,7 @@ import type { Pool } from "pg"
 import type { Stream } from "../streams"
 import * as streamsBarrel from "../streams"
 import { E2eStreamsRepository } from "../e2e-streams"
-import { decodeContextCursor } from "./cursor"
+import { decodeKeysetCursor } from "../../lib/keyset-cursor"
 import { StreamContextReadRepository, type StreamContextFeedRow } from "./read-repository"
 import { createStreamContextService } from "./service"
 
@@ -47,7 +47,7 @@ function feedRow(overrides: Partial<StreamContextFeedRow> = {}): StreamContextFe
       contentType: null,
       previewStatus: null,
     },
-    cursorOccurredAt: new Date("2026-07-20T10:00:00.000Z"),
+    cursorOccurredAtKey: "2026-07-20T10:00:00.100200Z",
     id: "sctx_1",
     ...overrides,
   }
@@ -90,6 +90,7 @@ describe("StreamContextService.list", () => {
       file: 0,
       memo: 0,
       delegation: 0,
+      follow_up: 0,
       thread: 0,
     })
 
@@ -137,7 +138,7 @@ describe("StreamContextService.list", () => {
           },
         },
       ],
-      counts: { link: 1, media: 0, file: 0, memo: 0, delegation: 0, thread: 0 },
+      counts: { link: 1, media: 0, file: 0, memo: 0, delegation: 0, follow_up: 0, thread: 0 },
       nextCursor: null,
       mode: "index",
     })
@@ -152,19 +153,20 @@ describe("StreamContextService.list", () => {
       file: 0,
       memo: 0,
       delegation: 0,
+      follow_up: 0,
       thread: 0,
     })
     spyOn(StreamContextReadRepository, "listFeed").mockResolvedValue([
-      feedRow({ key: "a", id: "sctx_3", cursorOccurredAt: new Date("2026-07-20T12:00:00.000Z") }),
-      feedRow({ key: "b", id: "sctx_2", cursorOccurredAt: new Date("2026-07-20T11:00:00.000Z") }),
-      feedRow({ key: "c", id: "sctx_1", cursorOccurredAt: new Date("2026-07-20T10:00:00.000Z") }),
+      feedRow({ key: "a", id: "sctx_3", cursorOccurredAtKey: "2026-07-20T12:00:00.300400Z" }),
+      feedRow({ key: "b", id: "sctx_2", cursorOccurredAtKey: "2026-07-20T11:00:00.500600Z" }),
+      feedRow({ key: "c", id: "sctx_1", cursorOccurredAtKey: "2026-07-20T10:00:00.100200Z" }),
     ])
 
     const first = await service.list(listParams)
 
     expect(first.items.map((item) => item.key)).toEqual(["a", "b"])
-    expect(decodeContextCursor(first.nextCursor!)).toEqual({
-      occurredAt: new Date("2026-07-20T11:00:00.000Z"),
+    expect(decodeKeysetCursor(first.nextCursor!)).toEqual({
+      at: "2026-07-20T11:00:00.500600Z",
       id: "sctx_2",
     })
 
@@ -176,7 +178,7 @@ describe("StreamContextService.list", () => {
     const second = await service.list({ ...listParams, cursor: first.nextCursor! })
 
     expect(listFeed.mock.calls[0]![1]!.cursor).toEqual({
-      occurredAt: new Date("2026-07-20T11:00:00.000Z"),
+      at: "2026-07-20T11:00:00.500600Z",
       id: "sctx_2",
     })
     expect(second.items.map((item) => item.key)).toEqual(["c"])
@@ -195,6 +197,7 @@ describe("StreamContextService.list", () => {
       file: 0,
       memo: 0,
       delegation: 0,
+      follow_up: 0,
       thread: 0,
     })
 
@@ -233,6 +236,7 @@ describe("StreamContextService.list", () => {
       file: 0,
       memo: 1,
       delegation: 0,
+      follow_up: 0,
       thread: 0,
     })
 
@@ -280,7 +284,7 @@ describe("StreamContextService.list", () => {
 
     expect(response).toEqual({
       items: [],
-      counts: { link: 0, media: 0, file: 0, memo: 0, delegation: 0, thread: 0 },
+      counts: { link: 0, media: 0, file: 0, memo: 0, delegation: 0, follow_up: 0, thread: 0 },
       nextCursor: null,
       mode: "client",
     })

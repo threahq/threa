@@ -1,13 +1,16 @@
 import {
   categoryFromMime,
   DELEGATION_STATUSES,
+  FOLLOW_UP_STATUSES,
   KNOWLEDGE_TYPES,
   type DelegationStatus,
+  type FollowUpStatus,
   type KnowledgeType,
 } from "@threa/types"
 import type {
   StreamContextAttachmentDetail,
   StreamContextDelegationDetail,
+  StreamContextFollowUpDetail,
   StreamContextLinkDetail,
   StreamContextMemoDetail,
   StreamContextThreadDetail,
@@ -115,6 +118,17 @@ export function contextItemFromCached(row: CachedStreamContextItem): ContextItem
         resultMessageId: detail.resultMessageId ?? null,
       }
     }
+    case "follow_up": {
+      const detail = row.detail as Partial<StreamContextFollowUpDetail>
+      return {
+        ...base,
+        category: "follow_up",
+        followUpId: row.refId,
+        note: detail.note ?? row.snippet ?? "Follow-up",
+        status: asFollowUpStatus(detail.status),
+        scheduledFor: detail.scheduledFor ?? null,
+      }
+    }
     case "thread": {
       const detail = row.detail as Partial<StreamContextThreadDetail>
       return {
@@ -131,6 +145,10 @@ export function contextItemFromCached(row: CachedStreamContextItem): ContextItem
 
 function asKnowledgeType(value: string | null | undefined): KnowledgeType {
   return (KNOWLEDGE_TYPES as readonly string[]).includes(value ?? "") ? (value as KnowledgeType) : "context"
+}
+
+function asFollowUpStatus(value: string | null | undefined): FollowUpStatus {
+  return (FOLLOW_UP_STATUSES as readonly string[]).includes(value ?? "") ? (value as FollowUpStatus) : "pending"
 }
 
 function asDelegationStatus(value: string | null | undefined): DelegationStatus {

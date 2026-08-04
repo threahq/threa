@@ -33,6 +33,7 @@ import { workspaceKeys } from "@/hooks/use-workspaces"
 import { streamKeys } from "@/hooks/use-streams"
 import { delegationKeys } from "@/hooks/use-stream-delegations"
 import { commandKeys } from "@/hooks/use-stream-commands"
+import { agentOutcomeKeys } from "@/hooks/use-agent-outcomes"
 import type { QueryClient } from "@tanstack/react-query"
 import { commitCounterMutation } from "./catch-up-batch"
 import { effectiveFreshness } from "./bootstrap-diff"
@@ -1769,6 +1770,15 @@ export function registerStreamSocketHandlers(
     if (payload.streamId !== streamId) return
     await handleAppendEvent(payload)
     await queryClient.invalidateQueries({ queryKey: delegationKeys.stream(workspaceId, streamId) })
+    await queryClient.invalidateQueries({ queryKey: agentOutcomeKeys.all })
+  }
+
+  // Follow-ups have no `fired`/`failed` event, so these two are the only live
+  // signals the outcomes read gets — schedule and cancel.
+  const handleFollowUpEvent = async (payload: Parameters<typeof handleAppendEvent>[0]) => {
+    if (payload.streamId !== streamId) return
+    await handleAppendEvent(payload)
+    await queryClient.invalidateQueries({ queryKey: agentOutcomeKeys.all })
   }
 
   const handleLinkPreviewReady = async (payload: LinkPreviewReadyPayload) => {
@@ -1898,8 +1908,8 @@ export function registerStreamSocketHandlers(
   socket.on("agent_session:interrupted", handleAppendEvent)
   socket.on("agent_session:deleted", handleAppendEvent)
   socket.on("stream:memos_captured", handleAppendEvent)
-  socket.on("stream:agent_follow_up_scheduled", handleAppendEvent)
-  socket.on("stream:agent_follow_up_cancelled", handleAppendEvent)
+  socket.on("stream:agent_follow_up_scheduled", handleFollowUpEvent)
+  socket.on("stream:agent_follow_up_cancelled", handleFollowUpEvent)
   socket.on("stream:delegation_created", handleDelegationEvent)
   socket.on("stream:delegation_status_changed", handleDelegationEvent)
   // Bot-access request/resolution rows append to the timeline like any other
@@ -1941,8 +1951,8 @@ export function registerStreamSocketHandlers(
     socket.off("agent_session:interrupted", handleAppendEvent)
     socket.off("agent_session:deleted", handleAppendEvent)
     socket.off("stream:memos_captured", handleAppendEvent)
-    socket.off("stream:agent_follow_up_scheduled", handleAppendEvent)
-    socket.off("stream:agent_follow_up_cancelled", handleAppendEvent)
+    socket.off("stream:agent_follow_up_scheduled", handleFollowUpEvent)
+    socket.off("stream:agent_follow_up_cancelled", handleFollowUpEvent)
     socket.off("stream:delegation_created", handleDelegationEvent)
     socket.off("stream:delegation_status_changed", handleDelegationEvent)
     socket.off("stream:bot_access_requested", handleAppendEvent)

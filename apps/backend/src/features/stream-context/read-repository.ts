@@ -1,4 +1,5 @@
 import type {
+  FollowUpStatus,
   LinkPreviewContentType,
   LinkPreviewStatus,
   RichLinkPreviewType,
@@ -10,6 +11,7 @@ import type {
 } from "@threa/types"
 import { CONTEXT_CATEGORIES, streamContextItemKey } from "@threa/types"
 import { composeSql, sql, type Querier } from "../../db"
+import { KEYSET_EPOCH, type KeysetCursor } from "../../lib/keyset-cursor"
 
 export interface StreamContextFeedFilters {
   workspaceId: string
@@ -25,26 +27,21 @@ export interface StreamContextFeedFilters {
   after?: Date
 }
 
-export interface StreamContextCursor {
-  occurredAt: Date
-  id: string
-}
-
 export interface ListFeedParams extends StreamContextFeedFilters {
-  cursor?: StreamContextCursor
+  cursor?: KeysetCursor
   limit: number
 }
 
 export interface ListOccurrencesParams extends StreamContextFeedFilters {
   category: ContextCategory
   groupKey: string
-  cursor?: StreamContextCursor
+  cursor?: KeysetCursor
   limit: number
 }
 
 export interface StreamContextFeedRow extends StreamContextItem {
-  /** Keyset position — the cursor is built from this, never from `occurredAt`'s string form. */
-  cursorOccurredAt: Date
+  /** Keyset position — full-precision `occurred_at` text, never `occurredAt`'s ms-truncated form. */
+  cursorOccurredAtKey: string
   id: string
 }
 
@@ -58,6 +55,7 @@ interface DbRow {
   source_message_id: string | null
   author_id: string | null
   occurred_at: Date
+  occurred_at_key: string
   sequence: string | null
   snippet: string
   detail: Record<string, unknown>
@@ -136,6 +134,12 @@ function detailFor(row: DbRow): StreamContextItemDetail {
         statusNote: row.task_status_note,
         resultMessageId: row.task_result_message_id,
       }
+    case "follow_up":
+      return {
+        note: stringOrNull(row.detail.note) ?? row.snippet,
+        status: (stringOrNull(row.detail.status) ?? "pending") as FollowUpStatus,
+        scheduledFor: stringOrNull(row.detail.scheduledFor),
+      }
     case "thread":
       return {
         name: row.thread_name,
@@ -177,7 +181,7 @@ function mapRow(row: DbRow): StreamContextFeedRow {
     snippet: row.snippet,
     occurrenceCount: row.occurrence_count,
     detail: detailFor(row),
-    cursorOccurredAt: row.occurred_at,
+    cursorOccurredAtKey: row.occurred_at_key,
     id: row.id,
   }
 }
@@ -208,6 +212,7 @@ function scopedSql(filters: StreamContextFeedFilters, extra?: { groupKey?: strin
       sci.source_message_id,
       sci.author_id,
       sci.occurred_at,
+      to_char(sci.occurred_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS occurred_at_key,
       sci.sequence,
       sci.snippet,
       sci.detail,
@@ -311,7 +316,7 @@ export const StreamContextReadRepository = {
       WHERE rn = 1
         AND (
           ${cursor === undefined}
-          OR (occurred_at, id) < (${cursor?.occurredAt ?? EPOCH}::timestamptz, ${cursor?.id ?? ""}::text)
+          OR (occurred_at, id) < (${cursor?.at ?? KEYSET_EPOCH}::timestamptz, ${cursor?.id ?? ""}::text)
         )
       ORDER BY occurred_at DESC, id DESC
       LIMIT ${params.limit}
@@ -351,7 +356,7 @@ export const StreamContextReadRepository = {
       FROM scoped
       WHERE (
         ${cursor === undefined}
-        OR (occurred_at, id) < (${cursor?.occurredAt ?? EPOCH}::timestamptz, ${cursor?.id ?? ""}::text)
+        OR (occurred_at, id) < (${cursor?.at ?? KEYSET_EPOCH}::timestamptz, ${cursor?.id ?? ""}::text)
       )
       ORDER BY occurred_at DESC, id DESC
       LIMIT ${params.limit}
