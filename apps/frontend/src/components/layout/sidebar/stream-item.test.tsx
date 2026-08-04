@@ -210,6 +210,37 @@ describe("StreamItem", () => {
     expect(search.get("streams")).toBe("stream_general")
   })
 
+  it("opens the outcomes view scoped to the stream", async () => {
+    const stream = createStream()
+
+    renderWithRouter(
+      <StreamItem
+        workspaceId="workspace_1"
+        stream={stream}
+        isActive={false}
+        unreadCount={0}
+        mentionCount={0}
+        allStreams={[stream]}
+      />
+    )
+
+    fireEvent.touchStart(screen.getByRole("link", { name: /general/i }), {
+      touches: [{ clientX: 16, clientY: 16 }],
+    })
+
+    await act(async () => {
+      vi.advanceTimersByTime(500)
+    })
+
+    fireEvent.click(screen.getByRole("button", { name: "Agent agenda…" }))
+
+    const search = new URLSearchParams(screen.getByTestId("location-search").textContent ?? "")
+    expect({ open: search.has("agenda"), scope: search.get("aStreams") }).toEqual({
+      open: true,
+      scope: "stream_general",
+    })
+  })
+
   it("keeps compact hover previews hidden on mobile", () => {
     const stream = createStream()
 

@@ -1,4 +1,14 @@
-import { Bell, Bookmark, Brain, CalendarClock, FileEdit, Paperclip, Tag, type LucideIcon } from "lucide-react"
+import {
+  Bell,
+  Bookmark,
+  Brain,
+  CalendarClock,
+  FileEdit,
+  ListChecks,
+  Paperclip,
+  Tag,
+  type LucideIcon,
+} from "lucide-react"
 import type { ReactNode } from "react"
 import { Link } from "react-router-dom"
 import type { SidebarQuickLink, SidebarQuickLinkKey } from "@threa/types"
@@ -18,6 +28,7 @@ export const QUICK_LINK_META: Record<SidebarQuickLinkKey, { label: string; icon:
   saved: { label: "Saved", icon: Bookmark },
   files: { label: "Files", icon: Paperclip },
   scheduled: { label: "Scheduled", icon: CalendarClock },
+  agenda: { label: "Agent agenda", icon: ListChecks },
   memory: { label: "Memory", icon: Brain },
   labels: { label: "Labels", icon: Tag },
   activity: { label: "Activity", icon: Bell },
@@ -36,6 +47,7 @@ interface SidebarQuickLinksProps {
   isActivityPage: boolean
   isMemoryPage: boolean
   isFilesPage: boolean
+  isAgendaPage: boolean
   isLabelsPage: boolean
   unreadActivityCount: number
 }
@@ -74,6 +86,7 @@ export function SidebarQuickLinks({
   isActivityPage,
   isMemoryPage,
   isFilesPage,
+  isAgendaPage,
   isLabelsPage,
   unreadActivityCount,
 }: SidebarQuickLinksProps) {
@@ -97,6 +110,7 @@ export function SidebarQuickLinks({
       signalSlot: countSlot(savedCount),
     },
     files: { to: `/w/${workspaceId}/files`, isActive: isFilesPage, unreadCount: 0, signalSlot: null },
+    agenda: { to: `/w/${workspaceId}/agenda`, isActive: isAgendaPage, unreadCount: 0, signalSlot: null },
     scheduled: {
       to: `/w/${workspaceId}/scheduled`,
       isActive: isScheduledPage,

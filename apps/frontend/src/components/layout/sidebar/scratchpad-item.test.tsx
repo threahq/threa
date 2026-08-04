@@ -255,6 +255,28 @@ describe("ScratchpadItem", () => {
     })
   })
 
+  it("opens the outcomes view scoped to the scratchpad", async () => {
+    renderWithRouter(
+      <ScratchpadItem
+        workspaceId="workspace_1"
+        stream={createScratchpad()}
+        isActive={false}
+        unreadCount={0}
+        mentionCount={0}
+      />
+    )
+
+    fireEvent.click(screen.getByText("Agent agenda…"))
+
+    await waitFor(() => {
+      const search = new URLSearchParams(screen.getByTestId("location-search").textContent ?? "")
+      expect({ open: search.has("agenda"), scope: search.get("aStreams") }).toEqual({
+        open: true,
+        scope: "stream_scratchpad_1",
+      })
+    })
+  })
+
   it("shows the AI companion badge on companion-on scratchpads", () => {
     renderWithRouter(
       <ScratchpadItem

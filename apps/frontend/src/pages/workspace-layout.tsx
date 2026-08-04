@@ -74,6 +74,7 @@ import { AccountSwitcherDialog, LogoutScopeDialog } from "@/components/account-s
 import { StreamSettingsDialog } from "@/components/stream-settings/stream-settings-dialog"
 import { CreateChannelDialog } from "@/components/create-channel"
 import { AttachmentExplorer, useExplorerUrlState } from "@/components/attachment-explorer"
+import { AgentOutcomesExplorer, useOutcomesUrlState } from "@/components/agent-outcomes"
 import { SearchPanelProvider, useSearchPanel } from "@/components/search"
 import { E2eUnlockProvider } from "@/components/encryption/e2e-unlock-provider"
 import { CallDock, CallLaunchProvider, IncomingCallOverlay } from "@/components/call"
@@ -105,6 +106,7 @@ interface WorkspaceKeyboardHandlerProps {
 function WorkspaceKeyboardHandler({ onOpenSwitcher, currentStreamId, children }: WorkspaceKeyboardHandlerProps) {
   const { openSettings } = useSettings()
   const { open: openExplorer } = useExplorerUrlState()
+  const { open: openOutcomes } = useOutcomesUrlState()
 
   useKeyboardShortcuts({
     openQuickSwitcher: () => onOpenSwitcher("stream"),
@@ -112,6 +114,10 @@ function WorkspaceKeyboardHandler({ onOpenSwitcher, currentStreamId, children }:
     openSettings: () => openSettings(),
     openAttachmentExplorer: () =>
       openExplorer({
+        streamIds: currentStreamId ? [currentStreamId] : [],
+      }),
+    openAgentAgenda: () =>
+      openOutcomes({
         streamIds: currentStreamId ? [currentStreamId] : [],
       }),
   })
@@ -539,6 +545,7 @@ export function WorkspaceLayout() {
                                           <StreamSettingsDialog workspaceId={workspaceId} />
                                           <CreateChannelDialog workspaceId={workspaceId} />
                                           <AttachmentExplorer workspaceId={workspaceId} />
+                                          <AgentOutcomesExplorer workspaceId={workspaceId} />
                                           <TraceDialogContainer />
                                           <Toaster />
                                         </TraceProvider>

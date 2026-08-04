@@ -31,6 +31,7 @@ import { useE2eUnlockOptional } from "@/components/encryption/e2e-unlock-provide
 import { getE2eSessionState } from "@/stores/e2e-session-store"
 import { useCreateChannel } from "@/components/create-channel"
 import { useExplorerUrlState } from "@/components/attachment-explorer"
+import { useOutcomesUrlState } from "@/components/agent-outcomes"
 import { useStreamSettings } from "@/components/stream-settings/use-stream-settings"
 import { WS_SETTINGS_PARAM, type WorkspaceSettingsTab } from "@/components/workspace-settings/tab-config"
 import { LabelPicker } from "@/components/labels/label-picker"
@@ -90,6 +91,7 @@ export function QuickSwitcher({ workspaceId, open, onOpenChange, initialMode, cu
   const { openSettings } = useSettings()
   const { openCreateChannel } = useCreateChannel()
   const { open: openExplorer } = useExplorerUrlState()
+  const { open: openOutcomes } = useOutcomesUrlState()
   const { openStreamSettings } = useStreamSettings()
   const archiveStream = useArchiveStream(workspaceId)
   const currentStreamName = useStreamName(workspaceId, currentStreamId ?? "")
@@ -280,6 +282,7 @@ export function QuickSwitcher({ workspaceId, open, onOpenChange, initialMode, cu
       openSettings,
       openWorkspaceSettings,
       openExplorer,
+      openOutcomes,
       currentStreamId,
       currentStreamName,
       openStreamSettings: handleOpenStreamSettings,
@@ -300,6 +303,7 @@ export function QuickSwitcher({ workspaceId, open, onOpenChange, initialMode, cu
       openSettings,
       openWorkspaceSettings,
       openExplorer,
+      openOutcomes,
       currentStreamId,
       currentStreamName,
       handleOpenStreamSettings,

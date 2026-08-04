@@ -1,4 +1,4 @@
-import { Archive, FileCode2, Paperclip, Settings, Tag, Trash2 } from "lucide-react"
+import { Archive, FileCode2, ListChecks, Paperclip, Settings, Tag, Trash2 } from "lucide-react"
 import { queueSnippetRequest } from "@/stores/snippet-request-store"
 import type { Command } from "./commands"
 
@@ -49,6 +49,17 @@ export const streamCommands: Command[] = [
       if (!currentStreamId) return
       closeDialog()
       openExplorer({ streamIds: [currentStreamId] })
+    },
+  },
+  {
+    id: "stream-agenda",
+    label: "Agent agenda in this stream",
+    icon: ListChecks,
+    keywords: ["follow-up", "follow ups", "delegation", "delegated", "agent", "current stream"],
+    action: ({ currentStreamId, openOutcomes, closeDialog }) => {
+      if (!currentStreamId) return
+      closeDialog()
+      openOutcomes({ streamIds: [currentStreamId] })
     },
   },
   {

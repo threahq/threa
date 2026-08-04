@@ -7,6 +7,7 @@ import {
   FileEdit,
   FolderPlus,
   Link2,
+  ListChecks,
   Lock,
   MessageSquareText,
   Paperclip,
@@ -18,6 +19,7 @@ import {
 import { Link, useNavigate } from "react-router-dom"
 import { LabelPicker } from "@/components/labels/label-picker"
 import { useExplorerUrlState } from "@/components/attachment-explorer"
+import { useOutcomesUrlState } from "@/components/agent-outcomes"
 import { SectionPicker } from "./section-picker"
 import { MentionIndicator } from "@/components/mention-indicator"
 import { DraftIndicator } from "@/components/draft-indicator"
@@ -93,6 +95,7 @@ export function ScratchpadItem({
   const { collapseOnMobile } = useSidebar()
   const { openStreamSettings } = useStreamSettings()
   const { open: openExplorer } = useExplorerUrlState()
+  const { open: openOutcomes } = useOutcomesUrlState()
   const itemRef = useRef<HTMLAnchorElement>(null)
   const [labelPickerOpen, setLabelPickerOpen] = useState(false)
   const [sectionPickerOpen, setSectionPickerOpen] = useState(false)
@@ -203,6 +206,12 @@ export function ScratchpadItem({
               onSelect: () => openExplorer({ streamIds: [streamWithPreview.id] }),
             } satisfies SidebarActionItem,
             {
+              id: "view-outcomes",
+              label: "Agent agenda…",
+              icon: ListChecks,
+              onSelect: () => openOutcomes({ streamIds: [streamWithPreview.id] }),
+            } satisfies SidebarActionItem,
+            {
               id: "add-to-section",
               label: "Add to section…",
               icon: FolderPlus,
@@ -219,7 +228,16 @@ export function ScratchpadItem({
         separatorBefore: !isDraft || boardActions.length > 0,
       },
     ],
-    [handleArchive, isDraft, openStreamSettings, openExplorer, streamWithPreview.id, workspaceId, boardActions]
+    [
+      handleArchive,
+      isDraft,
+      openStreamSettings,
+      openExplorer,
+      openOutcomes,
+      streamWithPreview.id,
+      workspaceId,
+      boardActions,
+    ]
   )
 
   const drawerPreview: SidebarActionPreview | null =

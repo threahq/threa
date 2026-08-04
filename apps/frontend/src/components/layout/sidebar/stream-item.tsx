@@ -7,6 +7,7 @@ import {
   FolderPlus,
   Hash,
   Link2,
+  ListChecks,
   Loader2,
   Lock,
   MessageSquareText,
@@ -18,6 +19,7 @@ import {
 import { Link } from "react-router-dom"
 import { LabelPicker } from "@/components/labels/label-picker"
 import { useExplorerUrlState } from "@/components/attachment-explorer"
+import { useOutcomesUrlState } from "@/components/agent-outcomes"
 import { SectionPicker } from "./section-picker"
 import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar"
 import { MentionIndicator } from "@/components/mention-indicator"
@@ -394,6 +396,7 @@ export function StreamItem({
   const { toEmoji } = useWorkspaceEmoji(workspaceId)
   const { openStreamSettings } = useStreamSettings()
   const { open: openExplorer } = useExplorerUrlState()
+  const { open: openOutcomes } = useOutcomesUrlState()
   const { collapseOnMobile } = useSidebar()
   const [labelPickerOpen, setLabelPickerOpen] = useState(false)
   const [sectionPickerOpen, setSectionPickerOpen] = useState(false)
@@ -508,6 +511,12 @@ export function StreamItem({
             onSelect: () => openExplorer({ streamIds: [stream.id] }),
           },
           {
+            id: "view-outcomes",
+            label: "Agent agenda…",
+            icon: ListChecks,
+            onSelect: () => openOutcomes({ streamIds: [stream.id] }),
+          },
+          {
             id: "add-to-section",
             label: "Add to section…",
             icon: FolderPlus,
@@ -516,7 +525,7 @@ export function StreamItem({
         ]
     if (boardActions.length === 0) return base
     return [...boardActions, ...base.map((a, i) => (i === 0 ? { ...a, separatorBefore: true } : a))]
-  }, [isVirtualDraft, openStreamSettings, openExplorer, stream.id, workspaceId, boardActions])
+  }, [isVirtualDraft, openStreamSettings, openExplorer, openOutcomes, stream.id, workspaceId, boardActions])
 
   let drawerPreview: SidebarActionPreview | null = null
   if (preview?.content) {

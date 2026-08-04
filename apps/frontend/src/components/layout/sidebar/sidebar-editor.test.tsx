@@ -69,6 +69,7 @@ describe("SidebarEditorDialog", () => {
       "Reorder Saved",
       "Reorder Files",
       "Reorder Scheduled",
+      "Reorder Agent agenda",
       "Reorder Memory",
       "Reorder Labels",
       "Reorder Activity",

@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from "react"
 import { useParams, useSearchParams, useNavigate } from "react-router-dom"
 import {
+  ListChecks,
   MoreHorizontal,
   Pencil,
   Archive,
@@ -43,6 +44,7 @@ import { usePanel, useSidebar, StreamAgentActivityProvider } from "@/contexts"
 import { useUserProfile } from "@/components/user-profile"
 import { useStreamSettings } from "@/components/stream-settings/use-stream-settings"
 import { useExplorerUrlState } from "@/components/attachment-explorer"
+import { useOutcomesUrlState } from "@/components/agent-outcomes"
 import { TimelineView, AgentActivityHeaderChip } from "@/components/timeline"
 import { LabelPicker } from "@/components/labels/label-picker"
 import { LabelStack } from "@/components/labels/label-stack"
@@ -207,6 +209,7 @@ export function StreamPage() {
   const { openUserProfile } = useUserProfile()
   const { openStreamSettings } = useStreamSettings()
   const { open: openExplorer } = useExplorerUrlState()
+  const { open: openOutcomes } = useOutcomesUrlState()
   const dmPeers = useWorkspaceDmPeers(workspaceId ?? "")
   const workspaceMetadata = useWorkspaceMetadata(workspaceId ?? "")
   // For an unlocked encrypted stream, the tamper-evident decrypted name; null
@@ -363,6 +366,12 @@ export function StreamPage() {
     label: "Browse files…",
     icon: Paperclip,
     onSelect: () => openExplorer({ streamIds: [streamId] }),
+  })
+  streamMenuActions.push({
+    id: "view-outcomes",
+    label: "Agent agenda…",
+    icon: ListChecks,
+    onSelect: () => openOutcomes({ streamIds: [streamId] }),
   })
   if (isScratchpad) {
     // Hide the rename affordance while locked rather than let it fall back to

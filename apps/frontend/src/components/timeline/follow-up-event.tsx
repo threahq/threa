@@ -2,7 +2,9 @@ import { useState, type ReactNode } from "react"
 import { toast } from "sonner"
 import { Clock, Check, Loader2 } from "lucide-react"
 import type { AgentFollowUpScheduledEventPayload, StreamEvent } from "@threa/types"
+import { Link, useSearchParams } from "react-router-dom"
 import { agentFollowUpsApi } from "@/api"
+import { outcomesSearch } from "@/components/agent-outcomes"
 import { useActors } from "@/hooks"
 import { formatFireTime, formatFullDateTime } from "@/lib/dates"
 import { cn } from "@/lib/utils"
@@ -34,6 +36,7 @@ interface FollowUpScheduledEventProps {
  */
 export function FollowUpScheduledEvent({ event, workspaceId, cancelledByEvent = false }: FollowUpScheduledEventProps) {
   const { getActorName } = useActors(workspaceId)
+  const [searchParams] = useSearchParams()
   const payload = event.payload as AgentFollowUpScheduledEventPayload | undefined
   const [optimisticallyCancelled, setOptimisticallyCancelled] = useState(false)
   const [cancelling, setCancelling] = useState(false)
@@ -89,14 +92,21 @@ export function FollowUpScheduledEvent({ event, workspaceId, cancelledByEvent = 
         </span>
 
         <div className="min-w-0 flex-1">
-          <p
+          <Link
+            to={{
+              search: outcomesSearch(searchParams, {
+                streamIds: [event.streamId],
+                state: "all",
+                selectedOutcomeId: payload.followUpId,
+              }),
+            }}
             className={cn(
-              "truncate text-[13px] font-medium",
+              "block truncate text-[13px] font-medium hover:underline",
               cancelled ? "text-muted-foreground line-through" : "text-foreground/90"
             )}
           >
             {payload.note}
-          </p>
+          </Link>
           <p className="mt-0.5 truncate text-[11px] text-muted-foreground" title={formatFullDateTime(scheduledFor)}>
             {actorName} · fires {formatFireTime(scheduledFor)}
           </p>

@@ -206,6 +206,7 @@ describe("moveQuickLink", () => {
       "saved",
       "files",
       "scheduled",
+      "agenda",
       "memory",
       "labels",
     ])

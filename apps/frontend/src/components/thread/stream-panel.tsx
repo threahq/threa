@@ -2,6 +2,7 @@ import { useSearchParams, useParams } from "react-router-dom"
 import { useMemo, useCallback, useEffect, useState, useRef } from "react"
 import { createPortal } from "react-dom"
 import {
+  ListChecks,
   MessageSquare,
   ChevronLeft,
   MoreHorizontal,
@@ -44,6 +45,7 @@ import { onDraftPromoted } from "@/lib/draft-promotions"
 import { dispatchStartBatchSelect } from "@/lib/batch-selection-events"
 import { useStreamSettings } from "@/components/stream-settings/use-stream-settings"
 import { useExplorerUrlState } from "@/components/attachment-explorer"
+import { useOutcomesUrlState } from "@/components/agent-outcomes"
 import { StreamLoadingIndicator } from "@/components/loading"
 import {
   StreamContent,
@@ -84,6 +86,7 @@ export function StreamPanel({ workspaceId, onClose }: StreamPanelProps) {
   const { queueDraftMessage, currentUserId } = useQueueDraftMessage(workspaceId)
   const { openStreamSettings } = useStreamSettings()
   const { open: openExplorer } = useExplorerUrlState()
+  const { open: openOutcomes } = useOutcomesUrlState()
   const { streamId: mainViewStreamId } = useParams<{ streamId: string }>()
 
   const isMainViewStream = (streamId: string) => {
@@ -289,6 +292,14 @@ export function StreamPanel({ workspaceId, onClose }: StreamPanelProps) {
     icon: Paperclip,
     onSelect: () => {
       if (panelId) openExplorer({ streamIds: [panelId] })
+    },
+  })
+  panelMenuActions.push({
+    id: "view-outcomes",
+    label: "Agent agenda…",
+    icon: ListChecks,
+    onSelect: () => {
+      if (panelId) openOutcomes({ streamIds: [panelId] })
     },
   })
   const setDraftPortalTarget = useCallback((el: HTMLElement | null) => {
