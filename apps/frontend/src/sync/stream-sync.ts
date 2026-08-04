@@ -3,6 +3,7 @@ import {
   isEventWriteChunkingEnabled,
   isIndexedMessagePatchEnabled,
   isNoOpRewrite,
+  isSharedStreamRegistrationEnabledSync,
   putEventsBounded,
 } from "@/db/event-writes"
 import {
@@ -1190,7 +1191,7 @@ export function detectSequenceGap(
   return sequenceToNum(incoming.sequence) > sequenceToNum(tail.latestSequence) + 1 ? tail.latestSequence : null
 }
 
-export function registerStreamSocketHandlers(
+function bindStreamSocketHandlers(
   socket: SyncEventSource,
   workspaceId: string,
   streamId: string,
@@ -1996,5 +1997,96 @@ export function registerStreamSocketHandlers(
     socket.off("link_preview:ready", handleLinkPreviewReady)
     socket.off("pointer:invalidated", handlePointerInvalidated)
     socket.off("bot_runtime:presence", handleBotRuntimePresence)
+  }
+}
+
+interface StreamRegistrationEntry {
+  refCount: number
+  cleanup: () => void
+  signature: { workspaceId: string; queryClient: QueryClient; hasSequenceGap: boolean }
+}
+
+// INV-9 exception: the whole point is one handler set shared by every
+// registrant for a key, so the registry cannot live in a component or an
+// engine instance — either would be per-registrant. Keyed by event source in a
+// WeakMap so a dead gate or socket takes its entries with it.
+const streamRegistrations = new WeakMap<SyncEventSource, Map<string, StreamRegistrationEntry>>()
+
+function describeSignatureConflicts(
+  existing: StreamRegistrationEntry["signature"],
+  next: StreamRegistrationEntry["signature"]
+): string[] {
+  const conflicts: string[] = []
+  if (existing.workspaceId !== next.workspaceId) {
+    conflicts.push(`workspaceId: existing ${existing.workspaceId}, new ${next.workspaceId}`)
+  }
+  if (existing.queryClient !== next.queryClient) {
+    conflicts.push("queryClient: a different QueryClient instance")
+  }
+  if (existing.hasSequenceGap !== next.hasSequenceGap) {
+    conflicts.push(
+      `onSequenceGap: existing ${existing.hasSequenceGap ? "set" : "unset"}, new ${next.hasSequenceGap ? "set" : "unset"}`
+    )
+  }
+  return conflicts
+}
+
+/**
+ * Registers the stream handler set, sharing one binding per
+ * `(eventSource, streamId)` when `sharedStreamRegistration` is on. The open
+ * stream is registered twice — once per membership by the SyncEngine, once by
+ * `useStreamSocket` — through the same event gate, so without sharing every
+ * handler runs twice for every event on that stream.
+ */
+export function registerStreamSocketHandlers(
+  socket: SyncEventSource,
+  workspaceId: string,
+  streamId: string,
+  queryClient: QueryClient,
+  options?: StreamSocketHandlerOptions
+): () => void {
+  if (!isSharedStreamRegistrationEnabledSync(workspaceId)) {
+    return bindStreamSocketHandlers(socket, workspaceId, streamId, queryClient, options)
+  }
+
+  const signature = { workspaceId, queryClient, hasSequenceGap: options?.onSequenceGap !== undefined }
+  let byStream = streamRegistrations.get(socket)
+  if (!byStream) {
+    byStream = new Map()
+    streamRegistrations.set(socket, byStream)
+  }
+
+  let entry = byStream.get(streamId)
+  if (entry) {
+    const conflicts = describeSignatureConflicts(entry.signature, signature)
+    if (conflicts.length > 0) {
+      throw new Error(
+        `registerStreamSocketHandlers: conflicting wiring for stream ${streamId} on one event source — ` +
+          `${conflicts.join("; ")}. ` +
+          `A shared registration serves the first registrant's wiring; register against a distinct event source instead.`
+      )
+    }
+    entry.refCount += 1
+  } else {
+    entry = {
+      refCount: 1,
+      cleanup: bindStreamSocketHandlers(socket, workspaceId, streamId, queryClient, options),
+      signature,
+    }
+    byStream.set(streamId, entry)
+  }
+
+  const held = entry
+  // React StrictMode runs an effect's teardown twice; a second decrement would
+  // unbind a stream another holder is still using.
+  let released = false
+  return () => {
+    if (released) return
+    released = true
+    held.refCount -= 1
+    if (held.refCount > 0) return
+    held.cleanup()
+    const live = streamRegistrations.get(socket)
+    if (live?.get(streamId) === held) live.delete(streamId)
   }
 }
