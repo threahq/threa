@@ -57,6 +57,7 @@ export const FEATURE_FLAGS = {
   bootstrapDiff: defineFlag({ values: ["off", "on"], scopes: ["workspace", "user"], default: "on" }),
   boundedTimelineRead: defineFlag({ values: ["off", "on"], scopes: ["workspace", "user"], default: "on" }),
   calls: defineFlag({ values: ["off", "on"], scopes: ["workspace"], default: "on" }),
+  coalescedLiveCommit: defineFlag({ values: ["off", "on"], scopes: ["workspace", "user"], default: "off" }),
   composeTraces: defineFlag({ values: ["off", "capture"], scopes: ["workspace"], default: "off" }),
   eventWriteChunking: defineFlag({ values: ["off", "on"], scopes: ["workspace", "user"], default: "on" }),
   indexedMessagePatch: defineFlag({ values: ["off", "on"], scopes: ["workspace", "user"], default: "on" }),
