@@ -1,4 +1,8 @@
 import { describe, it, expect } from "vitest"
+import { QueryClient } from "@tanstack/react-query"
+import { db } from "@/db"
+import { workspaceKeys } from "@/hooks/use-workspaces"
+import { LiveCommitBatch } from "./catch-up-batch"
 import type { Activity } from "@threa/types"
 import {
   applyStreamActivityOrdinal,
@@ -740,5 +744,49 @@ describe("pruneCounterTouches", () => {
     expect(pruneCounterTouches({ s1: 100, s2: 200, s3: 300 }, 200)).toEqual({ s2: 200, s3: 300 })
     expect(pruneCounterTouches(undefined, 200)).toEqual({})
     expect(pruneCounterTouches({ s1: 100 }, undefined)).toEqual({})
+  })
+})
+
+describe("coalesced live commit", () => {
+  const seeded = makeState({ unreadCounts: { s1: 1 }, latestOrdinals: { s1: 5 } })
+
+  it("out-of-order ordinals converge under coalescing", async () => {
+    const workspaceId = "ws_fold"
+    const queryClient = new QueryClient()
+    queryClient.setQueryData(workspaceKeys.bootstrap(workspaceId), {
+      streams: [],
+      streamMemberships: [],
+      ...seeded,
+      // The bootstrap's ordinal field is `messageCounts` (toCounterState).
+      messageCounts: seeded.latestOrdinals,
+    })
+    await db.unreadState.put({ id: workspaceId, workspaceId, ...seeded, mutedStreamIds: [] } as never)
+
+    const batch = new LiveCommitBatch(queryClient, workspaceId)
+    // Two activities for one stream, delivered in the wrong order in one task.
+    batch.applyCounter((state) => applyStreamActivityOrdinal(state, "s1", 7, { isOwnMessage: false, isViewing: false }))
+    batch.applyCounter((state) => applyStreamActivityOrdinal(state, "s1", 6, { isOwnMessage: false, isViewing: false }))
+    await batch.flush()
+
+    const perEvent = applyStreamActivityOrdinal(
+      applyStreamActivityOrdinal(seeded, "s1", 7, { isOwnMessage: false, isViewing: false }),
+      "s1",
+      6,
+      { isOwnMessage: false, isViewing: false }
+    )
+    const folded = queryClient.getQueryData<{
+      unreadCounts: Record<string, number>
+      messageCounts: Record<string, number>
+    }>(workspaceKeys.bootstrap(workspaceId))
+    const persisted = await db.unreadState.get(workspaceId)
+
+    expect({
+      cache: { unreadCounts: folded?.unreadCounts, latestOrdinals: folded?.messageCounts },
+      idb: { unreadCounts: persisted?.unreadCounts, latestOrdinals: persisted?.latestOrdinals },
+    }).toEqual({
+      cache: { unreadCounts: perEvent.unreadCounts, latestOrdinals: perEvent.latestOrdinals },
+      idb: { unreadCounts: perEvent.unreadCounts, latestOrdinals: perEvent.latestOrdinals },
+    })
+    expect(perEvent.unreadCounts.s1).toBe(3)
   })
 })

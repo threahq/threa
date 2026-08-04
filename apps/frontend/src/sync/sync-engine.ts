@@ -23,7 +23,7 @@ import { applyDraftsBootstrap, type DraftsServiceLike } from "./draft-sync"
 import { waitForInitialReveal } from "./reveal-gate"
 import { SyncLogCursor } from "./sync-log-cursor"
 import { SocketEventGate, type SyncEventSource } from "./socket-event-gate"
-import { CatchUpBatch } from "./catch-up-batch"
+import { CatchUpBatch, LiveCommitBatch } from "./catch-up-batch"
 import { beginApplyWindow, endApplyWindow } from "@/stores/apply-window"
 import { getPerfCapture } from "@/lib/perf/capture"
 import { SyncStatusStore } from "./sync-status"
@@ -185,6 +185,12 @@ export class SyncEngine {
    *  fold into it instead of writing per-entry; flushed once when the window
    *  closes (see performActiveCatchUp). Null → live, write-immediately. */
   private activeCatchUpBatch: CatchUpBatch | null = null
+  /** Coalesces one task's live counter/preview writes into one transaction and
+   *  one cache publication (feature-gated in the handler seams). Flushed before
+   *  a catch-up window opens so a live fold never interleaves into a replay
+   *  fold, and destroyed with the engine so a scheduled flush can't write
+   *  against a torn-down workspace. */
+  private readonly liveCommitBatch: LiveCommitBatch
 
   // Heartbeat (active mode): the highest workspace head observed in catch-up
   // responses. The cursor is per-user filtered and can sit permanently below
@@ -222,6 +228,12 @@ export class SyncEngine {
 
   constructor(private deps: SyncEngineDeps) {
     this.workspaceId = deps.workspaceId
+    this.liveCommitBatch = new LiveCommitBatch(deps.queryClient, deps.workspaceId, () => {
+      // Same recovery the catch-up flush failure takes: a dropped fold can hold
+      // an `activity:created` held-set insert, which no later message re-adds,
+      // and a slim reconnect does NOT re-fetch the workspace counters.
+      if (!this.isDestroyed) void this.runBootstrap(true, { forceFull: true })
+    })
     this.eventGate = deps.syncService
       ? new SocketEventGate(this.workspaceId, {
           onApplied: (syncId) => this.syncLogCursor?.advance(syncId),
@@ -372,6 +384,7 @@ export class SyncEngine {
         getCurrentUser: () => this.currentUser,
         subscribeStream: (streamId: string) => void this.subscribeStream(streamId),
         getCatchUpBatch: () => this.activeCatchUpBatch,
+        getLiveCommitBatch: () => this.liveCommitBatch,
       }
     )
 
@@ -636,6 +649,7 @@ export class SyncEngine {
    */
   destroy(): void {
     this.isDestroyed = true
+    this.liveCommitBatch.destroy()
     this.cleanupAllHandlers()
     this.subscribedStreams.clear()
     if (this.operationQueueRetryTimer) clearTimeout(this.operationQueueRetryTimer)
@@ -1499,6 +1513,18 @@ export class SyncEngine {
     // unread/activity badges and the activity-sorted sidebar paint the final
     // state once at flush rather than flickering through every replayed entry.
     // runCatchUp single-flights, so at most one batch is active at a time.
+    // Drain buffered live commits BEFORE the window opens: a live fold left
+    // buffered here would flush inside the replay and land on top of it.
+    try {
+      await this.liveCommitBatch.flush()
+    } catch (error) {
+      // Same rule as the catch-up batch flush below: this runs OUTSIDE the try
+      // whose finally owns gate.resume, so an escaping rejection would leave the
+      // gate paused forever — live delivery stops until a reload. The batch has
+      // already logged and reseeded; carry on into the replay.
+      console.error("Live commit batch pre-catch-up flush failed", { workspaceId: this.workspaceId, error })
+    }
+
     const catchUpBatch = new CatchUpBatch(this.deps.queryClient, this.workspaceId)
     this.activeCatchUpBatch = catchUpBatch
 

@@ -110,7 +110,7 @@ import {
   Visibilities,
   normalizeSidebarConfig,
 } from "@threa/types"
-import { isEventWriteChunkingEnabled, primeEventWriteFlags } from "@/db/event-writes"
+import { isCoalescedLiveCommitEnabled, isEventWriteChunkingEnabled, primeEventWriteFlags } from "@/db/event-writes"
 import { applyStreamBootstrapInCurrentTransaction } from "./stream-sync"
 import { deleteStreamSlots, deleteSlotsForStreams } from "@/stores/slot-store"
 import { applyDraftDeleted, applyDraftUpserted } from "./draft-sync"
@@ -126,7 +126,13 @@ import {
   upsertActivity,
 } from "./unread-counters"
 import { isAutoReadAttentiveNow } from "@/lib/auto-read-attention"
-import { commitCounterMutation, commitStreamPreview, type CatchUpBatch, type CounterMutator } from "./catch-up-batch"
+import {
+  commitCounterMutation,
+  commitStreamPreview,
+  type CatchUpBatch,
+  type CounterMutator,
+  type LiveCommitBatch,
+} from "./catch-up-batch"
 import {
   commitReadAll,
   commitReadStateSnapshot,
@@ -685,9 +691,21 @@ export function registerWorkspaceSocketHandlers(
      *  and sidebar order never flicker through intermediate replay values.
      *  Absent → live, write-immediately. */
     getCatchUpBatch?: () => CatchUpBatch | null
+    /** The engine's live-commit batch, used when `coalescedLiveCommit` is on:
+     *  one task's counter and preview writes fold into one transaction and one
+     *  cache publication instead of two of each per event. */
+    getLiveCommitBatch?: () => LiveCommitBatch | null
   }
 ): () => void {
   const abortController = new AbortController()
+
+  // Resolved once per registration rather than per event: the seams are
+  // synchronous, and an unresolved read simply takes today's immediate path,
+  // which costs the coalescing for the first events and never correctness.
+  let coalescedLiveCommit = false
+  void isCoalescedLiveCommitEnabled(db, workspaceId).then((enabled) => {
+    coalescedLiveCommit = enabled
+  })
 
   // The seams every flickering write routes through: fold into the catch-up
   // batch when one is active, else commit immediately (live). Read-pointer
@@ -699,6 +717,11 @@ export function registerWorkspaceSocketHandlers(
       batch.applyCounter(mutate)
       return
     }
+    const live = coalescedLiveCommit ? (refs.getLiveCommitBatch?.() ?? null) : null
+    if (live) {
+      live.applyCounter(mutate)
+      return
+    }
     commitCounterMutation(queryClient, workspaceId, mutate)
   }
 
@@ -706,6 +729,11 @@ export function registerWorkspaceSocketHandlers(
     const batch = refs.getCatchUpBatch?.() ?? null
     if (batch) {
       batch.setStreamPreview(streamId, preview)
+      return
+    }
+    const live = coalescedLiveCommit ? (refs.getLiveCommitBatch?.() ?? null) : null
+    if (live) {
+      live.setStreamPreview(streamId, preview)
       return
     }
     commitStreamPreview(queryClient, workspaceId, streamId, preview)
