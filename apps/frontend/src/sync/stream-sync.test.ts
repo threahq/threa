@@ -4368,7 +4368,11 @@ describe("registerStreamSocketHandlers — one handler set per (event source, st
 
   function enableSharing(enabled: boolean) {
     primeEventWriteFlags("ws_1", {
-      workspace: { sharedStreamRegistration: enabled ? "on" : "off" },
+      // `singlePreviewWriter` is pinned off, not inherited: these cases count
+      // `db.streams.update` calls to tell one apply from two, and that writer
+      // only exists on this arm. Inheriting a default scheduled to flip would
+      // silently retarget the assertion at nothing.
+      workspace: { sharedStreamRegistration: enabled ? "on" : "off", singlePreviewWriter: "off" },
       user: {},
     })
   }
