@@ -109,6 +109,22 @@ measurement of the same population. `timeline.tailLoad` is emitted by the bounde
 tail read alone: it exists in the on arm only, so its presence is what proves the
 flag armed, and its duration is the cost of the read a live arrival triggers.
 
+### Reading `stream.idbTransaction` / `stream.activityApply` (scenarios 4, 15)
+
+`stream.idbTransaction` counts the per-message write transactions the sync path
+opens: the event-write transaction (`stream-sync.ts`), the local context-row
+transaction (`putLocalContextRows`), and the counter and preview commits
+(`commitCounterMutation`, `commitStreamPreview`, or the single
+`LiveCommitBatch.commit` that replaces both when `coalescedLiveCommit` is on).
+It does not count catch-up flushes — those are per window, not per message — so
+read it only in a live-delivery scenario.
+
+`stream.activityApply` moves with the flag. With `coalescedLiveCommit` off it
+times `handleStreamActivity`'s body, which does the commits inline; with it on
+the commits are buffered and the mark is emitted by `LiveCommitBatch.commit`
+around the fold's persist and publish. Both arms therefore measure the same
+work — the transaction plus the bootstrap publication — and are comparable.
+
 ### Scenario 13 — reading the unchanged warm refresh
 
 `workspace-wide` is the only profile that crosses Dexie's 50-row threshold in

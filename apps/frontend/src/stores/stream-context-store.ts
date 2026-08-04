@@ -1,6 +1,7 @@
 import Dexie from "dexie"
 import { useLiveQuery } from "dexie-react-hooks"
 import { db, type CachedStreamContextItem } from "@/db"
+import { getPerfCapture } from "@/lib/perf/capture"
 import { MESSAGE_BODY_CONTEXT_CATEGORIES, type StreamContextItem, type StreamContextScope } from "@threa/types"
 
 export type { CachedStreamContextItem }
@@ -124,6 +125,7 @@ export async function seedStreamContextItems(
  */
 export async function putLocalContextRows(rows: CachedStreamContextItem[]): Promise<void> {
   if (rows.length === 0) return
+  getPerfCapture().count("stream.idbTransaction")
   await db.transaction("rw", db.streamContextItems, async () => {
     // Never downgrade a reconciled row. Event re-delivery is routine (catch-up
     // replays every sync-log entry through these handlers, and the gate's resume
