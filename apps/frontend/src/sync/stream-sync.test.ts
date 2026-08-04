@@ -4628,3 +4628,192 @@ describe("registerStreamSocketHandlers — one handler set per (event source, st
     releaseC()
   })
 })
+
+describe("registerStreamSocketHandlers — stream:activity is the single preview writer", () => {
+  function createTestSocket() {
+    const handlers = new Map<string, Set<(payload: unknown) => void>>()
+    const socket = {
+      on(event: string, handler: (payload: unknown) => void) {
+        const set = handlers.get(event) ?? new Set()
+        set.add(handler)
+        handlers.set(event, set)
+        return this
+      },
+      off(event: string, handler: (payload: unknown) => void) {
+        handlers.get(event)?.delete(handler)
+        return this
+      },
+    } as unknown as Socket
+    return {
+      socket,
+      async emit(event: string, payload: unknown) {
+        await Promise.all(Array.from(handlers.get(event) ?? []).map((handler) => handler(payload)))
+      },
+    }
+  }
+
+  function enableSinglePreviewWriter(enabled: boolean) {
+    primeEventWriteFlags("ws_1", {
+      workspace: { singlePreviewWriter: enabled ? "on" : "off" },
+      user: {},
+    })
+  }
+
+  const contentJson = {
+    type: "doc",
+    content: [{ type: "paragraph", content: [{ type: "text", text: "live" }] }],
+  }
+
+  function messageCreated(streamId: string, id: string, sequence: string, payload: Record<string, unknown> = {}) {
+    return {
+      workspaceId: "ws_1",
+      streamId,
+      event: {
+        id,
+        streamId,
+        sequence,
+        eventType: "message_created",
+        payload: { messageId: id, contentMarkdown: "live", contentJson, ...payload },
+        actorId: "user_7",
+        actorType: "user",
+        createdAt: "2026-08-04T10:00:00.000Z",
+      },
+    }
+  }
+
+  const bootstrapPreview = {
+    authorId: "user_1",
+    authorType: "user" as const,
+    content: "from the bootstrap",
+    createdAt: "2026-08-04T09:00:00.000Z",
+  }
+
+  async function seedStream(streamId: string) {
+    await db.streams.put({
+      id: streamId,
+      workspaceId: "ws_1",
+      rootStreamId: streamId,
+      lastMessagePreview: bootstrapPreview,
+      _cachedAt: Date.now(),
+    } as never)
+  }
+
+  beforeEach(async () => {
+    await db.events.clear()
+    await db.streams.clear()
+    await db.streamContextItems.clear()
+    await db.pendingMessages.clear()
+    await db.slots.clear()
+    resetEventWriteFlags()
+  })
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+    resetEventWriteFlags()
+  })
+
+  it("a live message writes no preview and no bootstrap cache entry", async () => {
+    enableSinglePreviewWriter(true)
+    const streamId = "stream_single_writer"
+    await seedStream(streamId)
+
+    const queryClient = new QueryClient()
+    queryClient.setQueryData(workspaceKeys.bootstrap("ws_1"), {
+      streams: [{ id: streamId, lastMessagePreview: bootstrapPreview }],
+    } as unknown as WorkspaceBootstrap)
+    const bootstrapBefore = queryClient.getQueryData(workspaceKeys.bootstrap("ws_1"))
+
+    const { socket, emit } = createTestSocket()
+    const cleanup = registerStreamSocketHandlers(socket, "ws_1", streamId, queryClient)
+
+    await emit("message:created", messageCreated(streamId, "evt_single", "10"))
+
+    expect({
+      persisted: (await db.events.get("evt_single"))?.sequence,
+      preview: (await db.streams.get(streamId))?.lastMessagePreview,
+      bootstrapUnchanged: queryClient.getQueryData(workspaceKeys.bootstrap("ws_1")) === bootstrapBefore,
+    }).toEqual({ persisted: "10", preview: bootstrapPreview, bootstrapUnchanged: true })
+
+    cleanup()
+  })
+
+  it("the flag off writes the preview exactly as today", async () => {
+    enableSinglePreviewWriter(false)
+    const streamId = "stream_single_writer_off"
+    await seedStream(streamId)
+
+    const queryClient = new QueryClient()
+    queryClient.setQueryData(workspaceKeys.bootstrap("ws_1"), {
+      streams: [{ id: streamId, lastMessagePreview: bootstrapPreview }],
+    } as unknown as WorkspaceBootstrap)
+
+    const { socket, emit } = createTestSocket()
+    const cleanup = registerStreamSocketHandlers(socket, "ws_1", streamId, queryClient)
+
+    await emit("message:created", messageCreated(streamId, "evt_single_off", "10"))
+
+    const written = {
+      authorId: "user_7",
+      authorType: "user",
+      content: contentJson,
+      createdAt: "2026-08-04T10:00:00.000Z",
+    }
+    expect({
+      preview: (await db.streams.get(streamId))?.lastMessagePreview,
+      cached: queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap("ws_1"))?.streams[0]
+        .lastMessagePreview,
+    }).toEqual({ preview: written, cached: written })
+
+    cleanup()
+  })
+
+  it("a message:created applied without a SyncEngine still writes the event and does not throw", async () => {
+    enableSinglePreviewWriter(true)
+    const streamId = "stream_no_engine"
+    const queryClient = new QueryClient()
+
+    // No workspace handlers registered — the raw-socket surface a draft panel
+    // mounted outside the SyncEngine provider gets (D2). Nothing writes the
+    // preview there, and nothing reads one either.
+    const { socket, emit } = createTestSocket()
+    const cleanup = registerStreamSocketHandlers(socket, "ws_1", streamId, queryClient)
+
+    await emit("message:created", messageCreated(streamId, "evt_no_engine", "10"))
+
+    expect({
+      persisted: (await db.events.get("evt_no_engine"))?.sequence,
+      row: await db.streams.get(streamId),
+    }).toEqual({ persisted: "10", row: undefined })
+
+    cleanup()
+  })
+
+  it("the share-fallback invalidation still fires for a map-less share-bearing event", async () => {
+    enableSinglePreviewWriter(true)
+    const streamId = "stream_share_fallback"
+    await seedStream(streamId)
+
+    const queryClient = new QueryClient()
+    const invalidateQueries = vi.spyOn(queryClient, "invalidateQueries").mockResolvedValue(undefined)
+
+    const { socket, emit } = createTestSocket()
+    const cleanup = registerStreamSocketHandlers(socket, "ws_1", streamId, queryClient)
+
+    await emit(
+      "message:created",
+      messageCreated(streamId, "evt_share_fallback", "10", {
+        contentJson: {
+          type: "doc",
+          content: [{ type: "sharedMessage", attrs: { messageId: "msg_src", streamId: "stream_src" } }],
+        },
+      })
+    )
+
+    expect(invalidateQueries.mock.calls.map((call) => call[0]?.queryKey)).toEqual([
+      streamKeys.bootstrap("ws_1", streamId),
+      streamKeys.events("ws_1", streamId),
+    ])
+
+    cleanup()
+  })
+})

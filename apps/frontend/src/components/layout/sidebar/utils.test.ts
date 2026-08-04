@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest"
+import * as prosemirror from "@threa/prosemirror"
 import { AuthorTypes, StreamTypes, Visibilities, type AuthorType, type StreamWithPreview } from "@threa/types"
 import {
   buildVirtualDmDrafts,
@@ -294,5 +295,31 @@ describe("truncateContent", () => {
     const out = truncateContent(`${"a".repeat(39)}😀 rest`, 40)
     expect(out).toBe(`${"a".repeat(39)}😀...`)
     expect([...out].every((c) => c.codePointAt(0)! < 0xd800 || c.codePointAt(0)! > 0xdfff)).toBe(true)
+  })
+})
+
+describe("truncateContent — a string preview costs no serialization", () => {
+  const doc = {
+    type: "doc",
+    content: [{ type: "paragraph", content: [{ type: "text", text: "hello there" }] }],
+  }
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it("a string preview renders without serializing a document", () => {
+    const serialize = vi.spyOn(prosemirror, "serializeToMarkdown")
+
+    const fromString = truncateContent("hello there")
+    const stringCalls = serialize.mock.calls.length
+    const fromDoc = truncateContent(doc)
+
+    expect({ fromString, stringCalls, fromDoc, docCalls: serialize.mock.calls.length > stringCalls }).toEqual({
+      fromString: "hello there",
+      stringCalls: 0,
+      fromDoc: "hello there",
+      docCalls: true,
+    })
   })
 })
