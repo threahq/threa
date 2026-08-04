@@ -12,6 +12,7 @@ import type { Socket } from "socket.io-client"
 import Dexie from "dexie"
 import { db } from "@/db"
 import { primeEventWriteFlags, resetEventWriteFlags } from "@/db/event-writes"
+import { NO_CAPTURE, PerfCapture, armPerfCapture } from "@/lib/perf/capture"
 import { workspaceKeys } from "@/hooks/use-workspaces"
 import { CatchUpBatch, LiveCommitBatch } from "./catch-up-batch"
 import { registerWorkspaceSocketHandlers } from "./workspace-sync"
@@ -438,11 +439,145 @@ describe("LiveCommitBatch", () => {
     vi.spyOn(Dexie.prototype, "transaction").mockRejectedValue(new Error("QuotaExceeded") as never)
     vi.spyOn(console, "error").mockImplementation(() => {})
 
-    batch.setStreamPreview("stream_1", { ...preview, content: "message 6" })
+    batch.applyCounter((state) => ({ ...state, unreadCounts: { ...state.unreadCounts, stream_1: 3 } }))
     await settle()
 
     expect(onFlushFailed).toHaveBeenCalledTimes(1)
     batch.destroy()
+  })
+
+  it("a preview-only failed flush does not ask the engine to reseed", async () => {
+    const queryClient = new QueryClient()
+    await seedFixture(queryClient, ["stream_1"])
+    const onFlushFailed = vi.fn()
+    const batch = new LiveCommitBatch(queryClient, WORKSPACE_ID, onFlushFailed)
+    vi.spyOn(Dexie.prototype, "transaction").mockRejectedValue(new Error("QuotaExceeded") as never)
+    vi.spyOn(console, "error").mockImplementation(() => {})
+
+    batch.setStreamPreview("stream_1", { ...preview, content: "message 6" })
+    await settle()
+
+    expect(onFlushFailed).not.toHaveBeenCalled()
+    batch.destroy()
+  })
+
+  it("consecutive failing flushes request exactly one reseed until one succeeds", async () => {
+    const queryClient = new QueryClient()
+    await seedFixture(queryClient, ["stream_1"])
+    const onFlushFailed = vi.fn()
+    const batch = new LiveCommitBatch(queryClient, WORKSPACE_ID, onFlushFailed)
+    const transaction = vi.spyOn(Dexie.prototype, "transaction").mockRejectedValue(new Error("QuotaExceeded") as never)
+    vi.spyOn(console, "error").mockImplementation(() => {})
+
+    for (let ordinal = 6; ordinal <= 8; ordinal += 1) {
+      batch.applyCounter((state) => ({ ...state, unreadCounts: { ...state.unreadCounts, stream_1: ordinal } }))
+      await settle()
+    }
+    const afterThreeFailures = onFlushFailed.mock.calls.length
+
+    transaction.mockRestore()
+    batch.applyCounter((state) => ({ ...state, unreadCounts: { ...state.unreadCounts, stream_1: 9 } }))
+    await settle()
+
+    vi.spyOn(Dexie.prototype, "transaction").mockRejectedValue(new Error("QuotaExceeded") as never)
+    batch.applyCounter((state) => ({ ...state, unreadCounts: { ...state.unreadCounts, stream_1: 10 } }))
+    await settle()
+
+    expect({ afterThreeFailures, total: onFlushFailed.mock.calls.length }).toEqual({
+      afterThreeFailures: 1,
+      total: 2,
+    })
+    batch.destroy()
+  })
+
+  it("flipping the flag off disarms the coalescing on the next event, with no reconnect", async () => {
+    const queryClient = new QueryClient()
+    await seedFixture(queryClient, ["stream_1"])
+    const harness = await register(queryClient, true)
+
+    harness.emit("stream:activity", activity("stream_1", 6))
+    await settle()
+
+    // What a `feature_flags:updated` socket event does to the module map.
+    primeEventWriteFlags(WORKSPACE_ID, { workspace: { coalescedLiveCommit: "off" }, user: {} })
+    const transaction = vi.spyOn(Dexie.prototype, "transaction")
+    const setQueryData = vi.spyOn(queryClient, "setQueryData")
+
+    harness.emit("stream:activity", activity("stream_1", 7))
+    await settle()
+
+    expect({ transactions: transaction.mock.calls.length, publications: setQueryData.mock.calls.length }).toEqual({
+      transactions: 2,
+      publications: 2,
+    })
+
+    harness.cleanup()
+  })
+
+  it("flipping the flag on arms the coalescing on the next event, with no reconnect", async () => {
+    const queryClient = new QueryClient()
+    await seedFixture(queryClient, ["stream_1"])
+    const harness = await register(queryClient, false)
+
+    harness.emit("stream:activity", activity("stream_1", 6))
+    await settle()
+
+    primeEventWriteFlags(WORKSPACE_ID, { workspace: { coalescedLiveCommit: "on" }, user: {} })
+    const transaction = vi.spyOn(Dexie.prototype, "transaction")
+    const setQueryData = vi.spyOn(queryClient, "setQueryData")
+
+    harness.emit("stream:activity", activity("stream_1", 7))
+    await settle()
+
+    expect({ transactions: transaction.mock.calls.length, publications: setQueryData.mock.calls.length }).toEqual({
+      transactions: 1,
+      publications: 1,
+    })
+
+    harness.cleanup()
+  })
+
+  it("the activity path's stream.idbTransaction count falls from two to one", async () => {
+    const counts = async (coalesced: boolean): Promise<number> => {
+      const queryClient = new QueryClient()
+      await seedFixture(queryClient, ["stream_1"])
+      const harness = await register(queryClient, coalesced)
+      const capture = new PerfCapture()
+      armPerfCapture(capture)
+
+      harness.emit("stream:activity", activity("stream_1", 6))
+      await settle()
+
+      armPerfCapture(NO_CAPTURE)
+      harness.cleanup()
+      return capture.snapshot().filter((sample) => sample.name === "stream.idbTransaction").length
+    }
+
+    expect({ off: await counts(false), on: await counts(true) }).toEqual({ off: 2, on: 1 })
+  })
+
+  it("the coalesced arm still records one stream.activityApply per fold, around the persist and publish", async () => {
+    const queryClient = new QueryClient()
+    await seedFixture(queryClient, ["stream_1"])
+    const harness = await register(queryClient, true)
+    const capture = new PerfCapture()
+    armPerfCapture(capture)
+
+    harness.emit("stream:activity", activity("stream_1", 6))
+    const beforeFlush = capture.snapshot().filter((sample) => sample.name === "stream.activityApply").length
+    await settle()
+    const samples = capture.snapshot().filter((sample) => sample.name === "stream.activityApply")
+
+    armPerfCapture(NO_CAPTURE)
+    // The handler-body sample is chunk 1's; the fold's is the one that covers
+    // the transaction and the publication, so it lands only after the flush.
+    expect({ beforeFlush, afterFlush: samples.length, valued: typeof samples.at(-1)?.value }).toEqual({
+      beforeFlush: 1,
+      afterFlush: 2,
+      valued: "number",
+    })
+
+    harness.cleanup()
   })
 
   it("a catch-up window opening flushes the live batch first", async () => {
