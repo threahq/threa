@@ -2094,3 +2094,129 @@ describe("EventService stream-context projection", () => {
     expect(StreamContextRepository.deleteByMessageId).toHaveBeenCalledWith(expect.anything(), "ws_1", "msg_del")
   })
 })
+
+describe("EventService.createMessage outbox pairing (the sidebar's single preview writer)", () => {
+  const createdAt = new Date("2026-08-04T10:00:00.000Z")
+
+  beforeEach(() => {
+    spyOn(db, "withTransaction").mockImplementation(((_db: unknown, callback: (client: any) => Promise<unknown>) =>
+      callback({})) as any)
+    spyOn(messagesTotal, "inc").mockImplementation(() => undefined)
+    spyOn(StreamEventRepository, "countMessagesThrough").mockResolvedValue(7)
+    spyOn(StreamRepository, "findById").mockResolvedValue({
+      id: "stream_1",
+      workspaceId: "ws_1",
+      type: "scratchpad",
+      parentStreamId: null,
+      parentAnchorId: null,
+    } as any)
+    spyOn(StreamEventRepository, "insert").mockImplementation((async (_client: any, params: any) => ({
+      id: "evt_1",
+      streamId: params.streamId,
+      sequence: 42n,
+      eventType: params.eventType,
+      payload: params.payload,
+      actorId: params.actorId,
+      actorType: params.actorType,
+      createdAt,
+    })) as any)
+    spyOn(MessageRepository, "insert").mockImplementation((async (_client: any, params: any) => ({
+      id: params.id,
+      streamId: params.streamId,
+      sequence: params.sequence,
+      authorId: params.authorId,
+      authorType: params.authorType,
+      contentJson: params.contentJson,
+      contentMarkdown: params.contentMarkdown,
+      replyCount: 0,
+      clientMessageId: null,
+      sentVia: null,
+      reactions: {},
+      metadata: {},
+      editedAt: null,
+      deletedAt: null,
+      createdAt,
+    })) as any)
+    spyOn(MessageRepository, "findByClientMessageId").mockResolvedValue(null)
+    spyOn(ReadStateRepository, "advance").mockResolvedValue(undefined as any)
+    spyOn(E2eStreamsRepository, "isE2eStream").mockResolvedValue(false)
+    spyOn(SharedMessageRepository, "deleteByShareMessageId").mockResolvedValue(undefined)
+    spyOn(OutboxRepository, "insert").mockResolvedValue(undefined as any)
+  })
+
+  afterEach(() => {
+    mock.restore()
+  })
+
+  it("createMessage emits stream:activity alongside message:created", async () => {
+    const service = new EventService({} as any)
+    await service.createMessage({
+      workspaceId: "ws_1",
+      streamId: "stream_1",
+      authorId: "usr_1",
+      authorType: "user",
+      contentJson: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "hello" }] }] },
+      contentMarkdown: "hello",
+    })
+
+    const calls = (OutboxRepository.insert as any).mock.calls as unknown[][]
+    const created = calls.find((call) => call[1] === "message:created")
+    const activity = calls.find((call) => call[1] === "stream:activity")
+
+    // The sidebar preview is written from `stream:activity` alone, so this
+    // pairing — and the markdown it carries — is load-bearing.
+    expect({
+      createdEventId: (created?.[2] as any)?.event?.id,
+      createdStreamId: (created?.[2] as any)?.streamId,
+      activity: activity?.[2],
+      activityFollowsCreated: calls.indexOf(activity!) > calls.indexOf(created!),
+    }).toEqual({
+      createdEventId: "evt_1",
+      createdStreamId: "stream_1",
+      activity: {
+        workspaceId: "ws_1",
+        streamId: "stream_1",
+        authorId: "usr_1",
+        sequence: "42",
+        messageOrdinal: 7,
+        lastMessagePreview: {
+          authorId: "usr_1",
+          authorType: "user",
+          content: "hello",
+          createdAt: createdAt.toISOString(),
+        },
+      },
+      activityFollowsCreated: true,
+    })
+  })
+})
+
+/**
+ * The client-side single preview writer rests on two source-level properties the
+ * mocked-transaction test above cannot see: `message:created` is emitted from
+ * exactly ONE site, and `stream:activity` rides with it. A second emit site added
+ * anywhere in `apps/backend/src` keeps that test green while silently freezing the
+ * sidebar for those messages — the preview is written from `stream:activity` alone.
+ *
+ * Same shape as the INV-68 ratchet: one recorded count, which may only go down.
+ */
+describe("message:created has exactly one outbox emit site", () => {
+  const EXPECTED_EMIT_SITES = { "features/messaging/event-service.ts": 1 }
+
+  async function countEmitSites(root: string): Promise<Record<string, number>> {
+    const { Glob } = await import("bun")
+    const counts: Record<string, number> = {}
+    for await (const file of new Glob("**/*.ts").scan({ cwd: root, absolute: true })) {
+      if (file.endsWith(".test.ts")) continue
+      const source = await Bun.file(file).text()
+      const matches = source.match(/OutboxRepository\.insert\(\s*[^,]+,\s*"message:created"/g)
+      if (matches) counts[file.slice(root.length + 1)] = matches.length
+    }
+    return counts
+  }
+
+  it("finds the one site, in event-service.ts", async () => {
+    const root = new URL("../../../src", import.meta.url).pathname.replace(/\/$/, "")
+    expect(await countEmitSites(root)).toEqual(EXPECTED_EMIT_SITES)
+  })
+})
