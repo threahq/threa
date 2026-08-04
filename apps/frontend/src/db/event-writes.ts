@@ -72,7 +72,7 @@ export function skipNoOpEventRewrites(
 // that Dexie must deserialize per read — so resolving the flag from it on every
 // event write costs more than the write. Resolve once per workspace per module
 // instance instead, primed from the network bootstrap and socket flag flips.
-type EventWriteFlags = { chunking: boolean; indexedMessagePatch: boolean }
+type EventWriteFlags = { chunking: boolean; indexedMessagePatch: boolean; sharedStreamRegistration: boolean }
 
 const flagsByWorkspace = new Map<string, EventWriteFlags>()
 let primeGeneration = 0
@@ -82,11 +82,25 @@ function resolveEventWriteFlags(layers: FeatureFlagLayers | null | undefined): E
   return {
     chunking: resolved.eventWriteChunking === "on",
     indexedMessagePatch: resolved.indexedMessagePatch === "on",
+    sharedStreamRegistration: resolved.sharedStreamRegistration === "on",
   }
 }
 
 /** Seed the cache from freshly delivered layers (bootstrap response or flag-flip socket event). */
 export function primeEventWriteFlags(workspaceId: string, layers: FeatureFlagLayers | null | undefined): void {
+  primeGeneration += 1
+  flagsByWorkspace.set(workspaceId, resolveEventWriteFlags(layers))
+}
+
+/**
+ * Seed the cache from the persisted workspace row on a warm start, where
+ * registration can run before any network prime. If-absent, not prime: the
+ * persisted row is only a warm-start fallback and must never overwrite a
+ * network prime that landed while the IDB reads were in flight (same freshness
+ * rule as {@link getEventWriteFlags}).
+ */
+export function primeEventWriteFlagsIfAbsent(workspaceId: string, layers: FeatureFlagLayers | null | undefined): void {
+  if (flagsByWorkspace.has(workspaceId)) return
   primeGeneration += 1
   flagsByWorkspace.set(workspaceId, resolveEventWriteFlags(layers))
 }
@@ -134,4 +148,15 @@ export async function readEventWriteFlagsFresh(database: ThreaDatabase, workspac
 /** The viewer's `indexedMessagePatch` value, resolved through the same primed cache. */
 export async function isIndexedMessagePatchEnabled(database: ThreaDatabase, workspaceId: string): Promise<boolean> {
   return (await getEventWriteFlags(database, workspaceId)).indexedMessagePatch
+}
+
+/**
+ * The viewer's `sharedStreamRegistration` value, read only from the primed map.
+ * Handler registration is synchronous, so there is no await in which to resolve
+ * the persisted row: an unprimed read falls back to the unshared path rather
+ * than guessing. A miss costs the optimization for that registration, never
+ * correctness — two unshared registrations behave exactly as they do today.
+ */
+export function isSharedStreamRegistrationEnabledSync(workspaceId: string): boolean {
+  return flagsByWorkspace.get(workspaceId)?.sharedStreamRegistration ?? false
 }
