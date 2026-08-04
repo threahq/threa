@@ -134,20 +134,31 @@ describe("two composers on one draft scope (board card + conversation panel)", (
       await seedDraftCacheFromIdb(workspaceId)
     })
 
-    const composer = mountComposer()
+    // The sender must be CO-MOUNTED, or the rescue exits on the composer-count
+    // gate and this asserts nothing: what is under test is the content gate, i.e.
+    // that every send path empties its editor before resolving. The idle sibling
+    // never engages, so only the sender can reach the rescue.
+    const idleSibling = mountComposer()
+    const sender = mountComposer()
     await act(async () => {
-      composer.result.current.handleContentChange(makeDoc("A2"))
+      sender.result.current.handleContentChange(makeDoc("A2"))
     })
     // The send path empties the editor, then resolves the row.
     await act(async () => {
-      composer.result.current.setContent({ type: "doc", content: [{ type: "paragraph" }] })
+      sender.result.current.setContent({ type: "doc", content: [{ type: "paragraph" }] })
     })
     await act(async () => {
-      await composer.result.current.resolveDraft()
+      await sender.result.current.resolveDraft()
+    })
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 100))
     })
 
     expect(await db.drafts.where("scope").equals(draftKey).count()).toBe(0)
-    expect(composer.result.current.content).toEqual({ type: "doc", content: [{ type: "paragraph" }] })
+    expect(sender.result.current.content).toEqual({ type: "doc", content: [{ type: "paragraph" }] })
+    // The idle sibling never engaged, so it takes the blank path: the send is
+    // visible there rather than leaving a stale body on screen.
+    expect(idleSibling.result.current.content).toEqual({ type: "doc", content: [{ type: "paragraph" }] })
   })
 
   it("creates nothing when a LONE composer's pointer is torn down while engaged", async () => {
