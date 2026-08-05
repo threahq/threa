@@ -27,26 +27,6 @@ import { boardReplyDraftKey, boardBranchReplyDraftKey, boardSubtopicDraftKey } f
 
 const WORKSPACE_ID = "ws_1"
 
-class FakeIntersectionObserver {
-  static instances: FakeIntersectionObserver[] = []
-  observed = new Set<Element>()
-  constructor(private callback: IntersectionObserverCallback) {
-    FakeIntersectionObserver.instances.push(this)
-  }
-  observe(el: Element) {
-    this.observed.add(el)
-  }
-  unobserve(el: Element) {
-    this.observed.delete(el)
-  }
-  disconnect() {
-    this.observed.clear()
-  }
-  fire(entries: Array<{ target: Element; isIntersecting: boolean }>) {
-    this.callback(entries as unknown as IntersectionObserverEntry[], this as unknown as IntersectionObserver)
-  }
-}
-
 function makeConversation(overrides: Partial<ConversationWithStaleness> = {}): ConversationWithStaleness {
   const now = "2026-06-22T12:00:00.000Z"
   return {
@@ -563,7 +543,7 @@ describe("BoardPage", () => {
     ] as never)
     mountBoard([makePost({ id: "conv_sp", streamId: "stream_sp" })])
 
-    expect(await screen.findByText("My Notes")).toBeTruthy() // header locator = scratchpad name
+    expect(await screen.findByRole("link", { name: "My Notes" })).toBeTruthy()
   })
 
   it("resolves a DM peer as the card's stream locator", async () => {
@@ -576,8 +556,7 @@ describe("BoardPage", () => {
     vi.mocked(workspaceStoreModule.useWorkspaceUsers).mockReturnValue([{ id: "usr_pierre", name: "Pierre" }] as never)
     mountBoard([makePost({ id: "conv_dm", streamId: "stream_dm", messageIds: ["d1"] }, { id: "d1" })])
 
-    // The DM peer's name is the header locator (where the post lives).
-    expect(await screen.findByText("Pierre")).toBeTruthy()
+    expect(await screen.findByRole("link", { name: "Pierre" })).toBeTruthy()
   })
 
   it("keeps the board column mounted, hidden and inert behind a fullscreen mobile panel", async () => {
@@ -599,48 +578,32 @@ describe("BoardPage", () => {
     expect(hidden?.className).toContain("invisible")
   })
 
-  it("counts a bumped UNSEEN card behind the pill while a bumped SEEN card stays frozen", async () => {
-    const seenPost = makePost(
-      { id: "conv_seen", messageIds: ["m_seen"], lastActivityAt: "2026-06-22T12:00:00.000Z" },
-      { id: "m_seen", contentMarkdown: "Seen card body." }
+  it("does not show the new pill for activity on cards already in the view", async () => {
+    const first = makePost(
+      { id: "conv_first", messageIds: ["m_first"], lastActivityAt: "2026-06-22T12:00:00.000Z" },
+      { id: "m_first", contentMarkdown: "First card body." }
     )
-    const unseenPost = makePost(
-      { id: "conv_unseen", messageIds: ["m_unseen"], lastActivityAt: "2026-06-22T11:00:00.000Z" },
-      { id: "m_unseen", contentMarkdown: "Unseen card body." }
+    const second = makePost(
+      { id: "conv_second", messageIds: ["m_second"], lastActivityAt: "2026-06-22T11:00:00.000Z" },
+      { id: "m_second", contentMarkdown: "Second card body." }
     )
-    vi.stubGlobal("IntersectionObserver", FakeIntersectionObserver)
-    FakeIntersectionObserver.instances = []
-    const { rerenderWith } = mountBoard([seenPost, unseenPost])
-    const seenBody = await screen.findByText("Seen card body.")
-    await screen.findByText("Unseen card body.")
+    const { rerenderWith } = mountBoard([first, second])
+    await screen.findByText("First card body.")
+    await screen.findByText("Second card body.")
 
-    // Fire the card-level observer for the first card only: that is the real
-    // `onSeen` wiring, which lands the id in the page's seen ref.
-    const cardEl = seenBody.closest("div.board-card-hover")
-    expect(cardEl, "the card root should carry the board-card class").toBeTruthy()
-    const observers = FakeIntersectionObserver.instances.filter((instance) => instance.observed.has(cardEl!))
-    expect(observers.length, "an IntersectionObserver should be watching the card root").toBeGreaterThan(0)
-    await act(async () => {
-      for (const observer of observers) observer.fire([{ target: cardEl!, isIntersecting: true }])
-    })
-
-    // Both cards gain activity; only the unseen one goes back behind the pill.
     await act(async () => {
       rerenderWith([
         makePost(
-          { id: "conv_unseen", messageIds: ["m_unseen"], lastActivityAt: "2026-06-22T14:00:00.000Z" },
-          { id: "m_unseen", contentMarkdown: "Unseen card body." }
+          { id: "conv_second", messageIds: ["m_second"], lastActivityAt: "2026-06-22T14:00:00.000Z" },
+          { id: "m_second", contentMarkdown: "Second card body." }
         ),
-        makePost(
-          { id: "conv_seen", messageIds: ["m_seen"], lastActivityAt: "2026-06-22T13:00:00.000Z" },
-          { id: "m_seen", contentMarkdown: "Seen card body." }
-        ),
+        first,
       ])
     })
 
-    expect(await screen.findByText("1 update available")).toBeTruthy()
-    expect(screen.getByText("Seen card body.")).toBeTruthy()
-    expect(screen.queryByText("Unseen card body.")).toBeNull()
+    expect(screen.queryByText(/update available/)).toBeNull()
+    expect(screen.getByText("First card body.")).toBeTruthy()
+    expect(screen.getByText("Second card body.")).toBeTruthy()
   })
 })
 

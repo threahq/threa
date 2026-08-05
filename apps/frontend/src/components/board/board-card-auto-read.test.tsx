@@ -82,7 +82,7 @@ const getBoardMessages = vi.fn().mockResolvedValue([])
 const markRead = vi.fn().mockResolvedValue({ streams: [] })
 const markUnread = vi.fn().mockResolvedValue({ streams: [] })
 
-function mountCard(onSeen?: () => void) {
+function mountCard() {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   render(
     <QueryClientProvider client={queryClient}>
@@ -90,13 +90,7 @@ function mountCard(onSeen?: () => void) {
         <ServicesProvider services={{ conversations: { markRead, markUnread, getBoardMessages } as never }}>
           <MemoryRouter initialEntries={[`/w/${WS}/board`]}>
             <PanelProvider>
-              <BoardCard
-                workspaceId={WS}
-                post={makePost()}
-                contextLabel="#general"
-                streamType="channel"
-                onSeen={onSeen}
-              />
+              <BoardCard workspaceId={WS} post={makePost()} contextLabel="#general" streamType="channel" />
             </PanelProvider>
           </MemoryRouter>
         </ServicesProvider>
@@ -204,26 +198,5 @@ describe("BoardCard viewport auto-read (full wiring: real card, real controller,
     })
 
     expect(markRead).toHaveBeenCalledWith(WS, "conv_1", "m_open")
-  })
-})
-
-describe("BoardCard onSeen", () => {
-  it("fires once on the card's first intersection and never again", async () => {
-    const onSeen = vi.fn()
-    mountCard(onSeen)
-    await act(async () => {})
-
-    const cardEl = document.querySelector(".board-card-hover")
-    expect(cardEl, "the card root should render").toBeTruthy()
-    const io = FakeIntersectionObserver.instances.find((instance) => instance.observed.has(cardEl!))
-    expect(io, "an IntersectionObserver should be observing the card root").toBeTruthy()
-
-    expect(onSeen).not.toHaveBeenCalled()
-    act(() => io!.fire([{ target: cardEl!, isIntersecting: true }]))
-    expect(onSeen).toHaveBeenCalledTimes(1)
-
-    act(() => io!.fire([{ target: cardEl!, isIntersecting: false }]))
-    act(() => io!.fire([{ target: cardEl!, isIntersecting: true }]))
-    expect(onSeen).toHaveBeenCalledTimes(1)
   })
 })

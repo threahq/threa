@@ -103,10 +103,6 @@ interface BoardCardProps {
    * state, so the card's unread rows stay unread.
    */
   onClearUnread?: () => void
-  /** Fired ONCE, on the card's first intersection with the viewport — "the viewer
-   *  has laid eyes on this card in this session". Drives the board's re-buffering:
-   *  an unseen card that gains activity goes back behind the "N new" pill. */
-  onSeen?: () => void
 }
 
 /** How many trailing messages a nested branch previews on a collapsed card; the
@@ -140,7 +136,6 @@ export function BoardCard({
   scrollerRef,
   listRef,
   removed = false,
-  onSeen,
   onClearUnread,
 }: BoardCardProps) {
   const { conversation } = post
@@ -536,22 +531,11 @@ export function BoardCard({
   // so off-screen cards on a long board don't suppress streams the user can't
   // see. The same signal gates the backfill below.
   const [cardInViewport, setCardInViewport] = useState(false)
-  // Same observer answers "has the viewer seen this card" (`onSeen`, first
-  // intersection only) — seen-ness is latched in a ref so a later re-intersection
-  // can't re-fire it, and the callback is held in a ref so the observer isn't
-  // torn down when the parent hands a fresh closure.
-  const onSeenRef = useRef(onSeen)
-  onSeenRef.current = onSeen
-  const seenFiredRef = useRef(false)
   useEffect(() => {
     const el = cardRef.current
     if (!el || typeof IntersectionObserver === "undefined") return
     const observer = new IntersectionObserver(([entry]) => {
       setCardInViewport(entry.isIntersecting)
-      if (entry.isIntersecting && !seenFiredRef.current) {
-        seenFiredRef.current = true
-        onSeenRef.current?.()
-      }
     })
     observer.observe(el)
     return () => observer.disconnect()
@@ -792,7 +776,13 @@ export function BoardCard({
     // Radix scroll viewport (the conversation panel). Match either so the pinned-
     // header elevation resolves against the real scroll root in both surfaces.
     const root = sentinel.closest("[data-board-scroll-viewport],[data-radix-scroll-area-viewport]")
-    const observer = new IntersectionObserver(([entry]) => setHeaderStuck(!entry.isIntersecting), { root })
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        const rootTop = entry.rootBounds?.top ?? root?.getBoundingClientRect().top ?? 0
+        setHeaderStuck(!entry.isIntersecting && entry.boundingClientRect.top < rootTop)
+      },
+      { root }
+    )
     observer.observe(sentinel)
     return () => observer.disconnect()
   }, [])
@@ -1145,16 +1135,15 @@ export function BoardCard({
               (see the observer above). In flow but h-0, so it shifts nothing. */}
           <div ref={stuckSentinelRef} aria-hidden className="h-0" />
           {/* Header pins to the scroll-viewport top while the card's messages
-              scroll under it (bg-card covers them), so the locator + topic stay
-              legible in a long card. The negative margins + re-padding fill the
-              header to the card edges; at rest it looks identical to an unpinned
-              header. A hairline + shadow fade in once pinned (headerStuck) to lift
-              it off the messages; the border is always present but transparent so
-              the elevation never shifts layout (INV-21). */}
+              scroll under it. On phones, named cards drop the context row once
+              pinned so only the name follows; the spacer below replaces that row,
+              while the pinned margin replaces the trimmed padding. */}
           <div
+            data-board-card-header
             className={cn(
-              "z-10 -mx-3 -mt-3 rounded-t-xl border-b border-transparent bg-card px-3 pt-3 pb-2 transition-[box-shadow,border-color] duration-200 sm:sticky sm:top-0 sm:-mx-4 sm:-mt-4 sm:px-4 sm:pt-4",
-              headerStuck && "sm:border-border/60 sm:shadow-[0_4px_12px_-6px_rgb(0_0_0/0.4)]"
+              "sticky top-0 z-10 -mx-3 -mt-3 rounded-t-xl border-b border-transparent bg-card px-3 pt-3 pb-2 transition-[box-shadow,border-color,padding,margin] duration-200 sm:-mx-4 sm:-mt-4 sm:px-4 sm:pt-4",
+              headerStuck &&
+                "mb-1.5 border-border/60 pt-2 pb-1.5 shadow-[0_4px_12px_-6px_rgb(0_0_0/0.4)] sm:mb-0 sm:pt-4 sm:pb-2"
             )}
           >
             {/* Title-led when the extractor (or a rename) set a topic: the topic is
@@ -1182,7 +1171,12 @@ export function BoardCard({
                   {unreadDot}
                   {headerActions}
                 </div>
-                <div className="mt-1 flex items-center gap-1.5 text-xs text-muted-foreground">
+                <div
+                  className={cn(
+                    "mt-1 flex items-center gap-1.5 text-xs text-muted-foreground",
+                    headerStuck && "hidden sm:flex"
+                  )}
+                >
                   {locatorLink("xs")}
                   <span className="shrink-0 opacity-50">·</span>
                   <RelativeTime date={conversation.lastActivityAt} terse className="shrink-0" />
@@ -1216,6 +1210,9 @@ export function BoardCard({
               </button>
             )}
           </div>
+          {conversation.topicSummary && (
+            <div data-board-card-context-spacer aria-hidden className={cn("h-0 sm:hidden", headerStuck && "h-6")} />
+          )}
 
           <div
             className={cn(bodyCollapsed && "overflow-hidden")}

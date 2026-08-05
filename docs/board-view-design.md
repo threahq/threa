@@ -419,9 +419,9 @@ effect and add it to `scrollTop`.
    disappears is the worst case for a stable list (removal shifts everything below).
    Tombstone in place until commit, or remove with anchor compensation. Above-
    viewport removals are absorbed by the anchor.
-3. **Count semantics.** Pill = new conversations. Seen-card activity = in-place dot,
-   not the pill (else "12 new" when nothing is actually new to look at). Decide
-   whether a seen card bumping past the current top counts as "new."
+3. **Count semantics.** Pill = new conversations only. Activity on any committed
+   card updates it in place and never counts, whether or not the card has entered
+   the viewport — tapping the pill must always reveal a genuinely new card.
 4. **Reconnect re-seed.** The reconnect bootstrap updates IDB (truth) but must NOT
    mutate the committed view — it only grows the buffer/pill. Big post-disconnect
    counts are expected.
@@ -453,11 +453,12 @@ The projection layer landed as `useStableBoardView`
   while committed. A card that vanishes from the live feed (delete / lost access)
   keeps rendering from last-known content until the next commit (tombstone-in-
   place, edge 2), so a removal never shifts the rows below it.
-- **Buffer + "N new" pill** — a live id newer than the committed floor that isn't
-  committed → buffered, counted in the pill; an id below the floor is older content
-  paged in by "Load more" → appended below the frozen window with no pill (the
-  `reconcileStableView` split, edge 1's pragmatic v1 take — the client cursor is
-  captured per page so re-return/skip is rare and self-heals via socket→IDB).
+- **Buffer + "N new" pill** — a new live id newer than the committed floor →
+  buffered, counted in the pill; activity on a committed id updates in place and
+  never counts. An id below the floor is older content paged in by "Load more" →
+  appended below the frozen window with no pill (the `reconcileStableView` split,
+  edge 1's pragmatic v1 take — the client cursor is captured per page so
+  re-return/skip is rare and self-heals via socket→IDB).
 - **Commit triggers** — pill click (scroll to top, then commit) and remount; the
   viewer's own authored post arms a one-shot `revealNext` so it surfaces instead of
   hiding behind its own pill. At-top still buffers (edge 5).
@@ -878,7 +879,10 @@ updates in place, it never re-sorts siblings).
 Shipped, all flag-gated behind `board-view`:
 
 - **The board** — workspace-wide feed at `/w/:ws/board`, message-led cards
-  grouped by recency, authored posts via the board composer.
+  grouped by recency, authored posts via the board composer. Long-card headers
+  follow the feed on desktop and mobile. Phones show the stream/date row at
+  rest, but only the conversation name follows the scroll; the pinned name row
+  also trims its vertical padding.
 - **Sync data plane** — conversations in IDB, `conversation:*` through
   `SocketEventGate`, synchronous determinable assign + bump
   (#1100/#1106/#1109/#1111).
