@@ -308,24 +308,31 @@ describe("stream context feed: collapse, display joins, filters", () => {
       ...testMessageContent(`budget notes ${OTHER_URL}`),
     })
 
-    const preview = await withTransaction(pool, async (client) =>
-      LinkPreviewRepository.insert(client, {
+    // Insert and fill in ONE transaction: the messages above carry this url, so
+    // a link-preview worker can claim the row the moment it is visible, and
+    // `updateMetadata` only applies `WHERE status = 'pending'` — losing that
+    // race leaves the title null and silently returns null, which showed up as
+    // two intermittently-red cases here rather than as a failed seed.
+    const seeded = await withTransaction(pool, async (client) => {
+      const preview = await LinkPreviewRepository.insert(client, {
         id: linkPreviewId(),
         workspaceId: wsId,
         url: REPORT_URL,
         normalizedUrl: normalizeUrl(REPORT_URL),
         contentType: "website",
       })
-    )
-    await withTransaction(pool, async (client) =>
-      LinkPreviewRepository.updateMetadata(client, wsId, preview.id, {
+      return LinkPreviewRepository.updateMetadata(client, wsId, preview.id, {
         title: "Quarterly budget",
         description: "The numbers",
         siteName: "example.com",
         contentType: "website",
         status: "completed",
       })
-    )
+    })
+    // Fail on the seed, not three assertions later on a missing join.
+    if (seeded?.title !== "Quarterly budget") {
+      throw new Error(`link preview seed did not apply: ${JSON.stringify(seeded)}`)
+    }
 
     await withTransaction(pool, async (client) => {
       await MemoRepository.insert(client, {
