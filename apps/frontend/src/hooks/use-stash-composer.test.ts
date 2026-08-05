@@ -501,4 +501,38 @@ describe("restoring a draft that belongs to another surface (adopt vs move)", ()
     expect(await db.composerLoaded.get(aoConversationScope)).toBeUndefined()
     expect((await db.drafts.get("draft_conv"))?.scope).toBe(aoConversationScope)
   })
+
+  // The pre-checks prove the RESTORED ROW is checked out nowhere; they say nothing
+  // about the scope being pointed at. A conversation can hold one draft in its own
+  // composer and have another stashed — repointing would leave that composer
+  // rendering its old body against our draft's id (its loaded id changes value
+  // rather than going null, so nothing blanks it) and its next save would write
+  // that body into the row we adopted.
+  it("refuses to adopt into a conversation scope that already holds a different draft", async () => {
+    await db.drafts.bulkAdd([
+      aoDraft("draft_conv", aoConversationScope),
+      aoDraft("draft_other", aoConversationScope),
+      aoDraft("draft_host", aoHostScope),
+    ])
+    await db.composerLoaded.bulkPut([
+      { scope: aoHostScope, workspaceId: aoWorkspaceId, draftId: "draft_host" },
+      { scope: aoConversationScope, workspaceId: aoWorkspaceId, draftId: "draft_other" },
+    ])
+    await seedDraftCacheFromIdb(aoWorkspaceId)
+
+    const { result } = renderHook(() => useAoHarness(aoHostScope, aoHostScope), { wrapper })
+    await waitFor(() => expect(result.current.stash.drafts.map((d) => d.id)).toContain("draft_conv"))
+
+    await act(async () => {
+      expect(await result.current.stash.handleRestoreStashed("draft_conv")).toEqual({
+        ok: false,
+        reason: "target-busy",
+      })
+    })
+
+    // The other composer keeps its draft, and ours was not adopted.
+    expect((await db.composerLoaded.get(aoConversationScope))?.draftId).toBe("draft_other")
+    expect(await db.composerTarget.get(aoHostScope)).toBeUndefined()
+    expect((await db.drafts.get("draft_conv"))?.scope).toBe(aoConversationScope)
+  })
 })
