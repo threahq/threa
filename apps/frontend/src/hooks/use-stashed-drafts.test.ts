@@ -126,24 +126,54 @@ function seedConversation(
   } as never)
 }
 
+/** Seed a `message_created` event so a `thread:<anchor>` draft resolves a host stream. */
+function seedThreadAnchor(messageId: string, streamId: string): Promise<unknown> {
+  return db.events.put({
+    id: `evt_${messageId}`,
+    workspaceId: pileWorkspaceId,
+    streamId,
+    eventType: "message_created",
+    payload: { messageId },
+    sequence: "1",
+    _sequenceNum: 1,
+    actorId: null,
+    actorType: null,
+    createdAt: new Date(1000).toISOString(),
+  } as never)
+}
+
 async function expectPile(scope: string, ids: string[]) {
   const { result, unmount } = renderHook(() => useStashedDrafts(pileWorkspaceId, scope))
   await waitFor(() => expect(result.current.drafts.map((d) => d.id).sort()).toEqual([...ids].sort()))
   unmount()
 }
 
-describe("useStashedDrafts — landing-site membership", () => {
+/** A conversation-backfill row: the point-read route from a message to its conversation. */
+function seedConversationMessage(messageId: string, conversationId: string, streamId: string): Promise<unknown> {
+  return db.conversationMessages.put({
+    messageId,
+    id: messageId,
+    conversationId,
+    workspaceId: pileWorkspaceId,
+    streamId,
+    _cachedAt: 1,
+  } as never)
+}
+
+describe("useStashedDrafts — pile membership", () => {
   beforeEach(async () => {
     __clearBoardDraftContextRegistry()
     await db.conversations.clear()
+    await db.conversationMessages.clear()
     await db.streams.clear()
+    await db.events.clear()
   })
 
   afterEach(() => {
     __clearBoardDraftContextRegistry()
   })
 
-  it("shares a pile both ways between a stream and a conversation that lands flat in it", async () => {
+  it("shares a pile both ways between a stream and a conversation anchored in it", async () => {
     await seedStream("stream_s")
     await seedConversation("conv_1", "stream_s")
     await db.drafts.bulkAdd([
@@ -155,47 +185,167 @@ describe("useStashedDrafts — landing-site membership", () => {
     await expectPile("stream:stream_s", ["draft_stream", "draft_conv"])
   })
 
-  it("keeps a lone channel conversation's reply out of every flat pile (its reply opens a thread)", async () => {
+  // Replying to a conversation is a top-level act in its stream, so a lone
+  // conversation's reply — which would convert its opener into a thread — is
+  // still something the user might have said in the channel instead.
+  it("includes a lone channel conversation's reply in the channel's pile, tiered borrowed", async () => {
     await seedStream("stream_s")
     await seedConversation("conv_lone", "stream_s", { messageIds: ["msg_1"], openingMessageId: "msg_1" })
     await db.drafts.bulkAdd([
       draftRow({ id: "draft_stream", scope: "stream:stream_s" }),
       draftRow({ id: "draft_lone", scope: "board:reply:conv_lone" }),
-      draftRow({ id: "draft_lone_2", scope: "board:reply:conv_lone", clientUpdatedAt: 900 }),
     ])
 
-    await expectPile("stream:stream_s", ["draft_stream"])
-    // Its own host lands nested, so its pile stays scope-exact: siblings only.
-    await expectPile("board:reply:conv_lone", ["draft_lone", "draft_lone_2"])
+    const { result } = renderHook(() => useStashedDrafts(pileWorkspaceId, "stream:stream_s"))
+    await waitFor(() => expect(result.current.drafts.map((d) => d.id)).toEqual(["draft_stream", "draft_lone"]))
+    expect(result.current.originByDraftId.get("draft_lone")).toEqual({
+      kind: "conversation",
+      conversationId: "conv_lone",
+      tier: "borrowed",
+    })
   })
 
-  it("never shares a thread, branch or sub-topic draft into another host's pile", async () => {
-    await seedStream("stream_s")
-    await seedConversation("conv_1", "stream_s")
-    await seedConversation("conv_branch", "stream_s")
-    await db.drafts.bulkAdd([
-      draftRow({ id: "draft_stream", scope: "stream:stream_s" }),
-      draftRow({ id: "draft_thread", scope: "thread:msg_9" }),
-      draftRow({ id: "draft_branch", scope: "board:branch-reply:conv_branch" }),
-      draftRow({ id: "draft_subtopic", scope: "board:subtopic:stream_s:msg_1" }),
-    ])
-
-    await expectPile("stream:stream_s", ["draft_stream"])
-    await expectPile("board:reply:conv_1", ["draft_stream"])
-  })
-
-  it("follows a conversation that moved into a thread: T's pile, not S's", async () => {
+  it("keeps a conversation that drifted into a thread in the channel's pile", async () => {
     await seedStream("stream_s")
     await seedStream("stream_t", { type: "thread", rootStreamId: "stream_s" })
     await seedConversation("conv_moved", "stream_s", { lastActiveStreamId: "stream_t" })
     await db.drafts.bulkAdd([
       draftRow({ id: "draft_s", scope: "stream:stream_s" }),
-      draftRow({ id: "draft_t", scope: "stream:stream_t" }),
       draftRow({ id: "draft_moved", scope: "board:reply:conv_moved" }),
     ])
 
-    await expectPile("stream:stream_s", ["draft_s"])
-    await expectPile("stream:stream_t", ["draft_t", "draft_moved"])
+    await expectPile("stream:stream_s", ["draft_s", "draft_moved"])
+  })
+
+  it("reaches a top-level draft downward into a thread composer's pile", async () => {
+    await seedStream("stream_s")
+    await seedThreadAnchor("msg_9", "stream_s")
+    await db.drafts.bulkAdd([
+      draftRow({ id: "draft_stream", scope: "stream:stream_s" }),
+      draftRow({ id: "draft_thread", scope: "thread:msg_9" }),
+    ])
+
+    await expectPile("thread:msg_9", ["draft_thread", "draft_stream"])
+  })
+
+  // The one exclusion the top-level host route does NOT cover: no conversation
+  // owns this thread, so the draft is only reachable where it was written.
+  it("keeps a draft in a conversation-less thread in its own pile only", async () => {
+    await seedStream("stream_s")
+    await seedThreadAnchor("msg_9", "stream_s")
+    await seedConversation("conv_1", "stream_s", { messageIds: ["msg_1"] })
+    await db.drafts.bulkAdd([
+      draftRow({ id: "draft_stream", scope: "stream:stream_s" }),
+      draftRow({ id: "draft_thread", scope: "thread:msg_9" }),
+      draftRow({ id: "draft_conv", scope: "board:reply:conv_1" }),
+    ])
+
+    await expectPile("stream:stream_s", ["draft_stream", "draft_conv"])
+    await expectPile("board:reply:conv_1", ["draft_conv", "draft_stream"])
+  })
+
+  it("does not match two unresolvable conversations to each other", async () => {
+    await seedStream("stream_s")
+    await seedThreadAnchor("msg_a", "stream_s")
+    await seedThreadAnchor("msg_b", "stream_s")
+    await db.drafts.bulkAdd([
+      draftRow({ id: "draft_a", scope: "thread:msg_a" }),
+      draftRow({ id: "draft_b", scope: "thread:msg_b" }),
+      // The control row: top level, so it reaches BOTH threads (R2). Without it
+      // an all-own pile would satisfy the assertion on its very first frame,
+      // before the shared context has resolved anything.
+      draftRow({ id: "draft_top", scope: "stream:stream_s" }),
+    ])
+
+    await expectPile("thread:msg_a", ["draft_a", "draft_top"])
+    await expectPile("thread:msg_b", ["draft_b", "draft_top"])
+  })
+
+  it("puts a thread stream's draft in its conversation's pile and at top level, never in another conversation's", async () => {
+    await seedStream("stream_s")
+    await seedStream("stream_tc", { type: "thread", rootStreamId: "stream_s", parentAnchorId: "msg_c" })
+    await seedThreadAnchor("msg_c", "stream_s")
+    await seedConversation("conv_c", "stream_s", { messageIds: ["msg_c"] })
+    await seedConversation("conv_d", "stream_s", { messageIds: ["msg_d"] })
+    await seedConversationMessage("msg_c", "conv_c", "stream_s")
+    await db.drafts.bulkAdd([
+      draftRow({ id: "draft_in_c_thread", scope: "stream:stream_tc" }),
+      // A top-level control row: it belongs in every pile here, so D's assertion
+      // waits for a settled pile instead of passing on the empty first frame.
+      draftRow({ id: "draft_top", scope: "stream:stream_s" }),
+    ])
+
+    await expectPile("board:reply:conv_c", ["draft_in_c_thread", "draft_top"])
+    await expectPile("stream:stream_tc", ["draft_in_c_thread", "draft_top"])
+    await expectPile("stream:stream_s", ["draft_in_c_thread", "draft_top"])
+    await expectPile("board:reply:conv_d", ["draft_top"])
+  })
+
+  it("puts a sub-topic fork off a conversation's message in that conversation's pile, never in another's", async () => {
+    await seedStream("stream_s")
+    await seedConversation("conv_c", "stream_s", { messageIds: ["msg_c"] })
+    await seedConversation("conv_d", "stream_s", { messageIds: ["msg_d"] })
+    await db.drafts.bulkAdd([
+      draftRow({ id: "draft_fork", scope: "board:subtopic:stream_s:msg_c" }),
+      draftRow({ id: "draft_top", scope: "stream:stream_s" }),
+    ])
+
+    await expectPile("board:reply:conv_c", ["draft_fork", "draft_top"])
+    await expectPile("stream:stream_s", ["draft_fork", "draft_top"])
+    await expectPile("board:reply:conv_d", ["draft_top"])
+  })
+
+  it("puts a branch reply under a conversation in that conversation's pile", async () => {
+    await seedStream("stream_s")
+    await seedStream("stream_tb", { type: "thread", rootStreamId: "stream_s", parentAnchorId: "msg_c" })
+    await seedConversation("conv_c", "stream_s", { messageIds: ["msg_c"] })
+    await seedConversation("conv_branch", "stream_tb", { messageIds: ["msg_branch"] })
+    await db.drafts.bulkAdd([
+      draftRow({ id: "draft_branch", scope: "board:branch-reply:conv_branch" }),
+      draftRow({ id: "draft_top", scope: "stream:stream_s" }),
+    ])
+
+    await expectPile("board:reply:conv_c", ["draft_branch", "draft_top"])
+  })
+
+  it("keeps a draft under a different root stream out of the pile", async () => {
+    await seedStream("stream_s")
+    await seedStream("stream_other")
+    await seedStream("stream_other_t", { type: "thread", rootStreamId: "stream_other" })
+    await seedConversation("conv_other", "stream_other")
+    await seedThreadAnchor("msg_other", "stream_other")
+    await db.drafts.bulkAdd([
+      draftRow({ id: "draft_stream", scope: "stream:stream_s" }),
+      draftRow({ id: "draft_other", scope: "stream:stream_other" }),
+      draftRow({ id: "draft_other_thread_stream", scope: "stream:stream_other_t" }),
+      draftRow({ id: "draft_other_conv", scope: "board:reply:conv_other" }),
+      draftRow({ id: "draft_other_anchor", scope: "thread:msg_other" }),
+      draftRow({ id: "draft_other_subtopic", scope: "board:subtopic:stream_other:msg_z" }),
+    ])
+
+    await expectPile("stream:stream_s", ["draft_stream"])
+  })
+
+  it("orders own rows before borrowed rows, each group newest first", async () => {
+    await seedStream("stream_s")
+    await seedConversation("conv_1", "stream_s")
+    await db.drafts.bulkAdd([
+      draftRow({ id: "own_old", scope: "stream:stream_s", clientUpdatedAt: 100 }),
+      draftRow({ id: "own_new", scope: "stream:stream_s", clientUpdatedAt: 400 }),
+      draftRow({ id: "borrowed_old", scope: "board:reply:conv_1", clientUpdatedAt: 200 }),
+      draftRow({ id: "borrowed_new", scope: "board:reply:conv_1", clientUpdatedAt: 500 }),
+    ])
+
+    const { result } = renderHook(() => useStashedDrafts(pileWorkspaceId, "stream:stream_s"))
+    await waitFor(() =>
+      expect(result.current.drafts.map((d) => d.id)).toEqual(["own_new", "own_old", "borrowed_new", "borrowed_old"])
+    )
+    expect([...result.current.originByDraftId.values()].map((origin) => origin.tier)).toEqual([
+      "own",
+      "own",
+      "borrowed",
+      "borrowed",
+    ])
   })
 
   it("excludes a draft checked out into ANY scope's composer on this device", async () => {
@@ -212,7 +362,7 @@ describe("useStashedDrafts — landing-site membership", () => {
     await expectPile("board:reply:conv_1", ["draft_conv"])
   })
 
-  it("excludes an empty draft, an archived landing stream, an E2E host, and an uncached conversation", async () => {
+  it("excludes an empty borrowed draft, an archived home, an E2E host, and an uncached conversation", async () => {
     await seedStream("stream_s")
     await seedStream("stream_archived", { archivedAt: "2026-01-01T00:00:00Z" })
     await seedStream("stream_sealed", { e2eEnabled: true })
@@ -221,7 +371,7 @@ describe("useStashedDrafts — landing-site membership", () => {
     await seedConversation("conv_sealed", "stream_sealed")
     await db.drafts.bulkAdd([
       draftRow({ id: "draft_stream", scope: "stream:stream_s" }),
-      draftRow({ id: "draft_empty", scope: "stream:stream_s", contentJson: EMPTY_DOC }),
+      draftRow({ id: "draft_empty", scope: "board:reply:conv_1", contentJson: EMPTY_DOC }),
       draftRow({ id: "draft_uncached", scope: "board:reply:conv_missing" }),
       draftRow({ id: "draft_archived", scope: "stream:stream_archived" }),
       draftRow({ id: "draft_archived_conv", scope: "board:reply:conv_archived" }),
@@ -253,25 +403,30 @@ describe("useStashedDrafts — landing-site membership", () => {
     await waitFor(() => expect(result.current.drafts.map((d) => d.id).sort()).toEqual(["draft_conv", "draft_stream"]))
   })
 
-  it("reports each row's origin as structured data", async () => {
+  it("reports each row's origin and tier as structured data", async () => {
     await seedStream("stream_s")
-    await seedConversation("conv_1", "stream_s")
+    await seedConversation("conv_1", "stream_s", { messageIds: ["msg_1", "msg_9"] })
+    await seedThreadAnchor("msg_9", "stream_s")
     await db.drafts.bulkAdd([
       draftRow({ id: "draft_stream", scope: "stream:stream_s" }),
       draftRow({ id: "draft_conv", scope: "board:reply:conv_1" }),
+      draftRow({ id: "draft_thread", scope: "thread:msg_9" }),
+      draftRow({ id: "draft_subtopic", scope: "board:subtopic:stream_s:msg_1" }),
     ])
 
     const { result } = renderHook(() => useStashedDrafts(pileWorkspaceId, "stream:stream_s"))
-    await waitFor(() => expect(result.current.originByDraftId.size).toBe(2))
+    await waitFor(() => expect(result.current.originByDraftId.size).toBe(4))
     expect(Object.fromEntries(result.current.originByDraftId)).toEqual({
-      draft_stream: { kind: "stream", streamId: "stream_s" },
-      draft_conv: { kind: "conversation", conversationId: "conv_1" },
+      draft_stream: { kind: "stream", streamId: "stream_s", tier: "own" },
+      draft_conv: { kind: "conversation", conversationId: "conv_1", tier: "borrowed" },
+      draft_thread: { kind: "thread", anchorId: "msg_9", streamId: "stream_s", tier: "borrowed" },
+      draft_subtopic: { kind: "subtopic", streamId: "stream_s", messageId: "msg_1", tier: "borrowed" },
     })
   })
 
-  it("holds membership while the picker is open, even as the landing site moves", async () => {
+  it("holds membership while the picker is open, even as the home stream moves", async () => {
     await seedStream("stream_s")
-    await seedStream("stream_t", { type: "thread", rootStreamId: "stream_s" })
+    await seedStream("stream_other")
     await seedConversation("conv_1", "stream_s")
     await db.drafts.bulkAdd([
       draftRow({ id: "draft_stream", scope: "stream:stream_s" }),
@@ -283,7 +438,7 @@ describe("useStashedDrafts — landing-site membership", () => {
 
     act(() => result.current.setPileOpen(true))
     await act(async () => {
-      await seedConversation("conv_1", "stream_s", { lastActiveStreamId: "stream_t" })
+      await seedConversation("conv_1", "stream_other")
       await new Promise((resolve) => setTimeout(resolve, 30))
     })
     expect(result.current.drafts.map((d) => d.id).sort()).toEqual(["draft_conv", "draft_stream"])
@@ -336,5 +491,75 @@ describe("useStashedDrafts — landing-site membership", () => {
     ])
 
     await expectPile("board:reply:conv_lone", ["draft_lone", "draft_lone_empty"])
+  })
+
+  // A `thread:` HOST resolves its own anchor even with no thread-scoped draft in
+  // the workspace: the anchor set the shared context is keyed on includes the
+  // host's, not just the drafts'. Without that the draft-thread panel — whose own
+  // row does not exist until the debounce fires — opens onto an empty pile.
+  it("resolves a thread host's home with no thread-scoped draft anywhere", async () => {
+    await seedStream("stream_s")
+    await seedThreadAnchor("msg_9", "stream_s")
+    await db.drafts.add(draftRow({ id: "draft_stream", scope: "stream:stream_s" }))
+
+    await expectPile("thread:msg_9", ["draft_stream"])
+    expect(await db.drafts.where("scope").startsWith("thread:").count()).toBe(0)
+  })
+})
+
+describe("useStashedDrafts — the worked example: two conversations in one channel", () => {
+  beforeEach(async () => {
+    __clearBoardDraftContextRegistry()
+    await db.conversations.clear()
+    await db.conversationMessages.clear()
+    await db.streams.clear()
+    await db.events.clear()
+
+    // stream_s holds two root messages, each the opener of its own conversation.
+    // A has a thread (four replies, so a real thread stream); B has none, only a
+    // draft reply in a draft thread.
+    await seedStream("stream_s")
+    await seedStream("stream_ta", { type: "thread", rootStreamId: "stream_s", parentAnchorId: "msg_a1" })
+    await seedThreadAnchor("msg_a1", "stream_s")
+    await seedThreadAnchor("msg_b1", "stream_s")
+    await seedConversation("conv_a", "stream_s", { messageIds: ["msg_a1"], openingMessageId: "msg_a1" })
+    await seedConversation("conv_b", "stream_s", { messageIds: ["msg_b1"], openingMessageId: "msg_b1" })
+    await seedConversationMessage("msg_a1", "conv_a", "stream_s")
+    await seedConversationMessage("msg_b1", "conv_b", "stream_s")
+
+    await db.drafts.bulkAdd([
+      draftRow({ id: "draft_b_thread", scope: "thread:msg_b1" }),
+      draftRow({ id: "draft_a_thread", scope: "stream:stream_ta" }),
+      draftRow({ id: "draft_top", scope: "stream:stream_s" }),
+    ])
+  })
+
+  afterEach(() => {
+    __clearBoardDraftContextRegistry()
+  })
+
+  it("continues B's draft-thread reply from B's conversation view and from the draft thread itself", async () => {
+    await expectPile("board:reply:conv_b", ["draft_b_thread", "draft_top"])
+    await expectPile("thread:msg_b1", ["draft_b_thread", "draft_top"])
+  })
+
+  it("continues A's thread draft from A's conversation view", async () => {
+    await expectPile("board:reply:conv_a", ["draft_a_thread", "draft_top"])
+  })
+
+  it("shows a top-level draft in both conversation views", async () => {
+    const { result } = renderHook(() => useStashedDrafts(pileWorkspaceId, "board:reply:conv_a"))
+    await waitFor(() => expect(result.current.drafts.map((d) => d.id)).toContain("draft_top"))
+    await expectPile("board:reply:conv_b", ["draft_b_thread", "draft_top"])
+  })
+
+  it("shows either conversation's draft in the top-level stream composer", async () => {
+    await expectPile("stream:stream_s", ["draft_top", "draft_a_thread", "draft_b_thread"])
+  })
+
+  it("keeps each conversation's draft out of the other conversation's pile", async () => {
+    const { result } = renderHook(() => useStashedDrafts(pileWorkspaceId, "board:reply:conv_a"))
+    await waitFor(() => expect(result.current.drafts.map((d) => d.id)).toContain("draft_a_thread"))
+    expect(result.current.drafts.map((d) => d.id)).not.toContain("draft_b_thread")
   })
 })

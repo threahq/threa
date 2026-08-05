@@ -1,12 +1,13 @@
 import { useCallback, useMemo, useRef, useState } from "react"
 import { type CachedDraft, type CachedStream } from "@/db"
 import { parseBoardDraftKey } from "@/lib/board/draft-keys"
+import { isDraftInHostPile, resolveDraftHomeStream, type DraftPileContext } from "@/lib/drafts/home-stream"
 import { hasSeededDraftCache, useComposerLoadedFromStore, useDraftsFromStore } from "@/stores/draft-store"
 import { useWorkspaceStreamsRaw } from "@/stores/workspace-store"
 import { deleteDraftById } from "@/sync/draft-sync"
 import { useOptionalSyncEngine } from "@/sync/sync-engine"
 import { draftHasPayload, isStreamArchived } from "./use-all-drafts"
-import { useDraftLandingSites } from "./use-draft-landing-sites"
+import { draftScopesSignature, useBoardDraftContext, useThreadAnchorContext } from "./use-board-draft-context"
 
 // Re-exported so components (which cannot import from `@/db` per INV-15) can
 // still get the row type they render without reaching into the data layer.
@@ -15,10 +16,22 @@ import { useDraftLandingSites } from "./use-draft-landing-sites"
 export type { CachedDraft }
 
 /** Where a pile row came from, as structured data — chunk 5 renders it (INV-46). */
-export type StashedDraftOrigin = { kind: "stream"; streamId: string } | { kind: "conversation"; conversationId: string }
+export type StashedDraftSource =
+  | { kind: "stream"; streamId: string }
+  | { kind: "conversation"; conversationId: string }
+  | { kind: "branch"; conversationId: string }
+  | { kind: "thread"; anchorId: string; streamId: string | null }
+  | { kind: "subtopic"; streamId: string; messageId: string }
+
+/**
+ * A pile row's provenance. `tier` is the safety the widened pile carries in
+ * presentation instead of exclusion: `own` is this host's exact scope, `borrowed`
+ * is somewhere else under the same root stream.
+ */
+export type StashedDraftOrigin = StashedDraftSource & { tier: "own" | "borrowed" }
 
 export interface UseStashedDraftsResult {
-  /** The pile the picker renders: every draft that lands where this host's does, minus the loaded ones. */
+  /** The pile the picker renders: every draft that could have been written under this host's root stream, minus the loaded ones. Own rows first, then borrowed; each group newest first. */
   drafts: CachedDraft[]
   /**
    * The subset this host may restore: its own scope's rows, minus any row already
@@ -27,7 +40,7 @@ export interface UseStashedDraftsResult {
    * their debounced saves fight over its `scope` and body.
    */
   claimableDrafts: CachedDraft[]
-  /** Where each pile row came from, keyed by draft id. */
+  /** Where each pile row came from, and its tier, keyed by draft id. */
   originByDraftId: Map<string, StashedDraftOrigin>
   /** True once the draft cache has been seeded (used to suppress empty-flash in the picker). */
   isLoaded: boolean
@@ -35,25 +48,30 @@ export interface UseStashedDraftsResult {
   deleteStashedDraft: (id: string) => Promise<void>
   /**
    * Tell the pile the picker is open. Membership is latched while it is: the
-   * landing stream is live data (a conversation can move into a thread mid-pick)
-   * and a row must not disappear under the user's cursor.
+   * home stream is live data (a conversation can cache or move mid-pick) and a
+   * row must not disappear under the user's cursor.
    */
   setPileOpen: (open: boolean) => void
 }
 
-/** A draft scope that could land flat — the only ones worth resolving a landing site for. */
-function couldLandFlat(scope: string): boolean {
-  if (scope.startsWith("stream:")) return true
-  return parseBoardDraftKey(scope)?.kind === "reply"
-}
-
-function draftOrigin(scope: string): StashedDraftOrigin | null {
+function draftSource(
+  scope: string,
+  streamByAnchorId: ReadonlyMap<string, { streamId: string }>
+): StashedDraftSource | null {
   if (scope.startsWith("stream:")) {
     const streamId = scope.slice("stream:".length)
     return streamId ? { kind: "stream", streamId } : null
   }
+  if (scope.startsWith("thread:")) {
+    const anchorId = scope.slice("thread:".length)
+    if (!anchorId) return null
+    return { kind: "thread", anchorId, streamId: streamByAnchorId.get(anchorId)?.streamId ?? null }
+  }
   const board = parseBoardDraftKey(scope)
-  return board?.kind === "reply" ? { kind: "conversation", conversationId: board.conversationId } : null
+  if (!board) return null
+  if (board.kind === "reply") return { kind: "conversation", conversationId: board.conversationId }
+  if (board.kind === "branch-reply") return { kind: "branch", conversationId: board.conversationId }
+  return { kind: "subtopic", streamId: board.streamId, messageId: board.messageId }
 }
 
 /** Encrypted directly, or under an encrypted root. An uncached stream fails closed. */
@@ -66,23 +84,23 @@ function isStreamEncrypted(streamId: string, streamMap: Map<string, CachedStream
 }
 
 /**
- * The stashed drafts a composer offers — every draft that would land in the same
- * place this host's own draft would, except the ones checked out into a composer
- * on this device.
+ * The stashed drafts a composer offers — every draft the user could plausibly
+ * have written from here, except the ones checked out into a composer on this
+ * device.
  *
- * "The same place" is the LANDING SITE: same stream, top level. A `stream:<S>`
- * draft and a board reply to a conversation that is live in S both land flat in
- * S, so they share one pile; a thread reply, a branch reply, a sub-topic fork and
- * a board reply that would convert its lone opener into a thread all land
- * somewhere nested and are never shared. When this host's own scope doesn't land
- * flat — or lands in a stream that is archived, encrypted, or uncached — the pile
- * stays scope-exact, which is also what every nested composer gets with no
- * special case.
+ * "Could have written here" is {@link isDraftInHostPile}: one root stream, then
+ * own scope / same conversation / a top-level draft / a top-level host offering
+ * this root's conversations. A draft in a thread that is part of no conversation
+ * is the one thing left out; two different conversations never share a pile.
+ * What keeps the rest safe is presentation, not exclusion: a row from another
+ * scope is tiered `borrowed` and ordered after every `own` row.
  *
- * `unknown` (a conversation this device hasn't cached) is never membership, and
- * the exclusion is re-derived every render rather than latched: the board-post
- * map is empty on the first frame, so a `board:reply:` scope resolves `unknown`
- * transiently before it flips.
+ * An unresolvable home (an uncached conversation, an uncached thread anchor) is
+ * never membership, and the exclusion is re-derived every render rather than
+ * latched: the board-post map is empty on the first frame, so a `board:reply:`
+ * scope resolves `null` transiently before it flips. When this host's own home
+ * is unresolvable — or is archived, encrypted, or uncached (a scratchpad, which
+ * has no `db.streams` row, lands here) — the pile stays scope-exact.
  *
  * Stash and restore are pointer moves (see `useStashComposer`): the loaded draft
  * is simply detached/attached via the `composerLoaded` pointer, so a sealed E2E
@@ -117,20 +135,80 @@ export function useStashedDrafts(workspaceId: string, scope: string | undefined)
   }, [cachedStreams])
 
   const candidates = useMemo(
-    () =>
-      allDrafts.filter(
-        (draft) => couldLandFlat(draft.scope) && !loadedAnywhere.has(draft.id) && draftHasPayload(draft)
-      ),
+    () => allDrafts.filter((draft) => !loadedAnywhere.has(draft.id) && draftHasPayload(draft)),
     [allDrafts, loadedAnywhere]
   )
 
-  const landingScopes = useMemo(() => {
+  const pileScopes = useMemo(() => {
     const scopes = candidates.map((draft) => draft.scope)
-    if (scope && couldLandFlat(scope)) scopes.push(scope)
-    return scopes
+    return scope ? [...scopes, scope] : scopes
   }, [candidates, scope])
 
-  const landingSites = useDraftLandingSites(workspaceId, landingScopes)
+  // Only the board scopes actually in play. A plain `board:reply:` scope keeps
+  // `useBoardDraftContext` on its `bulkGet` path; a branch or sub-topic scope is
+  // what puts it on the workspace-wide `db.conversations` scan, and those are the
+  // only scopes whose owning conversation can't be named without it.
+  const boardContextSignature = useMemo(
+    () => draftScopesSignature(pileScopes.filter((candidate) => parseBoardDraftKey(candidate) !== null)),
+    [pileScopes]
+  )
+
+  // The anchor ids the pile has to resolve: a `thread:` scope's own anchor, the
+  // anchor a thread stream hangs off (so a `stream:<threadId>` draft can name its
+  // conversation), and a sub-topic's fork message. Keyed lookups, no scan.
+  const anchorIdsSignature = useMemo(() => {
+    const anchorIds: string[] = []
+    for (const candidate of pileScopes) {
+      if (candidate.startsWith("thread:")) {
+        anchorIds.push(candidate.slice("thread:".length))
+        continue
+      }
+      if (candidate.startsWith("stream:")) {
+        const row = streamMap.get(candidate.slice("stream:".length))
+        const anchorId = row?.parentAnchorId ?? row?.parentMessageId
+        if (anchorId) anchorIds.push(anchorId)
+        continue
+      }
+      const board = parseBoardDraftKey(candidate)
+      if (board?.kind === "subtopic") anchorIds.push(board.messageId)
+    }
+    return draftScopesSignature(anchorIds.filter(Boolean))
+  }, [pileScopes, streamMap])
+
+  const { boardPostMap, hostPostByMessageId, parentPostByBranchConversationId } = useBoardDraftContext(
+    workspaceId,
+    boardContextSignature
+  )
+  const { streamByAnchorId, conversationIdByAnchorId } = useThreadAnchorContext(workspaceId, anchorIdsSignature)
+
+  // A message's owning conversation, from every source already loaded: the
+  // per-anchor backfill rows, the fork hosts, and the message lists of the
+  // conversations the scopes themselves name.
+  const conversationIdByMessageId = useMemo(() => {
+    const map = new Map<string, string>(conversationIdByAnchorId)
+    for (const [messageId, post] of hostPostByMessageId) map.set(messageId, post.id)
+    for (const post of boardPostMap.values()) {
+      for (const messageId of post.conversation.messageIds ?? []) map.set(messageId, post.id)
+    }
+    return map
+  }, [conversationIdByAnchorId, hostPostByMessageId, boardPostMap])
+
+  const parentConversationIdByBranchId = useMemo(() => {
+    const map = new Map<string, string>()
+    for (const [branchId, post] of parentPostByBranchConversationId) map.set(branchId, post.id)
+    return map
+  }, [parentPostByBranchConversationId])
+
+  const pileContext = useMemo<DraftPileContext>(
+    () => ({
+      streamById: streamMap,
+      boardPostByConversationId: boardPostMap,
+      threadAnchorStreamById: streamByAnchorId,
+      conversationIdByMessageId,
+      parentConversationIdByBranchId,
+    }),
+    [streamMap, boardPostMap, streamByAnchorId, conversationIdByMessageId, parentConversationIdByBranchId]
+  )
 
   const scopeExact = useMemo(() => {
     if (!workspaceId || !scope) return []
@@ -147,25 +225,31 @@ export function useStashedDrafts(workspaceId: string, scope: string | undefined)
     )
   }, [allDrafts, workspaceId, scope, loadedAnywhere])
 
+  const comparePile = useCallback(
+    (a: CachedDraft, b: CachedDraft) => {
+      const tier = (draft: CachedDraft) => (draft.scope === scope ? 0 : 1)
+      return tier(a) - tier(b) || b.clientUpdatedAt - a.clientUpdatedAt
+    },
+    [scope]
+  )
+
   const livePile = useMemo(() => {
     if (!workspaceId || !scope) return []
-    const host = landingSites.get(scope)
-    if (host?.kind !== "flat") return scopeExact
-    const landingStreamId = host.streamId
+    const home = resolveDraftHomeStream(scope, pileContext)
+    if (!home) return scopeExact
     // A stream we can't confirm is plaintext and active keeps the pile private:
     // a plaintext board draft must never be offered into a sealed composer, and
     // an archived stream's pile is nobody else's business.
-    if (isStreamEncrypted(landingStreamId, streamMap)) return scopeExact
-    if (isStreamArchived(landingStreamId, streamMap, archivedStreamIds)) return scopeExact
+    if (isStreamEncrypted(home, streamMap)) return scopeExact
+    if (isStreamArchived(home, streamMap, archivedStreamIds)) return scopeExact
 
-    return candidates
-      .filter((draft) => {
-        if (draft.id === loadedId) return false
-        const site = landingSites.get(draft.scope)
-        return site?.kind === "flat" && site.streamId === landingStreamId
-      })
+    const borrowed = candidates
+      .filter(
+        (draft) => draft.scope !== scope && draft.id !== loadedId && isDraftInHostPile(scope, draft.scope, pileContext)
+      )
       .sort((a, b) => b.clientUpdatedAt - a.clientUpdatedAt)
-  }, [workspaceId, scope, landingSites, scopeExact, candidates, loadedId, streamMap, archivedStreamIds])
+    return [...scopeExact, ...borrowed]
+  }, [workspaceId, scope, pileContext, scopeExact, candidates, loadedId, streamMap, archivedStreamIds])
 
   // Latch while the picker is open — see `setPileOpen`.
   const [pileOpen, setPileOpen] = useState(false)
@@ -186,22 +270,25 @@ export function useStashedDrafts(workspaceId: string, scope: string | undefined)
     for (const id of latchedIdsRef.current) {
       const row = draftsById.get(id)
       // A row that was deleted, emptied or checked out into a composer still goes
-      // — the latch holds membership against a moving landing site, not the row.
-      if (!row || !draftHasPayload(row) || loadedAnywhere.has(row.id)) continue
+      // — the latch holds membership against a moving home stream, not the row.
+      // "Emptied" applies to borrowed rows only; an own row carrying just context
+      // refs is legitimately body-less (see `scopeExact`).
+      if (!row || loadedAnywhere.has(row.id)) continue
+      if (row.scope !== scope && !draftHasPayload(row)) continue
       rows.set(id, row)
     }
     for (const row of livePile) rows.set(row.id, row)
-    return [...rows.values()].sort((a, b) => b.clientUpdatedAt - a.clientUpdatedAt)
-  }, [pileOpen, livePile, draftsById, loadedAnywhere])
+    return [...rows.values()].sort(comparePile)
+  }, [pileOpen, livePile, draftsById, loadedAnywhere, comparePile, scope])
 
   const originByDraftId = useMemo(() => {
     const map = new Map<string, StashedDraftOrigin>()
     for (const draft of drafts) {
-      const origin = draftOrigin(draft.scope)
-      if (origin) map.set(draft.id, origin)
+      const source = draftSource(draft.scope, streamByAnchorId)
+      if (source) map.set(draft.id, { ...source, tier: draft.scope === scope ? "own" : "borrowed" })
     }
     return map
-  }, [drafts])
+  }, [drafts, scope, streamByAnchorId])
 
   const isLoaded = hasSeededDraftCache(workspaceId)
   const syncEngine = useOptionalSyncEngine()

@@ -1,5 +1,6 @@
 import { liveQuery, type Subscription } from "dexie"
 import { useCallback, useMemo, useSyncExternalStore } from "react"
+import { THREAD_ANCHORABLE_EVENT_TYPES } from "@threa/types"
 import { db, type CachedBoardPost } from "@/db"
 import { parseBoardDraftKey } from "@/lib/board/draft-keys"
 
@@ -98,42 +99,44 @@ async function loadBoardDraftContext(workspaceId: string, keys: ScopeKeys): Prom
   return { boardPostMap, hostPostByMessageId, parentPostByBranchConversationId }
 }
 
-interface BoardDraftContextEntry {
-  context: BoardDraftContext
+interface SharedEntry<T> {
+  value: T
   listeners: Set<() => void>
   subscription: Subscription
   refCount: number
 }
 
 // INV-9 exception: one shared liveQuery per (workspace, referenced-id set),
-// ref-counted like `boardDraftsRegistry` in `use-scope-draft-preview.ts`. Two
-// consumers — the drafts explorer's location labels and the composer pile's
-// landing sites — mount this at once, and a per-mount `useLiveQuery` would run
-// the whole read (including the workspace-wide conversations scan the fork path
-// takes) once per consumer.
-const boardDraftContextRegistry = new Map<string, BoardDraftContextEntry>()
+// ref-counted like `boardDraftsRegistry` in `use-scope-draft-preview.ts`. Several
+// consumers — the drafts explorer's location labels, the sidebar badge, and the
+// composer pile (which mounts in the timeline, the board card and the stream
+// panel at once) — subscribe simultaneously, and a per-mount `useLiveQuery` would
+// run the whole read once per consumer on every write it observes.
+const boardDraftContextRegistry = new Map<string, SharedEntry<BoardDraftContext>>()
+const threadAnchorContextRegistry = new Map<string, SharedEntry<ThreadAnchorContext>>()
 
-function subscribeBoardDraftContext(
+function subscribeShared<T>(
+  registry: Map<string, SharedEntry<T>>,
   registryKey: string,
-  workspaceId: string,
-  keys: ScopeKeys,
+  empty: T,
+  query: () => Promise<T>,
   listener: () => void
 ): () => void {
-  let entry = boardDraftContextRegistry.get(registryKey)
+  let entry = registry.get(registryKey)
   if (!entry) {
-    const created: BoardDraftContextEntry = {
-      context: EMPTY_CONTEXT,
+    const created: SharedEntry<T> = {
+      value: empty,
       listeners: new Set(),
       refCount: 0,
       subscription: { unsubscribe() {} } as Subscription,
     }
     // Register BEFORE subscribing so `getSnapshot` observes the entry consistently;
     // the callback re-reads the live entry so a late emission after teardown no-ops.
-    boardDraftContextRegistry.set(registryKey, created)
-    created.subscription = liveQuery(() => loadBoardDraftContext(workspaceId, keys)).subscribe((context) => {
-      const live = boardDraftContextRegistry.get(registryKey)
+    registry.set(registryKey, created)
+    created.subscription = liveQuery(query).subscribe((value) => {
+      const live = registry.get(registryKey)
       if (!live) return
-      live.context = context
+      live.value = value
       for (const notify of live.listeners) notify()
     })
     entry = created
@@ -141,13 +144,13 @@ function subscribeBoardDraftContext(
   entry.listeners.add(listener)
   entry.refCount += 1
   return () => {
-    const current = boardDraftContextRegistry.get(registryKey)
+    const current = registry.get(registryKey)
     if (!current) return
     current.listeners.delete(listener)
     current.refCount -= 1
     if (current.refCount <= 0) {
       current.subscription.unsubscribe()
-      boardDraftContextRegistry.delete(registryKey)
+      registry.delete(registryKey)
     }
   }
 }
@@ -163,19 +166,101 @@ export function useBoardDraftContext(workspaceId: string, scopesSignature: strin
   const keys = useMemo(() => scopeKeys(scopesSignature), [scopesSignature])
   const registryKey = `${workspaceId} ${keys.conversationIdKey} ${keys.branchConversationIdKey} ${keys.subtopicMessageIdKey}`
   const subscribe = useCallback(
-    (onChange: () => void) => subscribeBoardDraftContext(registryKey, workspaceId, keys, onChange),
+    (onChange: () => void) =>
+      subscribeShared(
+        boardDraftContextRegistry,
+        registryKey,
+        EMPTY_CONTEXT,
+        () => loadBoardDraftContext(workspaceId, keys),
+        onChange
+      ),
     [registryKey, workspaceId, keys]
   )
   const getSnapshot = useCallback(
-    () => boardDraftContextRegistry.get(registryKey)?.context ?? EMPTY_CONTEXT,
+    () => boardDraftContextRegistry.get(registryKey)?.value ?? EMPTY_CONTEXT,
     [registryKey]
   )
   return useSyncExternalStore(subscribe, getSnapshot)
 }
 
-/** Tear down every shared board-draft-context subscription — for tests, so a
- *  module-level registry can't leak a liveQuery (or a snapshot) across cases. */
+/**
+ * What a set of thread/card anchor ids resolves to: the stream holding the
+ * anchored row (a `thread:` draft's home) and the conversation that owns it (the
+ * pile's same-conversation route).
+ */
+export interface ThreadAnchorContext {
+  /** Anchor id → the stream holding the anchored message/card. */
+  streamByAnchorId: Map<string, { streamId: string; anchorId: string }>
+  /** Anchor id → the conversation that contains it, where one is cached. */
+  conversationIdByAnchorId: Map<string, string>
+}
+
+const EMPTY_ANCHOR_CONTEXT: ThreadAnchorContext = { streamByAnchorId: new Map(), conversationIdByAnchorId: new Map() }
+
+// Both reads are keyed lookups over the ids actually referenced: the sparse
+// `payload.messageId` index (v47) for message anchors, the primary key for card
+// anchors and for the conversation-backfill rows. Nothing scans the events table
+// or the whole workspace, so an always-mounted composer's subscription re-fires
+// only on writes touching an id it asked for.
+async function loadThreadAnchorContext(workspaceId: string, anchorIdKey: string): Promise<ThreadAnchorContext> {
+  if (!anchorIdKey) return EMPTY_ANCHOR_CONTEXT
+  const anchorIds = anchorIdKey.split("|")
+
+  const streamByAnchorId = new Map<string, { streamId: string; anchorId: string }>()
+  const messageRows = await db.events.where("payload.messageId").anyOf(anchorIds).toArray()
+  for (const event of messageRows) {
+    if (event.eventType !== "message_created") continue
+    if (event.workspaceId != null && event.workspaceId !== workspaceId) continue
+    const messageId = (event.payload as { messageId?: string }).messageId
+    if (messageId) streamByAnchorId.set(messageId, { streamId: event.streamId, anchorId: messageId })
+  }
+  const cardRows = await db.events.bulkGet(anchorIds)
+  for (const event of cardRows) {
+    if (!event || !THREAD_ANCHORABLE_EVENT_TYPES.includes(event.eventType)) continue
+    if (event.workspaceId != null && event.workspaceId !== workspaceId) continue
+    streamByAnchorId.set(event.id, { streamId: event.streamId, anchorId: event.id })
+  }
+
+  const conversationIdByAnchorId = new Map<string, string>()
+  const conversationRows = await db.conversationMessages.bulkGet(anchorIds)
+  for (const row of conversationRows) {
+    if (row?.workspaceId === workspaceId) conversationIdByAnchorId.set(row.messageId, row.conversationId)
+  }
+
+  return { streamByAnchorId, conversationIdByAnchorId }
+}
+
+/**
+ * The cached rows a set of anchor ids points at, resolved once for every
+ * consumer (the drafts explorer, the sidebar badge, the composer pile). The
+ * signature is the anchor ids themselves, so a keystroke's draft write doesn't
+ * re-fire it and an anchor nobody references is never read.
+ */
+export function useThreadAnchorContext(workspaceId: string, anchorIdsSignature: string): ThreadAnchorContext {
+  const registryKey = `${workspaceId} ${anchorIdsSignature}`
+  const subscribe = useCallback(
+    (onChange: () => void) =>
+      subscribeShared(
+        threadAnchorContextRegistry,
+        registryKey,
+        EMPTY_ANCHOR_CONTEXT,
+        () => loadThreadAnchorContext(workspaceId, anchorIdsSignature),
+        onChange
+      ),
+    [registryKey, workspaceId, anchorIdsSignature]
+  )
+  const getSnapshot = useCallback(
+    () => threadAnchorContextRegistry.get(registryKey)?.value ?? EMPTY_ANCHOR_CONTEXT,
+    [registryKey]
+  )
+  return useSyncExternalStore(subscribe, getSnapshot)
+}
+
+/** Tear down every shared subscription — for tests, so a module-level registry
+ *  can't leak a liveQuery (or a snapshot) across cases. */
 export function __clearBoardDraftContextRegistry(): void {
-  for (const entry of boardDraftContextRegistry.values()) entry.subscription.unsubscribe()
-  boardDraftContextRegistry.clear()
+  for (const registry of [boardDraftContextRegistry, threadAnchorContextRegistry]) {
+    for (const entry of registry.values()) entry.subscription.unsubscribe()
+    registry.clear()
+  }
 }

@@ -59,6 +59,7 @@ export {
   useStashedDrafts,
   type UseStashedDraftsResult,
   type StashedDraftOrigin,
+  type StashedDraftSource,
   type CachedDraft,
 } from "./use-stashed-drafts"
 

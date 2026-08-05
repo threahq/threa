@@ -2,7 +2,6 @@ import { useCallback, useEffect, useRef } from "react"
 import { useSearchParams } from "react-router-dom"
 import { useLiveQuery } from "dexie-react-hooks"
 import { db } from "@/db"
-import { useComposerLoadedFromStore } from "@/stores/draft-store"
 import { isEmptyContent } from "@/lib/prosemirror-utils"
 import { restoreStashedDraftToComposer, stashLoadedDraft } from "./use-draft-message"
 import { useStashedDrafts, type CachedDraft, type StashedDraftOrigin } from "./use-stashed-drafts"
@@ -53,13 +52,21 @@ export function useStashParamDraftRow(
 ): { draftId: string; scope: string; isLoadedForScope: boolean } | null {
   const [searchParams] = useSearchParams()
   const draftId = searchParams.get("stash")
-  const row = useLiveQuery(() => (draftId ? db.drafts.get(draftId) : undefined), [draftId])
-  const loaded = useComposerLoadedFromStore(workspaceId)
-  if (!draftId || !row || row.workspaceId !== workspaceId) return null
+  // The pointer is read inside the SAME point query as the row, not through the
+  // workspace-wide composer-loaded store: this hook mounts per board card, and a
+  // store subscription would re-render every one of them whenever any composer
+  // anywhere checks a draft in or out.
+  const found = useLiveQuery(async () => {
+    if (!draftId) return undefined
+    const draft = await db.drafts.get(draftId)
+    if (!draft) return undefined
+    const pointer = await db.composerLoaded.get(draft.scope)
+    return { draft, isLoadedForScope: pointer?.draftId === draftId }
+  }, [draftId])
+  if (!draftId || !found || found.draft.workspaceId !== workspaceId) return null
   // Already checked out into its own scope's composer: a deep link to it has
   // nothing to restore, so a consumer must not treat it as a pending one.
-  const isLoadedForScope = loaded.some((entry) => entry.scope === row.scope && entry.draftId === draftId)
-  return { draftId, scope: row.scope, isLoadedForScope }
+  return { draftId, scope: found.draft.scope, isLoadedForScope: found.isLoadedForScope }
 }
 
 export function useStashComposer(
