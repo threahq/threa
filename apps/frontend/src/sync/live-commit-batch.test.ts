@@ -727,6 +727,41 @@ describe("LiveCommitBatch", () => {
     harness.cleanup()
   })
 
+  it("an off-then-on flip during an in-flight fold still lands the newest commit last", async () => {
+    const queryClient = new QueryClient()
+    await seedFixture(queryClient, ["stream_1"])
+    const harness = await register(queryClient, true)
+
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const realTransaction = Dexie.prototype.transaction
+    vi.spyOn(Dexie.prototype, "transaction").mockImplementationOnce(function (this: Dexie, ...args: unknown[]) {
+      const running = (realTransaction as (...a: unknown[]) => Promise<unknown>).apply(this, args)
+      return gate.then(() => running) as never
+    })
+
+    harness.emit("stream:activity", activity("stream_1", 6))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    // Off: #7 takes the deferred immediate arm while #6's commit is in flight.
+    primeEventWriteFlags(WORKSPACE_ID, { workspace: { coalescedLiveCommit: "off" }, user: {} })
+    harness.emit("stream:activity", activity("stream_1", 7))
+    // Back on: #8 buffers, and must publish AFTER the deferred #7.
+    primeEventWriteFlags(WORKSPACE_ID, { workspace: { coalescedLiveCommit: "on" }, user: {} })
+    harness.emit("stream:activity", activity("stream_1", 8))
+    release()
+    await settle()
+
+    expect({
+      cachePreview: bootstrapOf(queryClient)?.streams.find((s) => s.id === "stream_1")?.lastMessagePreview?.content,
+      idbPreview: (await db.streams.get("stream_1"))?.lastMessagePreview?.content,
+    }).toEqual({ cachePreview: "message 8", idbPreview: "message 8" })
+
+    harness.cleanup()
+  })
+
   it("a fold buffered before an account switch writes nothing after it", async () => {
     const queryClient = new QueryClient()
     await seedFixture(queryClient, ["stream_1"])
