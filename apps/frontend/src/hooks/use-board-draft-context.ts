@@ -133,11 +133,28 @@ function subscribeShared<T>(
     // Register BEFORE subscribing so `getSnapshot` observes the entry consistently;
     // the callback re-reads the live entry so a late emission after teardown no-ops.
     registry.set(registryKey, created)
-    created.subscription = liveQuery(query).subscribe((value) => {
-      const live = registry.get(registryKey)
-      if (!live) return
-      live.value = value
-      for (const notify of live.listeners) notify()
+    created.subscription = liveQuery(query).subscribe({
+      next(value) {
+        const live = registry.get(registryKey)
+        if (!live) return
+        live.value = value
+        for (const notify of live.listeners) notify()
+      },
+      // An error observer is not optional here. Without one Dexie drops the
+      // rejection silently, and a FIRST-run failure also leaves the observable
+      // with no tracked ranges, so it never re-queries — the entry would serve
+      // `empty` for the page's lifetime and every pile would collapse to
+      // scope-exact with no signal (INV-11). Dropping the entry lets the next
+      // subscriber rebuild it; `useLiveQuery`, which this replaced, surfaced the
+      // same failure by re-throwing in render.
+      error(err: unknown) {
+        console.error(`[draft-context] shared query failed for ${registryKey}`, err)
+        const live = registry.get(registryKey)
+        if (!live) return
+        registry.delete(registryKey)
+        live.subscription.unsubscribe()
+        for (const notify of live.listeners) notify()
+      },
     })
     entry = created
   }
