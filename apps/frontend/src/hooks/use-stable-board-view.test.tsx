@@ -6,24 +6,12 @@ import * as graphModule from "./use-conversation-graph"
 import type { CachedBoardPost } from "@/db"
 import {
   reconcileStableView,
-  useStableBoardView as useStableBoardViewImpl,
+  useStableBoardView,
   type BoardExclusionState,
   type BoardViewFilter,
   type BoardSeedState,
   type CommittedView,
 } from "./use-stable-board-view"
-
-/** Keeps the existing call sites focused on their own axis while the retired
- * viewport-seen input remains accepted only inside this test file. */
-function useStableBoardView(
-  workspaceId: string,
-  filter: BoardViewFilter,
-  exclusions: BoardExclusionState | undefined,
-  seed: BoardSeedState | undefined,
-  _retiredSeenRef?: { readonly current: ReadonlySet<string> }
-) {
-  return useStableBoardViewImpl(workspaceId, filter, exclusions, seed)
-}
 
 /** Build a full filter from overrides — every axis off unless named. */
 function filterOf(over: Partial<BoardViewFilter> = {}): BoardViewFilter {
@@ -198,7 +186,7 @@ describe("useStableBoardView", () => {
 
   it("reports loading until the IDB read resolves, then the empty state", () => {
     mockLive(undefined)
-    const { result, rerender } = renderHook(() => useStableBoardView("ws_1", ALL, undefined, undefined, undefined))
+    const { result, rerender } = renderHook(() => useStableBoardView("ws_1", ALL, undefined, undefined))
     expect(result.current.isLoading).toBe(true)
     act(() => mockLive([]))
     rerender()
@@ -208,7 +196,7 @@ describe("useStableBoardView", () => {
 
   it("holds order frozen and surfaces a fresh arrival as the new count", () => {
     mockLive(feed(post("a", 300), post("b", 200)))
-    const { result, rerender } = renderHook(() => useStableBoardView("ws_1", ALL, undefined, undefined, undefined))
+    const { result, rerender } = renderHook(() => useStableBoardView("ws_1", ALL, undefined, undefined))
     expect(result.current.posts.map((p) => p.id)).toEqual(["a", "b"])
 
     act(() => mockLive(feed(post("new", 500), post("a", 300), post("b", 200))))
@@ -224,7 +212,7 @@ describe("useStableBoardView", () => {
 
   it("reveals the viewer's own pending post at top the moment it lands", () => {
     mockLive(feed(post("a", 300)))
-    const { result, rerender } = renderHook(() => useStableBoardView("ws_1", ALL, undefined, undefined, undefined))
+    const { result, rerender } = renderHook(() => useStableBoardView("ws_1", ALL, undefined, undefined))
     act(() => mockLive(feed(pendingPost("mine", 600), post("a", 300))))
     rerender()
     expect(result.current.posts.map((p) => p.id)).toEqual(["mine", "a"])
@@ -233,7 +221,7 @@ describe("useStableBoardView", () => {
 
   it("reveals a pending post that materializes arbitrarily later (a queued scratchpad send), no arm window", () => {
     mockLive(feed(post("a", 300)))
-    const { result, rerender } = renderHook(() => useStableBoardView("ws_1", ALL, undefined, undefined, undefined))
+    const { result, rerender } = renderHook(() => useStableBoardView("ws_1", ALL, undefined, undefined))
     // An unrelated arrival buffers first; then, much later (past any old 8s arm),
     // the viewer's own scratchpad card finally lands from the drain.
     act(() => mockLive(feed(post("other", 500), post("a", 300))))
@@ -249,7 +237,7 @@ describe("useStableBoardView", () => {
 
   it("reveals ONLY the viewer's own pending card, leaving other users' arrivals buffered", () => {
     mockLive(feed(post("a", 300)))
-    const { result, rerender } = renderHook(() => useStableBoardView("ws_1", ALL, undefined, undefined, undefined))
+    const { result, rerender } = renderHook(() => useStableBoardView("ws_1", ALL, undefined, undefined))
     // Two unrelated new conversations accumulate, then the viewer posts.
     act(() => mockLive(feed(pendingPost("mine", 900), post("x", 700), post("y", 600), post("a", 300))))
     rerender()
@@ -260,7 +248,7 @@ describe("useStableBoardView", () => {
 
   it("marks a committed card that left the raw feed as removed, keeping its slot until the next commit", () => {
     mockLive(feed(post("a", 300), post("b", 200)))
-    const { result, rerender } = renderHook(() => useStableBoardView("ws_1", ALL, undefined, undefined, undefined))
+    const { result, rerender } = renderHook(() => useStableBoardView("ws_1", ALL, undefined, undefined))
     // "b" is merged away / emptied — its IDB row is gone.
     act(() => mockLive(feed(post("a", 300))))
     rerender()
@@ -280,7 +268,7 @@ describe("useStableBoardView", () => {
       openingMessage: { id: "m_open" },
     } as unknown as CachedBoardPost
     mockLive(feed(post("a", 300), ghost))
-    const { result, rerender } = renderHook(() => useStableBoardView("ws_1", ALL, undefined, undefined, undefined))
+    const { result, rerender } = renderHook(() => useStableBoardView("ws_1", ALL, undefined, undefined))
     // "b" merged into "c", which now carries its opening message.
     const successor = {
       ...post("c", 400),
@@ -303,7 +291,7 @@ describe("useStableBoardView", () => {
   it("reports no successor when nothing holds the removed card's opening message", () => {
     const ghost = { ...post("b", 200), openingMessage: { id: "m_open" } } as unknown as CachedBoardPost
     mockLive(feed(post("a", 300), ghost))
-    const { result, rerender } = renderHook(() => useStableBoardView("ws_1", ALL, undefined, undefined, undefined))
+    const { result, rerender } = renderHook(() => useStableBoardView("ws_1", ALL, undefined, undefined))
     act(() => mockLive(feed(post("a", 300))))
     rerender()
     expect([...result.current.removedIds]).toEqual(["b"])
@@ -314,9 +302,7 @@ describe("useStableBoardView", () => {
     const mine = { ...post("m", 300), isMine: true } as CachedBoardPost
     const plain = { ...post("a", 200), isMine: true } as CachedBoardPost
     mockLive(feed(mine, plain))
-    const { result, rerender } = renderHook(() =>
-      useStableBoardView("ws_1", lensFilter("mine"), undefined, undefined, undefined)
-    )
+    const { result, rerender } = renderHook(() => useStableBoardView("ws_1", lensFilter("mine"), undefined, undefined))
     expect(result.current.posts.map((p) => p.id)).toEqual(["m", "a"])
     // "a" stops matching the lens but its row is still in the raw feed.
     act(() => mockLive(feed(mine, { ...plain, isMine: false } as CachedBoardPost)))
@@ -327,7 +313,7 @@ describe("useStableBoardView", () => {
 
   it("resets the committed view when the workspace changes", () => {
     mockLive(feed(post("a", 300)))
-    const { result, rerender } = renderHook(({ ws }) => useStableBoardView(ws, ALL, undefined, undefined, undefined), {
+    const { result, rerender } = renderHook(({ ws }) => useStableBoardView(ws, ALL, undefined, undefined), {
       initialProps: { ws: "ws_1" },
     })
     expect(result.current.posts.map((p) => p.id)).toEqual(["a"])
@@ -341,7 +327,7 @@ describe("useStableBoardView", () => {
     const mine = { ...post("m", 300), isMine: true } as CachedBoardPost
     const other = { ...post("n", 200), isMine: false } as CachedBoardPost
     mockLive(feed(mine, other))
-    const { result } = renderHook(() => useStableBoardView("ws_1", lensFilter("mine"), undefined, undefined, undefined))
+    const { result } = renderHook(() => useStableBoardView("ws_1", lensFilter("mine"), undefined, undefined))
     expect(result.current.posts.map((p) => p.id)).toEqual(["m"])
   })
 
@@ -350,7 +336,7 @@ describe("useStableBoardView", () => {
     const plain = { ...post("a", 250), isMine: false } as CachedBoardPost
     mockLive(feed(mine, plain))
     const { result, rerender } = renderHook(
-      ({ lens }) => useStableBoardView("ws_1", lensFilter(lens), undefined, undefined, undefined),
+      ({ lens }) => useStableBoardView("ws_1", lensFilter(lens), undefined, undefined),
       {
         initialProps: { lens: "all" as BoardLens },
       }
@@ -372,12 +358,9 @@ describe("useStableBoardView", () => {
     const mine = { ...lensPost("s", 300, { isMine: true }), rootStreamId: "chan_a" } as CachedBoardPost
     const other = { ...lensPost("d", 400, {}), rootStreamId: "chan_b" } as CachedBoardPost
     mockLive(feed(mine, other))
-    const { result, rerender } = renderHook(
-      ({ filter }) => useStableBoardView("ws_1", filter, undefined, undefined, undefined),
-      {
-        initialProps: { filter: lensFilter("mine") },
-      }
-    )
+    const { result, rerender } = renderHook(({ filter }) => useStableBoardView("ws_1", filter, undefined, undefined), {
+      initialProps: { filter: lensFilter("mine") },
+    })
     expect(result.current.posts.map((p) => p.id)).toEqual(["s"])
     rerender({ filter: scopeFilter(["chan_b"]) })
     expect(result.current.posts.map((p) => p.id)).toEqual(["d"])
@@ -395,12 +378,9 @@ describe("useStableBoardView", () => {
     const scoped = { ...lensPost("s", 300, {}), rootStreamId: "chan_a" } as CachedBoardPost // chan_a only
     const mineLow = { ...lensPost("x", 200, { isMine: true }), rootStreamId: "chan_b" } as CachedBoardPost // mine, below s's floor
     mockLive(feed(scoped, mineLow))
-    const { result, rerender } = renderHook(
-      ({ filter }) => useStableBoardView("ws_1", filter, undefined, undefined, undefined),
-      {
-        initialProps: { filter: scopeFilter(["chan_a"]) },
-      }
-    )
+    const { result, rerender } = renderHook(({ filter }) => useStableBoardView("ws_1", filter, undefined, undefined), {
+      initialProps: { filter: scopeFilter(["chan_a"]) },
+    })
     expect(result.current.posts.map((p) => p.id)).toEqual(["s"])
 
     rerender({ filter: lensFilter("mine") })
@@ -424,9 +404,7 @@ describe("useStableBoardView", () => {
     const mine = lensPost("s", 300, { isMine: true })
     const idle = lensPost("i", 200, { isMine: true })
     mockLive(feed(mine, idle))
-    const { result, rerender } = renderHook(() =>
-      useStableBoardView("ws_1", lensFilter("mine"), undefined, undefined, undefined)
-    )
+    const { result, rerender } = renderHook(() => useStableBoardView("ws_1", lensFilter("mine"), undefined, undefined))
     expect(result.current.posts.map((p) => p.id)).toEqual(["s", "i"])
 
     // The mention on `s` is deleted with fresh activity — it no longer matches.
@@ -447,12 +425,9 @@ describe("useStableBoardView", () => {
     // top there via reconcile, no arm to carry across the reset.
     const mine = lensPost("s", 300, { isMine: true })
     mockLive(feed(mine))
-    const { result, rerender } = renderHook(
-      ({ filter }) => useStableBoardView("ws_1", filter, undefined, undefined, undefined),
-      {
-        initialProps: { filter: lensFilter("mine") },
-      }
-    )
+    const { result, rerender } = renderHook(({ filter }) => useStableBoardView("ws_1", filter, undefined, undefined), {
+      initialProps: { filter: lensFilter("mine") },
+    })
     expect(result.current.posts.map((p) => p.id)).toEqual(["s"])
 
     // Navigate to All, then the authored card lands after the fresh view's commit.
@@ -472,9 +447,7 @@ describe("useStableBoardView", () => {
     const threadUnderScope = scopedPost("t", 250, "stream_root")
     const outOfScope = scopedPost("z", 400, "stream_other")
     mockLive(feed(inScope, threadUnderScope, outOfScope))
-    const { result } = renderHook(() =>
-      useStableBoardView("ws_1", scopeFilter(["stream_root"]), undefined, undefined, undefined)
-    )
+    const { result } = renderHook(() => useStableBoardView("ws_1", scopeFilter(["stream_root"]), undefined, undefined))
     expect(result.current.posts.map((p) => p.id)).toEqual(["a", "t"])
   })
 
@@ -484,9 +457,7 @@ describe("useStableBoardView", () => {
       conversation: { ...post("l", 300).conversation, streamId: "stream_root" },
     } as CachedBoardPost
     mockLive(feed(legacy))
-    const { result } = renderHook(() =>
-      useStableBoardView("ws_1", scopeFilter(["stream_root"]), undefined, undefined, undefined)
-    )
+    const { result } = renderHook(() => useStableBoardView("ws_1", scopeFilter(["stream_root"]), undefined, undefined))
     expect(result.current.posts.map((p) => p.id)).toEqual(["l"])
   })
 
@@ -500,18 +471,14 @@ describe("useStableBoardView", () => {
     const threadUnderChannel = typedPost("t", 250, "channel")
     const dmPost = typedPost("d", 400, "dm")
     mockLive(feed(channelPost, threadUnderChannel, dmPost))
-    const { result } = renderHook(() =>
-      useStableBoardView("ws_1", typesFilter(["channel"]), undefined, undefined, undefined)
-    )
+    const { result } = renderHook(() => useStableBoardView("ws_1", typesFilter(["channel"]), undefined, undefined))
     expect(result.current.posts.map((p) => p.id)).toEqual(["c", "t"])
   })
 
   it("fails open for cached rows without rootStreamType — the board surfaces, never hides", () => {
     const legacy = post("l", 300) // no rootStreamType field
     mockLive(feed(legacy))
-    const { result } = renderHook(() =>
-      useStableBoardView("ws_1", typesFilter(["dm"]), undefined, undefined, undefined)
-    )
+    const { result } = renderHook(() => useStableBoardView("ws_1", typesFilter(["dm"]), undefined, undefined))
     expect(result.current.posts.map((p) => p.id)).toEqual(["l"])
   })
 
@@ -519,12 +486,9 @@ describe("useStableBoardView", () => {
     const channelPost = typedPost("c", 300, "channel")
     const dmPost = typedPost("d", 400, "dm")
     mockLive(feed(channelPost, dmPost))
-    const { result, rerender } = renderHook(
-      ({ filter }) => useStableBoardView("ws_1", filter, undefined, undefined, undefined),
-      {
-        initialProps: { filter: typesFilter(["channel"]) },
-      }
-    )
+    const { result, rerender } = renderHook(({ filter }) => useStableBoardView("ws_1", filter, undefined, undefined), {
+      initialProps: { filter: typesFilter(["channel"]) },
+    })
     expect(result.current.posts.map((p) => p.id)).toEqual(["c"])
     rerender({ filter: typesFilter(["dm"]) })
     expect(result.current.posts.map((p) => p.id)).toEqual(["d"])
@@ -567,7 +531,7 @@ describe("useStableBoardView", () => {
     } as unknown as ReturnType<typeof graphModule.useConversationGraph>)
 
     mockLive(feed(child, other, parent))
-    const { result } = renderHook(() => useStableBoardView("ws_1", ALL, undefined, undefined, undefined))
+    const { result } = renderHook(() => useStableBoardView("ws_1", ALL, undefined, undefined))
     // One card per root discussion: the child folds into the parent, whose
     // effective activity (900) now outranks "other" (500).
     expect(result.current.posts.map((p) => p.id)).toEqual(["parent", "other"])
@@ -612,7 +576,7 @@ describe("useStableBoardView", () => {
     // The live feed holds only the child (its parent didn't match the filters):
     // never vanish content — the child stays a standalone card.
     mockLive(feed(child))
-    const { result } = renderHook(() => useStableBoardView("ws_1", ALL, undefined, undefined, undefined))
+    const { result } = renderHook(() => useStableBoardView("ws_1", ALL, undefined, undefined))
     expect(result.current.posts.map((p) => p.id)).toEqual(["child"])
   })
 
@@ -620,12 +584,9 @@ describe("useStableBoardView", () => {
     const a = scopedPost("a", 300, "stream_one")
     const b = scopedPost("b", 400, "stream_two")
     mockLive(feed(a, b))
-    const { result, rerender } = renderHook(
-      ({ filter }) => useStableBoardView("ws_1", filter, undefined, undefined, undefined),
-      {
-        initialProps: { filter: scopeFilter(["stream_one"]) },
-      }
-    )
+    const { result, rerender } = renderHook(({ filter }) => useStableBoardView("ws_1", filter, undefined, undefined), {
+      initialProps: { filter: scopeFilter(["stream_one"]) },
+    })
     expect(result.current.posts.map((p) => p.id)).toEqual(["a"])
 
     // A structurally-equal scope (same key, fresh Set identity) must NOT reset.
@@ -677,7 +638,7 @@ describe("useStableBoardView — negative & label filters", () => {
     const other = anchoredPost("z", 400, "stream_ok", "stream_ok")
     mockLive(feed(inChannel, inThread, other))
     const { result } = renderHook(() =>
-      useStableBoardView("ws_1", excludeStreamsFilter(["stream_gh"]), undefined, undefined, undefined)
+      useStableBoardView("ws_1", excludeStreamsFilter(["stream_gh"]), undefined, undefined)
     )
     expect(result.current.posts.map((p) => p.id)).toEqual(["z"])
   })
@@ -687,7 +648,7 @@ describe("useStableBoardView — negative & label filters", () => {
     const inThread = anchoredPost("t", 250, "thread_1", "stream_c")
     mockLive(feed(inChannel, inThread))
     const { result } = renderHook(() =>
-      useStableBoardView("ws_1", excludeStreamsFilter(["thread_1"]), undefined, undefined, undefined)
+      useStableBoardView("ws_1", excludeStreamsFilter(["thread_1"]), undefined, undefined)
     )
     expect(result.current.posts.map((p) => p.id)).toEqual(["a"])
   })
@@ -699,7 +660,7 @@ describe("useStableBoardView — negative & label filters", () => {
       scope: { key: "stream_x", ids: new Set(["stream_x"]) },
       excludeStreams: { key: "stream_x", ids: new Set(["stream_x"]) },
     })
-    const { result } = renderHook(() => useStableBoardView("ws_1", filter, undefined, undefined, undefined))
+    const { result } = renderHook(() => useStableBoardView("ws_1", filter, undefined, undefined))
     expect(result.current.posts).toEqual([])
   })
 
@@ -709,7 +670,7 @@ describe("useStableBoardView — negative & label filters", () => {
     const legacy = post("l", 200) // no rootStreamType
     mockLive(feed(dmPost, channelPost, legacy))
     const filter = filterOf({ excludeTypes: { key: "dm", ids: new Set<BoardScopeStreamType>(["dm"]) } })
-    const { result } = renderHook(() => useStableBoardView("ws_1", filter, undefined, undefined, undefined))
+    const { result } = renderHook(() => useStableBoardView("ws_1", filter, undefined, undefined))
     expect(result.current.posts.map((p) => p.id)).toEqual(["c", "l"])
   })
 
@@ -719,22 +680,14 @@ describe("useStableBoardView — negative & label filters", () => {
     const unlabeled = anchoredPost("z", 400, "stream_plain", "stream_plain")
     mockLive(feed(onLabeledRoot, onLabeledAnchor, unlabeled))
     const { result } = renderHook(() =>
-      useStableBoardView(
-        "ws_1",
-        labelsFilter("label_x", ["stream_lab", "stream_lab2"]),
-        undefined,
-        undefined,
-        undefined
-      )
+      useStableBoardView("ws_1", labelsFilter("label_x", ["stream_lab", "stream_lab2"]), undefined, undefined)
     )
     expect(result.current.posts.map((p) => p.id)).toEqual(["a", "b"])
   })
 
   it("a label scope that resolves to no streams matches NOTHING, not everything", () => {
     mockLive(feed(post("a", 300)))
-    const { result } = renderHook(() =>
-      useStableBoardView("ws_1", labelsFilter("label_x", []), undefined, undefined, undefined)
-    )
+    const { result } = renderHook(() => useStableBoardView("ws_1", labelsFilter("label_x", []), undefined, undefined))
     expect(result.current.posts).toEqual([])
     expect(result.current.hasRawPosts).toBe(true)
   })
@@ -744,7 +697,7 @@ describe("useStableBoardView — negative & label filters", () => {
     const other = anchoredPost("z", 400, "stream_ok", "stream_ok")
     mockLive(feed(labeled, other))
     const { result } = renderHook(() =>
-      useStableBoardView("ws_1", excludeLabelsFilter("label_code", ["stream_code"]), undefined, undefined, undefined)
+      useStableBoardView("ws_1", excludeLabelsFilter("label_code", ["stream_code"]), undefined, undefined)
     )
     expect(result.current.posts.map((p) => p.id)).toEqual(["z"])
   })
@@ -753,12 +706,9 @@ describe("useStableBoardView — negative & label filters", () => {
     const a = anchoredPost("a", 300, "stream_a", "stream_a")
     const b = anchoredPost("b", 200, "stream_b", "stream_b")
     mockLive(feed(a, b))
-    const { result, rerender } = renderHook(
-      ({ filter }) => useStableBoardView("ws_1", filter, undefined, undefined, undefined),
-      {
-        initialProps: { filter: excludeLabelsFilter("label_x", []) },
-      }
-    )
+    const { result, rerender } = renderHook(({ filter }) => useStableBoardView("ws_1", filter, undefined, undefined), {
+      initialProps: { filter: excludeLabelsFilter("label_x", []) },
+    })
     expect(result.current.posts.map((p) => p.id)).toEqual(["a", "b"])
 
     // stream_a gets labeled while the view is open: same filter key, new
@@ -802,7 +752,7 @@ describe("useStableBoardView — hide & mute exclusions", () => {
 
   it("drops a hidden card immediately — even after it was committed and retained (the crux)", () => {
     mockLive(feed(post("a", 300), post("b", 200)))
-    const { result, rerender } = renderHook(({ excl }) => useStableBoardView("ws_1", ALL, excl, undefined, undefined), {
+    const { result, rerender } = renderHook(({ excl }) => useStableBoardView("ws_1", ALL, excl, undefined), {
       initialProps: { excl: NO_EXCL },
     })
     expect(result.current.posts.map((p) => p.id)).toEqual(["a", "b"])
@@ -817,7 +767,7 @@ describe("useStableBoardView — hide & mute exclusions", () => {
   it("revives a hidden card once its activity passes the watermark", () => {
     const excl = exclOf({ hidden: new Map([["a", 350]]) })
     mockLive(feed(post("a", 300)))
-    const { result, rerender } = renderHook(({ e }) => useStableBoardView("ws_1", ALL, e, undefined, undefined), {
+    const { result, rerender } = renderHook(({ e }) => useStableBoardView("ws_1", ALL, e, undefined), {
       initialProps: { e: excl },
     })
     expect(result.current.posts.map((p) => p.id)).toEqual([])
@@ -830,7 +780,7 @@ describe("useStableBoardView — hide & mute exclusions", () => {
   it("drops a muted stream's cards when mute is active", () => {
     mockLive(feed(streamPost("a", 300, "stream_x"), streamPost("b", 200, "stream_y")))
     const { result } = renderHook(() =>
-      useStableBoardView("ws_1", ALL, exclOf({ muted: new Set(["stream_x"]) }), undefined, undefined)
+      useStableBoardView("ws_1", ALL, exclOf({ muted: new Set(["stream_x"]) }), undefined)
     )
     expect(result.current.posts.map((p) => p.id)).toEqual(["b"])
   })
@@ -838,21 +788,21 @@ describe("useStableBoardView — hide & mute exclusions", () => {
   it("keeps a muted stream's cards when mute is inactive (an explicit ?in= scope)", () => {
     mockLive(feed(streamPost("a", 300, "stream_x"), streamPost("b", 200, "stream_y")))
     const { result } = renderHook(() =>
-      useStableBoardView("ws_1", ALL, exclOf({ muted: new Set(["stream_x"]), muteActive: false }), undefined, undefined)
+      useStableBoardView("ws_1", ALL, exclOf({ muted: new Set(["stream_x"]), muteActive: false }), undefined)
     )
     expect(result.current.posts.map((p) => p.id)).toEqual(["a", "b"])
   })
 
   it("drops a `rootArchived` card while showArchived is off", () => {
     mockLive(feed(archivedPost("a", 300, "stream_x"), streamPost("b", 200, "stream_y")))
-    const { result } = renderHook(() => useStableBoardView("ws_1", ALL, undefined, undefined, undefined))
+    const { result } = renderHook(() => useStableBoardView("ws_1", ALL, undefined, undefined))
     expect(result.current.posts.map((p) => p.id)).toEqual(["b"])
   })
 
   it("keeps a `rootArchived` card once showArchived opts in", () => {
     mockLive(feed(archivedPost("a", 300, "stream_x"), streamPost("b", 200, "stream_y")))
     const { result } = renderHook(() =>
-      useStableBoardView("ws_1", filterOf({ showArchived: true }), undefined, undefined, undefined)
+      useStableBoardView("ws_1", filterOf({ showArchived: true }), undefined, undefined)
     )
     expect(result.current.posts.map((p) => p.id)).toEqual(["a", "b"])
   })
@@ -862,12 +812,9 @@ describe("useStableBoardView — hide & mute exclusions", () => {
     // committed and retained; toggling archived off must drop it NOW (the server
     // won't re-seed it to evict it from IDB), driven purely by `post.rootArchived`.
     mockLive(feed(archivedPost("a", 300, "stream_x"), streamPost("b", 200, "stream_y")))
-    const { result, rerender } = renderHook(
-      ({ filter }) => useStableBoardView("ws_1", filter, undefined, undefined, undefined),
-      {
-        initialProps: { filter: filterOf({ showArchived: true }) },
-      }
-    )
+    const { result, rerender } = renderHook(({ filter }) => useStableBoardView("ws_1", filter, undefined, undefined), {
+      initialProps: { filter: filterOf({ showArchived: true }) },
+    })
     expect(result.current.posts.map((p) => p.id)).toEqual(["a", "b"])
 
     rerender({ filter: ALL })
@@ -883,13 +830,7 @@ describe("useStableBoardView — hide & mute exclusions", () => {
       feed(streamPost("a", 300, "stream_x"), staleActivePost("b", 200, "stream_y"), streamPost("c", 100, "stream_z"))
     )
     const { result } = renderHook(() =>
-      useStableBoardView(
-        "ws_1",
-        filterOf({ archivedRootIds: new Set(["stream_x", "stream_y"]) }),
-        undefined,
-        undefined,
-        undefined
-      )
+      useStableBoardView("ws_1", filterOf({ archivedRootIds: new Set(["stream_x", "stream_y"]) }), undefined, undefined)
     )
     expect(result.current.posts.map((p) => p.id)).toEqual(["c"])
   })
@@ -901,7 +842,6 @@ describe("useStableBoardView — hide & mute exclusions", () => {
         "ws_1",
         filterOf({ showArchived: true, archivedRootIds: new Set(["stream_x", "stream_y"]) }),
         undefined,
-        undefined,
         undefined
       )
     )
@@ -911,23 +851,16 @@ describe("useStableBoardView — hide & mute exclusions", () => {
   it("keeps a `rootArchived: false` card whose root is not in the archived index", () => {
     mockLive(feed(staleActivePost("a", 300, "stream_x")))
     const { result } = renderHook(() =>
-      useStableBoardView(
-        "ws_1",
-        filterOf({ archivedRootIds: new Set(["stream_other"]) }),
-        undefined,
-        undefined,
-        undefined
-      )
+      useStableBoardView("ws_1", filterOf({ archivedRootIds: new Set(["stream_other"]) }), undefined, undefined)
     )
     expect(result.current.posts.map((p) => p.id)).toEqual(["a"])
   })
 
   it("drops a committed card the instant its root joins the archived index", () => {
     mockLive(feed(streamPost("a", 300, "stream_x"), streamPost("b", 200, "stream_y")))
-    const { result, rerender } = renderHook(
-      ({ filter }) => useStableBoardView("ws_1", filter, undefined, undefined, undefined),
-      { initialProps: { filter: filterOf() } }
-    )
+    const { result, rerender } = renderHook(({ filter }) => useStableBoardView("ws_1", filter, undefined, undefined), {
+      initialProps: { filter: filterOf() },
+    })
     expect(result.current.posts.map((p) => p.id)).toEqual(["a", "b"])
 
     // A fresh arrival waits behind the "N new" pill — the reader's view is frozen.
@@ -951,7 +884,7 @@ describe("useStableBoardView — hide & mute exclusions", () => {
     // board can show its empty state instead of a perpetual seed skeleton.
     mockLive(feed(post("a", 300)))
     const { result } = renderHook(() =>
-      useStableBoardView("ws_1", ALL, exclOf({ hidden: new Map([["a", 400]]) }), undefined, undefined)
+      useStableBoardView("ws_1", ALL, exclOf({ hidden: new Map([["a", 400]]) }), undefined)
     )
     expect(result.current.posts).toEqual([])
     expect(result.current.isLoading).toBe(false)
@@ -975,7 +908,7 @@ describe("useStableBoardView — unread filter", () => {
     } as CachedBoardPost
     mockLive(feed(streamPost("a", 300, "stream_unread"), streamPost("b", 200, "stream_read"), legacy))
     const { result } = renderHook(() =>
-      useStableBoardView("ws_1", unreadFilter(["stream_unread", "stream_anchor"]), undefined, undefined, undefined)
+      useStableBoardView("ws_1", unreadFilter(["stream_unread", "stream_anchor"]), undefined, undefined)
     )
     expect(result.current.posts.map((p) => p.id)).toEqual(["a", "c"])
   })
@@ -985,12 +918,9 @@ describe("useStableBoardView — unread filter", () => {
     // just because it's no longer in `live` — reading it while sitting on
     // `?unread=true` is a voluntary action, same class as hide/mute.
     mockLive(feed(streamPost("a", 300, "stream_x"), streamPost("b", 200, "stream_y")))
-    const { result, rerender } = renderHook(
-      ({ filter }) => useStableBoardView("ws_1", filter, undefined, undefined, undefined),
-      {
-        initialProps: { filter: unreadFilter(["stream_x", "stream_y"]) },
-      }
-    )
+    const { result, rerender } = renderHook(({ filter }) => useStableBoardView("ws_1", filter, undefined, undefined), {
+      initialProps: { filter: unreadFilter(["stream_x", "stream_y"]) },
+    })
     expect(result.current.posts.map((p) => p.id)).toEqual(["a", "b"])
 
     // "stream_x" gets read — its id drops out of the live unread set. No commit.
@@ -1000,12 +930,9 @@ describe("useStableBoardView — unread filter", () => {
 
   it("a live unread re-resolution (same `?unread=true` selection) never resets the frozen view", () => {
     mockLive(feed(streamPost("a", 300, "stream_x")))
-    const { result, rerender } = renderHook(
-      ({ filter }) => useStableBoardView("ws_1", filter, undefined, undefined, undefined),
-      {
-        initialProps: { filter: unreadFilter(["stream_x"]) },
-      }
-    )
+    const { result, rerender } = renderHook(({ filter }) => useStableBoardView("ws_1", filter, undefined, undefined), {
+      initialProps: { filter: unreadFilter(["stream_x"]) },
+    })
     act(() => result.current.commit())
     expect(result.current.posts.map((p) => p.id)).toEqual(["a"])
 
@@ -1027,26 +954,21 @@ describe("useStableBoardView — drafts filter", () => {
 
   it("shows only conversations carrying a draft", () => {
     mockLive(feed(post("a", 300), post("b", 200)))
-    const { result } = renderHook(() =>
-      useStableBoardView("ws_1", draftsFilter(["a"]), undefined, undefined, undefined)
-    )
+    const { result } = renderHook(() => useStableBoardView("ws_1", draftsFilter(["a"]), undefined, undefined))
     expect(result.current.posts.map((p) => p.id)).toEqual(["a"])
   })
 
   it("matches a conversation whose message carries a sub-topic draft", () => {
     mockLive(feed(messagesPost("a", 300, ["msg_1", "msg_2"]), messagesPost("b", 200, ["msg_3"])))
-    const { result } = renderHook(() =>
-      useStableBoardView("ws_1", draftsFilter([], ["msg_2"]), undefined, undefined, undefined)
-    )
+    const { result } = renderHook(() => useStableBoardView("ws_1", draftsFilter([], ["msg_2"]), undefined, undefined))
     expect(result.current.posts.map((p) => p.id)).toEqual(["a"])
   })
 
   it("renders a resolved-draft card with the removal treatment in place, then drops it on the next commit", () => {
     mockLive(feed(post("a", 300), post("b", 200)))
-    const { result, rerender } = renderHook(
-      ({ filter }) => useStableBoardView("ws_1", filter, undefined, undefined, undefined),
-      { initialProps: { filter: draftsFilter(["a", "b"]) } }
-    )
+    const { result, rerender } = renderHook(({ filter }) => useStableBoardView("ws_1", filter, undefined, undefined), {
+      initialProps: { filter: draftsFilter(["a", "b"]) },
+    })
     expect(result.current.posts.map((p) => p.id)).toEqual(["a", "b"])
 
     // "a"'s draft resolves DURING the send: it sheds immediately, but through
@@ -1067,10 +989,9 @@ describe("useStableBoardView — drafts filter", () => {
 
   it("a drafts re-resolution (same `?drafts=true` selection) never resets the frozen view", () => {
     mockLive(feed(post("a", 300)))
-    const { result, rerender } = renderHook(
-      ({ filter }) => useStableBoardView("ws_1", filter, undefined, undefined, undefined),
-      { initialProps: { filter: draftsFilter(["a"]) } }
-    )
+    const { result, rerender } = renderHook(({ filter }) => useStableBoardView("ws_1", filter, undefined, undefined), {
+      initialProps: { filter: draftsFilter(["a"]) },
+    })
     act(() => result.current.commit())
 
     act(() => mockLive(feed(post("new", 500), post("a", 300))))
@@ -1093,7 +1014,7 @@ describe("useStableBoardView seed gate", () => {
 
   it("holds the stale feed until the seeded rows LAND in the feed, not merely until the query settles", () => {
     mockLive(feed(post("a", 300), post("b", 200)))
-    const { result, rerender } = renderHook(({ seed }) => useStableBoardView("ws_1", ALL, undefined, seed, undefined), {
+    const { result, rerender } = renderHook(({ seed }) => useStableBoardView("ws_1", ALL, undefined, seed), {
       initialProps: { seed: { settled: false, newest: { id: "conv_fresh", activityMs: 900 } } },
     })
     expect(result.current.posts).toEqual([])
@@ -1120,7 +1041,7 @@ describe("useStableBoardView seed gate", () => {
     // a reply to Y, so the seed's newest id is already present — id-presence alone
     // would open the gate on the stale order.
     mockLive(feed(post("x", 400), post("y", 200)))
-    const { result, rerender } = renderHook(({ seed }) => useStableBoardView("ws_1", ALL, undefined, seed, undefined), {
+    const { result, rerender } = renderHook(({ seed }) => useStableBoardView("ws_1", ALL, undefined, seed), {
       initialProps: { seed: { settled: true, newest: { id: "y", activityMs: 900 } } },
     })
     expect(result.current.posts).toEqual([])
@@ -1137,7 +1058,7 @@ describe("useStableBoardView seed gate", () => {
 
   it("the offline/timeout escape hatch commits what it has, and buffers arrivals after it", () => {
     mockLive(feed(post("a", 300), post("b", 200)))
-    const { result, rerender } = renderHook(({ seed }) => useStableBoardView("ws_1", ALL, undefined, seed, undefined), {
+    const { result, rerender } = renderHook(({ seed }) => useStableBoardView("ws_1", ALL, undefined, seed), {
       initialProps: { seed: { settled: true, newest: null } },
     })
     expect(result.current.posts.map((p) => p.id)).toEqual(["a", "b"])
@@ -1150,7 +1071,7 @@ describe("useStableBoardView seed gate", () => {
 
   it("commits the LATEST live feed when the gate opens, not the snapshot it held", () => {
     mockLive(feed(post("a", 300)))
-    const { result, rerender } = renderHook(({ seed }) => useStableBoardView("ws_1", ALL, undefined, seed, undefined), {
+    const { result, rerender } = renderHook(({ seed }) => useStableBoardView("ws_1", ALL, undefined, seed), {
       initialProps: { seed: { settled: false, newest: { id: "c", activityMs: 500 } } },
     })
     act(() => mockLive(feed(post("b", 400))))
@@ -1165,7 +1086,7 @@ describe("useStableBoardView seed gate", () => {
 
   it("a workspace switch re-arms the gate — the previous workspace's cached rows never commit", () => {
     mockLive(feed(post("a", 300), post("b", 200)))
-    const { result, rerender } = renderHook(({ ws, seed }) => useStableBoardView(ws, ALL, undefined, seed, undefined), {
+    const { result, rerender } = renderHook(({ ws, seed }) => useStableBoardView(ws, ALL, undefined, seed), {
       initialProps: { ws: "ws_1", seed: { settled: true, newest: null } },
     })
     expect(result.current.posts.map((p) => p.id)).toEqual(["a", "b"])
@@ -1185,7 +1106,7 @@ describe("useStableBoardView seed gate", () => {
       )
     )
     const { result, rerender } = renderHook(
-      ({ lens, seed }) => useStableBoardView("ws_1", lensFilter(lens), undefined, seed, undefined),
+      ({ lens, seed }) => useStableBoardView("ws_1", lensFilter(lens), undefined, seed),
       { initialProps: { lens: "all" as BoardLens, seed: { settled: true, newest: null } as BoardSeedState } }
     )
     expect(result.current.posts.map((p) => p.id)).toEqual(["decided", "plain"])
@@ -1198,7 +1119,7 @@ describe("useStableBoardView seed gate", () => {
 
   it("no seed argument means no gating (existing call sites commit immediately)", () => {
     mockLive(feed(post("a", 300)))
-    const { result } = renderHook(() => useStableBoardView("ws_1", ALL, undefined, undefined, undefined))
+    const { result } = renderHook(() => useStableBoardView("ws_1", ALL, undefined, undefined))
     expect(result.current.posts.map((p) => p.id)).toEqual(["a"])
     expect(result.current.isLoading).toBe(false)
   })

@@ -1379,7 +1379,7 @@ describe("BoardCard ledger", () => {
 /** Installs a controllable IntersectionObserver: jsdom ships none, and the card
  *  fails open without one. Returns a setter that drives every live observer. */
 function stubIntersectionObserver(initiallyIntersecting: boolean) {
-  type Entry = {
+  interface Entry {
     isIntersecting: boolean
     target: Element
     boundingClientRect: { top: number }
