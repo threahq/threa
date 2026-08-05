@@ -4,8 +4,10 @@ import { db, sequenceToNum, type CachedEvent } from "@/db"
 import {
   EVENT_BULK_PUT_LIMIT,
   isEventWriteChunkingEnabled,
+  isSharedStreamRegistrationEnabledSync,
   readEventWriteFlagsFresh,
   primeEventWriteFlags,
+  primeEventWriteFlagsIfAbsent,
   putEventsBounded,
   resetEventWriteFlags,
   skipNoOpEventRewrites,
@@ -256,8 +258,23 @@ describe("isEventWriteChunkingEnabled", () => {
     const second = await readEventWriteFlagsFresh(db, "ws_1")
 
     expect({ first, second }).toEqual({
-      first: { chunking: true, indexedMessagePatch: true },
-      second: { chunking: false, indexedMessagePatch: true },
+      first: { chunking: true, indexedMessagePatch: true, sharedStreamRegistration: false },
+      second: { chunking: false, indexedMessagePatch: true, sharedStreamRegistration: false },
     })
+  })
+})
+
+describe("primeEventWriteFlagsIfAbsent", () => {
+  it("primeEventWriteFlagsIfAbsent fills an empty cache", () => {
+    primeEventWriteFlagsIfAbsent("ws_1", { workspace: { sharedStreamRegistration: "on" }, user: {} })
+
+    expect(isSharedStreamRegistrationEnabledSync("ws_1")).toBe(true)
+  })
+
+  it("primeEventWriteFlagsIfAbsent never overwrites a value already primed", () => {
+    primeEventWriteFlags("ws_1", { workspace: { sharedStreamRegistration: "on" }, user: {} })
+    primeEventWriteFlagsIfAbsent("ws_1", { workspace: { sharedStreamRegistration: "off" }, user: {} })
+
+    expect(isSharedStreamRegistrationEnabledSync("ws_1")).toBe(true)
   })
 })

@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach } from "vitest"
 import { db, type CachedWorkspace, type CachedWorkspaceUser } from "@/db"
+import { isSharedStreamRegistrationEnabledSync, resetEventWriteFlags } from "@/db/event-writes"
 import {
   getCachedWorkspaceTables,
   resetWorkspaceStoreCache,
@@ -68,7 +69,7 @@ function seed(users: CachedWorkspaceUser[], options?: { publish?: boolean }): vo
 describe("seedWorkspaceCache publication gating", () => {
   beforeEach(async () => {
     resetWorkspaceStoreCache()
-    await Promise.all([db.workspaces.clear(), db.workspaceUsers.clear()])
+    await Promise.all([db.workspaces.clear(), db.workspaceUsers.clear(), db.workspaceMetadata.clear()])
   })
 
   it("seedWorkspaceCache with publish:false does not notify subscribers", () => {
@@ -96,6 +97,24 @@ describe("seedWorkspaceCache publication gating", () => {
     await idbSeed
 
     expect(getCachedWorkspaceTables(WS).users?.map((u) => u.name)).toEqual(["Fresh"])
+  })
+
+  it("a warm start primes the stream-registration flag before any bootstrap", async () => {
+    resetEventWriteFlags()
+    await db.workspaces.put(makeWorkspace())
+    await db.workspaceMetadata.put({
+      id: WS,
+      workspaceId: WS,
+      emojis: [],
+      emojiWeights: {},
+      commands: [],
+      featureFlags: { workspace: { sharedStreamRegistration: "on" }, user: {} },
+      _cachedAt: Date.now(),
+    } as unknown as Parameters<typeof db.workspaceMetadata.put>[0])
+
+    expect(await seedCacheFromIdb(WS)).toBe(true)
+
+    expect(isSharedStreamRegistrationEnabledSync(WS)).toBe(true)
   })
 
   it("a publishing seed notifies exactly once", () => {

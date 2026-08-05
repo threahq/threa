@@ -3,6 +3,7 @@ import {
   isEventWriteChunkingEnabled,
   isIndexedMessagePatchEnabled,
   isNoOpRewrite,
+  isSharedStreamRegistrationEnabledSync,
   putEventsBounded,
 } from "@/db/event-writes"
 import {
@@ -1190,14 +1191,21 @@ export function detectSequenceGap(
   return sequenceToNum(incoming.sequence) > sequenceToNum(tail.latestSequence) + 1 ? tail.latestSequence : null
 }
 
-export function registerStreamSocketHandlers(
+type SequenceGapListener = NonNullable<StreamSocketHandlerOptions["onSequenceGap"]>
+
+function bindStreamSocketHandlers(
   socket: SyncEventSource,
   workspaceId: string,
   streamId: string,
   queryClient: QueryClient,
-  options?: StreamSocketHandlerOptions
+  sequenceGapListeners: ReadonlySet<SequenceGapListener>
 ): () => void {
-  const onSequenceGap = options?.onSequenceGap
+  // Registrants join and leave a shared binding, so the listener set is read at
+  // dispatch time, never captured at bind time.
+  const wantsSequenceGap = () => sequenceGapListeners.size > 0
+  const notifySequenceGap = (gap: { streamId: string; afterSequence: string }) => {
+    for (const listener of [...sequenceGapListeners]) listener(gap)
+  }
 
   const handleMessageCreated = async (payload: MessageEventPayload) => {
     if (payload.streamId !== streamId) return
@@ -1257,7 +1265,7 @@ export function registerStreamSocketHandlers(
           }
 
           // Tail-gap check must read the latest BEFORE this write advances it.
-          if (onSequenceGap) {
+          if (wantsSequenceGap()) {
             gapAfterSequence = detectSequenceGap(await getPersistedTail(streamId), newEvent)
           }
 
@@ -1315,7 +1323,7 @@ export function registerStreamSocketHandlers(
       if (alreadyPersisted) getPerfCapture().count("stream.eventDuplicate")
 
       if (gapAfterSequence !== null) {
-        onSequenceGap?.({ streamId, afterSequence: gapAfterSequence })
+        notifySequenceGap({ streamId, afterSequence: gapAfterSequence })
       }
 
       const stopContextRows = getPerfCapture().time("stream.contextRows")
@@ -1717,7 +1725,7 @@ export function registerStreamSocketHandlers(
       const existing = await db.events.get(payload.event.id)
       if (existing) return
       // Tail-gap check must read the latest BEFORE this write advances it.
-      if (onSequenceGap) {
+      if (wantsSequenceGap()) {
         gapAfterSequence = detectSequenceGap(await getPersistedTail(streamId), payload.event)
       }
       const commandClientId =
@@ -1750,7 +1758,7 @@ export function registerStreamSocketHandlers(
       }
     })
     if (gapAfterSequence !== null) {
-      onSequenceGap?.({ streamId, afterSequence: gapAfterSequence })
+      notifySequenceGap({ streamId, afterSequence: gapAfterSequence })
     }
 
     // `memos:captured` is the only appended row that carries context artifacts
@@ -1996,5 +2004,101 @@ export function registerStreamSocketHandlers(
     socket.off("link_preview:ready", handleLinkPreviewReady)
     socket.off("pointer:invalidated", handlePointerInvalidated)
     socket.off("bot_runtime:presence", handleBotRuntimePresence)
+  }
+}
+
+interface StreamRegistrationEntry {
+  refCount: number
+  cleanup: () => void
+  sequenceGapListeners: Set<SequenceGapListener>
+  signature: { workspaceId: string; queryClient: QueryClient }
+}
+
+// INV-9 exception: the whole point is one handler set shared by every
+// registrant for a key, so the registry cannot live in a component or an
+// engine instance — either would be per-registrant. Keyed by event source in a
+// WeakMap so a dead gate or socket takes its entries with it.
+const streamRegistrations = new WeakMap<SyncEventSource, Map<string, StreamRegistrationEntry>>()
+
+function describeSignatureConflicts(
+  existing: StreamRegistrationEntry["signature"],
+  next: StreamRegistrationEntry["signature"]
+): string[] {
+  const conflicts: string[] = []
+  if (existing.workspaceId !== next.workspaceId) {
+    conflicts.push(`workspaceId: existing ${existing.workspaceId}, new ${next.workspaceId}`)
+  }
+  if (existing.queryClient !== next.queryClient) {
+    conflicts.push("queryClient: a different QueryClient instance")
+  }
+  return conflicts
+}
+
+/**
+ * Registers the stream handler set, sharing one binding per
+ * `(eventSource, streamId)` when `sharedStreamRegistration` is on. The open
+ * stream is registered twice — once per membership by the SyncEngine, once by
+ * `useStreamSocket` — through the same event gate, so without sharing every
+ * handler runs twice for every event on that stream.
+ */
+export function registerStreamSocketHandlers(
+  socket: SyncEventSource,
+  workspaceId: string,
+  streamId: string,
+  queryClient: QueryClient,
+  options?: StreamSocketHandlerOptions
+): () => void {
+  const onSequenceGap = options?.onSequenceGap
+  // A fresh wrapper per registration: two registrants may pass the same
+  // function reference, and a release must remove only its own listener.
+  const listener: SequenceGapListener | null = onSequenceGap ? (gap) => onSequenceGap(gap) : null
+
+  if (!isSharedStreamRegistrationEnabledSync(workspaceId)) {
+    return bindStreamSocketHandlers(socket, workspaceId, streamId, queryClient, new Set(listener ? [listener] : []))
+  }
+
+  const signature = { workspaceId, queryClient }
+  let byStream = streamRegistrations.get(socket)
+  if (!byStream) {
+    byStream = new Map()
+    streamRegistrations.set(socket, byStream)
+  }
+
+  let entry = byStream.get(streamId)
+  if (entry) {
+    const conflicts = describeSignatureConflicts(entry.signature, signature)
+    if (conflicts.length > 0) {
+      throw new Error(
+        `registerStreamSocketHandlers: conflicting wiring for stream ${streamId} on one event source — ` +
+          `${conflicts.join("; ")}. ` +
+          `A shared registration serves the first registrant's wiring; register against a distinct event source instead.`
+      )
+    }
+    entry.refCount += 1
+    if (listener) entry.sequenceGapListeners.add(listener)
+  } else {
+    const sequenceGapListeners = new Set<SequenceGapListener>(listener ? [listener] : [])
+    entry = {
+      refCount: 1,
+      cleanup: bindStreamSocketHandlers(socket, workspaceId, streamId, queryClient, sequenceGapListeners),
+      sequenceGapListeners,
+      signature,
+    }
+    byStream.set(streamId, entry)
+  }
+
+  const held = entry
+  // React StrictMode runs an effect's teardown twice; a second decrement would
+  // unbind a stream another holder is still using.
+  let released = false
+  return () => {
+    if (released) return
+    released = true
+    if (listener) held.sequenceGapListeners.delete(listener)
+    held.refCount -= 1
+    if (held.refCount > 0) return
+    held.cleanup()
+    const live = streamRegistrations.get(socket)
+    if (live?.get(streamId) === held) live.delete(streamId)
   }
 }

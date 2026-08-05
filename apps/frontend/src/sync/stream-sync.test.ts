@@ -19,6 +19,7 @@ import { streamKeys } from "@/hooks/use-streams"
 import { workspaceKeys } from "@/hooks/use-workspaces"
 import { commandsApi } from "@/api"
 import { clearDecryptCache, getCachedDecryption } from "@/lib/crypto/decrypt-cache"
+import { primeEventWriteFlags, resetEventWriteFlags } from "@/db/event-writes"
 import { sharedMessageSlotKey } from "@threa/types"
 import type {
   AttachmentSummary,
@@ -4331,5 +4332,373 @@ describe("registerStreamSocketHandlers — stream context rows", () => {
     })
 
     expect(await db.streamContextItems.get("link:https://example.com/old:msg_old")).toBeDefined()
+  })
+})
+
+describe("registerStreamSocketHandlers — one handler set per (event source, stream)", () => {
+  function createCountingSocket() {
+    const handlers = new Map<string, Set<(payload: unknown) => void>>()
+    const on = vi.fn((event: string, handler: (payload: unknown) => void) => {
+      const set = handlers.get(event) ?? new Set()
+      set.add(handler)
+      handlers.set(event, set)
+    })
+    const off = vi.fn((event: string, handler: (payload: unknown) => void) => {
+      handlers.get(event)?.delete(handler)
+    })
+    const socket = {
+      on(event: string, handler: (payload: unknown) => void) {
+        on(event, handler)
+        return this
+      },
+      off(event: string, handler: (payload: unknown) => void) {
+        off(event, handler)
+        return this
+      },
+    } as unknown as Socket
+    return {
+      socket,
+      on,
+      off,
+      async emit(event: string, payload: unknown) {
+        await Promise.all(Array.from(handlers.get(event) ?? []).map((handler) => handler(payload)))
+      },
+    }
+  }
+
+  function enableSharing(enabled: boolean) {
+    primeEventWriteFlags("ws_1", {
+      workspace: { sharedStreamRegistration: enabled ? "on" : "off" },
+      user: {},
+    })
+  }
+
+  function messageCreated(streamId: string, id: string, sequence: string, extraPayload: Record<string, unknown> = {}) {
+    return {
+      workspaceId: "ws_1",
+      streamId,
+      event: {
+        id,
+        streamId,
+        sequence,
+        eventType: "message_created",
+        payload: {
+          messageId: id,
+          contentMarkdown: "hello https://example.com/x",
+          contentJson: {
+            type: "doc",
+            content: [
+              {
+                type: "paragraph",
+                content: [{ type: "text", text: "hello https://example.com/x" }],
+              },
+            ],
+          },
+          ...extraPayload,
+        },
+        actorId: "user_1",
+        actorType: "user",
+        createdAt: new Date().toISOString(),
+      },
+    }
+  }
+
+  beforeEach(async () => {
+    await db.events.clear()
+    await db.streams.clear()
+    await db.streamContextItems.clear()
+    await db.pendingMessages.clear()
+    clearDecryptCache()
+    resetEventWriteFlags()
+  })
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+    resetEventWriteFlags()
+  })
+
+  it("two registrations against one event source bind the listener set once", async () => {
+    enableSharing(true)
+    const streamId = "stream_shared_once"
+    await db.streams.put({
+      id: streamId,
+      workspaceId: "ws_1",
+      rootStreamId: streamId,
+      _cachedAt: Date.now(),
+    } as never)
+
+    const { socket, emit } = createCountingSocket()
+    const scopeReads = vi.spyOn(db.streams, "get")
+    const previewWrites = vi.spyOn(db.streams, "update")
+    const queryClient = new QueryClient()
+
+    const releaseA = registerStreamSocketHandlers(socket, "ws_1", streamId, queryClient)
+    const releaseB = registerStreamSocketHandlers(socket, "ws_1", streamId, queryClient)
+
+    await emit("message:created", messageCreated(streamId, "evt_shared", "10"))
+
+    expect({
+      scopeReads: scopeReads.mock.calls.length,
+      previewWrites: previewWrites.mock.calls.length,
+      persisted: (await db.events.get("evt_shared"))?.sequence,
+    }).toEqual({ scopeReads: 1, previewWrites: 1, persisted: "10" })
+
+    releaseA()
+    releaseB()
+  })
+
+  it("binds the listener set twice and applies twice when the flag is off", async () => {
+    enableSharing(false)
+    const streamId = "stream_unshared"
+    await db.streams.put({
+      id: streamId,
+      workspaceId: "ws_1",
+      rootStreamId: streamId,
+      _cachedAt: Date.now(),
+    } as never)
+
+    const { socket, emit } = createCountingSocket()
+    const scopeReads = vi.spyOn(db.streams, "get")
+    const previewWrites = vi.spyOn(db.streams, "update")
+    const queryClient = new QueryClient()
+
+    const releaseA = registerStreamSocketHandlers(socket, "ws_1", streamId, queryClient)
+    const releaseB = registerStreamSocketHandlers(socket, "ws_1", streamId, queryClient)
+
+    await emit("message:created", messageCreated(streamId, "evt_unshared", "10"))
+
+    expect({
+      scopeReads: scopeReads.mock.calls.length,
+      previewWrites: previewWrites.mock.calls.length,
+    }).toEqual({ scopeReads: 2, previewWrites: 2 })
+
+    releaseA()
+    releaseB()
+  })
+
+  it("the listeners survive until the last release", async () => {
+    enableSharing(true)
+    const streamId = "stream_last_release"
+    const { socket, emit } = createCountingSocket()
+    const queryClient = new QueryClient()
+
+    const releaseA = registerStreamSocketHandlers(socket, "ws_1", streamId, queryClient)
+    const releaseB = registerStreamSocketHandlers(socket, "ws_1", streamId, queryClient)
+
+    releaseA()
+    await emit("message:created", messageCreated(streamId, "evt_after_first_release", "10"))
+    expect(await db.events.get("evt_after_first_release")).toBeDefined()
+
+    releaseB()
+    await emit("message:created", messageCreated(streamId, "evt_after_last_release", "11"))
+    expect(await db.events.get("evt_after_last_release")).toBeUndefined()
+  })
+
+  it("releasing twice does not tear down a live registration", async () => {
+    enableSharing(true)
+    const streamId = "stream_strictmode"
+    const { socket, emit } = createCountingSocket()
+    const queryClient = new QueryClient()
+
+    const releaseA = registerStreamSocketHandlers(socket, "ws_1", streamId, queryClient)
+    const releaseB = registerStreamSocketHandlers(socket, "ws_1", streamId, queryClient)
+    registerStreamSocketHandlers(socket, "ws_1", streamId, queryClient)
+
+    releaseA()
+    releaseA()
+    releaseB()
+
+    await emit("message:created", messageCreated(streamId, "evt_strictmode", "10"))
+    expect(await db.events.get("evt_strictmode")).toBeDefined()
+  })
+
+  it("a registration without an engine is not shared with the gated one", async () => {
+    enableSharing(true)
+    const streamId = "stream_two_sources"
+    const gated = createCountingSocket()
+    const raw = createCountingSocket()
+    const queryClient = new QueryClient()
+
+    const releaseGated = registerStreamSocketHandlers(gated.socket, "ws_1", streamId, queryClient)
+    const releaseRaw = registerStreamSocketHandlers(raw.socket, "ws_1", streamId, queryClient)
+
+    await gated.emit("message:created", messageCreated(streamId, "evt_gated_only", "9"))
+    expect(await db.events.get("evt_gated_only")).toBeDefined()
+
+    releaseGated()
+    await raw.emit("message:created", messageCreated(streamId, "evt_raw_only", "10"))
+    expect(await db.events.get("evt_raw_only")).toBeDefined()
+
+    releaseRaw()
+  })
+
+  it("a second registrant with mismatched wiring throws", () => {
+    enableSharing(true)
+    const streamId = "stream_mismatch"
+    const { socket } = createCountingSocket()
+    const queryClient = new QueryClient()
+
+    const release = registerStreamSocketHandlers(socket, "ws_1", streamId, queryClient, {
+      onSequenceGap: () => {},
+    })
+
+    expect(() =>
+      registerStreamSocketHandlers(socket, "ws_1", streamId, new QueryClient(), {
+        onSequenceGap: () => {},
+      })
+    ).toThrow(/queryClient/)
+
+    release()
+  })
+
+  it("every registrant's gap callback fires, and a released one stops", async () => {
+    enableSharing(true)
+    const streamId = "stream_gap_fanout"
+    const { socket, emit } = createCountingSocket()
+    const queryClient = new QueryClient()
+    const gapsA: unknown[] = []
+    const gapsB: unknown[] = []
+
+    const releaseA = registerStreamSocketHandlers(socket, "ws_1", streamId, queryClient, {
+      onSequenceGap: (gap) => gapsA.push(gap),
+    })
+    const releaseB = registerStreamSocketHandlers(socket, "ws_1", streamId, queryClient, {
+      onSequenceGap: (gap) => gapsB.push(gap),
+    })
+
+    await emit("message:created", messageCreated(streamId, "evt_gap_base", "10"))
+    await emit("message:created", messageCreated(streamId, "evt_gap_jump", "20"))
+
+    expect({ gapsA, gapsB }).toEqual({
+      gapsA: [{ streamId, afterSequence: "10" }],
+      gapsB: [{ streamId, afterSequence: "10" }],
+    })
+
+    releaseA()
+    await emit("message:created", messageCreated(streamId, "evt_gap_jump_again", "40"))
+
+    expect({ gapsA, gapsB }).toEqual({
+      gapsA: [{ streamId, afterSequence: "10" }],
+      gapsB: [
+        { streamId, afterSequence: "10" },
+        { streamId, afterSequence: "20" },
+      ],
+    })
+
+    releaseB()
+  })
+
+  it("two registrants sharing ONE callback reference keep the survivor's subscription", async () => {
+    enableSharing(true)
+    const streamId = "stream_gap_same_reference"
+    const { socket, emit } = createCountingSocket()
+    const queryClient = new QueryClient()
+    const gaps: unknown[] = []
+    // One reference for both holders: the per-registration wrapper is what makes
+    // them distinct Set members, so releasing A must not unsubscribe B.
+    const onGap = (gap: unknown) => gaps.push(gap)
+
+    const releaseA = registerStreamSocketHandlers(socket, "ws_1", streamId, queryClient, { onSequenceGap: onGap })
+    const releaseB = registerStreamSocketHandlers(socket, "ws_1", streamId, queryClient, { onSequenceGap: onGap })
+
+    releaseA()
+    await emit("message:created", messageCreated(streamId, "evt_same_ref_base", "10"))
+    await emit("message:created", messageCreated(streamId, "evt_same_ref_jump", "20"))
+
+    expect(gaps).toEqual([{ streamId, afterSequence: "10" }])
+
+    releaseB()
+  })
+
+  it("a registrant that joins a gap-less registration still receives gaps", async () => {
+    enableSharing(true)
+    const streamId = "stream_gap_late_join"
+    const { socket, emit } = createCountingSocket()
+    const queryClient = new QueryClient()
+    const gaps: unknown[] = []
+
+    const releaseA = registerStreamSocketHandlers(socket, "ws_1", streamId, queryClient)
+    const releaseB = registerStreamSocketHandlers(socket, "ws_1", streamId, queryClient, {
+      onSequenceGap: (gap) => gaps.push(gap),
+    })
+
+    await emit("message:created", messageCreated(streamId, "evt_late_base", "10"))
+    await emit("message:created", messageCreated(streamId, "evt_late_jump", "20"))
+
+    expect(gaps).toEqual([{ streamId, afterSequence: "10" }])
+
+    releaseA()
+    releaseB()
+  })
+
+  it("an E2E self-send seeds the decrypt cache exactly once", async () => {
+    enableSharing(true)
+    const streamId = "stream_e2e_shared"
+    const plaintextJson = { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "secret" }] }] }
+    await db.events.put({
+      id: "temp_e2e",
+      workspaceId: "ws_1",
+      streamId,
+      sequence: "999",
+      _sequenceNum: 999,
+      eventType: "message_created",
+      payload: { messageId: "temp_e2e", contentMarkdown: "secret", contentJson: plaintextJson },
+      actorId: "user_1",
+      actorType: "user",
+      createdAt: new Date().toISOString(),
+      _status: "pending",
+      _cachedAt: Date.now(),
+    })
+
+    const { socket, emit } = createCountingSocket()
+    const previewWrites = vi.spyOn(db.streams, "update")
+    const queryClient = new QueryClient()
+
+    const releaseA = registerStreamSocketHandlers(socket, "ws_1", streamId, queryClient)
+    const releaseB = registerStreamSocketHandlers(socket, "ws_1", streamId, queryClient)
+
+    await emit(
+      "message:created",
+      messageCreated(streamId, "evt_e2e_server", "1000", {
+        clientMessageId: "temp_e2e",
+        contentMarkdown: "🔒 Encrypted",
+        contentJson: null,
+        ciphertext: "base64ciphertext",
+        envelope: { v: 2 },
+      })
+    )
+
+    const cached = getCachedDecryption("evt_e2e_server")
+    expect({
+      status: cached?.status,
+      markdown: cached?.value?.contentMarkdown,
+      applies: previewWrites.mock.calls.length,
+    }).toEqual({ status: "decrypted", markdown: "secret", applies: 1 })
+
+    releaseA()
+    releaseB()
+  })
+
+  it("the registry drops its entry when the last holder releases", async () => {
+    enableSharing(true)
+    const streamId = "stream_registry_drop"
+    const { socket, emit } = createCountingSocket()
+    const queryClient = new QueryClient()
+
+    const releaseA = registerStreamSocketHandlers(socket, "ws_1", streamId, queryClient)
+    const releaseB = registerStreamSocketHandlers(socket, "ws_1", streamId, queryClient)
+    releaseA()
+    releaseB()
+
+    // A dropped entry is proven by the next registrant binding afresh rather
+    // than reusing a zero-count corpse — and by its handlers working.
+    const releaseC = registerStreamSocketHandlers(socket, "ws_1", streamId, queryClient, {
+      onSequenceGap: () => {},
+    })
+
+    await emit("message:created", messageCreated(streamId, "evt_registry_drop", "10"))
+    expect(await db.events.get("evt_registry_drop")).toBeDefined()
+
+    releaseC()
   })
 })
