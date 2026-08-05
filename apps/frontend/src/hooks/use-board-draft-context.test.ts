@@ -49,3 +49,53 @@ describe("useBoardDraftContext — shared subscription failure", () => {
     await waitFor(() => expect(second.result.current.boardPostMap.size).toBe(1))
   })
 })
+
+describe("useBoardDraftContext — shared subscription ref-counting", () => {
+  // The error path deletes an entry and a later subscriber rebuilds it under the
+  // same key. A cleanup that re-looked-up by key would then decrement the
+  // REPLACEMENT, tearing it down while its own owner is still mounted — the
+  // entry serves an empty context for the page's lifetime and every pile
+  // silently collapses to scope-exact. Exactly the failure the error observer
+  // exists to prevent, one layer down.
+  it("an unmount after a failed query does not tear down the rebuilt entry", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => {})
+    const bulkGet = vi.spyOn(db.conversations, "bulkGet").mockRejectedValue(new Error("boom"))
+
+    const failed = renderHook(() => useBoardDraftContext(workspaceId, "board:reply:conv_1"))
+    await waitFor(() => expect(error).toHaveBeenCalled())
+
+    bulkGet.mockRestore()
+    await db.conversations.put({
+      id: "conv_1",
+      workspaceId,
+      _lastActivityMs: 1,
+      _cachedAt: 1,
+      conversation: { id: "conv_1", streamId: "stream_s", messageIds: ["msg_1"] },
+      openingMessage: { id: "msg_1" },
+      recentMessages: [],
+    } as never)
+
+    const rebuilt = renderHook(() => useBoardDraftContext(workspaceId, "board:reply:conv_1"))
+    await waitFor(() => expect(rebuilt.result.current.boardPostMap.size).toBe(1))
+
+    // The stale consumer goes away. Its cleanup must touch only the entry it
+    // incremented, which is already orphaned.
+    failed.unmount()
+
+    // The live consumer's subscription must still be alive: a later write to the
+    // row it watches has to reach it. If the stale cleanup tore down the rebuilt
+    // entry, this value stays stale forever and nothing says so.
+    await db.conversations.put({
+      id: "conv_1",
+      workspaceId,
+      _lastActivityMs: 3,
+      _cachedAt: 3,
+      conversation: { id: "conv_1", streamId: "stream_moved", messageIds: ["msg_1"] },
+      openingMessage: { id: "msg_1" },
+      recentMessages: [],
+    } as never)
+    await waitFor(() =>
+      expect(rebuilt.result.current.boardPostMap.get("conv_1")?.conversation.streamId).toBe("stream_moved")
+    )
+  })
+})
