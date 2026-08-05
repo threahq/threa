@@ -42,6 +42,19 @@ export interface UseStashedDraftsResult {
   claimableDrafts: CachedDraft[]
   /** Where each pile row came from, and its tier, keyed by draft id. */
   originByDraftId: Map<string, StashedDraftOrigin>
+  /**
+   * Re-read at mutation time, not at pile time: whether this host may hold a
+   * draft from another scope. Pile membership is a render old by the time the
+   * user clicks a row, and the answer moves (a stream row hydrates, a late
+   * `e2eEnabled` lands, the stream is archived).
+   */
+  canHostForeignDraft: () => boolean
+  /**
+   * The structured origin of an arbitrary scope, from the same derivation the
+   * pile labels use — so a restore decides on `kind`, not on re-parsed scope
+   * strings (INV-35). No tier: the caller knows its own scope.
+   */
+  describeScope: (scope: string) => StashedDraftSource | null
   /** True once the draft cache has been seeded (used to suppress empty-flash in the picker). */
   isLoaded: boolean
   /** Delete a stashed row (and mirror the removal to the backend). */
@@ -81,6 +94,24 @@ function isStreamEncrypted(streamId: string, streamMap: Map<string, CachedStream
   if (stream.e2eEnabled) return true
   const root = stream.rootStreamId ? streamMap.get(stream.rootStreamId) : null
   return root?.e2eEnabled === true
+}
+
+/**
+ * Whether this host may hold a draft from another scope at all: its home stream
+ * resolves, is confirmed plaintext, and is active. A stream we can't confirm
+ * keeps the pile scope-exact, and the same predicate re-runs inside the restore
+ * mutation — a late `e2eEnabled` resolve must never leave a plaintext board
+ * draft targeted where `purgePlaintextScopeDrafts` deletes it.
+ */
+function isHostHomeEligible(
+  scope: string,
+  pileContext: DraftPileContext,
+  streamMap: Map<string, CachedStream>,
+  archivedStreamIds: ReadonlySet<string>
+): boolean {
+  const home = resolveDraftHomeStream(scope, pileContext)
+  if (!home) return false
+  return !isStreamEncrypted(home, streamMap) && !isStreamArchived(home, streamMap, archivedStreamIds)
 }
 
 /**
@@ -235,13 +266,10 @@ export function useStashedDrafts(workspaceId: string, scope: string | undefined)
 
   const livePile = useMemo(() => {
     if (!workspaceId || !scope) return []
-    const home = resolveDraftHomeStream(scope, pileContext)
-    if (!home) return scopeExact
     // A stream we can't confirm is plaintext and active keeps the pile private:
     // a plaintext board draft must never be offered into a sealed composer, and
     // an archived stream's pile is nobody else's business.
-    if (isStreamEncrypted(home, streamMap)) return scopeExact
-    if (isStreamArchived(home, streamMap, archivedStreamIds)) return scopeExact
+    if (!isHostHomeEligible(scope, pileContext, streamMap, archivedStreamIds)) return scopeExact
 
     const borrowed = candidates
       .filter(
@@ -290,6 +318,13 @@ export function useStashedDrafts(workspaceId: string, scope: string | undefined)
     return map
   }, [drafts, scope, streamByAnchorId])
 
+  const canHostForeignDraft = useCallback(
+    () => !!workspaceId && !!scope && isHostHomeEligible(scope, pileContext, streamMap, archivedStreamIds),
+    [workspaceId, scope, pileContext, streamMap, archivedStreamIds]
+  )
+
+  const describeScope = useCallback((candidate: string) => draftSource(candidate, streamByAnchorId), [streamByAnchorId])
+
   const isLoaded = hasSeededDraftCache(workspaceId)
   const syncEngine = useOptionalSyncEngine()
 
@@ -301,5 +336,14 @@ export function useStashedDrafts(workspaceId: string, scope: string | undefined)
     [workspaceId, syncEngine]
   )
 
-  return { drafts, claimableDrafts: scopeExact, originByDraftId, isLoaded, deleteStashedDraft, setPileOpen }
+  return {
+    drafts,
+    claimableDrafts: scopeExact,
+    originByDraftId,
+    canHostForeignDraft,
+    describeScope,
+    isLoaded,
+    deleteStashedDraft,
+    setPileOpen,
+  }
 }
