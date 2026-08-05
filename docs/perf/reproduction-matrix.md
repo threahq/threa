@@ -74,7 +74,7 @@ Seed while the client under test is disconnected (close the tab, or seed from a
 terminal while parked on another workspace), or the entries arrive live and
 there is no gap to catch up on.
 
-## The fourteen scenarios
+## The fifteen scenarios
 
 | #   | Scenario                                                  | Seed                                                                                           | Marks that prove it                                                                                                                                                                                                                                           |
 | --- | --------------------------------------------------------- | ---------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -92,6 +92,7 @@ there is no gap to catch up on.
 | 12  | Restore → switch stream → return → navigate away and back | `--profile drafts` plus `--profile large-stream`                                               | `editor.externalSync`, `stream.subscriptions`, `liveQuery.rerun`, `bootstrap.publish`                                                                                                                                                                         |
 | 13  | Unchanged warm refresh, wide workspace                    | `--profile workspace-wide`, then hard-refresh twice with no new messages (read the third load) | `bootstrap.preRead` + `bootstrap.tx` (the comparable number), `bootstrap.rowsWritten`, `bootstrap.rowsSkipped`, `bootstrap.diff`, `bootstrap.storePublish`, `bootstrap.cachePublish`, `bootstrap.cleanup`                                                     |
 | 14  | One incoming message into a deep scroll-back window       | `--profile large-stream`, scroll up ten pages, then post from a second client                  | `timeline.tailLoad` (bounded and flat as the scroll-back deepens), `liveQuery.load`, `timeline.derive` (samples sum to the whole derivation chain — one per memo in it), `timeline.windowItems` (identical between arms — a change here is a correctness bug) |
+| 15  | One incoming message into an open member stream           | `--profile large-stream`, open the channel, then post from a second client (phone)             | `stream.eventApply`, `stream.eventTx`, `stream.contextRows`, `stream.previewWrite`, `stream.activityApply`, `stream.eventDuplicate`, `stream.idbTransaction`                                                                                                  |
 
 ### Reading `liveQuery.rerun` / `liveQuery.load` (scenarios 7, 8, 14)
 
@@ -155,6 +156,29 @@ Three caveats, all load-bearing:
   by the bootstrap payload, so a workspace with activity since the last apply
   genuinely rewrites those rows — a heal, not a false diff. On a live workspace
   expect a large reduction, not a zero.
+
+`stream.eventApply` is wall clock around a handler that awaits, so it includes
+main-thread contention from the renders its own writes wake — its samples do not
+sum from `stream.eventTx` + `stream.contextRows` + `stream.previewWrite`.
+
+Three things to check before reading a scenario-15 capture, each of which
+otherwise produces a confident wrong conclusion:
+
+- `stream.eventDuplicate` counts **every** delivery whose event row already
+  existed — the double-registered twin, the gate's resume-splice redelivery, and
+  the ordinary bootstrap/catch-up overlap. Read it only on a live message with no
+  reconnect inside the capture window; a non-zero count after a reconnect does not
+  mean a de-duplication failed.
+- The ring holds 2000 non-`bootstrap.` samples, and an open double-registered
+  stream now emits ~12 per message. That is roughly 150 messages, and a 200-entry
+  catch-up overflows it. Capture scenario 15 over a short freshly-armed window, or
+  export immediately (`__threaPerfCapture.export()`), rather than reading marks off
+  a long session.
+- The region backend drops samples whose names its build does not know
+  (`features/perf-diagnostics/handlers.ts`), and Pages deploys ahead of Railway. In
+  that window an uploaded capture shows the sub-marks as **absent**, which looks
+  identical to "they measured ~0". Confirm the backend is on this build, or read the
+  capture from devtools instead of the uploaded row.
 
 Scenario 10 has no profile on purpose: what it exercises is one pasted document,
 not a seeded shape.
