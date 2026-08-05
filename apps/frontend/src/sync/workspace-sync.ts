@@ -715,10 +715,7 @@ export function registerWorkspaceSocketHandlers(
   const commitImmediate = (commit: () => void): void => {
     const pending = refs.getLiveCommitBatch?.() ?? null
     if (pending?.hasPending() || pending?.isFlushing()) {
-      void pending
-        .flush()
-        .catch(() => {})
-        .then(commit)
+      pending.runAfterDrain(commit)
       return
     }
     commit()

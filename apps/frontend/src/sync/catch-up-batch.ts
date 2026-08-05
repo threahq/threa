@@ -13,6 +13,13 @@ import {
   type ResolvedReadAllFrontier,
 } from "./read-state"
 
+/** One drain's worth of buffered work, detached from the batch. */
+type PendingFold = {
+  mutators: CounterMutator[]
+  previews: Map<string, LastMessagePreview | null>
+  snapshots: StreamReadFrontierSnapshot[]
+}
+
 /** One absolute (or relative) counter mutation, expressed as pure state math. */
 export type CounterMutator = (state: UnreadCounterState) => UnreadCounterState
 
@@ -209,10 +216,30 @@ export class LiveCommitBatch {
     // The chain carries the swallowed copy: `.then(onFulfilled)` on a rejected
     // promise skips its callback and propagates, so one rejection (a mutator
     // throwing inside publish) would poison every later flush permanently.
-    this.chain = attempt.catch((error) => {
-      console.error("Live commit batch flush failed", { workspaceId: this.workspaceId, error })
-    })
+    this.chain = attempt.catch(this.logFlushFailure)
     return attempt
+  }
+
+  /** Drain, then run `fn` — on the batch's OWN chain, so anything buffered after
+   *  this call queues BEHIND `fn` instead of racing it. Branching off `flush()`'s
+   *  returned promise inverts order: that promise settles when its drain runs,
+   *  and that drain commits whatever was buffered by then, which can be newer
+   *  than `fn`. */
+  runAfterDrain(fn: () => void): void {
+    this.scheduled = false
+    // Taken NOW, not when the drain runs: a commit that re-reads the buffers at
+    // execution time would sweep up whatever was buffered after this call and
+    // publish it BEFORE `fn`.
+    const drained = this.takePending()
+    this.chain = this.chain
+      .then(() => this.commit(drained))
+      .catch(this.logFlushFailure)
+      .then(fn)
+      .catch(this.logFlushFailure)
+  }
+
+  private readonly logFlushFailure = (error: unknown): void => {
+    console.error("Live commit batch flush failed", { workspaceId: this.workspaceId, error })
   }
 
   /** Stop writing on behalf of a torn-down workspace: a flush already scheduled
@@ -234,22 +261,28 @@ export class LiveCommitBatch {
     })
   }
 
-  private async commit(): Promise<void> {
+  private takePending(): PendingFold {
+    const pending = {
+      mutators: this.counterMutators,
+      previews: this.streamPreviews,
+      snapshots: this.readAllSnapshots,
+    }
+    this.counterMutators = []
+    this.streamPreviews = new Map()
+    this.readAllSnapshots = []
+    return pending
+  }
+
+  private async commit(pending?: PendingFold): Promise<void> {
     this.flushing = true
     try {
-      await this.runCommit()
+      await this.runCommit(pending ?? this.takePending())
     } finally {
       this.flushing = false
     }
   }
 
-  private async runCommit(): Promise<void> {
-    const mutators = this.counterMutators
-    const previews = this.streamPreviews
-    const snapshots = this.readAllSnapshots
-    this.counterMutators = []
-    this.streamPreviews = new Map()
-    this.readAllSnapshots = []
+  private async runCommit({ mutators, previews, snapshots }: PendingFold): Promise<void> {
     if (this.destroyed) return
     if (getAccountGeneration() !== this.accountGeneration) return
     if (mutators.length === 0 && previews.size === 0 && snapshots.length === 0) return
