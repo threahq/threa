@@ -4588,6 +4588,28 @@ describe("registerStreamSocketHandlers — one handler set per (event source, st
     releaseB()
   })
 
+  it("two registrants sharing ONE callback reference keep the survivor's subscription", async () => {
+    enableSharing(true)
+    const streamId = "stream_gap_same_reference"
+    const { socket, emit } = createCountingSocket()
+    const queryClient = new QueryClient()
+    const gaps: unknown[] = []
+    // One reference for both holders: the per-registration wrapper is what makes
+    // them distinct Set members, so releasing A must not unsubscribe B.
+    const onGap = (gap: unknown) => gaps.push(gap)
+
+    const releaseA = registerStreamSocketHandlers(socket, "ws_1", streamId, queryClient, { onSequenceGap: onGap })
+    const releaseB = registerStreamSocketHandlers(socket, "ws_1", streamId, queryClient, { onSequenceGap: onGap })
+
+    releaseA()
+    await emit("message:created", messageCreated(streamId, "evt_same_ref_base", "10"))
+    await emit("message:created", messageCreated(streamId, "evt_same_ref_jump", "20"))
+
+    expect(gaps).toEqual([{ streamId, afterSequence: "10" }])
+
+    releaseB()
+  })
+
   it("a registrant that joins a gap-less registration still receives gaps", async () => {
     enableSharing(true)
     const streamId = "stream_gap_late_join"
