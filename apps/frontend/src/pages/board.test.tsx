@@ -543,7 +543,7 @@ describe("BoardPage", () => {
     ] as never)
     mountBoard([makePost({ id: "conv_sp", streamId: "stream_sp" })])
 
-    expect(await screen.findByText("My Notes")).toBeTruthy() // header locator = scratchpad name
+    expect(await screen.findByRole("link", { name: "My Notes" })).toBeTruthy()
   })
 
   it("resolves a DM peer as the card's stream locator", async () => {
@@ -556,8 +556,7 @@ describe("BoardPage", () => {
     vi.mocked(workspaceStoreModule.useWorkspaceUsers).mockReturnValue([{ id: "usr_pierre", name: "Pierre" }] as never)
     mountBoard([makePost({ id: "conv_dm", streamId: "stream_dm", messageIds: ["d1"] }, { id: "d1" })])
 
-    // The DM peer's name is the header locator (where the post lives).
-    expect(await screen.findByText("Pierre")).toBeTruthy()
+    expect(await screen.findByRole("link", { name: "Pierre" })).toBeTruthy()
   })
 
   it("keeps the board column mounted, hidden and inert behind a fullscreen mobile panel", async () => {

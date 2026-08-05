@@ -1449,12 +1449,19 @@ describe("BoardCard sticky header", () => {
     expect(header?.className).toContain("sm:pt-4")
   })
 
-  it("hides a named conversation's context row only on phone widths", async () => {
+  it("shows context at rest but drops it from the pinned phone header", async () => {
+    const setIntersecting = stubIntersectionObserver(true)
     mountCard(makePost({ topicSummary: "Rotate the API tokens" }))
 
     const contextRow = (await screen.findByRole("link", { name: "#general" })).parentElement
+    const spacer = document.querySelector<HTMLElement>("[data-board-card-context-spacer]")
+    expect(contextRow?.className).not.toContain("hidden")
+    expect(spacer?.className).toContain("h-0")
+
+    setIntersecting(false, -1)
     expect(contextRow?.className).toContain("hidden")
     expect(contextRow?.className).toContain("sm:flex")
+    expect(spacer?.className).toContain("h-6")
   })
 })
 

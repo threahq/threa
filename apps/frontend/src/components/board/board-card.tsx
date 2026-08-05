@@ -1135,10 +1135,9 @@ export function BoardCard({
               (see the observer above). In flow but h-0, so it shifts nothing. */}
           <div ref={stuckSentinelRef} aria-hidden className="h-0" />
           {/* Header pins to the scroll-viewport top while the card's messages
-              scroll under it (bg-card covers them), so the locator + topic stay
-              legible in a long card. On phones it trims a little vertical padding
-              once pinned; an equal bottom margin holds the header's footprint, so
-              content does not jump. Desktop keeps its normal density. */}
+              scroll under it. On phones, named cards drop the context row once
+              pinned so only the name follows; the spacer below replaces that row,
+              while the pinned margin replaces the trimmed padding. */}
           <div
             data-board-card-header
             className={cn(
@@ -1172,7 +1171,12 @@ export function BoardCard({
                   {unreadDot}
                   {headerActions}
                 </div>
-                <div className="mt-1 hidden items-center gap-1.5 text-xs text-muted-foreground sm:flex">
+                <div
+                  className={cn(
+                    "mt-1 flex items-center gap-1.5 text-xs text-muted-foreground",
+                    headerStuck && "hidden sm:flex"
+                  )}
+                >
                   {locatorLink("xs")}
                   <span className="shrink-0 opacity-50">·</span>
                   <RelativeTime date={conversation.lastActivityAt} terse className="shrink-0" />
@@ -1206,6 +1210,9 @@ export function BoardCard({
               </button>
             )}
           </div>
+          {conversation.topicSummary && (
+            <div data-board-card-context-spacer aria-hidden className={cn("h-0 sm:hidden", headerStuck && "h-6")} />
+          )}
 
           <div
             className={cn(bodyCollapsed && "overflow-hidden")}
