@@ -323,7 +323,10 @@ function MessageInputComponent({
   // Active DraftMessage stays one-per-scope; this hook manages the sibling
   // many-per-scope stash and the `?stash=<id>` URL auto-restore. Stash + restore
   // are pointer moves, so they work for plaintext and E2E alike (no gating).
-  const stash = useStashComposer(composer, workspaceId, draftKey)
+  // `targetHost` is what makes ADOPT reachable here: this is the one composer
+  // that can point itself at another scope, so restoring a conversation's draft
+  // keeps the row where it is and raises the strip instead of moving it.
+  const stash = useStashComposer(composer, workspaceId, draftKey, { targetHost: hostScope })
   // A `?stash=` deep link naming one of THIS stream's own stashed rows while the
   // composer is armed: the stash host is the board scope, so nobody would claim
   // the param and the URL would carry it forever. Disarm — an explicit "work on
@@ -337,8 +340,8 @@ function MessageInputComponent({
   // shared cache; plaintext rows resolve from contentJson). All entries share
   // this stream's encrypted root.
   const stashPreviewInputs = useMemo(
-    () => stash.claimableDrafts.map((draft) => ({ draft, rootStreamId: e2eRootStreamId })),
-    [stash.claimableDrafts, e2eRootStreamId]
+    () => stash.drafts.map((draft) => ({ draft, rootStreamId: e2eRootStreamId })),
+    [stash.drafts, e2eRootStreamId]
   )
   const stashPreviews = useDecryptedDraftPreviews(workspaceId, stashPreviewInputs)
 
@@ -894,7 +897,7 @@ function MessageInputComponent({
     onStashDraft: stash.handleStashDraft,
     stashedDraftsTrigger: (
       <StashedDraftsPicker
-        drafts={stash.claimableDrafts}
+        drafts={stash.drafts}
         previewById={stashPreviews}
         canStashCurrent={composer.canSend}
         onStashCurrent={stash.handleStashDraft}
@@ -906,7 +909,7 @@ function MessageInputComponent({
     ),
     stashedDraftsTriggerFab: (
       <StashedDraftsPicker
-        drafts={stash.claimableDrafts}
+        drafts={stash.drafts}
         previewById={stashPreviews}
         canStashCurrent={composer.canSend}
         onStashCurrent={stash.handleStashDraft}

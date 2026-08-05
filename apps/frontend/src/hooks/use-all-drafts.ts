@@ -361,12 +361,22 @@ export function useAllDrafts(workspaceId: string) {
   const syncEngine = useOptionalSyncEngine()
 
   // scope -> loaded draft id, the device-local "checked out into the composer"
-  // pointer. A draft is "stashed" (vs. ambient/loaded) when it is not the one
-  // its scope points at.
+  // pointer.
   const loadedByScope = useMemo(() => {
     const map = new Map<string, string | null>()
     for (const row of composerLoaded) map.set(row.scope, row.draftId)
     return map
+  }, [composerLoaded])
+
+  // A draft is "stashed" when no composer on this device holds it — under ANY
+  // scope, not just its own. A restore can adopt a row into a host whose scope
+  // differs from the row's, so scope-keyed "is it the loaded one" would leave a
+  // checked-out draft advertising a `?stash=` deep link that its destination
+  // then refuses (the pile excludes checked-out-anywhere for the same reason).
+  const loadedDraftIds = useMemo(() => {
+    const ids = new Set<string>()
+    for (const row of composerLoaded) if (row.draftId) ids.add(row.draftId)
+    return ids
   }, [composerLoaded])
 
   // Stable signature over the set of draft scopes so the board-context queries
@@ -500,7 +510,7 @@ export function useAllDrafts(workspaceId: string) {
       // nested thread through the root check inside `isStreamArchived`.
       if (isStreamArchived(resolved.streamId, streamMap, archivedStreamIds)) continue
 
-      const isStashed = (loadedByScope.get(draft.scope) ?? null) !== draft.id
+      const isStashed = !loadedDraftIds.has(draft.id)
 
       // A stashed row deep-links via `?stash=<draftId>` so the composer host
       // pops + restores it on arrival; the loaded (ambient) row navigates
@@ -538,6 +548,7 @@ export function useAllDrafts(workspaceId: string) {
     allDrafts,
     draftsById,
     loadedByScope,
+    loadedDraftIds,
     streamMap,
     archivedStreamIds,
     messageToStreamMap,
