@@ -609,7 +609,7 @@ describe("MessageInput", () => {
     })
   })
 
-  describe("quote replies", async () => {
+  describe("quote replies", () => {
     it("inserts a quote block with one trailing paragraph so typing starts on the next line", () => {
       mockComposerState.content = {
         type: "doc",
@@ -1088,7 +1088,7 @@ describe("MessageInput", () => {
     })
   })
 
-  describe("attachment reference materialization", async () => {
+  describe("attachment reference materialization", () => {
     it("should keep existing numbered image references stable", () => {
       const content: JSONContent = {
         type: "doc",

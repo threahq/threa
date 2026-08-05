@@ -369,16 +369,20 @@ function MessageInputComponent({
   // directive — nothing is inserted into the body.
   const conversationReplyCtx = useConversationReply()
   const { openPanel } = usePanel()
-  // Which arm came from the gesture in this session. The target is durable, so
-  // "armed" alone can no longer tell a deliberate act from a page load.
-  const gestureArmedIdRef = useRef<string | null>(null)
+  // Which arm came from the gesture in this session, and on which host. The
+  // target is durable, so "armed" alone can no longer tell a deliberate act from
+  // a page load — and the host is part of it because this component is NOT
+  // remounted per stream: without it, arming in stream A and navigating back to
+  // A (or onto a B that is armed for the same conversation) would read as a
+  // fresh gesture and route on a plain navigation.
+  const gestureArmedIdRef = useRef<{ host: string; conversationId: string } | null>(null)
   useEffect(() => {
     if (!conversationReplyCtx) return
     // Arm only. Focus is deferred to the resolve effect below: focusing the
     // channel composer here would pop the mobile keyboard on it a beat before a
     // thread-follow reply redirects to the conversation panel.
     return conversationReplyCtx.registerHandler((data: ConversationReplyData) => {
-      gestureArmedIdRef.current = data.conversationId
+      gestureArmedIdRef.current = { host: hostScope, conversationId: data.conversationId }
       void setComposerTarget(workspaceId, hostScope, boardReplyDraftKey(data.conversationId))
     })
   }, [conversationReplyCtx, workspaceId, hostScope])
@@ -436,16 +440,22 @@ function MessageInputComponent({
     if (routedArmIdRef.current === armedConversationId) return
     // Restored, not gestured: latch it as routed so it shows the strip and does
     // nothing else. The send guard still routes when the user actually sends.
-    if (gestureArmedIdRef.current !== armedConversationId) {
+    const gesture = gestureArmedIdRef.current
+    if (gesture?.host !== hostScope || gesture.conversationId !== armedConversationId) {
       routedArmIdRef.current = armedConversationId
       return
     }
     const target = conversationReplyLastActiveStreamId
     if (!target) return
     routedArmIdRef.current = armedConversationId
+    // A gesture routes ONCE. `routedArmIdRef` is reset whenever the arm goes
+    // away (a stream switch does that), so without consuming the gesture here,
+    // navigating back would re-read it as a fresh gesture and route again on a
+    // plain navigation.
+    gestureArmedIdRef.current = null
     if (target === streamId) composerFocusRef.current?.focus()
     else redirectReplyToPanel(armedConversationId)
-  }, [armedConversationId, conversationReplyLastActiveStreamId, redirectReplyToPanel, streamId])
+  }, [armedConversationId, conversationReplyLastActiveStreamId, redirectReplyToPanel, streamId, hostScope])
 
   // Consume any pending share handoff for this stream, pre-inserting the
   // shared-message pointer into the composer and leaving the cursor after it.

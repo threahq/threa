@@ -199,11 +199,25 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
-function mount(initialEntries: string[] = ["/"]) {
+function mount(initialEntries: string[] = ["/"], mountStreamId: string = streamId) {
   return render(
     <QueryClientProvider client={queryClient}>
       <MemoryRouter initialEntries={initialEntries}>
-        <MessageInput workspaceId={workspaceId} streamId={streamId} />
+        <MessageInput workspaceId={workspaceId} streamId={mountStreamId} />
+        <SearchParamsProbe />
+      </MemoryRouter>
+    </QueryClientProvider>
+  )
+}
+
+/** The same tree with a different stream — `MessageInput` is NOT remounted per
+ *  stream in the app (same route, param-only change), so a navigation is a
+ *  rerender and any ref that outlives it is shared across streams. */
+function rerenderAtStream(view: ReturnType<typeof mount>, nextStreamId: string) {
+  view.rerender(
+    <QueryClientProvider client={queryClient}>
+      <MemoryRouter initialEntries={["/"]}>
+        <MessageInput workspaceId={workspaceId} streamId={nextStreamId} />
         <SearchParamsProbe />
       </MemoryRouter>
     </QueryClientProvider>
@@ -336,6 +350,33 @@ describe("the timeline composer's durable target", () => {
     // Still armed and still editing the board draft — the strip is the whole
     // effect of a restored arm.
     expect(screen.getByTestId("editor-body")).toHaveTextContent("board body")
+    expect(await db.composerTarget.get(hostScope)).toBeDefined()
+  })
+
+  it("does not re-route a gesture arm after navigating away and back", async () => {
+    await seedDrafts()
+    // Same-stream at arm time, so the gesture takes the focus branch and stays
+    // armed rather than redirecting and disarming.
+    lastActiveStreamId = streamId
+
+    const view = mount()
+    await waitFor(() => expect(screen.getByTestId("editor-body")).toHaveTextContent("stream body"))
+    await act(async () => {
+      registeredConversationReplyHandler?.({ conversationId: "conv_1" })
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+    await waitFor(() => expect(screen.getByTestId("conversation-reply-strip")).toBeInTheDocument())
+
+    // The conversation moves into a thread while the user is elsewhere.
+    lastActiveStreamId = "stream_thread"
+    rerenderAtStream(view, "stream_other")
+    await settle()
+    rerenderAtStream(view, streamId)
+    await waitFor(() => expect(screen.getByTestId("conversation-reply-strip")).toBeInTheDocument())
+    await settle()
+
+    // Coming back is a navigation, not a gesture: the arm shows and does nothing.
+    expect(openPanelSpy).not.toHaveBeenCalled()
     expect(await db.composerTarget.get(hostScope)).toBeDefined()
   })
 
