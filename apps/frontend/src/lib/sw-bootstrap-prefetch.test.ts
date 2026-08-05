@@ -124,6 +124,41 @@ describe("runBootstrapSync account routing", () => {
     expect(row.lastMessagePreview).toMatchObject({ authorId: "user_1" })
   })
 
+  it("derives the preview from markdown even when the event carries contentJson", async () => {
+    const workosUserId = "user_acct_preview"
+    const streamId = "stream_preview1"
+    const accountDb = new ThreaDatabase(accountDbName(workosUserId))
+
+    mockFetch({
+      [`/streams/${streamId}/bootstrap`]: {
+        stream: { id: streamId, workspaceId: "ws_1", type: "channel", slug: "general" },
+        events: [
+          makeEvent({
+            id: "evt_p1",
+            streamId,
+            sequence: "3",
+            payload: {
+              messageId: "evt_p1",
+              contentMarkdown: "hello there",
+              contentJson: {
+                type: "doc",
+                content: [{ type: "paragraph", content: [{ type: "text", text: "hello there" }] }],
+              },
+            },
+          } as never),
+        ],
+      },
+    })
+
+    await runBootstrapSync({ workspaceId: "ws_1", streamId, messageId: null, workosUserId })
+
+    const preview = (await accountDb.streams.get(streamId))?.lastMessagePreview
+    expect({ type: typeof preview?.content, content: preview?.content }).toEqual({
+      type: "string",
+      content: "hello there",
+    })
+  })
+
   it("skips all IndexedDB writes when the target carries no account id", async () => {
     const streamId = "stream_noacct1"
     const fetchMock = mockFetch({

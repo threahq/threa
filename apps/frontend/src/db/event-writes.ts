@@ -72,7 +72,12 @@ export function skipNoOpEventRewrites(
 // that Dexie must deserialize per read — so resolving the flag from it on every
 // event write costs more than the write. Resolve once per workspace per module
 // instance instead, primed from the network bootstrap and socket flag flips.
-type EventWriteFlags = { chunking: boolean; indexedMessagePatch: boolean; sharedStreamRegistration: boolean }
+type EventWriteFlags = {
+  chunking: boolean
+  indexedMessagePatch: boolean
+  sharedStreamRegistration: boolean
+  singlePreviewWriter: boolean
+}
 
 const flagsByWorkspace = new Map<string, EventWriteFlags>()
 let primeGeneration = 0
@@ -83,6 +88,7 @@ function resolveEventWriteFlags(layers: FeatureFlagLayers | null | undefined): E
     chunking: resolved.eventWriteChunking === "on",
     indexedMessagePatch: resolved.indexedMessagePatch === "on",
     sharedStreamRegistration: resolved.sharedStreamRegistration === "on",
+    singlePreviewWriter: resolved.singlePreviewWriter === "on",
   }
 }
 
@@ -148,6 +154,11 @@ export async function readEventWriteFlagsFresh(database: ThreaDatabase, workspac
 /** The viewer's `indexedMessagePatch` value, resolved through the same primed cache. */
 export async function isIndexedMessagePatchEnabled(database: ThreaDatabase, workspaceId: string): Promise<boolean> {
   return (await getEventWriteFlags(database, workspaceId)).indexedMessagePatch
+}
+
+/** The viewer's `singlePreviewWriter` value, resolved through the same primed cache. */
+export async function isSinglePreviewWriterEnabled(database: ThreaDatabase, workspaceId: string): Promise<boolean> {
+  return (await getEventWriteFlags(database, workspaceId)).singlePreviewWriter
 }
 
 /**

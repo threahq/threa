@@ -4349,3 +4349,87 @@ describe("stream:member_removed board cleanup", () => {
     cleanup()
   })
 })
+
+describe("stream:activity is the single preview writer", () => {
+  const serverPreview = {
+    authorId: "member_2",
+    authorType: "user" as const,
+    content: "**bold** from the server",
+    createdAt: "2026-08-04T10:00:00.000Z",
+  }
+
+  function activity(streamId: string) {
+    return {
+      workspaceId: "ws_1",
+      streamId,
+      authorId: "member_2",
+      sequence: "9",
+      messageOrdinal: 6,
+      lastMessagePreview: serverPreview,
+    }
+  }
+
+  async function seedStreamRow(streamId: string) {
+    await db.streams.put({
+      id: streamId,
+      workspaceId: "ws_1",
+      rootStreamId: streamId,
+      lastMessagePreview: null,
+      _cachedAt: Date.now(),
+    } as never)
+  }
+
+  function register(queryClient: QueryClient, currentStreamId?: string) {
+    const { socket, emit } = createTestSocket()
+    const cleanup = registerWorkspaceSocketHandlers(socket, "ws_1", queryClient, {
+      getCurrentStreamId: () => currentStreamId,
+      getCurrentUser: () => ({ id: "workos_1" }),
+      subscribeStream: vi.fn(),
+    })
+    return { emit, cleanup }
+  }
+
+  beforeEach(async () => {
+    await Promise.all([db.streams.clear(), db.unreadState.clear()])
+  })
+
+  it("stream:activity writes the server markdown as the preview content", async () => {
+    const streamId = "stream_activity_markdown"
+    await seedStreamRow(streamId)
+    const queryClient = new QueryClient()
+    const { emit, cleanup } = register(queryClient)
+
+    emit("stream:activity", activity(streamId))
+
+    await vi.waitFor(async () => {
+      const stored = (await db.streams.get(streamId))?.lastMessagePreview
+      expect({ preview: stored, isString: typeof stored?.content === "string" }).toEqual({
+        preview: serverPreview,
+        isString: true,
+      })
+    })
+
+    cleanup()
+  })
+
+  it("a stream:activity for the currently-open stream still commits its preview", async () => {
+    const streamId = "stream_activity_open"
+    await seedStreamRow(streamId)
+    const queryClient = new QueryClient()
+    const invalidateQueries = vi.spyOn(queryClient, "invalidateQueries").mockResolvedValue(undefined)
+    const { emit, cleanup } = register(queryClient, streamId)
+
+    emit("stream:activity", activity(streamId))
+
+    await vi.waitFor(async () => {
+      expect((await db.streams.get(streamId))?.lastMessagePreview).toEqual(serverPreview)
+    })
+    expect(
+      invalidateQueries.mock.calls.some(
+        (call) => JSON.stringify(call[0]?.queryKey) === JSON.stringify(streamKeys.bootstrap("ws_1", streamId))
+      )
+    ).toBe(false)
+
+    cleanup()
+  })
+})

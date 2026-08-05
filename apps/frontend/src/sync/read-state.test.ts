@@ -3,7 +3,11 @@ import { QueryClient } from "@tanstack/react-query"
 import { db } from "@/db"
 import { workspaceKeys } from "@/hooks/use-workspaces"
 import { streamKeys } from "@/hooks/use-streams"
+import type { Socket } from "socket.io-client"
 import { CatchUpBatch, commitCounterMutation } from "./catch-up-batch"
+import { registerStreamSocketHandlers } from "./stream-sync"
+import { registerWorkspaceSocketHandlers } from "./workspace-sync"
+import { primeEventWriteFlags, resetEventWriteFlags } from "@/db/event-writes"
 import { applyStreamsReadAllOrdinals } from "./unread-counters"
 import {
   applyReadStateSnapshotsIdb,
@@ -589,5 +593,131 @@ describe("commitReadStateSnapshot", () => {
       expect(readState?.lastReadEventId).toBe("evt_4")
       expect(readState?.lastReadSequence).toBe("40")
     })
+  })
+})
+
+describe("replayed message:created entries and the preview write", () => {
+  function createTestSocket() {
+    const handlers = new Map<string, Set<(payload: unknown) => void>>()
+    const socket = {
+      on(event: string, handler: (payload: unknown) => void) {
+        const set = handlers.get(event) ?? new Set()
+        set.add(handler)
+        handlers.set(event, set)
+        return this
+      },
+      off(event: string, handler: (payload: unknown) => void) {
+        handlers.get(event)?.delete(handler)
+        return this
+      },
+    } as unknown as Socket
+    return {
+      socket,
+      async emit(event: string, payload: unknown) {
+        await Promise.all(Array.from(handlers.get(event) ?? []).map((handler) => handler(payload)))
+      },
+    }
+  }
+
+  function entry(streamId: string, index: number) {
+    return {
+      workspaceId: "ws_1",
+      streamId,
+      event: {
+        id: `evt_replay_${index}`,
+        streamId,
+        sequence: String(100 + index),
+        eventType: "message_created",
+        payload: {
+          messageId: `evt_replay_${index}`,
+          contentMarkdown: `replayed ${index}`,
+          contentJson: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "x" }] }] },
+        },
+        actorId: "user_1",
+        actorType: "user",
+        createdAt: "2026-08-04T10:00:00.000Z",
+      },
+    }
+  }
+
+  async function replay(streamId: string, singlePreviewWriter: boolean): Promise<number> {
+    resetEventWriteFlags()
+    primeEventWriteFlags("ws_1", {
+      workspace: { singlePreviewWriter: singlePreviewWriter ? "on" : "off" },
+      user: {},
+    })
+    await db.events.clear()
+    await db.streams.clear()
+    await db.streams.put({
+      id: streamId,
+      workspaceId: "ws_1",
+      rootStreamId: streamId,
+      lastMessagePreview: null,
+      _cachedAt: Date.now(),
+    } as never)
+
+    const previewWrites = vi.spyOn(db.streams, "update")
+    const { socket, emit } = createTestSocket()
+    const cleanup = registerStreamSocketHandlers(socket, "ws_1", streamId, new QueryClient())
+    for (let index = 0; index < 3; index += 1) await emit("message:created", entry(streamId, index))
+    cleanup()
+    const calls = previewWrites.mock.calls.length
+    previewWrites.mockRestore()
+    return calls
+  }
+
+  it("live message:created delivery writes no preview when the single writer is on", async () => {
+    const on = await replay("stream_replay_on", true)
+    const off = await replay("stream_replay_off", false)
+    expect({ on, off }).toEqual({ on: 0, off: 3 })
+    resetEventWriteFlags()
+  })
+
+  it("a catch-up replay's batched stream:activity previews land on flush, last write winning", async () => {
+    const streamId = "stream_replay_batch"
+    await db.streams.clear()
+    await db.streams.put({
+      id: streamId,
+      workspaceId: "ws_1",
+      rootStreamId: streamId,
+      lastMessagePreview: null,
+      _cachedAt: Date.now(),
+    } as never)
+
+    const queryClient = new QueryClient()
+    const batch = new CatchUpBatch(queryClient, "ws_1")
+    const { socket, emit } = createTestSocket()
+    const cleanup = registerWorkspaceSocketHandlers(socket, "ws_1", queryClient, {
+      getCurrentStreamId: () => undefined,
+      getCurrentUser: () => ({ id: "workos_1" }),
+      subscribeStream: vi.fn(),
+      getCatchUpBatch: () => batch,
+    })
+
+    const activity = (content: string, createdAt: string) => ({
+      workspaceId: "ws_1",
+      streamId,
+      authorId: "user_1",
+      sequence: "100",
+      messageOrdinal: 1,
+      lastMessagePreview: { authorId: "user_1", authorType: "user" as const, content, createdAt },
+    })
+
+    await emit("stream:activity", activity("first replayed", "2026-08-04T10:00:00.000Z"))
+    await emit("stream:activity", activity("last replayed", "2026-08-04T10:00:01.000Z"))
+
+    // Buffered, not written — the replay must not touch the row per entry.
+    expect((await db.streams.get(streamId))?.lastMessagePreview).toBeNull()
+
+    await batch.flush()
+
+    expect((await db.streams.get(streamId))?.lastMessagePreview).toEqual({
+      authorId: "user_1",
+      authorType: "user",
+      content: "last replayed",
+      createdAt: "2026-08-04T10:00:01.000Z",
+    })
+
+    cleanup()
   })
 })

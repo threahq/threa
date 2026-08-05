@@ -2,6 +2,7 @@ import { db, sequenceToNum, type CachedEvent } from "@/db"
 import {
   isEventWriteChunkingEnabled,
   isIndexedMessagePatchEnabled,
+  isSinglePreviewWriterEnabled,
   isNoOpRewrite,
   isSharedStreamRegistrationEnabledSync,
   putEventsBounded,
@@ -1239,6 +1240,8 @@ function bindStreamSocketHandlers(
       let gapAfterSequence: string | null = null
 
       const chunked = await isEventWriteChunkingEnabled(db, workspaceId)
+      // Same primed map, so this resolves without a second IDB read.
+      const singlePreviewWriter = await isSinglePreviewWriterEnabled(db, workspaceId)
       getPerfCapture().count("stream.idbTransaction")
       // Read after the transaction only: the `return` it drives stays inside the
       // callback, so the write path's control flow is unchanged.
@@ -1345,34 +1348,39 @@ function bindStreamSocketHandlers(
         seedDecryption(newEvent.id, optimisticPlaintext)
       }
 
-      // Update sidebar preview in both TanStack cache and IDB so the sort order
-      // and preview text survive cold starts (offline-first).
-      const newPreview: LastMessagePreview = {
-        authorId: newEvent.actorId ?? "",
-        authorType: newEvent.actorType ?? "user",
-        content: newPayload.contentJson as string,
-        createdAt: newEvent.createdAt,
-      }
+      // `stream:activity` is emitted in the same backend transaction as this
+      // event and carries the server markdown, so it is the single preview
+      // writer; this arm only exists as the kill switch.
+      if (!singlePreviewWriter) {
+        // Update sidebar preview in both TanStack cache and IDB so the sort order
+        // and preview text survive cold starts (offline-first).
+        const newPreview: LastMessagePreview = {
+          authorId: newEvent.actorId ?? "",
+          authorType: newEvent.actorType ?? "user",
+          content: newPayload.contentJson as string,
+          createdAt: newEvent.createdAt,
+        }
 
-      const stopPreviewWrite = getPerfCapture().time("stream.previewWrite")
-      try {
-        await db.streams.update(streamId, {
-          lastMessagePreview: newPreview,
-          _cachedAt: Date.now(),
-        })
+        const stopPreviewWrite = getPerfCapture().time("stream.previewWrite")
+        try {
+          await db.streams.update(streamId, {
+            lastMessagePreview: newPreview,
+            _cachedAt: Date.now(),
+          })
 
-        queryClient.setQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap(workspaceId), (old) => {
-          if (!old) return old
-          return {
-            ...old,
-            streams: old.streams.map((stream) => {
-              if (stream.id !== streamId) return stream
-              return { ...stream, lastMessagePreview: newPreview }
-            }),
-          }
-        })
-      } finally {
-        stopPreviewWrite()
+          queryClient.setQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap(workspaceId), (old) => {
+            if (!old) return old
+            return {
+              ...old,
+              streams: old.streams.map((stream) => {
+                if (stream.id !== streamId) return stream
+                return { ...stream, lastMessagePreview: newPreview }
+              }),
+            }
+          })
+        } finally {
+          stopPreviewWrite()
+        }
       }
 
       if (!(payload.slots || payload.sharedMessages) && contentHasSharedMessage(newPayload.contentJson)) {
