@@ -16,7 +16,8 @@ import { formatKeyBinding, getEffectiveKeyBinding } from "@/lib/keyboard-shortcu
 import { useFabDrawerClose } from "./fab-drawer-close-context"
 import { useRegisterStashedDraftsOpen, useStashedDraftsBridge } from "./stashed-drafts-open-context"
 import { useComposerAnchor } from "./use-composer-anchor"
-import type { CachedDraft, DraftPreview, DraftRestoreRefusal, DraftRestoreResult } from "@/hooks"
+import type { CachedDraft, DraftPreview } from "@/hooks"
+import { RESTORE_REFUSAL_MESSAGE, type DraftRestoreResult } from "@/lib/drafts/restore-refusal"
 
 interface StashedDraftsPickerProps {
   drafts: CachedDraft[]
@@ -59,13 +60,6 @@ interface StashedDraftsPickerProps {
  * showing a render ago and the world has since moved past, so the copy names
  * what happened to the draft, not what the code checked.
  */
-const RESTORE_REFUSAL_MESSAGE: Record<DraftRestoreRefusal, string> = {
-  missing: "That draft is no longer there.",
-  "checked-out": "That draft is open in another composer.",
-  "host-ineligible": "This stream can't hold that draft — it stays where it is.",
-  raced: "That draft moved before it could be restored.",
-}
-
 function attachmentOrEmptyLabel(draft: CachedDraft): string {
   const attachmentCount = draft.attachments?.length ?? 0
   if (attachmentCount > 0) {

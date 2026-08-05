@@ -1,8 +1,14 @@
 import { useCallback, useEffect, useRef } from "react"
 import { useSearchParams } from "react-router-dom"
+import { toast } from "sonner"
 import { useLiveQuery } from "dexie-react-hooks"
 import { db } from "@/db"
 import { isEmptyContent } from "@/lib/prosemirror-utils"
+import {
+  RESTORE_REFUSAL_MESSAGE,
+  type DraftRestoreRefusal,
+  type DraftRestoreResult,
+} from "@/lib/drafts/restore-refusal"
 import { enqueueDraftUpsert, migrateLocalDraftScope } from "@/sync/draft-sync"
 import { useOptionalSyncEngine } from "@/sync/sync-engine"
 import { restoreStashedDraftToComposer, stashLoadedDraft } from "./use-draft-message"
@@ -78,16 +84,6 @@ export interface StashComposerHost {
   /** The host's own disarm: clears the target AND its gesture latch. */
   disarmTarget: () => Promise<void>
 }
-
-/** Why a restore did nothing. The caller surfaces it (INV-63); it is never silent. */
-export type DraftRestoreRefusal = "missing" | "checked-out" | "host-ineligible" | "raced"
-
-/**
- * The outcome of {@link UseStashComposerResult.handleRestoreStashed}. A refusal
- * is a real outcome, not an exception: nothing was written, and the caller owes
- * the user an explanation because the UI otherwise reads as success.
- */
-export type DraftRestoreResult = { ok: true } | { ok: false; reason: DraftRestoreRefusal }
 
 function refuse(reason: DraftRestoreRefusal, message: string): DraftRestoreResult {
   console.error(`[stash] ${message}`)
@@ -244,6 +240,19 @@ export function useStashComposer(
       }
 
       if (plan.action === "adopt") {
+        // The pre-checks proved the RESTORED ROW is checked out nowhere; they say
+        // nothing about the scope we are about to point at. A conversation can
+        // hold one draft in its own composer and have another stashed, and that
+        // stashed one is in this pile. Repointing the target scope would leave
+        // that composer rendering its old body against our draft's id — its
+        // loaded id changes value rather than going null, so nothing blanks or
+        // rehydrates it — and its next debounced save would write that body into
+        // the row we just adopted. We cannot flush an editor we do not own, so
+        // refuse and let the user deal with it where it lives.
+        const targetPointer = await db.composerLoaded.get(plan.targetScope)
+        if (targetPointer?.draftId && targetPointer.draftId !== id) {
+          return refuse("target-busy", `refusing adopt of ${id}: ${plan.targetScope} holds ${targetPointer.draftId}`)
+        }
         // The row stays exactly where it is — it keeps its filing, which is the
         // whole point. Check it out under its OWN scope first, then point the
         // host at it, so the composer never renders the target scope for a frame
@@ -327,7 +336,15 @@ export function useStashComposer(
     pendingStashRestoreRef.current = stashId
 
     handleRestoreStashed(stashId).then(
-      () => {
+      (result) => {
+        // A refusal is not an error, so this branch runs for one too. Stripping
+        // here would swallow exactly what the picker was just fixed to surface:
+        // the user arrives from /drafts, the composer is empty, the URL is clean
+        // and nothing says why. Keep the param and tell them (INV-63).
+        if (!result.ok) {
+          toast.error(RESTORE_REFUSAL_MESSAGE[result.reason])
+          return
+        }
         const nextParams = new URLSearchParams(searchParams)
         nextParams.delete("stash")
         setSearchParams(nextParams, { replace: true })
