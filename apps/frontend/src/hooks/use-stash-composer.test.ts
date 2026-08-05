@@ -10,6 +10,7 @@ import { __clearBoardDraftContextRegistry } from "./use-board-draft-context"
 import { useDraftComposer } from "./use-draft-composer"
 import { useStashComposer, useStashParamDraftRow } from "./use-stash-composer"
 import { upsertLoadedDraft, stashLoadedDraft, restoreStashedDraftToComposer } from "./use-draft-message"
+import { clearComposerTarget } from "./use-composer-target"
 import * as draftMessageModule from "./use-draft-message"
 import * as currentUserHook from "./use-current-workspace-user-id"
 import * as e2eSessionStore from "@/stores/e2e-session-store"
@@ -282,7 +283,14 @@ function aoDraft(id: string, scope: string, extra: Partial<CachedDraft> = {}): C
 
 function useAoHarness(key: string, targetHost?: string) {
   const composer = useDraftComposer({ workspaceId: aoWorkspaceId, draftKey: key, scopeId: key })
-  const stash = useStashComposer(composer, aoWorkspaceId, key, targetHost ? { targetHost } : undefined)
+  const stash = useStashComposer(
+    composer,
+    aoWorkspaceId,
+    key,
+    // Stands in for `message-input`'s disarm, which also clears its gesture latch;
+    // that half is pinned in `message-input.composer-target.test.tsx`.
+    targetHost ? { targetHost, disarmTarget: () => clearComposerTarget(targetHost) } : undefined
+  )
   return { composer, stash }
 }
 
@@ -334,6 +342,33 @@ describe("restoring a draft that belongs to another surface (adopt vs move)", ()
     expect((await db.composerLoaded.get(aoConversationScope))?.draftId).toBe("draft_conv")
     expect((await db.composerTarget.get(aoHostScope))?.scope).toBe(aoConversationScope)
     // The stream's own draft is untouched, still checked out under its own scope.
+    expect((await db.composerLoaded.get(aoHostScope))?.draftId).toBe("draft_host")
+  })
+
+  // The timeline holds a `board:branch-reply:` target exactly as it holds a
+  // `board:reply:` one (`message-input` derives `targetConversationId` from
+  // both), so moving one would rewrite a branch draft's scope to the channel and
+  // destroy the filing this feature exists to keep — with no undo.
+  it("adopts a branch reply's draft in the timeline instead of moving it", async () => {
+    const branchScope = `board:branch-reply:${aoConversationId}`
+    await db.drafts.bulkAdd([aoDraft("draft_branch", branchScope), aoDraft("draft_host", aoHostScope)])
+    await db.composerLoaded.put({ scope: aoHostScope, workspaceId: aoWorkspaceId, draftId: "draft_host" })
+    await seedDraftCacheFromIdb(aoWorkspaceId)
+
+    const { result } = renderHook(() => useAoHarness(aoHostScope, aoHostScope), { wrapper })
+    await waitFor(() => expect(result.current.stash.drafts.map((d) => d.id)).toContain("draft_branch"))
+
+    await act(async () => {
+      expect(await result.current.stash.handleRestoreStashed("draft_branch")).toEqual({ ok: true })
+    })
+
+    // The row did NOT move: same scope, no re-scoping push.
+    expect((await db.drafts.get("draft_branch"))?.scope).toBe(branchScope)
+    expect(await upsertOpsFor("draft_branch")).toHaveLength(0)
+    // Checked out under its own scope, with the timeline targeted at it — the
+    // strip and the branch-filed send both read that target.
+    expect((await db.composerLoaded.get(branchScope))?.draftId).toBe("draft_branch")
+    expect((await db.composerTarget.get(aoHostScope))?.scope).toBe(branchScope)
     expect((await db.composerLoaded.get(aoHostScope))?.draftId).toBe("draft_host")
   })
 
@@ -406,7 +441,10 @@ describe("restoring a draft that belongs to another surface (adopt vs move)", ()
     await db.composerLoaded.put({ scope: aoHostScope, workspaceId: aoWorkspaceId, draftId: "draft_stream" })
 
     await act(async () => {
-      await result.current.stash.handleRestoreStashed("draft_stream")
+      expect(await result.current.stash.handleRestoreStashed("draft_stream")).toEqual({
+        ok: false,
+        reason: "checked-out",
+      })
     })
 
     expect((await db.drafts.get("draft_stream"))?.scope).toBe(aoHostScope)
@@ -425,7 +463,10 @@ describe("restoring a draft that belongs to another surface (adopt vs move)", ()
     await db.drafts.delete("draft_stream")
 
     await act(async () => {
-      await result.current.stash.handleRestoreStashed("draft_stream")
+      expect(await result.current.stash.handleRestoreStashed("draft_stream")).toEqual({
+        ok: false,
+        reason: "missing",
+      })
     })
 
     expect((await db.composerLoaded.get(aoConversationScope))?.draftId).toBe("draft_host")
@@ -450,7 +491,10 @@ describe("restoring a draft that belongs to another surface (adopt vs move)", ()
     await waitFor(() => expect(result.current.stash.drafts.map((d) => d.id)).toContain("draft_conv"))
 
     await act(async () => {
-      await result.current.stash.handleRestoreStashed("draft_conv")
+      expect(await result.current.stash.handleRestoreStashed("draft_conv")).toEqual({
+        ok: false,
+        reason: "host-ineligible",
+      })
     })
 
     expect(await db.composerTarget.get(aoHostScope)).toBeUndefined()

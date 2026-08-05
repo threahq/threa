@@ -368,11 +368,13 @@ export function useAllDrafts(workspaceId: string) {
     return map
   }, [composerLoaded])
 
-  // A draft is "stashed" when no composer on this device holds it — under ANY
-  // scope, not just its own. A restore can adopt a row into a host whose scope
-  // differs from the row's, so scope-keyed "is it the loaded one" would leave a
-  // checked-out draft advertising a `?stash=` deep link that its destination
-  // then refuses (the pile excludes checked-out-anywhere for the same reason).
+  // A draft is "stashed" when no composer on this device holds it — keyed by
+  // draft id, the same checked-out-anywhere rule the stash pile excludes on, so
+  // the explorer can never offer a `?stash=` deep link the destination refuses.
+  // Every writer of `composerLoaded` keeps pointer-scope == row-scope (adopt
+  // checks the row out under its own scope; move rewrites the scope first), so
+  // an id-keyed and a scope-keyed rule agree on every reachable state; id-keyed
+  // is the one that stays true if that ever stops holding.
   const loadedDraftIds = useMemo(() => {
     const ids = new Set<string>()
     for (const row of composerLoaded) if (row.draftId) ids.add(row.draftId)
