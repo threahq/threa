@@ -71,6 +71,65 @@ describe("v47 payload.messageId index", () => {
   })
 })
 
+describe("v48 composer target + conversation messageIds index", () => {
+  it("serves the fork lookup from the multiEntry index and keeps the conversations store's other indexes", async () => {
+    const name = `threa_test_${Math.random().toString(36).slice(2)}`
+
+    // Seed at the v47 conversations shape — before the multiEntry index — so the
+    // rows exist before the index does.
+    const legacy = new Dexie(name)
+    legacy.version(47).stores({
+      conversations: "id, workspaceId, [workspaceId+_lastActivityMs], _cachedAt",
+    })
+    await legacy.open()
+    await legacy.table("conversations").bulkPut([
+      {
+        id: "conv_1",
+        workspaceId: "ws_1",
+        conversation: { id: "conv_1", streamId: "stream_1", messageIds: ["msg_a", "msg_b"] },
+        _lastActivityMs: 10,
+        _cachedAt: 1000,
+      },
+      {
+        id: "conv_2",
+        workspaceId: "ws_1",
+        conversation: { id: "conv_2", streamId: "stream_1", messageIds: ["msg_c"] },
+        _lastActivityMs: 20,
+        _cachedAt: 1000,
+      },
+    ])
+    legacy.close()
+
+    const db = new ThreaDatabase(name)
+    await db.open()
+
+    // The index was built over the pre-existing rows: a fork message resolves to
+    // its hosting conversation without scanning the workspace, and a
+    // conversation holding two of the queried ids comes back once.
+    const hosts = await db.conversations
+      .where("conversation.messageIds")
+      .anyOf(["msg_a", "msg_b", "msg_c"])
+      .distinct()
+      .toArray()
+    expect(hosts.map((row) => row.id).sort()).toEqual(["conv_1", "conv_2"])
+
+    // The version bump ADDS an index; the store's existing ones must survive.
+    const byActivity = await db.conversations.where("[workspaceId+_lastActivityMs]").equals(["ws_1", 20]).count()
+    expect(byActivity).toBe(1)
+
+    // The new device-local target store opens and round-trips.
+    await db.composerTarget.put({ host: "stream:stream_1", workspaceId: "ws_1", scope: "board:reply:conv_1" })
+    expect(await db.composerTarget.get("stream:stream_1")).toEqual({
+      host: "stream:stream_1",
+      workspaceId: "ws_1",
+      scope: "board:reply:conv_1",
+    })
+
+    db.close()
+    await Dexie.delete(name)
+  })
+})
+
 describe("one-way-door recovery", () => {
   it("a versionchange from another tab closes the connection and reloads", async () => {
     const name = `threa_test_${Math.random().toString(36).slice(2)}`

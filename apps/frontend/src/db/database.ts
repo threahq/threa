@@ -573,6 +573,22 @@ export interface ComposerLoaded {
   draftId: string | null
 }
 
+/**
+ * Device-local pointer: which draft scope a composer HOST currently points at.
+ * `stream:<S>` (the timeline composer for stream S) → `board:reply:<C>` when the
+ * user armed "Reply in conversation" there. Absent means the host composes its
+ * own scope. Like `ComposerLoaded` this is device-local and never synced, and it
+ * is deliberately NOT cleared on logout (see `clearAllCachedData`) — the arm is
+ * part of the in-progress work the drafts themselves survive with.
+ */
+export interface ComposerTarget {
+  /** Primary key: the host composer's own scope, e.g. "stream:{streamId}". */
+  host: string
+  workspaceId: string
+  /** The draft scope this host composes into instead of `host`. */
+  scope: string
+}
+
 export interface CachedUnreadState {
   id: string // workspaceId
   workspaceId: string
@@ -1067,6 +1083,7 @@ export class ThreaDatabase extends Dexie {
   draftScratchpads!: EntityTable<DraftScratchpad, "id">
   drafts!: EntityTable<CachedDraft, "id">
   composerLoaded!: EntityTable<ComposerLoaded, "scope">
+  composerTarget!: EntityTable<ComposerTarget, "host">
   unreadState!: EntityTable<CachedUnreadState, "id">
   userPreferences!: EntityTable<CachedUserPreferences, "id">
   workspaceMetadata!: EntityTable<CachedWorkspaceMetadata, "id">
@@ -1574,6 +1591,18 @@ export class ThreaDatabase extends Dexie {
         "id, workspaceId, streamId, sequence, [streamId+sequence], [streamId+_sequenceNum], eventType, [streamId+eventType], _clientId, _cachedAt, _status, payload.messageId",
     })
 
+    // v48: the durable composer target (which scope a host composes into),
+    // beside `composerLoaded` — device-local, unsynced, kept across logout like
+    // the drafts it points at. Plus a multiEntry index over a conversation's
+    // message ids: resolving which conversation hosts a fork/anchor message was
+    // a full workspace scan of `conversations`, which an always-mounted composer
+    // re-ran on every write. Both start from existing rows — Dexie builds the
+    // index during the upgrade, so no `.upgrade()`.
+    this.version(48).stores({
+      composerTarget: "host, workspaceId",
+      conversations: "id, workspaceId, [workspaceId+_lastActivityMs], _cachedAt, *conversation.messageIds",
+    })
+
     this.workspaceUsers = this.table(WORKSPACE_USERS_STORE) as EntityTable<CachedWorkspaceUser, "id">
 
     // Another tab upgraded the shared per-account database. Dexie closes this
@@ -1686,7 +1715,7 @@ export async function clearAllCachedData(): Promise<void> {
       db.savedMessages.clear(),
       db.scheduledMessages.clear(),
       // Drafts (the unified `drafts` store) and the device-local
-      // `composerLoaded` pointer are intentionally NOT cleared on logout —
+      // `composerLoaded` / `composerTarget` pointers are intentionally NOT cleared on logout —
       // mirroring the pre-unification behavior where ambient drafts survived a
       // sign-out so in-progress work isn't lost across a re-login. They are
       // workspace+user scoped within this account's database.

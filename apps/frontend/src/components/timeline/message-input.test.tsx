@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest"
 import type { ReactNode } from "react"
-import { act, render, screen } from "@testing-library/react"
+import { act, render, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { Router } from "react-router-dom"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
@@ -25,6 +25,8 @@ import * as streamCommandsModule from "@/hooks/use-stream-commands"
 import { spyOnExport } from "@/test"
 import { toast } from "sonner"
 import { MessageInput, materializePendingAttachmentReferences } from "./message-input"
+// eslint-disable-next-line no-restricted-imports -- clears the durable composer-target rows the composer reads
+import { db } from "@/db"
 import type { JSONContent } from "@threa/types"
 
 const EMPTY_DOC: JSONContent = { type: "doc", content: [{ type: "paragraph" }] }
@@ -114,7 +116,8 @@ let mockComposerState = {
   isLoaded: true,
 }
 
-beforeEach(() => {
+beforeEach(async () => {
+  await db.composerTarget.clear()
   vi.restoreAllMocks()
   vi.clearAllMocks()
   mockSendMessage.mockReset()
@@ -245,7 +248,11 @@ beforeEach(() => {
     isLoading: false,
     isError: false,
   } as unknown as ReturnType<typeof streamContextBagModule.useStreamContextBag>)
-  vi.spyOn(hooksModule, "getDraftMessageKey").mockImplementation(() => "test-draft-key")
+  // Real key shape: the durable composer target is keyed by the HOST scope, so a
+  // constant here would make two different streams share one arm.
+  vi.spyOn(hooksModule, "getDraftMessageKey").mockImplementation((location) =>
+    location.type === "stream" ? `stream:${location.streamId}` : `thread:${location.anchorId}`
+  )
   vi.spyOn(hooksModule, "useDraftComposer").mockImplementation(
     () =>
       ({
@@ -397,6 +404,22 @@ function Wrapper({ children }: { children: React.ReactNode }) {
       </Router>
     </QueryClientProvider>
   )
+}
+
+/**
+ * Mechanism C's gesture. Arming is now a durable IDB write the composer observes
+ * through a liveQuery, so the strip appears a tick later, not synchronously.
+ */
+async function arm(conversationId: string) {
+  await act(async () => {
+    registeredConversationReplyHandler?.({ conversationId })
+  })
+  // Settle on the composer having OBSERVED the write: either it armed inline
+  // (strip) or the arm resolved thread-live and handed off to the panel.
+  await waitFor(() => {
+    const observed = screen.queryByTestId("conversation-reply-strip") !== null || mockOpenPanel.mock.calls.length > 0
+    expect(observed).toBe(true)
+  })
 }
 
 function render$(ui: React.ReactElement) {
@@ -586,7 +609,7 @@ describe("MessageInput", () => {
     })
   })
 
-  describe("quote replies", () => {
+  describe("quote replies", async () => {
     it("inserts a quote block with one trailing paragraph so typing starts on the next line", () => {
       mockComposerState.content = {
         type: "doc",
@@ -630,11 +653,11 @@ describe("MessageInput", () => {
   })
 
   describe("reply in conversation", () => {
-    it("arms the composer with a dismissible strip showing the conversation topic and focuses the editor", () => {
+    it("arms the composer with a dismissible strip showing the conversation topic and focuses the editor", async () => {
       render$(<MessageInput workspaceId={workspaceId} streamId={streamId} />)
 
       expect(registeredConversationReplyHandler).not.toBeNull()
-      act(() => registeredConversationReplyHandler?.({ conversationId: "conv_1" }))
+      await arm("conv_1")
 
       const strip = screen.getByTestId("conversation-reply-strip")
       expect(strip).toHaveTextContent("Replying in Pizza plans")
@@ -647,7 +670,7 @@ describe("MessageInput", () => {
       mockComposerState.content = helloContent
 
       render$(<MessageInput workspaceId={workspaceId} streamId={streamId} />)
-      act(() => registeredConversationReplyHandler?.({ conversationId: "conv_1" }))
+      await arm("conv_1")
 
       await userEvent.click(screen.getByRole("button", { name: /send/i }))
 
@@ -657,7 +680,8 @@ describe("MessageInput", () => {
         attachments: undefined,
         conversation: { intent: "existing", conversationId: "conv_1" },
       })
-      expect(screen.queryByTestId("conversation-reply-strip")).not.toBeInTheDocument()
+      // Disarming is a durable delete now, so the strip clears a tick later.
+      await waitFor(() => expect(screen.queryByTestId("conversation-reply-strip")).not.toBeInTheDocument())
     })
 
     it("carries the armed directive onto a scheduled send and clears the strip", async () => {
@@ -665,7 +689,7 @@ describe("MessageInput", () => {
       mockComposerState.content = makeDoc("send this later, in the conversation")
 
       render$(<MessageInput workspaceId={workspaceId} streamId={streamId} />)
-      act(() => registeredConversationReplyHandler?.({ conversationId: "conv_1" }))
+      await arm("conv_1")
 
       await act(async () => {
         await capturedOnSchedule?.(new Date("2099-01-01T00:00:00.000Z"))
@@ -677,7 +701,7 @@ describe("MessageInput", () => {
           conversation: { intent: "existing", conversationId: "conv_1" },
         })
       )
-      expect(screen.queryByTestId("conversation-reply-strip")).not.toBeInTheDocument()
+      await waitFor(() => expect(screen.queryByTestId("conversation-reply-strip")).not.toBeInTheDocument())
     })
 
     it("stays silent when scheduling a reply whose conversation is live in this same stream", async () => {
@@ -688,7 +712,7 @@ describe("MessageInput", () => {
       mockComposerState.content = makeDoc("later, same channel")
 
       render$(<MessageInput workspaceId={workspaceId} streamId={streamId} />)
-      act(() => registeredConversationReplyHandler?.({ conversationId: "conv_1" }))
+      await arm("conv_1")
 
       await act(async () => {
         await capturedOnSchedule?.(new Date("2099-01-01T00:00:00.000Z"))
@@ -712,7 +736,7 @@ describe("MessageInput", () => {
           <MessageInput workspaceId={workspaceId} streamId={streamId} />
         </Wrapper>
       )
-      act(() => registeredConversationReplyHandler?.({ conversationId: "conv_1" }))
+      await arm("conv_1")
       expect(mockOpenPanel).not.toHaveBeenCalled()
 
       vi.spyOn(useConversationsModule, "useConversationBoardPost").mockReturnValue({
@@ -762,7 +786,7 @@ describe("MessageInput", () => {
       mockSendMessage.mockRejectedValue(new Error("stream creation failed"))
 
       render$(<MessageInput workspaceId={workspaceId} streamId={streamId} />)
-      act(() => registeredConversationReplyHandler?.({ conversationId: "conv_1" }))
+      await arm("conv_1")
 
       await userEvent.click(screen.getByRole("button", { name: /send/i }))
 
@@ -774,17 +798,17 @@ describe("MessageInput", () => {
       mockComposerState.content = makeDoc("just a normal message")
 
       render$(<MessageInput workspaceId={workspaceId} streamId={streamId} />)
-      act(() => registeredConversationReplyHandler?.({ conversationId: "conv_1" }))
+      await arm("conv_1")
 
       await userEvent.click(screen.getByRole("button", { name: /cancel reply in conversation/i }))
-      expect(screen.queryByTestId("conversation-reply-strip")).not.toBeInTheDocument()
+      await waitFor(() => expect(screen.queryByTestId("conversation-reply-strip")).not.toBeInTheDocument())
 
       await userEvent.click(screen.getByRole("button", { name: /send/i }))
 
       expect(mockSendMessage).toHaveBeenCalledWith(expect.objectContaining({ conversation: undefined }))
     })
 
-    it("hands off to the conversation panel when the conversation is live in a thread (thread-follow)", () => {
+    it("hands off to the conversation panel when the conversation is live in a thread (thread-follow)", async () => {
       // The conversation's most-recently-active stream is a thread (`thread_789`),
       // not the rendered channel (`stream_456`) — a flat send here would
       // re-interleave the channel, so the composer redirects to the conversation
@@ -805,12 +829,12 @@ describe("MessageInput", () => {
       )
 
       render$(<MessageInput workspaceId={workspaceId} streamId={streamId} />)
-      act(() => registeredConversationReplyHandler?.({ conversationId: "conv_1" }))
+      await arm("conv_1")
 
       expect(mockOpenPanel).toHaveBeenCalledWith(contextsModule.createConversationPanelId("conv_1"))
       // The panel's composer is asked to open, and no inline strip is left behind.
       expect(consumeConversationReplyOpen("conv_1")).toBe(true)
-      expect(screen.queryByTestId("conversation-reply-strip")).not.toBeInTheDocument()
+      await waitFor(() => expect(screen.queryByTestId("conversation-reply-strip")).not.toBeInTheDocument())
       // The channel composer is never focused — focus would pop the mobile keyboard
       // on the composer we're about to leave for the panel.
       expect(mockComposerFocus).not.toHaveBeenCalled()
@@ -831,7 +855,7 @@ describe("MessageInput", () => {
       mockComposerState.content = makeDoc("late pizza take")
 
       render$(<MessageInput workspaceId={workspaceId} streamId={streamId} />)
-      act(() => registeredConversationReplyHandler?.({ conversationId: "conv_1" }))
+      await arm("conv_1")
 
       await userEvent.click(screen.getByRole("button", { name: /send/i }))
 
@@ -844,7 +868,7 @@ describe("MessageInput", () => {
       expect(infoToastSpy).toHaveBeenCalled()
     })
 
-    it("keeps the inline reply put when a background update later moves the conversation to a thread", () => {
+    it("keeps the inline reply put when a background update later moves the conversation to a thread", async () => {
       // Armed and resolved same-stream (strip shown, composer focused). A live
       // board-post update then reports the conversation living in a thread — the
       // route is latched at arm time, so it must NOT evict the user to the panel
@@ -854,7 +878,7 @@ describe("MessageInput", () => {
           <MessageInput workspaceId={workspaceId} streamId={streamId} />
         </Wrapper>
       )
-      act(() => registeredConversationReplyHandler?.({ conversationId: "conv_1" }))
+      await arm("conv_1")
       expect(mockComposerFocus).toHaveBeenCalledTimes(1)
       expect(mockOpenPanel).not.toHaveBeenCalled()
 
@@ -876,7 +900,7 @@ describe("MessageInput", () => {
       expect(mockOpenPanel).not.toHaveBeenCalled()
     })
 
-    it("does not open the panel when navigating away from an armed same-stream reply", () => {
+    it("does not open the panel when navigating away from an armed same-stream reply", async () => {
       // Arm a same-stream reply (mock last-active === rendered stream) — inline strip,
       // no redirect. Switching streams must disarm quietly, never redirect the
       // now-stale armed conversation into the panel.
@@ -885,7 +909,7 @@ describe("MessageInput", () => {
           <MessageInput workspaceId={workspaceId} streamId={streamId} />
         </Wrapper>
       )
-      act(() => registeredConversationReplyHandler?.({ conversationId: "conv_1" }))
+      await arm("conv_1")
       expect(screen.getByTestId("conversation-reply-strip")).toBeInTheDocument()
       expect(mockOpenPanel).not.toHaveBeenCalled()
 
@@ -1064,7 +1088,7 @@ describe("MessageInput", () => {
     })
   })
 
-  describe("attachment reference materialization", () => {
+  describe("attachment reference materialization", async () => {
     it("should keep existing numbered image references stable", () => {
       const content: JSONContent = {
         type: "doc",
