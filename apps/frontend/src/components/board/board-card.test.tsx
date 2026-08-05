@@ -1448,6 +1448,14 @@ describe("BoardCard sticky header", () => {
     expect(header?.className).toContain("mb-1.5")
     expect(header?.className).toContain("sm:pt-4")
   })
+
+  it("hides a named conversation's context row only on phone widths", async () => {
+    mountCard(makePost({ topicSummary: "Rotate the API tokens" }))
+
+    const contextRow = (await screen.findByRole("link", { name: "#general" })).parentElement
+    expect(contextRow?.className).toContain("hidden")
+    expect(contextRow?.className).toContain("sm:flex")
+  })
 })
 
 describe("BoardCard backfill arming", () => {

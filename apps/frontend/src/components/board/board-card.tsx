@@ -1172,7 +1172,7 @@ export function BoardCard({
                   {unreadDot}
                   {headerActions}
                 </div>
-                <div className="mt-1 flex items-center gap-1.5 text-xs text-muted-foreground">
+                <div className="mt-1 hidden items-center gap-1.5 text-xs text-muted-foreground sm:flex">
                   {locatorLink("xs")}
                   <span className="shrink-0 opacity-50">·</span>
                   <RelativeTime date={conversation.lastActivityAt} terse className="shrink-0" />

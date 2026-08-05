@@ -880,8 +880,8 @@ Shipped, all flag-gated behind `board-view`:
 
 - **The board** — workspace-wide feed at `/w/:ws/board`, message-led cards
   grouped by recency, authored posts via the board composer. Long-card headers
-  follow the feed on desktop and mobile; the pinned phone header trims its
-  vertical padding.
+  follow the feed on desktop and mobile; the phone header keeps only the
+  conversation name and trims its vertical padding while pinned.
 - **Sync data plane** — conversations in IDB, `conversation:*` through
   `SocketEventGate`, synchronous determinable assign + bump
   (#1100/#1106/#1109/#1111).
