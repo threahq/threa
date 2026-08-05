@@ -160,14 +160,21 @@ function subscribeShared<T>(
   }
   entry.listeners.add(listener)
   entry.refCount += 1
+  // Hold the entry this subscriber incremented, not the key. The error path
+  // above can delete an entry and a later subscriber rebuild it under the same
+  // key, and a cleanup that re-looked-up would then decrement the REPLACEMENT —
+  // unsubscribing it while its own owner is still mounted, which serves `empty`
+  // for the page's lifetime and collapses every pile to scope-exact: exactly the
+  // failure the error observer exists to prevent, one layer down.
+  const owned = entry
   return () => {
-    const current = registry.get(registryKey)
-    if (!current) return
-    current.listeners.delete(listener)
-    current.refCount -= 1
-    if (current.refCount <= 0) {
-      current.subscription.unsubscribe()
-      registry.delete(registryKey)
+    owned.listeners.delete(listener)
+    owned.refCount -= 1
+    if (owned.refCount <= 0) {
+      owned.subscription.unsubscribe()
+      // Only if it is still the registered one — an orphan tears down its own
+      // subscription and leaves the replacement alone.
+      if (registry.get(registryKey) === owned) registry.delete(registryKey)
     }
   }
 }
