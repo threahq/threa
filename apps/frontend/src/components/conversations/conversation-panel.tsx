@@ -273,7 +273,10 @@ export function ConversationPanel({ workspaceId, onClose }: ConversationPanelPro
   const [floatingAnchorEl, setFloatingAnchorEl] = useState<HTMLElement | null>(null)
   const { panelId } = usePanel()
   const conversationId = panelId ? parseConversationPanel(panelId) : null
-  const { post, notFound, refetch } = useConversationBoardPost(workspaceId, conversationId)
+  const { post, notFound, loadFailed, refetch } = useConversationBoardPost(workspaceId, conversationId)
+  // Both ends the load: a 404 verdict and a failed request are equally terminal
+  // here (`retry: false`), and the empty state below names both.
+  const unopenable = notFound || loadFailed
   // Hidden set — the panel is reachable for a hidden conversation (deep-link,
   // search, Saved), so it offers "Unhide" when the open one is hidden.
   const hiddenConversations = useBoardHiddenConversations(workspaceId)
@@ -398,10 +401,10 @@ export function ConversationPanel({ workspaceId, onClose }: ConversationPanelPro
   // body pick the skeleton up where this left it — without it, the body mounting
   // at its own "loading" phase would blank a skeleton the user is already
   // looking at.
-  // `notFound` is terminal with `post` still null, so readiness has to include it —
+  // `unopenable` is terminal with `post` still null, so readiness has to include it —
   // otherwise the phase latches at "skeleton" and the header shimmers forever above
   // a resolved empty state.
-  const shellPhase = useCoordinatedPhase({ isLoading: !post && !notFound, isReady: !!post || notFound })
+  const shellPhase = useCoordinatedPhase({ isLoading: !post && !unopenable, isReady: !!post || unopenable })
   const skeletonShownRef = useRef<{ conversationId: string | null; shown: boolean }>({ conversationId, shown: false })
   if (skeletonShownRef.current.conversationId !== conversationId) {
     skeletonShownRef.current = { conversationId, shown: false }
@@ -439,7 +442,7 @@ export function ConversationPanel({ workspaceId, onClose }: ConversationPanelPro
   }
 
   let body: React.ReactNode = shellPhase === "skeleton" ? <ConversationRowsSkeleton /> : null
-  if (notFound) {
+  if (unopenable) {
     body = (
       <Empty className="min-h-[16rem] border-0">
         <EmptyHeader>

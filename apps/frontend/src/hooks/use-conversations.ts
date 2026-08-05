@@ -21,6 +21,7 @@ import { generateConversationId } from "@/lib/ids"
 import { serializeToMarkdown } from "@threa/prosemirror"
 import { type AttachmentSummary } from "./create-optimistic-bootstrap"
 import type { SplitGroupInput } from "@/api/conversations"
+import { ApiError } from "@/api/client"
 import { planBoardReply, type BoardReplyPlan } from "@/lib/board/reply-plan"
 import { StreamTypes } from "@threa/types"
 import type {
@@ -460,8 +461,14 @@ export interface ConversationBoardPost {
   post: BoardViewPost | null
   /** True only before any source (the reactive store or the by-id fetch) resolves. */
   isLoading: boolean
-  /** The conversation couldn't be found — gone, emptied, or not readable. */
+  /** The server answered 404 — gone, emptied, or not readable. Terminal; retrying won't help. */
   notFound: boolean
+  /**
+   * The fetch failed for any other reason (5xx, transport, auth blip). NOT
+   * terminal: `retry: false` makes a single failure final for this query, so a
+   * caller that destroys state on failure would do it on one bad response.
+   */
+  loadFailed: boolean
   refetch: () => void
 }
 
@@ -487,6 +494,7 @@ export function useConversationBoardPost(workspaceId: string, conversationId: st
     data: fetched,
     isLoading: fetchLoading,
     isError,
+    error,
     refetch,
   } = useQuery({
     queryKey: conversationId ? conversationKeys.boardPost(conversationId) : conversationKeys.boardPost("none"),
@@ -495,18 +503,23 @@ export function useConversationBoardPost(workspaceId: string, conversationId: st
     staleTime: 60_000,
   })
 
-  if (cached) return { post: cached, isLoading: false, notFound: false, refetch: () => void refetch() }
+  if (cached)
+    return { post: cached, isLoading: false, notFound: false, loadFailed: false, refetch: () => void refetch() }
   if (fetched)
     return {
       post: toBoardViewPost(workspaceId, fetched),
       isLoading: false,
       notFound: false,
+      loadFailed: false,
       refetch: () => void refetch(),
     }
-  // A 404 (gone/empty/cross-workspace) resolves the load as not-found, not a spinner.
-  const notFound = shouldFetch && isError
+  // Only a 404 (gone/empty/cross-workspace) is a verdict about the conversation.
+  // Everything else is a failed request: callers that discard state on the answer
+  // must not act on a 502 or a token-refresh blip.
+  const failed = shouldFetch && isError
+  const notFound = failed && ApiError.isApiError(error) && error.status === 404
   const isLoading = cached === undefined || (shouldFetch && fetchLoading)
-  return { post: null, isLoading, notFound, refetch: () => void refetch() }
+  return { post: null, isLoading, notFound, loadFailed: failed && !notFound, refetch: () => void refetch() }
 }
 
 export function useConversations(workspaceId: string, streamId: string, options?: UseConversationsOptions) {
