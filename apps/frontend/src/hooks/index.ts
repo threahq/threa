@@ -63,7 +63,13 @@ export {
   type CachedDraft,
 } from "./use-stashed-drafts"
 
-export { useStashComposer, useStashParamDraftRow, type UseStashComposerResult } from "./use-stash-composer"
+export {
+  useStashComposer,
+  useStashParamDraftRow,
+  type UseStashComposerResult,
+  type DraftRestoreRefusal,
+  type DraftRestoreResult,
+} from "./use-stash-composer"
 
 export {
   useComposerTarget,

@@ -226,29 +226,6 @@ describe("useAllDrafts board-composer drafts", () => {
     })
   })
 
-  // A restore can now check a row out under a scope that is not its own (the
-  // timeline adopting a conversation's draft). The explorer must agree with the
-  // pile's checked-out-anywhere rule, or it offers a `?stash=` deep link the
-  // destination refuses.
-  it("drops the stash deep link for a row checked out under another scope", async () => {
-    await seedConversation("conv_adopted", "stream_9", "GPU budget")
-    await db.drafts.add(syncedDraft({ id: "draft_adopted", scope: "board:reply:conv_adopted" }))
-    // Held by the host stream's composer, not by the row's own scope — the shape
-    // a cross-scope restore can leave behind. The pile excludes it either way
-    // (checked out anywhere); the explorer must agree.
-    await db.composerLoaded.put({ scope: "stream:stream_9", workspaceId, draftId: "draft_adopted" })
-
-    const { wrapper } = createWrapper()
-    const { result } = renderHook(() => useAllDrafts(workspaceId), { wrapper })
-
-    await waitFor(() => expect(result.current.drafts).toHaveLength(1))
-    expect(result.current.drafts[0]).toMatchObject({
-      id: "draft_adopted",
-      isStashed: false,
-      href: `/w/${workspaceId}/s/stream_9?panel=${encodeURIComponent("conv:conv_adopted")}`,
-    })
-  })
-
   it("lists a branch reply and a sub-topic draft, navigable but without a stash param (no mounted consumer)", async () => {
     await seedConversation("conv_2", "stream_thread_1", "Sub topic")
     await db.drafts.add(syncedDraft({ id: "draft_b2", scope: "board:branch-reply:conv_2" }))

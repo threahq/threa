@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest"
 import { render, screen, fireEvent, createEvent, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
+import { toast } from "sonner"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { StashedDraftsPicker } from "./stashed-drafts-picker"
 import { FabDrawerCloseContext } from "./fab-drawer-close-context"
@@ -49,6 +50,7 @@ describe("StashedDraftsPicker", () => {
     vi.restoreAllMocks()
     isTouchMockValue = false
     vi.spyOn(inputModeModule, "useInputMode").mockImplementation(() => (isTouchMockValue ? "touch" : "mouse"))
+    vi.spyOn(toast, "error").mockReturnValue("" as ReturnType<typeof toast.error>)
   })
 
   it("keeps the editor focused when pressing popover buttons on touch", async () => {
@@ -116,6 +118,27 @@ describe("StashedDraftsPicker", () => {
       expect(onRestore).toHaveBeenCalledWith("draft_1")
       await waitFor(() => expect(screen.queryByText("Saved one")).not.toBeInTheDocument())
       expect(closeFabDrawer).toHaveBeenCalled()
+    })
+
+    // Closing + focusing the composer IS the success signal (INV-63), so a
+    // refused restore that still closes reads as "it worked" while nothing
+    // happened. Every reason gets its own message.
+    it.each([
+      ["missing", "no longer there"],
+      ["checked-out", "open in another composer"],
+      ["host-ineligible", "can't hold that draft"],
+      ["raced", "moved before it could be restored"],
+    ] as const)("says why a %s restore did nothing and keeps the picker open", async (reason, message) => {
+      const onRestore = vi.fn().mockResolvedValue({ ok: false, reason })
+      const { closeFabDrawer, focusComposer } = renderPicker({ onRestore })
+
+      await userEvent.click(screen.getByRole("button", { name: /drafts/i }))
+      await userEvent.click(screen.getByText("Saved one"))
+
+      await waitFor(() => expect(toast.error).toHaveBeenCalledWith(expect.stringContaining(message)))
+      expect(screen.getByText("Saved one")).toBeInTheDocument()
+      expect(closeFabDrawer).not.toHaveBeenCalled()
+      expect(focusComposer).not.toHaveBeenCalled()
     })
 
     it("focuses the composer after a restore instead of the trigger", async () => {

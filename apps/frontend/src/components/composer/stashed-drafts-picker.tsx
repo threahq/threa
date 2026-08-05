@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react"
 import { FileEdit, FilePlus, Trash2 } from "lucide-react"
+import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import { Popover, PopoverAnchor, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
@@ -15,7 +16,7 @@ import { formatKeyBinding, getEffectiveKeyBinding } from "@/lib/keyboard-shortcu
 import { useFabDrawerClose } from "./fab-drawer-close-context"
 import { useRegisterStashedDraftsOpen, useStashedDraftsBridge } from "./stashed-drafts-open-context"
 import { useComposerAnchor } from "./use-composer-anchor"
-import type { CachedDraft, DraftPreview } from "@/hooks"
+import type { CachedDraft, DraftPreview, DraftRestoreRefusal, DraftRestoreResult } from "@/hooks"
 
 interface StashedDraftsPickerProps {
   drafts: CachedDraft[]
@@ -30,8 +31,13 @@ interface StashedDraftsPickerProps {
   canStashCurrent: boolean
   /** Called when the user clicks "Save current draft" or presses Enter on the save affordance. */
   onStashCurrent: () => void
-  /** Called with the stashed draft id when the user clicks a row to restore it. */
-  onRestore: (id: string) => void
+  /**
+   * Called with the stashed draft id when the user clicks a row to restore it.
+   * A refusal comes back as `{ ok: false }` rather than throwing; the picker
+   * stays open and says why, because closing + focusing the composer on a
+   * no-op reads as success (INV-63).
+   */
+  onRestore: (id: string) => void | Promise<DraftRestoreResult | void>
   /** Called when the user clicks the trash icon on a row. */
   onDelete: (id: string) => void
   /**
@@ -46,6 +52,18 @@ interface StashedDraftsPickerProps {
    * desktop inline; `fab` matches the 30x30 floating drawer in expanded mode.
    */
   size?: "compact" | "fab"
+}
+
+/**
+ * What a refused restore tells the user. Every reason is a state the pile was
+ * showing a render ago and the world has since moved past, so the copy names
+ * what happened to the draft, not what the code checked.
+ */
+const RESTORE_REFUSAL_MESSAGE: Record<DraftRestoreRefusal, string> = {
+  missing: "That draft is no longer there.",
+  "checked-out": "That draft is open in another composer.",
+  "host-ineligible": "This stream can't hold that draft — it stays where it is.",
+  raced: "That draft moved before it could be restored.",
 }
 
 function attachmentOrEmptyLabel(draft: CachedDraft): string {
@@ -116,8 +134,14 @@ export function StashedDraftsPicker({
   }, [onStashCurrent, closeFabDrawer])
 
   const handleRestore = useCallback(
-    (id: string) => {
-      onRestore(id)
+    async (id: string) => {
+      // Awaited, not fired and forgotten: the close + focus below are the only
+      // feedback a restore has, so they must not run for one that refused.
+      const result = await onRestore(id)
+      if (result && !result.ok) {
+        toast.error(RESTORE_REFUSAL_MESSAGE[result.reason])
+        return
+      }
       setOpen(false)
       closeFabDrawer?.()
       // Focus follows the restored content: skip Radix's trigger refocus and
@@ -281,7 +305,7 @@ export function StashedDraftsPicker({
                       <button
                         type="button"
                         data-draft-row
-                        onClick={() => handleRestore(draft.id)}
+                        onClick={() => void handleRestore(draft.id)}
                         className="flex-1 min-w-0 text-left focus:outline-none"
                       >
                         <p className="text-sm line-clamp-2 break-words">{preview}</p>

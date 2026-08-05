@@ -6,7 +6,7 @@ import { isEmptyContent } from "@/lib/prosemirror-utils"
 import { enqueueDraftUpsert, migrateLocalDraftScope } from "@/sync/draft-sync"
 import { useOptionalSyncEngine } from "@/sync/sync-engine"
 import { restoreStashedDraftToComposer, stashLoadedDraft } from "./use-draft-message"
-import { clearComposerTarget, setComposerTarget } from "./use-composer-target"
+import { setComposerTarget } from "./use-composer-target"
 import {
   useStashedDrafts,
   type CachedDraft,
@@ -28,12 +28,17 @@ export type DraftRestorePlan =
  * - **Same scope** — today's pointer move, untouched.
  * - **Adopt** — the host can point its composer target at a scope it can also
  *   display, so the draft keeps its filing and the row NEVER moves: a
- *   conversation reply (the strip then reads "Replying in <C>" and the send
- *   files into C through the directive that already exists), or the host's own
- *   scope while it is armed elsewhere (targeting it is a disarm).
+ *   conversation reply or a branch reply (the strip then reads "Replying in
+ *   <C>" and the send files into C through the directive that already exists),
+ *   or the host's own scope while it is armed elsewhere (targeting it is a
+ *   disarm). The adoptable set is exactly what `message-input` derives a
+ *   `targetConversationId` from — `board:reply:` and `board:branch-reply:`; a
+ *   source the host can hold must never be moved, because moving rewrites the
+ *   row's scope and destroys its filing with no undo.
  * - **Move** — everything else. A board conversation composer cannot be
- *   un-armed and a thread panel cannot display a conversation strip, so the
- *   only way to restore there is to make the draft the host's own.
+ *   un-armed and a thread panel cannot display a conversation strip, and no
+ *   host can target a `board:subtopic:` or `thread:` scope at all, so the only
+ *   way to restore there is to make the draft the host's own.
  *
  * `targetHost` is the `composerTarget` key of a host that can retarget itself
  * (only the timeline's top-level composer); `null` for hosts that can't.
@@ -46,7 +51,8 @@ export function planDraftRestore(input: {
 }): DraftRestorePlan {
   const { hostScope, targetHost, draftScope, draftSource } = input
   if (draftScope === hostScope) return { action: "same-scope" }
-  if (targetHost && (draftSource?.kind === "conversation" || draftScope === targetHost)) {
+  const adoptableSource = draftSource?.kind === "conversation" || draftSource?.kind === "branch"
+  if (targetHost && (adoptableSource || draftScope === targetHost)) {
     return { action: "adopt", targetHost, targetScope: draftScope }
   }
   return { action: "move", fromScope: draftScope, toScope: hostScope }
@@ -58,14 +64,34 @@ async function loadedScopesForDraft(draftId: string): Promise<string[]> {
   return pointers.filter((row) => row.draftId === draftId).map((row) => row.scope)
 }
 
-/** What a host tells the pile about itself beyond its scope. */
+/**
+ * What a host tells the pile about itself beyond its scope. Only the timeline's
+ * top-level composer has one; a thread panel and a board composer restore by
+ * moving the row instead. `disarmTarget` comes with `targetHost` rather than
+ * being derived here: clearing the target is only half of a disarm — the host's
+ * own gesture latch has to go with it, or a later adopt reads as a fresh
+ * "reply in conversation" gesture and redirects to the panel.
+ */
 export interface StashComposerHost {
-  /**
-   * The `composerTarget` key this composer can point at another scope, when it
-   * has one. Present only for the timeline's top-level composer; a thread panel
-   * and a board composer restore by moving the row instead.
-   */
-  targetHost?: string
+  /** The `composerTarget` key this composer can point at another scope. */
+  targetHost: string
+  /** The host's own disarm: clears the target AND its gesture latch. */
+  disarmTarget: () => Promise<void>
+}
+
+/** Why a restore did nothing. The caller surfaces it (INV-63); it is never silent. */
+export type DraftRestoreRefusal = "missing" | "checked-out" | "host-ineligible" | "raced"
+
+/**
+ * The outcome of {@link UseStashComposerResult.handleRestoreStashed}. A refusal
+ * is a real outcome, not an exception: nothing was written, and the caller owes
+ * the user an explanation because the UI otherwise reads as success.
+ */
+export type DraftRestoreResult = { ok: true } | { ok: false; reason: DraftRestoreRefusal }
+
+function refuse(reason: DraftRestoreRefusal, message: string): DraftRestoreResult {
+  console.error(`[stash] ${message}`)
+  return { ok: false, reason }
 }
 
 export interface UseStashComposerResult {
@@ -79,8 +105,8 @@ export interface UseStashComposerResult {
   setPileOpen: (open: boolean) => void
   /** Snapshot the current composer content into the stash, clear the editor. Empty composer → silent no-op. */
   handleStashDraft: () => Promise<void>
-  /** Swap: stash current content first (if any), then bring the chosen pile row here — adopting or moving it as {@link planDraftRestore} decides. */
-  handleRestoreStashed: (id: string) => Promise<void>
+  /** Swap: stash current content first (if any), then bring the chosen pile row here — adopting or moving it as {@link planDraftRestore} decides. Refusals come back as data for the caller to surface. */
+  handleRestoreStashed: (id: string) => Promise<DraftRestoreResult>
   /** Delete a stashed row without restoring. */
   handleDeleteStashed: (id: string) => Promise<void>
 }
@@ -143,6 +169,7 @@ export function useStashComposer(
   const stashedDrafts = useStashedDrafts(workspaceId, scope)
   const syncEngine = useOptionalSyncEngine()
   const targetHost = host?.targetHost ?? null
+  const disarmTarget = host?.disarmTarget ?? null
 
   const handleStashDraft = useCallback(async () => {
     if (!scope) return
@@ -169,23 +196,24 @@ export function useStashComposer(
    * IDB, not against the pile computed a render ago: by the time the user clicks,
    * the row may have been deleted or checked out elsewhere and the host may have
    * resolved encrypted or archived. On any failure nothing happens at all — no
-   * partial move, both drafts intact (INV-11: it's logged, not swallowed).
+   * partial move, both drafts intact — and the reason comes back to the caller,
+   * which owes the user a message: the picker closes and the caret lands in the
+   * composer either way, so a silent refusal looks exactly like a success
+   * (INV-11, INV-63).
    */
   const restoreDraftHere = useCallback(
-    async (id: string) => {
-      if (!scope) return
+    async (id: string): Promise<DraftRestoreResult> => {
+      if (!scope) return refuse("host-ineligible", `refusing restore of ${id}: host has no scope yet`)
       const row = await db.drafts.get(id)
       if (!row || row.workspaceId !== workspaceId) {
-        console.error(`[stash] refusing restore of missing draft ${id}`)
-        return
+        return refuse("missing", `refusing restore of missing draft ${id}`)
       }
       // Checked out anywhere on this device — including under its own scope — is
       // not restorable: two scopes holding one row make their debounced saves
       // fight over its `scope` and body.
       const checkedOut = await loadedScopesForDraft(id)
       if (checkedOut.length > 0) {
-        console.error(`[stash] refusing restore of ${id}: checked out in ${checkedOut.join(", ")}`)
-        return
+        return refuse("checked-out", `refusing restore of ${id}: checked out in ${checkedOut.join(", ")}`)
       }
 
       const plan = planDraftRestore({
@@ -199,8 +227,7 @@ export function useStashComposer(
       // adopt a late `e2eEnabled` resolve would let `purgePlaintextScopeDrafts`
       // delete the draft we just targeted.
       if (plan.action !== "same-scope" && !canHostForeignDraft()) {
-        console.error(`[stash] refusing restore of ${id} into ${scope}: host is not eligible`)
-        return
+        return refuse("host-ineligible", `refusing restore of ${id} into ${scope}: host is not eligible`)
       }
 
       // Swap semantics: flush whatever the composer holds into its row first so
@@ -223,10 +250,16 @@ export function useStashComposer(
         // with no draft loaded under it. Targeting the host's own scope IS the
         // disarm, so it clears rather than stores.
         await restoreStashedDraftToComposer(workspaceId, plan.targetScope, id)
-        if (plan.targetScope === plan.targetHost) await clearComposerTarget(plan.targetHost)
-        else await setComposerTarget(workspaceId, plan.targetHost, plan.targetScope)
+        // Through the host's own disarm, never a bare `clearComposerTarget`: the
+        // gesture latch has to be cleared with the target or a later adopt reads
+        // as a fresh gesture and redirects to the panel, wiping the target the
+        // adopt just set.
+        if (plan.targetScope === plan.targetHost) {
+          if (!disarmTarget) throw new Error(`[stash] host ${plan.targetHost} can retarget but has no disarm`)
+          await disarmTarget()
+        } else await setComposerTarget(workspaceId, plan.targetHost, plan.targetScope)
         composer.markNeedsRehydrate()
-        return
+        return { ok: true }
       }
 
       if (plan.action === "move") {
@@ -245,8 +278,7 @@ export function useStashComposer(
           return true
         })
         if (!moved) {
-          console.error(`[stash] draft ${id} moved out of ${plan.fromScope} before its restore could run`)
-          return
+          return refuse("raced", `draft ${id} moved out of ${plan.fromScope} before its restore could run`)
         }
         syncEngine?.kickOperationQueue()
       }
@@ -257,8 +289,9 @@ export function useStashComposer(
       await restoreStashedDraftToComposer(workspaceId, scope, id)
       // Re-read the newly-pointed draft into the editor (decrypting it for E2E).
       composer.markNeedsRehydrate()
+      return { ok: true }
     },
-    [composer, workspaceId, scope, targetHost, canHostForeignDraft, describeScope, syncEngine]
+    [composer, workspaceId, scope, targetHost, disarmTarget, canHostForeignDraft, describeScope, syncEngine]
   )
 
   const handleRestoreStashed = restoreDraftHere
