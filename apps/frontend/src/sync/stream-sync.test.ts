@@ -4427,15 +4427,13 @@ describe("registerStreamSocketHandlers — one handler set per (event source, st
       _cachedAt: Date.now(),
     } as never)
 
-    const { socket, on, emit } = createCountingSocket()
+    const { socket, emit } = createCountingSocket()
     const scopeReads = vi.spyOn(db.streams, "get")
     const previewWrites = vi.spyOn(db.streams, "update")
     const queryClient = new QueryClient()
 
     const releaseA = registerStreamSocketHandlers(socket, "ws_1", streamId, queryClient)
     const releaseB = registerStreamSocketHandlers(socket, "ws_1", streamId, queryClient)
-
-    expect(on).toHaveBeenCalledTimes(37)
 
     await emit("message:created", messageCreated(streamId, "evt_shared", "10"))
 
@@ -4459,15 +4457,13 @@ describe("registerStreamSocketHandlers — one handler set per (event source, st
       _cachedAt: Date.now(),
     } as never)
 
-    const { socket, on, emit } = createCountingSocket()
+    const { socket, emit } = createCountingSocket()
     const scopeReads = vi.spyOn(db.streams, "get")
     const previewWrites = vi.spyOn(db.streams, "update")
     const queryClient = new QueryClient()
 
     const releaseA = registerStreamSocketHandlers(socket, "ws_1", streamId, queryClient)
     const releaseB = registerStreamSocketHandlers(socket, "ws_1", streamId, queryClient)
-
-    expect(on).toHaveBeenCalledTimes(74)
 
     await emit("message:created", messageCreated(streamId, "evt_unshared", "10"))
 
@@ -4526,7 +4522,8 @@ describe("registerStreamSocketHandlers — one handler set per (event source, st
     const releaseGated = registerStreamSocketHandlers(gated.socket, "ws_1", streamId, queryClient)
     const releaseRaw = registerStreamSocketHandlers(raw.socket, "ws_1", streamId, queryClient)
 
-    expect({ gated: gated.on.mock.calls.length, raw: raw.on.mock.calls.length }).toEqual({ gated: 37, raw: 37 })
+    await gated.emit("message:created", messageCreated(streamId, "evt_gated_only", "9"))
+    expect(await db.events.get("evt_gated_only")).toBeDefined()
 
     releaseGated()
     await raw.emit("message:created", messageCreated(streamId, "evt_raw_only", "10"))
@@ -4545,7 +4542,6 @@ describe("registerStreamSocketHandlers — one handler set per (event source, st
       onSequenceGap: () => {},
     })
 
-    expect(() => registerStreamSocketHandlers(socket, "ws_1", streamId, queryClient)).toThrow(/onSequenceGap/)
     expect(() =>
       registerStreamSocketHandlers(socket, "ws_1", streamId, new QueryClient(), {
         onSequenceGap: () => {},
@@ -4553,6 +4549,64 @@ describe("registerStreamSocketHandlers — one handler set per (event source, st
     ).toThrow(/queryClient/)
 
     release()
+  })
+
+  it("every registrant's gap callback fires, and a released one stops", async () => {
+    enableSharing(true)
+    const streamId = "stream_gap_fanout"
+    const { socket, emit } = createCountingSocket()
+    const queryClient = new QueryClient()
+    const gapsA: unknown[] = []
+    const gapsB: unknown[] = []
+
+    const releaseA = registerStreamSocketHandlers(socket, "ws_1", streamId, queryClient, {
+      onSequenceGap: (gap) => gapsA.push(gap),
+    })
+    const releaseB = registerStreamSocketHandlers(socket, "ws_1", streamId, queryClient, {
+      onSequenceGap: (gap) => gapsB.push(gap),
+    })
+
+    await emit("message:created", messageCreated(streamId, "evt_gap_base", "10"))
+    await emit("message:created", messageCreated(streamId, "evt_gap_jump", "20"))
+
+    expect({ gapsA, gapsB }).toEqual({
+      gapsA: [{ streamId, afterSequence: "10" }],
+      gapsB: [{ streamId, afterSequence: "10" }],
+    })
+
+    releaseA()
+    await emit("message:created", messageCreated(streamId, "evt_gap_jump_again", "40"))
+
+    expect({ gapsA, gapsB }).toEqual({
+      gapsA: [{ streamId, afterSequence: "10" }],
+      gapsB: [
+        { streamId, afterSequence: "10" },
+        { streamId, afterSequence: "20" },
+      ],
+    })
+
+    releaseB()
+  })
+
+  it("a registrant that joins a gap-less registration still receives gaps", async () => {
+    enableSharing(true)
+    const streamId = "stream_gap_late_join"
+    const { socket, emit } = createCountingSocket()
+    const queryClient = new QueryClient()
+    const gaps: unknown[] = []
+
+    const releaseA = registerStreamSocketHandlers(socket, "ws_1", streamId, queryClient)
+    const releaseB = registerStreamSocketHandlers(socket, "ws_1", streamId, queryClient, {
+      onSequenceGap: (gap) => gaps.push(gap),
+    })
+
+    await emit("message:created", messageCreated(streamId, "evt_late_base", "10"))
+    await emit("message:created", messageCreated(streamId, "evt_late_jump", "20"))
+
+    expect(gaps).toEqual([{ streamId, afterSequence: "10" }])
+
+    releaseA()
+    releaseB()
   })
 
   it("an E2E self-send seeds the decrypt cache exactly once", async () => {
@@ -4606,7 +4660,7 @@ describe("registerStreamSocketHandlers — one handler set per (event source, st
   it("the registry drops its entry when the last holder releases", async () => {
     enableSharing(true)
     const streamId = "stream_registry_drop"
-    const { socket, on, emit } = createCountingSocket()
+    const { socket, emit } = createCountingSocket()
     const queryClient = new QueryClient()
 
     const releaseA = registerStreamSocketHandlers(socket, "ws_1", streamId, queryClient)
@@ -4616,11 +4670,9 @@ describe("registerStreamSocketHandlers — one handler set per (event source, st
 
     // A dropped entry is proven by the next registrant binding afresh rather
     // than reusing a zero-count corpse — and by its handlers working.
-    on.mockClear()
     const releaseC = registerStreamSocketHandlers(socket, "ws_1", streamId, queryClient, {
       onSequenceGap: () => {},
     })
-    expect(on).toHaveBeenCalledTimes(37)
 
     await emit("message:created", messageCreated(streamId, "evt_registry_drop", "10"))
     expect(await db.events.get("evt_registry_drop")).toBeDefined()

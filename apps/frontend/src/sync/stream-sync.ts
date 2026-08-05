@@ -1191,14 +1191,21 @@ export function detectSequenceGap(
   return sequenceToNum(incoming.sequence) > sequenceToNum(tail.latestSequence) + 1 ? tail.latestSequence : null
 }
 
+type SequenceGapListener = NonNullable<StreamSocketHandlerOptions["onSequenceGap"]>
+
 function bindStreamSocketHandlers(
   socket: SyncEventSource,
   workspaceId: string,
   streamId: string,
   queryClient: QueryClient,
-  options?: StreamSocketHandlerOptions
+  sequenceGapListeners: ReadonlySet<SequenceGapListener>
 ): () => void {
-  const onSequenceGap = options?.onSequenceGap
+  // Registrants join and leave a shared binding, so the listener set is read at
+  // dispatch time, never captured at bind time.
+  const wantsSequenceGap = () => sequenceGapListeners.size > 0
+  const notifySequenceGap = (gap: { streamId: string; afterSequence: string }) => {
+    for (const listener of [...sequenceGapListeners]) listener(gap)
+  }
 
   const handleMessageCreated = async (payload: MessageEventPayload) => {
     if (payload.streamId !== streamId) return
@@ -1258,7 +1265,7 @@ function bindStreamSocketHandlers(
           }
 
           // Tail-gap check must read the latest BEFORE this write advances it.
-          if (onSequenceGap) {
+          if (wantsSequenceGap()) {
             gapAfterSequence = detectSequenceGap(await getPersistedTail(streamId), newEvent)
           }
 
@@ -1316,7 +1323,7 @@ function bindStreamSocketHandlers(
       if (alreadyPersisted) getPerfCapture().count("stream.eventDuplicate")
 
       if (gapAfterSequence !== null) {
-        onSequenceGap?.({ streamId, afterSequence: gapAfterSequence })
+        notifySequenceGap({ streamId, afterSequence: gapAfterSequence })
       }
 
       const stopContextRows = getPerfCapture().time("stream.contextRows")
@@ -1718,7 +1725,7 @@ function bindStreamSocketHandlers(
       const existing = await db.events.get(payload.event.id)
       if (existing) return
       // Tail-gap check must read the latest BEFORE this write advances it.
-      if (onSequenceGap) {
+      if (wantsSequenceGap()) {
         gapAfterSequence = detectSequenceGap(await getPersistedTail(streamId), payload.event)
       }
       const commandClientId =
@@ -1751,7 +1758,7 @@ function bindStreamSocketHandlers(
       }
     })
     if (gapAfterSequence !== null) {
-      onSequenceGap?.({ streamId, afterSequence: gapAfterSequence })
+      notifySequenceGap({ streamId, afterSequence: gapAfterSequence })
     }
 
     // `memos:captured` is the only appended row that carries context artifacts
@@ -2003,7 +2010,8 @@ function bindStreamSocketHandlers(
 interface StreamRegistrationEntry {
   refCount: number
   cleanup: () => void
-  signature: { workspaceId: string; queryClient: QueryClient; hasSequenceGap: boolean }
+  sequenceGapListeners: Set<SequenceGapListener>
+  signature: { workspaceId: string; queryClient: QueryClient }
 }
 
 // INV-9 exception: the whole point is one handler set shared by every
@@ -2023,11 +2031,6 @@ function describeSignatureConflicts(
   if (existing.queryClient !== next.queryClient) {
     conflicts.push("queryClient: a different QueryClient instance")
   }
-  if (existing.hasSequenceGap !== next.hasSequenceGap) {
-    conflicts.push(
-      `onSequenceGap: existing ${existing.hasSequenceGap ? "set" : "unset"}, new ${next.hasSequenceGap ? "set" : "unset"}`
-    )
-  }
   return conflicts
 }
 
@@ -2045,11 +2048,16 @@ export function registerStreamSocketHandlers(
   queryClient: QueryClient,
   options?: StreamSocketHandlerOptions
 ): () => void {
+  const onSequenceGap = options?.onSequenceGap
+  // A fresh wrapper per registration: two registrants may pass the same
+  // function reference, and a release must remove only its own listener.
+  const listener: SequenceGapListener | null = onSequenceGap ? (gap) => onSequenceGap(gap) : null
+
   if (!isSharedStreamRegistrationEnabledSync(workspaceId)) {
-    return bindStreamSocketHandlers(socket, workspaceId, streamId, queryClient, options)
+    return bindStreamSocketHandlers(socket, workspaceId, streamId, queryClient, new Set(listener ? [listener] : []))
   }
 
-  const signature = { workspaceId, queryClient, hasSequenceGap: options?.onSequenceGap !== undefined }
+  const signature = { workspaceId, queryClient }
   let byStream = streamRegistrations.get(socket)
   if (!byStream) {
     byStream = new Map()
@@ -2067,10 +2075,13 @@ export function registerStreamSocketHandlers(
       )
     }
     entry.refCount += 1
+    if (listener) entry.sequenceGapListeners.add(listener)
   } else {
+    const sequenceGapListeners = new Set<SequenceGapListener>(listener ? [listener] : [])
     entry = {
       refCount: 1,
-      cleanup: bindStreamSocketHandlers(socket, workspaceId, streamId, queryClient, options),
+      cleanup: bindStreamSocketHandlers(socket, workspaceId, streamId, queryClient, sequenceGapListeners),
+      sequenceGapListeners,
       signature,
     }
     byStream.set(streamId, entry)
@@ -2083,6 +2094,7 @@ export function registerStreamSocketHandlers(
   return () => {
     if (released) return
     released = true
+    if (listener) held.sequenceGapListeners.delete(listener)
     held.refCount -= 1
     if (held.refCount > 0) return
     held.cleanup()
