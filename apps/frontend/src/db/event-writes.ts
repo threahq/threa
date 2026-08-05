@@ -77,10 +77,27 @@ type EventWriteFlags = {
   indexedMessagePatch: boolean
   sharedStreamRegistration: boolean
   singlePreviewWriter: boolean
+  coalescedLiveCommit: boolean
 }
 
 const flagsByWorkspace = new Map<string, EventWriteFlags>()
 let primeGeneration = 0
+let accountGeneration = 0
+
+/**
+ * Bumped on every account switch (the `flushModuleStoreCaches` site), so a
+ * deferred writer that captured the generation can tell that the global `db`
+ * proxy was repointed under it and refuse to write account A's rows into
+ * account B's database.
+ */
+export function bumpAccountGeneration(): void {
+  accountGeneration += 1
+}
+
+/** The current account generation — capture it before deferring a write. */
+export function getAccountGeneration(): number {
+  return accountGeneration
+}
 
 function resolveEventWriteFlags(layers: FeatureFlagLayers | null | undefined): EventWriteFlags {
   const resolved = resolveFeatureFlags(coerceLayers(layers ?? null) ?? EMPTY_FLAG_LAYERS)
@@ -89,6 +106,7 @@ function resolveEventWriteFlags(layers: FeatureFlagLayers | null | undefined): E
     indexedMessagePatch: resolved.indexedMessagePatch === "on",
     sharedStreamRegistration: resolved.sharedStreamRegistration === "on",
     singlePreviewWriter: resolved.singlePreviewWriter === "on",
+    coalescedLiveCommit: resolved.coalescedLiveCommit === "on",
   }
 }
 
@@ -159,6 +177,16 @@ export async function isIndexedMessagePatchEnabled(database: ThreaDatabase, work
 /** The viewer's `singlePreviewWriter` value, resolved through the same primed cache. */
 export async function isSinglePreviewWriterEnabled(database: ThreaDatabase, workspaceId: string): Promise<boolean> {
   return (await getEventWriteFlags(database, workspaceId)).singlePreviewWriter
+}
+
+/**
+ * The viewer's `coalescedLiveCommit` value, read only from the primed map so the
+ * synchronous commit seams can re-read it per event. A backoffice flip re-primes
+ * the map, so arming and disarming both take effect on the next event; an
+ * unprimed read takes the immediate path rather than guessing.
+ */
+export function isCoalescedLiveCommitEnabledSync(workspaceId: string): boolean {
+  return flagsByWorkspace.get(workspaceId)?.coalescedLiveCommit ?? false
 }
 
 /**

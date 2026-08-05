@@ -1627,6 +1627,62 @@ describe("SyncEngine sync cursor (active mode)", () => {
     engine.destroy()
   })
 
+  it("resumes the gate (drains the buffer) even when the live-commit flush before catch-up rejects", async () => {
+    await db.syncCursors.put({ key: "ws_1:sync-log", cursor: "10", updatedAt: Date.now() })
+    let resolveFirstPage: ((value: SyncCatchUpResponse) => void) | undefined
+    const catchUp = vi
+      .fn()
+      .mockImplementationOnce(() => new Promise<SyncCatchUpResponse>((resolve) => (resolveFirstPage = resolve)))
+      .mockResolvedValue(emptyPage("11"))
+    const deps = makeCounterDeps(catchUp)
+    const engine = new SyncEngine(deps)
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {})
+    // The pre-window drain rejects (a mutator threw out of publish on the
+    // preceding flush). It sits outside the try whose finally resumes the gate.
+    const liveBatch = (engine as unknown as { liveCommitBatch: { flush: () => Promise<void> } }).liveCommitBatch
+    vi.spyOn(liveBatch, "flush").mockRejectedValueOnce(new TypeError("bad bootstrap shape"))
+
+    const socket = new MockSocket()
+    await engine.onConnect(asSocket(socket))
+    await vi.waitFor(() => expect(resolveFirstPage).toBeDefined())
+
+    socket.trigger("workspace_user:added", userAddedLivePayload("12", "user_after_reject"))
+    resolveFirstPage!({ entries: [], head: "11" })
+
+    await vi.waitFor(async () => {
+      expect(await db.workspaceUsers.get("user_after_reject")).toBeDefined()
+    })
+
+    errorSpy.mockRestore()
+    engine.destroy()
+  })
+
+  it("a failed live-commit flush forces the same full snapshot reseed as a failed catch-up flush", async () => {
+    const catchUp = vi.fn().mockResolvedValue(emptyPage("10"))
+    const deps = makeCounterDeps(catchUp)
+    const engine = new SyncEngine(deps)
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {})
+
+    await engine.onConnect(asSocket(new MockSocket()))
+    await vi.waitFor(() => expect(deps.workspaceService.bootstrap).toHaveBeenCalledTimes(1))
+
+    const liveBatch = (
+      engine as unknown as { liveCommitBatch: { applyCounter: (mutate: (state: never) => never) => void } }
+    ).liveCommitBatch
+    vi.spyOn(db.unreadState, "get").mockRejectedValue(new Error("QuotaExceeded") as never)
+    // A counter fold, not a preview: only a dropped counter fold can hold a
+    // held-set insert, so only it asks the engine to reseed.
+    liveBatch.applyCounter((state) => state)
+
+    await vi.waitFor(() => {
+      expect(deps.workspaceService.bootstrap).toHaveBeenCalledTimes(2)
+    })
+
+    vi.mocked(db.unreadState.get).mockRestore?.()
+    errorSpy.mockRestore()
+    engine.destroy()
+  })
+
   it("does not re-apply a buffered ABSOLUTE counter duplicate at or below the catch-up position", async () => {
     await db.syncCursors.put({ key: "ws_1:sync-log", cursor: "10", updatedAt: Date.now() })
     let resolveFirstPage: ((value: SyncCatchUpResponse) => void) | undefined

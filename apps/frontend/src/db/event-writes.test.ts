@@ -258,12 +258,19 @@ describe("isEventWriteChunkingEnabled", () => {
     const second = await readEventWriteFlagsFresh(db, "ws_1")
 
     expect({ first, second }).toEqual({
-      first: { chunking: true, indexedMessagePatch: true, sharedStreamRegistration: false, singlePreviewWriter: false },
+      first: {
+        chunking: true,
+        indexedMessagePatch: true,
+        sharedStreamRegistration: false,
+        singlePreviewWriter: false,
+        coalescedLiveCommit: false,
+      },
       second: {
         chunking: false,
         indexedMessagePatch: true,
         sharedStreamRegistration: false,
         singlePreviewWriter: false,
+        coalescedLiveCommit: false,
       },
     })
   })

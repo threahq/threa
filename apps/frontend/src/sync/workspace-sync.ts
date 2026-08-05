@@ -110,7 +110,7 @@ import {
   Visibilities,
   normalizeSidebarConfig,
 } from "@threa/types"
-import { isEventWriteChunkingEnabled, primeEventWriteFlags } from "@/db/event-writes"
+import { isCoalescedLiveCommitEnabledSync, isEventWriteChunkingEnabled, primeEventWriteFlags } from "@/db/event-writes"
 import { applyStreamBootstrapInCurrentTransaction } from "./stream-sync"
 import { deleteStreamSlots, deleteSlotsForStreams } from "@/stores/slot-store"
 import { applyDraftDeleted, applyDraftUpserted } from "./draft-sync"
@@ -126,7 +126,13 @@ import {
   upsertActivity,
 } from "./unread-counters"
 import { isAutoReadAttentiveNow } from "@/lib/auto-read-attention"
-import { commitCounterMutation, commitStreamPreview, type CatchUpBatch, type CounterMutator } from "./catch-up-batch"
+import {
+  commitCounterMutation,
+  commitStreamPreview,
+  type CatchUpBatch,
+  type CounterMutator,
+  type LiveCommitBatch,
+} from "./catch-up-batch"
 import {
   commitReadAll,
   commitReadStateSnapshot,
@@ -685,6 +691,10 @@ export function registerWorkspaceSocketHandlers(
      *  and sidebar order never flicker through intermediate replay values.
      *  Absent → live, write-immediately. */
     getCatchUpBatch?: () => CatchUpBatch | null
+    /** The engine's live-commit batch, used when `coalescedLiveCommit` is on:
+     *  one task's counter and preview writes fold into one transaction and one
+     *  cache publication instead of two of each per event. */
+    getLiveCommitBatch?: () => LiveCommitBatch | null
   }
 ): () => void {
   const abortController = new AbortController()
@@ -693,13 +703,36 @@ export function registerWorkspaceSocketHandlers(
   // batch when one is active, else commit immediately (live). Read-pointer
   // mirrors and feed invalidations are not coalesced — they stay on their own
   // immediate paths in the handlers below.
+  /** The live batch when the flag is armed, else null. Re-read per event: a
+   *  backoffice flip re-primes the flag map, so arming and disarming both take
+   *  effect on the next event. */
+  const armedLiveBatch = (): LiveCommitBatch | null =>
+    isCoalescedLiveCommitEnabledSync(workspaceId) ? (refs.getLiveCommitBatch?.() ?? null) : null
+
+  /** Run an immediate (unbatched) commit, draining a still-pending fold first.
+   *  Without this, an off-flip mid-task lets an older buffered preview flush
+   *  AFTER a newer immediate commit and overwrite it in cache and IDB. */
+  const commitImmediate = (commit: () => void): void => {
+    const pending = refs.getLiveCommitBatch?.() ?? null
+    if (pending?.hasPending() || pending?.isFlushing()) {
+      pending.runAfterDrain(commit)
+      return
+    }
+    commit()
+  }
+
   const commitCounter = (mutate: CounterMutator): void => {
     const batch = refs.getCatchUpBatch?.() ?? null
     if (batch) {
       batch.applyCounter(mutate)
       return
     }
-    commitCounterMutation(queryClient, workspaceId, mutate)
+    const live = armedLiveBatch()
+    if (live) {
+      live.applyCounter(mutate)
+      return
+    }
+    commitImmediate(() => commitCounterMutation(queryClient, workspaceId, mutate))
   }
 
   const commitPreview = (streamId: string, preview: LastMessagePreview | null): void => {
@@ -708,7 +741,12 @@ export function registerWorkspaceSocketHandlers(
       batch.setStreamPreview(streamId, preview)
       return
     }
-    commitStreamPreview(queryClient, workspaceId, streamId, preview)
+    const live = armedLiveBatch()
+    if (live) {
+      live.setStreamPreview(streamId, preview)
+      return
+    }
+    commitImmediate(() => commitStreamPreview(queryClient, workspaceId, streamId, preview))
   }
 
   // Activity-feed invalidation seam. During catch-up it marks the feed stale on
@@ -1171,12 +1209,16 @@ export function registerWorkspaceSocketHandlers(
     // replay touched), else committed live through commitReadAll. The additive
     // `frontiers` snapshot carries each updated stream's post-write watermark;
     // legacy payloads omit it — counter behavior only, frontier rows untouched.
-    const batch = refs.getCatchUpBatch?.() ?? null
+    // The live batch takes the same pair, so a read-all and the events before it
+    // commit from ONE ordered buffer: routing it around the batch would open its
+    // transaction at handler time and drop held rows BEFORE the buffered fold
+    // inserts them, resurrecting an already-read mention.
+    const batch = refs.getCatchUpBatch?.() ?? armedLiveBatch()
     if (batch) {
       batch.applyCounter((state) => applyStreamsReadAllOrdinals(state, payload.reads))
       batch.applyReadAllFrontiers(payload.frontiers)
     } else {
-      void commitReadAll(queryClient, workspaceId, payload.reads, payload.frontiers)
+      commitImmediate(() => void commitReadAll(queryClient, workspaceId, payload.reads, payload.frontiers))
     }
 
     // Standalone frontier (read cutover): read_all carries ordinals, no event
