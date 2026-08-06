@@ -22,7 +22,7 @@ import {
 } from "@threa/types"
 import { EMPTY_DOC, isEmptyContent } from "@/lib/prosemirror-utils"
 import { clearStagedDraft, listStagedDrafts, type StagedDraft } from "@/lib/drafts/draft-staging"
-import { isResolvedDraftEcho } from "./draft-resolution-guard"
+import { isResolvedDraftEcho, markDraftMigrated } from "./draft-resolution-guard"
 
 /**
  * Stage 3 draft sync — wires the local-first draft store (Stage 2) to the
@@ -212,6 +212,10 @@ export async function migrateLocalDraftScope(
  * `baseVersion`) come from `toRow`; content is whatever is live at commit time.
  */
 export async function migrateLocalDraftId(workspaceId: string, fromId: string, toRow: CachedDraft): Promise<void> {
+  // Recorded BEFORE the transaction so anything already holding `fromId` — an
+  // armed debounced save, an in-flight identity-addressed write — follows the row
+  // forward instead of re-creating it as an orphan under the retired id.
+  markDraftMigrated(fromId, toRow.id)
   let repointedScope: string | null = null
   let finalRow: CachedDraft = toRow
   await db.transaction("rw", db.drafts, db.composerLoaded, async () => {

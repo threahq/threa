@@ -4,8 +4,8 @@ import { useAttachments, type PendingAttachment, type UploadResult } from "./use
 import type { JSONContent } from "@threa/types"
 import { EMPTY_DOC } from "@/lib/prosemirror-utils"
 import type { DraftContextRef } from "@/lib/context-bag/types"
-import type { DraftAttachment } from "@/db"
-import { wasDraftResolvedLocally } from "@/sync/draft-resolution-guard"
+import { generateLocalDraftId, type DraftAttachment } from "@/db"
+import { resolveMigratedDraftId, wasDraftResolvedLocally } from "@/sync/draft-resolution-guard"
 
 // Mounted composers per draft scope, in mount order. More than one live composer
 // on a scope is a precondition for the rescue below: with only this one, a
@@ -180,6 +180,14 @@ export function useDraftComposer({
   initialContent = EMPTY_DOC,
   e2eStreamId,
 }: UseDraftComposerOptions): DraftComposerState {
+  // Which draft row the editor's current content came from (hydrated, or created
+  // by the first save). Every save path addresses THIS row instead of re-reading
+  // the scope's pointer, so a repoint between hydration and a debounced save can
+  // never write this content into the newly-pointed draft. Set wherever the
+  // content is (re)filled from a loaded draft below; advanced by `useDraftMessage`
+  // itself after a create.
+  const contentDraftIdRef = useRef<string | null>(null)
+
   // Draft message persistence
   const {
     isLoaded: isDraftLoaded,
@@ -191,11 +199,12 @@ export function useDraftComposer({
     contextRefs: savedContextRefs = [] as DraftContextRef[],
     saveDraft,
     saveDraftDebounced,
+    cancelPendingSave,
     addAttachment: addDraftAttachment,
     removeAttachment: removeDraftAttachment,
     clearDraft,
     resolveDraft,
-  } = useDraftMessage(workspaceId, draftKey, e2eStreamId)
+  } = useDraftMessage(workspaceId, draftKey, e2eStreamId, contentDraftIdRef)
 
   // Attachment handling
   const {
@@ -326,9 +335,10 @@ export function useDraftComposer({
         restoreAttachments(savedAttachments)
       }
       restoredAttachmentIdsRef.current = new Set(savedAttachments.map((attachment: { id: string }) => attachment.id))
+      contentDraftIdRef.current = loadedDraftId ?? null
       hasInitialized.current = true
     }
-  }, [scopeId, isDraftLoaded, savedDraft, savedAttachments, restoreAttachments, resetForReinit])
+  }, [scopeId, isDraftLoaded, savedDraft, savedAttachments, restoreAttachments, resetForReinit, loadedDraftId])
 
   // Restore the loaded draft's (decrypted) attachments alongside its body when the
   // body late-hydrates. A sealed E2E draft's attachments become readable only once
@@ -377,14 +387,16 @@ export function useDraftComposer({
     if (awaitingRehydrateRef.current) {
       if (savedBodyAvailable) setContent(savedDraft)
       hydrateAttachments()
+      contentDraftIdRef.current = loadedDraftId ?? null
       awaitingRehydrateRef.current = false
       return
     }
     if (becameAvailable && !hasDocContent(content)) {
       if (savedBodyAvailable) setContent(savedDraft)
       hydrateAttachments()
+      contentDraftIdRef.current = loadedDraftId ?? null
     }
-  }, [isDraftLoaded, savedDraft, savedAttachmentIds, content, hydrateAttachments])
+  }, [isDraftLoaded, savedDraft, savedAttachmentIds, content, hydrateAttachments, loadedDraftId])
 
   // Blank the editor the moment the loaded draft is removed underneath the
   // composer: sent/resolved here, or discarded/resolved on another device (its
@@ -399,9 +411,78 @@ export function useDraftComposer({
   // wiped the in-progress edits and, on the pointer's return, the late-hydrate
   // rising edge re-filled the stale last-saved body — the keystrokes were lost.
   // A clean (unedited) loaded draft still clears: that is the cross-device case.
+  //
+  // A pointer that changes VALUE (X → Y) is a repoint: another surface — or a
+  // restore — checked a different draft into this scope. The editor is still
+  // rendering X, so persist X's content to X's own row (identity-addressed, so it
+  // cannot cross-write into Y) and then re-run init against Y. Rehydration happens
+  // whether or not the user is engaged: the repoint is this same user's own action
+  // on this device, so the new draft is what they asked to see.
   useEffect(() => {
     const prev = prevLoadedIdRef.current
     prevLoadedIdRef.current = loadedDraftId ?? null
+    if (loadedDraftId && prev !== loadedDraftId) {
+      if (!prev) {
+        // First pointer for this composer (null → X). With the editor idle — or
+        // when the editor's content already belongs to this very row, i.e. the
+        // pointer merely flickered null and came back — adopt its identity and
+        // hydrate from it as usual.
+        // The pointer merely flickered null and came back to the row the editor's
+        // content already belongs to — nothing to reconcile.
+        if (contentDraftIdRef.current === loadedDraftId) return
+        if (!userEngagedRef.current) {
+          contentDraftIdRef.current = loadedDraftId
+          return
+        }
+        if (!hasDocContent(contentRef.current)) {
+          // Engaged but empty (typed, then deleted back to nothing). There is
+          // nothing to preserve, but the debounce is still armed with an EMPTY_DOC
+          // save whose expected id is null — pointer-addressed, it would fire into
+          // the arriving draft and delete it. Drop it without persisting, then
+          // hydrate from the arriving draft like an idle composer would.
+          cancelPendingSave()
+          resetForReinit()
+          contentDraftIdRef.current = loadedDraftId
+          return
+        }
+        // The user typed into a pointer-less scope and a draft was checked into
+        // it underneath them. Their fragment has no identity yet, so the armed
+        // pointer-addressed save would land in the arriving draft and destroy its
+        // body. Persist the fragment as its OWN detached row first (an expected
+        // id no row holds takes the create path, and the occupied pointer is
+        // never stolen); `saveDraft` also clears the armed debounce. Only once it
+        // actually persisted may the editor be blanked — on a locked E2E scope the
+        // save is gated and returns null, and resetting would erase the fragment
+        // from screen and disk both, so the focused composer keeps its content.
+        saveDraft(contentRef.current, persistableAttachments(getPendingAttachmentsSnapshot()), generateLocalDraftId())
+          .then((saved) => {
+            if (!saved) return
+            resetForReinit()
+            contentDraftIdRef.current = loadedDraftId
+          })
+          .catch((err) => {
+            console.error("Failed to persist draft content displaced by a first pointer", err)
+          })
+        return
+      }
+      if (resolveMigratedDraftId(prev) === loadedDraftId) {
+        // Not a repoint: the SAME draft was re-keyed underneath the composer (a
+        // split ack / remote-delete preserve). The editor's content still belongs
+        // to this row, so nothing is flushed and nothing is reset — the id is
+        // simply followed. Any armed save captured the old id and is redirected
+        // by the migration map on the write path.
+        contentDraftIdRef.current = loadedDraftId
+        return
+      }
+      if (userEngagedRef.current && hasDocContent(contentRef.current)) {
+        saveDraft(contentRef.current, persistableAttachments(getPendingAttachmentsSnapshot()), prev).catch((err) => {
+          console.error("Failed to persist draft content displaced by a repoint", err)
+        })
+      }
+      resetForReinit()
+      contentDraftIdRef.current = loadedDraftId
+      return
+    }
     if (!prev || loadedDraftId) return
     if (userEngagedRef.current && hasDocContent(contentRef.current)) {
       // With another composer live on this scope, the vanishing pointer can be
@@ -420,9 +501,19 @@ export function useDraftComposer({
       return
     }
     userEngagedRef.current = false
+    contentDraftIdRef.current = null
     setContent(initialContent)
     clearAttachments()
-  }, [loadedDraftId, initialContent, clearAttachments, saveDraft, scopeRegistryKey, getPendingAttachmentsSnapshot])
+  }, [
+    loadedDraftId,
+    initialContent,
+    clearAttachments,
+    saveDraft,
+    scopeRegistryKey,
+    getPendingAttachmentsSnapshot,
+    resetForReinit,
+    cancelPendingSave,
+  ])
 
   // When attachments change, persist to draft storage. Reserved-but-still-
   // uploading attachments persist too: their id is already real, and a draft

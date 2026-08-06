@@ -4,6 +4,7 @@ import { useDraftComposer } from "./use-draft-composer"
 import type { JSONContent } from "@threa/types"
 import * as useDraftMessageModule from "./use-draft-message"
 import * as useAttachmentsModule from "./use-attachments"
+import { markDraftMigrated, resetDraftResolutionGuard } from "@/sync/draft-resolution-guard"
 
 const EMPTY_DOC: JSONContent = { type: "doc", content: [{ type: "paragraph" }] }
 const makeDoc = (text: string): JSONContent => ({
@@ -18,6 +19,10 @@ const mockAddDraftAttachment = vi.fn()
 const mockRemoveDraftAttachment = vi.fn()
 const mockClearDraft = vi.fn()
 const mockResolveDraft = vi.fn()
+const mockCancelPendingSave = vi.fn()
+
+/** What `saveDraft` resolves to when it actually persisted (see its contract). */
+const persistedRow = (id: string) => ({ id }) as unknown as import("@/db").CachedDraft
 
 interface MockDraftState {
   isLoaded: boolean
@@ -64,12 +69,14 @@ describe("useDraftComposer", () => {
 
   beforeEach(() => {
     vi.restoreAllMocks()
+    resetDraftResolutionGuard()
     mockSaveDraft.mockReset()
     mockSaveDraftDebounced.mockReset()
     mockAddDraftAttachment.mockReset()
     mockRemoveDraftAttachment.mockReset()
     mockClearDraft.mockReset()
     mockResolveDraft.mockReset()
+    mockCancelPendingSave.mockReset()
     mockHandleFileSelect.mockReset()
     mockRemoveAttachment.mockReset()
     mockClearAttachments.mockReset()
@@ -98,6 +105,7 @@ describe("useDraftComposer", () => {
           loadedDraftId: mockDraftLoadedId,
           saveDraft: mockSaveDraft,
           saveDraftDebounced: mockSaveDraftDebounced,
+          cancelPendingSave: mockCancelPendingSave,
           addAttachment: mockAddDraftAttachment,
           removeAttachment: mockRemoveDraftAttachment,
           clearDraft: mockClearDraft,
@@ -854,6 +862,159 @@ describe("useDraftComposer", () => {
       rerender()
 
       expect(result.current.content).toEqual(makeDoc("saved body and more"))
+    })
+  })
+
+  describe("repoint (loaded pointer changes value)", () => {
+    it("rehydrates an idle composer from the newly-pointed draft", () => {
+      mockDraftIsLoaded = true
+      mockDraftLoadedId = "draft_x"
+      mockDraftContentJson = makeDoc("X body")
+      const { result, rerender } = renderHook(() => useDraftComposer({ workspaceId, draftKey, scopeId }))
+      expect(result.current.content).toEqual(makeDoc("X body"))
+
+      act(() => {
+        mockDraftLoadedId = "draft_y"
+        mockDraftContentJson = makeDoc("Y body")
+        rerender()
+      })
+
+      expect(result.current.content).toEqual(makeDoc("Y body"))
+      // An idle editor holds only the hydrated body, so nothing needs flushing.
+      expect(mockSaveDraft).not.toHaveBeenCalled()
+    })
+
+    it("flushes typed content to its OWN row before rehydrating from the new one", () => {
+      mockDraftIsLoaded = true
+      mockDraftLoadedId = "draft_x"
+      mockDraftContentJson = makeDoc("X body")
+      mockSaveDraft.mockResolvedValue(undefined)
+      const { result, rerender } = renderHook(() => useDraftComposer({ workspaceId, draftKey, scopeId }))
+
+      act(() => {
+        result.current.handleContentChange(makeDoc("X body and typing"))
+      })
+
+      act(() => {
+        mockDraftLoadedId = "draft_y"
+        mockDraftContentJson = makeDoc("Y body")
+        rerender()
+      })
+
+      // Identity-addressed: the typed body is written to draft_x, never to draft_y.
+      expect(mockSaveDraft).toHaveBeenCalledWith(makeDoc("X body and typing"), [], "draft_x")
+      expect(result.current.content).toEqual(makeDoc("Y body"))
+    })
+
+    it("follows an id migration without flushing or blanking the editor", () => {
+      // A split ack / remote-delete preserve re-keys the SAME draft underneath the
+      // composer. The pointer changes value, but the editor's content still belongs
+      // to that row — treating it as a repoint would flush to the deleted id and
+      // `resetForReinit` mid-typing.
+      mockDraftIsLoaded = true
+      mockDraftLoadedId = "draft_x"
+      mockDraftContentJson = makeDoc("X body")
+      const { result, rerender } = renderHook(() => useDraftComposer({ workspaceId, draftKey, scopeId }))
+
+      act(() => {
+        result.current.handleContentChange(makeDoc("X body and typing"))
+      })
+
+      act(() => {
+        markDraftMigrated("draft_x", "draft_x2")
+        mockDraftLoadedId = "draft_x2"
+        rerender()
+      })
+
+      expect(result.current.content).toEqual(makeDoc("X body and typing"))
+      expect(mockSaveDraft).not.toHaveBeenCalled()
+
+      // Engagement survived: a stale saved body arriving now must not re-fill.
+      act(() => {
+        mockDraftContentJson = makeDoc("stale saved body")
+        rerender()
+      })
+      expect(result.current.content).toEqual(makeDoc("X body and typing"))
+    })
+
+    it("detaches a typed fragment to its own row when a first pointer arrives under an engaged editor", async () => {
+      // null → Y with the user mid-typing: the fragment has no identity, so the
+      // armed pointer-addressed save would land in Y and destroy its body.
+      mockDraftIsLoaded = true
+      mockDraftLoadedId = null
+      mockDraftContentJson = EMPTY_DOC
+      mockSaveDraft.mockResolvedValue(persistedRow("draft_detached"))
+      const { result, rerender } = renderHook(() => useDraftComposer({ workspaceId, draftKey, scopeId }))
+
+      act(() => {
+        result.current.handleContentChange(makeDoc("fragment"))
+      })
+
+      await act(async () => {
+        mockDraftLoadedId = "draft_y"
+        mockDraftContentJson = makeDoc("Y body")
+        rerender()
+      })
+
+      expect(mockSaveDraft).toHaveBeenCalledTimes(1)
+      const [flushedContent, , detachedId] = mockSaveDraft.mock.calls[0]
+      expect(flushedContent).toEqual(makeDoc("fragment"))
+      // A row id of its own — never Y's, and never the pointer-addressed null.
+      expect(typeof detachedId).toBe("string")
+      expect(detachedId).not.toBe("draft_y")
+      // Y rehydrates intact.
+      expect(result.current.content).toEqual(makeDoc("Y body"))
+    })
+
+    it("keeps the typed fragment on screen when the detached save could not persist", async () => {
+      // Locked E2E scope: `saveDraft` is gated and persists nothing (resolves
+      // null). Blanking the editor then would lose the fragment from screen AND
+      // disk, so the focused composer keeps it and does not adopt Y.
+      mockDraftIsLoaded = true
+      mockDraftLoadedId = null
+      mockDraftContentJson = EMPTY_DOC
+      mockSaveDraft.mockResolvedValue(null)
+      const { result, rerender } = renderHook(() => useDraftComposer({ workspaceId, draftKey, scopeId }))
+
+      act(() => {
+        result.current.handleContentChange(makeDoc("fragment"))
+      })
+
+      await act(async () => {
+        mockDraftLoadedId = "draft_y"
+        mockDraftContentJson = makeDoc("Y body")
+        rerender()
+      })
+
+      expect(result.current.content).toEqual(makeDoc("fragment"))
+      expect(mockClearAttachments).not.toHaveBeenCalled()
+    })
+
+    it("drops the armed save without persisting when an engaged editor is empty as the first pointer arrives", async () => {
+      // Typed, then deleted back to empty: the debounce is re-armed with an empty
+      // doc and a null expected id, so firing it would delete the arriving draft.
+      mockDraftIsLoaded = true
+      mockDraftLoadedId = null
+      mockDraftContentJson = EMPTY_DOC
+      const { result, rerender } = renderHook(() => useDraftComposer({ workspaceId, draftKey, scopeId }))
+
+      act(() => {
+        result.current.handleContentChange(makeDoc("fragment"))
+      })
+      act(() => {
+        result.current.handleContentChange(EMPTY_DOC)
+      })
+
+      await act(async () => {
+        mockDraftLoadedId = "draft_y"
+        mockDraftContentJson = makeDoc("Y body")
+        rerender()
+      })
+
+      expect(mockCancelPendingSave).toHaveBeenCalledTimes(1)
+      expect(mockSaveDraft).not.toHaveBeenCalled()
+      // Y is adopted and hydrated into the (empty) editor.
+      expect(result.current.content).toEqual(makeDoc("Y body"))
     })
   })
 })

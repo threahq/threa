@@ -12,7 +12,12 @@ import {
 } from "@/stores/draft-store"
 import { enqueueDraftUpsert, migrateLocalDraftScope, syncDraftRemoval, syncDraftResolution } from "@/sync/draft-sync"
 import { clearStagedDraft, readStagedDraft, stageDraftContent } from "@/lib/drafts/draft-staging"
-import { getScopeResolveSeq, markDraftResolved, recordScopeResolved } from "@/sync/draft-resolution-guard"
+import {
+  getScopeResolveSeq,
+  markDraftResolved,
+  recordScopeResolved,
+  resolveMigratedDraftId,
+} from "@/sync/draft-resolution-guard"
 import { useOptionalSyncEngine } from "@/sync/sync-engine"
 import { type JSONContent, draftStreamScope, draftThreadScope } from "@threa/types"
 import { serializeToMarkdown } from "@threa/prosemirror"
@@ -90,14 +95,27 @@ export async function upsertLoadedDraft(
   scope: string,
   fields: DraftFields,
   seal?: DraftSealContext,
-  /**
-   * The scope's resolve sequence observed when this save began. Passed only by
-   * the debounced typing save: if a resolve-on-send advanced the sequence while
-   * the save was in flight, creating a draft here would resurrect the just-sent
-   * content into the composer, so the create is dropped. Other create paths pass
-   * nothing and are never affected.
-   */
-  opts?: { observedResolveSeq?: number }
+  opts?: {
+    /**
+     * The scope's resolve sequence observed when this save began. Passed only by
+     * the debounced typing save: if a resolve-on-send advanced the sequence while
+     * the save was in flight, creating a draft here would resurrect the just-sent
+     * content into the composer, so the create is dropped. Other create paths pass
+     * nothing and are never affected.
+     */
+    observedResolveSeq?: number
+    /**
+     * The draft row this content belongs to — the id the composer's live content
+     * hydrated from (or was created as). When set, the save is addressed by ROW
+     * identity, not by the scope's `composerLoaded` pointer: a save landing after
+     * the pointer was repointed at another draft still writes its own row instead
+     * of overwriting the newly-pointed one. The pointer is never written in this
+     * branch (a stashed row taking late keystrokes stays stashed). When the row
+     * has been deleted underneath, the save falls back to the create path and
+     * claims the pointer only if the scope has none.
+     */
+    expectedDraftId?: string | null
+  }
 ): Promise<CachedDraft> {
   // The save's target identity is re-validated INSIDE the write transaction:
   // a split ack can migrate the loaded draft's id (and a push ack can advance
@@ -108,9 +126,24 @@ export async function upsertLoadedDraft(
   // still conflicts is dropped — the content stands in the editor (and, for
   // plaintext scopes, the staging buffer) until the next keystroke re-saves.
   let row!: CachedDraft
+  const expectedId = opts?.expectedDraftId ?? null
   for (let attempt = 0; attempt < 3; attempt++) {
-    const loadedId = await getLoadedDraftId(scope)
-    const existing = loadedId ? await db.drafts.get(loadedId) : undefined
+    // Identity-addressed when the caller named a row; pointer-addressed otherwise.
+    let loadedId = expectedId ?? (await getLoadedDraftId(scope))
+    let existing = loadedId ? await db.drafts.get(loadedId) : undefined
+    if (expectedId && !existing) {
+      // The expected row may have been RE-KEYED rather than deleted (a split ack
+      // or a remote-delete preserve runs `migrateLocalDraftId`). Follow the
+      // migration before concluding the row is gone: creating a fresh row here
+      // would fork the draft the user is still typing into. Only a genuinely
+      // unmigrated missing row falls through to the create path below.
+      const migratedId = resolveMigratedDraftId(expectedId)
+      const migratedRow = migratedId === expectedId ? undefined : await db.drafts.get(migratedId)
+      if (migratedRow) {
+        loadedId = migratedId
+        existing = migratedRow
+      }
+    }
     // The draft id binds the seal AAD (in the message-id slot), so resolve it
     // before sealing — a re-seal of the same draft reuses the id.
     const id = existing?.id ?? generateLocalDraftId()
@@ -178,10 +211,13 @@ export async function upsertLoadedDraft(
     // sent message into the composer. `recordScopeResolved` runs before the
     // resolve clears the pointer, so by the time the cleared pointer routes a
     // stale save into the create branch the bumped seq is visible.
+    let wrotePointer = false
     const outcome = await db.transaction("rw", db.drafts, db.composerLoaded, db.pendingOperations, async () => {
       if (isStaleObservedResolve(scope, opts?.observedResolveSeq)) return "dropped"
       const livePointer = (await db.composerLoaded.get(scope))?.draftId ?? null
-      if (livePointer !== loadedId) return "conflict"
+      // Pointer-addressed saves revalidate the pointer; identity-addressed ones
+      // revalidate the ROW below, so a repoint can't route them onto another draft.
+      if (!expectedId && livePointer !== loadedId) return "conflict"
       if (existing) {
         const liveRow = await db.drafts.get(id)
         if (!liveRow) return "conflict"
@@ -194,7 +230,13 @@ export async function upsertLoadedDraft(
         await db.drafts.put(row)
       } else {
         await db.drafts.put(row)
-        await db.composerLoaded.put({ scope, workspaceId, draftId: id })
+        // Claim the pointer only when the scope has none. An identity-addressed
+        // save whose row was deleted underneath lands here; stealing a pointer
+        // that now references another draft would detach that draft instead.
+        if (livePointer === null) {
+          await db.composerLoaded.put({ scope, workspaceId, draftId: id })
+          wrotePointer = true
+        }
       }
       // Mirror to the backend: a coalesced push that retries silently. The
       // caller kicks the queue so it drains promptly.
@@ -204,10 +246,10 @@ export async function upsertLoadedDraft(
 
     if (outcome === "conflict") continue
     if (outcome === "dropped") return row
-    if (existing) {
-      upsertDraftInCache(workspaceId, row)
-    } else {
+    if (wrotePointer) {
       upsertLoadedDraftInCache(workspaceId, row, scope)
+    } else {
+      upsertDraftInCache(workspaceId, row)
     }
 
     if (seal) {
@@ -272,13 +314,57 @@ async function removeLoadedDraftLocally(
  * The backend mirror is an UNCONDITIONAL delete — the user threw it away, so
  * drift doesn't matter.
  */
-export async function clearLoadedDraft(workspaceId: string, scope: string): Promise<void> {
+export async function clearLoadedDraft(
+  workspaceId: string,
+  scope: string,
+  /**
+   * The row the caller means to discard (see `upsertLoadedDraft`'s
+   * `expectedDraftId`). When the scope's pointer has since moved off it — an
+   * empty debounced save landing after a repoint — the row is deleted BY ID and
+   * the pointer (and the staging buffer, which now belongs to the new draft) is
+   * left alone. Omitted by the discard/send paths, which mean "whatever is loaded".
+   */
+  expectedDraftId?: string | null
+): Promise<void> {
+  if (expectedDraftId) {
+    // Follow a re-key (`migrateLocalDraftId`) so an empty save for the pre-split
+    // id clears the row that id became, not nothing at all.
+    const targetId = (await db.drafts.get(expectedDraftId)) ? expectedDraftId : resolveMigratedDraftId(expectedDraftId)
+    const pointer = (await db.composerLoaded.get(scope))?.draftId ?? null
+    if (pointer !== targetId) {
+      await removeDraftRowById(workspaceId, targetId, (id, baseVersion) =>
+        syncDraftRemoval(workspaceId, id, baseVersion)
+      )
+      return
+    }
+  }
   // Drop the staging buffer first (synchronous) so a racing flush or a reload
   // can't recover the discarded content back into the composer.
   clearStagedDraft(workspaceId, scope)
   await removeLoadedDraftLocally(workspaceId, scope, (loadedId, baseVersion) =>
     syncDraftRemoval(workspaceId, loadedId, baseVersion)
   )
+}
+
+/**
+ * Delete draft row `draftId` and mirror the removal, leaving every scope pointer
+ * untouched. The identity-addressed counterpart of `removeLoadedDraftLocally`:
+ * used when an empty save arrives for a row the scope no longer points at. Same
+ * one-transaction shape (read version, delete, enqueue) for the same reasons.
+ */
+async function removeDraftRowById(
+  workspaceId: string,
+  draftId: string,
+  mirror: (draftId: string, baseVersion: number | undefined) => Promise<void>
+): Promise<void> {
+  const removed = await db.transaction("rw", db.drafts, db.composerLoaded, db.pendingOperations, async () => {
+    const row = await db.drafts.get(draftId)
+    if (!row) return false
+    await db.drafts.delete(draftId)
+    await mirror(draftId, row.baseVersion)
+    return true
+  })
+  if (removed) deleteDraftFromCache(workspaceId, draftId)
 }
 
 /**
@@ -499,9 +585,24 @@ export async function relocateLoadedDraft(
  *   waits on disk. Attachments roam sealed inside the body's ciphertext (Stage 4d);
  *   context refs on E2E drafts stay session-local (deferred).
  */
-export function useDraftMessage(workspaceId: string, draftKey: string, e2eStreamId?: string | null) {
+export function useDraftMessage(
+  workspaceId: string,
+  draftKey: string,
+  e2eStreamId?: string | null,
+  /**
+   * Owned by the composer: the id of the draft row the live editor content
+   * hydrated from (or was created as). Every save path here addresses THAT row
+   * rather than re-reading the scope's pointer, so a pointer repointed between
+   * hydration and a debounced save can't route the write onto another draft.
+   * `null` means "no identity yet" and keeps the historical pointer-addressed
+   * behaviour (a fresh composer that has not yet read a draft).
+   */
+  contentDraftIdRef?: { current: string | null }
+) {
   const e2eEnabled = !!e2eStreamId
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const fallbackContentDraftIdRef = useRef<string | null>(null)
+  const contentDraftId = contentDraftIdRef ?? fallbackContentDraftIdRef
 
   // Seal needs the viewer's workspace user id and unlocked UIK. Read here (not
   // threaded from the call site) so the composer reacts when the session unlocks
@@ -548,12 +649,38 @@ export function useDraftMessage(workspaceId: string, draftKey: string, e2eStream
     void purgePlaintextScopeDrafts(workspaceId, draftKey)
   }, [e2eEnabled, draftKey, workspaceId])
 
+  /**
+   * Persist the composer content for this scope.
+   *
+   * Returns the row that was written, or `null` when nothing was persisted:
+   * the E2E gate refused (locked / no sender / no stream), the seal threw, the
+   * save was a deletion (empty content and no attachments), or a resolve-on-send
+   * advanced the scope's sequence and the create was dropped. Callers that
+   * discard the editor after a save MUST branch on this: on `null` the content
+   * exists only on screen, so blanking it loses it.
+   */
   const saveDraft = useCallback(
-    async (contentJson: JSONContent, attachments?: DraftAttachment[]) => {
+    async (
+      contentJson: JSONContent,
+      attachments?: DraftAttachment[],
+      expectedDraftId?: string | null
+    ): Promise<CachedDraft | null> => {
       // Clear any pending debounced save
       if (debounceRef.current) {
         clearTimeout(debounceRef.current)
         debounceRef.current = null
+      }
+
+      // The row this content belongs to. An explicit argument (the debounced
+      // save's arm-time capture, or a repoint flush) wins over the live ref,
+      // which may already have moved on to another draft.
+      const targetId = expectedDraftId ?? contentDraftId.current
+      // Whether this save still speaks for the composer's current content is
+      // decided at ASSIGNMENT time, never captured here: the ref can move on
+      // (a repoint) during the awaits below, and a stale capture would drag it
+      // back to the superseded row.
+      const advanceIdentity = (next: string | null) => {
+        if (contentDraftId.current === targetId) contentDraftId.current = next
       }
 
       // The scope's resolve sequence as this save begins. If a resolve-on-send
@@ -565,62 +692,68 @@ export function useDraftMessage(workspaceId: string, draftKey: string, e2eStream
       if (gate.enabled) {
         // E2EE-4: seal before disk, and only while unlocked. Locked → keep the
         // content in the composer for the session; nothing persists.
-        if (!gate.unlocked || !gate.senderId || !gate.streamId) return
+        if (!gate.unlocked || !gate.senderId || !gate.streamId) return null
         // Resolve the attachment set: an explicit arg, else the draft's current
         // (decrypted) attachments — a content-only save (a keystroke) must
         // preserve them, exactly as the plaintext path preserves them below. The
         // sealed row holds no plaintext attachments at rest, so they're read back
         // from the in-memory decrypt cache (the plaintext authority).
-        const currentLoadedId = await getLoadedDraftId(draftKey)
+        const currentLoadedId = targetId ?? (await getLoadedDraftId(draftKey))
         const finalAttachments = attachments ?? (currentLoadedId ? cachedDraftAttachments(currentLoadedId) : [])
         if (isEmptyContent(contentJson) && finalAttachments.length === 0) {
-          await clearLoadedDraft(workspaceId, draftKey)
+          await clearLoadedDraft(workspaceId, draftKey, targetId)
+          advanceIdentity(null)
           syncEngine?.kickOperationQueue()
-          return
+          return null
         }
         try {
-          await upsertLoadedDraft(
+          const saved = await upsertLoadedDraft(
             workspaceId,
             draftKey,
             { contentJson, attachments: finalAttachments },
             { senderId: gate.senderId, streamId: gate.streamId },
-            { observedResolveSeq }
+            { observedResolveSeq, expectedDraftId: targetId }
           )
+          advanceIdentity(saved.id)
           syncEngine?.kickOperationQueue()
+          return isStaleObservedResolve(draftKey, observedResolveSeq) ? null : saved
         } catch (err) {
           // A failed seal (e.g. the session locked between the gate check and the
           // seal) must never interrupt the user — the content stands in the composer.
           console.error("Failed to seal draft; kept in composer", err)
         }
-        return
+        return null
       }
 
       // Get current attachments + contextRefs if not provided. The contextRefs
       // sidecar must survive a content-only save (e.g. user typing into a
       // bag-attached scratchpad) — without this preservation the chip would
       // vanish from the composer the moment the first keystroke fires.
-      const currentLoadedId = await getLoadedDraftId(draftKey)
+      const currentLoadedId = targetId ?? (await getLoadedDraftId(draftKey))
       const currentDraft = currentLoadedId ? await db.drafts.get(currentLoadedId) : undefined
       const finalAttachments = attachments ?? currentDraft?.attachments ?? []
       const finalContextRefs = currentDraft?.contextRefs ?? []
 
       // Delete draft only when content + attachments + contextRefs are all empty.
       if (isEmptyContent(contentJson) && finalAttachments.length === 0 && finalContextRefs.length === 0) {
-        await clearLoadedDraft(workspaceId, draftKey)
+        await clearLoadedDraft(workspaceId, draftKey, targetId)
+        advanceIdentity(null)
         syncEngine?.kickOperationQueue()
-        return
+        return null
       }
 
-      await upsertLoadedDraft(
+      const saved = await upsertLoadedDraft(
         workspaceId,
         draftKey,
         { contentJson, attachments: finalAttachments, contextRefs: finalContextRefs },
         undefined,
-        { observedResolveSeq }
+        { observedResolveSeq, expectedDraftId: targetId }
       )
+      advanceIdentity(saved.id)
       syncEngine?.kickOperationQueue()
+      return isStaleObservedResolve(draftKey, observedResolveSeq) ? null : saved
     },
-    [draftKey, workspaceId, syncEngine]
+    [draftKey, workspaceId, syncEngine, contentDraftId]
   )
 
   const saveDraftDebounced = useCallback(
@@ -639,15 +772,19 @@ export function useDraftMessage(workspaceId: string, draftKey: string, e2eStream
       // encrypted never stages a plaintext keystroke. (The seal at timer-fire still
       // reads the ref, the right source for that deferred point.)
       if (!e2eEnabled) stageDraftContent(workspaceId, draftKey, contentJson)
+      // Capture the target row at ARM time, not at fire time: the keystrokes in
+      // `contentJson` belong to the draft loaded now, and the scope's pointer (and
+      // with it the composer's identity) may be repointed before the timer fires.
+      const expectedDraftId = contentDraftId.current
       // `saveDraft` reads the live E2E gate when the timer fires, so a value typed
       // while the stream was plaintext is sealed (or dropped) — never written as
       // plaintext — if the stream became encrypted in the meantime (E2EE-4).
       debounceRef.current = setTimeout(() => {
         debounceRef.current = null
-        void saveDraft(contentJson)
+        void saveDraft(contentJson, undefined, expectedDraftId)
       }, DEBOUNCE_MS)
     },
-    [saveDraft, workspaceId, draftKey, e2eEnabled]
+    [saveDraft, workspaceId, draftKey, e2eEnabled, contentDraftId]
   )
 
   /**
@@ -655,6 +792,16 @@ export function useDraftMessage(workspaceId: string, draftKey: string, e2eStream
    */
   const addAttachment = useCallback(
     async (attachment: DraftAttachment) => {
+      // The row this attachment operation belongs to, captured ONCE: the ref can
+      // move on (a repoint) across the awaits below, and reading it twice would
+      // source the content from one draft and address the write to another.
+      const targetId = contentDraftId.current
+      // Same assignment-time recheck `saveDraft` uses: the ref may have been
+      // repointed during the awaits below, and writing the captured target back
+      // would drag the composer's identity onto the superseded row.
+      const advanceIdentity = (next: string | null) => {
+        if (contentDraftId.current === targetId) contentDraftId.current = next
+      }
       if (e2eEnabled) {
         // E2EE-4: re-seal the draft with the added attachment. The body + current
         // attachments are the decrypted copy in memory (the row holds only
@@ -663,24 +810,26 @@ export function useDraftMessage(workspaceId: string, draftKey: string, e2eStream
         // attachment stays in the composer session, like a typed body would.
         const gate = e2eGateRef.current
         if (!gate.unlocked || !gate.senderId || !gate.streamId) return
-        const sealedLoadedId = await getLoadedDraftId(draftKey)
+        const sealedLoadedId = targetId ?? (await getLoadedDraftId(draftKey))
         const currentSealed = sealedLoadedId ? cachedDraftAttachments(sealedLoadedId) : []
         if (currentSealed.some((a) => a.id === attachment.id)) return
         const body = (sealedLoadedId ? cachedDraftBody(sealedLoadedId) : null) ?? EMPTY_DOC
         try {
-          await upsertLoadedDraft(
+          const saved = await upsertLoadedDraft(
             workspaceId,
             draftKey,
             { contentJson: body, attachments: [...currentSealed, attachment] },
-            { senderId: gate.senderId, streamId: gate.streamId }
+            { senderId: gate.senderId, streamId: gate.streamId },
+            { expectedDraftId: targetId }
           )
+          advanceIdentity(saved.id)
           syncEngine?.kickOperationQueue()
         } catch (err) {
           console.error("Failed to seal draft attachment; kept in composer", err)
         }
         return
       }
-      const currentLoadedId = await getLoadedDraftId(draftKey)
+      const currentLoadedId = targetId ?? (await getLoadedDraftId(draftKey))
       const currentDraft = currentLoadedId ? await db.drafts.get(currentLoadedId) : undefined
       const currentAttachments = currentDraft?.attachments ?? []
 
@@ -689,15 +838,22 @@ export function useDraftMessage(workspaceId: string, draftKey: string, e2eStream
         return
       }
 
-      await upsertLoadedDraft(workspaceId, draftKey, {
-        contentJson: currentDraft?.contentJson ?? EMPTY_DOC,
-        attachments: [...currentAttachments, attachment],
-        // Preserve sidecar so a paste/upload doesn't wipe an attached chip.
-        contextRefs: currentDraft?.contextRefs,
-      })
+      const saved = await upsertLoadedDraft(
+        workspaceId,
+        draftKey,
+        {
+          contentJson: currentDraft?.contentJson ?? EMPTY_DOC,
+          attachments: [...currentAttachments, attachment],
+          // Preserve sidecar so a paste/upload doesn't wipe an attached chip.
+          contextRefs: currentDraft?.contextRefs,
+        },
+        undefined,
+        { expectedDraftId: targetId }
+      )
+      advanceIdentity(saved.id)
       syncEngine?.kickOperationQueue()
     },
-    [draftKey, workspaceId, e2eEnabled, syncEngine]
+    [draftKey, workspaceId, e2eEnabled, syncEngine, contentDraftId]
   )
 
   /**
@@ -706,35 +862,46 @@ export function useDraftMessage(workspaceId: string, draftKey: string, e2eStream
    */
   const removeAttachment = useCallback(
     async (attachmentId: string) => {
+      // The row this attachment operation belongs to, captured ONCE: the ref can
+      // move on (a repoint) across the awaits below, and reading it twice would
+      // source the content from one draft and address the write to another.
+      const targetId = contentDraftId.current
+      // Assignment-time recheck, as in `addAttachment`/`saveDraft`.
+      const advanceIdentity = (next: string | null) => {
+        if (contentDraftId.current === targetId) contentDraftId.current = next
+      }
       if (e2eEnabled) {
         // E2EE-4: re-seal without the removed attachment (or clear when the draft
         // is left empty). Reads body + attachments from the in-memory decrypt
         // cache for the same reason `addAttachment` does. Locked → no-op.
         const gate = e2eGateRef.current
         if (!gate.unlocked || !gate.senderId || !gate.streamId) return
-        const sealedLoadedId = await getLoadedDraftId(draftKey)
+        const sealedLoadedId = targetId ?? (await getLoadedDraftId(draftKey))
         if (!sealedLoadedId) return
         const remaining = cachedDraftAttachments(sealedLoadedId).filter((a) => a.id !== attachmentId)
         const body = cachedDraftBody(sealedLoadedId) ?? EMPTY_DOC
         if (isEmptyContent(body) && remaining.length === 0) {
-          await clearLoadedDraft(workspaceId, draftKey)
+          await clearLoadedDraft(workspaceId, draftKey, targetId)
+          advanceIdentity(null)
           syncEngine?.kickOperationQueue()
           return
         }
         try {
-          await upsertLoadedDraft(
+          const saved = await upsertLoadedDraft(
             workspaceId,
             draftKey,
             { contentJson: body, attachments: remaining },
-            { senderId: gate.senderId, streamId: gate.streamId }
+            { senderId: gate.senderId, streamId: gate.streamId },
+            { expectedDraftId: targetId }
           )
+          advanceIdentity(saved.id)
           syncEngine?.kickOperationQueue()
         } catch (err) {
           console.error("Failed to re-seal draft after attachment removal; kept in composer", err)
         }
         return
       }
-      const currentLoadedId = await getLoadedDraftId(draftKey)
+      const currentLoadedId = targetId ?? (await getLoadedDraftId(draftKey))
       const currentDraft = currentLoadedId ? await db.drafts.get(currentLoadedId) : undefined
       if (!currentDraft) return
 
@@ -742,20 +909,42 @@ export function useDraftMessage(workspaceId: string, draftKey: string, e2eStream
 
       // Delete draft if both content and attachments are empty
       if (isEmptyContent(currentDraft.contentJson) && remainingAttachments.length === 0) {
-        await clearLoadedDraft(workspaceId, draftKey)
+        await clearLoadedDraft(workspaceId, draftKey, targetId)
+        advanceIdentity(null)
         syncEngine?.kickOperationQueue()
         return
       }
 
-      await upsertLoadedDraft(workspaceId, draftKey, {
-        contentJson: currentDraft.contentJson,
-        attachments: remainingAttachments,
-        contextRefs: currentDraft.contextRefs,
-      })
+      const saved = await upsertLoadedDraft(
+        workspaceId,
+        draftKey,
+        {
+          contentJson: currentDraft.contentJson,
+          attachments: remainingAttachments,
+          contextRefs: currentDraft.contextRefs,
+        },
+        undefined,
+        { expectedDraftId: targetId }
+      )
+      advanceIdentity(saved.id)
       syncEngine?.kickOperationQueue()
     },
-    [draftKey, workspaceId, e2eEnabled, syncEngine]
+    [draftKey, workspaceId, e2eEnabled, syncEngine, contentDraftId]
   )
+
+  /**
+   * Drop an armed debounced save WITHOUT persisting it. For the case where the
+   * pending keystrokes are known to be moot (the editor is empty and about to be
+   * re-hydrated from an arriving draft): letting the timer fire would run a
+   * pointer-addressed save with a stale expected id and delete or overwrite the
+   * draft that just arrived. `saveDraft` is not a substitute — it persists.
+   */
+  const cancelPendingSave = useCallback(() => {
+    if (debounceRef.current) {
+      clearTimeout(debounceRef.current)
+      debounceRef.current = null
+    }
+  }, [])
 
   const clearDraft = useCallback(async () => {
     // Clear any pending debounced save
@@ -765,8 +954,9 @@ export function useDraftMessage(workspaceId: string, draftKey: string, e2eStream
     }
 
     await clearLoadedDraft(workspaceId, draftKey)
+    contentDraftId.current = null
     syncEngine?.kickOperationQueue()
-  }, [draftKey, workspaceId, syncEngine])
+  }, [draftKey, workspaceId, syncEngine, contentDraftId])
 
   /**
    * Clear the loaded draft because its message was sent (resolve-on-send). Same
@@ -782,8 +972,9 @@ export function useDraftMessage(workspaceId: string, draftKey: string, e2eStream
     }
 
     await resolveLoadedDraft(workspaceId, draftKey)
+    contentDraftId.current = null
     syncEngine?.kickOperationQueue()
-  }, [draftKey, workspaceId, syncEngine])
+  }, [draftKey, workspaceId, syncEngine, contentDraftId])
 
   // Cleanup timeout on unmount
   useEffect(() => {
@@ -822,6 +1013,7 @@ export function useDraftMessage(workspaceId: string, draftKey: string, e2eStream
     contextRefs: (resolvedDraft?.contextRefs ?? []) as DraftContextRef[],
     saveDraft,
     saveDraftDebounced,
+    cancelPendingSave,
     addAttachment,
     removeAttachment,
     clearDraft,
