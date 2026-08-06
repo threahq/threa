@@ -101,6 +101,22 @@ export interface DraftSealContext {
  * composer reads it back from the seeded/decrypted cache. (Context refs stay
  * session-local — deferred.)
  */
+// Overloads: only an identity-addressed save (expectedDraftId set) can be
+// dropped for a deleted row — every other call always yields the row.
+export async function upsertLoadedDraft(
+  workspaceId: string,
+  scope: string,
+  fields: DraftFields,
+  seal?: DraftSealContext,
+  opts?: { observedResolveSeq?: number; expectedDraftId?: undefined; createIfMissing?: boolean }
+): Promise<CachedDraft>
+export async function upsertLoadedDraft(
+  workspaceId: string,
+  scope: string,
+  fields: DraftFields,
+  seal?: DraftSealContext,
+  opts?: { observedResolveSeq?: number; expectedDraftId?: string | null; createIfMissing?: boolean }
+): Promise<CachedDraft | null>
 export async function upsertLoadedDraft(
   workspaceId: string,
   scope: string,
@@ -126,8 +142,15 @@ export async function upsertLoadedDraft(
      * claims the pointer only if the scope has none.
      */
     expectedDraftId?: string | null
+    /**
+     * Only a caller that JUST MINTED `expectedDraftId` (the detached-create
+     * paths) may create when the row is missing. A named real id that is gone —
+     * and not re-keyed — was DELETED; recreating it from a late save would
+     * resurrect deleted content, so the save is dropped (null) instead.
+     */
+    createIfMissing?: boolean
   }
-): Promise<CachedDraft> {
+): Promise<CachedDraft | null> {
   // The save's target identity is re-validated INSIDE the write transaction:
   // a split ack can migrate the loaded draft's id (and a push ack can advance
   // its baseVersion) between our reads and our write. Writing against the
@@ -159,6 +182,11 @@ export async function upsertLoadedDraft(
       if (migratedRow) {
         loadedId = migratedId
         existing = migratedRow
+      } else if (!opts?.createIfMissing) {
+        // Named, gone, and not re-keyed: the row was deleted. Dropping the save
+        // is the no-resurrection rule — the delete (local or remote) already
+        // handled the composer via the pointer transition.
+        return null
       }
     }
     // The draft id binds the seal AAD (in the message-id slot), so resolve it
@@ -843,9 +871,11 @@ export function useDraftMessage(
       // create path without stealing the pointer), and an empty save is a no-op
       // (there is nothing of ours to delete).
       let effectiveTarget = targetId
+      let mintedDetachedId = false
       if (strictIdentity && targetId === null && (await getLoadedDraftId(draftKey)) !== null) {
         if (isEmptyContent(contentJson) && (attachments?.length ?? 0) === 0) return null
         effectiveTarget = generateLocalDraftId()
+        mintedDetachedId = true
       }
 
       // The scope's resolve sequence as this save begins. If a resolve-on-send
@@ -877,8 +907,9 @@ export function useDraftMessage(
             draftKey,
             { contentJson, attachments: finalAttachments },
             { senderId: gate.senderId, streamId: gate.streamId },
-            { observedResolveSeq, expectedDraftId: effectiveTarget }
+            { observedResolveSeq, expectedDraftId: effectiveTarget, createIfMissing: mintedDetachedId }
           )
+          if (!saved) return null
           advanceIdentity(saved.id)
           syncEngine?.kickOperationQueue()
           return isStaleObservedResolve(draftKey, observedResolveSeq) ? null : saved
@@ -917,8 +948,9 @@ export function useDraftMessage(
         draftKey,
         { contentJson, attachments: finalAttachments, contextRefs: finalContextRefs },
         undefined,
-        { observedResolveSeq, expectedDraftId: effectiveTarget }
+        { observedResolveSeq, expectedDraftId: effectiveTarget, createIfMissing: mintedDetachedId }
       )
+      if (!saved) return null
       advanceIdentity(saved.id)
       syncEngine?.kickOperationQueue()
       return isStaleObservedResolve(draftKey, observedResolveSeq) ? null : saved
@@ -977,8 +1009,10 @@ export function useDraftMessage(
       // attachment must not be sealed/written into it — it detaches to a fresh
       // row instead.
       let effectiveTarget = targetId
+      let mintedDetachedId = false
       if (strictIdentity && targetId === null && (await getLoadedDraftId(draftKey)) !== null) {
         effectiveTarget = generateLocalDraftId()
+        mintedDetachedId = true
       }
       if (e2eEnabled) {
         // E2EE-4: re-seal the draft with the added attachment. The body + current
@@ -998,8 +1032,9 @@ export function useDraftMessage(
             draftKey,
             { contentJson: body, attachments: [...currentSealed, attachment] },
             { senderId: gate.senderId, streamId: gate.streamId },
-            { expectedDraftId: effectiveTarget }
+            { expectedDraftId: effectiveTarget, createIfMissing: mintedDetachedId }
           )
+          if (!saved) return
           advanceIdentity(saved.id)
           syncEngine?.kickOperationQueue()
         } catch (err) {
@@ -1026,8 +1061,9 @@ export function useDraftMessage(
           contextRefs: currentDraft?.contextRefs,
         },
         undefined,
-        { expectedDraftId: effectiveTarget }
+        { expectedDraftId: effectiveTarget, createIfMissing: mintedDetachedId }
       )
+      if (!saved) return
       advanceIdentity(saved.id)
       syncEngine?.kickOperationQueue()
     },
@@ -1052,8 +1088,10 @@ export function useDraftMessage(
       // draft this composer did not hydrate. A fresh id resolves to no row, so
       // every branch below self-no-ops.
       let effectiveTarget = targetId
+      let mintedDetachedId = false
       if (strictIdentity && targetId === null && (await getLoadedDraftId(draftKey)) !== null) {
         effectiveTarget = generateLocalDraftId()
+        mintedDetachedId = true
       }
       if (e2eEnabled) {
         // E2EE-4: re-seal without the removed attachment (or clear when the draft
@@ -1077,8 +1115,9 @@ export function useDraftMessage(
             draftKey,
             { contentJson: body, attachments: remaining },
             { senderId: gate.senderId, streamId: gate.streamId },
-            { expectedDraftId: effectiveTarget }
+            { expectedDraftId: effectiveTarget, createIfMissing: mintedDetachedId }
           )
+          if (!saved) return
           advanceIdentity(saved.id)
           syncEngine?.kickOperationQueue()
         } catch (err) {
@@ -1109,8 +1148,9 @@ export function useDraftMessage(
           contextRefs: currentDraft.contextRefs,
         },
         undefined,
-        { expectedDraftId: effectiveTarget }
+        { expectedDraftId: effectiveTarget, createIfMissing: mintedDetachedId }
       )
+      if (!saved) return
       advanceIdentity(saved.id)
       syncEngine?.kickOperationQueue()
     },

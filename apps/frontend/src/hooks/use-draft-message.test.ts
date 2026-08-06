@@ -1130,10 +1130,11 @@ describe("upsertLoadedDraft — identity-addressed saves (repoint safety)", () =
     expect((await db.drafts.get("draft_X"))?.baseVersion).toBe(3)
   })
 
-  it("creates a fresh row without stealing the pointer when the expected row was deleted", async () => {
+  it("DROPS a save whose named row was deleted — no resurrection", async () => {
     await seedXY()
     await restoreStashedDraftToComposer(workspaceId, draftKey, "draft_Y")
     await db.drafts.delete("draft_X")
+    const rowsBefore = (await db.drafts.toArray()).map((row) => row.id).sort()
 
     const created = await upsertLoadedDraft(
       workspaceId,
@@ -1143,26 +1144,41 @@ describe("upsertLoadedDraft — identity-addressed saves (repoint safety)", () =
       { expectedDraftId: "draft_X" }
     )
 
-    expect(created.id).not.toBe("draft_X")
-    expect(await db.drafts.get("draft_X")).toBeUndefined()
+    // A named, gone, un-migrated row was DELETED; a late save must not bring it
+    // (or a fork of it) back. Only a just-minted detached id may create.
+    expect(created).toBeNull()
+    expect((await db.drafts.toArray()).map((row) => row.id).sort()).toEqual(rowsBefore)
     expect((await db.composerLoaded.get(draftKey))?.draftId).toBe("draft_Y")
     expect((await db.drafts.get("draft_Y"))?.contentJson).toEqual(makeDoc("Y body"))
   })
 
-  it("claims the pointer on the create fallback when the scope has none", async () => {
+  it("claims the pointer on the MINTED-id create when the scope has none; a deleted named id still drops", async () => {
     await seedXY()
     await db.drafts.delete("draft_X")
     await db.composerLoaded.delete(draftKey)
 
-    const created = await upsertLoadedDraft(
+    // Named-but-deleted: dropped even with a free pointer (no resurrection).
+    const dropped = await upsertLoadedDraft(
       workspaceId,
       draftKey,
       { contentJson: makeDoc("recreated"), attachments: [] },
       undefined,
       { expectedDraftId: "draft_X" }
     )
+    expect(dropped).toBeNull()
+    expect(await db.composerLoaded.get(draftKey)).toBeUndefined()
 
-    expect((await db.composerLoaded.get(draftKey))?.draftId).toBe(created.id)
+    // The detached-create path (a just-minted id) may create — and claims the
+    // free pointer.
+    const created = await upsertLoadedDraft(
+      workspaceId,
+      draftKey,
+      { contentJson: makeDoc("recreated"), attachments: [] },
+      undefined,
+      { expectedDraftId: "draft_fresh_minted", createIfMissing: true }
+    )
+    expect(created).not.toBeNull()
+    expect((await db.composerLoaded.get(draftKey))?.draftId).toBe(created!.id)
   })
 
   it("clearLoadedDraft deletes the expected row by id and leaves a moved-on pointer alone", async () => {
@@ -1522,14 +1538,16 @@ describe("take-over (chunk 2) — a restore detaches every other holder; only di
     )
 
     // Fresh row under the old scope; the taken row's body is untouched and the
-    // taker's pointer still references it.
-    expect(saved.id).not.toBe("draft_T")
-    expect(saved.scope).toBe(draftKey)
-    expect((await db.drafts.get(saved.id))?.contentJson).toEqual(makeDoc("displaced keystrokes"))
+    // taker's pointer still references it. (The foreign->forceCreate path is a
+    // SPLIT, never a drop — non-null by contract.)
+    expect(saved).not.toBeNull()
+    expect(saved!.id).not.toBe("draft_T")
+    expect(saved!.scope).toBe(draftKey)
+    expect((await db.drafts.get(saved!.id))?.contentJson).toEqual(makeDoc("displaced keystrokes"))
     expect((await db.drafts.get("draft_T"))?.contentJson).toEqual(makeDoc("original body"))
     expect((await db.composerLoaded.get(otherScope))?.draftId).toBe("draft_T")
     // Our scope's pointer was freed by the take-over, so the split claims it.
-    expect((await db.composerLoaded.get(draftKey))?.draftId).toBe(saved.id)
+    expect((await db.composerLoaded.get(draftKey))?.draftId).toBe(saved!.id)
   })
 })
 

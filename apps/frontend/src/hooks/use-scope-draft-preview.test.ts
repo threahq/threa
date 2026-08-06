@@ -241,6 +241,8 @@ describe("sub-topic indicator is membership, not advertising", () => {
     expect(preview.result.current).toBeNull()
     subtopics.unmount()
     preview.unmount()
+  })
+})
 
 // Named after the staging failure it guards (Kris, 2026-08-06): "stashing on the
 // board … leaves the board's preview composer (the button) still showing it as

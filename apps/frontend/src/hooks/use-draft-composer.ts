@@ -484,6 +484,12 @@ export function useDraftComposer({
           // `draft:deleted` reads false and stays deleted instead of being
           // resurrected by whichever device happens to hold the composer open.
           if (mountedComposerCount(scopeRegistryKey) > 1 && wasDraftResolvedLocally(prev)) {
+            // The rescued text belongs to a row that was just RESOLVED (deleted
+            // on send) — an identity-addressed save for it would be dropped by
+            // the no-resurrection rule. Clearing the identity first makes this a
+            // plain create under the now-empty scope: a sanctioned new row for
+            // genuinely newer text, not a resurrection of the sent one.
+            contentDraftIdRef.current = null
             return saveDraft(contentRef.current, persistableAttachments(getPendingAttachmentsSnapshot())).then(
               () => undefined,
               (err) => {
