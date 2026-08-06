@@ -307,13 +307,12 @@ function MessageInputComponent({
   // stream's own draft. The typed draft is NOT moved — its scope IS its target,
   // so it stays a draft of that conversation and keeps its filing.
   //
-  // It must also stop being CHECKED OUT here. Piles now offer loaded rows too
-  // (v2 take-over), but the drafts EXPLORER still keys `isStashed` on the
-  // pointer and offers a `?stash=` deep link only to detached rows — so without
-  // this detach the disarmed draft would carry no link there and "it stays
-  // reachable" would be weaker than promised. Detaching the pointer turns it
-  // into a real stash entry. Unless another composer is already mounted on the
-  // scope: then it is showing the draft and owns it.
+  // It must also stop being CHECKED OUT here — a pure DETACH (`putAway:
+  // false`): the drafts explorer keys its `?stash=` deep link on the pointer,
+  // so the detach is what keeps the disarmed draft reachable there, while the
+  // conversation's own board button and auto-restore keep advertising it (the
+  // user dismissed the ARM, not the draft). Unless another composer is already
+  // mounted on the scope: then it is showing the draft and owns it.
   //
   // ONE disarm, for every path that drops the target: clearing the target alone
   // strands the gesture latch, and a stranded latch makes the NEXT arm read as a
@@ -336,7 +335,11 @@ function MessageInputComponent({
       console.error("[composer] flush before disarm failed", err)
     }
     try {
-      await stashLoadedDraft(workspaceId, vacated)
+      // A disarm is MECHANICAL — "stop replying to that conversation here", not
+      // "put the draft away". Detach only: the draft keeps its board button,
+      // auto-restore and explorer link (putAway would hide all three on every
+      // device).
+      await stashLoadedDraft(workspaceId, vacated, { putAway: false })
     } catch (err) {
       console.error("[composer] could not release the disarmed draft", err)
     }

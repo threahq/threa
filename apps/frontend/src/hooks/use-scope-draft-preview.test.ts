@@ -210,3 +210,36 @@ describe("membership vs advertising (payloadScopes)", () => {
     expect(advertise.result.current.has("board:reply:conv_2")).toBe(true)
   })
 })
+
+describe("sub-topic indicator is membership, not advertising", () => {
+  it("keeps the fork-message entry for a put-away sub-topic draft while the reply button drops its preview", async () => {
+    const subScope = "board:subtopic:stream_9:msg_fork"
+    await db.drafts.add({
+      id: "d_sub_stashed",
+      workspaceId,
+      scope: subScope,
+      contentJson: doc("forked thought"),
+      attachments: [],
+      clientUpdatedAt: 2000,
+      stashedAt: 1500,
+    })
+    // Control on the same snapshot: a conversation-reply scope with a put-away
+    // row loses its ADVERTISING preview — that filter is real and untouched.
+    await db.drafts.add({
+      id: "d_conv_stashed",
+      workspaceId,
+      scope,
+      contentJson: doc("stashed reply"),
+      attachments: [],
+      clientUpdatedAt: 2000,
+      stashedAt: 1500,
+    })
+
+    const subtopics = renderHook(() => useBoardSubtopicDraftIndex(workspaceId))
+    const preview = renderHook(() => useScopeDraftPreview(workspaceId, scope))
+    await waitFor(() => expect(subtopics.result.current.get("msg_fork")?.draftId).toBe("d_sub_stashed"))
+    expect(preview.result.current).toBeNull()
+    subtopics.unmount()
+    preview.unmount()
+  })
+})

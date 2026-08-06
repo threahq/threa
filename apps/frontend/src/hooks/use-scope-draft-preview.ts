@@ -108,17 +108,26 @@ function buildSnapshot(rows: CachedDraft[], loadedByScope: Map<string, string | 
     if (loadedDraftId !== null && scopeRows.some((row) => row.id === loadedDraftId)) checkedOutScopes.add(scope)
     if (scopeRows.some(hasPayload)) payloadScopes.add(scope)
     const best = bestRow(scopeRows, loadedDraftId)
-    if (!best) continue
-    const preview = toPreview(best, loadedDraftId)
-    previewByScope.set(scope, preview)
+    if (best) previewByScope.set(scope, toPreview(best, loadedDraftId))
     const parsed = parseBoardDraftKey(scope)
     if (parsed?.kind === "subtopic") {
-      subtopicByMessageId.set(parsed.messageId, {
-        ...preview,
-        scope,
-        streamId: parsed.streamId,
-        messageId: parsed.messageId,
-      })
+      // The fork indicator is MEMBERSHIP, not advertising: it marks "an unsent
+      // sub-topic draft exists here" and its tap is an explicit open — the
+      // in-situ equivalent of a pile row — so a put-away draft keeps it (the
+      // required presentation per Kris's 2026-07-13 ruling). Only the
+      // auto-restoring resting affordances read the stash-filtered preview.
+      const withPayload = scopeRows.filter(hasPayload)
+      const member =
+        withPayload.find((row) => row.id === loadedDraftId) ??
+        (withPayload.length > 0 ? withPayload.reduce((a, b) => (b.clientUpdatedAt > a.clientUpdatedAt ? b : a)) : null)
+      if (member) {
+        subtopicByMessageId.set(parsed.messageId, {
+          ...toPreview(member, loadedDraftId),
+          scope,
+          streamId: parsed.streamId,
+          messageId: parsed.messageId,
+        })
+      }
     }
   }
   return { previewByScope, subtopicByMessageId, checkedOutScopes, payloadScopes }

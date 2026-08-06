@@ -87,6 +87,18 @@ describe("stashLoadedDraft (pointer-move stash)", () => {
     expect(ops.some((op) => (op.payload as { draftId?: string }).draftId === "draft_clean_stashed")).toBe(true)
   })
 
+  it("a MECHANICAL detach (putAway: false) clears the pointer without the durable marker", async () => {
+    const loaded = await upsertLoadedDraft(workspaceId, scope, { contentJson: makeDoc("armed reply"), attachments: [] })
+
+    const stashedId = await stashLoadedDraft(workspaceId, scope, { putAway: false })
+
+    expect(stashedId).toBe(loaded.id)
+    expect(await db.composerLoaded.get(scope)).toBeUndefined()
+    // No marker: a disarm is "stop replying here", not "put the draft away" —
+    // the board button and auto-restore must keep advertising it everywhere.
+    expect((await db.drafts.get(loaded.id))?.stashedAt ?? null).toBeNull()
+  })
+
   it("no-ops when nothing is loaded", async () => {
     expect(await stashLoadedDraft(workspaceId, scope)).toBeNull()
   })

@@ -530,7 +530,20 @@ export async function purgePlaintextScopeDrafts(workspaceId: string, scope: stri
  * `null` when nothing was loaded. Callers flush the live editor content into the row
  * first (so unsaved keystrokes survive) and reset the editor afterward.
  */
-export async function stashLoadedDraft(workspaceId: string, scope: string): Promise<string | null> {
+export async function stashLoadedDraft(
+  workspaceId: string,
+  scope: string,
+  /**
+   * `putAway: false` is a MECHANICAL detach — a disarm dropping a conversation
+   * arm, a relocate displacing the target's loaded draft. The pointer clears but
+   * the draft stays fully advertised (board button, auto-restore, fork
+   * indicators): the user never said "put it away", so no surface may act as if
+   * they did. Only the deliberate stash gesture (Cmd+S / "Save current") writes
+   * the durable marker.
+   */
+  opts?: { putAway?: boolean }
+): Promise<string | null> {
+  const putAway = opts?.putAway ?? true
   // The caller flushed the live editor into the row before stashing, so the
   // staged buffer is now redundant; drop it so a reload doesn't recover the
   // stashed body back into the (now draft-less) composer as a new loaded draft.
@@ -545,7 +558,7 @@ export async function stashLoadedDraft(workspaceId: string, scope: string): Prom
     const id = (await db.composerLoaded.get(scope))?.draftId ?? null
     if (!id) return null
     const row = await db.drafts.get(id)
-    if (row && row.stashedAt == null) {
+    if (putAway && row && row.stashedAt == null) {
       stashed = { ...row, stashedAt: Date.now() }
       await db.drafts.put(stashed)
       await enqueueDraftUpsert(workspaceId, id)
