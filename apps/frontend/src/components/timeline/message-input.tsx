@@ -12,10 +12,12 @@ import {
   useDecryptedDraftPreviews,
   useMentionStreamContext,
   useComposerTarget,
+  useMountedComposerCount,
   setComposerTarget,
   clearComposerTarget,
 } from "@/hooks"
 import { useIsMobile } from "@/hooks/use-mobile"
+import { stashLoadedDraft } from "@/hooks/use-draft-message"
 import { useComposeTrace } from "@/lib/compose-trace"
 import { usePreferences } from "@/contexts"
 import { useConnectionState } from "@/components/layout/connection-status"
@@ -297,6 +299,8 @@ function MessageInputComponent({
   }, [targetUnresolvable, hostScope, storedTarget])
   const effectiveTarget =
     targetResolved && !e2eEnabled && targetConversationId && !targetUnresolvable ? storedTarget : null
+  // Includes this composer once it is pointed at the scope, so >1 means someone else.
+  const mountedOnTarget = useMountedComposerCount(workspaceId, effectiveTarget)
   const armedConversationId = effectiveTarget ? targetConversationId : null
   const conversationReplyTopic = conversationReplyPost?.conversation.topicSummary ?? null
   const conversationReplyLastActiveStreamId = conversationReplyPost
@@ -390,15 +394,30 @@ function MessageInputComponent({
 
   // Disarm: this composer stops pointing at the conversation and reverts to the
   // stream's own draft. The typed draft is NOT moved — its scope IS its target,
-  // so it stays a draft of that conversation, keeps its filing, and stays
-  // reachable from the conversation's own composer and the stashed-drafts pile.
+  // so it stays a draft of that conversation and keeps its filing.
+  //
+  // It must also stop being CHECKED OUT here, though. A draft loaded under a scope
+  // no composer is showing is excluded from every pile on the device (the
+  // checked-out-anywhere rule) and carries no `?stash=` link in the explorer, so
+  // "it stays reachable" would be false: the only way back would be to open that
+  // conversation's own composer. Detaching the pointer turns it into a real stash
+  // entry, which is what makes the sentence above true. Unless another composer is
+  // already mounted on that scope — then it is showing the draft and owns it.
   const disarm = useCallback(() => {
     // Cleared here rather than in the routing effect: the gesture sets the ref
     // synchronously and the target lands an IDB write later, so an effect re-run
     // in that window would erase the very gesture it is meant to recognise.
     gestureArmedIdRef.current = null
+    const vacated = effectiveTarget
     void clearComposerTarget(hostScope)
-  }, [hostScope])
+    if (vacated && mountedOnTarget <= 1) {
+      void composerRef.current
+        .flushDraft()
+        .catch((err) => console.error("[composer] flush before disarm failed", err))
+        .then(() => stashLoadedDraft(workspaceId, vacated))
+        .catch((err) => console.error("[composer] could not release the disarmed draft", err))
+    }
+  }, [hostScope, workspaceId, effectiveTarget, mountedOnTarget])
 
   useEffect(() => {
     if (stashParamWantsHostScope) disarm()
@@ -422,6 +441,18 @@ function MessageInputComponent({
   const conversationReplyLastActiveStreamId = conversationReplyPost
     ? boardPostLastActiveStreamId(conversationReplyPost)
     : null
+
+  // Two live editors on one draft row is the failure the mounted-composer registry
+  // exists to police: the second never re-reads an ordinary body change, so
+  // whichever saves last silently wins. Arming let this composer occupy a board
+  // scope the conversation panel also mounts, so when the panel opens, yield —
+  // it is the more specific host, the same precedence the panel hand-off already
+  // uses, and the draft is checked out at that scope so it lands there intact.
+  useEffect(() => {
+    if (!effectiveTarget || mountedOnTarget <= 1) return
+    gestureArmedIdRef.current = null
+    void clearComposerTarget(hostScope)
+  }, [effectiveTarget, mountedOnTarget, hostScope])
 
   // Hand the armed conversation off to its side panel (Mechanism B), which renders
   // it across its root + threads and routes the reply recency-biased into the live

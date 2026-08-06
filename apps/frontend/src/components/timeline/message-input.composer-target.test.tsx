@@ -336,6 +336,24 @@ describe("the timeline composer's durable target", () => {
     expect(await db.composerTarget.get(hostScope)).toBeDefined()
   })
 
+  it("releases the draft it stops hosting when disarmed, so it returns to the pile", async () => {
+    await seedDrafts()
+    await setComposerTarget(workspaceId, hostScope, boardScope)
+
+    mount()
+    await waitFor(() => expect(screen.getByTestId("conversation-reply-strip")).toBeInTheDocument())
+
+    await act(async () => {
+      screen.getByRole("button", { name: /cancel reply in conversation/i }).click()
+    })
+
+    // A draft checked out under a scope no composer shows is excluded from every
+    // pile on the device, so disarming has to detach the pointer or the text is
+    // reachable from nowhere.
+    await waitFor(async () => expect(await db.composerLoaded.get(boardScope)).toBeUndefined())
+    expect(await bodyOf(boardScope)).toBe("board body")
+  })
+
   it("does not route a restored arm — a page load must not open the panel or focus", async () => {
     await seedDrafts()
     await setComposerTarget(workspaceId, hostScope, boardScope)
