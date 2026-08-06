@@ -240,7 +240,7 @@ describe("StashedDraftsPicker", () => {
     const sealed = makeDraft("draft_e", "placeholder")
     const open = () => userEvent.click(screen.getByRole("button", { name: /drafts/i }))
     const preview = (status: DraftPreview["status"], text = ""): Map<string, DraftPreview> =>
-      new Map([["draft_e", { text, status }]])
+      new Map([["draft_e", { text, markdown: text, status }]])
 
     it("renders the host-supplied decrypted body when ready", async () => {
       renderPicker({ drafts: [sealed], previewById: preview("ready", "decrypted body") })
