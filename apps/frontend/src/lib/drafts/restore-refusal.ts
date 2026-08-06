@@ -1,5 +1,11 @@
 /** Why a restore did not happen. Every guard returns one; none is silent (INV-11). */
-export type DraftRestoreRefusal = "missing" | "checked-out" | "target-busy" | "host-ineligible" | "raced"
+export type DraftRestoreRefusal =
+  | "missing"
+  | "checked-out"
+  | "target-busy"
+  | "host-ineligible"
+  | "branch-elsewhere"
+  | "raced"
 
 export type DraftRestoreResult = { ok: true } | { ok: false; reason: DraftRestoreRefusal }
 
@@ -15,5 +21,6 @@ export const RESTORE_REFUSAL_MESSAGE: Record<DraftRestoreRefusal, string> = {
   "checked-out": "That draft is open in another composer.",
   "target-busy": "That conversation already has a different draft open.",
   "host-ineligible": "This stream can't hold that draft — it stays where it is.",
+  "branch-elsewhere": "Open the conversation to continue that branch reply.",
   raced: "That draft moved before it could be restored.",
 }
