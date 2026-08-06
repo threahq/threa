@@ -15,16 +15,7 @@ export interface QuickSwitcherItem {
   group?: string
   href?: string
   onSelect: () => void
-  /** Optional action button (e.g., delete) */
-  onAction?: () => void
-  /** Icon for the action button */
-  actionIcon?: React.ComponentType<{ className?: string }>
-  /** Aria label for the action button */
-  actionLabel?: string
-  /**
-   * Row context menu, rendered in the trailing slot in place of the single
-   * action button. Its clicks never navigate the row.
-   */
+  /** Row context menu, rendered in the trailing slot. Its clicks never navigate the row. */
   contextMenu?: React.ReactNode
   /** Touch long-press on the row (e.g. open the row's action drawer). */
   onLongPress?: () => void

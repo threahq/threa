@@ -25,7 +25,7 @@ export function DraftContextMenu({ context, label }: { context: DraftActionConte
         <Button
           variant="ghost"
           size="icon"
-          className="reveal-actions h-7 w-7 shrink-0 text-muted-foreground"
+          className="reveal-actions-hover-only hidden h-7 w-7 shrink-0 text-muted-foreground sm:block"
           aria-label={`Draft actions: ${label}`}
         >
           <EllipsisVertical className="h-4 w-4" />
