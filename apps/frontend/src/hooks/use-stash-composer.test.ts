@@ -8,7 +8,7 @@ import { resetDraftStoreCache, seedDraftCacheFromIdb } from "@/stores/draft-stor
 import { resetDraftResolutionGuard } from "@/sync/draft-resolution-guard"
 import { __clearBoardDraftContextRegistry } from "./use-board-draft-context"
 import { useDraftComposer } from "./use-draft-composer"
-import { useStashComposer, useStashParamDraftRow } from "./use-stash-composer"
+import { useStashComposer, useStashParamDraftRow, planDraftRestore } from "./use-stash-composer"
 import { upsertLoadedDraft, stashLoadedDraft, restoreStashedDraftToComposer } from "./use-draft-message"
 import { clearComposerTarget } from "./use-composer-target"
 import * as draftMessageModule from "./use-draft-message"
@@ -243,6 +243,7 @@ const aoStreamId = "stream_ao"
 const aoHostScope = `stream:${aoStreamId}`
 const aoConversationId = "conv_ao"
 const aoConversationScope = `board:reply:${aoConversationId}`
+const aoBranchScope = "board:branch-reply:conv_ao_branch"
 
 function seedAoStream(overrides: Record<string, unknown> = {}): Promise<unknown> {
   return db.streams.put({
@@ -349,29 +350,32 @@ describe("restoring a draft that belongs to another surface (adopt vs move)", ()
   // `board:reply:` one (`message-input` derives `targetConversationId` from
   // both), so moving one would rewrite a branch draft's scope to the channel and
   // destroy the filing this feature exists to keep — with no undo.
-  it("adopts a branch reply's draft in the timeline instead of moving it", async () => {
-    const branchScope = `board:branch-reply:${aoConversationId}`
-    await db.drafts.bulkAdd([aoDraft("draft_branch", branchScope), aoDraft("draft_host", aoHostScope)])
-    await db.composerLoaded.put({ scope: aoHostScope, workspaceId: aoWorkspaceId, draftId: "draft_host" })
-    await seedDraftCacheFromIdb(aoWorkspaceId)
+  // Adopting a branch reply looks right — the timeline can hold the target and
+  // render the strip — but a branch conversation lives in a thread by
+  // construction, so the send guard always finds it not-live-here and hands off
+  // to a panel that opens the conversation's own reply scope, not the branch
+  // tail: the message is never sent and the draft is stranded. Moving is worse —
+  // it rewrites the scope and destroys the filing with no undo.
+  it("refuses a branch reply rather than adopting or moving it", () => {
+    expect(
+      planDraftRestore({
+        hostScope: aoHostScope,
+        targetHost: aoHostScope,
+        draftScope: aoBranchScope,
+        draftSource: { kind: "branch", conversationId: "conv_ao_branch" },
+      })
+    ).toEqual({ action: "refuse", reason: "branch-elsewhere" })
 
-    const { result } = renderHook(() => useAoHarness(aoHostScope, aoHostScope), { wrapper })
-    await waitFor(() => expect(result.current.stash.drafts.map((d) => d.id)).toContain("draft_branch"))
-
-    await act(async () => {
-      expect(await result.current.stash.handleRestoreStashed("draft_branch")).toEqual({ ok: true })
-    })
-
-    // The row did NOT move: same scope, no re-scoping push.
-    expect((await db.drafts.get("draft_branch"))?.scope).toBe(branchScope)
-    expect(await upsertOpsFor("draft_branch")).toHaveLength(0)
-    // Checked out under its own scope, with the timeline targeted at it — the
-    // strip and the branch-filed send both read that target.
-    expect((await db.composerLoaded.get(branchScope))?.draftId).toBe("draft_branch")
-    expect((await db.composerTarget.get(aoHostScope))?.scope).toBe(branchScope)
-    expect((await db.composerLoaded.get(aoHostScope))?.draftId).toBe("draft_host")
+    // A plain conversation reply is still adopted — the row keeps its filing.
+    expect(
+      planDraftRestore({
+        hostScope: aoHostScope,
+        targetHost: aoHostScope,
+        draftScope: aoConversationScope,
+        draftSource: { kind: "conversation", conversationId: aoConversationId },
+      })
+    ).toEqual({ action: "adopt", targetHost: aoHostScope, targetScope: aoConversationScope })
   })
-
   it("adopting the host's own scope while armed elsewhere is a disarm, not a move", async () => {
     await db.drafts.bulkAdd([aoDraft("draft_conv", aoConversationScope), aoDraft("draft_host", aoHostScope)])
     await db.composerTarget.put({ host: aoHostScope, workspaceId: aoWorkspaceId, scope: aoConversationScope })

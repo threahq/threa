@@ -25,6 +25,7 @@ import type { DraftComposerState } from "./use-draft-composer"
 export type DraftRestorePlan =
   | { action: "same-scope" }
   | { action: "adopt"; targetHost: string; targetScope: string }
+  | { action: "refuse"; reason: DraftRestoreRefusal }
   | { action: "move"; fromScope: string; toScope: string }
 
 /**
@@ -57,7 +58,16 @@ export function planDraftRestore(input: {
 }): DraftRestorePlan {
   const { hostScope, targetHost, draftScope, draftSource } = input
   if (draftScope === hostScope) return { action: "same-scope" }
-  const adoptableSource = draftSource?.kind === "conversation" || draftSource?.kind === "branch"
+  // A branch reply has no host outside its own composer that can both hold it and
+  // SEND it. Adopting looks right — the timeline can hold the target and render
+  // the strip — but a branch conversation lives in a thread by construction, so
+  // the send guard always finds it not-live-here and hands off to a panel that
+  // opens `board:reply:<B>`, not the branch tail: the message is never sent and
+  // the draft is stranded. Moving is worse: it rewrites the scope and destroys the
+  // filing. So neither, and say so — the row stays visible and the user is told
+  // where it lives.
+  if (draftSource?.kind === "branch") return { action: "refuse", reason: "branch-elsewhere" }
+  const adoptableSource = draftSource?.kind === "conversation"
   if (targetHost && (adoptableSource || draftScope === targetHost)) {
     return { action: "adopt", targetHost, targetScope: draftScope }
   }
@@ -218,6 +228,9 @@ export function useStashComposer(
         draftScope: row.scope,
         draftSource: describeScope(row.scope),
       })
+      if (plan.action === "refuse") {
+        return refuse(plan.reason, `refusing restore of ${id} into ${scope}: ${plan.reason}`)
+      }
       // Leaving the row's own scope needs a host that can hold it: an encrypted
       // or archived home means the pile should never have offered it, and for an
       // adopt a late `e2eEnabled` resolve would let `purgePlaintextScopeDrafts`
