@@ -428,14 +428,8 @@ export function useDraftComposer({
   // cannot cross-write into Y) and then re-run init against Y. Rehydration happens
   // whether or not the user is engaged: the repoint is this same user's own action
   // on this device, so the new draft is what they asked to see.
-  // Pointer transitions are handled STRICTLY IN ORDER through a promise chain:
-  // a transition that persists content (an async save) must fully resolve before
-  // the next transition's handler reads the editor state, or a second repoint
-  // landing inside the save's in-flight window (a programmatic double-restore,
-  // a catch-up burst) reads half-updated refs and flushes the wrong content into
-  // the wrong row. `prevLoadedIdRef` still advances synchronously so each queued
-  // handler gets its own (prev, next) pair; everything else is read at RUN time,
-  // after the previous handler settled.
+  // Serialization (why and how) is documented once, on the chain effect below.
+  //
   // NOT async: a transition with no persistence work completes synchronously
   // (returns null) so its resets and ref updates land in the same tick the
   // pointer changed — the pre-chain semantics every hydrate effect depends on.

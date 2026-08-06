@@ -2,6 +2,7 @@ import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react"
 import { createPortal } from "react-dom"
 import { CornerDownRight, X } from "lucide-react"
 import { toast } from "sonner"
+import { RESTORE_REFUSAL_MESSAGE } from "@/lib/drafts/restore-refusal"
 import {
   MessageComposer,
   FloatingComposerShell,
@@ -221,11 +222,15 @@ export function InlineComposerForm({
     if (!id || !composer.isLoaded) return
     restoreOnMountRef.current = null
     // A refusal here is rare (only a row deleted mid-open survives v2's
-    // take-over) but must not vanish silently (INV-11): the resting button
-    // advertised this draft, so an empty composer needs an explanation in the log.
+    // take-over) but the user TAPPED the resting button that advertised this
+    // draft — an unexplained empty composer is a silent failure, so it toasts
+    // like the picker and the deep link do (INV-11, INV-63).
     stash.handleRestoreStashed(id).then(
       (result) => {
-        if (!result.ok) console.error(`[board] mount restore of ${id} refused: ${result.reason}`)
+        if (!result.ok) {
+          console.error(`[board] mount restore of ${id} refused: ${result.reason}`)
+          toast.error(RESTORE_REFUSAL_MESSAGE[result.reason])
+        }
       },
       (err) => console.error(`[board] mount restore of ${id} threw`, err)
     )
@@ -257,7 +262,10 @@ export function InlineComposerForm({
     const stashId = restoreOnSignal.stashId
     stash.handleRestoreStashed(stashId).then(
       (result) => {
-        if (!result.ok) console.error(`[board] signal restore of ${stashId} refused: ${result.reason}`)
+        if (!result.ok) {
+          console.error(`[board] signal restore of ${stashId} refused: ${result.reason}`)
+          toast.error(RESTORE_REFUSAL_MESSAGE[result.reason])
+        }
       },
       (err) => console.error(`[board] signal restore of ${stashId} threw`, err)
     )

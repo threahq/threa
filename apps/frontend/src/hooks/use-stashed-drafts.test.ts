@@ -207,6 +207,7 @@ describe("useStashedDrafts — pile membership", () => {
       kind: "conversation",
       conversationId: "conv_lone",
       tier: "borrowed",
+      checkedOutElsewhere: false,
       title: null,
       // No topic summary yet — the label falls back to this stream's name rather
       // than a generic phrase, the same rung the drafts explorer uses.
@@ -357,18 +358,47 @@ describe("useStashedDrafts — pile membership", () => {
     ])
   })
 
-  it("excludes a draft checked out into ANY scope's composer on this device", async () => {
+  it("offers a draft checked out under ANOTHER scope, marked checkedOutElsewhere; hides only this host's own loaded one", async () => {
     await seedStream("stream_s")
     await seedConversation("conv_1", "stream_s")
     await db.drafts.bulkAdd([
       draftRow({ id: "draft_stream", scope: "stream:stream_s" }),
       draftRow({ id: "draft_conv", scope: "board:reply:conv_1" }),
     ])
-    // Live-typed in the timeline composer: the conversation's picker must not
-    // offer it, or a move would vacate it under a live editor.
+    // Loaded under the timeline scope — v1 hid this row from every other pile,
+    // which (pointers never detaching on navigation) meant nothing ever shared
+    // without an explicit stash. v2 offers it; a tap takes it over (chunk 2).
     await db.composerLoaded.put({ scope: "stream:stream_s", workspaceId: pileWorkspaceId, draftId: "draft_stream" })
 
-    await expectPile("board:reply:conv_1", ["draft_conv"])
+    const { result, unmount } = renderHook(() => useStashedDrafts(pileWorkspaceId, "board:reply:conv_1"))
+    await waitFor(() => expect(result.current.drafts.map((d) => d.id).sort()).toEqual(["draft_conv", "draft_stream"]))
+    expect(result.current.originByDraftId.get("draft_stream")?.checkedOutElsewhere).toBe(true)
+    expect(result.current.originByDraftId.get("draft_conv")?.checkedOutElsewhere).toBe(false)
+    // The deep-link claim set includes the loaded-elsewhere row too (take-over).
+    expect(result.current.claimableDrafts.map((d) => d.id)).toEqual(["draft_conv"])
+    unmount()
+
+    // Control: the host whose OWN composer holds the draft does not see it in
+    // its pile (it is already on screen) — the exclusion that remains.
+    const host = renderHook(() => useStashedDrafts(pileWorkspaceId, "stream:stream_s"))
+    await waitFor(() => expect(host.result.current.drafts.map((d) => d.id)).toEqual(["draft_conv"]))
+    expect(host.result.current.claimableDrafts.map((d) => d.id)).toEqual([])
+    host.unmount()
+  })
+
+  it("a stream draft with a live pointer appears in a same-root conversation pile without any stash step", async () => {
+    await seedStream("stream_s")
+    await seedConversation("conv_1", "stream_s")
+    await db.drafts.bulkAdd([
+      draftRow({ id: "draft_typed", scope: "stream:stream_s" }),
+      // Control row proving the pile is not just "everything": a draft under a
+      // different root stays out even while the widened rule admits the typed one.
+      draftRow({ id: "draft_other_root", scope: "stream:stream_other" }),
+    ])
+    await seedStream("stream_other")
+    await db.composerLoaded.put({ scope: "stream:stream_s", workspaceId: pileWorkspaceId, draftId: "draft_typed" })
+
+    await expectPile("board:reply:conv_1", ["draft_typed"])
   })
 
   it("excludes an empty borrowed draft, an archived home, an E2E host, and an uncached conversation", async () => {
@@ -426,11 +456,19 @@ describe("useStashedDrafts — pile membership", () => {
     const { result } = renderHook(() => useStashedDrafts(pileWorkspaceId, "stream:stream_s"))
     await waitFor(() => expect(result.current.originByDraftId.size).toBe(4))
     expect(Object.fromEntries(result.current.originByDraftId)).toEqual({
-      draft_stream: { kind: "stream", streamId: "stream_s", tier: "own", title: null, anchorStreamId: "stream_s" },
+      draft_stream: {
+        kind: "stream",
+        streamId: "stream_s",
+        tier: "own",
+        checkedOutElsewhere: false,
+        title: null,
+        anchorStreamId: "stream_s",
+      },
       draft_conv: {
         kind: "conversation",
         conversationId: "conv_1",
         tier: "borrowed",
+        checkedOutElsewhere: false,
         title: "Pizza plans",
         anchorStreamId: "stream_s",
       },
@@ -439,6 +477,7 @@ describe("useStashedDrafts — pile membership", () => {
         anchorId: "msg_9",
         streamId: "stream_s",
         tier: "borrowed",
+        checkedOutElsewhere: false,
         title: null,
         anchorStreamId: "stream_s",
       },
@@ -448,6 +487,7 @@ describe("useStashedDrafts — pile membership", () => {
         messageId: "msg_1",
         anchorStreamId: "stream_s",
         tier: "borrowed",
+        checkedOutElsewhere: false,
         title: "Pizza plans",
       },
     })
@@ -489,21 +529,43 @@ describe("useStashedDrafts — pile membership", () => {
     expect(result.current.claimableDrafts.map((d) => d.id)).toEqual(["draft_conv"])
   })
 
-  it("never offers or claims a row already checked out by another scope on this device", async () => {
+  // Every `composerLoaded` writer keeps pointer-scope == row-scope (adopt checks
+  // a row out under its OWN scope; move rewrites the scope first), so "checked
+  // out elsewhere" always means: a borrowed row loaded in its own composer on
+  // another surface. That also means a host's claim set never meets a foreign
+  // pointer on its own rows — dropping the old checked-out-anywhere claim filter
+  // is behavior-preserving, and the exclusion that remains (the host's own
+  // loaded draft) is asserted here with live rows on both sides.
+  it("offers a borrowed row loaded in its own composer elsewhere; a host never claims its own loaded draft", async () => {
     await seedStream("stream_s")
     await seedConversation("conv_1", "stream_s")
     await db.drafts.bulkAdd([
       draftRow({ id: "draft_shared", scope: "board:reply:conv_1" }),
       draftRow({ id: "draft_sibling", scope: "board:reply:conv_1", clientUpdatedAt: 900 }),
     ])
-    // Restored into the timeline composer from the drafts explorer: the row's own
-    // scope still says `board:reply:conv_1`, so a scope-exact claimable list would
-    // hand the same row to a second composer.
-    await db.composerLoaded.put({ scope: "stream:stream_s", workspaceId: pileWorkspaceId, draftId: "draft_shared" })
+    // The conversation's docked composer holds draft_shared (reachable shape:
+    // pointer under the row's own scope). v1 hid it from the stream's pile; v2
+    // offers it there — a tap takes it over (chunk 2).
+    await db.composerLoaded.put({
+      scope: "board:reply:conv_1",
+      workspaceId: pileWorkspaceId,
+      draftId: "draft_shared",
+    })
 
-    const { result } = renderHook(() => useStashedDrafts(pileWorkspaceId, "board:reply:conv_1"))
-    await waitFor(() => expect(result.current.claimableDrafts.map((d) => d.id)).toEqual(["draft_sibling"]))
-    expect(result.current.drafts.map((d) => d.id)).toEqual(["draft_sibling"])
+    const stream = renderHook(() => useStashedDrafts(pileWorkspaceId, "stream:stream_s"))
+    await waitFor(() =>
+      expect(stream.result.current.drafts.map((d) => d.id).sort()).toEqual(["draft_shared", "draft_sibling"])
+    )
+    expect(stream.result.current.originByDraftId.get("draft_shared")?.checkedOutElsewhere).toBe(true)
+    expect(stream.result.current.originByDraftId.get("draft_sibling")?.checkedOutElsewhere).toBe(false)
+    stream.unmount()
+
+    // The conversation host itself: its loaded draft is on screen, so neither
+    // pile nor claim set offers it; the detached sibling stays claimable.
+    const conv = renderHook(() => useStashedDrafts(pileWorkspaceId, "board:reply:conv_1"))
+    await waitFor(() => expect(conv.result.current.claimableDrafts.map((d) => d.id)).toEqual(["draft_sibling"]))
+    expect(conv.result.current.drafts.map((d) => d.id)).toEqual(["draft_sibling"])
+    conv.unmount()
   })
 
   // The scope-exact branch deliberately applies NO payload filter. A draft can

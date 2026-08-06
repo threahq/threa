@@ -404,9 +404,10 @@ export function useAllDrafts(workspaceId: string) {
     return map
   }, [composerLoaded])
 
-  // A draft is "stashed" when no composer on this device holds it — keyed by
-  // draft id, the same checked-out-anywhere rule the stash pile excludes on, so
-  // the explorer can never offer a `?stash=` deep link the destination refuses.
+  // A draft is "stashed" when no composer on this device holds it — the
+  // explorer's own rule for which rows carry a `?stash=` deep link. (The stash
+  // PILE no longer excludes on it — v2 offers loaded rows and a restore takes
+  // them over — so this is deliberately the stricter of the two, not a mirror.)
   // Every writer of `composerLoaded` keeps pointer-scope == row-scope (adopt
   // checks the row out under its own scope; move rewrites the scope first), so
   // an id-keyed and a scope-keyed rule agree on every reachable state; id-keyed

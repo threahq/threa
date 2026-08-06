@@ -544,3 +544,71 @@ describe("restoring a draft that belongs to another surface (adopt vs move)", ()
     expect(await db.drafts.get("draft_other")).toBeDefined()
   })
 })
+
+describe("restoreDraftHere — re-plan on mid-restore drift", () => {
+  beforeEach(async () => {
+    vi.restoreAllMocks()
+    resetDraftStoreCache()
+    resetDraftResolutionGuard()
+    __clearBoardDraftContextRegistry()
+    await db.drafts.clear()
+    await db.composerLoaded.clear()
+    await db.composerTarget.clear()
+    await db.pendingOperations.clear()
+    await db.streams.clear()
+    await db.conversations.clear()
+    vi.spyOn(currentUserHook, "useCurrentWorkspaceUserId").mockReturnValue(null)
+    vi.spyOn(e2eSessionStore, "useE2eSession").mockReturnValue(LOCKED_SESSION)
+  })
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+    __clearBoardDraftContextRegistry()
+  })
+
+  // The plan (adopt vs move) is made from the row's scope BEFORE the flush; the
+  // flush is the drift window. A row re-homed into a conversation during it must
+  // be ADOPTED by the re-plan — executing the stale move would rewrite its scope
+  // and destroy the filing with no undo.
+  it("re-plans a move into an adopt when the row is re-homed during the flush", async () => {
+    await seedAoStream()
+    await seedAoConversation()
+    const subtopicScope = `board:subtopic:${aoStreamId}:msg_1`
+    await db.drafts.put(aoDraft("draft_drift", subtopicScope))
+    await seedDraftCacheFromIdb(aoWorkspaceId)
+
+    function useDriftHarness() {
+      const composer = useDraftComposer({ workspaceId: aoWorkspaceId, draftKey: aoHostScope, scopeId: aoHostScope })
+      // The drift lands inside the flush window: another surface re-homes the
+      // row into the conversation between the plan and the move txn.
+      const wrapped = {
+        ...composer,
+        flushDraft: async () => {
+          const live = await db.drafts.get("draft_drift")
+          if (live && live.scope === subtopicScope) {
+            const { migrateLocalDraftScope } = await import("@/sync/draft-sync")
+            await migrateLocalDraftScope(aoWorkspaceId, subtopicScope, { ...live, scope: aoConversationScope })
+          }
+        },
+      }
+      const stash = useStashComposer(wrapped as never, aoWorkspaceId, aoHostScope, {
+        targetHost: aoHostScope,
+        disarmTarget: () => clearComposerTarget(aoHostScope),
+      })
+      return { stash }
+    }
+
+    const { result } = renderHook(() => useDriftHarness(), { wrapper })
+    await waitFor(() => expect(result.current.stash.drafts.map((d) => d.id)).toContain("draft_drift"))
+
+    await act(async () => {
+      expect(await result.current.stash.handleRestoreStashed("draft_drift")).toEqual({ ok: true })
+    })
+
+    // Re-planned: adopted where it now lives — filing KEPT, host armed at the
+    // conversation; never moved onto the host scope.
+    expect((await db.drafts.get("draft_drift"))?.scope).toBe(aoConversationScope)
+    expect((await db.composerTarget.get(aoHostScope))?.scope).toBe(aoConversationScope)
+    expect((await db.composerLoaded.get(aoConversationScope))?.draftId).toBe("draft_drift")
+  })
+})

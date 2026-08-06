@@ -34,6 +34,12 @@ export type StashedDraftSource =
  */
 export type StashedDraftOrigin = StashedDraftSource & {
   tier: "own" | "borrowed"
+  /**
+   * A DIFFERENT scope's composer pointer currently references this draft.
+   * Restoring still works — it takes the draft over (chunk 2) — but the picker
+   * shows a quiet hint so the take-over is informed rather than surprising.
+   */
+  checkedOutElsewhere: boolean
   /** The owning conversation's topic summary, when it has one. */
   title: string | null
   /**
@@ -48,13 +54,13 @@ export type StashedDraftOrigin = StashedDraftSource & {
 }
 
 export interface UseStashedDraftsResult {
-  /** The pile the picker renders: every draft that could have been written under this host's root stream, minus the loaded ones. Own rows first, then borrowed; each group newest first. */
+  /** The pile the picker renders: every draft that could have been written under this host's root stream, minus only THIS host's loaded one (already on screen). Own rows first, then borrowed; each group newest first. */
   drafts: CachedDraft[]
   /**
-   * The subset this host may restore: its own scope's rows, minus any row already
-   * checked out by a composer on this device. A row checked out under one scope is
-   * neither offered nor claimable under another — two scopes holding one row make
-   * their debounced saves fight over its `scope` and body.
+   * The subset the `?stash=` deep link may claim: this scope's rows minus the
+   * host's own loaded one. A row checked out under another scope stays claimable
+   * — the restore takes it over (chunk 2), the identity-addressed write path
+   * makes the displaced editor split rather than fight.
    */
   claimableDrafts: CachedDraft[]
   /** Where each pile row came from, and its tier, keyed by draft id. */
@@ -133,8 +139,12 @@ function isHostHomeEligible(
 
 /**
  * The stashed drafts a composer offers — every draft the user could plausibly
- * have written from here, except the ones checked out into a composer on this
- * device.
+ * have written from here, loaded elsewhere or not; the only exclusion is this
+ * host's own loaded draft, which is already on screen. A row checked out under
+ * another scope is offered with `checkedOutElsewhere` set and a tap TAKES it
+ * (chunk 2) — hiding it was v1's mistake: pointers never detach on navigation,
+ * so "loaded somewhere" described almost every draft and the pile shared
+ * nothing.
  *
  * "Could have written here" is {@link isDraftInHostPile}: one root stream, then
  * own scope / same conversation / a top-level draft / a top-level host offering
@@ -162,12 +172,13 @@ export function useStashedDrafts(workspaceId: string, scope: string | undefined)
   const cachedStreams = useWorkspaceStreamsRaw(workspaceId)
 
   const loadedId = scope ? (loaded.find((row) => row.scope === scope)?.draftId ?? null) : null
-  // Loaded in ANY scope on this device, not just this host's: a draft the user is
-  // live-typing in another composer must never be offered here.
-  const loadedAnywhere = useMemo(() => {
-    const ids = new Set<string>()
-    for (const row of loaded) if (row.draftId) ids.add(row.draftId)
-    return ids
+  // Where each draft is checked out, if anywhere. Being loaded somewhere no
+  // longer HIDES a row (v2: a visible row is loadable — restoring takes it
+  // over, chunk 2); it only annotates the origin so the take-over is informed.
+  const pointerScopeByDraftId = useMemo(() => {
+    const map = new Map<string, string>()
+    for (const row of loaded) if (row.draftId) map.set(row.draftId, row.scope)
+    return map
   }, [loaded])
 
   const streamMap = useMemo(() => {
@@ -182,10 +193,7 @@ export function useStashedDrafts(workspaceId: string, scope: string | undefined)
     return ids
   }, [cachedStreams])
 
-  const candidates = useMemo(
-    () => allDrafts.filter((draft) => !loadedAnywhere.has(draft.id) && draftHasPayload(draft)),
-    [allDrafts, loadedAnywhere]
-  )
+  const candidates = useMemo(() => allDrafts.filter(draftHasPayload), [allDrafts])
 
   const pileScopes = useMemo(() => {
     const scopes = candidates.map((draft) => draft.scope)
@@ -266,12 +274,13 @@ export function useStashedDrafts(workspaceId: string, scope: string | undefined)
         // (seeded by "Discuss with Ariadne") has an empty body and no attachments,
         // and the explorer already skips it — the scope's own picker is the last
         // surface that can reach it, so filtering here would strand it while it
-        // keeps syncing. `loadedAnywhere` is not optional: a row checked out under
-        // any scope on this device must be claimable from none.
-        .filter((draft) => draft.scope === scope && !loadedAnywhere.has(draft.id))
+        // keeps syncing. The only exclusion is this host's own loaded draft (it's
+        // already on screen); a row checked out ELSEWHERE stays claimable — the
+        // restore takes it over (v2).
+        .filter((draft) => draft.scope === scope && draft.id !== loadedId)
         .sort((a, b) => b.clientUpdatedAt - a.clientUpdatedAt)
     )
-  }, [allDrafts, workspaceId, scope, loadedAnywhere])
+  }, [allDrafts, workspaceId, scope, loadedId])
 
   const comparePile = useCallback(
     (a: CachedDraft, b: CachedDraft) => {
@@ -314,17 +323,19 @@ export function useStashedDrafts(workspaceId: string, scope: string | undefined)
     const rows = new Map<string, CachedDraft>()
     for (const id of latchedIdsRef.current) {
       const row = draftsById.get(id)
-      // A row that was deleted, emptied or checked out into a composer still goes
-      // — the latch holds membership against a moving home stream, not the row.
-      // "Emptied" applies to borrowed rows only; an own row carrying just context
-      // refs is legitimately body-less (see `scopeExact`).
-      if (!row || loadedAnywhere.has(row.id)) continue
+      // A row that was deleted, emptied, or that became THIS host's loaded draft
+      // still goes — the latch holds membership against a moving home stream, not
+      // the row. Checked out elsewhere is no longer a drop-out (v2: the row stays
+      // offered and a tap takes it over). "Emptied" applies to borrowed rows
+      // only; an own row carrying just context refs is legitimately body-less
+      // (see `scopeExact`).
+      if (!row || row.id === loadedId) continue
       if (row.scope !== scope && !draftHasPayload(row)) continue
       rows.set(id, row)
     }
     for (const row of livePile) rows.set(row.id, row)
     return [...rows.values()].sort(comparePile)
-  }, [pileOpen, livePile, draftsById, loadedAnywhere, comparePile, scope])
+  }, [pileOpen, livePile, draftsById, loadedId, comparePile, scope])
 
   const originByDraftId = useMemo(() => {
     const topicSummary = (source: StashedDraftSource): string | null => {
@@ -349,15 +360,17 @@ export function useStashedDrafts(workspaceId: string, scope: string | undefined)
     for (const draft of drafts) {
       const source = draftSource(draft.scope, streamByAnchorId)
       if (!source) continue
+      const pointerScope = pointerScopeByDraftId.get(draft.id)
       map.set(draft.id, {
         ...source,
         tier: draft.scope === scope ? "own" : "borrowed",
+        checkedOutElsewhere: pointerScope !== undefined && pointerScope !== scope,
         title: topicSummary(source),
         anchorStreamId: anchorStream(source),
       })
     }
     return map
-  }, [drafts, scope, streamByAnchorId, boardPostMap, hostPostByMessageId])
+  }, [drafts, scope, streamByAnchorId, boardPostMap, hostPostByMessageId, pointerScopeByDraftId])
 
   const canHostForeignDraft = useCallback(
     () => !!workspaceId && !!scope && isHostHomeEligible(scope, pileContext, streamMap, archivedStreamIds),
