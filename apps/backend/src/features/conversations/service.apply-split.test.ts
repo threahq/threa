@@ -50,6 +50,7 @@ function message(id: string): Message {
 interface Spies {
   insert: ReturnType<typeof spyOn>
   update: ReturnType<typeof spyOn>
+  updateTopicSummary: ReturnType<typeof spyOn>
   removePrimaryMessages: ReturnType<typeof spyOn>
   addPrimaryMessages: ReturnType<typeof spyOn>
   resolveIfEmpty: ReturnType<typeof spyOn>
@@ -116,6 +117,9 @@ function setup(options: { source: Conversation; primaries: Record<string, string
   return {
     insert,
     update: spyOn(ConversationRepository, "update").mockResolvedValue(null as never),
+    updateTopicSummary: spyOn(ConversationRepository, "updateTopicSummary").mockImplementation(async (_db, params) =>
+      makeConversation({ id: params.conversationId, topicSummary: params.topicSummary })
+    ),
     removePrimaryMessages: spyOn(ConversationRepository, "removePrimaryMessages").mockResolvedValue(undefined as never),
     addPrimaryMessages: spyOn(ConversationRepository, "addPrimaryMessages").mockResolvedValue(undefined as never),
     resolveIfEmpty: spyOn(ConversationRepository, "resolveIfEmpty").mockResolvedValue(undefined as never),
@@ -155,10 +159,14 @@ describe("ConversationService.applySplit", () => {
     ])
 
     // Source re-titled to the kept (first) group; only the moved ids are stripped.
-    expect(spies.update).toHaveBeenCalledWith(expect.anything(), WORKSPACE_ID, "conv_a", {
+    expect(spies.updateTopicSummary).toHaveBeenCalledWith(expect.anything(), {
+      workspaceId: WORKSPACE_ID,
+      conversationId: "conv_a",
       topicSummary: "Fable pricing",
-      summary: undefined,
+      source: "explicit",
+      updatedByUserId: ACTOR_ID,
     })
+    expect(spies.update).toHaveBeenCalledWith(expect.anything(), WORKSPACE_ID, "conv_a", { summary: undefined })
     expect(spies.removePrimaryMessages).toHaveBeenCalledWith(
       expect.anything(),
       WORKSPACE_ID,
@@ -229,10 +237,14 @@ describe("ConversationService.applySplit", () => {
       { title: "Moved", messageIds: ["m3", "m4"] },
     ])
 
-    expect(spies.update).toHaveBeenCalledWith(expect.anything(), WORKSPACE_ID, "conv_a", {
+    expect(spies.updateTopicSummary).toHaveBeenCalledWith(expect.anything(), {
+      workspaceId: WORKSPACE_ID,
+      conversationId: "conv_a",
       topicSummary: "Kept",
-      summary: undefined,
+      source: "explicit",
+      updatedByUserId: ACTOR_ID,
     })
+    expect(spies.update).toHaveBeenCalledWith(expect.anything(), WORKSPACE_ID, "conv_a", { summary: undefined })
   })
 
   test("leaves the source title untouched when un-analyzed messages remain", async () => {

@@ -10,8 +10,9 @@ import type {
   ThreadSummary,
   E2eActor,
   ThreaDocument,
+  TitleSource,
 } from "@threa/types"
-import { StreamTypes } from "@threa/types"
+import { StreamTypes, TitleSources } from "@threa/types"
 import { parseArchiveStatusFilter, type ArchiveStatus } from "../../lib/sql-filters"
 
 export type { StreamType, Visibility, CompanionMode, MemoryMode, ArchiveStatus }
@@ -21,6 +22,9 @@ interface StreamRow {
   workspace_id: string
   type: string
   display_name: string | null
+  display_name_source: TitleSource | null
+  display_name_revision: number
+  display_name_updated_by_user_id: string | null
   slug: string | null
   description: string | null
   description_json: ThreaDocument | null
@@ -101,6 +105,9 @@ export interface Stream {
   workspaceId: string
   type: StreamType
   displayName: string | null
+  displayNameSource?: TitleSource | null
+  displayNameRevision?: number
+  displayNameUpdatedByUserId?: string | null
   slug: string | null
   description: string | null
   descriptionJson: ThreaDocument | null
@@ -159,6 +166,8 @@ export interface InsertStreamParams {
   workspaceId: string
   type: StreamType
   displayName?: string
+  displayNameSource?: TitleSource
+  displayNameUpdatedByUserId?: string | null
   slug?: string
   description?: string | null
   descriptionJson?: ThreaDocument | null
@@ -177,9 +186,6 @@ export interface InsertStreamParams {
 }
 
 export interface UpdateStreamParams {
-  // `null` scrubs the plaintext name — used by a sealed-only E2E rename, where
-  // the authoritative name lives in `e2e_streams.name_ciphertext`.
-  displayName?: string | null
   slug?: string
   description?: string | null
   descriptionJson?: ThreaDocument | null
@@ -188,7 +194,6 @@ export interface UpdateStreamParams {
   companionPersonaId?: string | null
   memoryMode?: MemoryMode
   archivedAt?: Date | null
-  displayNameGeneratedAt?: Date | null
 }
 
 /** Preview of the last message in a stream for sidebar display */
@@ -216,6 +221,10 @@ function mapRowToStream(row: StreamRow): Stream {
     workspaceId: row.workspace_id,
     type: row.type as StreamType,
     displayName: row.display_name,
+    displayNameSource:
+      row.display_name_source ?? (row.display_name !== null || row.e2e_name_ciphertext ? TitleSources.LEGACY : null),
+    displayNameRevision: row.display_name_revision,
+    displayNameUpdatedByUserId: row.display_name_updated_by_user_id,
     slug: row.slug,
     description: row.description,
     descriptionJson: row.description_json,
@@ -275,7 +284,7 @@ function mapRowToStreamWithPreview(row: StreamWithPreviewRow): StreamWithPreview
 }
 
 const SELECT_FIELDS = `
-  id, workspace_id, type, display_name, slug, description, description_json, visibility,
+  id, workspace_id, type, display_name, display_name_source, display_name_revision, display_name_updated_by_user_id, slug, description, description_json, visibility,
   parent_stream_id, parent_anchor_id, root_stream_id, reply_count, last_reply_at,
   companion_mode, companion_persona_id, memory_mode, purpose,
   created_by, created_at, updated_at, archived_at, display_name_generated_at
@@ -285,7 +294,7 @@ const SELECT_FIELDS = `
 // plaintext rows visible (the `e2e_owner_user_key_id` projection is just
 // NULL for them) so callers don't have to branch on stream type.
 const SELECT_FIELDS_WITH_E2E = `
-  s.id, s.workspace_id, s.type, s.display_name, s.slug, s.description, s.description_json, s.visibility,
+  s.id, s.workspace_id, s.type, s.display_name, s.display_name_source, s.display_name_revision, s.display_name_updated_by_user_id, s.slug, s.description, s.description_json, s.visibility,
   s.parent_stream_id, s.parent_anchor_id, s.root_stream_id, s.reply_count, s.last_reply_at,
   s.companion_mode, s.companion_persona_id, s.memory_mode, s.purpose,
   s.created_by, s.created_at, s.updated_at, s.archived_at, s.display_name_generated_at,
@@ -844,9 +853,12 @@ export const StreamRepository = {
   },
 
   async insert(db: Querier, params: InsertStreamParams): Promise<Stream> {
+    if (params.displayName !== undefined && params.displayNameSource === undefined) {
+      throw new Error("Titled stream inserts require displayNameSource")
+    }
     const result = await db.query<StreamRow>(sql`
       INSERT INTO streams (
-        id, workspace_id, type, display_name, slug, description, description_json, visibility,
+        id, workspace_id, type, display_name, display_name_source, display_name_revision, display_name_updated_by_user_id, slug, description, description_json, visibility,
         parent_stream_id, parent_anchor_id, root_stream_id,
         companion_mode, companion_persona_id, memory_mode, purpose, uniqueness_key, created_by
       ) VALUES (
@@ -854,6 +866,9 @@ export const StreamRepository = {
         ${params.workspaceId},
         ${params.type},
         ${params.displayName ?? null},
+        ${params.displayNameSource ?? null},
+        ${params.displayName === undefined ? 0 : 1},
+        ${params.displayNameUpdatedByUserId ?? null},
         ${params.slug ?? null},
         ${params.description ?? null},
         ${params.descriptionJson ? JSON.stringify(params.descriptionJson) : null},
@@ -881,9 +896,12 @@ export const StreamRepository = {
     db: Querier,
     params: InsertStreamParams & { uniquenessKey: string }
   ): Promise<{ stream: Stream; created: boolean }> {
+    if (params.displayName !== undefined && params.displayNameSource === undefined) {
+      throw new Error("Titled stream inserts require displayNameSource")
+    }
     const insertResult = await db.query<StreamRow>(sql`
       INSERT INTO streams (
-        id, workspace_id, type, display_name, slug, description, visibility,
+        id, workspace_id, type, display_name, display_name_source, display_name_revision, display_name_updated_by_user_id, slug, description, visibility,
         parent_stream_id, parent_anchor_id, root_stream_id,
         companion_mode, companion_persona_id, memory_mode, uniqueness_key, created_by
       ) VALUES (
@@ -891,6 +909,9 @@ export const StreamRepository = {
         ${params.workspaceId},
         ${params.type},
         ${params.displayName ?? null},
+        ${params.displayNameSource ?? null},
+        ${params.displayName === undefined ? 0 : 1},
+        ${params.displayNameUpdatedByUserId ?? null},
         ${params.slug ?? null},
         ${params.description ?? null},
         ${params.visibility ?? "private"},
@@ -929,12 +950,15 @@ export const StreamRepository = {
    */
   async insertThreadOrFind(db: Querier, params: InsertStreamParams): Promise<{ stream: Stream; created: boolean }> {
     const anchorId = params.parentAnchorId ?? null
+    if (params.displayName !== undefined && params.displayNameSource === undefined) {
+      throw new Error("Titled stream inserts require displayNameSource")
+    }
     if (!params.parentStreamId || !anchorId) {
       throw new Error("parentStreamId and parentAnchorId are required for thread creation")
     }
     const insertResult = await db.query<StreamRow>(sql`
       INSERT INTO streams (
-        id, workspace_id, type, display_name, slug, description, visibility,
+        id, workspace_id, type, display_name, display_name_source, display_name_revision, display_name_updated_by_user_id, slug, description, visibility,
         parent_stream_id, parent_anchor_id, root_stream_id,
         companion_mode, companion_persona_id, memory_mode, uniqueness_key, created_by
       ) VALUES (
@@ -942,6 +966,9 @@ export const StreamRepository = {
         ${params.workspaceId},
         ${params.type},
         ${params.displayName ?? null},
+        ${params.displayNameSource ?? null},
+        ${params.displayName === undefined ? 0 : 1},
+        ${params.displayNameUpdatedByUserId ?? null},
         ${params.slug ?? null},
         ${params.description ?? null},
         ${params.visibility ?? "private"},
@@ -974,10 +1001,6 @@ export const StreamRepository = {
     const values: unknown[] = []
     let paramIndex = 1
 
-    if (params.displayName !== undefined) {
-      sets.push(`display_name = $${paramIndex++}`)
-      values.push(params.displayName)
-    }
     if (params.slug !== undefined) {
       sets.push(`slug = $${paramIndex++}`)
       values.push(params.slug)
@@ -1010,10 +1033,6 @@ export const StreamRepository = {
       sets.push(`archived_at = $${paramIndex++}`)
       values.push(params.archivedAt)
     }
-    if (params.displayNameGeneratedAt !== undefined) {
-      sets.push(`display_name_generated_at = $${paramIndex++}`)
-      values.push(params.displayNameGeneratedAt)
-    }
 
     if (sets.length === 0) return this.findById(db, id)
 
@@ -1026,6 +1045,34 @@ export const StreamRepository = {
       RETURNING ${SELECT_FIELDS}
     `
     const result = await db.query<StreamRow>(query, values)
+    return result.rows[0] ? mapRowToStream(result.rows[0]) : null
+  },
+
+  async updateDisplayName(
+    db: Querier,
+    params: {
+      workspaceId: string
+      streamId: string
+      displayName: string | null
+      source: TitleSource
+      updatedByUserId?: string | null
+      expectedRevision?: number
+      expectedSource?: TitleSource | null
+    }
+  ): Promise<Stream | null> {
+    const result = await db.query<StreamRow>(sql`
+      UPDATE streams SET
+        display_name = ${params.displayName},
+        display_name_source = ${params.source},
+        display_name_revision = display_name_revision + 1,
+        display_name_updated_by_user_id = ${params.updatedByUserId ?? null},
+        display_name_generated_at = CASE WHEN ${params.source} = ${TitleSources.GENERATED} THEN NOW() ELSE NULL END,
+        updated_at = NOW()
+      WHERE workspace_id = ${params.workspaceId} AND id = ${params.streamId}
+        AND (${params.expectedRevision === undefined} OR display_name_revision = ${params.expectedRevision ?? 0})
+        AND (${params.expectedSource === undefined} OR COALESCE(display_name_source, CASE WHEN display_name IS NOT NULL THEN ${TitleSources.LEGACY} END) IS NOT DISTINCT FROM ${params.expectedSource ?? null})
+      RETURNING ${sql.raw(SELECT_FIELDS)}
+    `)
     return result.rows[0] ? mapRowToStream(result.rows[0]) : null
   },
 
@@ -1048,13 +1095,16 @@ export const StreamRepository = {
   ): Promise<Stream> {
     const result = await db.query<StreamRow>(sql`
       INSERT INTO streams (
-        id, workspace_id, type, display_name, visibility,
+        id, workspace_id, type, display_name, display_name_source, display_name_revision, display_name_updated_by_user_id, visibility,
         companion_mode, created_by
       ) VALUES (
         ${params.id},
         ${params.workspaceId},
         ${"system"},
         ${"Threa"},
+        ${TitleSources.EXPLICIT},
+        ${1},
+        ${null},
         ${"private"},
         ${"off"},
         ${params.createdBy}

@@ -208,10 +208,15 @@ export class StreamNamingService {
         return false
       }
 
-      await StreamRepository.update(client, streamId, {
+      const namedStream = await StreamRepository.updateDisplayName(client, {
+        workspaceId: currentStream.workspaceId,
+        streamId,
         displayName: cleanName,
-        displayNameGeneratedAt: new Date(),
+        source: "generated",
+        expectedRevision: currentStream.displayNameRevision,
+        expectedSource: currentStream.displayNameSource,
       })
+      if (!namedStream) return false
 
       // The payload's visibility gates workspace-wide fanout in
       // delivery-groups. A thread's own row can hold a stale copied "public"
@@ -229,6 +234,8 @@ export class StreamNamingService {
         streamId,
         displayName: cleanName,
         visibility: fanoutVisibility,
+        source: namedStream.displayNameSource!,
+        revision: namedStream.displayNameRevision!,
       })
 
       logger.info({ streamId, displayName: cleanName, requireName }, "Auto-generated stream display name")

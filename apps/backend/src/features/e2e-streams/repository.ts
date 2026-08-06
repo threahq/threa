@@ -145,7 +145,9 @@ export const E2eStreamsRepository = {
       UPDATE e2e_streams
       SET name_ciphertext = ${Buffer.from(sealed.ciphertext, "base64")},
           name_envelope = ${JSON.stringify(sealed.envelope)}
-      WHERE workspace_id = ${workspaceId} AND stream_id = ${streamId} AND name_ciphertext IS NULL
+      WHERE workspace_id = ${workspaceId}
+        AND stream_id = ${streamId}
+        AND name_ciphertext IS NULL
     `)
     return (result.rowCount ?? 0) > 0
   },

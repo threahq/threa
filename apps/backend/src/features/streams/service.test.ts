@@ -31,6 +31,7 @@ const mockFindMembersByIds = spyOn(UserRepository, "findByIds")
 const mockInsertStream = spyOn(StreamRepository, "insert")
 const mockMarkStreamE2e = spyOn(E2eStreamsRepository, "markStreamE2e")
 const mockUpdate = spyOn(StreamRepository, "update")
+const mockUpdateDisplayName = spyOn(StreamRepository, "updateDisplayName")
 const mockUpdateSealedName = spyOn(E2eStreamsRepository, "updateSealedName")
 // Sparse read overlay pruning/listing runs inside the watermark write paths;
 // stub against the fake `{}` client so unit tests never touch a real DB.
@@ -2013,6 +2014,7 @@ describe("StreamService.updateStream sealed-name handling", () => {
     service = new StreamService({} as never)
     mockFindById.mockReset()
     mockUpdate.mockReset()
+    mockUpdateDisplayName.mockReset()
     mockUpdateSealedName.mockReset()
     mockInsertOutbox.mockReset()
   })
@@ -2020,6 +2022,7 @@ describe("StreamService.updateStream sealed-name handling", () => {
   test("setting a sealed name scrubs the plaintext display_name to null (INV-E1)", async () => {
     const stream = { id: "stream_1", workspaceId: "ws_1", displayName: null } as never
     mockUpdate.mockResolvedValue(stream)
+    mockUpdateDisplayName.mockResolvedValue(stream)
     mockUpdateSealedName.mockResolvedValue(true)
     mockFindById.mockResolvedValue(stream)
 
@@ -2030,7 +2033,10 @@ describe("StreamService.updateStream sealed-name handling", () => {
       sealedName: { ciphertext: "Y3Q=", envelope: { v: 1 } },
     })
 
-    expect(mockUpdate).toHaveBeenCalledWith({}, "stream_1", expect.objectContaining({ displayName: null }))
+    expect(mockUpdateDisplayName).toHaveBeenCalledWith(
+      {},
+      expect.objectContaining({ streamId: "stream_1", displayName: null, source: "explicit" })
+    )
     expect(mockUpdateSealedName).toHaveBeenCalledWith({}, "ws_1", "stream_1", {
       ciphertext: "Y3Q=",
       envelope: { v: 1 },
@@ -2040,6 +2046,7 @@ describe("StreamService.updateStream sealed-name handling", () => {
   test("setting a sealed name on a non-E2E stream fails loudly and emits no outbox event", async () => {
     const stream = { id: "stream_1", workspaceId: "ws_1", displayName: null } as never
     mockUpdate.mockResolvedValue(stream)
+    mockUpdateDisplayName.mockResolvedValue(stream)
     // No e2e_streams row to update — the stream isn't E2E.
     mockUpdateSealedName.mockResolvedValue(false)
 
@@ -2064,11 +2071,15 @@ describe("StreamService.updateStream sealed-name handling", () => {
   test("a plain (non-sealed) rename writes the plaintext displayName unchanged", async () => {
     const stream = { id: "stream_1", workspaceId: "ws_1", displayName: "New name" } as never
     mockUpdate.mockResolvedValue(stream)
+    mockUpdateDisplayName.mockResolvedValue(stream)
     mockFindById.mockResolvedValue(stream)
 
     await service.updateStream("stream_1", { displayName: "New name" })
 
-    expect(mockUpdate).toHaveBeenCalledWith({}, "stream_1", expect.objectContaining({ displayName: "New name" }))
+    expect(mockUpdateDisplayName).toHaveBeenCalledWith(
+      {},
+      expect.objectContaining({ streamId: "stream_1", displayName: "New name", source: "explicit" })
+    )
     expect(mockUpdateSealedName).not.toHaveBeenCalled()
   })
 })
@@ -2080,6 +2091,7 @@ describe("StreamService.updateStream description", () => {
     service = new StreamService({} as never)
     mockFindById.mockReset()
     mockUpdate.mockReset()
+    mockUpdateDisplayName.mockReset()
     mockInsertOutbox.mockReset()
     mockInsertEvent.mockReset().mockResolvedValue({ id: "evt_1", streamId: "stream_1" } as never)
   })
@@ -2114,6 +2126,7 @@ describe("StreamService.updateStream description", () => {
   test("leaves the description columns untouched when neither field is supplied", async () => {
     const stream = { id: "stream_1", workspaceId: "ws_1" } as never
     mockUpdate.mockResolvedValue(stream)
+    mockUpdateDisplayName.mockResolvedValue(stream)
     mockFindById.mockResolvedValue(stream)
 
     await service.updateStream("stream_1", { displayName: "Renamed" })

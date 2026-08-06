@@ -3,6 +3,10 @@ export type { UserId, MemberId, WorkspaceId } from "./ids"
 
 // Constants and their types
 export {
+  // Title provenance
+  TITLE_SOURCES,
+  type TitleSource,
+  TitleSources,
   // Stream types
   STREAM_TYPES,
   type StreamType,

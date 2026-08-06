@@ -26,7 +26,13 @@ import { resolveConversationDelivery } from "./conversation-delivery"
 import { emitAssignmentEvents } from "./assignment-events"
 import { isClusteredAuthorType, isClusteredStreamType } from "./extraction-eligibility"
 import { conversationId } from "../../lib/id"
-import { ConversationStatuses, LinkPreviewStatuses, StreamTypes, THREAD_ANCHORABLE_EVENT_TYPES } from "@threa/types"
+import {
+  ConversationStatuses,
+  LinkPreviewStatuses,
+  StreamTypes,
+  THREAD_ANCHORABLE_EVENT_TYPES,
+  TitleSources,
+} from "@threa/types"
 import { logger } from "../../lib/logger"
 
 const MESSAGES_BEFORE = 5
@@ -426,6 +432,7 @@ export class BoundaryExtractionService {
               streamId,
               workspaceId,
               topicSummary: decision.newTopic,
+              topicSummarySource: decision.newTopic === undefined ? undefined : TitleSources.GENERATED,
               summary: decision.newSummary,
               confidence: decision.confidence,
               status: ConversationStatuses.ACTIVE,

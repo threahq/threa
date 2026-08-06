@@ -126,6 +126,7 @@ describe("Stream Naming", () => {
         const stream = createMockStream({
           type: "scratchpad",
           displayName: "Project Ideas",
+          displayNameSource: "generated",
           displayNameGeneratedAt: new Date(),
         })
         const result = getEffectiveDisplayName(stream)
@@ -153,6 +154,7 @@ describe("Stream Naming", () => {
         const stream = createMockStream({
           type: "scratchpad",
           displayName: "Manual Name",
+          displayNameSource: "explicit",
           displayNameGeneratedAt: null,
         })
         const result = getEffectiveDisplayName(stream)
@@ -176,6 +178,7 @@ describe("Stream Naming", () => {
         const stream = createMockStream({
           type: "thread",
           displayName: "Discussion about API",
+          displayNameSource: "generated",
           displayNameGeneratedAt: new Date(),
         })
         const result = getEffectiveDisplayName(stream)
@@ -295,6 +298,47 @@ describe("Stream Naming", () => {
 
       expect(updated?.displayName).toBe("AI Generated Title")
       expect(updated?.displayNameGeneratedAt).not.toBeNull()
+    })
+
+    test("expected revision, source, and workspace mismatches leave the title unchanged", async () => {
+      const ownerId = userId()
+      const wsId = workspaceId()
+      await withTestTransaction(pool, async (client) => {
+        await WorkspaceRepository.insert(client, {
+          id: wsId,
+          name: "Stream CAS Workspace",
+          slug: `stream-cas-${wsId}`,
+          createdBy: ownerId,
+        })
+        await addTestMember(client, wsId, ownerId)
+      })
+      const scratchpad = await streamService.createScratchpad({ workspaceId: wsId, createdBy: ownerId })
+      const first = await StreamRepository.updateDisplayName(pool, {
+        workspaceId: wsId,
+        streamId: scratchpad.id,
+        displayName: "Current title",
+        source: "generated",
+      })
+
+      for (const guard of [
+        { workspaceId: wsId, expectedRevision: first!.displayNameRevision + 1 },
+        { workspaceId: wsId, expectedSource: "explicit" as const },
+        { workspaceId: workspaceId(), expectedRevision: first!.displayNameRevision },
+      ]) {
+        expect(
+          await StreamRepository.updateDisplayName(pool, {
+            ...guard,
+            streamId: scratchpad.id,
+            displayName: "Stale title",
+            source: "generated",
+          })
+        ).toBeNull()
+      }
+      expect(await StreamRepository.findById(pool, scratchpad.id)).toMatchObject({
+        displayName: "Current title",
+        displayNameSource: "generated",
+        displayNameRevision: first!.displayNameRevision,
+      })
     })
 
     test("updates display name without marking as generated", async () => {

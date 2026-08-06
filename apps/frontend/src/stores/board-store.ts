@@ -3,6 +3,7 @@ import { useLiveQuery } from "dexie-react-hooks"
 import { db, type CachedBoardPost } from "@/db"
 import { deleteConversationMessages, pruneConversationMessagesToMembership } from "./conversation-messages-store"
 import type { AttachmentSummary, BoardPost, BoardScopeStreamType, ConversationWithStaleness } from "@threa/types"
+import { mergeConversationByTitleRevision } from "@/lib/title-merge"
 
 function lastActivityMs(conversation: { lastActivityAt: string }): number {
   const ms = Date.parse(conversation.lastActivityAt)
@@ -294,9 +295,10 @@ export async function mergeBoardConversation(
     // opener — the row stays put meanwhile (no vanish-and-return motion).
     const openingMoved =
       memberIds !== null && existing.openingMessage !== null && !memberIds.has(existing.openingMessage.id)
+    const mergedConversation = mergeConversationByTitleRevision(existing.conversation, conversation)
     await db.conversations.put({
       ...existing,
-      conversation,
+      conversation: mergedConversation,
       recentMessages,
       // A kept cached set is still pruned to the new membership: an event that
       // omits the field but moves a message out must not leave it marked.

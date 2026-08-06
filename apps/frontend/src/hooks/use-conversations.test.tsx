@@ -659,10 +659,10 @@ describe("useSettleConversationMessage", () => {
     expect(merge).toHaveBeenCalledWith("conv_1", conversation, ["m_2"])
     expect(queryClient.getQueryData(conversationKeys.list(WORKSPACE_ID, STREAM_ID, {}))).toEqual([
       makeConversation("conv_0"),
-      conversation,
+      { id: "conv_1", topicSummary: "stale" },
     ])
     expect(queryClient.getQueryData(conversationKeys.boardPost("conv_1"))).toEqual({
-      conversation,
+      conversation: { id: "conv_1", topicSummary: "stale" },
       settlingMessageIds: ["m_2"],
       recentMessages: [],
     })

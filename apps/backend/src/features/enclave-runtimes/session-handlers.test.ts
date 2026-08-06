@@ -281,6 +281,13 @@ describe("createEnclaveSessionHandlers.sealedName", () => {
   it("stores the sealed title (first-write-wins) and broadcasts stream:updated", async () => {
     spyOn(AgentSessionRepository, "findById").mockResolvedValue(SESSION)
     spyOn(StreamRepository, "findById").mockResolvedValue({ id: "stream_1", workspaceId: "ws_1" } as never)
+    spyOn(StreamRepository, "findByIdForUpdate").mockResolvedValue({
+      id: "stream_1",
+      workspaceId: "ws_1",
+      displayNameSource: null,
+      displayNameRevision: 0,
+    } as never)
+    spyOn(StreamRepository, "updateDisplayName").mockResolvedValue({ id: "stream_1", workspaceId: "ws_1" } as never)
     spyOn(db, "withTransaction").mockImplementation(((_pool: unknown, cb: (c: unknown) => unknown) => cb({})) as never)
     const setName = spyOn(E2eStreamsRepository, "setSealedNameIfAbsent").mockResolvedValue(true)
     const insert = spyOn(OutboxRepository, "insert").mockResolvedValue(undefined as never)
@@ -297,6 +304,12 @@ describe("createEnclaveSessionHandlers.sealedName", () => {
   it("does not broadcast when the scratchpad is already named (no-op)", async () => {
     spyOn(AgentSessionRepository, "findById").mockResolvedValue(SESSION)
     spyOn(StreamRepository, "findById").mockResolvedValue({ id: "stream_1", workspaceId: "ws_1" } as never)
+    spyOn(StreamRepository, "findByIdForUpdate").mockResolvedValue({
+      id: "stream_1",
+      workspaceId: "ws_1",
+      displayNameSource: null,
+      displayNameRevision: 0,
+    } as never)
     spyOn(db, "withTransaction").mockImplementation(((_pool: unknown, cb: (c: unknown) => unknown) => cb({})) as never)
     spyOn(E2eStreamsRepository, "setSealedNameIfAbsent").mockResolvedValue(false)
     const insert = spyOn(OutboxRepository, "insert").mockResolvedValue(undefined as never)

@@ -6,6 +6,8 @@ import {
   LabelableResourceTypes,
   type ConversationStatus,
   type BoardLens,
+  type TitleSource,
+  TitleSources,
 } from "@threa/types"
 
 /**
@@ -202,6 +204,9 @@ interface ConversationRow {
   stream_id: string
   workspace_id: string
   topic_summary: string | null
+  topic_summary_source: TitleSource | null
+  topic_summary_revision: number
+  topic_summary_updated_by_user_id: string | null
   summary: string | null
   completeness_score: number
   confidence: number
@@ -236,6 +241,9 @@ export interface Conversation {
   participantIds: string[]
   secondaryMessageIds: string[]
   topicSummary: string | null
+  topicSummarySource?: TitleSource | null
+  topicSummaryRevision?: number
+  topicSummaryUpdatedByUserId?: string | null
   summary: string | null
   completenessScore: number
   confidence: number
@@ -251,6 +259,8 @@ export interface InsertConversationParams {
   streamId: string
   workspaceId: string
   topicSummary?: string
+  topicSummarySource?: TitleSource
+  topicSummaryUpdatedByUserId?: string | null
   summary?: string
   completenessScore?: number
   confidence?: number
@@ -259,7 +269,6 @@ export interface InsertConversationParams {
 }
 
 export interface UpdateConversationParams {
-  topicSummary?: string
   summary?: string
   completenessScore?: number
   confidence?: number
@@ -279,6 +288,9 @@ function mapRowToConversation(row: ConversationRow): Conversation {
     participantIds: row.participant_ids,
     secondaryMessageIds: row.secondary_message_ids,
     topicSummary: row.topic_summary,
+    topicSummarySource: row.topic_summary_source ?? (row.topic_summary !== null ? TitleSources.LEGACY : null),
+    topicSummaryRevision: row.topic_summary_revision,
+    topicSummaryUpdatedByUserId: row.topic_summary_updated_by_user_id,
     summary: row.summary,
     completenessScore: row.completeness_score,
     confidence: row.confidence,
@@ -293,7 +305,7 @@ function mapRowToConversation(row: ConversationRow): Conversation {
 const SELECT_FIELDS = `
   id, stream_id, workspace_id,
   message_ids, participant_ids, secondary_message_ids,
-  topic_summary, summary, completeness_score, confidence, status, parent_conversation_id,
+  topic_summary, topic_summary_source, topic_summary_revision, topic_summary_updated_by_user_id, summary, completeness_score, confidence, status, parent_conversation_id,
   last_activity_at, created_at, updated_at
 `
 
@@ -676,16 +688,22 @@ export const ConversationRepository = {
   },
 
   async insert(db: Querier, params: InsertConversationParams): Promise<Conversation> {
+    if (params.topicSummary !== undefined && params.topicSummarySource === undefined) {
+      throw new Error("Titled conversation inserts require topicSummarySource")
+    }
     const result = await db.query<ConversationRow>(sql`
       INSERT INTO conversations (
         id, stream_id, workspace_id,
-        topic_summary, summary, completeness_score, confidence, status, parent_conversation_id
+        topic_summary, topic_summary_source, topic_summary_revision, topic_summary_updated_by_user_id, summary, completeness_score, confidence, status, parent_conversation_id
       )
       VALUES (
         ${params.id},
         ${params.streamId},
         ${params.workspaceId},
         ${params.topicSummary ?? null},
+        ${params.topicSummarySource ?? null},
+        ${params.topicSummary === undefined ? 0 : 1},
+        ${params.topicSummaryUpdatedByUserId ?? null},
         ${params.summary ?? null},
         ${params.completenessScore ?? 1},
         ${params.confidence ?? 0.5},
@@ -712,10 +730,6 @@ export const ConversationRepository = {
     const values: unknown[] = []
     let paramIndex = 1
 
-    if (params.topicSummary !== undefined) {
-      updates.push(`topic_summary = $${paramIndex++}`)
-      values.push(params.topicSummary)
-    }
     if (params.summary !== undefined) {
       updates.push(`summary = $${paramIndex++}`)
       values.push(params.summary)
@@ -767,6 +781,33 @@ export const ConversationRepository = {
     const result = await db.query<ConversationRow>(query, values)
     if (!result.rows[0]) return null
     return mapRowToConversation(result.rows[0])
+  },
+
+  async updateTopicSummary(
+    db: Querier,
+    params: {
+      workspaceId: string
+      conversationId: string
+      topicSummary: string
+      source: TitleSource
+      updatedByUserId?: string | null
+      expectedRevision?: number
+      expectedSource?: TitleSource | null
+    }
+  ): Promise<Conversation | null> {
+    const result = await db.query<ConversationRow>(sql`
+      UPDATE conversations SET
+        topic_summary = ${params.topicSummary},
+        topic_summary_source = ${params.source},
+        topic_summary_revision = topic_summary_revision + 1,
+        topic_summary_updated_by_user_id = ${params.updatedByUserId ?? null},
+        updated_at = NOW()
+      WHERE workspace_id = ${params.workspaceId} AND id = ${params.conversationId}
+        AND (${params.expectedRevision === undefined} OR topic_summary_revision = ${params.expectedRevision ?? 0})
+        AND (${params.expectedSource === undefined} OR COALESCE(topic_summary_source, CASE WHEN topic_summary IS NOT NULL THEN ${TitleSources.LEGACY} END) IS NOT DISTINCT FROM ${params.expectedSource ?? null})
+      RETURNING ${sql.raw(SELECT_FIELDS)}
+    `)
+    return result.rows[0] ? mapRowToConversation(result.rows[0]) : null
   },
 
   /**

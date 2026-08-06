@@ -414,6 +414,7 @@ describe("Conversation Handlers", () => {
         conversationId: "conv_1",
         topicSummary: "New topic",
         status: undefined,
+        actorUserId: "usr_1",
       })
       expect((res as unknown as { body: unknown }).body).toEqual({
         conversation: { id: "conv_1", topicSummary: "Renamed", status: "active" },

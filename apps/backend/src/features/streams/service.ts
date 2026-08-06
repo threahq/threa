@@ -55,6 +55,7 @@ import {
   type AuthorType,
   type DescriptionSetEventPayload,
   type StreamReadFrontierSnapshot,
+  TitleSources,
 } from "@threa/types"
 import { ContextBagRepository, PersonaRepository, assertAssignablePersona } from "../agents"
 import { E2eStreamsRepository, E2eStreamActorsRepository, StreamE2eKeyWrapsRepository } from "../e2e-streams"
@@ -492,6 +493,8 @@ export class StreamService {
       workspaceId: params.workspaceId,
       type: StreamTypes.SCRATCHPAD,
       displayName: params.displayName,
+      displayNameSource: params.displayName === undefined ? undefined : TitleSources.EXPLICIT,
+      displayNameUpdatedByUserId: params.displayName === undefined ? undefined : params.createdBy,
       description: normalizedDescription?.description ?? undefined,
       descriptionJson: normalizedDescription?.descriptionJson ?? undefined,
       visibility: Visibilities.PRIVATE,
@@ -1015,7 +1018,8 @@ export class StreamService {
     }
   ): Promise<Stream | null> {
     const { sealedName, description, descriptionJson, actorId, actorType, ...rest } = data
-    const streamData: UpdateStreamParams = { ...rest }
+    const { displayName, ...nonTitleData } = rest
+    const streamData: UpdateStreamParams = { ...nonTitleData }
     const normalizedDescription = normalizeStreamDescription({ description, descriptionJson })
     if (normalizedDescription) {
       streamData.description = normalizedDescription.description
@@ -1032,8 +1036,7 @@ export class StreamService {
       // along. Trade-off: server-side name search (ILIKE/similarity on
       // display_name) can't see E2E streams — name search for them is
       // client-side over decrypted names.
-      streamData.displayName = null
-    } else if (sealedName === null && streamData.displayName == null) {
+    } else if (sealedName === null && displayName == null) {
       // Clearing a sealed name reverts to a plaintext label, so one must be
       // provided — otherwise the stream loses its name entirely (no ciphertext,
       // no cleartext).
@@ -1065,8 +1068,18 @@ export class StreamService {
           }
         }
 
-        const stream = await StreamRepository.update(client, streamId, streamData)
+        let stream = await StreamRepository.update(client, streamId, streamData)
         if (!stream) return null
+        if (displayName !== undefined || sealedName) {
+          stream = await StreamRepository.updateDisplayName(client, {
+            workspaceId: stream.workspaceId,
+            streamId,
+            displayName: sealedName ? null : (displayName ?? null),
+            source: TitleSources.EXPLICIT,
+            updatedByUserId: actorId,
+          })
+          if (!stream) return null
+        }
 
         // The sealed name lives on a different table; set/clear it in the same
         // transaction. `StreamRepository.update` returns only the plaintext
@@ -1543,11 +1556,17 @@ export class StreamService {
   async updateDisplayName(
     streamId: string,
     displayName: string,
-    markAsGenerated: boolean = false
+    markAsGenerated: boolean = false,
+    updatedByUserId?: string
   ): Promise<Stream | null> {
-    return StreamRepository.update(this.pool, streamId, {
+    const current = await StreamRepository.findById(this.pool, streamId)
+    if (!current) return null
+    return StreamRepository.updateDisplayName(this.pool, {
+      workspaceId: current.workspaceId,
+      streamId,
       displayName,
-      displayNameGeneratedAt: markAsGenerated ? new Date() : undefined,
+      source: markAsGenerated ? TitleSources.GENERATED : TitleSources.EXPLICIT,
+      updatedByUserId,
     })
   }
 

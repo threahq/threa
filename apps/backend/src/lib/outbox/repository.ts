@@ -313,6 +313,8 @@ export interface ReactionOutboxPayload extends StreamScopedPayload {
 export interface StreamDisplayNameUpdatedPayload extends StreamScopedPayload {
   displayName: string
   visibility: string
+  source: import("@threa/types").TitleSource
+  revision: number
 }
 
 export interface StreamMemberJoinedOutboxPayload extends StreamScopedPayload {
