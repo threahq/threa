@@ -1620,3 +1620,46 @@ describe("take-over aftermath — the displaced composer can neither delete nor 
     expect((await db.composerLoaded.get(draftKey))?.draftId).toBe("draft_Y")
   })
 })
+
+describe("write serialization — concurrent typing saves never fork", () => {
+  beforeEach(async () => {
+    vi.restoreAllMocks()
+    resetDraftStoreCache()
+    resetDraftResolutionGuard()
+    await db.drafts.clear()
+    await db.composerLoaded.clear()
+    await db.pendingOperations.clear()
+    vi.spyOn(currentUserHook, "useCurrentWorkspaceUserId").mockReturnValue(null)
+    vi.spyOn(e2eSessionStore, "useE2eSession").mockReturnValue(LOCKED_SESSION)
+  })
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it("two overlapping null-identity saves land in ONE row (the stray-prefix repro)", async () => {
+    await seedDraftCacheFromIdb(workspaceId)
+    const contentDraftIdRef = { current: null as string | null }
+    const { result } = renderHook(() => useDraftMessage(workspaceId, draftKey, undefined, contentDraftIdRef))
+
+    // Both fired before either resolves — the frozen-main-thread burst where two
+    // queued debounce timers run back-to-back. Unserialized IN A REAL BROWSER,
+    // save 2 reads a null identity against save 1's freshly-claimed pointer,
+    // misreads it as foreign, and mints a detached prefix row that survives the
+    // send. NOTE: fake-indexeddb's tighter txn timing lets the conflict-retry
+    // path merge these even without the write chain, so this test is a
+    // regression canary for the one-row outcome, NOT a proof of the chain — the
+    // chain's proof is the browser journey (5/5 clean runs vs ~50% stray).
+    let p1: Promise<unknown>
+    let p2: Promise<unknown>
+    await act(async () => {
+      p1 = result.current.saveDraft(makeDoc("Sh"), undefined, null)
+      p2 = result.current.saveDraft(makeDoc("Should we ship"), undefined, null)
+      await Promise.all([p1!, p2!])
+    })
+
+    const rows = await db.drafts.toArray()
+    expect(rows.map((row) => row.contentJson)).toEqual([makeDoc("Should we ship")])
+    expect((await db.composerLoaded.get(draftKey))?.draftId).toBe(rows[0].id)
+  })
+})

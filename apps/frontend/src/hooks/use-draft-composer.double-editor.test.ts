@@ -124,8 +124,12 @@ describe("two composers on one draft scope (board card + conversation panel)", (
     expect(card.result.current.content).toEqual(makeDoc("B"))
     card.unmount()
 
-    const bodies = await recoverableBodies()
-    expect(bodies.some((body) => body.includes('"B"'))).toBe(true)
+    // The rescue is fire-and-forget (and serialized behind the write chain), so
+    // poll for it rather than reading a fixed instant after unmount.
+    await vi.waitFor(async () => {
+      const bodies = await recoverableBodies()
+      expect(bodies.some((body) => body.includes('"B"'))).toBe(true)
+    })
   })
 
   it("does not resurrect the sender's own just-sent body", async () => {
