@@ -27,6 +27,7 @@ export type DraftRestorePlan =
   | { action: "adopt"; targetHost: string; targetScope: string }
   | { action: "refuse"; reason: DraftRestoreRefusal }
   | { action: "move"; fromScope: string; toScope: string }
+  | { action: "navigate"; conversationId: string }
 
 /**
  * Adopt or move — the one decision the shared pile turns on, taken from the
@@ -64,9 +65,9 @@ export function planDraftRestore(input: {
   // the send guard always finds it not-live-here and hands off to a panel that
   // opens `board:reply:<B>`, not the branch tail: the message is never sent and
   // the draft is stranded. Moving is worse: it rewrites the scope and destroys the
-  // filing. So neither, and say so — the row stays visible and the user is told
-  // where it lives.
-  if (draftSource?.kind === "branch") return { action: "refuse", reason: "branch-elsewhere" }
+  // filing. So the row NAVIGATES — the picker routes it to the parent
+  // conversation's panel (`origin.openHref`), where the branch composer lives.
+  if (draftSource?.kind === "branch") return { action: "navigate", conversationId: draftSource.conversationId }
   const adoptableSource = draftSource?.kind === "conversation"
   if (targetHost && (adoptableSource || draftScope === targetHost)) {
     return { action: "adopt", targetHost, targetScope: draftScope }
@@ -236,6 +237,12 @@ export function useStashComposer(
           draftScope: live.scope,
           draftSource: describeScope(live.scope),
         })
+        if (plan.action === "navigate") {
+          // Navigate rows are routed by the picker through `origin.openHref`
+          // before restore is ever called; reaching here is a wiring bug, and
+          // silently doing nothing would strand the tap (INV-11).
+          throw new Error(`[stash] navigate row ${id} reached restoreDraftHere — route via origin.openHref`)
+        }
         if (plan.action === "refuse") {
           return refuse(plan.reason, `refusing restore of ${id} into ${scope}: ${plan.reason}`)
         }

@@ -9,6 +9,8 @@ import {
 } from "react"
 import { FileEdit, FilePlus, Trash2 } from "lucide-react"
 import { toast } from "sonner"
+import { useNavigate } from "react-router-dom"
+import { requestConversationReplyOpen } from "@/stores/conversation-reply-open-store"
 import { Button } from "@/components/ui/button"
 import { Popover, PopoverAnchor, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
@@ -76,6 +78,20 @@ interface StashedDraftsPickerProps {
  * showing a render ago and the world has since moved past, so the copy names
  * what happened to the draft, not what the code checked.
  */
+/**
+ * The borrowed-row hint for tooltip and accessible name. `aria-label` REPLACES
+ * the content-derived name, so everything the visible row implies must ride
+ * inside it: where the row came from, whether a tap NAVIGATES (branch reply /
+ * mounted composer) or takes the draft over, and that picking changes filing.
+ */
+function rowHint(origin: StashedDraftRowOrigin | undefined, preview?: string): string | undefined {
+  if (!origin || origin.tier !== "borrowed") return undefined
+  const lead = preview !== undefined ? `${preview} — from ${origin.label}.` : `From ${origin.label}.`
+  if (origin.openHref) return `${lead} Opens in its own composer.`
+  const takeOver = origin.checkedOutElsewhere ? " Open in another composer — picking it takes it over." : ""
+  return `${lead}${takeOver} Picking it changes where this composer files.`
+}
+
 /** Whether this row's preview can still change height: a sealed body resolving
  *  in is the only thing that does. A plaintext row is final at first paint. */
 function isPreviewSettled(draft: CachedDraft, previewById?: Map<string, DraftPreview>): boolean {
@@ -193,6 +209,25 @@ export function StashedDraftsPicker({
       if (focusComposer) setTimeout(() => focusComposer(), 0)
     },
     [onRestore, closeFabDrawer, bridge, drafts, previewById, originById]
+  )
+
+  // A navigate row (branch reply, or a draft whose own composer is mounted —
+  // an open panel) takes the user to the composer that owns the draft instead
+  // of restoring here. Same close choreography as a restore, minus the focus
+  // steal (the destination surface owns focus on arrival).
+  const navigate = useNavigate()
+  const handleOpenElsewhere = useCallback(
+    (href: string, conversationId: string | null) => {
+      setOpen(false)
+      closeFabDrawer?.()
+      navigate(href)
+      // Arrival focus rides the reply-open store, NOT the URL: when the panel is
+      // already open beside this host the href can equal the current location and
+      // the navigation is a router no-op — without this signal the tap would do
+      // nothing visible (the silent no-op this routing exists to eliminate).
+      if (conversationId) requestConversationReplyOpen(conversationId)
+    },
+    [closeFabDrawer, navigate]
   )
 
   // Two-step delete: the trash icon opens a confirm dialog (parity with the
@@ -370,7 +405,11 @@ export function StashedDraftsPicker({
                         <button
                           type="button"
                           data-draft-row
-                          onClick={() => void handleRestore(draft.id)}
+                          onClick={() =>
+                            origin?.openHref
+                              ? handleOpenElsewhere(origin.openHref, origin.openConversationId ?? null)
+                              : void handleRestore(draft.id)
+                          }
                           // Picking a borrowed row does more than load it: the
                           // composer either retargets to that draft's conversation
                           // or takes the draft as its own, depending on the host.
@@ -382,16 +421,8 @@ export function StashedDraftsPicker({
                           // the "open elsewhere" hint must ride inside it too —
                           // as a visible-only span it would be dropped from the
                           // accessible name on exactly the rows that carry it.
-                          title={
-                            isBorrowed
-                              ? `From ${origin.label}.${origin.checkedOutElsewhere ? " Open in another composer — picking it takes it over." : ""} Picking it changes where this composer files.`
-                              : undefined
-                          }
-                          aria-label={
-                            isBorrowed
-                              ? `${preview} — from ${origin.label}.${origin.checkedOutElsewhere ? " Open in another composer — picking it takes it over." : ""} Picking it changes where this composer files.`
-                              : undefined
-                          }
+                          title={rowHint(origin)}
+                          aria-label={rowHint(origin, preview)}
                           className="flex-1 min-w-0 text-left focus:outline-none"
                         >
                           {/* The second line is reserved only while the preview
@@ -430,10 +461,16 @@ export function StashedDraftsPicker({
                                 shift, INV-21): the row is still fully loadable —
                                 a tap takes the draft over — this just says the
                                 take-over will detach another composer. */}
-                            {origin?.checkedOutElsewhere && (
-                              <span data-draft-open-elsewhere className="shrink-0 truncate">
-                                · open elsewhere
+                            {origin?.openHref ? (
+                              <span data-draft-opens-elsewhere className="shrink-0 truncate">
+                                · opens there
                               </span>
+                            ) : (
+                              origin?.checkedOutElsewhere && (
+                                <span data-draft-open-elsewhere className="shrink-0 truncate">
+                                  · open elsewhere
+                                </span>
+                              )
                             )}
                           </p>
                         </button>

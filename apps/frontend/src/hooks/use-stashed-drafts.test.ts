@@ -273,6 +273,8 @@ describe("useStashedDrafts — pile membership", () => {
       conversationId: "conv_lone",
       tier: "borrowed",
       checkedOutElsewhere: false,
+      openHref: null,
+      openConversationId: null,
       title: null,
       // No topic summary yet — the label falls back to this stream's name rather
       // than a generic phrase, the same rung the drafts explorer uses.
@@ -526,6 +528,8 @@ describe("useStashedDrafts — pile membership", () => {
         streamId: "stream_s",
         tier: "own",
         checkedOutElsewhere: false,
+        openHref: null,
+        openConversationId: null,
         title: null,
         anchorStreamId: "stream_s",
       },
@@ -534,6 +538,8 @@ describe("useStashedDrafts — pile membership", () => {
         conversationId: "conv_1",
         tier: "borrowed",
         checkedOutElsewhere: false,
+        openHref: null,
+        openConversationId: null,
         title: "Pizza plans",
         anchorStreamId: "stream_s",
       },
@@ -543,6 +549,8 @@ describe("useStashedDrafts — pile membership", () => {
         streamId: "stream_s",
         tier: "borrowed",
         checkedOutElsewhere: false,
+        openHref: null,
+        openConversationId: null,
         title: null,
         anchorStreamId: "stream_s",
       },
@@ -553,6 +561,8 @@ describe("useStashedDrafts — pile membership", () => {
         anchorStreamId: "stream_s",
         tier: "borrowed",
         checkedOutElsewhere: false,
+        openHref: null,
+        openConversationId: null,
         title: "Pizza plans",
       },
     })
@@ -742,5 +752,57 @@ describe("restoreStashedDraftToComposer — id validated in the txn (INV-20)", (
   it("returns false for a row that is genuinely gone, and points at nothing", async () => {
     expect(await restoreStashedDraftToComposer(workspaceId, scope, "draft_never")).toBe(false)
     expect(await db.composerLoaded.get(scope)).toBeUndefined()
+  })
+})
+
+describe("navigate rows (openHref)", () => {
+  beforeEach(async () => {
+    __clearBoardDraftContextRegistry()
+    await db.conversations.clear()
+    await db.conversationMessages.clear()
+    await db.streams.clear()
+    await db.events.clear()
+  })
+
+  afterEach(() => {
+    __clearBoardDraftContextRegistry()
+  })
+
+  it("gives a branch row a panel deep link to its PARENT conversation, with the stash param", async () => {
+    await seedStream("stream_s")
+    await seedStream("stream_tb", { type: "thread", rootStreamId: "stream_s", parentAnchorId: "msg_c" })
+    await seedConversation("conv_c", "stream_s", { messageIds: ["msg_c"] })
+    await seedConversation("conv_branch", "stream_tb", { messageIds: ["msg_branch"] })
+    await db.drafts.bulkAdd([
+      draftRow({ id: "draft_branch", scope: "board:branch-reply:conv_branch" }),
+      // Control: an ordinary conversation row (no mounted composer) navigates
+      // nowhere — it restores in place.
+      draftRow({ id: "draft_conv", scope: "board:reply:conv_c" }),
+    ])
+
+    const { result, unmount } = renderHook(() => useStashedDrafts(pileWorkspaceId, "board:reply:conv_c"))
+    await waitFor(() =>
+      expect(result.current.originByDraftId.get("draft_branch")?.openHref).toBe(
+        `/w/${pileWorkspaceId}/s/stream_s?panel=${encodeURIComponent("conv:conv_c")}&stash=draft_branch`
+      )
+    )
+    expect(result.current.originByDraftId.get("draft_conv")?.openHref ?? null).toBeNull()
+    unmount()
+  })
+
+  it("an OWN branch row never navigates — the branch composer restores its own stash in place", async () => {
+    await seedStream("stream_s")
+    await seedStream("stream_tb", { type: "thread", rootStreamId: "stream_s", parentAnchorId: "msg_c" })
+    await seedConversation("conv_c", "stream_s", { messageIds: ["msg_c"] })
+    await seedConversation("conv_branch", "stream_tb", { messageIds: ["msg_branch"] })
+    await db.drafts.put(draftRow({ id: "draft_own_branch", scope: "board:branch-reply:conv_branch" }))
+
+    // Host IS the branch composer: its own stashed row must be a plain
+    // same-scope restore (pointer move), not a navigation away from the card.
+    const { result, unmount } = renderHook(() => useStashedDrafts(pileWorkspaceId, "board:branch-reply:conv_branch"))
+    await waitFor(() => expect(result.current.drafts.map((d) => d.id)).toContain("draft_own_branch"))
+    expect(result.current.originByDraftId.get("draft_own_branch")?.openHref ?? null).toBeNull()
+    expect(result.current.originByDraftId.get("draft_own_branch")?.tier).toBe("own")
+    unmount()
   })
 })

@@ -11,6 +11,10 @@ export interface StashedDraftRowOrigin {
   label: string
   /** Another scope's composer holds this draft; a tap takes it over (quiet hint, never a gate). */
   checkedOutElsewhere: boolean
+  /** Set when the row NAVIGATES (branch reply / mounted composer) instead of restoring here. */
+  openHref: string | null
+  /** The destination conversation for the arrival focus signal; set with `openHref`. */
+  openConversationId: string | null
 }
 
 /**
@@ -55,7 +59,13 @@ export function useStashedDraftOrigins(
     }
     const map = new Map<string, StashedDraftRowOrigin>()
     for (const [draftId, origin] of originByDraftId) {
-      map.set(draftId, { tier: origin.tier, label: label(origin), checkedOutElsewhere: origin.checkedOutElsewhere })
+      map.set(draftId, {
+        tier: origin.tier,
+        label: label(origin),
+        checkedOutElsewhere: origin.checkedOutElsewhere,
+        openHref: origin.openHref,
+        openConversationId: origin.openConversationId,
+      })
     }
     return map
   }, [originByDraftId, streams, users, dmPeers])

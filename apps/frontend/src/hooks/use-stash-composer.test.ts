@@ -356,7 +356,7 @@ describe("restoring a draft that belongs to another surface (adopt vs move)", ()
   // to a panel that opens the conversation's own reply scope, not the branch
   // tail: the message is never sent and the draft is stranded. Moving is worse —
   // it rewrites the scope and destroys the filing with no undo.
-  it("refuses a branch reply rather than adopting or moving it", () => {
+  it("routes a branch reply to NAVIGATION rather than adopting or moving it", () => {
     expect(
       planDraftRestore({
         hostScope: aoHostScope,
@@ -364,7 +364,7 @@ describe("restoring a draft that belongs to another surface (adopt vs move)", ()
         draftScope: aoBranchScope,
         draftSource: { kind: "branch", conversationId: "conv_ao_branch" },
       })
-    ).toEqual({ action: "refuse", reason: "branch-elsewhere" })
+    ).toEqual({ action: "navigate", conversationId: "conv_ao_branch" })
 
     // A plain conversation reply is still adopted — the row keeps its filing.
     expect(
@@ -610,5 +610,75 @@ describe("restoreDraftHere — re-plan on mid-restore drift", () => {
     expect((await db.drafts.get("draft_drift"))?.scope).toBe(aoConversationScope)
     expect((await db.composerTarget.get(aoHostScope))?.scope).toBe(aoConversationScope)
     expect((await db.composerLoaded.get(aoConversationScope))?.draftId).toBe("draft_drift")
+  })
+})
+
+describe("navigate rows — mounted conversation composer (chunk 3's deferred no-op)", () => {
+  beforeEach(async () => {
+    vi.restoreAllMocks()
+    resetDraftStoreCache()
+    resetDraftResolutionGuard()
+    __clearBoardDraftContextRegistry()
+    await db.drafts.clear()
+    await db.composerLoaded.clear()
+    await db.composerTarget.clear()
+    await db.pendingOperations.clear()
+    await db.streams.clear()
+    await db.conversations.clear()
+    vi.spyOn(currentUserHook, "useCurrentWorkspaceUserId").mockReturnValue(null)
+    vi.spyOn(e2eSessionStore, "useE2eSession").mockReturnValue(LOCKED_SESSION)
+  })
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+    __clearBoardDraftContextRegistry()
+  })
+
+  it("routes a conversation row to its OPEN panel composer instead of adopting into a host that would yield", async () => {
+    await seedAoStream()
+    await seedAoConversation()
+    await db.drafts.put(aoDraft("draft_conv", aoConversationScope))
+    await seedDraftCacheFromIdb(aoWorkspaceId)
+
+    // The conversation panel's docked composer is mounted on the draft's scope.
+    const panel = renderHook(
+      () =>
+        useDraftComposer({ workspaceId: aoWorkspaceId, draftKey: aoConversationScope, scopeId: aoConversationScope }),
+      { wrapper }
+    )
+    const host = renderHook(() => useAoHarness(aoHostScope, aoHostScope), { wrapper })
+    await waitFor(() =>
+      expect(host.result.current.stash.originByDraftId.get("draft_conv")?.openHref).toBe(
+        `/w/${aoWorkspaceId}/s/${aoStreamId}?panel=${encodeURIComponent(`conv:${aoConversationId}`)}&stash=draft_conv`
+      )
+    )
+
+    // Control: unmount the panel composer and the same row restores in place.
+    panel.unmount()
+    await waitFor(() =>
+      expect(host.result.current.stash.originByDraftId.get("draft_conv")?.openHref ?? null).toBeNull()
+    )
+    host.unmount()
+  })
+
+  it("restoreDraftHere throws on a navigate row — routing bugs fail loudly (INV-11)", async () => {
+    await seedAoStream()
+    await seedAoConversation()
+    await db.streams.put({
+      id: "stream_tb_nav",
+      workspaceId: aoWorkspaceId,
+      type: "thread",
+      visibility: "private",
+      rootStreamId: aoStreamId,
+      parentAnchorId: "msg_1",
+      archivedAt: null,
+    } as never)
+    await db.drafts.put(aoDraft("draft_branch_nav", aoBranchScope))
+    await seedDraftCacheFromIdb(aoWorkspaceId)
+
+    const { result } = renderHook(() => useAoHarness(aoHostScope, aoHostScope), { wrapper })
+    await waitFor(() => expect(result.current.composer.isLoaded).toBe(true))
+
+    await expect(result.current.stash.handleRestoreStashed("draft_branch_nav")).rejects.toThrow(/navigate row/)
   })
 })

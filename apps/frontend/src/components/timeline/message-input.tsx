@@ -338,7 +338,8 @@ function MessageInputComponent({
       // A disarm is MECHANICAL — "stop replying to that conversation here", not
       // "put the draft away". Detach only: the draft keeps its board button,
       // auto-restore and explorer link (putAway would hide all three on every
-      // device).
+      // device). No marker means no push either, so nothing to drain here — the
+      // component stays free of persistence orchestration (INV-15).
       await stashLoadedDraft(workspaceId, vacated, { putAway: false })
     } catch (err) {
       console.error("[composer] could not release the disarmed draft", err)

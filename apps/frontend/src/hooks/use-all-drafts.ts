@@ -1,7 +1,6 @@
 import { useCallback, useMemo } from "react"
 import { db, type CachedBoardPost, type CachedDraft, type CachedStream } from "@/db"
 import { draftScopesSignature, useBoardDraftContext, useThreadAnchorContext } from "./use-board-draft-context"
-import { createConversationPanelId } from "@/contexts"
 import { parseBoardDraftKey, type ParsedBoardDraftKey } from "@/lib/board/draft-keys"
 import { type CompanionMode } from "@threa/types"
 import {
@@ -20,6 +19,7 @@ import { getStreamName, streamFallbackLabel, streamLabel } from "@/lib/streams"
 import { draftInlineText, draftMarkdown, draftPreviewStatusLabel } from "@/lib/drafts/decryption"
 import { effectiveConversationTitle } from "@/lib/conversations/title"
 import { conversationOriginLabel, subtopicOriginLabel, threadOriginLabel } from "@/lib/drafts/origin-label"
+import { conversationPanelHref } from "@/lib/board/panel-href"
 import {
   useDecryptedDraftPreviews,
   type DraftPreview,
@@ -286,12 +286,8 @@ function resolveBoardDraftLocation(
   subtopicHostByMessageId: Map<string, CachedBoardPost>,
   parentPostByBranchConversationId: Map<string, CachedBoardPost>
 ): ResolvedDraftLocation & { supportsStashRestore: boolean } {
-  const panelHref = (conversationId: string, anchorStreamId: string | null) => {
-    const panelParam = `panel=${encodeURIComponent(createConversationPanelId(conversationId))}`
-    return anchorStreamId
-      ? `/w/${workspaceId}/s/${anchorStreamId}?${panelParam}`
-      : `/w/${workspaceId}/board?${panelParam}`
-  }
+  const panelHref = (conversationId: string, anchorStreamId: string | null) =>
+    conversationPanelHref(workspaceId, conversationId, anchorStreamId)
 
   if (parsed.kind === "subtopic") {
     const host = subtopicHostByMessageId.get(parsed.messageId)

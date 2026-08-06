@@ -55,6 +55,38 @@ export function useMountedComposerCount(workspaceId: string, scope: string | nul
   )
 }
 
+// Cached per-workspace mounted-scope sets, rebuilt lazily after each registry
+// change: `useSyncExternalStore` needs a STABLE snapshot reference between
+// notifications or it loops.
+const mountedScopeSetCache = new Map<string, ReadonlySet<string>>()
+composerRegistryListeners.add(() => mountedScopeSetCache.clear())
+
+/**
+ * Every scope with a live composer mounted for `workspaceId`, as a set. The
+ * stash pile uses it to route rows whose draft is ALREADY ON SCREEN in its own
+ * composer (an open conversation panel's docked footer): tapping such a row
+ * navigates/focuses there instead of adopting into a host whose yield-to-panel
+ * effect would immediately undo the adopt — the silent no-op chunk 3 deferred.
+ */
+export function useMountedComposerScopes(workspaceId: string): ReadonlySet<string> {
+  return useSyncExternalStore(
+    subscribeComposerRegistry,
+    useCallback(() => {
+      let set = mountedScopeSetCache.get(workspaceId)
+      if (!set) {
+        const prefix = `${workspaceId} `
+        const built = new Set<string>()
+        for (const key of mountedComposersByScope.keys()) {
+          if (key.startsWith(prefix)) built.add(key.slice(prefix.length))
+        }
+        set = built
+        mountedScopeSetCache.set(workspaceId, set)
+      }
+      return set
+    }, [workspaceId])
+  )
+}
+
 /**
  * Whether this composer is the one host that consumes a `?stash=` deep link for
  * its scope. Exactly one mounted composer per scope answers true; the rest defer,
