@@ -1,10 +1,7 @@
-import type { ComponentType } from "react"
 import {
   Sparkles,
   MessageSquareReply,
   Quote,
-  FileText,
-  Type,
   Pencil,
   Trash2,
   History,
@@ -26,8 +23,16 @@ import {
   Check,
 } from "lucide-react"
 import { toast } from "sonner"
-import { stripMarkdown } from "@/lib/markdown"
 import { buildStreamLink, buildConversationLink } from "@/lib/stream-links"
+import {
+  type ActionDefinition,
+  type GroupedAction,
+  copyContentActions,
+  copyToClipboard,
+  filterVisibleActions,
+} from "@/components/actions/action-model"
+
+export { groupVisibleActions, resolveActionLabel } from "@/components/actions/action-model"
 
 /**
  * Actor types whose messages can carry an agent trace. The single source of
@@ -229,99 +234,10 @@ export interface MessageActionContext {
 }
 
 /** A top-level action in the message context menu. */
-export interface MessageAction {
-  id: string
-  /**
-   * Visible menu label. Plain string for static entries; for actions whose
-   * label depends on the message (e.g. "Share to #parent-name"), pass a
-   * function that derives it from the context.
-   */
-  label: string | ((context: MessageActionContext) => string)
-  icon: ComponentType<{ className?: string }>
-  /**
-   * Render a separator before this action in the menu. For grouped entries
-   * (see {@link groupId}), only the group's primary action's `separatorBefore`
-   * is honored — alternatives ride along the group.
-   */
-  separatorBefore?: boolean
-  /** Visual variant — "destructive" renders in red */
-  variant?: "destructive"
-  /**
-   * Group id for split-button grouping. Adjacent visible actions sharing the
-   * same `groupId` collapse into one row: the first action is the primary
-   * (default tap), the rest become alternatives reachable via a chevron-driven
-   * dropdown. A group with only one visible action degrades to a regular row.
-   * `groupVisibleActions` performs the collapse.
-   */
-  groupId?: string
-  /** Controls visibility — evaluated by getVisibleActions */
-  when: (context: MessageActionContext) => boolean
-  /** URL for navigation actions — rendered as <Link> (INV-40) */
-  getHref?: (context: MessageActionContext) => string | undefined
-  /** Handler for mutation actions — rendered as <button> */
-  action?: (context: MessageActionContext) => void | Promise<void>
-}
+export type MessageAction = ActionDefinition<MessageActionContext>
 
-/** Resolve the visible label for an action, handling the string/function variants. */
-export function resolveActionLabel(action: MessageAction, context: MessageActionContext): string {
-  return typeof action.label === "function" ? action.label(context) : action.label
-}
-
-/**
- * A grouped item in the rendered menu.
- *
- * - `single` — an ungrouped action (or a group whose only visible member
- *   degraded to a standalone row). Renders as a normal menu row.
- * - `group` — multiple visible same-`groupId` actions. The renderer shows
- *   `members[0]` as the row's primary tap target and exposes ALL members
- *   (including `members[0]`) in a chevron-driven dropdown so the menu is
- *   a complete list of options rather than "the alternatives". The first
- *   member is always the default — opening the dropdown should feel like
- *   a list with the default option pre-highlighted.
- */
-export type GroupedActionItem = { kind: "single"; action: MessageAction } | { kind: "group"; members: MessageAction[] }
-
-/**
- * Collapse adjacent same-`groupId` actions into split-button groups, leaving
- * ungrouped actions as `single` items. Order is preserved; grouped items
- * appear at the position of their first member. The first member becomes
- * the primary (default tap target); the dropdown lists every member so the
- * UI presents the full set of options rather than "the others".
- *
- * Same-group actions are expected to be defined adjacently in
- * {@link messageActions}; this is enforced by visibility filtering. A group
- * with only one visible member degrades to a `single` item — no chevron.
- */
-export function groupVisibleActions(actions: MessageAction[]): GroupedActionItem[] {
-  const items: GroupedActionItem[] = []
-  let i = 0
-  while (i < actions.length) {
-    const action = actions[i]
-    if (!action.groupId) {
-      items.push({ kind: "single", action })
-      i++
-      continue
-    }
-
-    const members: MessageAction[] = [action]
-    let j = i + 1
-    while (j < actions.length && actions[j].groupId === action.groupId) {
-      members.push(actions[j])
-      j++
-    }
-    if (members.length === 1) {
-      items.push({ kind: "single", action })
-    } else {
-      items.push({ kind: "group", members })
-    }
-    i = j
-  }
-  return items
-}
-
-async function copyToClipboard(text: string): Promise<void> {
-  await navigator.clipboard.writeText(text)
-}
+/** A rendered menu item — an action, or a split-button group of them. */
+export type GroupedActionItem = GroupedAction<MessageActionContext>
 
 export const messageActions: MessageAction[] = [
   {
@@ -570,37 +486,10 @@ export const messageActions: MessageAction[] = [
     when: (ctx) => !!ctx.onMarkUnread,
     action: (ctx) => ctx.onMarkUnread?.(),
   },
-  {
-    id: "copy-as-markdown",
-    label: "Copy as Markdown",
-    icon: FileText,
+  ...copyContentActions<MessageActionContext>({
+    getMarkdown: (ctx) => ctx.contentMarkdown,
     separatorBefore: true,
-    groupId: "copy",
-    when: () => true,
-    action: async (ctx) => {
-      try {
-        await copyToClipboard(ctx.contentMarkdown)
-        toast.success("Copied as Markdown") // INV-63-allow: clipboard copy from a closing menu has no inline anchor
-      } catch {
-        toast.error("Failed to copy")
-      }
-    },
-  },
-  {
-    id: "copy-as-plain-text",
-    label: "Copy as Plain text",
-    icon: Type,
-    groupId: "copy",
-    when: () => true,
-    action: async (ctx) => {
-      try {
-        await copyToClipboard(stripMarkdown(ctx.contentMarkdown))
-        toast.success("Copied as plain text") // INV-63-allow: clipboard copy from a closing menu has no inline anchor
-      } catch {
-        toast.error("Failed to copy")
-      }
-    },
-  },
+  }),
   {
     id: "copy-link",
     label: "Copy link to message",
@@ -636,5 +525,5 @@ export const messageActions: MessageAction[] = [
 ]
 /** Filter actions that should be shown for a given message context. */
 export function getVisibleActions(context: MessageActionContext): MessageAction[] {
-  return messageActions.filter((a) => a.when(context))
+  return filterVisibleActions(messageActions, context)
 }

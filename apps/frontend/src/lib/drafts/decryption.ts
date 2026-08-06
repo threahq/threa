@@ -143,6 +143,13 @@ export type DraftPreviewStatus = "ready" | "decrypting" | "locked" | "failed"
 export interface DraftPreview {
   /** Inline, markdown-stripped body text; "" when empty or unavailable. */
   text: string
+  /**
+   * The full markdown body — what a copy action puts on the clipboard; "" when
+   * empty or unavailable. Kept beside `text` (rather than re-serialized per
+   * surface) so a sealed draft's copyability is decided by the same decrypt
+   * state that decides its preview.
+   */
+  markdown: string
   status: DraftPreviewStatus
 }
 
@@ -152,14 +159,24 @@ export function draftInlineText(contentJson: JSONContent | null | undefined): st
   return stripMarkdownToInline(serializeToMarkdown(contentJson)).trim()
 }
 
+/** Full markdown for a draft body; "" when empty. */
+export function draftMarkdown(contentJson: JSONContent | null | undefined): string {
+  if (!contentJson || isEmptyContent(contentJson)) return ""
+  return serializeToMarkdown(contentJson).trim()
+}
+
 /** Project a decrypt state onto the list-preview shape. */
 export function draftDecryptionToPreview(decryption: DraftDecryption): DraftPreview {
   if (decryption.status === "plaintext" || decryption.status === "decrypted") {
-    return { text: draftInlineText(decryption.contentJson), status: "ready" }
+    return {
+      text: draftInlineText(decryption.contentJson),
+      markdown: draftMarkdown(decryption.contentJson),
+      status: "ready",
+    }
   }
-  if (decryption.status === "failed") return { text: "", status: "failed" }
-  if (decryption.status === "locked") return { text: "", status: "locked" }
-  return { text: "", status: "decrypting" } // pending / none
+  if (decryption.status === "failed") return { text: "", markdown: "", status: "failed" }
+  if (decryption.status === "locked") return { text: "", markdown: "", status: "locked" }
+  return { text: "", markdown: "", status: "decrypting" } // pending / none
 }
 
 /** User-facing label for a non-ready preview status. */

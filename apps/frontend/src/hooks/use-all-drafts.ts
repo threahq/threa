@@ -17,9 +17,14 @@ import { isDraftId } from "./use-draft-scratchpads"
 import { purgeScopeDrafts } from "./use-draft-message"
 import { isEmptyContent } from "@/lib/prosemirror-utils"
 import { getStreamName, streamFallbackLabel, streamLabel } from "@/lib/streams"
-import { draftInlineText, draftPreviewStatusLabel } from "@/lib/drafts/decryption"
+import { draftInlineText, draftMarkdown, draftPreviewStatusLabel } from "@/lib/drafts/decryption"
 import { conversationOriginLabel, subtopicOriginLabel, threadOriginLabel } from "@/lib/drafts/origin-label"
-import { useDecryptedDraftPreviews, type DraftPreview, type DraftPreviewInput } from "./use-decrypted-draft-previews"
+import {
+  useDecryptedDraftPreviews,
+  type DraftPreview,
+  type DraftPreviewInput,
+  type DraftPreviewStatus,
+} from "./use-decrypted-draft-previews"
 
 export type DraftType = "scratchpad" | "channel" | "dm" | "thread"
 
@@ -40,6 +45,18 @@ export interface UnifiedDraft {
   displayName: string
   /** Preview of the draft content (truncated) */
   preview: string
+  /**
+   * The full markdown body, for copy-to-clipboard; "" when the body is empty or
+   * not readable (see {@link UnifiedDraft.contentStatus}).
+   */
+  contentMarkdown: string
+  /**
+   * Readability of {@link UnifiedDraft.contentMarkdown}. A sealed draft is
+   * "locked" / "decrypting" / "failed" until its body decrypts, so copy is
+   * disabled rather than putting an empty string or a status label on the
+   * clipboard.
+   */
+  contentStatus: DraftPreviewStatus
   /** Number of attachments */
   attachmentCount: number
   /** Last updated timestamp for sorting */
@@ -117,6 +134,22 @@ function draftPreviewLabel(draft: CachedDraft, previewMap: Map<string, DraftPrev
   if (!preview) return "Encrypted draft"
   if (preview.status !== "ready") return draftPreviewStatusLabel(preview.status)
   return truncatePreview(preview.text) || "Encrypted draft"
+}
+
+/**
+ * The copy source for a draft row: the full markdown plus how readable it is.
+ * Reads the same decrypted-preview entry the row's label does, so a sealed row
+ * can never show "Decrypting…" while a copy action hands out that label (or an
+ * empty body) as content.
+ */
+function draftCopySource(
+  draft: CachedDraft,
+  previewMap: Map<string, DraftPreview>
+): { contentMarkdown: string; contentStatus: DraftPreviewStatus } {
+  if (draft.ciphertext == null) return { contentMarkdown: draftMarkdown(draft.contentJson), contentStatus: "ready" }
+  const preview = previewMap.get(draft.id)
+  if (!preview) return { contentMarkdown: "", contentStatus: "locked" }
+  return { contentMarkdown: preview.markdown, contentStatus: preview.status }
 }
 
 /** The encrypted root whose SSK seals a draft's body, for decrypt-on-read previews. */
@@ -469,6 +502,7 @@ export function useAllDrafts(workspaceId: string) {
           streamId: scratchpad.id,
           displayName,
           preview: draftPreviewLabel(loadedDraft, previewMap),
+          ...draftCopySource(loadedDraft, previewMap),
           attachmentCount: loadedDraft?.attachments?.length ?? 0,
           updatedAt: loadedDraft?.clientUpdatedAt ?? scratchpad.createdAt,
           href: `/w/${workspaceId}/s/${scratchpad.id}`,
@@ -531,6 +565,7 @@ export function useAllDrafts(workspaceId: string) {
         streamId: resolved.streamId,
         displayName: resolved.displayName,
         preview: draftPreviewLabel(draft, previewMap),
+        ...draftCopySource(draft, previewMap),
         attachmentCount: draft.attachments?.length ?? 0,
         updatedAt: draft.clientUpdatedAt,
         href,

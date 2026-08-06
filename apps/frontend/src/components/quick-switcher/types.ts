@@ -21,6 +21,13 @@ export interface QuickSwitcherItem {
   actionIcon?: React.ComponentType<{ className?: string }>
   /** Aria label for the action button */
   actionLabel?: string
+  /**
+   * Row context menu, rendered in the trailing slot in place of the single
+   * action button. Its clicks never navigate the row.
+   */
+  contextMenu?: React.ReactNode
+  /** Touch long-press on the row (e.g. open the row's action drawer). */
+  onLongPress?: () => void
   /** Urgency level for visual indicators (color strip, bold text) */
   urgency?: UrgencyLevel
   /** Number of unread messages */

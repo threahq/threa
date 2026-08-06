@@ -592,6 +592,8 @@ describe("streamIdsWithLoadedDraft", () => {
       streamId: "stream_1",
       displayName: "General",
       preview: "hello",
+      contentMarkdown: "hello",
+      contentStatus: "ready" as const,
       attachmentCount: 0,
       updatedAt: 1000,
       href: "/w/ws_1/s/stream_1",
