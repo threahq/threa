@@ -224,13 +224,25 @@ function ItemRow({
   const ActionIcon = item.actionIcon
   const touchCapable = useTouchCapable()
 
-  // Additive touch gesture (a mouse never fires it), suppressed in batch mode
-  // where the whole row is a selection toggle. `deferToInteractiveElements`
-  // keeps a hold on the row's own menu button from also opening the drawer.
+  // A long press on a navigating row has to suppress the synthetic click that
+  // follows it, or the drawer opens AND the row routes away underneath it. A
+  // timestamp window, not a boolean: with no synthetic click (the platform does
+  // not always send one) a boolean latch would swallow the user's next real tap.
+  // Same shape as `useSidebarItemDrawer`, whose rows are also links.
+  const suppressClicksUntilRef = useRef(0)
+
+  // Additive touch gesture; a mouse never fires it, and batch mode owns the whole
+  // row as a selection toggle. NOTE: no `deferToInteractiveElements` — these
+  // handlers sit ON the row's own `<a href>`, and that option's `closest()` test
+  // matches the element itself, so it would refuse every touch on the row and the
+  // gesture would never fire at all. The menu button is kept from arming it by
+  // stopping touchstart at its wrapper instead.
   const longPress = useLongPress({
     enabled: touchCapable && !selectionEnabled && !!item.onLongPress,
-    onLongPress: () => item.onLongPress?.(),
-    deferToInteractiveElements: true,
+    onLongPress: () => {
+      suppressClicksUntilRef.current = Date.now() + 750
+      item.onLongPress?.()
+    },
   })
 
   // Roving tabindex in selection mode: active option is the tab stop.
@@ -279,6 +291,8 @@ function ItemRow({
               e.preventDefault()
               e.stopPropagation()
             }}
+            // Holding the ⋮ trigger must not also arm the row's long press.
+            onTouchStart={(e) => e.stopPropagation()}
           >
             {item.contextMenu}
           </div>
@@ -326,7 +340,14 @@ function ItemRow({
         data-index={index}
         className={className}
         onMouseEnter={() => onSelectIndex(index)}
-        onClick={(e) => onClick(e, item)}
+        onClick={(e) => {
+          if (suppressClicksUntilRef.current > Date.now()) {
+            e.preventDefault()
+            e.stopPropagation()
+            return
+          }
+          onClick(e, item)
+        }}
         onTouchStart={longPress.handlers.onTouchStart}
         onTouchEnd={longPress.handlers.onTouchEnd}
         onTouchMove={longPress.handlers.onTouchMove}

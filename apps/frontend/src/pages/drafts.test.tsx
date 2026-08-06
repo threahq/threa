@@ -1,7 +1,8 @@
 import { MemoryRouter, Route, Routes } from "react-router-dom"
-import { describe, expect, it, vi, beforeEach } from "vitest"
+import { describe, expect, it, vi, beforeEach, afterEach } from "vitest"
 import { toast } from "sonner"
-import { render, screen, userEvent, within, waitFor } from "@/test"
+import { act, fireEvent, render, screen, userEvent, within, waitFor } from "@/test"
+import * as touchCapableModule from "@/hooks/use-touch-capable"
 import { DraftsPage } from "./drafts"
 import { SidebarProvider } from "@/contexts"
 import * as hooksModule from "@/hooks"
@@ -41,6 +42,9 @@ function renderPage() {
       <MemoryRouter initialEntries={[`/w/${WS}/drafts`]}>
         <Routes>
           <Route path="/w/:workspaceId/drafts" element={<DraftsPage />} />
+          {/* Any navigation away renders this, so a test can assert a click did
+              NOT route without reaching for a navigate spy. */}
+          <Route path="*" element={<div data-testid="navigated-away" />} />
         </Routes>
       </MemoryRouter>
     </SidebarProvider>
@@ -292,5 +296,40 @@ describe("DraftsPage row context menu", () => {
     renderPage()
 
     expect(screen.getByRole("option", { name: /Alpha/ })).toHaveAttribute("href", `/w/${WS}/s/stream_a`)
+  })
+})
+
+describe("DraftsPage touch long-press", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks()
+    mockDrafts([draft({ id: "a", displayName: "Alpha" })])
+    vi.spyOn(touchCapableModule, "useTouchCapable").mockReturnValue(true)
+  })
+  afterEach(() => vi.useRealTimers())
+
+  // The row IS an <a href>, so a defer-to-interactive-elements guard would match
+  // the row itself via closest() and refuse every touch — the whole mobile half
+  // of this surface would be dead with nothing failing.
+  it("opens the action drawer from a long press on a row that navigates", () => {
+    vi.useFakeTimers()
+    renderPage()
+
+    const row = screen.getByRole("option", { name: /Alpha/i })
+    fireEvent.touchStart(row, { touches: [{ clientX: 10, clientY: 10 }] })
+    act(() => vi.advanceTimersByTime(600))
+
+    expect(screen.getByRole("button", { name: /Copy as Markdown/i })).toBeInTheDocument()
+  })
+
+  it("does not navigate on the click that follows the hold", () => {
+    vi.useFakeTimers()
+    renderPage()
+
+    const row = screen.getByRole("option", { name: /Alpha/i })
+    fireEvent.touchStart(row, { touches: [{ clientX: 10, clientY: 10 }] })
+    act(() => vi.advanceTimersByTime(600))
+    fireEvent.click(row)
+
+    expect(screen.queryByTestId("navigated-away")).toBeNull()
   })
 })
