@@ -7,7 +7,7 @@ import { StashedDraftsPicker } from "./stashed-drafts-picker"
 import { FabDrawerCloseContext } from "./fab-drawer-close-context"
 import { StashedDraftsComposerBridgeContext } from "./stashed-drafts-open-context"
 import * as inputModeModule from "@/hooks/use-input-mode"
-import type { CachedDraft, DraftPreview } from "@/hooks"
+import type { CachedDraft, DraftPreview, StashedDraftRowOrigin } from "@/hooks"
 
 let isTouchMockValue = false
 
@@ -33,16 +33,18 @@ function renderPicker(overrides: Partial<Parameters<typeof StashedDraftsPicker>[
   }
   const closeFabDrawer = vi.fn()
   const focusComposer = vi.fn()
-  render(
+  const tree = (pickerProps: typeof props) => (
     <TooltipProvider>
       <FabDrawerCloseContext.Provider value={closeFabDrawer}>
         <StashedDraftsComposerBridgeContext.Provider value={{ openRef: { current: null }, focusComposer }}>
-          <StashedDraftsPicker {...props} />
+          <StashedDraftsPicker {...pickerProps} />
         </StashedDraftsComposerBridgeContext.Provider>
       </FabDrawerCloseContext.Provider>
     </TooltipProvider>
   )
-  return { ...props, closeFabDrawer, focusComposer }
+  const { rerender, unmount } = render(tree(props))
+  const rerenderWith = (next: Partial<typeof props>) => rerender(tree({ ...props, ...next }))
+  return { ...props, closeFabDrawer, focusComposer, rerenderWith, unmount }
 }
 
 describe("StashedDraftsPicker", () => {
@@ -213,6 +215,105 @@ describe("StashedDraftsPicker", () => {
       renderPicker({ drafts: [makeDraft("draft_p", "plain body")] })
       await open()
       expect(screen.getByText("plain body")).toBeInTheDocument()
+    })
+  })
+
+  describe("origin and the own/borrowed seam", () => {
+    const open = () => userEvent.click(screen.getByRole("button", { name: /drafts/i }))
+    const own: StashedDraftRowOrigin = { tier: "own", label: "#general" }
+    const borrowed = (label: string): StashedDraftRowOrigin => ({ tier: "borrowed", label })
+    const rows = [makeDraft("draft_own", "mine"), makeDraft("draft_borrowed", "theirs")]
+
+    it("draws the seam between the last own row and the first borrowed one", async () => {
+      renderPicker({
+        drafts: rows,
+        originById: new Map([
+          ["draft_own", own],
+          ["draft_borrowed", borrowed("Reply in Pizza plans")],
+        ]),
+      })
+      await open()
+
+      const items = Array.from(screen.getByRole("list").children).map((el) => el.textContent)
+      expect(items[0]).toContain("mine")
+      expect(items[1]).toContain("From elsewhere")
+      expect(items[2]).toContain("theirs")
+    })
+
+    it("renders no seam when every row is borrowed, and none when every row is own", async () => {
+      const { unmount } = renderPicker({
+        drafts: rows,
+        originById: new Map([
+          ["draft_own", borrowed("Reply in Pizza plans")],
+          ["draft_borrowed", borrowed("Reply in Pizza plans")],
+        ]),
+      })
+      await open()
+      expect(screen.queryByTestId("stashed-drafts-borrowed-separator")).toBeNull()
+      unmount()
+
+      renderPicker({
+        drafts: rows,
+        originById: new Map([
+          ["draft_own", own],
+          ["draft_borrowed", own],
+        ]),
+      })
+      await open()
+      expect(screen.queryByTestId("stashed-drafts-borrowed-separator")).toBeNull()
+    })
+
+    it("names where a borrowed row came from, and says nothing on an own row", async () => {
+      renderPicker({
+        drafts: rows,
+        originById: new Map([
+          ["draft_own", own],
+          ["draft_borrowed", borrowed("Reply in Pizza plans")],
+        ]),
+      })
+      await open()
+
+      const origins = screen.getAllByText(/Reply in Pizza plans|#general/)
+      expect(origins.map((el) => el.textContent)).toEqual(["Reply in Pizza plans"])
+    })
+
+    // The two fixed-height classes ARE the INV-21 story for this row: the preview
+    // reserves two lines so a decrypting body cannot grow it, and the meta line is
+    // a fixed height so a late-resolving origin can only truncate. Assert them
+    // directly — a count-vs-itself comparison stays green with both deleted, which
+    // is worse than no test because it reads as coverage.
+    it("holds the row's geometry classes, and adding an origin does not add a line", async () => {
+      const { rerenderWith } = renderPicker({
+        drafts: rows,
+        // The borrowed row has NO origin entry yet — the state before the label
+        // resolves, which is the transition that actually happens.
+        originById: new Map([["draft_own", own]]),
+      })
+      await open()
+
+      const row = () => screen.getAllByText("theirs")[0]!.closest("button")!
+      const paragraphs = () => Array.from(row().querySelectorAll("p"))
+
+      const before = paragraphs()
+      expect(before).toHaveLength(2)
+      expect(before[0]!.className).toContain("min-h-10")
+      expect(before[0]!.className).toContain("line-clamp-2")
+      expect(before[1]!.className).toContain("h-4")
+
+      rerenderWith({
+        drafts: rows,
+        originById: new Map([
+          ["draft_own", own],
+          ["draft_borrowed", borrowed("Reply in Pizza plans")],
+        ]),
+      })
+
+      expect(screen.getByText("Reply in Pizza plans")).toBeInTheDocument()
+      const after = paragraphs()
+      // The origin shares the meta line rather than adding a third paragraph.
+      expect(after).toHaveLength(2)
+      expect(after[0]!.className).toContain("min-h-10")
+      expect(after[1]!.className).toContain("h-4")
     })
   })
 

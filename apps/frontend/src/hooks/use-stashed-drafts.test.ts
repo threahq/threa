@@ -112,7 +112,12 @@ function seedStream(id: string, overrides: Record<string, unknown> = {}): Promis
 function seedConversation(
   id: string,
   streamId: string,
-  opts: { messageIds?: string[]; openingMessageId?: string | null; lastActiveStreamId?: string } = {}
+  opts: {
+    messageIds?: string[]
+    openingMessageId?: string | null
+    lastActiveStreamId?: string
+    topicSummary?: string
+  } = {}
 ): Promise<unknown> {
   const openingMessageId = opts.openingMessageId === undefined ? "msg_1" : opts.openingMessageId
   return db.conversations.put({
@@ -120,7 +125,7 @@ function seedConversation(
     workspaceId: pileWorkspaceId,
     _lastActivityMs: 1,
     _cachedAt: 1,
-    conversation: { id, streamId, messageIds: opts.messageIds ?? ["msg_1", "msg_2"] },
+    conversation: { id, streamId, messageIds: opts.messageIds ?? ["msg_1", "msg_2"], topicSummary: opts.topicSummary },
     openingMessage: openingMessageId ? { id: openingMessageId } : null,
     recentMessages: opts.lastActiveStreamId ? [{ streamId: opts.lastActiveStreamId }] : [],
   } as never)
@@ -202,6 +207,10 @@ describe("useStashedDrafts — pile membership", () => {
       kind: "conversation",
       conversationId: "conv_lone",
       tier: "borrowed",
+      title: null,
+      // No topic summary yet — the label falls back to this stream's name rather
+      // than a generic phrase, the same rung the drafts explorer uses.
+      anchorStreamId: "stream_s",
     })
   })
 
@@ -405,7 +414,7 @@ describe("useStashedDrafts — pile membership", () => {
 
   it("reports each row's origin and tier as structured data", async () => {
     await seedStream("stream_s")
-    await seedConversation("conv_1", "stream_s", { messageIds: ["msg_1", "msg_9"] })
+    await seedConversation("conv_1", "stream_s", { messageIds: ["msg_1", "msg_9"], topicSummary: "Pizza plans" })
     await seedThreadAnchor("msg_9", "stream_s")
     await db.drafts.bulkAdd([
       draftRow({ id: "draft_stream", scope: "stream:stream_s" }),
@@ -417,10 +426,30 @@ describe("useStashedDrafts — pile membership", () => {
     const { result } = renderHook(() => useStashedDrafts(pileWorkspaceId, "stream:stream_s"))
     await waitFor(() => expect(result.current.originByDraftId.size).toBe(4))
     expect(Object.fromEntries(result.current.originByDraftId)).toEqual({
-      draft_stream: { kind: "stream", streamId: "stream_s", tier: "own" },
-      draft_conv: { kind: "conversation", conversationId: "conv_1", tier: "borrowed" },
-      draft_thread: { kind: "thread", anchorId: "msg_9", streamId: "stream_s", tier: "borrowed" },
-      draft_subtopic: { kind: "subtopic", streamId: "stream_s", messageId: "msg_1", tier: "borrowed" },
+      draft_stream: { kind: "stream", streamId: "stream_s", tier: "own", title: null, anchorStreamId: "stream_s" },
+      draft_conv: {
+        kind: "conversation",
+        conversationId: "conv_1",
+        tier: "borrowed",
+        title: "Pizza plans",
+        anchorStreamId: "stream_s",
+      },
+      draft_thread: {
+        kind: "thread",
+        anchorId: "msg_9",
+        streamId: "stream_s",
+        tier: "borrowed",
+        title: null,
+        anchorStreamId: "stream_s",
+      },
+      draft_subtopic: {
+        kind: "subtopic",
+        streamId: "stream_s",
+        messageId: "msg_1",
+        anchorStreamId: "stream_s",
+        tier: "borrowed",
+        title: "Pizza plans",
+      },
     })
   })
 

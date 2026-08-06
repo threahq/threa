@@ -19,6 +19,7 @@ import { isEmptyContent } from "@/lib/prosemirror-utils"
 import { getStreamName, streamFallbackLabel, streamLabel } from "@/lib/streams"
 import { draftInlineText, draftPreviewStatusLabel } from "@/lib/drafts/decryption"
 import { effectiveConversationTitle } from "@/lib/conversations/title"
+import { conversationOriginLabel, subtopicOriginLabel, threadOriginLabel } from "@/lib/drafts/origin-label"
 import { useDecryptedDraftPreviews, type DraftPreview, type DraftPreviewInput } from "./use-decrypted-draft-previews"
 
 export type DraftType = "scratchpad" | "channel" | "dm" | "thread"
@@ -180,8 +181,7 @@ function resolveDraftLocation(
     const messageInfo = messageToStreamMap.get(parsed.id)
     const parentStream = messageInfo ? streamMap.get(messageInfo.streamId) : null
     if (parentStream) {
-      const streamName = streamLabel(parentStream, "sidebar")
-      const displayName = `Thread in ${streamName}`
+      const displayName = threadOriginLabel(streamLabel(parentStream, "sidebar"))
       return {
         draftType: "thread",
         streamId: parentStream.id,
@@ -193,9 +193,9 @@ function resolveDraftLocation(
     return {
       draftType: "thread",
       streamId: null,
-      displayName: "Thread reply",
+      displayName: threadOriginLabel(null),
       href: null,
-      groupLabel: "Thread reply",
+      groupLabel: threadOriginLabel(null),
     }
   }
 
@@ -258,7 +258,7 @@ function resolveBoardDraftLocation(
     const stream = streamMap.get(parsed.streamId)
     let context = stream ? streamLabel(stream, "sidebar") : null
     if (host) context = effectiveConversationTitle(host.conversation, streamMap.get(host.conversation.streamId))
-    const displayName = context ? `New sub-topic in ${context}` : "New sub-topic"
+    const displayName = subtopicOriginLabel(context)
     return {
       draftType: streamDraftType(stream),
       streamId: parsed.streamId,
@@ -276,7 +276,7 @@ function resolveBoardDraftLocation(
   const stream = anchorStreamId ? streamMap.get(anchorStreamId) : undefined
   let target = stream ? streamLabel(stream, "sidebar") : null
   if (post) target = effectiveConversationTitle(post.conversation, streamMap.get(post.conversation.streamId))
-  const displayName = target ? `Reply in ${target}` : "Conversation reply"
+  const displayName = conversationOriginLabel(target)
   const shared = { draftType: streamDraftType(stream), streamId: anchorStreamId, displayName, groupLabel: displayName }
 
   if (parsed.kind === "branch-reply") {
