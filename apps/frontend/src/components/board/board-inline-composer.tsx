@@ -17,7 +17,7 @@ import { useComposerCommandSend } from "@/components/composer/use-composer-comma
 import { useIsMobileOrCoarse } from "@/hooks/use-pointer"
 import { useInputMode } from "@/hooks/use-input-mode"
 import { appendQuoteReplyNode, type QuoteReplyData } from "@/components/timeline/quote-reply-context"
-import { useDraftComposer, useScheduleMessage, useStashComposer, hasDocContent } from "@/hooks"
+import { useDraftComposer, useScheduleMessage, useStashComposer, useStashedDraftOrigins, hasDocContent } from "@/hooks"
 import { useComposeTrace } from "@/lib/compose-trace"
 import { relocateLoadedDraft } from "@/hooks/use-draft-message"
 import { useOptionalSyncEngine } from "@/sync/sync-engine"
@@ -209,6 +209,7 @@ export function InlineComposerForm({
   // stash the timeline composer has, so a half-written inline reply survives
   // switching cards without hijacking the ambient draft slot.
   const stash = useStashComposer(composer, workspaceId, draftKey)
+  const stashOrigins = useStashedDraftOrigins(workspaceId, stash.originByDraftId)
   const scheduleMessage = useScheduleMessage(workspaceId)
   const { planSend, dispatchCommand } = useComposerCommandSend(workspaceId, streamId, commandConversationId)
 
@@ -554,6 +555,7 @@ export function InlineComposerForm({
   // picker's own `contentJson` fallback previews suffice — no decrypt pass.
   const stashPickerProps = {
     drafts: stash.drafts,
+    originById: stashOrigins,
     canStashCurrent: composer.canSend,
     // Stashing disposes of the current composition — end the compose session so
     // the next one can't inherit its openedAt/horizon (trace discarded).

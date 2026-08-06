@@ -63,6 +63,8 @@ export {
   type CachedDraft,
 } from "./use-stashed-drafts"
 
+export { useStashedDraftOrigins, type StashedDraftRowOrigin } from "./use-stashed-draft-origins"
+
 export { useStashComposer, useStashParamDraftRow, type UseStashComposerResult } from "./use-stash-composer"
 
 export {

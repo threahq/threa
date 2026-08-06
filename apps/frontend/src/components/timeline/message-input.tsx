@@ -10,6 +10,7 @@ import {
   useStashComposer,
   useStashParamDraftRow,
   useDecryptedDraftPreviews,
+  useStashedDraftOrigins,
   useMentionStreamContext,
   useComposerTarget,
   useMountedComposerCount,
@@ -397,6 +398,7 @@ function MessageInputComponent({
     [stash.drafts, e2eRootStreamId]
   )
   const stashPreviews = useDecryptedDraftPreviews(workspaceId, stashPreviewInputs)
+  const stashOrigins = useStashedDraftOrigins(workspaceId, stash.originByDraftId)
 
   // Use a ref so the handler always reads fresh composer state without
   // re-registering on every render (composer object is not memoized).
@@ -918,6 +920,7 @@ function MessageInputComponent({
       <StashedDraftsPicker
         drafts={stash.drafts}
         previewById={stashPreviews}
+        originById={stashOrigins}
         canStashCurrent={composer.canSend}
         onStashCurrent={stash.handleStashDraft}
         onRestore={stash.handleRestoreStashed}
@@ -930,6 +933,7 @@ function MessageInputComponent({
       <StashedDraftsPicker
         drafts={stash.drafts}
         previewById={stashPreviews}
+        originById={stashOrigins}
         canStashCurrent={composer.canSend}
         onStashCurrent={stash.handleStashDraft}
         onRestore={stash.handleRestoreStashed}
@@ -964,7 +968,7 @@ function MessageInputComponent({
   // file into a conversation, so it renders wherever the composer does (inline
   // and expanded). Dismissible: X disarms without touching the typed content.
   const conversationReplyStrip = armedConversationId ? (
-    <ConversationReplyStrip title={conversationReplyTopic ?? "conversation"} onCancel={disarm} />
+    <ConversationReplyStrip title={conversationReplyTopic ?? "this conversation"} onCancel={disarm} />
   ) : null
 
   const StreamGlyph = stream ? STREAM_ICONS[stream.type] : null

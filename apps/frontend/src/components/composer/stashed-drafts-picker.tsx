@@ -1,4 +1,12 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react"
+import {
+  Fragment,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent as ReactKeyboardEvent,
+} from "react"
 import { FileEdit, FilePlus, Trash2 } from "lucide-react"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
@@ -16,7 +24,7 @@ import { formatKeyBinding, getEffectiveKeyBinding } from "@/lib/keyboard-shortcu
 import { useFabDrawerClose } from "./fab-drawer-close-context"
 import { useRegisterStashedDraftsOpen, useStashedDraftsBridge } from "./stashed-drafts-open-context"
 import { useComposerAnchor } from "./use-composer-anchor"
-import type { CachedDraft, DraftPreview } from "@/hooks"
+import type { CachedDraft, DraftPreview, StashedDraftRowOrigin } from "@/hooks"
 import { RESTORE_REFUSAL_MESSAGE, type DraftRestoreResult } from "@/lib/drafts/restore-refusal"
 
 interface StashedDraftsPickerProps {
@@ -28,6 +36,14 @@ interface StashedDraftsPickerProps {
    * the row's `contentJson` (plaintext-only callers / tests).
    */
   previewById?: Map<string, DraftPreview>
+  /**
+   * Per-row tier + already-formatted origin label, from `useStashedDraftOrigins`.
+   * The picker only renders it: it draws the own/borrowed seam and names where a
+   * borrowed row came from, and never resolves a stream, conversation or scope
+   * itself (INV-15). Absent → every row renders as its own (plaintext-only
+   * callers / tests).
+   */
+  originById?: Map<string, StashedDraftRowOrigin>
   /** True when the composer has something worth stashing (controls "Save current" enablement). */
   canStashCurrent: boolean
   /** Called when the user clicks "Save current draft" or presses Enter on the save affordance. */
@@ -84,6 +100,7 @@ function rowPreview(draft: CachedDraft, previewById?: Map<string, DraftPreview>)
 export function StashedDraftsPicker({
   drafts,
   previewById,
+  originById,
   canStashCurrent,
   onStashCurrent,
   onRestore,
@@ -290,39 +307,79 @@ export function StashedDraftsPicker({
             </div>
           ) : (
             <ul className="max-h-64 overflow-y-auto py-1" role="list">
-              {drafts.map((draft) => {
+              {drafts.map((draft, index) => {
                 const preview = rowPreview(draft, previewById)
                 const attachmentCount = draft.attachments?.length ?? 0
+                const origin = originById?.get(draft.id)
+                const isBorrowed = origin?.tier === "borrowed"
+                // The seam, not a per-row badge: the pile arrives own-first, so
+                // the first borrowed row that follows an own row carries it. All
+                // own or all borrowed → no header at all.
+                const startsBorrowedGroup =
+                  isBorrowed && index > 0 && originById?.get(drafts[index - 1]!.id)?.tier !== "borrowed"
                 return (
-                  <li key={draft.id} className="group/row reveal-host">
-                    <div className="flex items-start gap-2 px-3 py-2 hover:bg-muted/60 focus-within:bg-muted/60">
-                      <button
-                        type="button"
-                        data-draft-row
-                        onClick={() => void handleRestore(draft.id)}
-                        className="flex-1 min-w-0 text-left focus:outline-none"
+                  <Fragment key={draft.id}>
+                    {startsBorrowedGroup && (
+                      <li
+                        role="presentation"
+                        data-testid="stashed-drafts-borrowed-separator"
+                        className="flex items-center gap-2 px-3 pt-2 pb-1"
                       >
-                        <p className="text-sm line-clamp-2 break-words">{preview}</p>
-                        <p className="text-[11px] text-muted-foreground mt-0.5">
-                          {formatRelativeTime(new Date(draft.clientUpdatedAt), now, undefined, { terse: true })}
-                          {attachmentCount > 0 && <span className="ml-1.5">· {attachmentCount} 📎</span>}
-                        </p>
-                      </button>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon"
-                        aria-label="Delete saved draft"
-                        className="h-7 w-7 shrink-0 reveal-actions"
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          requestDelete(draft.id)
-                        }}
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </Button>
-                    </div>
-                  </li>
+                        <span className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                          From elsewhere
+                        </span>
+                        <span className="h-px flex-1 bg-border" aria-hidden />
+                      </li>
+                    )}
+                    <li className="group/row reveal-host">
+                      <div className="flex items-start gap-2 px-3 py-2 hover:bg-muted/60 focus-within:bg-muted/60">
+                        <button
+                          type="button"
+                          data-draft-row
+                          onClick={() => void handleRestore(draft.id)}
+                          className="flex-1 min-w-0 text-left focus:outline-none"
+                        >
+                          {/* Two lines are reserved whether or not the preview
+                              fills them: a decrypting row resolves from one line
+                              to two, and the popover sits over the composer
+                              (INV-21). */}
+                          <p className="text-sm leading-5 min-h-10 line-clamp-2 break-words">{preview}</p>
+                          {/* One line, fixed height: the origin shares it with the
+                              timestamp and truncates, so a name resolving late
+                              never reflows the row. */}
+                          <p className="mt-0.5 flex items-baseline gap-1.5 h-4 text-[11px] leading-4 text-muted-foreground">
+                            {isBorrowed && (
+                              <>
+                                <span data-draft-origin className="min-w-0 truncate">
+                                  {origin.label}
+                                </span>
+                                <span className="shrink-0" aria-hidden>
+                                  ·
+                                </span>
+                              </>
+                            )}
+                            <span className="shrink-0">
+                              {formatRelativeTime(new Date(draft.clientUpdatedAt), now, undefined, { terse: true })}
+                              {attachmentCount > 0 && <span className="ml-1.5">· {attachmentCount} 📎</span>}
+                            </span>
+                          </p>
+                        </button>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          aria-label="Delete saved draft"
+                          className="h-7 w-7 shrink-0 reveal-actions"
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            requestDelete(draft.id)
+                          }}
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </Button>
+                      </div>
+                    </li>
+                  </Fragment>
                 )
               })}
             </ul>
