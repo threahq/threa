@@ -916,18 +916,22 @@ describe("useDraftComposer", () => {
       expect(mockSaveDraft).not.toHaveBeenCalled()
     })
 
-    it("flushes typed content to its OWN row before rehydrating from the new one", () => {
+    it("flushes typed content to its OWN row before rehydrating from the new one", async () => {
       mockDraftIsLoaded = true
       mockDraftLoadedId = "draft_x"
       mockDraftContentJson = makeDoc("X body")
-      mockSaveDraft.mockResolvedValue(undefined)
+      // The flush must report a PERSISTED row: the reset is gated on it, so a
+      // gated save (null) deliberately leaves the editor untouched instead.
+      mockSaveDraft.mockResolvedValue({ id: "draft_x" })
       const { result, rerender } = renderHook(() => useDraftComposer({ workspaceId, draftKey, scopeId }))
 
       act(() => {
         result.current.handleContentChange(makeDoc("X body and typing"))
       })
 
-      act(() => {
+      // The rehydrate happens once the flush RESOLVES (persist-gated), so the
+      // pointer change and the settled flush need an async act.
+      await act(async () => {
         mockDraftLoadedId = "draft_y"
         mockDraftContentJson = makeDoc("Y body")
         rerender()
@@ -936,6 +940,71 @@ describe("useDraftComposer", () => {
       // Identity-addressed: the typed body is written to draft_x, never to draft_y.
       expect(mockSaveDraft).toHaveBeenCalledWith(makeDoc("X body and typing"), [], "draft_x")
       expect(result.current.content).toEqual(makeDoc("Y body"))
+    })
+
+    it("keeps the typed content on screen when the repoint flush cannot persist", async () => {
+      mockDraftIsLoaded = true
+      mockDraftLoadedId = "draft_x"
+      mockDraftContentJson = makeDoc("X body")
+      // A gated save (locked E2E): the content reached no disk, so blanking the
+      // editor would destroy it — the composer must keep it and its identity.
+      mockSaveDraft.mockResolvedValue(null)
+      const { result, rerender } = renderHook(() => useDraftComposer({ workspaceId, draftKey, scopeId }))
+
+      act(() => {
+        result.current.handleContentChange(makeDoc("X body and typing"))
+      })
+
+      await act(async () => {
+        mockDraftLoadedId = "draft_y"
+        mockDraftContentJson = makeDoc("Y body")
+        rerender()
+      })
+
+      expect(mockSaveDraft).toHaveBeenCalledWith(makeDoc("X body and typing"), [], "draft_x")
+      expect(result.current.content).toEqual(makeDoc("X body and typing"))
+    })
+
+    it("serializes overlapping repoints — a second pointer change waits for the in-flight flush", async () => {
+      mockDraftIsLoaded = true
+      mockDraftLoadedId = "draft_x"
+      mockDraftContentJson = makeDoc("X body")
+      // A flush the test controls: X→Y arrives while typed content is engaged,
+      // and Y→Z lands BEFORE the X-flush resolves. The Z transition must queue
+      // behind it — running it immediately would read half-updated refs and
+      // flush the fragment into Y's real row.
+      let resolveFlush!: (row: { id: string }) => void
+      mockSaveDraft.mockImplementationOnce(() => new Promise<{ id: string }>((resolve) => (resolveFlush = resolve)))
+      const { result, rerender } = renderHook(() => useDraftComposer({ workspaceId, draftKey, scopeId }))
+
+      act(() => {
+        result.current.handleContentChange(makeDoc("X body and typing"))
+      })
+      act(() => {
+        mockDraftLoadedId = "draft_y"
+        mockDraftContentJson = makeDoc("Y body")
+        rerender()
+      })
+      // The X-flush is in flight; a second repoint lands.
+      act(() => {
+        mockDraftLoadedId = "draft_z"
+        mockDraftContentJson = makeDoc("Z body")
+        rerender()
+      })
+
+      // Only the X flush has run — the Z transition is queued, so no save was
+      // fired against Y (that would be the fragment landing in Y's row).
+      expect(mockSaveDraft).toHaveBeenCalledTimes(1)
+      expect(mockSaveDraft).toHaveBeenCalledWith(makeDoc("X body and typing"), [], "draft_x")
+
+      await act(async () => {
+        resolveFlush({ id: "draft_x" })
+      })
+
+      // The queued Z transition ran after the flush settled: the editor shows Z
+      // and still only one save ever fired.
+      expect(mockSaveDraft).toHaveBeenCalledTimes(1)
+      expect(result.current.content).toEqual(makeDoc("Z body"))
     })
 
     it("follows an id migration without flushing or blanking the editor", () => {

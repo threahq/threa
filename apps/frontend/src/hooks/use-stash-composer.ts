@@ -74,12 +74,6 @@ export function planDraftRestore(input: {
   return { action: "move", fromScope: draftScope, toScope: hostScope }
 }
 
-/** Every scope holding a device-local pointer at this draft. */
-async function loadedScopesForDraft(draftId: string): Promise<string[]> {
-  const pointers = await db.composerLoaded.toArray()
-  return pointers.filter((row) => row.draftId === draftId).map((row) => row.scope)
-}
-
 /**
  * What a host tells the pile about itself beyond its scope. Only the timeline's
  * top-level composer has one; a thread panel and a board composer restore by
@@ -200,9 +194,10 @@ export function useStashComposer(
   /**
    * Bring pile row `id` into this host. Everything is revalidated HERE, against
    * IDB, not against the pile computed a render ago: by the time the user clicks,
-   * the row may have been deleted or checked out elsewhere and the host may have
-   * resolved encrypted or archived. On any failure nothing happens at all — no
-   * partial move, both drafts intact — and the reason comes back to the caller,
+   * the row may have been deleted and the host may have resolved encrypted or
+   * archived. A row checked out elsewhere is TAKEN, never refused (v2). On any
+   * failure nothing happens at all — no partial move, both drafts intact — and
+   * the reason comes back to the caller,
    * which owes the user a message: the picker closes and the caret lands in the
    * composer either way, so a silent refusal looks exactly like a success
    * (INV-11, INV-63).
@@ -214,104 +209,118 @@ export function useStashComposer(
       if (!row || row.workspaceId !== workspaceId) {
         return refuse("missing", `refusing restore of missing draft ${id}`)
       }
-      // Checked out anywhere on this device — including under its own scope — is
-      // not restorable: two scopes holding one row make their debounced saves
-      // fight over its `scope` and body.
-      const checkedOut = await loadedScopesForDraft(id)
-      if (checkedOut.length > 0) {
-        return refuse("checked-out", `refusing restore of ${id}: checked out in ${checkedOut.join(", ")}`)
-      }
+      // A draft checked out elsewhere — any scope, any surface — is TAKEN, never
+      // refused: `restoreStashedDraftToComposer` detaches every other pointer in
+      // its own transaction, and a composer that loses its pointer mid-edit
+      // splits its content into a fresh row (`upsertLoadedDraft`'s foreign-holder
+      // guard). Same semantics as continuing a draft on your phone while the
+      // laptop still has it open.
 
-      const plan = planDraftRestore({
-        hostScope: scope,
-        targetHost,
-        draftScope: row.scope,
-        draftSource: describeScope(row.scope),
-      })
-      if (plan.action === "refuse") {
-        return refuse(plan.reason, `refusing restore of ${id} into ${scope}: ${plan.reason}`)
-      }
-      // Leaving the row's own scope needs a host that can hold it: an encrypted
-      // or archived home means the pile should never have offered it, and for an
-      // adopt a late `e2eEnabled` resolve would let `purgePlaintextScopeDrafts`
-      // delete the draft we just targeted.
-      if (plan.action !== "same-scope" && !canHostForeignDraft()) {
-        return refuse("host-ineligible", `refusing restore of ${id} into ${scope}: host is not eligible`)
-      }
-
-      // Swap semantics: flush whatever the composer holds into its row first so
-      // switching drafts never silently destroys work — it stays as a stash entry
-      // once the pointer moves off it. `flushDraft` only persists a non-empty
-      // editor, so a restore fired while the composer is still mid-hydration
-      // (transiently empty) can NEVER delete the currently-loaded draft. A thrown
-      // flush (e.g. IDB quota, or a seal that raced a lock) is swallowed: losing a
-      // recent auto-save is a smaller harm than aborting the deliberate restore.
-      try {
-        await composer.flushDraft()
-      } catch (err) {
-        console.error("Failed to flush current content before restoring", err)
-      }
-
-      if (plan.action === "adopt") {
-        // The pre-checks proved the RESTORED ROW is checked out nowhere; they say
-        // nothing about the scope we are about to point at. A conversation can
-        // hold one draft in its own composer and have another stashed, and that
-        // stashed one is in this pile. Repointing the target scope would leave
-        // that composer rendering its old body against our draft's id — its
-        // loaded id changes value rather than going null, so nothing blanks or
-        // rehydrates it — and its next debounced save would write that body into
-        // the row we just adopted. We cannot flush an editor we do not own, so
-        // refuse and let the user deal with it where it lives.
-        const targetPointer = await db.composerLoaded.get(plan.targetScope)
-        if (targetPointer?.draftId && targetPointer.draftId !== id) {
-          return refuse("target-busy", `refusing adopt of ${id}: ${plan.targetScope} holds ${targetPointer.draftId}`)
+      // Two attempts: the plan (adopt vs move) is made from the row's scope, and
+      // the flush below (an IDB write, possibly a seal) sits between that read
+      // and the execute. A concurrent re-home in that window must produce a NEW
+      // plan, not execute the stale one — a move planned against a `stream:`
+      // filing must become an adopt if the row just became conversation-filed,
+      // because executing the stale move rewrites the scope and destroys the
+      // filing with no undo. The move txn detects the drift and retries once.
+      for (let attempt = 0; attempt < 2; attempt++) {
+        const live = attempt === 0 ? row : await db.drafts.get(id)
+        if (!live || live.workspaceId !== workspaceId) {
+          return refuse("missing", `refusing restore of missing draft ${id}`)
         }
-        // The row stays exactly where it is — it keeps its filing, which is the
-        // whole point. Check it out under its OWN scope first, then point the
-        // host at it, so the composer never renders the target scope for a frame
-        // with no draft loaded under it. Targeting the host's own scope IS the
-        // disarm, so it clears rather than stores.
-        await restoreStashedDraftToComposer(workspaceId, plan.targetScope, id)
-        // Through the host's own disarm, never a bare `clearComposerTarget`: the
-        // gesture latch has to be cleared with the target or a later adopt reads
-        // as a fresh gesture and redirects to the panel, wiping the target the
-        // adopt just set.
-        if (plan.targetScope === plan.targetHost) {
-          if (!disarmTarget) throw new Error(`[stash] host ${plan.targetHost} can retarget but has no disarm`)
-          await disarmTarget()
-        } else await setComposerTarget(workspaceId, plan.targetHost, plan.targetScope)
+        const plan = planDraftRestore({
+          hostScope: scope,
+          targetHost,
+          draftScope: live.scope,
+          draftSource: describeScope(live.scope),
+        })
+        if (plan.action === "refuse") {
+          return refuse(plan.reason, `refusing restore of ${id} into ${scope}: ${plan.reason}`)
+        }
+        // Leaving the row's own scope needs a host that can hold it: an encrypted
+        // or archived home means the pile should never have offered it, and for an
+        // adopt a late `e2eEnabled` resolve would let `purgePlaintextScopeDrafts`
+        // delete the draft we just targeted.
+        if (plan.action !== "same-scope" && !canHostForeignDraft()) {
+          return refuse("host-ineligible", `refusing restore of ${id} into ${scope}: host is not eligible`)
+        }
+
+        // Swap semantics: flush whatever the composer holds into its row first so
+        // switching drafts never silently destroys work — it stays as a stash entry
+        // once the pointer moves off it. `flushDraft` only persists a non-empty
+        // editor, so a restore fired while the composer is still mid-hydration
+        // (transiently empty) can NEVER delete the currently-loaded draft. A thrown
+        // flush (e.g. IDB quota, or a seal that raced a lock) is swallowed: losing a
+        // recent auto-save is a smaller harm than aborting the deliberate restore.
+        // Once only — the retry re-plans, it does not re-flush.
+        if (attempt === 0) {
+          try {
+            await composer.flushDraft()
+          } catch (err) {
+            console.error("Failed to flush current content before restoring", err)
+          }
+        }
+
+        if (plan.action === "adopt") {
+          // Whatever the target scope held is simply displaced: the pointer
+          // overwrite detaches it into a stash entry, and a composer mounted there
+          // rehydrates to the adopted draft through the repoint path (chunk 1) —
+          // its own typed content, if any, is flushed to its own row first. No
+          // refusal: the row the user tapped is the row they get (v2 principle).
+          // The row stays exactly where it is — it keeps its filing, which is the
+          // whole point. Check it out under its OWN scope first, then point the
+          // host at it, so the composer never renders the target scope for a frame
+          // with no draft loaded under it. Targeting the host's own scope IS the
+          // disarm, so it clears rather than stores.
+          await restoreStashedDraftToComposer(workspaceId, plan.targetScope, id)
+          // Through the host's own disarm, never a bare `clearComposerTarget`: the
+          // gesture latch has to be cleared with the target or a later adopt reads
+          // as a fresh gesture and redirects to the panel, wiping the target the
+          // adopt just set.
+          if (plan.targetScope === plan.targetHost) {
+            if (!disarmTarget) throw new Error(`[stash] host ${plan.targetHost} can retarget but has no disarm`)
+            await disarmTarget()
+          } else await setComposerTarget(workspaceId, plan.targetHost, plan.targetScope)
+          composer.markNeedsRehydrate()
+          return { ok: true }
+        }
+
+        if (plan.action === "move") {
+          // Row-preserving: same id, same `baseVersion`, `scope` rewritten. NOT
+          // `relocateLoadedDraft` (it rebuilds the row through `upsertLoadedDraft`
+          // with no seal context, writing plaintext at rest on an encrypted stream)
+          // and NOT a plain coalescing enqueue (a push snapshotted before the move
+          // may be in flight with its claim not yet visible; coalescing onto it
+          // loses the scope change server-side forever). Move + enqueue share one
+          // transaction so the re-scoped row is never visible without its dirty bit.
+          // The scope is re-checked INSIDE the txn: drift since planning means the
+          // plan may be the wrong ACTION now, so it goes back around for a fresh
+          // plan instead of moving from wherever the row happens to live.
+          const moved = await db.transaction("rw", db.drafts, db.composerLoaded, db.pendingOperations, async () => {
+            const inTxn = await db.drafts.get(id)
+            if (!inTxn) return "missing"
+            if (inTxn.scope === plan.toScope) return "done"
+            if (inTxn.scope !== plan.fromScope) return "replan"
+            await migrateLocalDraftScope(workspaceId, plan.fromScope, { ...inTxn, scope: plan.toScope })
+            await enqueueDraftUpsert(workspaceId, id, { forceNewOp: true })
+            return "done"
+          })
+          if (moved === "missing") {
+            return refuse("missing", `draft ${id} vanished before its move could run`)
+          }
+          if (moved === "replan") continue
+          syncEngine?.kickOperationQueue()
+        }
+
+        // The host's pointer takes the restored row. Whatever it held is detached
+        // by that same write and becomes a stash entry — a scope points at exactly
+        // one draft, so the swap never clobbers (it was already flushed above).
+        await restoreStashedDraftToComposer(workspaceId, scope, id)
+        // Re-read the newly-pointed draft into the editor (decrypting it for E2E).
         composer.markNeedsRehydrate()
         return { ok: true }
       }
-
-      if (plan.action === "move") {
-        // Row-preserving: same id, same `baseVersion`, `scope` rewritten. NOT
-        // `relocateLoadedDraft` (it rebuilds the row through `upsertLoadedDraft`
-        // with no seal context, writing plaintext at rest on an encrypted stream)
-        // and NOT a plain coalescing enqueue (a push snapshotted before the move
-        // may be in flight with its claim not yet visible; coalescing onto it
-        // loses the scope change server-side forever). Move + enqueue share one
-        // transaction so the re-scoped row is never visible without its dirty bit.
-        const moved = await db.transaction("rw", db.drafts, db.composerLoaded, db.pendingOperations, async () => {
-          const live = await db.drafts.get(id)
-          if (!live || live.scope !== plan.fromScope) return false
-          await migrateLocalDraftScope(workspaceId, plan.fromScope, { ...live, scope: plan.toScope })
-          await enqueueDraftUpsert(workspaceId, id, { forceNewOp: true })
-          return true
-        })
-        if (!moved) {
-          return refuse("raced", `draft ${id} moved out of ${plan.fromScope} before its restore could run`)
-        }
-        syncEngine?.kickOperationQueue()
-      }
-
-      // The host's pointer takes the restored row. Whatever it held is detached
-      // by that same write and becomes a stash entry — a scope points at exactly
-      // one draft, so the swap never clobbers (it was already flushed above).
-      await restoreStashedDraftToComposer(workspaceId, scope, id)
-      // Re-read the newly-pointed draft into the editor (decrypting it for E2E).
-      composer.markNeedsRehydrate()
-      return { ok: true }
+      return refuse("raced", `draft ${id} kept moving while being restored`)
     },
     [composer, workspaceId, scope, targetHost, disarmTarget, canHostForeignDraft, describeScope, syncEngine]
   )

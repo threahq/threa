@@ -1431,3 +1431,144 @@ describe("upsertLoadedDraft — identity-addressed saves (repoint safety)", () =
     expect((await db.drafts.get(pointerId!))?.contentJson).toEqual(makeDoc("first words"))
   })
 })
+
+describe("take-over (chunk 2) — a restore detaches every other holder; a stale save splits", () => {
+  beforeEach(async () => {
+    vi.restoreAllMocks()
+    resetDraftStoreCache()
+    resetDraftResolutionGuard()
+    await db.drafts.clear()
+    await db.composerLoaded.clear()
+    await db.pendingOperations.clear()
+    vi.spyOn(currentUserHook, "useCurrentWorkspaceUserId").mockReturnValue(null)
+    vi.spyOn(e2eSessionStore, "useE2eSession").mockReturnValue(LOCKED_SESSION)
+  })
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  const otherScope = "board:reply:conv_take"
+
+  it("restoreStashedDraftToComposer detaches every other scope's pointer at the draft", async () => {
+    await db.drafts.put({
+      id: "draft_T",
+      workspaceId,
+      scope: otherScope,
+      contentJson: makeDoc("taken body"),
+      attachments: [],
+      clientUpdatedAt: Date.now(),
+    })
+    await db.composerLoaded.put({ scope: otherScope, workspaceId, draftId: "draft_T" })
+    await seedDraftCacheFromIdb(workspaceId)
+
+    await restoreStashedDraftToComposer(workspaceId, draftKey, "draft_T")
+
+    expect((await db.composerLoaded.get(draftKey))?.draftId).toBe("draft_T")
+    expect(await db.composerLoaded.get(otherScope)).toBeUndefined()
+    expect((await db.drafts.get("draft_T"))?.contentJson).toEqual(makeDoc("taken body"))
+  })
+
+  it("an identity-addressed save for a row another scope now holds SPLITS instead of writing it", async () => {
+    await db.drafts.put({
+      id: "draft_T",
+      workspaceId,
+      scope: draftKey,
+      contentJson: makeDoc("original body"),
+      attachments: [],
+      clientUpdatedAt: Date.now(),
+    })
+    await db.composerLoaded.put({ scope: draftKey, workspaceId, draftId: "draft_T" })
+    await seedDraftCacheFromIdb(workspaceId)
+    // Another surface takes the draft (pointer moves to its scope, ours detached).
+    await restoreStashedDraftToComposer(workspaceId, otherScope, "draft_T")
+
+    const saved = await upsertLoadedDraft(
+      workspaceId,
+      draftKey,
+      { contentJson: makeDoc("displaced keystrokes"), attachments: [] },
+      undefined,
+      { expectedDraftId: "draft_T" }
+    )
+
+    // Fresh row under the old scope; the taken row's body is untouched and the
+    // taker's pointer still references it.
+    expect(saved.id).not.toBe("draft_T")
+    expect(saved.scope).toBe(draftKey)
+    expect((await db.drafts.get(saved.id))?.contentJson).toEqual(makeDoc("displaced keystrokes"))
+    expect((await db.drafts.get("draft_T"))?.contentJson).toEqual(makeDoc("original body"))
+    expect((await db.composerLoaded.get(otherScope))?.draftId).toBe("draft_T")
+    // Our scope's pointer was freed by the take-over, so the split claims it.
+    expect((await db.composerLoaded.get(draftKey))?.draftId).toBe(saved.id)
+  })
+})
+
+describe("take-over aftermath — the displaced composer can neither delete nor overwrite the taken draft", () => {
+  beforeEach(async () => {
+    vi.restoreAllMocks()
+    resetDraftStoreCache()
+    resetDraftResolutionGuard()
+    await db.drafts.clear()
+    await db.composerLoaded.clear()
+    await db.pendingOperations.clear()
+    vi.spyOn(currentUserHook, "useCurrentWorkspaceUserId").mockReturnValue(null)
+    vi.spyOn(e2eSessionStore, "useE2eSession").mockReturnValue(LOCKED_SESSION)
+  })
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  const otherScope = "board:reply:conv_aftermath"
+
+  it("an empty identity save after a take-over leaves the taken row alone (delete-path foreign guard)", async () => {
+    await db.drafts.put({
+      id: "draft_D",
+      workspaceId,
+      scope: draftKey,
+      contentJson: makeDoc("taken body"),
+      attachments: [],
+      clientUpdatedAt: Date.now(),
+    })
+    await db.composerLoaded.put({ scope: draftKey, workspaceId, draftId: "draft_D" })
+    await seedDraftCacheFromIdb(workspaceId)
+    // Another surface takes D; the victim scope's pointer is detached.
+    await restoreStashedDraftToComposer(workspaceId, otherScope, "draft_D")
+
+    // The victim composer empties its editor; its armed save still speaks for D.
+    await clearLoadedDraft(workspaceId, draftKey, "draft_D")
+
+    expect((await db.drafts.get("draft_D"))?.contentJson).toEqual(makeDoc("taken body"))
+    expect((await db.composerLoaded.get(otherScope))?.draftId).toBe("draft_D")
+    expect(await db.pendingOperations.where("workspaceId").equals(workspaceId).count()).toBe(0)
+  })
+
+  it("a null-identity save under a foreign pointer detaches to a fresh row instead of writing the pointed-at draft", async () => {
+    await db.drafts.put({
+      id: "draft_Y",
+      workspaceId,
+      scope: draftKey,
+      contentJson: makeDoc("Y body"),
+      attachments: [],
+      clientUpdatedAt: Date.now(),
+    })
+    await db.composerLoaded.put({ scope: draftKey, workspaceId, draftId: "draft_Y" })
+    await seedDraftCacheFromIdb(workspaceId)
+
+    // A composer with an identity ref (strict protocol) whose content never
+    // hydrated from Y — the ref is null while the pointer references Y.
+    const contentDraftIdRef = { current: null as string | null }
+    const { result } = renderHook(() => useDraftMessage(workspaceId, draftKey, undefined, contentDraftIdRef))
+
+    let saved: Awaited<ReturnType<typeof result.current.saveDraft>> = null
+    await act(async () => {
+      saved = await result.current.saveDraft(makeDoc("orphan fragment"))
+    })
+
+    expect(saved).not.toBeNull()
+    expect(saved!.id).not.toBe("draft_Y")
+    expect((await db.drafts.get("draft_Y"))?.contentJson).toEqual(makeDoc("Y body"))
+    expect((await db.drafts.get(saved!.id))?.contentJson).toEqual(makeDoc("orphan fragment"))
+    expect((await db.composerLoaded.get(draftKey))?.draftId).toBe("draft_Y")
+  })
+})

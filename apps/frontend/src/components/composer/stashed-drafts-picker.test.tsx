@@ -128,7 +128,6 @@ describe("StashedDraftsPicker", () => {
     // happened. Every reason gets its own message.
     it.each([
       ["missing", "no longer there"],
-      ["checked-out", "open in another composer"],
       ["host-ineligible", "can't hold that draft"],
       ["raced", "moved before it could be restored"],
     ] as const)("says why a %s restore did nothing and keeps the picker open", async (reason, message) => {
