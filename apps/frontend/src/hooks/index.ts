@@ -101,6 +101,7 @@ export {
   hasDocContent,
   type UseDraftComposerOptions,
   type DraftComposerState,
+  useMountedComposerCount,
 } from "./use-draft-composer"
 
 export { useScrollBehavior } from "./use-scroll-behavior"

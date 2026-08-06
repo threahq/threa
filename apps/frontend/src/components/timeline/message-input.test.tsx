@@ -273,6 +273,11 @@ beforeEach(async () => {
         clearDraft: mockClearDraft,
         resolveDraft: mockResolveDraft,
         clearAttachments: mockClearAttachments,
+        // On the real state; the disarm path flushes before releasing the draft
+        // it stops hosting, and a stub missing this surfaces as an unhandled
+        // rejection rather than a readable failure.
+        flushDraft: vi.fn().mockResolvedValue(undefined),
+        markNeedsRehydrate: vi.fn(),
         isLoaded: mockComposerState.isLoaded,
       }) as unknown as ReturnType<typeof hooksModule.useDraftComposer>
   )
