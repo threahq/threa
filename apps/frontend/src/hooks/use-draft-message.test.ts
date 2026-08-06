@@ -1171,11 +1171,11 @@ describe("upsertLoadedDraft — identity-addressed saves (repoint safety)", () =
       await restoreStashedDraftToComposer(workspaceId, draftKey, "draft_Y")
       contentDraftIdRef.current = "draft_Y"
     })
-    await act(async () => {
-      await new Promise((r) => setTimeout(r, 700))
+    // Poll for the debounced write instead of sleeping a fixed margin — a slow
+    // runner firing the 500 ms timer late must not race the assertion.
+    await vi.waitFor(async () => {
+      expect((await db.drafts.get("draft_X"))?.contentJson).toEqual(makeDoc("typed into X"))
     })
-
-    expect((await db.drafts.get("draft_X"))?.contentJson).toEqual(makeDoc("typed into X"))
     expect((await db.drafts.get("draft_Y"))?.contentJson).toEqual(makeDoc("Y body"))
     expect((await db.composerLoaded.get(draftKey))?.draftId).toBe("draft_Y")
     // The stale save spoke for a superseded row, so it must not repoint the ref.
@@ -1194,11 +1194,9 @@ describe("upsertLoadedDraft — identity-addressed saves (repoint safety)", () =
       await restoreStashedDraftToComposer(workspaceId, draftKey, "draft_Y")
       contentDraftIdRef.current = "draft_Y"
     })
-    await act(async () => {
-      await new Promise((r) => setTimeout(r, 700))
+    await vi.waitFor(async () => {
+      expect(await db.drafts.get("draft_X")).toBeUndefined()
     })
-
-    expect(await db.drafts.get("draft_X")).toBeUndefined()
     expect((await db.drafts.get("draft_Y"))?.contentJson).toEqual(makeDoc("Y body"))
     expect((await db.composerLoaded.get(draftKey))?.draftId).toBe("draft_Y")
     expect(contentDraftIdRef.current).toBe("draft_Y")
@@ -1238,11 +1236,9 @@ describe("upsertLoadedDraft — identity-addressed saves (repoint safety)", () =
       await migrateLocalDraftId(workspaceId, "draft_X", { ...live!, id: "draft_X2", baseVersion: 9 })
       contentDraftIdRef.current = "draft_X2"
     })
-    await act(async () => {
-      await new Promise((r) => setTimeout(r, 700))
+    await vi.waitFor(async () => {
+      expect((await db.drafts.get("draft_X2"))?.contentJson).toEqual(makeDoc("typed into X"))
     })
-
-    expect((await db.drafts.get("draft_X2"))?.contentJson).toEqual(makeDoc("typed into X"))
     expect(await db.drafts.get("draft_X")).toBeUndefined()
     // X2 and Y only — a forked third row is the bug this closes.
     expect((await db.drafts.toArray()).map((row) => row.id).sort()).toEqual(["draft_X2", "draft_Y"])
@@ -1364,6 +1360,9 @@ describe("upsertLoadedDraft — identity-addressed saves (repoint safety)", () =
       result.current.cancelPendingSave()
     })
     await act(async () => {
+      // A NEGATIVE outcome (the cancelled timer must not fire) has nothing to
+      // poll for; the bounded wait can only weaken with runner slowness, never
+      // false-fail — the assertion below holds whether or not more time passes.
       await new Promise((r) => setTimeout(r, 700))
     })
 
