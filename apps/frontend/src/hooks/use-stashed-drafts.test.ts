@@ -275,6 +275,7 @@ describe("useStashedDrafts — pile membership", () => {
       checkedOutElsewhere: false,
       openHref: null,
       openConversationId: null,
+      openCarriesDraft: false,
       title: null,
       // No topic summary yet — the label falls back to this stream's name rather
       // than a generic phrase, the same rung the drafts explorer uses.
@@ -530,6 +531,7 @@ describe("useStashedDrafts — pile membership", () => {
         checkedOutElsewhere: false,
         openHref: null,
         openConversationId: null,
+        openCarriesDraft: false,
         title: null,
         anchorStreamId: "stream_s",
       },
@@ -540,6 +542,7 @@ describe("useStashedDrafts — pile membership", () => {
         checkedOutElsewhere: false,
         openHref: null,
         openConversationId: null,
+        openCarriesDraft: false,
         title: "Pizza plans",
         anchorStreamId: "stream_s",
       },
@@ -551,6 +554,7 @@ describe("useStashedDrafts — pile membership", () => {
         checkedOutElsewhere: false,
         openHref: null,
         openConversationId: null,
+        openCarriesDraft: false,
         title: null,
         anchorStreamId: "stream_s",
       },
@@ -563,6 +567,7 @@ describe("useStashedDrafts — pile membership", () => {
         checkedOutElsewhere: false,
         openHref: null,
         openConversationId: null,
+        openCarriesDraft: false,
         title: "Pizza plans",
       },
     })

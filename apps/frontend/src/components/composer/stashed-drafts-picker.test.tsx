@@ -295,6 +295,7 @@ describe("StashedDraftsPicker", () => {
       checkedOutElsewhere: false,
       openHref: null,
       openConversationId: null,
+      openCarriesDraft: false,
     }
     const borrowed = (
       label: string,
@@ -306,6 +307,7 @@ describe("StashedDraftsPicker", () => {
       checkedOutElsewhere,
       openHref,
       openConversationId: openHref ? "conv_1" : null,
+      openCarriesDraft: openHref !== null,
     })
     const rows = [makeDraft("draft_own", "mine"), makeDraft("draft_borrowed", "theirs")]
 
@@ -490,11 +492,19 @@ describe("navigate rows (branch replies / mounted composers)", () => {
             checkedOutElsewhere: false,
             openHref: "/w/ws_1/s/stream_1?panel=conv%3Aconv_1&stash=draft_nav",
             openConversationId: "conv_1",
+            openCarriesDraft: true,
           },
         ],
         [
           "draft_plain",
-          { tier: "borrowed", label: "#general", checkedOutElsewhere: false, openHref: null, openConversationId: null },
+          {
+            tier: "borrowed",
+            label: "#general",
+            checkedOutElsewhere: false,
+            openHref: null,
+            openConversationId: null,
+            openCarriesDraft: false,
+          },
         ],
       ]),
       onRestore,
@@ -522,6 +532,44 @@ describe("navigate rows (branch replies / mounted composers)", () => {
     expect(replyOpenSpy).toHaveBeenCalledWith("conv_1")
   })
 
+  it("says 'pick the draft up' for the manual-pickup fallback instead of promising its own composer", async () => {
+    renderPicker({
+      drafts: [makeDraft("draft_fb", "orphan branch")],
+      originById: new Map<string, StashedDraftRowOrigin>([
+        [
+          "draft_fb",
+          {
+            tier: "borrowed",
+            label: "Reply in Pizza plans",
+            checkedOutElsewhere: false,
+            openHref: "/w/ws_1/board?panel=conv%3Aconv_orphan",
+            openConversationId: "conv_orphan",
+            openCarriesDraft: false,
+          },
+        ],
+      ]),
+    })
+    await userEvent.click(screen.getByRole("button", { name: /drafts/i }))
+
+    const row = screen.getByText("orphan branch").closest("button")!
+    expect(row.getAttribute("aria-label")).toContain("pick the draft up")
+    expect(row.getAttribute("aria-label")).not.toContain("its own composer")
+  })
+
+  it("a throwing restore toasts and keeps the picker open — never a silent no-op", async () => {
+    const onRestore = vi.fn().mockRejectedValue(new Error("navigate row reached restore"))
+    const { closeFabDrawer } = renderPicker({
+      drafts: [makeDraft("draft_boom", "drifting row")],
+      onRestore,
+    })
+    await userEvent.click(screen.getByRole("button", { name: /drafts/i }))
+    await userEvent.click(screen.getByText("drifting row"))
+
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith(expect.stringContaining("could not be restored")))
+    expect(screen.getByText("drifting row")).toBeInTheDocument()
+    expect(closeFabDrawer).not.toHaveBeenCalled()
+  })
+
   it("a control row without openHref still restores", async () => {
     const onRestore = vi.fn().mockResolvedValue({ ok: true })
     renderPicker({
@@ -529,7 +577,14 @@ describe("navigate rows (branch replies / mounted composers)", () => {
       originById: new Map<string, StashedDraftRowOrigin>([
         [
           "draft_plain",
-          { tier: "borrowed", label: "#general", checkedOutElsewhere: false, openHref: null, openConversationId: null },
+          {
+            tier: "borrowed",
+            label: "#general",
+            checkedOutElsewhere: false,
+            openHref: null,
+            openConversationId: null,
+            openCarriesDraft: false,
+          },
         ],
       ]),
       onRestore,

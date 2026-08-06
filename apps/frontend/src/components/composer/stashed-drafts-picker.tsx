@@ -87,7 +87,14 @@ interface StashedDraftsPickerProps {
 function rowHint(origin: StashedDraftRowOrigin | undefined, preview?: string): string | undefined {
   if (!origin || origin.tier !== "borrowed") return undefined
   const lead = preview !== undefined ? `${preview} — from ${origin.label}.` : `From ${origin.label}.`
-  if (origin.openHref) return `${lead} Opens in its own composer.`
+  if (origin.openHref) {
+    // The manual-pickup fallback (uncached parent) lands on the conversation
+    // WITHOUT carrying the draft — promising "its own composer" there would be
+    // promising more than the tap delivers.
+    return origin.openCarriesDraft
+      ? `${lead} Opens in its own composer.`
+      : `${lead} Opens the conversation — pick the draft up from its pile there.`
+  }
   const takeOver = origin.checkedOutElsewhere ? " Open in another composer — picking it takes it over." : ""
   return `${lead}${takeOver} Picking it changes where this composer files.`
 }
@@ -191,7 +198,19 @@ export function StashedDraftsPicker({
       })
       // Awaited, not fired and forgotten: the close + focus below are the only
       // feedback a restore has, so they must not run for one that refused.
-      const result = await onRestore(id)
+      // A THROW (a navigate row reaching restore via scope drift between render
+      // and click, or a host wiring bug) must not be a silent no-op either —
+      // the loud console error stays, the user still gets told (INV-11).
+      let result: Awaited<ReturnType<typeof onRestore>>
+      try {
+        result = await onRestore(id)
+      } catch (err) {
+        restorePendingRef.current = false
+        setRestorePresentation(null)
+        console.error("[stash] restore threw", err)
+        toast.error("That draft could not be restored here.")
+        return
+      }
       restorePendingRef.current = false
       if (result && !result.ok) {
         setRestorePresentation(null)

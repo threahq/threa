@@ -15,6 +15,8 @@ export interface StashedDraftRowOrigin {
   openHref: string | null
   /** The destination conversation for the arrival focus signal; set with `openHref`. */
   openConversationId: string | null
+  /** False for the manual-pickup fallback: the destination shows the conversation but not the draft. */
+  openCarriesDraft: boolean
 }
 
 /**
@@ -65,6 +67,7 @@ export function useStashedDraftOrigins(
         checkedOutElsewhere: origin.checkedOutElsewhere,
         openHref: origin.openHref,
         openConversationId: origin.openConversationId,
+        openCarriesDraft: origin.openCarriesDraft,
       })
     }
     return map

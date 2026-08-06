@@ -58,6 +58,12 @@ export type StashedDraftOrigin = StashedDraftSource & {
    * router-side, so focus must ride a store hand-off, not the URL.
    */
   openConversationId: string | null
+  /**
+   * False only for the manual-pickup fallback (branch with an uncached parent):
+   * the destination panel shows the conversation but cannot check the draft out
+   * — the hint copy must not promise "its own composer" there.
+   */
+  openCarriesDraft: boolean
   /** The owning conversation's topic summary, when it has one. */
   title: string | null
   /**
@@ -380,7 +386,7 @@ export function useStashedDrafts(workspaceId: string, scope: string | undefined)
       const source = draftSource(draft.scope, streamByAnchorId)
       if (!source) continue
       const pointerScope = pointerScopeByDraftId.get(draft.id)
-      const navigateTarget = ((): { href: string; conversationId: string } | null => {
+      const navigateTarget = ((): { href: string; conversationId: string; carriesDraft: boolean } | null => {
         // Only BORROWED rows ever navigate: the host's own rows (a branch
         // composer's own stash included) restore in place via `same-scope`.
         if (draft.scope === scope) return null
@@ -390,6 +396,7 @@ export function useStashedDrafts(workspaceId: string, scope: string | undefined)
             return {
               href: conversationPanelHref(workspaceId, parent.id, parent.conversation.streamId, draft.id),
               conversationId: parent.id,
+              carriesDraft: true,
             }
           }
           // Parent unresolvable: the branch's own panel still shows the
@@ -397,6 +404,7 @@ export function useStashedDrafts(workspaceId: string, scope: string | undefined)
           return {
             href: conversationPanelHref(workspaceId, source.conversationId, anchorStream(source)),
             conversationId: source.conversationId,
+            carriesDraft: false,
           }
         }
         if (source.kind === "conversation" && mountedScopes.has(draft.scope)) {
@@ -408,6 +416,7 @@ export function useStashedDrafts(workspaceId: string, scope: string | undefined)
           return {
             href: conversationPanelHref(workspaceId, source.conversationId, anchorStream(source), stashId),
             conversationId: source.conversationId,
+            carriesDraft: true,
           }
         }
         return null
@@ -418,6 +427,7 @@ export function useStashedDrafts(workspaceId: string, scope: string | undefined)
         checkedOutElsewhere: pointerScope !== undefined && pointerScope !== scope,
         openHref: navigateTarget?.href ?? null,
         openConversationId: navigateTarget?.conversationId ?? null,
+        openCarriesDraft: navigateTarget?.carriesDraft ?? false,
         title: topicSummary(source),
         anchorStreamId: anchorStream(source),
       })
