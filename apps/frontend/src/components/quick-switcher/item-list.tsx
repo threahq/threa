@@ -2,7 +2,6 @@ import { useEffect, useRef } from "react"
 import { Link } from "react-router-dom"
 import { Check } from "lucide-react"
 import { cn } from "@/lib/utils"
-import { Button } from "@/components/ui/button"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { MentionIndicator } from "@/components/mention-indicator"
 import { useLongPress } from "@/hooks/use-long-press"
@@ -221,7 +220,6 @@ function ItemRow({
   onSelectionKeyDown: (e: React.KeyboardEvent, index: number, itemId: string) => void
 }) {
   const Icon = item.icon
-  const ActionIcon = item.actionIcon
   const touchCapable = useTouchCapable()
 
   // A long press on a navigating row has to suppress the synthetic click that
@@ -296,21 +294,6 @@ function ItemRow({
           >
             {item.contextMenu}
           </div>
-        )}
-        {!selectionEnabled && !item.contextMenu && item.onAction && ActionIcon && (
-          <Button
-            variant="ghost"
-            size="icon"
-            className="reveal-actions h-7 w-7 shrink-0"
-            onClick={(e) => {
-              e.preventDefault()
-              e.stopPropagation()
-              item.onAction?.()
-            }}
-            aria-label={item.actionLabel}
-          >
-            <ActionIcon className="h-4 w-4 text-muted-foreground hover:text-destructive" />
-          </Button>
         )}
       </div>
     </>
