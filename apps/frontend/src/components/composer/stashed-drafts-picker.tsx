@@ -76,6 +76,13 @@ interface StashedDraftsPickerProps {
  * showing a render ago and the world has since moved past, so the copy names
  * what happened to the draft, not what the code checked.
  */
+/** Whether this row's preview can still change height: a sealed body resolving
+ *  in is the only thing that does. A plaintext row is final at first paint. */
+function isPreviewSettled(draft: CachedDraft, previewById?: Map<string, DraftPreview>): boolean {
+  if (draft.ciphertext == null) return true
+  return previewById?.get(draft.id)?.status === "ready"
+}
+
 function attachmentOrEmptyLabel(draft: CachedDraft): string {
   const attachmentCount = draft.attachments?.length ?? 0
   if (attachmentCount > 0) {
@@ -313,10 +320,14 @@ export function StashedDraftsPicker({
                 const origin = originById?.get(draft.id)
                 const isBorrowed = origin?.tier === "borrowed"
                 // The seam, not a per-row badge: the pile arrives own-first, so
-                // the first borrowed row that follows an own row carries it. All
-                // own or all borrowed → no header at all.
+                // the FIRST borrowed row carries it — including at index 0. An
+                // all-borrowed pile is the modal case, not an edge one: a channel
+                // composer with no stashed draft of its own is exactly where a
+                // conversation's draft surfaces, and requiring a preceding own row
+                // left that pile with no "from elsewhere" cue at all. It still
+                // cannot orphan, because a real row always follows it.
                 const startsBorrowedGroup =
-                  isBorrowed && index > 0 && originById?.get(drafts[index - 1]!.id)?.tier !== "borrowed"
+                  isBorrowed && (index === 0 || originById?.get(drafts[index - 1]!.id)?.tier !== "borrowed")
                 return (
                   <Fragment key={draft.id}>
                     {startsBorrowedGroup && (
@@ -337,13 +348,39 @@ export function StashedDraftsPicker({
                           type="button"
                           data-draft-row
                           onClick={() => void handleRestore(draft.id)}
+                          // Picking a borrowed row does more than load it: the
+                          // composer either retargets to that draft's conversation
+                          // or takes the draft as its own, depending on the host.
+                          // The row cannot know which (the plan needs the host's
+                          // target), so it says the part that is true either way
+                          // rather than guessing — and does it in the accessible
+                          // name and the tooltip, which cost no layout (INV-21).
+                          title={
+                            isBorrowed
+                              ? `From ${origin.label}. Picking it changes where this composer files.`
+                              : undefined
+                          }
+                          aria-label={
+                            isBorrowed
+                              ? `${preview} — from ${origin.label}. Picking it changes where this composer files.`
+                              : undefined
+                          }
                           className="flex-1 min-w-0 text-left focus:outline-none"
                         >
-                          {/* Two lines are reserved whether or not the preview
-                              fills them: a decrypting row resolves from one line
-                              to two, and the popover sits over the composer
-                              (INV-21). */}
-                          <p className="text-sm leading-5 min-h-10 line-clamp-2 break-words">{preview}</p>
+                          {/* The second line is reserved only while the preview
+                              can still change height — a sealed row resolving from
+                              "Decrypting…" to a body, over a composer (INV-21).
+                              Reserving it unconditionally cost a quarter of the
+                              visible pile in every plaintext workspace, where the
+                              preview is stable from first paint. */}
+                          <p
+                            className={cn(
+                              "text-sm leading-5 line-clamp-2 break-words",
+                              !isPreviewSettled(draft, previewById) && "min-h-10"
+                            )}
+                          >
+                            {preview}
+                          </p>
                           {/* One line, fixed height: the origin shares it with the
                               timestamp and truncates, so a name resolving late
                               never reflows the row. */}
