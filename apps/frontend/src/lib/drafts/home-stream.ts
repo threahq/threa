@@ -30,10 +30,12 @@ export interface DraftPileContext extends DraftHomeContext {
 }
 
 /**
- * The root stream a draft's message would land under — its "home". Coarser than
- * {@link resolveDraftLandingSite} on purpose: everything under one root (the root
- * itself, its threads, the conversations anchored in it) shares a home, and the
- * landing site stays the finer answer for origin labels and adopt-vs-move.
+ * The root stream a draft's message would land under — its "home". Deliberately
+ * coarse: everything under one root (the root itself, its threads, the
+ * conversations anchored in it) shares a home, and {@link isDraftInHostPile}
+ * does the finer work of deciding which of them may see each other. Origin
+ * labels read {@link resolveDraftConversation}; adopt-vs-move reads the row's
+ * `StashedDraftSource`.
  *
  * `null` means unresolvable — an uncached conversation or an uncached thread
  * anchor — and is never membership (INV-11).
