@@ -272,7 +272,9 @@ export function useStashComposer(
           // host at it, so the composer never renders the target scope for a frame
           // with no draft loaded under it. Targeting the host's own scope IS the
           // disarm, so it clears rather than stores.
-          await restoreStashedDraftToComposer(workspaceId, plan.targetScope, id)
+          if (!(await restoreStashedDraftToComposer(workspaceId, plan.targetScope, id))) {
+            return refuse("missing", `draft ${id} vanished (or re-keyed away) before its adopt could land`)
+          }
           // Through the host's own disarm, never a bare `clearComposerTarget`: the
           // gesture latch has to be cleared with the target or a later adopt reads
           // as a fresh gesture and redirects to the panel, wiping the target the
@@ -315,7 +317,9 @@ export function useStashComposer(
         // The host's pointer takes the restored row. Whatever it held is detached
         // by that same write and becomes a stash entry — a scope points at exactly
         // one draft, so the swap never clobbers (it was already flushed above).
-        await restoreStashedDraftToComposer(workspaceId, scope, id)
+        if (!(await restoreStashedDraftToComposer(workspaceId, scope, id))) {
+          return refuse("missing", `draft ${id} vanished (or re-keyed away) before its restore could land`)
+        }
         // Re-read the newly-pointed draft into the editor (decrypting it for E2E).
         composer.markNeedsRehydrate()
         return { ok: true }

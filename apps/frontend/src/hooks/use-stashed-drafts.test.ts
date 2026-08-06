@@ -592,3 +592,28 @@ describe("useStashedDrafts — the worked example: two conversations in one chan
     expect(result.current.drafts.map((d) => d.id)).not.toContain("draft_b_thread")
   })
 })
+
+describe("restoreStashedDraftToComposer — id validated in the txn (INV-20)", () => {
+  it("follows a re-key that landed mid-restore instead of pointing at the retired id", async () => {
+    const { migrateLocalDraftId } = await import("@/sync/draft-sync")
+    const { resetDraftResolutionGuard } = await import("@/sync/draft-resolution-guard")
+    resetDraftResolutionGuard()
+    const first = await upsertLoadedDraft(workspaceId, scope, { contentJson: makeDoc("body"), attachments: [] })
+    await stashLoadedDraft(workspaceId, scope)
+    // A split ack re-keys the row between the caller's read and the restore txn.
+    const live = await db.drafts.get(first.id)
+    await migrateLocalDraftId(workspaceId, first.id, { ...live!, id: "draft_rekeyed", baseVersion: 4 })
+
+    expect(await restoreStashedDraftToComposer(workspaceId, scope, first.id)).toBe(true)
+
+    // The pointer follows the migration — never the retired id, which would
+    // render an empty composer over an orphaned row.
+    expect((await db.composerLoaded.get(scope))?.draftId).toBe("draft_rekeyed")
+    expect(await db.drafts.get(first.id)).toBeUndefined()
+  })
+
+  it("returns false for a row that is genuinely gone, and points at nothing", async () => {
+    expect(await restoreStashedDraftToComposer(workspaceId, scope, "draft_never")).toBe(false)
+    expect(await db.composerLoaded.get(scope)).toBeUndefined()
+  })
+})

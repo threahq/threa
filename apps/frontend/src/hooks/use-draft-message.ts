@@ -306,11 +306,20 @@ export async function upsertLoadedDraft(
 async function removeLoadedDraftLocally(
   workspaceId: string,
   scope: string,
-  mirror: (loadedId: string, baseVersion: number | undefined) => Promise<void>
+  mirror: (loadedId: string, baseVersion: number | undefined) => Promise<void>,
+  /**
+   * When set, the pointer is re-asserted INSIDE the txn to still name this row
+   * (INV-20): an identity-addressed empty save read the pointer outside, and a
+   * restore repointing the scope in that gap must make the delete a no-op — not
+   * destroy whatever the pointer now holds (and mirror the delete everywhere).
+   * The pointer-addressed callers ("whatever is loaded") pass nothing.
+   */
+  expectedDraftId?: string | null
 ): Promise<void> {
   let removedId: string | null = null
   await db.transaction("rw", db.drafts, db.composerLoaded, db.pendingOperations, async () => {
     const loadedId = (await db.composerLoaded.get(scope))?.draftId ?? null
+    if (expectedDraftId && loadedId !== expectedDraftId) return
     let version: number | undefined
     if (loadedId) {
       const row = await db.drafts.get(loadedId)
@@ -342,10 +351,11 @@ export async function clearLoadedDraft(
    */
   expectedDraftId?: string | null
 ): Promise<void> {
+  let targetId: string | null = null
   if (expectedDraftId) {
     // Follow a re-key (`migrateLocalDraftId`) so an empty save for the pre-split
     // id clears the row that id became, not nothing at all.
-    const targetId = (await db.drafts.get(expectedDraftId)) ? expectedDraftId : resolveMigratedDraftId(expectedDraftId)
+    targetId = (await db.drafts.get(expectedDraftId)) ? expectedDraftId : resolveMigratedDraftId(expectedDraftId)
     const pointer = (await db.composerLoaded.get(scope))?.draftId ?? null
     if (pointer !== targetId) {
       // The delete-path twin of the write path's foreign-holder split, enforced
@@ -361,8 +371,14 @@ export async function clearLoadedDraft(
   // Drop the staging buffer first (synchronous) so a racing flush or a reload
   // can't recover the discarded content back into the composer.
   clearStagedDraft(workspaceId, scope)
-  await removeLoadedDraftLocally(workspaceId, scope, (loadedId, baseVersion) =>
-    syncDraftRemoval(workspaceId, loadedId, baseVersion)
+  await removeLoadedDraftLocally(
+    workspaceId,
+    scope,
+    (loadedId, baseVersion) => syncDraftRemoval(workspaceId, loadedId, baseVersion),
+    // The RESOLVED id: the in-txn re-assertion must track a re-key the same way
+    // the branch above did, or a mid-clear migration turns the guard into a
+    // spurious no-op.
+    targetId
   )
 }
 
@@ -515,19 +531,31 @@ export async function restoreStashedDraftToComposer(
   workspaceId: string,
   scope: string,
   draftId: string
-): Promise<void> {
+): Promise<boolean> {
   // Drop the staging buffer: it holds the keystrokes for the draft being swapped
   // OUT (already flushed to its own row by the caller), so leaving it would let a
   // reload before the next keystroke recover that stale body over the draft we
   // just restored — corrupting it. The restored draft re-stages on its first edit.
   clearStagedDraft(workspaceId, scope)
-  const detached = await db.transaction("rw", db.composerLoaded, async () => {
+  let pointedId = draftId
+  const detached = await db.transaction("rw", db.drafts, db.composerLoaded, async () => {
+    // The id is re-validated INSIDE the txn (INV-20): a split ack can re-key the
+    // row (`migrateLocalDraftId`) between the caller's read and here — the
+    // caller's flush is an IDB write sitting in exactly that window — and
+    // pointing the scope at a retired id renders an empty composer over an
+    // orphaned row. Follow the migration; a genuinely-gone row restores nothing.
+    if (!(await db.drafts.get(pointedId))) {
+      const migrated = resolveMigratedDraftId(pointedId)
+      if (migrated === pointedId || !(await db.drafts.get(migrated))) return null
+      pointedId = migrated
+    }
     const holders = await db.composerLoaded.where("workspaceId").equals(workspaceId).toArray()
-    const others = holders.filter((row) => row.draftId === draftId && row.scope !== scope)
+    const others = holders.filter((row) => row.draftId === pointedId && row.scope !== scope)
     for (const row of others) await db.composerLoaded.delete(row.scope)
-    await db.composerLoaded.put({ scope, workspaceId, draftId })
+    await db.composerLoaded.put({ scope, workspaceId, draftId: pointedId })
     return others.map((row) => row.scope)
   })
+  if (detached === null) return false
   for (const detachedScope of detached) {
     // Same teardown a stash does for the scope it detaches: the staging buffer's
     // keystrokes belong to the draft just taken, and a reload's reconcile would
@@ -536,7 +564,8 @@ export async function restoreStashedDraftToComposer(
     clearStagedDraft(workspaceId, detachedScope)
     setComposerLoadedInCache(workspaceId, detachedScope, null)
   }
-  setComposerLoadedInCache(workspaceId, scope, draftId)
+  setComposerLoadedInCache(workspaceId, scope, pointedId)
+  return true
 }
 
 /**
