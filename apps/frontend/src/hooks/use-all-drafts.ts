@@ -78,6 +78,13 @@ export interface UnifiedDraft {
    */
   isStashed: boolean
   /**
+   * True only for a draft the user DELIBERATELY put away (`stashedAt` on the
+   * synced row — chunk 4). Strictly narrower than `isStashed`, which is the
+   * device-local "no composer here holds it" and is also true for rows merely
+   * roamed from another device. Drives the explorer's "Stashed" annotation.
+   */
+  putAway: boolean
+  /**
    * Scratchpad-only: the companion mode the draft was created with (locked at
    * Quick Switcher choice). Lets the drafts explorer distinguish "Quick Note"
    * (off) from "Scratchpad" (on) at a glance.
@@ -512,6 +519,7 @@ export function useAllDrafts(workspaceId: string) {
           href: `/w/${workspaceId}/s/${scratchpad.id}`,
           groupLabel: displayName,
           isStashed: false,
+          putAway: false,
           companionMode: scratchpad.companionMode,
         })
       }
@@ -575,6 +583,7 @@ export function useAllDrafts(workspaceId: string) {
         href,
         groupLabel: resolved.groupLabel,
         isStashed,
+        putAway: draft.stashedAt != null,
       })
     }
 

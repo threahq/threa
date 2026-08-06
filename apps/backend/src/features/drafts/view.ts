@@ -26,6 +26,7 @@ export function toDraftView(row: Draft): DraftView {
     e2eVersion: row.e2eVersion,
     version: row.version,
     clientUpdatedAt: row.clientUpdatedAt.toISOString(),
+    stashedAt: row.stashedAt ? row.stashedAt.toISOString() : null,
     lastClientWriteId: row.lastClientWriteId,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),

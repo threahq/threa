@@ -192,6 +192,7 @@ export async function upsertLoadedDraft(
         attachments: [],
         clientUpdatedAt: Date.now(),
         baseVersion: existing?.baseVersion,
+        stashedAt: existing?.stashedAt,
         ciphertext: sealed.ciphertext,
         envelope: sealed.envelope,
         e2eVersion: sealed.e2eVersion,
@@ -213,6 +214,7 @@ export async function upsertLoadedDraft(
         // server would SPLIT it into a duplicate — once per keystroke after the
         // first sync. Preserve it so the push CAS-updates in place instead.
         baseVersion: existing?.baseVersion,
+        stashedAt: existing?.stashedAt,
         attachmentIds: existing?.attachmentIds,
       }
     }
@@ -256,8 +258,13 @@ export async function upsertLoadedDraft(
         // between our read and this txn, and writing the stale value back would
         // make the next push CAS against an old version and split.
         row = seal
-          ? { ...row, baseVersion: liveRow.baseVersion }
-          : { ...row, baseVersion: liveRow.baseVersion, attachmentIds: liveRow.attachmentIds }
+          ? { ...row, baseVersion: liveRow.baseVersion, stashedAt: liveRow.stashedAt }
+          : {
+              ...row,
+              baseVersion: liveRow.baseVersion,
+              stashedAt: liveRow.stashedAt,
+              attachmentIds: liveRow.attachmentIds,
+            }
         await db.drafts.put(row)
       } else {
         await db.drafts.put(row)
@@ -524,13 +531,30 @@ export async function purgePlaintextScopeDrafts(workspaceId: string, scope: stri
  * first (so unsaved keystrokes survive) and reset the editor afterward.
  */
 export async function stashLoadedDraft(workspaceId: string, scope: string): Promise<string | null> {
-  const draftId = (await db.composerLoaded.get(scope))?.draftId ?? null
-  if (!draftId) return null
   // The caller flushed the live editor into the row before stashing, so the
   // staged buffer is now redundant; drop it so a reload doesn't recover the
   // stashed body back into the (now draft-less) composer as a new loaded draft.
   clearStagedDraft(workspaceId, scope)
-  await db.composerLoaded.delete(scope)
+  // Stash is a durable, SYNCED statement (chunk 4): `stashedAt` rides the row
+  // so no surface on any device advertises or auto-restores it until a restore
+  // clears the flag. Marker + pointer detach + push enqueue in one txn, so the
+  // stashed row is never visible without its dirty bit. `clientUpdatedAt` is
+  // deliberately NOT bumped — putting a draft away must not reorder the pile.
+  let stashed: CachedDraft | null = null
+  const draftId = await db.transaction("rw", db.drafts, db.composerLoaded, db.pendingOperations, async () => {
+    const id = (await db.composerLoaded.get(scope))?.draftId ?? null
+    if (!id) return null
+    const row = await db.drafts.get(id)
+    if (row && row.stashedAt == null) {
+      stashed = { ...row, stashedAt: Date.now() }
+      await db.drafts.put(stashed)
+      await enqueueDraftUpsert(workspaceId, id)
+    }
+    await db.composerLoaded.delete(scope)
+    return id
+  })
+  if (!draftId) return null
+  if (stashed) upsertDraftInCache(workspaceId, stashed)
   setComposerLoadedInCache(workspaceId, scope, null)
   return draftId
 }
@@ -558,7 +582,8 @@ export async function restoreStashedDraftToComposer(
   // just restored — corrupting it. The restored draft re-stages on its first edit.
   clearStagedDraft(workspaceId, scope)
   let pointedId = draftId
-  const detached = await db.transaction("rw", db.drafts, db.composerLoaded, async () => {
+  let unstashed: CachedDraft | null = null
+  const detached = await db.transaction("rw", db.drafts, db.composerLoaded, db.pendingOperations, async () => {
     // The id is re-validated INSIDE the txn (INV-20): a split ack can re-key the
     // row (`migrateLocalDraftId`) between the caller's read and here — the
     // caller's flush is an IDB write sitting in exactly that window — and
@@ -573,9 +598,19 @@ export async function restoreStashedDraftToComposer(
     const others = holders.filter((row) => row.draftId === pointedId && row.scope !== scope)
     for (const row of others) await db.composerLoaded.delete(row.scope)
     await db.composerLoaded.put({ scope, workspaceId, draftId: pointedId })
+    // Restoring UN-stashes (chunk 4): the durable "put away" flag clears the
+    // moment a composer takes the draft back, and the clear rides the same push
+    // machinery so every device's resting affordances resume advertising it.
+    const row = await db.drafts.get(pointedId)
+    if (row && row.stashedAt != null) {
+      unstashed = { ...row, stashedAt: null }
+      await db.drafts.put(unstashed)
+      await enqueueDraftUpsert(workspaceId, pointedId)
+    }
     return others.map((row) => row.scope)
   })
   if (detached === null) return false
+  if (unstashed) upsertDraftInCache(workspaceId, unstashed)
   for (const detachedScope of detached) {
     // Same teardown a stash does for the scope it detaches: the staging buffer's
     // keystrokes belong to the draft just taken, and a reload's reconcile would

@@ -82,6 +82,7 @@ describe("E2E draft roam (seal → wire → apply → decrypt)", () => {
       e2eVersion: sealed.e2eVersion,
       version: 1,
       clientUpdatedAt: new Date().toISOString(),
+      stashedAt: null,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     }
@@ -138,6 +139,7 @@ describe("E2E draft roam (seal → wire → apply → decrypt)", () => {
       workspaceId,
       userId,
       scope,
+      stashedAt: null,
       rootStreamId: streamId,
       contentJson: null,
       contentMarkdown: null,

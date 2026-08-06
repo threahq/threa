@@ -34,7 +34,57 @@ describe("stashLoadedDraft (pointer-move stash)", () => {
     // Pointer cleared; the row is preserved (not deleted) so it stays a stash entry
     // and keeps roaming — no plaintext snapshot into a new row.
     expect(await db.composerLoaded.get(scope)).toBeUndefined()
-    expect(await db.drafts.get(loaded.id)).toBeDefined()
+    const row = await db.drafts.get(loaded.id)
+    expect(row).toBeDefined()
+    // Durable stash (chunk 4): the marker is set WITHOUT bumping recency, and a
+    // push is enqueued so it roams to every device.
+    expect(row?.stashedAt).toEqual(expect.any(Number))
+    expect(row?.clientUpdatedAt).toBe(loaded.clientUpdatedAt)
+  })
+
+  // The setup above coalesces onto the create's own op, which made an "op
+  // exists" assertion vacuous (it existed before the stash). This seeds a
+  // CLEAN, fully-synced row — baseVersion set, queue empty — so the op can only
+  // come from the stash itself; without the enqueue the marker never leaves
+  // this device.
+  it("enqueues the marker push even for a clean, already-synced row", async () => {
+    await db.drafts.put({
+      id: "draft_clean",
+      workspaceId,
+      scope,
+      contentJson: makeDoc("synced body"),
+      attachments: [],
+      baseVersion: 3,
+      clientUpdatedAt: 1000,
+    })
+    await db.composerLoaded.put({ scope, workspaceId, draftId: "draft_clean" })
+    expect(await db.pendingOperations.count()).toBe(0)
+
+    await stashLoadedDraft(workspaceId, scope)
+
+    expect((await db.drafts.get("draft_clean"))?.stashedAt).toEqual(expect.any(Number))
+    const ops = await db.pendingOperations.where("type").equals("upsert_draft").toArray()
+    expect(ops.some((op) => (op.payload as { draftId?: string }).draftId === "draft_clean")).toBe(true)
+  })
+
+  it("restore enqueues the un-stash push for a clean, already-synced stashed row", async () => {
+    await db.drafts.put({
+      id: "draft_clean_stashed",
+      workspaceId,
+      scope,
+      contentJson: makeDoc("synced body"),
+      attachments: [],
+      baseVersion: 5,
+      clientUpdatedAt: 1000,
+      stashedAt: 900,
+    })
+    expect(await db.pendingOperations.count()).toBe(0)
+
+    await restoreStashedDraftToComposer(workspaceId, scope, "draft_clean_stashed")
+
+    expect((await db.drafts.get("draft_clean_stashed"))?.stashedAt).toBeNull()
+    const ops = await db.pendingOperations.where("type").equals("upsert_draft").toArray()
+    expect(ops.some((op) => (op.payload as { draftId?: string }).draftId === "draft_clean_stashed")).toBe(true)
   })
 
   it("no-ops when nothing is loaded", async () => {
@@ -79,6 +129,9 @@ describe("restoreStashedDraftToComposer (pointer-move restore)", () => {
     // Both rows survive (nothing deleted) — `second` is now the stash entry.
     expect(await db.drafts.get(first.id)).toBeDefined()
     expect(await db.drafts.get(second.id)).toBeDefined()
+    // Restoring UN-stashes: the durable marker set by the stash clears and the
+    // clear is pushed (chunk 4).
+    expect((await db.drafts.get(first.id))?.stashedAt).toBeNull()
   })
 })
 

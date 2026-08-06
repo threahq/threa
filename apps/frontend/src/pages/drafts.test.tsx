@@ -22,6 +22,7 @@ function draft(overrides: Partial<UnifiedDraft> & { id: string; displayName: str
     href: `/w/${WS}/s/stream_${overrides.id}`,
     groupLabel: overrides.displayName,
     isStashed: false,
+    putAway: false,
     ...overrides,
   }
 }
@@ -334,5 +335,27 @@ describe("DraftsPage touch long-press", () => {
     fireEvent.click(row)
 
     expect(screen.queryByTestId("navigated-away")).toBeNull()
+  })
+})
+
+describe("put-away annotation (durable stash, chunk 4)", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks()
+    deleteDraft.mockReset()
+    deleteDraft.mockResolvedValue(undefined)
+  })
+
+  it("labels a deliberately put-away row 'Stashed' and leaves a merely-roamed row unlabeled", () => {
+    mockDrafts([
+      draft({ id: "a", displayName: "Alpha", isStashed: true, putAway: true, preview: "put away body" }),
+      draft({ id: "b", displayName: "Bravo", isStashed: true, putAway: false, preview: "roamed body" }),
+    ])
+    renderPage()
+
+    // The put-away row carries the annotation; the roamed control row does not
+    // — the two device-local/durable notions must not be conflated.
+    expect(screen.getByText("Stashed")).toBeInTheDocument()
+    const roamedRow = screen.getByText("roamed body").closest("a, button, li")
+    expect(roamedRow?.textContent).not.toContain("Stashed")
   })
 })

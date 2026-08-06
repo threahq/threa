@@ -31,6 +31,11 @@ const TYPE_ICONS: Record<DraftType, React.ComponentType<{ className?: string }>>
   thread: MessageSquare,
 }
 
+/** The put-away annotation ("Stashed"); null for active and merely-roamed rows. */
+function stashedRowDescription(draft: UnifiedDraft): string | null {
+  return draft.putAway ? "Stashed" : null
+}
+
 export function DraftsPage() {
   const { workspaceId } = useParams<{ workspaceId: string }>()
   const navigate = useNavigate()
@@ -180,7 +185,9 @@ export function DraftsPage() {
       return {
         id: draft.id,
         label,
-        description: draft.isStashed ? undefined : description,
+        // A put-away row says so (INV-46: structured flag, formatted here) — a
+        // merely-roamed row shows nothing, exactly like before.
+        description: stashedRowDescription(draft) ?? (draft.isStashed ? undefined : description),
         icon,
         href: draft.href ?? undefined,
         group: draft.groupLabel,

@@ -588,6 +588,7 @@ describe("streamIdsWithLoadedDraft", () => {
   function unifiedDraft(overrides: Partial<UnifiedDraft> = {}): UnifiedDraft {
     return {
       id: "draft_1",
+      putAway: false,
       type: "channel" as DraftType,
       streamId: "stream_1",
       displayName: "General",

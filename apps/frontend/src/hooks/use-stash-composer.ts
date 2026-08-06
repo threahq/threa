@@ -185,9 +185,11 @@ export function useStashComposer(
     await composer.flushDraft()
     const stashedId = await stashLoadedDraft(workspaceId, scope)
     if (!stashedId) return
+    // The durable stash marker rides the row (chunk 4) — drain it promptly.
+    syncEngine?.kickOperationQueue()
     // Re-init the (now draft-less) composer so the editor blanks out.
     composer.markNeedsRehydrate()
-  }, [composer, workspaceId, scope])
+  }, [composer, workspaceId, scope, syncEngine])
 
   const { canHostForeignDraft, describeScope } = stashedDrafts
 
@@ -275,6 +277,8 @@ export function useStashComposer(
           if (!(await restoreStashedDraftToComposer(workspaceId, plan.targetScope, id))) {
             return refuse("missing", `draft ${id} vanished (or re-keyed away) before its adopt could land`)
           }
+          // The restore may have cleared a durable stash marker — drain the push.
+          syncEngine?.kickOperationQueue()
           // Through the host's own disarm, never a bare `clearComposerTarget`: the
           // gesture latch has to be cleared with the target or a later adopt reads
           // as a fresh gesture and redirects to the panel, wiping the target the
@@ -320,6 +324,8 @@ export function useStashComposer(
         if (!(await restoreStashedDraftToComposer(workspaceId, scope, id))) {
           return refuse("missing", `draft ${id} vanished (or re-keyed away) before its restore could land`)
         }
+        // The restore may have cleared a durable stash marker — drain the push.
+        syncEngine?.kickOperationQueue()
         // Re-read the newly-pointed draft into the editor (decrypting it for E2E).
         composer.markNeedsRehydrate()
         return { ok: true }

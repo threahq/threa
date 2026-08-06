@@ -85,6 +85,7 @@ export function cachedDraftFromWire(draft: Draft): CachedDraft {
     attachmentIds: draft.attachmentIds,
     baseVersion: draft.version,
     clientUpdatedAt: Number.isNaN(clientUpdatedAt) ? Date.now() : clientUpdatedAt,
+    stashedAt: draft.stashedAt ? Date.parse(draft.stashedAt) : null,
     ...(draft.ciphertext != null
       ? { ciphertext: draft.ciphertext, envelope: draft.envelope, e2eVersion: draft.e2eVersion ?? undefined }
       : {}),
@@ -865,6 +866,9 @@ export async function executeDraftUpsert(
     ciphertext: isE2e ? row.ciphertext : null,
     envelope: isE2e ? row.envelope : null,
     e2eVersion: isE2e ? (row.e2eVersion ?? null) : null,
+    // The current value rides every push (absent means null server-side), so a
+    // stash set while offline still roams once the queue drains.
+    stashedAt: row.stashedAt ? new Date(row.stashedAt).toISOString() : null,
   }
 
   const res = await service.upsert(workspaceId, draftId, input)

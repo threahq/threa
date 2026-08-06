@@ -2507,6 +2507,12 @@ export interface Draft {
   version: number
   /** Authoring device's wall clock for the last edit; drives recency ordering. */
   clientUpdatedAt: string
+  /**
+   * Set while the draft is stashed ("put away"): no surface on any device may
+   * advertise or auto-restore it — it lives in piles and the drafts explorer
+   * until the user restores it, which clears the flag. Null = active.
+   */
+  stashedAt: string | null
   /** Last accepted write id; lets the authoring device suppress its own sent-write echoes. */
   lastClientWriteId?: string | null
   createdAt: string
@@ -2545,6 +2551,11 @@ export interface UpsertDraftInput {
   ciphertext?: string | null
   envelope?: unknown | null
   e2eVersion?: number | null
+  /**
+   * Absent means PRESERVE the server's current value (legacy clients omit it);
+   * new clients send it on every push — explicit null clears, a timestamp sets.
+   */
+  stashedAt?: string | null
 }
 
 /**
