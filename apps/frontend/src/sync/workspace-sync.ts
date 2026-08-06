@@ -2831,14 +2831,13 @@ export async function applyWorkspaceBootstrap(
         ...bootstrap.streams.map((s) => {
           const membership = membershipByStream.get(s.id)
           const existing = existingByStreamId.get(s.id)
-          return {
+          const incoming = {
             ...s,
             notificationLevel: membership?.notificationLevel,
-            // Preserve fields workspace-bootstrap doesn't carry but stream-
-            // bootstrap does (bag mirroring lives in `applyStreamBootstrap`).
             contextBag: existing?.contextBag,
             _cachedAt: now,
           }
+          return existing ? mergeStreamByTitleRevision(existing, incoming) : incoming
         }),
         // Archived roots ship slim (no preview/membership) but must persist so
         // every `useWorkspaceStreams` consumer (drafts, name resolution) keeps
@@ -3132,6 +3131,10 @@ export async function applyWorkspaceBootstrap(
     anyChanged,
     bootstrap: {
       ...bootstrap,
+      streams: bootstrap.streams.map((stream) => {
+        const merged = mergedStreams.find((candidate) => candidate.id === stream.id)
+        return merged ? { ...merged, lastMessagePreview: stream.lastMessagePreview } : stream
+      }),
       streamReadState: effectiveReadStateMap,
       unreadCounts: effectiveUnread.unreadCounts,
       unreadActivities: effectiveUnread.unreadActivities,
@@ -3331,7 +3334,12 @@ export async function applyReconnectBootstrapBatch(
         ? diffSingleton(existingWorkspace, workspaceRow)
         : { write: true, merged: workspaceRow }
       const usersDiff = diffEnabled ? diffRows(byId(existingUsers), userRows) : writeAllRows(userRows)
-      const streamsDiff = diffEnabled ? diffRows(byId(existingStreams), streamRows) : writeAllRows(streamRows)
+      const existingByStreamId = byId(existingStreams)
+      const mergedStreamRows = streamRows.map((incoming) => {
+        const existing = existingByStreamId.get(incoming.id)
+        return existing ? mergeStreamByTitleRevision(existing, incoming) : incoming
+      })
+      const streamsDiff = diffEnabled ? diffRows(existingByStreamId, mergedStreamRows) : writeAllRows(mergedStreamRows)
       const membershipsDiff = diffEnabled
         ? diffRows(byId(existingMemberships), membershipRows)
         : writeAllRows(membershipRows)

@@ -1,5 +1,10 @@
 import { describe, expect, test } from "vitest"
-import { mergeConversationByTitleRevision, mergeStreamByTitleRevision } from "./title-merge"
+import {
+  mergeConversationByTitleRevision,
+  mergeStreamByTitleRevision,
+  persistStreamByTitleRevision,
+} from "./title-merge"
+import { db } from "@/db"
 import type { ConversationWithStaleness, Stream } from "@threa/types"
 
 const stream = (revision: number): Stream =>
@@ -25,6 +30,20 @@ const conversation = (revision: number): ConversationWithStaleness =>
   }) as ConversationWithStaleness
 
 describe("revision-guarded title merges", () => {
+  test("a delayed HTTP mutation preserves a newer socket title in atomic IndexedDB persistence", async () => {
+    await db.streams.clear()
+    await persistStreamByTitleRevision(stream(5))
+
+    await persistStreamByTitleRevision({ ...stream(3), description: "delayed mutation fields" })
+
+    expect(await db.streams.get("stream_1")).toMatchObject({
+      displayName: "title-5",
+      displayNameRevision: 5,
+      sealedNameCiphertext: "cipher-5",
+      description: "delayed mutation fields",
+    })
+  })
+
   test.each([
     ["lower", 1],
     ["missing", undefined],

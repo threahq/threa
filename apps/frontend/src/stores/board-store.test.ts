@@ -98,6 +98,34 @@ describe("seedBoardPosts", () => {
     await seedBoardPosts(WORKSPACE_ID, [makePost("conv_b", "2026-06-21T12:00:00.000Z")])
     expect((await readBoard()).map((p) => p.id)).toEqual(["conv_b", "conv_a"])
   })
+
+  it("keeps a newer socket topic when an older fetched page is ingested later", async () => {
+    const newer = makePost("conv_1", "2026-06-20T12:00:00.000Z")
+    newer.conversation = {
+      ...newer.conversation,
+      topicSummary: "socket topic",
+      topicSummarySource: "explicit",
+      topicSummaryRevision: 4,
+    }
+    await seedBoardPosts(WORKSPACE_ID, [newer])
+    const delayed = makePost("conv_1", "2026-06-21T12:00:00.000Z")
+    delayed.conversation = {
+      ...delayed.conversation,
+      topicSummary: "stale fetched topic",
+      topicSummarySource: "generated",
+      topicSummaryRevision: 2,
+    }
+
+    await seedBoardPosts(WORKSPACE_ID, [delayed])
+
+    expect(await db.conversations.get("conv_1")).toMatchObject({
+      conversation: {
+        lastActivityAt: "2026-06-21T12:00:00.000Z",
+        topicSummary: "socket topic",
+        topicSummaryRevision: 4,
+      },
+    })
+  })
 })
 
 describe("mergeBoardConversation", () => {

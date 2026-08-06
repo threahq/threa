@@ -281,7 +281,7 @@ describe("createEnclaveSessionHandlers.sealedName", () => {
   it("stores the sealed title (first-write-wins) and broadcasts stream:updated", async () => {
     spyOn(AgentSessionRepository, "findById").mockResolvedValue(SESSION)
     spyOn(StreamRepository, "findById").mockResolvedValue({ id: "stream_1", workspaceId: "ws_1" } as never)
-    spyOn(StreamRepository, "findByIdForUpdate").mockResolvedValue({
+    spyOn(StreamRepository, "findByIdForUpdateBlocking").mockResolvedValue({
       id: "stream_1",
       workspaceId: "ws_1",
       displayNameSource: null,
@@ -304,7 +304,7 @@ describe("createEnclaveSessionHandlers.sealedName", () => {
   it("does not broadcast when the scratchpad is already named (no-op)", async () => {
     spyOn(AgentSessionRepository, "findById").mockResolvedValue(SESSION)
     spyOn(StreamRepository, "findById").mockResolvedValue({ id: "stream_1", workspaceId: "ws_1" } as never)
-    spyOn(StreamRepository, "findByIdForUpdate").mockResolvedValue({
+    spyOn(StreamRepository, "findByIdForUpdateBlocking").mockResolvedValue({
       id: "stream_1",
       workspaceId: "ws_1",
       displayNameSource: null,

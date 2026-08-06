@@ -414,7 +414,7 @@ export function createEnclaveSessionHandlers({ pool, eventService, io, costServi
       if (!stream) throw new HttpError("Stream not found", { status: 404, code: "STREAM_NOT_FOUND" })
 
       await withTransaction(pool, async (client) => {
-        const locked = await StreamRepository.findByIdForUpdate(client, session.streamId)
+        const locked = await StreamRepository.findByIdForUpdateBlocking(client, session.streamId)
         if (!locked || locked.workspaceId !== stream.workspaceId || locked.displayNameSource !== null) return
         const set = await E2eStreamsRepository.setSealedNameIfAbsent(client, stream.workspaceId, session.streamId, {
           ciphertext: parsed.data.ciphertext,

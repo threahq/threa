@@ -347,6 +347,13 @@ export const StreamRepository = {
     return result.rows[0] ? mapRowToStream(result.rows[0]) : null
   },
 
+  async findByIdForUpdateBlocking(db: Querier, id: string): Promise<Stream | null> {
+    const result = await db.query<StreamRow>(
+      sql`SELECT ${sql.raw(SELECT_FIELDS)} FROM streams WHERE id = ${id} FOR UPDATE`
+    )
+    return result.rows[0] ? mapRowToStream(result.rows[0]) : null
+  },
+
   async findByIds(db: Querier, ids: string[]): Promise<Stream[]> {
     if (ids.length === 0) return []
     const result = await db.query<StreamRow>(sql`SELECT ${sql.raw(SELECT_FIELDS)} FROM streams WHERE id = ANY(${ids})`)

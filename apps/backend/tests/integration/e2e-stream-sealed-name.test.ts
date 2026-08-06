@@ -63,6 +63,29 @@ describe("E2E sealed stream name", () => {
     return { wsId, sId, ownerId }
   }
 
+  test("blocking title lock waits for a contending stream transaction", async () => {
+    const { sId } = await seedStream(true)
+    const holder = await pool.connect()
+    const waiter = await pool.connect()
+    try {
+      await holder.query("BEGIN")
+      await StreamRepository.findByIdForUpdateBlocking(holder, sId)
+      let acquired = false
+      const waiting = StreamRepository.findByIdForUpdateBlocking(waiter, sId).then((stream) => {
+        acquired = true
+        return stream
+      })
+      await new Promise((resolve) => setTimeout(resolve, 30))
+      expect(acquired).toBe(false)
+      await holder.query("COMMIT")
+      expect((await waiting)?.id).toBe(sId)
+    } finally {
+      await holder.query("ROLLBACK").catch(() => undefined)
+      holder.release()
+      waiter.release()
+    }
+  })
+
   test("migration backfills plaintext, sealed, and conversation titles while leaving unnamed rows source-null", async () => {
     const client = await pool.connect()
     try {

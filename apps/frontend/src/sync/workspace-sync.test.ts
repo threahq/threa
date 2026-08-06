@@ -1899,6 +1899,41 @@ describe("registerWorkspaceSocketHandlers", () => {
     cleanup()
   })
 
+  it("keeps a newer socket title when an older workspace bootstrap finishes later", async () => {
+    const newer = makeStream("stream_delayed_bootstrap", {
+      displayName: "socket title",
+      displayNameSource: "explicit",
+      displayNameRevision: 3,
+      description: "before fetch",
+    })
+    await db.streams.put({ ...newer, workspaceId: "ws_1", _cachedAt: Date.now() })
+    const stale = makeBootstrap({
+      streams: [
+        {
+          ...newer,
+          displayName: "stale bootstrap title",
+          displayNameSource: "generated",
+          displayNameRevision: 1,
+          description: "from delayed fetch",
+          lastMessagePreview: null,
+        },
+      ],
+    })
+
+    const { bootstrap } = await applyWorkspaceBootstrap("ws_1", stale, Date.now() - 1_000)
+
+    expect(bootstrap.streams[0]).toMatchObject({
+      displayName: "socket title",
+      displayNameRevision: 3,
+      description: "from delayed fetch",
+    })
+    expect(await db.streams.get(newer.id)).toMatchObject({
+      displayName: "socket title",
+      displayNameRevision: 3,
+      description: "from delayed fetch",
+    })
+  })
+
   it("does not run the INV-53 saved/scheduled reconnect invalidations on registration", () => {
     // The workspace catch-up cursor replays the missed user-scoped saved/
     // scheduled entries through these same handlers, so registration never

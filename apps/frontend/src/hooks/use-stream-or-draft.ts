@@ -37,6 +37,7 @@ import type {
 } from "@threa/types"
 import { StreamTypes, Visibilities, CompanionModes } from "@threa/types"
 import { nextOptimisticSequence } from "@/lib/optimistic-sequence"
+import { mergeStreamByTitleRevision, persistStreamByTitleRevision } from "@/lib/title-merge"
 
 const DM_DRAFT_PREFIX = "draft_dm_"
 
@@ -522,20 +523,29 @@ function useRealStream(workspaceId: string, streamId: string, enabled: boolean):
         : { displayName: newName }
 
       const updatedStream = await streamService.update(workspaceId, streamId, updateInput)
-      await db.streams.put(toCachedStream(updatedStream, idbStream))
+      await persistStreamByTitleRevision(updatedStream)
 
+      queryClient.setQueryData<Stream>(streamKeys.detail(workspaceId, streamId), (old) =>
+        old ? mergeStreamByTitleRevision(old, updatedStream) : updatedStream
+      )
       queryClient.setQueryData(streamKeys.bootstrap(workspaceId, streamId), (old: unknown) => {
         if (!old || typeof old !== "object") return old
-        return { ...old, stream: updatedStream }
+        const bootstrap = old as { stream?: Stream }
+        return {
+          ...bootstrap,
+          stream: bootstrap.stream ? mergeStreamByTitleRevision(bootstrap.stream, updatedStream) : updatedStream,
+        }
       })
 
       queryClient.setQueryData(workspaceKeys.bootstrap(workspaceId), (old: unknown) => {
         if (!old || typeof old !== "object") return old
-        const wsBootstrap = old as { streams?: Array<{ id: string }> }
+        const wsBootstrap = old as { streams?: Stream[] }
         if (!wsBootstrap.streams) return old
         return {
           ...wsBootstrap,
-          streams: wsBootstrap.streams.map((s) => (s.id === streamId ? { ...s, ...updatedStream } : s)),
+          streams: wsBootstrap.streams.map((stream) =>
+            stream.id === streamId ? mergeStreamByTitleRevision(stream, updatedStream) : stream
+          ),
         }
       })
     },

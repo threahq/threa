@@ -68,7 +68,17 @@ export function useBoardPost(conversationId: string | null): CachedBoardPost | n
  */
 export async function seedBoardPosts(workspaceId: string, posts: BoardPost[]): Promise<void> {
   if (posts.length === 0) return
-  await db.conversations.bulkPut(posts.map((post) => toCached(workspaceId, post)))
+  await db.transaction("rw", db.conversations, async () => {
+    const incoming = posts.map((post) => toCached(workspaceId, post))
+    const existing = await db.conversations.bulkGet(incoming.map((post) => post.id))
+    await db.conversations.bulkPut(
+      incoming.map((post, index) => {
+        const cached = existing[index]
+        if (!cached) return post
+        return { ...post, conversation: mergeConversationByTitleRevision(cached.conversation, post.conversation) }
+      })
+    )
+  })
 }
 
 /** The known facts about a board post the instant the send returns — enough to

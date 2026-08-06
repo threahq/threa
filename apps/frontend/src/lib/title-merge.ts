@@ -1,3 +1,4 @@
+import { db, type CachedStream } from "@/db"
 import type { ConversationWithStaleness, Stream } from "@threa/types"
 
 const streamTitleFields = [
@@ -22,6 +23,16 @@ export function mergeStreamByTitleRevision<T extends Partial<Stream>>(cached: T,
     ;(merged as Record<string, unknown>)[field] = cached[field]
   }
   return merged
+}
+
+export async function persistStreamByTitleRevision(incoming: Stream): Promise<CachedStream> {
+  return db.transaction("rw", db.streams, async () => {
+    const cached = await db.streams.get(incoming.id)
+    const merged = cached ? mergeStreamByTitleRevision(cached, incoming) : incoming
+    const row = { ...merged, _cachedAt: Date.now() } as CachedStream
+    await db.streams.put(row)
+    return row
+  })
 }
 
 export function mergeConversationByTitleRevision<T extends ConversationWithStaleness>(cached: T, incoming: T): T {
