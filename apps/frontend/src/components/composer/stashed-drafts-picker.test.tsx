@@ -240,18 +240,7 @@ describe("StashedDraftsPicker", () => {
       expect(items[2]).toContain("theirs")
     })
 
-    it("renders no seam when every row is borrowed, and none when every row is own", async () => {
-      const { unmount } = renderPicker({
-        drafts: rows,
-        originById: new Map([
-          ["draft_own", borrowed("Reply in Pizza plans")],
-          ["draft_borrowed", borrowed("Reply in Pizza plans")],
-        ]),
-      })
-      await open()
-      expect(screen.queryByTestId("stashed-drafts-borrowed-separator")).toBeNull()
-      unmount()
-
+    it("renders no seam when every row is own", async () => {
       renderPicker({
         drafts: rows,
         originById: new Map([
@@ -282,6 +271,39 @@ describe("StashedDraftsPicker", () => {
     // a fixed height so a late-resolving origin can only truncate. Assert them
     // directly — a count-vs-itself comparison stays green with both deleted, which
     // is worse than no test because it reads as coverage.
+    it("marks an all-borrowed pile as from elsewhere — the pile this feature exists for", async () => {
+      // A channel composer with no stashed draft of its own is exactly where a
+      // conversation's draft surfaces, so requiring a preceding own row left the
+      // modal case with no cue at all.
+      renderPicker({
+        drafts: rows,
+        originById: new Map([
+          ["draft_own", borrowed("Reply in Pizza plans")],
+          ["draft_borrowed", borrowed("Reply in Pizza plans")],
+        ]),
+      })
+      await open()
+
+      expect(screen.getAllByTestId("stashed-drafts-borrowed-separator")).toHaveLength(1)
+    })
+
+    it("tells the user a borrowed row will change where the composer files", async () => {
+      renderPicker({
+        drafts: rows,
+        originById: new Map([
+          ["draft_own", own],
+          ["draft_borrowed", borrowed("Reply in Pizza plans")],
+        ]),
+      })
+      await open()
+
+      const borrowedRow = screen.getAllByText("theirs")[0]!.closest("button")!
+      expect(borrowedRow.getAttribute("aria-label")).toContain("changes where this composer files")
+      // An own row carries no such warning — nothing moves when you pick it.
+      const ownRow = screen.getAllByText("mine")[0]!.closest("button")!
+      expect(ownRow.getAttribute("aria-label")).toBeNull()
+    })
+
     it("holds the row's geometry classes, and adding an origin does not add a line", async () => {
       const { rerenderWith } = renderPicker({
         drafts: rows,
@@ -296,7 +318,9 @@ describe("StashedDraftsPicker", () => {
 
       const before = paragraphs()
       expect(before).toHaveLength(2)
-      expect(before[0]!.className).toContain("min-h-10")
+      // A plaintext row's preview is final at first paint, so it does NOT pay the
+      // reserved second line — that cost only buys something for a sealed row.
+      expect(before[0]!.className).not.toContain("min-h-10")
       expect(before[0]!.className).toContain("line-clamp-2")
       expect(before[1]!.className).toContain("h-4")
 
@@ -312,7 +336,7 @@ describe("StashedDraftsPicker", () => {
       const after = paragraphs()
       // The origin shares the meta line rather than adding a third paragraph.
       expect(after).toHaveLength(2)
-      expect(after[0]!.className).toContain("min-h-10")
+      expect(after[0]!.className).toContain("line-clamp-2")
       expect(after[1]!.className).toContain("h-4")
     })
   })
