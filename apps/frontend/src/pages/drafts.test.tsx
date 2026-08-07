@@ -318,6 +318,8 @@ describe("DraftsPage touch long-press", () => {
     fireEvent.touchStart(row, { touches: [{ clientX: 10, clientY: 10 }] })
     act(() => vi.advanceTimersByTime(600))
 
+    expect(screen.queryByRole("button", { name: /Copy as Markdown/i })).toBeNull()
+    fireEvent.touchEnd(row)
     expect(screen.getByRole("button", { name: /Copy as Markdown/i })).toBeInTheDocument()
   })
 
@@ -328,6 +330,7 @@ describe("DraftsPage touch long-press", () => {
     const row = screen.getByRole("option", { name: /Alpha/i })
     fireEvent.touchStart(row, { touches: [{ clientX: 10, clientY: 10 }] })
     act(() => vi.advanceTimersByTime(600))
+    fireEvent.touchEnd(row)
     fireEvent.click(row)
 
     expect(screen.queryByTestId("navigated-away")).toBeNull()

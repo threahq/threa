@@ -237,6 +237,9 @@ function ItemRow({
   // stopping touchstart at its wrapper instead.
   const longPress = useLongPress({
     enabled: touchCapable && !selectionEnabled && !!item.onLongPress,
+    // The action drawer is Vaul gesture-aware. Mount it only after the held
+    // touch ends so the opening finger cannot drive its first release frame.
+    triggerOnTouchEnd: true,
     onLongPress: () => {
       suppressClicksUntilRef.current = Date.now() + 750
       item.onLongPress?.()

@@ -5,6 +5,12 @@ interface UseLongPressOptions {
   threshold?: number
   /** Called when long press is detected */
   onLongPress: () => void
+  /**
+   * Wait until the held touch ends before calling `onLongPress`. Use when the
+   * callback mounts a gesture-aware overlay: mounting it under the initiating
+   * finger lets that same touch-end briefly dismiss or drag the new surface.
+   */
+  triggerOnTouchEnd?: boolean
   /** Disable the hook (e.g., on desktop) */
   enabled?: boolean
   /**
@@ -43,6 +49,7 @@ interface UseLongPressReturn {
 export function useLongPress({
   threshold = 500,
   onLongPress,
+  triggerOnTouchEnd = false,
   enabled = true,
   deferToNativeLinks = false,
   deferToInteractiveElements = false,
@@ -103,15 +110,17 @@ export function useLongPress({
         } catch {
           // Ignore
         }
-        onLongPressRef.current()
+        if (!triggerOnTouchEnd) onLongPressRef.current()
       }, threshold)
     },
-    [enabled, threshold, deferToNativeLinks, deferToInteractiveElements]
+    [enabled, threshold, triggerOnTouchEnd, deferToNativeLinks, deferToInteractiveElements]
   )
 
   const onTouchEnd = useCallback(() => {
+    const shouldTrigger = triggerOnTouchEnd && firedRef.current && enabledRef.current
     clear()
-  }, [clear])
+    if (shouldTrigger) onLongPressRef.current()
+  }, [clear, triggerOnTouchEnd])
 
   // `touchcancel` fires (instead of `touchend`) when the browser/OS steals the
   // gesture; clear the pending timer and pressed state so neither gets stuck.
@@ -144,10 +153,10 @@ export function useLongPress({
     (e: React.MouseEvent) => {
       if (enabled && (timerRef.current !== null || firedRef.current)) {
         e.preventDefault()
-        firedRef.current = false
+        if (!triggerOnTouchEnd) firedRef.current = false
       }
     },
-    [enabled]
+    [enabled, triggerOnTouchEnd]
   )
 
   // Cancel pending timer on unmount to avoid firing on stale closures.
