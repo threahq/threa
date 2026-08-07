@@ -395,6 +395,30 @@ describe("MessageComposer", () => {
   })
 
   describe("mobile state handling", () => {
+    it("shows a slash command in the collapsed preview", () => {
+      isMobileMockValue = true
+
+      render(
+        <MessageComposer
+          {...defaultProps}
+          content={{
+            type: "doc",
+            content: [
+              {
+                type: "paragraph",
+                content: [
+                  { type: "slashCommand", attrs: { name: "steer", clientActionId: null } },
+                  { type: "text", text: " focus on tests" },
+                ],
+              },
+            ],
+          }}
+        />
+      )
+
+      expect(screen.getByText("/steer focus on tests")).toBeInTheDocument()
+    })
+
     it("renders editor in preview mode when mobile unfocused with content", () => {
       isMobileMockValue = true
 

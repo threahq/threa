@@ -527,14 +527,20 @@ The composer is **TipTap (ProseMirror)** wrapped by:
 - `PendingAttachments` — upload status row.
 - `AttachmentPill`, `MessageContextBadge`, `ScheduledMessagesPicker`, `StashedDraftsPicker`, `FloatingComposerShell`.
 
-### 9.1 Custom node types in flight
+### 9.1 Composer document nodes
 
-From the editor's content-walk helpers in `message-composer.tsx`:
+`editor/editor-extensions.ts` defines the composer schema:
 
-- `text`, `mention` (with `attrs.label`), `emoji` (with `attrs.emoji`/`attrs.shortcode`), `hardBreak`.
-- `quoteReply` — inline replied-to bubble, `attrs.authorName`.
-- `sharedMessage` — embedded cross-stream message card, `attrs.authorName`.
-- `paragraph`, `heading`, `bulletList`, `orderedList`, `codeBlock`.
+- Text structure: `doc`, `paragraph`, `text`, `hardBreak`, `heading`, `blockquote`, `horizontalRule`, and `codeBlock`.
+- Lists and tables: `bulletList`, `orderedList`, `listItem`, `table`, `tableRow`, `tableHeader`, and `tableCell`.
+- Inline atoms: `mention` (`attrs.slug`), `channelLink` (`attrs.slug`), `slashCommand` (`attrs.name`), `emoji`, `attachmentReference`, `memoEmbed`, `inAppLink`, and `giphyEmbed`.
+- Block atoms: `quoteReply` and `sharedMessage`.
+
+The mobile collapsed bar and board draft affordances both use
+`lib/drafts/collapsed-composer-preview.ts`. It gives each schema node a one-line
+semantic projection. Its test compares the preview fixture matrix with the node
+extensions returned by `createEditorExtensions`, so adding a node without a
+preview fixture fails the frontend suite.
 
 ### 9.2 Editor styles
 
