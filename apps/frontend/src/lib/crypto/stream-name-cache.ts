@@ -2,16 +2,16 @@ import { tryOpenStreamName, type DecryptMessageOpts } from "./message-envelope"
 import { createDecryptedCache, type DecryptStatus } from "./decrypted-cache"
 
 /**
- * In-memory cache for decrypted E2E stream names — a global-subscription instance
+ * In-memory cache for decrypted E2E stream names — a keyed-subscription instance
  * of the shared {@link createDecryptedCache} primitive (which owns the
  * inflight-dedup, lock-epoch guard, version signal, and lock-clear registration).
  *
  * The enclave seals a scratchpad's auto-title (and a manual rename re-seals it)
  * under the stream's SSK, AAD-bound to the stream. The ciphertext lives at rest
  * in `db.streams` (`sealedNameCiphertext`/`sealedNameEnvelope`); the decrypted
- * plaintext is held ONLY here and is never persisted. A single global version
- * counter drives re-renders: the store-read overlay (`useWorkspaceStreams`) and
- * the open-stream header subscribe once and re-read when any name lands. Keyed by
+ * plaintext is held ONLY here and is never persisted. Keyed title readers wake
+ * only for their stream; the collection overlay can still subscribe globally.
+ * Keyed by
  * `${workspaceId}:${streamId}:${ciphertext}` so a rename (fresh ciphertext)
  * supersedes the prior plaintext without a manual purge, and a never-decrypted key
  * reads `null` rather than a stale value.
@@ -22,6 +22,12 @@ import { createDecryptedCache, type DecryptStatus } from "./decrypted-cache"
  * fired by `clearAllDecrypted` on lock) drops everything.
  */
 
+const decryptedNameOverlays = new WeakSet<object>()
+
+export function isDecryptedStreamNameOverlay(stream: object): boolean {
+  return decryptedNameOverlays.has(stream)
+}
+
 interface NameEntry {
   status: DecryptStatus
   /** The decrypted name; null while pending or after a failed/locked open. */
@@ -29,7 +35,7 @@ interface NameEntry {
 }
 
 const cache = createDecryptedCache<NameEntry>({
-  subscription: "global",
+  subscription: "per-key",
   // A null open is transient (locked, or a wrap that becomes resolvable later),
   // so a later request must retry rather than pin the placeholder forever.
   retryFailed: true,
@@ -45,6 +51,10 @@ export function streamNameCacheKey(workspaceId: string, streamId: string, cipher
 
 export function subscribeStreamNameCache(listener: () => void): () => void {
   return cache.subscribe(null, listener)
+}
+
+export function subscribeStreamName(key: string, listener: () => void): () => void {
+  return cache.subscribe(key, listener)
 }
 
 export function getStreamNameCacheVersion(): number {
@@ -119,7 +129,9 @@ export function applyDecryptedNameOverlay<
     const decrypted = getCachedStreamName(streamNameCacheKey(workspaceId, stream.id, stream.sealedNameCiphertext))
     if (decrypted == null || decrypted === stream.displayName) return stream
     changed = true
-    return { ...stream, displayName: decrypted }
+    const overlaid = { ...stream, displayName: decrypted }
+    decryptedNameOverlays.add(overlaid)
+    return overlaid
   })
   return changed ? next : streams
 }
