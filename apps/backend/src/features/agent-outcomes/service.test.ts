@@ -65,14 +65,14 @@ describe("statusesForState", () => {
   it("resolves outstanding to the non-terminal statuses of both kinds", () => {
     expect(statusesForState("outstanding")).toEqual({
       followUpStatuses: ["pending"],
-      delegationStatuses: ["open", "claimed", "running"],
+      delegationStatuses: ["open", "claimed", "running", "expired"],
     })
   })
 
   it("resolves settled to the terminal statuses of both kinds", () => {
     expect(statusesForState("settled")).toEqual({
       followUpStatuses: ["fired", "cancelled", "failed"],
-      delegationStatuses: ["completed", "failed", "cancelled", "expired"],
+      delegationStatuses: ["completed", "failed", "cancelled"],
     })
   })
 

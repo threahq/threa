@@ -231,10 +231,10 @@ export function TimelineCardActionDrawer({
 
   return (
     <Drawer open={open} onOpenChange={onOpenChange}>
-      <DrawerContent className="max-h-[85dvh]">
+      <DrawerContent className="flex max-h-[85dvh] min-h-0 flex-col">
         <DrawerTitle className="sr-only">Actions for {title}</DrawerTitle>
         <DrawerDescription className="sr-only">Choose an action for this card.</DrawerDescription>
-        <div className="min-h-0 overflow-y-auto">
+        <div className="min-h-0 flex-1 overflow-y-auto">
           <div className="px-4 pb-3 pt-2">
             <p className="break-words text-base font-semibold text-foreground">{title}</p>
             {subtitle && <p className="mt-0.5 text-xs text-muted-foreground">{subtitle}</p>}

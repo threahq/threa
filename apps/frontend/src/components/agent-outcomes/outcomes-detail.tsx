@@ -8,6 +8,7 @@ import { useAsyncAction } from "@/hooks/use-async-action"
 import { useFormattedDate } from "@/hooks"
 import { useStreamName } from "@/hooks/use-stream-name"
 import { agentOutcomeKeys } from "@/hooks/use-agent-outcomes"
+import { delegationKeys } from "@/hooks/use-stream-delegations"
 import { OUTCOME_KIND_LABEL, type OutcomeItem } from "@/lib/agent-outcomes/items"
 import { cn } from "@/lib/utils"
 
@@ -30,7 +31,12 @@ export function OutcomesDetail({ workspaceId, item }: OutcomesDetailProps) {
   const streamName = useStreamName(workspaceId, item?.streamId ?? "", "noun")
   const queryClient = useQueryClient()
 
-  const invalidate = () => queryClient.invalidateQueries({ queryKey: agentOutcomeKeys.all })
+  const invalidate = async () => {
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: agentOutcomeKeys.all }),
+      queryClient.invalidateQueries({ queryKey: delegationKeys.all }),
+    ])
+  }
 
   const cancel = useAsyncAction(
     async () => {
@@ -45,6 +51,16 @@ export function OutcomesDetail({ workspaceId, item }: OutcomesDetailProps) {
       await invalidate()
     },
     { errorMessage: "Couldn't cancel" }
+  )
+
+  const requeue = useAsyncAction(
+    async () => {
+      if (!item || item.kind !== "delegation") return
+      const { requeued } = await delegationsApi.requeue(workspaceId, item.id)
+      if (!requeued) toast.info("This delegation is no longer expired")
+      await invalidate()
+    },
+    { errorMessage: "Couldn't requeue" }
   )
 
   const markDone = useAsyncAction(
@@ -104,6 +120,11 @@ export function OutcomesDetail({ workspaceId, item }: OutcomesDetailProps) {
         ) : (
           <span className="text-xs text-muted-foreground">No card to open — its source event is gone.</span>
         )}
+        {item.canRequeue ? (
+          <Button size="sm" variant="outline" onClick={requeue.run} disabled={requeue.pending}>
+            Requeue
+          </Button>
+        ) : null}
         {item.canMarkDone ? (
           <Button size="sm" variant="outline" onClick={markDone.run} disabled={markDone.pending}>
             Mark done

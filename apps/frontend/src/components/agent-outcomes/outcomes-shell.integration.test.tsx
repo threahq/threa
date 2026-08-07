@@ -2,8 +2,10 @@ import type { AgentOutcomeSummary, ListAgentOutcomesResponse } from "@threa/type
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { MemoryRouter, useLocation } from "react-router-dom"
 import { beforeEach, describe, expect, it, vi } from "vitest"
+import { toast } from "sonner"
 import { render, screen, userEvent, waitFor } from "@/test"
 import * as agentOutcomesApiModule from "@/api/agent-outcomes"
+import { delegationsApi } from "@/api/delegations"
 import * as preferencesModule from "@/contexts/preferences-context"
 import * as workspaceStoreModule from "@/stores/workspace-store"
 import * as mobileModule from "@/hooks/use-mobile"
@@ -28,6 +30,18 @@ function makeFollowUp(overrides: Partial<AgentOutcomeSummary> = {}): AgentOutcom
     occursAt: "2026-08-01T18:00:00.000Z",
     anchorEventId: "event_1",
     ...overrides,
+  } as AgentOutcomeSummary
+}
+
+function expiredDelegation(): AgentOutcomeSummary {
+  return {
+    ...makeFollowUp(),
+    kind: "delegation",
+    id: "dlg_expired",
+    title: "Recover the claim",
+    status: "expired",
+    scheduledFor: null,
+    occursAt: "2026-07-28T10:00:00.000Z",
   } as AgentOutcomeSummary
 }
 
@@ -122,6 +136,53 @@ describe("OutcomesShell", () => {
     const detail = await screen.findByTestId("outcomes-detail")
     expect(detail).toHaveTextContent("Follow-up")
     expect(detail).toHaveTextContent("Scheduled")
+  })
+
+  it("offers expired recovery and invalidates the outcome after requeue", async () => {
+    const listSpy = vi
+      .spyOn(agentOutcomesApiModule.agentOutcomesApi, "list")
+      .mockResolvedValue(page([expiredDelegation()]))
+    const requeue = vi.spyOn(delegationsApi, "requeue").mockResolvedValue({ requeued: true })
+
+    renderShell("/w/ws_1/agenda?aSelected=dlg_expired")
+    expect(await screen.findAllByText("Claim expired")).toHaveLength(2)
+    expect(screen.getByRole("button", { name: "Mark done" })).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Cancel" })).toBeInTheDocument()
+    await userEvent.setup().click(screen.getByRole("button", { name: "Requeue" }))
+
+    expect(requeue).toHaveBeenCalledWith("ws_1", "dlg_expired")
+    await waitFor(() => expect(listSpy.mock.calls.length).toBeGreaterThan(1))
+  })
+
+  it("reports a lost requeue race and refreshes authoritative outcomes", async () => {
+    const listSpy = vi
+      .spyOn(agentOutcomesApiModule.agentOutcomesApi, "list")
+      .mockResolvedValue(page([expiredDelegation()]))
+    vi.spyOn(delegationsApi, "requeue").mockResolvedValue({ requeued: false })
+    const info = vi.spyOn(toast, "info")
+
+    renderShell("/w/ws_1/agenda?aSelected=dlg_expired")
+    await userEvent.setup().click(await screen.findByRole("button", { name: "Requeue" }))
+
+    await waitFor(() => expect(info).toHaveBeenCalledWith("This delegation is no longer expired"))
+    await waitFor(() => expect(listSpy.mock.calls.length).toBeGreaterThan(1))
+  })
+
+  it("keeps truthful expired state and reports a requeue error without refreshing", async () => {
+    const listSpy = vi
+      .spyOn(agentOutcomesApiModule.agentOutcomesApi, "list")
+      .mockResolvedValue(page([expiredDelegation()]))
+    vi.spyOn(delegationsApi, "requeue").mockRejectedValue(new Error("offline"))
+    const error = vi.spyOn(toast, "error")
+
+    renderShell("/w/ws_1/agenda?aSelected=dlg_expired")
+    await screen.findByRole("button", { name: "Requeue" })
+    const before = listSpy.mock.calls.length
+    await userEvent.setup().click(screen.getByRole("button", { name: "Requeue" }))
+
+    await waitFor(() => expect(error).toHaveBeenCalledWith("Couldn't requeue"))
+    expect(listSpy).toHaveBeenCalledTimes(before)
+    expect(screen.getByTestId("outcomes-detail")).toHaveTextContent("Claim expired")
   })
 
   it("the back arrow returns a deep-linked detail to the list, without closing the surface", async () => {

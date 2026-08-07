@@ -30,6 +30,7 @@ export interface OutcomeItem {
    */
   anchorPath: string | null
   canCancel: boolean
+  canRequeue: boolean
   /** Only a delegation can be closed out by hand; a follow-up has no such affordance. */
   canMarkDone: boolean
 }
@@ -68,6 +69,7 @@ export function toOutcomeItem(workspaceId: string, outcome: AgentOutcomeSummary)
     statusChangedAt: outcome.statusChangedAt,
     anchorPath: outcomeAnchorPath(workspaceId, outcome),
     canCancel: !settled,
+    canRequeue: outcome.kind === "delegation" && outcome.status === "expired",
     canMarkDone: outcome.kind === "delegation" && !settled,
   }
 }

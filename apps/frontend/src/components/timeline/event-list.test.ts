@@ -991,6 +991,33 @@ describe("timelineRowPropsEqual (memoized row comparator)", () => {
     payload: { messageId: "msg_b", contentMarkdown: "b" },
   })
 
+  it("repaints a delegation row when rendered reason or thread target changes", () => {
+    const item: TimelineItem = {
+      type: "event",
+      event: createEvent({
+        id: "evt_delegation",
+        sequence: "90",
+        eventType: "delegation:created",
+        payload: { delegationId: "dlg_1" },
+      }),
+    }
+    const props = (patch: Record<string, unknown>) => ({
+      item,
+      ctx: makeCtx({
+        delegationStatusPatches: new Map([["dlg_1", { delegationId: "dlg_1", status: "open", ...patch } as never]]),
+      }),
+      deferSecondaryHydration: false,
+    })
+
+    expect(timelineRowPropsEqual(props({ reason: "claim_expired" }), props({ reason: "claim_released" }))).toBe(false)
+    expect(
+      timelineRowPropsEqual(
+        props({ status: "completed", threadStreamId: "thread_1" }),
+        props({ status: "completed", threadStreamId: "thread_2" })
+      )
+    ).toBe(false)
+  })
+
   it("equal when ctx is rebuilt with fresh containers but same per-item content", () => {
     // Simulates a data tick: new ctx object, new Set/Map identities, same content.
     const prev = {

@@ -18,6 +18,11 @@ describe("agent outcome constants", () => {
       (status) => !(FOLLOW_UP_TERMINAL_STATUSES as readonly string[]).includes(status)
     )
     expect(outstanding).toEqual(["pending"])
+
+    const outstandingDelegations = DELEGATION_STATUSES.filter(
+      (status) => !(DELEGATION_TERMINAL_STATUSES as readonly string[]).includes(status)
+    )
+    expect(outstandingDelegations).toEqual(["open", "claimed", "running", "expired"])
   })
 
   it("enumerates the kinds and states the endpoint accepts", () => {

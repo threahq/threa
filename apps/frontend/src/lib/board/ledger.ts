@@ -15,7 +15,7 @@ import {
 } from "@threa/types"
 
 import type { BoardEventRow } from "@/lib/board/board-event-rows"
-import { DELEGATION_STATUS_LABEL } from "@/lib/delegation-display"
+import { delegationAvailabilityLabel } from "@/lib/delegation-display"
 import { formatDuration, formatFireTime } from "@/lib/dates"
 import { resolveEmojiShortcodes, stripMarkdownKeepingCode, truncateInline } from "@/lib/markdown/strip"
 
@@ -265,7 +265,7 @@ export function ledgerEventContent(row: BoardEventRow, ctx: LedgerEventContentCt
         key: row.key,
         kind: "delegation",
         label: payload?.title ? `Delegation: ${payload.title}` : "Delegation",
-        meta: DELEGATION_STATUS_LABEL[row.statusPatch?.status ?? DelegationStatuses.OPEN],
+        meta: delegationAvailabilityLabel(row.statusPatch?.status ?? DelegationStatuses.OPEN, row.statusPatch?.reason),
       }
     }
     default: {

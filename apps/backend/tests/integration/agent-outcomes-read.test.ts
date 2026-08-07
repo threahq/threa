@@ -87,6 +87,7 @@ describe("agent outcomes read path", () => {
   let privateDelegationId: string
   let channelFollowUpId: string
   let channelDelegationId: string
+  let expiredDelegationId: string
   let threadFollowUpEventId: string
 
   beforeAll(async () => {
@@ -162,6 +163,13 @@ describe("agent outcomes read path", () => {
       title: "Ship the migration",
       status: "running",
       statusChangedAt: new Date("2126-01-01T00:00:00.000Z"),
+    })
+    expiredDelegationId = await seedDelegation(pool, {
+      workspaceId: wsId,
+      streamId: channelId,
+      title: "Recover the expired claim",
+      status: "expired",
+      statusChangedAt: new Date("2126-01-01T00:01:00.000Z"),
     })
     threadFollowUpEventId = eventId()
     await withTransaction(pool, async (client) => {
@@ -253,7 +261,7 @@ describe("agent outcomes read path", () => {
       withCount: true,
     })
 
-    expect({ off: withoutCount.outstandingCount, on: withCount.outstandingCount }).toEqual({ off: null, on: 2 })
+    expect({ off: withoutCount.outstandingCount, on: withCount.outstandingCount }).toEqual({ off: null, on: 3 })
   })
 
   test("scope=stream drops a thread's follow-up that scope=tree includes", async () => {
@@ -280,7 +288,7 @@ describe("agent outcomes read path", () => {
     }).toEqual({
       treeHasThreadRow: true,
       streamHasThreadRow: false,
-      streamIds: [channelDelegationId, channelFollowUpId].sort(),
+      streamIds: [channelDelegationId, expiredDelegationId, channelFollowUpId].sort(),
     })
   })
 
@@ -288,7 +296,9 @@ describe("agent outcomes read path", () => {
     const outstanding = await service().list({ workspaceId: wsId, userId: memberId, state: "outstanding", limit: 50 })
     const settled = await service().list({ workspaceId: wsId, userId: memberId, state: "settled", limit: 50 })
 
-    expect(outstanding.items.map((i) => i.id).sort()).toEqual([threadFollowUpId, channelDelegationId].sort())
+    expect(outstanding.items.map((i) => i.id).sort()).toEqual(
+      [threadFollowUpId, channelDelegationId, expiredDelegationId].sort()
+    )
     expect(settled.items.map((i) => i.id)).toEqual([channelFollowUpId])
   })
 
@@ -302,7 +312,7 @@ describe("agent outcomes read path", () => {
     })
 
     expect(response.items.map((i) => i.id).sort()).toEqual(
-      [threadFollowUpId, channelDelegationId, channelFollowUpId].sort()
+      [threadFollowUpId, channelDelegationId, expiredDelegationId, channelFollowUpId].sort()
     )
   })
 

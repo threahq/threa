@@ -28,10 +28,14 @@ export const delegationsApi = {
     return api.get<DelegationSummary>(`/api/workspaces/${workspaceId}/delegations/${id}`)
   },
 
+  /** Reopen an expired delegation. `requeued` is false when another transition won first. */
+  async requeue(workspaceId: string, id: string): Promise<{ requeued: boolean }> {
+    return api.post<{ requeued: boolean }>(`/api/workspaces/${workspaceId}/delegations/${id}/requeue`, {})
+  },
+
   /**
-   * Cancel a non-terminal delegation. `cancelled` is `false` when the cancel
-   * lost the race (already completed/failed/expired/cancelled); the call still
-   * resolves so a double-click is harmless.
+   * Cancel a non-terminal delegation, including an expired one. `cancelled` is
+   * false when a completed, failed, or cancelled transition won first.
    */
   async cancel(workspaceId: string, id: string): Promise<{ cancelled: boolean }> {
     return api.post<{ cancelled: boolean }>(`/api/workspaces/${workspaceId}/delegations/${id}/cancel`, {})

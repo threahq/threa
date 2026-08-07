@@ -19,6 +19,7 @@ function item(overrides: Partial<OutcomeItem> & { id: string; occursAt: string }
     statusChangedAt: overrides.occursAt,
     anchorPath: null,
     canCancel: true,
+    canRequeue: false,
     canMarkDone: false,
     ...overrides,
   }
