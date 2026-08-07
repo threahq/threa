@@ -688,9 +688,6 @@ export const ConversationRepository = {
   },
 
   async insert(db: Querier, params: InsertConversationParams): Promise<Conversation> {
-    if (params.topicSummary !== undefined && params.topicSummarySource === undefined) {
-      throw new Error("Titled conversation inserts require topicSummarySource")
-    }
     const result = await db.query<ConversationRow>(sql`
       INSERT INTO conversations (
         id, stream_id, workspace_id,
@@ -701,7 +698,7 @@ export const ConversationRepository = {
         ${params.streamId},
         ${params.workspaceId},
         ${params.topicSummary ?? null},
-        ${params.topicSummarySource ?? null},
+        ${params.topicSummary === undefined ? null : (params.topicSummarySource ?? TitleSources.EXPLICIT)},
         ${params.topicSummary === undefined ? 0 : 1},
         ${params.topicSummaryUpdatedByUserId ?? null},
         ${params.summary ?? null},

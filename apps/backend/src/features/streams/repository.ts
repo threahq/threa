@@ -860,9 +860,6 @@ export const StreamRepository = {
   },
 
   async insert(db: Querier, params: InsertStreamParams): Promise<Stream> {
-    if (params.displayName !== undefined && params.displayNameSource === undefined) {
-      throw new Error("Titled stream inserts require displayNameSource")
-    }
     const result = await db.query<StreamRow>(sql`
       INSERT INTO streams (
         id, workspace_id, type, display_name, display_name_source, display_name_revision, display_name_updated_by_user_id, slug, description, description_json, visibility,
@@ -873,7 +870,7 @@ export const StreamRepository = {
         ${params.workspaceId},
         ${params.type},
         ${params.displayName ?? null},
-        ${params.displayNameSource ?? null},
+        ${params.displayName === undefined ? null : (params.displayNameSource ?? TitleSources.EXPLICIT)},
         ${params.displayName === undefined ? 0 : 1},
         ${params.displayNameUpdatedByUserId ?? null},
         ${params.slug ?? null},
@@ -903,9 +900,6 @@ export const StreamRepository = {
     db: Querier,
     params: InsertStreamParams & { uniquenessKey: string }
   ): Promise<{ stream: Stream; created: boolean }> {
-    if (params.displayName !== undefined && params.displayNameSource === undefined) {
-      throw new Error("Titled stream inserts require displayNameSource")
-    }
     const insertResult = await db.query<StreamRow>(sql`
       INSERT INTO streams (
         id, workspace_id, type, display_name, display_name_source, display_name_revision, display_name_updated_by_user_id, slug, description, visibility,
@@ -916,7 +910,7 @@ export const StreamRepository = {
         ${params.workspaceId},
         ${params.type},
         ${params.displayName ?? null},
-        ${params.displayNameSource ?? null},
+        ${params.displayName === undefined ? null : (params.displayNameSource ?? TitleSources.EXPLICIT)},
         ${params.displayName === undefined ? 0 : 1},
         ${params.displayNameUpdatedByUserId ?? null},
         ${params.slug ?? null},
@@ -957,9 +951,6 @@ export const StreamRepository = {
    */
   async insertThreadOrFind(db: Querier, params: InsertStreamParams): Promise<{ stream: Stream; created: boolean }> {
     const anchorId = params.parentAnchorId ?? null
-    if (params.displayName !== undefined && params.displayNameSource === undefined) {
-      throw new Error("Titled stream inserts require displayNameSource")
-    }
     if (!params.parentStreamId || !anchorId) {
       throw new Error("parentStreamId and parentAnchorId are required for thread creation")
     }
@@ -973,7 +964,7 @@ export const StreamRepository = {
         ${params.workspaceId},
         ${params.type},
         ${params.displayName ?? null},
-        ${params.displayNameSource ?? null},
+        ${params.displayName === undefined ? null : (params.displayNameSource ?? TitleSources.EXPLICIT)},
         ${params.displayName === undefined ? 0 : 1},
         ${params.displayNameUpdatedByUserId ?? null},
         ${params.slug ?? null},
