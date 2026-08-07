@@ -1,7 +1,13 @@
 import { useCallback, useState } from "react"
 import { useQueryClient } from "@tanstack/react-query"
 import { toast } from "sonner"
-import { TitleSources, type BoardPost, type Stream, type TitleSource } from "@threa/types"
+import {
+  TitleSources,
+  type BoardPost,
+  type ConversationWithStaleness,
+  type Stream,
+  type TitleSource,
+} from "@threa/types"
 import { conversationsApi } from "@/api/conversations"
 import { streamsApi } from "@/api/streams"
 import { sealStreamRename } from "@/lib/crypto/stream-rename"
@@ -56,7 +62,10 @@ export function useRegenerateTitle(workspaceId: string, target: RegenerationTarg
       }
       const result = await conversationsApi.regenerateTitle(workspaceId, target.conversationId)
       await mergeBoardConversation(target.conversationId, result.conversation)
-      queryClient.setQueryData(conversationKeys.byId(workspaceId, target.conversationId), result.conversation)
+      queryClient.setQueryData<ConversationWithStaleness>(
+        conversationKeys.byId(workspaceId, target.conversationId),
+        (old) => (old ? mergeConversationByTitleRevision(old, result.conversation) : result.conversation)
+      )
       queryClient.setQueryData<BoardPost>(conversationKeys.boardPost(target.conversationId), (old) =>
         old
           ? {

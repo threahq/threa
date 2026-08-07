@@ -1,4 +1,4 @@
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -333,6 +333,7 @@ function SlugSection({ workspaceId, stream }: { workspaceId: string; stream: Str
 
 function DisplayNameSection({ workspaceId, stream }: { workspaceId: string; stream: Stream }) {
   const [name, setName] = useState(stream.displayName ?? "")
+  const [nameDirty, setNameDirty] = useState(false)
   const renameStream = useRenameStream(workspaceId, stream.id, stream)
   const hasChanged = name !== (stream.displayName ?? "")
   const locked = !renameStream.canRename
@@ -342,12 +343,16 @@ function DisplayNameSection({ workspaceId, stream }: { workspaceId: string; stre
     stream,
     currentTitle: stream.displayName ?? "",
   })
+  useEffect(() => {
+    if (!nameDirty) setName(stream.displayName ?? "")
+  }, [nameDirty, stream.displayName, stream.displayNameRevision])
 
   const handleSave = async () => {
     const trimmed = name.trim()
     if (!trimmed || !hasChanged || locked) return
     try {
       await renameStream.rename(trimmed)
+      setNameDirty(false)
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Failed to update name")
     }
@@ -358,7 +363,10 @@ function DisplayNameSection({ workspaceId, stream }: { workspaceId: string; stre
       <Label className="text-sm font-medium">Display name</Label>
       <Input
         value={name}
-        onChange={(e) => setName(e.target.value)}
+        onChange={(e) => {
+          setName(e.target.value)
+          setNameDirty(true)
+        }}
         placeholder="Scratchpad name"
         maxLength={100}
         disabled={locked}
