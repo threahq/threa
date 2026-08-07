@@ -18,6 +18,7 @@ import { StreamRepository, StreamEventRepository } from "../streams"
 import { E2eStreamsRepository } from "../e2e-streams"
 import { OutboxRepository } from "../../lib/outbox"
 import { MessageRepository, type EventService } from "../messaging"
+import { DynamicNamingStateRepository } from "../dynamic-naming"
 import type { AICostServiceLike } from "../ai-usage"
 import { createEnclaveSessionHandlers } from "./session-handlers"
 import { EnclaveInvocationsRepository } from "./invocations-repository"
@@ -115,6 +116,7 @@ function fakeCostService() {
 }
 
 function makeHandlers(createMessage = mock(async (_input: Record<string, unknown>) => ({}) as never)) {
+  spyOn(DynamicNamingStateRepository, "releaseOwnedClaim").mockResolvedValue(0)
   const eventService = { createMessage } as unknown as EventService
   const { io, emit } = fakeIo()
   const { costService, recordUsage } = fakeCostService()
@@ -290,6 +292,7 @@ describe("createEnclaveSessionHandlers.sealedName", () => {
     spyOn(StreamRepository, "updateDisplayName").mockResolvedValue({ id: "stream_1", workspaceId: "ws_1" } as never)
     spyOn(db, "withTransaction").mockImplementation(((_pool: unknown, cb: (c: unknown) => unknown) => cb({})) as never)
     const setName = spyOn(E2eStreamsRepository, "setSealedNameIfAbsent").mockResolvedValue(true)
+    spyOn(DynamicNamingStateRepository, "find").mockResolvedValue(null)
     const insert = spyOn(OutboxRepository, "insert").mockResolvedValue(undefined as never)
     const { handlers } = makeHandlers()
     const res = fakeRes()
@@ -326,6 +329,98 @@ describe("createEnclaveSessionHandlers.sealedName", () => {
     spyOn(AgentSessionRepository, "findById").mockResolvedValue({ ...SESSION!, status: SessionStatuses.FAILED })
     const { handlers } = makeHandlers()
     await expect(handlers.sealedName(req("session_1", NAME_BODY), fakeRes())).rejects.toMatchObject({ status: 409 })
+  })
+})
+
+describe("createEnclaveSessionHandlers.namingDecision", () => {
+  const RENAME_BODY = {
+    action: "rename",
+    confidence: 0.9,
+    observedStateRevision: 4,
+    observedTitleRevision: 2,
+    observedMessageCount: 3,
+    observedCheckpoint: 3,
+    sealedReplacement: {
+      ciphertext: "Y3Q=",
+      envelope: {
+        v: 2,
+        keyGeneration: 0,
+        iv: "aXY=",
+        aad: Buffer.from("stream_1|name|0").toString("base64"),
+      },
+    },
+  }
+
+  it("atomically applies progress and a sealed generated rename", async () => {
+    spyOn(AgentSessionRepository, "findById").mockResolvedValue(SESSION)
+    spyOn(db, "withTransaction").mockImplementation(((_pool: unknown, cb: (c: unknown) => unknown) => cb({})) as never)
+    spyOn(StreamRepository, "findByIdForUpdateBlocking").mockResolvedValue({
+      id: "stream_1",
+      workspaceId: "ws_1",
+      displayName: null,
+      displayNameSource: "generated",
+      displayNameRevision: 2,
+    } as never)
+    spyOn(DynamicNamingStateRepository, "find").mockResolvedValue({
+      version: 4,
+      claimOwnerId: "session_1",
+      claimToken: "claim_1",
+      claimCheckpoint: 3,
+      claimTitleRevision: 2,
+    } as never)
+    spyOn(MessageRepository, "getNamingStats").mockResolvedValue({ count: 3, latestMessageAt: new Date() })
+    const apply = spyOn(DynamicNamingStateRepository, "applyDecision").mockResolvedValue({ state: {} } as never)
+    const store = spyOn(E2eStreamsRepository, "updateSealedName").mockResolvedValue(true)
+    spyOn(StreamRepository, "updateDisplayName").mockResolvedValue({
+      id: "stream_1",
+      workspaceId: "ws_1",
+      displayNameRevision: 3,
+    } as never)
+    const insert = spyOn(OutboxRepository, "insert").mockResolvedValue(undefined as never)
+    const { handlers } = makeHandlers()
+    const res = fakeRes()
+
+    await handlers.namingDecision(req("session_1", RENAME_BODY), res)
+
+    expect(res.statusCode).toBe(204)
+    expect(apply).toHaveBeenCalledWith({}, expect.objectContaining({ token: "claim_1", expectedVersion: 4 }))
+    expect(store).toHaveBeenCalledWith({}, "ws_1", "stream_1", expect.objectContaining({ ciphertext: "Y3Q=" }))
+    expect(insert).toHaveBeenCalledWith({}, "stream:updated", expect.objectContaining({ streamId: "stream_1" }))
+  })
+
+  it("rejects a replacement not sealed for the stream name slot", async () => {
+    spyOn(AgentSessionRepository, "findById").mockResolvedValue(SESSION)
+    const { handlers } = makeHandlers()
+    await expect(
+      handlers.namingDecision(
+        req("session_1", {
+          ...RENAME_BODY,
+          sealedReplacement: {
+            ...RENAME_BODY.sealedReplacement,
+            envelope: { ...RENAME_BODY.sealedReplacement.envelope, aad: "YWFk" },
+          },
+        }),
+        fakeRes()
+      )
+    ).rejects.toMatchObject({ status: 400 })
+  })
+
+  it("lets a manual rename win without storing enclave output", async () => {
+    spyOn(AgentSessionRepository, "findById").mockResolvedValue(SESSION)
+    spyOn(db, "withTransaction").mockImplementation(((_pool: unknown, cb: (c: unknown) => unknown) => cb({})) as never)
+    spyOn(StreamRepository, "findByIdForUpdateBlocking").mockResolvedValue({
+      id: "stream_1",
+      workspaceId: "ws_1",
+      displayName: null,
+      displayNameSource: "explicit",
+      displayNameRevision: 3,
+    } as never)
+    const store = spyOn(E2eStreamsRepository, "updateSealedName").mockResolvedValue(true)
+    const { handlers } = makeHandlers()
+
+    await handlers.namingDecision(req("session_1", RENAME_BODY), fakeRes())
+
+    expect(store).not.toHaveBeenCalled()
   })
 })
 

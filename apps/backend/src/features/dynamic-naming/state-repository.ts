@@ -204,6 +204,24 @@ export const DynamicNamingStateRepository = {
     return result.rows[0] ? mapRow(result.rows[0]) : null
   },
 
+  async renewOwnedClaimLease(db: Querier, params: { ownerId: string; leaseSeconds: number }): Promise<number> {
+    const result = await db.query(sql`
+      UPDATE dynamic_naming_state SET
+        claim_expires_at = NOW() + (${params.leaseSeconds} || ' seconds')::interval,
+        updated_at = NOW()
+      WHERE claim_owner_id = ${params.ownerId} AND claim_token IS NOT NULL
+    `)
+    return result.rowCount ?? 0
+  },
+
+  async releaseOwnedClaim(db: Querier, ownerId: string): Promise<number> {
+    const result = await db.query(sql`
+      UPDATE dynamic_naming_state SET ${clearClaim}, version = version + 1, updated_at = NOW()
+      WHERE claim_owner_id = ${ownerId} AND claim_token IS NOT NULL
+    `)
+    return result.rowCount ?? 0
+  },
+
   async release(
     db: Querier,
     params: {

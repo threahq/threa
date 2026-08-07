@@ -928,6 +928,12 @@ export interface EnclaveSessionAssignment {
    */
   autoTitle?: boolean
   /**
+   * Revision-fenced dynamic naming work reserved for this exact session. Opaque
+   * title bytes are opened only in the enclave; the backend never sees plaintext.
+   * New enclaves prefer this over `autoTitle`, which remains for rollout compatibility.
+   */
+  naming?: import("./enclave-naming").EnclaveNamingInstruction
+  /**
    * Sealed `turn_digest` step contents from this stream's recent completed
    * sessions, oldest→newest (C-1: carry tool work forward). The backend ships
    * the opaque ciphertext it already persisted via `/steps`; the enclave — which

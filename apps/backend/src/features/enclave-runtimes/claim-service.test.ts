@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, mock, spyOn } from "bun:test"
 import type { Pool } from "pg"
+import { StreamTypes } from "@threa/types"
 import * as db from "../../db"
 import * as agents from "../agents"
 import { AgentSessionRepository, ConversationSummaryRepository, hashCallbackToken } from "../agents"
@@ -8,6 +9,7 @@ import { OutboxRepository } from "../../lib/outbox"
 import { E2eStreamActorsRepository, E2eStreamsRepository, StreamE2eKeyWrapsRepository } from "../e2e-streams"
 import type { E2eStream, E2eStreamActor, StreamE2eKeyWrap } from "../e2e-streams"
 import { MessageRepository } from "../messaging"
+import { DynamicNamingStateRepository } from "../dynamic-naming"
 import { AttachmentRepository } from "../attachments"
 import type { StorageProvider } from "../../lib/storage/s3-client"
 import type { Message } from "../messaging"
@@ -130,6 +132,62 @@ describe("EnclaveClaimService.claimTurn", () => {
     })
     expect(insertOutbox.mock.calls[0]![0]).toBe(tx)
     expect(insertOutbox.mock.calls[0]![1]).toBe("agent_session:started")
+  })
+
+  it("reserves naming under the new session in the same transaction", async () => {
+    const { tx } = arrangeClaim()
+    spyOn(StreamRepository, "findById").mockResolvedValue({
+      id: "stream_1",
+      workspaceId: "ws_1",
+      type: StreamTypes.SCRATCHPAD,
+      rootStreamId: null,
+    } as never)
+    spyOn(StreamRepository, "findByIdForUpdateBlocking").mockResolvedValue({
+      id: "stream_1",
+      workspaceId: "ws_1",
+      type: StreamTypes.SCRATCHPAD,
+      displayName: null,
+      displayNameSource: null,
+      displayNameRevision: 0,
+      archivedAt: null,
+    } as never)
+    spyOn(MessageRepository, "getNamingStats").mockResolvedValue({ count: 1, latestMessageAt: TRIGGER.createdAt })
+    spyOn(DynamicNamingStateRepository, "ensure").mockResolvedValue({
+      version: 0,
+      lastEvaluatedMessageCount: 0,
+      consecutiveKeeps: 0,
+      completedAt: null,
+      structureVersion: 0,
+      lastEvaluatedStructureVersion: 0,
+      claimToken: null,
+      claimExpiresAt: null,
+    } as never)
+    const claim = spyOn(DynamicNamingStateRepository, "claim").mockImplementation(
+      async (_db, params) =>
+        ({
+          version: 1,
+          claimReason: "ordinary",
+          claimToken: "dnclaim_1",
+          ...params,
+        }) as never
+    )
+    spyOn(E2eStreamsRepository, "getSealedName").mockResolvedValue(null)
+    spyOn(AgentSessionRepository, "insertRunningOrSkip").mockImplementation(
+      async (_db, params) =>
+        ({
+          id: params.id,
+          createdAt: new Date(),
+        }) as never
+    )
+    spyOn(StreamEventRepository, "insert").mockResolvedValue({ id: "evt_1" } as never)
+    spyOn(OutboxRepository, "insert").mockResolvedValue(undefined as never)
+
+    const assignment = await service().claimTurn("eik_live")
+
+    expect(assignment?.naming).toMatchObject({ checkpoint: 1, messageCount: 2, titleRevision: 0 })
+    expect(assignment?.autoTitle).toBe(true)
+    expect(claim.mock.calls[0]![0]).toBe(tx)
+    expect(claim.mock.calls[0]![1].ownerId).toBe(assignment!.sessionId)
   })
 
   it("binds callbacks to the claiming runner: the claim token rides the assignment, its hash the row, plus the seal generation (Phase 2.4b)", async () => {

@@ -74,12 +74,14 @@ The key model, in plain terms:
 This feature is `building`. What it deliberately does **not** do yet — the
 known-missing tally, kept current as gaps close:
 
-- **Stream names keep a server-visible plaintext copy.** Renaming an encrypted
-  scratchpad now also seals the name under the stream key (a tamper-evident copy
-  the app prefers once unlocked), but a plaintext `displayName` is still stored so
-  the name shows everywhere even while locked — which means the server can still
-  see titles. This is a deliberate trade for display continuity, not full title
-  privacy. Server-side AI name polish stays disabled for encrypted streams.
+- **Stream names are sealed too.** An encrypted scratchpad's title is ciphertext
+  bound to the stream and key generation; `streams.display_name` stays null. An
+  unlocked device decrypts it in memory, while locked and public views use a
+  neutral fallback rather than exposing the title. Ariadne can revise a generated
+  title at the same bounded conversation checkpoints as a plaintext scratchpad:
+  the backend reserves only revision/count metadata, the enclave evaluates the
+  decrypted context, and only a sealed replacement returns. A manual title change
+  bumps the revision and always wins over an in-flight generated decision.
 - **PIN is a device convenience, not a recovery method.** You can set a 6-digit
   quick-unlock PIN per trusted device (Signal / Messenger style) to reopen without
   retyping the full passphrase; the PIN never leaves the device and only guards the

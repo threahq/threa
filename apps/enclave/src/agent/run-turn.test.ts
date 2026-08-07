@@ -3,6 +3,7 @@ import {
   ATTACHMENT_AAD,
   ATTACHMENT_KEY_GENERATION,
   buildMessageAad,
+  buildNameAad,
   buildSummaryAad,
   buildWrapAad,
   bytesToBase64,
@@ -22,6 +23,7 @@ import type {
   SealedStepStart,
   EnclaveSealedSubstep,
   EnclaveSessionAssignment,
+  EnclaveNamingDecision,
 } from "@threa/types"
 import { createEnclaveKeyPair, type EnclaveKeyPair } from "../keystore"
 import type { RawChatFn, RawChatRequest, RawChatResult } from "../llm"
@@ -395,6 +397,66 @@ describe("runEnclaveTurn", () => {
       ciphertext: Buffer.from(sealedName!.ciphertext, "base64"),
     })
     expect(title).toBe("Trip planning to France")
+  })
+
+  it("prefers revision-fenced naming and seals only a rename", async () => {
+    const keyPair = await createEnclaveKeyPair()
+    const ssk = generateStreamKey()
+    const wrap = await wrapSskToEnclave(keyPair, ssk)
+    const prompt = await sealUnder(ssk, "The migration rollback left orphaned records.", "msg_user", "usr_owner")
+    const prior = await sealMessage({
+      key: ssk,
+      keyGeneration: GEN,
+      payload: "Deployment issue",
+      aad: buildNameAad({ streamId: STREAM_ID, keyGeneration: GEN }),
+    })
+    const chat = stubChat([
+      textReply("Let's repair them before retrying."),
+      textReply(JSON.stringify({ action: "rename", title: "Migration rollback records", confidence: 0.9 })),
+    ])
+    const { onMessage, onStepStarted, onStep, onSubstep } = collector()
+    const decisions: EnclaveNamingDecision[] = []
+    await runEnclaveTurn(
+      {
+        keyPair,
+        rawChat: chat.fn,
+        onMessage,
+        onStepStarted,
+        onStep,
+        onSubstep,
+        pollNewMessages: async () => [],
+        namingQuietMs: 0,
+        onNamingDecision: async (value) => void decisions.push(value),
+        onSealedName: async () => {
+          throw new Error("legacy callback must not run")
+        },
+      },
+      baseRequest({
+        wraps: [wrap],
+        prompt,
+        autoTitle: true,
+        naming: {
+          stateRevision: 4,
+          titleRevision: 2,
+          checkpoint: 3,
+          messageCount: 2,
+          forced: true,
+          reason: "ordinary",
+          currentSealedTitle: { ciphertext: bytesToBase64(prior.ciphertext), envelope: prior.envelope },
+        },
+      })
+    )
+    const decision = decisions[0]
+    expect(decision?.action).toBe("rename")
+    expect(decision?.observedMessageCount).toBe(2)
+    if (!decision || decision.action !== "rename") throw new Error("missing rename")
+    expect(
+      await openMessageAsString({
+        key: ssk,
+        envelope: decision.sealedReplacement.envelope,
+        ciphertext: Buffer.from(decision.sealedReplacement.ciphertext, "base64"),
+      })
+    ).toBe("Migration rollback records")
   })
 
   it("does not title when autoTitle is unset", async () => {

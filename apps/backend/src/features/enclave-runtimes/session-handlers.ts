@@ -8,6 +8,7 @@ import {
   E2E_PLACEHOLDER_CONTENT_MARKDOWN,
   ENCLAVE_CALLBACK_TOKEN_HEADER,
   TitleSources,
+  EnclaveNamingDecisionSchema,
   type EnclaveMidTurnMessage,
   type EnclaveMidTurnMessagesResponse,
   type EnclaveSessionHeartbeatResponse,
@@ -37,6 +38,7 @@ import { StreamRepository, StreamEventRepository } from "../streams"
 import { E2eStreamsRepository } from "../e2e-streams"
 import { serializeTraceStep } from "../public-api"
 import { MessageRepository, type EventService } from "../messaging"
+import { DYNAMIC_NAMING_CLAIM_LEASE_SECONDS, DynamicNamingStateRepository } from "../dynamic-naming"
 import type { AICostServiceLike } from "../ai-usage"
 import { enqueueEnclaveInvocation } from "./claim-service"
 import { EnclaveInvocationsRepository, ENCLAVE_CLAIM_TTL_SECONDS } from "./invocations-repository"
@@ -234,6 +236,10 @@ export function createEnclaveSessionHandlers({ pool, eventService, io, costServi
         sessionId: id,
         claimTtlSeconds: ENCLAVE_CLAIM_TTL_SECONDS,
       })
+      await DynamicNamingStateRepository.renewOwnedClaimLease(pool, {
+        ownerId: id,
+        leaseSeconds: DYNAMIC_NAMING_CLAIM_LEASE_SECONDS,
+      })
       const response: EnclaveSessionHeartbeatResponse = { abort: session?.abortRequestedAt != null }
       res.status(200).json(response)
     },
@@ -430,8 +436,113 @@ export function createEnclaveSessionHandlers({ pool, eventService, io, costServi
           expectedSource: null,
         })
         if (!titled) throw new Error("Sealed title metadata update lost its stream lock")
+
+        // New backend → old enclave compatibility: the legacy first-title body
+        // carries no observed metadata, but its callback/session and the locked
+        // target identify the session-owned checkpoint-1 claim. Consume it as a
+        // generated rename so old runners do not leave checkpoint 1 pending on
+        // every later turn. An old backend has no state row and simply skips it.
+        const namingState = await DynamicNamingStateRepository.find(client, stream.workspaceId, "stream", stream.id)
+        if (namingState?.claimOwnerId === id && namingState.claimToken) {
+          const applied = await DynamicNamingStateRepository.applyDecision(client, {
+            workspaceId: stream.workspaceId,
+            targetKind: "stream",
+            targetId: stream.id,
+            token: namingState.claimToken,
+            expectedVersion: namingState.version,
+            titleRevision: locked.displayNameRevision ?? 0,
+            decision: { action: "rename", title: "[sealed]" },
+          })
+          if (!applied) throw new Error("Legacy sealed title could not consume its session naming claim")
+        }
         const updated = (await StreamRepository.findById(client, session.streamId)) ?? titled
         await OutboxRepository.insert(client, "stream:updated", {
+          workspaceId: updated.workspaceId,
+          streamId: updated.id,
+          stream: updated,
+        })
+      })
+
+      res.status(204).end()
+    },
+
+    /**
+     * POST /internal/enclave-runtimes/sessions/:id/naming-decision
+     * Apply a revision-fenced E2E naming decision. The body contains only
+     * metadata and (for rename) opaque sealed bytes; title plaintext never
+     * crosses this boundary. The session-owned state claim binds the decision
+     * to the runner that received the instruction.
+     */
+    async namingDecision(req: Request, res: Response) {
+      const id = req.params.id
+      if (!id) throw new HttpError("Missing session id", { status: 400, code: "VALIDATION_ERROR" })
+      const parsed = EnclaveNamingDecisionSchema.safeParse(req.body)
+      if (!parsed.success) throw new HttpError("Invalid request body", { status: 400, code: "VALIDATION_ERROR" })
+
+      const session = await AgentSessionRepository.findById(pool, id)
+      assertRunning(session)
+      assertCallbackBound(session, req)
+      if (parsed.data.action === "rename") {
+        assertReplyGeneration(session, parsed.data.sealedReplacement.envelope)
+        const expectedAad = Buffer.from(
+          `${session.streamId}|name|${parsed.data.sealedReplacement.envelope.keyGeneration}`,
+          "utf8"
+        ).toString("base64")
+        if (parsed.data.sealedReplacement.envelope.aad !== expectedAad) {
+          throw new HttpError("Invalid sealed name binding", { status: 400, code: "VALIDATION_ERROR" })
+        }
+      }
+
+      await withTransaction(pool, async (tx) => {
+        const stream = await StreamRepository.findByIdForUpdateBlocking(tx, session.streamId)
+        if (!stream) return
+        const decision = parsed.data
+        const source = stream.displayNameSource ?? (stream.displayName ? TitleSources.LEGACY : null)
+        if (source !== null && source !== TitleSources.GENERATED) {
+          await DynamicNamingStateRepository.releaseOwnedClaim(tx, id)
+          return
+        }
+        const state = await DynamicNamingStateRepository.find(tx, stream.workspaceId, "stream", stream.id)
+        if (
+          !state ||
+          state.claimOwnerId !== id ||
+          state.version !== decision.observedStateRevision ||
+          state.claimCheckpoint !== decision.observedCheckpoint ||
+          state.claimTitleRevision !== decision.observedTitleRevision ||
+          (stream.displayNameRevision ?? 0) !== decision.observedTitleRevision
+        )
+          return
+        const stats = await MessageRepository.getNamingStats(tx, stream.id)
+        if (stats.count !== decision.observedMessageCount) return
+
+        const applied = await DynamicNamingStateRepository.applyDecision(tx, {
+          workspaceId: stream.workspaceId,
+          targetKind: "stream",
+          targetId: stream.id,
+          token: state.claimToken!,
+          expectedVersion: state.version,
+          titleRevision: decision.observedTitleRevision,
+          decision:
+            decision.action === "rename" ? { action: "rename", title: "[sealed]" } : { action: decision.action },
+        })
+        if (!applied) return
+        if (decision.action !== "rename") return
+
+        const stored = await E2eStreamsRepository.updateSealedName(tx, stream.workspaceId, stream.id, {
+          ciphertext: decision.sealedReplacement.ciphertext,
+          envelope: decision.sealedReplacement.envelope,
+        })
+        if (!stored) throw new Error("E2E naming decision target disappeared")
+        const updated = await StreamRepository.updateDisplayName(tx, {
+          workspaceId: stream.workspaceId,
+          streamId: stream.id,
+          displayName: null,
+          source: TitleSources.GENERATED,
+          expectedRevision: decision.observedTitleRevision,
+          expectedSource: source,
+        })
+        if (!updated) throw new Error("E2E naming title CAS failed after state claim was consumed")
+        await OutboxRepository.insert(tx, "stream:updated", {
           workspaceId: updated.workspaceId,
           streamId: updated.id,
           stream: updated,
@@ -716,6 +827,9 @@ export function createEnclaveSessionHandlers({ pool, eventService, io, costServi
         // Flip the turn's claim with the session (same tx, INV-7) so the
         // claimable set and the session lifecycle can't diverge.
         await EnclaveInvocationsRepository.completeBySession(tx, id)
+        // A new-protocol callback consumes this first; an old enclave never calls
+        // it, so completion releases the otherwise-unused session-owned claim.
+        await DynamicNamingStateRepository.releaseOwnedClaim(tx, id)
         // Broadcast needs the workspace (room addressing). A missing stream is an
         // edge (deleted mid-turn): the session is still marked COMPLETED durably,
         // but the lifecycle event/outbox are skipped — same tradeoff the orphan
@@ -869,9 +983,10 @@ export function createEnclaveSessionHandlers({ pool, eventService, io, costServi
       // the RUNNING→FAILED transition is won, so a raced completion keeps its
       // own claim flip.
       const error = `Enclave session failed: ${parsed.data.errorName}`
-      await failSessionWithLifecycle(pool, io, session, error, (tx) =>
-        EnclaveInvocationsRepository.failBySession(tx, { sessionId: id, errorMessage: error })
-      )
+      await failSessionWithLifecycle(pool, io, session, error, async (tx) => {
+        await EnclaveInvocationsRepository.failBySession(tx, { sessionId: id, errorMessage: error })
+        await DynamicNamingStateRepository.releaseOwnedClaim(tx, id)
+      })
 
       res.status(204).end()
     },

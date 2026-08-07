@@ -84,12 +84,10 @@ export const E2eStreamsRepository = {
   },
 
   /**
-   * Store (or clear) the sealed display name for an E2E stream. The plaintext
-   * `streams.display_name` is updated separately on the same rename; this is the
-   * authoritative name an unlocked client prefers. The server holds opaque bytes
-   * + framing it cannot read. Passing `null` clears both columns — used when a
-   * rename can't produce a fresh seal (locked session), so a stale sealed name
-   * can't outrank the new plaintext one after the next unlock.
+   * Store (or clear) the sealed display name for an E2E stream. The authoritative
+   * title exists only as opaque bytes + framing the server cannot read;
+   * `streams.display_name` remains null while its metadata revision/source is
+   * updated separately. Passing `null` clears both sealed columns.
    *
    * Returns whether a row was updated (false for a plaintext stream id — the
    * WHERE matches nothing). `Buffer.from(_, "base64")` is permissive, so we
@@ -119,6 +117,22 @@ export const E2eStreamsRepository = {
       SELECT EXISTS(SELECT 1 FROM updated) AS updated
     `)
     return result.rows[0]?.updated ?? false
+  },
+
+  async getSealedName(
+    db: Querier,
+    workspaceId: string,
+    streamId: string
+  ): Promise<{ ciphertext: string; envelope: unknown } | null> {
+    const result = await db.query<{ name_ciphertext: Buffer | null; name_envelope: unknown | null }>(sql`
+      SELECT name_ciphertext, name_envelope FROM e2e_streams
+      WHERE workspace_id = ${workspaceId} AND stream_id = ${streamId}
+      LIMIT 1
+    `)
+    const row = result.rows[0]
+    return row?.name_ciphertext && row.name_envelope
+      ? { ciphertext: row.name_ciphertext.toString("base64"), envelope: row.name_envelope }
+      : null
   },
 
   async getByStreamId(db: Querier, workspaceId: string, streamId: string): Promise<E2eStream | null> {
