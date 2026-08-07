@@ -111,11 +111,12 @@ interface DelegationCalls {
   statuses: string[]
   completes: Array<{ id: string; resultMarkdown?: string }>
   fails: Array<{ id: string; errorMessage: string }>
+  releases: Array<{ id: string }>
 }
 
 /** One open delegation, then an empty queue — the runner claims it and waits on the executor. */
 function stubDelegationClient(id: string): { client: DelegationClient; calls: DelegationCalls } {
-  const calls: DelegationCalls = { statuses: [], completes: [], fails: [] }
+  const calls: DelegationCalls = { statuses: [], completes: [], fails: [], releases: [] }
   let listed = false
   const client = {
     listOpen: async () => {
@@ -135,6 +136,10 @@ function stubDelegationClient(id: string): { client: DelegationClient; calls: De
     },
     fail: async (failedId: string, _token: string, errorMessage: string) => {
       calls.fails.push({ id: failedId, errorMessage })
+      return claimedDelegation(id)
+    },
+    release: async (releasedId: string) => {
+      calls.releases.push({ id: releasedId })
       return claimedDelegation(id)
     },
   } as unknown as DelegationClient
@@ -263,35 +268,27 @@ describe("ChannelServer delegations", () => {
     expect(starts).toBe(0)
   })
 
-  test("force reconnect interrupts active delegation and waits for its fail report", async () => {
+  test("force reconnect delegates cancellation to the runner and waits for release", async () => {
     const server = new ChannelServer(makeConfig(), new ThreaClient(makeConfig()), makeFakeTransport())
     const internals = server as any
     let releaseStop!: () => void
-    let rejectedWith = ""
     internals.delegations = { stop: () => new Promise<void>((resolve) => (releaseStop = resolve)) }
-    internals.openDelegations.set("dlg_active", {
-      reject: (error: Error) => {
-        rejectedWith = error.message
-      },
-      clear: () => {},
-    })
+    internals.openDelegations.set("dlg_active", { clear: () => {} })
 
     let finished = false
     const stopping = internals.stopDelegationsForReconnect(true).then(() => (finished = true))
     await Promise.resolve()
-    expect({ rejectedWith, finished }).toEqual({
-      rejectedWith: "Claude Code channel reconnected mid-delegation",
-      finished: false,
-    })
+    expect(finished).toBe(false)
     releaseStop()
     await stopping
     expect(finished).toBe(true)
   })
 
-  test("shutdown fails an in-flight delegation instead of stranding its claim", async () => {
+  test("shutdown aborts and releases an in-flight delegation", async () => {
     const { server, calls } = await startDelegatingServer("dlg_1")
     await server.shutdown()
-    expect(calls.fails).toEqual([{ id: "dlg_1", errorMessage: "Claude Code channel shut down mid-delegation" }])
+    expect(calls.releases).toEqual([{ id: "dlg_1" }])
+    expect(calls.fails).toHaveLength(0)
     expect(calls.completes).toHaveLength(0)
   })
 

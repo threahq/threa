@@ -57,6 +57,7 @@ export {
   DelegationClient,
   type DelegationClientOptions,
   type DelegationSummary,
+  type InspectedDelegation,
   type ClaimedDelegation,
 } from "./delegation-client"
 export {

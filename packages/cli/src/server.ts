@@ -39,9 +39,10 @@ const INSTRUCTIONS =
   "(labels are private to the key actor and found-or-created by name). Memory provenance: get_memo traces a " +
   "memo to its source messages. Attachments: get_attachment (metadata plus extracted text), " +
   "get_attachment_download_url (short-lived signed URL for the raw bytes). Delegations: close the loop on a " +
-  "delegated task with list_delegations (the open queue) → claim_delegation (returns a claim token shown once " +
-  "and persisted to ~/.threa/state.json; 15-min TTL) → update_delegation while working (status_note reports " +
-  "progress and renews the claim, no note is a pure heartbeat) → finish_delegation (outcome complete or fail). " +
+  "delegated task with list_delegations (the open queue) → get_delegation (inspect brief/context) → " +
+  "claim_delegation (returns a claim token shown once and persisted to ~/.threa/state.json; 15-min TTL) → optional " +
+  "update_delegation while working (status_note reports progress and renews the claim, no note is a pure heartbeat) → " +
+  "finish_delegation (outcome complete or fail) or release_delegation for controlled stop. " +
   "A completed result is posted into the delegation's stream so GAM memorizes it. Lifecycle tools reuse the " +
   "stored token; pass claim_token to override or to recover on another machine. request_delegation_access " +
   "is bot-key only."
