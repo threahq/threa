@@ -177,12 +177,13 @@ class DeepgramSession implements TranscriptionSession {
       case "Results": {
         const text = data.channel?.alternatives?.[0]?.transcript ?? ""
         const isFinal = data.is_final === true
-        if (isFinal) this.resolvePendingFlush()
         if (!text) return
         this.emitDelta({ text, isFinal })
         return
       }
       case "Metadata":
+        this.resolvePendingFlush()
+        return
       case "SpeechStarted":
       case "UtteranceEnd":
         return
@@ -204,12 +205,9 @@ class DeepgramSession implements TranscriptionSession {
 
   async flush(): Promise<void> {
     if (this.closed || !this.ws || this.ws.readyState !== WebSocket.OPEN) return
-    // Deepgram's CloseStream is request-response: it asks the server to commit
-    // any buffered audio and reply with one last `is_final=true` Results frame.
-    // The gateway immediately calls close() after flush(), so if we returned
-    // here right away the socket teardown would race the final frame and the
-    // user's last utterance would silently disappear. Wait for the final
-    // Results (resolved from handleMessage) or the safety timeout.
+    // CloseStream completes with Metadata after any terminal Results frames.
+    // Waiting for that protocol boundary prevents an endpointing final already
+    // in flight from releasing the barrier before the buffered tail arrives.
     this.ws.send(JSON.stringify({ type: "CloseStream" }))
     await new Promise<void>((resolve) => {
       const timer = setTimeout(() => {

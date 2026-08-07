@@ -250,6 +250,16 @@ export function registerVoiceGateway(io: Server, deps: Dependencies) {
             deps.userPreferencesService.getPreferences(workspaceId, row.userId),
             deps.workspaceSettingsService.getSettings(workspaceId),
           ])
+          if (prefs.status === "rejected")
+            logger.warn(
+              { err: prefs.reason, workspaceId, userId: row.userId, voiceSessionId },
+              "Voice user preferences lookup failed"
+            )
+          if (settings.status === "rejected")
+            logger.warn(
+              { err: settings.reason, workspaceId, userId: row.userId, voiceSessionId },
+              "Voice workspace settings lookup failed"
+            )
           const polishLevel = prefs.status === "fulfilled" ? prefs.value.voicePolishLevel : "none"
           const steeringTerms = resolveSteeringTerms(
             settings.status === "fulfilled" ? settings.value.voiceSteeringWords : undefined,

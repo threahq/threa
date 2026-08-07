@@ -1,6 +1,7 @@
-import { afterEach, describe, expect, it, jest, mock } from "bun:test"
+import { afterEach, describe, expect, it, jest, mock, spyOn } from "bun:test"
 import type { Server } from "socket.io"
 import { VOICE_DRAFT_CONTEXT_MAX_CHARS } from "@threa/types"
+import { logger } from "../../lib/logger"
 import { registerVoiceGateway } from "./realtime-gateway"
 import type { TranscriptionSession } from "./transcription/strategy"
 
@@ -218,7 +219,8 @@ describe("registerVoiceGateway voice:start", () => {
     )
   })
 
-  it("keeps polish and per-user steering when the workspace-settings lookup fails", async () => {
+  it("keeps polish and per-user steering while warning when workspace settings fail", async () => {
+    const warn = spyOn(logger, "warn").mockImplementation(() => logger)
     const seenLevels: string[] = []
     const { socket, upstream, transcription } = setup({
       voicePolishLevel: "opinionated",
@@ -243,9 +245,14 @@ describe("registerVoiceGateway voice:start", () => {
     upstream.fireDelta({ text: "hi", isFinal: true })
     await new Promise((r) => setTimeout(r, 0))
     expect(seenLevels).toEqual(["opinionated"])
+    expect(warn).toHaveBeenCalledWith(
+      expect.objectContaining({ workspaceId: "ws_1" }),
+      "Voice workspace settings lookup failed"
+    )
   })
 
-  it("keeps workspace steering when the user-prefs lookup fails (polish defaults off)", async () => {
+  it("keeps workspace steering while warning when user preferences fail", async () => {
+    const warn = spyOn(logger, "warn").mockImplementation(() => logger)
     const { socket, transcription } = setup({
       workspaceSteeringWords: ["Acme"],
       userPrefsThrows: true,
@@ -260,6 +267,10 @@ describe("registerVoiceGateway voice:start", () => {
     // User prefs failed → polish off + no user terms, but workspace terms still apply.
     expect(transcription.open).toHaveBeenCalledWith(
       expect.objectContaining({ vocabulary: ["Threa", "Ariadne", "Acme"] })
+    )
+    expect(warn).toHaveBeenCalledWith(
+      expect.objectContaining({ workspaceId: "ws_1" }),
+      "Voice user preferences lookup failed"
     )
   })
 

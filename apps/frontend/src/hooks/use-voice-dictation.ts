@@ -3,6 +3,7 @@ import { io, type Socket } from "socket.io-client"
 import {
   VOICE_DRAFT_CONTEXT_MAX_CHARS,
   type VoiceStartAck,
+  type VoiceStoppedPayload,
   type VoiceTranscriptDelta,
   type VoiceTranscriptPolished,
 } from "@threa/types"
@@ -182,6 +183,7 @@ const SAMPLE_RATE_HZ = 16_000
 // If the server never acks voice:stop (dropped connection mid-stop), fall
 // through anyway so the button can't hang in the "stopping" state forever.
 const STOP_ACK_TIMEOUT_MS = 3000
+const FORMAT_STOP_ACK_TIMEOUT_MS = 7000
 
 // Silence-detection thresholds. Two failure modes to catch:
 //
@@ -573,6 +575,10 @@ export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDi
         }
 
         const session = await dependencies.createSession(workspaceId, { language })
+        if (generation !== startGenerationRef.current) {
+          void dependencies.abortSession(workspaceId, session.voiceSessionId).catch(() => {})
+          return
+        }
         sessionIdRef.current = session.voiceSessionId
         setMaxDurationMs(session.maxDurationMs)
 
@@ -586,6 +592,11 @@ export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDi
         const stream = await navigator.mediaDevices.getUserMedia({
           audio: { channelCount: 1, echoCancellation: false, noiseSuppression: false, autoGainControl: false },
         })
+        if (generation !== startGenerationRef.current) {
+          stream.getTracks().forEach((track) => track.stop())
+          void dependencies.abortSession(workspaceId, session.voiceSessionId).catch(() => {})
+          return
+        }
         streamRef.current = stream
         const track = stream.getAudioTracks()[0]
         // Capture the device label so the silence-detection warning can name
@@ -616,6 +627,10 @@ export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDi
         }
 
         await audioContext.audioWorklet.addModule("/worklets/pcm16-processor.js")
+        if (generation !== startGenerationRef.current) {
+          stream.getTracks().forEach((track) => track.stop())
+          return
+        }
 
         const source = audioContext.createMediaStreamSource(stream)
         const worklet = new AudioWorkletNode(audioContext, "pcm16-processor", {
@@ -722,17 +737,17 @@ export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDi
           })
           if (!accepted) sessionChunkIdRef.current = null
         })
-        socket.on("voice:transcription:error", (e: { code?: string }) => fail(friendlyTranscriptionError(e?.code)))
-        socket.on("voice:stopped", () => {
-          // Server-initiated stop (e.g. the max-duration guard). Keep any pending
-          // hypothesis and leave the recording state, not just tear down audio.
+        socket.on("voice:transcription:error", (e: { code?: string }) => {
+          if (socketRef.current === socket) fail(friendlyTranscriptionError(e?.code))
+        })
+        socket.on("voice:stopped", (payload: VoiceStoppedPayload) => {
+          if (socketRef.current !== socket) return
+          if (payload.outcome !== "success" && payload.outcome !== "empty_input") lockAllChunks()
           teardown()
           setState("idle")
         })
         socket.on("disconnect", () => {
-          // An unexpected drop while still capturing ends the take — surface it
-          // so the button leaves its recording state instead of hanging.
-          if (workletRef.current) fail("Dictation connection lost")
+          if (socketRef.current === socket && workletRef.current) fail("Dictation connection lost")
         })
 
         // Snapshot the draft around the caret as polish context. Captured at
@@ -760,7 +775,7 @@ export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDi
               return
             }
             worklet.port.onmessage = (event: MessageEvent<ArrayBuffer>) => {
-              socketRef.current?.emit("voice:audio", event.data)
+              if (socketRef.current === socket) socket.emit("voice:audio", event.data)
             }
             recordingStartRef.current = performance.now()
             lastElapsedTickRef.current = 0
@@ -817,7 +832,7 @@ export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDi
         setState("idle")
       }
       if (protocolVersionRef.current >= 2)
-        socket.timeout(STOP_ACK_TIMEOUT_MS).emit("voice:stop", { mode: "format" }, recover)
+        socket.timeout(FORMAT_STOP_ACK_TIMEOUT_MS).emit("voice:stop", { mode: "format" }, recover)
       else socket.timeout(STOP_ACK_TIMEOUT_MS).emit("voice:stop", recover)
     } else {
       setState("idle")
@@ -932,8 +947,9 @@ export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDi
       void dependencies.abortSession(workspaceId, sessionId).catch(() => {})
     }
     coordinator.deactivate(coordinatedStop)
+    lockAllChunks()
     setState("idle")
-  }, [teardownAudio, updateInterim, workspaceId, coordinator, coordinatedStop, dependencies])
+  }, [teardownAudio, updateInterim, workspaceId, coordinator, coordinatedStop, dependencies, lockAllChunks])
 
   // Backgrounding the tab throttles the rAF meter and (on mobile) suspends audio
   // capture, so a take left "recording" would silently record nothing while the

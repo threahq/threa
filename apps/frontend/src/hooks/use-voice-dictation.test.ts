@@ -87,7 +87,7 @@ beforeEach(() => {
   vi.stubGlobal("cancelAnimationFrame", () => {})
 })
 
-function hookHarness(acks: VoiceStartAck[]) {
+function hookHarness(acks: VoiceStartAck[], callbacks: Partial<Parameters<typeof useVoiceDictation>[0]> = {}) {
   const sockets: FakeSocket[] = []
   let session = 0
   const abortSession = vi.fn(async () => {})
@@ -109,7 +109,7 @@ function hookHarness(acks: VoiceStartAck[]) {
   }
   const committed = vi.fn()
   const rendered = renderHook(() =>
-    useVoiceDictation({ workspaceId: "ws_1", onCommittedText: committed, dependencies })
+    useVoiceDictation({ workspaceId: "ws_1", onCommittedText: committed, dependencies, ...callbacks })
   )
   return { ...rendered, sockets, committed, abortSession, dependencies }
 }
@@ -195,6 +195,42 @@ describe("useVoiceDictation lifecycle", () => {
     vi.useRealTimers()
   })
 
+  it("gives deliberate formatting the full backend processing budget", async () => {
+    vi.useFakeTimers()
+    const harness = hookHarness([{ ok: true, protocolVersion: 2 }])
+    act(() => harness.result.current.start())
+    await act(async () => {
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    act(() => harness.result.current.stop())
+    act(() => vi.advanceTimersByTime(3_000))
+    expect(harness.sockets[0].disconnected).toBe(false)
+    act(() => vi.advanceTimersByTime(4_000))
+    expect(harness.sockets[0].disconnected).toBe(true)
+    vi.useRealTimers()
+  })
+
+  it("ignores detached send-as-is socket lifecycle callbacks during a new take", async () => {
+    const harness = hookHarness([
+      { ok: true, protocolVersion: 2 },
+      { ok: true, protocolVersion: 2 },
+    ])
+    act(() => harness.result.current.start())
+    await waitFor(() => expect(harness.result.current.state).toBe("recording"))
+    act(() => harness.result.current.prepareSendAsIs())
+    act(() => harness.result.current.start())
+    await waitFor(() => expect(harness.result.current.state).toBe("recording"))
+
+    act(() => {
+      harness.sockets[0].fire("voice:stopped", { reason: "stopped", revision: 0, outcome: "success" })
+      harness.sockets[0].fire("disconnect", undefined)
+    })
+
+    expect(harness.result.current.state).toBe("recording")
+    expect(harness.result.current.error).toBeNull()
+  })
+
   it("aborts over HTTP after session creation but before socket setup", async () => {
     let releaseMic!: () => void
     Object.defineProperty(navigator, "mediaDevices", {
@@ -213,6 +249,77 @@ describe("useVoiceDictation lifecycle", () => {
 
     expect(harness.abortSession).toHaveBeenCalledWith("ws_1", "voicesess_1")
     releaseMic()
+  })
+
+  it("stops a microphone stream that resolves after abort", async () => {
+    let releaseMic!: () => void
+    const stopTrack = vi.fn()
+    Object.defineProperty(navigator, "mediaDevices", {
+      configurable: true,
+      value: {
+        getUserMedia: () =>
+          new Promise((resolve) => {
+            releaseMic = () =>
+              resolve({ getAudioTracks: () => [], getTracks: () => [{ stop: stopTrack }] } as unknown as MediaStream)
+          }),
+      },
+    })
+    const harness = hookHarness([{ ok: true, protocolVersion: 2 }])
+    act(() => harness.result.current.start())
+    await waitFor(() => expect(harness.dependencies.createSession).toHaveBeenCalledTimes(1))
+    act(() => harness.result.current.abort())
+    await act(async () => releaseMic())
+
+    expect(stopTrack).toHaveBeenCalledTimes(1)
+    expect(harness.sockets).toHaveLength(0)
+  })
+
+  it("locks stale polished comparison state when authoritative formatting fails or the take aborts", async () => {
+    let chunkText = "raw tail"
+    const lockAll = vi.fn()
+    const harness = hookHarness([{ ok: true, protocolVersion: 2 }], {
+      onPolishedChunkInserted: ({ text }) => {
+        chunkText = text
+      },
+      onGetChunkText: () => chunkText,
+      onChunkSwap: ({ newText }) => {
+        chunkText = newText
+        return true
+      },
+      onLockAllChunks: lockAll,
+    })
+    act(() => harness.result.current.start())
+    await waitFor(() => expect(harness.result.current.state).toBe("recording"))
+    lockAll.mockClear()
+    act(() => {
+      harness.sockets[0].fire("voice:transcript:delta", {
+        voiceSessionId: "voicesess_1",
+        revision: 1,
+        text: "raw tail",
+        isFinal: true,
+        chunkId: "chunk_1",
+      })
+      harness.sockets[0].fire("voice:transcript:polished", {
+        voiceSessionId: "voicesess_1",
+        revision: 1,
+        chunkId: "chunk_1",
+        raw: "raw tail",
+        polished: "polished",
+      })
+      harness.sockets[0].fire("voice:transcript:delta", {
+        voiceSessionId: "voicesess_1",
+        revision: 2,
+        text: "new tail",
+        isFinal: true,
+        chunkId: "chunk_1",
+      })
+      harness.sockets[0].fire("voice:stopped", { reason: "stopped", revision: 2, outcome: "provider_error" })
+    })
+
+    expect(harness.result.current.hasUnlockedChunks).toBe(false)
+    expect(lockAll).toHaveBeenCalledTimes(1)
+    act(() => harness.result.current.abort())
+    expect(lockAll).toHaveBeenCalledTimes(2)
   })
 })
 

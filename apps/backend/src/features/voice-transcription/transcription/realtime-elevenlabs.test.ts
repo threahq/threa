@@ -145,7 +145,7 @@ describe("RealtimeElevenLabsStrategy audio + transcripts", () => {
     expect(result.totalAudioMs).toBe(1000)
   })
 
-  test("flush waits until the committed transcript is delivered", async () => {
+  test("flush waits for post-commit quiet so an in-flight final cannot hide the terminal transcript", async () => {
     const { session, socket } = await openSession()
     const deltas: TranscriptionDelta[] = []
     session.onDelta((delta) => deltas.push(delta))
@@ -153,9 +153,19 @@ describe("RealtimeElevenLabsStrategy audio + transcripts", () => {
     const msg = JSON.parse(socket.sent.at(-1)!)
     expect(msg).toMatchObject({ message_type: "input_audio_chunk", commit: true, audio_base_64: "" })
 
+    let resolved = false
+    void flushed.then(() => {
+      resolved = true
+    })
+    socket.dispatch("message", { data: JSON.stringify({ message_type: "committed_transcript", text: "prior" }) })
+    await Promise.resolve()
+    expect(resolved).toBe(false)
     socket.dispatch("message", { data: JSON.stringify({ message_type: "committed_transcript", text: "tail" }) })
     await flushed
-    expect(deltas).toEqual([{ text: "tail", isFinal: true }])
+    expect(deltas).toEqual([
+      { text: "prior", isFinal: true },
+      { text: "tail", isFinal: true },
+    ])
   })
 
   test("close releases a pending flush", async () => {
