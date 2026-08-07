@@ -19,6 +19,7 @@ import { usePreferencesOptional } from "@/contexts"
 import { getEffectiveKeyBinding, matchesKeyBinding } from "@/lib/keyboard-shortcuts"
 import { RichEditor, EditorToolbar, EditorActionBar } from "@/components/editor"
 import type { RichEditorHandle } from "@/components/editor"
+import { handleMobileInlineAttachmentPicker } from "@/components/editor/mobile-inline-attachment-picker"
 import { Button } from "@/components/ui/button"
 import { Separator } from "@/components/ui/separator"
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from "@/components/ui/tooltip"
@@ -35,7 +36,7 @@ import { COLLAPSED_COMPOSER_ROW, COLLAPSED_COMPOSER_SHADOW } from "@/components/
 import { isEmptyContent } from "@/lib/prosemirror-utils"
 import { collapsedComposerPreview } from "@/lib/drafts/collapsed-composer-preview"
 import type { PendingAttachment, UploadResult } from "@/hooks/use-attachments"
-import type { MessageSendMode, JSONContent } from "@threa/types"
+import { DEFAULT_USER_PREFERENCES, type MessageSendMode, type JSONContent } from "@threa/types"
 import type { MentionStreamContext } from "@/hooks/use-mentionables"
 import type { Editor } from "@tiptap/react"
 import { consumeComposerCommandRequest, subscribeComposerCommandRequest } from "@/stores/composer-command-request-store"
@@ -313,6 +314,7 @@ export function MessageComposer({
   const [voiceActive, setVoiceActive] = useState(false)
   const isMobile = useIsMobile()
   const actionSide = useComposerActionSide()
+  const preferencesCtx = usePreferencesOptional()
   const mirrored = actionSide === "left"
   // Selection toolbar is a hover/mouse affordance, so it keys off the active
   // input mode (a finger suppresses it) rather than viewport width — a mouse on
@@ -572,6 +574,20 @@ export function MessageComposer({
     fileInputRef.current?.click()
   }, [fileInputRef])
 
+  const handleFileInputChange = useCallback(
+    (event: ChangeEvent<HTMLInputElement>) => {
+      handleMobileInlineAttachmentPicker({
+        event,
+        isMobile,
+        inlineEnabled:
+          preferencesCtx?.preferences?.mobileInlineAttachments ?? DEFAULT_USER_PREFERENCES.mobileInlineAttachments,
+        insertFiles: (files) => richEditorRef.current?.insertFiles(files) ?? false,
+        fallback: onFileSelect,
+      })
+    },
+    [isMobile, onFileSelect, preferencesCtx?.preferences?.mobileInlineAttachments]
+  )
+
   // Stable wrappers that read the editor handle at call time (not render time),
   // so they stay fresh whether invoked from an inline toolbar button or a
   // folded "+" overflow menu item.
@@ -653,7 +669,6 @@ export function MessageComposer({
   // scopes the shortcut to whichever composer actually received focus — if
   // main + thread are both mounted, only the focused one fires. Registered
   // via `SHORTCUT_ACTIONS`, so the user can remap it in settings.
-  const preferencesCtx = usePreferencesOptional()
   const stashBinding = getEffectiveKeyBinding("draftStash", preferencesCtx?.preferences?.keyboardShortcuts ?? {})
 
   // Cmd/Ctrl+S with nothing to stash flips to "show me my drafts": open the
@@ -854,7 +869,7 @@ export function MessageComposer({
               type="file"
               multiple
               className="hidden"
-              onChange={onFileSelect}
+              onChange={handleFileInputChange}
               disabled={controlsDisabled}
             />
 
@@ -1135,7 +1150,7 @@ export function MessageComposer({
             type="file"
             multiple
             className="hidden"
-            onChange={onFileSelect}
+            onChange={handleFileInputChange}
             disabled={controlsDisabled}
           />
 

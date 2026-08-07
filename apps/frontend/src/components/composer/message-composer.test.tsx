@@ -15,6 +15,7 @@ import { queueComposerCommandRequest } from "@/stores/composer-command-request-s
 
 let isMobileMockValue = false
 const mockRichEditorFocus = vi.fn()
+const mockInsertFiles = vi.fn(() => true)
 
 type MockEditorInstance = {
   id: string
@@ -31,6 +32,7 @@ const MockRichEditor = forwardRef<
     insertSlash: () => void
     insertEmoji: () => void
     openSnippetEditor: () => void
+    insertFiles: (files: File[]) => boolean
     getEditor: () => MockEditorInstance | null
   },
   {
@@ -69,6 +71,7 @@ const MockRichEditor = forwardRef<
       insertSlash: () => undefined,
       insertEmoji: () => undefined,
       openSnippetEditor: () => undefined,
+      insertFiles: mockInsertFiles,
       getEditor: () => editorInstance,
     }),
     [editorInstance]
@@ -142,6 +145,7 @@ describe("MessageComposer", () => {
   beforeEach(() => {
     vi.restoreAllMocks()
     mockRichEditorFocus.mockClear()
+    mockInsertFiles.mockClear()
     isMobileMockValue = false
     vi.useRealTimers()
     vi.spyOn(useMobileModule, "useIsMobile").mockImplementation(() => isMobileMockValue)
@@ -368,6 +372,38 @@ describe("MessageComposer", () => {
       render(<MessageComposer {...defaultProps} pendingAttachments={[]} />)
 
       expect(screen.queryByText(/\.txt$/)).not.toBeInTheDocument()
+    })
+
+    it("inserts picked files at the editor selection by default on mobile", async () => {
+      isMobileMockValue = true
+      vi.spyOn(contextsModule, "usePreferencesOptional").mockReturnValue({
+        preferences: {},
+      } as unknown as ReturnType<typeof contextsModule.usePreferencesOptional>)
+      const onFileSelect = vi.fn()
+      const { container } = render(<MessageComposer {...defaultProps} onFileSelect={onFileSelect} />)
+      const file = new File(["notes"], "notes.txt", { type: "text/plain" })
+
+      await userEvent.upload(container.querySelector('input[type="file"]') as HTMLInputElement, file)
+
+      expect(mockInsertFiles).toHaveBeenCalledWith([file])
+      expect(onFileSelect).not.toHaveBeenCalled()
+    })
+
+    it("keeps the attachment-row flow when inline insertion is disabled", async () => {
+      isMobileMockValue = true
+      vi.spyOn(contextsModule, "usePreferencesOptional").mockReturnValue({
+        preferences: { mobileInlineAttachments: false },
+      } as unknown as ReturnType<typeof contextsModule.usePreferencesOptional>)
+      const onFileSelect = vi.fn()
+      const { container } = render(<MessageComposer {...defaultProps} onFileSelect={onFileSelect} />)
+      const file = new File(["notes"], "notes.txt", { type: "text/plain" })
+
+      await userEvent.upload(container.querySelector('input[type="file"]') as HTMLInputElement, file)
+
+      expect({
+        selectedFiles: Array.from(onFileSelect.mock.calls[0]?.[0].target.files ?? []),
+        inlineInsertCalls: mockInsertFiles.mock.calls,
+      }).toEqual({ selectedFiles: [file], inlineInsertCalls: [] })
     })
   })
 

@@ -71,6 +71,8 @@ export interface RichEditorHandle {
   insertEmoji(): void
   /** Open the snippet editor with an empty draft anchored at the caret. */
   openSnippetEditor(): void
+  /** Upload files and insert their reference chips at the current selection. */
+  insertFiles(files: File[]): boolean
   /** Append a committed dictation span at the caret. */
   insertTranscribedText(text: string): void
   /** Show the live (uncommitted) dictation hypothesis as a caret ghost; empty string clears it. */
@@ -557,6 +559,16 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
       })
     }
   }, [])
+
+  const insertFiles = useCallback(
+    (files: File[]): boolean => {
+      const editorInstance = editorRef.current
+      if (!editorInstance || editorInstance.isDestroyed || !onFileUploadRef.current) return false
+      for (const file of files) void handleFileInsert(file, editorInstance)
+      return true
+    },
+    [handleFileInsert]
+  )
 
   // Save the snippet editor's contents as a text attachment, inserting the chip
   // back at the caret position the paste happened at. Reuses the same
@@ -1159,6 +1171,7 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
       insertSlash: handleSlashClick,
       insertEmoji: handleEmojiClick,
       openSnippetEditor,
+      insertFiles,
       insertTranscribedText,
       setDictationInterim,
       insertDictationChunk,
@@ -1175,6 +1188,7 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
       handleSlashClick,
       handleEmojiClick,
       openSnippetEditor,
+      insertFiles,
       insertTranscribedText,
       setDictationInterim,
       insertDictationChunk,

@@ -54,9 +54,9 @@ export const SETTINGS_TAB_CONFIG: Record<SettingsTab, SettingsTabConfig> = {
     keywords: ["push", "alerts", "mute", "mentions", "enable notifications"],
   },
   keyboard: {
-    label: "Keyboard",
-    description: "Shortcuts and send behavior",
-    keywords: ["shortcuts", "hotkeys", "bindings", "enter", "send"],
+    label: "Composer",
+    description: "Sending, attachments, and shortcuts",
+    keywords: ["keyboard", "shortcuts", "hotkeys", "bindings", "enter", "send", "attachments", "files", "mobile"],
   },
   diagnostics: {
     label: "Diagnostics",

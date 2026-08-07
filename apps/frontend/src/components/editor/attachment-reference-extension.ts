@@ -137,9 +137,16 @@ export const AttachmentReferenceExtension = Node.create({
             type: mark.type.name,
             attrs: mark.attrs,
           }))
+          const nodeBefore = $from.nodeBefore
+          const isLineStart = $from.parentOffset === 0 || nodeBefore?.type.name === "hardBreak"
+          let charBefore = ""
+          if (nodeBefore?.isText) charBefore = nodeBefore.text?.slice(-1) ?? ""
+          else if (nodeBefore) charBefore = "\uFFFC"
+          const needsLeadingSpace = !isLineStart && charBefore !== "" && !/\s/u.test(charBefore)
 
           return chain()
             .insertContent([
+              ...(needsLeadingSpace ? [{ type: "text", text: " ", marks }] : []),
               { type: "attachmentReference", attrs, marks },
               { type: "text", text: " ", marks },
             ])

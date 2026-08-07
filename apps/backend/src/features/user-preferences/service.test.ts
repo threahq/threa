@@ -76,6 +76,27 @@ describe("UserPreferencesService.updatePreferences defaultCompanionPersonaId", (
   })
 })
 
+describe("UserPreferencesService.updatePreferences mobile inline attachments", () => {
+  afterEach(() => mock.restore())
+
+  it("stores the disabled override", async () => {
+    setupTransaction()
+    const bulkSet = spyOn(UserPreferencesRepository, "bulkSetOverrides").mockResolvedValue(undefined as any)
+    const bulkDelete = spyOn(UserPreferencesRepository, "bulkDeleteOverrides").mockResolvedValue(undefined as any)
+    spyOn(UserPreferencesRepository, "findOverrides").mockResolvedValue([
+      { key: "mobileInlineAttachments", value: false },
+    ])
+    spyOn(OutboxRepository, "insert").mockResolvedValue({} as any)
+    const service = new UserPreferencesService({} as any)
+
+    const prefs = await service.updatePreferences(WORKSPACE_ID, USER_ID, { mobileInlineAttachments: false })
+
+    expect(bulkSet).toHaveBeenCalledWith({}, USER_ID, [{ key: "mobileInlineAttachments", value: false }])
+    expect(bulkDelete).not.toHaveBeenCalled()
+    expect(prefs.mobileInlineAttachments).toBe(false)
+  })
+})
+
 describe("UserPreferencesService.updatePreferences board ledger settings", () => {
   afterEach(() => mock.restore())
 

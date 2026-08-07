@@ -8,6 +8,7 @@ import * as contextsModule from "@/contexts"
 const mockPreferences = {
   keyboardShortcuts: {} as Record<string, string>,
   messageSendMode: "enter" as const,
+  mobileInlineAttachments: true,
 }
 
 const updatePreference = vi.fn()
@@ -21,6 +22,7 @@ describe("KeyboardSettings", () => {
     resetKeyboardShortcut.mockReset()
     resetAllKeyboardShortcuts.mockReset()
     mockPreferences.keyboardShortcuts = {}
+    mockPreferences.mobileInlineAttachments = true
 
     vi.spyOn(contextsModule, "usePreferences").mockReturnValue({
       preferences: mockPreferences,
@@ -28,6 +30,17 @@ describe("KeyboardSettings", () => {
       resetKeyboardShortcut,
       resetAllKeyboardShortcuts,
     } as unknown as ReturnType<typeof contextsModule.usePreferences>)
+  })
+
+  it("updates mobile inline attachment behavior", async () => {
+    render(<KeyboardSettings />)
+
+    const toggle = screen.getByRole("switch", { name: "Insert files at the cursor" })
+    expect(toggle).toBeChecked()
+
+    await userEvent.click(toggle)
+
+    expect(updatePreference).toHaveBeenCalledWith("mobileInlineAttachments", false)
   })
 
   it("saves conflict overrides as a single keyboardShortcuts update", async () => {

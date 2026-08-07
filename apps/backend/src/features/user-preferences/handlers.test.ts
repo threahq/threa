@@ -239,6 +239,18 @@ describe("updatePreferencesSchema board ledger settings", () => {
   })
 })
 
+describe("updatePreferencesSchema mobileInlineAttachments", () => {
+  it("accepts booleans and rejects other values", () => {
+    expect(updatePreferencesSchema.parse({ mobileInlineAttachments: true })).toEqual({
+      mobileInlineAttachments: true,
+    })
+    expect(updatePreferencesSchema.parse({ mobileInlineAttachments: false })).toEqual({
+      mobileInlineAttachments: false,
+    })
+    expect(updatePreferencesSchema.safeParse({ mobileInlineAttachments: "yes" }).success).toBe(false)
+  })
+})
+
 describe("updatePreferencesSchema accessibility.composerActionSide", () => {
   it("accepts both sides", () => {
     expect(updatePreferencesSchema.parse({ accessibility: { composerActionSide: "left" } }).accessibility).toEqual({

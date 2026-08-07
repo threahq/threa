@@ -320,6 +320,8 @@ export interface UserPreferences {
   notificationLevel: PrefNotificationLevel
   sidebarCollapsed: boolean
   messageSendMode: MessageSendMode
+  /** Whether files picked on mobile are also inserted into the message body at the caret. */
+  mobileInlineAttachments: boolean
   linkPreviewDefault: LinkPreviewDefault
   /**
    * What dragging a labeled stream out of its sidebar label section does to that
@@ -444,6 +446,7 @@ export const DEFAULT_USER_PREFERENCES: Omit<UserPreferences, "workspaceId" | "us
   notificationLevel: "all",
   sidebarCollapsed: false,
   messageSendMode: "enter",
+  mobileInlineAttachments: true,
   linkPreviewDefault: "open",
   labelRemoveOnMove: "ask",
   unreadOpenPosition: "latest",
@@ -489,6 +492,7 @@ export interface UpdateUserPreferencesInput {
   notificationLevel?: PrefNotificationLevel
   sidebarCollapsed?: boolean
   messageSendMode?: MessageSendMode
+  mobileInlineAttachments?: boolean
   linkPreviewDefault?: LinkPreviewDefault
   labelRemoveOnMove?: LabelRemoveOnMove
   unreadOpenPosition?: UnreadOpenPosition
