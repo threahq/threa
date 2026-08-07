@@ -213,6 +213,7 @@ describe("API E2E Tests", () => {
       await loginAs(client, testEmail("sequence"), "Sequence Test")
       const workspace = await createWorkspace(client, `Seq WS ${testRunId}`)
       const scratchpad = await createScratchpad(client, workspace.id)
+      await updateCompanionMode(client, workspace.id, scratchpad.id, "off")
 
       const m1 = await sendMessage(client, workspace.id, scratchpad.id, "First")
       const m2 = await sendMessage(client, workspace.id, scratchpad.id, "Second")
