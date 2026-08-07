@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest"
+import { afterEach, describe, expect, it, vi } from "vitest"
 import { Editor } from "@tiptap/core"
 import type { JSONContent } from "@tiptap/react"
 import { createEditorExtensions } from "./editor-extensions"
@@ -51,5 +51,17 @@ describe("dictation Markdown context", () => {
     expect(context.before).not.toMatch(/[\uD800-\uDBFF]$/)
     expect(context.after).not.toMatch(/^[\uDC00-\uDFFF]/)
     expect(() => context.before.match(/\*\*/g)).not.toThrow()
+  })
+
+  it("bounds serialization attempts for a long draft", () => {
+    const text = "a".repeat(100_000)
+    editor = make({ type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text }] }] })
+    const cut = vi.spyOn(editor.state.doc, "cut")
+    const middle = Math.floor(editor.state.doc.content.size / 2)
+
+    const context = getDictationMarkdownContext(editor.state.doc, { from: middle, to: middle }, 2_000)
+
+    expect(context).toEqual({ before: "a".repeat(2_000), after: "a".repeat(2_000) })
+    expect(cut.mock.calls.length).toBeLessThanOrEqual(40)
   })
 })
