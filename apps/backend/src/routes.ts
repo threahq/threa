@@ -1425,6 +1425,12 @@ export function registerRoutes(app: Express, deps: Dependencies) {
   app.get("/api/workspaces/:workspaceId/delegations", ...authed, audit("delegations.list", "read"), delegations.list)
   app.get("/api/workspaces/:workspaceId/delegations/:id", ...authed, audit("delegations.get", "read"), delegations.get)
   app.post(
+    "/api/workspaces/:workspaceId/delegations/:id/requeue",
+    ...authed,
+    audit("delegations.requeue", "write"),
+    delegations.requeue
+  )
+  app.post(
     "/api/workspaces/:workspaceId/delegations/:id/cancel",
     ...authed,
     audit("delegations.cancel", "write"),
@@ -1923,7 +1929,9 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     completeBotInvocation: publicApi.completeBotInvocation,
     failBotInvocation: publicApi.failBotInvocation,
     listDelegations: delegationPublicApi.listDelegations,
+    getDelegation: delegationPublicApi.getDelegation,
     claimDelegation: delegationPublicApi.claimDelegation,
+    releaseDelegation: delegationPublicApi.releaseDelegation,
     heartbeatDelegation: delegationPublicApi.heartbeatDelegation,
     reportDelegationStatus: delegationPublicApi.reportDelegationStatus,
     completeDelegation: delegationPublicApi.completeDelegation,

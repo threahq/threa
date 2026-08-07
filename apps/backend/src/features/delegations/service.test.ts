@@ -436,26 +436,52 @@ describe("DelegationService.complete / fail / markRunning", () => {
   })
 })
 
-describe("DelegationService.expireLapsedClaims", () => {
+describe("DelegationService reopening", () => {
   afterEach(() => mock.restore())
 
-  it("appends an expired patch per reaped row, in the sweep's own transaction", async () => {
+  it("appends an open claim_expired patch per reopened row", async () => {
     stubTransaction()
-    spyOn(DelegatedTaskRepository, "expireLapsedClaims").mockResolvedValue([
-      fakeDelegation({ id: "dlg_1", status: DelegationStatuses.EXPIRED }),
-      fakeDelegation({ id: "dlg_2", status: DelegationStatuses.EXPIRED, streamId: "stream_2" }),
+    spyOn(DelegatedTaskRepository, "reopenLapsedClaims").mockResolvedValue([
+      fakeDelegation({ id: "dlg_1", status: DelegationStatuses.OPEN }),
+      fakeDelegation({ id: "dlg_2", status: DelegationStatuses.OPEN, streamId: "stream_2" }),
     ])
     const { insertEvent } = stubEventAppend()
 
-    const expired = await makeService().expireLapsedClaims()
+    expect(await makeService().reopenLapsedClaims()).toHaveLength(2)
+    expect(insertEvent.mock.calls.map((call) => (call[1] as any).payload)).toEqual([
+      expect.objectContaining({ delegationId: "dlg_1", status: "open", reason: "claim_expired" }),
+      expect.objectContaining({ delegationId: "dlg_2", status: "open", reason: "claim_expired" }),
+    ])
+  })
 
-    expect(expired).toHaveLength(2)
-    const appendedIds = insertEvent.mock.calls.map(
-      (call) => (call[1] as { payload: { delegationId: string } }).payload.delegationId
-    )
-    expect(appendedIds).toEqual(["dlg_1", "dlg_2"])
-    const secondAppend = insertEvent.mock.calls[1]?.[1] as { streamId: string; payload: { status: string } }
-    expect(secondAppend.streamId).toBe("stream_2")
-    expect(secondAppend.payload.status).toBe(DelegationStatuses.EXPIRED)
+  it("appends release and requeue reasons, but no event on lost CAS", async () => {
+    stubTransaction()
+    const release = spyOn(DelegatedTaskRepository, "release").mockResolvedValue(fakeDelegation())
+    const requeue = spyOn(DelegatedTaskRepository, "requeue").mockResolvedValue(fakeDelegation())
+    const { insertEvent } = stubEventAppend()
+
+    await makeService().release({ workspaceId: "ws_1", id: "dlg_1", claimToken: "tok" })
+    await makeService().requeue({
+      workspaceId: "ws_1",
+      id: "dlg_1",
+      requeuedBy: { actorId: "usr_1", actorType: AuthorTypes.USER },
+    })
+    expect(insertEvent.mock.calls.map((call) => (call[1] as any).payload.reason)).toEqual([
+      "claim_released",
+      "requeued",
+    ])
+
+    release.mockResolvedValue(null)
+    requeue.mockResolvedValue(null)
+    insertEvent.mockClear()
+    expect(await makeService().release({ workspaceId: "ws_1", id: "dlg_1", claimToken: "old" })).toBeNull()
+    expect(
+      await makeService().requeue({
+        workspaceId: "ws_1",
+        id: "dlg_1",
+        requeuedBy: { actorId: "usr_1", actorType: AuthorTypes.USER },
+      })
+    ).toBeNull()
+    expect(insertEvent).not.toHaveBeenCalled()
   })
 })

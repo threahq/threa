@@ -151,6 +151,8 @@ export {
   DELEGATION_STATUSES,
   type DelegationStatus,
   DelegationStatuses,
+  DELEGATION_REOPEN_REASONS,
+  type DelegationReopenReason,
   DELEGATION_TERMINAL_STATUSES,
   // Bot access-request lifecycle (F3)
   BOT_ACCESS_REQUEST_STATUSES,

@@ -172,14 +172,14 @@ export const DelegatedTaskRepository = {
 
   /**
    * A workspace's open (claimable) delegations, oldest first — the 5.3 list
-   * surface. `since` narrows to rows created after the instant, so a polling
-   * runner that remembers its last sweep doesn't re-download the whole queue.
+   * surface. `since` narrows to rows whose availability changed after the
+   * instant, so reopened old tasks appear in polling deltas.
    */
   async listOpen(db: Querier, workspaceId: string, { since }: { since?: Date } = {}): Promise<DelegatedTask[]> {
     const result = await db.query<DelegatedTaskRow>(sql`
       SELECT ${sql.raw(COLUMNS)} FROM delegated_tasks
       WHERE workspace_id = ${workspaceId} AND status = ${DelegationStatuses.OPEN}
-        AND (${since ?? null}::timestamptz IS NULL OR created_at > ${since ?? null})
+        AND (${since ?? null}::timestamptz IS NULL OR status_changed_at > ${since ?? null})
       ORDER BY created_at ASC
     `)
     return result.rows.map(mapRow)
@@ -236,11 +236,12 @@ export const DelegatedTaskRepository = {
         claim_idempotency_key = ${params.claimIdempotencyKey},
         claim_expires_at = NOW() + (${params.ttlSeconds} || ' seconds')::interval,
         claimed_by_label = ${params.claimedByLabel},
+        status_note = NULL,
         status_changed_at = NOW(),
         updated_at = NOW()
       WHERE id = ${params.id}
         AND workspace_id = ${params.workspaceId}
-        AND status = ${DelegationStatuses.OPEN}
+        AND status IN (${DelegationStatuses.OPEN}, ${DelegationStatuses.EXPIRED})
       RETURNING ${sql.raw(COLUMNS)}
     `)
     return result.rows[0] ? mapRow(result.rows[0]) : null
@@ -268,6 +269,7 @@ export const DelegatedTaskRepository = {
         AND workspace_id = ${params.workspaceId}
         AND status IN (${DelegationStatuses.CLAIMED}, ${DelegationStatuses.RUNNING})
         AND claim_idempotency_key = ${params.claimIdempotencyKey}
+        AND claim_expires_at > NOW()
       RETURNING ${sql.raw(COLUMNS)}
     `)
     return result.rows[0] ? mapRow(result.rows[0]) : null
@@ -415,7 +417,7 @@ export const DelegatedTaskRepository = {
       WHERE id = ${params.id}
         AND workspace_id = ${params.workspaceId}
         AND (${params.streamId ?? null}::text IS NULL OR stream_id = ${params.streamId ?? null})
-        AND status IN (${DelegationStatuses.OPEN}, ${DelegationStatuses.CLAIMED}, ${DelegationStatuses.RUNNING})
+        AND status IN (${DelegationStatuses.OPEN}, ${DelegationStatuses.CLAIMED}, ${DelegationStatuses.RUNNING}, ${DelegationStatuses.EXPIRED})
       RETURNING ${sql.raw(COLUMNS)}
     `)
     return result.rows[0] ? mapRow(result.rows[0]) : null
@@ -441,22 +443,60 @@ export const DelegatedTaskRepository = {
       WHERE id = ${params.id}
         AND workspace_id = ${params.workspaceId}
         AND (${params.streamId ?? null}::text IS NULL OR stream_id = ${params.streamId ?? null})
-        AND status IN (${DelegationStatuses.OPEN}, ${DelegationStatuses.CLAIMED}, ${DelegationStatuses.RUNNING})
+        AND status IN (${DelegationStatuses.OPEN}, ${DelegationStatuses.CLAIMED}, ${DelegationStatuses.RUNNING}, ${DelegationStatuses.EXPIRED})
+      RETURNING ${sql.raw(COLUMNS)}
+    `)
+    return result.rows[0] ? mapRow(result.rows[0]) : null
+  },
+
+  async requeue(
+    db: Querier,
+    params: { workspaceId: string; id: string; streamId?: string }
+  ): Promise<DelegatedTask | null> {
+    const result = await db.query<DelegatedTaskRow>(sql`
+      UPDATE delegated_tasks SET
+        status = ${DelegationStatuses.OPEN}, claim_token_hash = NULL, claim_idempotency_key = NULL,
+        claim_expires_at = NULL, claimed_by_label = NULL, status_note = NULL,
+        status_changed_at = NOW(), updated_at = NOW()
+      WHERE id = ${params.id} AND workspace_id = ${params.workspaceId}
+        AND (${params.streamId ?? null}::text IS NULL OR stream_id = ${params.streamId ?? null})
+        AND status = ${DelegationStatuses.EXPIRED}
+      RETURNING ${sql.raw(COLUMNS)}
+    `)
+    return result.rows[0] ? mapRow(result.rows[0]) : null
+  },
+
+  async release(
+    db: Querier,
+    params: { workspaceId: string; id: string; claimTokenHash: string }
+  ): Promise<DelegatedTask | null> {
+    const result = await db.query<DelegatedTaskRow>(sql`
+      UPDATE delegated_tasks SET
+        status = ${DelegationStatuses.OPEN}, claim_token_hash = NULL, claim_idempotency_key = NULL,
+        claim_expires_at = NULL, claimed_by_label = NULL, status_note = NULL,
+        status_changed_at = NOW(), updated_at = NOW()
+      WHERE id = ${params.id} AND workspace_id = ${params.workspaceId}
+        AND status IN (${DelegationStatuses.CLAIMED}, ${DelegationStatuses.RUNNING})
+        AND claim_token_hash = ${params.claimTokenHash} AND claim_expires_at > NOW()
       RETURNING ${sql.raw(COLUMNS)}
     `)
     return result.rows[0] ? mapRow(result.rows[0]) : null
   },
 
   /**
-   * Set-based expiry (INV-56): CAS every lapsed claim to `expired` in one
+   * Set-based reopening (INV-56): CAS every lapsed claim to `open` in one
    * statement and return the affected rows so the sweep can append their
    * timeline events in the same transaction. The status guard makes concurrent
    * sweeps idempotent — the second one matches nothing.
    */
-  async expireLapsedClaims(db: Querier): Promise<DelegatedTask[]> {
+  async reopenLapsedClaims(db: Querier): Promise<DelegatedTask[]> {
     const result = await db.query<DelegatedTaskRow>(sql`
       UPDATE delegated_tasks SET
-        status = ${DelegationStatuses.EXPIRED},
+        status = ${DelegationStatuses.OPEN},
+        claim_token_hash = NULL,
+        claim_idempotency_key = NULL,
+        claim_expires_at = NULL,
+        claimed_by_label = NULL,
         status_note = NULL,
         status_changed_at = NOW(),
         updated_at = NOW()

@@ -11,6 +11,7 @@ import {
   type BotSessionArchivedOutboxPayload,
   type BotSessionRestoredOutboxPayload,
   type StreamDelegationCreatedOutboxPayload,
+  type StreamDelegationStatusChangedOutboxPayload,
   type StreamBotAccessStatusChangedOutboxPayload,
 } from "./repository"
 import { resolveDeliveryGroups, emitToGroups } from "./delivery-groups"
@@ -18,6 +19,7 @@ import { logger } from "../logger"
 import { SyncLogRepository, type SyncLogEntryInput } from "../../features/sync"
 import { CursorLock, ensureListenerFromLatest, DebounceWithMaxWait, type ProcessResult } from "@threa/backend-common"
 import type { OutboxHandler } from "@threa/backend-common"
+import type { DelegationStatusChangedEventPayload } from "@threa/types"
 import { invalidatePointersForEvent } from "../../features/messaging/sharing"
 import {
   outboxBatchSize,
@@ -236,6 +238,18 @@ export class BroadcastHandler implements OutboxHandler {
         delegationId: created.delegationId,
         title: created.title,
       })
+    }
+
+    if (isOutboxEventType(event, "stream:delegation_status_changed")) {
+      const payload = event.payload as StreamDelegationStatusChangedOutboxPayload
+      const changed = payload.event.payload as DelegationStatusChangedEventPayload
+      if (changed.status === "open" && changed.delegationId) {
+        this.botNamespace.to(`bot:${payload.workspaceId}`).emit("delegation:available", {
+          workspaceId: payload.workspaceId,
+          streamId: payload.streamId,
+          delegationId: changed.delegationId,
+        })
+      }
     }
 
     // An approved access request that carries a delegation re-emits the same

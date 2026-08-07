@@ -8,6 +8,7 @@ import {
   AuthorTypes,
   type AuthorType,
   type DelegationCreatedEventPayload,
+  type DelegationReopenReason,
   type DelegationStatusChangedEventPayload,
 } from "@threa/types"
 import { StreamEventRepository, StreamRepository } from "../streams"
@@ -56,8 +57,8 @@ export type ClaimDelegationResult =
  * later transition is a `delegation:status_changed` patch on it, so the card
  * can never sit on stale state.
  *
- * Concurrency model (INV-20): claim CASes on `status = 'open'`, cancel on any
- * non-terminal status, and claim-authenticated transitions guard on the token
+ * Concurrency model (INV-20): claim CASes on `open|expired`, cancel on any
+ * recoverable status, and claim-authenticated transitions guard on the token
  * hash + unexpired TTL — so claim-vs-cancel resolves to exactly one winner and
  * a lapsed claim can act on nothing.
  */
@@ -256,6 +257,33 @@ export class DelegationService {
     return { ok: false, reason: existing ? "not_open" : "not_found" }
   }
 
+  async release(params: { workspaceId: string; id: string; claimToken: string }): Promise<DelegatedTask | null> {
+    return withTransaction(this.pool, async (client) => {
+      const reopened = await DelegatedTaskRepository.release(client, {
+        workspaceId: params.workspaceId,
+        id: params.id,
+        claimTokenHash: hashCallbackToken(params.claimToken),
+      })
+      if (!reopened) return null
+      await this.appendStatusEvent(client, reopened, SYSTEM_ACTOR, { reason: "claim_released" })
+      return reopened
+    })
+  }
+
+  async requeue(params: {
+    workspaceId: string
+    id: string
+    streamId?: string
+    requeuedBy: { actorId: string; actorType: AuthorType }
+  }): Promise<DelegatedTask | null> {
+    return withTransaction(this.pool, async (client) => {
+      const reopened = await DelegatedTaskRepository.requeue(client, params)
+      if (!reopened) return null
+      await this.appendStatusEvent(client, reopened, params.requeuedBy, { reason: "requeued" })
+      return reopened
+    })
+  }
+
   /**
    * Heartbeat: push the claim's expiry forward. No status change, no event —
    * liveness is not card-visible state. Returns the fresh expiry or `null`
@@ -377,23 +405,23 @@ export class DelegationService {
   }
 
   /**
-   * Expiry-sweep entry: CAS every lapsed claim to `expired` (set-based, INV-56)
+   * Expiry-sweep entry: CAS every lapsed claim back to `open` (set-based, INV-56)
    * and append each card's status event in the same transaction. Concurrent
    * sweeps are idempotent — the loser's UPDATE matches nothing.
    */
-  async expireLapsedClaims(): Promise<DelegatedTask[]> {
+  async reopenLapsedClaims(): Promise<DelegatedTask[]> {
     return withTransaction(this.pool, async (client) => {
-      const expired = await DelegatedTaskRepository.expireLapsedClaims(client)
-      for (const delegation of expired) {
-        await this.appendStatusEvent(client, delegation, SYSTEM_ACTOR)
+      const reopened = await DelegatedTaskRepository.reopenLapsedClaims(client)
+      for (const delegation of reopened) {
+        await this.appendStatusEvent(client, delegation, SYSTEM_ACTOR, { reason: "claim_expired" })
       }
-      if (expired.length > 0) {
+      if (reopened.length > 0) {
         logger.info(
-          { count: expired.length, delegationIds: expired.map((d) => d.id) },
-          "delegation claims expired by sweep"
+          { count: reopened.length, delegationIds: reopened.map((d) => d.id) },
+          "delegation claims reopened by sweep"
         )
       }
-      return expired
+      return reopened
     })
   }
 
@@ -406,11 +434,12 @@ export class DelegationService {
     client: PoolClient,
     delegation: DelegatedTask,
     actor: { actorId?: string; actorType: AuthorType },
-    extra: { threadStreamId?: string } = {}
+    extra: { threadStreamId?: string; reason?: DelegationReopenReason } = {}
   ): Promise<void> {
     const payload: DelegationStatusChangedEventPayload = {
       delegationId: delegation.id,
       status: delegation.status,
+      reason: extra.reason,
       claimedByLabel: delegation.claimedByLabel,
       resultMessageId: delegation.resultMessageId,
       threadStreamId: extra.threadStreamId,
@@ -459,7 +488,7 @@ export class DelegationService {
 }
 
 /**
- * Machine transitions (claim/running/complete/fail/expired) act as the system
+ * Machine transitions (claim/running/complete/fail/reopen) act as the system
  * (no actorId, like `memos:captured`): the executing local agent is not a
  * workspace actor — `claimedByLabel` on the payload carries its human-readable
  * identity instead.

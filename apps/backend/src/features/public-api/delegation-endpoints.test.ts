@@ -110,7 +110,9 @@ describe("delegation public API — key + token gates", () => {
     const bareReq = makeRequest({ userKey: false, botKey: false })
     for (const handler of [
       handlers.listDelegations,
+      handlers.getDelegation,
       handlers.claimDelegation,
+      handlers.releaseDelegation,
       handlers.heartbeatDelegation,
       handlers.reportDelegationStatus,
       handlers.completeDelegation,
@@ -160,6 +162,110 @@ describe("listDelegations", () => {
     expect(getAccessibleStreamIdsForBot).toHaveBeenCalledWith("ws_1", "bot_1")
     const data = (payloads[0] as { data: Array<{ id: string }> }).data
     expect(data.map((d) => d.id)).toEqual(["dlg_granted"])
+  })
+})
+
+describe("get/release delegation", () => {
+  it("returns inspect content without claim secrets", async () => {
+    const row = makeDelegation({
+      claimTokenHash: "secret",
+      claimIdempotencyKey: "secret-key",
+      claimExpiresAt: new Date("2026-07-10T12:15:00Z"),
+    })
+    const handlers = makeHandlers({
+      delegationService: { getById: mock(async () => row) },
+      streamService: { tryAccess: mock(async () => ({ id: "stream_1" }) as never) },
+    })
+    const { res, payloads } = createResponse()
+    await handlers.getDelegation(makeRequest(), res)
+    const data = (payloads[0] as any).data
+    expect(data).toMatchObject({
+      brief: row.brief,
+      contextRefs: row.contextRefs,
+      claimExpiresAt: "2026-07-10T12:15:00.000Z",
+    })
+    expect(data.claimTokenHash).toBeUndefined()
+    expect(data.claimIdempotencyKey).toBeUndefined()
+  })
+
+  it("returns bot-accessible inspect content without claim secrets", async () => {
+    const row = makeDelegation({
+      claimTokenHash: "secret",
+      claimIdempotencyKey: "secret-key",
+      claimExpiresAt: new Date("2026-07-10T12:15:00Z"),
+    })
+    const isStreamAccessibleForBot = mock(async () => true)
+    const handlers = makeHandlers({
+      delegationService: { getById: mock(async () => row) },
+      botChannelService: { isStreamAccessibleForBot },
+    })
+    const { res, payloads } = createResponse()
+
+    await handlers.getDelegation(makeRequest({ userKey: false, botKey: true }), res)
+
+    expect(isStreamAccessibleForBot).toHaveBeenCalledWith("ws_1", "bot_1", "stream_1")
+    const data = (payloads[0] as any).data
+    expect(data).toMatchObject({
+      brief: row.brief,
+      contextRefs: row.contextRefs,
+      claimExpiresAt: "2026-07-10T12:15:00.000Z",
+    })
+    expect(data.claimTokenHash).toBeUndefined()
+    expect(data.claimIdempotencyKey).toBeUndefined()
+  })
+
+  it("404s inspect for inaccessible user and bot keys without revealing existence", async () => {
+    const getById = mock(async () => makeDelegation())
+    const handlers = makeHandlers({
+      delegationService: { getById },
+      streamService: { tryAccess: mock(async () => null) },
+      botChannelService: { isStreamAccessibleForBot: mock(async () => false) },
+    })
+    const { res } = createResponse()
+
+    for (const req of [makeRequest(), makeRequest({ userKey: false, botKey: true })]) {
+      await expect(handlers.getDelegation(req, res)).rejects.toMatchObject({ status: 404, code: "NOT_FOUND" })
+    }
+  })
+
+  it("rejects release without a callback token before mutation", async () => {
+    const release = mock(async (): Promise<DelegatedTask | null> => makeDelegation())
+    const handlers = makeHandlers({ delegationService: { release } })
+    const { res } = createResponse()
+
+    await expect(handlers.releaseDelegation(makeRequest(), res)).rejects.toMatchObject({
+      status: 401,
+      code: "UNAUTHORIZED",
+    })
+    expect(release).not.toHaveBeenCalled()
+  })
+
+  it("404s release after stream access is revoked without mutation", async () => {
+    const release = mock(async (): Promise<DelegatedTask | null> => makeDelegation())
+    const handlers = makeHandlers({
+      delegationService: { getById: mock(async () => makeDelegation()), release },
+      botChannelService: { isStreamAccessibleForBot: mock(async () => false) },
+    })
+    const { res } = createResponse()
+
+    await expect(
+      handlers.releaseDelegation(makeRequest({ userKey: false, botKey: true, token: "tok" }), res)
+    ).rejects.toMatchObject({ status: 404, code: "NOT_FOUND" })
+    expect(release).not.toHaveBeenCalled()
+  })
+
+  it("releases with callback token and 404s a lost claim", async () => {
+    const release = mock(async (): Promise<DelegatedTask | null> => makeDelegation())
+    const handlers = makeHandlers({
+      delegationService: { getById: mock(async () => makeDelegation()), release },
+      streamService: { tryAccess: mock(async () => ({ id: "stream_1" }) as never) },
+    })
+    const { res, payloads } = createResponse()
+    await handlers.releaseDelegation(makeRequest({ token: "tok" }), res)
+    expect(release).toHaveBeenCalledWith({ workspaceId: "ws_1", id: "dlg_1", claimToken: "tok" })
+    expect((payloads[0] as any).data.status).toBe("open")
+    release.mockResolvedValue(null)
+    await expect(handlers.releaseDelegation(makeRequest({ token: "old" }), res)).rejects.toMatchObject({ status: 404 })
   })
 })
 

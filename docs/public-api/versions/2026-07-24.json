@@ -3259,7 +3259,7 @@
         "operationId": "listDelegations",
         "summary": "List open delegations",
         "tags": ["Delegations"],
-        "description": "List delegated tasks that are open to claim, filtered to what the key can access: a user-scoped key sees streams its user can access, a workspace key sees the bot's channel grants.",
+        "description": "List delegated tasks whose current status is open and whose availability changed after `since`, filtered to streams the key can access.",
         "security": [{ "apiKey": ["delegations:read"] }],
         "parameters": [
           { "$ref": "#/components/parameters/ThreaVersion" },
@@ -3347,12 +3347,115 @@
         }
       }
     },
+    "/api/v1/workspaces/{workspaceId}/delegations/{delegationId}": {
+      "get": {
+        "operationId": "getDelegation",
+        "summary": "Get a delegation",
+        "tags": ["Delegations"],
+        "description": "Inspect an accessible delegation's brief, context references, status, and current claim expiry.",
+        "security": [{ "apiKey": ["delegations:read"] }],
+        "parameters": [
+          { "$ref": "#/components/parameters/ThreaVersion" },
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "Workspace ID (prefixed ULID)"
+          },
+          {
+            "name": "delegationId",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "Delegation ID (prefixed ULID)"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "id": { "type": "string" },
+                        "streamId": { "type": "string" },
+                        "title": { "type": "string" },
+                        "status": {
+                          "type": "string",
+                          "enum": ["open", "claimed", "running", "completed", "failed", "cancelled", "expired"]
+                        },
+                        "claimedByLabel": { "type": "string" },
+                        "statusNote": { "type": "string" },
+                        "resultMessageId": { "type": "string" },
+                        "sourceConversationId": { "type": "string" },
+                        "createdAt": { "type": "string", "format": "date-time" },
+                        "statusChangedAt": { "type": "string", "format": "date-time" },
+                        "brief": { "type": "string" },
+                        "contextRefs": { "type": "array", "items": { "type": "string" } },
+                        "claimExpiresAt": { "type": "string", "format": "date-time" }
+                      },
+                      "required": [
+                        "id",
+                        "streamId",
+                        "title",
+                        "status",
+                        "createdAt",
+                        "statusChangedAt",
+                        "brief",
+                        "contextRefs"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": ["data"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "object",
+                  "properties": {
+                    "error": { "type": "string" },
+                    "code": {
+                      "description": "Machine-readable error code, e.g. INVALID_API_VERSION",
+                      "type": "string"
+                    },
+                    "details": {
+                      "type": "object",
+                      "propertyNames": { "type": "string" },
+                      "additionalProperties": { "type": "array", "items": { "type": "string" } }
+                    }
+                  },
+                  "required": ["error"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "401": { "description": "Missing or invalid API key" },
+          "403": { "description": "Insufficient permissions or inaccessible resource" },
+          "404": { "description": "Resource not found" }
+        }
+      }
+    },
     "/api/v1/workspaces/{workspaceId}/delegations/{delegationId}/claim": {
       "post": {
         "operationId": "claimDelegation",
-        "summary": "Claim an open delegation",
+        "summary": "Claim an open or expired delegation",
         "tags": ["Delegations"],
-        "description": "Atomically claim an open delegation. Returns the brief, context refs, and the claim token (cleartext, exactly once; send it as X-Threa-Callback-Token on every later lifecycle call). A delegation that is no longer open returns 409.",
+        "description": "Atomically claim an open or historical expired delegation. Returns the brief, context refs, and the claim token (cleartext, exactly once; send it as X-Threa-Callback-Token on every later lifecycle call). A delegation that is no longer open returns 409.",
         "security": [{ "apiKey": ["delegations:write"] }],
         "parameters": [
           { "$ref": "#/components/parameters/ThreaVersion" },
@@ -3492,6 +3595,104 @@
               }
             }
           }
+        }
+      }
+    },
+    "/api/v1/workspaces/{workspaceId}/delegations/{delegationId}/release": {
+      "post": {
+        "operationId": "releaseDelegation",
+        "summary": "Release a delegation claim",
+        "tags": ["Delegations"],
+        "description": "Release a live claim so the delegation is open again. Authenticated with the per-claim callback token.",
+        "security": [{ "apiKey": ["delegations:write"] }],
+        "parameters": [
+          { "$ref": "#/components/parameters/ThreaVersion" },
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "Workspace ID (prefixed ULID)"
+          },
+          {
+            "name": "delegationId",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "Delegation ID (prefixed ULID)"
+          },
+          {
+            "name": "X-Threa-Callback-Token",
+            "in": "header",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "Per-claim token from the delegation claim response (binds the caller to its claim)."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "id": { "type": "string" },
+                        "streamId": { "type": "string" },
+                        "title": { "type": "string" },
+                        "status": {
+                          "type": "string",
+                          "enum": ["open", "claimed", "running", "completed", "failed", "cancelled", "expired"]
+                        },
+                        "claimedByLabel": { "type": "string" },
+                        "statusNote": { "type": "string" },
+                        "resultMessageId": { "type": "string" },
+                        "sourceConversationId": { "type": "string" },
+                        "createdAt": { "type": "string", "format": "date-time" },
+                        "statusChangedAt": { "type": "string", "format": "date-time" }
+                      },
+                      "required": ["id", "streamId", "title", "status", "createdAt", "statusChangedAt"],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": ["data"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "object",
+                  "properties": {
+                    "error": { "type": "string" },
+                    "code": {
+                      "description": "Machine-readable error code, e.g. INVALID_API_VERSION",
+                      "type": "string"
+                    },
+                    "details": {
+                      "type": "object",
+                      "propertyNames": { "type": "string" },
+                      "additionalProperties": { "type": "array", "items": { "type": "string" } }
+                    }
+                  },
+                  "required": ["error"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "401": { "description": "Missing or invalid API key" },
+          "403": { "description": "Insufficient permissions or inaccessible resource" },
+          "404": { "description": "Resource not found" }
         }
       }
     },

@@ -18,6 +18,7 @@ import type {
   AgentStepType,
   KnowledgeType,
   DelegationStatus,
+  DelegationReopenReason,
 } from "./constants"
 import type { WorkspaceInvitableRole } from "./workspace-permissions"
 import type { ContextBag, ContextIntent, ContextRefKind } from "./context-bag"
@@ -1324,6 +1325,8 @@ export interface DelegationCreatedEventPayload {
 export interface DelegationStatusChangedEventPayload {
   delegationId: string
   status: DelegationStatus
+  /** Why a delegation became open again. */
+  reason?: DelegationReopenReason
   /** Free-text label for the claiming agent, e.g. "Kris's MacBook / Claude Code". */
   claimedByLabel?: string | null
   /** The stream message the completing agent posted its result as. */

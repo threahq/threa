@@ -554,7 +554,7 @@ export const sqlTextAssertionAllowlist = {
   "apps/backend/src/features/bot-runtimes/repository.test.ts": 64,
   "apps/backend/src/features/bot-runtimes/service.test.ts": 2,
   "apps/backend/src/features/calls/repository.test.ts": 64,
-  "apps/backend/src/features/delegations/repository.test.ts": 23,
+  "apps/backend/src/features/delegations/repository.test.ts": 19,
   "apps/backend/src/features/drafts/repository.test.ts": 39,
   "apps/backend/src/features/e2e-streams/actor-repository.test.ts": 9,
   "apps/backend/src/features/e2e-streams/key-wrap-repository.test.ts": 11,
