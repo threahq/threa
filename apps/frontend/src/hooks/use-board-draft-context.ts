@@ -1,5 +1,5 @@
-import { liveQuery, type Subscription } from "dexie"
-import { useCallback, useMemo, useSyncExternalStore } from "react"
+import { useLiveQuery } from "dexie-react-hooks"
+import { useMemo } from "react"
 import { THREAD_ANCHORABLE_EVENT_TYPES } from "@threa/types"
 import { db, type CachedBoardPost } from "@/db"
 import { parseBoardDraftKey } from "@/lib/board/draft-keys"
@@ -108,86 +108,6 @@ async function loadBoardDraftContext(workspaceId: string, keys: ScopeKeys): Prom
   return { boardPostMap, hostPostByMessageId, parentPostByBranchConversationId }
 }
 
-interface SharedEntry<T> {
-  value: T
-  listeners: Set<() => void>
-  subscription: Subscription
-  refCount: number
-}
-
-// INV-9 exception: one shared liveQuery per (workspace, referenced-id set),
-// ref-counted like `boardDraftsRegistry` in `use-scope-draft-preview.ts`. Several
-// consumers — the drafts explorer's location labels, the sidebar badge, and the
-// composer pile (which mounts in the timeline, the board card and the stream
-// panel at once) — subscribe simultaneously, and a per-mount `useLiveQuery` would
-// run the whole read once per consumer on every write it observes.
-const boardDraftContextRegistry = new Map<string, SharedEntry<BoardDraftContext>>()
-const threadAnchorContextRegistry = new Map<string, SharedEntry<ThreadAnchorContext>>()
-
-function subscribeShared<T>(
-  registry: Map<string, SharedEntry<T>>,
-  registryKey: string,
-  empty: T,
-  query: () => Promise<T>,
-  listener: () => void
-): () => void {
-  let entry = registry.get(registryKey)
-  if (!entry) {
-    const created: SharedEntry<T> = {
-      value: empty,
-      listeners: new Set(),
-      refCount: 0,
-      subscription: { unsubscribe() {} } as Subscription,
-    }
-    // Register BEFORE subscribing so `getSnapshot` observes the entry consistently;
-    // the callback re-reads the live entry so a late emission after teardown no-ops.
-    registry.set(registryKey, created)
-    created.subscription = liveQuery(query).subscribe({
-      next(value) {
-        const live = registry.get(registryKey)
-        if (!live) return
-        live.value = value
-        for (const notify of live.listeners) notify()
-      },
-      // An error observer is not optional here. Without one Dexie drops the
-      // rejection silently, and a FIRST-run failure also leaves the observable
-      // with no tracked ranges, so it never re-queries — the entry would serve
-      // `empty` for the page's lifetime and every pile would collapse to
-      // scope-exact with no signal (INV-11). Dropping the entry lets the next
-      // subscriber rebuild it; `useLiveQuery`, which this replaced, surfaced the
-      // same failure by re-throwing in render.
-      error(err: unknown) {
-        console.error(`[draft-context] shared query failed for ${registryKey}`, err)
-        const live = registry.get(registryKey)
-        if (!live) return
-        registry.delete(registryKey)
-        live.subscription.unsubscribe()
-        for (const notify of live.listeners) notify()
-      },
-    })
-    entry = created
-  }
-  entry.listeners.add(listener)
-  entry.refCount += 1
-  // Hold the entry this subscriber incremented, not the key. The error path
-  // above can delete an entry and a later subscriber rebuild it under the same
-  // key, and a cleanup that re-looked-up would then decrement the REPLACEMENT —
-  // unsubscribing it while its own owner is still mounted, which serves `empty`
-  // for the page's lifetime and collapses every pile to scope-exact: exactly the
-  // failure the error observer exists to prevent, one layer down.
-  const owned = entry
-  return () => {
-    owned.listeners.delete(listener)
-    owned.refCount -= 1
-    if (owned.refCount <= 0) {
-      owned.subscription.unsubscribe()
-      // Only if it is still the registered one — an orphan tears down its own
-      // subscription and leaves the replacement alone.
-      if (registry.get(registryKey) === owned) registry.delete(registryKey)
-    }
-  }
-}
-
 /**
  * The cached conversations a set of `board:*` draft scopes references, resolved
  * once for every consumer (the drafts explorer's location labels, the composer
@@ -197,23 +117,7 @@ function subscribeShared<T>(
  */
 export function useBoardDraftContext(workspaceId: string, scopesSignature: string): BoardDraftContext {
   const keys = useMemo(() => scopeKeys(scopesSignature), [scopesSignature])
-  const registryKey = `${workspaceId} ${keys.conversationIdKey} ${keys.branchConversationIdKey} ${keys.subtopicMessageIdKey}`
-  const subscribe = useCallback(
-    (onChange: () => void) =>
-      subscribeShared(
-        boardDraftContextRegistry,
-        registryKey,
-        EMPTY_CONTEXT,
-        () => loadBoardDraftContext(workspaceId, keys),
-        onChange
-      ),
-    [registryKey, workspaceId, keys]
-  )
-  const getSnapshot = useCallback(
-    () => boardDraftContextRegistry.get(registryKey)?.value ?? EMPTY_CONTEXT,
-    [registryKey]
-  )
-  return useSyncExternalStore(subscribe, getSnapshot)
+  return useLiveQuery(() => loadBoardDraftContext(workspaceId, keys), [workspaceId, keys], EMPTY_CONTEXT)
 }
 
 /**
@@ -270,30 +174,9 @@ async function loadThreadAnchorContext(workspaceId: string, anchorIdKey: string)
  * re-fire it and an anchor nobody references is never read.
  */
 export function useThreadAnchorContext(workspaceId: string, anchorIdsSignature: string): ThreadAnchorContext {
-  const registryKey = `${workspaceId} ${anchorIdsSignature}`
-  const subscribe = useCallback(
-    (onChange: () => void) =>
-      subscribeShared(
-        threadAnchorContextRegistry,
-        registryKey,
-        EMPTY_ANCHOR_CONTEXT,
-        () => loadThreadAnchorContext(workspaceId, anchorIdsSignature),
-        onChange
-      ),
-    [registryKey, workspaceId, anchorIdsSignature]
+  return useLiveQuery(
+    () => loadThreadAnchorContext(workspaceId, anchorIdsSignature),
+    [workspaceId, anchorIdsSignature],
+    EMPTY_ANCHOR_CONTEXT
   )
-  const getSnapshot = useCallback(
-    () => threadAnchorContextRegistry.get(registryKey)?.value ?? EMPTY_ANCHOR_CONTEXT,
-    [registryKey]
-  )
-  return useSyncExternalStore(subscribe, getSnapshot)
-}
-
-/** Tear down every shared subscription — for tests, so a module-level registry
- *  can't leak a liveQuery (or a snapshot) across cases. */
-export function __clearBoardDraftContextRegistry(): void {
-  for (const registry of [boardDraftContextRegistry, threadAnchorContextRegistry]) {
-    for (const entry of registry.values()) entry.subscription.unsubscribe()
-    registry.clear()
-  }
 }

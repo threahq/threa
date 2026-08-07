@@ -1,10 +1,9 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest"
+import { describe, it, expect, beforeEach } from "vitest"
 import { renderHook, act, waitFor } from "@testing-library/react"
 import { stashLoadedDraft, restoreStashedDraftToComposer, upsertLoadedDraft } from "./use-draft-message"
 import type { JSONContent } from "@threa/types"
 import { db, type CachedDraft } from "@/db"
 import { resetDraftStoreCache } from "@/stores/draft-store"
-import { __clearBoardDraftContextRegistry } from "./use-board-draft-context"
 import { useStashedDrafts } from "./use-stashed-drafts"
 
 const makeDoc = (text: string): JSONContent => ({
@@ -232,15 +231,10 @@ function seedConversationMessage(messageId: string, conversationId: string, stre
 
 describe("useStashedDrafts — pile membership", () => {
   beforeEach(async () => {
-    __clearBoardDraftContextRegistry()
     await db.conversations.clear()
     await db.conversationMessages.clear()
     await db.streams.clear()
     await db.events.clear()
-  })
-
-  afterEach(() => {
-    __clearBoardDraftContextRegistry()
   })
 
   it("shares a pile both ways between a stream and a conversation anchored in it", async () => {
@@ -663,7 +657,6 @@ describe("useStashedDrafts — pile membership", () => {
 
 describe("useStashedDrafts — the worked example: two conversations in one channel", () => {
   beforeEach(async () => {
-    __clearBoardDraftContextRegistry()
     await db.conversations.clear()
     await db.conversationMessages.clear()
     await db.streams.clear()
@@ -686,10 +679,6 @@ describe("useStashedDrafts — the worked example: two conversations in one chan
       draftRow({ id: "draft_a_thread", scope: "stream:stream_ta" }),
       draftRow({ id: "draft_top", scope: "stream:stream_s" }),
     ])
-  })
-
-  afterEach(() => {
-    __clearBoardDraftContextRegistry()
   })
 
   it("continues B's draft-thread reply from B's conversation view and from the draft thread itself", async () => {
@@ -745,15 +734,10 @@ describe("restoreStashedDraftToComposer — id validated in the txn (INV-20)", (
 
 describe("navigate rows (openHref)", () => {
   beforeEach(async () => {
-    __clearBoardDraftContextRegistry()
     await db.conversations.clear()
     await db.conversationMessages.clear()
     await db.streams.clear()
     await db.events.clear()
-  })
-
-  afterEach(() => {
-    __clearBoardDraftContextRegistry()
   })
 
   it("gives a branch row a panel deep link to its PARENT conversation, with the stash param", async () => {

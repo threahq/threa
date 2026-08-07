@@ -6,7 +6,6 @@ import type { JSONContent } from "@threa/types"
 import { db, type CachedDraft } from "@/db"
 import { resetDraftStoreCache, seedDraftCacheFromIdb } from "@/stores/draft-store"
 import { resetDraftResolutionGuard } from "@/sync/draft-resolution-guard"
-import { __clearBoardDraftContextRegistry } from "./use-board-draft-context"
 import { useDraftComposer } from "./use-draft-composer"
 import { useStashComposer, useStashParamDraftRow, planDraftRestore } from "./use-stash-composer"
 import { upsertLoadedDraft, stashLoadedDraft, restoreStashedDraftToComposer } from "./use-draft-message"
@@ -305,7 +304,6 @@ describe("restoring a draft that belongs to another surface (adopt vs move)", ()
     vi.restoreAllMocks()
     resetDraftStoreCache()
     resetDraftResolutionGuard()
-    __clearBoardDraftContextRegistry()
     await db.drafts.clear()
     await db.composerLoaded.clear()
     await db.composerTarget.clear()
@@ -319,7 +317,6 @@ describe("restoring a draft that belongs to another surface (adopt vs move)", ()
   })
 
   afterEach(() => {
-    __clearBoardDraftContextRegistry()
     vi.restoreAllMocks()
   })
 
@@ -550,7 +547,6 @@ describe("restoreDraftHere — re-plan on mid-restore drift", () => {
     vi.restoreAllMocks()
     resetDraftStoreCache()
     resetDraftResolutionGuard()
-    __clearBoardDraftContextRegistry()
     await db.drafts.clear()
     await db.composerLoaded.clear()
     await db.composerTarget.clear()
@@ -563,7 +559,6 @@ describe("restoreDraftHere — re-plan on mid-restore drift", () => {
 
   afterEach(() => {
     vi.restoreAllMocks()
-    __clearBoardDraftContextRegistry()
   })
 
   // The plan (adopt vs move) is made from the row's scope BEFORE the flush; the
@@ -618,7 +613,6 @@ describe("navigate rows — mounted conversation composer (chunk 3's deferred no
     vi.restoreAllMocks()
     resetDraftStoreCache()
     resetDraftResolutionGuard()
-    __clearBoardDraftContextRegistry()
     await db.drafts.clear()
     await db.composerLoaded.clear()
     await db.composerTarget.clear()
@@ -631,7 +625,6 @@ describe("navigate rows — mounted conversation composer (chunk 3's deferred no
 
   afterEach(() => {
     vi.restoreAllMocks()
-    __clearBoardDraftContextRegistry()
   })
 
   it("routes a conversation row to its OPEN panel composer instead of adopting into a host that would yield", async () => {
