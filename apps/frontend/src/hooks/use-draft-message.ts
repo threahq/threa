@@ -60,6 +60,17 @@ export interface DraftFields {
   contextRefs?: DraftContextRef[]
 }
 
+function sameDraftPayload(row: CachedDraft, fields: DraftFields): boolean {
+  const contentJson = row.ciphertext ? cachedDraftBody(row.id) : row.contentJson
+  if (!contentJson) return false
+  const attachments = row.ciphertext ? cachedDraftAttachments(row.id) : row.attachments
+  return (
+    JSON.stringify(contentJson) === JSON.stringify(fields.contentJson) &&
+    JSON.stringify(attachments) === JSON.stringify(fields.attachments) &&
+    JSON.stringify(row.contextRefs ?? []) === JSON.stringify(fields.contextRefs ?? [])
+  )
+}
+
 /**
  * E2E seal context for a draft write — present only for encrypted streams.
  * `streamId` is the encrypted root whose current SSK seals the body.
@@ -128,10 +139,11 @@ export async function upsertLoadedDraft(
   let row!: CachedDraft
   const expectedId = opts?.expectedDraftId ?? null
   // Set when the expected row turned out to be owned by ANOTHER scope's composer
-  // (a take-over moved it): this save must SPLIT into a fresh row here rather
-  // than write a draft someone else is now editing — the same-device mirror of
-  // the cross-device split protection.
+  // and this editor has genuinely different content. An identical late save is
+  // only the old surface finishing the same-device hand-off; splitting that
+  // creates the duplicate row the move was meant to avoid.
   let forceCreate = false
+  let unchangedForeignRow: CachedDraft | null = null
   for (let attempt = 0; attempt < 3; attempt++) {
     // Identity-addressed when the caller named a row; pointer-addressed otherwise.
     let loadedId = forceCreate ? null : (expectedId ?? (await getLoadedDraftId(scope)))
@@ -227,11 +239,18 @@ export async function upsertLoadedDraft(
         const liveRow = await db.drafts.get(id)
         if (!liveRow) return "conflict"
         // A pointer in ANOTHER scope means a take-over moved this row while the
-        // save was in flight: someone else's composer owns it now, and writing it
-        // would put this editor's body into their draft. Split instead.
+        // save was in flight. The common mobile hand-off leaves an identical
+        // debounce behind; that is already the moved row, not concurrent work,
+        // so it is a no-op. Only divergent content earns a split.
         if (expectedId) {
           const holders = await db.composerLoaded.where("workspaceId").equals(workspaceId).toArray()
-          if (holders.some((p) => p.draftId === id && p.scope !== scope)) return "foreign"
+          if (holders.some((p) => p.draftId === id && p.scope !== scope)) {
+            if (sameDraftPayload(liveRow, fields)) {
+              unchangedForeignRow = liveRow
+              return "unchanged-foreign"
+            }
+            return "foreign"
+          }
         }
         // Freshest sync bookkeeping wins: a push ack can advance baseVersion
         // between our read and this txn, and writing the stale value back would
@@ -260,6 +279,7 @@ export async function upsertLoadedDraft(
       forceCreate = true
       continue
     }
+    if (outcome === "unchanged-foreign") return unchangedForeignRow!
     if (outcome === "conflict") continue
     if (outcome === "dropped") return row
     if (wrotePointer) {

@@ -11,6 +11,7 @@ import {
 } from "./use-draft-message"
 import { readStagedDraft, stageDraftContent } from "@/lib/drafts/draft-staging"
 import { getScopeResolveSeq, resetDraftResolutionGuard } from "@/sync/draft-resolution-guard"
+import { migrateLocalDraftScope } from "@/sync/draft-sync"
 import { ContextRefKinds, type JSONContent } from "@threa/types"
 import type { DraftContextRef } from "@/lib/context-bag/types"
 import { db } from "@/db"
@@ -1432,7 +1433,7 @@ describe("upsertLoadedDraft — identity-addressed saves (repoint safety)", () =
   })
 })
 
-describe("take-over (chunk 2) — a restore detaches every other holder; a stale save splits", () => {
+describe("take-over (chunk 2) — a restore detaches every other holder; only divergent edits split", () => {
   beforeEach(async () => {
     vi.restoreAllMocks()
     resetDraftStoreCache()
@@ -1469,7 +1470,36 @@ describe("take-over (chunk 2) — a restore detaches every other holder; a stale
     expect((await db.drafts.get("draft_T"))?.contentJson).toEqual(makeDoc("taken body"))
   })
 
-  it("an identity-addressed save for a row another scope now holds SPLITS instead of writing it", async () => {
+  it("drops an identical late save after the row moves instead of creating a duplicate", async () => {
+    await db.drafts.put({
+      id: "draft_T",
+      workspaceId,
+      scope: draftKey,
+      contentJson: makeDoc("same body"),
+      attachments: [],
+      clientUpdatedAt: Date.now(),
+    })
+    await db.composerLoaded.put({ scope: draftKey, workspaceId, draftId: "draft_T" })
+    await seedDraftCacheFromIdb(workspaceId)
+    const row = await db.drafts.get("draft_T")
+    await migrateLocalDraftScope(workspaceId, draftKey, { ...row!, scope: otherScope })
+
+    const saved = await upsertLoadedDraft(
+      workspaceId,
+      draftKey,
+      { contentJson: makeDoc("same body"), attachments: [] },
+      undefined,
+      { expectedDraftId: "draft_T" }
+    )
+
+    expect(saved?.id).toBe("draft_T")
+    expect(await db.drafts.get("draft_T")).toMatchObject({ scope: otherScope, contentJson: makeDoc("same body") })
+    expect((await db.drafts.toArray()).map((draft) => draft.id)).toEqual(["draft_T"])
+    expect(await db.composerLoaded.get(draftKey)).toBeUndefined()
+    expect((await db.composerLoaded.get(otherScope))?.draftId).toBe("draft_T")
+  })
+
+  it("splits a divergent identity-addressed save for a row another scope now holds", async () => {
     await db.drafts.put({
       id: "draft_T",
       workspaceId,
