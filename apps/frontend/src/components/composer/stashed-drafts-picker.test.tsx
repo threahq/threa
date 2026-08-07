@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest"
-import { render, screen, fireEvent, createEvent, waitFor } from "@testing-library/react"
+import { act, render, screen, fireEvent, createEvent, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { toast } from "sonner"
 import { TooltipProvider } from "@/components/ui/tooltip"
@@ -8,6 +8,7 @@ import { FabDrawerCloseContext } from "./fab-drawer-close-context"
 import { StashedDraftsComposerBridgeContext } from "./stashed-drafts-open-context"
 import * as inputModeModule from "@/hooks/use-input-mode"
 import type { CachedDraft, DraftPreview, StashedDraftRowOrigin } from "@/hooks"
+import type { DraftRestoreResult } from "@/lib/drafts/restore-refusal"
 
 let isTouchMockValue = false
 
@@ -151,6 +152,60 @@ describe("StashedDraftsPicker", () => {
 
       await waitFor(() => expect(focusComposer).toHaveBeenCalled())
       expect(screen.getByRole("button", { name: /drafts/i })).not.toHaveFocus()
+    })
+
+    it("holds one pile presentation until an in-flight restore closes it", async () => {
+      const row = makeDraft("draft_1", "Saved one")
+      const borrowed = {
+        tier: "borrowed",
+        label: "Reply in Pizza plans",
+        checkedOutElsewhere: false,
+        openHref: null,
+        openConversationId: null,
+        openCarriesDraft: false,
+      } as StashedDraftRowOrigin
+      let finishRestore!: (result: DraftRestoreResult) => void
+      const onRestore = vi.fn(
+        () =>
+          new Promise<DraftRestoreResult>((resolve) => {
+            finishRestore = resolve
+          })
+      )
+      const { rerenderWith } = renderPicker({
+        drafts: [row],
+        originById: new Map([[row.id, borrowed]]),
+        onRestore,
+      })
+
+      await userEvent.click(screen.getByRole("button", { name: /drafts/i }))
+      await userEvent.click(screen.getByText("Saved one"))
+      await waitFor(() => expect(onRestore).toHaveBeenCalledWith(row.id))
+
+      rerenderWith({
+        drafts: [{ ...row, scope: "board:reply:conv_1" }],
+        originById: new Map([
+          [
+            row.id,
+            {
+              tier: "own",
+              label: "#general",
+              checkedOutElsewhere: false,
+              openHref: null,
+              openConversationId: null,
+              openCarriesDraft: false,
+            } as StashedDraftRowOrigin,
+          ],
+        ]),
+      })
+      expect(screen.getByTestId("stashed-drafts-borrowed-separator")).toBeInTheDocument()
+      expect(screen.getByText("Reply in Pizza plans")).toBeInTheDocument()
+
+      rerenderWith({ drafts: [], originById: new Map() })
+      expect(screen.getByText("Saved one")).toBeInTheDocument()
+      expect(screen.queryByText(/No saved drafts yet/)).not.toBeInTheDocument()
+
+      await act(async () => finishRestore({ ok: true }))
+      await waitFor(() => expect(screen.queryByText("Saved one")).not.toBeInTheDocument())
     })
   })
 

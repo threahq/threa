@@ -117,6 +117,16 @@ export function StashedDraftsPicker({
   size = "compact",
 }: StashedDraftsPickerProps) {
   const [open, setOpen] = useState(false)
+  const [restorePresentation, setRestorePresentation] = useState<{
+    drafts: CachedDraft[]
+    previewById?: Map<string, DraftPreview>
+    originById?: Map<string, StashedDraftRowOrigin>
+  } | null>(null)
+  const restorePendingRef = useRef(false)
+  const handleOpenChange = useCallback((next: boolean) => {
+    if (next) setRestorePresentation(null)
+    setOpen(next)
+  }, [])
   useEffect(() => onOpenChange?.(open), [open, onOpenChange])
   const [draftToDelete, setDraftToDelete] = useState<string | null>(null)
   const closeFabDrawer = useFabDrawerClose()
@@ -130,7 +140,7 @@ export function StashedDraftsPicker({
 
   // Cmd/Ctrl+S on an empty composer opens the list (registered with the
   // hosting MessageComposer via the bridge).
-  const openFromShortcut = useCallback(() => setOpen(true), [])
+  const openFromShortcut = useCallback(() => handleOpenChange(true), [handleOpenChange])
   useRegisterStashedDraftsOpen(openFromShortcut)
 
   // The stash shortcut hint mirrors the user's effective (remappable)
@@ -142,7 +152,10 @@ export function StashedDraftsPicker({
   // keyboard-shortcut copy — a hardware keyboard is present only with a mouse.
   const isTouch = useInputMode() === "touch"
   const actionSide = useComposerActionSide()
-  const count = drafts.length
+  const presentedDrafts = restorePresentation?.drafts ?? drafts
+  const presentedPreviewById = restorePresentation?.previewById ?? previewById
+  const presentedOriginById = restorePresentation?.originById ?? originById
+  const count = presentedDrafts.length
   const now = useMemo(() => new Date(), [open])
 
   const handleStashCurrent = useCallback(() => {
@@ -153,10 +166,19 @@ export function StashedDraftsPicker({
 
   const handleRestore = useCallback(
     async (id: string) => {
+      if (restorePendingRef.current) return
+      restorePendingRef.current = true
+      setRestorePresentation({
+        drafts: [...drafts],
+        previewById: previewById ? new Map(previewById) : undefined,
+        originById: originById ? new Map(originById) : undefined,
+      })
       // Awaited, not fired and forgotten: the close + focus below are the only
       // feedback a restore has, so they must not run for one that refused.
       const result = await onRestore(id)
+      restorePendingRef.current = false
       if (result && !result.ok) {
+        setRestorePresentation(null)
         toast.error(RESTORE_REFUSAL_MESSAGE[result.reason])
         return
       }
@@ -170,7 +192,7 @@ export function StashedDraftsPicker({
       const focusComposer = bridge?.focusComposer
       if (focusComposer) setTimeout(() => focusComposer(), 0)
     },
-    [onRestore, closeFabDrawer, bridge]
+    [onRestore, closeFabDrawer, bridge, drafts, previewById, originById]
   )
 
   // Two-step delete: the trash icon opens a confirm dialog (parity with the
@@ -211,7 +233,7 @@ export function StashedDraftsPicker({
 
   return (
     <>
-      <Popover open={open} onOpenChange={setOpen}>
+      <Popover open={open} onOpenChange={handleOpenChange}>
         {/* Anchor above the whole composer (not the trigger) so the popover
             doesn't paint over the editor — null in the expanded FAB layout,
             where the trigger anchors normally. */}
@@ -298,7 +320,7 @@ export function StashedDraftsPicker({
             </Button>
           </div>
 
-          {drafts.length === 0 ? (
+          {presentedDrafts.length === 0 ? (
             <div className="px-3 py-6 text-center text-xs text-muted-foreground">
               {isTouch || !stashBindingLabel ? (
                 <>
@@ -314,10 +336,10 @@ export function StashedDraftsPicker({
             </div>
           ) : (
             <ul className="max-h-64 overflow-y-auto py-1" role="list">
-              {drafts.map((draft, index) => {
-                const preview = rowPreview(draft, previewById)
+              {presentedDrafts.map((draft, index) => {
+                const preview = rowPreview(draft, presentedPreviewById)
                 const attachmentCount = draft.attachments?.length ?? 0
-                const origin = originById?.get(draft.id)
+                const origin = presentedOriginById?.get(draft.id)
                 const isBorrowed = origin?.tier === "borrowed"
                 // The seam, not a per-row badge: the pile arrives own-first, so
                 // the FIRST borrowed row carries it — including at index 0. An
@@ -327,7 +349,8 @@ export function StashedDraftsPicker({
                 // left that pile with no "from elsewhere" cue at all. It still
                 // cannot orphan, because a real row always follows it.
                 const startsBorrowedGroup =
-                  isBorrowed && (index === 0 || originById?.get(drafts[index - 1]!.id)?.tier !== "borrowed")
+                  isBorrowed &&
+                  (index === 0 || presentedOriginById?.get(presentedDrafts[index - 1]!.id)?.tier !== "borrowed")
                 return (
                   <Fragment key={draft.id}>
                     {startsBorrowedGroup && (
@@ -376,7 +399,7 @@ export function StashedDraftsPicker({
                           <p
                             className={cn(
                               "text-sm leading-5 line-clamp-2 break-words",
-                              !isPreviewSettled(draft, previewById) && "min-h-10"
+                              !isPreviewSettled(draft, presentedPreviewById) && "min-h-10"
                             )}
                           >
                             {preview}
