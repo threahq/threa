@@ -2,6 +2,7 @@ import { ulid } from "ulid"
 import type { Querier } from "../../db"
 import { sql } from "../../db"
 import { DYNAMIC_NAMING_SETTLING_KEEPS } from "./config"
+import { DYNAMIC_NAMING_FRONTIER_ADVANCING_REASONS } from "./policy"
 import type {
   DynamicNamingCheckpoint,
   DynamicNamingClaimReason,
@@ -34,6 +35,23 @@ interface StateRow {
   updated_at: Date
 }
 
+interface AppliedStateRow extends StateRow {
+  consumed_claim_checkpoint: number
+  consumed_claim_message_count: number
+  consumed_claim_reason: string
+}
+
+export interface ConsumedDynamicNamingClaim {
+  checkpoint: DynamicNamingCheckpoint
+  messageCount: number
+  reason: DynamicNamingClaimReason
+}
+
+export interface AppliedDynamicNamingDecision {
+  state: DynamicNamingState
+  consumedClaim: ConsumedDynamicNamingClaim
+}
+
 export interface DynamicNamingState {
   id: string
   workspaceId: string
@@ -61,6 +79,9 @@ export interface DynamicNamingState {
 
 const COLUMNS =
   "id, workspace_id, target_kind, target_id, last_evaluated_message_count, consecutive_keeps, completed_at, version, structure_version, last_evaluated_structure_version, last_structural_event_id, regeneration_pending, claim_token, claim_owner_id, claim_checkpoint, claim_message_count, claim_structure_version, claim_title_revision, claim_reason, claim_expires_at, created_at, updated_at"
+const QUALIFIED_COLUMNS = COLUMNS.split(", ")
+  .map((column) => `s.${column}`)
+  .join(", ")
 const clearClaim = sql.raw(
   "claim_token = NULL, claim_owner_id = NULL, claim_checkpoint = NULL, claim_message_count = NULL, claim_structure_version = NULL, claim_title_revision = NULL, claim_reason = NULL, claim_expires_at = NULL"
 )
@@ -156,6 +177,28 @@ export const DynamicNamingStateRepository = {
     return result.rows[0] ? mapRow(result.rows[0]) : null
   },
 
+  async renewClaim(
+    db: Querier,
+    params: {
+      workspaceId: string
+      targetKind: DynamicNamingTargetKind
+      targetId: string
+      token: string
+      expectedVersion: number
+      leaseSeconds: number
+    }
+  ): Promise<DynamicNamingState | null> {
+    const result = await db.query<StateRow>(sql`
+      UPDATE dynamic_naming_state SET
+        claim_expires_at = NOW() + (${params.leaseSeconds} || ' seconds')::interval,
+        version = version + 1, updated_at = NOW()
+      WHERE workspace_id = ${params.workspaceId} AND target_kind = ${params.targetKind} AND target_id = ${params.targetId}
+        AND claim_token = ${params.token} AND version = ${params.expectedVersion} AND claim_expires_at > NOW()
+      RETURNING ${sql.raw(COLUMNS)}
+    `)
+    return result.rows[0] ? mapRow(result.rows[0]) : null
+  },
+
   async release(
     db: Querier,
     params: {
@@ -186,14 +229,27 @@ export const DynamicNamingStateRepository = {
       titleRevision: number
       decision: DynamicNamingDecision
     }
-  ): Promise<DynamicNamingState | null> {
+  ): Promise<AppliedDynamicNamingDecision | null> {
     const isKeep = params.decision.action === "keep"
     const isRename = params.decision.action === "rename"
-    const result = await db.query<StateRow>(sql`
-      UPDATE dynamic_naming_state SET
+    const frontierReasons = sql.raw(DYNAMIC_NAMING_FRONTIER_ADVANCING_REASONS.map((reason) => `'${reason}'`).join(", "))
+    const result = await db.query<AppliedStateRow>(sql`
+      WITH consumed AS (
+        SELECT id, claim_checkpoint AS consumed_claim_checkpoint, claim_message_count AS consumed_claim_message_count,
+          claim_reason AS consumed_claim_reason
+        FROM dynamic_naming_state
+        WHERE workspace_id = ${params.workspaceId} AND target_kind = ${params.targetKind} AND target_id = ${params.targetId}
+          AND claim_token = ${params.token} AND version = ${params.expectedVersion}
+          AND claim_expires_at > NOW() AND claim_title_revision = ${params.titleRevision}
+          AND claim_structure_version = structure_version
+          AND (claim_reason IN ('structural', 'regenerate') OR completed_at IS NULL)
+          AND (${params.decision.action} <> 'defer' OR (claim_reason = 'ordinary' AND claim_checkpoint = 1))
+        FOR UPDATE
+      ), updated AS (
+      UPDATE dynamic_naming_state s SET
         last_evaluated_message_count = CASE
-          WHEN claim_reason = 'structural' THEN last_evaluated_message_count
-          ELSE GREATEST(last_evaluated_message_count, claim_message_count)
+          WHEN claim_reason IN (${frontierReasons}) THEN GREATEST(last_evaluated_message_count, claim_message_count)
+          ELSE last_evaluated_message_count
         END,
         consecutive_keeps = CASE
           WHEN ${isRename} THEN 0
@@ -209,15 +265,23 @@ export const DynamicNamingStateRepository = {
         last_evaluated_structure_version = CASE WHEN claim_reason IN ('structural', 'regenerate') THEN claim_structure_version ELSE last_evaluated_structure_version END,
         regeneration_pending = CASE WHEN claim_reason = 'regenerate' THEN FALSE ELSE regeneration_pending END,
         ${clearClaim}, version = version + 1, updated_at = NOW()
-      WHERE workspace_id = ${params.workspaceId} AND target_kind = ${params.targetKind} AND target_id = ${params.targetId}
-        AND claim_token = ${params.token} AND version = ${params.expectedVersion}
-        AND claim_expires_at > NOW() AND claim_title_revision = ${params.titleRevision}
-        AND claim_structure_version = structure_version
-        AND (claim_reason IN ('structural', 'regenerate') OR completed_at IS NULL)
-        AND (${params.decision.action} <> 'defer' OR (claim_reason = 'ordinary' AND claim_checkpoint = 1))
-      RETURNING ${sql.raw(COLUMNS)}
+      FROM consumed WHERE s.id = consumed.id
+      RETURNING ${sql.raw(QUALIFIED_COLUMNS)}
+      )
+      SELECT updated.*, consumed.consumed_claim_checkpoint, consumed.consumed_claim_message_count,
+        consumed.consumed_claim_reason
+      FROM updated JOIN consumed ON updated.id = consumed.id
     `)
-    return result.rows[0] ? mapRow(result.rows[0]) : null
+    const row = result.rows[0]
+    if (!row) return null
+    return {
+      state: mapRow(row),
+      consumedClaim: {
+        checkpoint: row.consumed_claim_checkpoint as DynamicNamingCheckpoint,
+        messageCount: row.consumed_claim_message_count,
+        reason: row.consumed_claim_reason as DynamicNamingClaimReason,
+      },
+    }
   },
 
   async recoverExpiredClaims(db: Querier, workspaceId: string, limit: number): Promise<number> {

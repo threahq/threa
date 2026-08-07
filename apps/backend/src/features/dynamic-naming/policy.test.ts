@@ -104,6 +104,23 @@ describe("dynamic naming policy", () => {
     expect(next).toEqual({ ...settled, lastEvaluatedStructureVersion: 2 })
   })
 
+  test("regeneration advances the same observed frontier as persistence", () => {
+    const reset = initial({ structureVersion: 5, lastEvaluatedStructureVersion: 4 })
+    const next = reduceNamingProgress(
+      reset,
+      { eligible: true, checkpoint: 10, forced: true, structural: true },
+      { action: "keep" },
+      12,
+      "regenerate"
+    )
+    expect(next).toMatchObject({
+      lastEvaluatedMessageCount: 12,
+      consecutiveKeeps: 0,
+      completed: false,
+      lastEvaluatedStructureVersion: 5,
+    })
+  })
+
   test("regenerate clears settlement and creates structural work", () => {
     const reset = resetNamingProgress(
       initial({

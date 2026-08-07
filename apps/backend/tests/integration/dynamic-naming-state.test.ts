@@ -86,6 +86,56 @@ describe("dynamic naming state repository", () => {
     expect(claims.filter(Boolean)).toHaveLength(1)
   })
 
+  test("renewal is token/version fenced and renewed claims cannot be reclaimed", async () => {
+    const state = await repo.ensure(pool, {
+      workspaceId: workspace,
+      targetKind: "stream",
+      targetId: "stream_dn_renew",
+    })
+    const claim = await repo.claim(pool, {
+      workspaceId: workspace,
+      targetKind: "stream",
+      targetId: state.targetId,
+      ownerId: "worker_a",
+      checkpoint: 1,
+      messageCount: 1,
+      structureVersion: 0,
+      titleRevision: 1,
+      expectedVersion: state.version,
+      leaseSeconds: 1,
+    })
+    expect(
+      await repo.renewClaim(pool, {
+        workspaceId: workspace,
+        targetKind: "stream",
+        targetId: state.targetId,
+        token: "wrong",
+        expectedVersion: claim!.version,
+        leaseSeconds: 60,
+      })
+    ).toBeNull()
+    const renewed = await repo.renewClaim(pool, {
+      workspaceId: workspace,
+      targetKind: "stream",
+      targetId: state.targetId,
+      token: claim!.claimToken!,
+      expectedVersion: claim!.version,
+      leaseSeconds: 60,
+    })
+    expect(renewed).toMatchObject({ claimToken: claim!.claimToken, version: claim!.version + 1 })
+    expect(await repo.recoverExpiredClaims(pool, workspace, 1)).toBe(0)
+    expect(
+      await repo.renewClaim(pool, {
+        workspaceId: workspace,
+        targetKind: "stream",
+        targetId: state.targetId,
+        token: claim!.claimToken!,
+        expectedVersion: claim!.version,
+        leaseSeconds: 60,
+      })
+    ).toBeNull()
+  })
+
   test("expired claims recover and stale token/version cannot apply", async () => {
     const state = await repo.ensure(pool, {
       workspaceId: workspace,
@@ -150,7 +200,7 @@ describe("dynamic naming state repository", () => {
         titleRevision: 1,
         decision: { action: "keep" },
       })
-    ).toMatchObject({ consecutiveKeeps: 1 })
+    ).toMatchObject({ state: { consecutiveKeeps: 1 }, consumedClaim: { checkpoint: 1, messageCount: 1 } })
   })
 
   test("structural events dedupe monotonically and regeneration resets", async () => {
@@ -316,7 +366,8 @@ describe("dynamic naming state repository", () => {
     expect(await repo.applyDecision(pool, { ...base, titleRevision: 5, decision: { action: "keep" } })).toBeNull()
     expect(await repo.applyDecision(pool, { ...base, titleRevision: 4, decision: { action: "defer" } })).toBeNull()
     expect(await repo.applyDecision(pool, { ...base, titleRevision: 4, decision: { action: "keep" } })).toMatchObject({
-      lastEvaluatedMessageCount: 3,
+      state: { lastEvaluatedMessageCount: 3 },
+      consumedClaim: { checkpoint: 3, messageCount: 3, reason: "ordinary" },
     })
   })
 
@@ -354,7 +405,10 @@ describe("dynamic naming state repository", () => {
       titleRevision: 8,
       decision: { action: "keep" },
     })
-    expect(applied).toMatchObject({ lastEvaluatedMessageCount: 12, regenerationPending: false })
+    expect(applied).toMatchObject({
+      state: { lastEvaluatedMessageCount: 12, regenerationPending: false },
+      consumedClaim: { checkpoint: 10, messageCount: 12, reason: "regenerate" },
+    })
   })
 
   test("orphan cleanup preserves live targets", async () => {

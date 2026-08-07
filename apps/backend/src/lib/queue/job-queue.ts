@@ -1,4 +1,6 @@
 import { AgentTriggers, type AgentSessionRerunContext, type JSONContent } from "@threa/types"
+import type { DynamicNamingEvaluateJobData } from "./dynamic-naming-contract"
+export type { DynamicNamingEvaluateJobData } from "./dynamic-naming-contract"
 
 export interface Job<T = unknown> {
   id: string
@@ -125,12 +127,6 @@ export interface NamingJobData {
   streamId: string
   /** If true, must generate a name (no NOT_ENOUGH_CONTEXT escape). Set when message is from agent. */
   requireName: boolean
-}
-
-export interface DynamicNamingEvaluateJobData {
-  workspaceId: string
-  targetKind: "stream" | "conversation"
-  targetId: string
 }
 
 export interface EmbeddingJobData {

@@ -1,5 +1,16 @@
 import { DYNAMIC_NAMING_CHECKPOINTS, DYNAMIC_NAMING_SETTLING_KEEPS } from "./config"
-import type { DynamicNamingCheckpoint, DynamicNamingDecision } from "./types"
+import type { DynamicNamingCheckpoint, DynamicNamingClaimReason, DynamicNamingDecision } from "./types"
+
+export const DYNAMIC_NAMING_FRONTIER_ADVANCING_REASONS = [
+  "ordinary",
+  "regenerate",
+] as const satisfies readonly DynamicNamingClaimReason[]
+
+export function advancesMessageFrontier(reason: DynamicNamingClaimReason): boolean {
+  return DYNAMIC_NAMING_FRONTIER_ADVANCING_REASONS.includes(
+    reason as (typeof DYNAMIC_NAMING_FRONTIER_ADVANCING_REASONS)[number]
+  )
+}
 
 export interface NamingProgress {
   lastEvaluatedMessageCount: number
@@ -35,28 +46,28 @@ export function reduceNamingProgress(
   progress: NamingProgress,
   eligibility: Extract<NamingEligibility, { eligible: true }>,
   decision: DynamicNamingDecision,
-  messageCount: number
+  messageCount: number,
+  reason: DynamicNamingClaimReason = eligibility.structural ? "structural" : "ordinary"
 ): NamingProgress {
   if (decision.action === "defer" && (eligibility.forced || eligibility.checkpoint !== 1)) {
     throw new Error("Dynamic naming may defer only at checkpoint 1")
   }
 
-  if (eligibility.structural) {
-    return {
-      ...progress,
-      consecutiveKeeps: decision.action === "rename" ? 0 : progress.consecutiveKeeps,
-      lastEvaluatedStructureVersion: progress.structureVersion,
-    }
-  }
-
-  const consecutiveKeeps = decision.action === "keep" ? progress.consecutiveKeeps + 1 : 0
+  const structural = reason === "structural" || reason === "regenerate"
+  let consecutiveKeeps = 0
+  if (structural) consecutiveKeeps = decision.action === "rename" ? 0 : progress.consecutiveKeeps
+  else if (decision.action === "keep") consecutiveKeeps = progress.consecutiveKeeps + 1
   return {
     ...progress,
-    lastEvaluatedMessageCount: Math.max(messageCount, eligibility.checkpoint),
+    lastEvaluatedMessageCount: advancesMessageFrontier(reason)
+      ? Math.max(messageCount, eligibility.checkpoint)
+      : progress.lastEvaluatedMessageCount,
     consecutiveKeeps,
-    completed:
-      eligibility.checkpoint === 10 ||
-      (decision.action === "keep" && consecutiveKeeps >= DYNAMIC_NAMING_SETTLING_KEEPS),
+    completed: structural
+      ? progress.completed
+      : eligibility.checkpoint === 10 ||
+        (decision.action === "keep" && consecutiveKeeps >= DYNAMIC_NAMING_SETTLING_KEEPS),
+    lastEvaluatedStructureVersion: structural ? progress.structureVersion : progress.lastEvaluatedStructureVersion,
   }
 }
 

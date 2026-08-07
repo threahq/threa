@@ -1,10 +1,13 @@
 import type { PoolClient } from "pg"
 import { z } from "zod"
 import { DYNAMIC_NAMING_CHECKPOINTS } from "./config"
-
-export const DynamicNamingTargetKinds = ["stream", "conversation"] as const
-export const DynamicNamingTargetKindSchema = z.enum(DynamicNamingTargetKinds)
-export type DynamicNamingTargetKind = z.infer<typeof DynamicNamingTargetKindSchema>
+export {
+  DynamicNamingEvaluateJobSchema,
+  DynamicNamingTargetKinds,
+  DynamicNamingTargetKindSchema,
+} from "../../lib/queue/dynamic-naming-contract"
+import type { DynamicNamingEvaluateJobData, DynamicNamingTargetKind } from "../../lib/queue/dynamic-naming-contract"
+export type { DynamicNamingEvaluateJobData, DynamicNamingTargetKind } from "../../lib/queue/dynamic-naming-contract"
 
 export const DynamicNamingCheckpointSchema = z.union(DYNAMIC_NAMING_CHECKPOINTS.map((value) => z.literal(value)))
 export type DynamicNamingCheckpoint = z.infer<typeof DynamicNamingCheckpointSchema>
@@ -15,13 +18,6 @@ export const DynamicNamingDecisionSchema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("rename"), title: z.string().trim().min(1) }),
 ])
 export type DynamicNamingDecision = z.infer<typeof DynamicNamingDecisionSchema>
-
-export const DynamicNamingEvaluateJobSchema = z.object({
-  workspaceId: z.string().min(1),
-  targetKind: DynamicNamingTargetKindSchema,
-  targetId: z.string().min(1),
-})
-export type DynamicNamingEvaluateJobData = z.infer<typeof DynamicNamingEvaluateJobSchema>
 
 export interface DynamicNamingTargetSnapshot {
   workspaceId: string
@@ -51,7 +47,8 @@ export interface DynamicNamingDecisionProvider {
   decide(
     target: DynamicNamingTargetSnapshot,
     checkpoint: DynamicNamingCheckpoint,
-    forced: boolean
+    forced: boolean,
+    signal: AbortSignal
   ): Promise<DynamicNamingDecision>
 }
 
