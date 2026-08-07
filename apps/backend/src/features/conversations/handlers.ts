@@ -161,6 +161,10 @@ const markUnreadSchema = z.object({
 const updateConversationParamsSchema = z.object({
   conversationId: z.string().min(1),
 })
+const regenerateConversationParamsSchema = z
+  .object({ workspaceId: z.string().min(1), conversationId: z.string().min(1) })
+  .strict()
+const regenerateConversationBodySchema = z.object({}).strict()
 
 // Status is restricted to the two the user can set — reopen (`active`) or resolve
 // (`resolved`). `stalled` is a derived/LLM lifecycle state, never user-assignable.
@@ -496,6 +500,19 @@ export function createConversationHandlers({
         actorUserId: userId,
       })
       res.json(result)
+    },
+
+    async regenerateTitle(req: Request, res: Response) {
+      const userId = req.user!.id
+      const workspaceId = req.workspaceId!
+      const { conversationId } = validateRequest(regenerateConversationParamsSchema, req.params)
+      validateRequest(regenerateConversationBodySchema, req.body ?? {})
+      const conversation = await conversationService.getById(conversationId)
+      if (!conversation || conversation.workspaceId !== workspaceId) {
+        return res.status(404).json({ error: "Conversation not found" })
+      }
+      await streamService.validateStreamAccess(conversation.streamId, workspaceId, userId)
+      res.json(await conversationService.regenerateTitle({ workspaceId, conversationId }))
     },
 
     /**

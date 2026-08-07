@@ -70,6 +70,14 @@ export const streamsApi = {
     return res.stream
   },
 
+  async regenerateTitle(
+    workspaceId: string,
+    streamId: string,
+    sealedName?: { sealedNameCiphertext: string; sealedNameEnvelope: unknown }
+  ): Promise<{ stream: Stream; deferred: boolean }> {
+    return api.post(`/api/workspaces/${workspaceId}/streams/${streamId}/regenerate-title`, sealedName ?? {})
+  },
+
   async updateCompanionMode(
     workspaceId: string,
     streamId: string,

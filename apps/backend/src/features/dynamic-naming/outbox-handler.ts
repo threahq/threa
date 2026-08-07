@@ -33,13 +33,16 @@ export class DynamicNamingOutboxHandler extends DebouncedOutboxHandler {
   }
 
   protected async processBatch(events: OutboxEvent[]): Promise<bigint[]> {
+    const requested = new Map<string, OutboxEvent>()
     const ordinary = new Map<string, OutboxEvent>()
     const structural = new Map<
       string,
       { ref: { workspaceId: string; targetKind: "conversation"; targetId: string }; eventId: bigint }
     >()
     for (const event of events) {
-      if (isOutboxEventType(event, "conversation:message_reassigned")) {
+      if (isOutboxEventType(event, "dynamic_naming:requested")) {
+        requested.set(`${event.payload.workspaceId}:${event.payload.targetKind}:${event.payload.targetId}`, event)
+      } else if (isOutboxEventType(event, "conversation:message_reassigned")) {
         for (const targetId of [event.payload.fromConversationId, event.payload.toConversationId]) {
           const key = `${event.payload.workspaceId}:conversation:${targetId}`
           const previous = structural.get(key)
@@ -59,6 +62,7 @@ export class DynamicNamingOutboxHandler extends DebouncedOutboxHandler {
         if (payload) ordinary.set(`${payload.workspaceId}:stream:${payload.streamId}`, event)
       }
     }
+    for (const event of requested.values()) await this.processEvent(event)
     for (const event of ordinary.values()) await this.processEvent(event)
     if (this.lifecycle) {
       await Promise.all(
@@ -71,6 +75,16 @@ export class DynamicNamingOutboxHandler extends DebouncedOutboxHandler {
   }
 
   protected async processEvent(event: OutboxEvent): Promise<void> {
+    if (isOutboxEventType(event, "dynamic_naming:requested")) {
+      if (!event.payload.deferred) {
+        await this.scheduler.schedule({
+          workspaceId: event.payload.workspaceId,
+          targetKind: event.payload.targetKind,
+          targetId: event.payload.targetId,
+        })
+      }
+      return
+    }
     if (isOutboxEventType(event, "conversation:message_assigned")) {
       const payload = event.payload
       if (!payload.isPrimary || !(await this.isEligibleConversation(payload.workspaceId, payload.conversationId)))

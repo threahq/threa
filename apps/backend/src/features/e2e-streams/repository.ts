@@ -98,7 +98,8 @@ export const E2eStreamsRepository = {
     db: Querier,
     workspaceId: string,
     streamId: string,
-    sealed: { ciphertext: string; envelope: unknown } | null
+    sealed: { ciphertext: string; envelope: unknown } | null,
+    expectedKeyGeneration?: number
   ): Promise<boolean> {
     if (sealed && Buffer.from(sealed.ciphertext, "base64").toString("base64") !== sealed.ciphertext) {
       throw new Error("updateSealedName: ciphertext is not canonical base64")
@@ -112,6 +113,7 @@ export const E2eStreamsRepository = {
             name_envelope = ${sealed ? JSON.stringify(sealed.envelope) : null}
         FROM rollout_guard
         WHERE workspace_id = ${workspaceId} AND stream_id = ${streamId}
+          AND (${expectedKeyGeneration === undefined} OR current_key_generation = ${expectedKeyGeneration ?? 0})
         RETURNING 1
       )
       SELECT EXISTS(SELECT 1 FROM updated) AS updated

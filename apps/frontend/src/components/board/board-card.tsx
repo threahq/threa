@@ -1064,6 +1064,7 @@ export function BoardCard({
         conversationId={conversation.id}
         streamId={conversation.streamId}
         topicSummary={conversationTitle}
+        topicSummarySource={conversation.topicSummarySource}
         status={conversation.status}
         triggerClassName="shrink-0"
       />

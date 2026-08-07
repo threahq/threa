@@ -152,6 +152,9 @@ export function emitToGroups(
  * emitted.
  */
 export function resolveDeliveryGroups(event: OutboxEvent): string[] | null {
+  // Internal lifecycle wake-up: clients receive the resulting title projection,
+  // never this scheduler request in workspace sync logs or sockets.
+  if (isOutboxEventType(event, "dynamic_naming:requested")) return []
   if (isBotScopedEvent(event)) {
     return null
   }

@@ -268,6 +268,13 @@ export const conversationsApi = {
     return api.patch(`/api/workspaces/${workspaceId}/conversations/${conversationId}`, body)
   },
 
+  async regenerateTitle(
+    workspaceId: string,
+    conversationId: string
+  ): Promise<{ conversation: ConversationWithStaleness; deferred: false }> {
+    return api.post(`/api/workspaces/${workspaceId}/conversations/${conversationId}/regenerate-title`)
+  },
+
   // Per-viewer board exclusions (board-view-design.md § "Hide & mute").
   async hideConversation(workspaceId: string, conversationId: string): Promise<{ hiddenAt: string }> {
     return api.post(`/api/workspaces/${workspaceId}/conversations/${conversationId}/hide`)

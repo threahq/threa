@@ -19,6 +19,7 @@ import type {
   StreamPurpose,
   StreamType,
   ThreaDocument,
+  TitleSource,
   ToolPrivacyCategory,
   ToolPrivacyPolicy,
   WorkspaceRoleSlug,
@@ -76,6 +77,10 @@ export interface CachedStream {
   workspaceId: string
   type: StreamType
   displayName: string | null
+  /** Title provenance/revision survive IDB so regeneration visibility and CAS merges are stable across reloads. */
+  displayNameSource?: TitleSource | null
+  displayNameRevision?: number
+  displayNameUpdatedByUserId?: string | null
   slug: string | null
   description: string | null
   /**
