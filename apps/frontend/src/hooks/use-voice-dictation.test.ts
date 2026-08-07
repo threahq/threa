@@ -1,11 +1,234 @@
-import { describe, it, expect } from "vitest"
+import { act, renderHook, waitFor } from "@testing-library/react"
+import { beforeEach, describe, it, expect, vi } from "vitest"
+import type { VoiceStartAck, VoiceTranscriptDelta } from "@threa/types"
 import {
   friendlyTranscriptionError,
   shouldWarnNoAudio,
   noAudioWarningMessage,
   NO_AUDIO_INITIAL_WAIT_MS,
   NO_AUDIO_SILENCE_WAIT_MS,
+  resetVoiceTakeProtocol,
+  useVoiceDictation,
 } from "./use-voice-dictation"
+
+class FakeSocket {
+  handlers = new Map<string, (payload: unknown) => void>()
+  stopCallbacks: Array<() => void> = []
+  stopPayloads: unknown[] = []
+  disconnected = false
+  private timeoutMs: number | null = null
+  constructor(private readonly ack: VoiceStartAck) {}
+  on(event: string, callback: (payload: unknown) => void) {
+    this.handlers.set(event, callback)
+    return this
+  }
+  emit(event: string, ...args: unknown[]) {
+    if (event === "voice:start") (args[1] as (ack: VoiceStartAck) => void)(this.ack)
+    if (event === "voice:stop") {
+      this.stopPayloads.push(args[0])
+      const callback = args.at(-1)
+      if (typeof callback === "function") {
+        this.stopCallbacks.push(callback as () => void)
+        if (this.timeoutMs !== null) setTimeout(callback as () => void, this.timeoutMs)
+      }
+    }
+    return this
+  }
+  timeout(ms: number) {
+    this.timeoutMs = ms
+    return this
+  }
+  disconnect() {
+    this.disconnected = true
+    return this
+  }
+  fire(event: string, payload: unknown) {
+    this.handlers.get(event)?.(payload)
+  }
+}
+
+class FakeAudioContext {
+  state = "running"
+  destination = {}
+  audioWorklet = { addModule: async () => {} }
+  onstatechange: (() => void) | null = null
+  resume = async () => {}
+  close = async () => {}
+  createMediaStreamSource = () => ({ connect: () => {} })
+  createGain = () => ({ gain: { value: 0 }, connect: () => {} })
+  createAnalyser = () => ({
+    fftSize: 1024,
+    smoothingTimeConstant: 0,
+    disconnect: () => {},
+    getByteTimeDomainData: () => {},
+  })
+}
+
+class FakeWorklet {
+  port = { close: () => {}, onmessage: null }
+  connect() {}
+  disconnect() {}
+}
+
+const stream = {
+  getAudioTracks: () => [{ label: "Test mic", onmute: null, onunmute: null }],
+  getTracks: () => [{ stop: () => {} }],
+}
+
+beforeEach(() => {
+  localStorage.setItem("threa-ws-config:ws_1", JSON.stringify({ region: "test", wsUrl: "https://voice.test" }))
+  Object.defineProperty(window, "AudioContext", { configurable: true, value: FakeAudioContext })
+  Object.defineProperty(globalThis, "AudioWorkletNode", { configurable: true, value: FakeWorklet })
+  Object.defineProperty(navigator, "mediaDevices", {
+    configurable: true,
+    value: { getUserMedia: async () => stream },
+  })
+  vi.stubGlobal("requestAnimationFrame", () => 1)
+  vi.stubGlobal("cancelAnimationFrame", () => {})
+})
+
+function hookHarness(acks: VoiceStartAck[]) {
+  const sockets: FakeSocket[] = []
+  let session = 0
+  const abortSession = vi.fn(async () => {})
+  const dependencies = {
+    createSocket: (() => {
+      const socket = new FakeSocket(acks[sockets.length])
+      sockets.push(socket)
+      return socket
+    }) as never,
+    createSession: vi.fn(async () => ({
+      voiceSessionId: `voicesess_${++session}`,
+      model: "test",
+      provider: "test",
+      region: "test",
+      expiresAt: "later",
+      maxDurationMs: 600_000,
+    })),
+    abortSession,
+  }
+  const committed = vi.fn()
+  const rendered = renderHook(() =>
+    useVoiceDictation({ workspaceId: "ws_1", onCommittedText: committed, dependencies })
+  )
+  return { ...rendered, sockets, committed, abortSession, dependencies }
+}
+
+describe("useVoiceDictation lifecycle", () => {
+  it("accepts a lower revision in a second real hook session", async () => {
+    const harness = hookHarness([
+      { ok: true, protocolVersion: 2 },
+      { ok: true, protocolVersion: 2 },
+    ])
+    act(() => harness.result.current.start())
+    await waitFor(() => expect(harness.result.current.state).toBe("recording"))
+    act(() =>
+      harness.sockets[0].fire("voice:transcript:delta", {
+        voiceSessionId: "voicesess_1",
+        revision: 5,
+        text: "first",
+        isFinal: true,
+      } satisfies VoiceTranscriptDelta)
+    )
+    act(() => harness.result.current.stop())
+    act(() => harness.sockets[0].stopCallbacks[0]())
+    await waitFor(() => expect(harness.result.current.state).toBe("idle"))
+
+    act(() => harness.result.current.start())
+    await waitFor(() => expect(harness.result.current.state).toBe("recording"))
+    act(() =>
+      harness.sockets[1].fire("voice:transcript:delta", {
+        voiceSessionId: "voicesess_2",
+        revision: 1,
+        text: "second",
+        isFinal: true,
+      } satisfies VoiceTranscriptDelta)
+    )
+
+    expect(harness.committed.mock.calls.map(([text]) => text)).toEqual(["first", "second"])
+  })
+
+  it("resets v2 capability before a legacy session and disconnects legacy send-as-is immediately", async () => {
+    const harness = hookHarness([
+      { ok: true, protocolVersion: 2 },
+      { ok: true, protocolVersion: 1 },
+    ])
+    act(() => harness.result.current.start())
+    await waitFor(() => expect(harness.result.current.state).toBe("recording"))
+    act(() => harness.result.current.prepareSendAsIs())
+    expect(harness.sockets[0].disconnected).toBe(false)
+    act(() => harness.sockets[0].stopCallbacks[0]())
+
+    act(() => harness.result.current.start())
+    await waitFor(() => expect(harness.result.current.state).toBe("recording"))
+    act(() => harness.result.current.prepareSendAsIs())
+
+    expect(harness.sockets[1].stopPayloads).toEqual([])
+    expect(harness.sockets[1].disconnected).toBe(true)
+  })
+
+  it("retains a v2 send-as-is socket through ACK and timeout", async () => {
+    vi.useFakeTimers()
+    const harness = hookHarness([
+      { ok: true, protocolVersion: 2 },
+      { ok: true, protocolVersion: 2 },
+    ])
+    act(() => harness.result.current.start())
+    await act(async () => {
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    act(() => harness.result.current.prepareSendAsIs())
+    expect(harness.sockets[0].disconnected).toBe(false)
+    act(() => harness.sockets[0].stopCallbacks[0]())
+    expect(harness.sockets[0].disconnected).toBe(true)
+
+    act(() => harness.result.current.start())
+    await act(async () => {
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    act(() => harness.result.current.prepareSendAsIs())
+    expect(harness.sockets[1].disconnected).toBe(false)
+    act(() => vi.advanceTimersByTime(3_000))
+    expect(harness.sockets[1].disconnected).toBe(true)
+    vi.useRealTimers()
+  })
+
+  it("aborts over HTTP after session creation but before socket setup", async () => {
+    let releaseMic!: () => void
+    Object.defineProperty(navigator, "mediaDevices", {
+      configurable: true,
+      value: {
+        getUserMedia: () =>
+          new Promise((resolve) => {
+            releaseMic = () => resolve(stream)
+          }),
+      },
+    })
+    const harness = hookHarness([{ ok: true, protocolVersion: 2 }])
+    act(() => harness.result.current.start())
+    await waitFor(() => expect(harness.dependencies.createSession).toHaveBeenCalledTimes(1))
+    act(() => harness.result.current.abort())
+
+    expect(harness.abortSession).toHaveBeenCalledWith("ws_1", "voicesess_1")
+    releaseMic()
+  })
+})
+
+describe("resetVoiceTakeProtocol", () => {
+  it("accepts low revisions and legacy capability again in a second session", () => {
+    const acceptedRevision = { current: 5 }
+    const protocolVersion = { current: 2 }
+
+    resetVoiceTakeProtocol({ acceptedRevision, protocolVersion })
+
+    expect({ acceptedRevision: acceptedRevision.current, protocolVersion: protocolVersion.current }).toEqual({
+      acceptedRevision: 0,
+      protocolVersion: 1,
+    })
+  })
+})
 
 describe("friendlyTranscriptionError", () => {
   it("phrases known upstream codes as short human copy", () => {

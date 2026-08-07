@@ -26,7 +26,7 @@ describe("createPolishTranscript", () => {
       sessionId: "voicesess_1",
     })
 
-    expect(out).toBe("Hello, world.")
+    expect(out).toEqual({ status: "success", markdown: "Hello, world." })
     const call = generateText.mock.calls[0][0]
     expect(call.model).toBe(POLISH_MODEL)
     expect(call.telemetry?.functionId).toBe("voice-transcript-polish")
@@ -202,9 +202,7 @@ describe("createPolishTranscript", () => {
       sessionId: "voicesess_1",
     })
 
-    expect(out).not.toContain("—")
-    expect(out).not.toContain("–")
-    expect(out).toBe("here's what I'm thinking: pie")
+    expect(out).toEqual({ status: "success", markdown: "here's what I'm thinking: pie" })
 
     const sys = generateText.mock.calls[0][0].messages.find((m: { role: string }) => m.role === "system")
     expect(sys?.content).toContain("em dashes")
@@ -224,7 +222,7 @@ describe("createPolishTranscript", () => {
       sessionId: "voicesess_1",
     })
 
-    expect(out).toBe("hello world")
+    expect(out).toEqual({ status: "provider_error" })
   })
 
   it("returns the raw text unchanged when the model returns an empty string", async () => {
@@ -239,7 +237,40 @@ describe("createPolishTranscript", () => {
       sessionId: "voicesess_1",
     })
 
-    expect(out).toBe("non empty")
+    expect(out).toEqual({ status: "invalid_output", reason: "empty" })
+  })
+
+  it("returns canceled when external cancellation aborts the provider", async () => {
+    const generateText = mock(async (args: GenerateTextArgs) => {
+      await new Promise<void>((resolve) => args.abortSignal?.addEventListener("abort", () => resolve(), { once: true }))
+      throw new Error("aborted")
+    })
+    const polish = createPolishTranscript({ ai: fakeAI(generateText) })
+    const controller = new AbortController()
+    const pending = polish({
+      rawTranscript: "hello",
+      level: "minor",
+      workspaceId: "ws_1",
+      userId: "user_1",
+      sessionId: "voicesess_1",
+      signal: controller.signal,
+    })
+    controller.abort()
+    expect(await pending).toEqual({ status: "canceled" })
+  })
+
+  it("rejects length-truncated output", async () => {
+    const generateText = mock(async () => ({ ...textResult("partial"), finishReason: "length" }) as never)
+    const polish = createPolishTranscript({ ai: fakeAI(generateText) })
+    expect(
+      await polish({
+        rawTranscript: "hello",
+        level: "minor",
+        workspaceId: "ws_1",
+        userId: "user_1",
+        sessionId: "voicesess_1",
+      })
+    ).toEqual({ status: "invalid_output", reason: "truncated" })
   })
 
   it("skips the model entirely for whitespace-only input", async () => {
@@ -254,7 +285,7 @@ describe("createPolishTranscript", () => {
       sessionId: "voicesess_1",
     })
 
-    expect(out).toBe("   ")
+    expect(out).toEqual({ status: "empty_input" })
     expect(generateText).not.toHaveBeenCalled()
   })
 })

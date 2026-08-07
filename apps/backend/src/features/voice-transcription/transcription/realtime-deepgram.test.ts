@@ -165,6 +165,13 @@ describe("RealtimeDeepgramStrategy audio + transcripts", () => {
     expect(elapsed).toBeGreaterThanOrEqual(1400)
   }, 5000)
 
+  test("close releases a pending flush without waiting for its timeout", async () => {
+    const { session } = await openSession()
+    const flushed = session.flush()
+    await session.close()
+    await flushed
+  })
+
   test("a server-initiated close after a successful flush does NOT surface an error", async () => {
     const { session, socket } = await openSession()
     const errors: TranscriptionError[] = []

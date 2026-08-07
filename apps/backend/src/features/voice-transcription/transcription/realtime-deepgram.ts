@@ -252,6 +252,7 @@ class DeepgramSession implements TranscriptionSession {
 
   async close(): Promise<TranscriptionResult> {
     this.closed = true
+    this.resolvePendingFlush()
     if (this.ws && this.ws.readyState <= WebSocket.OPEN) {
       this.ws.close()
     }

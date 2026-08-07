@@ -26,6 +26,7 @@ const MAX_KEYTERMS = 50
 const MAX_KEYTERM_LENGTH = 20
 /** PCM16 mono: 2 bytes/sample, so ms = bytes / (2 * 16000 / 1000) = bytes / 32. */
 const BYTES_PER_MS = (SAMPLE_RATE_HZ * 2) / 1000
+const FLUSH_FINAL_WAIT_MS = 1500
 
 /**
  * Map our registry model id (`elevenlabs:scribe-v2-realtime`) to the ElevenLabs
@@ -69,6 +70,7 @@ class ElevenLabsSession implements TranscriptionSession {
   private chunksSent = 0
   private openedAt = 0
   private closed = false
+  private pendingFlush: (() => void) | null = null
 
   constructor(
     private readonly apiKey: string,
@@ -171,6 +173,7 @@ class ElevenLabsSession implements TranscriptionSession {
       case "committed_transcript":
       case "committed_transcript_with_timestamps":
         if (data.text) this.emitDelta({ text: data.text, isFinal: true })
+        this.resolvePendingFlush()
         return
       case "input_error":
         this.emitError({ code: "INPUT_ERROR", message: data.error ?? data.message ?? "Upstream input error" })
@@ -204,6 +207,21 @@ class ElevenLabsSession implements TranscriptionSession {
         sample_rate: SAMPLE_RATE_HZ,
       })
     )
+    await new Promise<void>((resolve) => {
+      const timer = setTimeout(() => {
+        this.pendingFlush = null
+        resolve()
+      }, FLUSH_FINAL_WAIT_MS)
+      this.pendingFlush = () => {
+        clearTimeout(timer)
+        this.pendingFlush = null
+        resolve()
+      }
+    })
+  }
+
+  private resolvePendingFlush(): void {
+    this.pendingFlush?.()
   }
 
   onDelta(cb: (delta: TranscriptionDelta) => void): void {
@@ -224,6 +242,7 @@ class ElevenLabsSession implements TranscriptionSession {
 
   async close(): Promise<TranscriptionResult> {
     this.closed = true
+    this.resolvePendingFlush()
     if (this.ws && this.ws.readyState <= WebSocket.OPEN) {
       this.ws.close()
     }

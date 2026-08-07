@@ -55,7 +55,8 @@ export interface MicButtonHandle {
    * any transient warning/error chrome. The composer calls this when it sends
    * or clears the draft so the dictation surfaces don't outlive the message.
    */
-  endSession: () => void
+  prepareSendAsIs: () => void
+  abort: () => void
 }
 
 interface MicButtonProps {
@@ -130,7 +131,8 @@ export const MicButton = forwardRef<MicButtonHandle, MicButtonProps>(function Mi
     dismissError,
     start,
     stop,
-    endSession,
+    prepareSendAsIs,
+    abort,
   } = useVoiceDictation({
     workspaceId,
     onCommittedText: onInsertText,
@@ -142,7 +144,7 @@ export const MicButton = forwardRef<MicButtonHandle, MicButtonProps>(function Mi
     language,
   })
 
-  useImperativeHandle(ref, () => ({ endSession }), [endSession])
+  useImperativeHandle(ref, () => ({ prepareSendAsIs, abort }), [prepareSendAsIs, abort])
 
   // Tell the host when a take is in flight. The mobile composer collapses its
   // action bar (and this button) on blur; without this signal a tap-outside
