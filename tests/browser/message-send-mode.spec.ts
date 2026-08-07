@@ -31,16 +31,11 @@ test.describe("Message Send Mode", () => {
     await openSettings(page)
     const dialog = page.getByRole("dialog")
 
-    // Settings now use sidebar buttons on desktop but older flows used tabs.
-    const composerSidebarButton = dialog.getByRole("button", { name: /composer/i })
-    if (await composerSidebarButton.isVisible().catch(() => false)) {
-      await composerSidebarButton.click()
-    } else {
-      const composerTab = dialog.getByRole("tab", { name: /composer/i })
-      if (await composerTab.isVisible().catch(() => false)) {
-        await composerTab.click()
-      }
-    }
+    // Wait for the responsive nav to mount before selecting Composer; checking
+    // visibility immediately races the dialog's deferred content render.
+    const composerSidebarButton = dialog.getByRole("button", { name: /^Composer\b/ })
+    await expect(composerSidebarButton).toBeVisible({ timeout: 5000 })
+    await composerSidebarButton.click()
 
     await expect(dialog.getByRole("radio", { name: "Enter to send", exact: true })).toBeVisible({ timeout: 5000 })
 
