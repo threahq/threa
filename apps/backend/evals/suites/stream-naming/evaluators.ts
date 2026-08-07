@@ -5,6 +5,20 @@
 import type { Evaluator, EvaluatorResult, RunEvaluator, CaseResult } from "../../framework/types"
 import type { StreamNamingOutput, StreamNamingExpected } from "./types"
 
+export const actionEvaluator: Evaluator<StreamNamingOutput, StreamNamingExpected> = {
+  name: "action",
+  evaluate: (output, expected) => {
+    if (!expected.expectedAction) return { name: "action", score: 1, passed: true, details: "No expectation set" }
+    const passed = output.action === expected.expectedAction
+    return {
+      name: "action",
+      score: passed ? 1 : 0,
+      passed,
+      details: passed ? undefined : `Expected ${expected.expectedAction}, got ${output.action}`,
+    }
+  },
+}
+
 /**
  * Evaluator that checks if NOT_ENOUGH_CONTEXT was correctly returned.
  */

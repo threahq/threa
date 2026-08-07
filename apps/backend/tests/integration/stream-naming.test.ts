@@ -10,7 +10,8 @@
 
 import { describe, test, expect, beforeAll, afterAll } from "bun:test"
 import { Pool } from "pg"
-import { withTestTransaction, addTestMember } from "./setup"
+import { withTransaction } from "../../src/db"
+import { withTestTransaction, addTestMember, testMessageContent } from "./setup"
 import { WorkspaceRepository } from "../../src/features/workspaces"
 import { StreamService, StreamRepository, type Stream } from "../../src/features/streams"
 import {
@@ -19,8 +20,16 @@ import {
   formatParticipantNames,
 } from "../../src/features/streams/display-name"
 import { setupTestDatabase } from "./setup"
-import { userId, workspaceId } from "../../src/lib/id"
+import { messageId, streamId, userId, workspaceId } from "../../src/lib/id"
 import { StreamTypes, Visibilities, CompanionModes } from "@threa/types"
+import { MessageRepository } from "../../src/features/messaging"
+import { MessageFormatter } from "../../src/lib/ai/message-formatter"
+import {
+  DynamicNamingService,
+  DynamicNamingStreamTarget,
+  type DynamicNamingDecision,
+  type DynamicNamingEvaluationInput,
+} from "../../src/features/dynamic-naming"
 
 // Helper to create a mock stream object
 function createMockStream(overrides: Partial<Stream> = {}): Stream {
@@ -366,5 +375,281 @@ describe("Stream Naming", () => {
       expect(updated?.displayName).toBe("Manual Title")
       expect(updated?.displayNameGeneratedAt).toBeNull()
     })
+  })
+})
+
+describe("Dynamic plaintext stream naming", () => {
+  let pool: Pool
+
+  beforeAll(async () => {
+    pool = await setupTestDatabase()
+  })
+
+  afterAll(async () => {
+    await pool.end()
+  })
+
+  async function createScratchpad(messageCount = 1) {
+    const ownerId = userId()
+    const wsId = workspaceId()
+    await withTestTransaction(pool, async (client) => {
+      await WorkspaceRepository.insert(client, {
+        id: wsId,
+        name: "Dynamic Naming Workspace",
+        slug: `dynamic-naming-${wsId}`,
+        createdBy: ownerId,
+      })
+      await addTestMember(client, wsId, ownerId)
+    })
+    const stream = await new StreamService(pool).createScratchpad({ workspaceId: wsId, createdBy: ownerId })
+    await withTransaction(pool, async (client) => {
+      for (let index = 1; index <= messageCount; index += 1) {
+        await MessageRepository.insert(client, {
+          id: messageId(),
+          streamId: stream.id,
+          sequence: BigInt(index),
+          authorId: ownerId,
+          authorType: "user",
+          ...testMessageContent(`Message ${index} about lunar gardening`),
+        })
+      }
+    })
+    return { ownerId, wsId, stream }
+  }
+
+  function buildService(
+    decide: (input: DynamicNamingEvaluationInput) => Promise<DynamicNamingDecision>,
+    scheduled: Date[] = []
+  ) {
+    return new DynamicNamingService(
+      pool,
+      new Map([["stream", new DynamicNamingStreamTarget(pool, new MessageFormatter())]]),
+      { decide },
+      {
+        schedule: async (_data, processAfter) => {
+          if (processAfter) scheduled.push(processAfter)
+        },
+      },
+      () => new Date(Date.now() + 10_000)
+    )
+  }
+
+  test("renames an unnamed scratchpad and records generated provenance", async () => {
+    const { wsId, stream } = await createScratchpad()
+    const service = buildService(async (input) => {
+      expect(input).toMatchObject({ checkpoint: 1, forced: false, currentTitle: null, messageCount: 1 })
+      expect(input.context).toContain("lunar gardening")
+      return { action: "rename", title: "Lunar gardening" }
+    })
+
+    expect(await service.evaluate({ workspaceId: wsId, targetKind: "stream", targetId: stream.id }, "job_1")).toEqual({
+      status: "evaluated",
+      action: "rename",
+      revision: 1,
+    })
+    expect(await StreamRepository.findById(pool, stream.id)).toMatchObject({
+      displayName: "Lunar gardening",
+      displayNameSource: "generated",
+      displayNameRevision: 1,
+    })
+  })
+
+  test("a manual rename during evaluation invalidates the generated result", async () => {
+    const { ownerId, wsId, stream } = await createScratchpad()
+    const service = buildService(async () => {
+      await StreamRepository.updateDisplayName(pool, {
+        workspaceId: wsId,
+        streamId: stream.id,
+        displayName: "My garden notes",
+        source: "explicit",
+        updatedByUserId: ownerId,
+      })
+      return { action: "rename", title: "Stale model title" }
+    })
+
+    expect(
+      await service.evaluate({ workspaceId: wsId, targetKind: "stream", targetId: stream.id }, "job_manual")
+    ).toEqual({ status: "stale" })
+    expect(await StreamRepository.findById(pool, stream.id)).toMatchObject({
+      displayName: "My garden notes",
+      displayNameSource: "explicit",
+      displayNameRevision: 1,
+    })
+  })
+
+  test("two jobs for one checkpoint make one model call", async () => {
+    const { wsId, stream } = await createScratchpad()
+    let calls = 0
+    let startEvaluation: (() => void) | undefined
+    const evaluationStarted = new Promise<void>((resolve) => {
+      startEvaluation = resolve
+    })
+    let finishEvaluation: (() => void) | undefined
+    const evaluationGate = new Promise<void>((resolve) => {
+      finishEvaluation = resolve
+    })
+    const scheduled: Date[] = []
+    const service = buildService(async () => {
+      calls += 1
+      startEvaluation?.()
+      await evaluationGate
+      return { action: "rename", title: "One model title" }
+    }, scheduled)
+
+    const first = service.evaluate({ workspaceId: wsId, targetKind: "stream", targetId: stream.id }, "job_a")
+    await evaluationStarted
+    const second = await service.evaluate({ workspaceId: wsId, targetKind: "stream", targetId: stream.id }, "job_b")
+    finishEvaluation?.()
+    await first
+
+    expect({ calls, secondStatus: second.status, scheduled: scheduled.length }).toEqual({
+      calls: 1,
+      secondStatus: "requeued",
+      scheduled: 1,
+    })
+  })
+
+  test("thread context starts with its anchor while counting only replies", async () => {
+    const ownerId = userId()
+    const wsId = workspaceId()
+    const rootId = streamId()
+    const threadId = streamId()
+    const anchorId = messageId()
+    await withTransaction(pool, async (client) => {
+      await StreamRepository.insert(client, {
+        id: rootId,
+        workspaceId: wsId,
+        type: "channel",
+        slug: "gardening",
+        visibility: "private",
+        companionMode: "off",
+        createdBy: ownerId,
+      })
+      await MessageRepository.insert(client, {
+        id: anchorId,
+        streamId: rootId,
+        sequence: 1n,
+        authorId: ownerId,
+        authorType: "user",
+        ...testMessageContent("Anchor about moon soil"),
+      })
+      await StreamRepository.insert(client, {
+        id: threadId,
+        workspaceId: wsId,
+        type: "thread",
+        parentStreamId: rootId,
+        rootStreamId: rootId,
+        parentAnchorId: anchorId,
+        visibility: "private",
+        companionMode: "off",
+        createdBy: ownerId,
+      })
+      await MessageRepository.insert(client, {
+        id: messageId(),
+        streamId: threadId,
+        sequence: 2n,
+        authorId: ownerId,
+        authorType: "user",
+        ...testMessageContent("Reply about watering"),
+      })
+    })
+    const service = buildService(async (input) => {
+      expect(input.messageCount).toBe(1)
+      expect(input.context.indexOf("Anchor about moon soil")).toBeLessThan(
+        input.context.indexOf("Reply about watering")
+      )
+      return { action: "rename", title: "Moon soil watering" }
+    })
+
+    expect(
+      await service.evaluate({ workspaceId: wsId, targetKind: "stream", targetId: threadId }, "job_thread")
+    ).toMatchObject({ status: "evaluated", action: "rename" })
+  })
+
+  test("waits for the five-second quiet deadline before claiming", async () => {
+    const { wsId, stream } = await createScratchpad()
+    let calls = 0
+    const scheduled: Date[] = []
+    const service = new DynamicNamingService(
+      pool,
+      new Map([["stream", new DynamicNamingStreamTarget(pool, new MessageFormatter())]]),
+      {
+        decide: async () => {
+          calls += 1
+          return { action: "rename", title: "Too early" }
+        },
+      },
+      {
+        schedule: async (_data, processAfter) => {
+          if (processAfter) scheduled.push(processAfter)
+        },
+      }
+    )
+
+    const result = await service.evaluate({ workspaceId: wsId, targetKind: "stream", targetId: stream.id }, "job_quiet")
+    expect({ status: result.status, calls, scheduled: scheduled.length }).toEqual({
+      status: "requeued",
+      calls: 0,
+      scheduled: 1,
+    })
+  })
+
+  test("two consecutive keeps settle a generated title after checkpoints 3 and 6", async () => {
+    const { ownerId, wsId, stream } = await createScratchpad()
+    const checkpoints: number[] = []
+    const service = buildService(async (input) => {
+      checkpoints.push(input.checkpoint)
+      return input.checkpoint === 1 ? { action: "rename", title: "Lunar garden" } : { action: "keep" }
+    })
+    const ref = { workspaceId: wsId, targetKind: "stream" as const, targetId: stream.id }
+
+    await service.evaluate(ref, "job_cp1")
+    await withTransaction(pool, async (client) => {
+      for (let sequence = 2; sequence <= 3; sequence += 1) {
+        await MessageRepository.insert(client, {
+          id: messageId(),
+          streamId: stream.id,
+          sequence: BigInt(sequence),
+          authorId: ownerId,
+          authorType: "user",
+          ...testMessageContent(`Lunar garden detail ${sequence}`),
+        })
+      }
+    })
+    await service.evaluate(ref, "job_cp3")
+    await withTransaction(pool, async (client) => {
+      for (let sequence = 4; sequence <= 6; sequence += 1) {
+        await MessageRepository.insert(client, {
+          id: messageId(),
+          streamId: stream.id,
+          sequence: BigInt(sequence),
+          authorId: ownerId,
+          authorType: "user",
+          ...testMessageContent(`Lunar garden detail ${sequence}`),
+        })
+      }
+    })
+    await service.evaluate(ref, "job_cp6")
+    await service.evaluate(ref, "job_after_settle")
+
+    expect(checkpoints).toEqual([1, 3, 6])
+  })
+
+  test("an old-path generated title starts refinement after checkpoint 1", async () => {
+    const { wsId, stream } = await createScratchpad(3)
+    await StreamRepository.updateDisplayName(pool, {
+      workspaceId: wsId,
+      streamId: stream.id,
+      displayName: "Opening title",
+      source: "generated",
+    })
+    let observedCheckpoint: number | null = null
+    const service = buildService(async (input) => {
+      observedCheckpoint = input.checkpoint
+      return { action: "keep" }
+    })
+
+    await service.evaluate({ workspaceId: wsId, targetKind: "stream", targetId: stream.id }, "job_seed")
+    expect(observedCheckpoint).toBe(3)
   })
 })

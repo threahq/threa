@@ -1,4 +1,5 @@
 import type { PoolClient } from "pg"
+import type { TitleSource } from "@threa/types"
 import { z } from "zod"
 import { DYNAMIC_NAMING_CHECKPOINTS } from "./config"
 export {
@@ -12,19 +13,47 @@ export type { DynamicNamingEvaluateJobData, DynamicNamingTargetKind } from "../.
 export const DynamicNamingCheckpointSchema = z.union(DYNAMIC_NAMING_CHECKPOINTS.map((value) => z.literal(value)))
 export type DynamicNamingCheckpoint = z.infer<typeof DynamicNamingCheckpointSchema>
 
-export const DynamicNamingDecisionSchema = z.discriminatedUnion("action", [
-  z.object({ action: z.literal("defer") }),
-  z.object({ action: z.literal("keep") }),
-  z.object({ action: z.literal("rename"), title: z.string().trim().min(1) }),
+export type DynamicNamingDecision = { action: "defer" } | { action: "keep" } | { action: "rename"; title: string }
+
+export const DynamicNamingDecisionResponseSchema = z
+  .object({
+    action: z.enum(["defer", "keep", "rename"]),
+    title: z.string().trim().max(100),
+  })
+  .strict()
+
+export const DynamicNamingDecisionSchema: z.ZodType<DynamicNamingDecision> = z.discriminatedUnion("action", [
+  z.object({ action: z.literal("defer") }).strict(),
+  z.object({ action: z.literal("keep") }).strict(),
+  z.object({ action: z.literal("rename"), title: z.string().trim().min(1).max(100) }).strict(),
 ])
-export type DynamicNamingDecision = z.infer<typeof DynamicNamingDecisionSchema>
 
 export interface DynamicNamingTargetSnapshot {
   workspaceId: string
   targetKind: DynamicNamingTargetKind
   targetId: string
   messageCount: number
+  latestMessageAt: Date | null
+  title: string | null
+  titleSource: TitleSource | null
   titleRevision: number
+}
+
+export interface DynamicNamingEvaluationInput {
+  workspaceId: string
+  targetKind: DynamicNamingTargetKind
+  targetId: string
+  checkpoint: DynamicNamingCheckpoint
+  forced: boolean
+  messageCount: number
+  currentTitle: string | null
+  context: string
+  existingTitles: string[]
+}
+
+export interface DynamicNamingTargetContext {
+  context: string
+  existingTitles: string[]
 }
 
 export type DynamicNamingClaimReason = "ordinary" | "structural" | "regenerate"
@@ -41,15 +70,12 @@ export interface DynamicNamingTargetAdapter {
     client: PoolClient,
     params: DynamicNamingTargetLockParams
   ): Promise<DynamicNamingTargetSnapshot | null>
+  loadContext(target: DynamicNamingTargetSnapshot): Promise<DynamicNamingTargetContext | null>
+  applyRename(client: PoolClient, target: DynamicNamingTargetSnapshot, title: string): Promise<number | null>
 }
 
 export interface DynamicNamingDecisionProvider {
-  decide(
-    target: DynamicNamingTargetSnapshot,
-    checkpoint: DynamicNamingCheckpoint,
-    forced: boolean,
-    signal: AbortSignal
-  ): Promise<DynamicNamingDecision>
+  decide(input: DynamicNamingEvaluationInput, signal: AbortSignal): Promise<DynamicNamingDecision>
 }
 
 export interface DynamicNamingJobScheduler {
