@@ -146,7 +146,6 @@ beforeEach(() => {
   vi.spyOn(inputModeModule, "useInputMode").mockReturnValue("mouse")
   vi.spyOn(contextsModule, "usePreferences").mockReturnValue({ preferences: undefined } as never)
   vi.spyOn(mentionablesModule, "useMentionStreamContext").mockReturnValue(undefined as never)
-  vi.spyOn(workspaceStoreModule, "useWorkspaceStreams").mockReturnValue([] as never)
   vi.spyOn(workspaceStoreModule, "useWorkspaceUsers").mockReturnValue([] as never)
   vi.spyOn(workspaceStoreModule, "useWorkspaceDmPeers").mockReturnValue([] as never)
   vi.spyOn(streamStoreModule, "useStreamFromStore").mockReturnValue(undefined as never)
@@ -619,7 +618,6 @@ describe("InlineComposerForm compose trace", () => {
   it("measures against the streamId prop even when the host is absent from the workspace cache", async () => {
     // A thread host never appears in the workspace streams cache — resolving the
     // horizon there is what left branch and panel replies unmeasured.
-    vi.spyOn(workspaceStoreModule, "useWorkspaceStreams").mockReturnValue([] as never)
     const onSubmit = vi.fn().mockResolvedValue(undefined)
     composerStub.canSend = true
     render(<Capturing>{form({ onSubmit })}</Capturing>)

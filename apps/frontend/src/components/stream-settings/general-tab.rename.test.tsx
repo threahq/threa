@@ -102,7 +102,7 @@ describe("GeneralTab display-name rename (stream settings surface)", () => {
     const stream = encryptedScratchpad()
     const update = vi.fn().mockResolvedValue({ ...stream, displayName: null, sealedNameCiphertext: "Y3Q=" })
 
-    renderTab(stream, update)
+    const view = renderTab(stream, update)
 
     await userEvent.type(screen.getByPlaceholderText("Scratchpad name"), "Therapy notes")
     await userEvent.click(screen.getByRole("button", { name: /save/i }))
@@ -116,6 +116,7 @@ describe("GeneralTab display-name rename (stream settings surface)", () => {
     expect(update.mock.calls[0]![2]).not.toHaveProperty("displayName")
     // The new name is immediately resolvable on this device (no re-decrypt flicker).
     expect(getCachedStreamName(streamNameCacheKey(WS, stream.id, "Y3Q="))).toBe("Therapy notes")
+    view.unmount()
   })
 
   it("makes the field read-only and never updates while the session is locked", async () => {
@@ -124,7 +125,7 @@ describe("GeneralTab display-name rename (stream settings surface)", () => {
     const sealSpy = vi.spyOn(messageEnvelope, "sealStreamName")
 
     const update = vi.fn()
-    renderTab(encryptedScratchpad(), update)
+    const view = renderTab(encryptedScratchpad(), update)
 
     const input = screen.getByPlaceholderText("Scratchpad name")
     expect(input).toBeDisabled()
@@ -132,5 +133,6 @@ describe("GeneralTab display-name rename (stream settings surface)", () => {
     expect(screen.queryByRole("button", { name: /save/i })).not.toBeInTheDocument()
     expect(update).not.toHaveBeenCalled()
     expect(sealSpy).not.toHaveBeenCalled()
+    view.unmount()
   })
 })

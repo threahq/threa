@@ -189,7 +189,6 @@ beforeEach(async () => {
   await db.streams.clear()
   await db.conversations.clear()
   await db.streams.put(cachedStream(STREAM, StreamTypes.CHANNEL))
-  vi.spyOn(workspaceStoreModule, "useWorkspaceStreams").mockReturnValue([] as never)
   vi.spyOn(workspaceStoreModule, "useWorkspaceUsers").mockReturnValue([] as never)
   vi.spyOn(workspaceStoreModule, "useWorkspaceDmPeers").mockReturnValue([] as never)
   vi.spyOn(workspaceStoreModule, "useWorkspacePersonas").mockReturnValue([] as never)

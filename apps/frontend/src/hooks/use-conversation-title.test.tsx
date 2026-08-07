@@ -30,12 +30,13 @@ describe("useConversationTitle", () => {
     expect(reader.result.current).toBeNull()
     act(() => primeStreamName(key, "Decrypted title"))
     expect(reader.result.current).toBe("Decrypted title")
+    reader.unmount()
   })
 
   it("does not rerender when another stream title changes", () => {
     vi.spyOn(streamStore, "useStreamFromStore").mockReturnValue(stream as never)
     let renders = 0
-    renderHook(() => {
+    const reader = renderHook(() => {
       renders += 1
       return useConversationTitle(workspaceId, { streamId: stream.id, topicSummary: null })
     })
@@ -44,5 +45,6 @@ describe("useConversationTitle", () => {
     act(() => primeStreamName(streamNameCacheKey(workspaceId, "stream_other", "ciphertext_2"), "Other title"))
 
     expect(renders).toBe(before)
+    reader.unmount()
   })
 })

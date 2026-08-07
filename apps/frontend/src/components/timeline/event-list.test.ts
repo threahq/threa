@@ -401,13 +401,24 @@ describe("annotateConversationRevivals", () => {
 
     expect(revivalOf(items[2])).toEqual({
       conversationId: "conv_x",
+      streamId: "",
       topicSummary: null,
       previousActivityAt: "2026-02-19T00:00:00.000Z",
     })
     // Every block start chips now — A and B each open their conversation for
     // the first time locally, so both chip too, just with no time to show.
-    expect(revivalOf(items[0])).toEqual({ conversationId: "conv_x", topicSummary: null, previousActivityAt: undefined })
-    expect(revivalOf(items[1])).toEqual({ conversationId: "conv_y", topicSummary: null, previousActivityAt: undefined })
+    expect(revivalOf(items[0])).toEqual({
+      conversationId: "conv_x",
+      streamId: "",
+      topicSummary: null,
+      previousActivityAt: undefined,
+    })
+    expect(revivalOf(items[1])).toEqual({
+      conversationId: "conv_y",
+      streamId: "",
+      topicSummary: null,
+      previousActivityAt: undefined,
+    })
   })
 
   it("resolves the topic label from the conversation list when it has loaded", () => {
@@ -437,6 +448,7 @@ describe("annotateConversationRevivals", () => {
 
     expect(revivalOf(items[2])).toEqual({
       conversationId: "conv_x",
+      streamId: "",
       topicSummary: "Pizza",
       previousActivityAt: "2026-02-19T00:00:00.000Z",
     })
@@ -465,6 +477,7 @@ describe("annotateConversationRevivals", () => {
 
     expect(revivalOf(items[2])).toEqual({
       conversationId: "conv_successor",
+      streamId: "",
       topicSummary: "Pizza",
       previousActivityAt: "2026-02-19T00:00:00.000Z",
     })
@@ -501,6 +514,7 @@ describe("annotateConversationRevivals", () => {
 
     expect(revivalOf(annotated[1])).toEqual({
       conversationId: "conv_x",
+      streamId: "",
       topicSummary: null,
       previousActivityAt: undefined,
     })
@@ -511,6 +525,7 @@ describe("annotateConversationRevivals", () => {
 
     expect(revivalOf(annotated[2])).toEqual({
       conversationId: "conv_x",
+      streamId: "",
       topicSummary: null,
       previousActivityAt: "2026-02-19T00:00:00.000Z",
     })
@@ -535,6 +550,7 @@ describe("annotateConversationRevivals", () => {
 
     expect(revivalOf(annotated[0])).toEqual({
       conversationId: "conv_x",
+      streamId: "",
       topicSummary: null,
       previousActivityAt: undefined,
     })
