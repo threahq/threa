@@ -531,6 +531,15 @@ export function createEnclaveSessionHandlers({ pool, eventService, io, costServi
           decision.observedMessageCount
         )
         if (!eligibility.eligible || eligibility.checkpoint !== decision.observedCheckpoint) return
+        if (
+          decision.action === "keep" &&
+          !(await E2eStreamsRepository.getSealedName(tx, stream.workspaceId, stream.id))
+        ) {
+          // `keep` is meaningful only for an existing title. A buggy or mixed-
+          // version enclave must not advance/settle an unnamed scratchpad.
+          await DynamicNamingStateRepository.releaseOwnedClaim(tx, id)
+          return
+        }
 
         const observedState = await DynamicNamingStateRepository.advanceOwnedClaimObservation(tx, {
           ownerId: id,

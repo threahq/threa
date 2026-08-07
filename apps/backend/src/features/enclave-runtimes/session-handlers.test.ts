@@ -407,6 +407,50 @@ describe("createEnclaveSessionHandlers.namingDecision", () => {
     )
   })
 
+  it("does not advance keep for an unnamed encrypted stream", async () => {
+    spyOn(AgentSessionRepository, "findById").mockResolvedValue(SESSION)
+    spyOn(db, "withTransaction").mockImplementation(((_pool: unknown, cb: (c: unknown) => unknown) => cb({})) as never)
+    spyOn(StreamRepository, "findByIdForUpdateBlocking").mockResolvedValue({
+      id: "stream_1",
+      workspaceId: "ws_1",
+      displayName: null,
+      displayNameSource: null,
+      displayNameRevision: 0,
+    } as never)
+    spyOn(DynamicNamingStateRepository, "find").mockResolvedValue({
+      version: 4,
+      claimOwnerId: "session_1",
+      claimToken: "claim_1",
+      claimCheckpoint: 3,
+      claimTitleRevision: 0,
+      lastEvaluatedMessageCount: 1,
+      consecutiveKeeps: 0,
+      completedAt: null,
+      structureVersion: 0,
+      lastEvaluatedStructureVersion: 0,
+    } as never)
+    spyOn(MessageRepository, "getNamingStats").mockResolvedValue({ count: 3, latestMessageAt: new Date() })
+    spyOn(E2eStreamsRepository, "getSealedName").mockResolvedValue(null)
+    const release = spyOn(DynamicNamingStateRepository, "releaseOwnedClaim").mockResolvedValue(1)
+    const advance = spyOn(DynamicNamingStateRepository, "advanceOwnedClaimObservation")
+    const { handlers } = makeHandlers()
+
+    await handlers.namingDecision(
+      req("session_1", {
+        action: "keep",
+        confidence: 0.9,
+        observedStateRevision: 4,
+        observedTitleRevision: 0,
+        observedMessageCount: 3,
+        observedCheckpoint: 3,
+      }),
+      fakeRes()
+    )
+
+    expect(release).toHaveBeenCalledWith({}, "session_1")
+    expect(advance).not.toHaveBeenCalled()
+  })
+
   it("rejects a replacement not sealed for the stream name slot", async () => {
     spyOn(AgentSessionRepository, "findById").mockResolvedValue(SESSION)
     const { handlers } = makeHandlers()
