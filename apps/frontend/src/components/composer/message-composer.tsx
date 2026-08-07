@@ -19,6 +19,7 @@ import { usePreferencesOptional } from "@/contexts"
 import { getEffectiveKeyBinding, matchesKeyBinding } from "@/lib/keyboard-shortcuts"
 import { RichEditor, EditorToolbar, EditorActionBar } from "@/components/editor"
 import type { RichEditorHandle } from "@/components/editor"
+import { handleMobileInlineAttachmentPicker } from "@/components/editor/mobile-inline-attachment-picker"
 import { Button } from "@/components/ui/button"
 import { Separator } from "@/components/ui/separator"
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from "@/components/ui/tooltip"
@@ -575,14 +576,14 @@ export function MessageComposer({
 
   const handleFileInputChange = useCallback(
     (event: ChangeEvent<HTMLInputElement>) => {
-      const files = Array.from(event.target.files ?? [])
-      const mobileInlineAttachments =
-        preferencesCtx?.preferences?.mobileInlineAttachments ?? DEFAULT_USER_PREFERENCES.mobileInlineAttachments
-      if (!isMobile || !mobileInlineAttachments || files.length === 0 || !richEditorRef.current?.insertFiles(files)) {
-        onFileSelect(event)
-        return
-      }
-      event.target.value = ""
+      handleMobileInlineAttachmentPicker({
+        event,
+        isMobile,
+        inlineEnabled:
+          preferencesCtx?.preferences?.mobileInlineAttachments ?? DEFAULT_USER_PREFERENCES.mobileInlineAttachments,
+        insertFiles: (files) => richEditorRef.current?.insertFiles(files) ?? false,
+        fallback: onFileSelect,
+      })
     },
     [isMobile, onFileSelect, preferencesCtx?.preferences?.mobileInlineAttachments]
   )

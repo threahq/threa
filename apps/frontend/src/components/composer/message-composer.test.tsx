@@ -400,8 +400,10 @@ describe("MessageComposer", () => {
 
       await userEvent.upload(container.querySelector('input[type="file"]') as HTMLInputElement, file)
 
-      expect(onFileSelect).toHaveBeenCalledOnce()
-      expect(mockInsertFiles).not.toHaveBeenCalled()
+      expect({
+        selectedFiles: Array.from(onFileSelect.mock.calls[0]?.[0].target.files ?? []),
+        inlineInsertCalls: mockInsertFiles.mock.calls,
+      }).toEqual({ selectedFiles: [file], inlineInsertCalls: [] })
     })
   })
 

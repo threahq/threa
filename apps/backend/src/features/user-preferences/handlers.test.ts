@@ -244,6 +244,9 @@ describe("updatePreferencesSchema mobileInlineAttachments", () => {
     expect(updatePreferencesSchema.parse({ mobileInlineAttachments: true })).toEqual({
       mobileInlineAttachments: true,
     })
+    expect(updatePreferencesSchema.parse({ mobileInlineAttachments: false })).toEqual({
+      mobileInlineAttachments: false,
+    })
     expect(updatePreferencesSchema.safeParse({ mobileInlineAttachments: "yes" }).success).toBe(false)
   })
 })

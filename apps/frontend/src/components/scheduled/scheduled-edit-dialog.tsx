@@ -1,12 +1,13 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { type ChangeEvent, useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { Loader2, Send, Trash2 } from "lucide-react"
 import type { Editor } from "@tiptap/react"
-import { type JSONContent, type ScheduledMessageView } from "@threa/types"
+import { DEFAULT_USER_PREFERENCES, type JSONContent, type ScheduledMessageView } from "@threa/types"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Drawer, DrawerContent, DrawerTitle } from "@/components/ui/drawer"
 import { Button } from "@/components/ui/button"
 import { RichEditor, EditorActionBar, EditorToolbar } from "@/components/editor"
 import type { RichEditorHandle } from "@/components/editor"
+import { handleMobileInlineAttachmentPicker } from "@/components/editor/mobile-inline-attachment-picker"
 import { PendingAttachments } from "@/components/timeline/pending-attachments"
 import { DateTimeField } from "@/components/forms/date-time-field"
 import { parseLocalDateTime, toDateInputValue, toTimeInputValue } from "@/lib/dates"
@@ -22,6 +23,7 @@ import {
 } from "@/hooks"
 import { useMentionStreamContext } from "@/hooks/use-mentionables"
 import { useAttachments } from "@/hooks/use-attachments"
+import { usePreferences } from "@/contexts"
 import { useWorkspaceStreams } from "@/stores/workspace-store"
 import { materializePendingAttachmentReferences } from "@/components/timeline/message-input"
 import { toast } from "sonner"
@@ -52,6 +54,7 @@ interface ScheduledEditDialogProps {
  */
 export function ScheduledEditDialog({ workspaceId, scheduled, onClose }: ScheduledEditDialogProps) {
   const isMobile = useIsMobile()
+  const { preferences } = usePreferences()
   // Selection toolbar is a hover/mouse affordance, so it keys off the active
   // input mode (a finger suppresses it) rather than viewport width — a mouse on
   // a touchscreen laptop still gets it.
@@ -188,6 +191,19 @@ export function ScheduledEditDialog({ workspaceId, scheduled, onClose }: Schedul
     const next = handle?.getEditor() ?? null
     setToolbarEditor((cur) => (cur === next ? cur : next))
   }, [])
+
+  const handleFileInputChange = useCallback(
+    (event: ChangeEvent<HTMLInputElement>) => {
+      handleMobileInlineAttachmentPicker({
+        event,
+        isMobile,
+        inlineEnabled: preferences?.mobileInlineAttachments ?? DEFAULT_USER_PREFERENCES.mobileInlineAttachments,
+        insertFiles: (files) => editorRef.current?.insertFiles(files) ?? false,
+        fallback: attachmentsHook.handleFileSelect,
+      })
+    },
+    [attachmentsHook.handleFileSelect, isMobile, preferences?.mobileInlineAttachments]
+  )
 
   // Snapshot the live editor content + materialized attachments — shared by
   // Save and Send now so both ship exactly what the user currently sees.
@@ -347,7 +363,7 @@ export function ScheduledEditDialog({ workspaceId, scheduled, onClose }: Schedul
       type="file"
       multiple
       className="hidden"
-      onChange={attachmentsHook.handleFileSelect}
+      onChange={handleFileInputChange}
       disabled={isSaving}
     />
   )
