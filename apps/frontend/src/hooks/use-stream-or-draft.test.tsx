@@ -682,7 +682,7 @@ describe("useStreamOrDraft scratchpad rename (top-bar editor path)", () => {
     }))
 
     const queryClient = new QueryClient()
-    const { result } = renderHook(() => useStreamOrDraft("ws_1", streamId), {
+    const { result, unmount } = renderHook(() => useStreamOrDraft("ws_1", streamId), {
       wrapper: createWrapper(queryClient, { streamService: { update } }),
     })
 
@@ -708,6 +708,10 @@ describe("useStreamOrDraft scratchpad rename (top-bar editor path)", () => {
 
     const persisted = await db.streams.get(streamId)
     expect(persisted).toMatchObject({ sealedNameCiphertext: "Y3Q=", displayName: null })
+
+    // This hook subscribes to the E2E session store. Unmount it before afterEach
+    // restores the mocked hook implementation and clears its title cache.
+    unmount()
   })
 
   it("renames a plaintext scratchpad by writing displayName directly (no sealing)", async () => {
