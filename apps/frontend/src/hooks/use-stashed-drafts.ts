@@ -2,7 +2,7 @@ import { useCallback, useMemo, useRef, useState } from "react"
 import { type CachedDraft, type CachedStream } from "@/db"
 import { parseBoardDraftKey } from "@/lib/board/draft-keys"
 import { isDraftInHostPile, resolveDraftHomeStream, type DraftPileContext } from "@/lib/drafts/home-stream"
-import { hasSeededDraftCache, useComposerLoadedFromStore, useDraftsFromStore } from "@/stores/draft-store"
+import { useComposerLoadedFromStore, useDraftsFromStore } from "@/stores/draft-store"
 import { conversationPanelHref } from "@/lib/board/panel-href"
 import { useMountedComposerScopes } from "./use-draft-composer"
 import { useWorkspaceStreamsRaw } from "@/stores/workspace-store"
@@ -80,13 +80,6 @@ export type StashedDraftOrigin = StashedDraftSource & {
 export interface UseStashedDraftsResult {
   /** The pile the picker renders: every draft that could have been written under this host's root stream, minus only THIS host's loaded one (already on screen). Own rows first, then borrowed; each group newest first. */
   drafts: CachedDraft[]
-  /**
-   * The subset the `?stash=` deep link may claim: this scope's rows minus the
-   * host's own loaded one. A row checked out under another scope stays claimable
-   * — the restore takes it over (chunk 2), the identity-addressed write path
-   * makes the displaced editor split rather than fight.
-   */
-  claimableDrafts: CachedDraft[]
   /** Where each pile row came from, and its tier, keyed by draft id. */
   originByDraftId: Map<string, StashedDraftOrigin>
   /**
@@ -102,8 +95,6 @@ export interface UseStashedDraftsResult {
    * strings (INV-35). No tier: the caller knows its own scope.
    */
   describeScope: (scope: string) => StashedDraftSource | null
-  /** True once the draft cache has been seeded (used to suppress empty-flash in the picker). */
-  isLoaded: boolean
   /** Delete a stashed row (and mirror the removal to the backend). */
   deleteStashedDraft: (id: string) => Promise<void>
   /**
@@ -452,7 +443,6 @@ export function useStashedDrafts(workspaceId: string, scope: string | undefined)
 
   const describeScope = useCallback((candidate: string) => draftSource(candidate, streamByAnchorId), [streamByAnchorId])
 
-  const isLoaded = hasSeededDraftCache(workspaceId)
   const syncEngine = useOptionalSyncEngine()
 
   const deleteStashedDraft = useCallback(
@@ -465,11 +455,9 @@ export function useStashedDrafts(workspaceId: string, scope: string | undefined)
 
   return {
     drafts,
-    claimableDrafts: scopeExact,
     originByDraftId,
     canHostForeignDraft,
     describeScope,
-    isLoaded,
     deleteStashedDraft,
     setPileOpen,
   }

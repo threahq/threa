@@ -25,7 +25,6 @@ import type { DraftComposerState } from "./use-draft-composer"
 export type DraftRestorePlan =
   | { action: "same-scope" }
   | { action: "adopt"; targetHost: string; targetScope: string }
-  | { action: "refuse"; reason: DraftRestoreRefusal }
   | { action: "move"; fromScope: string; toScope: string }
   | { action: "navigate"; conversationId: string }
 
@@ -98,8 +97,6 @@ function refuse(reason: DraftRestoreRefusal, message: string): DraftRestoreResul
 export interface UseStashComposerResult {
   /** The landing-site-wide pile the picker renders, newest first within each tier. */
   drafts: CachedDraft[]
-  /** This scope's own rows — what the `?stash=` deep link may claim. */
-  claimableDrafts: CachedDraft[]
   /** Where each pile row came from, keyed by draft id (structured; the caller formats). */
   originByDraftId: Map<string, StashedDraftOrigin>
   /** Tell the pile whether the picker is open, so membership latches while it is. */
@@ -168,6 +165,7 @@ export function useStashComposer(
   host?: StashComposerHost
 ): UseStashComposerResult {
   const stashedDrafts = useStashedDrafts(workspaceId, scope)
+  const stashParamRow = useStashParamDraftRow(workspaceId)
   const syncEngine = useOptionalSyncEngine()
   const targetHost = host?.targetHost ?? null
   const disarmTarget = host?.disarmTarget ?? null
@@ -242,9 +240,6 @@ export function useStashComposer(
           // before restore is ever called; reaching here is a wiring bug, and
           // silently doing nothing would strand the tap (INV-11).
           throw new Error(`[stash] navigate row ${id} reached restoreDraftHere — route via origin.openHref`)
-        }
-        if (plan.action === "refuse") {
-          return refuse(plan.reason, `refusing restore of ${id} into ${scope}: ${plan.reason}`)
         }
         // Leaving the row's own scope needs a host that can hold it: an encrypted
         // or archived home means the pile should never have offered it, and for an
@@ -361,15 +356,11 @@ export function useStashComposer(
   useEffect(() => {
     const stashId = searchParams.get("stash")
     if (!stashId || !scope || !composer.isLoaded) return
-    // Two gates, both load-bearing. The row must belong to THIS scope
-    // (`claimableDrafts`, not the landing-site-wide pile): restoring a foreign id
-    // would point this scope's loaded draft at another scope's row, splitting one
-    // draft across two composers. And this composer must hold the scope's claim —
-    // a board card and the conversation panel's footer mount the same scope, so
-    // membership alone let both restore. A non-claimant skips WITHOUT stripping,
-    // leaving the param for the claimant.
+    // The point query is the deep-link authority: exact scope, not already
+    // loaded there, and claimed by only one of the duplicate composer hosts.
     if (!composer.isStashClaimant) return
-    if (!stashedDrafts.claimableDrafts.some((draft) => draft.id === stashId)) return
+    if (!stashParamRow || stashParamRow.draftId !== stashId || stashParamRow.scope !== scope) return
+    if (stashParamRow.isLoadedForScope) return
     if (pendingStashRestoreRef.current === stashId) return
 
     pendingStashRestoreRef.current = stashId
@@ -400,13 +391,12 @@ export function useStashComposer(
     scope,
     composer.isLoaded,
     composer.isStashClaimant,
-    stashedDrafts.claimableDrafts,
+    stashParamRow,
     handleRestoreStashed,
   ])
 
   return {
     drafts: stashedDrafts.drafts,
-    claimableDrafts: stashedDrafts.claimableDrafts,
     originByDraftId: stashedDrafts.originByDraftId,
     setPileOpen: stashedDrafts.setPileOpen,
     handleStashDraft,

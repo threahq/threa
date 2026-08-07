@@ -442,15 +442,12 @@ describe("useStashedDrafts — pile membership", () => {
     await waitFor(() => expect(result.current.drafts.map((d) => d.id).sort()).toEqual(["draft_conv", "draft_stream"]))
     expect(result.current.originByDraftId.get("draft_stream")?.checkedOutElsewhere).toBe(true)
     expect(result.current.originByDraftId.get("draft_conv")?.checkedOutElsewhere).toBe(false)
-    // The deep-link claim set includes the loaded-elsewhere row too (take-over).
-    expect(result.current.claimableDrafts.map((d) => d.id)).toEqual(["draft_conv"])
     unmount()
 
     // Control: the host whose OWN composer holds the draft does not see it in
     // its pile (it is already on screen) — the exclusion that remains.
     const host = renderHook(() => useStashedDrafts(pileWorkspaceId, "stream:stream_s"))
     await waitFor(() => expect(host.result.current.drafts.map((d) => d.id)).toEqual(["draft_conv"]))
-    expect(host.result.current.claimableDrafts.map((d) => d.id)).toEqual([])
     host.unmount()
   })
 
@@ -596,19 +593,6 @@ describe("useStashedDrafts — pile membership", () => {
     await waitFor(() => expect(result.current.drafts.map((d) => d.id)).toEqual(["draft_stream"]))
   })
 
-  it("claimable rows stay this host's own scope even when the pile is wider", async () => {
-    await seedStream("stream_s")
-    await seedConversation("conv_1", "stream_s")
-    await db.drafts.bulkAdd([
-      draftRow({ id: "draft_stream", scope: "stream:stream_s" }),
-      draftRow({ id: "draft_conv", scope: "board:reply:conv_1" }),
-    ])
-
-    const { result } = renderHook(() => useStashedDrafts(pileWorkspaceId, "board:reply:conv_1"))
-    await waitFor(() => expect(result.current.drafts).toHaveLength(2))
-    expect(result.current.claimableDrafts.map((d) => d.id)).toEqual(["draft_conv"])
-  })
-
   // Every `composerLoaded` writer keeps pointer-scope == row-scope (adopt checks
   // a row out under its OWN scope; move rewrites the scope first), so "checked
   // out elsewhere" always means: a borrowed row loaded in its own composer on
@@ -640,11 +624,10 @@ describe("useStashedDrafts — pile membership", () => {
     expect(stream.result.current.originByDraftId.get("draft_sibling")?.checkedOutElsewhere).toBe(false)
     stream.unmount()
 
-    // The conversation host itself: its loaded draft is on screen, so neither
-    // pile nor claim set offers it; the detached sibling stays claimable.
+    // The conversation host itself excludes its loaded draft because it is
+    // already on screen; the detached sibling remains in the pile.
     const conv = renderHook(() => useStashedDrafts(pileWorkspaceId, "board:reply:conv_1"))
-    await waitFor(() => expect(conv.result.current.claimableDrafts.map((d) => d.id)).toEqual(["draft_sibling"]))
-    expect(conv.result.current.drafts.map((d) => d.id)).toEqual(["draft_sibling"])
+    await waitFor(() => expect(conv.result.current.drafts.map((d) => d.id)).toEqual(["draft_sibling"]))
     conv.unmount()
   })
 

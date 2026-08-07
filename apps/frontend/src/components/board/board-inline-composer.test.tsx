@@ -103,7 +103,6 @@ function draftComposerStub() {
 function stashComposerStub() {
   return {
     drafts: [],
-    claimableDrafts: [],
     originByDraftId: new Map(),
     handleStashDraft: vi.fn().mockResolvedValue(undefined),
     handleRestoreStashed: vi.fn().mockResolvedValue({ ok: true }),
@@ -372,12 +371,10 @@ describe("InlineComposerForm restore-on-mount", () => {
 
   it("hands the picker the landing-site-wide pile, borrowed rows included", async () => {
     // A borrowed row restores here by MOVING to this conversation's scope, so the
-    // picker offers the whole pile. `claimableDrafts` stays scope-exact for the
-    // `?stash=` deep link only.
+    // picker offers the whole pile.
     const borrowed = { id: "draft_foreign", scope: "stream:stream_1" }
     const own = { id: "draft_own", scope: "board:reply:conv_1" }
     stashStub.drafts = [own, borrowed] as never
-    stashStub.claimableDrafts = [own] as never
 
     render(<Anchored>{form()}</Anchored>)
 
