@@ -50,7 +50,6 @@ import { useComposerCommandSend } from "@/components/composer/use-composer-comma
 import type { JSONContent } from "@threa/types"
 import type { PendingAttachment } from "@/hooks/use-attachments"
 import { ComposerEncryptionNotice } from "@/components/encryption/stream-encryption-affordance"
-import { useConversationTitle } from "@/hooks/use-conversation-title"
 
 interface MessageInputProps {
   workspaceId: string
@@ -422,25 +421,6 @@ function MessageInputComponent({
   useEffect(() => {
     if (stashParamWantsHostScope) disarm()
   }, [stashParamWantsHostScope, disarm])
-
-  useEffect(() => {
-    setConversationReply(null)
-  }, [streamId])
-  // Topic label for the strip — cached board card or a one-shot by-id fetch. The
-  // same projection carries the conversation's most-recently-active stream: the
-  // latest reply's own stream (a thread under the root), falling back to the
-  // conversation's anchor.
-  const { post: conversationReplyPost } = useConversationBoardPost(
-    workspaceId,
-    conversationReply?.conversationId ?? null
-  )
-  const conversationReplyTopic = useConversationTitle(
-    workspaceId,
-    conversationReplyPost?.conversation ?? { streamId: "", topicSummary: null }
-  )
-  const conversationReplyLastActiveStreamId = conversationReplyPost
-    ? boardPostLastActiveStreamId(conversationReplyPost)
-    : null
 
   // Two live editors on one draft row is the failure the mounted-composer registry
   // exists to police: the second never re-reads an ordinary body change, so
@@ -958,11 +938,10 @@ function MessageInputComponent({
     ),
   } as const
 
-  // Armed "Reply in conversation" strip — the send's only signal that it will
-  // file into a conversation, so it renders wherever the composer does (inline
-  // and expanded). Dismissible: X disarms without touching the typed content.
+  // The filing strip is informational here. Dismissing it required relocating
+  // a live synced draft solely to preserve an uncommon inline undo action.
   const conversationReplyStrip = armedConversationId ? (
-    <ConversationReplyStrip title={conversationReplyTopic ?? "conversation"} onCancel={disarm} />
+    <ConversationReplyStrip title={conversationReplyTopic ?? "conversation"} />
   ) : null
 
   const StreamGlyph = stream ? STREAM_ICONS[stream.type] : null

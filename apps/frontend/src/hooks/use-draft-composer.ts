@@ -298,10 +298,7 @@ export function useDraftComposer({
   useEffect(() => {
     const isScopeChange = prevScopeIdRef.current !== null && prevScopeIdRef.current !== scopeId
 
-    // On scope change, reset state
-    if (isScopeChange) {
-      resetForReinit()
-    }
+    if (isScopeChange) resetForReinit()
 
     // Track scope changes
     if (prevScopeIdRef.current !== scopeId) {

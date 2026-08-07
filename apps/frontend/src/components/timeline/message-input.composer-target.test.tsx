@@ -183,15 +183,27 @@ beforeEach(async () => {
   vi.spyOn(composerModule, "MessageComposer").mockImplementation((({
     content,
     onContentChange,
+    composerRef,
   }: {
     content: JSONContent
     onContentChange: (value: JSONContent) => void
-  }) => (
-    <div>
-      <span data-testid="editor-body">{docText(content)}</span>
-      <button onClick={() => onContentChange(makeDoc("typed here"))}>type</button>
-    </div>
-  )) as unknown as typeof composerModule.MessageComposer)
+    composerRef?: { current: unknown }
+  }) => {
+    if (composerRef) {
+      composerRef.current = {
+        focus: vi.fn(),
+        focusAfterQuoteReply: vi.fn(),
+        getEditor: () => null,
+        openSnippetEditor: vi.fn(),
+      }
+    }
+    return (
+      <div>
+        <span data-testid="editor-body">{docText(content)}</span>
+        <button onClick={() => onContentChange(makeDoc("typed here"))}>type</button>
+      </div>
+    )
+  }) as unknown as typeof composerModule.MessageComposer)
 })
 
 afterEach(() => {
@@ -281,27 +293,6 @@ describe("the timeline composer's durable target", () => {
     expect(screen.getByTestId("conversation-reply-strip")).toHaveTextContent("Replying in Pizza plans")
   })
 
-  it("arms from the gesture and disarms from the strip's ×, leaving the draft at its board scope", async () => {
-    await seedDrafts()
-    mount()
-    await waitFor(() => expect(screen.getByTestId("editor-body")).toHaveTextContent("stream body"))
-
-    await act(async () => {
-      registeredConversationReplyHandler?.({ conversationId: "conv_1" })
-      await new Promise((resolve) => setTimeout(resolve, 0))
-    })
-    expect(await db.composerTarget.get(hostScope)).toEqual({ host: hostScope, workspaceId, scope: boardScope })
-    await waitFor(() => expect(screen.getByTestId("editor-body")).toHaveTextContent("board body"))
-
-    await userEvent.click(screen.getByRole("button", { name: /cancel reply in conversation/i }))
-
-    await waitFor(() => expect(screen.getByTestId("editor-body")).toHaveTextContent("stream body"))
-    expect(await db.composerTarget.get(hostScope)).toBeUndefined()
-    // Disarming means "this composer no longer points at C" — the draft written
-    // for C stays a C draft.
-    expect(await bodyOf(boardScope)).toBe("board body")
-  })
-
   it("falls back to the stream scope when the target's conversation is gone", async () => {
     await seedDrafts()
     await setComposerTarget(workspaceId, hostScope, boardScope)
@@ -334,24 +325,6 @@ describe("the timeline composer's durable target", () => {
     // The target survives — the carve-out declines to apply it, it does not
     // delete it, so unlocking or leaving the encrypted stream restores the arm.
     expect(await db.composerTarget.get(hostScope)).toBeDefined()
-  })
-
-  it("releases the draft it stops hosting when disarmed, so it returns to the pile", async () => {
-    await seedDrafts()
-    await setComposerTarget(workspaceId, hostScope, boardScope)
-
-    mount()
-    await waitFor(() => expect(screen.getByTestId("conversation-reply-strip")).toBeInTheDocument())
-
-    await act(async () => {
-      screen.getByRole("button", { name: /cancel reply in conversation/i }).click()
-    })
-
-    // A draft checked out under a scope no composer shows is excluded from every
-    // pile on the device, so disarming has to detach the pointer or the text is
-    // reachable from nowhere.
-    await waitFor(async () => expect(await db.composerLoaded.get(boardScope)).toBeUndefined())
-    expect(await bodyOf(boardScope)).toBe("board body")
   })
 
   it("does not route a restored arm — a page load must not open the panel or focus", async () => {
@@ -411,6 +384,7 @@ describe("the timeline composer's durable target", () => {
     })
 
     await waitFor(() => expect(openPanelSpy).toHaveBeenCalled())
+    await waitFor(async () => expect(await db.composerLoaded.get(boardScope)).toBeUndefined())
   })
 
   it("holds the arm when the board-post fetch fails for anything but a 404", async () => {

@@ -798,21 +798,6 @@ describe("MessageInput", () => {
       expect(screen.getByTestId("conversation-reply-strip")).toBeInTheDocument()
     })
 
-    it("dismissing the strip disarms the filing — the next send carries no directive", async () => {
-      mockComposerState.canSend = true
-      mockComposerState.content = makeDoc("just a normal message")
-
-      render$(<MessageInput workspaceId={workspaceId} streamId={streamId} />)
-      await arm("conv_1")
-
-      await userEvent.click(screen.getByRole("button", { name: /cancel reply in conversation/i }))
-      await waitFor(() => expect(screen.queryByTestId("conversation-reply-strip")).not.toBeInTheDocument())
-
-      await userEvent.click(screen.getByRole("button", { name: /send/i }))
-
-      expect(mockSendMessage).toHaveBeenCalledWith(expect.objectContaining({ conversation: undefined }))
-    })
-
     it("hands off to the conversation panel when the conversation is live in a thread (thread-follow)", async () => {
       // The conversation's most-recently-active stream is a thread (`thread_789`),
       // not the rendered channel (`stream_456`) — a flat send here would
