@@ -78,6 +78,59 @@ function pasteHtml(editor: Editor, html: string): Slice {
 }
 
 describe("attachment reference insertion", () => {
+  it.each([
+    ["Hello", "Hello "],
+    ["Hello ", "Hello "],
+    ["Hello:   ", "Hello:   "],
+    ["", ""],
+  ])("normalizes spacing before a chip inserted after %j", (input, expectedBeforeChip) => {
+    const editor = new Editor({
+      element: document.createElement("div"),
+      extensions: createEditorExtensions({ placeholder: "Type a message..." }),
+      content: {
+        type: "doc",
+        content: [{ type: "paragraph", content: input ? [{ type: "text", text: input }] : undefined }],
+      },
+    })
+    openEditors.push(editor)
+    editor.view.dispatch(editor.state.tr.setSelection(TextSelection.create(editor.state.doc, input.length + 1)))
+
+    editor.commands.insertAttachmentReference(CHIP_ATTRS)
+
+    const at = chipPos(editor)
+    expect({
+      beforeChip: editor.state.doc.textBetween(0, at),
+      afterChip: editor.state.doc.textBetween(at + 1, at + 2),
+    }).toEqual({ beforeChip: expectedBeforeChip, afterChip: " " })
+  })
+
+  it("does not add a leading space after a hard break", () => {
+    const editor = new Editor({
+      element: document.createElement("div"),
+      extensions: createEditorExtensions({ placeholder: "Type a message..." }),
+      content: {
+        type: "doc",
+        content: [
+          {
+            type: "paragraph",
+            content: [{ type: "text", text: "Hello" }, { type: "hardBreak" }],
+          },
+        ],
+      },
+    })
+    openEditors.push(editor)
+    editor.view.dispatch(editor.state.tr.setSelection(TextSelection.create(editor.state.doc, 7)))
+
+    editor.commands.insertAttachmentReference(CHIP_ATTRS)
+
+    expect(editor.getJSON().content?.[0]?.content).toEqual([
+      { type: "text", text: "Hello" },
+      { type: "hardBreak" },
+      { type: "attachmentReference", attrs: CHIP_ATTRS },
+      { type: "text", text: " " },
+    ])
+  })
+
   it("inserts the chip at the current text selection", () => {
     const editor = new Editor({
       element: document.createElement("div"),
