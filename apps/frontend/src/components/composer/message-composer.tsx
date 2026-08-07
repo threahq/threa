@@ -35,7 +35,7 @@ import { COLLAPSED_COMPOSER_ROW, COLLAPSED_COMPOSER_SHADOW } from "@/components/
 import { isEmptyContent } from "@/lib/prosemirror-utils"
 import { collapsedComposerPreview } from "@/lib/drafts/collapsed-composer-preview"
 import type { PendingAttachment, UploadResult } from "@/hooks/use-attachments"
-import type { MessageSendMode, JSONContent } from "@threa/types"
+import { DEFAULT_USER_PREFERENCES, type MessageSendMode, type JSONContent } from "@threa/types"
 import type { MentionStreamContext } from "@/hooks/use-mentionables"
 import type { Editor } from "@tiptap/react"
 import { consumeComposerCommandRequest, subscribeComposerCommandRequest } from "@/stores/composer-command-request-store"
@@ -576,8 +576,9 @@ export function MessageComposer({
   const handleFileInputChange = useCallback(
     (event: ChangeEvent<HTMLInputElement>) => {
       const files = Array.from(event.target.files ?? [])
-      const insertInline = isMobile && preferencesCtx?.preferences?.mobileInlineAttachments === true
-      if (!insertInline || files.length === 0 || !richEditorRef.current?.insertFiles(files)) {
+      const mobileInlineAttachments =
+        preferencesCtx?.preferences?.mobileInlineAttachments ?? DEFAULT_USER_PREFERENCES.mobileInlineAttachments
+      if (!isMobile || !mobileInlineAttachments || files.length === 0 || !richEditorRef.current?.insertFiles(files)) {
         onFileSelect(event)
         return
       }

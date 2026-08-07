@@ -446,7 +446,7 @@ export const DEFAULT_USER_PREFERENCES: Omit<UserPreferences, "workspaceId" | "us
   notificationLevel: "all",
   sidebarCollapsed: false,
   messageSendMode: "enter",
-  mobileInlineAttachments: false,
+  mobileInlineAttachments: true,
   linkPreviewDefault: "open",
   labelRemoveOnMove: "ask",
   unreadOpenPosition: "latest",

@@ -374,10 +374,10 @@ describe("MessageComposer", () => {
       expect(screen.queryByText(/\.txt$/)).not.toBeInTheDocument()
     })
 
-    it("inserts picked files at the editor selection when enabled on mobile", async () => {
+    it("inserts picked files at the editor selection by default on mobile", async () => {
       isMobileMockValue = true
       vi.spyOn(contextsModule, "usePreferencesOptional").mockReturnValue({
-        preferences: { mobileInlineAttachments: true },
+        preferences: {},
       } as unknown as ReturnType<typeof contextsModule.usePreferencesOptional>)
       const onFileSelect = vi.fn()
       const { container } = render(<MessageComposer {...defaultProps} onFileSelect={onFileSelect} />)
