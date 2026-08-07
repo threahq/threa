@@ -147,12 +147,13 @@ test.describe("Drafts Page", () => {
     await page.locator('a[href*="/drafts"]').click()
     await expect(page).toHaveURL(/\/drafts$/, { timeout: 2000 })
 
-    // Hover over draft item to reveal delete button
+    // Hover over draft item to reveal the row's actions menu
     const draftItem = page.getByRole("option").first()
     await draftItem.hover()
 
-    // Click delete button (the action button within the draft item)
-    await draftItem.getByRole("button", { name: /delete/i }).click()
+    // Delete lives in the row's actions dropdown now, not a bare button
+    await draftItem.getByRole("button", { name: /draft actions/i }).click()
+    await page.getByRole("menuitem", { name: "Delete draft" }).click()
 
     // Confirmation dialog should appear
     const dialog = page.getByRole("alertdialog")
@@ -184,10 +185,11 @@ test.describe("Drafts Page", () => {
     await page.locator('a[href*="/drafts"]').click()
     await expect(page).toHaveURL(/\/drafts$/, { timeout: 2000 })
 
-    // Hover and click delete
+    // Hover and delete via the row's actions dropdown
     const draftItem = page.getByRole("option").first()
     await draftItem.hover()
-    await draftItem.getByRole("button", { name: /delete/i }).click()
+    await draftItem.getByRole("button", { name: /draft actions/i }).click()
+    await page.getByRole("menuitem", { name: "Delete draft" }).click()
 
     // Cancel the confirmation
     await page.getByRole("button", { name: /cancel/i }).click()
