@@ -338,7 +338,7 @@ describe("DraftsPage touch long-press", () => {
   })
 })
 
-describe("put-away annotation (durable stash, chunk 4)", () => {
+describe("put-away annotation", () => {
   beforeEach(() => {
     vi.restoreAllMocks()
     deleteDraft.mockReset()

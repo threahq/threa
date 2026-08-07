@@ -66,7 +66,7 @@ composerRegistryListeners.add(() => mountedScopeSetCache.clear())
  * stash pile uses it to route rows whose draft is ALREADY ON SCREEN in its own
  * composer (an open conversation panel's docked footer): tapping such a row
  * navigates/focuses there instead of adopting into a host whose yield-to-panel
- * effect would immediately undo the adopt — the silent no-op chunk 3 deferred.
+ * effect would immediately undo the adopt.
  */
 export function useMountedComposerScopes(workspaceId: string): ReadonlySet<string> {
   return useSyncExternalStore(

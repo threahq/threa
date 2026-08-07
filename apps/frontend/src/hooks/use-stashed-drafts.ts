@@ -17,7 +17,7 @@ import { draftScopesSignature, useBoardDraftContext, useThreadAnchorContext } fr
 // scope — there is no separate stash entity, plaintext or sealed.
 export type { CachedDraft }
 
-/** Where a pile row came from, as structured data — chunk 5 renders it (INV-46). */
+/** Where a pile row came from, as structured data for presentation (INV-46). */
 export type StashedDraftSource =
   | { kind: "stream"; streamId: string }
   | { kind: "conversation"; conversationId: string }
@@ -38,14 +38,14 @@ export type StashedDraftOrigin = StashedDraftSource & {
   tier: "own" | "borrowed"
   /**
    * A DIFFERENT scope's composer pointer currently references this draft.
-   * Restoring still works — it takes the draft over (chunk 2) — but the picker
+   * Restoring still works by taking the draft over, but the picker
    * shows a quiet hint so the take-over is informed rather than surprising.
    */
   checkedOutElsewhere: boolean
   /**
    * Set when tapping this row should NAVIGATE instead of restoring here: a
-   * branch reply (its composer lives only on the parent conversation's panel —
-   * v1 toasted directions at the user instead), or a conversation row whose own
+   * branch reply (its composer lives only on the parent conversation's panel),
+   * or a conversation row whose own
    * composer is MOUNTED right now (an open panel's docked footer): adopting
    * would arm a host whose yield-to-panel effect immediately un-arms it — a
    * silent no-op — so the row takes the user to the composer that already shows
@@ -156,10 +156,9 @@ function isHostHomeEligible(
  * The stashed drafts a composer offers — every draft the user could plausibly
  * have written from here, loaded elsewhere or not; the only exclusion is this
  * host's own loaded draft, which is already on screen. A row checked out under
- * another scope is offered with `checkedOutElsewhere` set and a tap TAKES it
- * (chunk 2) — hiding it was v1's mistake: pointers never detach on navigation,
- * so "loaded somewhere" described almost every draft and the pile shared
- * nothing.
+ * another scope is offered with `checkedOutElsewhere` set and a tap takes it.
+ * Pointers do not detach on navigation, so hiding loaded rows would leave almost
+ * nothing shareable.
  *
  * "Could have written here" is {@link isDraftInHostPile}: one root stream, then
  * own scope / same conversation / a top-level draft / a top-level host offering
@@ -188,9 +187,8 @@ export function useStashedDrafts(workspaceId: string, scope: string | undefined)
 
   const loadedId = scope ? (loaded.find((row) => row.scope === scope)?.draftId ?? null) : null
   const mountedScopes = useMountedComposerScopes(workspaceId)
-  // Where each draft is checked out, if anywhere. Being loaded somewhere no
-  // longer HIDES a row (v2: a visible row is loadable — restoring takes it
-  // over, chunk 2); it only annotates the origin so the take-over is informed.
+  // Where each draft is checked out, if anywhere. A loaded row remains
+  // available; the pointer only annotates the origin so take-over is informed.
   const pointerScopeByDraftId = useMemo(() => {
     const map = new Map<string, string>()
     for (const row of loaded) if (row.draftId) map.set(row.draftId, row.scope)
@@ -292,7 +290,7 @@ export function useStashedDrafts(workspaceId: string, scope: string | undefined)
         // surface that can reach it, so filtering here would strand it while it
         // keeps syncing. The only exclusion is this host's own loaded draft (it's
         // already on screen); a row checked out ELSEWHERE stays claimable — the
-        // restore takes it over (v2).
+        // restore takes it over.
         .filter((draft) => draft.scope === scope && draft.id !== loadedId)
         .sort((a, b) => b.clientUpdatedAt - a.clientUpdatedAt)
     )
@@ -341,8 +339,8 @@ export function useStashedDrafts(workspaceId: string, scope: string | undefined)
       const row = draftsById.get(id)
       // A row that was deleted, emptied, or that became THIS host's loaded draft
       // still goes — the latch holds membership against a moving home stream, not
-      // the row. Checked out elsewhere is no longer a drop-out (v2: the row stays
-      // offered and a tap takes it over). "Emptied" applies to borrowed rows
+      // the row. Checked-out rows stay offered for take-over. "Emptied" applies
+      // to borrowed rows
       // only; an own row carrying just context refs is legitimately body-less
       // (see `scopeExact`).
       if (!row || row.id === loadedId) continue
