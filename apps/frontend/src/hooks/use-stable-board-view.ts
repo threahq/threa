@@ -345,6 +345,7 @@ export function reconcileStableView(
 /** The conversation a merged-away card's opening message now belongs to. */
 export interface RemovedSuccessor {
   conversationId: string
+  streamId: string
   topicSummary: string | null
 }
 
@@ -662,7 +663,11 @@ export function useStableBoardView(
         successorById.set(
           postId(post),
           successor
-            ? { conversationId: successor.conversation.id, topicSummary: successor.conversation.topicSummary ?? null }
+            ? {
+                conversationId: successor.conversation.id,
+                streamId: successor.conversation.streamId,
+                topicSummary: successor.conversation.topicSummary ?? null,
+              }
             : null
         )
       }

@@ -6,6 +6,7 @@ import { useBoardSubtopicDraftIndex, useScopeDraftPreview, useStashParamDraftRow
 import type { SubtopicDraftEntry } from "@/hooks"
 import { rescopeScopeDrafts } from "@/hooks/use-draft-message"
 import { parseBoardDraftKey } from "@/lib/board/draft-keys"
+import { effectiveConversationTitle } from "@/lib/conversations/title"
 import { CollapsedComposerBar } from "@/components/composer/collapsed-composer-bar"
 import { createDraftPanelId } from "@/contexts"
 import { collectBranchThreadStreamIds } from "@/hooks/use-conversation-graph"
@@ -246,7 +247,11 @@ export function useInlineBranchComposer(params: {
           {
             conversationId: parsed.conversationId,
             threadStreamId,
-            title: branchPost?.conversation.topicSummary ?? "sub-topic",
+            title:
+              effectiveConversationTitle(
+                branchPost.conversation,
+                [...index.threadsByAnchorId.values()].find((stream) => stream.id === threadStreamId)
+              ) ?? "sub-topic",
           },
           stashTarget.draftId
         )

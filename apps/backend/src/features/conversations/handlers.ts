@@ -8,6 +8,7 @@ import { setAuditSubjects } from "../access-log"
 import {
   CONVERSATION_STATUSES,
   ConversationStatuses,
+  StreamTypes,
   MAX_CONVERSATION_TOPIC_LENGTH,
   BOARD_LENSES,
   BOARD_SCOPE_STREAM_TYPES,
@@ -422,7 +423,13 @@ export function createConversationHandlers({
       }
 
       // validateStreamAccess handles public visibility + thread root membership
-      await streamService.validateStreamAccess(conversation.streamId, workspaceId, userId)
+      const stream = await streamService.validateStreamAccess(conversation.streamId, workspaceId, userId)
+      if (stream.type === StreamTypes.SCRATCHPAD) {
+        throw new HttpError("Scratchpad conversations cannot be split", {
+          status: 400,
+          code: "SCRATCHPAD_CONVERSATION_TITLE_OWNED_BY_STREAM",
+        })
+      }
 
       const proposal = await boundaryExtractionService.proposeSplit(conversationId, workspaceId)
       res.json(proposal)

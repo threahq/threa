@@ -177,7 +177,7 @@ describe("useStreamStructuralIndex — anchor-keyed thread map", () => {
       // Card anchor — a board branch never forks off a card, so it's excluded.
       threadStream("t_card", { parentAnchorId: "event_c", parentMessageId: null }),
     ]
-    vi.spyOn(workspaceStore, "useWorkspaceStreamsRaw").mockReturnValue(streams)
+    vi.spyOn(workspaceStore, "useWorkspaceStreams").mockReturnValue(streams)
 
     const { result } = renderHook(() => useStreamStructuralIndex("ws_1"))
     const map = result.current.threadsByAnchorId

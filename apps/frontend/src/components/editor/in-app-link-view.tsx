@@ -5,6 +5,7 @@ import { useParams } from "react-router-dom"
 import { InAppLinkChip } from "@/components/in-app-link/in-app-link-chip"
 import { useInAppLinkChip } from "@/hooks/use-in-app-link-chip"
 import { useResolvedInAppLink } from "@/components/timeline/in-app-link-preview-card"
+import { useConversationTitle } from "@/hooks/use-conversation-title"
 import type { InAppLinkAttrs } from "./in-app-link-extension"
 
 /**
@@ -87,8 +88,12 @@ function ConversationChipView({
   updateAttributes: (attrs: Record<string, unknown>) => void
 }) {
   const { data } = useResolvedInAppLink(workspaceId, undefined, attrs.url, true)
-
-  const resolvedName = data?.kind === "conversation" && data.accessTier === "full" ? (data.topicSummary ?? null) : null
+  const conversation = data?.kind === "conversation" ? data : null
+  const effectiveTitle = useConversationTitle(workspaceId, {
+    streamId: conversation?.streamId ?? "",
+    topicSummary: conversation?.topicSummary ?? null,
+  })
+  const resolvedName = conversation?.accessTier === "full" ? effectiveTitle : null
 
   useEffect(() => {
     if (resolvedName && !attrs.name) {

@@ -264,6 +264,7 @@ describe("LinkPreviewService.resolveInAppLink", () => {
     expect(result).toEqual({
       kind: "conversation",
       accessTier: "full",
+      streamId: "stream_1",
       topicSummary: "Auth redesign",
       summary: "Deciding how auth flows through the router.",
       status: "resolved",
@@ -271,6 +272,40 @@ describe("LinkPreviewService.resolveInAppLink", () => {
       participantIds: ["user_a", "user_b"],
       streamName: "eng",
       streamType: "channel",
+    })
+  })
+
+  test("never returns historical plaintext streamName for an E2E conversation link", async () => {
+    spyOn(LinkPreviewRepository, "findById").mockResolvedValue(
+      makePreview({ contentType: "conversation_link", targetStreamId: null, targetConversationId: "conv_1" })
+    )
+    spyOn(ConversationRepository, "findById").mockResolvedValue(makeConversation())
+    const service = makeService(
+      {
+        tryAccess: async () =>
+          makeStream({
+            type: "scratchpad",
+            e2eEnabled: true,
+            displayName: "Historical private title",
+            slug: "historical-private-title",
+          }),
+      },
+      {}
+    )
+
+    const result = await service.resolveInAppLink(WORKSPACE_ID, VIEWER_ID, "lp_1")
+
+    expect(result).toEqual({
+      kind: "conversation",
+      accessTier: "full",
+      streamId: "stream_1",
+      topicSummary: undefined,
+      summary: "Deciding how auth flows through the router.",
+      status: "active",
+      messageCount: 3,
+      participantIds: ["user_a", "user_b"],
+      streamName: undefined,
+      streamType: "scratchpad",
     })
   })
 

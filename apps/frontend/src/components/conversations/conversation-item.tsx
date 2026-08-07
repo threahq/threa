@@ -10,6 +10,7 @@ import { RelativeTime } from "@/components/relative-time"
 import { useConversationService, usePanel, createConversationPanelId } from "@/contexts"
 import { useActors } from "@/hooks"
 import { conversationKeys } from "@/hooks/use-conversations"
+import { useConversationTitle } from "@/hooks/use-conversation-title"
 import type { AuthorType, ConversationWithStaleness, Message } from "@threa/types"
 
 interface ConversationItemProps {
@@ -29,7 +30,8 @@ export function ConversationItem({
   onMessageClick,
   className,
 }: ConversationItemProps) {
-  const { topicSummary, messageIds, lastActivityAt } = conversation
+  const { messageIds, lastActivityAt } = conversation
+  const title = useConversationTitle(workspaceId, conversation)
   const { openPanel } = usePanel()
 
   return (
@@ -51,7 +53,7 @@ export function ConversationItem({
                     <ChevronRight className="h-4 w-4 mt-0.5 flex-shrink-0 text-muted-foreground" />
                   )}
                   <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium truncate">{topicSummary || "Untitled conversation"}</p>
+                    <p className="text-sm font-medium truncate">{title || "Untitled conversation"}</p>
                     <span className="mt-1 block text-xs text-muted-foreground">
                       {messageIds.length} {messageIds.length === 1 ? "message" : "messages"}
                     </span>

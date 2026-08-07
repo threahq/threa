@@ -360,7 +360,9 @@ export const StreamRepository = {
 
   async findByIds(db: Querier, ids: string[]): Promise<Stream[]> {
     if (ids.length === 0) return []
-    const result = await db.query<StreamRow>(sql`SELECT ${sql.raw(SELECT_FIELDS)} FROM streams WHERE id = ANY(${ids})`)
+    const result = await db.query<StreamRow>(
+      sql`SELECT ${sql.raw(SELECT_FIELDS_WITH_E2E)} FROM ${sql.raw(FROM_STREAMS_WITH_E2E)} WHERE s.id = ANY(${ids})`
+    )
     return result.rows.map(mapRowToStream)
   },
 

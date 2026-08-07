@@ -639,14 +639,16 @@ describe("useStreamOrDraft scratchpad rename (top-bar editor path)", () => {
   })
 
   it("seals the new name and persists a sealed-only update (no plaintext) for an encrypted scratchpad", async () => {
-    vi.spyOn(e2eSession, "getE2eSessionState").mockReturnValue({
+    const unlockedSession = {
       status: "unlocked",
       keyId: "e2ek_alice",
       publicKey: null,
       privateKey: {} as CryptoKey,
       deviceTrusted: true,
       error: null,
-    } as never)
+    } as never
+    vi.spyOn(e2eSession, "getE2eSessionState").mockReturnValue(unlockedSession)
+    vi.spyOn(e2eSession, "useE2eSession").mockReturnValue(unlockedSession)
     vi.spyOn(streamKeyCache, "resolveCurrentStreamKey").mockResolvedValue({
       key: new Uint8Array(32),
       keyGeneration: 0,
@@ -684,7 +686,10 @@ describe("useStreamOrDraft scratchpad rename (top-bar editor path)", () => {
       wrapper: createWrapper(queryClient, { streamService: { update } }),
     })
 
-    await waitFor(() => expect(result.current.stream?.e2eEnabled).toBe(true))
+    await waitFor(() => {
+      expect(result.current.stream?.e2eEnabled).toBe(true)
+      expect(result.current.canRename).toBe(true)
+    })
 
     await act(async () => {
       await result.current.rename("Therapy notes")

@@ -1665,6 +1665,8 @@ export interface MemoLinkPreviewData {
 export interface ConversationLinkPreviewData {
   kind: "conversation"
   accessTier: InAppLinkAccessTier
+  /** Anchor stream id used for live effective-title resolution (full tier only). */
+  streamId?: string
   /** LLM-generated 2–5 word title (full tier only) */
   topicSummary?: string
   /** Rolling prose summary of the conversation (full tier only) */

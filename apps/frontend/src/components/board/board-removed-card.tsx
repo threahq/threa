@@ -2,6 +2,7 @@ import { Link } from "react-router-dom"
 import { BoardCard } from "@/components/board/board-card"
 import { usePanel, createConversationPanelId } from "@/contexts"
 import type { BoardViewPost, RemovedSuccessor } from "@/hooks/use-stable-board-view"
+import { useConversationTitle } from "@/hooks/use-conversation-title"
 
 interface BoardRemovedCardProps {
   workspaceId: string
@@ -35,6 +36,7 @@ export function BoardRemovedCard({
   emptyLabel = "No longer on your board.",
 }: BoardRemovedCardProps) {
   const { getPanelUrl } = usePanel()
+  const successorTitle = useConversationTitle(workspaceId, successor ?? { streamId: "", topicSummary: null })
 
   return (
     <div className="relative">
@@ -57,7 +59,7 @@ export function BoardRemovedCard({
                 to={getPanelUrl(createConversationPanelId(successor.conversationId))}
                 className="font-medium text-foreground underline-offset-2 hover:underline"
               >
-                {successor.topicSummary ?? "another conversation"}
+                {successorTitle ?? "another conversation"}
               </Link>
             </span>
           ) : (

@@ -203,6 +203,7 @@ describe("MessageEvent", () => {
           streamId={streamId}
           revival={{
             conversationId: "conv_a",
+            streamId: "stream_1",
             topicSummary: "Pizza",
             previousActivityAt: "2026-06-01T00:00:00.000Z",
           }}
@@ -233,6 +234,7 @@ describe("MessageEvent", () => {
           groupContinuation
           revival={{
             conversationId: "conv_a",
+            streamId: "stream_1",
             topicSummary: "Pizza",
             previousActivityAt: "2026-06-01T00:00:00.000Z",
           }}
@@ -251,7 +253,12 @@ describe("MessageEvent", () => {
           event={event}
           workspaceId={workspaceId}
           streamId={streamId}
-          revival={{ conversationId: "conv_a", topicSummary: "Pizza", previousActivityAt: undefined }}
+          revival={{
+            conversationId: "conv_a",
+            streamId: "stream_1",
+            topicSummary: "Pizza",
+            previousActivityAt: undefined,
+          }}
         />,
         { wrapper: Wrapper }
       )

@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from "react"
+import { toast } from "sonner"
 import { useParams, useSearchParams, useNavigate } from "react-router-dom"
 import {
   ListChecks,
@@ -52,10 +53,8 @@ import { StreamHeaderEncryptionAction } from "@/components/encryption/stream-enc
 import { StreamEncryptionGate } from "@/components/encryption/stream-encryption-gate"
 import { useDecryptedStreamName, useStreamNameDecrypting } from "@/hooks/use-decrypted-stream-name"
 import { Skeleton } from "@/components/ui/skeleton"
-import { useWorkspaceUserId } from "@/hooks/use-workspaces"
 import { useFeatureFlag } from "@/hooks/use-feature-flags"
 import { CallStartMenu, RejoinBar } from "@/components/call"
-import { useE2eSession } from "@/stores/e2e-session-store"
 import { ThreadHeader } from "@/components/thread"
 import { ThreadPanelSlot, SidebarToggle, StreamTitlePreview, panelTakeoverClasses } from "@/components/layout"
 import { PanelHost } from "@/components/layout/panel-host"
@@ -76,7 +75,8 @@ export function StreamPage() {
   const { workspaceId, streamId } = useParams<{ workspaceId: string; streamId: string }>()
   const [searchParams, setSearchParams] = useSearchParams()
   const navigate = useNavigate()
-  const { stream, isDraft, error, rename, archive, unarchive } = useStreamOrDraft(workspaceId!, streamId!)
+  const { stream, isDraft, error, rename, canRename, renamePending, renameError, archive, unarchive } =
+    useStreamOrDraft(workspaceId!, streamId!)
   const { isMobile } = useSidebar()
   const { panelId, isPanelOpen, closePanel, setFocusedPane } = usePanel()
   const {
@@ -219,11 +219,9 @@ export function StreamPage() {
   // but the decrypt hasn't landed) so the header shows a loader instead of
   // flashing the "unnamed" placeholder on cold load.
   const nameDecrypting = useStreamNameDecrypting(workspaceId ?? "", stream)
-  // Renaming an E2E stream seals the new name under its key, so it requires an
-  // unlocked session — the affordance is omitted while locked (the stream is in
-  // its locked/unlock state then anyway).
-  const currentUserId = useWorkspaceUserId(workspaceId ?? "")
-  const e2eUnlocked = useE2eSession(workspaceId ?? "", currentUserId ?? "").status === "unlocked"
+  useEffect(() => {
+    if (renameError) toast.error(renameError.message)
+  }, [renameError])
   // An external agent (e.g. a Pi remote bot runtime) attached to this
   // scratchpad. Drives the "External" pill state and its connection dot.
   // Called here (above the early returns below) to keep hook order stable.
@@ -293,7 +291,7 @@ export function StreamPage() {
   // a non-encrypted scratchpad can always be renamed. Gate every rename affordance
   // (header title click and menu item) on this so a locked session can't open the
   // editor only for `rename()` to reject on seal.
-  const canRenameScratchpad = !isEncryptedScratchpad || e2eUnlocked
+  const canRenameScratchpad = canRename
 
   const handleStartRename = () => {
     if (!canRenameScratchpad) return
@@ -595,6 +593,7 @@ export function StreamPage() {
         className="h-8 max-w-xs font-semibold"
         placeholder="Scratchpad name"
         autoFocus
+        disabled={renamePending}
       />
     )
   } else if (isThread && stream) {

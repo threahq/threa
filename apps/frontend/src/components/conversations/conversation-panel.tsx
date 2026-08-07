@@ -73,6 +73,7 @@ import { useStashedDrafts } from "@/hooks/use-stashed-drafts"
 import { boardReplyDraftKey, boardBranchReplyDraftKey } from "@/lib/board/draft-keys"
 import { useWorkspaceUserId } from "@/hooks/use-workspaces"
 import { useStreamName } from "@/hooks/use-stream-name"
+import { useConversationTitle } from "@/hooks/use-conversation-title"
 import { usePanel, parseConversationPanel, useSidebar, useCoordinatedPhase, type CoordinatedPhase } from "@/contexts"
 import { useStreamFromStore } from "@/stores/stream-store"
 import { consumeConversationReplyOpen, subscribeConversationReplyOpen } from "@/stores/conversation-reply-open-store"
@@ -185,6 +186,7 @@ function ConversationPanelHeader({
   onClose,
 }: ConversationPanelHeaderProps) {
   const ContextGlyph = (hostStreamType && TYPE_GLYPH[hostStreamType]) || MessageSquareText
+  const effectiveTitle = useConversationTitle(workspaceId, post?.conversation ?? { streamId: "", topicSummary: null })
   const revealed = phase === "ready" && post !== null
   return (
     <SidePanelHeader>
@@ -207,7 +209,7 @@ function ConversationPanelHeader({
             {/* The topic is the conversation's identity — show it when set, falling
                 back to the stream locator (the pre-topic behavior). */}
             <span className={cn("truncate", post.conversation.status === "resolved" && "text-muted-foreground")}>
-              {post.conversation.topicSummary ?? locator}
+              {effectiveTitle ?? locator}
             </span>
             <RelativeTime
               date={post.conversation.lastActivityAt}
@@ -227,7 +229,7 @@ function ConversationPanelHeader({
           workspaceId={workspaceId}
           conversationId={post.conversation.id}
           streamId={post.conversation.streamId}
-          topicSummary={post.conversation.topicSummary}
+          topicSummary={effectiveTitle}
           status={post.conversation.status}
           isHidden={isHidden}
           triggerClassName="shrink-0"

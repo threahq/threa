@@ -2,9 +2,9 @@ import { useCallback, useSyncExternalStore } from "react"
 import { liveQuery, type Subscription } from "dexie"
 import { StreamTypes } from "@threa/types"
 import { db, type CachedBoardPost, type CachedStream } from "@/db"
-import { useWorkspaceStreamsRaw } from "@/stores/workspace-store"
+import { useWorkspaceStreams } from "@/stores/workspace-store"
 import { streamLabel } from "@/lib/streams"
-import { stripMarkdownToInline } from "@/lib/markdown/strip"
+import { effectiveConversationTitle } from "@/lib/conversations/title"
 import type { RenderableMessage } from "@/components/message/message-item"
 import type { BranchConversationView } from "@/lib/board/branch-grouping"
 import { applySettlingAll } from "@/hooks/use-board-card-messages"
@@ -168,7 +168,7 @@ function computeStructuralIndex(streams: CachedStream[]): StreamStructuralIndex 
 }
 
 export function useStreamStructuralIndex(workspaceId: string): StreamStructuralIndex {
-  const streams = useWorkspaceStreamsRaw(workspaceId)
+  const streams = useWorkspaceStreams(workspaceId)
   return computeStructuralIndex(streams)
 }
 
@@ -289,7 +289,7 @@ export function deriveBranchConversations(params: {
       const markedMessages = settlingMessageIds.length
         ? applySettlingAll(messages, new Set(settlingMessageIds))
         : messages
-      const title = stripMarkdownToInline(childPost.conversation.topicSummary ?? "") || streamLabel(thread, "generic")
+      const title = effectiveConversationTitle(childPost.conversation, thread) || streamLabel(thread, "generic")
       const children = depth < maxDepth ? walk(childMemberIds, depth + 1, nextSeen) : []
       const overflow = depth >= maxDepth && hasDeeperBranch(childMemberIds, index, graph, nextSeen)
       out.push({
@@ -358,7 +358,7 @@ export function deriveBranchProvenance(params: {
   const parentPost = params.graph.conversationById.get(parentId)!
   const parentAnchor = params.index.streamsById.get(parentPost.conversation.streamId)
   const title =
-    stripMarkdownToInline(parentPost.conversation.topicSummary ?? "") ||
+    effectiveConversationTitle(parentPost.conversation, parentAnchor) ||
     (parentAnchor ? streamLabel(parentAnchor, "generic") : "conversation")
   return { parentConversationId: parentId, title }
 }

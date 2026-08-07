@@ -21,6 +21,8 @@ import {
   type ConversationRowAnnotation,
 } from "./model"
 import { ConversationOverlayRowProvider } from "./row-context"
+import { useWorkspaceStreams } from "@/stores/workspace-store"
+import { effectiveConversationTitle } from "@/lib/conversations/title"
 
 /**
  * Floating panel listing the conversations that currently have message rows
@@ -53,6 +55,12 @@ export function ConversationOverlayPanel({
   topBarOpen?: boolean
 }) {
   const isMobile = useIsMobile()
+  const streams = useWorkspaceStreams(workspaceId)
+  const titleFor = (conversation: ConversationWithStaleness) =>
+    effectiveConversationTitle(
+      conversation,
+      streams.find((stream) => stream.id === conversation.streamId)
+    )
   // Collapsed by default on mobile; the user's explicit choice wins once made.
   const [userCollapsed, setUserCollapsed] = useState<boolean | null>(null)
   const collapsed = userCollapsed ?? isMobile
@@ -136,7 +144,7 @@ export function ConversationOverlayPanel({
                       type="button"
                       onClick={() => onToggleFocus(conversation.id)}
                       aria-pressed={isFocused}
-                      title={conversation.topicSummary ?? undefined}
+                      title={titleFor(conversation) ?? undefined}
                       className={cn(
                         "flex min-w-0 flex-1 items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs",
                         isFocused && "font-medium"
@@ -148,7 +156,7 @@ export function ConversationOverlayPanel({
                         style={{ backgroundColor: conversationColor(colorIndex) }}
                       />
                       <span className="min-w-0 flex-1 truncate">
-                        {conversation.topicSummary || "Untitled conversation"}
+                        {titleFor(conversation) || "Untitled conversation"}
                       </span>
                       <span className="shrink-0 tabular-nums text-muted-foreground">
                         {conversation.messageIds.length}
@@ -228,6 +236,7 @@ export function ConversationOverlayRow({
   annotation,
   messageId,
   messageCreatedAt,
+  workspaceId = "",
   selectionActive = false,
   children,
 }: {
@@ -235,12 +244,19 @@ export function ConversationOverlayRow({
   annotation: ConversationRowAnnotation
   messageId: string
   messageCreatedAt: string
+  workspaceId?: string
   /** While a split selection is active the row is a selection toggle; the
    *  single-message correction swatch is hidden so it can't intercept the tap. */
   selectionActive?: boolean
   children: ReactNode
 }) {
   const { model, focusedConversationId, onReassignMessage, pendingMessageIds, observeRow } = overlay
+  const streams = useWorkspaceStreams(workspaceId)
+  const titleFor = (item: ConversationWithStaleness) =>
+    effectiveConversationTitle(
+      item,
+      streams.find((stream) => stream.id === item.streamId)
+    )
   const conversation = annotation.conversationId ? model.conversationsById.get(annotation.conversationId) : undefined
   const conversationId = conversation?.id ?? null
   const colorIndex = conversation ? (model.colorIndexById.get(conversation.id) ?? 0) : null
@@ -293,7 +309,7 @@ export function ConversationOverlayRow({
           // panel already carry the grouping.
           <span
             data-testid="conversation-block-chip"
-            title={conversation.topicSummary ?? undefined}
+            title={titleFor(conversation) ?? undefined}
             className={cn(
               "pointer-events-none absolute right-4 top-1.5 z-[5]",
               "hidden max-w-[40%] items-center gap-1.5 rounded-full border px-2 py-0.5 min-[1120px]:inline-flex",
@@ -310,7 +326,7 @@ export function ConversationOverlayRow({
               className="h-1.5 w-1.5 shrink-0 rounded-full"
               style={{ backgroundColor: conversationColor(colorIndex) }}
             />
-            <span className="truncate">{conversation.topicSummary || "Untitled conversation"}</span>
+            <span className="truncate">{titleFor(conversation) || "Untitled conversation"}</span>
           </span>
         )}
         {!selectionActive && (
@@ -359,7 +375,7 @@ export function ConversationOverlayRow({
                       className="h-2 w-2 shrink-0 rounded-full"
                       style={{ backgroundColor: conversationColor(candidateColorIndex) }}
                     />
-                    <span className="flex-1 truncate">{candidate.topicSummary || "Untitled conversation"}</span>
+                    <span className="flex-1 truncate">{titleFor(candidate) || "Untitled conversation"}</span>
                     <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
                       {candidate.messageIds.length}
                     </span>
@@ -397,6 +413,7 @@ export function ConversationPickerDrawer({
   annotation,
   messageId,
   messageCreatedAt,
+  workspaceId = "",
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
@@ -404,7 +421,14 @@ export function ConversationPickerDrawer({
   annotation: ConversationRowAnnotation
   messageId: string
   messageCreatedAt: string
+  workspaceId?: string
 }) {
+  const streams = useWorkspaceStreams(workspaceId)
+  const titleFor = (item: ConversationWithStaleness) =>
+    effectiveConversationTitle(
+      item,
+      streams.find((stream) => stream.id === item.streamId)
+    )
   const { model, onReassignMessage, pendingMessageIds } = overlay
   // Mirror the rail swatch menu: ignore picks while this message's
   // reassignment is already in flight, so rapid taps can't enqueue
@@ -442,7 +466,7 @@ export function ConversationPickerDrawer({
                   className="h-2.5 w-2.5 shrink-0 rounded-full"
                   style={{ backgroundColor: conversationColor(colorIndex) }}
                 />
-                <span className="min-w-0 flex-1 truncate">{candidate.topicSummary || "Untitled conversation"}</span>
+                <span className="min-w-0 flex-1 truncate">{titleFor(candidate) || "Untitled conversation"}</span>
                 <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
                   {candidate.messageIds.length}
                 </span>

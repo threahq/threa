@@ -20,9 +20,7 @@ import { ChannelSlugInput } from "./channel-slug-input"
 import { DescriptionSection } from "./description-section"
 import { getStreamName } from "@/lib/streams"
 import { useUpdateStream, useArchiveStream, useUnarchiveStream, useSetNotificationLevel } from "@/hooks"
-import { useWorkspaceUserId } from "@/hooks/use-workspaces"
-import { useE2eSession } from "@/stores/e2e-session-store"
-import { sealStreamRename } from "@/lib/crypto/stream-rename"
+import { useRenameStream } from "@/hooks/use-rename-stream"
 import {
   StreamTypes,
   Visibilities,
@@ -334,29 +332,17 @@ function SlugSection({ workspaceId, stream }: { workspaceId: string; stream: Str
 
 function DisplayNameSection({ workspaceId, stream }: { workspaceId: string; stream: Stream }) {
   const [name, setName] = useState(stream.displayName ?? "")
-  const updateMutation = useUpdateStream(workspaceId, stream.id)
+  const renameStream = useRenameStream(workspaceId, stream.id, stream)
   const hasChanged = name !== (stream.displayName ?? "")
-
-  // An E2E scratchpad's name is sealed-only — renaming seals the new name under
-  // the stream key and never writes plaintext (INV-E1), so it needs an unlocked
-  // session. While locked the field is read-only and points the user at unlock.
-  const isEncrypted = !!stream.e2eEnabled
-  const currentUserId = useWorkspaceUserId(workspaceId)
-  const e2eUnlocked = useE2eSession(workspaceId, currentUserId ?? "").status === "unlocked"
-  const locked = isEncrypted && !e2eUnlocked
+  const locked = !renameStream.canRename
 
   const handleSave = async () => {
     const trimmed = name.trim()
     if (!trimmed || !hasChanged || locked) return
     try {
-      const data = isEncrypted
-        ? await sealStreamRename({ workspaceId, streamId: stream.id, userId: currentUserId ?? "", name: trimmed })
-        : { displayName: trimmed }
-      updateMutation.mutate(data, {
-        onError: () => toast.error("Failed to update name"),
-      })
-    } catch {
-      toast.error("Unlock this scratchpad to rename it")
+      await renameStream.rename(trimmed)
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to update name")
     }
   }
 
@@ -372,8 +358,8 @@ function DisplayNameSection({ workspaceId, stream }: { workspaceId: string; stre
       />
       {locked && <p className="text-xs text-muted-foreground">Unlock this scratchpad to rename it.</p>}
       {hasChanged && !locked && (
-        <Button size="sm" onClick={handleSave} disabled={!name.trim() || updateMutation.isPending}>
-          {updateMutation.isPending ? "Saving..." : "Save"}
+        <Button size="sm" onClick={() => void handleSave()} disabled={!name.trim() || renameStream.isPending}>
+          {renameStream.isPending ? "Saving..." : "Save"}
         </Button>
       )}
     </div>

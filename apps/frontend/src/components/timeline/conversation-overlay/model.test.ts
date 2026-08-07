@@ -277,7 +277,12 @@ describe("annotateConversationRevivals", () => {
     expect(revivals(items, membership)).toEqual([
       null,
       null,
-      { conversationId: "conv_a", topicSummary: "Pizza", previousActivityAt: "2026-06-01T00:00:00.000Z" },
+      {
+        conversationId: "conv_a",
+        streamId: "stream_123",
+        topicSummary: "Pizza",
+        previousActivityAt: "2026-06-01T00:00:00.000Z",
+      },
     ])
   })
 
@@ -322,6 +327,7 @@ describe("annotateConversationRevivals", () => {
     expect(result[3]).toBeNull()
     expect(result[4]).toEqual({
       conversationId: "conv_a",
+      streamId: "stream_123",
       topicSummary: "Pizza",
       previousActivityAt: "2026-06-01T00:00:00.000Z",
     })

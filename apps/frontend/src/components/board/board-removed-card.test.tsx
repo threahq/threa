@@ -127,7 +127,7 @@ afterEach(() => vi.restoreAllMocks())
 
 describe("BoardRemovedCard", () => {
   it("keeps the retained card's content and links into the successor", () => {
-    renderCard({ conversationId: "conv_successor", topicSummary: "Deploy plan" })
+    renderCard({ conversationId: "conv_successor", streamId: "stream_1", topicSummary: "Deploy plan" })
 
     // The retained body still renders — the row holds its footprint.
     expect(screen.getByText("Opening body.")).toBeTruthy()
@@ -136,7 +136,11 @@ describe("BoardRemovedCard", () => {
   })
 
   it("offers no interactive affordance but the successor link", () => {
-    const { container } = renderCard({ conversationId: "conv_successor", topicSummary: "Deploy plan" })
+    const { container } = renderCard({
+      conversationId: "conv_successor",
+      streamId: "stream_1",
+      topicSummary: "Deploy plan",
+    })
 
     // The card underneath is `inert` — out of the a11y tree AND the tab order
     // (aria-hidden alone would satisfy role queries while leaving every button

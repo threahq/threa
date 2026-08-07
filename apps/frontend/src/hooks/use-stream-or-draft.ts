@@ -7,7 +7,6 @@ import { useUser } from "@/auth"
 import { type SealStreamMessageResult } from "@/lib/crypto/message-envelope"
 import { reviveStaleActorWraps } from "@/lib/crypto/stream-key-cache"
 import { sealOutgoingMessage } from "@/lib/crypto/seal-send"
-import { sealStreamRename } from "@/lib/crypto/stream-rename"
 import { useStreamBootstrap, streamKeys } from "./use-streams"
 import { workspaceKeys } from "./use-workspaces"
 import { useDraftScratchpads } from "./use-draft-scratchpads"
@@ -37,7 +36,7 @@ import type {
 } from "@threa/types"
 import { StreamTypes, Visibilities, CompanionModes } from "@threa/types"
 import { nextOptimisticSequence } from "@/lib/optimistic-sequence"
-import { mergeStreamByTitleRevision, persistStreamByTitleRevision } from "@/lib/title-merge"
+import { useRenameStream } from "./use-rename-stream"
 
 const DM_DRAFT_PREFIX = "draft_dm_"
 
@@ -165,6 +164,9 @@ export interface UseStreamOrDraftReturn {
   error: Error | null
 
   rename: (newName: string) => Promise<void>
+  canRename: boolean
+  renamePending: boolean
+  renameError: Error | null
   archive: () => Promise<void>
   unarchive?: () => Promise<void>
   sendMessage: (input: SendMessageInput) => Promise<{ navigateTo?: string; replace?: boolean }>
@@ -253,6 +255,9 @@ function useDraftStream(workspaceId: string, streamId: string, enabled: boolean)
     isDraft: true,
     error: null,
     rename,
+    canRename: true,
+    renamePending: false,
+    renameError: null,
     archive,
     sendMessage,
     currentUserId,
@@ -457,6 +462,9 @@ function useDraftDmStream(workspaceId: string, streamId: string, enabled: boolea
     isDraft: true,
     error: null,
     rename,
+    canRename: true,
+    renamePending: false,
+    renameError: null,
     archive,
     sendMessage,
     currentUserId,
@@ -485,6 +493,8 @@ function useRealStream(workspaceId: string, streamId: string, enabled: boolean):
     enabled: enabled && !idbStream,
   })
   const baseStream = idbStream ?? bootstrap?.stream
+  const renameStream = useRenameStream(workspaceId, streamId, baseStream)
+  const { rename } = renameStream
   const displayName =
     baseStream?.type === StreamTypes.DM
       ? resolveRealDmDisplayName(baseStream.id, baseStream.displayName, idbStreams, idbUsers, idbDmPeers)
@@ -509,48 +519,6 @@ function useRealStream(workspaceId: string, streamId: string, enabled: boolean):
         sealedNameEnvelope: baseStream.sealedNameEnvelope ?? null,
       }
     : undefined
-
-  const rename = useCallback(
-    async (newName: string) => {
-      // An E2E stream's name is sealed-only: we persist the tamper-evident
-      // ciphertext and NEVER the plaintext, so the server can't read it (the
-      // server scrubs `display_name` to null when a sealed name is set). Sealing
-      // needs the SSK, so it throws when the session is locked — the rename
-      // affordance is disabled in that state, and this is the backstop that
-      // keeps a rename from ever falling back to writing plaintext.
-      const updateInput = baseStream?.e2eEnabled
-        ? await sealStreamRename({ workspaceId, streamId, userId: currentUserId ?? "", name: newName })
-        : { displayName: newName }
-
-      const updatedStream = await streamService.update(workspaceId, streamId, updateInput)
-      await persistStreamByTitleRevision(updatedStream)
-
-      queryClient.setQueryData<Stream>(streamKeys.detail(workspaceId, streamId), (old) =>
-        old ? mergeStreamByTitleRevision(old, updatedStream) : updatedStream
-      )
-      queryClient.setQueryData(streamKeys.bootstrap(workspaceId, streamId), (old: unknown) => {
-        if (!old || typeof old !== "object") return old
-        const bootstrap = old as { stream?: Stream }
-        return {
-          ...bootstrap,
-          stream: bootstrap.stream ? mergeStreamByTitleRevision(bootstrap.stream, updatedStream) : updatedStream,
-        }
-      })
-
-      queryClient.setQueryData(workspaceKeys.bootstrap(workspaceId), (old: unknown) => {
-        if (!old || typeof old !== "object") return old
-        const wsBootstrap = old as { streams?: Stream[] }
-        if (!wsBootstrap.streams) return old
-        return {
-          ...wsBootstrap,
-          streams: wsBootstrap.streams.map((stream) =>
-            stream.id === streamId ? mergeStreamByTitleRevision(stream, updatedStream) : stream
-          ),
-        }
-      })
-    },
-    [streamId, workspaceId, streamService, queryClient, idbStream, baseStream?.e2eEnabled, currentUserId]
-  )
 
   const archive = useCallback(async () => {
     await streamService.archive(workspaceId, streamId)
@@ -723,6 +691,9 @@ function useRealStream(workspaceId: string, streamId: string, enabled: boolean):
     isDraft: false,
     error: stream ? null : (error ?? null),
     rename,
+    canRename: renameStream.canRename,
+    renamePending: renameStream.isPending,
+    renameError: renameStream.error,
     archive,
     unarchive,
     sendMessage,

@@ -116,6 +116,7 @@ export function buildMessageConversationMap(conversations: ConversationWithStale
 export interface ConversationRevival {
   /** Conversation to open when the chip is tapped (`conv:<id>` panel). */
   conversationId: string
+  streamId: string
   /** Topic label for the chip; null falls back to a generic label. */
   topicSummary: string | null
   /**

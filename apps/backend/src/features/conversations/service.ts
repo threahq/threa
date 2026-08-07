@@ -779,6 +779,13 @@ export class ConversationService {
         throw new HttpError("Conversation not found", { status: 404, code: "CONVERSATION_NOT_FOUND" })
       }
       if (topicSummary !== undefined) {
+        const ownerStream = await StreamRepository.findById(client, updated.streamId)
+        if (ownerStream?.type === StreamTypes.SCRATCHPAD) {
+          throw new HttpError("Rename the scratchpad instead", {
+            status: 400,
+            code: "SCRATCHPAD_TITLE_OWNED_BY_STREAM",
+          })
+        }
         updated = await ConversationRepository.updateTopicSummary(client, {
           workspaceId,
           conversationId,
@@ -1308,6 +1315,13 @@ export class ConversationService {
         throw new HttpError("Conversation is not in this stream", {
           status: 400,
           code: "CONVERSATION_NOT_IN_STREAM",
+        })
+      }
+      const ownerStream = await StreamRepository.findById(client, source.streamId)
+      if (ownerStream?.type === StreamTypes.SCRATCHPAD) {
+        throw new HttpError("Scratchpad conversations cannot be split", {
+          status: 400,
+          code: "SCRATCHPAD_CONVERSATION_TITLE_OWNED_BY_STREAM",
         })
       }
 
