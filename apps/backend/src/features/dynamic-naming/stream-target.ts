@@ -36,7 +36,10 @@ export class DynamicNamingStreamTarget implements DynamicNamingTargetAdapter {
     params: DynamicNamingTargetLockParams
   ): Promise<StreamTargetSnapshot | null> {
     if (params.targetKind !== "stream") return null
-    const stream = await StreamRepository.findByIdForUpdate(client, params.targetId)
+    // A contended title row is delayed work, not a protected/missing target.
+    // Block inside this short DB-only claim/apply phase so SKIP LOCKED cannot
+    // acknowledge and permanently lose an eligible checkpoint.
+    const stream = await StreamRepository.findByIdForUpdateBlocking(client, params.targetId)
     if (!stream || stream.workspaceId !== params.workspaceId || stream.archivedAt) return null
     if (stream.type !== StreamTypes.SCRATCHPAD && stream.type !== StreamTypes.THREAD) return null
     if (await E2eStreamsRepository.isE2eStream(client, params.workspaceId, params.targetId)) return null
