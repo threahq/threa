@@ -29,7 +29,7 @@ import { useComposerAnchor } from "./use-composer-anchor"
 import type { CachedDraft, DraftPreview, StashedDraftRowOrigin } from "@/hooks"
 import { RESTORE_REFUSAL_MESSAGE, type DraftRestoreResult } from "@/lib/drafts/restore-refusal"
 
-interface StashedDraftsPickerProps {
+export interface StashedDraftsPickerProps {
   drafts: CachedDraft[]
   /**
    * Decrypted (or plaintext) inline previews per draft id, computed by the host

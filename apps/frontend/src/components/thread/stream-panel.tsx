@@ -57,7 +57,7 @@ import {
 } from "@/components/timeline"
 import { StreamErrorBoundary } from "@/components/stream-error-boundary"
 import { Empty, EmptyHeader, EmptyMedia, EmptyTitle, EmptyDescription } from "@/components/ui/empty"
-import { FloatingComposerShell, MessageComposer, StashedDraftsPicker } from "@/components/composer"
+import { FloatingComposerShell, MessageComposer } from "@/components/composer"
 import { ComposerEncryptionNotice } from "@/components/encryption/stream-encryption-affordance"
 import { SidebarToggle } from "@/components/layout"
 import { EMPTY_DOC } from "@/lib/prosemirror-utils"
@@ -214,34 +214,19 @@ export function StreamPanel({ workspaceId, onClose }: StreamPanelProps) {
   const stashPreviews = useDecryptedDraftPreviews(workspaceId, stashPreviewInputs)
   const stashOrigins = useStashedDraftOrigins(workspaceId, stash.originByDraftId)
 
-  const stashedDraftsTrigger = stashScope ? (
-    <StashedDraftsPicker
-      drafts={stash.drafts}
-      previewById={stashPreviews}
-      originById={stashOrigins}
-      canStashCurrent={composer.canSend}
-      onStashCurrent={stash.handleStashDraft}
-      onRestore={stash.handleRestoreStashed}
-      onDelete={stash.handleDeleteStashed}
-      onOpenChange={stash.setPileOpen}
-      controlsDisabled={composer.isSending}
-    />
-  ) : undefined
-
-  const stashedDraftsTriggerFab = stashScope ? (
-    <StashedDraftsPicker
-      drafts={stash.drafts}
-      previewById={stashPreviews}
-      originById={stashOrigins}
-      canStashCurrent={composer.canSend}
-      onStashCurrent={stash.handleStashDraft}
-      onRestore={stash.handleRestoreStashed}
-      onDelete={stash.handleDeleteStashed}
-      onOpenChange={stash.setPileOpen}
-      controlsDisabled={composer.isSending}
-      size="fab"
-    />
-  ) : undefined
+  const stashedDrafts = stashScope
+    ? {
+        drafts: stash.drafts,
+        previewById: stashPreviews,
+        originById: stashOrigins,
+        canStashCurrent: composer.canSend,
+        onStashCurrent: stash.handleStashDraft,
+        onRestore: stash.handleRestoreStashed,
+        onDelete: stash.handleDeleteStashed,
+        onOpenChange: stash.setPileOpen,
+        controlsDisabled: composer.isSending,
+      }
+    : undefined
 
   // Reply composer placeholder: surface an E2E draft's decrypt state so the
   // briefly-empty editor doesn't read as "no draft", and a failed decrypt says
@@ -620,8 +605,7 @@ export function StreamPanel({ workspaceId, onClose }: StreamPanelProps) {
                     autoFocus
                     streamContext={draftStreamContext}
                     onStashDraft={stash.handleStashDraft}
-                    stashedDraftsTrigger={stashedDraftsTrigger}
-                    stashedDraftsTriggerFab={stashedDraftsTriggerFab}
+                    stashedDrafts={stashedDrafts}
                   />
                 </div>,
                 draftPortalTargetRef.current
@@ -691,8 +675,7 @@ export function StreamPanel({ workspaceId, onClose }: StreamPanelProps) {
                   onExpandClick={handleDraftExpand}
                   streamContext={draftStreamContext}
                   onStashDraft={stash.handleStashDraft}
-                  stashedDraftsTrigger={stashedDraftsTrigger}
-                  stashedDraftsTriggerFab={stashedDraftsTriggerFab}
+                  stashedDrafts={stashedDrafts}
                 />
               )}
             </FloatingComposerShell>

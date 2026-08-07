@@ -5,7 +5,6 @@ import { render, screen, fireEvent, act, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { forwardRef, useEffect, useImperativeHandle, useState, type ForwardedRef } from "react"
 import { MessageComposer } from "./message-composer"
-import { StashedDraftsPicker } from "./stashed-drafts-picker"
 import type { CachedDraft } from "@/hooks"
 import type { PendingAttachment } from "@/hooks/use-attachments"
 import type { JSONContent } from "@threa/types"
@@ -636,15 +635,13 @@ describe("MessageComposer", () => {
           <MessageComposer
             {...defaultProps}
             onStashDraft={onStashDraft}
-            stashedDraftsTrigger={
-              <StashedDraftsPicker
-                drafts={[draft]}
-                canStashCurrent={false}
-                onStashCurrent={vi.fn()}
-                onRestore={onRestore}
-                onDelete={vi.fn()}
-              />
-            }
+            stashedDrafts={{
+              drafts: [draft],
+              canStashCurrent: false,
+              onStashCurrent: vi.fn(),
+              onRestore,
+              onDelete: vi.fn(),
+            }}
             {...props}
           />
         </MemoryRouter>

@@ -61,7 +61,7 @@ const EditorStub = (props: MessageComposerProps) => {
     <div
       data-testid="editor-stub"
       data-expanded={String(!!props.expanded)}
-      data-has-stash={String(!!props.stashedDraftsTrigger && !!props.stashedDraftsTriggerFab && !!props.onStashDraft)}
+      data-has-stash={String(!!props.stashedDrafts && !!props.onStashDraft)}
       data-has-schedule={String(!!props.scheduledMessagesTrigger && !!props.scheduledMessagesTriggerFab)}
     >
       {props.placeholder}
@@ -380,10 +380,7 @@ describe("InlineComposerForm restore-on-mount", () => {
 
     await waitFor(() => expect(editorSpy).toHaveBeenCalled())
     const props = editorSpy.mock.calls.at(-1)![0] as MessageComposerProps
-    for (const trigger of [props.stashedDraftsTrigger, props.stashedDraftsTriggerFab]) {
-      const pickerProps = (trigger as { props: { drafts: { id: string }[] } }).props
-      expect(pickerProps.drafts.map((draft) => draft.id)).toEqual(["draft_own", "draft_foreign"])
-    }
+    expect(props.stashedDrafts?.drafts.map((draft) => draft.id)).toEqual(["draft_own", "draft_foreign"])
   })
 
   it("does nothing without a restore id", async () => {

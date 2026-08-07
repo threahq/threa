@@ -9,7 +9,6 @@ import {
   OverlayComposerShell,
   ConversationReplyStrip,
   ScheduledMessagesPicker,
-  StashedDraftsPicker,
   useFloatingComposerAnchor,
   useFloatingComposerHeight,
   type ComposerControlHandle,
@@ -658,8 +657,7 @@ export function InlineComposerForm({
     scopeId: draftKey,
     streamContext,
     onStashDraft: stash.handleStashDraft,
-    stashedDraftsTrigger: <StashedDraftsPicker {...stashPickerProps} />,
-    stashedDraftsTriggerFab: <StashedDraftsPicker {...stashPickerProps} size="fab" />,
+    stashedDrafts: stashPickerProps,
     scheduledMessagesTrigger: schedulePickerProps ? <ScheduledMessagesPicker {...schedulePickerProps} /> : undefined,
     scheduledMessagesTriggerFab: schedulePickerProps ? (
       <ScheduledMessagesPicker {...schedulePickerProps} size="fab" />
