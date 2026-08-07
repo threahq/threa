@@ -140,7 +140,12 @@ describe("E2E sealed stream name", () => {
         streamId: unnamedId,
         workspaceId: wsId,
       })
+      await client.query("UPDATE streams SET display_name = 'Leaky plaintext copy' WHERE id = $1", [sealedId])
 
+      await client.query("DROP TRIGGER IF EXISTS preserve_legacy_stream_title_intent_trigger ON streams")
+      await client.query("DROP FUNCTION IF EXISTS preserve_legacy_stream_title_intent()")
+      await client.query("DROP TRIGGER IF EXISTS preserve_legacy_conversation_title_intent_trigger ON conversations")
+      await client.query("DROP FUNCTION IF EXISTS preserve_legacy_conversation_title_intent()")
       await client.query(
         "ALTER TABLE streams DROP COLUMN display_name_source, DROP COLUMN display_name_revision, DROP COLUMN display_name_updated_by_user_id"
       )
@@ -149,10 +154,13 @@ describe("E2E sealed stream name", () => {
       )
       await client.query(await Bun.file(MIGRATION_PATH).text())
 
-      const streamRows = await client.query<{ id: string; display_name_source: string | null }>(
-        "SELECT id, display_name_source FROM streams WHERE id = ANY($1)",
-        [[plaintextId, sealedId, unnamedId]]
-      )
+      const streamRows = await client.query<{
+        id: string
+        display_name: string | null
+        display_name_source: string | null
+      }>("SELECT id, display_name, display_name_source FROM streams WHERE id = ANY($1)", [
+        [plaintextId, sealedId, unnamedId],
+      ])
       const streamSources = Object.fromEntries(streamRows.rows.map((row) => [row.id, row.display_name_source]))
       const conversationRows = await client.query<{ id: string; topic_summary_source: string | null }>(
         "SELECT id, topic_summary_source FROM conversations WHERE id = ANY($1)",
@@ -162,7 +170,37 @@ describe("E2E sealed stream name", () => {
         conversationRows.rows.map((row) => [row.id, row.topic_summary_source])
       )
       expect(streamSources).toEqual({ [plaintextId]: "legacy", [sealedId]: "legacy", [unnamedId]: null })
+      expect(streamRows.rows.find((row) => row.id === sealedId)?.display_name).toBeNull()
       expect(conversationSources).toEqual({ [titledConversationId]: "legacy", [unnamedConversationId]: null })
+
+      // A pre-migration replica updates only the old title column. The rollout
+      // trigger must preserve that human intent over a generated title.
+      await client.query(
+        "UPDATE streams SET display_name = 'Generated', display_name_source = 'generated', display_name_revision = 1 WHERE id = $1",
+        [plaintextId]
+      )
+      await client.query("UPDATE streams SET display_name = 'Human old-replica edit' WHERE id = $1", [plaintextId])
+      await client.query(
+        "UPDATE conversations SET topic_summary = 'Generated', topic_summary_source = 'generated', topic_summary_revision = 1 WHERE id = $1",
+        [titledConversationId]
+      )
+      await client.query("UPDATE conversations SET topic_summary = 'Human old-replica topic' WHERE id = $1", [
+        titledConversationId,
+      ])
+      expect(
+        (
+          await client.query("SELECT display_name_source, display_name_revision FROM streams WHERE id = $1", [
+            plaintextId,
+          ])
+        ).rows[0]
+      ).toEqual({ display_name_source: "explicit", display_name_revision: 2 })
+      expect(
+        (
+          await client.query("SELECT topic_summary_source, topic_summary_revision FROM conversations WHERE id = $1", [
+            titledConversationId,
+          ])
+        ).rows[0]
+      ).toEqual({ topic_summary_source: "explicit", topic_summary_revision: 2 })
     } finally {
       await client.query("ROLLBACK")
       client.release()
@@ -280,6 +318,8 @@ describe("E2E sealed stream name", () => {
       envelope: ENVELOPE,
     })
     expect((await StreamRepository.findByIdForWorkspace(pool, sId, wsId))?.displayNameSource).toBe("legacy")
+    expect((await StreamRepository.findByIdForUpdate(pool, sId))?.displayNameSource).toBe("legacy")
+    expect((await StreamRepository.findByIdForUpdateBlocking(pool, sId))?.displayNameSource).toBe("legacy")
   })
 
   test("rejects non-canonical base64 instead of storing a corrupt blob", async () => {

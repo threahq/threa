@@ -342,14 +342,18 @@ export const StreamRepository = {
    */
   async findByIdForUpdate(db: Querier, id: string): Promise<Stream | null> {
     const result = await db.query<StreamRow>(
-      sql`SELECT ${sql.raw(SELECT_FIELDS)} FROM streams WHERE id = ${id} FOR UPDATE SKIP LOCKED`
+      sql`SELECT ${sql.raw(SELECT_FIELDS)},
+        (SELECT e.name_ciphertext FROM e2e_streams e WHERE e.stream_id = streams.id AND e.workspace_id = streams.workspace_id) AS e2e_name_ciphertext
+        FROM streams WHERE id = ${id} FOR UPDATE SKIP LOCKED`
     )
     return result.rows[0] ? mapRowToStream(result.rows[0]) : null
   },
 
   async findByIdForUpdateBlocking(db: Querier, id: string): Promise<Stream | null> {
     const result = await db.query<StreamRow>(
-      sql`SELECT ${sql.raw(SELECT_FIELDS)} FROM streams WHERE id = ${id} FOR UPDATE`
+      sql`SELECT ${sql.raw(SELECT_FIELDS)},
+        (SELECT e.name_ciphertext FROM e2e_streams e WHERE e.stream_id = streams.id AND e.workspace_id = streams.workspace_id) AS e2e_name_ciphertext
+        FROM streams WHERE id = ${id} FOR UPDATE`
     )
     return result.rows[0] ? mapRowToStream(result.rows[0]) : null
   },
