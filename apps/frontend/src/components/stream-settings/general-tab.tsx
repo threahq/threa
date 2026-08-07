@@ -364,8 +364,9 @@ function DisplayNameSection({ workspaceId, stream }: { workspaceId: string; stre
       <Input
         value={name}
         onChange={(e) => {
-          setName(e.target.value)
-          setNameDirty(true)
+          const nextName = e.target.value
+          setName(nextName)
+          setNameDirty(nextName !== (stream.displayName ?? ""))
         }}
         placeholder="Scratchpad name"
         maxLength={100}
