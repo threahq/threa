@@ -6,6 +6,7 @@ import { JobQueues, type QueueManager } from "../../lib/queue"
 import { E2eStreamsRepository } from "../e2e-streams"
 import { StreamRepository } from "../streams"
 import { DYNAMIC_NAMING_QUIET_MS } from "./config"
+import { DynamicNamingStateRepository } from "./state-repository"
 import type { DynamicNamingJobScheduler, DynamicNamingTargetKind } from "./types"
 
 export class QueueDynamicNamingScheduler implements DynamicNamingJobScheduler {
@@ -39,6 +40,8 @@ export class DynamicNamingOutboxHandler extends DebouncedOutboxHandler {
     if (await E2eStreamsRepository.isE2eStream(this.db, payload.workspaceId, payload.streamId)) return
     const source = stream.displayNameSource ?? (stream.displayName ? TitleSources.LEGACY : null)
     if (source !== null && source !== TitleSources.GENERATED) return
+    const state = await DynamicNamingStateRepository.find(this.db, payload.workspaceId, "stream", payload.streamId)
+    if (state?.completedAt && state.structureVersion <= state.lastEvaluatedStructureVersion) return
 
     await this.scheduler.schedule(
       { workspaceId: payload.workspaceId, targetKind: "stream", targetId: payload.streamId },

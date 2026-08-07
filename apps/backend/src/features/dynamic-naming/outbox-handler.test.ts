@@ -5,6 +5,7 @@ import { StreamRepository } from "../streams"
 import type { OutboxEvent } from "../../lib/outbox"
 import { DYNAMIC_NAMING_QUIET_MS } from "./config"
 import { DynamicNamingOutboxHandler } from "./outbox-handler"
+import { DynamicNamingStateRepository } from "./state-repository"
 
 class TestHandler extends DynamicNamingOutboxHandler {
   process(event: OutboxEvent) {
@@ -45,6 +46,7 @@ describe("dynamic naming outbox handler", () => {
     schedule.mockClear()
     spyOn(StreamRepository, "findById").mockResolvedValue(stream as never)
     spyOn(E2eStreamsRepository, "isE2eStream").mockResolvedValue(false)
+    spyOn(DynamicNamingStateRepository, "find").mockResolvedValue(null)
   })
 
   afterEach(() => {
@@ -69,6 +71,17 @@ describe("dynamic naming outbox handler", () => {
     })
     await handler.process(event)
     ;(E2eStreamsRepository.isE2eStream as ReturnType<typeof mock>).mockResolvedValueOnce(true)
+    await handler.process(event)
+    expect(schedule).not.toHaveBeenCalled()
+  })
+
+  test("does not enqueue ordinary messages after the lifecycle settles", async () => {
+    const handler = new TestHandler({} as never, { schedule })
+    ;(DynamicNamingStateRepository.find as ReturnType<typeof mock>).mockResolvedValueOnce({
+      completedAt: new Date(),
+      structureVersion: 0,
+      lastEvaluatedStructureVersion: 0,
+    })
     await handler.process(event)
     expect(schedule).not.toHaveBeenCalled()
   })
