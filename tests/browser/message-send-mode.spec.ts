@@ -32,13 +32,13 @@ test.describe("Message Send Mode", () => {
     const dialog = page.getByRole("dialog")
 
     // Settings now use sidebar buttons on desktop but older flows used tabs.
-    const keyboardSidebarButton = dialog.getByRole("button", { name: /keyboard/i })
-    if (await keyboardSidebarButton.isVisible().catch(() => false)) {
-      await keyboardSidebarButton.click()
+    const composerSidebarButton = dialog.getByRole("button", { name: /composer/i })
+    if (await composerSidebarButton.isVisible().catch(() => false)) {
+      await composerSidebarButton.click()
     } else {
-      const keyboardTab = dialog.getByRole("tab", { name: /keyboard/i })
-      if (await keyboardTab.isVisible().catch(() => false)) {
-        await keyboardTab.click()
+      const composerTab = dialog.getByRole("tab", { name: /composer/i })
+      if (await composerTab.isVisible().catch(() => false)) {
+        await composerTab.click()
       }
     }
 
