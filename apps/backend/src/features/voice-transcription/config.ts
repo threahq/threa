@@ -67,9 +67,26 @@ export const voiceConfig = {
 
 // Voice-transcript polish config (INV-44: colocated with the feature, shared
 // by production and evals).
-export const POLISH_MODEL = "openrouter:openai/gpt-5.6-luna"
-export const POLISH_TIMEOUT_MS = 4500
-export const POLISH_MAX_TOKENS = 2048
+export interface VoicePolishConfig {
+  model: string
+  liveTimeoutMs: number
+  finalTimeoutMs: number
+  maxTokens: number
+  temperature: number
+}
+
+// Deadlines calibrated by the voice-polish eval matrix. Live passes are
+// interim-only (raw STT stays visible; a slow pass is discarded non-destructively),
+// so the live deadline is a freshness knob, not a correctness gate. The final
+// deadline bounds the user-visible wait after mic stop; it sits at the eval cap
+// because measured long-take latency is heavy-tailed.
+export const voicePolishConfig: VoicePolishConfig = {
+  model: "openrouter:openai/gpt-5.6-luna",
+  liveTimeoutMs: 6500,
+  finalTimeoutMs: 8000,
+  maxTokens: 2048,
+  temperature: 0.2,
+}
 
 // The example vocabulary in both prompts is English; without this note,
 // non-English transcripts drop fillers inconsistently and the spoken-shortcode
@@ -81,7 +98,7 @@ export const POLISH_LANGUAGE_NOTE = `Language: detect the language of the raw tr
 // as AI-isms the speaker almost never dictates.
 export const POLISH_SHARED_HARD_RULES = `Hard rules:
 - NEVER use em dashes ("—") or en dashes ("–"). Use a colon, comma, or period instead. When a clause expands or explains another, prefer a colon. Example: "here's what I'm thinking: pie for dinner" — NOT "here's what I'm thinking—pie for dinner".
-- Preserve the speaker's words and intent. Do not paraphrase, summarize, translate, or add information that wasn't dictated.
+- Preserve every dictated detail and the speaker's intent. Do not paraphrase, summarize, translate, collapse repeated-looking sections, or add information that wasn't dictated. Long takes must remain complete: keep every distinct numbered label, item, owner, date, dependency, and action even when adjacent sentences follow the same pattern.
 - Inline backticks only for words the speaker explicitly said as code (variable names, function names, file paths).
 - Do not invent headings, code blocks, links, or block quotes.
 - The user message may include "Existing draft text" sections: text already sitting in the user's composer around where the dictation will be inserted. Treat it as READ-ONLY context. Use it to spell names and terms the way the draft spells them, to resolve ambiguous words the speaker references, and to make the polished text flow with its surroundings (e.g. start lowercase with no leading period when the dictation continues a sentence from the before-text). NEVER include, repeat, continue, or rewrite the draft text in your output — output only the polished transcript.
@@ -100,7 +117,7 @@ Apply ONLY minor fixes:
 - Comma splices and restored apostrophes ("dont" -> "don't", "im" -> "I'm").
 - Obvious homophone slips ("there"/"their", "your"/"you're", "to"/"too") only when context makes it unambiguous.
 
-Do NOT remove filler words like "uh", "um", "yeah", "okay so" — keep them. Do NOT apply self-corrections (if the speaker says "X, no sorry Y", keep both X and Y exactly as dictated). Do NOT format lists or expand emoji shortcodes. Stay conservative.
+Do NOT remove filler words like "uh", "um", "yeah", "okay so" — keep them. Do NOT apply self-corrections: if the speaker says "X, no sorry Y" / "X, wait, Y" / "X, I mean Y", keep every word exactly as dictated, including the correction phrase itself. Do NOT format lists or expand emoji shortcodes. Never drop, reorder, or merge words. Stay conservative: when in doubt, change nothing.
 
 ${POLISH_SHARED_HARD_RULES}`
 
@@ -116,7 +133,7 @@ Apply OPINIONATED corrections to make the message land cleanly:
 - Drop false starts and abandoned restarts. When the speaker trails off and restarts a thought without a correction phrase ("I am... I think this is good" / "we could maybe... let's just ship it"), keep only the completed thought. Drop stutters and immediate word repetitions ("I I think" -> "I think"). When the speaker says "let me start over" / "scratch all that" or apologizes about the dictation itself ("sorry, I was rambling"), drop the meta-commentary and everything it abandons, keeping only the restarted take.
 - Fix transcription artifacts conservatively: capitalize sentence starts, restore apostrophes, and pick obvious homophones ("there"/"their", "your"/"you're", "to"/"too") only when context makes them unambiguous.
 - Punctuate sparingly. Add a period (or ? / !) only where the speaker clearly ended a thought. Do NOT pepper a sentence with commas around every short clause, conjunction, transition word, or affirmation. When in doubt, leave the comma out: one sentence with two commas reads cleaner than the same sentence with five.
-- Format lists ONLY when the speaker clearly enumerates discrete items ("first X, second Y, third Z" or "one X, two Y, three Z"). Use a markdown bullet list. Do not turn flowing prose into bullets.
+- Format lists ONLY when the speaker clearly enumerates discrete items. Explicit numbered narration ("number one X, number two Y") becomes a Markdown ordered list. Other clear enumeration ("first X, second Y" or "one X, two Y") becomes a Markdown bullet list. The Markdown marker replaces the spoken enumeration marker: output "- X", not "- First X", and "1. X", not "1. Number one X". Do not turn flowing prose into a list.
 - Convert spoken emoji shortcodes to markdown shortcodes: "colon blush colon" -> ":blush:", "colon thinking face colon" -> ":thinking_face:". Only when the speaker clearly framed it as a shortcode (literal "colon X colon"). Do not invent emoji that weren't dictated.
 - Convert spoken mentions and slash commands when the speaker frames them explicitly: "at sign john" / "at-mention john" -> "@john", "slash command voice memo" -> "/voice-memo". Skip if the framing is ambiguous.
 

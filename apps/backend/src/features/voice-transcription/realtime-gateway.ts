@@ -57,6 +57,7 @@ interface RelayState {
   draftBefore?: string
   draftAfter?: string
   revision: number
+  previousAcceptedMarkdown?: string
   scheduler: PolishScheduler
   finalOutcome: PolishOutcome["status"]
 }
@@ -93,6 +94,8 @@ export function registerVoiceGateway(io: Server, deps: Dependencies) {
         draftBefore: current.draftBefore,
         draftAfter: current.draftAfter,
         steeringTerms: current.steeringTerms,
+        previousAcceptedMarkdown: current.previousAcceptedMarkdown,
+        deadline: current.phase === "formatting" ? "final" : "live",
         signal,
       })
       return typeof outcome === "string"
@@ -109,6 +112,7 @@ export function registerVoiceGateway(io: Server, deps: Dependencies) {
     ) {
       if (state !== current || current.phase === "closing" || current.phase === "closed") return
       if (revision !== current.revision || outcome.status !== "success") return
+      current.previousAcceptedMarkdown = outcome.markdown
       socket.emit("voice:transcript:polished", {
         voiceSessionId: current.voiceSessionId,
         chunkId: current.sessionChunkId,

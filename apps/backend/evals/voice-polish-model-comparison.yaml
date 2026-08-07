@@ -1,0 +1,26 @@
+suites:
+  - name: voice-polish
+    title: "GPT-5.6 Luna (production)"
+    components:
+      voice-polish:
+        model: openrouter:openai/gpt-5.6-luna
+        temperature: 0.2
+  - name: voice-polish
+    title: "GPT-5.6 Luna (without previous accepted)"
+    components:
+      voice-polish:
+        model: openrouter:openai/gpt-5.6-luna
+        temperature: 0.2
+        prompt: without-previous
+  - name: voice-polish
+    title: "GPT-5.4 Mini"
+    components:
+      voice-polish:
+        model: openrouter:openai/gpt-5.4-mini
+        temperature: 0.2
+  - name: voice-polish
+    title: "Gemini 3.1 Flash Lite"
+    components:
+      voice-polish:
+        model: openrouter:google/gemini-3.1-flash-lite
+        temperature: 0.2

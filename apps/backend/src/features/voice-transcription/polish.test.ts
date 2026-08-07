@@ -1,6 +1,6 @@
 import { describe, expect, it, mock } from "bun:test"
 import { buildPolishUserMessage, createPolishTranscript, scrubDashes } from "./polish"
-import { POLISH_MODEL } from "./config"
+import { voicePolishConfig } from "./config"
 import type { AI } from "@threa/agent-runtime"
 
 type GenerateTextArgs = Parameters<AI["generateText"]>[0]
@@ -35,7 +35,7 @@ describe("createPolishTranscript", () => {
       },
     })
     const call = generateText.mock.calls[0][0]
-    expect(call.model).toBe(POLISH_MODEL)
+    expect(call.model).toBe(voicePolishConfig.model)
     expect(call.telemetry?.functionId).toBe("voice-transcript-polish")
     expect(call.telemetry?.metadata).toMatchObject({ level: "opinionated" })
     expect(call.context).toMatchObject({ workspaceId: "ws_1", userId: "user_1", origin: "user" })
