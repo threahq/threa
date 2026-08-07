@@ -149,7 +149,7 @@ describe("registerVoiceGateway voice:start", () => {
 
     await socket.trigger("voice:start", START_PAYLOAD, cb)
 
-    expect(cb).toHaveBeenCalledWith({ ok: true, protocolVersion: 2 })
+    expect(cb).toHaveBeenCalledWith({ ok: true, protocolVersion: 3 })
     expect(transcription.open).toHaveBeenCalledWith({
       model: "elevenlabs:scribe-v2-realtime",
       language: undefined,
@@ -280,7 +280,7 @@ describe("registerVoiceGateway voice:start", () => {
 
     await socket.trigger("voice:start", {}, cb)
 
-    expect(cb).toHaveBeenCalledWith({ ok: false, error: "workspaceId and voiceSessionId required", protocolVersion: 2 })
+    expect(cb).toHaveBeenCalledWith({ ok: false, error: "workspaceId and voiceSessionId required", protocolVersion: 3 })
     expect(transcription.open).not.toHaveBeenCalled()
   })
 
@@ -295,7 +295,7 @@ describe("registerVoiceGateway voice:start", () => {
     const cb = mock(() => {})
     await socket.trigger("voice:start", START_PAYLOAD, cb)
 
-    expect(cb).toHaveBeenCalledWith({ ok: false, error: "Session already started", protocolVersion: 2 })
+    expect(cb).toHaveBeenCalledWith({ ok: false, error: "Session already started", protocolVersion: 3 })
   })
 
   it("tears down the upstream when the socket disconnects mid-start", async () => {
@@ -320,7 +320,7 @@ describe("registerVoiceGateway voice:start", () => {
       sessionId: "voicesess_1",
       totalAudioMs: 0,
     })
-    expect(cb).toHaveBeenCalledWith({ ok: false, error: "Session ended before it started", protocolVersion: 2 })
+    expect(cb).toHaveBeenCalledWith({ ok: false, error: "Session ended before it started", protocolVersion: 3 })
   })
 
   it("aborts the resolved session when opening the upstream fails", async () => {
@@ -339,7 +339,7 @@ describe("registerVoiceGateway voice:start", () => {
       sessionId: "voicesess_1",
       totalAudioMs: 0,
     })
-    expect(cb).toHaveBeenCalledWith({ ok: false, error: "Failed to start voice session", protocolVersion: 2 })
+    expect(cb).toHaveBeenCalledWith({ ok: false, error: "Failed to start voice session", protocolVersion: 3 })
   })
 })
 

@@ -1,6 +1,6 @@
 import { act, renderHook, waitFor } from "@testing-library/react"
 import { beforeEach, describe, it, expect, vi } from "vitest"
-import type { VoiceStartAck, VoiceTranscriptDelta } from "@threa/types"
+import type { JSONContent, VoiceStartAck, VoiceTranscriptDelta } from "@threa/types"
 import {
   friendlyTranscriptionError,
   shouldWarnNoAudio,
@@ -274,16 +274,104 @@ describe("useVoiceDictation lifecycle", () => {
     expect(harness.sockets).toHaveLength(0)
   })
 
+  it("canonically inserts send-as-is interim recovery synchronously before the composer snapshot", async () => {
+    const order: string[] = []
+    const inserted = vi.fn(({ contentJson }: { contentJson: JSONContent }) => {
+      order.push("insert")
+      expect(contentJson).toEqual({
+        type: "doc",
+        content: [{ type: "paragraph", content: [{ type: "text", marks: [{ type: "bold" }], text: "recovered" }] }],
+      })
+    })
+    const harness = hookHarness([{ ok: true, protocolVersion: 3 }], { onPolishedChunkInserted: inserted })
+    act(() => harness.result.current.start())
+    await waitFor(() => expect(harness.result.current.state).toBe("recording"))
+    act(() =>
+      harness.sockets[0].fire("voice:transcript:delta", {
+        voiceSessionId: "voicesess_1",
+        revision: 1,
+        text: "**recovered**",
+        isFinal: false,
+      })
+    )
+    act(() => {
+      harness.result.current.prepareSendAsIs()
+      order.push("snapshot")
+    })
+
+    expect(order).toEqual(["insert", "snapshot"])
+    expect(inserted).toHaveBeenCalledTimes(1)
+    expect(harness.committed).not.toHaveBeenCalled()
+  })
+
+  it("normalizes v2 Markdown and preserves exact v3 raw and polished JSON payloads", async () => {
+    let current: JSONContent | null = null
+    const inserted = vi.fn(({ contentJson }: { contentJson: JSONContent }) => {
+      current = contentJson
+    })
+    const swapped = vi.fn(({ contentJson }: { contentJson: JSONContent }) => {
+      current = contentJson
+      return true
+    })
+    const harness = hookHarness([{ ok: true, protocolVersion: 3 }], {
+      onPolishedChunkInserted: inserted,
+      onGetChunkContent: () => current,
+      onChunkSwap: swapped,
+    })
+    act(() => harness.result.current.start())
+    await waitFor(() => expect(harness.result.current.state).toBe("recording"))
+    act(() => {
+      harness.sockets[0].fire("voice:transcript:delta", {
+        voiceSessionId: "voicesess_1",
+        revision: 1,
+        text: "**legacy final**",
+        isFinal: true,
+        chunkId: "chunk_1",
+      })
+    })
+    expect(current).toEqual({
+      type: "doc",
+      content: [{ type: "paragraph", content: [{ type: "text", marks: [{ type: "bold" }], text: "legacy final" }] }],
+    })
+
+    const rawContentJson: JSONContent = {
+      type: "doc",
+      content: [{ type: "paragraph", content: [{ type: "text", marks: [{ type: "italic" }], text: "raw exact" }] }],
+    }
+    const polishedContentJson: JSONContent = {
+      type: "doc",
+      content: [{ type: "paragraph", content: [{ type: "text", marks: [{ type: "code" }], text: "polished exact" }] }],
+    }
+    act(() => {
+      harness.sockets[0].fire("voice:transcript:polished", {
+        voiceSessionId: "voicesess_1",
+        revision: 1,
+        chunkId: "chunk_1",
+        authoritative: true,
+        raw: "ignored raw wire text",
+        polished: "ignored polished wire text",
+        rawContentJson,
+        polishedContentJson,
+      })
+    })
+    expect(swapped).toHaveBeenLastCalledWith({ chunkId: "chunk_1", contentJson: polishedContentJson })
+    act(() => harness.result.current.setShowOriginal(true))
+    expect(swapped).toHaveBeenLastCalledWith({ chunkId: "chunk_1", contentJson: rawContentJson })
+  })
+
   it("locks stale polished comparison state when authoritative formatting fails or the take aborts", async () => {
-    let chunkText = "raw tail"
+    let chunkContent: JSONContent = {
+      type: "doc",
+      content: [{ type: "paragraph", content: [{ type: "text", text: "raw tail" }] }],
+    }
     const lockAll = vi.fn()
     const harness = hookHarness([{ ok: true, protocolVersion: 2 }], {
-      onPolishedChunkInserted: ({ text }) => {
-        chunkText = text
+      onPolishedChunkInserted: ({ contentJson }) => {
+        chunkContent = contentJson
       },
-      onGetChunkText: () => chunkText,
-      onChunkSwap: ({ newText }) => {
-        chunkText = newText
+      onGetChunkContent: () => chunkContent,
+      onChunkSwap: ({ contentJson }) => {
+        chunkContent = contentJson
         return true
       },
       onLockAllChunks: lockAll,

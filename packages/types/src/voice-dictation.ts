@@ -1,4 +1,6 @@
-export const VOICE_PROTOCOL_VERSION = 2 as const
+import type { JSONContent } from "./prosemirror"
+
+export const VOICE_PROTOCOL_VERSION = 3 as const
 
 export type VoiceTerminationMode = "format" | "send_as_is" | "abort"
 export type VoiceRelayPhase = "live" | "formatting" | "closing" | "closed"
@@ -23,6 +25,7 @@ export interface VoiceTranscriptDelta {
   text: string
   isFinal: boolean
   chunkId?: string
+  contentJson?: JSONContent
 }
 
 export interface VoiceTranscriptPolished {
@@ -32,6 +35,8 @@ export interface VoiceTranscriptPolished {
   authoritative: boolean
   raw: string
   polished: string
+  rawContentJson?: JSONContent
+  polishedContentJson?: JSONContent
 }
 
 export interface VoiceStoppedPayload {

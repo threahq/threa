@@ -2,6 +2,7 @@ import type { Server } from "socket.io"
 import { ulid } from "ulid"
 import { z } from "zod"
 import type { AuthService } from "@threa/backend-common"
+import { parseMarkdown } from "@threa/prosemirror"
 import {
   VOICE_DRAFT_CONTEXT_MAX_CHARS,
   VOICE_PROTOCOL_VERSION,
@@ -94,7 +95,9 @@ export function registerVoiceGateway(io: Server, deps: Dependencies) {
         steeringTerms: current.steeringTerms,
         signal,
       })
-      return typeof outcome === "string" ? { status: "success", markdown: outcome } : outcome
+      return typeof outcome === "string"
+        ? { status: "success", markdown: outcome, contentJson: parseMarkdown(outcome) }
+        : outcome
     }
 
     function emitPolish(
@@ -113,6 +116,8 @@ export function registerVoiceGateway(io: Server, deps: Dependencies) {
         authoritative,
         raw,
         polished: outcome.markdown,
+        rawContentJson: parseMarkdown(raw),
+        polishedContentJson: outcome.contentJson,
       })
     }
 
@@ -127,7 +132,7 @@ export function registerVoiceGateway(io: Server, deps: Dependencies) {
         revision,
         text: raw,
         isFinal: true,
-        ...(current.polishLevel === "none" ? {} : { chunkId: current.sessionChunkId }),
+        ...(current.polishLevel === "none" ? {} : { chunkId: current.sessionChunkId, contentJson: parseMarkdown(raw) }),
       })
       if (schedule && current.phase === "live" && current.polishLevel !== "none") {
         const cumulative = current.rawFinals.join(" ")

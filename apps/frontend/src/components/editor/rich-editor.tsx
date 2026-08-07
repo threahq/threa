@@ -80,13 +80,13 @@ export interface RichEditorHandle {
    * later be swapped (Show original / Show polished) or locked when the user
    * edits inside it.
    */
-  insertDictationChunk(args: { chunkId: string; text: string }): void
+  insertDictationChunk(args: { chunkId: string; contentJson: JSONContent }): void
   /**
    * Swap a tracked chunk's text in place. Returns true if the swap happened,
    * false if the chunk was missing or the user edited inside it (the chunk is
    * locked in that case and the swap is skipped).
    */
-  replaceDictationChunkText(args: { chunkId: string; newText: string; expectedText: string }): boolean
+  replaceDictationChunk?(args: { chunkId: string; contentJson: JSONContent }): boolean
   /** Drop tracking for a single chunk (leaves its text in the doc). */
   lockDictationChunk(args: { chunkId: string }): void
   /** Drop tracking for every chunk. */
@@ -97,7 +97,7 @@ export interface RichEditorHandle {
    * The dictation hook uses this as the canonical `expectedText` for swap calls,
    * rather than maintaining a parallel prediction that drifts from the doc.
    */
-  getDictationChunkText(chunkId: string): string | null
+  getDictationChunkContent?(chunkId: string): JSONContent | null
   /** Access the TipTap editor instance for external toolbar rendering */
   getEditor(): import("@tiptap/react").Editor | null
 }
@@ -1113,17 +1113,17 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
   )
 
   const insertDictationChunk = useCallback(
-    ({ chunkId, text }: { chunkId: string; text: string }) => {
-      if (!editor || editor.isDestroyed || !text) return
-      editor.chain().focus().insertDictationChunk({ chunkId, text }).run()
+    ({ chunkId, contentJson }: { chunkId: string; contentJson: JSONContent }) => {
+      if (!editor || editor.isDestroyed) return
+      editor.chain().focus().insertDictationChunk({ chunkId, contentJson }).run()
     },
     [editor]
   )
 
-  const replaceDictationChunkText = useCallback(
-    ({ chunkId, newText, expectedText }: { chunkId: string; newText: string; expectedText: string }) => {
+  const replaceDictationChunk = useCallback(
+    ({ chunkId, contentJson }: { chunkId: string; contentJson: JSONContent }) => {
       if (!editor || editor.isDestroyed) return false
-      return editor.chain().replaceDictationChunkText({ chunkId, newText, expectedText }).run()
+      return editor.chain().replaceDictationChunk({ chunkId, contentJson }).run()
     },
     [editor]
   )
@@ -1141,11 +1141,10 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
     editor.chain().lockAllDictationChunks().run()
   }, [editor])
 
-  const getDictationChunkText = useCallback(
-    (chunkId: string): string | null => {
+  const getDictationChunkContent = useCallback(
+    (chunkId: string): JSONContent | null => {
       if (!editor || editor.isDestroyed) return null
-      const positions = getDictationChunkPositions(editor.state)
-      return positions.find((c) => c.chunkId === chunkId)?.text ?? null
+      return getDictationChunkPositions(editor.state).find((c) => c.chunkId === chunkId)?.contentJson ?? null
     },
     [editor]
   )
@@ -1162,10 +1161,10 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
       insertTranscribedText,
       setDictationInterim,
       insertDictationChunk,
-      replaceDictationChunkText,
+      replaceDictationChunk,
       lockDictationChunk,
       lockAllDictationChunks,
-      getDictationChunkText,
+      getDictationChunkContent,
       getEditor: () => editor,
     }),
     [
@@ -1178,10 +1177,10 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
       insertTranscribedText,
       setDictationInterim,
       insertDictationChunk,
-      replaceDictationChunkText,
+      replaceDictationChunk,
       lockDictationChunk,
       lockAllDictationChunks,
-      getDictationChunkText,
+      getDictationChunkContent,
       editor,
     ]
   )

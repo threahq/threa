@@ -1,172 +1,116 @@
 import { Extension } from "@tiptap/core"
+import { Node as ProseMirrorNode } from "@tiptap/pm/model"
 import { Plugin, PluginKey, type EditorState } from "@tiptap/pm/state"
 import { Decoration, DecorationSet } from "@tiptap/pm/view"
+import type { JSONContent } from "@threa/types"
+import { canonicalContentSlice } from "./multiline-blocks"
 
 export interface DictationChunkInfo {
   chunkId: string
   from: number
   to: number
-  /** Text currently sitting inside the chunk range (read from the live doc). */
-  text: string
+  contentJson: JSONContent
+}
+
+type Chunk = { chunkId: string; from: number; to: number; expectedContentJson: JSONContent; locked: boolean }
+type ChunkState = Map<string, Chunk>
+type ChunkMeta = { type: "set"; chunk: Chunk } | { type: "lock"; chunkId: string } | { type: "removeAll" }
+
+const DictationChunkPluginKey = new PluginKey<ChunkState>("dictationChunk")
+
+function sliceJson(doc: ProseMirrorNode, from: number, to: number): JSONContent {
+  return { type: "doc", content: doc.slice(from, to).content.toJSON() as JSONContent[] }
+}
+
+function equalJson(a: JSONContent, b: JSONContent): boolean {
+  return JSON.stringify(a) === JSON.stringify(b)
+}
+
+function withBoundarySpace(state: EditorState, from: number, contentJson: JSONContent): JSONContent {
+  const content = contentJson.content
+  if (!content?.length || content[0].type !== "paragraph") return contentJson
+  const charBefore = from > 0 ? state.doc.textBetween(from - 1, from) : ""
+  if (!charBefore || /\s/.test(charBefore)) return contentJson
+  const first = content[0]
+  return {
+    ...contentJson,
+    content: [{ ...first, content: [{ type: "text", text: " " }, ...(first.content ?? [])] }, ...content.slice(1)],
+  }
 }
 
 declare module "@tiptap/core" {
   interface Commands<ReturnType> {
     dictationChunk: {
-      /**
-       * Insert a polished dictation chunk at the caret, prefixing with a single
-       * space when the preceding character isn't whitespace (mirrors
-       * insertTranscribedText). The inserted range is wrapped in a tracking
-       * decoration that auto-maps through later edits, so it can be found and
-       * replaced when the user toggles "Show original".
-       */
-      insertDictationChunk: (args: { chunkId: string; text: string }) => ReturnType
-      /**
-       * Replace the text inside a chunk with `newText`, but only if the chunk's
-       * current text still matches `expectedText`. If the user has edited inside
-       * the chunk (current text differs), the chunk is locked instead (its
-       * decoration is removed) and the swap is skipped — the user's edit wins.
-       */
-      replaceDictationChunkText: (args: { chunkId: string; newText: string; expectedText: string }) => ReturnType
-      /** Drop the tracking decoration for one chunk; its text stays in the doc. */
+      insertDictationChunk: (args: { chunkId: string; contentJson: JSONContent }) => ReturnType
+      replaceDictationChunk: (args: { chunkId: string; contentJson: JSONContent }) => ReturnType
       lockDictationChunk: (args: { chunkId: string }) => ReturnType
-      /** Drop tracking decorations for every chunk. */
       lockAllDictationChunks: () => ReturnType
     }
   }
 }
 
-type ChunkSpec = { chunkId: string }
-
-type ChunkMeta =
-  | { type: "add"; chunkId: string; from: number; to: number }
-  | { type: "remove"; chunkId: string }
-  | { type: "removeAll" }
-  | { type: "replace"; chunkId: string; from: number; to: number }
-
-const DictationChunkPluginKey = new PluginKey<DecorationSet>("dictationChunk")
-
-function isChunkSpec(spec: unknown): spec is ChunkSpec {
-  return typeof spec === "object" && spec !== null && typeof (spec as ChunkSpec).chunkId === "string"
-}
-
-function findChunk(set: DecorationSet, chunkId: string): Decoration | null {
-  const decos = set.find(undefined, undefined, (spec) => isChunkSpec(spec) && spec.chunkId === chunkId)
-  return decos[0] ?? null
-}
-
-function chunkDecoration(from: number, to: number, chunkId: string): Decoration {
-  // Non-inclusive on both sides: typing right at the chunk's boundary lands
-  // outside the chunk, so post-chunk edits don't extend the tracked range.
-  return Decoration.inline(
-    from,
-    to,
-    { class: "dictation-chunk", "data-chunk-id": chunkId },
-    { chunkId, inclusiveStart: false, inclusiveEnd: false }
-  )
-}
-
-/**
- * Tracks ranges of inserted polished dictation chunks so the session toggle can
- * later swap them between polished and raw text. The tracking is decoration-
- * only: chunk metadata never enters the document JSON, so it doesn't serialize
- * to markdown, doesn't survive a send, and doesn't leak into other surfaces.
- */
 export const DictationChunkExtension = Extension.create({
   name: "dictationChunk",
 
   addCommands() {
     return {
       insertDictationChunk:
-        ({ chunkId, text }) =>
+        ({ chunkId, contentJson }) =>
         ({ state, tr, dispatch }) => {
-          if (!text) return false
-          const set = DictationChunkPluginKey.getState(state)
-          const existing = set ? findChunk(set, chunkId) : null
-
-          if (existing) {
-            // Extend the existing chunk by inserting at its end position
-            // rather than at the user's caret. A dictation session keeps
-            // every emitted final inside one tracked range so the end-of-
-            // session polish swap can replace the whole thing as one piece —
-            // even if the user moved the caret away mid-take. The space we
-            // insert when butting against text is absorbed INTO the chunk so
-            // the decoration stays a single contiguous range.
-            const insertAt = existing.to
-            const charBefore = insertAt > 0 ? state.doc.textBetween(insertAt - 1, insertAt) : ""
-            const prefix = charBefore && !/\s/.test(charBefore) ? " " : ""
-            const inserted = `${prefix}${text}`
-            tr.insertText(inserted, insertAt)
-            tr.setMeta(DictationChunkPluginKey, {
-              type: "replace",
-              chunkId,
-              from: existing.from,
-              to: insertAt + inserted.length,
-            } satisfies ChunkMeta)
-            if (dispatch) dispatch(tr.scrollIntoView())
-            return true
-          }
-
-          const from = state.selection.from
-          const charBefore = from > 0 ? state.doc.textBetween(from - 1, from) : ""
-          const prefix = charBefore && !/\s/.test(charBefore) ? " " : ""
-          const inserted = `${prefix}${text}`
-          tr.insertText(inserted, from)
-          const chunkFrom = from + prefix.length
-          const chunkTo = from + inserted.length
+          const existing = DictationChunkPluginKey.getState(state)?.get(chunkId)
+          if (existing?.locked) return false
+          const from = existing?.to ?? state.selection.from
+          const to = existing?.to ?? state.selection.to
+          const normalized = withBoundarySpace(state, from, contentJson)
+          const slice = canonicalContentSlice(state.schema, normalized)
+          if (!slice) return false
+          tr.replaceRange(from, to, slice)
+          const insertedFrom = tr.mapping.map(from, -1)
+          const insertedTo = tr.mapping.map(to, 1)
+          const chunkFrom = existing?.from ?? insertedFrom
           tr.setMeta(DictationChunkPluginKey, {
-            type: "add",
-            chunkId,
-            from: chunkFrom,
-            to: chunkTo,
+            type: "set",
+            chunk: {
+              chunkId,
+              from: chunkFrom,
+              to: insertedTo,
+              expectedContentJson: sliceJson(tr.doc, chunkFrom, insertedTo),
+              locked: false,
+            },
           } satisfies ChunkMeta)
-          if (dispatch) dispatch(tr.scrollIntoView())
+          dispatch?.(tr.scrollIntoView())
           return true
         },
 
-      replaceDictationChunkText:
-        ({ chunkId, newText, expectedText }) =>
+      replaceDictationChunk:
+        ({ chunkId, contentJson }) =>
         ({ state, tr, dispatch }) => {
-          const set = DictationChunkPluginKey.getState(state)
-          if (!set) return false
-          const deco = findChunk(set, chunkId)
-          if (!deco) return false
-          const currentText = state.doc.textBetween(deco.from, deco.to)
-          if (currentText !== expectedText) {
-            // The user edited inside the chunk between renders — preserve their
-            // edit rather than overwriting it, and stop tracking this chunk so
-            // a later toggle never resurrects the lost text.
-            tr.setMeta(DictationChunkPluginKey, { type: "remove", chunkId } satisfies ChunkMeta)
-            if (dispatch) dispatch(tr)
+          const chunk = DictationChunkPluginKey.getState(state)?.get(chunkId)
+          if (!chunk || chunk.locked) return false
+          const normalized = withBoundarySpace(state, chunk.from, contentJson)
+          const slice = canonicalContentSlice(state.schema, normalized)
+          if (!slice) return false
+          if (!equalJson(sliceJson(state.doc, chunk.from, chunk.to), chunk.expectedContentJson)) {
+            tr.setMeta(DictationChunkPluginKey, { type: "lock", chunkId } satisfies ChunkMeta)
+            dispatch?.(tr)
             return false
           }
-          if (!newText) {
-            tr.delete(deco.from, deco.to)
-            tr.setMeta(DictationChunkPluginKey, { type: "remove", chunkId } satisfies ChunkMeta)
-            if (dispatch) dispatch(tr)
-            return true
-          }
-          const newFrom = deco.from
-          const newTo = newFrom + newText.length
-          tr.insertText(newText, deco.from, deco.to)
-          // The "replace" meta below is applied AFTER the doc-change mapping,
-          // so the plugin can re-anchor the decoration at the new bounds even
-          // if mapping collapsed the original range.
+          tr.replaceRange(chunk.from, chunk.to, slice)
+          const from = tr.mapping.map(chunk.from, -1)
+          const to = tr.mapping.map(chunk.to, 1)
           tr.setMeta(DictationChunkPluginKey, {
-            type: "replace",
-            chunkId,
-            from: newFrom,
-            to: newTo,
+            type: "set",
+            chunk: { chunkId, from, to, expectedContentJson: sliceJson(tr.doc, from, to), locked: false },
           } satisfies ChunkMeta)
-          if (dispatch) dispatch(tr)
+          dispatch?.(tr)
           return true
         },
 
       lockDictationChunk:
         ({ chunkId }) =>
         ({ tr, dispatch }) => {
-          tr.setMeta(DictationChunkPluginKey, { type: "remove", chunkId } satisfies ChunkMeta)
-          if (dispatch) dispatch(tr)
+          tr.setMeta(DictationChunkPluginKey, { type: "lock", chunkId } satisfies ChunkMeta)
+          dispatch?.(tr)
           return true
         },
 
@@ -174,7 +118,7 @@ export const DictationChunkExtension = Extension.create({
         () =>
         ({ tr, dispatch }) => {
           tr.setMeta(DictationChunkPluginKey, { type: "removeAll" } satisfies ChunkMeta)
-          if (dispatch) dispatch(tr)
+          dispatch?.(tr)
           return true
         },
     }
@@ -182,45 +126,45 @@ export const DictationChunkExtension = Extension.create({
 
   addProseMirrorPlugins() {
     return [
-      new Plugin<DecorationSet>({
+      new Plugin<ChunkState>({
         key: DictationChunkPluginKey,
         state: {
-          init: () => DecorationSet.empty,
-          apply(tr, oldSet) {
-            // Map existing chunk ranges through the doc change before applying
-            // explicit meta operations — that way add/remove always work on
-            // up-to-date ranges.
-            let set = oldSet.map(tr.mapping, tr.doc)
+          init: () => new Map(),
+          apply(tr, previous) {
             const meta = tr.getMeta(DictationChunkPluginKey) as ChunkMeta | undefined
-            if (!meta) return set
-            if (meta.type === "add") {
-              set = set.add(tr.doc, [chunkDecoration(meta.from, meta.to, meta.chunkId)])
-              return set
+            if (meta?.type === "removeAll") return new Map()
+            const next = new Map<string, Chunk>()
+            for (const [id, chunk] of previous) {
+              if (meta?.type === "set" && meta.chunk.chunkId === id) continue
+              const from = tr.mapping.map(chunk.from, 1)
+              const to = tr.mapping.map(chunk.to, -1)
+              let locked = chunk.locked || (meta?.type === "lock" && meta.chunkId === id)
+              if (tr.docChanged && !meta && !locked) {
+                locked = from >= to || !equalJson(sliceJson(tr.doc, from, to), chunk.expectedContentJson)
+              }
+              next.set(id, { ...chunk, from, to: Math.max(from, to), locked })
             }
-            if (meta.type === "remove") {
-              const existing = findChunk(set, meta.chunkId)
-              if (existing) set = set.remove([existing])
-              return set
-            }
-            if (meta.type === "removeAll") {
-              return DecorationSet.empty
-            }
-            if (meta.type === "replace") {
-              // The range may or may not still exist after mapping; remove it
-              // explicitly so we never end up with two decorations for the same
-              // chunkId, then add the new tracked range.
-              const existing = findChunk(set, meta.chunkId)
-              if (existing) set = set.remove([existing])
-              set = set.add(tr.doc, [chunkDecoration(meta.from, meta.to, meta.chunkId)])
-              return set
-            }
-            return set
+            if (meta?.type === "set") next.set(meta.chunk.chunkId, meta.chunk)
+            return next
           },
         },
         props: {
           decorations(state) {
-            const set = DictationChunkPluginKey.getState(state)
-            return set && set !== DecorationSet.empty ? set : null
+            const chunks = DictationChunkPluginKey.getState(state)
+            if (!chunks?.size) return null
+            return DecorationSet.create(
+              state.doc,
+              [...chunks.values()]
+                .filter((chunk) => !chunk.locked && chunk.from < chunk.to)
+                .map((chunk) =>
+                  Decoration.inline(
+                    chunk.from,
+                    chunk.to,
+                    { class: "dictation-chunk", "data-chunk-id": chunk.chunkId },
+                    { inclusiveStart: false, inclusiveEnd: false }
+                  )
+                )
+            )
           },
         },
       }),
@@ -228,21 +172,13 @@ export const DictationChunkExtension = Extension.create({
   },
 })
 
-/**
- * Snapshot the current chunk positions + the text sitting inside each one.
- * Callers (the dictation hook) use this to verify a chunk's text hasn't
- * drifted before issuing a swap.
- */
 export function getDictationChunkPositions(state: EditorState): DictationChunkInfo[] {
-  const set = DictationChunkPluginKey.getState(state)
-  if (!set) return []
-  return set
-    .find()
-    .filter((d) => isChunkSpec(d.spec))
-    .map((d) => ({
-      chunkId: (d.spec as ChunkSpec).chunkId,
-      from: d.from,
-      to: d.to,
-      text: state.doc.textBetween(d.from, d.to),
+  return [...(DictationChunkPluginKey.getState(state)?.values() ?? [])]
+    .filter((chunk) => !chunk.locked)
+    .map((chunk) => ({
+      chunkId: chunk.chunkId,
+      from: chunk.from,
+      to: chunk.to,
+      contentJson: sliceJson(state.doc, chunk.from, chunk.to),
     }))
 }
