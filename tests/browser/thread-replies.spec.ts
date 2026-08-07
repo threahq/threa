@@ -101,6 +101,40 @@ test.describe("Thread Replies", () => {
     await expect(parentInStream.getByRole("link", { name: /1 reply/i })).toBeVisible({ timeout: 45000 })
   })
 
+  test("keeps reminder controls above a thread preview", async ({ page }) => {
+    const channelName = `thread-reminder-${testId}`
+    await createChannel(page, channelName)
+
+    const editor = page.locator("[contenteditable='true']")
+    await editor.click()
+    const parentMessage = `Parent with reminder ${testId}`
+    await page.keyboard.type(parentMessage)
+    await page.keyboard.press("Meta+Enter")
+
+    const parentInStream = page.getByRole("main").locator(".message-item").filter({ hasText: parentMessage }).first()
+    await expect(parentInStream).toBeVisible({ timeout: 5000 })
+    await clickReplyInThread(parentInStream)
+    await expect(page.getByText(/Start a new thread/)).toBeVisible({ timeout: 3000 })
+
+    await sendPanelReply(page, `Thread reply for reminder ${testId}`)
+    await waitForRealThreadPanel(page)
+
+    const returnToChannel = page.getByRole("button", { name: `Return to #${channelName}` })
+    await returnToChannel.click()
+    await expect(page).not.toHaveURL(/panel=/)
+    await expect(parentInStream.getByRole("link", { name: /1 reply/i })).toBeVisible({ timeout: 10000 })
+
+    await parentInStream.hover()
+    await parentInStream.getByRole("button", { name: "Save for later" }).hover()
+
+    const reminderContent = page.locator("[data-state='open']").filter({ hasText: "In 15 minutes" })
+    await expect(reminderContent).toBeVisible()
+    expect(await reminderContent.evaluate((element) => element.closest(".message-item"))).toBeNull()
+
+    await reminderContent.getByRole("button", { name: "In 15 minutes" }).click()
+    await expect(parentInStream.getByText("Saved", { exact: true })).toBeVisible()
+  })
+
   test("should send multiple replies in a thread", async ({ page }) => {
     // Create a channel
     const channelName = `multi-reply-${testId}`
