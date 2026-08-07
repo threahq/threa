@@ -37,18 +37,23 @@ export async function sealStreamRename(params: {
   streamId: string
   userId: string
   name: string
+  /** Bypass a cached generation when the backend will generation-CAS this write. */
+  refreshCurrentKey?: boolean
 }): Promise<SealedNameFields> {
   const { workspaceId, streamId, userId, name } = params
   const session = getE2eSessionState(workspaceId, userId)
   if (session.status !== "unlocked" || !session.privateKey || !session.keyId) {
     throw new StreamNameSealUnavailableError("locked")
   }
-  const streamKey = await resolveCurrentStreamKey({
-    workspaceId,
-    streamId,
-    recipientKeyId: session.keyId,
-    privateKey: session.privateKey,
-  })
+  const streamKey = await resolveCurrentStreamKey(
+    {
+      workspaceId,
+      streamId,
+      recipientKeyId: session.keyId,
+      privateKey: session.privateKey,
+    },
+    { refresh: params.refreshCurrentKey }
+  )
   if (!streamKey) {
     throw new StreamNameSealUnavailableError("no-stream-key")
   }

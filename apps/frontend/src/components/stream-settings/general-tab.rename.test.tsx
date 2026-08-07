@@ -7,6 +7,7 @@ import * as useWorkspacesModule from "@/hooks/use-workspaces"
 import * as e2eSession from "@/stores/e2e-session-store"
 import * as streamKeyCache from "@/lib/crypto/stream-key-cache"
 import * as messageEnvelope from "@/lib/crypto/message-envelope"
+import { streamsApi } from "@/api/streams"
 import * as descriptionSectionModule from "./description-section"
 import { clearStreamNameCache, getCachedStreamName, streamNameCacheKey } from "@/lib/crypto/stream-name-cache"
 import { StreamTypes, Visibilities, type Stream } from "@threa/types"
@@ -116,6 +117,30 @@ describe("GeneralTab display-name rename (stream settings surface)", () => {
     expect(update.mock.calls[0]![2]).not.toHaveProperty("displayName")
     // The new name is immediately resolvable on this device (no re-decrypt flicker).
     expect(getCachedStreamName(streamNameCacheKey(WS, stream.id, "Y3Q="))).toBe("Therapy notes")
+    view.unmount()
+  })
+
+  it("re-seals the decrypted current title with a freshly resolved generation", async () => {
+    vi.spyOn(useWorkspacesModule, "useWorkspaceUserId").mockReturnValue(USER)
+    vi.spyOn(e2eSession, "useE2eSession").mockReturnValue(unlocked())
+    vi.spyOn(e2eSession, "getE2eSessionState").mockReturnValue(unlocked())
+    const resolve = vi.spyOn(streamKeyCache, "resolveCurrentStreamKey").mockResolvedValue({
+      key: new Uint8Array(32),
+      keyGeneration: 1,
+    } as never)
+    vi.spyOn(messageEnvelope, "sealStreamName").mockResolvedValue({ ciphertext: "bmV3", envelope: { v: 2 } as never })
+    const stream = encryptedScratchpad({ displayName: "Private title", displayNameSource: "explicit" })
+    const regenerate = vi.spyOn(streamsApi, "regenerateTitle").mockResolvedValue({
+      stream: { ...stream, displayNameSource: "generated", sealedNameCiphertext: "bmV3" },
+      deferred: true,
+    })
+
+    const view = renderTab(stream, vi.fn())
+    await userEvent.click(screen.getByRole("button", { name: "Regenerate title" }))
+
+    await waitFor(() => expect(regenerate).toHaveBeenCalledTimes(1))
+    expect(resolve.mock.calls[0]?.[1]).toEqual({ refresh: true })
+    expect(JSON.stringify(regenerate.mock.calls[0])).not.toContain("Private title")
     view.unmount()
   })
 

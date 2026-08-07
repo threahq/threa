@@ -379,10 +379,11 @@ export async function resolveStreamKey(input: ResolveStreamKeyInput): Promise<Ui
  * and unwraps that generation's key from the same response.
  */
 export async function resolveCurrentStreamKey(
-  input: Omit<ResolveStreamKeyInput, "keyGeneration">
+  input: Omit<ResolveStreamKeyInput, "keyGeneration">,
+  options?: { refresh?: boolean }
 ): Promise<CachedStreamKey | null> {
   const cachedGen = currentGenerations.get(streamSlot(input.workspaceId, input.streamId))
-  if (cachedGen !== undefined) {
+  if (!options?.refresh && cachedGen !== undefined) {
     const cachedKey = keys.get(keySlot(input.workspaceId, input.streamId, cachedGen))
     if (cachedKey) return { keyGeneration: cachedGen, key: cachedKey }
   }

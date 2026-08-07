@@ -1,11 +1,16 @@
 import { useCallback, useState } from "react"
 import { useQueryClient } from "@tanstack/react-query"
 import { toast } from "sonner"
-import { TitleSources, type Stream, type TitleSource } from "@threa/types"
+import { TitleSources, type BoardPost, type Stream, type TitleSource } from "@threa/types"
 import { conversationsApi } from "@/api/conversations"
 import { streamsApi } from "@/api/streams"
 import { sealStreamRename } from "@/lib/crypto/stream-rename"
-import { mergeStreamByTitleRevision, persistStreamByTitleRevision } from "@/lib/title-merge"
+import {
+  mergeConversationByTitleRevision,
+  mergeStreamByTitleRevision,
+  persistStreamByTitleRevision,
+} from "@/lib/title-merge"
+import { mergeBoardConversation } from "@/stores/board-store"
 import { conversationKeys } from "./use-conversations"
 import { streamKeys } from "./use-streams"
 import { useWorkspaceUserId, workspaceKeys } from "./use-workspaces"
@@ -37,6 +42,7 @@ export function useRegenerateTitle(workspaceId: string, target: RegenerationTarg
               streamId: target.stream.id,
               userId,
               name: target.currentTitle,
+              refreshCurrentKey: true,
             })
           : undefined
         const result = await streamsApi.regenerateTitle(workspaceId, target.stream.id, sealed)
@@ -49,7 +55,16 @@ export function useRegenerateTitle(workspaceId: string, target: RegenerationTarg
         return
       }
       const result = await conversationsApi.regenerateTitle(workspaceId, target.conversationId)
+      await mergeBoardConversation(target.conversationId, result.conversation)
       queryClient.setQueryData(conversationKeys.byId(workspaceId, target.conversationId), result.conversation)
+      queryClient.setQueryData<BoardPost>(conversationKeys.boardPost(target.conversationId), (old) =>
+        old
+          ? {
+              ...old,
+              conversation: mergeConversationByTitleRevision(old.conversation, result.conversation),
+            }
+          : old
+      )
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: conversationKeys.workspaceLists(workspaceId) }),
         queryClient.invalidateQueries({ queryKey: conversationKeys.byId(workspaceId, target.conversationId) }),
