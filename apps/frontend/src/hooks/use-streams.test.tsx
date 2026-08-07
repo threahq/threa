@@ -70,6 +70,7 @@ function makeWorkspaceBootstrap(): WorkspaceBootstrap {
       language: "en",
       notificationLevel: "all",
       sidebarCollapsed: false,
+      mobileInlineAttachments: false,
       linkPreviewDefault: "open",
       labelRemoveOnMove: "ask",
       unreadOpenPosition: "latest",

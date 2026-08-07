@@ -313,6 +313,7 @@ export function MessageComposer({
   const [voiceActive, setVoiceActive] = useState(false)
   const isMobile = useIsMobile()
   const actionSide = useComposerActionSide()
+  const preferencesCtx = usePreferencesOptional()
   const mirrored = actionSide === "left"
   // Selection toolbar is a hover/mouse affordance, so it keys off the active
   // input mode (a finger suppresses it) rather than viewport width — a mouse on
@@ -572,6 +573,19 @@ export function MessageComposer({
     fileInputRef.current?.click()
   }, [fileInputRef])
 
+  const handleFileInputChange = useCallback(
+    (event: ChangeEvent<HTMLInputElement>) => {
+      const files = Array.from(event.target.files ?? [])
+      const insertInline = isMobile && preferencesCtx?.preferences?.mobileInlineAttachments === true
+      if (!insertInline || files.length === 0 || !richEditorRef.current?.insertFiles(files)) {
+        onFileSelect(event)
+        return
+      }
+      event.target.value = ""
+    },
+    [isMobile, onFileSelect, preferencesCtx?.preferences?.mobileInlineAttachments]
+  )
+
   // Stable wrappers that read the editor handle at call time (not render time),
   // so they stay fresh whether invoked from an inline toolbar button or a
   // folded "+" overflow menu item.
@@ -653,7 +667,6 @@ export function MessageComposer({
   // scopes the shortcut to whichever composer actually received focus — if
   // main + thread are both mounted, only the focused one fires. Registered
   // via `SHORTCUT_ACTIONS`, so the user can remap it in settings.
-  const preferencesCtx = usePreferencesOptional()
   const stashBinding = getEffectiveKeyBinding("draftStash", preferencesCtx?.preferences?.keyboardShortcuts ?? {})
 
   // Cmd/Ctrl+S with nothing to stash flips to "show me my drafts": open the
@@ -854,7 +867,7 @@ export function MessageComposer({
               type="file"
               multiple
               className="hidden"
-              onChange={onFileSelect}
+              onChange={handleFileInputChange}
               disabled={controlsDisabled}
             />
 
@@ -1135,7 +1148,7 @@ export function MessageComposer({
             type="file"
             multiple
             className="hidden"
-            onChange={onFileSelect}
+            onChange={handleFileInputChange}
             disabled={controlsDisabled}
           />
 

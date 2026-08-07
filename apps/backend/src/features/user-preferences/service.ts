@@ -69,6 +69,7 @@ function flattenUpdates(updates: UpdateUserPreferencesInput): Array<{ key: strin
     "notificationLevel",
     "sidebarCollapsed",
     "messageSendMode",
+    "mobileInlineAttachments",
     "linkPreviewDefault",
     "labelRemoveOnMove",
     "unreadOpenPosition",

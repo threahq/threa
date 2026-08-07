@@ -5,6 +5,7 @@ import { Popover, PopoverAnchor, PopoverContent } from "@/components/ui/popover"
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
 import { Label } from "@/components/ui/label"
 import { Separator } from "@/components/ui/separator"
+import { Switch } from "@/components/ui/switch"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 import { RotateCcw } from "lucide-react"
 import { usePreferences } from "@/contexts"
@@ -19,7 +20,7 @@ import {
   resolveShortcutBindingUpdate,
   type ShortcutAction,
 } from "@/lib/keyboard-shortcuts"
-import { MESSAGE_SEND_MODE_OPTIONS, type MessageSendMode } from "@threa/types"
+import { DEFAULT_USER_PREFERENCES, MESSAGE_SEND_MODE_OPTIONS, type MessageSendMode } from "@threa/types"
 
 const SEND_MODE_CONFIG: Record<MessageSendMode, { label: string; description: string }> = {
   enter: {
@@ -293,6 +294,8 @@ export function KeyboardSettings({ onCaptureStateChange }: KeyboardSettingsProps
   const hasConflicts = conflicts.size > 0
   const hasCustomBindings = Object.keys(customBindings).length > 0
   const messageSendMode = preferences?.messageSendMode ?? "enter"
+  const mobileInlineAttachments =
+    preferences?.mobileInlineAttachments ?? DEFAULT_USER_PREFERENCES.mobileInlineAttachments
 
   const [capturingId, setCapturingId] = useState<string | null>(null)
 
@@ -388,6 +391,28 @@ export function KeyboardSettings({ onCaptureStateChange }: KeyboardSettingsProps
             </div>
           ))}
         </RadioGroup>
+      </section>
+
+      <Separator />
+
+      <section className="space-y-3">
+        <div>
+          <h3 className="text-sm font-medium">File attachments</h3>
+          <p className="text-sm text-muted-foreground">Control how picked files appear in the mobile composer</p>
+        </div>
+        <div className="flex items-center justify-between gap-4">
+          <div className="space-y-1">
+            <Label htmlFor="mobile-inline-attachments">Insert files at the cursor</Label>
+            <p className="text-sm text-muted-foreground">
+              Adds a file chip to the message. Removing the chip keeps the file attached.
+            </p>
+          </div>
+          <Switch
+            id="mobile-inline-attachments"
+            checked={mobileInlineAttachments}
+            onCheckedChange={(checked) => updatePreference("mobileInlineAttachments", checked)}
+          />
+        </div>
       </section>
 
       {shortcuts.navigation.length > 0 && (

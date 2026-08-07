@@ -55,6 +55,7 @@ const updatePreferencesSchema = z.object({
   notificationLevel: z.enum(PREF_NOTIFICATION_LEVEL_OPTIONS).optional(),
   sidebarCollapsed: z.boolean().optional(),
   messageSendMode: z.enum(MESSAGE_SEND_MODE_OPTIONS).optional(),
+  mobileInlineAttachments: z.boolean().optional(),
   linkPreviewDefault: z.enum(LINK_PREVIEW_DEFAULT_OPTIONS).optional(),
   labelRemoveOnMove: z.enum(LABEL_REMOVE_ON_MOVE_OPTIONS).optional(),
   unreadOpenPosition: z.enum(UNREAD_OPEN_POSITION_OPTIONS).optional(),

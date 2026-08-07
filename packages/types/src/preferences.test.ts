@@ -1,6 +1,12 @@
 import { describe, expect, it } from "bun:test"
 import { DEFAULT_BOARD_MASS_BADGE, DEFAULT_USER_PREFERENCES, normalizeBoardMassBadge } from "./preferences"
 
+describe("user preference defaults", () => {
+  it("keeps mobile file picking out of the message body until enabled", () => {
+    expect(DEFAULT_USER_PREFERENCES.mobileInlineAttachments).toBe(false)
+  })
+})
+
 describe("normalizeBoardMassBadge", () => {
   it("keeps a mode that still exists", () => {
     expect(normalizeBoardMassBadge("count")).toBe("count")
