@@ -51,8 +51,11 @@ export function decideVoicePolishComparison(
   let previousAcceptedShips: boolean | null = null
   if (withoutPrevious) {
     if (!productionEnabled) reasons.push(`Missing previous-accepted production result for ${voicePolishConfig.model}`)
-    else if (!productionEnabled.qualification.qualified || !withoutPrevious.qualification.qualified) {
-      reasons.push("Previous-accepted prompt decision requires qualifying enabled and without-previous permutations")
+    // The enabled (production) variant must qualify; the without-previous baseline
+    // need not — its failures are the evidence that the previous-accepted prompt
+    // earns its place. The comparison itself is per-case-rate based.
+    else if (!productionEnabled.qualification.qualified) {
+      reasons.push("Previous-accepted production permutation does not qualify")
     } else {
       const sample = permutations.find(
         (item) =>

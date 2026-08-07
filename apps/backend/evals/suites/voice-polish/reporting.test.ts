@@ -22,7 +22,7 @@ const permutation = (model: string, durationMs: number, promptVariant?: string, 
       caseName: caseId,
       expectedOutput: {
         stability: caseId === "stability" ? "prior-content" : undefined,
-        correctionOrStructure: caseId === "correction",
+        correctionOrStructure: true,
       },
       evaluations: [
         ...safety,
@@ -72,5 +72,23 @@ describe("voice polish comparison decision", () => {
       },
     ] as never)
     expect(failed).toMatchObject({ selectedModel: null, exitAllowed: false })
+  })
+
+  test("an unqualified without-previous baseline is evidence, not a blocker", () => {
+    // Baseline fails the per-case gate (stability 4/6 < 5/6) while the enabled
+    // variant is clean: that gap is exactly what the previous-accepted prompt is
+    // meant to prove, so the decision ships it and allows exit.
+    const results = [
+      { suiteName: "voice-polish: production", permutations: [permutation(voicePolishConfig.model, 1000)] },
+      {
+        suiteName: "voice-polish: baseline",
+        permutations: [permutation(voicePolishConfig.model, 1000, "without-previous", 2)],
+      },
+    ] as never
+    expect(decideVoicePolishComparison(results)).toMatchObject({
+      selectedModel: voicePolishConfig.model,
+      previousAcceptedShips: true,
+      exitAllowed: true,
+    })
   })
 })
