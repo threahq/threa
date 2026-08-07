@@ -23,6 +23,15 @@ export interface DebouncedOutboxHandlerConfig {
  * need different values pass overrides in super() rather than redefining the
  * whole block.
  */
+class PartialBatchError extends Error {
+  constructor(
+    cause: unknown,
+    readonly processedIds: bigint[]
+  ) {
+    super(cause instanceof Error ? cause.message : String(cause), { cause })
+  }
+}
+
 const DEFAULT_CONFIG = {
   batchSize: 100,
   debounceMs: 50,
@@ -100,25 +109,30 @@ export abstract class DebouncedOutboxHandler implements OutboxHandler {
         return { status: "no_events" }
       }
 
-      const seen: bigint[] = []
-
       try {
-        for (const event of events) {
-          await this.processEvent(event)
-          seen.push(event.id)
-        }
-
+        const seen = await this.processBatch(events)
         return { status: "processed", processedIds: seen }
       } catch (err) {
-        const error = err instanceof Error ? err : new Error(String(err))
-
-        if (seen.length > 0) {
-          return { status: "error", error, processedIds: seen }
-        }
-
-        return { status: "error", error }
+        const original = err instanceof PartialBatchError ? err.cause : err
+        const error = original instanceof Error ? original : new Error(String(original))
+        return err instanceof PartialBatchError && err.processedIds.length > 0
+          ? { status: "error", error, processedIds: err.processedIds }
+          : { status: "error", error }
       }
     })
+  }
+
+  protected async processBatch(events: OutboxEvent[]): Promise<bigint[]> {
+    const seen: bigint[] = []
+    try {
+      for (const event of events) {
+        await this.processEvent(event)
+        seen.push(event.id)
+      }
+      return seen
+    } catch (error) {
+      throw new PartialBatchError(error, seen)
+    }
   }
 
   /**

@@ -69,6 +69,7 @@ import {
 } from "./features/streams"
 import { EventService } from "./features/messaging"
 import {
+  DynamicNamingConversationTarget,
   DynamicNamingEvaluator,
   DynamicNamingOutboxHandler,
   DynamicNamingService,
@@ -76,6 +77,8 @@ import {
   QueueDynamicNamingScheduler,
   StubDynamicNamingEvaluator,
   createDynamicNamingWorker,
+  type DynamicNamingTargetAdapter,
+  type DynamicNamingTargetKind,
 } from "./features/dynamic-naming"
 import { AttachmentService, createAttachmentUploadSweepWorker } from "./features/attachments"
 import { MessageFormatter } from "./lib/ai/message-formatter"
@@ -385,12 +388,16 @@ export async function startServer(): Promise<ServerInstance> {
   })
   const dynamicNamingScheduler = new QueueDynamicNamingScheduler(jobQueue)
   const dynamicNamingTarget = new DynamicNamingStreamTarget(pool, messageFormatter)
+  const dynamicConversationNamingTarget = new DynamicNamingConversationTarget(pool, messageFormatter)
   const dynamicNamingEvaluator = config.useStubAI
     ? new StubDynamicNamingEvaluator()
     : new DynamicNamingEvaluator(ai, configResolver)
   const dynamicNamingService = new DynamicNamingService(
     pool,
-    new Map([["stream", dynamicNamingTarget]]),
+    new Map<DynamicNamingTargetKind, DynamicNamingTargetAdapter>([
+      ["stream", dynamicNamingTarget],
+      ["conversation", dynamicConversationNamingTarget],
+    ]),
     dynamicNamingEvaluator,
     dynamicNamingScheduler
   )
@@ -1475,7 +1482,7 @@ export async function startServer(): Promise<ServerInstance> {
   // matching the claim/callback routes.
   const enclaveDispatchHandler = config.enclaveInternalApiKey ? new EnclaveDispatchHandler(pool) : null
   const contextBagPrecomputeHandler = new ContextBagPrecomputeHandler(pool, jobQueue)
-  const dynamicNamingHandler = new DynamicNamingOutboxHandler(pool, dynamicNamingScheduler)
+  const dynamicNamingHandler = new DynamicNamingOutboxHandler(pool, dynamicNamingScheduler, dynamicNamingService)
   const emojiUsageHandler = new EmojiUsageHandler(pool)
   const embeddingHandler = new EmbeddingHandler(pool, jobQueue)
   const boundaryExtractionHandler = new BoundaryExtractionHandler(pool, jobQueue)
