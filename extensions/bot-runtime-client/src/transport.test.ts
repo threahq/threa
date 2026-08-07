@@ -384,22 +384,33 @@ describe("socket self-heal (the wedge that burns the edge quota)", () => {
     }
   })
 
-  it("redials after a server-initiated disconnect (Socket.IO won't reconnect on its own)", async () => {
+  it("reports a ready-socket loss and redials after a server-initiated disconnect", async () => {
     const fake = makeFakeSocket()
     const ioSpy = spyOn(socketIoClient, "io").mockReturnValue(fake as unknown as ReturnType<typeof socketIoClient.io>)
     try {
       stubHintFetch()
-      const transport = makeSelfHealTransport(3 * 60 * 1000)
+      const disconnected = mock(() => {})
+      const transport = new BotRuntimeTransport({
+        baseUrl: "https://app.example.test",
+        workspaceId: "ws_1",
+        apiKey: "threa_bk_test",
+        hello: HELLO,
+        staleSocketRedialMs: 3 * 60 * 1000,
+        callbacks: { onDisconnected: disconnected },
+      })
       await transport.connect()
       fake.handlers.connect!()
       expect(transport.socketConnected).toBe(true)
 
       fake.handlers.disconnect!("io server disconnect")
       expect(transport.socketConnected).toBe(false)
+      expect(disconnected).toHaveBeenCalledTimes(1)
       expect(fake.connect).toHaveBeenCalledTimes(1)
 
-      // Client-side drops are left to Socket.IO's own retry loop.
+      // Duplicate disconnect events while already unavailable neither notify
+      // again nor force a client-side reconnect.
       fake.handlers.disconnect!("transport close")
+      expect(disconnected).toHaveBeenCalledTimes(1)
       expect(fake.connect).toHaveBeenCalledTimes(1)
     } finally {
       ioSpy.mockRestore()

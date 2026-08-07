@@ -402,6 +402,7 @@ export class RemoteSession {
             void this.probeArchiveBackstop()
             if (bootstrap.availableInvocations.length > 0 || bootstrap.ownedClaims.length > 0) void this.claimDrain()
           },
+          onDisconnected: () => this.handleTransportDisconnected(),
           onSessionArchived: (payload) => void this.handleSessionArchived(payload),
           onSessionRestored: (payload) => void this.handleSessionRestored(payload),
         },
@@ -1697,6 +1698,11 @@ export class RemoteSession {
   }
 
   private startPoll(): void {
+    this.reschedulePoll(this.config.pollMs)
+  }
+
+  private handleTransportDisconnected(): void {
+    this.emptyNoSocketPolls = 0
     this.reschedulePoll(this.config.pollMs)
   }
 

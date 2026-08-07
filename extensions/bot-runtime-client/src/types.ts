@@ -79,6 +79,8 @@ export interface BotRuntimeTransportCallbacks {
   onSessionRestored?: (payload: unknown) => void
   /** The `bot:hello` ack landed; carries the bootstrap snapshot. */
   onBootstrap?: (bootstrap: BotHelloBootstrap) => void
+  /** A hello-ready socket became unavailable; wake any HTTP delivery backstop parked on the healthy-socket cadence. */
+  onDisconnected?: () => void
 }
 
 export interface BotRuntimeTransportOptions {

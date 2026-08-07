@@ -891,6 +891,7 @@ function ensureTransport(pi: ExtensionAPI, ctx: ExtensionContext): BotRuntimeTra
           void claimIfIdle(pi, ctx).catch(() => undefined)
         }
       },
+      onDisconnected: () => handleTransportDisconnected(),
       onSessionArchived: (payload) => handleArchivePush(ctx, payload),
       onSessionRestored: (payload) => handleRestorePush(ctx, payload),
     },
@@ -1943,6 +1944,16 @@ function handleRestorePush(ctx: ExtensionContext, payload: unknown): void {
   if (!isObject(payload) || sessionTearingDown) return
   if (typeof payload.runtimeSessionId === "string" && payload.runtimeSessionId !== getRuntimeSessionId(ctx)) return
   void ensureArchiveController(ctx).restored()
+}
+
+function handleTransportDisconnected(
+  schedule: typeof rearmPoll = rearmPoll,
+  inFlightRunId = pollInFlightRunId,
+  activeRunId = pollingRunId
+): void {
+  if (sessionTearingDown) return
+  consecutiveQuietPolls = 0
+  if (inFlightRunId !== activeRunId) schedule?.(basePollMs())
 }
 
 function basePollMs(): number {
@@ -4229,6 +4240,7 @@ export const __testing = {
   resetQuietPollsForTesting: () => {
     consecutiveQuietPolls = 0
   },
+  handleTransportDisconnected,
 }
 
 export default function (pi: ExtensionAPI): void {
@@ -4396,7 +4408,9 @@ export default function (pi: ExtensionAPI): void {
     } else {
       clearPendingSnapshot(ctx)
     }
-    await heartbeat(pending ? "busy" : "available", pending ? "Working on Threa invocation…" : undefined, ctx)
+    await heartbeat(pending ? "busy" : "available", pending ? "Working on Threa invocation…" : undefined, ctx).catch(
+      (error) => emitPollDebug(ctx, `session startup heartbeat failed; continuing: ${summarizeError(error)}`)
+    )
     await ensureTransport(pi, ctx)?.connect()
     startPolling(pi, ctx)
     if (event.reason === "reload") ctx.ui.notify("Threa remote reconnected after reload.", "info")
