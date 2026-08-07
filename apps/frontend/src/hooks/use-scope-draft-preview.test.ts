@@ -18,8 +18,12 @@ const doc = (text: string): JSONContent => ({
   content: [{ type: "paragraph", content: text ? [{ type: "text", text }] : undefined }],
 })
 
+async function seedContent(id: string, draftScope: string, contentJson: JSONContent, clientUpdatedAt: number) {
+  await db.drafts.add({ id, workspaceId, scope: draftScope, contentJson, attachments: [], clientUpdatedAt })
+}
+
 async function seed(id: string, draftScope: string, text: string, clientUpdatedAt: number) {
-  await db.drafts.add({ id, workspaceId, scope: draftScope, contentJson: doc(text), attachments: [], clientUpdatedAt })
+  await seedContent(id, draftScope, doc(text), clientUpdatedAt)
 }
 
 beforeEach(async () => {
@@ -55,6 +59,29 @@ describe("useScopeDraftPreview", () => {
     await waitFor(() =>
       expect(result.current).toMatchObject({ draftId: "draft_new", preview: "newest roamed body", isCheckedOut: false })
     )
+  })
+
+  it("uses the shared collapsed-composer projection for structural draft content", async () => {
+    await seedContent(
+      "draft_command",
+      scope,
+      {
+        type: "doc",
+        content: [
+          {
+            type: "paragraph",
+            content: [
+              { type: "slashCommand", attrs: { name: "steer", clientActionId: null } },
+              { type: "text", text: " focus on tests" },
+            ],
+          },
+        ],
+      },
+      1000
+    )
+
+    const { result } = renderHook(() => useScopeDraftPreview(workspaceId, scope))
+    await waitFor(() => expect(result.current?.preview).toBe("/steer focus on tests"))
   })
 
   it("throws on a non-board scope — the shared snapshot only covers board:* rows", () => {

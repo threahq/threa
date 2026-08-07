@@ -33,6 +33,7 @@ import type { DraftContextRef } from "@/lib/context-bag/types"
 import { cn } from "@/lib/utils"
 import { COLLAPSED_COMPOSER_ROW, COLLAPSED_COMPOSER_SHADOW } from "@/components/composer/collapsed-composer-bar"
 import { isEmptyContent } from "@/lib/prosemirror-utils"
+import { collapsedComposerPreview } from "@/lib/drafts/collapsed-composer-preview"
 import type { PendingAttachment, UploadResult } from "@/hooks/use-attachments"
 import type { MessageSendMode, JSONContent } from "@threa/types"
 import type { MentionStreamContext } from "@/hooks/use-mentionables"
@@ -61,88 +62,6 @@ function prependComposerCommand(content: JSONContent, command: string): JSONCont
     ...content,
     content: [{ type: "paragraph", content: [{ type: "text", text: command }] }, ...(content.content ?? [])],
   }
-}
-
-/** Check whether the document has content beyond a single line. */
-function isMultiLine(doc: JSONContent): boolean {
-  const blocks = doc.content
-  if (!blocks?.length) return false
-
-  // Filter out empty trailing paragraphs (TipTap always appends one)
-  const nonEmpty = blocks.filter((b) => b.type !== "paragraph" || (b.content?.length ?? 0) > 0)
-  if (nonEmpty.length > 1) return true
-
-  const first = nonEmpty[0]
-  if (!first) return false
-
-  if ((first.type === "bulletList" || first.type === "orderedList") && (first.content?.length ?? 0) > 1) return true
-  if (first.type === "codeBlock") {
-    const text = (first.content ?? []).map((c) => c.text ?? "").join("")
-    return text.includes("\n")
-  }
-  if (first.content?.some((c) => c.type === "hardBreak")) return true
-
-  return false
-}
-
-/** Extract the first line of plain text from editor content for the mobile preview bar. */
-function getPreviewText(doc: JSONContent): string {
-  function walk(node: JSONContent): string | null {
-    if (node.type === "text") return node.text ?? ""
-    if (node.type === "mention") return `@${node.attrs?.label ?? ""}`
-    if (node.type === "emoji") return String(node.attrs?.emoji ?? node.attrs?.shortcode ?? "")
-    if (node.type === "hardBreak") return null
-    // Atom node: no child text, so surface its baked label or it reads as empty.
-    if (node.type === "inAppLink")
-      return typeof node.attrs?.name === "string" && node.attrs.name ? node.attrs.name : "Link"
-
-    if (node.type === "quoteReply") {
-      const author = typeof node.attrs?.authorName === "string" ? node.attrs.authorName : ""
-      return `Replying to ${author}`
-    }
-
-    if (node.type === "sharedMessage") {
-      const author = typeof node.attrs?.authorName === "string" ? node.attrs.authorName : ""
-      return author ? `Sharing message from ${author}` : "Sharing a message"
-    }
-
-    if (node.type === "memoEmbed") {
-      const title = typeof node.attrs?.title === "string" ? node.attrs.title : ""
-      return title ? `Memo: ${title}` : "Memo"
-    }
-
-    if (node.type === "giphyEmbed") {
-      const title = typeof node.attrs?.title === "string" ? node.attrs.title : ""
-      return title ? `GIF: ${title}` : "GIF"
-    }
-
-    if (node.type === "codeBlock") {
-      const text = (node.content ?? []).map((c) => c.text ?? "").join("")
-      return text.split("\n")[0] ?? ""
-    }
-
-    if (!node.content?.length) return null
-
-    if (node.type === "paragraph" || node.type === "heading") {
-      const parts: string[] = []
-      for (const child of node.content) {
-        const t = walk(child)
-        if (t === null) break
-        parts.push(t)
-      }
-      return parts.join("") || null
-    }
-
-    for (const child of node.content) {
-      const t = walk(child)
-      if (t) return t
-    }
-    return null
-  }
-
-  const firstLine = walk(doc)?.trim() ?? ""
-  if (!firstLine) return ""
-  return isMultiLine(doc) ? `${firstLine}…` : firstLine
 }
 
 /** Platform-appropriate modifier key symbol (⌘ on Mac, Ctrl+ elsewhere) */
@@ -647,7 +566,7 @@ export function MessageComposer({
   }, [effectiveSendMode, expanded])
 
   // Plain-text first line for the mobile collapsed preview bar
-  const previewText = useMemo(() => getPreviewText(content), [content])
+  const previewText = useMemo(() => collapsedComposerPreview(content), [content])
 
   const handleAttachClick = useCallback(() => {
     fileInputRef.current?.click()

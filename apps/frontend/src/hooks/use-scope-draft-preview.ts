@@ -1,7 +1,7 @@
 import { useCallback, useSyncExternalStore } from "react"
 import { liveQuery, type Subscription } from "dexie"
 import { db, type CachedDraft } from "@/db"
-import { draftInlineText } from "@/lib/drafts/decryption"
+import { collapsedComposerPreview } from "@/lib/drafts/collapsed-composer-preview"
 import { isEmptyContent } from "@/lib/prosemirror-utils"
 import { parseBoardDraftKey, BOARD_DRAFT_SCOPE_PREFIX } from "@/lib/board/draft-keys"
 
@@ -32,7 +32,7 @@ function hasPayload(draft: CachedDraft): boolean {
 function toPreview(best: CachedDraft, loadedDraftId: string | null): ScopeDraftPreview {
   return {
     draftId: best.id,
-    preview: draftInlineText(best.contentJson),
+    preview: collapsedComposerPreview(best.contentJson),
     attachmentCount: best.attachments?.length ?? 0,
     isCheckedOut: best.id === loadedDraftId,
   }

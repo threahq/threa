@@ -138,48 +138,20 @@ export function createEditorExtensions(options: CreateEditorExtensionsOptions | 
     // Tracks ranges of polished dictation chunks so the session toggle can
     // swap them back to raw transcript; inert unless chunks are added.
     DictationChunkExtension,
+
+    // Schema nodes stay mounted even when their picker is disabled. Their
+    // extensions provide inert default suggestions, so every RichEditor parses
+    // the same document shape and the preview audit can inspect one factory call.
+    config.mentionSuggestion ? MentionExtension.configure({ suggestion: config.mentionSuggestion }) : MentionExtension,
+    config.channelSuggestion ? ChannelExtension.configure({ suggestion: config.channelSuggestion }) : ChannelExtension,
+    config.commandSuggestion ? CommandExtension.configure({ suggestion: config.commandSuggestion }) : CommandExtension,
+    config.emojiSuggestion && config.toEmoji
+      ? EmojiExtension.configure({ suggestion: config.emojiSuggestion, toEmoji: config.toEmoji })
+      : EmojiExtension,
+    config.memoSearchSuggestion
+      ? MemoSearchExtension.configure({ suggestion: config.memoSearchSuggestion })
+      : MemoSearchExtension,
   ]
-
-  if (config.mentionSuggestion) {
-    extensions.push(
-      MentionExtension.configure({
-        suggestion: config.mentionSuggestion,
-      })
-    )
-  }
-
-  if (config.channelSuggestion) {
-    extensions.push(
-      ChannelExtension.configure({
-        suggestion: config.channelSuggestion,
-      })
-    )
-  }
-
-  if (config.commandSuggestion) {
-    extensions.push(
-      CommandExtension.configure({
-        suggestion: config.commandSuggestion,
-      })
-    )
-  }
-
-  if (config.emojiSuggestion && config.toEmoji) {
-    extensions.push(
-      EmojiExtension.configure({
-        suggestion: config.emojiSuggestion,
-        toEmoji: config.toEmoji,
-      })
-    )
-  }
-
-  if (config.memoSearchSuggestion) {
-    extensions.push(
-      MemoSearchExtension.configure({
-        suggestion: config.memoSearchSuggestion,
-      })
-    )
-  }
 
   return extensions
 }
