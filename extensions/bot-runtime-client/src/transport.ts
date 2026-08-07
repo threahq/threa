@@ -146,10 +146,12 @@ export class BotRuntimeTransport {
       this.sendHello()
     })
     socket.on("disconnect", (reason: string) => {
+      const wasReady = this.socketConnected
       this.connected = false
       this.helloReady = false
       this.helloInFlight = false
       this.disconnectedAt ??= Date.now()
+      if (wasReady) this.callbacks.onDisconnected?.()
       // Socket.IO's auto-reconnect covers every disconnect reason EXCEPT a
       // server-initiated one (deploy drain, kick) — there the client stays down
       // until someone calls connect(). Redial immediately; a flap lands on the
@@ -157,10 +159,12 @@ export class BotRuntimeTransport {
       if (reason === "io server disconnect") socket.connect()
     })
     socket.on("connect_error", (error: unknown) => {
+      const wasReady = this.socketConnected
       this.connected = false
       this.helloReady = false
       this.helloInFlight = false
       this.disconnectedAt ??= Date.now()
+      if (wasReady) this.callbacks.onDisconnected?.()
       this.logFn(`socket connect_error: ${summarize(error)}`)
     })
     socket.on("bot_invocation:available", () => this.callbacks.onInvocationAvailable?.())
@@ -228,10 +232,12 @@ export class BotRuntimeTransport {
 
   /** Drop the current socket without stopping the transport — the next `connect()` dials fresh. */
   private teardownSocket(): void {
+    const wasReady = this.socketConnected
     this.connected = false
     this.helloReady = false
     this.helloInFlight = false
     this.disconnectedAt = undefined
+    if (wasReady) this.callbacks.onDisconnected?.()
     const socket = this.socket
     this.socket = undefined
     if (socket) {

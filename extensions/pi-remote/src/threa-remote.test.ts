@@ -523,6 +523,30 @@ describe("Pi remote trace safety", () => {
     // socket push is the real delivery path. See the constant's comment.
     expect(__testing.WS_BACKSTOP_POLL_MS).toBe(15 * 60 * 1000)
   })
+
+  test("pulls polling back to the fast cadence when a ready socket drops", () => {
+    __testing.setConfigForTesting({
+      baseUrl: "https://app.threa.io",
+      workspaceId: "ws_123",
+      apiKey: "threa_bk_test",
+      pollMs: 3000,
+    })
+    expect(__testing.nextQuietPollMs()).toBe(3000)
+    expect(__testing.nextQuietPollMs()).toBe(6000)
+
+    const delays: number[] = []
+    __testing.handleTransportDisconnected((delayMs) => delays.push(delayMs), 7, 7)
+
+    // The current run's poll owns the next timer and will observe the socketless
+    // state itself; scheduling here would create a second poll loop.
+    expect(delays).toEqual([])
+    expect(__testing.nextQuietPollMs()).toBe(3000)
+
+    // A poll left over from a canceled run cannot schedule for the active run,
+    // so it must not suppress the disconnect wakeup.
+    __testing.handleTransportDisconnected((delayMs) => delays.push(delayMs), 6, 7)
+    expect(delays).toEqual([3000])
+  })
 })
 
 describe("sanitizeInstanceIdSegment", () => {
@@ -1756,6 +1780,72 @@ describe("session-scoped lifecycle isolation", () => {
 })
 
 describe("reload claim continuity", () => {
+  test("starts transport and polling even when the session-start heartbeat fails", async () => {
+    const handlers = new Map<string, (event: unknown, ctx: any) => Promise<void>>()
+    const pi = {
+      registerCommand: () => {},
+      on: (event: string, handler: (event: unknown, ctx: any) => Promise<void>) => handlers.set(event, handler),
+      sendUserMessage: () => {},
+    }
+    threaRemote(pi as never)
+
+    const runtimeSessionId = "runtime_heartbeat_failure"
+    __testing.setConfigForTesting({
+      baseUrl: "https://example.test",
+      workspaceId: "ws_123",
+      apiKey: "threa_bk_test",
+      pollMs: 10,
+      linkedSessions: {
+        [runtimeSessionId]: {
+          enabled: true,
+          instanceId: "pi-heartbeat-failure",
+          runtimeSessionId,
+          rootStreamId: "stream_1",
+          activeStreamId: "stream_1",
+        },
+      },
+    })
+    const ctx = {
+      sessionManager: { getSessionId: () => runtimeSessionId, getBranch: () => [] },
+      isIdle: () => true,
+      cwd: "/tmp",
+      modelRegistry: { getAvailable: () => [] },
+      ui: {
+        setStatus: () => {},
+        notify: () => {},
+        theme: { fg: (_tone: string, text: string) => text },
+      },
+    }
+    const requests: string[] = []
+    let failPresence = true
+    const fetchSpy = spyOn(globalThis, "fetch").mockImplementation((async (input: string | URL | Request) => {
+      const url = String(input)
+      requests.push(url)
+      if (url.endsWith("/bot-runtime/presence") && failPresence) {
+        failPresence = false
+        return new Response(JSON.stringify({ error: "temporary" }), {
+          status: 503,
+          headers: { "content-type": "application/json" },
+        })
+      }
+      const data = url.endsWith("/bot-invocations/claim") ? null : {}
+      return new Response(JSON.stringify(url.includes("/api/workspaces/") ? {} : { data }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      })
+    }) as typeof fetch)
+
+    try {
+      await handlers.get("session_start")!({ reason: "reload" }, ctx)
+      await Bun.sleep(30)
+
+      expect(requests.some((url) => url.includes("/api/workspaces/ws_123/config"))).toBe(true)
+      expect(requests.some((url) => url.endsWith("/bot-invocations/claim"))).toBe(true)
+    } finally {
+      fetchSpy.mockRestore()
+    }
+  })
+
   test("restores, renews, and completes the in-flight claim after the extension cache is cleared", async () => {
     const handlers = new Map<string, (event: unknown, ctx: any) => Promise<void>>()
     const pi = {

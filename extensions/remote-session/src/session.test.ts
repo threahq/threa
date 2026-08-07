@@ -1658,6 +1658,37 @@ describe("claimDrain intercept routing", () => {
 })
 
 describe("no-socket poll backoff", () => {
+  test("pulls a parked socket backstop forward when the shared transport disconnects", () => {
+    const { client } = makeFakeClient()
+    const session = new RemoteSession({
+      config: makeConfig(),
+      client,
+      delegate: { deliverTurn: async () => {} },
+      runtime: RUNTIME,
+    })
+    const internal = session as unknown as {
+      emptyNoSocketPolls: number
+      pollTimer: ReturnType<typeof setTimeout> | undefined
+      stopped: boolean
+      transport: {
+        callbacks: { onDisconnected?: () => void }
+        disconnect: () => void
+      }
+    }
+    internal.emptyNoSocketPolls = 5
+    const parkedTimer = setTimeout(() => {}, 15 * 60 * 1000)
+    internal.pollTimer = parkedTimer
+
+    internal.transport.callbacks.onDisconnected?.()
+
+    expect(internal.emptyNoSocketPolls).toBe(0)
+    expect(internal.pollTimer).toBeDefined()
+    expect(internal.pollTimer).not.toBe(parkedTimer)
+    if (internal.pollTimer) clearTimeout(internal.pollTimer)
+    internal.stopped = true
+    internal.transport.disconnect()
+  })
+
   test("doubles empty socketless ticks to the cap; claim, socket, or reconnect resets", () => {
     const { client } = makeFakeClient()
     const { transport } = makeFakeTransport()
