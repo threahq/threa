@@ -1072,7 +1072,21 @@ export const StreamRepository = {
         updated_at = NOW()
       WHERE workspace_id = ${params.workspaceId} AND id = ${params.streamId}
         AND (${params.expectedRevision === undefined} OR display_name_revision = ${params.expectedRevision ?? 0})
-        AND (${params.expectedSource === undefined} OR COALESCE(display_name_source, CASE WHEN display_name IS NOT NULL THEN ${TitleSources.LEGACY} END) IS NOT DISTINCT FROM ${params.expectedSource ?? null})
+        AND (${params.expectedSource === undefined} OR COALESCE(
+          display_name_source,
+          CASE WHEN display_name IS NOT NULL OR EXISTS (
+            SELECT 1 FROM e2e_streams e
+            WHERE e.workspace_id = streams.workspace_id
+              AND e.stream_id = streams.id
+              AND e.name_ciphertext IS NOT NULL
+          ) THEN ${TitleSources.LEGACY} END
+        ) IS NOT DISTINCT FROM ${params.expectedSource ?? null}
+          OR (
+            current_setting('threa.coordinated_title_write', true) = '1'
+            AND display_name_source IS NULL
+            AND ${params.expectedSource === null}
+          )
+        )
       RETURNING ${sql.raw(SELECT_FIELDS)}
     `)
     return result.rows[0] ? mapRowToStream(result.rows[0]) : null

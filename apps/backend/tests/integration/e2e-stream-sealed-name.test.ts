@@ -146,6 +146,8 @@ describe("E2E sealed stream name", () => {
       await client.query("DROP FUNCTION IF EXISTS preserve_legacy_stream_title_intent()")
       await client.query("DROP TRIGGER IF EXISTS preserve_legacy_conversation_title_intent_trigger ON conversations")
       await client.query("DROP FUNCTION IF EXISTS preserve_legacy_conversation_title_intent()")
+      await client.query("DROP TRIGGER IF EXISTS preserve_legacy_e2e_title_intent_trigger ON e2e_streams")
+      await client.query("DROP FUNCTION IF EXISTS preserve_legacy_e2e_title_intent()")
       await client.query(
         "ALTER TABLE streams DROP COLUMN display_name_source, DROP COLUMN display_name_revision, DROP COLUMN display_name_updated_by_user_id"
       )
@@ -201,6 +203,34 @@ describe("E2E sealed stream name", () => {
           ])
         ).rows[0]
       ).toEqual({ topic_summary_source: "explicit", topic_summary_revision: 2 })
+
+      await client.query(
+        "UPDATE streams SET display_name_source = 'generated', display_name_revision = 1 WHERE id = $1",
+        [sealedId]
+      )
+      await client.query("SELECT set_config('threa.coordinated_title_write', '', true)")
+      await client.query("UPDATE e2e_streams SET name_ciphertext = $1 WHERE workspace_id = $2 AND stream_id = $3", [
+        Buffer.from("old-replica-manual-title"),
+        wsId,
+        sealedId,
+      ])
+      expect(
+        (await client.query("SELECT display_name_source, display_name_revision FROM streams WHERE id = $1", [sealedId]))
+          .rows[0]
+      ).toEqual({ display_name_source: "explicit", display_name_revision: 2 })
+
+      await client.query(
+        "UPDATE streams SET display_name_source = 'generated', display_name_revision = 3 WHERE id = $1",
+        [sealedId]
+      )
+      await E2eStreamsRepository.updateSealedName(client, wsId, sealedId, {
+        ciphertext: Buffer.from("coordinated-new-replica-title").toString("base64"),
+        envelope: ENVELOPE,
+      })
+      expect(
+        (await client.query("SELECT display_name_source, display_name_revision FROM streams WHERE id = $1", [sealedId]))
+          .rows[0]
+      ).toEqual({ display_name_source: "generated", display_name_revision: 3 })
     } finally {
       await client.query("ROLLBACK")
       client.release()
@@ -320,6 +350,15 @@ describe("E2E sealed stream name", () => {
     expect((await StreamRepository.findByIdForWorkspace(pool, sId, wsId))?.displayNameSource).toBe("legacy")
     expect((await StreamRepository.findByIdForUpdate(pool, sId))?.displayNameSource).toBe("legacy")
     expect((await StreamRepository.findByIdForUpdateBlocking(pool, sId))?.displayNameSource).toBe("legacy")
+    const updated = await StreamRepository.updateDisplayName(pool, {
+      workspaceId: wsId,
+      streamId: sId,
+      displayName: null,
+      source: "generated",
+      expectedRevision: 0,
+      expectedSource: "legacy",
+    })
+    expect(updated).toMatchObject({ displayNameSource: "generated", displayNameRevision: 1 })
   })
 
   test("rejects non-canonical base64 instead of storing a corrupt blob", async () => {

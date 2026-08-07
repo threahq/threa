@@ -79,3 +79,28 @@ $$ LANGUAGE plpgsql;
 CREATE TRIGGER preserve_legacy_conversation_title_intent_trigger
 BEFORE INSERT OR UPDATE OF topic_summary ON conversations
 FOR EACH ROW EXECUTE FUNCTION preserve_legacy_conversation_title_intent();
+
+-- Old replicas write sealed title bytes directly on e2e_streams and cannot
+-- advance the new streams provenance columns. Treat those rollout-window writes
+-- as explicit. New repository writes set a statement-local guard and coordinate
+-- provenance themselves in the same transaction.
+CREATE FUNCTION preserve_legacy_e2e_title_intent() RETURNS TRIGGER AS $$
+BEGIN
+  IF current_setting('threa.coordinated_title_write', true) = '1' THEN
+    RETURN NEW;
+  END IF;
+  IF (TG_OP = 'INSERT' AND NEW.name_ciphertext IS NOT NULL)
+    OR (TG_OP = 'UPDATE' AND NEW.name_ciphertext IS DISTINCT FROM OLD.name_ciphertext) THEN
+    UPDATE streams
+    SET display_name_source = 'explicit',
+        display_name_revision = display_name_revision + 1,
+        display_name_updated_by_user_id = NULL
+    WHERE workspace_id = NEW.workspace_id AND id = NEW.stream_id;
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER preserve_legacy_e2e_title_intent_trigger
+AFTER INSERT OR UPDATE OF name_ciphertext ON e2e_streams
+FOR EACH ROW EXECUTE FUNCTION preserve_legacy_e2e_title_intent();
