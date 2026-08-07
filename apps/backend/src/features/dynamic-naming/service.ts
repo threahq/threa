@@ -54,13 +54,17 @@ export class DynamicNamingService {
     const target = await withTransaction(this.pool, async (client) => {
       const snapshot = await adapter.lockAndValidate(client, ref)
       if (!snapshot) return null
-      await DynamicNamingStateRepository.ensure(client, {
+      const ensured = await DynamicNamingStateRepository.ensure(client, {
         ...ref,
         initialLastEvaluatedMessageCount:
           snapshot.title !== null && snapshot.titleSource === TitleSources.GENERATED ? 1 : 0,
       })
-      const state = await DynamicNamingStateRepository.recordStructuralEvent(client, { ...ref, eventId })
-      return state ? snapshot : null
+      const changed = await DynamicNamingStateRepository.recordStructuralEvent(client, { ...ref, eventId })
+      const state = changed ?? ensured
+      // A retry after queue-send failure sees the same monotonic event id. It
+      // must still schedule while the structural frontier remains dirty; only a
+      // duplicate already evaluated is a true no-op.
+      return state.structureVersion > state.lastEvaluatedStructureVersion ? snapshot : null
     })
     if (!target) return false
     await this.scheduler.schedule(ref, this.quietDeadline(target) ?? this.now())

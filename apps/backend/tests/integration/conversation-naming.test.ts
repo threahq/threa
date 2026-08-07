@@ -136,6 +136,30 @@ describe("dynamic conversation naming", () => {
     expect(calls).toBe(0)
   })
 
+  test("a structural outbox retry still schedules after the first queue send fails", async () => {
+    const item = await fixture({ count: 3, title: "Deployment issue" })
+    let attempts = 0
+    const naming = new DynamicNamingService(
+      pool,
+      new Map([["conversation", new DynamicNamingConversationTarget(pool, new MessageFormatter())]]),
+      { decide: async () => ({ action: "keep" }) },
+      {
+        schedule: async () => {
+          attempts += 1
+          if (attempts === 1) throw new Error("queue unavailable")
+        },
+      }
+    )
+    const ref = {
+      workspaceId: item.workspaceId,
+      targetKind: "conversation" as const,
+      targetId: item.conversationId,
+    }
+    await expect(naming.recordStructuralEvent(ref, "9050")).rejects.toThrow("queue unavailable")
+    await expect(naming.recordStructuralEvent(ref, "9050")).resolves.toBe(true)
+    expect(attempts).toBe(2)
+  })
+
   test("a structural reassignment evaluates once after ordinary settlement", async () => {
     const item = await fixture({ count: 3, title: "Deployment issue" })
     const checkpoints: Array<{ checkpoint: number; forced: boolean }> = []
