@@ -56,7 +56,7 @@ import { EnclaveTraceObserver } from "./trace-observer"
 import { buildEnclaveTools } from "./tools"
 import { decodeUtf8 } from "./attachment-tool"
 import { generateTitle } from "./auto-title"
-import { evaluateNaming } from "./naming-evaluator"
+import { advanceNamingInstruction, evaluateNaming } from "./naming-evaluator"
 
 /**
  * The agent turn, run entirely inside the enclave next to decrypted plaintext.
@@ -475,6 +475,7 @@ export async function runEnclaveTurn(
   // callback; completion releases the session-owned claim for a later retry.
   if (request.naming && firstReplyText && onNamingDecision) {
     try {
+      let quietReached = pollNewMessages === undefined
       if (pollNewMessages) {
         let boundary = loopResult.lastProcessedSequence > 0n ? loopResult.lastProcessedSequence : 0n
         // Bound a stream of fast follow-ups: each observed batch earns a fresh
@@ -482,7 +483,10 @@ export async function runEnclaveTurn(
         for (let poll = 0; poll < 3; poll++) {
           await new Promise((resolve) => setTimeout(resolve, deps.namingQuietMs ?? 5_000))
           const finalRows = await pollNewMessages(boundary)
-          if (finalRows.length === 0) break
+          if (finalRows.length === 0) {
+            quietReached = true
+            break
+          }
           for (const row of finalRows) {
             const sequence = BigInt(row.sequence)
             if (sequence > boundary) boundary = sequence
@@ -501,6 +505,7 @@ export async function runEnclaveTurn(
           }
         }
       }
+      if (!quietReached) throw new Error("Naming quiet window not reached")
 
       let currentTitle: string | null = null
       if (request.naming.currentSealedTitle) {
@@ -522,10 +527,13 @@ export async function runEnclaveTurn(
         ...replyTexts.map((text) => `assistant: ${text}`),
         ...namingInterjections.values().map((text) => `user: ${text}`),
       ].join("\n\n")
+      const observedMessageCount =
+        request.naming.messageCount + Math.max(0, messageIds.length - 1) + namingInterjections.size
+      const effectiveInstruction = advanceNamingInstruction(request.naming, observedMessageCount)
       const evaluated = await evaluateNaming({
         rawChat,
         model: request.model,
-        instruction: request.naming,
+        instruction: effectiveInstruction,
         currentTitle,
         context,
         signal: abortSignal,
@@ -535,12 +543,8 @@ export async function runEnclaveTurn(
           confidence: evaluated.confidence,
           observedStateRevision: request.naming.stateRevision,
           observedTitleRevision: request.naming.titleRevision,
-          // The instruction already anticipates the first reply (the callback is
-          // impossible without one). Add only additional replies plus newly
-          // observed user interjections to reach the exact persisted count.
-          observedMessageCount:
-            request.naming.messageCount + Math.max(0, messageIds.length - 1) + namingInterjections.size,
-          observedCheckpoint: request.naming.checkpoint,
+          observedMessageCount,
+          observedCheckpoint: effectiveInstruction.checkpoint,
         }
         if (evaluated.action === "rename") {
           const sealed = await sealMessage({

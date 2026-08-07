@@ -1,5 +1,5 @@
 import { z } from "zod"
-import type { EnclaveNamingInstruction } from "@threa/types"
+import { ENCLAVE_NAMING_CHECKPOINTS, type EnclaveNamingInstruction } from "@threa/types"
 import type { RawChatFn } from "../llm"
 import { sanitizeTitle } from "./auto-title"
 
@@ -15,6 +15,20 @@ export type EnclaveNamingEvaluation =
   | { action: "defer"; confidence: number }
   | { action: "keep"; confidence: number }
   | { action: "rename"; confidence: number; title: string }
+
+export function advanceNamingInstruction(
+  instruction: EnclaveNamingInstruction,
+  observedMessageCount: number
+): EnclaveNamingInstruction {
+  const checkpoint =
+    [...ENCLAVE_NAMING_CHECKPOINTS].reverse().find((candidate) => candidate <= observedMessageCount) ?? 1
+  return {
+    ...instruction,
+    checkpoint,
+    messageCount: observedMessageCount,
+    forced: instruction.forced || checkpoint >= 3,
+  }
+}
 
 const SYSTEM = `Evaluate whether a conversation title should be deferred, kept, or renamed.
 - defer only at a non-forced checkpoint 1 when no useful subject is identifiable.

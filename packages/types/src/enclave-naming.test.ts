@@ -10,7 +10,7 @@ const observed = {
 }
 const sealed = {
   ciphertext: "Y3Q=",
-  envelope: { v: 1, keyGeneration: 2, iv: "aXY=", aad: "YWFk" },
+  envelope: { v: 2, keyGeneration: 2, iv: "aXY=", aad: "YWFk" },
 }
 
 describe("enclave naming protocol", () => {
@@ -42,6 +42,16 @@ describe("enclave naming protocol", () => {
     expect(
       EnclaveNamingDecisionSchema.safeParse({ action: "rename", ...observed, sealedReplacement: sealed }).success
     ).toBe(true)
+  })
+
+  test("rejects malformed sealed framing", () => {
+    expect(
+      EnclaveNamingDecisionSchema.safeParse({
+        action: "rename",
+        ...observed,
+        sealedReplacement: { ...sealed, envelope: { ...sealed.envelope, iv: "not base64" } },
+      }).success
+    ).toBe(false)
   })
 
   test("rejects unknown plaintext fields", () => {

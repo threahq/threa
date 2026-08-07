@@ -439,7 +439,7 @@ describe("runEnclaveTurn", () => {
           stateRevision: 4,
           titleRevision: 2,
           checkpoint: 3,
-          messageCount: 2,
+          messageCount: 3,
           forced: true,
           reason: "ordinary",
           currentSealedTitle: { ciphertext: bytesToBase64(prior.ciphertext), envelope: prior.envelope },
@@ -448,7 +448,7 @@ describe("runEnclaveTurn", () => {
     )
     const decision = decisions[0]
     expect(decision?.action).toBe("rename")
-    expect(decision?.observedMessageCount).toBe(2)
+    expect(decision?.observedMessageCount).toBe(3)
     if (!decision || decision.action !== "rename") throw new Error("missing rename")
     expect(
       await openMessageAsString({

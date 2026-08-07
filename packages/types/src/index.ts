@@ -691,6 +691,7 @@ export type {
 } from "./api"
 
 export {
+  ENCLAVE_NAMING_CHECKPOINTS,
   EnclaveNamingInstructionSchema,
   EnclaveNamingDecisionSchema,
   type EnclaveNamingInstruction,

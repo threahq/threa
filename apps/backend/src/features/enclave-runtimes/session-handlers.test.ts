@@ -367,13 +367,25 @@ describe("createEnclaveSessionHandlers.namingDecision", () => {
       claimToken: "claim_1",
       claimCheckpoint: 3,
       claimTitleRevision: 2,
+      lastEvaluatedMessageCount: 1,
+      consecutiveKeeps: 0,
+      completedAt: null,
+      structureVersion: 0,
+      lastEvaluatedStructureVersion: 0,
     } as never)
     spyOn(MessageRepository, "getNamingStats").mockResolvedValue({ count: 3, latestMessageAt: new Date() })
+    spyOn(DynamicNamingStateRepository, "advanceOwnedClaimObservation").mockResolvedValue({ version: 5 } as never)
     const apply = spyOn(DynamicNamingStateRepository, "applyDecision").mockResolvedValue({ state: {} } as never)
     const store = spyOn(E2eStreamsRepository, "updateSealedName").mockResolvedValue(true)
     spyOn(StreamRepository, "updateDisplayName").mockResolvedValue({
       id: "stream_1",
       workspaceId: "ws_1",
+      displayNameRevision: 3,
+    } as never)
+    spyOn(StreamRepository, "findById").mockResolvedValue({
+      id: "stream_1",
+      workspaceId: "ws_1",
+      sealedNameCiphertext: "Y3Q=",
       displayNameRevision: 3,
     } as never)
     const insert = spyOn(OutboxRepository, "insert").mockResolvedValue(undefined as never)
@@ -383,9 +395,16 @@ describe("createEnclaveSessionHandlers.namingDecision", () => {
     await handlers.namingDecision(req("session_1", RENAME_BODY), res)
 
     expect(res.statusCode).toBe(204)
-    expect(apply).toHaveBeenCalledWith({}, expect.objectContaining({ token: "claim_1", expectedVersion: 4 }))
+    expect(apply).toHaveBeenCalledWith({}, expect.objectContaining({ token: "claim_1", expectedVersion: 5 }))
     expect(store).toHaveBeenCalledWith({}, "ws_1", "stream_1", expect.objectContaining({ ciphertext: "Y3Q=" }))
-    expect(insert).toHaveBeenCalledWith({}, "stream:updated", expect.objectContaining({ streamId: "stream_1" }))
+    expect(insert).toHaveBeenCalledWith(
+      {},
+      "stream:updated",
+      expect.objectContaining({
+        streamId: "stream_1",
+        stream: expect.objectContaining({ sealedNameCiphertext: "Y3Q=" }),
+      })
+    )
   })
 
   it("rejects a replacement not sealed for the stream name slot", async () => {

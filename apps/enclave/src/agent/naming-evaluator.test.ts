@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest"
 import type { EnclaveNamingInstruction } from "@threa/types"
-import { evaluateNaming } from "./naming-evaluator"
+import { advanceNamingInstruction, evaluateNaming } from "./naming-evaluator"
 
 const instruction: EnclaveNamingInstruction = {
   stateRevision: 4,
@@ -12,6 +12,12 @@ const instruction: EnclaveNamingInstruction = {
 }
 
 describe("evaluateNaming", () => {
+  it("promotes a checkpoint-1 claim when reply/interjection growth crosses checkpoint 3", () => {
+    expect(
+      advanceNamingInstruction({ ...instruction, checkpoint: 1, messageCount: 2, forced: false }, 3)
+    ).toMatchObject({ checkpoint: 3, messageCount: 3, forced: true })
+  })
+
   it("uses strict provider JSON and accepts rename", async () => {
     let request: Parameters<import("../llm").RawChatFn>[0] | undefined
     const rawChat: import("../llm").RawChatFn = vi.fn(async (value) => {

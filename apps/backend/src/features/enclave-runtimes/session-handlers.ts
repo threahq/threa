@@ -38,7 +38,11 @@ import { StreamRepository, StreamEventRepository } from "../streams"
 import { E2eStreamsRepository } from "../e2e-streams"
 import { serializeTraceStep } from "../public-api"
 import { MessageRepository, type EventService } from "../messaging"
-import { DYNAMIC_NAMING_CLAIM_LEASE_SECONDS, DynamicNamingStateRepository } from "../dynamic-naming"
+import {
+  DYNAMIC_NAMING_CLAIM_LEASE_SECONDS,
+  DynamicNamingStateRepository,
+  getNamingEligibility,
+} from "../dynamic-naming"
 import type { AICostServiceLike } from "../ai-usage"
 import { enqueueEnclaveInvocation } from "./claim-service"
 import { EnclaveInvocationsRepository, ENCLAVE_CLAIM_TTL_SECONDS } from "./invocations-repository"
@@ -507,20 +511,41 @@ export function createEnclaveSessionHandlers({ pool, eventService, io, costServi
           !state ||
           state.claimOwnerId !== id ||
           state.version !== decision.observedStateRevision ||
-          state.claimCheckpoint !== decision.observedCheckpoint ||
           state.claimTitleRevision !== decision.observedTitleRevision ||
           (stream.displayNameRevision ?? 0) !== decision.observedTitleRevision
         )
           return
         const stats = await MessageRepository.getNamingStats(tx, stream.id)
-        if (stats.count !== decision.observedMessageCount) return
+        // Growth after the enclave's final snapshot does not invalidate a sound
+        // decision by itself; catch-up handles those rows. Deletion does make the
+        // observed context impossible and therefore stale.
+        if (stats.count < decision.observedMessageCount) return
+        const eligibility = getNamingEligibility(
+          {
+            lastEvaluatedMessageCount: state.lastEvaluatedMessageCount,
+            consecutiveKeeps: state.consecutiveKeeps,
+            completed: state.completedAt !== null,
+            structureVersion: state.structureVersion,
+            lastEvaluatedStructureVersion: state.lastEvaluatedStructureVersion,
+          },
+          decision.observedMessageCount
+        )
+        if (!eligibility.eligible || eligibility.checkpoint !== decision.observedCheckpoint) return
 
+        const observedState = await DynamicNamingStateRepository.advanceOwnedClaimObservation(tx, {
+          ownerId: id,
+          token: state.claimToken!,
+          expectedVersion: state.version,
+          checkpoint: decision.observedCheckpoint,
+          messageCount: decision.observedMessageCount,
+        })
+        if (!observedState) return
         const applied = await DynamicNamingStateRepository.applyDecision(tx, {
           workspaceId: stream.workspaceId,
           targetKind: "stream",
           targetId: stream.id,
           token: state.claimToken!,
-          expectedVersion: state.version,
+          expectedVersion: observedState.version,
           titleRevision: decision.observedTitleRevision,
           decision:
             decision.action === "rename" ? { action: "rename", title: "[sealed]" } : { action: decision.action },
@@ -542,10 +567,14 @@ export function createEnclaveSessionHandlers({ pool, eventService, io, costServi
           expectedSource: source,
         })
         if (!updated) throw new Error("E2E naming title CAS failed after state claim was consumed")
+        // updateDisplayName returns a streams-only row; refetch the E2E join so
+        // the live event carries the replacement ciphertext with its revision.
+        const projected = await StreamRepository.findById(tx, updated.id)
+        if (!projected) throw new Error("E2E naming stream disappeared after title update")
         await OutboxRepository.insert(tx, "stream:updated", {
-          workspaceId: updated.workspaceId,
-          streamId: updated.id,
-          stream: updated,
+          workspaceId: projected.workspaceId,
+          streamId: projected.id,
+          stream: projected,
         })
       })
 

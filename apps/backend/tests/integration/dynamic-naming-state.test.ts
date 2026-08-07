@@ -109,9 +109,17 @@ describe("dynamic naming state repository", () => {
       version: claim!.version,
       claimOwnerId: "session_1",
     })
+    const observed = await repo.advanceOwnedClaimObservation(pool, {
+      ownerId: "session_1",
+      token: claim!.claimToken!,
+      expectedVersion: claim!.version,
+      checkpoint: 3,
+      messageCount: 3,
+    })
+    expect(observed).toMatchObject({ version: claim!.version + 1, claimCheckpoint: 3, claimMessageCount: 3 })
     expect(await repo.releaseOwnedClaim(pool, "session_1")).toBe(1)
     expect(await repo.find(pool, workspace, "stream", state.targetId)).toMatchObject({
-      version: claim!.version + 1,
+      version: claim!.version + 2,
       claimOwnerId: null,
       claimToken: null,
     })
