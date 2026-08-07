@@ -32,10 +32,12 @@ function isConversationSnapshot(target: DynamicNamingTargetSnapshot): target is 
 }
 
 function orderedPrimaryMessages(conversation: Conversation, messages: Map<string, Message>): Message[] {
-  return conversation.messageIds.flatMap((id) => {
-    const message = messages.get(id)
-    return message ? [message] : []
-  })
+  return conversation.messageIds
+    .flatMap((id) => {
+      const message = messages.get(id)
+      return message ? [message] : []
+    })
+    .sort((left, right) => left.createdAt.getTime() - right.createdAt.getTime())
 }
 
 export class DynamicNamingConversationTarget implements DynamicNamingTargetAdapter {
@@ -83,9 +85,11 @@ export class DynamicNamingConversationTarget implements DynamicNamingTargetAdapt
       if (await E2eStreamsRepository.isE2eStream(client, target.workspaceId, conversation.streamId)) return null
       const byId = await MessageRepository.findByIdsInWorkspace(client, target.workspaceId, conversation.messageIds)
       const messages = orderedPrimaryMessages(conversation, byId).slice(-DYNAMIC_NAMING_MAX_MESSAGES)
-      const siblings = await ConversationRepository.findByStream(client, conversation.streamId, {
-        limit: DYNAMIC_NAMING_MAX_EXISTING_TITLES + 1,
-      })
+      const siblings = await ConversationRepository.findByStreamIncludingThreads(
+        client,
+        stream.rootStreamId ?? stream.id,
+        { limit: DYNAMIC_NAMING_MAX_EXISTING_TITLES + 1 }
+      )
       const attachments = await AttachmentRepository.findByMessageIds(
         client,
         messages.map((message) => message.id)
