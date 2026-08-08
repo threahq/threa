@@ -6,6 +6,10 @@ const CLEANUP_MIGRATION = new URL(
   "../../src/db/migrations/20260808065950_remove_legacy_naming_compatibility.sql",
   import.meta.url
 )
+const DROP_TIMESTAMP_MIGRATION = new URL(
+  "../../src/db/migrations/20260808080503_drop_stream_display_name_generated_at.sql",
+  import.meta.url
+)
 
 describe("legacy naming cleanup migration", () => {
   let pool: Pool
@@ -18,7 +22,7 @@ describe("legacy naming cleanup migration", () => {
     await pool.end()
   })
 
-  test("removes rollout triggers and cancels unfinished legacy queue work", async () => {
+  test("removes rollout triggers, queue work, and timestamp provenance", async () => {
     const client = await pool.connect()
     try {
       await client.query("BEGIN")
@@ -35,6 +39,8 @@ describe("legacy naming cleanup migration", () => {
       `)
 
       await client.query(await Bun.file(CLEANUP_MIGRATION).text())
+      await client.query("ALTER TABLE streams ADD COLUMN IF NOT EXISTS display_name_generated_at TIMESTAMPTZ")
+      await client.query(await Bun.file(DROP_TIMESTAMP_MIGRATION).text())
 
       const message = await client.query(
         "SELECT cancelled_at, process_after, claimed_by FROM queue_messages WHERE id = 'queue_legacy_naming_test'"
@@ -62,7 +68,7 @@ describe("legacy naming cleanup migration", () => {
         processAfter: null,
         claimedBy: null,
         tokens: 0,
-        legacyColumn: 1,
+        legacyColumn: 0,
         triggers: [],
       })
     } finally {
