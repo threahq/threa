@@ -65,3 +65,4 @@ export { ConversationFeedbackRepository } from "./feedback-repository"
 export type { Conversation, InsertConversationParams, UpdateConversationParams } from "./repository"
 
 export { addStalenessFields, computeTemporalStaleness, computeEffectiveCompleteness } from "./staleness"
+export { resolveConversationDelivery } from "./conversation-delivery"

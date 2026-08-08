@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test"
 import { AuthorTypes, StreamTypes } from "@threa/types"
+import { ConversationRepository } from "../conversations"
 import { E2eStreamsRepository } from "../e2e-streams"
 import { StreamRepository } from "../streams"
 import type { OutboxEvent } from "../../lib/outbox"
@@ -10,6 +11,10 @@ import { DynamicNamingStateRepository } from "./state-repository"
 class TestHandler extends DynamicNamingOutboxHandler {
   process(event: OutboxEvent) {
     return this.processEvent(event)
+  }
+
+  processAll(events: OutboxEvent[]) {
+    return this.processBatch(events)
   }
 }
 
@@ -73,6 +78,82 @@ describe("dynamic naming outbox handler", () => {
     ;(E2eStreamsRepository.isE2eStream as ReturnType<typeof mock>).mockResolvedValueOnce(true)
     await handler.process(event)
     expect(schedule).not.toHaveBeenCalled()
+  })
+
+  test("schedules primary non-scratchpad conversation assignments", async () => {
+    ;(StreamRepository.findById as ReturnType<typeof mock>).mockResolvedValueOnce({
+      ...stream,
+      type: StreamTypes.CHANNEL,
+    })
+    spyOn(ConversationRepository, "findById").mockResolvedValue({
+      id: "conv_1",
+      workspaceId: "ws_1",
+      streamId: "stream_1",
+      topicSummary: "Generated title",
+      topicSummarySource: "generated",
+    } as never)
+    const handler = new TestHandler({} as never, { schedule })
+    await handler.process({
+      id: 13n,
+      eventType: "conversation:message_assigned",
+      payload: {
+        workspaceId: "ws_1",
+        streamId: "stream_1",
+        messageId: "msg_1",
+        conversationId: "conv_1",
+        isPrimary: true,
+        reason: "classifier",
+      },
+      createdAt,
+    } as unknown as OutboxEvent)
+    expect(schedule).toHaveBeenCalledWith(
+      { workspaceId: "ws_1", targetKind: "conversation", targetId: "conv_1" },
+      new Date(createdAt.getTime() + DYNAMIC_NAMING_QUIET_MS)
+    )
+  })
+
+  test("marks both ends of a reassignment structurally dirty", async () => {
+    const recordStructuralEvent = mock(async (_ref: unknown, _eventId: string) => true)
+    const handler = new TestHandler({} as never, { schedule }, { recordStructuralEvent })
+    await handler.process({
+      id: 14n,
+      eventType: "conversation:message_reassigned",
+      payload: {
+        workspaceId: "ws_1",
+        streamId: "stream_1",
+        messageId: "msg_1",
+        fromConversationId: "conv_from",
+        toConversationId: "conv_to",
+        reason: "user_correction",
+      },
+      createdAt,
+    } as unknown as OutboxEvent)
+    expect(recordStructuralEvent.mock.calls.map((call) => call[0])).toEqual([
+      { workspaceId: "ws_1", targetKind: "conversation", targetId: "conv_from" },
+      { workspaceId: "ws_1", targetKind: "conversation", targetId: "conv_to" },
+    ])
+  })
+
+  test("coalesces repeated structural events to the newest id per target", async () => {
+    const recordStructuralEvent = mock(async (_ref: unknown, _eventId: string) => true)
+    const handler = new TestHandler({} as never, { schedule }, { recordStructuralEvent })
+    const reassigned = (id: bigint) =>
+      ({
+        id,
+        eventType: "conversation:message_reassigned",
+        payload: {
+          workspaceId: "ws_1",
+          streamId: "stream_1",
+          messageId: `msg_${id}`,
+          fromConversationId: "conv_from",
+          toConversationId: "conv_to",
+          reason: "split",
+        },
+        createdAt,
+      }) as unknown as OutboxEvent
+    await handler.processAll([reassigned(20n), reassigned(21n)])
+    expect(recordStructuralEvent.mock.calls).toHaveLength(2)
+    expect(recordStructuralEvent.mock.calls.map((call) => call[1])).toEqual(["21", "21"])
   })
 
   test("does not enqueue ordinary messages after the lifecycle settles", async () => {

@@ -48,6 +48,29 @@ export class DynamicNamingService {
     private readonly now: () => Date = () => new Date()
   ) {}
 
+  async recordStructuralEvent(ref: TargetRef, eventId: string): Promise<boolean> {
+    const adapter = this.adapters.get(ref.targetKind)
+    if (!adapter) return false
+    const target = await withTransaction(this.pool, async (client) => {
+      const snapshot = await adapter.lockAndValidate(client, ref)
+      if (!snapshot) return null
+      const ensured = await DynamicNamingStateRepository.ensure(client, {
+        ...ref,
+        initialLastEvaluatedMessageCount:
+          snapshot.title !== null && snapshot.titleSource === TitleSources.GENERATED ? 1 : 0,
+      })
+      const changed = await DynamicNamingStateRepository.recordStructuralEvent(client, { ...ref, eventId })
+      const state = changed ?? ensured
+      // A retry after queue-send failure sees the same monotonic event id. It
+      // must still schedule while the structural frontier remains dirty; only a
+      // duplicate already evaluated is a true no-op.
+      return state.structureVersion > state.lastEvaluatedStructureVersion ? snapshot : null
+    })
+    if (!target) return false
+    await this.scheduler.schedule(ref, this.quietDeadline(target) ?? this.now())
+    return true
+  }
+
   async evaluate(ref: TargetRef, ownerId: string): Promise<DynamicNamingEvaluationResult> {
     const adapter = this.adapters.get(ref.targetKind)
     if (!adapter) return { status: "protected" }

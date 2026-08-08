@@ -264,6 +264,23 @@ User: The tricky part is keeping the two families apart`,
     },
   },
   {
+    id: "classifier-opening-refinement-001",
+    name: "Conversation: Refine a broad classifier opening title",
+    input: {
+      conversationText: `User: The production deploy failed during the database migration
+User: The rollback left orphaned account records
+User: We need to repair the records before retrying`,
+      currentTitle: "Deployment issue",
+      checkpoint: 3,
+      category: "technical",
+    },
+    expectedOutput: {
+      expectedAction: "rename",
+      nameContains: ["migration", "rollback", "record"],
+      wordCountRange: { min: 2, max: 5 },
+    },
+  },
+  {
     id: "checkpoint-current-title-keep-001",
     name: "Checkpoint: Preserve an accurate current title",
     input: {
