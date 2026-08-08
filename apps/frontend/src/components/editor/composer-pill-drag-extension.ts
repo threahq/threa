@@ -4,6 +4,7 @@ import { Plugin, PluginKey, Selection, type EditorState, type Transaction } from
 import { dropPoint } from "@tiptap/pm/transform"
 import { Decoration, DecorationSet, type EditorView } from "@tiptap/pm/view"
 import { LONG_PRESS_MOVE_TOLERANCE_PX, LONG_PRESS_THRESHOLD_MS } from "@/hooks/use-long-press"
+import { ComposerPillTouchGuide } from "./composer-pill-touch-guide"
 
 export const COMPOSER_PILL_NODE_NAMES = [
   "mention",
@@ -18,6 +19,9 @@ export const COMPOSER_PILL_NODE_NAMES = [
 const COMPOSER_PILL_NODE_NAME_SET = new Set<string>(COMPOSER_PILL_NODE_NAMES)
 const MOUSE_DRAG_THRESHOLD_PX = 6
 const COMPATIBILITY_CLICK_WINDOW_MS = 400
+const TOUCH_ACTIVATION_HAPTIC_MS = 10
+const TOUCH_TARGET_HAPTIC_MS = 10
+const TOUCH_DROP_HAPTIC_PATTERN_MS = [10, 20, 10]
 
 interface ComposerPillDragState {
   sourcePos: number
@@ -43,11 +47,72 @@ function pillSlice(node: ProseMirrorNode): Slice {
   return new Slice(Fragment.from(node), 0, 0)
 }
 
+/**
+ * Keep pill drops between lexical tokens. Text-node boundaries alone are not
+ * enough because marks can split one word into several nodes; only whitespace,
+ * non-text inline nodes, and the parent edges form real insertion slots.
+ */
+const INLINE_TOKEN_BOUNDARY_CACHE = new WeakMap<ProseMirrorNode, readonly number[]>()
+
+function inlineTokenBoundaryOffsets(parent: ProseMirrorNode): readonly number[] {
+  const cached = INLINE_TOKEN_BOUNDARY_CACHE.get(parent)
+  if (cached) return cached
+
+  const candidates = new Set<number>([0, parent.content.size])
+  parent.forEach((child, offset) => {
+    if (!child.isText) {
+      if (child.isInline) {
+        candidates.add(offset)
+        candidates.add(offset + child.nodeSize)
+      }
+      return
+    }
+
+    const text = child.text ?? ""
+    for (let index = 0; index < text.length; index++) {
+      if (!/\s/u.test(text[index] ?? "")) continue
+      candidates.add(offset + index)
+      candidates.add(offset + index + 1)
+    }
+  })
+
+  const result = [...candidates].sort((left, right) => left - right)
+  INLINE_TOKEN_BOUNDARY_CACHE.set(parent, result)
+  return result
+}
+
+function nearestInlineTokenBoundary(doc: ProseMirrorNode, pos: number): number {
+  const $pos = doc.resolve(pos)
+  const parent = $pos.parent
+  if (!parent.inlineContent) return pos
+
+  const parentStart = $pos.start()
+  const relativePos = pos - parentStart
+  const candidates = inlineTokenBoundaryOffsets(parent)
+  let low = 0
+  let high = candidates.length
+  while (low < high) {
+    const middle = (low + high) >> 1
+    if ((candidates[middle] ?? 0) < relativePos) low = middle + 1
+    else high = middle
+  }
+
+  const before = candidates[Math.max(0, low - 1)]
+  const after = candidates[Math.min(low, candidates.length - 1)]
+  if (before === undefined) return parentStart + (after ?? relativePos)
+  if (after === undefined) return parentStart + before
+  return parentStart + (relativePos - before <= after - relativePos ? before : after)
+}
+
 export function composerPillDropPoint(doc: ProseMirrorNode, rawPos: number, node: ProseMirrorNode): number | null {
   if (rawPos < 0 || rawPos > doc.content.size) return null
-  const point = dropPoint(doc, rawPos, pillSlice(node))
+  const slice = pillSlice(node)
+  const point = dropPoint(doc, rawPos, slice)
   if (point === null || !doc.resolve(point).parent.inlineContent) return null
-  return point
+
+  const snappedPoint = dropPoint(doc, nearestInlineTokenBoundary(doc, point), slice)
+  if (snappedPoint === null || !doc.resolve(snappedPoint).parent.inlineContent) return null
+  return snappedPoint
 }
 
 export function createComposerPillMoveTransaction(
@@ -194,6 +259,14 @@ function touchById(list: TouchList, id: number): Touch | null {
   return null
 }
 
+function vibrate(win: Window, pattern: number | number[]) {
+  try {
+    win.navigator.vibrate?.(pattern)
+  } catch {
+    // Vibration is optional feedback.
+  }
+}
+
 class ComposerPillDragController {
   private view: EditorView
   private readonly doc: Document
@@ -201,6 +274,7 @@ class ComposerPillDragController {
   private pending: PendingDrag | null = null
   private longPressTimer: number | null = null
   private suppressClickUntil = 0
+  private touchGuide: ComposerPillTouchGuide | null = null
 
   constructor(view: EditorView) {
     this.view = view
@@ -213,12 +287,18 @@ class ComposerPillDragController {
     view.dom.addEventListener("dragstart", this.onNativeDragStart, true)
   }
 
-  update(view: EditorView) {
+  update(view: EditorView, previousState?: EditorState) {
     this.view = view
     const dragState = ComposerPillDragPluginKey.getState(view.state)
     const active = dragState !== null && dragState !== undefined
     view.dom.classList.toggle("composer-pill-drag-active", active)
-    if (this.pending?.active && !active) this.clearPending()
+    if (this.pending?.active && !active) {
+      this.clearPending()
+      return
+    }
+    if (previousState?.doc !== view.state.doc && this.pending?.kind === "touch" && this.pending.active && dragState) {
+      this.touchGuide?.refresh(view.state.doc, dragState.dropPos)
+    }
   }
 
   destroy() {
@@ -250,12 +330,6 @@ class ComposerPillDragController {
     this.longPressTimer = this.win.setTimeout(() => {
       if (!this.pending || this.pending.kind !== "touch") return
       this.activate()
-      if (!this.pending?.active) return
-      try {
-        this.win.navigator.vibrate?.(10)
-      } catch {
-        // Vibration is optional feedback.
-      }
     }, LONG_PRESS_THRESHOLD_MS)
   }
 
@@ -270,6 +344,10 @@ class ComposerPillDragController {
       this.view.state.doc.nodeAt(drag.sourcePos)!
     )
     this.setDragState({ sourcePos: drag.sourcePos, dropPos })
+    if (drag.kind === "touch") {
+      this.updateTouchGuide(drag.startX, drag.startY, dropPos)
+      vibrate(this.win, TOUCH_ACTIVATION_HAPTIC_MS)
+    }
   }
 
   private updateDrop(x: number, y: number) {
@@ -280,7 +358,12 @@ class ComposerPillDragController {
       this.clearPending()
       return
     }
-    this.setDragState({ ...current, dropPos: dropPositionAt(this.view, x, y) })
+    const dropPos = dropPositionAt(this.view, x, y)
+    if (drag.kind === "touch") {
+      this.updateTouchGuide(x, y, dropPos)
+      if (dropPos !== null && dropPos !== current.dropPos) vibrate(this.win, TOUCH_TARGET_HAPTIC_MS)
+    }
+    this.setDragState({ ...current, dropPos })
   }
 
   private finish(x: number, y: number) {
@@ -297,10 +380,12 @@ class ComposerPillDragController {
         ? null
         : createComposerPillMoveTransaction(this.view.state, current.sourcePos, current.dropPos)
 
+    const touchDrop = drag.kind === "touch"
     this.suppressClickUntil = Date.now() + COMPATIBILITY_CLICK_WINDOW_MS
     this.clearPending()
     if (tr) {
       this.view.dispatch(tr.setMeta(ComposerPillDragPluginKey, null).setMeta("uiEvent", "drop"))
+      if (touchDrop) vibrate(this.win, TOUCH_DROP_HAPTIC_PATTERN_MS)
     } else {
       this.clearDragState()
     }
@@ -325,7 +410,19 @@ class ComposerPillDragController {
     this.doc.removeEventListener("touchcancel", this.onTouchCancel, true)
     this.doc.removeEventListener("keydown", this.onKeyDown, true)
     this.win.removeEventListener("blur", this.onWindowBlur)
+    this.removeTouchGuide()
     this.pending = null
+  }
+
+  private updateTouchGuide(x: number, y: number, dropPos: number | null) {
+    if (this.pending?.kind !== "touch" || !this.pending.active) return
+    this.touchGuide ??= new ComposerPillTouchGuide(this.doc, this.win)
+    this.touchGuide.update(this.view.state.doc, dropPos, x, y)
+  }
+
+  private removeTouchGuide() {
+    this.touchGuide?.destroy()
+    this.touchGuide = null
   }
 
   private setDragState(next: ComposerPillDragState) {
@@ -464,7 +561,7 @@ export const ComposerPillDragExtension = Extension.create({
         view(view) {
           const controller = new ComposerPillDragController(view)
           return {
-            update: (updatedView) => controller.update(updatedView),
+            update: (updatedView, previousState) => controller.update(updatedView, previousState),
             destroy: () => controller.destroy(),
           }
         },

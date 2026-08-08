@@ -11,9 +11,20 @@ import {
 } from "./composer-pill-drag-extension"
 
 const openEditors: Editor[] = []
+let originalVibrateDescriptor: PropertyDescriptor | undefined
+let vibrateMocked = false
 
 afterEach(() => {
   while (openEditors.length > 0) openEditors.pop()?.destroy()
+  if (vibrateMocked) {
+    if (originalVibrateDescriptor) {
+      Object.defineProperty(window.navigator, "vibrate", originalVibrateDescriptor)
+    } else {
+      delete (window.navigator as unknown as { vibrate?: Navigator["vibrate"] }).vibrate
+    }
+    originalVibrateDescriptor = undefined
+    vibrateMocked = false
+  }
   vi.useRealTimers()
   vi.restoreAllMocks()
 })
@@ -51,6 +62,14 @@ function touch(identifier: number, clientX: number, clientY: number): Touch {
   return { identifier, clientX, clientY } as Touch
 }
 
+function mockVibrate() {
+  originalVibrateDescriptor = Object.getOwnPropertyDescriptor(window.navigator, "vibrate")
+  vibrateMocked = true
+  const vibrate = vi.fn((_pattern: number | number[]) => true)
+  Object.defineProperty(window.navigator, "vibrate", { configurable: true, value: vibrate })
+  return vibrate
+}
+
 describe("composer pill moves", () => {
   it("covers every inline composer chip while leaving emoji text atoms out", () => {
     const editor = createPillEditor()
@@ -84,17 +103,32 @@ describe("composer pill moves", () => {
     expect(childTypes(editor)).toEqual(["mention", "channelLink", "slashCommand"])
   })
 
-  it("can insert the pill at a text caret, not only between other atoms", () => {
-    const editor = createPillEditor([pill("mention"), { type: "text", text: "hello" }])
-    const tr = createComposerPillMoveTransaction(editor.state, nodePos(editor, "mention"), 5)
+  it("snaps a text drop to whitespace instead of splitting a word", () => {
+    const editor = createPillEditor([pill("mention"), { type: "text", text: "hello world" }])
+    const sourcePos = nodePos(editor, "mention")
+    const source = editor.state.doc.nodeAt(sourcePos)!
+
+    expect(composerPillDropPoint(editor.state.doc, 5, source)).toBe(7)
+    const tr = createComposerPillMoveTransaction(editor.state, sourcePos, 5)
 
     expect(tr).not.toBeNull()
     editor.view.dispatch(tr!)
     expect(editor.getJSON().content?.[0]?.content).toEqual([
-      { type: "text", text: "hel" },
+      { type: "text", text: "hello" },
       pill("mention"),
-      { type: "text", text: "lo" },
+      { type: "text", text: " world" },
     ])
+  })
+
+  it("does not treat a text mark boundary inside a word as a drop slot", () => {
+    const editor = createPillEditor([
+      pill("mention"),
+      { type: "text", text: "hel", marks: [{ type: "bold" }] },
+      { type: "text", text: "lo world" },
+    ])
+    const source = editor.state.doc.nodeAt(nodePos(editor, "mention"))!
+
+    expect(composerPillDropPoint(editor.state.doc, 5, source)).toBe(7)
   })
 
   it("treats either edge of the source pill as a no-op", () => {
@@ -138,6 +172,7 @@ describe("composer pill drag gestures", () => {
     expect(childTypes(editor)).toEqual(["mention", "channelLink", "slashCommand"])
     expect(editor.view.dom.querySelector(".composer-pill-dragging")).not.toBeNull()
     expect(editor.view.dom.querySelector(".composer-pill-drop-cursor")).not.toBeNull()
+    expect(document.querySelector(".composer-pill-touch-guide")).toBeNull()
 
     fireEvent.mouseUp(document, { button: 0, clientX: 18, clientY: 10 })
 
@@ -172,8 +207,9 @@ describe("composer pill drag gestures", () => {
     expect(editor.view.dom.querySelector(".composer-pill-dragging")).toBeNull()
   })
 
-  it("requires a stationary long press before touch dragging, then commits only on release", () => {
+  it("uses a contextual touch guide and haptics after the stationary long press", () => {
     vi.useFakeTimers()
+    const vibrate = mockVibrate()
     const editor = createPillEditor()
     const source = editor.view.dom.querySelector<HTMLElement>('[data-type="mention"]')!
     const dropPos = nodePos(editor, "slashCommand") + 1
@@ -185,12 +221,74 @@ describe("composer pill drag gestures", () => {
 
     vi.advanceTimersByTime(1)
     expect(editor.view.dom.querySelector(".composer-pill-dragging")).not.toBeNull()
+    expect(document.querySelector(".composer-pill-touch-guide")).toHaveTextContent("@alice")
 
     fireEvent.touchMove(document, { touches: [touch(7, 20, 10)] })
     expect(childTypes(editor)).toEqual(["mention", "channelLink", "slashCommand"])
+    expect(document.querySelector(".composer-pill-touch-guide")).toHaveTextContent("/invite")
 
     fireEvent.touchEnd(document, { touches: [], changedTouches: [touch(7, 20, 10)] })
     expect(childTypes(editor)).toEqual(["channelLink", "slashCommand", "mention"])
+    expect(document.querySelector(".composer-pill-touch-guide")).toBeNull()
+    expect(vibrate.mock.calls.map(([pattern]) => pattern)).toEqual([10, 10, [10, 20, 10]])
+  })
+
+  it("shows words across formatting-isolated whitespace in the touch guide", () => {
+    vi.useFakeTimers()
+    const editor = createPillEditor([
+      pill("mention"),
+      { type: "text", text: "hello", marks: [{ type: "bold" }] },
+      { type: "text", text: " ", marks: [{ type: "italic" }] },
+      { type: "text", text: "world" },
+    ])
+    const source = editor.view.dom.querySelector<HTMLElement>('[data-type="mention"]')!
+    vi.spyOn(editor.view, "posAtCoords").mockReturnValue({ pos: 7, inside: -1 })
+
+    fireEvent.touchStart(source, { touches: [touch(2, 10, 100)] })
+    vi.advanceTimersByTime(500)
+    fireEvent.touchMove(document, { touches: [touch(2, 20, 100)] })
+
+    const context = Array.from(document.querySelectorAll(".composer-pill-touch-guide__context"))
+    expect(context.map((element) => element.textContent)).toEqual(["hello", "world"])
+
+    fireEvent.touchCancel(document)
+    expect(document.querySelector(".composer-pill-touch-guide")).toBeNull()
+  })
+
+  it("refreshes touch-guide context when an inline node updates during the drag", () => {
+    vi.useFakeTimers()
+    const editor = createPillEditor([
+      pill("mention"),
+      { type: "text", text: "hello " },
+      {
+        type: "attachmentReference",
+        attrs: {
+          id: "att_1",
+          filename: "old.txt",
+          mimeType: "text/plain",
+          sizeBytes: 42,
+          status: "uploaded",
+          imageIndex: null,
+          error: null,
+        },
+      },
+    ])
+    const source = editor.view.dom.querySelector<HTMLElement>('[data-type="mention"]')!
+    const attachmentPos = nodePos(editor, "attachmentReference")
+    vi.spyOn(editor.view, "posAtCoords").mockReturnValue({ pos: attachmentPos, inside: -1 })
+
+    fireEvent.touchStart(source, { touches: [touch(5, 10, 100)] })
+    vi.advanceTimersByTime(500)
+    fireEvent.touchMove(document, { touches: [touch(5, 20, 100)] })
+    expect(document.querySelector(".composer-pill-touch-guide")).toHaveTextContent("old.txt")
+
+    const attachment = editor.state.doc.nodeAt(attachmentPos)!
+    editor.view.dispatch(
+      editor.state.tr.setNodeMarkup(attachmentPos, undefined, { ...attachment.attrs, filename: "new.txt" })
+    )
+    expect(document.querySelector(".composer-pill-touch-guide")).toHaveTextContent("new.txt")
+
+    fireEvent.touchCancel(document)
   })
 
   it("cancels an active drag when a second finger lands outside the editor", () => {
@@ -207,6 +305,7 @@ describe("composer pill drag gestures", () => {
 
     expect(childTypes(editor)).toEqual(["mention", "channelLink", "slashCommand"])
     expect(editor.view.dom.querySelector(".composer-pill-dragging")).toBeNull()
+    expect(document.querySelector(".composer-pill-touch-guide")).toBeNull()
   })
 
   it("leaves touch scrolling alone when the finger moves before the long-press threshold", () => {
@@ -220,5 +319,6 @@ describe("composer pill drag gestures", () => {
 
     expect(childTypes(editor)).toEqual(["mention", "channelLink", "slashCommand"])
     expect(editor.view.dom.querySelector(".composer-pill-dragging")).toBeNull()
+    expect(document.querySelector(".composer-pill-touch-guide")).toBeNull()
   })
 })
