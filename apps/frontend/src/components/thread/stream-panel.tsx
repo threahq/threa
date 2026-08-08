@@ -35,6 +35,7 @@ import {
   useComposerHeightPublish,
   useStashComposer,
   useDecryptedDraftPreviews,
+  useStashedDraftOrigins,
   useWorkspaceUserId,
   useExternalThreadDraftPromotion,
 } from "@/hooks"
@@ -211,11 +212,13 @@ export function StreamPanel({ workspaceId, onClose }: StreamPanelProps) {
     [stash.drafts, e2eRoot]
   )
   const stashPreviews = useDecryptedDraftPreviews(workspaceId, stashPreviewInputs)
+  const stashOrigins = useStashedDraftOrigins(workspaceId, stash.originByDraftId)
 
   const stashedDraftsTrigger = stashScope ? (
     <StashedDraftsPicker
       drafts={stash.drafts}
       previewById={stashPreviews}
+      originById={stashOrigins}
       canStashCurrent={composer.canSend}
       onStashCurrent={stash.handleStashDraft}
       onRestore={stash.handleRestoreStashed}
@@ -229,6 +232,7 @@ export function StreamPanel({ workspaceId, onClose }: StreamPanelProps) {
     <StashedDraftsPicker
       drafts={stash.drafts}
       previewById={stashPreviews}
+      originById={stashOrigins}
       canStashCurrent={composer.canSend}
       onStashCurrent={stash.handleStashDraft}
       onRestore={stash.handleRestoreStashed}

@@ -26,9 +26,26 @@ export type StashedDraftSource =
 /**
  * A pile row's provenance. `tier` is the safety the widened pile carries in
  * presentation instead of exclusion: `own` is this host's exact scope, `borrowed`
- * is somewhere else under the same root stream.
+ * is somewhere else under the same root stream. `title` is the owning
+ * conversation's topic summary when the post is cached — null otherwise, and the
+ * renderer falls back to the stream (sub-topics) or to the explorer's generic
+ * wording. Stream names are deliberately NOT resolved here: they are
+ * viewer-specific (DMs) and belong to `lib/streams`.
  */
-export type StashedDraftOrigin = StashedDraftSource & { tier: "own" | "borrowed" }
+export type StashedDraftOrigin = StashedDraftSource & {
+  tier: "own" | "borrowed"
+  /** The owning conversation's topic summary, when it has one. */
+  title: string | null
+  /**
+   * The stream the origin sits in, for the label's middle rung. A conversation
+   * has no `topicSummary` until the boundary extractor has run, which is exactly
+   * the newest conversations — the ones a pile is most likely to be showing. The
+   * drafts explorer falls back to the anchor stream's name before its generic
+   * phrase, and the picker has to climb the same ladder or the two surfaces name
+   * the same draft differently.
+   */
+  anchorStreamId: string | null
+}
 
 export interface UseStashedDraftsResult {
   /** The pile the picker renders: every draft that could have been written under this host's root stream, minus the loaded ones. Own rows first, then borrowed; each group newest first. */
@@ -310,13 +327,37 @@ export function useStashedDrafts(workspaceId: string, scope: string | undefined)
   }, [pileOpen, livePile, draftsById, loadedAnywhere, comparePile, scope])
 
   const originByDraftId = useMemo(() => {
+    const topicSummary = (source: StashedDraftSource): string | null => {
+      if (source.kind === "conversation" || source.kind === "branch") {
+        return boardPostMap.get(source.conversationId)?.conversation.topicSummary ?? null
+      }
+      if (source.kind === "subtopic") {
+        return hostPostByMessageId.get(source.messageId)?.conversation.topicSummary ?? null
+      }
+      return null
+    }
+    const anchorStream = (source: StashedDraftSource): string | null => {
+      if (source.kind === "conversation" || source.kind === "branch") {
+        return boardPostMap.get(source.conversationId)?.conversation.streamId ?? null
+      }
+      if (source.kind === "subtopic") return source.streamId
+      if (source.kind === "thread") return source.streamId
+      if (source.kind === "stream") return source.streamId
+      return null
+    }
     const map = new Map<string, StashedDraftOrigin>()
     for (const draft of drafts) {
       const source = draftSource(draft.scope, streamByAnchorId)
-      if (source) map.set(draft.id, { ...source, tier: draft.scope === scope ? "own" : "borrowed" })
+      if (!source) continue
+      map.set(draft.id, {
+        ...source,
+        tier: draft.scope === scope ? "own" : "borrowed",
+        title: topicSummary(source),
+        anchorStreamId: anchorStream(source),
+      })
     }
     return map
-  }, [drafts, scope, streamByAnchorId])
+  }, [drafts, scope, streamByAnchorId, boardPostMap, hostPostByMessageId])
 
   const canHostForeignDraft = useCallback(
     () => !!workspaceId && !!scope && isHostHomeEligible(scope, pileContext, streamMap, archivedStreamIds),

@@ -1,4 +1,12 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react"
+import {
+  Fragment,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent as ReactKeyboardEvent,
+} from "react"
 import { FileEdit, FilePlus, Trash2 } from "lucide-react"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
@@ -16,7 +24,7 @@ import { formatKeyBinding, getEffectiveKeyBinding } from "@/lib/keyboard-shortcu
 import { useFabDrawerClose } from "./fab-drawer-close-context"
 import { useRegisterStashedDraftsOpen, useStashedDraftsBridge } from "./stashed-drafts-open-context"
 import { useComposerAnchor } from "./use-composer-anchor"
-import type { CachedDraft, DraftPreview } from "@/hooks"
+import type { CachedDraft, DraftPreview, StashedDraftRowOrigin } from "@/hooks"
 import { RESTORE_REFUSAL_MESSAGE, type DraftRestoreResult } from "@/lib/drafts/restore-refusal"
 
 interface StashedDraftsPickerProps {
@@ -28,6 +36,14 @@ interface StashedDraftsPickerProps {
    * the row's `contentJson` (plaintext-only callers / tests).
    */
   previewById?: Map<string, DraftPreview>
+  /**
+   * Per-row tier + already-formatted origin label, from `useStashedDraftOrigins`.
+   * The picker only renders it: it draws the own/borrowed seam and names where a
+   * borrowed row came from, and never resolves a stream, conversation or scope
+   * itself (INV-15). Absent → every row renders as its own (plaintext-only
+   * callers / tests).
+   */
+  originById?: Map<string, StashedDraftRowOrigin>
   /** True when the composer has something worth stashing (controls "Save current" enablement). */
   canStashCurrent: boolean
   /** Called when the user clicks "Save current draft" or presses Enter on the save affordance. */
@@ -60,6 +76,13 @@ interface StashedDraftsPickerProps {
  * showing a render ago and the world has since moved past, so the copy names
  * what happened to the draft, not what the code checked.
  */
+/** Whether this row's preview can still change height: a sealed body resolving
+ *  in is the only thing that does. A plaintext row is final at first paint. */
+function isPreviewSettled(draft: CachedDraft, previewById?: Map<string, DraftPreview>): boolean {
+  if (draft.ciphertext == null) return true
+  return previewById?.get(draft.id)?.status === "ready"
+}
+
 function attachmentOrEmptyLabel(draft: CachedDraft): string {
   const attachmentCount = draft.attachments?.length ?? 0
   if (attachmentCount > 0) {
@@ -84,6 +107,7 @@ function rowPreview(draft: CachedDraft, previewById?: Map<string, DraftPreview>)
 export function StashedDraftsPicker({
   drafts,
   previewById,
+  originById,
   canStashCurrent,
   onStashCurrent,
   onRestore,
@@ -93,6 +117,16 @@ export function StashedDraftsPicker({
   size = "compact",
 }: StashedDraftsPickerProps) {
   const [open, setOpen] = useState(false)
+  const [restorePresentation, setRestorePresentation] = useState<{
+    drafts: CachedDraft[]
+    previewById?: Map<string, DraftPreview>
+    originById?: Map<string, StashedDraftRowOrigin>
+  } | null>(null)
+  const restorePendingRef = useRef(false)
+  const handleOpenChange = useCallback((next: boolean) => {
+    if (next) setRestorePresentation(null)
+    setOpen(next)
+  }, [])
   useEffect(() => onOpenChange?.(open), [open, onOpenChange])
   const [draftToDelete, setDraftToDelete] = useState<string | null>(null)
   const closeFabDrawer = useFabDrawerClose()
@@ -106,7 +140,7 @@ export function StashedDraftsPicker({
 
   // Cmd/Ctrl+S on an empty composer opens the list (registered with the
   // hosting MessageComposer via the bridge).
-  const openFromShortcut = useCallback(() => setOpen(true), [])
+  const openFromShortcut = useCallback(() => handleOpenChange(true), [handleOpenChange])
   useRegisterStashedDraftsOpen(openFromShortcut)
 
   // The stash shortcut hint mirrors the user's effective (remappable)
@@ -118,7 +152,10 @@ export function StashedDraftsPicker({
   // keyboard-shortcut copy — a hardware keyboard is present only with a mouse.
   const isTouch = useInputMode() === "touch"
   const actionSide = useComposerActionSide()
-  const count = drafts.length
+  const presentedDrafts = restorePresentation?.drafts ?? drafts
+  const presentedPreviewById = restorePresentation?.previewById ?? previewById
+  const presentedOriginById = restorePresentation?.originById ?? originById
+  const count = presentedDrafts.length
   const now = useMemo(() => new Date(), [open])
 
   const handleStashCurrent = useCallback(() => {
@@ -129,10 +166,19 @@ export function StashedDraftsPicker({
 
   const handleRestore = useCallback(
     async (id: string) => {
+      if (restorePendingRef.current) return
+      restorePendingRef.current = true
+      setRestorePresentation({
+        drafts: [...drafts],
+        previewById: previewById ? new Map(previewById) : undefined,
+        originById: originById ? new Map(originById) : undefined,
+      })
       // Awaited, not fired and forgotten: the close + focus below are the only
       // feedback a restore has, so they must not run for one that refused.
       const result = await onRestore(id)
+      restorePendingRef.current = false
       if (result && !result.ok) {
+        setRestorePresentation(null)
         toast.error(RESTORE_REFUSAL_MESSAGE[result.reason])
         return
       }
@@ -146,7 +192,7 @@ export function StashedDraftsPicker({
       const focusComposer = bridge?.focusComposer
       if (focusComposer) setTimeout(() => focusComposer(), 0)
     },
-    [onRestore, closeFabDrawer, bridge]
+    [onRestore, closeFabDrawer, bridge, drafts, previewById, originById]
   )
 
   // Two-step delete: the trash icon opens a confirm dialog (parity with the
@@ -187,7 +233,7 @@ export function StashedDraftsPicker({
 
   return (
     <>
-      <Popover open={open} onOpenChange={setOpen}>
+      <Popover open={open} onOpenChange={handleOpenChange}>
         {/* Anchor above the whole composer (not the trigger) so the popover
             doesn't paint over the editor — null in the expanded FAB layout,
             where the trigger anchors normally. */}
@@ -274,7 +320,7 @@ export function StashedDraftsPicker({
             </Button>
           </div>
 
-          {drafts.length === 0 ? (
+          {presentedDrafts.length === 0 ? (
             <div className="px-3 py-6 text-center text-xs text-muted-foreground">
               {isTouch || !stashBindingLabel ? (
                 <>
@@ -290,39 +336,110 @@ export function StashedDraftsPicker({
             </div>
           ) : (
             <ul className="max-h-64 overflow-y-auto py-1" role="list">
-              {drafts.map((draft) => {
-                const preview = rowPreview(draft, previewById)
+              {presentedDrafts.map((draft, index) => {
+                const preview = rowPreview(draft, presentedPreviewById)
                 const attachmentCount = draft.attachments?.length ?? 0
+                const origin = presentedOriginById?.get(draft.id)
+                const isBorrowed = origin?.tier === "borrowed"
+                // The seam, not a per-row badge: the pile arrives own-first, so
+                // the FIRST borrowed row carries it — including at index 0. An
+                // all-borrowed pile is the modal case, not an edge one: a channel
+                // composer with no stashed draft of its own is exactly where a
+                // conversation's draft surfaces, and requiring a preceding own row
+                // left that pile with no "from elsewhere" cue at all. It still
+                // cannot orphan, because a real row always follows it.
+                const startsBorrowedGroup =
+                  isBorrowed &&
+                  (index === 0 || presentedOriginById?.get(presentedDrafts[index - 1]!.id)?.tier !== "borrowed")
                 return (
-                  <li key={draft.id} className="group/row reveal-host">
-                    <div className="flex items-start gap-2 px-3 py-2 hover:bg-muted/60 focus-within:bg-muted/60">
-                      <button
-                        type="button"
-                        data-draft-row
-                        onClick={() => void handleRestore(draft.id)}
-                        className="flex-1 min-w-0 text-left focus:outline-none"
+                  <Fragment key={draft.id}>
+                    {startsBorrowedGroup && (
+                      <li
+                        role="presentation"
+                        data-testid="stashed-drafts-borrowed-separator"
+                        className="flex items-center gap-2 px-3 pt-2 pb-1"
                       >
-                        <p className="text-sm line-clamp-2 break-words">{preview}</p>
-                        <p className="text-[11px] text-muted-foreground mt-0.5">
-                          {formatRelativeTime(new Date(draft.clientUpdatedAt), now, undefined, { terse: true })}
-                          {attachmentCount > 0 && <span className="ml-1.5">· {attachmentCount} 📎</span>}
-                        </p>
-                      </button>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon"
-                        aria-label="Delete saved draft"
-                        className="h-7 w-7 shrink-0 reveal-actions"
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          requestDelete(draft.id)
-                        }}
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </Button>
-                    </div>
-                  </li>
+                        <span className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                          From elsewhere
+                        </span>
+                        <span className="h-px flex-1 bg-border" aria-hidden />
+                      </li>
+                    )}
+                    <li className="group/row reveal-host">
+                      <div className="flex items-start gap-2 px-3 py-2 hover:bg-muted/60 focus-within:bg-muted/60">
+                        <button
+                          type="button"
+                          data-draft-row
+                          onClick={() => void handleRestore(draft.id)}
+                          // Picking a borrowed row does more than load it: the
+                          // composer either retargets to that draft's conversation
+                          // or takes the draft as its own, depending on the host.
+                          // The row cannot know which (the plan needs the host's
+                          // target), so it says the part that is true either way
+                          // rather than guessing — and does it in the accessible
+                          // name and the tooltip, which cost no layout (INV-21).
+                          title={
+                            isBorrowed
+                              ? `From ${origin.label}. Picking it changes where this composer files.`
+                              : undefined
+                          }
+                          aria-label={
+                            isBorrowed
+                              ? `${preview} — from ${origin.label}. Picking it changes where this composer files.`
+                              : undefined
+                          }
+                          className="flex-1 min-w-0 text-left focus:outline-none"
+                        >
+                          {/* The second line is reserved only while the preview
+                              can still change height — a sealed row resolving from
+                              "Decrypting…" to a body, over a composer (INV-21).
+                              Reserving it unconditionally cost a quarter of the
+                              visible pile in every plaintext workspace, where the
+                              preview is stable from first paint. */}
+                          <p
+                            className={cn(
+                              "text-sm leading-5 line-clamp-2 break-words",
+                              !isPreviewSettled(draft, presentedPreviewById) && "min-h-10"
+                            )}
+                          >
+                            {preview}
+                          </p>
+                          {/* One line, fixed height: the origin shares it with the
+                              timestamp and truncates, so a name resolving late
+                              never reflows the row. */}
+                          <p className="mt-0.5 flex items-baseline gap-1.5 h-4 text-[11px] leading-4 text-muted-foreground">
+                            {isBorrowed && (
+                              <>
+                                <span data-draft-origin className="min-w-0 truncate">
+                                  {origin.label}
+                                </span>
+                                <span className="shrink-0" aria-hidden>
+                                  ·
+                                </span>
+                              </>
+                            )}
+                            <span className="shrink-0">
+                              {formatRelativeTime(new Date(draft.clientUpdatedAt), now, undefined, { terse: true })}
+                              {attachmentCount > 0 && <span className="ml-1.5">· {attachmentCount} 📎</span>}
+                            </span>
+                          </p>
+                        </button>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          aria-label="Delete saved draft"
+                          className="h-7 w-7 shrink-0 reveal-actions"
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            requestDelete(draft.id)
+                          }}
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </Button>
+                      </div>
+                    </li>
+                  </Fragment>
                 )
               })}
             </ul>
