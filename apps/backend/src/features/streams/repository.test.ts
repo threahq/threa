@@ -34,7 +34,6 @@ function streamRow(overrides: Record<string, unknown> = {}) {
     created_at: new Date(),
     updated_at: new Date(),
     archived_at: null,
-    display_name_generated_at: null,
     ...overrides,
   }
 }

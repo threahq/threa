@@ -2,17 +2,7 @@ import type { Stream, StreamType } from "./repository"
 
 export type DisplayNameSource = "slug" | "generated" | "explicit" | "legacy" | "participants" | "placeholder"
 
-/**
- * A stored name is authoritative however it got there.
- *
- * `display_name_generated_at` records that the auto-namer wrote the name; it is
- * never set by `StreamRepository.insert`, so requiring it to render meant every
- * scratchpad created WITH a name — which is what every bot runtime does — was
- * displayed as "New scratchpad" forever. `needsAutoNaming` keys off
- * `displayName === null`, so those streams were also skipped by the very
- * namer that would have set the timestamp: named enough to be ineligible,
- * ungenerated enough to be invisible.
- */
+/** A stored name is authoritative; provenance controls whether naming may replace it. */
 function storedDisplayName(stream: Stream): EffectiveDisplayName | undefined {
   // Whitespace is not a name: rendering it gives a blank row, and
   // `needsAutoNaming` would still count the stream as named, so nothing would
@@ -97,12 +87,4 @@ export function formatParticipantNames(participants: { id: string; name: string 
 
   // Defensive fallback for inconsistent data.
   return participants[0]?.name ?? "Direct message"
-}
-
-/** True only for scratchpads/threads that have no display name yet. */
-export function needsAutoNaming(stream: Stream): boolean {
-  if (stream.type !== "scratchpad" && stream.type !== "thread") {
-    return false
-  }
-  return stream.displayName === null
 }

@@ -36,7 +36,6 @@ function makeStream(overrides: Record<string, any> = {}): any {
     parentStreamId: null,
     parentMessageId: null,
     rootStreamId: null,
-    displayNameGeneratedAt: null,
     ...overrides,
   }
 }

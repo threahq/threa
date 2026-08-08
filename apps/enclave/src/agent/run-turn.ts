@@ -24,7 +24,6 @@ import type {
   SealedStep,
   SealedStepStart,
   EnclaveSealedSubstep,
-  EnclaveSealedName,
   EnclaveSealedSummary,
   EnclaveNamingDecision,
   EnclaveSskWrap,
@@ -55,7 +54,6 @@ import { createEnclaveAI, type UsageAccumulator } from "./enclave-ai"
 import { EnclaveTraceObserver } from "./trace-observer"
 import { buildEnclaveTools } from "./tools"
 import { decodeUtf8 } from "./attachment-tool"
-import { generateTitle } from "./auto-title"
 import { advanceNamingInstruction, evaluateNaming } from "./naming-evaluator"
 
 /**
@@ -111,13 +109,6 @@ export interface EnclaveTurnDeps {
   onStep: (step: SealedStep) => Promise<void>
   /** Stream a sealed substep — ephemeral mid-run phase text (e.g. research progress). */
   onSubstep: (substep: EnclaveSealedSubstep) => Promise<void>
-  /**
-   * Persist a sealed auto-generated title for the scratchpad. Called best-effort
-   * after the turn when `request.autoTitle` is set and the turn produced a reply;
-   * a throw here is swallowed (titling never blocks or fails the turn). Omitted →
-   * no titling.
-   */
-  onSealedName?: (sealed: EnclaveSealedName) => Promise<void>
   /** Apply a revision-fenced dynamic naming decision containing ciphertext only. */
   onNamingDecision?: (decision: EnclaveNamingDecision) => Promise<void>
   /** Test seam; production defaults to the five-second quiet window. */
@@ -165,7 +156,7 @@ export async function runEnclaveTurn(
   deps: EnclaveTurnDeps,
   request: EnclaveSessionAssignment
 ): Promise<EnclaveSessionResult> {
-  const { keyPair, rawChat, onMessage, onStepStarted, onStep, onSubstep, onSealedName, tools, abortSignal } = deps
+  const { keyPair, rawChat, onMessage, onStepStarted, onStep, onSubstep, tools, abortSignal } = deps
   const { pollNewMessages, onSealedSummary, onNamingDecision } = deps
 
   // Recover the SSK for every generation the backend wrapped to us. The wrap AAD
@@ -293,8 +284,7 @@ export async function runEnclaveTurn(
 
   const usage: UsageAccumulator = { promptTokens: 0, completionTokens: 0, cost: 0 }
   const messageIds: string[] = []
-  // First reply's plaintext, kept only to seed the auto-title below (never logged
-  // or persisted; lives in-process for the turn like all other plaintext here).
+  // First reply plaintext seeds dynamic naming below; it is never logged or persisted.
   let firstReplyText: string | null = null
   const replyTexts: string[] = []
   const namingInterjections = new Map<string, string>()
@@ -447,8 +437,7 @@ export async function runEnclaveTurn(
   const loopResult = await new EnclaveTurnDriver({ ai }).runTurn(turnRequest, turnSink)
 
   // Turn digest (C-1): condense the turn's tool work with one cheap completion
-  // over the same pinned model, seal it as a trailing turn_digest step (the
-  // auto-title pattern: post-run, in-enclave, plaintext never leaves), and ship
+  // over the same pinned model, seal it as a trailing turn_digest step, and ship
   // it over the step callback. Best-effort — the replies are already delivered,
   // so a digest failure must never affect the turn. Usage accumulates into the
   // same total recorded at /complete.
@@ -567,29 +556,9 @@ export async function runEnclaveTurn(
     }
   }
 
-  // Legacy rollout path: old backends send only autoTitle and old enclaves use
-  // the sealed-name callback. New assignments prefer the instruction above.
-  if (!request.naming && request.autoTitle && firstReplyText && onSealedName) {
-    try {
-      const title = await generateTitle({ rawChat, model: request.model, promptText, replyText: firstReplyText })
-      if (title) {
-        const sealed = await sealMessage({
-          key: replySsk,
-          keyGeneration: request.reply.keyGeneration,
-          payload: title,
-          aad: buildNameAad({ streamId: request.streamId, keyGeneration: request.reply.keyGeneration }),
-        })
-        await onSealedName({ ciphertext: bytesToBase64(sealed.ciphertext), envelope: sealed.envelope })
-      }
-    } catch {
-      // Titling is non-essential; a failure must never affect the reply.
-    }
-  }
-
   // Rolling conversation summary (C-2): fold the messages that overflowed the
   // verbatim window into the prior summary, seal the result under the reply SSK
-  // (the auto-title pattern — post-run, in-enclave, plaintext never leaves), and
-  // POST it back with the advanced cursor. Only messages newer than the prior
+  // post-run without letting plaintext leave the enclave, and POST it back with the advanced cursor. Only messages newer than the prior
   // cursor are folded, so nothing is summarized twice. The same shared fold the
   // in-process companion runs, so the two surfaces produce identical memory.
   // Best-effort and last: the replies are already delivered, so a summary

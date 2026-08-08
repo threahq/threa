@@ -718,20 +718,6 @@ export interface SealedComplete {
 }
 
 /**
- * A sealed auto-generated stream title the enclave produced this turn, POSTed to
- * `POST .../sessions/:id/sealed-name`. The server can't read message content, so
- * it can't title an encrypted scratchpad — the enclave (which sees plaintext)
- * generates a short title, seals it under the stream SSK bound by AAD to
- * `streamId|name|generation` (`buildNameAad`), and the backend stores the
- * ciphertext as the stream's sealed name (`e2e_streams.name_ciphertext`). No
- * `messageId`: a stream name occupies a single per-stream slot, not a message.
- */
-export interface EnclaveSealedName {
-  ciphertext: string
-  envelope: EnclaveStreamEnvelope
-}
-
-/**
  * The sealed rolling conversation summary (C-2) the enclave folded at turn end,
  * POSTed to `POST .../sessions/:id/sealed-summary`. The server can't read message
  * content, so it can't summarize an encrypted scratchpad — the enclave (which
@@ -919,18 +905,8 @@ export interface EnclaveSessionAssignment {
    */
   attachmentCiphertexts?: { attachmentId: string; ciphertext: string }[]
   /**
-   * When true, this scratchpad has no sealed name yet, so the enclave should
-   * generate a short title from the decrypted turn, seal it under the SSK
-   * (`buildNameAad`), and POST it back via the sealed-name callback. The server
-   * can't title an encrypted scratchpad itself (it only holds ciphertext).
-   * Set only for the root scratchpad's first untitled turn; omitted/false
-   * otherwise (threads and already-titled scratchpads).
-   */
-  autoTitle?: boolean
-  /**
    * Revision-fenced dynamic naming work reserved for this exact session. Opaque
    * title bytes are opened only in the enclave; the backend never sees plaintext.
-   * New enclaves prefer this over `autoTitle`, which remains for rollout compatibility.
    */
   naming?: import("./enclave-naming").EnclaveNamingInstruction
   /**

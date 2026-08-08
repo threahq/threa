@@ -85,13 +85,6 @@ const messageSchema = z.object({
   envelope: streamEnvelopeSchema,
 })
 
-// A sealed auto-generated stream name. Like a reply but without a messageId — a
-// name is a single per-stream slot, not a message. Same base64 validation.
-const sealedNameSchema = z.object({
-  ciphertext: z.base64().min(1),
-  envelope: streamEnvelopeSchema,
-})
-
 // A sealed rolling conversation summary (C-2). Like a sealed name (a single
 // per-(stream, persona) slot, no messageId) plus the advanced cursor — the
 // highest message sequence folded in, base-10 — which gates the row's monotonic
@@ -401,76 +394,6 @@ export function createEnclaveSessionHandlers({ pool, eventService, io, costServi
     },
 
     /**
-     * POST /internal/enclave-runtimes/sessions/:id/sealed-name
-     * Persist the enclave's sealed auto-title for an untitled E2E scratchpad
-     * (the server can't title it — it only holds ciphertext). First-write-wins
-     * (`setSealedNameIfAbsent`), and on a real change we re-read the e2e-joined
-     * stream and broadcast `stream:updated` so the sidebar/header pick up the
-     * name and decrypt it live. We never set a plaintext display name — the
-     * title exists only as ciphertext.
-     */
-    async sealedName(req: Request, res: Response) {
-      const id = req.params.id
-      if (!id) throw new HttpError("Missing session id", { status: 400, code: "VALIDATION_ERROR" })
-
-      const parsed = sealedNameSchema.safeParse(req.body)
-      if (!parsed.success) throw new HttpError("Invalid request body", { status: 400, code: "VALIDATION_ERROR" })
-
-      const session = await AgentSessionRepository.findById(pool, id)
-      assertRunning(session)
-      assertCallbackBound(session, req)
-      assertReplyGeneration(session, parsed.data.envelope)
-      const stream = await StreamRepository.findById(pool, session.streamId)
-      if (!stream) throw new HttpError("Stream not found", { status: 404, code: "STREAM_NOT_FOUND" })
-
-      await withTransaction(pool, async (client) => {
-        const locked = await StreamRepository.findByIdForUpdateBlocking(client, session.streamId)
-        if (!locked || locked.workspaceId !== stream.workspaceId || locked.displayNameSource !== null) return
-        const set = await E2eStreamsRepository.setSealedNameIfAbsent(client, stream.workspaceId, session.streamId, {
-          ciphertext: parsed.data.ciphertext,
-          envelope: parsed.data.envelope,
-        })
-        if (!set) return
-        const titled = await StreamRepository.updateDisplayName(client, {
-          workspaceId: stream.workspaceId,
-          streamId: session.streamId,
-          displayName: null,
-          source: TitleSources.GENERATED,
-          expectedRevision: locked.displayNameRevision,
-          expectedSource: null,
-        })
-        if (!titled) throw new Error("Sealed title metadata update lost its stream lock")
-
-        // New backend → old enclave compatibility: the legacy first-title body
-        // carries no observed metadata, but its callback/session and the locked
-        // target identify the session-owned checkpoint-1 claim. Consume it as a
-        // generated rename so old runners do not leave checkpoint 1 pending on
-        // every later turn. An old backend has no state row and simply skips it.
-        const namingState = await DynamicNamingStateRepository.find(client, stream.workspaceId, "stream", stream.id)
-        if (namingState?.claimOwnerId === id && namingState.claimToken) {
-          const applied = await DynamicNamingStateRepository.applyDecision(client, {
-            workspaceId: stream.workspaceId,
-            targetKind: "stream",
-            targetId: stream.id,
-            token: namingState.claimToken,
-            expectedVersion: namingState.version,
-            titleRevision: locked.displayNameRevision ?? 0,
-            decision: { action: "rename", title: "[sealed]" },
-          })
-          if (!applied) throw new Error("Legacy sealed title could not consume its session naming claim")
-        }
-        const updated = (await StreamRepository.findById(client, session.streamId)) ?? titled
-        await OutboxRepository.insert(client, "stream:updated", {
-          workspaceId: updated.workspaceId,
-          streamId: updated.id,
-          stream: updated,
-        })
-      })
-
-      res.status(204).end()
-    },
-
-    /**
      * POST /internal/enclave-runtimes/sessions/:id/naming-decision
      * Apply a revision-fenced E2E naming decision. The body contains only
      * metadata and (for rename) opaque sealed bytes; title plaintext never
@@ -562,11 +485,6 @@ export function createEnclaveSessionHandlers({ pool, eventService, io, costServi
         if (!applied) return
         if (decision.action !== "rename") return
 
-        const stored = await E2eStreamsRepository.updateSealedName(tx, stream.workspaceId, stream.id, {
-          ciphertext: decision.sealedReplacement.ciphertext,
-          envelope: decision.sealedReplacement.envelope,
-        })
-        if (!stored) throw new Error("E2E naming decision target disappeared")
         const updated = await StreamRepository.updateDisplayName(tx, {
           workspaceId: stream.workspaceId,
           streamId: stream.id,
@@ -576,6 +494,11 @@ export function createEnclaveSessionHandlers({ pool, eventService, io, costServi
           expectedSource: source,
         })
         if (!updated) throw new Error("E2E naming title CAS failed after state claim was consumed")
+        const stored = await E2eStreamsRepository.updateSealedName(tx, stream.workspaceId, stream.id, {
+          ciphertext: decision.sealedReplacement.ciphertext,
+          envelope: decision.sealedReplacement.envelope,
+        })
+        if (!stored) throw new Error("E2E naming decision target disappeared")
         // updateDisplayName returns a streams-only row; refetch the E2E join so
         // the live event carries the replacement ciphertext with its revision.
         const projected = await StreamRepository.findById(tx, updated.id)

@@ -42,7 +42,6 @@ interface StreamRow {
   created_at: Date
   updated_at: Date
   archived_at: Date | null
-  display_name_generated_at: Date | null
   /**
    * Optional columns from a LEFT JOIN against `e2e_streams`. Only the
    * `findById` family pulls them; bare `streams`-only queries leave the
@@ -143,7 +142,6 @@ export interface Stream {
   createdAt: Date
   updatedAt: Date
   archivedAt: Date | null
-  displayNameGeneratedAt: Date | null
   /**
    * End-to-end encryption metadata, populated by callers that LEFT JOIN
    * `e2e_streams`. Optional so existing read paths and test fixtures
@@ -242,7 +240,6 @@ function mapRowToStream(row: StreamRow): Stream {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     archivedAt: row.archived_at,
-    displayNameGeneratedAt: row.display_name_generated_at,
     // Only expose the E2E fields when the query opted into the JOIN —
     // a bare `streams` SELECT leaves them as `undefined` so plaintext
     // callers don't have to special-case the placeholder.
@@ -287,7 +284,7 @@ const SELECT_FIELDS = `
   id, workspace_id, type, display_name, display_name_source, display_name_revision, display_name_updated_by_user_id, slug, description, description_json, visibility,
   parent_stream_id, parent_anchor_id, root_stream_id, reply_count, last_reply_at,
   companion_mode, companion_persona_id, memory_mode, purpose,
-  created_by, created_at, updated_at, archived_at, display_name_generated_at
+  created_by, created_at, updated_at, archived_at
 `
 
 // SELECT list for queries that need the E2E flag inline. The LEFT JOIN keeps
@@ -297,7 +294,7 @@ const SELECT_FIELDS_WITH_E2E = `
   s.id, s.workspace_id, s.type, s.display_name, s.display_name_source, s.display_name_revision, s.display_name_updated_by_user_id, s.slug, s.description, s.description_json, s.visibility,
   s.parent_stream_id, s.parent_anchor_id, s.root_stream_id, s.reply_count, s.last_reply_at,
   s.companion_mode, s.companion_persona_id, s.memory_mode, s.purpose,
-  s.created_by, s.created_at, s.updated_at, s.archived_at, s.display_name_generated_at,
+  s.created_by, s.created_at, s.updated_at, s.archived_at,
   e.owner_user_key_id AS e2e_owner_user_key_id,
   e.name_ciphertext AS e2e_name_ciphertext,
   e.name_envelope AS e2e_name_envelope,
@@ -1070,7 +1067,6 @@ export const StreamRepository = {
         display_name_source = ${params.source},
         display_name_revision = display_name_revision + 1,
         display_name_updated_by_user_id = ${params.updatedByUserId ?? null},
-        display_name_generated_at = CASE WHEN ${params.source} = ${TitleSources.GENERATED} THEN NOW() ELSE NULL END,
         updated_at = NOW()
       WHERE workspace_id = ${params.workspaceId} AND id = ${params.streamId}
         AND (${params.expectedRevision === undefined} OR display_name_revision = ${params.expectedRevision ?? 0})
@@ -1083,11 +1079,6 @@ export const StreamRepository = {
               AND e.name_ciphertext IS NOT NULL
           ) THEN ${TitleSources.LEGACY} END
         ) IS NOT DISTINCT FROM ${params.expectedSource ?? null}
-          OR (
-            current_setting('threa.coordinated_title_write', true) = '1'
-            AND display_name_source IS NULL
-            AND ${params.expectedSource === null}
-          )
         )
       RETURNING ${sql.raw(SELECT_FIELDS)}
     `)

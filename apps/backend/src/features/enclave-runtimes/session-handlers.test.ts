@@ -277,61 +277,6 @@ describe("createEnclaveSessionHandlers.pollMessages (interjection pull)", () => 
   })
 })
 
-describe("createEnclaveSessionHandlers.sealedName", () => {
-  const NAME_BODY = { ciphertext: "Y3Q=", envelope: { v: 2, keyGeneration: 0, iv: "aXY=", aad: "YWFk" } }
-
-  it("stores the sealed title (first-write-wins) and broadcasts stream:updated", async () => {
-    spyOn(AgentSessionRepository, "findById").mockResolvedValue(SESSION)
-    spyOn(StreamRepository, "findById").mockResolvedValue({ id: "stream_1", workspaceId: "ws_1" } as never)
-    spyOn(StreamRepository, "findByIdForUpdateBlocking").mockResolvedValue({
-      id: "stream_1",
-      workspaceId: "ws_1",
-      displayNameSource: null,
-      displayNameRevision: 0,
-    } as never)
-    spyOn(StreamRepository, "updateDisplayName").mockResolvedValue({ id: "stream_1", workspaceId: "ws_1" } as never)
-    spyOn(db, "withTransaction").mockImplementation(((_pool: unknown, cb: (c: unknown) => unknown) => cb({})) as never)
-    const setName = spyOn(E2eStreamsRepository, "setSealedNameIfAbsent").mockResolvedValue(true)
-    spyOn(DynamicNamingStateRepository, "find").mockResolvedValue(null)
-    const insert = spyOn(OutboxRepository, "insert").mockResolvedValue(undefined as never)
-    const { handlers } = makeHandlers()
-    const res = fakeRes()
-
-    await handlers.sealedName(req("session_1", NAME_BODY), res)
-
-    expect(res.statusCode).toBe(204)
-    expect(setName).toHaveBeenCalledWith({}, "ws_1", "stream_1", expect.objectContaining({ ciphertext: "Y3Q=" }))
-    expect(insert).toHaveBeenCalledWith({}, "stream:updated", expect.objectContaining({ streamId: "stream_1" }))
-  })
-
-  it("does not broadcast when the scratchpad is already named (no-op)", async () => {
-    spyOn(AgentSessionRepository, "findById").mockResolvedValue(SESSION)
-    spyOn(StreamRepository, "findById").mockResolvedValue({ id: "stream_1", workspaceId: "ws_1" } as never)
-    spyOn(StreamRepository, "findByIdForUpdateBlocking").mockResolvedValue({
-      id: "stream_1",
-      workspaceId: "ws_1",
-      displayNameSource: null,
-      displayNameRevision: 0,
-    } as never)
-    spyOn(db, "withTransaction").mockImplementation(((_pool: unknown, cb: (c: unknown) => unknown) => cb({})) as never)
-    spyOn(E2eStreamsRepository, "setSealedNameIfAbsent").mockResolvedValue(false)
-    const insert = spyOn(OutboxRepository, "insert").mockResolvedValue(undefined as never)
-    const { handlers } = makeHandlers()
-    const res = fakeRes()
-
-    await handlers.sealedName(req("session_1", NAME_BODY), res)
-
-    expect(res.statusCode).toBe(204)
-    expect(insert).not.toHaveBeenCalled()
-  })
-
-  it("409s when the session is no longer running", async () => {
-    spyOn(AgentSessionRepository, "findById").mockResolvedValue({ ...SESSION!, status: SessionStatuses.FAILED })
-    const { handlers } = makeHandlers()
-    await expect(handlers.sealedName(req("session_1", NAME_BODY), fakeRes())).rejects.toMatchObject({ status: 409 })
-  })
-})
-
 describe("createEnclaveSessionHandlers.namingDecision", () => {
   const RENAME_BODY = {
     action: "rename",
@@ -1185,7 +1130,6 @@ describe("createEnclaveSessionHandlers callback binding (Phase 2.4b)", () => {
   // per-handler wiring so a regression on any one route fails this file.
   const ENVELOPE = { v: 2, keyGeneration: 0, iv: "aXY=", aad: "YWFk" }
   const mismatchCases: [keyof ReturnType<typeof makeHandlers>["handlers"], unknown][] = [
-    ["sealedName", { ciphertext: "Y3Q=", envelope: ENVELOPE }],
     ["sealedSummary", { ciphertext: "Y3Q=", envelope: ENVELOPE, lastSummarizedSequence: "1" }],
     ["stepStarted", STEP_START_BODY],
     ["substep", { stepType: "web_search", ciphertext: "Y3Q=", envelope: ENVELOPE }],

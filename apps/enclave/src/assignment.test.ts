@@ -38,7 +38,7 @@ describe("sessionAssignmentSchema", () => {
     expect(sessionAssignmentSchema.safeParse(rest).success).toBe(false)
   })
 
-  it("keeps the opaque naming instruction and legacy flag through parsing", () => {
+  it("keeps the opaque naming instruction through parsing", () => {
     const naming = {
       stateRevision: 4,
       titleRevision: 2,
@@ -51,8 +51,8 @@ describe("sessionAssignmentSchema", () => {
         envelope: { v: 2, keyGeneration: 0, iv: "aXY=", aad: "YWFk" },
       },
     }
-    const parsed = sessionAssignmentSchema.parse({ ...BASE, autoTitle: true, naming })
-    expect(parsed).toMatchObject({ autoTitle: true, naming })
+    const parsed = sessionAssignmentSchema.parse({ ...BASE, naming })
+    expect(parsed).toMatchObject({ naming })
   })
 
   it("keeps recentDigests through parsing", () => {

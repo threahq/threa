@@ -450,11 +450,6 @@ export class EnclaveClaimService {
       maxChars: DEFAULT_CONTEXT_WINDOW_CHARS,
       priorSummary,
       summaryCursor,
-      // Ask the enclave to seal a title only for an untitled scratchpad: gate on
-      // the *trigger's own* stream (a top-level scratchpad message titles it; a
-      // thread reply never does), while `e2e.hasSealedName` is the root's — the
-      // scratchpad that owns the title. (`e2e` resolves to the root for threads.)
-      autoTitle: triggerStream.type === StreamTypes.SCRATCHPAD && !e2e.hasSealedName,
     })
     if (!assignment) {
       // The claim predicate proved wrap coverage moments ago, so this is the

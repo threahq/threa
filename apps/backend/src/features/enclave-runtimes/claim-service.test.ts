@@ -185,7 +185,6 @@ describe("EnclaveClaimService.claimTurn", () => {
     const assignment = await service().claimTurn("eik_live")
 
     expect(assignment?.naming).toMatchObject({ checkpoint: 1, messageCount: 2, titleRevision: 0 })
-    expect(assignment?.autoTitle).toBe(true)
     expect(claim.mock.calls[0]![0]).toBe(tx)
     expect(claim.mock.calls[0]![1].ownerId).toBe(assignment!.sessionId)
   })

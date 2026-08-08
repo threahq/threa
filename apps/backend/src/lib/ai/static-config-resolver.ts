@@ -12,7 +12,7 @@ import {
   BOUNDARY_EXTRACTION_TEMPERATURE,
   BOUNDARY_EXTRACTION_SYSTEM_PROMPT,
 } from "../../features/conversations"
-import { STREAM_NAMING_MODEL_ID, STREAM_NAMING_TEMPERATURE } from "../../features/streams"
+import { DYNAMIC_NAMING_MODEL_ID, DYNAMIC_NAMING_TEMPERATURE } from "../../features/dynamic-naming"
 import { MEMO_CLASSIFIER_MODEL_ID, MEMO_MEMORIZER_MODEL_ID, MEMO_TEMPERATURES } from "../../features/memos"
 import {
   SUGGESTION_EXTRACTOR_MODEL_ID,
@@ -44,8 +44,8 @@ function buildDefaultConfigs(): Map<string, ComponentConfig> {
   })
 
   configs.set(COMPONENT_PATHS.STREAM_NAMING, {
-    modelId: STREAM_NAMING_MODEL_ID,
-    temperature: STREAM_NAMING_TEMPERATURE,
+    modelId: DYNAMIC_NAMING_MODEL_ID,
+    temperature: DYNAMIC_NAMING_TEMPERATURE,
   })
 
   configs.set(COMPONENT_PATHS.MEMO_CLASSIFIER, {

@@ -26,8 +26,7 @@ export class StreamNameSealUnavailableError extends Error {
 /**
  * Seal a new display name for an E2E stream so a rename persists ONLY the
  * tamper-evident ciphertext (AAD-bound to the stream) — the server never
- * receives the cleartext name (INV-E1). Mirrors the enclave auto-title's sealed-only
- * write (`setSealedNameIfAbsent`). The single sealing path for every rename
+ * receives the cleartext name (INV-E1). The single sealing path for every rename
  * surface (open-stream header + stream settings); both call this rather than
  * re-deriving the seal. Throws — never returns a plaintext fallback — when the
  * session is locked or the SSK can't be resolved.

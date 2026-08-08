@@ -21,7 +21,6 @@ export interface Job<T = unknown> {
 
 export const JobQueues = {
   PERSONA_AGENT: "persona.agent",
-  NAMING_GENERATE: "naming.generate",
   DYNAMIC_NAMING_EVALUATE: "dynamic-naming.evaluate",
   EMBEDDING_GENERATE: "embedding.generate",
   BOUNDARY_EXTRACT: "boundary.extract",
@@ -120,13 +119,6 @@ export interface AgentEpisodeSummarizeJobData {
 export interface AgentReflectiveCaptureJobData {
   workspaceId: string
   sessionId: string
-}
-
-export interface NamingJobData {
-  workspaceId: string
-  streamId: string
-  /** If true, must generate a name (no NOT_ENOUGH_CONTEXT escape). Set when message is from agent. */
-  requireName: boolean
 }
 
 export interface EmbeddingJobData {
@@ -409,7 +401,6 @@ export interface LinkPreviewVisibleRefreshJobData {
 
 export interface JobDataMap {
   [JobQueues.PERSONA_AGENT]: PersonaAgentJobData
-  [JobQueues.NAMING_GENERATE]: NamingJobData
   [JobQueues.DYNAMIC_NAMING_EVALUATE]: DynamicNamingEvaluateJobData
   [JobQueues.EMBEDDING_GENERATE]: EmbeddingJobData
   [JobQueues.BOUNDARY_EXTRACT]: BoundaryExtractionJobData
