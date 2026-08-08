@@ -514,14 +514,15 @@ export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDi
 
   const fail = useCallback(
     (message: string) => {
-      // Don't throw away words the user already saw mid-segment — commit the
-      // pending hypothesis before tearing the failed take down.
-      updateInterim("")
+      // The preview is view-only editor decoration. Commit it to the document
+      // before teardown clears the decoration so a transport/provider failure
+      // can never erase words the user was already looking at.
+      flushInterim()
       setError(message)
       setState("error")
       teardown()
     },
-    [teardown, updateInterim]
+    [flushInterim, teardown]
   )
 
   const start = useCallback(() => {
@@ -754,6 +755,11 @@ export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDi
         })
         socket.on("voice:stopped", (payload: VoiceStoppedPayload) => {
           if (socketRef.current !== socket) return
+          // A provider/relay terminal event is allowed to arrive without a
+          // final delta. Preserve the last visible hypothesis before teardown.
+          // On the normal path the final delta already cleared this, so the
+          // flush is an idempotent no-op rather than a duplicate insertion.
+          flushInterim()
           if (payload.outcome !== "success" && payload.outcome !== "empty_input") lockAllChunks()
           teardown()
           setState("idle")
@@ -814,6 +820,7 @@ export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDi
     workspaceId,
     language,
     fail,
+    flushInterim,
     teardown,
     runMeter,
     coordinator,
@@ -847,6 +854,9 @@ export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDi
         socket.timeout(FORMAT_STOP_ACK_TIMEOUT_MS).emit("voice:stop", { mode: "format" }, recover)
       else socket.timeout(STOP_ACK_TIMEOUT_MS).emit("voice:stop", recover)
     } else {
+      // Defensive local recovery for a take whose socket disappeared before
+      // stop could be emitted. The visible preview still belongs to the user.
+      flushInterim()
       setState("idle")
     }
     // The take is over — start the post-session lock countdown. The user gets a
@@ -958,27 +968,28 @@ export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDi
     setState("idle")
   }, [teardownAudio, updateInterim, workspaceId, coordinator, coordinatedStop, dependencies, lockAllChunks])
 
-  // Backgrounding the tab throttles the rAF meter and (on mobile) suspends audio
-  // capture, so a take left "recording" would silently record nothing while the
-  // UI still says it's live. End it cleanly on hide instead: stop() flushes the
-  // in-flight hypothesis and commits the landed text, so the user returns to
-  // their words and an idle mic rather than a dead one they think is recording.
+  // Backgrounding the tab throttles the rAF meter and can suspend capture or
+  // networking entirely. Preserve the visible hypothesis synchronously and end
+  // as-is; `abort()` is intentionally reserved for explicit discard actions.
   useEffect(() => {
     const onVisibilityChange = () => {
-      if (document.visibilityState === "hidden") abort()
+      if (document.visibilityState === "hidden") prepareSendAsIs()
     }
     document.addEventListener("visibilitychange", onVisibilityChange)
     return () => document.removeEventListener("visibilitychange", onVisibilityChange)
-  }, [abort])
+  }, [prepareSendAsIs])
 
-  // Abort a still-open session on unmount: disconnecting the socket makes the
-  // gateway finalize it as aborted; if the socket never opened, abort over HTTP
-  // so it doesn't linger until the max-duration guard. Also clear the lock
-  // timer so it doesn't fire against a torn-down editor handle.
+  // Preserve any visible hypothesis before unmount. Scope navigation remounts
+  // the mic while leaving the composer/editor alive, so treating cleanup as an
+  // implicit abort would erase the ghost before the draft can retain it.
+  // Disconnecting then makes the gateway finalize the session as aborted; if
+  // the socket never opened, abort over HTTP so it doesn't linger until the
+  // max-duration guard. Also clear the lock timer.
   useEffect(() => {
     return () => {
       const sessionId = sessionIdRef.current
       const hadSocket = socketRef.current !== null
+      flushInterim()
       teardown()
       if (lockTimerRef.current !== null) {
         clearTimeout(lockTimerRef.current)
@@ -988,7 +999,7 @@ export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDi
         void dependencies.abortSession(workspaceId, sessionId).catch(() => {})
       }
     }
-  }, [teardown, workspaceId, dependencies])
+  }, [flushInterim, teardown, workspaceId, dependencies])
 
   let hasUnlockedChunks = false
   for (const record of chunks.values()) {
