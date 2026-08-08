@@ -2,12 +2,19 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { MemoryRouter } from "react-router-dom"
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import type { DelegationCreatedEventPayload, DelegationStatusChangedEventPayload, StreamEvent } from "@threa/types"
 import { toast } from "sonner"
 import * as hooksModule from "@/hooks"
 import { PanelProvider } from "@/contexts"
 import { delegationsApi } from "@/api"
 import { buildDelegationPrompt, DelegationEvent } from "./delegation-event"
+import {
+  collectDelegationStatusPatches,
+  TimelineItemContent,
+  type TimelineItem,
+  type TimelineItemRenderContext,
+} from "./event-list"
 
 afterEach(() => vi.useRealTimers())
 
@@ -58,19 +65,23 @@ function renderCard(
   payloadOverride?: Partial<CardPayload>,
   isThreadParent = false
 ) {
-  return render(
-    <MemoryRouter initialEntries={["/w/ws_1"]}>
-      <PanelProvider>
-        <DelegationEvent
-          event={createdEvent({ ...CREATED_PAYLOAD, ...payloadOverride })}
-          workspaceId="ws_1"
-          streamId="stream_1"
-          statusPatch={statusPatch}
-          isThreadParent={isThreadParent}
-        />
-      </PanelProvider>
-    </MemoryRouter>
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  const rendered = render(
+    <QueryClientProvider client={queryClient}>
+      <MemoryRouter initialEntries={["/w/ws_1"]}>
+        <PanelProvider>
+          <DelegationEvent
+            event={createdEvent({ ...CREATED_PAYLOAD, ...payloadOverride })}
+            workspaceId="ws_1"
+            streamId="stream_1"
+            statusPatch={statusPatch}
+            isThreadParent={isThreadParent}
+          />
+        </PanelProvider>
+      </MemoryRouter>
+    </QueryClientProvider>
   )
+  return { ...rendered, queryClient }
 }
 
 describe("buildDelegationPrompt", () => {
@@ -189,7 +200,8 @@ describe("DelegationEvent", () => {
     expect(chip).toHaveAttribute("href", "/w/ws_1?panel=stream_thread")
   })
 
-  it.each(["failed", "expired"] as const)("%s is terminal: no Cancel action, status in meta", async (status) => {
+  it("failed is terminal: no Cancel action, status in meta", async () => {
+    const status = "failed" as const
     renderCard({ delegationId: "dlg_1", status })
 
     expect(screen.getByText(new RegExp(`Ariadne · ${status}`, "i"))).toBeInTheDocument()
@@ -267,12 +279,156 @@ describe("DelegationEvent", () => {
     expect(screen.getByText(/Ariadne · Open/)).toBeInTheDocument()
   })
 
-  it("embeds the lifecycle breadcrumb (id + claim endpoint) in the compiled prompt", () => {
+  it("describes the executor-neutral inspect, claim, liveness, and release order", () => {
     const prompt = buildDelegationPrompt(CREATED_PAYLOAD, { workspaceId: "ws_1", origin: "https://threa.test" })
-    expect(prompt).toContain("## Threa delegation lifecycle")
-    expect(prompt).toContain("https://threa.test/api/v1/workspaces/ws_1/delegations/dlg_1/claim")
-    expect(prompt).toContain("X-Threa-Callback-Token")
-    expect(prompt).toContain('press "Mark done"')
+    expect(prompt.indexOf("1. Inspect: GET")).toBeLessThan(prompt.indexOf("2. If you accept the work, claim it"))
+    expect(prompt).toContain("optionally renews the lease")
+    expect(prompt).toContain("For a controlled stop")
+    expect(prompt).toContain("/release")
+    expect(prompt).not.toContain("resolved context refs")
+    expect(prompt).not.toContain("Claude Code")
+  })
+
+  it.each([
+    ["claim_expired", "Claim expired · Open again"],
+    ["claim_released", "Claim released · Open again"],
+    ["requeued", "Requeued · Open"],
+  ] as const)("renders %s with distinct frontend-owned availability copy", (reason, label) => {
+    renderCard({ delegationId: "dlg_1", status: "open", reason })
+    expect(screen.getByText(new RegExp(label.replace("·", "·")))).toBeInTheDocument()
+  })
+
+  it("keeps historical expired work active and exposes every recovery action", async () => {
+    renderCard({ delegationId: "dlg_1", status: "expired" })
+    expect(screen.getByText("Add rate limiting to the webhook endpoint")).not.toHaveClass("line-through")
+    expect(screen.getByText(/Ariadne · Claim expired/)).toBeInTheDocument()
+    await userEvent.click(screen.getByRole("button", { name: "Card actions" }))
+    expect(screen.getByRole("menuitem", { name: "Requeue" })).toBeInTheDocument()
+    expect(screen.getByRole("menuitem", { name: "Mark done" })).toBeInTheDocument()
+    expect(screen.getByRole("menuitem", { name: "Cancel delegation" })).toBeInTheDocument()
+  })
+
+  it("shows a winning requeue before pending invalidations finish", async () => {
+    vi.spyOn(delegationsApi, "requeue").mockResolvedValue({ requeued: true })
+    const { queryClient } = renderCard({ delegationId: "dlg_1", status: "expired" })
+    let finishInvalidations!: () => void
+    const invalidations = new Promise<void>((resolve) => {
+      finishInvalidations = resolve
+    })
+    const invalidate = vi.spyOn(queryClient, "invalidateQueries").mockReturnValue(invalidations)
+
+    await selectCardAction("Requeue")
+
+    expect(await screen.findByText(/Requeued · Open/)).toBeInTheDocument()
+    expect(invalidate).toHaveBeenCalledTimes(2)
+    finishInvalidations()
+  })
+
+  it("keeps requeue optimism for an equivalent reconstructed baseline and yields to newer lifecycle patches", async () => {
+    vi.spyOn(delegationsApi, "requeue").mockResolvedValue({ requeued: true })
+    const expired = { delegationId: "dlg_1", status: "expired", reason: "claim_expired" } as const
+    const { queryClient, rerender } = renderCard(expired)
+    await selectCardAction("Requeue")
+    expect(await screen.findByText(/Requeued · Open/)).toBeInTheDocument()
+
+    const renderPatch = (statusPatch: DelegationStatusChangedEventPayload) =>
+      rerender(
+        <QueryClientProvider client={queryClient}>
+          <MemoryRouter initialEntries={["/w/ws_1"]}>
+            <PanelProvider>
+              <DelegationEvent
+                event={createdEvent(CREATED_PAYLOAD)}
+                workspaceId="ws_1"
+                streamId="stream_1"
+                statusPatch={statusPatch}
+              />
+            </PanelProvider>
+          </MemoryRouter>
+        </QueryClientProvider>
+      )
+
+    renderPatch({ ...expired })
+    expect(screen.getByText(/Requeued · Open/)).toBeInTheDocument()
+    expect(screen.queryByText(/Claim expired/)).not.toBeInTheDocument()
+
+    renderPatch({ delegationId: "dlg_1", status: "open", reason: "requeued" })
+    expect(await screen.findByText(/Requeued · Open/)).toBeInTheDocument()
+
+    renderPatch({ delegationId: "dlg_1", status: "claimed", claimedByLabel: "New owner" })
+    expect(await screen.findByText(/Ariadne · Claimed · New owner/)).toBeInTheDocument()
+
+    renderPatch({ delegationId: "dlg_1", status: "completed" })
+    expect(await screen.findByText(/Ariadne · Completed/)).toBeInTheDocument()
+  })
+
+  it("renders each collected last patch through the mounted memoized timeline row", async () => {
+    const cardItem: TimelineItem = { type: "event", event: createdEvent(CREATED_PAYLOAD) }
+    const patchItem = (id: string, status: string, reason?: string): TimelineItem => ({
+      type: "event",
+      event: {
+        ...createdEvent(CREATED_PAYLOAD),
+        id,
+        eventType: "delegation:status_changed",
+        payload: { delegationId: "dlg_1", status, reason },
+      },
+    })
+    const ctx = (patches: TimelineItem[]): TimelineItemRenderContext => ({
+      workspaceId: "ws_1",
+      streamId: "stream_1",
+      sessionLiveCounts: new Map(),
+      sessionLiveSubsteps: new Map(),
+      cancelledFollowUpIds: new Set(),
+      delegationStatusPatches: collectDelegationStatusPatches(patches),
+      botAccessStatusPatches: new Map(),
+      callEndedPatches: new Map(),
+    })
+    const queryClient = new QueryClient()
+    const row = (patches: TimelineItem[]) => (
+      <QueryClientProvider client={queryClient}>
+        <MemoryRouter initialEntries={["/w/ws_1"]}>
+          <PanelProvider>
+            <TimelineItemContent item={cardItem} ctx={ctx(patches)} deferSecondaryHydration={false} />
+          </PanelProvider>
+        </MemoryRouter>
+      </QueryClientProvider>
+    )
+
+    const expired = patchItem("evt_expired", "expired", "claim_expired")
+    const released = patchItem("evt_released", "open", "claim_released")
+    const claimed = patchItem("evt_claimed", "claimed")
+    const { rerender } = render(row([expired]))
+    expect(screen.getByText(/Claim expired/)).toBeInTheDocument()
+
+    rerender(row([expired, patchItem("evt_open_expired", "open", "claim_expired")]))
+    expect(await screen.findByText(/Claim expired · Open again/)).toBeInTheDocument()
+
+    rerender(row([expired, released]))
+    expect(await screen.findByText(/Claim released · Open again/)).toBeInTheDocument()
+
+    rerender(row([expired, released, claimed]))
+    expect(await screen.findByText(/Ariadne · Claimed/)).toBeInTheDocument()
+  })
+
+  it("invalidates definitive lost races without lying about local state", async () => {
+    vi.spyOn(delegationsApi, "requeue").mockResolvedValue({ requeued: false })
+    const info = vi.spyOn(toast, "info")
+    const { queryClient } = renderCard({ delegationId: "dlg_1", status: "expired" })
+    const invalidate = vi.spyOn(queryClient, "invalidateQueries")
+    await selectCardAction("Requeue")
+    await waitFor(() => expect(info).toHaveBeenCalledWith("This delegation is no longer expired"))
+    expect(invalidate).toHaveBeenCalledTimes(2)
+    expect(screen.getByText(/Ariadne · Claim expired/)).toBeInTheDocument()
+  })
+
+  it("preserves expired state and caches when requeue errors", async () => {
+    vi.spyOn(delegationsApi, "requeue").mockRejectedValue(new Error("offline"))
+    const error = vi.spyOn(toast, "error")
+    const { queryClient } = renderCard({ delegationId: "dlg_1", status: "expired" })
+    const invalidate = vi.spyOn(queryClient, "invalidateQueries")
+    await selectCardAction("Requeue")
+    await waitFor(() => expect(error).toHaveBeenCalledWith("Couldn't requeue the delegation"))
+    expect(invalidate).not.toHaveBeenCalled()
+    expect(screen.getByText(/Ariadne · Claim expired/)).toBeInTheDocument()
   })
 
   it("cancels via the API and flips to Cancelled for the clicking member", async () => {
@@ -342,12 +498,13 @@ describe("DelegationEvent", () => {
     vi.useFakeTimers()
     vi.spyOn(hooksModule, "useTouchCapable").mockReturnValue(true)
     vi.spyOn(hooksModule, "useInputMode").mockReturnValue("touch")
-    renderCard()
+    renderCard({ delegationId: "dlg_1", status: "expired" })
 
     const title = screen.getByText("Add rate limiting to the webhook endpoint")
     fireEvent.touchStart(title, { touches: [{ clientX: 10, clientY: 10 }] })
     act(() => vi.advanceTimersByTime(500))
 
+    expect(screen.getByRole("button", { name: "Requeue" })).toBeInTheDocument()
     expect(screen.getByRole("button", { name: "Mark done" })).toBeInTheDocument()
     expect(screen.getByRole("button", { name: "Cancel delegation" })).toBeInTheDocument()
     vi.useRealTimers()
@@ -369,15 +526,17 @@ describe("DelegationEvent", () => {
 
   it("renders nothing without a payload", () => {
     const { container } = render(
-      <MemoryRouter initialEntries={["/w/ws_1"]}>
-        <PanelProvider>
-          <DelegationEvent
-            event={{ ...createdEvent(CREATED_PAYLOAD), payload: undefined }}
-            workspaceId="ws_1"
-            streamId="stream_1"
-          />
-        </PanelProvider>
-      </MemoryRouter>
+      <QueryClientProvider client={new QueryClient()}>
+        <MemoryRouter initialEntries={["/w/ws_1"]}>
+          <PanelProvider>
+            <DelegationEvent
+              event={{ ...createdEvent(CREATED_PAYLOAD), payload: undefined }}
+              workspaceId="ws_1"
+              streamId="stream_1"
+            />
+          </PanelProvider>
+        </MemoryRouter>
+      </QueryClientProvider>
     )
     expect(container).toBeEmptyDOMElement()
   })

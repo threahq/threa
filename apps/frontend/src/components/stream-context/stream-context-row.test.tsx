@@ -125,6 +125,19 @@ describe("StreamContextRow delegation", () => {
     expect(screen.getByText("Delegated task")).toBeInTheDocument()
   })
 
+  it("styles expired work as active", () => {
+    renderRow(delegationItem({ status: "expired", claimedByLabel: null, statusNote: null }))
+    const expired = screen.getByText("Claim expired")
+    expect(expired).toHaveClass("bg-primary/15", "text-primary")
+    expect(screen.getByText("Add rate limiting")).not.toHaveClass("line-through")
+  })
+
+  it("labels an authoritative reopened delegation Open with active styling", () => {
+    renderRow(delegationItem({ status: "open", claimedByLabel: null, statusNote: null }))
+    expect(screen.getByText("Open")).toHaveClass("bg-sky-500/15")
+    expect(screen.getByText("Add rate limiting")).not.toHaveClass("line-through")
+  })
+
   it("renders inert (no dead-click button) when the created event id is missing", () => {
     renderRow(delegationItem({ sourceMessageId: null }))
     expect(screen.getByText("Add rate limiting")).toBeInTheDocument()

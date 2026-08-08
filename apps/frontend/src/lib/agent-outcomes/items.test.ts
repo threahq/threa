@@ -62,6 +62,7 @@ describe("toOutcomeItem", () => {
       statusChangedAt: "2026-07-28T09:00:00.000Z",
       anchorPath: "/w/ws_1/s/str_design?m=event_1",
       canCancel: true,
+      canRequeue: false,
       canMarkDone: false,
     })
   })
@@ -75,6 +76,7 @@ describe("toOutcomeItem", () => {
       statusNote: "step 2 of 4",
       anchorPath: "/w/ws_1/s/str_strategy?m=event_2",
       canCancel: true,
+      canRequeue: false,
       canMarkDone: true,
     })
   })
@@ -84,13 +86,25 @@ describe("toOutcomeItem", () => {
       statusLabel: "Ran",
       isSettled: true,
       canCancel: false,
+      canRequeue: false,
       canMarkDone: false,
     })
     expect(toOutcomeItem("ws_1", delegation({ status: "completed" }))).toMatchObject({
       statusLabel: "Completed",
       isSettled: true,
       canCancel: false,
+      canRequeue: false,
       canMarkDone: false,
+    })
+  })
+
+  it("keeps an expired delegation outstanding and recoverable", () => {
+    expect(toOutcomeItem("ws_1", delegation({ status: "expired" }))).toMatchObject({
+      statusLabel: "Claim expired",
+      isSettled: false,
+      canCancel: true,
+      canRequeue: true,
+      canMarkDone: true,
     })
   })
 

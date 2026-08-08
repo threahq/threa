@@ -1,4 +1,5 @@
-import { useRef, useState } from "react"
+import { useEffect, useRef, useState } from "react"
+import { useQueryClient } from "@tanstack/react-query"
 import { toast } from "sonner"
 import {
   ArrowUpRight,
@@ -10,6 +11,7 @@ import {
   Link2,
   Loader2,
   MessageSquareReply,
+  RotateCcw,
   TerminalSquare,
   X,
 } from "lucide-react"
@@ -24,7 +26,13 @@ import {
 import { delegationsApi } from "@/api"
 import { usePanel } from "@/contexts"
 import { useActors } from "@/hooks"
-import { DELEGATION_STATUS_LABEL, DELEGATION_TERMINAL } from "@/lib/delegation-display"
+import { agentOutcomeKeys } from "@/hooks/use-agent-outcomes"
+import { delegationKeys } from "@/hooks/use-stream-delegations"
+import {
+  delegationAvailabilityLabel,
+  DELEGATION_REOPEN_REASON_LABEL,
+  DELEGATION_TERMINAL,
+} from "@/lib/delegation-display"
 import { buildDelegationLink } from "@/lib/stream-links"
 import { cn } from "@/lib/utils"
 import { ThreadSlot } from "./thread-slot"
@@ -36,6 +44,19 @@ import {
   useTimelineCardActionSurface,
 } from "./timeline-card-actions"
 import { useThreadAnchor } from "./use-thread-anchor"
+
+function delegationPatchSignature(patch: DelegationStatusChangedEventPayload | undefined): string | undefined {
+  if (!patch) return undefined
+  return JSON.stringify([
+    patch.delegationId,
+    patch.status,
+    patch.claimedByLabel ?? null,
+    patch.resultMessageId ?? null,
+    patch.threadStreamId ?? null,
+    patch.statusNote ?? null,
+    patch.reason ?? null,
+  ])
+}
 
 interface DelegationEventProps {
   event: StreamEvent
@@ -84,14 +105,16 @@ export function buildDelegationPrompt(
       `(created in Threa under Settings > API keys, scopes delegations:read + delegations:write),`,
       `work it through the API so the card tracks your progress:`,
       "",
-      `1. Claim: POST ${base}/claim with body {"claimedByLabel":"<who/what you are>"}.`,
-      `   The response carries the brief, the resolved context refs, and a claimToken (shown once, 15-minute lease).`,
-      `2. Send the token as an X-Threa-Callback-Token header on every later call:`,
-      `   POST ${base}/heartbeat (renew the lease), POST ${base}/status {"statusNote":"..."} (progress on the card),`,
-      `   then POST ${base}/complete {"resultMarkdown":"..."} or POST ${base}/fail {"errorMessage":"..."}.`,
+      `1. Inspect: GET ${base}. Review the brief and context refs, which are pointers into Threa.`,
+      `2. If you accept the work, claim it: POST ${base}/claim with body {"claimedByLabel":"<executor label>"}.`,
+      `   The response includes a claimToken shown once and a 15-minute lease.`,
+      `3. Send the token as an X-Threa-Callback-Token header on later calls.`,
+      `   POST ${base}/heartbeat optionally renews the lease; POST ${base}/status {"statusNote":"..."} reports progress.`,
+      `   POST ${base}/complete {"resultMarkdown":"..."} completes the work; POST ${base}/fail {"errorMessage":"..."} reports an execution failure.`,
+      `   For a controlled stop, POST ${base}/release so another executor can claim it.`,
       `   Completing posts your result into the conversation.`,
       "",
-      `Without API access: the context refs above are Threa-internal pointers you cannot resolve —`,
+      `Without API access, the context refs above are Threa-internal pointers you cannot resolve.`,
       `ask the requester to paste their content, and when the work is finished tell them so they`,
       `can press "Mark done" on the delegation card.`
     )
@@ -108,6 +131,7 @@ export function buildDelegationPrompt(
 export function DelegationEvent({ event, workspaceId, streamId, statusPatch, isThreadParent }: DelegationEventProps) {
   const { getActorName } = useActors(workspaceId)
   const { getPanelUrl } = usePanel()
+  const queryClient = useQueryClient()
   // Healing (chunk-2) lands thread stats on the card's own payload once a thread
   // exists, keyed on this event's id — the same anchor the thread was created on.
   const payload = event.payload as
@@ -119,23 +143,36 @@ export function DelegationEvent({ event, workspaceId, streamId, statusPatch, isT
   const { threadHref, replyUrl } = useThreadAnchor(streamId, event.id, { threadId: payload?.threadId })
   const [optimisticallyCancelled, setOptimisticallyCancelled] = useState(false)
   const [optimisticallyDone, setOptimisticallyDone] = useState(false)
+  const [optimisticallyRequeued, setOptimisticallyRequeued] = useState(false)
+  const requeuePatchSignatureRef = useRef<string | undefined>(undefined)
   const [cancelling, setCancelling] = useState(false)
   const [markingDone, setMarkingDone] = useState(false)
+  const [requeueing, setRequeueing] = useState(false)
   const [copyDone, setCopyDone] = useState(false)
   const [briefOpen, setBriefOpen] = useState(false)
   const copyResetRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const actionSurface = useTimelineCardActionSurface()
+
+  const statusPatchSignature = delegationPatchSignature(statusPatch)
+  useEffect(() => {
+    if (optimisticallyRequeued && statusPatchSignature !== requeuePatchSignatureRef.current) {
+      setOptimisticallyRequeued(false)
+    }
+  }, [optimisticallyRequeued, statusPatchSignature])
 
   if (!payload) return null
 
   let status: DelegationStatus = statusPatch?.status ?? DelegationStatuses.OPEN
   if (optimisticallyDone) status = DelegationStatuses.COMPLETED
   else if (optimisticallyCancelled) status = DelegationStatuses.CANCELLED
+  else if (optimisticallyRequeued) status = DelegationStatuses.OPEN
   const terminal = DELEGATION_TERMINAL.has(status)
-  const optimisticFlip = optimisticallyCancelled || optimisticallyDone
+  const optimisticFlip = optimisticallyCancelled || optimisticallyDone || optimisticallyRequeued
   const actorName = getActorName(event.actorId, event.actorType)
 
-  const metaParts = [`${actorName} · ${DELEGATION_STATUS_LABEL[status]}`]
+  let availabilityLabel = delegationAvailabilityLabel(status, statusPatch?.reason)
+  if (optimisticallyRequeued) availabilityLabel = DELEGATION_REOPEN_REASON_LABEL.requeued
+  const metaParts = [`${actorName} · ${availabilityLabel}`]
   if (statusPatch?.claimedByLabel && !optimisticFlip) metaParts.push(statusPatch.claimedByLabel)
   const statusNote = !optimisticFlip ? statusPatch?.statusNote : null
 
@@ -179,6 +216,28 @@ export function DelegationEvent({ event, workspaceId, streamId, statusPatch, isT
     }
   }
 
+  async function handleRequeue() {
+    if (!payload || requeueing || status !== DelegationStatuses.EXPIRED) return
+    setRequeueing(true)
+    try {
+      const { requeued } = await delegationsApi.requeue(workspaceId, payload.delegationId)
+      if (requeued) {
+        requeuePatchSignatureRef.current = statusPatchSignature
+        setOptimisticallyRequeued(true)
+      } else {
+        toast.info("This delegation is no longer expired")
+      }
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: delegationKeys.all }),
+        queryClient.invalidateQueries({ queryKey: agentOutcomeKeys.all }),
+      ])
+    } catch {
+      toast.error("Couldn't requeue the delegation")
+    } finally {
+      setRequeueing(false)
+    }
+  }
+
   async function handleMarkDone() {
     if (!payload || markingDone || terminal) return
     setMarkingDone(true)
@@ -204,7 +263,7 @@ export function DelegationEvent({ event, workspaceId, streamId, statusPatch, isT
       if (didCancel) {
         setOptimisticallyCancelled(true)
       } else {
-        // Lost the race (completed/failed/expired/cancelled elsewhere). Don't
+        // Lost the race (completed/failed/cancelled elsewhere). Don't
         // flip — the authoritative patch will land with what actually happened.
         toast.info("This delegation already finished or was cancelled")
       }
@@ -251,6 +310,17 @@ export function DelegationEvent({ event, workspaceId, streamId, statusPatch, isT
       onSelect: () => setBriefOpen((open) => !open),
     }
   )
+  if (status === DelegationStatuses.EXPIRED) {
+    actions.push({
+      id: "requeue",
+      label: requeueing ? "Requeueing…" : "Requeue",
+      icon: requeueing ? Loader2 : RotateCcw,
+      onSelect: handleRequeue,
+      disabled: requeueing,
+      loading: requeueing,
+      separatorBefore: true,
+    })
+  }
   if (!terminal) {
     actions.push(
       {
@@ -286,7 +356,8 @@ export function DelegationEvent({ event, workspaceId, streamId, statusPatch, isT
       <div
         className={cn(
           "rounded-[10px] border px-3 py-2 transition-colors",
-          terminal ? "border-border/60 bg-muted/20" : "border-border bg-muted/40"
+          terminal ? "border-border/60 bg-muted/20" : "border-border bg-muted/40",
+          status === DelegationStatuses.EXPIRED && "border-primary/35 bg-primary/[0.04]"
         )}
       >
         <div className="flex items-center gap-3">
@@ -303,9 +374,7 @@ export function DelegationEvent({ event, workspaceId, streamId, statusPatch, isT
             <p
               className={cn(
                 "truncate text-[13px] font-medium",
-                status === DelegationStatuses.CANCELLED || status === DelegationStatuses.EXPIRED
-                  ? "text-muted-foreground line-through"
-                  : "text-foreground/90"
+                status === DelegationStatuses.CANCELLED ? "text-muted-foreground line-through" : "text-foreground/90"
               )}
             >
               {payload.title}
@@ -355,8 +424,8 @@ export function DelegationEvent({ event, workspaceId, streamId, statusPatch, isT
               {promptText()}
             </pre>
             <p className="mt-1.5 text-[11px] text-muted-foreground">
-              Paste this into your local agent (Claude Code, etc.). An agent with a Threa API key can claim the task and
-              update this card; otherwise press Mark done when the work is finished.
+              Give this prompt to an executor. With a Threa API key it can inspect the task, claim it if accepted, and
+              update this card. Otherwise press Mark done when the work is finished.
             </p>
           </div>
         )}

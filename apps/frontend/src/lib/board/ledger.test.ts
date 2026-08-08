@@ -395,6 +395,35 @@ describe("ledgerEventContent", () => {
     expect(ledgerEventContent(row, ctx)?.meta).toBe("Open")
   })
 
+  it.each([
+    ["claim_expired", "Claim expired · Open again"],
+    ["claim_released", "Claim released · Open again"],
+    ["requeued", "Requeued · Open"],
+    [undefined, "Open"],
+  ] as const)("carries the delegation's %s reopen reason", (reason, label) => {
+    const row: BoardEventRow = {
+      kind: "delegation",
+      key: "evt_1",
+      sortMs: 0,
+      streamId: "stream_1",
+      event: event("delegation:created", { delegationId: "dlg_1", title: "Migrate", brief: "…", contextRefs: [] }),
+      statusPatch: { delegationId: "dlg_1", status: "open", reason },
+    }
+    expect(ledgerEventContent(row, ctx).meta).toBe(label)
+  })
+
+  it("keeps historical expired delegations active in the compact ledger", () => {
+    const row: BoardEventRow = {
+      kind: "delegation",
+      key: "evt_1",
+      sortMs: 0,
+      streamId: "stream_1",
+      event: event("delegation:created", { delegationId: "dlg_1", title: "Migrate", brief: "…", contextRefs: [] }),
+      statusPatch: { delegationId: "dlg_1", status: "expired" },
+    }
+    expect(ledgerEventContent(row, ctx).meta).toBe("Claim expired")
+  })
+
   it("carries a delegation's title and its latest status", () => {
     const row: BoardEventRow = {
       kind: "delegation",

@@ -1105,7 +1105,9 @@ function delegationPatchEqual(
     a.status === b.status &&
     a.claimedByLabel === b.claimedByLabel &&
     a.resultMessageId === b.resultMessageId &&
-    a.statusNote === b.statusNote
+    a.threadStreamId === b.threadStreamId &&
+    a.statusNote === b.statusNote &&
+    a.reason === b.reason
   )
 }
 

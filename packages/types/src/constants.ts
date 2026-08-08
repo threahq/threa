@@ -747,7 +747,7 @@ export const FollowUpStatuses = {
 // person, later) for the user's local agent to execute. `open` until a local
 // agent claims it via the public API (5.3); `claimed`/`running` while held under
 // a TTL'd claim token; `completed`/`failed` are terminal reports; `cancelled` by
-// a stream member from the card; `expired` when the sweep finds a lapsed claim.
+// a stream member from the card; historical `expired` claims remain recoverable.
 export const DELEGATION_STATUSES = [
   "open",
   "claimed",
@@ -772,12 +772,11 @@ export const DelegationStatuses = {
 export const DELEGATION_REOPEN_REASONS = ["claim_expired", "claim_released", "requeued"] as const
 export type DelegationReopenReason = (typeof DELEGATION_REOPEN_REASONS)[number]
 
-/** Terminal delegation statuses — no further transitions (and no expiry sweep interest). */
+/** Settled delegation statuses with no further transitions. */
 export const DELEGATION_TERMINAL_STATUSES = [
   "completed",
   "failed",
   "cancelled",
-  "expired",
 ] as const satisfies readonly DelegationStatus[]
 
 // Bot access-request lifecycle (F3): a bot runtime that lacks stream access
