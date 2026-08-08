@@ -3,6 +3,20 @@ import { Registry, Gauge, Counter, Histogram } from "prom-client"
 // Dedicated registry, not prom-client's default.
 export const registry = new Registry()
 
+export const dynamicNamingClaimsTotal = new Counter({
+  name: "dynamic_naming_claims_total",
+  help: "Dynamic naming claim attempts by action",
+  labelNames: ["target_kind", "action", "checkpoint"],
+  registers: [registry],
+})
+
+export const dynamicNamingDecisionsTotal = new Counter({
+  name: "dynamic_naming_decisions_total",
+  help: "Dynamic naming decisions by action",
+  labelNames: ["target_kind", "action", "checkpoint"],
+  registers: [registry],
+})
+
 export const poolConnectionsTotal = new Gauge({
   name: "pool_connections_total",
   help: "Total number of connections in the pool",

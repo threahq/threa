@@ -1,4 +1,6 @@
 import { AgentTriggers, type AgentSessionRerunContext, type JSONContent } from "@threa/types"
+import type { DynamicNamingEvaluateJobData } from "./dynamic-naming-contract"
+export type { DynamicNamingEvaluateJobData } from "./dynamic-naming-contract"
 
 export interface Job<T = unknown> {
   id: string
@@ -20,6 +22,7 @@ export interface Job<T = unknown> {
 export const JobQueues = {
   PERSONA_AGENT: "persona.agent",
   NAMING_GENERATE: "naming.generate",
+  DYNAMIC_NAMING_EVALUATE: "dynamic-naming.evaluate",
   EMBEDDING_GENERATE: "embedding.generate",
   BOUNDARY_EXTRACT: "boundary.extract",
   CONVERSATION_STALENESS_SWEEP: "conversation.staleness-sweep",
@@ -407,6 +410,7 @@ export interface LinkPreviewVisibleRefreshJobData {
 export interface JobDataMap {
   [JobQueues.PERSONA_AGENT]: PersonaAgentJobData
   [JobQueues.NAMING_GENERATE]: NamingJobData
+  [JobQueues.DYNAMIC_NAMING_EVALUATE]: DynamicNamingEvaluateJobData
   [JobQueues.EMBEDDING_GENERATE]: EmbeddingJobData
   [JobQueues.BOUNDARY_EXTRACT]: BoundaryExtractionJobData
   [JobQueues.CONVERSATION_STALENESS_SWEEP]: ConversationStalenessSweepJobData
