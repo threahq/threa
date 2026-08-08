@@ -97,6 +97,7 @@ export interface CasUpdateDraftParams {
    * `expectedVersion` trails (the ack of the prior write was lost).
    */
   ownWriteIds: string[]
+  scope: string
   rootStreamId: string | null
   contentJson: JSONContent | null
   contentMarkdown: string | null
@@ -213,6 +214,7 @@ export const DraftsRepository = {
     const ownWriteIds = params.ownWriteIds
     const result = await db.query<DraftRow>(sql`
       UPDATE drafts SET
+        scope = ${params.scope},
         root_stream_id = ${params.rootStreamId},
         content_json = ${jsonbOrNull(params.contentJson)}::jsonb,
         content_markdown = ${params.contentMarkdown},

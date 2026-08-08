@@ -534,44 +534,42 @@ export async function rescopeScopeDrafts(workspaceId: string, fromScope: string,
 }
 
 /**
- * Move the loaded draft's content out of `fromScope` into a FRESH loaded draft
- * under `toScope`, deleting the source draft. The race-proof alternative to
- * `rescopeScopeDrafts` for a scope a LIVE editor is leaving: an in-flight push
- * snapshotted before a row-move can land after it and reinstate the old scope
- * server-side (last write wins) — no enqueue-layer ordering can prevent that.
- * Deleting the source instead rides the delete machinery's tombstone
- * (`supersededWriteIds`), which is designed to suppress exactly those late
- * pushes; the target row is brand-new, so it has no version history to fight.
+ * Move the loaded draft from `fromScope` to `toScope` without changing its id or
+ * payload. The composer flushes first, then this changes only filing metadata.
+ * An existing loaded draft at the destination is displaced into that scope's
+ * pile rather than overwritten.
  *
- * `liveContent` is the editor's current document (keystrokes may not have
- * flushed); it wins over the persisted body. An existing loaded draft under
- * `toScope` is stashed first, never clobbered (cardinal no-loss rule). Stash
- * siblings under `fromScope` stay put — they were deliberately stashed against
- * that target. No-op (source still cleared) when there is nothing to move.
+ * Scope move + pointer move + forced sync op commit atomically. The forced op
+ * carries any in-flight write lineage, so an old-scope push is followed by an
+ * idempotent push of the new scope.
  */
 export async function relocateLoadedDraft(
   workspaceId: string,
   fromScope: string,
   toScope: string,
-  liveContent?: JSONContent
-): Promise<void> {
-  // Bump the source scope's resolve sequence BEFORE the teardown (mirroring
-  // `resolveLoadedDraft`): a debounced typing save already in flight captured
-  // the pre-bump sequence, so `isStaleObservedResolve` drops its create instead
-  // of letting it resurrect the scope we're vacating. The caller must separately
-  // clear any ARMED-but-unfired debounce (its save would capture the post-bump
-  // sequence) — flushing the composer before calling this does that.
-  recordScopeResolved(fromScope)
-  const loadedId = (await db.composerLoaded.get(fromScope))?.draftId ?? null
-  const row = loadedId ? await db.drafts.get(loadedId) : null
-  const contentJson = liveContent && !isEmptyContent(liveContent) ? liveContent : (row?.contentJson ?? EMPTY_DOC)
-  const attachments = row?.attachments ?? []
+  opts?: { targetHost?: string }
+): Promise<CachedDraft | null> {
+  let moved: CachedDraft | null = null
+  await db.transaction("rw", db.drafts, db.composerLoaded, db.composerTarget, db.pendingOperations, async () => {
+    const loadedId = (await db.composerLoaded.get(fromScope))?.draftId ?? null
+    const live = loadedId ? await db.drafts.get(loadedId) : null
+    if (live && live.scope === fromScope) {
+      moved = { ...live, scope: toScope }
+      await migrateLocalDraftScope(workspaceId, fromScope, moved)
+      await enqueueDraftUpsert(workspaceId, live.id, { forceNewOp: true })
+    }
+    if (opts?.targetHost) {
+      if (toScope === opts.targetHost) await db.composerTarget.delete(opts.targetHost)
+      else await db.composerTarget.put({ host: opts.targetHost, workspaceId, scope: toScope })
+    }
+  })
 
-  if (!isEmptyContent(contentJson) || attachments.length > 0) {
-    await stashLoadedDraft(workspaceId, toScope)
-    await upsertLoadedDraft(workspaceId, toScope, { contentJson, attachments })
+  const staged = readStagedDraft(workspaceId, fromScope)
+  if (staged) {
+    stageDraftContent(workspaceId, toScope, staged.contentJson)
+    clearStagedDraft(workspaceId, fromScope)
   }
-  await clearLoadedDraft(workspaceId, fromScope)
+  return moved
 }
 
 /**
@@ -663,7 +661,8 @@ export function useDraftMessage(
     async (
       contentJson: JSONContent,
       attachments?: DraftAttachment[],
-      expectedDraftId?: string | null
+      expectedDraftId?: string | null,
+      options?: { keepEmpty?: boolean }
     ): Promise<CachedDraft | null> => {
       // Clear any pending debounced save
       if (debounceRef.current) {
@@ -675,6 +674,9 @@ export function useDraftMessage(
       // save's arm-time capture, or a repoint flush) wins over the live ref,
       // which may already have moved on to another draft.
       const targetId = expectedDraftId ?? contentDraftId.current
+      // Filing can preserve an existing row after the user deliberately cleared
+      // it, but must never mint an empty draft before this editor owns an id.
+      if (options?.keepEmpty && targetId === null) return null
       // Whether this save still speaks for the composer's current content is
       // decided at ASSIGNMENT time, never captured here: the ref can move on
       // (a repoint) during the awaits below, and a stale capture would drag it
@@ -700,7 +702,7 @@ export function useDraftMessage(
         // from the in-memory decrypt cache (the plaintext authority).
         const currentLoadedId = targetId ?? (await getLoadedDraftId(draftKey))
         const finalAttachments = attachments ?? (currentLoadedId ? cachedDraftAttachments(currentLoadedId) : [])
-        if (isEmptyContent(contentJson) && finalAttachments.length === 0) {
+        if (!options?.keepEmpty && isEmptyContent(contentJson) && finalAttachments.length === 0) {
           await clearLoadedDraft(workspaceId, draftKey, targetId)
           advanceIdentity(null)
           syncEngine?.kickOperationQueue()
@@ -735,7 +737,12 @@ export function useDraftMessage(
       const finalContextRefs = currentDraft?.contextRefs ?? []
 
       // Delete draft only when content + attachments + contextRefs are all empty.
-      if (isEmptyContent(contentJson) && finalAttachments.length === 0 && finalContextRefs.length === 0) {
+      if (
+        !options?.keepEmpty &&
+        isEmptyContent(contentJson) &&
+        finalAttachments.length === 0 &&
+        finalContextRefs.length === 0
+      ) {
         await clearLoadedDraft(workspaceId, draftKey, targetId)
         advanceIdentity(null)
         syncEngine?.kickOperationQueue()
@@ -989,6 +996,9 @@ export function useDraftMessage(
   // content, or the empty placeholder while locked/decrypting/failed/absent (the
   // shared core returns null contentJson for those states).
   const contentJson = decryptedContent.contentJson ?? EMPTY_DOC
+  const contentDraftScope = contentDraftId.current
+    ? (drafts.find((draft) => draft.id === contentDraftId.current)?.scope ?? null)
+    : null
 
   return {
     /** True once Dexie has loaded and (for an E2E draft) the read has settled (not mid-decrypt). */
@@ -1004,6 +1014,8 @@ export function useDraftMessage(
      * clear the editor so a gone draft doesn't linger.
      */
     loadedDraftId: loadedId,
+    /** Current scope of the row whose payload the live editor owns, even while its pointer is moving. */
+    contentDraftScope,
     contentJson,
     // Attachments come from the shared read path: a plaintext draft's own
     // `attachments`, or — for a sealed draft — the metadata recovered from the

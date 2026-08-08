@@ -586,26 +586,19 @@ export function InlineComposerForm({
     </div>
   ) : null
 
-  // Cancel the armed sub-conversation target: relocate the draft (live editor
-  // content wins) into the root reply scope, then disarm. `relocateLoadedDraft`
-  // deletes the source rather than re-scoping the row — an in-flight push
-  // snapshotted under the branch scope would otherwise land last and reinstate
-  // it server-side; the delete's tombstone suppresses exactly that. The content
-  // re-reads under root via the scope-change rehydrate once `onCancel` flips
-  // the draft key.
+  // Cancel the armed sub-conversation target: flush the editor, move that same
+  // draft row into the root reply scope, then disarm. The stable identity lets
+  // the mounted composer keep its live content and attachments through the
+  // filing-only scope change.
   const handleCancelReplyTarget = useCallback(async () => {
     if (!replyTarget) return
-    // Flush FIRST: `saveDraft` clears the armed typing debounce, whose closure
-    // is bound to the branch scope — the composer never unmounts on cancel
-    // (only its draftKey flips), so an unfired timer would otherwise outlive
-    // the relocate and mint a fresh draft under the vacated scope. In-flight
-    // saves past the timer are dropped by the resolve-seq bump inside
-    // `relocateLoadedDraft`.
-    await composerRef.current.flushDraft()
-    await relocateLoadedDraft(workspaceId, draftKey, replyTarget.moveDraftToKey, composer.content)
+    // Flush first so the row carries the editor's latest payload before its
+    // filing metadata changes.
+    await composerRef.current.flushDraft({ keepEmpty: true })
+    await relocateLoadedDraft(workspaceId, draftKey, replyTarget.moveDraftToKey)
     syncEngine?.kickOperationQueue()
     replyTarget.onCancel()
-  }, [replyTarget, workspaceId, draftKey, syncEngine, composer.content])
+  }, [replyTarget, workspaceId, draftKey, syncEngine])
 
   // Armed reply-target strip — the send's only signal that it files into a
   // sub-conversation, matching the timeline's dismissible strip. Replaces the

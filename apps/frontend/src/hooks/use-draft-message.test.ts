@@ -198,6 +198,22 @@ describe("useDraftMessage", () => {
       expect(await db.composerLoaded.get(draftKey)).toBeUndefined()
     })
 
+    it("can keep an existing empty row alive for a filing-only scope move", async () => {
+      const row = await upsertLoadedDraft(workspaceId, draftKey, {
+        contentJson: makeDoc("something"),
+        attachments: [],
+      })
+      const identity = { current: row.id }
+      const { result } = renderHook(() => useDraftMessage(workspaceId, draftKey, undefined, identity))
+
+      await act(async () => {
+        await result.current.saveDraft(EMPTY_DOC, [], undefined, { keepEmpty: true })
+      })
+
+      expect(await loadedDraft(draftKey)).toMatchObject({ id: row.id, contentJson: EMPTY_DOC })
+      expect((await db.composerLoaded.get(draftKey))?.draftId).toBe(row.id)
+    })
+
     it("should preserve existing attachments when saving content", async () => {
       const existingAttachments = [{ id: "attach_1", filename: "file.txt", mimeType: "text/plain", sizeBytes: 50 }]
       await upsertLoadedDraft(workspaceId, draftKey, { contentJson: makeDoc("x"), attachments: existingAttachments })

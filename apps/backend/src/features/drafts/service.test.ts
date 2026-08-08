@@ -126,7 +126,7 @@ describe("DraftsService.upsert", () => {
     expect(result.split).toBe(false)
     expect(casUpdate).toHaveBeenCalledWith(
       expect.anything(),
-      expect.objectContaining({ ownWriteIds: ["write_next", "write_prior"] })
+      expect.objectContaining({ scope: "stream:stream_1", ownWriteIds: ["write_next", "write_prior"] })
     )
   })
 

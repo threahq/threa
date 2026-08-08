@@ -311,8 +311,8 @@ describe("InlineComposerForm armed reply-target strip", () => {
     expect(screen.getByRole("button", { name: "Cancel reply in conversation" })).toBeTruthy()
   })
 
-  it("× relocates the draft (live content included) to the root scope, then disarms", async () => {
-    const relocateSpy = vi.fn().mockResolvedValue(undefined)
+  it("× flushes and moves the stable draft to the root scope before disarming", async () => {
+    const relocateSpy = vi.fn().mockResolvedValue(null)
     spyOnExport(draftMessageModule, "relocateLoadedDraft").mockReturnValue(relocateSpy as never)
     const onCancel = vi.fn()
     render(
@@ -327,15 +327,9 @@ describe("InlineComposerForm armed reply-target strip", () => {
 
     await userEvent.click(screen.getByRole("button", { name: "Cancel reply in conversation" }))
 
-    expect(relocateSpy).toHaveBeenCalledWith(
-      "ws_1",
-      "board:branch-reply:conv_b",
-      "board:reply:conv_root",
-      expect.anything()
-    )
-    // Flush must precede the relocate: it clears the armed typing debounce
-    // (bound to the branch scope) that would otherwise fire after the move and
-    // mint a fresh draft under the vacated scope.
+    expect(relocateSpy).toHaveBeenCalledWith("ws_1", "board:branch-reply:conv_b", "board:reply:conv_root")
+    // Flush must precede the metadata move so the stable row carries the latest
+    // editor payload into its new filing scope.
     expect(flushDraft).toHaveBeenCalled()
     expect(flushDraft.mock.invocationCallOrder[0]).toBeLessThan(relocateSpy.mock.invocationCallOrder[0])
     await waitFor(() => expect(onCancel).toHaveBeenCalled())

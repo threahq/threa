@@ -7,7 +7,6 @@ import {
   upsertLoadedDraft,
 } from "./use-draft-message"
 import { readStagedDraft, stageDraftContent } from "@/lib/drafts/draft-staging"
-import { getScopeResolveSeq } from "@/sync/draft-resolution-guard"
 import { hasPendingDraftUpsert } from "@/sync/draft-sync"
 import { db, type CachedDraft } from "@/db"
 import { resetDraftStoreCache } from "@/stores/draft-store"
@@ -151,53 +150,43 @@ describe("draft write helpers — Stage 3 sync wiring", () => {
     expect(readStagedDraft(workspaceId, toScope)?.contentJson).toEqual(makeDoc("moving"))
   })
 
-  it("relocateLoadedDraft mints a fresh target draft, tombstones the source, and stashes an existing target draft", async () => {
+  it("relocateLoadedDraft keeps one identity while displacing an existing target draft", async () => {
     const fromScope = "board:branch-reply:conv_move"
     const toScope = "board:reply:conv_move_root"
     const sourceRow = await upsertLoadedDraft(workspaceId, fromScope, {
-      contentJson: makeDoc("stale persisted"),
+      contentJson: makeDoc("live keystrokes"),
       attachments: [],
     })
     const existingTarget = await upsertLoadedDraft(workspaceId, toScope, {
       contentJson: makeDoc("root already had this"),
       attachments: [],
     })
+    const sourceOp = (await db.pendingOperations.where("type").equals("upsert_draft").toArray()).find(
+      (op) => op.payload.draftId === sourceRow.id
+    )
 
-    await relocateLoadedDraft(workspaceId, fromScope, toScope, makeDoc("live keystrokes"))
+    const moved = await relocateLoadedDraft(workspaceId, fromScope, toScope)
 
-    // Source: row deleted, pointer gone, delete queued (tombstone suppresses in-flight pushes).
-    expect(await db.drafts.get(sourceRow.id)).toBeUndefined()
+    expect(moved?.id).toBe(sourceRow.id)
     expect((await db.composerLoaded.get(fromScope))?.draftId).toBeUndefined()
-    expect(await pendingDeletes(sourceRow.id)).toBe(1)
-    // Target: a FRESH loaded draft carrying the live editor content, not the stale body.
-    const targetLoadedId = (await db.composerLoaded.get(toScope))?.draftId
-    expect(targetLoadedId).toBeDefined()
-    expect(targetLoadedId).not.toBe(sourceRow.id)
-    expect((await db.drafts.get(targetLoadedId!))?.contentJson).toEqual(makeDoc("live keystrokes"))
-    // The target's previous loaded draft survives as a stash sibling (no-loss).
-    expect((await db.drafts.get(existingTarget.id))?.scope).toBe(toScope)
-    expect((await db.drafts.get(existingTarget.id))?.contentJson).toEqual(makeDoc("root already had this"))
-  })
-
-  it("relocateLoadedDraft drops an in-flight debounced save for the vacated scope (resolve-seq bump)", async () => {
-    // A debounced typing save that began BEFORE the relocate captured the
-    // pre-bump resolve sequence; letting its create land would resurrect the
-    // scope the user just moved out of (the review's phantom-draft finding).
-    const fromScope = "board:branch-reply:conv_seq"
-    const toScope = "board:reply:conv_seq_root"
-    await upsertLoadedDraft(workspaceId, fromScope, { contentJson: makeDoc("typed"), attachments: [] })
-    const observedResolveSeq = getScopeResolveSeq(fromScope)
-
-    await relocateLoadedDraft(workspaceId, fromScope, toScope, makeDoc("typed"))
-
-    // Simulates the stale save's create firing after the relocate.
-    await upsertLoadedDraft(workspaceId, fromScope, { contentJson: makeDoc("typed"), attachments: [] }, undefined, {
-      observedResolveSeq,
+    expect((await db.composerLoaded.get(toScope))?.draftId).toBe(sourceRow.id)
+    expect(await db.drafts.get(sourceRow.id)).toMatchObject({
+      id: sourceRow.id,
+      scope: toScope,
+      contentJson: makeDoc("live keystrokes"),
     })
-
-    const fromRows = await db.drafts.where("[workspaceId+scope]").equals([workspaceId, fromScope]).toArray()
-    expect(fromRows).toHaveLength(0)
-    expect((await db.composerLoaded.get(fromScope))?.draftId).toBeUndefined()
+    expect(await pendingDeletes(sourceRow.id)).toBe(0)
+    expect(await pendingUpserts(sourceRow.id)).toBe(1)
+    const movedOp = (await db.pendingOperations.where("type").equals("upsert_draft").toArray()).find(
+      (op) => op.payload.draftId === sourceRow.id
+    )
+    expect(movedOp?.id).not.toBe(sourceOp?.id)
+    expect(movedOp?.payload.priorWriteIds).toContain(sourceOp?.payload.writeId)
+    // The target's previous loaded draft survives as a pile sibling (no-loss).
+    expect(await db.drafts.get(existingTarget.id)).toMatchObject({
+      scope: toScope,
+      contentJson: makeDoc("root already had this"),
+    })
   })
 
   it("rescopeScopeDrafts supersedes a queued push with a fresh op carrying its writeId lineage", async () => {

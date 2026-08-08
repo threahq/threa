@@ -199,6 +199,26 @@ describe("useDraftComposer", () => {
   })
 
   describe("scope change", () => {
+    it("keeps live content and attachments when the same draft identity changes filing scope", () => {
+      const sourceKey = "board:reply:conv_1"
+      const targetKey = "stream:stream_1"
+      mockDraftLoadedId = "draft_stable"
+      mockDraftStateByKey[sourceKey] = { isLoaded: true, contentJson: makeDoc("saved"), attachments: [] }
+      mockDraftStateByKey[targetKey] = { isLoaded: true, contentJson: makeDoc("saved"), attachments: [] }
+
+      const { result, rerender } = renderHook(
+        ({ currentKey }) => useDraftComposer({ workspaceId, draftKey: currentKey, scopeId: currentKey }),
+        { initialProps: { currentKey: sourceKey } }
+      )
+      act(() => result.current.handleContentChange(makeDoc("typed here")))
+      mockClearAttachments.mockClear()
+
+      rerender({ currentKey: targetKey })
+
+      expect(result.current.content).toEqual(makeDoc("typed here"))
+      expect(mockClearAttachments).not.toHaveBeenCalled()
+    })
+
     it("should reset content when scopeId changes", () => {
       const { result, rerender } = renderHook(({ scopeId }) => useDraftComposer({ workspaceId, draftKey, scopeId }), {
         initialProps: { scopeId: "stream_1" },
@@ -211,7 +231,8 @@ describe("useDraftComposer", () => {
       })
       expect(result.current.content).toEqual(newContent)
 
-      // Change scope
+      // Change to a scope that points at another identity.
+      mockDraftLoadedId = null
       rerender({ scopeId: "stream_2" })
 
       expect(result.current.content).toEqual(EMPTY_DOC)
@@ -222,7 +243,8 @@ describe("useDraftComposer", () => {
         initialProps: { scopeId: "stream_1" },
       })
 
-      // Change scope
+      // Change to a scope that points at another identity.
+      mockDraftLoadedId = null
       rerender({ scopeId: "stream_2" })
 
       expect(mockClearAttachments).toHaveBeenCalled()
@@ -694,6 +716,16 @@ describe("useDraftComposer", () => {
       })
 
       expect(mockSaveDraft).toHaveBeenCalledWith(makeDoc("unsaved keystrokes"))
+    })
+
+    it("persists an existing empty row when a filing-only move requests it", async () => {
+      const { result } = renderHook(() => useDraftComposer({ workspaceId, draftKey, scopeId }))
+
+      await act(async () => {
+        await result.current.flushDraft({ keepEmpty: true })
+      })
+
+      expect(mockSaveDraft).toHaveBeenCalledWith(EMPTY_DOC, [], undefined, { keepEmpty: true })
     })
 
     it("no-ops on an empty editor so a restore mid-hydration can't delete the loaded draft", async () => {

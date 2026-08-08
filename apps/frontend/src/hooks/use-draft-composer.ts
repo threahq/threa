@@ -133,13 +133,11 @@ export interface DraftComposerState {
   setIsSending: (sending: boolean) => void
 
   /**
-   * Persist the live editor content into the loaded draft row immediately
-   * (bypassing the debounce, sealing it for E2E) — but only when it is non-empty,
-   * so it never takes the empty→delete path. Used by stash/restore to preserve
-   * unsaved keystrokes before the loaded draft is detached or swapped, without
-   * risking deletion of a draft whose editor is still mid-hydration.
+   * Persist the live editor payload immediately, bypassing the debounce. Normal
+   * stash/restore calls avoid the empty→delete path; filing-only scope moves may
+   * preserve an existing row after the user deliberately cleared its body.
    */
-  flushDraft: () => Promise<void>
+  flushDraft: (options?: { keepEmpty?: boolean }) => Promise<void>
   /**
    * Re-run the composer's init from whatever draft is now loaded for the scope.
    * Called after a stash/restore pointer move so the editor re-reads (and, for
@@ -194,6 +192,7 @@ export function useDraftComposer({
     isDecrypting,
     decryptFailed,
     loadedDraftId,
+    contentDraftScope,
     contentJson: savedDraft,
     attachments: savedAttachments,
     contextRefs: savedContextRefs = [] as DraftContextRef[],
@@ -280,9 +279,19 @@ export function useDraftComposer({
   // while the editor is still mid-hydration (transiently empty) — taking the
   // empty→delete path then would silently destroy the loaded draft. An
   // intentional clear is handled by the debounced save, never here.
-  const flushDraft = useCallback(async () => {
-    if (hasDocContent(contentRef.current)) await saveDraft(contentRef.current)
-  }, [saveDraft])
+  const flushDraft = useCallback(
+    async (options?: { keepEmpty?: boolean }) => {
+      const attachments = persistableAttachments(getPendingAttachmentsSnapshot())
+      if (options?.keepEmpty) {
+        await saveDraft(contentRef.current, attachments, undefined, options)
+      } else if (hasDocContent(contentRef.current)) {
+        await saveDraft(contentRef.current)
+      } else if (attachments.length > 0) {
+        await saveDraft(contentRef.current, attachments)
+      }
+    },
+    [getPendingAttachmentsSnapshot, saveDraft]
+  )
 
   // Blank the composer to an un-initialized state so the init effect below
   // re-hydrates it from whatever draft is now loaded for the scope. Used on both
@@ -307,7 +316,8 @@ export function useDraftComposer({
   useEffect(() => {
     const isScopeChange = prevScopeIdRef.current !== null && prevScopeIdRef.current !== scopeId
 
-    if (isScopeChange) resetForReinit()
+    const followsSameDraft = loadedDraftId !== null && contentDraftIdRef.current === loadedDraftId
+    if (isScopeChange && !followsSameDraft) resetForReinit()
 
     // Track scope changes
     if (prevScopeIdRef.current !== scopeId) {
@@ -484,6 +494,10 @@ export function useDraftComposer({
       return
     }
     if (!prev || loadedDraftId) return
+    // A filing-only move can publish the row's new scope before the host target
+    // catches up. The editor still owns this identity, so the old pointer going
+    // null is not a removal.
+    if (contentDraftScope && contentDraftScope !== draftKey) return
     if (userEngagedRef.current && hasDocContent(contentRef.current)) {
       // With another composer live on this scope, the vanishing pointer can be
       // THAT editor's send resolving the shared row while this one holds newer
@@ -513,6 +527,8 @@ export function useDraftComposer({
     getPendingAttachmentsSnapshot,
     resetForReinit,
     cancelPendingSave,
+    contentDraftScope,
+    draftKey,
   ])
 
   // When attachments change, persist to draft storage. Reserved-but-still-

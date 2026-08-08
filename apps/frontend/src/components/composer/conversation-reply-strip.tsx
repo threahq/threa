@@ -36,3 +36,16 @@ export function ConversationReplyStrip({ title, onCancel }: ConversationReplyStr
     </div>
   )
 }
+
+/** Preserve the strip's line box while the focused mobile compose session ends. */
+export function ConversationReplyStripPlaceholder() {
+  return (
+    <div
+      data-testid="conversation-reply-strip-placeholder"
+      aria-hidden="true"
+      className={`${CONVERSATION_REPLY_STRIP_CLASS_NAME} invisible pointer-events-none`}
+    >
+      <span>&nbsp;</span>
+    </div>
+  )
+}

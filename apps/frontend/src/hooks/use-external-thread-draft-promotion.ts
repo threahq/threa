@@ -8,15 +8,15 @@ interface ExternalThreadDraftPromotionOptions {
   isDraft: boolean
   anchorId: string | null | undefined
   externalThreadId: string | null | undefined
-  flushDraft: () => Promise<void>
+  flushDraft: (options?: { keepEmpty?: boolean }) => Promise<void>
   setIsSending: (sending: boolean) => void
   onPromoted: (threadId: string) => void
 }
 
 /**
  * Preserve a live draft when another actor materializes its thread first.
- * The loaded row uses the tombstone-safe relocation path; stash siblings can
- * then move normally once no live editor write can resurrect the old scope.
+ * The loaded row keeps its identity while its scope and pointer move; stash
+ * siblings then follow through the same lineage-safe scope update.
  */
 export function useExternalThreadDraftPromotion({
   workspaceId,
@@ -38,7 +38,7 @@ export function useExternalThreadDraftPromotion({
     void (async () => {
       try {
         // Flush also cancels the composer's armed debounce before relocation.
-        await flushDraft()
+        await flushDraft({ keepEmpty: true })
         const fromScope = draftThreadScope(anchorId)
         const toScope = draftStreamScope(externalThreadId)
         await relocateLoadedDraft(workspaceId, fromScope, toScope)

@@ -13,7 +13,7 @@ export { MessageContextBadge } from "./message-context-badge"
 export { StreamTargetPicker, type StreamTargetPickerProps } from "./stream-target-picker"
 export { StreamSortToggle } from "./stream-sort-toggle"
 export { OverlayComposerShell, type OverlayComposerShellProps } from "./overlay-composer-shell"
-export { ConversationReplyStrip } from "./conversation-reply-strip"
+export { ConversationReplyStrip, ConversationReplyStripPlaceholder } from "./conversation-reply-strip"
 export {
   ComposerDisabledNotice,
   CONVERSATION_ARCHIVED_REASON,

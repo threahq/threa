@@ -172,6 +172,7 @@ export class DraftsService {
           id: params.id,
           expectedVersion: params.expectedVersion,
           ownWriteIds,
+          scope: params.scope,
           rootStreamId: params.rootStreamId,
           contentJson: params.contentJson,
           contentMarkdown: params.contentMarkdown,
