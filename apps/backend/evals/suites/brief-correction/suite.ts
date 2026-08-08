@@ -155,7 +155,7 @@ async function setupTestData(
   // Seed a standing brief as a prior member edit (the contradicts-brief arm).
   if (input.existingBrief) {
     const briefService = new StreamBriefService({ pool })
-    const result = await briefService.update({
+    const result = await briefService.updateInternal({
       workspaceId: ctx.workspaceId,
       streamId: testStreamId,
       content: input.existingBrief,
@@ -250,7 +250,7 @@ async function runBriefCorrectionTask(input: BriefCorrectionInput, ctx: EvalCont
     // as server.ts binds it, so the eval exercises the real write path (INV-45).
     const briefService = new StreamBriefService({ pool: ctx.pool })
     const updateBrief: PersonaAgentDeps["updateBrief"] = async ({ content, reason, expectedVersion }) => {
-      const result = await briefService.update({
+      const result = await briefService.updateInternal({
         workspaceId: ctx.workspaceId,
         streamId,
         content,

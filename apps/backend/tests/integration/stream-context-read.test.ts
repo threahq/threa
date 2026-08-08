@@ -85,9 +85,8 @@ describe("stream context read path", () => {
 
     // The thread is created by the OUTSIDER, so the member holds no membership
     // row on it — the case a `stream_members` filter would drop.
-    const thread = await streamService.create({
+    const thread = await streamService.createThreadInternal({
       workspaceId: wsId,
-      type: StreamTypes.THREAD,
       parentStreamId: channelId,
       parentAnchorId: anchor.id,
       createdBy: outsiderId,

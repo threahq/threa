@@ -20,7 +20,7 @@ import {
   sendMessageWithAttachments,
   sendMessage,
   joinWorkspace,
-  joinStream,
+  addStreamMember,
   reserveAttachment,
   uploadReservedContent,
   reportAttachmentUploadFailure,
@@ -322,10 +322,10 @@ describe("File Attachments E2E", () => {
       await loginAs(member1Client, testEmail("tl-member1"), "TL Member 1")
       await loginAs(member2Client, testEmail("tl-member2"), "TL Member 2")
 
-      await joinWorkspace(member1Client, workspace.id)
-      await joinWorkspace(member2Client, workspace.id)
-      await joinStream(member1Client, workspace.id, channel.id)
-      await joinStream(member2Client, workspace.id, channel.id)
+      const member1 = await joinWorkspace(member1Client, workspace.id)
+      const member2 = await joinWorkspace(member2Client, workspace.id)
+      expect((await addStreamMember(ownerClient, workspace.id, channel.id, member1.id)).status).toBe(201)
+      expect((await addStreamMember(ownerClient, workspace.id, channel.id, member2.id)).status).toBe(201)
 
       // Member1 uploads file to workspace (no stream specified)
       const attachment = await uploadAttachment(member1Client, workspace.id, {
@@ -361,10 +361,10 @@ describe("File Attachments E2E", () => {
       await loginAs(member1Client, testEmail("share-member1"), "Share Member 1")
       await loginAs(member2Client, testEmail("share-member2"), "Share Member 2")
 
-      await joinWorkspace(member1Client, workspace.id)
-      await joinWorkspace(member2Client, workspace.id)
-      await joinStream(member1Client, workspace.id, channel.id)
-      await joinStream(member2Client, workspace.id, channel.id)
+      const member1 = await joinWorkspace(member1Client, workspace.id)
+      const member2 = await joinWorkspace(member2Client, workspace.id)
+      expect((await addStreamMember(ownerClient, workspace.id, channel.id, member1.id)).status).toBe(201)
+      expect((await addStreamMember(ownerClient, workspace.id, channel.id, member2.id)).status).toBe(201)
 
       // Member1 uploads to workspace and attaches to channel message
       const content = `Shared content ${testRunId}`

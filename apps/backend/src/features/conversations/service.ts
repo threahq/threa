@@ -4,7 +4,14 @@ import { ConversationRepository, distinctAuthors, type Conversation } from "./re
 import { ConversationFeedbackRepository } from "./feedback-repository"
 import { MessageConversationStateRepository } from "./settling-repository"
 import { MessageRepository, type Message } from "../messaging"
-import { StreamRepository, applySparseRead, applySparseUnread, type ReadStateSnapshot } from "../streams"
+import {
+  assertStreamWritable,
+  assertStreamsWritable,
+  StreamRepository,
+  applySparseRead,
+  applySparseUnread,
+  type ReadStateSnapshot,
+} from "../streams"
 import { ActivityRepository } from "../activity"
 import { AttachmentRepository, hydrateAttachmentSummaries } from "../attachments"
 import { LinkPreviewRepository, toLinkPreviewSummary } from "../link-previews"
@@ -217,28 +224,11 @@ export interface ApplySplitResult {
 }
 
 /**
- * Re-filing a message is a write to its stream, so it obeys the same archived
- * rule as sending one (`StreamService.resolveWritableMessageStream`): the
- * effective root's `archivedAt` seals every thread under it (INV-62), and the
- * anchor's own row seals it directly.
- */
-async function assertStreamNotArchived(client: Querier, streamId: string): Promise<void> {
-  const stream = await StreamRepository.findById(client, streamId)
-  if (stream?.archivedAt) {
-    throw new HttpError("Cannot move messages in an archived stream", { status: 403 })
-  }
-  if (stream?.rootStreamId) {
-    const root = await StreamRepository.findById(client, stream.rootStreamId)
-    if (root?.archivedAt) {
-      throw new HttpError("Cannot move messages in a thread under an archived stream", { status: 403 })
-    }
-  }
-}
-
-/**
  * Public interface for querying conversations.
  * Computes temporal staleness on read.
  */
+class StaleMessagePlacementError extends Error {}
+
 export class ConversationService {
   constructor(private pool: Pool) {}
 
@@ -548,153 +538,166 @@ export class ConversationService {
   async reassignMessage(params: ReassignMessageParams): Promise<ReassignMessageResult> {
     const { workspaceId, conversationId, messageId, userId } = params
 
-    return withTransaction(this.pool, async (client) => {
-      const target = await ConversationRepository.findById(client, conversationId)
-      if (!target || target.workspaceId !== workspaceId) {
-        throw new HttpError("Conversation not found", { status: 404, code: "CONVERSATION_NOT_FOUND" })
-      }
+    for (let attempt = 0; attempt < 3; attempt++) {
+      let attemptedStreamId: string | null = null
+      try {
+        return await withTransaction(this.pool, async (client) => {
+          const target = await ConversationRepository.findById(client, conversationId)
+          if (!target || target.workspaceId !== workspaceId) {
+            throw new HttpError("Conversation not found", { status: 404, code: "CONVERSATION_NOT_FOUND" })
+          }
 
-      // Lock-then-read in one statement (INV-20): the same row lock that
-      // serializes us against concurrent boundary extractions also guarantees
-      // the streamId/authorId we validate against can't be changed by a
-      // concurrent message move between read and write.
-      const message = await MessageRepository.findByIdForUpdate(client, messageId)
-      if (!message) {
-        throw new HttpError("Message not found", { status: 404, code: "MESSAGE_NOT_FOUND" })
-      }
-      // One-root rule, same as the assigner's `existing` directive: same stream
-      // passes trivially; a cross-stream move between the root and its threads
-      // (the board's "move to sub-topic" re-file) passes; a cross-root move is
-      // rejected. Membership moves only — the message row itself never leaves
-      // its stream (re-file, not relocation).
-      if (message.streamId !== target.streamId) {
-        const [targetRoot, messageRoot] = await Promise.all([
-          effectiveRootId(client, target.streamId),
-          effectiveRootId(client, message.streamId),
-        ])
-        if (targetRoot !== messageRoot) {
-          throw new HttpError("Conversation is in a different root stream", {
-            status: 400,
-            code: "CONVERSATION_NOT_IN_ROOT",
+          const messageSnapshot = await MessageRepository.findById(client, messageId)
+          attemptedStreamId = messageSnapshot?.streamId ?? null
+          if (!messageSnapshot) {
+            throw new HttpError("Message not found", { status: 404, code: "MESSAGE_NOT_FOUND" })
+          }
+          await assertStreamsWritable(client, {
+            workspaceId,
+            streamIds: [messageSnapshot.streamId, target.streamId],
+            principal: { kind: "user", userId },
           })
-        }
-      }
+          const message = await MessageRepository.findByIdForUpdate(client, messageId)
+          if (!message) throw new HttpError("Message not found", { status: 404, code: "MESSAGE_NOT_FOUND" })
+          if (message.streamId !== messageSnapshot.streamId) throw new StaleMessagePlacementError()
+          // One-root rule, same as the assigner's `existing` directive: same stream
+          // passes trivially; a cross-stream move between the root and its threads
+          // (the board's "move to sub-topic" re-file) passes; a cross-root move is
+          // rejected. Membership moves only — the message row itself never leaves
+          // its stream (re-file, not relocation).
+          if (message.streamId !== target.streamId) {
+            const [targetRoot, messageRoot] = await Promise.all([
+              effectiveRootId(client, target.streamId),
+              effectiveRootId(client, message.streamId),
+            ])
+            if (targetRoot !== messageRoot) {
+              throw new HttpError("Conversation is in a different root stream", {
+                status: 400,
+                code: "CONVERSATION_NOT_IN_ROOT",
+              })
+            }
+          }
 
-      await assertStreamNotArchived(client, message.streamId)
-      if (target.streamId !== message.streamId) await assertStreamNotArchived(client, target.streamId)
+          const previous = await ConversationRepository.findPrimaryByMessageId(client, workspaceId, messageId)
+          if (previous?.id === target.id) {
+            // Already where the user wants it — report current state, record nothing.
+            return { conversation: addStalenessFields(target), previousConversation: null }
+          }
 
-      const previous = await ConversationRepository.findPrimaryByMessageId(client, workspaceId, messageId)
-      if (previous?.id === target.id) {
-        // Already where the user wants it — report current state, record nothing.
-        return { conversation: addStalenessFields(target), previousConversation: null }
-      }
+          if (previous) {
+            await ConversationRepository.removePrimaryMessage(client, workspaceId, previous.id, messageId)
+            // Moving a conversation's only message out leaves an empty shell that
+            // would otherwise stay "active" forever; resolve it. Moving a message
+            // back into it (the undo path) reactivates it below.
+            await ConversationRepository.resolveIfEmpty(client, workspaceId, previous.id)
+          }
+          await ConversationRepository.addPrimaryMessage(client, workspaceId, target.id, messageId, message.authorId)
+          // Deliberately unconditional, not just for the undo path: a user moving
+          // a message into ANY resolved conversation is declaring it has activity
+          // again, so it returns to the active lifecycle.
+          await ConversationRepository.reactivateIfInactive(client, workspaceId, target.id)
 
-      if (previous) {
-        await ConversationRepository.removePrimaryMessage(client, workspaceId, previous.id, messageId)
-        // Moving a conversation's only message out leaves an empty shell that
-        // would otherwise stay "active" forever; resolve it. Moving a message
-        // back into it (the undo path) reactivates it below.
-        await ConversationRepository.resolveIfEmpty(client, workspaceId, previous.id)
-      }
-      await ConversationRepository.addPrimaryMessage(client, workspaceId, target.id, messageId, message.authorId)
-      // Deliberately unconditional, not just for the undo path: a user moving
-      // a message into ANY resolved conversation is declaring it has activity
-      // again, so it returns to the active lifecycle.
-      await ConversationRepository.reactivateIfInactive(client, workspaceId, target.id)
+          await ConversationFeedbackRepository.insert(client, {
+            id: conversationFeedbackId(),
+            workspaceId,
+            streamId: message.streamId,
+            messageId,
+            fromConversationId: previous?.id ?? null,
+            toConversationId: target.id,
+            userId,
+          })
 
-      await ConversationFeedbackRepository.insert(client, {
-        id: conversationFeedbackId(),
-        workspaceId,
-        streamId: message.streamId,
-        messageId,
-        fromConversationId: previous?.id ?? null,
-        toConversationId: target.id,
-        userId,
-      })
+          // A user re-filing a provisionally-placed message IS the human ruling:
+          // the row follows the message to its new home and settles there, so the
+          // emptied source can never be left holding a settling row.
+          await MessageConversationStateRepository.settleForConversationTarget(
+            client,
+            workspaceId,
+            messageId,
+            target.id,
+            "user"
+          )
 
-      // A user re-filing a provisionally-placed message IS the human ruling:
-      // the row follows the message to its new home and settles there, so the
-      // emptied source can never be left holding a settling row.
-      await MessageConversationStateRepository.settleForConversationTarget(
-        client,
-        workspaceId,
-        messageId,
-        target.id,
-        "user"
-      )
+          const touchedIds = previous ? [previous.id, target.id] : [target.id]
+          await ConversationRepository.bumpActivityForIds(client, workspaceId, touchedIds)
 
-      const touchedIds = previous ? [previous.id, target.id] : [target.id]
-      await ConversationRepository.bumpActivityForIds(client, workspaceId, touchedIds)
+          // `previous` and `target` share one access root (the one-root guard above,
+          // INV-62) but can be anchored in different streams under it — the root and
+          // one of its threads — so delivery is resolved per conversation stream,
+          // mirroring the boundary extractor's cross-stream persist.
+          const deliveryByStreamId = new Map<string, Awaited<ReturnType<typeof resolveConversationDelivery>>>()
+          const deliveryFor = async (streamId: string) => {
+            let resolved = deliveryByStreamId.get(streamId)
+            if (!resolved) {
+              const stream = await StreamRepository.findById(client, streamId)
+              resolved = await resolveConversationDelivery(client, stream)
+              deliveryByStreamId.set(streamId, resolved)
+            }
+            return resolved
+          }
 
-      // `previous` and `target` share one access root (the one-root guard above,
-      // INV-62) but can be anchored in different streams under it — the root and
-      // one of its threads — so delivery is resolved per conversation stream,
-      // mirroring the boundary extractor's cross-stream persist.
-      const deliveryByStreamId = new Map<string, Awaited<ReturnType<typeof resolveConversationDelivery>>>()
-      const deliveryFor = async (streamId: string) => {
-        let resolved = deliveryByStreamId.get(streamId)
-        if (!resolved) {
-          const stream = await StreamRepository.findById(client, streamId)
-          resolved = await resolveConversationDelivery(client, stream)
-          deliveryByStreamId.set(streamId, resolved)
-        }
-        return resolved
-      }
+          const touched = await ConversationRepository.findByIds(client, workspaceId, touchedIds)
+          const settlingByConversation = await MessageConversationStateRepository.listSettlingByConversationIds(
+            client,
+            workspaceId,
+            touchedIds
+          )
+          for (const conv of touched) {
+            const { parentStreamId, streamVisibility } = await deliveryFor(conv.streamId)
+            await OutboxRepository.insert(client, "conversation:updated", {
+              workspaceId,
+              streamId: conv.streamId,
+              conversationId: conv.id,
+              conversation: addStalenessFields(conv),
+              parentStreamId,
+              streamVisibility,
+              settlingMessageIds: settlingByConversation.get(conv.id) ?? [],
+            })
+          }
 
-      const touched = await ConversationRepository.findByIds(client, workspaceId, touchedIds)
-      const settlingByConversation = await MessageConversationStateRepository.listSettlingByConversationIds(
-        client,
-        workspaceId,
-        touchedIds
-      )
-      for (const conv of touched) {
-        const { parentStreamId, streamVisibility } = await deliveryFor(conv.streamId)
-        await OutboxRepository.insert(client, "conversation:updated", {
-          workspaceId,
-          streamId: conv.streamId,
-          conversationId: conv.id,
-          conversation: addStalenessFields(conv),
-          parentStreamId,
-          streamVisibility,
-          settlingMessageIds: settlingByConversation.get(conv.id) ?? [],
+          if (previous) {
+            await OutboxRepository.insert(client, "conversation:message_reassigned", {
+              workspaceId,
+              streamId: message.streamId,
+              messageId,
+              fromConversationId: previous.id,
+              toConversationId: target.id,
+              reason: "user_correction",
+            })
+          } else {
+            await OutboxRepository.insert(client, "conversation:message_assigned", {
+              workspaceId,
+              streamId: message.streamId,
+              parentStreamId: (await deliveryFor(message.streamId)).parentStreamId,
+              messageId,
+              conversationId: target.id,
+              isPrimary: true,
+              reason: "user_correction",
+            })
+          }
+
+          const findTouched = (id: string): Conversation | undefined => touched.find((c) => c.id === id)
+          const updatedTarget = findTouched(target.id)
+          if (!updatedTarget) {
+            // The target row vanished mid-transaction despite the row lock — fail
+            // loudly (INV-11) rather than returning stale membership.
+            throw new Error(`Conversation ${target.id} disappeared during reassignment`)
+          }
+          const updatedPrevious = previous ? findTouched(previous.id) : undefined
+
+          return {
+            conversation: addStalenessFields(updatedTarget),
+            previousConversation: updatedPrevious ? addStalenessFields(updatedPrevious) : null,
+          }
         })
+      } catch (error) {
+        if (attempt === 2) throw error
+        if (error instanceof StaleMessagePlacementError) continue
+        const current = await MessageRepository.findById(this.pool, messageId)
+        if (!current || current.streamId === attemptedStreamId) throw error
       }
-
-      if (previous) {
-        await OutboxRepository.insert(client, "conversation:message_reassigned", {
-          workspaceId,
-          streamId: message.streamId,
-          messageId,
-          fromConversationId: previous.id,
-          toConversationId: target.id,
-          reason: "user_correction",
-        })
-      } else {
-        await OutboxRepository.insert(client, "conversation:message_assigned", {
-          workspaceId,
-          streamId: message.streamId,
-          parentStreamId: (await deliveryFor(message.streamId)).parentStreamId,
-          messageId,
-          conversationId: target.id,
-          isPrimary: true,
-          reason: "user_correction",
-        })
-      }
-
-      const findTouched = (id: string): Conversation | undefined => touched.find((c) => c.id === id)
-      const updatedTarget = findTouched(target.id)
-      if (!updatedTarget) {
-        // The target row vanished mid-transaction despite the row lock — fail
-        // loudly (INV-11) rather than returning stale membership.
-        throw new Error(`Conversation ${target.id} disappeared during reassignment`)
-      }
-      const updatedPrevious = previous ? findTouched(previous.id) : undefined
-
-      return {
-        conversation: addStalenessFields(updatedTarget),
-        previousConversation: updatedPrevious ? addStalenessFields(updatedPrevious) : null,
-      }
-    })
+    }
+    throw new Error("Unreachable")
   }
 
   /**
@@ -711,51 +714,85 @@ export class ConversationService {
   async settleMessage(params: SettleMessageParams): Promise<SettleMessageResult> {
     const { workspaceId, conversationId, messageId, userId } = params
 
-    return withTransaction(this.pool, async (client) => {
-      const conversation = await ConversationRepository.findById(client, conversationId)
-      if (!conversation || conversation.workspaceId !== workspaceId) {
-        throw new HttpError("Conversation not found", { status: 404, code: "CONVERSATION_NOT_FOUND" })
-      }
+    for (let attempt = 0; attempt < 3; attempt++) {
+      let attemptedStreamId: string | null = null
+      try {
+        return await withTransaction(this.pool, async (client) => {
+          const conversation = await ConversationRepository.findById(client, conversationId)
+          if (!conversation || conversation.workspaceId !== workspaceId) {
+            throw new HttpError("Conversation not found", { status: 404, code: "CONVERSATION_NOT_FOUND" })
+          }
 
-      const message = await MessageRepository.findById(client, messageId)
-      if (!message || !conversation.messageIds.includes(messageId)) {
-        throw new HttpError("Message not found", { status: 404, code: "MESSAGE_NOT_FOUND" })
-      }
+          const message = await MessageRepository.findById(client, messageId)
+          attemptedStreamId = message?.streamId ?? null
+          if (!message || !conversation.messageIds.includes(messageId)) {
+            throw new HttpError("Message not found", { status: 404, code: "MESSAGE_NOT_FOUND" })
+          }
 
-      const settled = await MessageConversationStateRepository.settle(client, workspaceId, [messageId], "user")
-      if (settled.length > 0) {
-        await ConversationFeedbackRepository.insert(client, {
-          id: conversationFeedbackId(),
-          workspaceId,
-          streamId: message.streamId,
-          messageId,
-          fromConversationId: conversation.id,
-          toConversationId: conversation.id,
-          userId,
+          await assertStreamWritable(client, {
+            workspaceId,
+            streamId: message.streamId,
+            principal: { kind: "user", userId },
+          })
+          const lockedMessage = await MessageRepository.findByIdForUpdate(client, messageId)
+          if (!lockedMessage || lockedMessage.streamId !== message.streamId) throw new StaleMessagePlacementError()
+          const lockedConversation = await ConversationRepository.findByIdForUpdate(client, workspaceId, conversationId)
+          if (!lockedConversation || !lockedConversation.messageIds.includes(messageId)) {
+            throw new HttpError("Message not found", { status: 404, code: "MESSAGE_NOT_FOUND" })
+          }
+
+          const settled = await MessageConversationStateRepository.settle(client, workspaceId, [messageId], "user")
+          if (settled.length > 0) {
+            await ConversationFeedbackRepository.insert(client, {
+              id: conversationFeedbackId(),
+              workspaceId,
+              streamId: message.streamId,
+              messageId,
+              fromConversationId: conversation.id,
+              toConversationId: conversation.id,
+              userId,
+            })
+            await emitSettledConversationUpdates(client, workspaceId, settled)
+          }
+
+          const settlingByConversation = await MessageConversationStateRepository.listSettlingByConversationIds(
+            client,
+            workspaceId,
+            [conversation.id]
+          )
+
+          return {
+            conversation: addStalenessFields(lockedConversation),
+            previousConversation: null,
+            settlingMessageIds: settlingByConversation.get(conversation.id) ?? [],
+          }
         })
-        await emitSettledConversationUpdates(client, workspaceId, settled)
+      } catch (error) {
+        if (attempt === 2) throw error
+        if (error instanceof StaleMessagePlacementError) continue
+        const current = await MessageRepository.findById(this.pool, messageId)
+        if (!current || current.streamId === attemptedStreamId) throw error
       }
-
-      const settlingByConversation = await MessageConversationStateRepository.listSettlingByConversationIds(
-        client,
-        workspaceId,
-        [conversation.id]
-      )
-
-      return {
-        conversation: addStalenessFields(conversation),
-        previousConversation: null,
-        settlingMessageIds: settlingByConversation.get(conversation.id) ?? [],
-      }
-    })
+    }
+    throw new Error("Unreachable")
   }
 
   async regenerateTitle(params: {
     workspaceId: string
     conversationId: string
+    actorUserId: string
   }): Promise<{ conversation: ConversationWithStaleness; deferred: false }> {
     const { workspaceId, conversationId } = params
     return withTransaction(this.pool, async (client) => {
+      const snapshot = await ConversationRepository.findById(client, conversationId)
+      if (!snapshot || snapshot.workspaceId !== workspaceId) {
+        throw new HttpError("Conversation not found", { status: 404, code: "CONVERSATION_NOT_FOUND" })
+      }
+      await assertStreamWritable(client, {
+        workspaceId,
+        streamId: snapshot.streamId,
+        principal: { kind: "user", userId: params.actorUserId },
+      })
       const locked = await ConversationRepository.findByIdForUpdate(client, workspaceId, conversationId)
       if (!locked) throw new HttpError("Conversation not found", { status: 404, code: "CONVERSATION_NOT_FOUND" })
       const stream = await StreamRepository.findById(client, locked.streamId)
@@ -840,6 +877,16 @@ export class ConversationService {
   }): Promise<{ conversation: ConversationWithStaleness }> {
     const { workspaceId, conversationId, topicSummary, status, actorUserId } = params
     return withTransaction(this.pool, async (client) => {
+      const snapshot = await ConversationRepository.findById(client, conversationId)
+      if (!snapshot || snapshot.workspaceId !== workspaceId) {
+        throw new HttpError("Conversation not found", { status: 404, code: "CONVERSATION_NOT_FOUND" })
+      }
+      if (!actorUserId) throw new Error("actorUserId is required for conversation mutation")
+      await assertStreamWritable(client, {
+        workspaceId,
+        streamId: snapshot.streamId,
+        principal: { kind: "user", userId: actorUserId },
+      })
       let updated = await ConversationRepository.update(client, workspaceId, conversationId, {
         status,
         // A user-set status is authoritative — lock it so the extractor's LLM stops
@@ -905,6 +952,15 @@ export class ConversationService {
     const { workspaceId, conversationId, threadStreamId, actorUserId } = params
 
     return withTransaction(this.pool, async (client) => {
+      const snapshot = await ConversationRepository.findById(client, conversationId)
+      if (!snapshot || snapshot.workspaceId !== workspaceId) {
+        throw new HttpError("Conversation not found", { status: 404, code: "CONVERSATION_NOT_FOUND" })
+      }
+      await assertStreamsWritable(client, {
+        workspaceId,
+        streamIds: [snapshot.streamId, threadStreamId],
+        principal: { kind: "user", userId: actorUserId },
+      })
       // Lock the source: any op that removes a primary from it must UPDATE this
       // row, so holding the lock keeps `messageIds` stable through the split and
       // serializes a concurrent split (the loser re-reads an empty move set).
@@ -1087,9 +1143,11 @@ export class ConversationService {
     const { workspaceId, streamId, messageIds, target, actorUserId } = params
 
     return withTransaction(this.pool, async (client) => {
-      // Every moving message and an existing destination are pinned to this
-      // stream below, so one archived check covers the whole batch.
-      await assertStreamNotArchived(client, streamId)
+      await assertStreamWritable(client, {
+        workspaceId,
+        streamId,
+        principal: { kind: "user", userId: actorUserId },
+      })
 
       const uniqueIds = [...new Set(messageIds)]
 
@@ -1379,6 +1437,11 @@ export class ConversationService {
     const { workspaceId, streamId, conversationId, groups, actorUserId } = params
 
     return withTransaction(this.pool, async (client) => {
+      await assertStreamWritable(client, {
+        workspaceId,
+        streamId,
+        principal: { kind: "user", userId: actorUserId },
+      })
       const source = await ConversationRepository.findByIdForUpdate(client, workspaceId, conversationId)
       if (!source) {
         throw new HttpError("Conversation not found", { status: 404, code: "CONVERSATION_NOT_FOUND" })

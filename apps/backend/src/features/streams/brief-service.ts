@@ -5,6 +5,8 @@ import { withTransaction } from "../../db"
 import { HttpError } from "../../lib/errors"
 import { OutboxRepository } from "../../lib/outbox"
 import { StreamEventRepository } from "./event-repository"
+import { StreamRepository } from "./repository"
+import { assertStreamWritable, type StreamWritePrincipal } from "./write-authority"
 import { StreamBriefRepository, type BriefAuthorKind, type StreamBrief } from "./brief-repository"
 
 /**
@@ -36,6 +38,8 @@ export interface UpdateBriefParams {
    * the timeline row carries a null reason.
    */
   reason?: string
+  principal: StreamWritePrincipal
+  requestedStreamId: string
 }
 
 export type UpdateBriefResult =
@@ -64,16 +68,44 @@ export class StreamBriefService {
    * miss an accepted version.
    */
   async update(params: UpdateBriefParams): Promise<UpdateBriefResult> {
+    return this.updateInTransaction(params, true)
+  }
+
+  async updateInternal(params: Omit<UpdateBriefParams, "principal" | "requestedStreamId">): Promise<UpdateBriefResult> {
+    return this.updateInTransaction(params, false)
+  }
+
+  private async updateInTransaction(
+    params: UpdateBriefParams | Omit<UpdateBriefParams, "principal" | "requestedStreamId">,
+    enforceAuthority: boolean
+  ): Promise<UpdateBriefResult> {
     const { workspaceId, streamId, content, expectedVersion, updatedByKind, updatedById, reason } = params
-    if (content.length > STREAM_BRIEF_MAX_CHARS) {
-      throw new HttpError(`Brief exceeds ${STREAM_BRIEF_MAX_CHARS} characters`, {
-        status: 400,
-        code: "BRIEF_TOO_LONG",
-        details: { maxChars: STREAM_BRIEF_MAX_CHARS },
-      })
-    }
 
     return withTransaction(this.pool, async (client) => {
+      if (enforceAuthority) {
+        const request = params as UpdateBriefParams
+        const authority = await assertStreamWritable(client, {
+          workspaceId,
+          streamId: request.requestedStreamId,
+          principal: request.principal,
+        })
+        const effectiveRootId = authority.target.rootStreamId ?? authority.target.id
+        if (effectiveRootId !== streamId) throw new HttpError("Stream not found", { status: 404, code: "NOT_FOUND" })
+        const freshTarget = await StreamRepository.findById(client, request.requestedStreamId)
+        if (freshTarget?.e2eEnabled) {
+          throw new HttpError("Briefs are not supported on encrypted streams", {
+            status: 400,
+            code: "BRIEF_E2E_UNSUPPORTED",
+          })
+        }
+      }
+      if (content.length > STREAM_BRIEF_MAX_CHARS) {
+        throw new HttpError(`Brief exceeds ${STREAM_BRIEF_MAX_CHARS} characters`, {
+          status: 400,
+          code: "BRIEF_TOO_LONG",
+          details: { maxChars: STREAM_BRIEF_MAX_CHARS },
+        })
+      }
       const brief =
         expectedVersion === 0
           ? await StreamBriefRepository.insertFirstVersion(client, {

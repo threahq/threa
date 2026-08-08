@@ -28,7 +28,13 @@ import {
 } from "../../lib/errors"
 import { formatParticipantNames } from "./display-name"
 import { checkStreamAccess } from "./access"
-import { assertViewerStreamWritable, deriveStreamViewerState, lockEffectiveStreams } from "./write-authority"
+import {
+  assertStreamWritable,
+  assertViewerStreamWritable,
+  deriveStreamViewerState,
+  lockEffectiveStreams,
+  type StreamWritePrincipal,
+} from "./write-authority"
 import { UserRepository } from "../workspaces"
 import { BotChannelAccessRepository } from "../api-keys"
 import {
@@ -237,6 +243,10 @@ export class StreamService {
     const stream = await this.checkAccess(streamId, workspaceId, userId)
     if (!stream) throw new StreamNotFoundError()
     return stream
+  }
+
+  async assertWritable(streamId: string, workspaceId: string, principal: StreamWritePrincipal): Promise<void> {
+    await withTransaction(this.pool, (client) => assertStreamWritable(client, { workspaceId, streamId, principal }))
   }
 
   /** Like {@link validateStreamAccess} but returns null instead of throwing. */
@@ -468,6 +478,7 @@ export class StreamService {
           parentStreamId: params.parentStreamId,
           parentAnchorId,
           createdBy: params.createdBy,
+          principal: { kind: "user", userId: params.createdBy },
         })
       }
       default:
@@ -649,7 +660,18 @@ export class StreamService {
     })
   }
 
-  async createThread(params: CreateThreadParams): Promise<Stream> {
+  async createThread(params: CreateThreadParams & { principal: StreamWritePrincipal }): Promise<Stream> {
+    return withTransaction(this.pool, async (client) => {
+      await assertStreamWritable(client, {
+        workspaceId: params.workspaceId,
+        streamId: params.parentStreamId,
+        principal: params.principal,
+      })
+      return this.createThreadOn(client, params)
+    })
+  }
+
+  async createThreadInternal(params: CreateThreadParams): Promise<Stream> {
     return withTransaction(this.pool, (client) => this.createThreadOn(client, params))
   }
 
@@ -846,13 +868,16 @@ export class StreamService {
     streamId: string,
     workspaceId: string,
     companionMode: CompanionMode,
-    companionPersonaId?: string | null,
-    actingUserId?: string
+    companionPersonaId: string | null | undefined,
+    actingUserId: string
   ): Promise<Stream> {
-    // The acting user may pin their own personal persona but not another user's
-    // (user-scoped-personas); the handler threads the caller's id.
-    await assertAssignablePersona(this.pool, companionPersonaId, workspaceId, { callerUserId: actingUserId })
     return withTransaction(this.pool, async (client) => {
+      await assertStreamWritable(client, {
+        workspaceId,
+        streamId,
+        principal: { kind: "user", userId: actingUserId },
+      })
+      await assertAssignablePersona(client, companionPersonaId, workspaceId, { callerUserId: actingUserId })
       const stream = await StreamRepository.update(client, streamId, {
         companionMode,
         companionPersonaId,
@@ -880,10 +905,27 @@ export class StreamService {
   async setStreamToolPolicy(
     workspaceId: string,
     streamId: string,
-    policy: ToolPrivacyPolicy
+    policy: ToolPrivacyPolicy,
+    principal: StreamWritePrincipal
   ): Promise<ToolPrivacyPolicy> {
-    await StreamPoliciesRepository.setToolPolicy(this.pool, workspaceId, streamId, policy)
-    return policy
+    return withTransaction(this.pool, async (client) => {
+      const { target } = await assertStreamWritable(client, { workspaceId, streamId, principal })
+      if (target.type !== StreamTypes.SCRATCHPAD) {
+        throw new HttpError("Tool policy can only be set on a scratchpad", {
+          status: 400,
+          code: "INVALID_STREAM_TYPE",
+        })
+      }
+      const ownerId = principal.kind === "user" ? principal.userId : null
+      if (target.createdBy !== ownerId) {
+        throw new HttpError("Only the scratchpad owner can change its tool policy", {
+          status: 403,
+          code: "FORBIDDEN",
+        })
+      }
+      await StreamPoliciesRepository.setToolPolicy(client, workspaceId, streamId, policy)
+      return policy
+    })
   }
 
   /**
@@ -1030,7 +1072,8 @@ export class StreamService {
        * null so the server never holds the cleartext name at rest.
        */
       sealedName?: { ciphertext: string; envelope: unknown } | null
-    }
+    },
+    authority: { workspaceId: string; principal: StreamWritePrincipal }
   ): Promise<Stream | null> {
     const { sealedName, description, descriptionJson, actorId, actorType, ...rest } = data
     const { displayName, ...nonTitleData } = rest
@@ -1062,6 +1105,11 @@ export class StreamService {
     }
     try {
       return await withTransaction(this.pool, async (client) => {
+        await assertStreamWritable(client, {
+          workspaceId: authority.workspaceId,
+          streamId,
+          principal: authority.principal,
+        })
         // Snapshot the pre-update markdown so we only emit when it really changes
         // (a no-op re-save shouldn't spam the timeline).
         let previousDescription: string | null = null
@@ -1571,9 +1619,11 @@ export class StreamService {
   async regenerateDisplayName(
     workspaceId: string,
     streamId: string,
+    principal: StreamWritePrincipal,
     sealedName?: { ciphertext: string; envelope: unknown }
   ): Promise<{ stream: Stream; deferred: boolean }> {
     return withTransaction(this.pool, async (client) => {
+      await assertStreamWritable(client, { workspaceId, streamId, principal })
       const locked = await StreamRepository.findByIdForUpdateBlocking(client, streamId)
       if (!locked || locked.workspaceId !== workspaceId) {
         throw new HttpError("Stream not found", { status: 404, code: "STREAM_NOT_FOUND" })

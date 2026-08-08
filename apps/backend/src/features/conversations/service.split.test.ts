@@ -5,6 +5,7 @@ import { ConversationRepository, type Conversation } from "./repository"
 import { ConversationFeedbackRepository } from "./feedback-repository"
 import * as delivery from "./conversation-delivery"
 import { StreamRepository } from "../streams"
+import * as streamsModule from "../streams"
 import { MessageRepository, type Message } from "../messaging"
 import { OutboxRepository } from "../../lib/outbox"
 import * as dbModule from "../../db"
@@ -83,6 +84,7 @@ function setup(options?: {
   const fakeClient = { query: mock(async () => ({ rows: [] })) } as unknown as PoolClient
   spyOn(dbModule, "withTransaction").mockImplementation((async (_pool: unknown, fn: (c: PoolClient) => unknown) =>
     fn(fakeClient)) as typeof dbModule.withTransaction)
+  spyOn(streamsModule, "assertStreamsWritable").mockResolvedValue([])
 
   const streams = { ...STREAMS, ...(options?.streamOverrides ?? {}) }
   spyOn(StreamRepository, "findById").mockImplementation(

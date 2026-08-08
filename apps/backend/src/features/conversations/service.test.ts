@@ -39,6 +39,8 @@ describe("ConversationService.updateConversation — user status lock", () => {
   beforeEach(() => {
     spyOn(dbModule, "withTransaction").mockImplementation((async (_pool: unknown, cb: (client: unknown) => unknown) =>
       cb({})) as never)
+    spyOn(ConversationRepository, "findById").mockResolvedValue(fakeConversation())
+    spyOn(streamsModule, "assertStreamWritable").mockResolvedValue({} as never)
     updateSpy = spyOn(ConversationRepository, "update").mockResolvedValue(fakeConversation())
     updateTopicSpy = spyOn(ConversationRepository, "updateTopicSummary").mockResolvedValue(
       fakeConversation({ topicSummary: "New title", topicSummarySource: "explicit", topicSummaryRevision: 1 })
@@ -56,7 +58,12 @@ describe("ConversationService.updateConversation — user status lock", () => {
 
   test("locks the status against the extractor when the user sets it (Mark resolved / Reopen)", async () => {
     const service = new ConversationService(POOL)
-    await service.updateConversation({ workspaceId: "ws_1", conversationId: "conv_1", status: "resolved" })
+    await service.updateConversation({
+      workspaceId: "ws_1",
+      conversationId: "conv_1",
+      status: "resolved",
+      actorUserId: "usr_1",
+    })
 
     expect(updateSpy).toHaveBeenCalledWith(
       expect.anything(),
@@ -68,7 +75,12 @@ describe("ConversationService.updateConversation — user status lock", () => {
 
   test("leaves the lock untouched on a rename-only edit (no status change)", async () => {
     const service = new ConversationService(POOL)
-    await service.updateConversation({ workspaceId: "ws_1", conversationId: "conv_1", topicSummary: "New title" })
+    await service.updateConversation({
+      workspaceId: "ws_1",
+      conversationId: "conv_1",
+      topicSummary: "New title",
+      actorUserId: "usr_1",
+    })
 
     expect(updateSpy.mock.calls[0]![3]).toEqual(expect.objectContaining({ statusLockedByUser: undefined }))
     expect(updateTopicSpy).toHaveBeenCalledWith(

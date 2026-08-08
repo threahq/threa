@@ -3,7 +3,7 @@ import type { Request, Response } from "express"
 import type { Pool } from "pg"
 import { Visibilities } from "@threa/types"
 import { StreamRepository, type Stream } from "./repository"
-import { StreamMemberRepository } from "./member-repository"
+import { HttpError } from "../../lib/errors"
 import { createStreamBriefHandlers } from "./brief-handlers"
 import type { StreamBriefService, UpdateBriefParams } from "./brief-service"
 import type { StreamBrief } from "./brief-repository"
@@ -93,21 +93,34 @@ describe("stream brief handlers", () => {
     expect(res.body).toEqual({ brief: null })
   })
 
-  it("PUT requires membership of the effective root: a non-member who can read a public stream gets 403", async () => {
+  it("PUT delegates public non-member authority to the transactional service", async () => {
     spyOn(StreamRepository, "findById").mockResolvedValue(fakeStream())
-    spyOn(StreamMemberRepository, "isMember").mockResolvedValue(false)
-    const handlers = makeHandlers({})
+    const update = mock(async () => {
+      throw new HttpError("This stream is read-only", {
+        status: 403,
+        code: "STREAM_READ_ONLY",
+        details: { reason: "not_a_member" },
+      })
+    })
+    const handlers = makeHandlers({ update } as unknown as Partial<StreamBriefService>)
 
     const req = fakeReq({ body: { content: "Goal: ship v2", version: 0 } })
     await expect(handlers.put(req, fakeRes())).rejects.toMatchObject({
       status: 403,
-      code: "BRIEF_MEMBERSHIP_REQUIRED",
+      code: "STREAM_READ_ONLY",
+      details: { reason: "not_a_member" },
     })
   })
 
-  it("PUT rejects encrypted streams — a sealed stream's brief would be plaintext the enclave never injects", async () => {
+  it("PUT delegates encrypted-stream ordering to the transactional service", async () => {
     spyOn(StreamRepository, "findById").mockResolvedValue(fakeStream({ e2eEnabled: true }))
-    const handlers = makeHandlers({})
+    const update = mock(async () => {
+      throw new HttpError("Briefs are not supported on encrypted streams", {
+        status: 400,
+        code: "BRIEF_E2E_UNSUPPORTED",
+      })
+    })
+    const handlers = makeHandlers({ update } as unknown as Partial<StreamBriefService>)
 
     const req = fakeReq({ body: { content: "Goal: ship v2", version: 0 } })
     await expect(handlers.put(req, fakeRes())).rejects.toMatchObject({
@@ -118,7 +131,6 @@ describe("stream brief handlers", () => {
 
   it("PUT rejects a version beyond pg INT4 range at validation instead of 500ing in the guard query", async () => {
     spyOn(StreamRepository, "findById").mockResolvedValue(fakeStream())
-    spyOn(StreamMemberRepository, "isMember").mockResolvedValue(true)
     const handlers = makeHandlers({})
 
     const req = fakeReq({ body: { content: "x", version: 3_000_000_000 } })
@@ -127,7 +139,6 @@ describe("stream brief handlers", () => {
 
   it("PUT surfaces a lost optimistic-concurrency race as 409 carrying the fresh brief", async () => {
     spyOn(StreamRepository, "findById").mockResolvedValue(fakeStream())
-    spyOn(StreamMemberRepository, "isMember").mockResolvedValue(true)
     const current = fakeBriefServiceUpdateResult({ version: 5 })
     const update = mock(async () => ({ outcome: "version_conflict" as const, current }))
     const handlers = makeHandlers({ update } as unknown as Partial<StreamBriefService>)
@@ -142,7 +153,6 @@ describe("stream brief handlers", () => {
 
   it("PUT writes as the calling user and returns the updated brief", async () => {
     spyOn(StreamRepository, "findById").mockResolvedValue(fakeStream())
-    spyOn(StreamMemberRepository, "isMember").mockResolvedValue(true)
     const brief = fakeBriefServiceUpdateResult({ version: 1 })
     const update = mock(async (_params: UpdateBriefParams) => ({ outcome: "updated" as const, brief }))
     const handlers = makeHandlers({ update } as unknown as Partial<StreamBriefService>)
@@ -157,6 +167,8 @@ describe("stream brief handlers", () => {
       expectedVersion: 0,
       updatedByKind: "user",
       updatedById: "usr_1",
+      principal: { kind: "user", userId: "usr_1" },
+      requestedStreamId: "stream_chan",
     })
     expect(res.body).toEqual({ brief })
   })

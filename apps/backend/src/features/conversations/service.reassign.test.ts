@@ -5,6 +5,7 @@ import { ConversationRepository, type Conversation } from "./repository"
 import { ConversationFeedbackRepository } from "./feedback-repository"
 import * as delivery from "./conversation-delivery"
 import { StreamRepository } from "../streams"
+import * as streamsModule from "../streams"
 import { MessageRepository, type Message } from "../messaging"
 import { OutboxRepository } from "../../lib/outbox"
 import * as dbModule from "../../db"
@@ -69,10 +70,19 @@ function setup(options: {
   spyOn(StreamRepository, "findById").mockImplementation(
     async (_c: unknown, id: string) => (STREAMS[id] ?? null) as never
   )
-  spyOn(MessageRepository, "findByIdForUpdate").mockImplementation(async (_c: unknown, id: string) => {
+  spyOn(streamsModule, "assertStreamsWritable").mockImplementation(async (_c, params) => {
+    const denied = params.streamIds
+      .map((id) => STREAMS[id])
+      .find((stream) => stream?.archivedAt || (stream?.rootStreamId && STREAMS[stream.rootStreamId]?.archivedAt))
+    if (denied) throw Object.assign(new Error("read only"), { status: 403, code: "STREAM_READ_ONLY" })
+    return []
+  })
+  const findMessage = async (_c: unknown, id: string) => {
     const base = MESSAGES[id]
     return base ? ({ id, streamId: base.streamId, authorId: base.authorId } as unknown as Message) : null
-  })
+  }
+  spyOn(MessageRepository, "findById").mockImplementation(findMessage)
+  spyOn(MessageRepository, "findByIdForUpdate").mockImplementation(findMessage)
 
   spyOn(ConversationRepository, "findById").mockImplementation(
     async (_c: unknown, id: string) => options.conversations[id] ?? null

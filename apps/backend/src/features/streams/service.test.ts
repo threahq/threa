@@ -21,13 +21,19 @@ import * as db from "../../db"
 import { HttpError } from "../../lib/errors"
 
 const mockFindById = spyOn(StreamRepository, "findById")
+spyOn(StreamRepository, "findByIds").mockImplementation(async (client, ids) => {
+  const streams = await Promise.all(ids.map((id) => mockFindById(client, id)))
+  return streams.filter((stream): stream is NonNullable<typeof stream> => stream != null)
+})
 const mockFindByIdsForUpdateBlocking = spyOn(StreamRepository, "findByIdsForUpdateBlocking").mockImplementation(
   async (client, _workspaceId, ids) => {
     const streams = await Promise.all(ids.map((id) => mockFindById(client, id)))
     return streams.filter((stream): stream is NonNullable<typeof stream> => stream != null)
   }
 )
-const mockLockMemberships = spyOn(StreamMemberRepository, "lockMemberships").mockResolvedValue(new Set())
+const mockLockMemberships = spyOn(StreamMemberRepository, "lockMemberships").mockImplementation(
+  async (_client, streamIds) => new Set(streamIds)
+)
 spyOn(StreamMemberRepository, "lockMemberPairs").mockImplementation(
   async (_client, pairs) => new Set(pairs.map(({ streamId, memberId }) => `${streamId}:${memberId}`))
 )
@@ -2045,10 +2051,14 @@ describe("StreamService.updateStream sealed-name handling", () => {
 
     // Even if a client sends a plaintext displayName alongside the seal, the
     // server must not persist it — the sealed ciphertext is the only name.
-    await service.updateStream("stream_1", {
-      displayName: "leak",
-      sealedName: { ciphertext: "Y3Q=", envelope: { v: 1 } },
-    })
+    await service.updateStream(
+      "stream_1",
+      {
+        displayName: "leak",
+        sealedName: { ciphertext: "Y3Q=", envelope: { v: 1 } },
+      },
+      { workspaceId: "ws_1", principal: { kind: "user", userId: "usr_1" } }
+    )
 
     expect(mockUpdateDisplayName).toHaveBeenCalledWith(
       {},
@@ -2064,13 +2074,18 @@ describe("StreamService.updateStream sealed-name handling", () => {
     const stream = { id: "stream_1", workspaceId: "ws_1", displayName: null } as never
     mockUpdate.mockResolvedValue(stream)
     mockUpdateDisplayName.mockResolvedValue(stream)
+    mockFindById.mockResolvedValue(stream)
     // No e2e_streams row to update — the stream isn't E2E.
     mockUpdateSealedName.mockResolvedValue(false)
 
     await expect(
-      service.updateStream("stream_1", {
-        sealedName: { ciphertext: "Y3Q=", envelope: { v: 1 } },
-      })
+      service.updateStream(
+        "stream_1",
+        {
+          sealedName: { ciphertext: "Y3Q=", envelope: { v: 1 } },
+        },
+        { workspaceId: "ws_1", principal: { kind: "user", userId: "usr_1" } }
+      )
     ).rejects.toMatchObject({ status: 400, code: "STREAM_NOT_E2E" })
 
     // Transaction rolls back; no stream:updated event for a half-applied rename.
@@ -2078,7 +2093,13 @@ describe("StreamService.updateStream sealed-name handling", () => {
   })
 
   test("clearing a sealed name without a displayName is rejected", async () => {
-    await expect(service.updateStream("stream_1", { sealedName: null })).rejects.toMatchObject({
+    await expect(
+      service.updateStream(
+        "stream_1",
+        { sealedName: null },
+        { workspaceId: "ws_1", principal: { kind: "user", userId: "usr_1" } }
+      )
+    ).rejects.toMatchObject({
       status: 400,
       code: "SEALED_NAME_REQUIRES_DISPLAY_NAME",
     })
@@ -2091,7 +2112,11 @@ describe("StreamService.updateStream sealed-name handling", () => {
     mockUpdateDisplayName.mockResolvedValue(stream)
     mockFindById.mockResolvedValue(stream)
 
-    await service.updateStream("stream_1", { displayName: "New name" })
+    await service.updateStream(
+      "stream_1",
+      { displayName: "New name" },
+      { workspaceId: "ws_1", principal: { kind: "user", userId: "usr_1" } }
+    )
 
     expect(mockUpdateDisplayName).toHaveBeenCalledWith(
       {},
@@ -2118,12 +2143,16 @@ describe("StreamService.updateStream description", () => {
     mockUpdate.mockResolvedValue(stream)
     mockFindById.mockResolvedValue(stream)
 
-    await service.updateStream("stream_1", {
-      descriptionJson: {
-        type: "doc",
-        content: [{ type: "paragraph", content: [{ type: "text", text: "About this channel" }] }],
+    await service.updateStream(
+      "stream_1",
+      {
+        descriptionJson: {
+          type: "doc",
+          content: [{ type: "paragraph", content: [{ type: "text", text: "About this channel" }] }],
+        },
       },
-    })
+      { workspaceId: "ws_1", principal: { kind: "user", userId: "usr_1" } }
+    )
 
     expect(mockUpdate).toHaveBeenCalledWith(
       {},
@@ -2146,7 +2175,11 @@ describe("StreamService.updateStream description", () => {
     mockUpdateDisplayName.mockResolvedValue(stream)
     mockFindById.mockResolvedValue(stream)
 
-    await service.updateStream("stream_1", { displayName: "Renamed" })
+    await service.updateStream(
+      "stream_1",
+      { displayName: "Renamed" },
+      { workspaceId: "ws_1", principal: { kind: "user", userId: "usr_1" } }
+    )
 
     const params = mockUpdate.mock.calls[0]![2] as Record<string, unknown>
     expect(params).not.toHaveProperty("description")
@@ -2155,15 +2188,21 @@ describe("StreamService.updateStream description", () => {
 
   test("appends a description_set timeline event + outbox when an actor changes the description", async () => {
     mockUpdate.mockResolvedValue({ id: "stream_1", workspaceId: "ws_1" } as never)
-    // First read = pre-update snapshot; second = the post-update re-read.
+    const authorityStream = { id: "stream_1", workspaceId: "ws_1", type: "channel", visibility: "private" }
     mockFindById
-      .mockResolvedValueOnce({ id: "stream_1", workspaceId: "ws_1", description: "Old" } as never)
-      .mockResolvedValueOnce({ id: "stream_1", workspaceId: "ws_1", description: "New" } as never)
+      .mockResolvedValueOnce(authorityStream as never)
+      .mockResolvedValueOnce(authorityStream as never)
+      .mockResolvedValueOnce({ ...authorityStream, description: "Old" } as never)
+      .mockResolvedValueOnce({ ...authorityStream, description: "New" } as never)
 
-    await service.updateStream("stream_1", {
-      descriptionJson: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "New" }] }] },
-      actorId: "usr_1",
-    })
+    await service.updateStream(
+      "stream_1",
+      {
+        descriptionJson: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "New" }] }] },
+        actorId: "usr_1",
+      },
+      { workspaceId: "ws_1", principal: { kind: "user", userId: "usr_1" } }
+    )
 
     expect(mockInsertEvent).toHaveBeenCalledWith(
       {},
@@ -2185,10 +2224,14 @@ describe("StreamService.updateStream description", () => {
     mockUpdate.mockResolvedValue({ id: "stream_1", workspaceId: "ws_1" } as never)
     mockFindById.mockResolvedValue({ id: "stream_1", workspaceId: "ws_1", description: "Same" } as never)
 
-    await service.updateStream("stream_1", {
-      descriptionJson: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "Same" }] }] },
-      actorId: "usr_1",
-    })
+    await service.updateStream(
+      "stream_1",
+      {
+        descriptionJson: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "Same" }] }] },
+        actorId: "usr_1",
+      },
+      { workspaceId: "ws_1", principal: { kind: "user", userId: "usr_1" } }
+    )
 
     expect(mockInsertEvent).not.toHaveBeenCalled()
   })
@@ -2197,9 +2240,13 @@ describe("StreamService.updateStream description", () => {
     mockUpdate.mockResolvedValue({ id: "stream_1", workspaceId: "ws_1", description: "New" } as never)
     mockFindById.mockResolvedValue({ id: "stream_1", workspaceId: "ws_1", description: "New" } as never)
 
-    await service.updateStream("stream_1", {
-      descriptionJson: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "New" }] }] },
-    })
+    await service.updateStream(
+      "stream_1",
+      {
+        descriptionJson: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "New" }] }] },
+      },
+      { workspaceId: "ws_1", principal: { kind: "user", userId: "usr_1" } }
+    )
 
     expect(mockInsertEvent).not.toHaveBeenCalled()
   })
@@ -2278,16 +2325,18 @@ describe("StreamService.updateCompanionMode persona validation", () => {
 
   test("rejects a companionPersonaId that resolves to no active persona", async () => {
     mockPersonaFindById.mockResolvedValue(null)
-    await expect(service.updateCompanionMode("stream_1", "ws_1", "on", "persona_gone")).rejects.toMatchObject({
-      status: 400,
-      code: "PERSONA_NOT_AVAILABLE",
-    })
+    await expect(service.updateCompanionMode("stream_1", "ws_1", "on", "persona_gone", "user_1")).rejects.toMatchObject(
+      {
+        status: 400,
+        code: "PERSONA_NOT_AVAILABLE",
+      }
+    )
     expect(mockUpdate).not.toHaveBeenCalled()
   })
 
   test("rejects an archived persona", async () => {
     mockPersonaFindById.mockResolvedValue({ id: "persona_x", status: "archived" } as never)
-    await expect(service.updateCompanionMode("stream_1", "ws_1", "on", "persona_x")).rejects.toMatchObject({
+    await expect(service.updateCompanionMode("stream_1", "ws_1", "on", "persona_x", "user_1")).rejects.toMatchObject({
       status: 400,
       code: "PERSONA_NOT_AVAILABLE",
     })
@@ -2295,13 +2344,13 @@ describe("StreamService.updateCompanionMode persona validation", () => {
 
   test("accepts an active persona and writes", async () => {
     mockPersonaFindById.mockResolvedValue({ id: "persona_x", status: "active" } as never)
-    await service.updateCompanionMode("stream_1", "ws_1", "on", "persona_x")
+    await service.updateCompanionMode("stream_1", "ws_1", "on", "persona_x", "user_1")
     expect(mockUpdate).toHaveBeenCalled()
     expect(mockPersonaFindById).toHaveBeenCalledWith(expect.anything(), "persona_x", "ws_1")
   })
 
   test("clearing (null) skips persona validation", async () => {
-    await service.updateCompanionMode("stream_1", "ws_1", "off", null)
+    await service.updateCompanionMode("stream_1", "ws_1", "off", null, "user_1")
     expect(mockPersonaFindById).not.toHaveBeenCalled()
     expect(mockUpdate).toHaveBeenCalled()
   })

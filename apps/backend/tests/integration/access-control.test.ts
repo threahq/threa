@@ -449,6 +449,7 @@ describe("Access Control", () => {
         parentStreamId: channel.id,
         parentAnchorId: parentMessage.id,
         createdBy: ownerId,
+        principal: { kind: "user", userId: ownerId },
       })
 
       // Threads inherit visibility from the root stream.
@@ -498,6 +499,7 @@ describe("Access Control", () => {
         parentStreamId: channel.id,
         parentAnchorId: event.id,
         createdBy: ownerId,
+        principal: { kind: "user", userId: ownerId },
       })
 
       expect(thread.parentAnchorId).toBe(event.id)
@@ -547,6 +549,7 @@ describe("Access Control", () => {
         parentStreamId: channel.id,
         parentAnchorId: msg1.id,
         createdBy: ownerId,
+        principal: { kind: "user", userId: ownerId },
       })
 
       const msg2 = await eventService.createMessage({
@@ -562,6 +565,7 @@ describe("Access Control", () => {
         parentStreamId: thread1.id,
         parentAnchorId: msg2.id,
         createdBy: ownerId,
+        principal: { kind: "user", userId: ownerId },
       })
 
       const msg3 = await eventService.createMessage({
@@ -577,6 +581,7 @@ describe("Access Control", () => {
         parentStreamId: thread2.id,
         parentAnchorId: msg3.id,
         createdBy: ownerId,
+        principal: { kind: "user", userId: ownerId },
       })
 
       // All threads should have channel as root
@@ -629,6 +634,7 @@ describe("Access Control", () => {
         parentStreamId: channel.id,
         parentAnchorId: parentMessage.id,
         createdBy: ownerId,
+        principal: { kind: "user", userId: ownerId },
       })
 
       // Non-member of channel cannot access thread (even though in workspace)
@@ -679,7 +685,7 @@ describe("Access Control", () => {
         authorType: "user",
         ...testMessageContent("Message that will spawn a thread"),
       })
-      const thread = await streamService.createThread({
+      const thread = await streamService.createThreadInternal({
         workspaceId: wsId,
         parentStreamId: channel.id,
         parentAnchorId: parentMessage.id,
@@ -731,6 +737,7 @@ describe("Access Control", () => {
         parentStreamId: channel.id,
         parentAnchorId: parentMessage.id,
         createdBy: ownerId,
+        principal: { kind: "user", userId: ownerId },
       })
 
       // Initially not a member of either
@@ -997,6 +1004,7 @@ describe("Access Control", () => {
         parentStreamId: memberPrivateChannel.id,
         parentAnchorId: parentMessage.id,
         createdBy: ownerId,
+        principal: { kind: "user", userId: ownerId },
       })
 
       const publicChannel = await streamService.createChannel({

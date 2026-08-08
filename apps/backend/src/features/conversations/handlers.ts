@@ -512,7 +512,7 @@ export function createConversationHandlers({
         return res.status(404).json({ error: "Conversation not found" })
       }
       await streamService.validateStreamAccess(conversation.streamId, workspaceId, userId)
-      res.json(await conversationService.regenerateTitle({ workspaceId, conversationId }))
+      res.json(await conversationService.regenerateTitle({ workspaceId, conversationId, actorUserId: userId }))
     },
 
     /**

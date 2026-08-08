@@ -50,7 +50,7 @@ describe("StreamBriefService.update", () => {
     const insertFirst = spyOn(StreamBriefRepository, "insertFirstVersion").mockResolvedValue(fakeBrief())
     const insertRevision = spyOn(StreamBriefRepository, "insertRevision").mockResolvedValue(undefined)
 
-    const result = await makeService().update({
+    const result = await makeService().updateInternal({
       workspaceId: "ws_1",
       streamId: "stream_1",
       content: "Goal: ship v2",
@@ -77,7 +77,7 @@ describe("StreamBriefService.update", () => {
     const updateAtVersion = spyOn(StreamBriefRepository, "updateAtVersion").mockResolvedValue(updated)
     const insertRevision = spyOn(StreamBriefRepository, "insertRevision").mockResolvedValue(undefined)
 
-    const result = await makeService().update({
+    const result = await makeService().updateInternal({
       workspaceId: "ws_1",
       streamId: "stream_1",
       content: "Goal: ship v3",
@@ -98,7 +98,7 @@ describe("StreamBriefService.update", () => {
     spyOn(StreamBriefRepository, "updateAtVersion").mockResolvedValue(updated)
     spyOn(StreamBriefRepository, "insertRevision").mockResolvedValue(undefined)
 
-    await makeService().update({
+    await makeService().updateInternal({
       workspaceId: "ws_1",
       streamId: "stream_root",
       content: "Goal: ship v3",
@@ -123,7 +123,7 @@ describe("StreamBriefService.update", () => {
     spyOn(StreamBriefRepository, "insertFirstVersion").mockResolvedValue(fakeBrief({ version: 1, id: "sbrf_1" }))
     spyOn(StreamBriefRepository, "insertRevision").mockResolvedValue(undefined)
 
-    await makeService().update({
+    await makeService().updateInternal({
       workspaceId: "ws_1",
       streamId: "stream_1",
       content: "Goal: ship v2",
@@ -145,7 +145,7 @@ describe("StreamBriefService.update", () => {
     spyOn(StreamBriefRepository, "updateAtVersion").mockResolvedValue(null)
     spyOn(StreamBriefRepository, "findByStreamId").mockResolvedValue(fakeBrief({ version: 5 }))
 
-    await makeService().update({
+    await makeService().updateInternal({
       workspaceId: "ws_1",
       streamId: "stream_1",
       content: "stale write",
@@ -164,7 +164,7 @@ describe("StreamBriefService.update", () => {
     spyOn(StreamBriefRepository, "findByStreamId").mockResolvedValue(current)
     const insertRevision = spyOn(StreamBriefRepository, "insertRevision").mockResolvedValue(undefined)
 
-    const result = await makeService().update({
+    const result = await makeService().updateInternal({
       workspaceId: "ws_1",
       streamId: "stream_1",
       content: "stale write",
@@ -183,7 +183,7 @@ describe("StreamBriefService.update", () => {
     spyOn(StreamBriefRepository, "insertFirstVersion").mockResolvedValue(null)
     spyOn(StreamBriefRepository, "findByStreamId").mockResolvedValue(current)
 
-    const result = await makeService().update({
+    const result = await makeService().updateInternal({
       workspaceId: "ws_1",
       streamId: "stream_1",
       content: "late create",
@@ -195,10 +195,11 @@ describe("StreamBriefService.update", () => {
     expect(result).toEqual({ outcome: "version_conflict", current })
   })
 
-  it("rejects content over the cap before touching the database", async () => {
-    const withTransaction = spyOn(dbModule, "withTransaction")
+  it("rejects generated content over the cap inside its transaction before writing", async () => {
+    stubTransaction()
+    const insertFirst = spyOn(StreamBriefRepository, "insertFirstVersion")
 
-    const attempt = makeService().update({
+    const attempt = makeService().updateInternal({
       workspaceId: "ws_1",
       streamId: "stream_1",
       content: "x".repeat(STREAM_BRIEF_MAX_CHARS + 1),
@@ -209,7 +210,7 @@ describe("StreamBriefService.update", () => {
 
     await expect(attempt).rejects.toMatchObject({ status: 400, code: "BRIEF_TOO_LONG" })
     await expect(attempt).rejects.toBeInstanceOf(HttpError)
-    expect(withTransaction).not.toHaveBeenCalled()
+    expect(insertFirst).not.toHaveBeenCalled()
   })
 })
 

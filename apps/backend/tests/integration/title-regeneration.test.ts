@@ -3,7 +3,7 @@ import { Pool } from "pg"
 import { StreamTypes } from "@threa/types"
 import { addTestMember, setupTestDatabase, withTransaction } from "./setup"
 import { WorkspaceRepository } from "../../src/features/workspaces"
-import { StreamRepository, StreamService } from "../../src/features/streams"
+import { StreamMemberRepository, StreamRepository, StreamService } from "../../src/features/streams"
 import { ConversationRepository, ConversationService } from "../../src/features/conversations"
 import { DynamicNamingStateRepository } from "../../src/features/dynamic-naming"
 import { E2eStreamsRepository } from "../../src/features/e2e-streams"
@@ -41,12 +41,13 @@ describe("title regeneration", () => {
         displayNameSource: "explicit",
         createdBy: ownerId,
       })
+      await StreamMemberRepository.insert(tx, sId, ownerId)
     })
     return { wsId, ownerId, sId }
   }
 
   test("preserves a plaintext stream title while resetting lifecycle and writing the request atomically", async () => {
-    const { wsId, sId } = await fixture()
+    const { wsId, ownerId, sId } = await fixture()
     const state = await DynamicNamingStateRepository.ensure(pool, {
       workspaceId: wsId,
       targetKind: "stream",
@@ -56,7 +57,10 @@ describe("title regeneration", () => {
       state.id,
     ])
 
-    const result = await new StreamService(pool).regenerateDisplayName(wsId, sId)
+    const result = await new StreamService(pool).regenerateDisplayName(wsId, sId, {
+      kind: "user",
+      userId: ownerId,
+    })
 
     expect(result).toMatchObject({
       deferred: false,
@@ -89,6 +93,7 @@ describe("title regeneration", () => {
         slug: `regen-${channelId}`,
         createdBy: ownerId,
       })
+      await StreamMemberRepository.insert(tx, channelId, ownerId)
       await ConversationRepository.insert(tx, {
         id: cId,
         workspaceId: wsId,
@@ -98,7 +103,11 @@ describe("title regeneration", () => {
       })
     })
 
-    const result = await new ConversationService(pool).regenerateTitle({ workspaceId: wsId, conversationId: cId })
+    const result = await new ConversationService(pool).regenerateTitle({
+      workspaceId: wsId,
+      conversationId: cId,
+      actorUserId: ownerId,
+    })
 
     expect(result.conversation).toMatchObject({
       topicSummary: "Migration rollback",
@@ -131,7 +140,12 @@ describe("title regeneration", () => {
     const ciphertext = Buffer.from("freshly-resealed-current-title").toString("base64")
     const envelope = nameEnvelope(sId)
 
-    const result = await new StreamService(pool).regenerateDisplayName(wsId, sId, { ciphertext, envelope })
+    const result = await new StreamService(pool).regenerateDisplayName(
+      wsId,
+      sId,
+      { kind: "user", userId: ownerId },
+      { ciphertext, envelope }
+    )
 
     expect(result).toMatchObject({ deferred: true, stream: { displayName: null, displayNameSource: "generated" } })
     expect(await E2eStreamsRepository.getSealedName(pool, wsId, sId)).toEqual({ ciphertext, envelope })

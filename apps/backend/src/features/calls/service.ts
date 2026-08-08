@@ -21,7 +21,13 @@ import {
   callRingOutcomesTotal,
 } from "../../lib/observability"
 import { callId, callInvitationId, callParticipantId, callEndpointId, eventId } from "../../lib/id"
-import { checkStreamAccess, StreamMemberRepository, StreamRepository, StreamEventRepository } from "../streams"
+import {
+  assertStreamWritable,
+  checkStreamAccess,
+  StreamMemberRepository,
+  StreamRepository,
+  StreamEventRepository,
+} from "../streams"
 import { UserRepository } from "../workspaces"
 import { ActivityRepository } from "../activity"
 import { OutboxRepository } from "../../lib/outbox"
@@ -158,10 +164,11 @@ export class CallService {
     tx?: PoolClient
   ): Promise<StartCallResult> {
     const { result, closedSessionIds } = await withTransaction(tx ?? this.pool, async (client) => {
-      const stream = await checkStreamAccess(client, params.streamId, params.workspaceId, params.userId)
-      if (!stream) {
-        throw new HttpError("No access to this stream", { status: 403, code: "CALL_STREAM_ACCESS_DENIED" })
-      }
+      const { target: stream } = await assertStreamWritable(client, {
+        workspaceId: params.workspaceId,
+        streamId: params.streamId,
+        principal: { kind: "user", userId: params.userId },
+      })
 
       const inserted = await CallRepository.insertIfNoActiveCall(client, {
         id: callId(),
@@ -287,9 +294,12 @@ export class CallService {
         userId: params.userId,
         callId: params.callId,
       })
-      if (!access) {
-        throw new HttpError("Call not found", { status: 404, code: "CALL_NOT_FOUND" })
-      }
+      if (!access) throw new HttpError("Call not found", { status: 404, code: "CALL_NOT_FOUND" })
+      await assertStreamWritable(client, {
+        workspaceId: params.workspaceId,
+        streamId: access.call.streamId,
+        principal: { kind: "user", userId: params.userId },
+      })
 
       return this.joinLockedCall(client, params)
     })

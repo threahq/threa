@@ -13,7 +13,7 @@ import {
   type CommandInfo,
 } from "@threa/types"
 import { withClient, type Querier } from "../../db"
-import { checkStreamAccess, StreamRepository, type Stream } from "../streams"
+import { checkStreamAccess, projectStreamForUser, StreamRepository, type Stream } from "../streams"
 import { BotRepository } from "../public-api"
 import {
   BotRuntimeInstanceRepository,
@@ -30,6 +30,12 @@ import {
   listWorkspaceCommandInfos,
   SESSION_CONTROL_COMMAND_NAMES,
 } from "./catalog"
+
+const READ_ONLY_COMMAND_NAMES = new Set(["invite", "stop", "status"])
+
+export function commandRequiresWritableAuthority(name: string): boolean {
+  return !READ_ONLY_COMMAND_NAMES.has(name.toLowerCase())
+}
 
 export type ResolvedCommand =
   | { info: CommandInfo; executionKind: "server" }
@@ -83,11 +89,23 @@ export class CommandAvailabilityService {
 
   async resolveCommandInTransaction(
     db: Querier,
-    params: { workspaceId: string; userId: string; streamId: string; name: string }
+    params: { workspaceId: string; userId: string; streamId: string; name: string },
+    options?: { includeReadOnlyWorkCommands?: boolean }
   ): Promise<ResolvedCommand | null> {
-    const commands = await this.resolveStreamCommandsInTransaction(db, params)
+    const commands = await this.resolveStreamCommandsInTransaction(db, params, options)
     const lower = params.name.toLowerCase()
     return commands.find((command) => command.info.name.toLowerCase() === lower) ?? null
+  }
+
+  async resolveCommandForDispatch(params: {
+    workspaceId: string
+    userId: string
+    streamId: string
+    name: string
+  }): Promise<ResolvedCommand | null> {
+    return withClient(this.deps.pool, (db) =>
+      this.resolveCommandInTransaction(db, params, { includeReadOnlyWorkCommands: true })
+    )
   }
 
   private async resolveStreamCommands(params: {
@@ -100,15 +118,26 @@ export class CommandAvailabilityService {
 
   private async resolveStreamCommandsInTransaction(
     db: Querier,
-    params: { workspaceId: string; userId: string; streamId: string }
+    params: { workspaceId: string; userId: string; streamId: string },
+    options?: { includeReadOnlyWorkCommands?: boolean }
   ): Promise<ResolvedCommand[]> {
     const stream = await checkStreamAccess(db, params.streamId, params.workspaceId, params.userId)
-    if (!stream || stream.archivedAt) return []
+    if (!stream) return []
+    const projected = await projectStreamForUser(db, {
+      workspaceId: params.workspaceId,
+      stream,
+      userId: params.userId,
+    })
+    if (!projected) return []
+    const writable = !projected.readOnly
 
     const commands: ResolvedCommand[] = []
 
     for (const info of listServerCommandInfos(this.deps.commandRegistry)) {
-      if (await isServerCommandAvailableInStream(info.name, stream, db)) {
+      if (
+        (options?.includeReadOnlyWorkCommands || writable || !commandRequiresWritableAuthority(info.name)) &&
+        (await isServerCommandAvailableInStream(info.name, stream, db))
+      ) {
         commands.push({ info, executionKind: CommandKinds.SERVER })
       }
     }
@@ -127,6 +156,7 @@ export class CommandAvailabilityService {
     if (runtimeTarget) {
       for (const info of listSessionControlCommandInfos()) {
         if (!runtimeTarget.advertisedCommandNames.has(info.name.toLowerCase())) continue
+        if (!options?.includeReadOnlyWorkCommands && !writable && commandRequiresWritableAuthority(info.name)) continue
         commands.push({
           info: applyAdvertisedSuggestions(info, runtimeTarget),
           executionKind: CommandKinds.BOT_RUNTIME,
@@ -161,7 +191,6 @@ async function resolveRuntimeCommandTarget(
   const rootStream = rootStreamId === stream.id ? stream : await StreamRepository.findById(db, rootStreamId)
 
   if (!rootStream || rootStream.workspaceId !== workspaceId) return null
-  if (rootStream.archivedAt) return null
   if (rootStream.type !== StreamTypes.SCRATCHPAD) return null
 
   const active = await StreamActiveActorRepository.findByRootStream(db, workspaceId, rootStream.id)

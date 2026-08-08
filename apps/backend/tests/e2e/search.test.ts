@@ -17,6 +17,7 @@ import {
   search,
   joinWorkspace,
   joinStream,
+  addStreamMember,
   archiveStream,
   unarchiveStream,
   getUserId,
@@ -235,7 +236,7 @@ describe("Search E2E Tests", () => {
       const clientB = new TestClient()
       const userB = await loginAs(clientB, testEmail("withB"), "With User B")
       const memberB = await joinWorkspace(clientB, workspace.id)
-      await joinStream(clientB, workspace.id, channelShared.id)
+      expect((await addStreamMember(clientA, workspace.id, channelShared.id, memberB.id)).status).toBe(201)
 
       // User A searches with userB's member ID - should only find messages in shared channel
       const results = await search(clientA, workspace.id, { query: keyword, with: [memberB.id] })
@@ -310,7 +311,7 @@ describe("Search E2E Tests", () => {
       const clientB = new TestClient()
       await loginAs(clientB, testEmail("withThreadB"), "WithThread User B")
       const memberB = await joinWorkspace(clientB, workspace.id)
-      await joinStream(clientB, workspace.id, channel.id)
+      expect((await addStreamMember(clientA, workspace.id, channel.id, memberB.id)).status).toBe(201)
 
       const keyword = `chimera${testRunId}`
       const rootMessage = await sendMessage(clientA, workspace.id, channel.id, `Root ${keyword}`)
@@ -541,7 +542,7 @@ describe("Search E2E Tests", () => {
       const creator = new TestClient()
       await loginAs(creator, testEmail("archcreator"), "Archive Creator")
       const workspace = await createWorkspace(creator, `ArchCreator WS ${testRunId}`)
-      const channel = await createChannel(creator, workspace.id, `archtest-${testRunId}`)
+      const channel = await createChannel(creator, workspace.id, `archtest-${testRunId}`, "public")
       await archiveStream(creator, workspace.id, channel.id)
 
       // Different user joins the workspace and the channel

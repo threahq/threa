@@ -112,6 +112,12 @@ async function setupTestWorkspace(): Promise<TestContext> {
   })
   const botReadWriteKey = await createBotKey(client, workspace.id, botRes.id, ["messages:read", "messages:write"], "rw")
   const streamsReadOnlyKey = await createBotKey(client, workspace.id, botRes.id, ["streams:read"], "streams-only")
+  for (const streamId of [publicChannel.id, secondPublicChannel.id]) {
+    const grant = await client.post(`/api/workspaces/${workspace.id}/bots/${botRes.id}/streams/${streamId}/grant`, {})
+    if (grant.status !== 204) {
+      throw new Error(`Grant bot stream access failed (${grant.status}): ${JSON.stringify(grant.data)}`)
+    }
+  }
 
   const userKeyRes = await client.post<{ key: { id: string }; value: string }>(
     `/api/workspaces/${workspace.id}/user-api-keys`,

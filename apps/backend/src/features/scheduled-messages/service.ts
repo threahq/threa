@@ -13,8 +13,7 @@ import { HttpError, isUniqueViolation } from "../../lib/errors"
 // the same — see service.ts there for the TDZ explanation).
 import "../workspaces"
 import { OutboxRepository } from "../../lib/outbox"
-import { StreamRepository, StreamMemberRepository, type Stream } from "../streams"
-import { Visibilities } from "@threa/types"
+import { assertStreamWritable, resolveLockedStreamAuthorities, StreamRepository } from "../streams"
 import { MessageRepository } from "../messaging"
 import { EventService } from "../messaging"
 import { scheduledMessageId, scheduledMessageQueueId } from "../../lib/id"
@@ -105,45 +104,56 @@ export class ScheduledMessagesService {
   async schedule(params: ScheduleParams): Promise<ScheduledMessageView> {
     const clamped = clampToFuture(params.scheduledFor)
 
-    return withTransaction(this.pool, async (client) => {
-      if (params.clientMessageId) {
-        const existing = await ScheduledMessagesRepository.findByClientMessageId(
-          client,
-          params.workspaceId,
-          params.userId,
-          params.clientMessageId
-        )
-        if (existing) return toScheduledMessageView(existing)
-      }
-
-      await this.ensureStreamWriteAccess(client, params.workspaceId, params.userId, params.streamId)
-
-      if (params.parentMessageId) {
-        const parent = await MessageRepository.findById(client, params.parentMessageId)
-        if (!parent || parent.deletedAt !== null) {
-          throw new HttpError("Parent message not found", {
-            status: 404,
-            code: "SCHEDULED_MESSAGE_PARENT_UNAVAILABLE",
-          })
+    try {
+      return await withTransaction(this.pool, async (client) => {
+        if (params.clientMessageId) {
+          const existing = await ScheduledMessagesRepository.findByClientMessageId(
+            client,
+            params.workspaceId,
+            params.userId,
+            params.clientMessageId
+          )
+          if (existing) {
+            await resolveLockedStreamAuthorities(client, {
+              workspaceId: params.workspaceId,
+              streamIds: [existing.streamId],
+              principal: { kind: "user", userId: params.userId },
+            })
+            return toScheduledMessageView(existing)
+          }
         }
-        // Workspace-scope check (INV-8): MessageRepository.findById is keyed
-        // by the message PK alone, so we must verify the parent belongs to
-        // the caller's workspace via its stream. Without this, a caller could
-        // attach a foreign workspace's message id and the row would be
-        // accepted (and silently leak workspace boundaries at fire time).
-        const parentStream = await StreamRepository.findById(client, parent.streamId)
-        if (!parentStream || parentStream.workspaceId !== params.workspaceId) {
-          throw new HttpError("Parent message not found", {
-            status: 404,
-            code: "SCHEDULED_MESSAGE_PARENT_UNAVAILABLE",
-          })
-        }
-      }
 
-      const id = scheduledMessageId()
-      let row: ScheduledMessage
-      try {
-        row = await ScheduledMessagesRepository.insert(client, {
+        const authority = await assertStreamWritable(client, {
+          workspaceId: params.workspaceId,
+          streamId: params.streamId,
+          principal: { kind: "user", userId: params.userId },
+        })
+        await this.assertSchedulingTransportSupported(client, authority.target)
+
+        if (params.parentMessageId) {
+          const parent = await MessageRepository.findById(client, params.parentMessageId)
+          if (!parent || parent.deletedAt !== null) {
+            throw new HttpError("Parent message not found", {
+              status: 404,
+              code: "SCHEDULED_MESSAGE_PARENT_UNAVAILABLE",
+            })
+          }
+          // Workspace-scope check (INV-8): MessageRepository.findById is keyed
+          // by the message PK alone, so we must verify the parent belongs to
+          // the caller's workspace via its stream. Without this, a caller could
+          // attach a foreign workspace's message id and the row would be
+          // accepted (and silently leak workspace boundaries at fire time).
+          const parentStream = await StreamRepository.findById(client, parent.streamId)
+          if (!parentStream || parentStream.workspaceId !== params.workspaceId) {
+            throw new HttpError("Parent message not found", {
+              status: 404,
+              code: "SCHEDULED_MESSAGE_PARENT_UNAVAILABLE",
+            })
+          }
+        }
+
+        const id = scheduledMessageId()
+        const row: ScheduledMessage = await ScheduledMessagesRepository.insert(client, {
           id,
           workspaceId: params.workspaceId,
           userId: params.userId,
@@ -157,32 +167,36 @@ export class ScheduledMessagesService {
           scheduledFor: clamped,
           clientMessageId: params.clientMessageId,
         })
-      } catch (err) {
-        // Concurrent duplicate insert with the same client_message_id — refetch
-        // the winner and return it. Same shape the message-create path uses.
-        if (params.clientMessageId && isUniqueViolation(err, "idx_scheduled_messages_client_id")) {
-          const existing = await ScheduledMessagesRepository.findByClientMessageId(
-            client,
-            params.workspaceId,
-            params.userId,
-            params.clientMessageId
-          )
-          if (existing) return toScheduledMessageView(existing)
+
+        const queueId = await this.enqueueSendJob(client, row)
+        const updated = (await ScheduledMessagesRepository.findById(client, params.workspaceId, params.userId, id)) ?? {
+          ...row,
+          queueMessageId: queueId,
         }
-        throw err
-      }
 
-      const queueId = await this.enqueueSendJob(client, row)
-      const updated = (await ScheduledMessagesRepository.findById(client, params.workspaceId, params.userId, id)) ?? {
-        ...row,
-        queueMessageId: queueId,
-      }
+        const view = toScheduledMessageView(updated)
+        await this.publishUpsert(client, view, params.userId)
 
-      const view = toScheduledMessageView(updated)
-      await this.publishUpsert(client, view, params.userId)
-
-      return view
-    })
+        return view
+      })
+    } catch (err) {
+      if (!params.clientMessageId || !isUniqueViolation(err, "idx_scheduled_messages_client_id")) throw err
+      return withTransaction(this.pool, async (client) => {
+        const winner = await ScheduledMessagesRepository.findByClientMessageId(
+          client,
+          params.workspaceId,
+          params.userId,
+          params.clientMessageId!
+        )
+        if (!winner) throw err
+        await resolveLockedStreamAuthorities(client, {
+          workspaceId: params.workspaceId,
+          streamIds: [winner.streamId],
+          principal: { kind: "user", userId: params.userId },
+        })
+        return toScheduledMessageView(winner)
+      })
+    }
   }
 
   async list(params: ListScheduledParams): Promise<{ scheduled: ScheduledMessageView[]; nextCursor: string | null }> {
@@ -273,7 +287,14 @@ export class ScheduledMessagesService {
    */
   async update(params: UpdateScheduledParams): Promise<ScheduledMessageView> {
     return withTransaction(this.pool, async (client) => {
-      const existing = await this.assertPendingOrThrow(client, params)
+      const existing = await this.findOwnedOrThrow(client, params)
+      const authority = await assertStreamWritable(client, {
+        workspaceId: params.workspaceId,
+        streamId: existing.streamId,
+        principal: { kind: "user", userId: params.userId },
+      })
+      await this.assertSchedulingTransportSupported(client, authority.target)
+      this.assertRowPending(existing)
 
       const updated = await ScheduledMessagesRepository.update(client, {
         workspaceId: params.workspaceId,
@@ -345,7 +366,14 @@ export class ScheduledMessagesService {
 
   async sendNow(params: { workspaceId: string; userId: string; id: string }): Promise<ScheduledMessageView> {
     return withTransaction(this.pool, async (client) => {
-      const existing = await this.assertPendingOrThrow(client, params)
+      const existing = await this.findOwnedOrThrow(client, params)
+      const authority = await assertStreamWritable(client, {
+        workspaceId: params.workspaceId,
+        streamId: existing.streamId,
+        principal: { kind: "user", userId: params.userId },
+      })
+      await this.assertSchedulingTransportSupported(client, authority.target)
+      this.assertRowPending(existing)
 
       // Claim the row atomically (status flip → sending). `force` drops the
       // `scheduled_for <= NOW()` guard so a still-future row fires now, and
@@ -558,10 +586,9 @@ export class ScheduledMessagesService {
    * Use `notPendingMessage` to override the user-visible text per call site
    * (e.g. cancel uses "Cannot cancel sending scheduled message").
    */
-  private async assertPendingOrThrow(
+  private async findOwnedOrThrow(
     client: PoolClient,
-    params: { workspaceId: string; userId: string; id: string },
-    options?: { notPendingMessage?: (status: string) => string }
+    params: { workspaceId: string; userId: string; id: string }
   ): Promise<ScheduledMessage> {
     const existing = await ScheduledMessagesRepository.findById(client, params.workspaceId, params.userId, params.id)
     if (!existing) {
@@ -570,6 +597,13 @@ export class ScheduledMessagesService {
         code: "SCHEDULED_MESSAGE_NOT_FOUND",
       })
     }
+    return existing
+  }
+
+  private assertRowPending(
+    existing: ScheduledMessage,
+    options?: { notPendingMessage?: (status: string) => string }
+  ): void {
     if (existing.status !== ScheduledMessageStatuses.PENDING) {
       const buildMessage = options?.notPendingMessage ?? ((status: string) => `Scheduled message already ${status}`)
       throw new HttpError(buildMessage(existing.status), {
@@ -580,6 +614,15 @@ export class ScheduledMessagesService {
             : "SCHEDULED_MESSAGE_NOT_PENDING",
       })
     }
+  }
+
+  private async assertPendingOrThrow(
+    client: PoolClient,
+    params: { workspaceId: string; userId: string; id: string },
+    options?: { notPendingMessage?: (status: string) => string }
+  ): Promise<ScheduledMessage> {
+    const existing = await this.findOwnedOrThrow(client, params)
+    this.assertRowPending(existing, options)
     return existing
   }
 
@@ -616,59 +659,14 @@ export class ScheduledMessagesService {
     return queueId
   }
 
-  /**
-   * Stream-write authorization. Mirrors the saved-messages stream-access
-   * helper but for write intent: the user must be a member of the stream
-   * (or the stream's root for thread sends), and the workspace must match.
-   * Public streams allow any workspace user to write — same as live message
-   * create.
-   */
-  private async ensureStreamWriteAccess(
-    client: PoolClient,
-    workspaceId: string,
-    userId: string,
-    streamIdParam: string
-  ): Promise<Stream> {
-    const stream = await StreamRepository.findById(client, streamIdParam)
-    if (!stream || stream.workspaceId !== workspaceId) {
-      throw new HttpError("Stream not found", { status: 404, code: "STREAM_NOT_FOUND" })
-    }
-    if (stream.archivedAt) {
-      throw new HttpError("Cannot schedule messages to an archived stream", {
-        status: 403,
-        code: "STREAM_ARCHIVED",
-      })
-    }
-
-    // E2EE-3: the server holds no stream key, so it can never seal a future
-    // message at fire time. Refuse at schedule time with a loud error rather
-    // than accepting plaintext that would either leak into the sealed stream
-    // (now backstopped by the INV-E1 sink) or silently fail to send much later.
-    // `findById` already populates `e2eEnabled` off the e2e_streams join.
-    if (stream.e2eEnabled === true) {
+  private async assertSchedulingTransportSupported(client: PoolClient, stream: { id: string }): Promise<void> {
+    const fresh = await StreamRepository.findById(client, stream.id)
+    if (fresh?.e2eEnabled) {
       throw new HttpError("Cannot schedule messages to an end-to-end-encrypted stream", {
         status: 400,
         code: "E2E_STREAM_SCHEDULING_UNSUPPORTED",
       })
     }
-
-    const accessStreamId = stream.rootStreamId ?? stream.id
-    let accessStream: Stream | null = stream
-    if (stream.rootStreamId) {
-      accessStream = await StreamRepository.findById(client, accessStreamId)
-      if (!accessStream) {
-        throw new HttpError("Parent stream not found", { status: 404, code: "STREAM_NOT_FOUND" })
-      }
-    }
-
-    if (accessStream.visibility === Visibilities.PUBLIC) return stream
-
-    const isMember = await StreamMemberRepository.isMember(client, accessStreamId, userId)
-    if (!isMember) {
-      throw new HttpError("Not a member of this stream", { status: 403, code: "FORBIDDEN" })
-    }
-
-    return stream
   }
 }
 
