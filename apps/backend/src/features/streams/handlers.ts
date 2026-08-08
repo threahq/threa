@@ -180,6 +180,19 @@ const updateStreamSchema = z
     }
   )
 
+const regenerateTitleParamsSchema = z.object({ workspaceId: z.string().min(1), streamId: z.string().min(1) }).strict()
+
+const regenerateTitleSchema = z
+  .object({
+    sealedNameCiphertext: z.string().min(1).regex(BASE64_PATTERN, "must be base64").optional(),
+    sealedNameEnvelope: sealedNameEnvelopeSchema.optional(),
+  })
+  .strict()
+  .refine((value) => (value.sealedNameCiphertext === undefined) === (value.sealedNameEnvelope === undefined), {
+    message: "sealedNameCiphertext and sealedNameEnvelope must be supplied together",
+    path: ["sealedNameCiphertext"],
+  })
+
 const updateCompanionModeSchema = z.object({
   companionMode: companionModeSchema,
   companionPersonaId: z.string().nullable().optional(),
@@ -744,6 +757,20 @@ export function createStreamHandlers({
         sealedName,
       })
       res.json({ stream: updated })
+    },
+
+    async regenerateTitle(req: Request, res: Response) {
+      const userId = req.user!.id
+      const workspaceId = req.workspaceId!
+      const { streamId } = validateRequest(regenerateTitleParamsSchema, req.params)
+      await streamService.validateStreamAccess(streamId, workspaceId, userId)
+      const body = validateRequest(regenerateTitleSchema, req.body ?? {})
+      const sealedName =
+        body.sealedNameCiphertext && body.sealedNameEnvelope
+          ? { ciphertext: body.sealedNameCiphertext, envelope: body.sealedNameEnvelope }
+          : undefined
+      const result = await streamService.regenerateDisplayName(workspaceId, streamId, sealedName)
+      res.json(result)
     },
 
     async listEvents(req: Request, res: Response) {

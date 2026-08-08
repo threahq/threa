@@ -707,6 +707,12 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     audit("streams.update", "write"),
     stream.update
   )
+  app.post(
+    "/api/workspaces/:workspaceId/streams/:streamId/regenerate-title",
+    ...authed,
+    audit("streams.regenerate_title", "write"),
+    stream.regenerateTitle
+  )
   app.get(
     "/api/workspaces/:workspaceId/streams/:streamId/context",
     ...authed,
@@ -1031,6 +1037,12 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     ...authed,
     audit("conversations.update", "write"),
     conversation.updateConversation
+  )
+  app.post(
+    "/api/workspaces/:workspaceId/conversations/:conversationId/regenerate-title",
+    ...authed,
+    audit("conversations.regenerate_title", "write"),
+    conversation.regenerateTitle
   )
   app.get(
     "/api/workspaces/:workspaceId/board/exclusions",

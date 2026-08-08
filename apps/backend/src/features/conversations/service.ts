@@ -17,6 +17,7 @@ import { effectiveRootId } from "./conversation-assigner"
 import { conversationFeedbackId, conversationId as generateConversationId } from "../../lib/id"
 import { HttpError } from "../../lib/errors"
 import { logger } from "../../lib/logger"
+import { DynamicNamingStateRepository } from "../dynamic-naming/state-repository"
 import {
   BOARD_TAIL_MAX_ROWS,
   ConversationStatuses,
@@ -746,6 +747,77 @@ export class ConversationService {
         previousConversation: null,
         settlingMessageIds: settlingByConversation.get(conversation.id) ?? [],
       }
+    })
+  }
+
+  async regenerateTitle(params: {
+    workspaceId: string
+    conversationId: string
+  }): Promise<{ conversation: ConversationWithStaleness; deferred: false }> {
+    const { workspaceId, conversationId } = params
+    return withTransaction(this.pool, async (client) => {
+      const locked = await ConversationRepository.findByIdForUpdate(client, workspaceId, conversationId)
+      if (!locked) throw new HttpError("Conversation not found", { status: 404, code: "CONVERSATION_NOT_FOUND" })
+      const stream = await StreamRepository.findById(client, locked.streamId)
+      if (!stream || stream.type === StreamTypes.SCRATCHPAD || stream.e2eEnabled) {
+        throw new HttpError("Conversation title regeneration is not supported for this stream", {
+          status: 400,
+          code: "CONVERSATION_TYPE_INVALID",
+        })
+      }
+      const source = locked.topicSummarySource ?? (locked.topicSummary ? TitleSources.LEGACY : null)
+      if (!locked.topicSummary || (source !== TitleSources.EXPLICIT && source !== TitleSources.LEGACY)) {
+        throw new HttpError("Only protected titles can be regenerated", {
+          status: 409,
+          code: "TITLE_REGENERATION_NOT_ALLOWED",
+        })
+      }
+      const updated = await ConversationRepository.updateTopicSummary(client, {
+        workspaceId,
+        conversationId,
+        topicSummary: locked.topicSummary,
+        source: TitleSources.GENERATED,
+        expectedRevision: locked.topicSummaryRevision ?? 0,
+        expectedSource: source,
+      })
+      if (!updated) throw new Error("Regeneration title CAS failed under conversation lock")
+      const state = await DynamicNamingStateRepository.ensure(client, {
+        workspaceId,
+        targetKind: "conversation",
+        targetId: conversationId,
+      })
+      const reset = await DynamicNamingStateRepository.resetForRegeneration(client, {
+        workspaceId,
+        targetKind: "conversation",
+        targetId: conversationId,
+        expectedVersion: state.version,
+      })
+      if (!reset) throw new Error("Regeneration state CAS failed")
+
+      const { parentStreamId, streamVisibility } = await resolveConversationDelivery(client, stream)
+      const settlingByConversation = await MessageConversationStateRepository.listSettlingByConversationIds(
+        client,
+        workspaceId,
+        [updated.id]
+      )
+      const projected = addStalenessFields(updated)
+      await OutboxRepository.insert(client, "conversation:updated", {
+        workspaceId,
+        streamId: updated.streamId,
+        conversationId: updated.id,
+        conversation: projected,
+        parentStreamId,
+        streamVisibility,
+        settlingMessageIds: settlingByConversation.get(updated.id) ?? [],
+      })
+      await OutboxRepository.insert(client, "dynamic_naming:requested", {
+        workspaceId,
+        targetKind: "conversation",
+        targetId: conversationId,
+        deferred: false,
+      })
+      logger.info({ workspaceId, targetKind: "conversation", source }, "Dynamic title regeneration requested")
+      return { conversation: projected, deferred: false }
     })
   }
 

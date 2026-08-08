@@ -23,6 +23,21 @@ describe("permissionGroup", () => {
   })
 })
 
+describe("resolveDeliveryGroups — internal events", () => {
+  it("keeps dynamic naming requests out of client delivery", () => {
+    expect(
+      resolveDeliveryGroups(
+        event("dynamic_naming:requested", {
+          workspaceId: "ws_1",
+          targetKind: "stream",
+          targetId: "stream_1",
+          deferred: false,
+        })
+      )
+    ).toEqual([])
+  })
+})
+
 describe("resolveDeliveryGroups — invitation events", () => {
   const invitationEvents = [
     "invitation:sent",

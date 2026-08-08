@@ -259,6 +259,20 @@ describe("E2E sealed stream name", () => {
     expect(stream?.sealedNameEnvelope).toBeNull()
   })
 
+  test("updateSealedName is fenced by the observed key generation", async () => {
+    const { wsId, sId } = await seedStream(true)
+    expect(
+      await E2eStreamsRepository.updateSealedName(
+        pool,
+        wsId,
+        sId,
+        { ciphertext: Buffer.from("stale").toString("base64"), envelope: ENVELOPE },
+        1
+      )
+    ).toBe(false)
+    expect(await E2eStreamsRepository.getSealedName(pool, wsId, sId)).toBeNull()
+  })
+
   test("updateSealedName no-ops for a plaintext (non-E2E) stream", async () => {
     const { wsId, sId } = await seedStream(false)
 

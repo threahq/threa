@@ -1,4 +1,4 @@
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -21,6 +21,7 @@ import { DescriptionSection } from "./description-section"
 import { getStreamName } from "@/lib/streams"
 import { useUpdateStream, useArchiveStream, useUnarchiveStream, useSetNotificationLevel } from "@/hooks"
 import { useRenameStream } from "@/hooks/use-rename-stream"
+import { isProtectedRegenerableTitle, useRegenerateTitle } from "@/hooks/use-regenerate-title"
 import {
   StreamTypes,
   Visibilities,
@@ -104,7 +105,7 @@ export function GeneralTab({
       <DmDisplayNameSection key="name" displayName={dmDisplayName ?? stream.displayName ?? "Direct message"} />
     )
   } else if (isThread) {
-    sections.push(<ThreadDisplayNameSection key="name" displayName={stream.displayName ?? "Thread"} />)
+    sections.push(<ThreadDisplayNameSection key="name" workspaceId={workspaceId} stream={stream} />)
   }
 
   if (isChannel || isScratchpad || isDm) {
@@ -332,15 +333,26 @@ function SlugSection({ workspaceId, stream }: { workspaceId: string; stream: Str
 
 function DisplayNameSection({ workspaceId, stream }: { workspaceId: string; stream: Stream }) {
   const [name, setName] = useState(stream.displayName ?? "")
+  const [nameDirty, setNameDirty] = useState(false)
   const renameStream = useRenameStream(workspaceId, stream.id, stream)
   const hasChanged = name !== (stream.displayName ?? "")
   const locked = !renameStream.canRename
+  const canRegenerate = isProtectedRegenerableTitle(stream.displayName, stream.displayNameSource)
+  const regeneration = useRegenerateTitle(workspaceId, {
+    kind: "stream",
+    stream,
+    currentTitle: stream.displayName ?? "",
+  })
+  useEffect(() => {
+    if (!nameDirty) setName(stream.displayName ?? "")
+  }, [nameDirty, stream.displayName, stream.displayNameRevision])
 
   const handleSave = async () => {
     const trimmed = name.trim()
     if (!trimmed || !hasChanged || locked) return
     try {
       await renameStream.rename(trimmed)
+      setNameDirty(false)
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Failed to update name")
     }
@@ -351,7 +363,11 @@ function DisplayNameSection({ workspaceId, stream }: { workspaceId: string; stre
       <Label className="text-sm font-medium">Display name</Label>
       <Input
         value={name}
-        onChange={(e) => setName(e.target.value)}
+        onChange={(e) => {
+          const nextName = e.target.value
+          setName(nextName)
+          setNameDirty(nextName !== (stream.displayName ?? ""))
+        }}
         placeholder="Scratchpad name"
         maxLength={100}
         disabled={locked}
@@ -360,6 +376,16 @@ function DisplayNameSection({ workspaceId, stream }: { workspaceId: string; stre
       {hasChanged && !locked && (
         <Button size="sm" onClick={() => void handleSave()} disabled={!name.trim() || renameStream.isPending}>
           {renameStream.isPending ? "Saving..." : "Save"}
+        </Button>
+      )}
+      {canRegenerate && !hasChanged && (
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={locked || regeneration.isPending}
+          onClick={() => void regeneration.regenerate().catch(() => undefined)}
+        >
+          {regeneration.isPending ? "Regenerating…" : "Regenerate title"}
         </Button>
       )}
     </div>
@@ -376,11 +402,24 @@ function DmDisplayNameSection({ displayName }: { displayName: string }) {
   )
 }
 
-function ThreadDisplayNameSection({ displayName }: { displayName: string }) {
+function ThreadDisplayNameSection({ workspaceId, stream }: { workspaceId: string; stream: Stream }) {
+  const title = stream.displayName ?? "Thread"
+  const regeneration = useRegenerateTitle(workspaceId, { kind: "stream", stream, currentTitle: title })
+  const canRegenerate = !stream.e2eEnabled && isProtectedRegenerableTitle(stream.displayName, stream.displayNameSource)
   return (
     <div className="space-y-3">
       <Label className="text-sm font-medium">Display name</Label>
-      <Input value={displayName} disabled readOnly className="bg-muted/50" />
+      <Input value={title} disabled readOnly className="bg-muted/50" />
+      {canRegenerate && (
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={regeneration.isPending}
+          onClick={() => void regeneration.regenerate().catch(() => undefined)}
+        >
+          {regeneration.isPending ? "Regenerating…" : "Regenerate title"}
+        </Button>
+      )}
     </div>
   )
 }

@@ -59,6 +59,7 @@ import {
 } from "@threa/types"
 import { ContextBagRepository, PersonaRepository, assertAssignablePersona } from "../agents"
 import { E2eStreamsRepository, E2eStreamActorsRepository, StreamE2eKeyWrapsRepository } from "../e2e-streams"
+import { DynamicNamingStateRepository } from "../dynamic-naming/state-repository"
 import type { E2eStream, StreamE2eKeyWrap } from "../e2e-streams"
 import { UserE2eKeysRepository } from "../user-e2e-keys"
 import { EnclaveRuntimesRepository, ENCLAVE_RUNTIME_STALENESS_MS } from "../enclave-runtimes"
@@ -1550,6 +1551,101 @@ export class StreamService {
       }
       const exists = await StreamRepository.slugExistsInWorkspace(client, workspaceId, slug)
       return !exists
+    })
+  }
+
+  async regenerateDisplayName(
+    workspaceId: string,
+    streamId: string,
+    sealedName?: { ciphertext: string; envelope: unknown }
+  ): Promise<{ stream: Stream; deferred: boolean }> {
+    return withTransaction(this.pool, async (client) => {
+      const locked = await StreamRepository.findByIdForUpdateBlocking(client, streamId)
+      if (!locked || locked.workspaceId !== workspaceId) {
+        throw new HttpError("Stream not found", { status: 404, code: "STREAM_NOT_FOUND" })
+      }
+      if (locked.type !== StreamTypes.SCRATCHPAD && locked.type !== StreamTypes.THREAD) {
+        throw new HttpError("Stream type cannot regenerate a title", { status: 400, code: "STREAM_TYPE_INVALID" })
+      }
+      const source = locked.displayNameSource ?? (locked.displayName ? TitleSources.LEGACY : null)
+      if (source !== TitleSources.EXPLICIT && source !== TitleSources.LEGACY) {
+        throw new HttpError("Only protected titles can be regenerated", {
+          status: 409,
+          code: "TITLE_REGENERATION_NOT_ALLOWED",
+        })
+      }
+      const e2eConfig = await E2eStreamsRepository.getByStreamId(client, workspaceId, streamId)
+      const e2e = e2eConfig !== null
+      if (e2e && locked.type !== StreamTypes.SCRATCHPAD) {
+        throw new HttpError("Encrypted thread title regeneration is not supported", {
+          status: 400,
+          code: "STREAM_TYPE_INVALID",
+        })
+      }
+      if (e2e !== (sealedName !== undefined)) {
+        throw new HttpError(e2e ? "A sealed title is required" : "Sealed titles require E2E", {
+          status: 400,
+          code: "TITLE_REGENERATION_SEAL_INVALID",
+        })
+      }
+      if (!e2e && !locked.displayName) {
+        throw new HttpError("A current title is required", { status: 409, code: "TITLE_REGENERATION_NOT_ALLOWED" })
+      }
+      if (sealedName) {
+        const envelope = sealedName.envelope as { keyGeneration?: unknown; aad?: unknown }
+        const expectedGeneration = e2eConfig!.currentKeyGeneration
+        const expectedAad = Buffer.from(`${streamId}|name|${expectedGeneration}`, "utf8").toString("base64")
+        if (envelope.keyGeneration !== expectedGeneration || envelope.aad !== expectedAad) {
+          throw new HttpError("Sealed title must use the current stream name slot", {
+            status: 400,
+            code: "TITLE_REGENERATION_SEAL_INVALID",
+          })
+        }
+        const stored = await E2eStreamsRepository.updateSealedName(
+          client,
+          workspaceId,
+          streamId,
+          sealedName,
+          expectedGeneration
+        )
+        if (!stored) throw new Error("E2E regeneration target disappeared")
+      }
+      const updated = await StreamRepository.updateDisplayName(client, {
+        workspaceId,
+        streamId,
+        displayName: e2e ? null : locked.displayName,
+        source: TitleSources.GENERATED,
+        expectedRevision: locked.displayNameRevision ?? 0,
+        expectedSource: source,
+      })
+      if (!updated) throw new Error("Regeneration title CAS failed under stream lock")
+      const state = await DynamicNamingStateRepository.ensure(client, {
+        workspaceId,
+        targetKind: "stream",
+        targetId: streamId,
+      })
+      const reset = await DynamicNamingStateRepository.resetForRegeneration(client, {
+        workspaceId,
+        targetKind: "stream",
+        targetId: streamId,
+        expectedVersion: state.version,
+      })
+      if (!reset) throw new Error("Regeneration state CAS failed")
+      const projected = await StreamRepository.findById(client, streamId)
+      if (!projected) throw new Error("Regeneration stream disappeared")
+      await OutboxRepository.insert(client, "stream:updated", {
+        workspaceId,
+        streamId,
+        stream: projected,
+      })
+      await OutboxRepository.insert(client, "dynamic_naming:requested", {
+        workspaceId,
+        targetKind: "stream",
+        targetId: streamId,
+        deferred: e2e,
+      })
+      logger.info({ workspaceId, targetKind: "stream", source, e2e }, "Dynamic title regeneration requested")
+      return { stream: projected, deferred: e2e }
     })
   }
 

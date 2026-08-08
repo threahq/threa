@@ -303,7 +303,9 @@ export const DynamicNamingStateRepository = {
           ELSE 0
         END,
         completed_at = CASE
-          WHEN claim_reason IN ('structural', 'regenerate') THEN completed_at
+          WHEN claim_reason = 'structural' THEN completed_at
+          WHEN claim_reason = 'regenerate' AND claim_checkpoint = 10 THEN NOW()
+          WHEN claim_reason = 'regenerate' THEN NULL
           WHEN claim_checkpoint = 10 OR (${isKeep} AND consecutive_keeps + 1 >= ${DYNAMIC_NAMING_SETTLING_KEEPS}) THEN COALESCE(completed_at, NOW())
           ELSE completed_at
         END,

@@ -230,6 +230,7 @@ function ConversationPanelHeader({
           conversationId={post.conversation.id}
           streamId={post.conversation.streamId}
           topicSummary={effectiveTitle}
+          topicSummarySource={post.conversation.topicSummarySource}
           status={post.conversation.status}
           isHidden={isHidden}
           triggerClassName="shrink-0"

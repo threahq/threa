@@ -45,7 +45,12 @@ const stream = {
 }
 
 describe("dynamic naming outbox handler", () => {
-  const schedule = mock(async () => {})
+  const schedule = mock(
+    async (
+      _data: { workspaceId: string; targetKind: "stream" | "conversation"; targetId: string },
+      _processAfter?: Date
+    ) => {}
+  )
 
   beforeEach(() => {
     schedule.mockClear()
@@ -132,6 +137,20 @@ describe("dynamic naming outbox handler", () => {
       { workspaceId: "ws_1", targetKind: "conversation", targetId: "conv_from" },
       { workspaceId: "ws_1", targetKind: "conversation", targetId: "conv_to" },
     ])
+  })
+
+  test("schedules plaintext regeneration requests and leaves E2E requests deferred", async () => {
+    const handler = new TestHandler({} as never, { schedule })
+    const requested = (id: bigint, targetId: string, deferred: boolean) =>
+      ({
+        id,
+        eventType: "dynamic_naming:requested",
+        payload: { workspaceId: "ws_1", targetKind: "stream", targetId, deferred },
+        createdAt,
+      }) as unknown as OutboxEvent
+    await handler.processAll([requested(10n, "stream_1", false), event, requested(11n, "stream_e2e", true)])
+    expect(schedule.mock.calls[0]).toEqual([{ workspaceId: "ws_1", targetKind: "stream", targetId: "stream_1" }])
+    expect(schedule.mock.calls).toHaveLength(2)
   })
 
   test("coalesces repeated structural events to the newest id per target", async () => {

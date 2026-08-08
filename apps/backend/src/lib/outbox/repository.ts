@@ -58,6 +58,7 @@ export type OutboxEventType =
   | "conversation:updated"
   | "conversation:message_assigned"
   | "conversation:message_reassigned"
+  | "dynamic_naming:requested"
   | "board:conversation_hide_changed"
   | "board:stream_mute_changed"
   | "memo:created"
@@ -1185,6 +1186,13 @@ export interface BudgetAlertOutboxPayload extends WorkspaceScopedPayload {
 /**
  * Maps event types to their payload types for type-safe event handling.
  */
+export interface DynamicNamingRequestedOutboxPayload {
+  workspaceId: string
+  targetKind: "stream" | "conversation"
+  targetId: string
+  deferred: boolean
+}
+
 export interface OutboxEventPayloadMap {
   "message:created": MessageCreatedOutboxPayload
   "message:edited": MessageEditedOutboxPayload
@@ -1224,6 +1232,7 @@ export interface OutboxEventPayloadMap {
   "conversation:updated": ConversationUpdatedOutboxPayload
   "conversation:message_assigned": ConversationMessageAssignedOutboxPayload
   "conversation:message_reassigned": ConversationMessageReassignedOutboxPayload
+  "dynamic_naming:requested": DynamicNamingRequestedOutboxPayload
   "board:conversation_hide_changed": BoardConversationHideChangedOutboxPayload
   "board:stream_mute_changed": BoardStreamMuteChangedOutboxPayload
   "memo:created": MemoCreatedOutboxPayload

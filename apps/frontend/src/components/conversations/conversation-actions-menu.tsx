@@ -1,6 +1,12 @@
 import { useEffect, useRef, useState } from "react"
 import { CircleCheck, Eye, EyeOff, EllipsisVertical, Pencil, RotateCcw, Sparkles } from "lucide-react"
-import { ConversationStatuses, MAX_CONVERSATION_TOPIC_LENGTH, StreamTypes } from "@threa/types"
+import {
+  ConversationStatuses,
+  MAX_CONVERSATION_TOPIC_LENGTH,
+  StreamTypes,
+  type Stream,
+  type TitleSource,
+} from "@threa/types"
 import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
@@ -24,6 +30,7 @@ import { ConversationSplitDialog } from "./conversation-split-dialog"
 import { useWorkspaceStreams } from "@/stores/workspace-store"
 import { effectiveConversationTitle } from "@/lib/conversations/title"
 import { useRenameStream } from "@/hooks/use-rename-stream"
+import { isProtectedRegenerableTitle, useRegenerateTitle } from "@/hooks/use-regenerate-title"
 
 interface ConversationActionsMenuProps {
   workspaceId: string
@@ -33,6 +40,7 @@ interface ConversationActionsMenuProps {
   streamId?: string
   /** Current topic — prefilled into the rename dialog; null renders as empty. */
   topicSummary: string | null
+  topicSummarySource?: TitleSource | null
   /** Current status — selects the resolve vs. reopen item. */
   status: string
   /** Whether this conversation is currently hidden from the viewer's board —
@@ -54,6 +62,7 @@ export function ConversationActionsMenu({
   conversationId,
   streamId,
   topicSummary,
+  topicSummarySource,
   status,
   isHidden = false,
   triggerClassName,
@@ -104,6 +113,24 @@ export function ConversationActionsMenu({
               <Pencil className="h-4 w-4" />
               Rename topic…
             </DropdownMenuItem>
+          )}
+          {isProtectedRegenerableTitle(
+            effectiveTitle,
+            isScratchpad ? stream?.displayNameSource : topicSummarySource
+          ) && (
+            <RegenerateTitleMenuItem
+              workspaceId={workspaceId}
+              target={
+                isScratchpad && stream
+                  ? { kind: "stream", stream, currentTitle: effectiveTitle! }
+                  : {
+                      kind: "conversation",
+                      conversationId,
+                      currentTitle: effectiveTitle!,
+                      source: topicSummarySource,
+                    }
+              }
+            />
           )}
           <DropdownMenuItem
             onSelect={() =>
@@ -162,6 +189,33 @@ export function ConversationActionsMenu({
         />
       )}
     </>
+  )
+}
+
+function RegenerateTitleMenuItem(props: {
+  workspaceId: string
+  target:
+    | {
+        kind: "stream"
+        stream: Pick<Stream, "id" | "e2eEnabled" | "displayNameSource">
+        currentTitle: string
+      }
+    | { kind: "conversation"; conversationId: string; currentTitle: string; source?: TitleSource | null }
+}) {
+  const regeneration = useRegenerateTitle(props.workspaceId, props.target)
+  const renameStream = useRenameStream(props.workspaceId, props.target.kind === "stream" ? props.target.stream.id : "")
+  const disabled = regeneration.isPending || (props.target.kind === "stream" && !renameStream.canRename)
+  return (
+    <DropdownMenuItem
+      disabled={disabled}
+      onSelect={(event) => {
+        event.preventDefault()
+        void regeneration.regenerate().catch(() => undefined)
+      }}
+    >
+      <Sparkles className="h-4 w-4" />
+      {regeneration.isPending ? "Regenerating…" : "Regenerate title"}
+    </DropdownMenuItem>
   )
 }
 

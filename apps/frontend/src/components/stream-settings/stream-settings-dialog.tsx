@@ -52,7 +52,13 @@ export function StreamSettingsDialog({ workspaceId }: StreamSettingsDialogProps)
   // Get stream from stream bootstrap cache, fallback to IDB workspace streams
   const stream = streamId ? (bootstrap?.stream ?? null) : null
   const streamFromIdb = streamId ? (idbStreams.find((s) => s.id === streamId) ?? null) : null
-  const resolvedStream: Stream | null = stream ?? (streamFromIdb as Stream | null)
+  // Bootstrap keeps E2E displayName null by design; the workspace-store row is
+  // the memory-only decrypted overlay. Prefer that title in the dialog without
+  // ever persisting it, so encrypted title actions remain reachable while unlocked.
+  let resolvedStream: Stream | null = stream ?? (streamFromIdb as Stream | null)
+  if (stream?.e2eEnabled && streamFromIdb?.displayName) {
+    resolvedStream = { ...stream, displayName: streamFromIdb.displayName }
+  }
 
   const currentMembership = useMemo(() => {
     if (!streamId) return null

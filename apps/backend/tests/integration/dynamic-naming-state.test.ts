@@ -445,7 +445,7 @@ describe("dynamic naming state repository", () => {
       decision: { action: "keep" },
     })
     expect(applied).toMatchObject({
-      state: { lastEvaluatedMessageCount: 12, regenerationPending: false },
+      state: { lastEvaluatedMessageCount: 12, regenerationPending: false, completedAt: expect.any(Date) },
       consumedClaim: { checkpoint: 10, messageCount: 12, reason: "regenerate" },
     })
   })
