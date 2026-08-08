@@ -87,12 +87,8 @@ export const MessageVersionRepository = {
    * - Each edit increments revision by 1
    */
   async getCurrentRevision(db: Querier, messageId: string): Promise<number | null> {
-    const result = await db.query<{ revision: number | null }>(sql`
-      SELECT CASE
-        WHEN EXISTS (SELECT 1 FROM messages WHERE id = ${messageId})
-        THEN COALESCE((SELECT MAX(version_number) FROM message_versions WHERE message_id = ${messageId}), 0) + 1
-        ELSE NULL
-      END AS revision
+    const result = await db.query<{ revision: number }>(sql`
+      SELECT revision FROM messages WHERE id = ${messageId}
     `)
 
     return result.rows[0]?.revision ?? null

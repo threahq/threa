@@ -57,6 +57,7 @@ function makeMessage(id: string, content: string): Message {
     ciphertext: null,
     envelope: null,
     e2eVersion: null,
+    revision: 1,
   }
 }
 

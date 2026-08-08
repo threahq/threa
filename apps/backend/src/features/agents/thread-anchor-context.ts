@@ -63,5 +63,6 @@ export async function findThreadAnchorContext(db: Querier, stream: Stream): Prom
     ciphertext: null,
     envelope: null,
     e2eVersion: null,
+    revision: 1,
   }
 }

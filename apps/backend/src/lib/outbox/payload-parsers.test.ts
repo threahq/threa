@@ -44,6 +44,38 @@ describe("parseMessagePayload", () => {
       })
     })
 
+    test("parses the message:edited payload shape", () => {
+      const contentJson = { type: "doc", content: [{ type: "paragraph", content: [] }] }
+      expect(
+        parseMessagePayload({
+          workspaceId: "ws_123",
+          streamId: "stream_456",
+          event: {
+            id: "event_edit",
+            sequence: "43",
+            actorType: "user",
+            actorId: "usr_abc",
+            payload: {
+              messageId: "msg_def",
+              contentMarkdown: "Edited",
+              contentJson,
+              editedAt: new Date().toISOString(),
+            },
+          },
+        })
+      ).toEqual({
+        workspaceId: "ws_123",
+        streamId: "stream_456",
+        event: {
+          id: "event_edit",
+          sequence: "43",
+          actorType: "user",
+          actorId: "usr_abc",
+          payload: { messageId: "msg_def", contentMarkdown: "Edited", contentJson },
+        },
+      })
+    })
+
     test("should parse persona message", () => {
       const payload = {
         workspaceId: "ws_123",

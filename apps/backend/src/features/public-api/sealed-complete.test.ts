@@ -96,8 +96,11 @@ function arrange(
     message: { id: params.id, streamId: session.streamId },
   }))
   const getLatestSequence = mock(async () => 5n)
+  const activeClaim = { id: "binv_1", responseStreamId: "stream_thread" }
+  const findActiveClaimForUpdate = mock(async () => (claimCompleted ? activeClaim : null))
+  const validateClaimSourceForCompletion = mock(async () => true)
   const completeInvocationInTransaction = mock(async (_db: unknown, _params: unknown) =>
-    claimCompleted ? { id: "binv_1" } : null
+    claimCompleted ? activeClaim : null
   )
 
   const { io, emitted } = createEmitSpy()
@@ -108,13 +111,25 @@ function arrange(
     memoExplorerService: {} as PublicApiDeps["memoExplorerService"],
     attachmentService: {} as PublicApiDeps["attachmentService"],
     botChannelService: {} as PublicApiDeps["botChannelService"],
-    botRuntimeService: { completeInvocationInTransaction } as unknown as PublicApiDeps["botRuntimeService"],
+    botRuntimeService: {
+      findActiveClaimForUpdate,
+      validateClaimSourceForCompletion,
+      completeInvocationInTransaction,
+    } as unknown as PublicApiDeps["botRuntimeService"],
     labelService: {} as PublicApiDeps["labelService"],
     labelAssignmentService: {} as PublicApiDeps["labelAssignmentService"],
     pool: {} as PublicApiDeps["pool"],
     io,
   })
-  return { handlers, emitted, createMessageInTransaction, completeInvocationInTransaction, insertEvent, insertOutbox }
+  return {
+    handlers,
+    emitted,
+    createMessageInTransaction,
+    completeInvocationInTransaction,
+    validateClaimSourceForCompletion,
+    insertEvent,
+    insertOutbox,
+  }
 }
 
 function req(
@@ -231,6 +246,26 @@ describe("completeBotInvocationSealed", () => {
       status: 404,
       code: "NOT_FOUND",
     })
+  })
+
+  it("persists no sealed reply, trace floor, or lifecycle when canonical input is stale", async () => {
+    const arranged = arrange()
+    arranged.validateClaimSourceForCompletion.mockResolvedValue(false)
+    const { res } = createResponse()
+
+    await expect(
+      arranged.handlers.completeBotInvocationSealed(
+        req({ reply: { messageId: "msg_reply", ciphertext: "c2VhbGVk", envelope: REPLY_ENVELOPE } }),
+        res
+      )
+    ).rejects.toMatchObject({ status: 404, code: "NOT_FOUND" })
+
+    expect({
+      messages: arranged.createMessageInTransaction.mock.calls.length,
+      completions: arranged.completeInvocationInTransaction.mock.calls.length,
+      lifecycleEvents: arranged.insertEvent.mock.calls.length,
+      lifecycleOutbox: arranged.insertOutbox.mock.calls.length,
+    }).toEqual({ messages: 0, completions: 0, lifecycleEvents: 0, lifecycleOutbox: 0 })
   })
 
   it("rejects a reply sealed under the wrong key generation (400)", async () => {

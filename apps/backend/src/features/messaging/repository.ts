@@ -22,6 +22,7 @@ interface MessageRow {
   ciphertext: Buffer | null
   envelope: unknown | null
   e2e_version: number | null
+  revision: number
 }
 
 interface ReactionRow {
@@ -63,6 +64,20 @@ export interface Message {
   ciphertext: Buffer | null
   envelope: unknown | null
   e2eVersion: number | null
+  revision: number
+}
+
+export interface InvocationSourceState {
+  workspaceId: string
+  streamId: string
+  revision: number
+  deleted: boolean
+  contentJson: JSONContent
+  contentMarkdown: string
+  ciphertext: Buffer | null
+  envelope: unknown | null
+  authorId: string
+  authorType: AuthorType
 }
 
 export interface InsertMessageParams {
@@ -110,6 +125,7 @@ function mapRowToMessage(row: MessageRow, reactions: Record<string, string[]> = 
     ciphertext: row.ciphertext,
     envelope: row.envelope,
     e2eVersion: row.e2e_version,
+    revision: row.revision,
   }
 }
 
@@ -168,7 +184,7 @@ const SELECT_FIELDS = `
   content_json, content_markdown, ${REPLY_COUNT_SUBQUERY("messages")}, client_message_id, sent_via,
   metadata, conversation_intent,
   edited_at, deleted_at, created_at,
-  ciphertext, envelope, e2e_version
+  ciphertext, envelope, e2e_version, revision
 `
 
 const QUALIFIED_SELECT_FIELDS = `
@@ -176,10 +192,38 @@ const QUALIFIED_SELECT_FIELDS = `
   m.content_json, m.content_markdown, ${REPLY_COUNT_SUBQUERY("m")}, m.client_message_id, m.sent_via,
   m.metadata, m.conversation_intent,
   m.edited_at, m.deleted_at, m.created_at,
-  m.ciphertext, m.envelope, m.e2e_version
+  m.ciphertext, m.envelope, m.e2e_version, m.revision
 `
 
 export const MessageRepository = {
+  async findInvocationSourceStateForShare(
+    db: Querier,
+    params: { workspaceId: string; messageId: string }
+  ): Promise<InvocationSourceState | null> {
+    const result = await db.query<MessageRow & { workspace_id: string }>(sql`
+      SELECT m.*, s.workspace_id, 0 AS reply_count
+      FROM messages m
+      JOIN streams s ON s.id = m.stream_id
+      WHERE m.id = ${params.messageId}
+        AND s.workspace_id = ${params.workspaceId}
+      FOR SHARE OF m
+    `)
+    const row = result.rows[0]
+    if (!row) return null
+    return {
+      workspaceId: row.workspace_id,
+      streamId: row.stream_id,
+      revision: row.revision,
+      deleted: row.deleted_at !== null,
+      contentJson: row.content_json,
+      contentMarkdown: row.content_markdown,
+      ciphertext: row.ciphertext,
+      envelope: row.envelope,
+      authorId: row.author_id,
+      authorType: row.author_type as AuthorType,
+    }
+  },
+
   async findByClientMessageId(db: Querier, streamId: string, clientMessageId: string): Promise<Message | null> {
     const result = await db.query<MessageRow>(sql`
       SELECT ${sql.raw(SELECT_FIELDS)} FROM messages
@@ -676,7 +720,7 @@ export const MessageRepository = {
   ): Promise<Message | null> {
     const result = await db.query<MessageRow>(sql`
       UPDATE messages
-      SET content_json = ${JSON.stringify(contentJson)}, content_markdown = ${contentMarkdown}, edited_at = NOW()
+      SET content_json = ${JSON.stringify(contentJson)}, content_markdown = ${contentMarkdown}, edited_at = NOW(), revision = revision + 1
       WHERE id = ${id}
       RETURNING ${sql.raw(SELECT_FIELDS)}
     `)
@@ -687,8 +731,8 @@ export const MessageRepository = {
   async softDelete(db: Querier, id: string): Promise<Message | null> {
     const result = await db.query<MessageRow>(sql`
       UPDATE messages
-      SET deleted_at = NOW()
-      WHERE id = ${id}
+      SET deleted_at = NOW(), revision = revision + 1
+      WHERE id = ${id} AND deleted_at IS NULL
       RETURNING ${sql.raw(SELECT_FIELDS)}
     `)
     if (!result.rows[0]) return null

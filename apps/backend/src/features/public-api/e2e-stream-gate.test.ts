@@ -113,6 +113,7 @@ describe("public API E2E-stream plaintext gate", () => {
     spyOn(dbModule, "withTransaction").mockImplementation(((_pool: unknown, fn: (c: unknown) => unknown) =>
       fn({})) as never)
     const botRuntimeService = {
+      validateClaimSourceForCompletion: mock(() => Promise.resolve(true)),
       findActiveClaimForUpdate: mock(() => Promise.resolve({ id: "claim_1", responseStreamId: "stream_1" })),
       findPresenceByInstance: mock(() => Promise.resolve({ manifest: null })),
       completeInvocationInTransaction: mock(() => Promise.resolve({ id: "inv_1" })),
@@ -166,6 +167,7 @@ describe("public API E2E-stream plaintext gate", () => {
       })
     )
     const botRuntimeService = {
+      validateClaimSourceForCompletion: mock(() => Promise.resolve(true)),
       findActiveClaimForUpdate: mock(() =>
         Promise.resolve({ id: "claim_1", responseStreamId: "stream_1", metadata: {}, authorUserId: "usr_1" })
       ),
@@ -209,6 +211,7 @@ describe("public API E2E-stream plaintext gate", () => {
       fn({})) as never)
     const createMessageInTransaction = mock(() => Promise.resolve({ id: "msg_ack" }))
     const botRuntimeService = {
+      validateClaimSourceForCompletion: mock(() => Promise.resolve(true)),
       findActiveClaimForUpdate: mock(() => Promise.resolve({ id: "claim_1", responseStreamId: "stream_1" })),
       findPresenceByInstance: mock(() => Promise.resolve({ manifest: null })),
     } as unknown as PublicApiDeps["botRuntimeService"]
@@ -243,6 +246,7 @@ describe("public API E2E-stream plaintext gate", () => {
     const isE2e = spyOn(E2eStreamsRepository, "isE2eStream").mockResolvedValue(true)
     const findById = spyOn(BotRepository, "findById").mockResolvedValue({ id: "bot_1", archivedAt: null } as never)
     const botRuntimeService = {
+      validateClaimSourceForCompletion: mock(() => Promise.resolve(true)),
       findActiveClaim: mock(() =>
         Promise.resolve({ id: "claim_1", responseStreamId: "stream_1", sourceMessageId: "msg_t" })
       ),

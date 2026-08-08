@@ -14,6 +14,18 @@ import { type JSONContent, actorTypeFromMentionId, isResolvedChannelLinkId, isRe
  * Mention nodes whose id is still a bare slug (unresolved) are skipped — they
  * only appear before the ingestion resolver runs. Deduped by `actorId`.
  */
+export function collectMentionSlugs(content: JSONContent): string[] {
+  const slugs: string[] = []
+  const walk = (node: JSONContent): void => {
+    if (node.type === "mention" && typeof node.attrs?.slug === "string" && node.attrs.slug.length > 0) {
+      slugs.push(node.attrs.slug)
+    }
+    for (const child of node.content ?? []) walk(child)
+  }
+  walk(content)
+  return slugs
+}
+
 export function collectMentionActorRefs(
   content: JSONContent
 ): Array<{ actorType: "user" | "persona" | "bot" | "broadcast"; actorId: string }> {

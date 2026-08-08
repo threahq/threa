@@ -4,6 +4,7 @@ import * as dbModule from "../../db"
 import type { ProcessResult } from "@threa/backend-common"
 import * as cursorLockModule from "@threa/backend-common"
 import { OutboxRepository } from "../../lib/outbox"
+import { BotInvocationRepository } from "../bot-runtimes"
 import { MessageVersionRepository } from "../messaging"
 import { StreamEventRepository, StreamRepository } from "../streams"
 import { E2eStreamsRepository } from "../e2e-streams"
@@ -23,8 +24,9 @@ function mockCursorLock(onRun?: (result: ProcessResult) => void) {
   ;(spyOn(cursorLockModule, "CursorLock") as any).mockImplementation(makeFakeCursorLock(onRun))
 }
 
-function createHandler() {
+function createHandler(botInvocationOwned = false) {
   mockCursorLock()
+  spyOn(BotInvocationRepository, "isBotInvocationSession").mockResolvedValue(botInvocationOwned)
   spyOn(MessageVersionRepository, "findLatestByMessageId").mockResolvedValue(null)
 
   const eventService = {
@@ -910,6 +912,89 @@ describe("AgentMessageMutationHandler", () => {
     expect(updateStatusSpy).not.toHaveBeenCalled()
     expect(eventService.deleteMessage).not.toHaveBeenCalled()
     expect(jobQueue.send).not.toHaveBeenCalled()
+  })
+
+  it("skips persona rerun for a bot-owned trigger session", async () => {
+    spyOn(OutboxRepository, "fetchAfterId").mockResolvedValue([
+      {
+        id: 1n,
+        eventType: "message:edited",
+        payload: {
+          workspaceId: "ws_1",
+          streamId: "stream_1",
+          event: { actorId: "usr_1", payload: { messageId: "msg_trigger" } },
+        },
+        createdAt: new Date(),
+      } as any,
+    ])
+    spyOn(AgentSessionRepository, "findByTriggerMessage").mockResolvedValue({ id: "binv_1" } as any)
+    const revision = spyOn(MessageVersionRepository, "getCurrentRevision")
+    const update = spyOn(AgentSessionRepository, "updateStatus")
+    const { handler, jobQueue } = createHandler(true)
+
+    handler.handle()
+    await waitForDebounce()
+
+    expect(BotInvocationRepository.isBotInvocationSession).toHaveBeenCalledWith({}, "ws_1", "binv_1")
+    expect({
+      revisionReads: revision.mock.calls.length,
+      updates: update.mock.calls.length,
+      jobs: jobQueue.send.mock.calls.length,
+    }).toEqual({ revisionReads: 0, updates: 0, jobs: 0 })
+  })
+
+  it("skips persona rerun for a bot-owned session referencing the edited message", async () => {
+    spyOn(OutboxRepository, "fetchAfterId").mockResolvedValue([
+      {
+        id: 1n,
+        eventType: "message:edited",
+        payload: {
+          workspaceId: "ws_1",
+          streamId: "stream_1",
+          event: { actorId: "usr_1", payload: { messageId: "msg_context" } },
+        },
+        createdAt: new Date(),
+      } as any,
+    ])
+    spyOn(AgentSessionRepository, "findByTriggerMessage").mockResolvedValue(null)
+    spyOn(AgentSessionRepository, "findLatestByStream").mockResolvedValue({ id: "binv_1" } as any)
+    const update = spyOn(AgentSessionRepository, "updateStatus")
+    const { handler, jobQueue } = createHandler(true)
+
+    handler.handle()
+    await waitForDebounce()
+
+    expect(BotInvocationRepository.isBotInvocationSession).toHaveBeenCalledWith({}, "ws_1", "binv_1")
+    expect({ updates: update.mock.calls.length, jobs: jobQueue.send.mock.calls.length }).toEqual({
+      updates: 0,
+      jobs: 0,
+    })
+  })
+
+  it("skips persona deletion and message cascade for bot-owned sessions", async () => {
+    spyOn(OutboxRepository, "fetchAfterId").mockResolvedValue([
+      {
+        id: 1n,
+        eventType: "message:deleted",
+        payload: { workspaceId: "ws_1", streamId: "stream_1", messageId: "msg_trigger" },
+        createdAt: new Date(),
+      } as any,
+    ])
+    spyOn(AgentSessionRepository, "listByTriggerMessage").mockResolvedValue([{ id: "binv_1" }] as any)
+    const update = spyOn(AgentSessionRepository, "updateStatus")
+    const { handler, eventService } = createHandler(true)
+
+    handler.handle()
+    await waitForDebounce()
+
+    expect(BotInvocationRepository.isBotInvocationSession).toHaveBeenCalledWith({}, "ws_1", "binv_1")
+    expect({
+      updates: update.mock.calls.length,
+      deletedMessages: eventService.deleteMessage.mock.calls.length,
+    }).toEqual({
+      updates: 0,
+      deletedMessages: 0,
+    })
   })
 
   it("deletes invoking sessions and cascades deletion for stored and event-sourced session messages", async () => {

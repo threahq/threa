@@ -66,6 +66,7 @@ function toMessages(input: MemorizerInput, now: Date): { messages: Message[]; fo
         ciphertext: null,
         envelope: null,
         e2eVersion: null,
+        revision: 1,
       }) satisfies Message
   )
   return { messages, formatted }

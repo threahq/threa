@@ -94,6 +94,7 @@ function toMessage(
     ciphertext: null,
     envelope: null,
     e2eVersion: null,
+    revision: 1,
   }
 }
 

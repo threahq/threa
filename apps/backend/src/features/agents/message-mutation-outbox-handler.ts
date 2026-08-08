@@ -12,6 +12,7 @@ import { MessageVersionRepository } from "../messaging"
 import { StreamEventRepository, StreamRepository } from "../streams"
 import { E2eStreamsRepository } from "../e2e-streams"
 import { AgentSessionRepository, SessionStatuses, type AgentSession } from "./session-repository"
+import { BotInvocationRepository } from "../bot-runtimes"
 
 export type AgentMessageMutationHandlerConfig = DebouncedOutboxHandlerConfig
 
@@ -149,6 +150,7 @@ export class AgentMessageMutationHandler extends DebouncedOutboxHandler {
 
     const latestSession = await AgentSessionRepository.findByTriggerMessage(this.db, payload.messageId)
     if (latestSession) {
+      if (await BotInvocationRepository.isBotInvocationSession(this.db, payload.workspaceId, latestSession.id)) return
       await this.handleTriggerMessageEdit(payload, occurredAt, latestSession)
       return
     }
@@ -215,6 +217,7 @@ export class AgentMessageMutationHandler extends DebouncedOutboxHandler {
   ): Promise<void> {
     const latestSession = await AgentSessionRepository.findLatestByStream(this.db, payload.streamId)
     if (!latestSession) return
+    if (await BotInvocationRepository.isBotInvocationSession(this.db, payload.workspaceId, latestSession.id)) return
     if (latestSession.triggerMessageId === payload.messageId) return
     if (this.shouldSkipBySessionStatus(latestSession)) return
 
@@ -337,6 +340,7 @@ export class AgentMessageMutationHandler extends DebouncedOutboxHandler {
     if (sessions.length === 0) return
 
     for (const session of sessions) {
+      if (await BotInvocationRepository.isBotInvocationSession(this.db, payload.workspaceId, session.id)) continue
       const deletedAt = await this.markSessionDeleted(session, payload.workspaceId)
 
       await this.deleteSessionMessages(session, payload.workspaceId)

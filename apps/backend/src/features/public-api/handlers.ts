@@ -611,7 +611,7 @@ async function buildSealedClaimContext(
       0
     ),
   ])
-  if (!trigger) {
+  if (!trigger || trigger.deletedAt) {
     throw new HttpError("Sealed claim trigger message is gone", { status: 409, code: "TRIGGER_MESSAGE_GONE" })
   }
   const priorMessages = surrounding.filter((m) => m.id !== invocation.sourceMessageId)
@@ -1350,6 +1350,15 @@ export function createPublicApiHandlers({
 
       if (!isSessionControl && bot && !bot.archivedAt) {
         await withTransaction(pool, async (client) => {
+          const currentClaim = await botRuntimeService.findActiveClaimForUpdate(client, {
+            workspaceId: invocation.workspaceId,
+            botId: invocation.actorId,
+            invocationId: invocation.id,
+            instanceId: data.instanceId,
+            claimToken: invocation.claimToken!,
+          })
+          if (!currentClaim || currentClaim.claimedSourceMessageRevision !== invocation.claimedSourceMessageRevision)
+            return
           const latestSequence = await eventService.getLatestSequence(invocation.responseStreamId)
           const session = await AgentSessionRepository.insertRunningOrSkip(client, {
             id: invocation.id,
@@ -1568,6 +1577,15 @@ export function createPublicApiHandlers({
       if (data.reply) assertReplyKeyGeneration(session, data.reply.envelope)
 
       const { message, sessionFinalized } = await withTransaction(pool, async (client) => {
+        const claim = await botRuntimeService.findActiveClaimForUpdate(client, {
+          workspaceId: req.workspaceId!,
+          botId: bot.id,
+          invocationId: session.id,
+          claimToken: callbackToken,
+        })
+        if (!claim || !(await botRuntimeService.validateClaimSourceForCompletion(client, claim))) {
+          throw new HttpError("Invocation claim not found", { status: 404, code: "NOT_FOUND" })
+        }
         const reply = data.reply
         const message = reply
           ? (
@@ -1680,7 +1698,9 @@ export function createPublicApiHandlers({
           instanceId: data.instanceId,
           claimToken: data.claimToken,
         })
-        if (!claim) throw new HttpError("Invocation claim not found", { status: 404, code: "NOT_FOUND" })
+        if (!claim || !(await botRuntimeService.validateClaimSourceForCompletion(client, claim))) {
+          throw new HttpError("Invocation claim not found", { status: 404, code: "NOT_FOUND" })
+        }
         await assertStreamAccessible(req, claim.responseStreamId)
         // E2EE-2: a plaintext completion MESSAGE into an E2E stream would break
         // the sealed timeline (sealed replies go to /sealed-complete instead),

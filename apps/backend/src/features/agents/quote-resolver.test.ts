@@ -51,6 +51,7 @@ function createMessage(overrides: Partial<Message> & { id: string }): Message {
     ciphertext: null,
     envelope: null,
     e2eVersion: null,
+    revision: 1,
   }
   return { ...base, ...overrides }
 }

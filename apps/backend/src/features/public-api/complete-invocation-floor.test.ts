@@ -88,7 +88,9 @@ function arrangeCompletion(params: { existingSteps: unknown[]; manifest?: unknow
     createMessageInTransaction,
     getLatestSequence: mock(() => Promise.resolve(7n)),
   } as unknown as EventService
+  const validateClaimSourceForCompletion = mock(() => Promise.resolve(true))
   const botRuntimeService = {
+    validateClaimSourceForCompletion,
     findActiveClaimForUpdate: mock(() => Promise.resolve({ id: "binv_1", responseStreamId: "stream_1" })),
     findPresenceByInstance: mock(() => Promise.resolve({ manifest: params.manifest ?? null })),
     completeInvocationInTransaction: mock(() =>
@@ -128,7 +130,16 @@ function arrangeCompletion(params: { existingSteps: unknown[]; manifest?: unknow
     body: { instanceId: "inst_1", claimToken: "tok_1", finalMessageMarkdown: "High tide is at 14:32." },
   } as unknown as Request
 
-  return { handlers, req, emitted, appendStep, insertEvent, createMessageInTransaction, completeSession }
+  return {
+    handlers,
+    req,
+    emitted,
+    appendStep,
+    insertEvent,
+    createMessageInTransaction,
+    completeSession,
+    validateClaimSourceForCompletion,
+  }
 }
 
 describe("completeBotInvocation synthesized-trace floor", () => {
@@ -186,6 +197,23 @@ describe("completeBotInvocation synthesized-trace floor", () => {
     const completedEvent = insertEvent.mock.calls[0]?.[1] as unknown as { payload: Record<string, unknown> }
     expect(completedEvent.payload).toMatchObject({ stepCount: 1 })
     expect(emitted.filter((e) => e.event === "agent_session:step:completed")).toHaveLength(0)
+  })
+
+  it("writes no reply or synthesized trace when canonical input is stale", async () => {
+    const arranged = arrangeCompletion({ existingSteps: [] })
+    arranged.validateClaimSourceForCompletion.mockResolvedValue(false)
+
+    await expect(arranged.handlers.completeBotInvocation(arranged.req, createResponse())).rejects.toMatchObject({
+      status: 404,
+      code: "NOT_FOUND",
+    })
+
+    expect({
+      messages: arranged.createMessageInTransaction.mock.calls.length,
+      synthesizedSteps: arranged.appendStep.mock.calls.length,
+      completedSessions: arranged.completeSession.mock.calls.length,
+      lifecycleEvents: arranged.insertEvent.mock.calls.length,
+    }).toEqual({ messages: 0, synthesizedSteps: 0, completedSessions: 0, lifecycleEvents: 0 })
   })
 })
 

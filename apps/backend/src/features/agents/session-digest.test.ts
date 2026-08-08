@@ -56,6 +56,7 @@ function makeMessage(id: string, content: string, authorType = "user", authorId 
     ciphertext: null,
     envelope: null,
     e2eVersion: null,
+    revision: 1,
   } as Message
 }
 

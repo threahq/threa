@@ -50,6 +50,7 @@ export {
   collectQuoteReplyMessageIds,
   collectMemoEmbedIds,
   collectMentionActorRefs,
+  collectMentionSlugs,
   collectChannelStreamIds,
   collectUnresolvedMentionSlugs,
   collectUnresolvedChannelLinkSlugs,

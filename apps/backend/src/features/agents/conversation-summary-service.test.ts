@@ -27,6 +27,7 @@ function makeMessage(sequence: bigint, content: string): Message {
     ciphertext: null,
     envelope: null,
     e2eVersion: null,
+    revision: 1,
   }
 }
 
