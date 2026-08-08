@@ -119,18 +119,18 @@ User: How long do reviews usually take?`,
     },
   },
 
-  // Minimal context - should return NOT_ENOUGH_CONTEXT
+  // Minimal context may defer only before the first forced checkpoint
   {
     id: "minimal-greeting-001",
     name: "Minimal: Just a greeting",
     input: {
       conversationText: `User: Hi`,
-      requireName: false,
+      checkpoint: 1,
+      forced: false,
       category: "minimal",
     },
     expectedOutput: {
       expectedAction: "defer",
-      expectNotEnoughContext: true,
     },
   },
   {
@@ -138,28 +138,28 @@ User: How long do reviews usually take?`,
     name: "Minimal: Single word message",
     input: {
       conversationText: `User: Thanks`,
-      requireName: false,
+      checkpoint: 1,
+      forced: false,
       category: "minimal",
     },
     expectedOutput: {
       expectedAction: "defer",
-      expectNotEnoughContext: true,
     },
   },
   {
     id: "minimal-required-001",
-    name: "Minimal: Required name for vague message",
+    name: "Minimal: Forced name for vague message",
     input: {
       conversationText: `User: Hey
 AI: Hello! How can I help you today?`,
-      requireName: true,
+      checkpoint: 3,
+      forced: true,
       category: "minimal",
     },
     expectedOutput: {
       expectedAction: "rename",
-      expectNotEnoughContext: false,
       wordCountRange: { min: 2, max: 5 },
-      allowGeneric: true, // Generic names acceptable for minimal context
+      allowGeneric: true,
     },
   },
 

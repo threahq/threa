@@ -134,10 +134,7 @@ export const sessionAssignmentSchema = z
       .array(z.object({ attachmentId: z.string().min(1), ciphertext: z.string().min(1) }))
       .max(MAX_INLINE_ATTACHMENTS)
       .optional(),
-    // Whether to auto-title this scratchpad (declared so Zod doesn't strip it —
-    // the same failure mode the attachment slice hit).
-    autoTitle: z.boolean().optional(),
-    /** Revision-fenced E2E dynamic naming instruction; preferred over autoTitle. */
+    /** Revision-fenced E2E dynamic naming instruction. */
     naming: EnclaveNamingInstructionSchema.optional(),
     /**
      * Prior turns' sealed turn_digest steps (C-1), oldest→newest. MUST be

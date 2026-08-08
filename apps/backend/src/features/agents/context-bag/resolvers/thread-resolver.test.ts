@@ -33,7 +33,6 @@ function makeStream(overrides: Record<string, any> = {}): any {
     parentStreamId: null,
     parentAnchorId: null,
     rootStreamId: null,
-    displayNameGeneratedAt: null,
     ...overrides,
   }
 }

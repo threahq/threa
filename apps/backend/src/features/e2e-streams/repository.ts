@@ -105,13 +105,10 @@ export const E2eStreamsRepository = {
       throw new Error("updateSealedName: ciphertext is not canonical base64")
     }
     const result = await db.query<{ updated: boolean }>(sql`
-      WITH rollout_guard AS MATERIALIZED (
-        SELECT set_config('threa.coordinated_title_write', '1', true)
-      ), updated AS (
+      WITH updated AS (
         UPDATE e2e_streams
         SET name_ciphertext = ${sealed ? Buffer.from(sealed.ciphertext, "base64") : null},
             name_envelope = ${sealed ? JSON.stringify(sealed.envelope) : null}
-        FROM rollout_guard
         WHERE workspace_id = ${workspaceId} AND stream_id = ${streamId}
           AND (${expectedKeyGeneration === undefined} OR current_key_generation = ${expectedKeyGeneration ?? 0})
         RETURNING 1
@@ -145,41 +142,6 @@ export const E2eStreamsRepository = {
       LIMIT 1
     `)
     return result.rows[0] ? mapRow(result.rows[0]) : null
-  },
-
-  /**
-   * Store a sealed display name only if the stream doesn't already have one
-   * (race-safe first-write-wins, INV-20). Used by the enclave auto-title path:
-   * the enclave only generates a title for an untitled scratchpad, and the
-   * `name_ciphertext IS NULL` guard means a second concurrent first-turn can't
-   * clobber the title the first one set. Returns true when this call set it.
-   * No-op (false) for a plaintext stream or one already named.
-   */
-  async setSealedNameIfAbsent(
-    db: Querier,
-    workspaceId: string,
-    streamId: string,
-    sealed: { ciphertext: string; envelope: unknown }
-  ): Promise<boolean> {
-    if (Buffer.from(sealed.ciphertext, "base64").toString("base64") !== sealed.ciphertext) {
-      throw new Error("setSealedNameIfAbsent: ciphertext is not canonical base64")
-    }
-    const result = await db.query<{ updated: boolean }>(sql`
-      WITH rollout_guard AS MATERIALIZED (
-        SELECT set_config('threa.coordinated_title_write', '1', true)
-      ), updated AS (
-        UPDATE e2e_streams
-        SET name_ciphertext = ${Buffer.from(sealed.ciphertext, "base64")},
-            name_envelope = ${JSON.stringify(sealed.envelope)}
-        FROM rollout_guard
-        WHERE workspace_id = ${workspaceId}
-          AND stream_id = ${streamId}
-          AND name_ciphertext IS NULL
-        RETURNING 1
-      )
-      SELECT EXISTS(SELECT 1 FROM updated) AS updated
-    `)
-    return result.rows[0]?.updated ?? false
   },
 
   /**

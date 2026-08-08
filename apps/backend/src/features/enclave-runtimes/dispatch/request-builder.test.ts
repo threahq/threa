@@ -84,7 +84,7 @@ describe("buildEnclaveSessionAssignment", () => {
     expect(assignment).not.toHaveProperty("maxTokens") // null → omitted
   })
 
-  it("ships both legacy autoTitle and opaque revision-fenced naming during rollout", () => {
+  it("ships opaque revision-fenced naming without plaintext title metadata", () => {
     const naming = {
       stateRevision: 4,
       titleRevision: 2,
@@ -97,8 +97,8 @@ describe("buildEnclaveSessionAssignment", () => {
         envelope: { v: 2, keyGeneration: 1, iv: "aXY=", aad: "YWFk" },
       },
     }
-    const assignment = buildEnclaveSessionAssignment(inputs({ autoTitle: true, naming }))
-    expect(assignment).toMatchObject({ autoTitle: true, naming })
+    const assignment = buildEnclaveSessionAssignment(inputs({ naming }))
+    expect(assignment).toMatchObject({ naming })
     expect(JSON.stringify(assignment)).not.toContain("currentTitle")
   })
 

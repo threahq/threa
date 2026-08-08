@@ -2,10 +2,9 @@
  * Stream Naming Integration Tests
  *
  * Tests verify:
- * 1. needsAutoNaming correctly identifies streams needing naming
- * 2. getEffectiveDisplayName returns correct names for each stream type
- * 3. formatParticipantNames handles various participant counts
- * 4. StreamNamingService database interactions (using stub provider)
+ * 1. getEffectiveDisplayName returns correct names for each stream type
+ * 2. formatParticipantNames handles participant projections
+ * 3. revision-fenced dynamic naming updates real schema rows
  */
 
 import { describe, test, expect, beforeAll, afterAll } from "bun:test"
@@ -14,11 +13,7 @@ import { withTransaction } from "../../src/db"
 import { withTestTransaction, addTestMember, testMessageContent } from "./setup"
 import { WorkspaceRepository } from "../../src/features/workspaces"
 import { StreamService, StreamRepository, type Stream } from "../../src/features/streams"
-import {
-  needsAutoNaming,
-  getEffectiveDisplayName,
-  formatParticipantNames,
-} from "../../src/features/streams/display-name"
+import { getEffectiveDisplayName, formatParticipantNames } from "../../src/features/streams/display-name"
 import { setupTestDatabase } from "./setup"
 import { messageId, streamId, userId, workspaceId } from "../../src/lib/id"
 import { StreamTypes, Visibilities, CompanionModes } from "@threa/types"
@@ -50,7 +45,6 @@ function createMockStream(overrides: Partial<Stream> = {}): Stream {
     createdAt: new Date(),
     updatedAt: new Date(),
     archivedAt: null,
-    displayNameGeneratedAt: null,
     ...overrides,
   }
 }
@@ -66,44 +60,6 @@ describe("Stream Naming", () => {
 
   afterAll(async () => {
     await pool.end()
-  })
-
-  describe("needsAutoNaming", () => {
-    test("returns true for scratchpad without displayName", () => {
-      const stream = createMockStream({ type: "scratchpad", displayName: null })
-      expect(needsAutoNaming(stream)).toBe(true)
-    })
-
-    test("returns true for thread without displayName", () => {
-      const stream = createMockStream({ type: "thread", displayName: null })
-      expect(needsAutoNaming(stream)).toBe(true)
-    })
-
-    test("returns false for thread with displayName", () => {
-      const stream = createMockStream({
-        type: "thread",
-        displayName: "Discussion Thread",
-      })
-      expect(needsAutoNaming(stream)).toBe(false)
-    })
-
-    test("returns false for scratchpad with displayName", () => {
-      const stream = createMockStream({
-        type: "scratchpad",
-        displayName: "My Notes",
-      })
-      expect(needsAutoNaming(stream)).toBe(false)
-    })
-
-    test("returns false for channel (even without displayName)", () => {
-      const stream = createMockStream({ type: "channel", displayName: null })
-      expect(needsAutoNaming(stream)).toBe(false)
-    })
-
-    test("returns false for dm", () => {
-      const stream = createMockStream({ type: "dm", displayName: null })
-      expect(needsAutoNaming(stream)).toBe(false)
-    })
   })
 
   describe("getEffectiveDisplayName", () => {
@@ -136,7 +92,6 @@ describe("Stream Naming", () => {
           type: "scratchpad",
           displayName: "Project Ideas",
           displayNameSource: "generated",
-          displayNameGeneratedAt: new Date(),
         })
         const result = getEffectiveDisplayName(stream)
         expect(result.displayName).toBe("Project Ideas")
@@ -153,18 +108,11 @@ describe("Stream Naming", () => {
         expect(result.source).toBe("placeholder")
       })
 
-      test("renders a name set at creation, with no auto-namer timestamp", () => {
-        // This assertion used to be the opposite, on the theory that a name
-        // without `displayNameGeneratedAt` meant it "wasn't set properly".
-        // `StreamRepository.insert` has no such column, so that description fit
-        // every scratchpad a bot ever created: the name was stored and never
-        // rendered, and `needsAutoNaming` (displayName === null) skipped those
-        // streams, so nothing ever set the timestamp either.
+      test("renders an explicit name set at creation", () => {
         const stream = createMockStream({
           type: "scratchpad",
           displayName: "Manual Name",
           displayNameSource: "explicit",
-          displayNameGeneratedAt: null,
         })
         const result = getEffectiveDisplayName(stream)
         expect(result.displayName).toBe("Manual Name")
@@ -173,7 +121,7 @@ describe("Stream Naming", () => {
 
       test("only a genuinely nameless scratchpad gets the placeholder", () => {
         for (const displayName of [null, "", "   "]) {
-          const stream = createMockStream({ type: "scratchpad", displayName, displayNameGeneratedAt: null })
+          const stream = createMockStream({ type: "scratchpad", displayName })
           expect(getEffectiveDisplayName(stream)).toEqual({
             displayName: "New scratchpad",
             source: "placeholder",
@@ -188,7 +136,6 @@ describe("Stream Naming", () => {
           type: "thread",
           displayName: "Discussion about API",
           displayNameSource: "generated",
-          displayNameGeneratedAt: new Date(),
         })
         const result = getEffectiveDisplayName(stream)
         expect(result.displayName).toBe("Discussion about API")
@@ -278,37 +225,7 @@ describe("Stream Naming", () => {
     })
   })
 
-  describe("Stream updateDisplayName", () => {
-    test("updates display name and marks as generated", async () => {
-      const ownerId = userId()
-      const wsId = workspaceId()
-
-      await withTestTransaction(pool, async (client) => {
-        await WorkspaceRepository.insert(client, {
-          id: wsId,
-          name: "Name Update Workspace",
-          slug: `name-update-ws-${wsId}`,
-          createdBy: ownerId,
-        })
-        await addTestMember(client, wsId, ownerId)
-      })
-
-      const scratchpad = await streamService.createScratchpad({
-        workspaceId: wsId,
-        createdBy: ownerId,
-      })
-
-      // Initially no display name
-      expect(scratchpad.displayName).toBeNull()
-      expect(scratchpad.displayNameGeneratedAt).toBeNull()
-
-      // Update with generated name
-      const updated = await streamService.updateDisplayName(scratchpad.id, "AI Generated Title", true)
-
-      expect(updated?.displayName).toBe("AI Generated Title")
-      expect(updated?.displayNameGeneratedAt).not.toBeNull()
-    })
-
+  describe("Stream title revision", () => {
     test("expected revision, source, and workspace mismatches leave the title unchanged", async () => {
       const ownerId = userId()
       const wsId = workspaceId()
@@ -348,32 +265,6 @@ describe("Stream Naming", () => {
         displayNameSource: "generated",
         displayNameRevision: first!.displayNameRevision,
       })
-    })
-
-    test("updates display name without marking as generated", async () => {
-      const ownerId = userId()
-      const wsId = workspaceId()
-
-      await withTestTransaction(pool, async (client) => {
-        await WorkspaceRepository.insert(client, {
-          id: wsId,
-          name: "Manual Name Workspace",
-          slug: `manual-name-ws-${wsId}`,
-          createdBy: ownerId,
-        })
-        await addTestMember(client, wsId, ownerId)
-      })
-
-      const scratchpad = await streamService.createScratchpad({
-        workspaceId: wsId,
-        createdBy: ownerId,
-      })
-
-      // Update with manual name (not generated)
-      const updated = await streamService.updateDisplayName(scratchpad.id, "Manual Title", false)
-
-      expect(updated?.displayName).toBe("Manual Title")
-      expect(updated?.displayNameGeneratedAt).toBeNull()
     })
   })
 })

@@ -20,35 +20,13 @@ export const actionEvaluator: Evaluator<StreamNamingOutput, StreamNamingExpected
 }
 
 /**
- * Evaluator that checks if NOT_ENOUGH_CONTEXT was correctly returned.
- */
-export const notEnoughContextEvaluator: Evaluator<StreamNamingOutput, StreamNamingExpected> = {
-  name: "not-enough-context",
-  evaluate: (output: StreamNamingOutput, expected: StreamNamingExpected): EvaluatorResult => {
-    if (expected.expectNotEnoughContext === undefined) {
-      return { name: "not-enough-context", score: 1, passed: true, details: "No expectation set" }
-    }
-
-    const passed = output.notEnoughContext === expected.expectNotEnoughContext
-    return {
-      name: "not-enough-context",
-      score: passed ? 1 : 0,
-      passed,
-      details: passed
-        ? undefined
-        : `Expected notEnoughContext=${expected.expectNotEnoughContext}, got ${output.notEnoughContext}`,
-    }
-  },
-}
-
-/**
  * Evaluator that checks word count is within expected range.
  */
 export const wordCountEvaluator: Evaluator<StreamNamingOutput, StreamNamingExpected> = {
   name: "word-count",
   evaluate: (output: StreamNamingOutput, expected: StreamNamingExpected): EvaluatorResult => {
     // Skip if no name was generated
-    if (output.notEnoughContext || !output.name) {
+    if (output.action === "defer" || !output.name) {
       return { name: "word-count", score: 1, passed: true, details: "No name generated" }
     }
 
@@ -76,7 +54,7 @@ export const nameContainsEvaluator: Evaluator<StreamNamingOutput, StreamNamingEx
     }
 
     // Skip if no name was generated
-    if (output.notEnoughContext || !output.name) {
+    if (output.action === "defer" || !output.name) {
       return {
         name: "name-contains",
         score: 0,
@@ -113,7 +91,7 @@ export const nameNotContainsEvaluator: Evaluator<StreamNamingOutput, StreamNamin
     }
 
     // Skip if no name was generated
-    if (output.notEnoughContext || !output.name) {
+    if (output.action === "defer" || !output.name) {
       return { name: "name-not-contains", score: 1, passed: true, details: "No name generated" }
     }
 
@@ -136,13 +114,13 @@ export const nameNotContainsEvaluator: Evaluator<StreamNamingOutput, StreamNamin
 export const avoidsGenericEvaluator: Evaluator<StreamNamingOutput, StreamNamingExpected> = {
   name: "avoids-generic",
   evaluate: (output: StreamNamingOutput, expected: StreamNamingExpected): EvaluatorResult => {
-    // Skip if allowGeneric is set (for edge cases like minimal context with requireName)
+    // Skip if allowGeneric is set (for forced minimal-context cases)
     if (expected.allowGeneric) {
       return { name: "avoids-generic", score: 1, passed: true, details: "Generic names allowed for this case" }
     }
 
     // Skip if no name was generated
-    if (output.notEnoughContext || !output.name) {
+    if (output.action === "defer" || !output.name) {
       return { name: "avoids-generic", score: 1, passed: true, details: "No name generated" }
     }
 
@@ -195,7 +173,7 @@ export const wordCountComplianceEvaluator: RunEvaluator<StreamNamingOutput, Stre
   name: "word-count-compliance",
   evaluate: (cases: CaseResult<StreamNamingOutput, StreamNamingExpected>[]): EvaluatorResult => {
     const wordCountResults = cases
-      .filter((c) => !c.error && c.output && !c.output.notEnoughContext && c.output.name)
+      .filter((c) => !c.error && c.output && c.output.action !== "defer" && c.output.name)
       .map((c) => {
         const wordCount = c.output!.name!.split(/\s+/).length
         return wordCount >= 2 && wordCount <= 5

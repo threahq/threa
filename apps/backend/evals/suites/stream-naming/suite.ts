@@ -21,7 +21,7 @@
  * - name-contains: Does it contain expected topic words?
  * - name-not-contains: Does it avoid unwanted phrases?
  * - avoids-generic: Does it avoid generic names like "Quick Question"?
- * - not-enough-context: Correctly returns NOT_ENOUGH_CONTEXT for minimal input?
+ * - action: Does minimal context defer while forced checkpoints rename?
  */
 
 import type { EvalSuite, EvalContext } from "../../framework/types"
@@ -29,7 +29,6 @@ import { streamNamingCases } from "./cases"
 import type { StreamNamingInput, StreamNamingOutput, StreamNamingExpected } from "./types"
 import {
   actionEvaluator,
-  notEnoughContextEvaluator,
   wordCountEvaluator,
   nameContainsEvaluator,
   nameNotContainsEvaluator,
@@ -45,7 +44,7 @@ import {
 
 /** Calls the production structured evaluator directly (INV-45). */
 async function runStreamNamingTask(input: StreamNamingInput, ctx: EvalContext): Promise<StreamNamingOutput> {
-  const checkpoint = input.checkpoint ?? (input.requireName === false ? 1 : 3)
+  const checkpoint = input.checkpoint ?? 3
   const forced = input.forced ?? checkpoint >= 3
   const evaluator = new DynamicNamingEvaluator(ctx.ai, ctx.configResolver)
 
@@ -68,14 +67,12 @@ async function runStreamNamingTask(input: StreamNamingInput, ctx: EvalContext): 
       input,
       action: decision.action,
       name: decision.action === "rename" ? decision.title : (input.currentTitle ?? null),
-      notEnoughContext: decision.action === "defer",
     }
   } catch (error) {
     return {
       input,
       action: "defer",
       name: null,
-      notEnoughContext: false,
       error: error instanceof Error ? error.message : String(error),
     }
   }
@@ -94,7 +91,6 @@ export const streamNamingSuite: EvalSuite<StreamNamingInput, StreamNamingOutput,
 
   evaluators: [
     actionEvaluator,
-    notEnoughContextEvaluator,
     wordCountEvaluator,
     nameContainsEvaluator,
     nameNotContainsEvaluator,

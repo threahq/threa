@@ -1,7 +1,25 @@
 import { z } from "zod"
 import { ENCLAVE_NAMING_CHECKPOINTS, type EnclaveNamingInstruction } from "@threa/types"
 import type { RawChatFn } from "../llm"
-import { sanitizeTitle } from "./auto-title"
+
+const MAX_TITLE_CHARS = 60
+
+export function sanitizeTitle(raw: string | null | undefined): string | null {
+  if (!raw) return null
+  const firstLine = raw
+    .split("\n")
+    .map((line) => line.trim())
+    .find((line) => line.length > 0)
+  if (!firstLine) return null
+  const unquoted = firstLine
+    .replace(/^["'“”‘’]+/, "")
+    .replace(/["'“”‘’]+$/, "")
+    .replace(/\.+$/, "")
+    .replace(/\s+/g, " ")
+    .trim()
+  if (!unquoted) return null
+  return unquoted.length > MAX_TITLE_CHARS ? unquoted.slice(0, MAX_TITLE_CHARS).trim() : unquoted
+}
 
 const responseSchema = z
   .object({

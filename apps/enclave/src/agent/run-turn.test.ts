@@ -365,40 +365,6 @@ describe("runEnclaveTurn", () => {
     expect(result.lastProcessedSequence).toBeUndefined()
   })
 
-  it("seals an auto-title the owner's SSK can recover when autoTitle is set", async () => {
-    const keyPair = await createEnclaveKeyPair()
-    const ssk = generateStreamKey()
-    const wrap = await wrapSskToEnclave(keyPair, ssk)
-    const prompt = await sealUnder(ssk, "Help me plan a trip to France.", "msg_user", "usr_owner")
-    // First chat = the turn's reply; second = the title generation call.
-    const chat = stubChat([textReply("Sure, where to?"), textReply('"Trip planning to France."')])
-    const { onMessage, onStepStarted, onStep, onSubstep } = collector()
-
-    let sealedName: { ciphertext: string; envelope: { keyGeneration: number } } | null = null
-    await runEnclaveTurn(
-      {
-        keyPair,
-        rawChat: chat.fn,
-        onMessage,
-        onStepStarted,
-        onStep,
-        onSubstep,
-        onSealedName: async (s) => void (sealedName = s),
-      },
-      baseRequest({ wraps: [wrap], prompt, autoTitle: true })
-    )
-
-    expect(sealedName).not.toBeNull()
-    expect(sealedName!.envelope.keyGeneration).toBe(GEN)
-    // The sealed title decrypts under the same SSK (quotes/period stripped).
-    const title = await openMessageAsString({
-      key: ssk,
-      envelope: sealedName!.envelope as never,
-      ciphertext: Buffer.from(sealedName!.ciphertext, "base64"),
-    })
-    expect(title).toBe("Trip planning to France")
-  })
-
   it("prefers revision-fenced naming and seals only a rename", async () => {
     const keyPair = await createEnclaveKeyPair()
     const ssk = generateStreamKey()
@@ -427,14 +393,10 @@ describe("runEnclaveTurn", () => {
         pollNewMessages: async () => [],
         namingQuietMs: 0,
         onNamingDecision: async (value) => void decisions.push(value),
-        onSealedName: async () => {
-          throw new Error("legacy callback must not run")
-        },
       },
       baseRequest({
         wraps: [wrap],
         prompt,
-        autoTitle: true,
         naming: {
           stateRevision: 4,
           titleRevision: 2,
@@ -457,31 +419,6 @@ describe("runEnclaveTurn", () => {
         ciphertext: Buffer.from(decision.sealedReplacement.ciphertext, "base64"),
       })
     ).toBe("Migration rollback records")
-  })
-
-  it("does not title when autoTitle is unset", async () => {
-    const keyPair = await createEnclaveKeyPair()
-    const ssk = generateStreamKey()
-    const wrap = await wrapSskToEnclave(keyPair, ssk)
-    const prompt = await sealUnder(ssk, "Just a note.", "msg_user", "usr_owner")
-    const chat = stubChat(textReply("Noted."))
-    const { onMessage, onStepStarted, onStep, onSubstep } = collector()
-
-    let titled = false
-    await runEnclaveTurn(
-      {
-        keyPair,
-        rawChat: chat.fn,
-        onMessage,
-        onStepStarted,
-        onStep,
-        onSubstep,
-        onSealedName: async () => void (titled = true),
-      },
-      baseRequest({ wraps: [wrap], prompt })
-    )
-
-    expect(titled).toBe(false)
   })
 
   it("opens the prior sealed summary into the `## Conversation Memory` block (C-2)", async () => {

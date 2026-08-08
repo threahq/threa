@@ -41,7 +41,6 @@ function makeStream(overrides: Partial<Record<string, any>>): any {
     createdAt: new Date(),
     updatedAt: new Date(),
     archivedAt: null,
-    displayNameGeneratedAt: null,
     ...overrides,
   }
 }

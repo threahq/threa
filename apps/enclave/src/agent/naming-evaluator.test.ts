@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest"
 import type { EnclaveNamingInstruction } from "@threa/types"
-import { advanceNamingInstruction, evaluateNaming } from "./naming-evaluator"
+import { advanceNamingInstruction, evaluateNaming, sanitizeTitle } from "./naming-evaluator"
 
 const instruction: EnclaveNamingInstruction = {
   stateRevision: 4,
@@ -10,6 +10,14 @@ const instruction: EnclaveNamingInstruction = {
   forced: true,
   reason: "ordinary",
 }
+
+describe("sanitizeTitle", () => {
+  it("normalizes model output and caps long titles", () => {
+    expect(sanitizeTitle("\n  “Launch   checklist.”\nignored")).toBe("Launch checklist")
+    expect(sanitizeTitle("a".repeat(200))?.length).toBe(60)
+    expect(sanitizeTitle("   \n  ")).toBeNull()
+  })
+})
 
 describe("evaluateNaming", () => {
   it("promotes a checkpoint-1 claim when reply/interjection growth crosses checkpoint 3", () => {

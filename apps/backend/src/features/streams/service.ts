@@ -1649,23 +1649,6 @@ export class StreamService {
     })
   }
 
-  async updateDisplayName(
-    streamId: string,
-    displayName: string,
-    markAsGenerated: boolean = false,
-    updatedByUserId?: string
-  ): Promise<Stream | null> {
-    const current = await StreamRepository.findById(this.pool, streamId)
-    if (!current) return null
-    return StreamRepository.updateDisplayName(this.pool, {
-      workspaceId: current.workspaceId,
-      streamId,
-      displayName,
-      source: markAsGenerated ? TitleSources.GENERATED : TitleSources.EXPLICIT,
-      updatedByUserId,
-    })
-  }
-
   async joinPublicChannel(streamId: string, workspaceId: string, memberId: string): Promise<StreamMember> {
     return withTransaction(this.pool, async (client) => {
       const stream = await StreamRepository.findById(client, streamId)

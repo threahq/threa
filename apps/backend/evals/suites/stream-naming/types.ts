@@ -10,8 +10,6 @@ export interface StreamNamingInput {
   conversationText: string
   /** Existing stream names to avoid */
   existingNames?: string[]
-  /** Compatibility shorthand: true maps to forced checkpoint 3; false to checkpoint 1. */
-  requireName?: boolean
   currentTitle?: string | null
   checkpoint?: 1 | 3 | 6 | 10
   forced?: boolean
@@ -28,8 +26,6 @@ export interface StreamNamingOutput {
   action: "defer" | "keep" | "rename"
   /** Generated name, or the current title for keep. */
   name: string | null
-  /** Whether NOT_ENOUGH_CONTEXT was returned */
-  notEnoughContext: boolean
   /** Error message if generation failed */
   error?: string
 }
@@ -39,8 +35,6 @@ export interface StreamNamingOutput {
  */
 export interface StreamNamingExpected {
   expectedAction?: "defer" | "keep" | "rename"
-  /** Should return defer. */
-  expectNotEnoughContext?: boolean
   /** Name should contain these words/phrases (case-insensitive) */
   nameContains?: string[]
   /** Name should NOT contain these words/phrases */
@@ -49,6 +43,6 @@ export interface StreamNamingExpected {
   wordCountRange?: { min: number; max: number }
   /** Should avoid existing names */
   shouldAvoidExisting?: boolean
-  /** Allow generic names for edge cases (e.g., minimal context with requireName) */
+  /** Allow generic names for forced minimal-context cases. */
   allowGeneric?: boolean
 }

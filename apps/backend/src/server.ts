@@ -60,13 +60,7 @@ import { InvitationService, InvitationShadowSyncHandler } from "./features/invit
 import { WorkosOrgServiceImpl, StubWorkosOrgService } from "@threa/backend-common"
 import { PartitionMaintenanceWorker } from "@threa/backend-common"
 import { AccessLogService, createAiAccessLogSink } from "./features/access-log"
-import {
-  StreamService,
-  StreamNamingService,
-  StubStreamNamingService,
-  StreamBriefService,
-  createNamingWorker,
-} from "./features/streams"
+import { StreamService, StreamBriefService } from "./features/streams"
 import { EventService } from "./features/messaging"
 import {
   DynamicNamingConversationTarget,
@@ -336,9 +330,6 @@ export async function startServer(): Promise<ServerInstance> {
   const modelRegistry = createModelRegistry()
   const configResolver = createStaticConfigResolver()
   const messageFormatter = new MessageFormatter()
-  const streamNamingService = config.useStubAI
-    ? new StubStreamNamingService()
-    : new StreamNamingService(pool, ai, configResolver, messageFormatter)
   const conversationService = new ConversationService(pool)
   const userPreferencesService = new UserPreferencesService(pool)
   // Both halves of the consent pair are resolved server-side and injected as
@@ -1105,11 +1096,6 @@ export async function startServer(): Promise<ServerInstance> {
     fairness: QueueFairness.NONE,
   })
 
-  const namingWorker = createNamingWorker({ streamNamingService })
-  jobQueue.registerHandler(JobQueues.NAMING_GENERATE, namingWorker, {
-    tier: QueueTiers.LIGHT,
-    fairness: QueueFairness.NONE,
-  })
   jobQueue.registerHandler(JobQueues.DYNAMIC_NAMING_EVALUATE, createDynamicNamingWorker(dynamicNamingService), {
     tier: QueueTiers.LIGHT,
     fairness: QueueFairness.NONE,

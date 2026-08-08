@@ -6,7 +6,6 @@ import {
   type EnclaveMidTurnMessagesResponse,
   type EnclaveSessionHeartbeatResponse,
   type SealedReply,
-  type EnclaveSealedName,
   type EnclaveSealedSummary,
   type SealedStep,
   type SealedStepStart,
@@ -51,8 +50,6 @@ export interface BackendCallbacks {
   complete(sessionId: string, result: EnclaveSessionResult): Promise<void>
   /** Terminate the session promptly when the loop throws — scrubbed error metadata only, never plaintext. */
   fail(sessionId: string, failure: EnclaveSessionFailure): Promise<void>
-  /** Persist a sealed auto-generated stream title (best-effort; for untitled E2E scratchpads). */
-  sealedName(sessionId: string, sealed: EnclaveSealedName): Promise<void>
   /** Apply a revision-fenced sealed dynamic naming decision. */
   namingDecision(sessionId: string, decision: EnclaveNamingDecision): Promise<void>
   /** Persist the sealed rolling conversation summary (best-effort; C-2). */
@@ -161,16 +158,6 @@ export function createBackendCallbacks(config: EnclaveConfig, callbackToken?: st
         signal: AbortSignal.timeout(COMPLETE_TIMEOUT_MS),
       })
       if (!res.ok) throw new Error(`session fail failed: ${res.status}`)
-    },
-
-    async sealedName(sessionId, sealed) {
-      const res = await fetch(`${base}/internal/enclave-runtimes/sessions/${sessionId}/sealed-name`, {
-        method: "POST",
-        headers,
-        body: JSON.stringify(sealed),
-        signal: AbortSignal.timeout(MESSAGE_TIMEOUT_MS),
-      })
-      if (!res.ok) throw new Error(`session sealed-name failed: ${res.status}`)
     },
 
     async namingDecision(sessionId, decision) {

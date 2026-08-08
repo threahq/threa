@@ -70,8 +70,6 @@ export interface BuildInvokeInputs {
    * attachments.
    */
   attachmentCiphertexts?: { attachmentId: string; ciphertext: string }[]
-  /** Ask the enclave to generate + seal a title for this (untitled) scratchpad. */
-  autoTitle?: boolean
   /** Revision-fenced dynamic naming work reserved by the session transaction. */
   naming?: EnclaveNamingInstruction
   /**
@@ -161,7 +159,6 @@ export function buildEnclaveSessionAssignment(inputs: BuildInvokeInputs): Enclav
     ...(inputs.attachmentCiphertexts && inputs.attachmentCiphertexts.length > 0
       ? { attachmentCiphertexts: inputs.attachmentCiphertexts }
       : {}),
-    ...(inputs.autoTitle ? { autoTitle: true } : {}),
     ...(inputs.naming ? { naming: inputs.naming } : {}),
     // Prior turns' sealed digests (C-1) — shipped only when present so the
     // no-digest assignment stays byte-identical to before.

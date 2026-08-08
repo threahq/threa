@@ -19,22 +19,7 @@ export {
   streamAccessPredicateSql,
 } from "./access"
 
-export { StreamNamingService } from "./naming-service"
-export type { GenerateNameResult } from "./naming-service"
 export { prependThreadNamingAnchor, renderNamingEventAnchor } from "./naming-context"
-export { StubStreamNamingService } from "./naming-service.stub"
-export { createNamingWorker } from "./naming-worker"
-export type { StreamNamingServiceLike, NamingWorkerDeps } from "./naming-worker"
-export { NamingHandler } from "./naming-outbox-handler"
-export type { NamingHandlerConfig } from "./naming-outbox-handler"
-
-export {
-  STREAM_NAMING_MODEL_ID,
-  STREAM_NAMING_TEMPERATURE,
-  MAX_MESSAGES_FOR_NAMING,
-  MAX_EXISTING_NAMES,
-  buildNamingSystemPrompt,
-} from "./naming-config"
 
 export { NOTIFICATION_CONFIG, isAllowedLevel, getDefaultLevel, getEffectiveLevel } from "./notification-config"
 
@@ -81,5 +66,5 @@ export type { CompactionTarget } from "./sparse-read-repository"
 export { applySparseRead, applySparseUnread } from "./sparse-read"
 export type { ReadStateSnapshot, ApplySparseReadParams } from "./sparse-read"
 
-export { getEffectiveDisplayName, formatParticipantNames, needsAutoNaming } from "./display-name"
+export { getEffectiveDisplayName, formatParticipantNames } from "./display-name"
 export type { DisplayNameSource, DisplayNameContext, EffectiveDisplayName } from "./display-name"

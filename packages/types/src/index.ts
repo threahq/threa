@@ -527,7 +527,6 @@ export type {
   EnclaveSskWrap,
   SealedReply,
   SealedComplete,
-  EnclaveSealedName,
   EnclaveSealedSummary,
   SealedStep,
   SealedStepStart,
