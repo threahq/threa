@@ -3,9 +3,21 @@
 import * as socketIoClient from "socket.io-client"
 import type { Socket } from "socket.io-client"
 import { THREA_CALLBACK_TOKEN_HEADER, type SealedStepFrame } from "./sealed"
+import {
+  InvocationControlManager,
+  parseCancellationReason,
+  parseRevision,
+  type ControlSyncResult,
+  type InvocationControlState,
+  type InvocationControlSyncRequest,
+  type ObserveClaimParams,
+  type ObservedClaimHandle,
+} from "./invocation-control"
 import { buildBotSocketUrl, isObject, parseWsHint, type WsHint } from "./ws-hint"
 import type {
   BotHelloBootstrap,
+  BotHelloOwnedClaim,
+  BotHelloRecentCancellation,
   BotRuntimeTransportCallbacks,
   DelegationAvailableNudge,
   BotRuntimeTransportOptions,
@@ -61,6 +73,7 @@ export class BotRuntimeTransport {
   private disconnectedAt: number | undefined
   /** The cursor echoed by the last hello ack; re-sent on the next hello so the bootstrap only replays unseen events. */
   private cursor: string | undefined
+  private readonly controls: InvocationControlManager
 
   constructor(opts: BotRuntimeTransportOptions) {
     this.base = opts.baseUrl.replace(/\/$/, "")
@@ -74,6 +87,18 @@ export class BotRuntimeTransport {
     this.fetchTimeoutMs = opts.fetchTimeoutMs ?? DEFAULT_FETCH_TIMEOUT_MS
     this.staleSocketRedialMs = opts.staleSocketRedialMs ?? DEFAULT_STALE_SOCKET_REDIAL_MS
     this.logFn = opts.log ?? (() => {})
+    this.controls = new InvocationControlManager(
+      {
+        sync: (request) => this.syncObservedClaim(request),
+        socketReady: () => this.socketConnected,
+        log: this.logFn,
+      },
+      {
+        retryDelayMs: opts.controlRetryDelayMs,
+        minRenewDelayMs: opts.controlMinRenewDelayMs,
+        scheduler: opts.controlScheduler,
+      }
+    )
   }
 
   /** Whether the `/bot` socket is currently connected. */
@@ -152,6 +177,7 @@ export class BotRuntimeTransport {
       this.helloInFlight = false
       this.disconnectedAt ??= Date.now()
       if (wasReady) this.callbacks.onDisconnected?.()
+      this.controls.wake()
       // Socket.IO's auto-reconnect covers every disconnect reason EXCEPT a
       // server-initiated one (deploy drain, kick) — there the client stays down
       // until someone calls connect(). Redial immediately; a flap lands on the
@@ -165,9 +191,14 @@ export class BotRuntimeTransport {
       this.helloInFlight = false
       this.disconnectedAt ??= Date.now()
       if (wasReady) this.callbacks.onDisconnected?.()
+      this.controls.wake()
       this.logFn(`socket connect_error: ${summarize(error)}`)
     })
-    socket.on("bot_invocation:available", () => this.callbacks.onInvocationAvailable?.())
+    socket.on("bot_invocation:available", () =>
+      this.controls.enqueueAdapter(() => this.callbacks.onInvocationAvailable?.())
+    )
+    socket.on("bot_invocation:input_updated", (payload: unknown) => this.controls.hint(payload, false))
+    socket.on("bot_invocation:cancelled", (payload: unknown) => this.controls.hint(payload, true))
     socket.on("delegation:available", (payload: unknown) =>
       this.callbacks.onDelegationAvailable?.(payload as DelegationAvailableNudge)
     )
@@ -207,9 +238,12 @@ export class BotRuntimeTransport {
           const bootstrap: BotHelloBootstrap = {
             serverGeneratedAt: typeof ack.serverGeneratedAt === "string" ? ack.serverGeneratedAt : undefined,
             availableInvocations: Array.isArray(ack.availableInvocations) ? ack.availableInvocations : [],
-            ownedClaims: Array.isArray(ack.ownedClaims) ? ack.ownedClaims : [],
+            ownedClaims: Array.isArray(ack.ownedClaims) ? ack.ownedClaims.flatMap(parseOwnedClaim) : [],
+            recentCancellations: Array.isArray(ack.recentCancellations)
+              ? ack.recentCancellations.flatMap(parseRecentCancellation)
+              : [],
           }
-          this.callbacks.onBootstrap?.(bootstrap)
+          void this.controls.bootstrap(bootstrap.recentCancellations, () => this.callbacks.onBootstrap?.(bootstrap))
         }
       )
   }
@@ -219,6 +253,7 @@ export class BotRuntimeTransport {
     this.stopped = true
     if (this.redialTimer) clearTimeout(this.redialTimer)
     this.redialTimer = undefined
+    this.controls.stop()
     this.teardownSocket()
   }
 
@@ -248,6 +283,11 @@ export class BotRuntimeTransport {
         // already closed
       }
     }
+  }
+
+  /** Own renewal and control synchronization for a claimed invocation. */
+  observeClaim(params: ObserveClaimParams): ObservedClaimHandle {
+    return this.controls.observe(params)
   }
 
   // --- Routed background writes (WS-first, HTTP fallback) --------------------
@@ -382,19 +422,26 @@ export class BotRuntimeTransport {
    * caller drops on `sent` instead of retrying. Idempotent writes (renew CAS,
    * presence upsert) ignore the distinction and retry on either.
    */
-  private emitWrite(event: string, payload: unknown): Promise<{ sent: boolean; ack: BotWriteAck | null }> {
+  private emitWrite(
+    event: string,
+    payload: unknown,
+    signal?: AbortSignal
+  ): Promise<{ sent: boolean; ack: BotWriteAck | null; aborted?: boolean }> {
     const socket = this.socket
+    if (signal?.aborted) return Promise.resolve({ sent: false, ack: null, aborted: true })
     if (!socket || !this.connected || !this.helloReady) return Promise.resolve({ sent: false, ack: null })
     return new Promise((resolve) => {
       let settled = false
-      const done = (result: { sent: boolean; ack: BotWriteAck | null }) => {
+      const onAbort = () => done({ sent: true, ack: null, aborted: true })
+      const done = (result: { sent: boolean; ack: BotWriteAck | null; aborted?: boolean }) => {
         if (settled) return
         settled = true
+        signal?.removeEventListener("abort", onAbort)
         resolve(result)
       }
+      signal?.addEventListener("abort", onAbort, { once: true })
       try {
         socket.timeout(this.wsAckTimeoutMs).emit(event, payload, (err: unknown, ack: unknown) => {
-          // Either way the frame was sent; only the ack is in question.
           done({ sent: true, ack: err ? null : normalizeAck(ack) })
         })
       } catch (error) {
@@ -462,6 +509,56 @@ export class BotRuntimeTransport {
     }
   }
 
+  private async syncObservedClaim(request: InvocationControlSyncRequest): Promise<ControlSyncResult> {
+    const payload = {
+      invocationId: request.invocationId,
+      instanceId: request.instanceId ?? this.hello.instanceId,
+      claimToken: request.claimToken,
+      claimTtlSeconds: request.claimTtlSeconds,
+      knownSourceRevision: request.knownSourceRevision,
+      ...(request.restartRequiredRevision === undefined
+        ? {}
+        : { restartRequiredRevision: request.restartRequiredRevision }),
+    }
+    const ws = await this.emitWrite("bot:invocation:renew", payload, request.signal)
+    if (request.signal.aborted || ws.aborted) return { kind: "aborted" }
+    if (ws.ack?.ok) {
+      const parsed = parseControlState(ws.ack.data, request.invocationId, request.minimumSourceRevision)
+      if (parsed) return { kind: "control", state: parsed }
+    } else if (ws.ack?.code === "NOT_FOUND") {
+      return { kind: "not_found" }
+    }
+    if (request.signal.aborted) return { kind: "aborted" }
+    try {
+      const res = await this.httpRequest(
+        this.v1Path(`/bot-invocations/${request.invocationId}/renew`),
+        {
+          method: "POST",
+          body: JSON.stringify({
+            instanceId: payload.instanceId,
+            claimToken: payload.claimToken,
+            claimTtlSeconds: payload.claimTtlSeconds,
+            knownSourceRevision: request.knownSourceRevision,
+            ...(request.restartRequiredRevision === undefined
+              ? {}
+              : { restartRequiredRevision: request.restartRequiredRevision }),
+          }),
+        },
+        request.signal
+      )
+      if (request.signal.aborted) return { kind: "aborted" }
+      if (res.status === 404) return { kind: "not_found" }
+      if (!res.ok) return { kind: "retry" }
+      const body = (await res.json()) as unknown
+      const parsed = isObject(body)
+        ? parseControlState(body.data, request.invocationId, request.minimumSourceRevision)
+        : undefined
+      return parsed ? { kind: "control", state: parsed } : { kind: "retry" }
+    } catch {
+      return request.signal.aborted ? { kind: "aborted" } : { kind: "retry" }
+    }
+  }
+
   private async httpRenewFallback(
     invocationId: string,
     claimToken: string,
@@ -494,8 +591,11 @@ export class BotRuntimeTransport {
     return `/api/v1/workspaces/${this.workspaceId}${suffix}`
   }
 
-  private async httpRequest(path: string, init: RequestInit): Promise<Response> {
+  private async httpRequest(path: string, init: RequestInit, callerSignal?: AbortSignal): Promise<Response> {
     const controller = new AbortController()
+    const onCallerAbort = () => controller.abort()
+    callerSignal?.addEventListener("abort", onCallerAbort, { once: true })
+    if (callerSignal?.aborted) controller.abort()
     const timeout = setTimeout(() => controller.abort(), this.fetchTimeoutMs)
     try {
       return await fetch(`${this.base}${path}`, {
@@ -509,8 +609,70 @@ export class BotRuntimeTransport {
       })
     } finally {
       clearTimeout(timeout)
+      callerSignal?.removeEventListener("abort", onCallerAbort)
     }
   }
+}
+
+function parseControlState(
+  value: unknown,
+  expectedInvocationId: string,
+  minimumSourceRevision: number
+): InvocationControlState | undefined {
+  if (!isObject(value) || value.invocationId !== expectedInvocationId) return
+  const sourceRevision = parseRevision(value.sourceRevision)
+  if (sourceRevision === undefined) return
+  if (value.status === "active" && typeof value.claimExpiresAt === "string") {
+    if (!Number.isFinite(Date.parse(value.claimExpiresAt))) return
+    if (value.update !== undefined) {
+      if (!isObject(value.update) || parseRevision(value.update.sourceRevision) !== sourceRevision) return
+    }
+    return {
+      invocationId: expectedInvocationId,
+      status: "active",
+      claimExpiresAt: value.claimExpiresAt,
+      sourceRevision,
+      ...(value.update === undefined ? {} : { update: value.update }),
+    }
+  }
+  const reason = parseCancellationReason(value.reason)
+  if (value.status === "cancelled" && sourceRevision >= minimumSourceRevision && reason) {
+    return { invocationId: expectedInvocationId, status: "cancelled", sourceRevision, reason }
+  }
+  return
+}
+
+function parseOwnedClaim(value: unknown): BotHelloOwnedClaim[] {
+  if (!isObject(value) || typeof value.id !== "string" || typeof value.sourceMessageId !== "string") return []
+  const sourceRevision = parseRevision(value.sourceRevision)
+  const claimedSourceRevision = value.claimedSourceRevision === null ? null : parseRevision(value.claimedSourceRevision)
+  if (sourceRevision === undefined || claimedSourceRevision === undefined) return []
+  return [{ id: value.id, sourceMessageId: value.sourceMessageId, sourceRevision, claimedSourceRevision }]
+}
+
+function parseRecentCancellation(value: unknown): BotHelloRecentCancellation[] {
+  if (!isObject(value) || typeof value.invocationId !== "string") return []
+  const sourceRevision = parseRevision(value.sourceRevision)
+  const reason = parseCancellationReason(value.reason)
+  if (sourceRevision === undefined || !reason) return []
+  if (value.targetInstanceId !== undefined && typeof value.targetInstanceId !== "string") return []
+  if (
+    value.targetRuntimeSessionId !== undefined &&
+    value.targetRuntimeSessionId !== null &&
+    typeof value.targetRuntimeSessionId !== "string"
+  )
+    return []
+  return [
+    {
+      invocationId: value.invocationId,
+      sourceRevision,
+      reason,
+      ...(typeof value.targetInstanceId === "string" ? { targetInstanceId: value.targetInstanceId } : {}),
+      ...(value.targetRuntimeSessionId === undefined
+        ? {}
+        : { targetRuntimeSessionId: value.targetRuntimeSessionId as string | null }),
+    },
+  ]
 }
 
 function normalizeAck(ack: unknown): BotWriteAck | null {

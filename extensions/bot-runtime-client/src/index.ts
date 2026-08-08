@@ -1,4 +1,14 @@
 export { BotRuntimeTransport } from "./transport"
+export type {
+  BotInvocationCancellationReason,
+  InputUpdateDisposition,
+  InvocationCancellation,
+  InvocationControlCallbacks,
+  InvocationInputUpdate,
+  InvocationControlScheduler,
+  ObserveClaimParams,
+  ObservedClaimHandle,
+} from "./invocation-control"
 export {
   parseAllowedTmuxKey,
   sendAllowedTmuxKey,
@@ -44,6 +54,8 @@ export type {
   BotHelloBootstrap,
   BotRuntimeTransportCallbacks,
   BotRuntimeTransportOptions,
+  BotHelloOwnedClaim,
+  BotHelloRecentCancellation,
   DelegationAvailableNudge,
 } from "./types"
 export {
