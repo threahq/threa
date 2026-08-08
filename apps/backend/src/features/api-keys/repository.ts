@@ -81,6 +81,26 @@ export const BotChannelAccessRepository = {
     return result.rows[0].granted
   },
 
+  async lockGrants(
+    db: Querier,
+    workspaceId: string,
+    botId: string,
+    rootStreamIds: readonly string[]
+  ): Promise<Set<string>> {
+    const stableIds = [...new Set(rootStreamIds)].sort()
+    if (stableIds.length === 0) return new Set()
+    const result = await db.query<{ stream_id: string }>(sql`
+      SELECT stream_id
+      FROM bot_channel_access
+      WHERE workspace_id = ${workspaceId}
+        AND bot_id = ${botId}
+        AND stream_id = ANY(${stableIds})
+      ORDER BY stream_id
+      FOR UPDATE
+    `)
+    return new Set(result.rows.map((row) => row.stream_id))
+  },
+
   async getGrantedBotIds(db: Querier, workspaceId: string, streamId: string): Promise<string[]> {
     const result = await db.query<{ bot_id: string }>(sql`
       SELECT a.bot_id FROM bot_channel_access a

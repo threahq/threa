@@ -362,7 +362,8 @@ export function createMessageHandlers({
         // without crashing on null content. Attachments still bind: the rows are
         // `e2e_only` ciphertext (no real content to gate on), and the same
         // workspace + shareable check the plaintext path runs covers them.
-        const { message } = await eventService.createMessageReturningConversation(
+        const { message } = await eventService.createMessageForPrincipalReturningConversation(
+          { kind: "user", userId },
           {
             workspaceId,
             streamId,
@@ -445,7 +446,8 @@ export function createMessageHandlers({
       // `conversationId` is the id the declared directive assigned the message to
       // (a fresh mint for a board `new` post) — surfaced so the board composer can
       // slot an optimistic card keyed by the real id, reconciled by the echo.
-      const { message, conversationId } = await eventService.createMessageReturningConversation(
+      const { message, conversationId } = await eventService.createMessageForPrincipalReturningConversation(
+        { kind: "user", userId },
         {
           workspaceId,
           streamId,
@@ -499,16 +501,19 @@ export function createMessageHandlers({
       // content), so this is reference-only by construction.
       const attachmentIds = collectAttachmentReferenceIds(contentJson)
 
-      const message = await eventService.editMessage({
-        workspaceId,
-        messageId,
-        streamId: existing.streamId,
-        contentJson,
-        contentMarkdown,
-        actorId: userId,
-        attachmentIds: attachmentIds.length > 0 ? attachmentIds : undefined,
-        confirmedPrivacyWarning: data.confirmedPrivacyWarning,
-      })
+      const message = await eventService.editMessageForPrincipal(
+        { kind: "user", userId },
+        {
+          workspaceId,
+          messageId,
+          streamId: existing.streamId,
+          contentJson,
+          contentMarkdown,
+          actorId: userId,
+          attachmentIds: attachmentIds.length > 0 ? attachmentIds : undefined,
+          confirmedPrivacyWarning: data.confirmedPrivacyWarning,
+        }
+      )
 
       if (!message) {
         throw new MessageNotFoundError()
@@ -529,14 +534,17 @@ export function createMessageHandlers({
         target: { streamId: data.sourceStreamId },
       })
 
-      const moveResult = await eventService.moveMessagesToThread({
-        workspaceId,
-        sourceStreamId: data.sourceStreamId,
-        targetMessageId: data.targetMessageId,
-        messageIds: data.messageIds,
-        actorId: userId,
-        leaseKey: data.leaseKey,
-      })
+      const moveResult = await eventService.moveMessagesToThreadForPrincipal(
+        { kind: "user", userId },
+        {
+          workspaceId,
+          sourceStreamId: data.sourceStreamId,
+          targetMessageId: data.targetMessageId,
+          messageIds: data.messageIds,
+          actorId: userId,
+          leaseKey: data.leaseKey,
+        }
+      )
 
       res.json({
         sourceStreamId: moveResult.sourceStreamId,
@@ -594,12 +602,15 @@ export function createMessageHandlers({
         throw new HttpError("Can only delete your own messages", { status: 403, code: "FORBIDDEN" })
       }
 
-      await eventService.deleteMessage({
-        workspaceId,
-        messageId,
-        streamId: existing.streamId,
-        actorId: userId,
-      })
+      await eventService.deleteMessageForPrincipal(
+        { kind: "user", userId },
+        {
+          workspaceId,
+          messageId,
+          streamId: existing.streamId,
+          actorId: userId,
+        }
+      )
 
       res.status(204).send()
     },
@@ -630,13 +641,16 @@ export function createMessageHandlers({
         throw new MessageNotFoundError()
       }
 
-      const message = await eventService.addReaction({
-        workspaceId,
-        messageId,
-        streamId: existing.streamId,
-        emoji: shortcode,
-        userId,
-      })
+      const message = await eventService.addReactionForPrincipal(
+        { kind: "user", userId },
+        {
+          workspaceId,
+          messageId,
+          streamId: existing.streamId,
+          emoji: shortcode,
+          userId,
+        }
+      )
 
       if (!message) {
         throw new MessageNotFoundError()
@@ -668,13 +682,16 @@ export function createMessageHandlers({
         throw new MessageNotFoundError()
       }
 
-      const message = await eventService.removeReaction({
-        workspaceId,
-        messageId,
-        streamId: existing.streamId,
-        emoji: shortcode,
-        userId,
-      })
+      const message = await eventService.removeReactionForPrincipal(
+        { kind: "user", userId },
+        {
+          workspaceId,
+          messageId,
+          streamId: existing.streamId,
+          emoji: shortcode,
+          userId,
+        }
+      )
 
       if (!message) {
         throw new MessageNotFoundError()

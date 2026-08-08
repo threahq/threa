@@ -370,7 +370,7 @@ describe("Sparse read overlay", () => {
     )
     expect(await SparseReadRepository.countOverlay(pool, sid, reader)).toBe(1)
 
-    await streamService.removeMember(sid, reader)
+    await streamService.removeMember(sid, reader, wid, other)
 
     expect(await SparseReadRepository.countOverlay(pool, sid, reader)).toBe(0)
     // The other member's overlay state is untouched by reader's removal.

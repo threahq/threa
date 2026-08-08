@@ -192,7 +192,7 @@ describe("Access Control", () => {
       })
 
       // Add user as stream member
-      await streamService.addMember(channel.id, streamMemberWorkspaceId, wsId)
+      await streamService.addMember(channel.id, streamMemberWorkspaceId, wsId, ownerId)
 
       // Now they can access
       const stream = await streamService.validateStreamAccess(channel.id, wsId, streamMemberWorkspaceId)
@@ -320,7 +320,7 @@ describe("Access Control", () => {
       )
 
       // Add as member
-      await streamService.addMember(channel.id, newMemberWorkspaceId, wsId)
+      await streamService.addMember(channel.id, newMemberWorkspaceId, wsId, ownerId)
 
       // Now has access
       const stream = await streamService.validateStreamAccess(channel.id, wsId, newMemberWorkspaceId)
@@ -351,14 +351,14 @@ describe("Access Control", () => {
         createdBy: ownerId,
         visibility: Visibilities.PRIVATE,
       })
-      await streamService.addMember(channel.id, removedMemberWorkspaceId, wsId)
+      await streamService.addMember(channel.id, removedMemberWorkspaceId, wsId, ownerId)
 
       // Verify access
       const accessBefore = await streamService.validateStreamAccess(channel.id, wsId, removedMemberWorkspaceId)
       expect(accessBefore.id).toBe(channel.id)
 
       // Remove member
-      await streamService.removeMember(channel.id, removedMemberWorkspaceId)
+      await streamService.removeMember(channel.id, removedMemberWorkspaceId, wsId, ownerId)
 
       // Access revoked
       await expect(streamService.validateStreamAccess(channel.id, wsId, removedMemberWorkspaceId)).rejects.toThrow(
@@ -637,7 +637,7 @@ describe("Access Control", () => {
       )
 
       // Add them to channel
-      await streamService.addMember(channel.id, nonMemberWorkspaceId, wsId)
+      await streamService.addMember(channel.id, nonMemberWorkspaceId, wsId, ownerId)
 
       // Now they can access thread
       const access = await streamService.validateStreamAccess(thread.id, wsId, nonMemberWorkspaceId)
@@ -669,7 +669,7 @@ describe("Access Control", () => {
         createdBy: channelOwnerId,
         visibility: Visibilities.PRIVATE,
       })
-      await streamService.addMember(channel.id, channelMemberWorkspaceId, wsId)
+      await streamService.addMember(channel.id, channelMemberWorkspaceId, wsId, channelOwnerId)
 
       // Create message and thread by a different user (e.g., persona creating thread for mention response)
       const parentMessage = await eventService.createMessage({
@@ -738,7 +738,7 @@ describe("Access Control", () => {
       expect(await streamService.isMember(thread.id, newMemberWorkspaceId)).toBe(false)
 
       // Add them to the thread
-      await streamService.addMember(thread.id, newMemberWorkspaceId, wsId)
+      await streamService.addMember(thread.id, newMemberWorkspaceId, wsId, ownerId)
 
       // Should now be member of both thread AND root channel
       expect(await streamService.isMember(thread.id, newMemberWorkspaceId)).toBe(true)
@@ -774,7 +774,7 @@ describe("Access Control", () => {
         createdBy: ownerId,
         visibility: Visibilities.PRIVATE,
       })
-      await streamService.addMember(channel.id, memberWorkspaceId, wsId)
+      await streamService.addMember(channel.id, memberWorkspaceId, wsId, ownerId)
 
       // Owner is member (auto-added on create)
       expect(await streamService.isMember(channel.id, ownerId)).toBe(true)
@@ -812,7 +812,7 @@ describe("Access Control", () => {
         createdBy: userAId,
         visibility: Visibilities.PUBLIC,
       })
-      await streamService.addMember(channel.id, userBMemberId, wsId)
+      await streamService.addMember(channel.id, userBMemberId, wsId, userAId)
 
       // Create a regular message (visible to both)
       await eventService.createMessage({
@@ -891,7 +891,7 @@ describe("Access Control", () => {
         createdBy: userAId,
         visibility: Visibilities.PUBLIC,
       })
-      await streamService.addMember(channel.id, userBMemberId, wsId)
+      await streamService.addMember(channel.id, userBMemberId, wsId, userAId)
 
       // Create command_dispatched and command_failed events as User A
       const cmdId = commandId()
@@ -982,7 +982,7 @@ describe("Access Control", () => {
         createdBy: ownerId,
         visibility: Visibilities.PRIVATE,
       })
-      await streamService.addMember(memberPrivateChannel.id, viewerId, wsId)
+      await streamService.addMember(memberPrivateChannel.id, viewerId, wsId, ownerId)
 
       // Thread inside the member channel; viewer is NOT added to the thread.
       const parentMessage = await eventService.createMessage({

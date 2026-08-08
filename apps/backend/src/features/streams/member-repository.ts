@@ -229,6 +229,36 @@ export const StreamMemberRepository = {
     return result.rows.length > 0
   },
 
+  async lockMemberships(db: Querier, rootStreamIds: readonly string[], memberId: string): Promise<Set<string>> {
+    const stableIds = [...new Set(rootStreamIds)].sort()
+    if (stableIds.length === 0) return new Set()
+    const result = await db.query<{ stream_id: string }>(sql`
+      SELECT stream_id
+      FROM stream_members
+      WHERE stream_id = ANY(${stableIds}) AND member_id = ${memberId}
+      ORDER BY stream_id
+      FOR UPDATE
+    `)
+    return new Set(result.rows.map((row) => row.stream_id))
+  },
+
+  async lockMemberPairs(db: Querier, pairs: readonly { streamId: string; memberId: string }[]): Promise<Set<string>> {
+    const stable = [...new Map(pairs.map((pair) => [`${pair.streamId}:${pair.memberId}`, pair])).values()].sort(
+      (a, b) => a.streamId.localeCompare(b.streamId) || a.memberId.localeCompare(b.memberId)
+    )
+    if (stable.length === 0) return new Set()
+    const result = await db.query<{ stream_id: string; member_id: string }>(sql`
+      SELECT sm.stream_id, sm.member_id
+      FROM stream_members sm
+      JOIN unnest(${stable.map((pair) => pair.streamId)}::text[], ${stable.map((pair) => pair.memberId)}::text[])
+        AS requested(stream_id, member_id)
+        ON requested.stream_id = sm.stream_id AND requested.member_id = sm.member_id
+      ORDER BY sm.stream_id, sm.member_id
+      FOR UPDATE OF sm
+    `)
+    return new Set(result.rows.map((row) => `${row.stream_id}:${row.member_id}`))
+  },
+
   /**
    * Count members of `streamId` who are NOT members of `otherStreamId`.
    * Used by the sharing privacy boundary check: given a source and target

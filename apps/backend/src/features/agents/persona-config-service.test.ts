@@ -412,7 +412,7 @@ describe("PersonaConfigService.setOverride", () => {
 
     expect(result.outcome).toBe("written")
     expect("testStreamId" in result).toBe(false)
-    expect(archiveStream).toHaveBeenCalledWith("stream_test", CALLER_ID)
+    expect(archiveStream).toHaveBeenCalledWith("stream_test", WORKSPACE_ID, CALLER_ID)
 
     // A failed archive must not fail the save — the override is already committed.
     archiveStream.mockImplementation(async () => {
@@ -793,7 +793,7 @@ describe("PersonaConfigService draft lifecycle", () => {
 
     await service.discardDraft(WORKSPACE_ID, ARIADNE_AGENT_ID, CALLER)
 
-    expect(archiveStream).toHaveBeenCalledWith("stream_test", CALLER_ID)
+    expect(archiveStream).toHaveBeenCalledWith("stream_test", WORKSPACE_ID, CALLER_ID)
     expect(deleteByOwner).toHaveBeenCalledWith({}, WORKSPACE_ID, ARIADNE_AGENT_ID, CALLER_ID)
     // Archive first so a failed archive leaves the pointer to retry, never orphans.
     expect(order).toEqual(["archive", "delete"])
