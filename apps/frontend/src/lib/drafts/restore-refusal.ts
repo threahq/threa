@@ -1,5 +1,5 @@
 /** Why a restore did not happen. Every guard returns one; none is silent (INV-11). */
-export type DraftRestoreRefusal = "missing" | "host-ineligible" | "branch-elsewhere" | "raced"
+export type DraftRestoreRefusal = "missing" | "host-ineligible" | "raced"
 
 export type DraftRestoreResult = { ok: true } | { ok: false; reason: DraftRestoreRefusal }
 
@@ -13,6 +13,5 @@ export type DraftRestoreResult = { ok: true } | { ok: false; reason: DraftRestor
 export const RESTORE_REFUSAL_MESSAGE: Record<DraftRestoreRefusal, string> = {
   missing: "That draft is no longer there.",
   "host-ineligible": "This stream can't hold that draft — it stays where it is.",
-  "branch-elsewhere": "Open the conversation to continue that branch reply.",
   raced: "That draft moved before it could be restored.",
 }

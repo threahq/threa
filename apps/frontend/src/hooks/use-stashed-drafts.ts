@@ -3,6 +3,8 @@ import { type CachedDraft, type CachedStream } from "@/db"
 import { parseBoardDraftKey } from "@/lib/board/draft-keys"
 import { isDraftInHostPile, resolveDraftHomeStream, type DraftPileContext } from "@/lib/drafts/home-stream"
 import { hasSeededDraftCache, useComposerLoadedFromStore, useDraftsFromStore } from "@/stores/draft-store"
+import { conversationPanelHref } from "@/lib/board/panel-href"
+import { useMountedComposerScopes } from "./use-draft-composer"
 import { useWorkspaceStreamsRaw } from "@/stores/workspace-store"
 import { deleteDraftById } from "@/sync/draft-sync"
 import { useOptionalSyncEngine } from "@/sync/sync-engine"
@@ -40,6 +42,28 @@ export type StashedDraftOrigin = StashedDraftSource & {
    * shows a quiet hint so the take-over is informed rather than surprising.
    */
   checkedOutElsewhere: boolean
+  /**
+   * Set when tapping this row should NAVIGATE instead of restoring here: a
+   * branch reply (its composer lives only on the parent conversation's panel —
+   * v1 toasted directions at the user instead), or a conversation row whose own
+   * composer is MOUNTED right now (an open panel's docked footer): adopting
+   * would arm a host whose yield-to-panel effect immediately un-arms it — a
+   * silent no-op — so the row takes the user to the composer that already shows
+   * (or will claim) the draft.
+   */
+  openHref: string | null
+  /**
+   * The conversation whose panel `openHref` lands on, for the arrival focus
+   * signal (`requestConversationReplyOpen`) — a same-URL navigation is a no-op
+   * router-side, so focus must ride a store hand-off, not the URL.
+   */
+  openConversationId: string | null
+  /**
+   * False only for the manual-pickup fallback (branch with an uncached parent):
+   * the destination panel shows the conversation but cannot check the draft out
+   * — the hint copy must not promise "its own composer" there.
+   */
+  openCarriesDraft: boolean
   /** The owning conversation's topic summary, when it has one. */
   title: string | null
   /**
@@ -172,6 +196,7 @@ export function useStashedDrafts(workspaceId: string, scope: string | undefined)
   const cachedStreams = useWorkspaceStreamsRaw(workspaceId)
 
   const loadedId = scope ? (loaded.find((row) => row.scope === scope)?.draftId ?? null) : null
+  const mountedScopes = useMountedComposerScopes(workspaceId)
   // Where each draft is checked out, if anywhere. Being loaded somewhere no
   // longer HIDES a row (v2: a visible row is loadable — restoring takes it
   // over, chunk 2); it only annotates the origin so the take-over is informed.
@@ -361,16 +386,64 @@ export function useStashedDrafts(workspaceId: string, scope: string | undefined)
       const source = draftSource(draft.scope, streamByAnchorId)
       if (!source) continue
       const pointerScope = pointerScopeByDraftId.get(draft.id)
+      const navigateTarget = ((): { href: string; conversationId: string; carriesDraft: boolean } | null => {
+        // Only BORROWED rows ever navigate: the host's own rows (a branch
+        // composer's own stash included) restore in place via `same-scope`.
+        if (draft.scope === scope) return null
+        if (source.kind === "branch") {
+          const parent = parentPostByBranchConversationId.get(source.conversationId)
+          if (parent) {
+            return {
+              href: conversationPanelHref(workspaceId, parent.id, parent.conversation.streamId, draft.id),
+              conversationId: parent.id,
+              carriesDraft: true,
+            }
+          }
+          // Parent unresolvable: the branch's own panel still shows the
+          // conversation for manual pickup (mirrors the drafts explorer).
+          return {
+            href: conversationPanelHref(workspaceId, source.conversationId, anchorStream(source)),
+            conversationId: source.conversationId,
+            carriesDraft: false,
+          }
+        }
+        if (source.kind === "conversation" && mountedScopes.has(draft.scope)) {
+          // Loaded there already -> the href may equal the CURRENT url (panel
+          // open beside the host), so arrival focus rides the reply-open store,
+          // never the URL; stashed -> also carry ?stash= for the mounted
+          // composer's own claim effect.
+          const stashId = pointerScope === draft.scope ? undefined : draft.id
+          return {
+            href: conversationPanelHref(workspaceId, source.conversationId, anchorStream(source), stashId),
+            conversationId: source.conversationId,
+            carriesDraft: true,
+          }
+        }
+        return null
+      })()
       map.set(draft.id, {
         ...source,
         tier: draft.scope === scope ? "own" : "borrowed",
         checkedOutElsewhere: pointerScope !== undefined && pointerScope !== scope,
+        openHref: navigateTarget?.href ?? null,
+        openConversationId: navigateTarget?.conversationId ?? null,
+        openCarriesDraft: navigateTarget?.carriesDraft ?? false,
         title: topicSummary(source),
         anchorStreamId: anchorStream(source),
       })
     }
     return map
-  }, [drafts, scope, streamByAnchorId, boardPostMap, hostPostByMessageId, pointerScopeByDraftId])
+  }, [
+    drafts,
+    scope,
+    workspaceId,
+    streamByAnchorId,
+    boardPostMap,
+    hostPostByMessageId,
+    pointerScopeByDraftId,
+    parentPostByBranchConversationId,
+    mountedScopes,
+  ])
 
   const canHostForeignDraft = useCallback(
     () => !!workspaceId && !!scope && isHostHomeEligible(scope, pileContext, streamMap, archivedStreamIds),

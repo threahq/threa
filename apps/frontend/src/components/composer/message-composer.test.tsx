@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest"
+import { MemoryRouter } from "react-router-dom"
 import { spyOnExport } from "@/test/spy"
 import { render, screen, fireEvent, act, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
@@ -631,20 +632,22 @@ describe("MessageComposer", () => {
       const onStashDraft = vi.fn()
       const onRestore = vi.fn()
       render(
-        <MessageComposer
-          {...defaultProps}
-          onStashDraft={onStashDraft}
-          stashedDraftsTrigger={
-            <StashedDraftsPicker
-              drafts={[draft]}
-              canStashCurrent={false}
-              onStashCurrent={vi.fn()}
-              onRestore={onRestore}
-              onDelete={vi.fn()}
-            />
-          }
-          {...props}
-        />
+        <MemoryRouter>
+          <MessageComposer
+            {...defaultProps}
+            onStashDraft={onStashDraft}
+            stashedDraftsTrigger={
+              <StashedDraftsPicker
+                drafts={[draft]}
+                canStashCurrent={false}
+                onStashCurrent={vi.fn()}
+                onRestore={onRestore}
+                onDelete={vi.fn()}
+              />
+            }
+            {...props}
+          />
+        </MemoryRouter>
       )
       return { onStashDraft, onRestore }
     }

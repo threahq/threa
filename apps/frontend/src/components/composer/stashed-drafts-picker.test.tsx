@@ -1,14 +1,21 @@
 import { describe, it, expect, vi, beforeEach } from "vitest"
 import { act, render, screen, fireEvent, createEvent, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
+import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom"
 import { toast } from "sonner"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { StashedDraftsPicker } from "./stashed-drafts-picker"
 import { FabDrawerCloseContext } from "./fab-drawer-close-context"
 import { StashedDraftsComposerBridgeContext } from "./stashed-drafts-open-context"
 import * as inputModeModule from "@/hooks/use-input-mode"
+import * as replyOpenStore from "@/stores/conversation-reply-open-store"
 import type { CachedDraft, DraftPreview, StashedDraftRowOrigin } from "@/hooks"
 import type { DraftRestoreResult } from "@/lib/drafts/restore-refusal"
+
+function LocationEcho() {
+  const location = useLocation()
+  return <div data-testid="navigated-away">{`${location.pathname}${location.search}`}</div>
+}
 
 let isTouchMockValue = false
 
@@ -35,13 +42,21 @@ function renderPicker(overrides: Partial<Parameters<typeof StashedDraftsPicker>[
   const closeFabDrawer = vi.fn()
   const focusComposer = vi.fn()
   const tree = (pickerProps: typeof props) => (
-    <TooltipProvider>
-      <FabDrawerCloseContext.Provider value={closeFabDrawer}>
-        <StashedDraftsComposerBridgeContext.Provider value={{ openRef: { current: null }, focusComposer }}>
-          <StashedDraftsPicker {...pickerProps} />
-        </StashedDraftsComposerBridgeContext.Provider>
-      </FabDrawerCloseContext.Provider>
-    </TooltipProvider>
+    <MemoryRouter initialEntries={["/start"]}>
+      <TooltipProvider>
+        <FabDrawerCloseContext.Provider value={closeFabDrawer}>
+          <StashedDraftsComposerBridgeContext.Provider value={{ openRef: { current: null }, focusComposer }}>
+            <StashedDraftsPicker {...pickerProps} />
+          </StashedDraftsComposerBridgeContext.Provider>
+        </FabDrawerCloseContext.Provider>
+      </TooltipProvider>
+      <Routes>
+        <Route path="/start" element={null} />
+        {/* A navigate row landing anywhere else renders this marker with the
+            exact location, so tests bind the destination, not just "moved". */}
+        <Route path="*" element={<LocationEcho />} />
+      </Routes>
+    </MemoryRouter>
   )
   const { rerender, unmount } = render(tree(props))
   const rerenderWith = (next: Partial<typeof props>) => rerender(tree({ ...props, ...next }))
@@ -274,11 +289,25 @@ describe("StashedDraftsPicker", () => {
 
   describe("origin and the own/borrowed seam", () => {
     const open = () => userEvent.click(screen.getByRole("button", { name: /drafts/i }))
-    const own: StashedDraftRowOrigin = { tier: "own", label: "#general", checkedOutElsewhere: false }
-    const borrowed = (label: string, checkedOutElsewhere = false): StashedDraftRowOrigin => ({
+    const own: StashedDraftRowOrigin = {
+      tier: "own",
+      label: "#general",
+      checkedOutElsewhere: false,
+      openHref: null,
+      openConversationId: null,
+      openCarriesDraft: false,
+    }
+    const borrowed = (
+      label: string,
+      checkedOutElsewhere = false,
+      openHref: string | null = null
+    ): StashedDraftRowOrigin => ({
       tier: "borrowed",
       label,
       checkedOutElsewhere,
+      openHref,
+      openConversationId: openHref ? "conv_1" : null,
+      openCarriesDraft: openHref !== null,
     })
     const rows = [makeDraft("draft_own", "mine"), makeDraft("draft_borrowed", "theirs")]
 
@@ -443,5 +472,125 @@ describe("StashedDraftsPicker", () => {
 
       expect(onDelete).not.toHaveBeenCalled()
     })
+  })
+})
+
+describe("navigate rows (branch replies / mounted composers)", () => {
+  const open = () => userEvent.click(screen.getByRole("button", { name: /drafts/i }))
+
+  it("navigates instead of restoring, closes the picker, and says so in the meta line", async () => {
+    const replyOpenSpy = vi.spyOn(replyOpenStore, "requestConversationReplyOpen")
+    const onRestore = vi.fn()
+    const { closeFabDrawer } = renderPicker({
+      drafts: [makeDraft("draft_nav", "branch body"), makeDraft("draft_plain", "plain body")],
+      originById: new Map<string, StashedDraftRowOrigin>([
+        [
+          "draft_nav",
+          {
+            tier: "borrowed",
+            label: "Reply in Pizza plans",
+            checkedOutElsewhere: false,
+            openHref: "/w/ws_1/s/stream_1?panel=conv%3Aconv_1&stash=draft_nav",
+            openConversationId: "conv_1",
+            openCarriesDraft: true,
+          },
+        ],
+        [
+          "draft_plain",
+          {
+            tier: "borrowed",
+            label: "#general",
+            checkedOutElsewhere: false,
+            openHref: null,
+            openConversationId: null,
+            openCarriesDraft: false,
+          },
+        ],
+      ]),
+      onRestore,
+    })
+    await open()
+
+    // Scoped to the NAVIGATE row (not a join over all rows): the badge must sit
+    // on the branch row and stay off the control row.
+    const navRow = screen.getByText("branch body").closest("li")
+    const plainRow = screen.getByText("plain body").closest("li")
+    expect(navRow?.textContent).toContain("opens there")
+    expect(plainRow?.textContent).not.toContain("opens there")
+
+    await userEvent.click(screen.getByText("branch body"))
+
+    // Navigation, not restore: the row never reaches the restore path, and it
+    // lands EXACTLY on the row's href (path + panel + stash param), not merely
+    // "somewhere else".
+    expect(onRestore).not.toHaveBeenCalled()
+    const landed = await screen.findByTestId("navigated-away")
+    expect(landed.textContent).toBe("/w/ws_1/s/stream_1?panel=conv%3Aconv_1&stash=draft_nav")
+    expect(closeFabDrawer).toHaveBeenCalled()
+    // Arrival focus rides the reply-open store — a same-URL navigation is a
+    // router no-op, so without this the tap can be a silent nothing.
+    expect(replyOpenSpy).toHaveBeenCalledWith("conv_1")
+  })
+
+  it("says 'pick the draft up' for the manual-pickup fallback instead of promising its own composer", async () => {
+    renderPicker({
+      drafts: [makeDraft("draft_fb", "orphan branch")],
+      originById: new Map<string, StashedDraftRowOrigin>([
+        [
+          "draft_fb",
+          {
+            tier: "borrowed",
+            label: "Reply in Pizza plans",
+            checkedOutElsewhere: false,
+            openHref: "/w/ws_1/board?panel=conv%3Aconv_orphan",
+            openConversationId: "conv_orphan",
+            openCarriesDraft: false,
+          },
+        ],
+      ]),
+    })
+    await userEvent.click(screen.getByRole("button", { name: /drafts/i }))
+
+    const row = screen.getByText("orphan branch").closest("button")!
+    expect(row.getAttribute("aria-label")).toContain("pick the draft up")
+    expect(row.getAttribute("aria-label")).not.toContain("its own composer")
+  })
+
+  it("a throwing restore toasts and keeps the picker open — never a silent no-op", async () => {
+    const onRestore = vi.fn().mockRejectedValue(new Error("navigate row reached restore"))
+    const { closeFabDrawer } = renderPicker({
+      drafts: [makeDraft("draft_boom", "drifting row")],
+      onRestore,
+    })
+    await userEvent.click(screen.getByRole("button", { name: /drafts/i }))
+    await userEvent.click(screen.getByText("drifting row"))
+
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith(expect.stringContaining("could not be restored")))
+    expect(screen.getByText("drifting row")).toBeInTheDocument()
+    expect(closeFabDrawer).not.toHaveBeenCalled()
+  })
+
+  it("a control row without openHref still restores", async () => {
+    const onRestore = vi.fn().mockResolvedValue({ ok: true })
+    renderPicker({
+      drafts: [makeDraft("draft_plain", "plain body")],
+      originById: new Map<string, StashedDraftRowOrigin>([
+        [
+          "draft_plain",
+          {
+            tier: "borrowed",
+            label: "#general",
+            checkedOutElsewhere: false,
+            openHref: null,
+            openConversationId: null,
+            openCarriesDraft: false,
+          },
+        ],
+      ]),
+      onRestore,
+    })
+    await open()
+    await userEvent.click(screen.getByText("plain body"))
+    expect(onRestore).toHaveBeenCalledWith("draft_plain")
   })
 })
