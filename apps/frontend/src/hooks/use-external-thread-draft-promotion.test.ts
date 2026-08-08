@@ -16,7 +16,7 @@ describe("useExternalThreadDraftPromotion", () => {
     setIsSending.mockReset()
     onPromoted.mockReset()
     kickOperationQueue.mockReset()
-    vi.spyOn(draftMessageModule, "relocateLoadedDraft").mockResolvedValue(undefined)
+    vi.spyOn(draftMessageModule, "relocateLoadedDraft").mockResolvedValue(null)
     vi.spyOn(draftMessageModule, "rescopeScopeDrafts").mockResolvedValue(undefined)
     vi.spyOn(syncEngineModule, "useOptionalSyncEngine").mockReturnValue({
       kickOperationQueue,

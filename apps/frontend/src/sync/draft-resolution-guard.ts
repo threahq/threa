@@ -51,7 +51,7 @@ export function markDraftResolved(draftId: string, version: number): void {
  * True when THIS device resolved-on-send the draft that just disappeared. The
  * discriminator a composer needs when its loaded pointer goes null: only a local
  * send marks an id here, so a null that is a remote `draft:deleted` or a
- * deliberate teardown (discard, stash, relocate, purge) reads false and must not
+ * deliberate teardown (discard, stash, purge) reads false and must not
  * be treated as "another editor sent the row out from under me".
  */
 export function wasDraftResolvedLocally(draftId: string): boolean {
@@ -79,8 +79,42 @@ export function isResolvedDraftEcho(draftId: string, version: number): boolean {
   return version <= rec.version
 }
 
+/**
+ * 3. **Id migration — a device-local forwarding map.** A draft can be re-keyed
+ *    underneath a live composer (`migrateLocalDraftId`: a server split ack, a
+ *    remote-delete preserve). Anything holding the OLD id — an armed debounced
+ *    save, an in-flight identity-addressed write — must land on the new row, not
+ *    create an orphan copy of it. The migration is recorded synchronously so a
+ *    save that captured the pre-migration id can follow it forward. Chains are
+ *    followed (X → X′ → X″); the map is device-local and unbounded only in the
+ *    number of migrations a session performs.
+ */
+const migratedDraftIds = new Map<string, string>()
+
+/** Record that draft `oldId` was re-keyed to `newId`. */
+export function markDraftMigrated(oldId: string, newId: string): void {
+  if (oldId === newId) return
+  migratedDraftIds.set(oldId, newId)
+}
+
+/**
+ * Follow a draft id through any migrations recorded for it, returning the id the
+ * row lives under now (the input itself when it never migrated). A cycle would
+ * be a bug, so the walk is bounded by the map size rather than trusting it.
+ */
+export function resolveMigratedDraftId(draftId: string): string {
+  let current = draftId
+  for (let hops = 0; hops <= migratedDraftIds.size; hops++) {
+    const next = migratedDraftIds.get(current)
+    if (next === undefined) return current
+    current = next
+  }
+  return current
+}
+
 /** Test-only reset of the in-memory guards between cases. */
 export function resetDraftResolutionGuard(): void {
   scopeResolveSeq.clear()
   draftResolvedVersion.clear()
+  migratedDraftIds.clear()
 }

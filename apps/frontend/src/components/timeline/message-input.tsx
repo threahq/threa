@@ -14,16 +14,17 @@ import {
   useMentionStreamContext,
   useComposerTarget,
   useMountedComposerCount,
-  setComposerTarget,
   clearComposerTarget,
 } from "@/hooks"
 import { useIsMobile } from "@/hooks/use-mobile"
-import { stashLoadedDraft } from "@/hooks/use-draft-message"
+import { relocateLoadedDraft, stashLoadedDraft } from "@/hooks/use-draft-message"
+import { useOptionalSyncEngine } from "@/sync/sync-engine"
 import { useComposeTrace } from "@/lib/compose-trace"
 import { usePreferences } from "@/contexts"
 import { useConnectionState } from "@/components/layout/connection-status"
 import {
   ConversationReplyStrip,
+  ConversationReplyStripPlaceholder,
   FloatingComposerShell,
   ComposerDisabledNotice,
   MessageComposer,
@@ -256,6 +257,7 @@ function MessageInputComponent({
   // through their root channel for access grants — handled inside the hook.
   const streamContext = useMentionStreamContext(workspaceId, stream)
 
+  const isMobile = useIsMobile()
   const e2eEnabled = stream?.e2eEnabled === true
   // The encrypted root holds the SSK + wraps (a thread shares its root's key), so
   // both sealing and the repair notice key off the root, not the (maybe-thread) id.
@@ -365,6 +367,7 @@ function MessageInputComponent({
   // `scopeId` (`use-draft-composer.ts`), so a mismatched pair renders one draft
   // while every save targets another.
   const draftKey = effectiveTarget ?? hostScope
+  const syncEngine = useOptionalSyncEngine()
   const composer = useDraftComposer({
     workspaceId,
     draftKey,
@@ -403,6 +406,10 @@ function MessageInputComponent({
   // Use a ref so the handler always reads fresh composer state without
   // re-registering on every render (composer object is not memoized).
   const composerRef = useRef(composer)
+  const armConversationPendingRef = useRef(false)
+  const removeConversationFilingPendingRef = useRef(false)
+  const mobileChromeOpenRef = useRef(false)
+  const [preserveConversationStripSpace, setPreserveConversationStripSpace] = useState(false)
   composerRef.current = composer
 
   // Imperative handle for programmatic focus from outside (e.g. quote reply insertion)
@@ -426,21 +433,63 @@ function MessageInputComponent({
     })
   }, [quoteReplyCtx])
 
-  // "Reply in conversation" (Mechanism C): arming points this host at the
-  // conversation's draft scope. The send reads the same target for its `existing`
-  // directive — nothing is inserted into the body.
+  // "Reply in conversation" changes the filing of the content already in this
+  // mounted editor. Flush it, move that same draft row, and update the durable
+  // target in one local-first transaction. An empty composer with no row simply
+  // opens the destination's existing draft, if any.
   const conversationReplyCtx = useConversationReply()
   const { openPanel } = usePanel()
   useEffect(() => {
     if (!conversationReplyCtx) return
-    // Arm only. Focus is deferred to the resolve effect below: focusing the
-    // channel composer here would pop the mobile keyboard on it a beat before a
-    // thread-follow reply redirects to the conversation panel.
     return conversationReplyCtx.registerHandler((data: ConversationReplyData) => {
+      if (armConversationPendingRef.current) return
+      armConversationPendingRef.current = true
       gestureArmedIdRef.current = { host: hostScope, conversationId: data.conversationId }
-      void setComposerTarget(workspaceId, hostScope, boardReplyDraftKey(data.conversationId))
+      const targetScope = boardReplyDraftKey(data.conversationId)
+      void (async () => {
+        try {
+          await composerRef.current.flushDraft({ keepEmpty: true })
+          await relocateLoadedDraft(workspaceId, draftKey, targetScope, { targetHost: hostScope })
+          syncEngine?.kickOperationQueue()
+        } catch (err) {
+          gestureArmedIdRef.current = null
+          console.error("[composer] could not change the conversation filing", err)
+        } finally {
+          armConversationPendingRef.current = false
+        }
+      })()
     })
-  }, [conversationReplyCtx, workspaceId, hostScope])
+  }, [conversationReplyCtx, workspaceId, hostScope, draftKey, syncEngine])
+
+  const removeConversationFiling = useCallback(async () => {
+    const vacated = effectiveTarget
+    if (!vacated || removeConversationFilingPendingRef.current) return
+    removeConversationFilingPendingRef.current = true
+    try {
+      // The editor owns the payload. Persist it, then move that same row's filing
+      // metadata and durable target together; no identity hand-off occurs.
+      await composerRef.current.flushDraft({ keepEmpty: true })
+      await relocateLoadedDraft(workspaceId, vacated, hostScope, { targetHost: hostScope })
+      gestureArmedIdRef.current = null
+      syncEngine?.kickOperationQueue()
+    } catch (err) {
+      setPreserveConversationStripSpace(false)
+      console.error("[composer] could not remove the conversation filing", err)
+    } finally {
+      removeConversationFilingPendingRef.current = false
+    }
+  }, [effectiveTarget, workspaceId, hostScope, syncEngine])
+
+  const dismissConversationFiling = useCallback(() => {
+    // Keep the focused mobile shell still until its keyboard/chrome session ends.
+    setPreserveConversationStripSpace(isMobile && mobileChromeOpenRef.current)
+    void removeConversationFiling()
+  }, [isMobile, removeConversationFiling])
+
+  const handleMobileChromeOpenChange = useCallback((open: boolean) => {
+    mobileChromeOpenRef.current = open
+    if (!open) setPreserveConversationStripSpace(false)
+  }, [])
 
   useEffect(() => {
     if (stashParamWantsHostScope) disarm()
@@ -639,7 +688,6 @@ function MessageInputComponent({
   const [error, setError] = useState<string | null>(null)
   const [expanded, setExpanded] = useState(false)
   const messageSendMode = preferences?.messageSendMode ?? "enter"
-  const isMobile = useIsMobile()
   const connectionState = useConnectionState()
   const isOffline = connectionState === "offline"
 
@@ -652,6 +700,7 @@ function MessageInputComponent({
   useEffect(() => {
     setError(null)
     setExpanded(false)
+    setPreserveConversationStripSpace(false)
   }, [streamId])
 
   // Collapse the fullscreen overlay when the viewport crosses to mobile (expand is
@@ -887,6 +936,7 @@ function MessageInputComponent({
     placeholder: composerPlaceholder,
     messageSendMode,
     onComposerFocus,
+    onMobileChromeOpenChange: handleMobileChromeOpenChange,
     scopeId: streamId,
     onEditLastMessage: triggerEditLast
       ? () => {
@@ -964,11 +1014,18 @@ function MessageInputComponent({
     ),
   } as const
 
-  // The filing strip is informational here. Dismissing it required relocating
-  // a live synced draft solely to preserve an uncommon inline undo action.
-  const conversationReplyStrip = armedConversationId ? (
-    <ConversationReplyStrip title={conversationReplyTopic ?? "this conversation"} />
-  ) : null
+  // Removing the filing changes metadata on the same draft. On mobile, retain
+  // the strip's line box until the focused chrome session closes so neither the
+  // composer nor keyboard moves during the action.
+  let conversationReplyStrip = preserveConversationStripSpace ? <ConversationReplyStripPlaceholder /> : null
+  if (armedConversationId) {
+    conversationReplyStrip = (
+      <ConversationReplyStrip
+        title={conversationReplyTopic ?? "this conversation"}
+        onCancel={dismissConversationFiling}
+      />
+    )
+  }
 
   const StreamGlyph = stream ? STREAM_ICONS[stream.type] : null
 

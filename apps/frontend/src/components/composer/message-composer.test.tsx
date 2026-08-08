@@ -480,6 +480,22 @@ describe("MessageComposer", () => {
       expect(screen.getByText("/steer focus on tests")).toBeInTheDocument()
     })
 
+    it("reports chrome closure after focus leaves", () => {
+      isMobileMockValue = true
+      vi.useFakeTimers()
+      const onMobileChromeOpenChange = vi.fn()
+
+      render(<MessageComposer {...defaultProps} onMobileChromeOpenChange={onMobileChromeOpenChange} />)
+      expect(onMobileChromeOpenChange).toHaveBeenLastCalledWith(false)
+
+      fireEvent.click(screen.getByTestId("rich-editor-wrapper"))
+      expect(onMobileChromeOpenChange).toHaveBeenLastCalledWith(true)
+
+      fireEvent.blur(screen.getByTestId("rich-editor"))
+      act(() => vi.advanceTimersByTime(200))
+      expect(onMobileChromeOpenChange).toHaveBeenLastCalledWith(false)
+    })
+
     it("renders editor in preview mode when mobile unfocused with content", () => {
       isMobileMockValue = true
 

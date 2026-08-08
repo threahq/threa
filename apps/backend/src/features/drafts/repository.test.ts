@@ -119,6 +119,7 @@ describe("DraftsRepository.casUpdate", () => {
       id: "draft_01",
       expectedVersion: 3,
       ownWriteIds: ["write_2", "write_prior"],
+      scope: "stream:stream_2",
       rootStreamId: "stream_1",
       contentJson: { type: "doc", content: [] },
       contentMarkdown: "edited",
@@ -133,6 +134,7 @@ describe("DraftsRepository.casUpdate", () => {
     })
 
     expect(captured.text).toContain("UPDATE drafts SET")
+    expect(captured.values).toContain("stream:stream_2")
     expect(captured.text).toContain("version = version + 1")
     expect(captured.text).toContain("deleted_at IS NULL")
     expect(captured.text).toContain("version =")
@@ -154,6 +156,7 @@ describe("DraftsRepository.casUpdate", () => {
       id: "draft_01",
       expectedVersion: 99,
       ownWriteIds: ["write_3"],
+      scope: "stream:stream_2",
       rootStreamId: null,
       contentJson: { type: "doc", content: [] },
       contentMarkdown: "x",

@@ -155,6 +155,8 @@ export interface MessageComposerProps {
    * Default false (the timeline/thread composers rest compacted on mobile).
    */
   initialMobileChromeOpen?: boolean
+  /** Reports mobile focus/chrome changes so hosts can retire temporary layout slots after the keyboard closes. */
+  onMobileChromeOpenChange?: (open: boolean) => void
 
   /** Scope identifier — when it changes, re-focus the editor (if autoFocus) */
   scopeId?: string
@@ -262,6 +264,7 @@ export function MessageComposer({
   messageSendMode = "enter",
   autoFocus = false,
   initialMobileChromeOpen = false,
+  onMobileChromeOpenChange,
   scopeId,
   onEditLastMessage,
   onEscapeBlur,
@@ -331,6 +334,9 @@ export function MessageComposer({
   const mobileChromeOpen = mobileFocused || voiceActive
   const mobileChromeOpenRef = useRef(mobileChromeOpen)
   mobileChromeOpenRef.current = mobileChromeOpen
+  useEffect(() => {
+    if (isMobile) onMobileChromeOpenChange?.(mobileChromeOpen)
+  }, [isMobile, mobileChromeOpen, onMobileChromeOpenChange])
 
   // Defer the mobile chrome expansion until the keyboard's viewport resize
   // lands. Expanding on focus alone ran ~100ms ahead of the keyboard, so the

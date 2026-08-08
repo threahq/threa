@@ -57,6 +57,7 @@ let loadFailed = false
 let lastActiveStreamId = streamId
 let e2eEnabled = false
 let openPanelSpy = vi.fn()
+let renderedBodies: string[] = []
 
 const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
 
@@ -76,6 +77,7 @@ beforeEach(async () => {
   lastActiveStreamId = streamId
   e2eEnabled = false
   openPanelSpy = vi.fn()
+  renderedBodies = []
 
   vi.spyOn(currentUserHook, "useCurrentWorkspaceUserId").mockReturnValue(null)
   vi.spyOn(e2eSessionStore, "useE2eSession").mockReturnValue(LOCKED_SESSION)
@@ -189,6 +191,7 @@ beforeEach(async () => {
     onContentChange: (value: JSONContent) => void
     composerRef?: { current: unknown }
   }) => {
+    renderedBodies.push(docText(content))
     if (composerRef) {
       composerRef.current = {
         focus: vi.fn(),
@@ -201,6 +204,7 @@ beforeEach(async () => {
       <div>
         <span data-testid="editor-body">{docText(content)}</span>
         <button onClick={() => onContentChange(makeDoc("typed here"))}>type</button>
+        <button onClick={() => onContentChange({ type: "doc", content: [{ type: "paragraph" }] })}>clear</button>
       </div>
     )
   }) as unknown as typeof composerModule.MessageComposer)
@@ -275,6 +279,33 @@ describe("the timeline composer's durable target", () => {
     expect(await bodyOf(hostScope)).toBe("stream body")
   })
 
+  it("re-files the current composer content across conversations with one stable draft", async () => {
+    await seedDrafts()
+    mount()
+    await waitFor(() => expect(screen.getByTestId("editor-body")).toHaveTextContent("stream body"))
+    const stableDraftId = (await db.composerLoaded.get(hostScope))?.draftId
+
+    await userEvent.click(screen.getByRole("button", { name: "type" }))
+    await waitFor(async () => expect(await bodyOf(hostScope)).toBe("typed here"))
+    await act(async () => registeredConversationReplyHandler?.({ conversationId: "conv_1" }))
+    await waitFor(async () => expect((await db.composerTarget.get(hostScope))?.scope).toBe(boardScope))
+    expect((await db.composerLoaded.get(boardScope))?.draftId).toBe(stableDraftId)
+
+    const secondScope = "board:reply:conv_2"
+    renderedBodies = []
+    await act(async () => registeredConversationReplyHandler?.({ conversationId: "conv_2" }))
+    await waitFor(async () => expect((await db.composerTarget.get(hostScope))?.scope).toBe(secondScope))
+
+    expect((await db.composerLoaded.get(secondScope))?.draftId).toBe(stableDraftId)
+    expect(await db.drafts.get(stableDraftId!)).toMatchObject({
+      id: stableDraftId,
+      scope: secondScope,
+      contentJson: makeDoc("typed here"),
+    })
+    expect(screen.getByTestId("editor-body")).toHaveTextContent("typed here")
+    expect(renderedBodies).not.toContain("")
+  })
+
   it("survives a reload — a fresh mount reads the stored target", async () => {
     await seedDrafts()
     await setComposerTarget(workspaceId, hostScope, boardScope)
@@ -291,6 +322,57 @@ describe("the timeline composer's durable target", () => {
     mount()
     await waitFor(() => expect(screen.getByTestId("editor-body")).toHaveTextContent("board body"))
     expect(screen.getByTestId("conversation-reply-strip")).toHaveTextContent("Replying in Pizza plans")
+  })
+
+  it("removes conversation filing without changing the live draft identity or payload", async () => {
+    await seedDrafts()
+    await setComposerTarget(workspaceId, hostScope, boardScope)
+
+    mount()
+    await waitFor(() => expect(screen.getByTestId("editor-body")).toHaveTextContent("board body"))
+    const stableDraftId = (await db.composerLoaded.get(boardScope))?.draftId
+    expect(stableDraftId).toBeDefined()
+
+    await userEvent.click(screen.getByRole("button", { name: "type" }))
+    await waitFor(async () => expect(await bodyOf(boardScope)).toBe("typed here"))
+    renderedBodies = []
+    await userEvent.click(screen.getByRole("button", { name: /cancel reply in conversation/i }))
+
+    await waitFor(async () => expect(await db.composerTarget.get(hostScope)).toBeUndefined())
+    await waitFor(() => expect(screen.queryByTestId("conversation-reply-strip")).not.toBeInTheDocument())
+    expect(screen.getByTestId("editor-body")).toHaveTextContent("typed here")
+    expect(renderedBodies).not.toContain("")
+    expect((await db.composerLoaded.get(hostScope))?.draftId).toBe(stableDraftId)
+    expect(await db.drafts.get(stableDraftId!)).toMatchObject({
+      id: stableDraftId,
+      scope: hostScope,
+      contentJson: makeDoc("typed here"),
+    })
+    // The stream draft that was loaded before arming remains as a pile sibling.
+    expect(await bodyOf(hostScope)).toBe("stream body|typed here")
+    expect(await bodyOf(boardScope)).toBe("")
+  })
+
+  it("keeps a deliberately cleared composer empty while removing its filing", async () => {
+    await seedDrafts()
+    await setComposerTarget(workspaceId, hostScope, boardScope)
+    mount()
+    await waitFor(() => expect(screen.getByTestId("editor-body")).toHaveTextContent("board body"))
+    const stableDraftId = (await db.composerLoaded.get(boardScope))?.draftId
+
+    await userEvent.click(screen.getByRole("button", { name: "clear" }))
+    renderedBodies = []
+    await userEvent.click(screen.getByRole("button", { name: /cancel reply in conversation/i }))
+
+    await waitFor(async () => expect(await db.composerTarget.get(hostScope)).toBeUndefined())
+    expect(screen.getByTestId("editor-body").textContent).toBe("")
+    expect(renderedBodies).not.toContain("stream body")
+    expect((await db.composerLoaded.get(hostScope))?.draftId).toBe(stableDraftId)
+    expect(await db.drafts.get(stableDraftId!)).toMatchObject({
+      id: stableDraftId,
+      scope: hostScope,
+      contentJson: { type: "doc", content: [{ type: "paragraph" }] },
+    })
   })
 
   it("falls back to the stream scope when the target's conversation is gone", async () => {

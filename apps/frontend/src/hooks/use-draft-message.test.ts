@@ -198,6 +198,22 @@ describe("useDraftMessage", () => {
       expect(await db.composerLoaded.get(draftKey)).toBeUndefined()
     })
 
+    it("can keep an existing empty row alive for a filing-only scope move", async () => {
+      const row = await upsertLoadedDraft(workspaceId, draftKey, {
+        contentJson: makeDoc("something"),
+        attachments: [],
+      })
+      const identity = { current: row.id }
+      const { result } = renderHook(() => useDraftMessage(workspaceId, draftKey, undefined, identity))
+
+      await act(async () => {
+        await result.current.saveDraft(EMPTY_DOC, [], undefined, { keepEmpty: true })
+      })
+
+      expect(await loadedDraft(draftKey)).toMatchObject({ id: row.id, contentJson: EMPTY_DOC })
+      expect((await db.composerLoaded.get(draftKey))?.draftId).toBe(row.id)
+    })
+
     it("should preserve existing attachments when saving content", async () => {
       const existingAttachments = [{ id: "attach_1", filename: "file.txt", mimeType: "text/plain", sizeBytes: 50 }]
       await upsertLoadedDraft(workspaceId, draftKey, { contentJson: makeDoc("x"), attachments: existingAttachments })
@@ -1043,5 +1059,375 @@ describe("upsertLoadedDraft — save races the sync engine (in-transaction reval
     // The freshly confirmed basis survives the save; writing the stale 1 back
     // would make the next push CAS against an old version and split.
     expect((await db.drafts.get("draft_x"))?.baseVersion).toBe(7)
+  })
+})
+
+describe("upsertLoadedDraft — identity-addressed saves (repoint safety)", () => {
+  beforeEach(async () => {
+    vi.restoreAllMocks()
+    resetDraftStoreCache()
+    resetDraftResolutionGuard()
+    await db.drafts.clear()
+    await db.composerLoaded.clear()
+    await db.pendingOperations.clear()
+    vi.spyOn(currentUserHook, "useCurrentWorkspaceUserId").mockReturnValue(null)
+    vi.spyOn(e2eSessionStore, "useE2eSession").mockReturnValue(LOCKED_SESSION)
+  })
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  /** Two drafts on one scope, the pointer parked on X. */
+  async function seedXY() {
+    await db.drafts.put({
+      id: "draft_X",
+      workspaceId,
+      scope: draftKey,
+      contentJson: makeDoc("X body"),
+      attachments: [],
+      baseVersion: 3,
+      clientUpdatedAt: Date.now(),
+    })
+    await db.drafts.put({
+      id: "draft_Y",
+      workspaceId,
+      scope: draftKey,
+      contentJson: makeDoc("Y body"),
+      attachments: [],
+      clientUpdatedAt: Date.now(),
+    })
+    await db.composerLoaded.put({ scope: draftKey, workspaceId, draftId: "draft_X" })
+    await seedDraftCacheFromIdb(workspaceId)
+  }
+
+  it("writes the expected row (not the pointer's) when the pointer moved off it", async () => {
+    await seedXY()
+    await restoreStashedDraftToComposer(workspaceId, draftKey, "draft_Y")
+
+    await upsertLoadedDraft(
+      workspaceId,
+      draftKey,
+      { contentJson: makeDoc("late keystrokes"), attachments: [] },
+      undefined,
+      { expectedDraftId: "draft_X" }
+    )
+
+    expect((await db.drafts.get("draft_X"))?.contentJson).toEqual(makeDoc("late keystrokes"))
+    expect((await db.drafts.get("draft_Y"))?.contentJson).toEqual(makeDoc("Y body"))
+    expect((await db.composerLoaded.get(draftKey))?.draftId).toBe("draft_Y")
+  })
+
+  it("carries the expected row's baseVersion forward (no split on the next push)", async () => {
+    await seedXY()
+    await restoreStashedDraftToComposer(workspaceId, draftKey, "draft_Y")
+
+    await upsertLoadedDraft(workspaceId, draftKey, { contentJson: makeDoc("more"), attachments: [] }, undefined, {
+      expectedDraftId: "draft_X",
+    })
+
+    expect((await db.drafts.get("draft_X"))?.baseVersion).toBe(3)
+  })
+
+  it("creates a fresh row without stealing the pointer when the expected row was deleted", async () => {
+    await seedXY()
+    await restoreStashedDraftToComposer(workspaceId, draftKey, "draft_Y")
+    await db.drafts.delete("draft_X")
+
+    const created = await upsertLoadedDraft(
+      workspaceId,
+      draftKey,
+      { contentJson: makeDoc("orphaned keystrokes"), attachments: [] },
+      undefined,
+      { expectedDraftId: "draft_X" }
+    )
+
+    expect(created.id).not.toBe("draft_X")
+    expect(await db.drafts.get("draft_X")).toBeUndefined()
+    expect((await db.composerLoaded.get(draftKey))?.draftId).toBe("draft_Y")
+    expect((await db.drafts.get("draft_Y"))?.contentJson).toEqual(makeDoc("Y body"))
+  })
+
+  it("claims the pointer on the create fallback when the scope has none", async () => {
+    await seedXY()
+    await db.drafts.delete("draft_X")
+    await db.composerLoaded.delete(draftKey)
+
+    const created = await upsertLoadedDraft(
+      workspaceId,
+      draftKey,
+      { contentJson: makeDoc("recreated"), attachments: [] },
+      undefined,
+      { expectedDraftId: "draft_X" }
+    )
+
+    expect((await db.composerLoaded.get(draftKey))?.draftId).toBe(created.id)
+  })
+
+  it("clearLoadedDraft deletes the expected row by id and leaves a moved-on pointer alone", async () => {
+    await seedXY()
+    await restoreStashedDraftToComposer(workspaceId, draftKey, "draft_Y")
+
+    await clearLoadedDraft(workspaceId, draftKey, "draft_X")
+
+    expect(await db.drafts.get("draft_X")).toBeUndefined()
+    expect((await db.drafts.get("draft_Y"))?.contentJson).toEqual(makeDoc("Y body"))
+    expect((await db.composerLoaded.get(draftKey))?.draftId).toBe("draft_Y")
+  })
+
+  it("a debounced save landing after a repoint writes its own row, not the new pointer's", async () => {
+    await seedXY()
+    const contentDraftIdRef = { current: "draft_X" as string | null }
+    const { result } = renderHook(() => useDraftMessage(workspaceId, draftKey, undefined, contentDraftIdRef))
+
+    act(() => {
+      result.current.saveDraftDebounced(makeDoc("typed into X"))
+    })
+    await act(async () => {
+      await restoreStashedDraftToComposer(workspaceId, draftKey, "draft_Y")
+      contentDraftIdRef.current = "draft_Y"
+    })
+    // Poll for the debounced write instead of sleeping a fixed margin — a slow
+    // runner firing the 500 ms timer late must not race the assertion.
+    await vi.waitFor(async () => {
+      expect((await db.drafts.get("draft_X"))?.contentJson).toEqual(makeDoc("typed into X"))
+    })
+    expect((await db.drafts.get("draft_Y"))?.contentJson).toEqual(makeDoc("Y body"))
+    expect((await db.composerLoaded.get(draftKey))?.draftId).toBe("draft_Y")
+    // The stale save spoke for a superseded row, so it must not repoint the ref.
+    expect(contentDraftIdRef.current).toBe("draft_Y")
+  })
+
+  it("an empty debounced save landing after a repoint deletes its own row, not the new pointer's", async () => {
+    await seedXY()
+    const contentDraftIdRef = { current: "draft_X" as string | null }
+    const { result } = renderHook(() => useDraftMessage(workspaceId, draftKey, undefined, contentDraftIdRef))
+
+    act(() => {
+      result.current.saveDraftDebounced(EMPTY_DOC)
+    })
+    await act(async () => {
+      await restoreStashedDraftToComposer(workspaceId, draftKey, "draft_Y")
+      contentDraftIdRef.current = "draft_Y"
+    })
+    await vi.waitFor(async () => {
+      expect(await db.drafts.get("draft_X")).toBeUndefined()
+    })
+    expect((await db.drafts.get("draft_Y"))?.contentJson).toEqual(makeDoc("Y body"))
+    expect((await db.composerLoaded.get(draftKey))?.draftId).toBe("draft_Y")
+    expect(contentDraftIdRef.current).toBe("draft_Y")
+  })
+
+  it("does not drag the identity ref back when a flush for a superseded row resolves", async () => {
+    // The composer's repoint branch flushes X's content while the ref still reads
+    // X, then advances the ref to Y. The resolving flush must not pull it back —
+    // the next keystroke would write Y's body into X's row.
+    await seedXY()
+    const contentDraftIdRef = { current: "draft_X" as string | null }
+    const { result } = renderHook(() => useDraftMessage(workspaceId, draftKey, undefined, contentDraftIdRef))
+
+    await act(async () => {
+      const flushed = result.current.saveDraft(makeDoc("X body and typing"), undefined, "draft_X")
+      contentDraftIdRef.current = "draft_Y"
+      await flushed
+    })
+
+    expect(contentDraftIdRef.current).toBe("draft_Y")
+    expect((await db.drafts.get("draft_X"))?.contentJson).toEqual(makeDoc("X body and typing"))
+  })
+
+  it("a debounced save follows an id migration instead of forking the draft", async () => {
+    // A split ack re-keys X → X2 while the debounce is armed with X. The save
+    // must land on X2 (the same draft, new id), not create a third row.
+    await seedXY()
+    const { migrateLocalDraftId } = await import("@/sync/draft-sync")
+    const contentDraftIdRef = { current: "draft_X" as string | null }
+    const { result } = renderHook(() => useDraftMessage(workspaceId, draftKey, undefined, contentDraftIdRef))
+
+    act(() => {
+      result.current.saveDraftDebounced(makeDoc("typed into X"))
+    })
+    await act(async () => {
+      const live = await db.drafts.get("draft_X")
+      await migrateLocalDraftId(workspaceId, "draft_X", { ...live!, id: "draft_X2", baseVersion: 9 })
+      contentDraftIdRef.current = "draft_X2"
+    })
+    await vi.waitFor(async () => {
+      expect((await db.drafts.get("draft_X2"))?.contentJson).toEqual(makeDoc("typed into X"))
+    })
+    expect(await db.drafts.get("draft_X")).toBeUndefined()
+    // X2 and Y only — a forked third row is the bug this closes.
+    expect((await db.drafts.toArray()).map((row) => row.id).sort()).toEqual(["draft_X2", "draft_Y"])
+    expect((await db.composerLoaded.get(draftKey))?.draftId).toBe("draft_X2")
+  })
+
+  it("seals into the expected row when the pointer moved off it (E2E path)", async () => {
+    await db.drafts.put({
+      id: "draft_X",
+      workspaceId,
+      scope: draftKey,
+      contentJson: EMPTY_DOC,
+      attachments: [],
+      ciphertext: "ct_X_old",
+      envelope: { v: 2 },
+      e2eVersion: 2,
+      baseVersion: 4,
+      clientUpdatedAt: Date.now(),
+    })
+    await db.drafts.put({
+      id: "draft_Y",
+      workspaceId,
+      scope: draftKey,
+      contentJson: EMPTY_DOC,
+      attachments: [],
+      ciphertext: "ct_Y",
+      envelope: { v: 2 },
+      e2eVersion: 2,
+      clientUpdatedAt: Date.now(),
+    })
+    await db.composerLoaded.put({ scope: draftKey, workspaceId, draftId: "draft_Y" })
+    await seedDraftCacheFromIdb(workspaceId)
+    vi.spyOn(sealDraft, "sealDraftContent").mockResolvedValue({
+      ciphertext: "ct_X_new",
+      envelope: { v: 2 },
+      e2eVersion: 2,
+      contentMarkdown: "late sealed keystrokes",
+      attachmentRefs: [],
+    } as unknown as Awaited<ReturnType<typeof sealDraft.sealDraftContent>>)
+
+    await upsertLoadedDraft(
+      workspaceId,
+      draftKey,
+      { contentJson: makeDoc("late sealed keystrokes"), attachments: [] },
+      { senderId: "user_1", streamId: "stream_e2e_root" },
+      { expectedDraftId: "draft_X" }
+    )
+
+    expect(await db.drafts.get("draft_X")).toMatchObject({ ciphertext: "ct_X_new", baseVersion: 4 })
+    expect((await db.drafts.get("draft_Y"))?.ciphertext).toBe("ct_Y")
+    expect((await db.composerLoaded.get(draftKey))?.draftId).toBe("draft_Y")
+  })
+
+  it("does not drag the identity ref back when an addAttachment for a superseded row resolves", async () => {
+    // Same shape as the flush case above, through the attachment path: the ref
+    // moves X → Y while the upsert is in flight; the resolving call must not
+    // pull it back onto X.
+    await seedXY()
+    const contentDraftIdRef = { current: "draft_X" as string | null }
+    const { result } = renderHook(() => useDraftMessage(workspaceId, draftKey, undefined, contentDraftIdRef))
+
+    await act(async () => {
+      const added = result.current.addAttachment({
+        id: "attach_1",
+        filename: "a.txt",
+        mimeType: "text/plain",
+        sizeBytes: 10,
+      })
+      contentDraftIdRef.current = "draft_Y"
+      await added
+    })
+
+    expect(contentDraftIdRef.current).toBe("draft_Y")
+    expect((await db.drafts.get("draft_X"))?.attachments.map((a) => a.id)).toEqual(["attach_1"])
+  })
+
+  it("does not drag the identity ref back when a removeAttachment for a superseded row empties it", async () => {
+    await db.drafts.put({
+      id: "draft_X",
+      workspaceId,
+      scope: draftKey,
+      contentJson: EMPTY_DOC,
+      attachments: [{ id: "attach_1", filename: "a.txt", mimeType: "text/plain", sizeBytes: 10 }],
+      clientUpdatedAt: Date.now(),
+    })
+    await db.drafts.put({
+      id: "draft_Y",
+      workspaceId,
+      scope: draftKey,
+      contentJson: makeDoc("Y body"),
+      attachments: [],
+      clientUpdatedAt: Date.now(),
+    })
+    await db.composerLoaded.put({ scope: draftKey, workspaceId, draftId: "draft_Y" })
+    await seedDraftCacheFromIdb(workspaceId)
+    const contentDraftIdRef = { current: "draft_X" as string | null }
+    const { result } = renderHook(() => useDraftMessage(workspaceId, draftKey, undefined, contentDraftIdRef))
+
+    await act(async () => {
+      const removed = result.current.removeAttachment("attach_1")
+      contentDraftIdRef.current = "draft_Y"
+      await removed
+    })
+
+    // X emptied out and went away; the ref still speaks for Y, not null.
+    expect(await db.drafts.get("draft_X")).toBeUndefined()
+    expect(contentDraftIdRef.current).toBe("draft_Y")
+  })
+
+  it("cancelPendingSave drops an armed debounce without persisting it", async () => {
+    await seedXY()
+    const contentDraftIdRef = { current: null as string | null }
+    const { result } = renderHook(() => useDraftMessage(workspaceId, draftKey, undefined, contentDraftIdRef))
+
+    act(() => {
+      result.current.saveDraftDebounced(EMPTY_DOC)
+    })
+    act(() => {
+      result.current.cancelPendingSave()
+    })
+    await act(async () => {
+      // A NEGATIVE outcome (the cancelled timer must not fire) has nothing to
+      // poll for; the bounded wait can only weaken with runner slowness, never
+      // false-fail — the assertion below holds whether or not more time passes.
+      await new Promise((r) => setTimeout(r, 700))
+    })
+
+    // The armed empty save was pointer-addressed (null identity): had it fired it
+    // would have cleared the scope's loaded row.
+    expect((await db.drafts.get("draft_X"))?.contentJson).toEqual(makeDoc("X body"))
+    expect((await db.composerLoaded.get(draftKey))?.draftId).toBe("draft_X")
+  })
+
+  it("saveDraft reports null when the E2E gate refused to persist", async () => {
+    // Locked session on an encrypted scope: nothing reaches disk, so the caller
+    // must not blank the editor.
+    await seedDraftCacheFromIdb(workspaceId)
+    const { result } = renderHook(() => useDraftMessage(workspaceId, draftKey, "stream_e2e_root"))
+
+    let saved: unknown = "unset"
+    await act(async () => {
+      saved = await result.current.saveDraft(makeDoc("typed while locked"))
+    })
+
+    expect(saved).toBeNull()
+    expect(await db.drafts.toArray()).toEqual([])
+  })
+
+  it("saveDraft reports the persisted row on a plaintext save", async () => {
+    await seedXY()
+    const contentDraftIdRef = { current: "draft_X" as string | null }
+    const { result } = renderHook(() => useDraftMessage(workspaceId, draftKey, undefined, contentDraftIdRef))
+
+    const saved: unknown[] = []
+    await act(async () => {
+      saved.push(await result.current.saveDraft(makeDoc("more X")))
+    })
+
+    expect(saved[0]).toMatchObject({ id: "draft_X", contentJson: makeDoc("more X") })
+  })
+
+  it("records the created id on the create path (empty scope, no identity yet)", async () => {
+    await seedDraftCacheFromIdb(workspaceId)
+    const contentDraftIdRef = { current: null as string | null }
+    const { result } = renderHook(() => useDraftMessage(workspaceId, draftKey, undefined, contentDraftIdRef))
+
+    await act(async () => {
+      await result.current.saveDraft(makeDoc("first words"))
+    })
+
+    const pointerId = (await db.composerLoaded.get(draftKey))?.draftId
+    expect(pointerId).toBeDefined()
+    expect(contentDraftIdRef.current).toBe(pointerId)
+    expect((await db.drafts.get(pointerId!))?.contentJson).toEqual(makeDoc("first words"))
   })
 })
