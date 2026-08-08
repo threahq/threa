@@ -1,10 +1,9 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest"
+import { describe, it, expect, beforeEach } from "vitest"
 import { renderHook, act, waitFor } from "@testing-library/react"
 import { stashLoadedDraft, restoreStashedDraftToComposer, upsertLoadedDraft } from "./use-draft-message"
 import type { JSONContent } from "@threa/types"
 import { db, type CachedDraft } from "@/db"
 import { resetDraftStoreCache } from "@/stores/draft-store"
-import { __clearBoardDraftContextRegistry } from "./use-board-draft-context"
 import { useStashedDrafts } from "./use-stashed-drafts"
 
 const makeDoc = (text: string): JSONContent => ({
@@ -232,15 +231,10 @@ function seedConversationMessage(messageId: string, conversationId: string, stre
 
 describe("useStashedDrafts — pile membership", () => {
   beforeEach(async () => {
-    __clearBoardDraftContextRegistry()
     await db.conversations.clear()
     await db.conversationMessages.clear()
     await db.streams.clear()
     await db.events.clear()
-  })
-
-  afterEach(() => {
-    __clearBoardDraftContextRegistry()
   })
 
   it("shares a pile both ways between a stream and a conversation anchored in it", async () => {
@@ -442,15 +436,12 @@ describe("useStashedDrafts — pile membership", () => {
     await waitFor(() => expect(result.current.drafts.map((d) => d.id).sort()).toEqual(["draft_conv", "draft_stream"]))
     expect(result.current.originByDraftId.get("draft_stream")?.checkedOutElsewhere).toBe(true)
     expect(result.current.originByDraftId.get("draft_conv")?.checkedOutElsewhere).toBe(false)
-    // The deep-link claim set includes the loaded-elsewhere row too (take-over).
-    expect(result.current.claimableDrafts.map((d) => d.id)).toEqual(["draft_conv"])
     unmount()
 
     // Control: the host whose OWN composer holds the draft does not see it in
     // its pile (it is already on screen) — the exclusion that remains.
     const host = renderHook(() => useStashedDrafts(pileWorkspaceId, "stream:stream_s"))
     await waitFor(() => expect(host.result.current.drafts.map((d) => d.id)).toEqual(["draft_conv"]))
-    expect(host.result.current.claimableDrafts.map((d) => d.id)).toEqual([])
     host.unmount()
   })
 
@@ -596,19 +587,6 @@ describe("useStashedDrafts — pile membership", () => {
     await waitFor(() => expect(result.current.drafts.map((d) => d.id)).toEqual(["draft_stream"]))
   })
 
-  it("claimable rows stay this host's own scope even when the pile is wider", async () => {
-    await seedStream("stream_s")
-    await seedConversation("conv_1", "stream_s")
-    await db.drafts.bulkAdd([
-      draftRow({ id: "draft_stream", scope: "stream:stream_s" }),
-      draftRow({ id: "draft_conv", scope: "board:reply:conv_1" }),
-    ])
-
-    const { result } = renderHook(() => useStashedDrafts(pileWorkspaceId, "board:reply:conv_1"))
-    await waitFor(() => expect(result.current.drafts).toHaveLength(2))
-    expect(result.current.claimableDrafts.map((d) => d.id)).toEqual(["draft_conv"])
-  })
-
   // Every `composerLoaded` writer keeps pointer-scope == row-scope (adopt checks
   // a row out under its OWN scope; move rewrites the scope first), so "checked
   // out elsewhere" always means: a borrowed row loaded in its own composer on
@@ -640,11 +618,10 @@ describe("useStashedDrafts — pile membership", () => {
     expect(stream.result.current.originByDraftId.get("draft_sibling")?.checkedOutElsewhere).toBe(false)
     stream.unmount()
 
-    // The conversation host itself: its loaded draft is on screen, so neither
-    // pile nor claim set offers it; the detached sibling stays claimable.
+    // The conversation host itself excludes its loaded draft because it is
+    // already on screen; the detached sibling remains in the pile.
     const conv = renderHook(() => useStashedDrafts(pileWorkspaceId, "board:reply:conv_1"))
-    await waitFor(() => expect(conv.result.current.claimableDrafts.map((d) => d.id)).toEqual(["draft_sibling"]))
-    expect(conv.result.current.drafts.map((d) => d.id)).toEqual(["draft_sibling"])
+    await waitFor(() => expect(conv.result.current.drafts.map((d) => d.id)).toEqual(["draft_sibling"]))
     conv.unmount()
   })
 
@@ -680,7 +657,6 @@ describe("useStashedDrafts — pile membership", () => {
 
 describe("useStashedDrafts — the worked example: two conversations in one channel", () => {
   beforeEach(async () => {
-    __clearBoardDraftContextRegistry()
     await db.conversations.clear()
     await db.conversationMessages.clear()
     await db.streams.clear()
@@ -703,10 +679,6 @@ describe("useStashedDrafts — the worked example: two conversations in one chan
       draftRow({ id: "draft_a_thread", scope: "stream:stream_ta" }),
       draftRow({ id: "draft_top", scope: "stream:stream_s" }),
     ])
-  })
-
-  afterEach(() => {
-    __clearBoardDraftContextRegistry()
   })
 
   it("continues B's draft-thread reply from B's conversation view and from the draft thread itself", async () => {
@@ -762,15 +734,10 @@ describe("restoreStashedDraftToComposer — id validated in the txn (INV-20)", (
 
 describe("navigate rows (openHref)", () => {
   beforeEach(async () => {
-    __clearBoardDraftContextRegistry()
     await db.conversations.clear()
     await db.conversationMessages.clear()
     await db.streams.clear()
     await db.events.clear()
-  })
-
-  afterEach(() => {
-    __clearBoardDraftContextRegistry()
   })
 
   it("gives a branch row a panel deep link to its PARENT conversation, with the stash param", async () => {

@@ -1130,10 +1130,11 @@ describe("upsertLoadedDraft — identity-addressed saves (repoint safety)", () =
     expect((await db.drafts.get("draft_X"))?.baseVersion).toBe(3)
   })
 
-  it("creates a fresh row without stealing the pointer when the expected row was deleted", async () => {
+  it("DROPS a save whose named row was deleted — no resurrection", async () => {
     await seedXY()
     await restoreStashedDraftToComposer(workspaceId, draftKey, "draft_Y")
     await db.drafts.delete("draft_X")
+    const rowsBefore = (await db.drafts.toArray()).map((row) => row.id).sort()
 
     const created = await upsertLoadedDraft(
       workspaceId,
@@ -1143,26 +1144,41 @@ describe("upsertLoadedDraft — identity-addressed saves (repoint safety)", () =
       { expectedDraftId: "draft_X" }
     )
 
-    expect(created.id).not.toBe("draft_X")
-    expect(await db.drafts.get("draft_X")).toBeUndefined()
+    // A named, gone, un-migrated row was DELETED; a late save must not bring it
+    // (or a fork of it) back. Only a just-minted detached id may create.
+    expect(created).toBeNull()
+    expect((await db.drafts.toArray()).map((row) => row.id).sort()).toEqual(rowsBefore)
     expect((await db.composerLoaded.get(draftKey))?.draftId).toBe("draft_Y")
     expect((await db.drafts.get("draft_Y"))?.contentJson).toEqual(makeDoc("Y body"))
   })
 
-  it("claims the pointer on the create fallback when the scope has none", async () => {
+  it("claims the pointer on the MINTED-id create when the scope has none; a deleted named id still drops", async () => {
     await seedXY()
     await db.drafts.delete("draft_X")
     await db.composerLoaded.delete(draftKey)
 
-    const created = await upsertLoadedDraft(
+    // Named-but-deleted: dropped even with a free pointer (no resurrection).
+    const dropped = await upsertLoadedDraft(
       workspaceId,
       draftKey,
       { contentJson: makeDoc("recreated"), attachments: [] },
       undefined,
       { expectedDraftId: "draft_X" }
     )
+    expect(dropped).toBeNull()
+    expect(await db.composerLoaded.get(draftKey)).toBeUndefined()
 
-    expect((await db.composerLoaded.get(draftKey))?.draftId).toBe(created.id)
+    // The detached-create path (a just-minted id) may create — and claims the
+    // free pointer.
+    const created = await upsertLoadedDraft(
+      workspaceId,
+      draftKey,
+      { contentJson: makeDoc("recreated"), attachments: [] },
+      undefined,
+      { expectedDraftId: "draft_fresh_minted", createIfMissing: true }
+    )
+    expect(created).not.toBeNull()
+    expect((await db.composerLoaded.get(draftKey))?.draftId).toBe(created!.id)
   })
 
   it("clearLoadedDraft deletes the expected row by id and leaves a moved-on pointer alone", async () => {
@@ -1522,14 +1538,16 @@ describe("take-over (chunk 2) — a restore detaches every other holder; only di
     )
 
     // Fresh row under the old scope; the taken row's body is untouched and the
-    // taker's pointer still references it.
-    expect(saved.id).not.toBe("draft_T")
-    expect(saved.scope).toBe(draftKey)
-    expect((await db.drafts.get(saved.id))?.contentJson).toEqual(makeDoc("displaced keystrokes"))
+    // taker's pointer still references it. (The foreign->forceCreate path is a
+    // SPLIT, never a drop — non-null by contract.)
+    expect(saved).not.toBeNull()
+    expect(saved!.id).not.toBe("draft_T")
+    expect(saved!.scope).toBe(draftKey)
+    expect((await db.drafts.get(saved!.id))?.contentJson).toEqual(makeDoc("displaced keystrokes"))
     expect((await db.drafts.get("draft_T"))?.contentJson).toEqual(makeDoc("original body"))
     expect((await db.composerLoaded.get(otherScope))?.draftId).toBe("draft_T")
     // Our scope's pointer was freed by the take-over, so the split claims it.
-    expect((await db.composerLoaded.get(draftKey))?.draftId).toBe(saved.id)
+    expect((await db.composerLoaded.get(draftKey))?.draftId).toBe(saved!.id)
   })
 })
 
@@ -1600,5 +1618,48 @@ describe("take-over aftermath — the displaced composer can neither delete nor 
     expect((await db.drafts.get("draft_Y"))?.contentJson).toEqual(makeDoc("Y body"))
     expect((await db.drafts.get(saved!.id))?.contentJson).toEqual(makeDoc("orphan fragment"))
     expect((await db.composerLoaded.get(draftKey))?.draftId).toBe("draft_Y")
+  })
+})
+
+describe("write serialization — concurrent typing saves never fork", () => {
+  beforeEach(async () => {
+    vi.restoreAllMocks()
+    resetDraftStoreCache()
+    resetDraftResolutionGuard()
+    await db.drafts.clear()
+    await db.composerLoaded.clear()
+    await db.pendingOperations.clear()
+    vi.spyOn(currentUserHook, "useCurrentWorkspaceUserId").mockReturnValue(null)
+    vi.spyOn(e2eSessionStore, "useE2eSession").mockReturnValue(LOCKED_SESSION)
+  })
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it("two overlapping null-identity saves land in ONE row (the stray-prefix repro)", async () => {
+    await seedDraftCacheFromIdb(workspaceId)
+    const contentDraftIdRef = { current: null as string | null }
+    const { result } = renderHook(() => useDraftMessage(workspaceId, draftKey, undefined, contentDraftIdRef))
+
+    // Both fired before either resolves — the frozen-main-thread burst where two
+    // queued debounce timers run back-to-back. Unserialized IN A REAL BROWSER,
+    // save 2 reads a null identity against save 1's freshly-claimed pointer,
+    // misreads it as foreign, and mints a detached prefix row that survives the
+    // send. NOTE: fake-indexeddb's tighter txn timing lets the conflict-retry
+    // path merge these even without the write chain, so this test is a
+    // regression canary for the one-row outcome, NOT a proof of the chain — the
+    // chain's proof is the browser journey (5/5 clean runs vs ~50% stray).
+    let p1: Promise<unknown>
+    let p2: Promise<unknown>
+    await act(async () => {
+      p1 = result.current.saveDraft(makeDoc("Sh"), undefined, null)
+      p2 = result.current.saveDraft(makeDoc("Should we ship"), undefined, null)
+      await Promise.all([p1!, p2!])
+    })
+
+    const rows = await db.drafts.toArray()
+    expect(rows.map((row) => row.contentJson)).toEqual([makeDoc("Should we ship")])
+    expect((await db.composerLoaded.get(draftKey))?.draftId).toBe(rows[0].id)
   })
 })

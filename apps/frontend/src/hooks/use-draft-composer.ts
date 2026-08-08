@@ -66,7 +66,7 @@ composerRegistryListeners.add(() => mountedScopeSetCache.clear())
  * stash pile uses it to route rows whose draft is ALREADY ON SCREEN in its own
  * composer (an open conversation panel's docked footer): tapping such a row
  * navigates/focuses there instead of adopting into a host whose yield-to-panel
- * effect would immediately undo the adopt — the silent no-op chunk 3 deferred.
+ * effect would immediately undo the adopt.
  */
 export function useMountedComposerScopes(workspaceId: string): ReadonlySet<string> {
   return useSyncExternalStore(
@@ -479,11 +479,17 @@ export function useDraftComposer({
           // THAT editor's send resolving the shared row while this one holds newer
           // unsent text that exists only in React state — persist it rather than
           // merely declining to blank. Both conditions are load-bearing: alone on
-          // the scope the null is a deliberate teardown (relocate/stash/clear/
-          // purge), and only a local resolve-on-send marks the id, so a remote
+          // the scope the null is a deliberate teardown (stash/clear/purge), and
+          // only a local resolve-on-send marks the id, so a remote
           // `draft:deleted` reads false and stays deleted instead of being
           // resurrected by whichever device happens to hold the composer open.
           if (mountedComposerCount(scopeRegistryKey) > 1 && wasDraftResolvedLocally(prev)) {
+            // The rescued text belongs to a row that was just RESOLVED (deleted
+            // on send) — an identity-addressed save for it would be dropped by
+            // the no-resurrection rule. Clearing the identity first makes this a
+            // plain create under the now-empty scope: a sanctioned new row for
+            // genuinely newer text, not a resurrection of the sent one.
+            contentDraftIdRef.current = null
             return saveDraft(contentRef.current, persistableAttachments(getPendingAttachmentsSnapshot())).then(
               () => undefined,
               (err) => {

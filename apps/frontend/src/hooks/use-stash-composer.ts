@@ -25,7 +25,6 @@ import type { DraftComposerState } from "./use-draft-composer"
 export type DraftRestorePlan =
   | { action: "same-scope" }
   | { action: "adopt"; targetHost: string; targetScope: string }
-  | { action: "refuse"; reason: DraftRestoreRefusal }
   | { action: "move"; fromScope: string; toScope: string }
   | { action: "navigate"; conversationId: string }
 
@@ -98,8 +97,6 @@ function refuse(reason: DraftRestoreRefusal, message: string): DraftRestoreResul
 export interface UseStashComposerResult {
   /** The landing-site-wide pile the picker renders, newest first within each tier. */
   drafts: CachedDraft[]
-  /** This scope's own rows — what the `?stash=` deep link may claim. */
-  claimableDrafts: CachedDraft[]
   /** Where each pile row came from, keyed by draft id (structured; the caller formats). */
   originByDraftId: Map<string, StashedDraftOrigin>
   /** Tell the pile whether the picker is open, so membership latches while it is. */
@@ -168,6 +165,7 @@ export function useStashComposer(
   host?: StashComposerHost
 ): UseStashComposerResult {
   const stashedDrafts = useStashedDrafts(workspaceId, scope)
+  const stashParamRow = useStashParamDraftRow(workspaceId)
   const syncEngine = useOptionalSyncEngine()
   const targetHost = host?.targetHost ?? null
   const disarmTarget = host?.disarmTarget ?? null
@@ -186,7 +184,7 @@ export function useStashComposer(
     await composer.flushDraft()
     const stashedId = await stashLoadedDraft(workspaceId, scope)
     if (!stashedId) return
-    // The durable stash marker rides the row (chunk 4) — drain it promptly.
+    // The durable stash marker rides the row — drain it promptly.
     syncEngine?.kickOperationQueue()
     // Re-init the (now draft-less) composer so the editor blanks out.
     composer.markNeedsRehydrate()
@@ -198,7 +196,7 @@ export function useStashComposer(
    * Bring pile row `id` into this host. Everything is revalidated HERE, against
    * IDB, not against the pile computed a render ago: by the time the user clicks,
    * the row may have been deleted and the host may have resolved encrypted or
-   * archived. A row checked out elsewhere is TAKEN, never refused (v2). On any
+   * archived. A row checked out elsewhere is taken over, never refused. On any
    * failure nothing happens at all — no partial move, both drafts intact — and
    * the reason comes back to the caller,
    * which owes the user a message: the picker closes and the caret lands in the
@@ -243,9 +241,6 @@ export function useStashComposer(
           // silently doing nothing would strand the tap (INV-11).
           throw new Error(`[stash] navigate row ${id} reached restoreDraftHere — route via origin.openHref`)
         }
-        if (plan.action === "refuse") {
-          return refuse(plan.reason, `refusing restore of ${id} into ${scope}: ${plan.reason}`)
-        }
         // Leaving the row's own scope needs a host that can hold it: an encrypted
         // or archived home means the pile should never have offered it, and for an
         // adopt a late `e2eEnabled` resolve would let `purgePlaintextScopeDrafts`
@@ -273,9 +268,9 @@ export function useStashComposer(
         if (plan.action === "adopt") {
           // Whatever the target scope held is simply displaced: the pointer
           // overwrite detaches it into a stash entry, and a composer mounted there
-          // rehydrates to the adopted draft through the repoint path (chunk 1) —
-          // its own typed content, if any, is flushed to its own row first. No
-          // refusal: the row the user tapped is the row they get (v2 principle).
+          // rehydrates to the adopted draft through the repoint path; its own
+          // typed content, if any, is flushed to its own row first. The row the
+          // user tapped is always the row they get.
           // The row stays exactly where it is — it keeps its filing, which is the
           // whole point. Check it out under its OWN scope first, then point the
           // host at it, so the composer never renders the target scope for a frame
@@ -299,13 +294,11 @@ export function useStashComposer(
         }
 
         if (plan.action === "move") {
-          // Row-preserving: same id, same `baseVersion`, `scope` rewritten. NOT
-          // `relocateLoadedDraft` (it rebuilds the row through `upsertLoadedDraft`
-          // with no seal context, writing plaintext at rest on an encrypted stream)
-          // and NOT a plain coalescing enqueue (a push snapshotted before the move
-          // may be in flight with its claim not yet visible; coalescing onto it
-          // loses the scope change server-side forever). Move + enqueue share one
-          // transaction so the re-scoped row is never visible without its dirty bit.
+          // Row-preserving: same id, same `baseVersion`, `scope` rewritten. Like
+          // loaded-draft relocation, this cannot use a plain coalescing enqueue:
+          // a push snapshotted before the move may already be in flight. Move +
+          // forced enqueue share one transaction, so the re-scoped row is never
+          // visible without its dirty bit and the new scope cannot be skipped.
           // The scope is re-checked INSIDE the txn: drift since planning means the
           // plan may be the wrong ACTION now, so it goes back around for a fresh
           // plan instead of moving from wherever the row happens to live.
@@ -342,15 +335,6 @@ export function useStashComposer(
     [composer, workspaceId, scope, targetHost, disarmTarget, canHostForeignDraft, describeScope, syncEngine]
   )
 
-  const handleRestoreStashed = restoreDraftHere
-
-  const handleDeleteStashed = useCallback(
-    async (id: string) => {
-      await stashedDrafts.deleteStashedDraft(id)
-    },
-    [stashedDrafts]
-  )
-
   // Auto-restore when the URL carries `?stash=<id>` — how the /drafts explorer
   // deep-links to a specific snapshot. The dedup ref prevents the same id firing
   // twice within one mount if React re-runs the effect, and the param is stripped
@@ -361,20 +345,16 @@ export function useStashComposer(
   useEffect(() => {
     const stashId = searchParams.get("stash")
     if (!stashId || !scope || !composer.isLoaded) return
-    // Two gates, both load-bearing. The row must belong to THIS scope
-    // (`claimableDrafts`, not the landing-site-wide pile): restoring a foreign id
-    // would point this scope's loaded draft at another scope's row, splitting one
-    // draft across two composers. And this composer must hold the scope's claim —
-    // a board card and the conversation panel's footer mount the same scope, so
-    // membership alone let both restore. A non-claimant skips WITHOUT stripping,
-    // leaving the param for the claimant.
+    // The point query is the deep-link authority: exact scope, not already
+    // loaded there, and claimed by only one of the duplicate composer hosts.
     if (!composer.isStashClaimant) return
-    if (!stashedDrafts.claimableDrafts.some((draft) => draft.id === stashId)) return
+    if (!stashParamRow || stashParamRow.draftId !== stashId || stashParamRow.scope !== scope) return
+    if (stashParamRow.isLoadedForScope) return
     if (pendingStashRestoreRef.current === stashId) return
 
     pendingStashRestoreRef.current = stashId
 
-    handleRestoreStashed(stashId).then(
+    restoreDraftHere(stashId).then(
       (result) => {
         // A refusal is not an error, so this branch runs for one too. Stripping
         // here would swallow exactly what the picker was just fixed to surface:
@@ -400,17 +380,16 @@ export function useStashComposer(
     scope,
     composer.isLoaded,
     composer.isStashClaimant,
-    stashedDrafts.claimableDrafts,
-    handleRestoreStashed,
+    stashParamRow,
+    restoreDraftHere,
   ])
 
   return {
     drafts: stashedDrafts.drafts,
-    claimableDrafts: stashedDrafts.claimableDrafts,
     originByDraftId: stashedDrafts.originByDraftId,
     setPileOpen: stashedDrafts.setPileOpen,
     handleStashDraft,
-    handleRestoreStashed,
-    handleDeleteStashed,
+    handleRestoreStashed: restoreDraftHere,
+    handleDeleteStashed: stashedDrafts.deleteStashedDraft,
   }
 }

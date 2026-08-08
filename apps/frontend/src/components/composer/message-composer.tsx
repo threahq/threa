@@ -31,6 +31,7 @@ import { FabDrawerCloseContext } from "./fab-drawer-close-context"
 import { StashedDraftsComposerBridgeContext, type StashedDraftsComposerBridge } from "./stashed-drafts-open-context"
 import { ComposerActionBar } from "./composer-action-bar"
 import { ComposerLinkPreviews } from "./composer-link-previews"
+import { StashedDraftsPicker, type StashedDraftsPickerProps } from "./stashed-drafts-picker"
 import { ContextRefStrip } from "./context-ref-strip"
 import type { DraftContextRef } from "@/lib/context-bag/types"
 import { cn } from "@/lib/utils"
@@ -205,20 +206,8 @@ export interface MessageComposerProps {
    */
   onStashDraft?: () => void
 
-  /**
-   * Slot for the stashed-drafts picker trigger used in the desktop inline
-   * toolbar and the mobile action bar (compact size). Omit to hide the
-   * affordance entirely (used by edit forms and other non-draft consumers).
-   */
-  stashedDraftsTrigger?: ReactNode
-
-  /**
-   * Separate slot for the expanded-mode FAB drawer, where the trigger needs
-   * to match the 30x30 outline-shadow style of the other drawer buttons.
-   * Hosts pass both slots because the picker is rendered fresh in each
-   * context rather than shared by reference.
-   */
-  stashedDraftsTriggerFab?: ReactNode
+  /** Draft-pile behavior; the composer owns compact versus FAB presentation. */
+  stashedDrafts?: Omit<StashedDraftsPickerProps, "size">
 
   /**
    * Slot for the unified scheduled-messages picker — both the "schedule this
@@ -228,12 +217,7 @@ export interface MessageComposerProps {
    */
   scheduledMessagesTrigger?: ReactNode
 
-  /**
-   * Separate slot for the expanded-mode FAB drawer; mirrors
-   * `stashedDraftsTriggerFab`. The picker is rendered fresh per context
-   * (with `size="fab"`) rather than shared by reference because the trigger
-   * sizing differs between the inline action bar and the floating drawer.
-   */
+  /** Separate scheduled-messages slot sized for the expanded FAB drawer. */
   scheduledMessagesTriggerFab?: ReactNode
 }
 
@@ -276,14 +260,15 @@ export function MessageComposer({
   streamContext,
   composerRef,
   onStashDraft,
-  stashedDraftsTrigger,
-  stashedDraftsTriggerFab,
+  stashedDrafts,
   scheduledMessagesTrigger,
   scheduledMessagesTriggerFab,
 }: MessageComposerProps) {
   // Controls (buttons, file input) are disabled during both external disable and sending.
   // The editor itself stays editable during sending so mobile keyboards don't close/reopen.
   const controlsDisabled = disabled || isSubmitting
+  const stashedDraftsTrigger = stashedDrafts ? <StashedDraftsPicker {...stashedDrafts} /> : undefined
+  const stashedDraftsTriggerFab = stashedDrafts ? <StashedDraftsPicker {...stashedDrafts} size="fab" /> : undefined
 
   const richEditorRef = useRef<RichEditorHandle>(null)
 

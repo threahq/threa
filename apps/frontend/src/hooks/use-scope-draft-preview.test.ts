@@ -243,3 +243,59 @@ describe("sub-topic indicator is membership, not advertising", () => {
     preview.unmount()
   })
 })
+
+// Named after the staging failure it guards (Kris, 2026-08-06): "stashing on the
+// board … leaves the board's preview composer (the button) still showing it as
+// if the draft is there and then loads with the drafts despite explicitly
+// stashing". The full round-trip through the REAL stash machinery: stash →
+// button rests (no advertisement, so no auto-restore either) while the pile
+// still offers the row.
+describe("staging repro: stash on the board sticks", () => {
+  it("after stashLoadedDraft the resting button advertises nothing and the pile still has the row", async () => {
+    const { stashLoadedDraft, upsertLoadedDraft } = await import("./use-draft-message")
+    const { resetDraftStoreCache, seedDraftCacheFromIdb } = await import("@/stores/draft-store")
+    const { useStashedDrafts } = await import("./use-stashed-drafts")
+    resetDraftStoreCache()
+    await db.pendingOperations.clear()
+    await db.streams.clear()
+    await db.conversations.clear()
+    await db.streams.put({
+      id: "stream_rt",
+      workspaceId,
+      type: "channel",
+      visibility: "private",
+      rootStreamId: null,
+      archivedAt: null,
+    } as never)
+    await db.conversations.put({
+      id: "conv_rt",
+      workspaceId,
+      _lastActivityMs: 1,
+      _cachedAt: 1,
+      conversation: { id: "conv_rt", streamId: "stream_rt", messageIds: ["msg_rt"] },
+      openingMessage: { id: "msg_rt" },
+      recentMessages: [],
+    } as never)
+    const rtScope = "board:reply:conv_rt"
+    await upsertLoadedDraft(workspaceId, rtScope, { contentJson: doc("typed on the board"), attachments: [] })
+    await seedDraftCacheFromIdb(workspaceId)
+
+    // Observe the loaded advertisement first so the negative assertion below
+    // cannot pass merely because the live query has not hydrated yet.
+    const preview = renderHook(() => useScopeDraftPreview(workspaceId, rtScope))
+    await waitFor(() => expect(preview.result.current).toMatchObject({ preview: "typed on the board" }))
+
+    const stashedId = await stashLoadedDraft(workspaceId, rtScope)
+    expect(stashedId).not.toBeNull()
+
+    // Button rests: nothing advertised, so the open-time auto-restore
+    // (restoreStashedIdOnMount derives from this same preview) has nothing to fire.
+    await waitFor(() => expect(preview.result.current).toBeNull())
+    // The pile still offers the row — stash hides it from the button, never
+    // from the picker.
+    const pile = renderHook(() => useStashedDrafts(workspaceId, rtScope))
+    await waitFor(() => expect(pile.result.current.drafts.map((d) => d.id)).toContain(stashedId))
+    preview.unmount()
+    pile.unmount()
+  })
+})

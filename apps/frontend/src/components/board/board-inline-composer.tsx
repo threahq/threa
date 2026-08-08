@@ -9,7 +9,6 @@ import {
   OverlayComposerShell,
   ConversationReplyStrip,
   ScheduledMessagesPicker,
-  StashedDraftsPicker,
   useFloatingComposerAnchor,
   useFloatingComposerHeight,
   type ComposerControlHandle,
@@ -221,8 +220,8 @@ export function InlineComposerForm({
     const id = restoreOnMountRef.current
     if (!id || !composer.isLoaded) return
     restoreOnMountRef.current = null
-    // A refusal here is rare (only a row deleted mid-open survives v2's
-    // take-over) but the user TAPPED the resting button that advertised this
+    // A refusal here is rare (only a row deleted mid-open survives take-over),
+    // but the user tapped the resting button that advertised this
     // draft — an unexplained empty composer is a silent failure, so it toasts
     // like the picker and the deep link do (INV-11, INV-63).
     stash.handleRestoreStashed(id).then(
@@ -658,8 +657,7 @@ export function InlineComposerForm({
     scopeId: draftKey,
     streamContext,
     onStashDraft: stash.handleStashDraft,
-    stashedDraftsTrigger: <StashedDraftsPicker {...stashPickerProps} />,
-    stashedDraftsTriggerFab: <StashedDraftsPicker {...stashPickerProps} size="fab" />,
+    stashedDrafts: stashPickerProps,
     scheduledMessagesTrigger: schedulePickerProps ? <ScheduledMessagesPicker {...schedulePickerProps} /> : undefined,
     scheduledMessagesTriggerFab: schedulePickerProps ? (
       <ScheduledMessagesPicker {...schedulePickerProps} size="fab" />

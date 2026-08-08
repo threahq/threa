@@ -30,7 +30,6 @@ import {
   MessageComposer,
   OverlayComposerShell,
   ScheduledMessagesPicker,
-  StashedDraftsPicker,
 } from "@/components/composer"
 import type { ComposerControlHandle } from "@/components/composer"
 import { useStreamName } from "@/hooks/use-stream-name"
@@ -970,33 +969,17 @@ function MessageInputComponent({
     streamContext,
     composerRef: composerFocusRef,
     onStashDraft: stash.handleStashDraft,
-    stashedDraftsTrigger: (
-      <StashedDraftsPicker
-        drafts={stash.drafts}
-        previewById={stashPreviews}
-        originById={stashOrigins}
-        canStashCurrent={composer.canSend}
-        onStashCurrent={stash.handleStashDraft}
-        onRestore={stash.handleRestoreStashed}
-        onDelete={stash.handleDeleteStashed}
-        onOpenChange={stash.setPileOpen}
-        controlsDisabled={composer.isSending}
-      />
-    ),
-    stashedDraftsTriggerFab: (
-      <StashedDraftsPicker
-        drafts={stash.drafts}
-        previewById={stashPreviews}
-        originById={stashOrigins}
-        canStashCurrent={composer.canSend}
-        onStashCurrent={stash.handleStashDraft}
-        onRestore={stash.handleRestoreStashed}
-        onDelete={stash.handleDeleteStashed}
-        onOpenChange={stash.setPileOpen}
-        controlsDisabled={composer.isSending}
-        size="fab"
-      />
-    ),
+    stashedDrafts: {
+      drafts: stash.drafts,
+      previewById: stashPreviews,
+      originById: stashOrigins,
+      canStashCurrent: composer.canSend,
+      onStashCurrent: stash.handleStashDraft,
+      onRestore: stash.handleRestoreStashed,
+      onDelete: stash.handleDeleteStashed,
+      onOpenChange: stash.setPileOpen,
+      controlsDisabled: composer.isSending,
+    },
     scheduledMessagesTrigger: (
       <ScheduledMessagesPicker
         workspaceId={workspaceId}
