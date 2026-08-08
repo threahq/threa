@@ -1,9 +1,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest"
 import {
   __resetShareHandoffStoreForTesting,
+  acknowledgeShareHandoffBatch,
   consumeShareHandoff,
   consumePlaintextShareHandoff,
   peekShareHandoff,
+  peekPlaintextShareHandoff,
+  peekShareHandoffBatch,
   queueShareHandoff,
   queuePlaintextShareHandoff,
   subscribeShareHandoff,
@@ -37,8 +40,36 @@ describe("share handoff store", () => {
     queuePlaintextShareHandoff("stream_a", "the secret plan", sampleAttrs)
     // The pointer channel is untouched by a plaintext queue.
     expect(consumeShareHandoff("stream_a")).toBeNull()
+    expect(peekPlaintextShareHandoff("stream_a")).toMatchObject({ markdown: "the secret plan", attrs: sampleAttrs })
     expect(consumePlaintextShareHandoff("stream_a")).toMatchObject({ markdown: "the secret plan", attrs: sampleAttrs })
     expect(consumePlaintextShareHandoff("stream_a")).toBeNull()
+  })
+
+  it("keeps multiple handoffs queued while the destination composer prepares", () => {
+    queueShareHandoff("stream_a", { ...sampleAttrs, messageId: "msg_1" })
+    queueShareHandoff("stream_a", { ...sampleAttrs, messageId: "msg_2" })
+
+    expect(consumeShareHandoff("stream_a")?.messageId).toBe("msg_1")
+    expect(consumeShareHandoff("stream_a")?.messageId).toBe("msg_2")
+    expect(consumeShareHandoff("stream_a")).toBeNull()
+  })
+
+  it("snapshots mixed handoffs in FIFO order and acknowledges only that batch", () => {
+    queuePlaintextShareHandoff("stream_a", "first", { ...sampleAttrs, messageId: "msg_plain" })
+    queueShareHandoff("stream_a", { ...sampleAttrs, messageId: "msg_pointer" })
+
+    const batch = peekShareHandoffBatch("stream_a")!
+    expect(batch.handoffs).toEqual([
+      { kind: "plaintext", markdown: "first", attrs: { ...sampleAttrs, messageId: "msg_plain" } },
+      { kind: "pointer", attrs: { ...sampleAttrs, messageId: "msg_pointer" } },
+    ])
+    expect(peekPlaintextShareHandoff("stream_a")?.markdown).toBe("first")
+
+    queueShareHandoff("stream_a", { ...sampleAttrs, messageId: "msg_later" })
+    acknowledgeShareHandoffBatch("stream_a", batch)
+
+    expect(consumePlaintextShareHandoff("stream_a")).toBeNull()
+    expect(consumeShareHandoff("stream_a")?.messageId).toBe("msg_later")
   })
 
   it("queues independently per target stream", () => {

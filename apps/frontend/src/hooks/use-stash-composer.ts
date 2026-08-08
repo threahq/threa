@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef } from "react"
 import { useSearchParams } from "react-router-dom"
 import { toast } from "sonner"
 import { useLiveQuery } from "dexie-react-hooks"
+import type { JSONContent } from "@threa/types"
 import { db } from "@/db"
 import { isEmptyContent } from "@/lib/prosemirror-utils"
 import {
@@ -103,6 +104,8 @@ export interface UseStashComposerResult {
   setPileOpen: (open: boolean) => void
   /** Snapshot the current composer content into the stash, clear the editor. Empty composer → silent no-op. */
   handleStashDraft: () => Promise<void>
+  /** Stash any loaded draft before programmatic composer replacement. Returns whether a row was preserved. */
+  handleStashBeforeReplace: (contentJson: JSONContent) => Promise<boolean>
   /** Swap: stash current content first (if any), then bring the chosen pile row here — adopting or moving it as {@link planDraftRestore} decides. Refusals come back as data for the caller to surface. */
   handleRestoreStashed: (id: string) => Promise<DraftRestoreResult>
   /** Delete a stashed row without restoring. */
@@ -170,25 +173,33 @@ export function useStashComposer(
   const targetHost = host?.targetHost ?? null
   const disarmTarget = host?.disarmTarget ?? null
 
+  const stashCurrentDraft = useCallback(
+    async (contentJson?: JSONContent): Promise<boolean> => {
+      if (!scope) return false
+      const persisted = await composer.flushDraftWithResult(contentJson ? { contentJson } : undefined)
+      if (!persisted) return false
+      const stashedId = await stashLoadedDraft(workspaceId, scope)
+      if (!stashedId) return false
+      syncEngine?.kickOperationQueue()
+      composer.markNeedsRehydrate()
+      return true
+    },
+    [composer, workspaceId, scope, syncEngine]
+  )
+
   const handleStashDraft = useCallback(async () => {
-    if (!scope) return
     // Nothing worth stashing → silent no-op (parity with the picker's disabled
     // button and the product brief). Attachments alone count as content.
     const hasContent = !isEmptyContent(composer.content)
     const hasAttachments = composer.uploadedIds.length > 0
     if (!hasContent && !hasAttachments) return
+    await stashCurrentDraft()
+  }, [composer.content, composer.uploadedIds.length, stashCurrentDraft])
 
-    // Flush the live editor into its row first (sealed for E2E, E2EE-4) so the
-    // stash entry carries exactly what the user was typing, then detach it. The
-    // flush never deletes (it no-ops on empty), so it can't destroy the draft.
-    await composer.flushDraft()
-    const stashedId = await stashLoadedDraft(workspaceId, scope)
-    if (!stashedId) return
-    // The durable stash marker rides the row — drain it promptly.
-    syncEngine?.kickOperationQueue()
-    // Re-init the (now draft-less) composer so the editor blanks out.
-    composer.markNeedsRehydrate()
-  }, [composer, workspaceId, scope, syncEngine])
+  const handleStashBeforeReplace = useCallback(
+    (contentJson: JSONContent) => stashCurrentDraft(contentJson),
+    [stashCurrentDraft]
+  )
 
   const { canHostForeignDraft, describeScope } = stashedDrafts
 
@@ -389,6 +400,7 @@ export function useStashComposer(
     originByDraftId: stashedDrafts.originByDraftId,
     setPileOpen: stashedDrafts.setPileOpen,
     handleStashDraft,
+    handleStashBeforeReplace,
     handleRestoreStashed: restoreDraftHere,
     handleDeleteStashed: stashedDrafts.deleteStashedDraft,
   }

@@ -1,9 +1,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest"
-import type { ReactNode } from "react"
+import { StrictMode, type ReactNode } from "react"
 import { act, cleanup, render, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { MemoryRouter, useSearchParams } from "react-router-dom"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
+import { toast } from "sonner"
 import * as contextsModule from "@/contexts"
 import * as hooksModule from "@/hooks"
 import * as useAttachmentsModule from "@/hooks/use-attachments"
@@ -18,11 +19,12 @@ import * as discussModule from "@/hooks/use-discuss-with-ariadne"
 import * as streamContextBagModule from "@/hooks/use-stream-context-bag"
 import * as streamCommandsModule from "@/hooks/use-stream-commands"
 import { spyOnExport } from "@/test"
-import { upsertLoadedDraft, stashLoadedDraft } from "@/hooks/use-draft-message"
+import * as draftMessageModule from "@/hooks/use-draft-message"
 import { resetDraftStoreCache, seedDraftCacheFromIdb } from "@/stores/draft-store"
 import { resetDraftResolutionGuard } from "@/sync/draft-resolution-guard"
 import { resetApplyWindow } from "@/stores/apply-window"
 import { setComposerTarget } from "@/hooks/use-composer-target"
+import { peekShareHandoff, queueShareHandoff, resetShareHandoffStoreCache } from "@/stores/share-handoff-store"
 // eslint-disable-next-line no-restricted-imports -- seeds/asserts the real draft + composer-target rows
 import { db } from "@/db"
 import { MessageInput } from "./message-input"
@@ -58,14 +60,17 @@ let lastActiveStreamId = streamId
 let e2eEnabled = false
 let openPanelSpy = vi.fn()
 let renderedBodies: string[] = []
+let editorRunResult = true
 
 const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+const { upsertLoadedDraft, stashLoadedDraft } = draftMessageModule
 
 beforeEach(async () => {
   vi.restoreAllMocks()
   resetApplyWindow()
   resetDraftStoreCache()
   resetDraftResolutionGuard()
+  resetShareHandoffStoreCache()
   localStorage.clear()
   await db.drafts.clear()
   await db.composerLoaded.clear()
@@ -78,6 +83,7 @@ beforeEach(async () => {
   e2eEnabled = false
   openPanelSpy = vi.fn()
   renderedBodies = []
+  editorRunResult = true
 
   vi.spyOn(currentUserHook, "useCurrentWorkspaceUserId").mockReturnValue(null)
   vi.spyOn(e2eSessionStore, "useE2eSession").mockReturnValue(LOCKED_SESSION)
@@ -193,16 +199,35 @@ beforeEach(async () => {
   }) => {
     renderedBodies.push(docText(content))
     if (composerRef) {
+      const chain = {
+        nextContent: content,
+        setContent(nextContent: JSONContent) {
+          this.nextContent = nextContent
+          return this
+        },
+        focus() {
+          return this
+        },
+        run() {
+          if (editorRunResult) onContentChange(this.nextContent)
+          return editorRunResult
+        },
+      }
       composerRef.current = {
         focus: vi.fn(),
         focusAfterQuoteReply: vi.fn(),
-        getEditor: () => null,
+        getEditor: () => ({
+          isDestroyed: false,
+          getJSON: () => content,
+          chain: () => chain,
+        }),
         openSnippetEditor: vi.fn(),
       }
     }
     return (
       <div>
         <span data-testid="editor-body">{docText(content)}</span>
+        <span data-testid="editor-json">{JSON.stringify(content)}</span>
         <button onClick={() => onContentChange(makeDoc("typed here"))}>type</button>
         <button onClick={() => onContentChange({ type: "doc", content: [{ type: "paragraph" }] })}>clear</button>
       </div>
@@ -215,8 +240,8 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
-function mount(initialEntries: string[] = ["/"], mountStreamId: string = streamId) {
-  return render(
+function mount(initialEntries: string[] = ["/"], mountStreamId: string = streamId, strict = false) {
+  const tree = (
     <QueryClientProvider client={queryClient}>
       <MemoryRouter initialEntries={initialEntries}>
         <MessageInput workspaceId={workspaceId} streamId={mountStreamId} />
@@ -224,6 +249,7 @@ function mount(initialEntries: string[] = ["/"], mountStreamId: string = streamI
       </MemoryRouter>
     </QueryClientProvider>
   )
+  return render(strict ? <StrictMode>{tree}</StrictMode> : tree)
 }
 
 /** The same tree with a different stream — `MessageInput` is NOT remounted per
@@ -266,6 +292,196 @@ async function bodyOf(scope: string): Promise<string> {
 }
 
 describe("the timeline composer's durable target", () => {
+  it("stashes the target's live draft before a shared message takes over the composer", async () => {
+    const original = await upsertLoadedDraft(workspaceId, hostScope, {
+      contentJson: makeDoc("keep this"),
+      attachments: [
+        {
+          id: "attach_keep",
+          filename: "keep.txt",
+          mimeType: "text/plain",
+          sizeBytes: 12,
+        },
+      ],
+    })
+    await act(async () => {
+      await seedDraftCacheFromIdb(workspaceId)
+    })
+    mount()
+    await waitFor(() => expect(screen.getByTestId("editor-body")).toHaveTextContent("keep this"))
+    await userEvent.click(screen.getByRole("button", { name: "type" }))
+
+    queueShareHandoff(streamId, {
+      messageId: "msg_shared",
+      streamId: "stream_source",
+      authorName: "Ada",
+      authorId: "usr_ada",
+      actorType: "user",
+    })
+
+    await waitFor(() => expect(screen.getByTestId("editor-json")).toHaveTextContent('"type":"sharedMessage"'), {
+      timeout: 7000,
+    })
+    await waitFor(
+      async () => {
+        const loadedId = (await db.composerLoaded.get(hostScope))?.draftId
+        expect(loadedId).toBeDefined()
+        expect(loadedId).not.toBe(original.id)
+      },
+      { timeout: 7000 }
+    )
+
+    expect(await db.drafts.get(original.id)).toMatchObject({
+      contentJson: makeDoc("typed here"),
+      attachments: [{ id: "attach_keep", filename: "keep.txt", mimeType: "text/plain", sizeBytes: 12 }],
+      stashedAt: expect.any(Number),
+    })
+    const loadedId = (await db.composerLoaded.get(hostScope))?.draftId
+    expect(await db.drafts.get(loadedId!)).toMatchObject({
+      contentJson: {
+        type: "doc",
+        content: [
+          {
+            type: "sharedMessage",
+            attrs: {
+              messageId: "msg_shared",
+              streamId: "stream_source",
+              authorName: "Ada",
+              authorId: "usr_ada",
+              actorType: "user",
+            },
+          },
+          { type: "paragraph" },
+        ],
+      },
+    })
+  }, 10_000)
+
+  it("keeps the draft and handoff when the destination cannot be stashed", async () => {
+    const original = await upsertLoadedDraft(workspaceId, hostScope, {
+      contentJson: makeDoc("keep this"),
+      attachments: [],
+    })
+    await act(async () => {
+      await seedDraftCacheFromIdb(workspaceId)
+    })
+    mount()
+    await waitFor(() => expect(screen.getByTestId("editor-body")).toHaveTextContent("keep this"))
+
+    vi.spyOn(draftMessageModule, "stashLoadedDraft").mockRejectedValueOnce(new Error("IDB unavailable"))
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {})
+    const toastSpy = vi.spyOn(toast, "error").mockImplementation(() => "toast-id")
+    queueShareHandoff(streamId, {
+      messageId: "msg_retry",
+      streamId: "stream_source",
+      authorName: "Ada",
+      authorId: "usr_ada",
+      actorType: "user",
+    })
+
+    await waitFor(() =>
+      expect(toastSpy).toHaveBeenCalledWith("Couldn't prepare this composer for sharing. Your draft was kept.")
+    )
+    expect(screen.getByTestId("editor-body")).toHaveTextContent("keep this")
+    expect((await db.composerLoaded.get(hostScope))?.draftId).toBe(original.id)
+    expect((await db.drafts.get(original.id))?.stashedAt).toBeUndefined()
+    expect(peekShareHandoff(streamId)?.messageId).toBe("msg_retry")
+    expect(errorSpy).toHaveBeenCalled()
+  }, 10_000)
+
+  it("keeps the handoff when the destination editor rejects insertion", async () => {
+    await act(async () => {
+      await seedDraftCacheFromIdb(workspaceId)
+    })
+    mount()
+    editorRunResult = false
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {})
+    const toastSpy = vi.spyOn(toast, "error").mockImplementation(() => "toast-id")
+    queueShareHandoff(streamId, {
+      messageId: "msg_rejected",
+      streamId: "stream_source",
+      authorName: "Ada",
+      authorId: "usr_ada",
+      actorType: "user",
+    })
+
+    await waitFor(() =>
+      expect(toastSpy).toHaveBeenCalledWith("Couldn't prepare this composer for sharing. Your draft was kept.")
+    )
+    expect(screen.getByTestId("editor-json")).not.toHaveTextContent('"messageId":"msg_rejected"')
+    expect(peekShareHandoff(streamId)?.messageId).toBe("msg_rejected")
+    expect(await db.composerLoaded.get(hostScope)).toBeUndefined()
+    expect(errorSpy).toHaveBeenCalled()
+  }, 10_000)
+
+  it("keeps the handoff through StrictMode's throwaway effect", async () => {
+    await act(async () => {
+      await seedDraftCacheFromIdb(workspaceId)
+    })
+    queueShareHandoff(streamId, {
+      messageId: "msg_strict",
+      streamId: "stream_source",
+      authorName: "Ada",
+      authorId: "usr_ada",
+      actorType: "user",
+    })
+
+    mount(["/"], streamId, true)
+
+    await waitFor(() => expect(screen.getByTestId("editor-json")).toHaveTextContent('"messageId":"msg_strict"'), {
+      timeout: 7000,
+    })
+    await waitFor(async () => expect((await db.composerLoaded.get(hostScope))?.draftId).toBeDefined(), {
+      timeout: 7000,
+    })
+    expect(screen.getByTestId("editor-json").textContent?.match(/msg_strict/g)).toHaveLength(1)
+  }, 10_000)
+
+  it("hydrates the destination before stashing when navigation reuses the composer", async () => {
+    const targetStreamId = "stream_target"
+    const targetScope = `stream:${targetStreamId}`
+    const source = await upsertLoadedDraft(workspaceId, hostScope, {
+      contentJson: makeDoc("source body"),
+      attachments: [],
+    })
+    const target = await upsertLoadedDraft(workspaceId, targetScope, {
+      contentJson: makeDoc("target body"),
+      attachments: [],
+    })
+    await act(async () => {
+      await seedDraftCacheFromIdb(workspaceId)
+    })
+
+    const view = mount()
+    await waitFor(() => expect(screen.getByTestId("editor-body")).toHaveTextContent("source body"))
+    queueShareHandoff(targetStreamId, {
+      messageId: "msg_target",
+      streamId: "stream_source",
+      authorName: "Ada",
+      authorId: "usr_ada",
+      actorType: "user",
+    })
+    rerenderAtStream(view, targetStreamId)
+
+    await waitFor(() => expect(screen.getByTestId("editor-json")).toHaveTextContent('"messageId":"msg_target"'), {
+      timeout: 7000,
+    })
+    await waitFor(
+      async () => {
+        const loadedId = (await db.composerLoaded.get(targetScope))?.draftId
+        expect(loadedId).toBeDefined()
+        expect(loadedId).not.toBe(target.id)
+      },
+      { timeout: 7000 }
+    )
+
+    expect(await db.drafts.get(source.id)).toMatchObject({ contentJson: makeDoc("source body") })
+    expect(await db.drafts.get(target.id)).toMatchObject({
+      contentJson: makeDoc("target body"),
+      stashedAt: expect.any(Number),
+    })
+  }, 10_000)
+
   it("edits the targeted board draft, not the stream's own — and a keystroke lands there", async () => {
     await seedDrafts()
     await setComposerTarget(workspaceId, hostScope, boardScope)
@@ -288,15 +504,19 @@ describe("the timeline composer's durable target", () => {
     await userEvent.click(screen.getByRole("button", { name: "type" }))
     await waitFor(async () => expect(await bodyOf(hostScope)).toBe("typed here"))
     await act(async () => registeredConversationReplyHandler?.({ conversationId: "conv_1" }))
-    await waitFor(async () => expect((await db.composerTarget.get(hostScope))?.scope).toBe(boardScope))
-    expect((await db.composerLoaded.get(boardScope))?.draftId).toBe(stableDraftId)
+    await waitFor(async () => {
+      expect((await db.composerTarget.get(hostScope))?.scope).toBe(boardScope)
+      expect((await db.composerLoaded.get(boardScope))?.draftId).toBe(stableDraftId)
+    })
 
     const secondScope = "board:reply:conv_2"
     renderedBodies = []
     await act(async () => registeredConversationReplyHandler?.({ conversationId: "conv_2" }))
-    await waitFor(async () => expect((await db.composerTarget.get(hostScope))?.scope).toBe(secondScope))
+    await waitFor(async () => {
+      expect((await db.composerTarget.get(hostScope))?.scope).toBe(secondScope)
+      expect((await db.composerLoaded.get(secondScope))?.draftId).toBe(stableDraftId)
+    })
 
-    expect((await db.composerLoaded.get(secondScope))?.draftId).toBe(stableDraftId)
     expect(await db.drafts.get(stableDraftId!)).toMatchObject({
       id: stableDraftId,
       scope: secondScope,
