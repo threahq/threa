@@ -590,6 +590,12 @@ const delegationSchema = z.object({
   statusChangedAt: z.string().datetime(),
 })
 
+const inspectedDelegationSchema = delegationSchema.extend({
+  brief: z.string(),
+  contextRefs: z.array(z.string()),
+  claimExpiresAt: z.string().datetime().optional(),
+})
+
 const claimedDelegationSchema = delegationSchema.extend({
   /** The complete hand-off prompt (markdown) — the executor's working set. */
   brief: z.string(),
@@ -752,7 +758,9 @@ export type OperationId =
   | "completeBotInvocation"
   | "failBotInvocation"
   | "listDelegations"
+  | "getDelegation"
   | "claimDelegation"
+  | "releaseDelegation"
   | "heartbeatDelegation"
   | "reportDelegationStatus"
   | "completeDelegation"
@@ -1141,7 +1149,7 @@ export const PUBLIC_API_ROUTES: PublicApiRoute[] = [
     operationId: "listDelegations",
     summary: "List open delegations",
     description:
-      "List delegated tasks that are open to claim, filtered to what the key can access: a user-scoped key sees streams its user can access, a workspace key sees the bot's channel grants.",
+      "List delegated tasks whose current status is open and whose availability changed after `since`, filtered to streams the key can access.",
     tags: ["Delegations"],
     scopes: [WORKSPACE_PERMISSION_SCOPES.DELEGATIONS_READ],
     parameters: [workspaceIdParam],
@@ -1150,12 +1158,24 @@ export const PUBLIC_API_ROUTES: PublicApiRoute[] = [
     responseSchema: dataArrayEnvelope(delegationSchema),
   },
   {
+    method: "get",
+    path: "/api/v1/workspaces/{workspaceId}/delegations/{delegationId}",
+    operationId: "getDelegation",
+    summary: "Get a delegation",
+    description: "Inspect an accessible delegation's brief, context references, status, and current claim expiry.",
+    tags: ["Delegations"],
+    scopes: [WORKSPACE_PERMISSION_SCOPES.DELEGATIONS_READ],
+    parameters: [workspaceIdParam, delegationIdParam],
+    responseSchema: dataEnvelope(inspectedDelegationSchema),
+    canReturn404: true,
+  },
+  {
     method: "post",
     path: "/api/v1/workspaces/{workspaceId}/delegations/{delegationId}/claim",
     operationId: "claimDelegation",
-    summary: "Claim an open delegation",
+    summary: "Claim an open or expired delegation",
     description:
-      "Atomically claim an open delegation. Returns the brief, context refs, and the claim token (cleartext, exactly once; send it as X-Threa-Callback-Token on every later lifecycle call). A delegation that is no longer open returns 409.",
+      "Atomically claim an open or historical expired delegation. Returns the brief, context refs, and the claim token (cleartext, exactly once; send it as X-Threa-Callback-Token on every later lifecycle call). A delegation that is no longer open returns 409.",
     tags: ["Delegations"],
     scopes: [WORKSPACE_PERMISSION_SCOPES.DELEGATIONS_WRITE],
     parameters: [workspaceIdParam, delegationIdParam],
@@ -1164,6 +1184,19 @@ export const PUBLIC_API_ROUTES: PublicApiRoute[] = [
     responseSchema: dataEnvelope(claimedDelegationSchema),
     canReturn404: true,
     canReturn409: true,
+  },
+  {
+    method: "post",
+    path: "/api/v1/workspaces/{workspaceId}/delegations/{delegationId}/release",
+    operationId: "releaseDelegation",
+    summary: "Release a delegation claim",
+    description:
+      "Release a live claim so the delegation is open again. Authenticated with the per-claim callback token.",
+    tags: ["Delegations"],
+    scopes: [WORKSPACE_PERMISSION_SCOPES.DELEGATIONS_WRITE],
+    parameters: [workspaceIdParam, delegationIdParam, delegationTokenHeaderParam],
+    responseSchema: dataEnvelope(delegationSchema),
+    canReturn404: true,
   },
   {
     method: "post",

@@ -73,9 +73,8 @@ function serializeDelegation(delegation: DelegatedTask) {
  * at rest via the service); every later transition authenticates with the
  * `X-Threa-Callback-Token` header — the sealed-claim pattern. A lapsed, stolen,
  * or already-terminal claim makes the token-guarded CAS match nothing → 404,
- * mirroring bot-invocation renew/complete. Claiming is CAS `open → claimed`
- * only: an `expired` delegation stays terminal (the sweep's visible transition
- * keeps its meaning) — re-claiming was considered and deliberately left out.
+ * mirroring bot-invocation renew/complete. Direct claiming CASes either `open`
+ * or a historical `expired` row to `claimed`; queue listing remains open-only.
  */
 export function createDelegationPublicApiHandlers({
   pool,
@@ -110,8 +109,8 @@ export function createDelegationPublicApiHandlers({
    * Load a delegation the key may act on, or 404. Every lifecycle op gates on
    * CURRENT stream access, not just claim time: a key that loses access
    * mid-claim (revoked channel grant, removed member) can no longer drive the
-   * card — its status notes stop landing and its heartbeats lapse the claim to
-   * the visible `expired` instead of renewing a zombie it can never finish.
+   * card — its status notes stop landing and its lapsed claim reopens instead
+   * of renewing a zombie it can never finish.
    * 404 (not 403) so a non-member probing ids can't tell an existing
    * delegation from a missing one, mirroring the first-party cancel handler.
    */
@@ -162,8 +161,21 @@ export function createDelegationPublicApiHandlers({
       res.json({ data: open.filter((d) => accessible.has(d.streamId)).map(serializeDelegation) })
     },
 
+    async getDelegation(req: Request, res: Response) {
+      const identity = resolveKeyIdentity(req)
+      const delegation = await resolveAccessibleDelegation(identity, req.workspaceId!, req.params.delegationId!)
+      res.json({
+        data: {
+          ...serializeDelegation(delegation),
+          brief: delegation.brief,
+          contextRefs: delegation.contextRefs,
+          claimExpiresAt: delegation.claimExpiresAt?.toISOString(),
+        },
+      })
+    },
+
     /**
-     * CAS `open → claimed`. Exactly one concurrent claimer wins; a lost race is
+     * CAS `open|expired → claimed`. Exactly one concurrent claimer wins; a lost race is
      * 409 (the delegation exists but is not open), an invisible or missing id
      * is 404. The response is the executor's full working set: the brief, the
      * context refs, and the claim token (cleartext, returned exactly once).
@@ -193,6 +205,19 @@ export function createDelegationPublicApiHandlers({
           claimExpiresAt: result.delegation.claimExpiresAt!.toISOString(),
         },
       })
+    },
+
+    async releaseDelegation(req: Request, res: Response) {
+      const identity = resolveKeyIdentity(req)
+      const claimToken = requireCallbackToken(req)
+      await resolveAccessibleDelegation(identity, req.workspaceId!, req.params.delegationId!)
+      const reopened = await delegationService.release({
+        workspaceId: req.workspaceId!,
+        id: req.params.delegationId!,
+        claimToken,
+      })
+      if (!reopened) throw new HttpError("Delegation claim not found", { status: 404, code: "NOT_FOUND" })
+      res.json({ data: serializeDelegation(reopened) })
     },
 
     /** Push the claim TTL forward. Liveness only — no status change, no card event. */
@@ -234,7 +259,7 @@ export function createDelegationPublicApiHandlers({
     /**
      * Terminal success. When a result is given, the message insert and the
      * `completed` CAS share one transaction, so a lost claim race (cancelled /
-     * expired under us) rolls the message back instead of leaving an orphan —
+     * reopened under us) rolls the message back instead of leaving an orphan —
      * the `completeBotInvocation` shape. The author follows the key kind:
      * user key → the user (with via-API provenance), bot key → the bot.
      */

@@ -571,6 +571,47 @@ describe("BroadcastHandler", () => {
     })
   })
 
+  it("re-nudges when a delegation status patch reopens it", async () => {
+    const event = makeEvent(1n, "stream:delegation_status_changed", {
+      workspaceId: "ws_1",
+      streamId: "stream_a",
+      event: {
+        id: "event_1",
+        streamId: "stream_a",
+        eventType: "delegation:status_changed",
+        payload: { delegationId: "dlg_1", status: "open" },
+      },
+    })
+    spyOn(OutboxRepository, "fetchAfterId").mockResolvedValue([event])
+    const { handler, emitChains } = createHandler()
+    handler.handle()
+    await new Promise((r) => setTimeout(r, 300))
+    expect(emitChains).toContainEqual({
+      room: "bot:ws_1",
+      eventType: "delegation:available",
+      payload: { workspaceId: "ws_1", streamId: "stream_a", delegationId: "dlg_1", title: undefined },
+      namespace: "/bot",
+    })
+  })
+
+  it("does not re-nudge for a non-open delegation status patch", async () => {
+    const event = makeEvent(1n, "stream:delegation_status_changed", {
+      workspaceId: "ws_1",
+      streamId: "stream_a",
+      event: {
+        id: "event_1",
+        streamId: "stream_a",
+        eventType: "delegation:status_changed",
+        payload: { delegationId: "dlg_1", status: "claimed" },
+      },
+    })
+    spyOn(OutboxRepository, "fetchAfterId").mockResolvedValue([event])
+    const { handler, emitChains } = createHandler()
+    handler.handle()
+    await new Promise((r) => setTimeout(r, 300))
+    expect(emitChains.some((e) => e.eventType === "delegation:available")).toBe(false)
+  })
+
   it("re-nudges the workspace runtime room when an approved bot_access request carries a delegation (F3)", async () => {
     const event = makeEvent(1n, "stream:bot_access_status_changed", {
       workspaceId: "ws_1",

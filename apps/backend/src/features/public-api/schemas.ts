@@ -455,7 +455,7 @@ export const listMyBotsSchema = z.object({
 export const listDelegationsQuerySchema = z.object({
   /** Only the claimable queue is listed today; the enum grows when a real consumer needs more (INV-36). */
   status: z.literal("open").optional().default("open"),
-  /** Only delegations created after this instant — a polling runner's cheap delta. */
+  /** Only delegations whose availability changed after this instant. */
   since: z.string().datetime().optional(),
 })
 

@@ -81,6 +81,23 @@ export function createDelegationHandlers({ pool, delegationService }: Dependenci
       res.json(toSummary(delegation))
     },
 
+    async requeue(req: Request, res: Response) {
+      const userId = req.user!.id
+      const workspaceId = req.workspaceId!
+      const id = req.params.id!
+      const delegation = await delegationService.getById({ workspaceId, id })
+      if (!delegation || !(await checkStreamAccess(pool, delegation.streamId, workspaceId, userId))) {
+        throw new HttpError("Delegation not found", { status: 404, code: "DELEGATION_NOT_FOUND" })
+      }
+      const reopened = await delegationService.requeue({
+        workspaceId,
+        id,
+        streamId: delegation.streamId,
+        requeuedBy: { actorId: userId, actorType: AuthorTypes.USER },
+      })
+      res.json({ requeued: reopened !== null })
+    },
+
     async cancel(req: Request, res: Response) {
       const userId = req.user!.id
       const workspaceId = req.workspaceId!

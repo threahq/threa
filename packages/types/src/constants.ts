@@ -769,6 +769,9 @@ export const DelegationStatuses = {
   EXPIRED: "expired",
 } as const satisfies Record<string, DelegationStatus>
 
+export const DELEGATION_REOPEN_REASONS = ["claim_expired", "claim_released", "requeued"] as const
+export type DelegationReopenReason = (typeof DELEGATION_REOPEN_REASONS)[number]
+
 /** Terminal delegation statuses — no further transitions (and no expiry sweep interest). */
 export const DELEGATION_TERMINAL_STATUSES = [
   "completed",

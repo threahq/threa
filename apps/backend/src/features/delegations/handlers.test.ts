@@ -62,6 +62,24 @@ function makeHandlers(delegationService: Partial<DelegationService>) {
   })
 }
 
+describe("delegation requeue handler", () => {
+  afterEach(() => mock.restore())
+
+  it("requeues an accessible delegation and reports a lost race honestly", async () => {
+    spyOn(streamsModule, "checkStreamAccess").mockResolvedValue({ id: "stream_1" } as never)
+    const requeue = mock(async (): Promise<DelegatedTaskWithEvent | null> => makeDelegation({ status: "open" }))
+    const handlers = makeHandlers({ getById: mock(async () => makeDelegation({ status: "expired" })), requeue })
+    const first = createResponse()
+    await handlers.requeue(makeRequest(), first.res)
+    expect(first.payloads[0]).toEqual({ requeued: true })
+    expect(requeue).toHaveBeenCalledWith(expect.objectContaining({ workspaceId: "ws_1", streamId: "stream_1" }))
+    requeue.mockResolvedValue(null)
+    const second = createResponse()
+    await handlers.requeue(makeRequest(), second.res)
+    expect(second.payloads[0]).toEqual({ requeued: false })
+  })
+})
+
 describe("delegation get handler", () => {
   afterEach(() => mock.restore())
 

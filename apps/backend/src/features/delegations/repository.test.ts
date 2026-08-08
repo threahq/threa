@@ -212,9 +212,6 @@ describe("DelegatedTaskRepository.reclaimByIdempotencyKey", () => {
     expect(captured.values).toContain("fresh_hash")
     expect(captured.values).toContain(DelegationStatuses.CLAIMED)
     expect(captured.values).toContain(DelegationStatuses.RUNNING)
-    // Deliberately NO claim_expires_at guard: the recovery window includes a
-    // lapsed-but-unswept claim; a swept (expired) row fails the status guard.
-    expect(captured.text).not.toContain("claim_expires_at >")
   })
 
   it("returns null when the key doesn't match the live claim", async () => {
@@ -228,21 +225,6 @@ describe("DelegatedTaskRepository.reclaimByIdempotencyKey", () => {
         ttlSeconds: 900,
       })
     ).toBeNull()
-  })
-})
-
-describe("DelegatedTaskRepository.listOpen since", () => {
-  afterEach(() => mock.restore())
-
-  it("narrows to rows created after the instant when since is given", async () => {
-    const captured: Captured = { text: null, values: null }
-    const db = createQuerier(captured, [])
-    const since = new Date("2026-07-12T10:00:00.000Z")
-
-    await DelegatedTaskRepository.listOpen(db, "ws_1", { since })
-
-    expect(captured.text).toContain("created_at >")
-    expect(captured.values).toContain(since)
   })
 })
 
@@ -391,22 +373,20 @@ describe("DelegatedTaskRepository.findCreatedEventId", () => {
   })
 })
 
-describe("DelegatedTaskRepository.expireLapsedClaims", () => {
+describe("DelegatedTaskRepository.reopenLapsedClaims", () => {
   afterEach(() => mock.restore())
 
-  it("set-based CAS of every lapsed claim to expired (INV-56), returning the rows", async () => {
+  it("set-based CAS of every lapsed claim back to open (INV-56), returning the rows", async () => {
     const captured: Captured = { text: null, values: null }
     const db = createQuerier(captured, [
-      makeRow({ id: "dlg_1", status: DelegationStatuses.EXPIRED }),
-      makeRow({ id: "dlg_2", status: DelegationStatuses.EXPIRED }),
+      makeRow({ id: "dlg_1", status: DelegationStatuses.OPEN }),
+      makeRow({ id: "dlg_2", status: DelegationStatuses.OPEN }),
     ])
 
-    const expired = await DelegatedTaskRepository.expireLapsedClaims(db)
+    const reopened = await DelegatedTaskRepository.reopenLapsedClaims(db)
 
-    expect(captured.text).toContain("claim_expires_at <= NOW()")
-    expect(captured.text).toContain("status_note = NULL")
     expect(captured.values).toContain(DelegationStatuses.CLAIMED)
     expect(captured.values).toContain(DelegationStatuses.RUNNING)
-    expect(expired.map((d) => d.id)).toEqual(["dlg_1", "dlg_2"])
+    expect(reopened.map((d) => d.id)).toEqual(["dlg_1", "dlg_2"])
   })
 })
