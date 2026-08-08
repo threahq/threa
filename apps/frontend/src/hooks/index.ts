@@ -66,6 +66,13 @@ export {
 export { useStashComposer, useStashParamDraftRow, type UseStashComposerResult } from "./use-stash-composer"
 
 export {
+  useComposerTarget,
+  setComposerTarget,
+  clearComposerTarget,
+  type ComposerTargetState,
+} from "./use-composer-target"
+
+export {
   useScopeDraftPreview,
   useBoardSubtopicDraftIndex,
   useBoardScopeDraftIndex,
@@ -94,6 +101,7 @@ export {
   hasDocContent,
   type UseDraftComposerOptions,
   type DraftComposerState,
+  useMountedComposerCount,
 } from "./use-draft-composer"
 
 export { useScrollBehavior } from "./use-scroll-behavior"

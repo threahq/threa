@@ -28,6 +28,7 @@ export type {
   DraftScratchpad,
   CachedDraft,
   ComposerLoaded,
+  ComposerTarget,
   DraftAttachment,
   CachedSavedMessage,
   CachedScheduledMessage,

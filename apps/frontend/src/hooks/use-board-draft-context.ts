@@ -80,8 +80,17 @@ async function loadBoardDraftContext(workspaceId: string, keys: ScopeKeys): Prom
   const hostPostByMessageId = new Map<string, CachedBoardPost>()
   let hostRows: CachedBoardPost[] = []
   if (forkMessageIds.size > 0) {
-    const rows = await db.conversations.where("workspaceId").equals(workspaceId).toArray()
-    hostRows = rows.filter((row) => row.conversation.messageIds?.some((id: string) => forkMessageIds.has(id)))
+    // The v48 multiEntry index over `conversation.messageIds` — a keyed lookup
+    // per fork id instead of a scan of every conversation in the workspace.
+    // `distinct()` because a conversation holding two of the ids would otherwise
+    // come back once per match.
+    hostRows = (
+      await db.conversations
+        .where("conversation.messageIds")
+        .anyOf([...forkMessageIds])
+        .distinct()
+        .toArray()
+    ).filter((row) => row.workspaceId === workspaceId)
     for (const post of hostRows) {
       for (const id of post.conversation.messageIds ?? []) {
         if (forkMessageIds.has(id)) hostPostByMessageId.set(id, post)

@@ -42,6 +42,20 @@ function subscribeComposerRegistry(listener: () => void): () => void {
 }
 
 /**
+ * How many composers are mounted on a scope right now. A host that can point
+ * itself at another scope needs this: two live editors on one draft row fight
+ * over it — the second never re-reads an ordinary body change, so whichever
+ * saves last wins and the other's text is gone.
+ */
+export function useMountedComposerCount(workspaceId: string, scope: string | null): number {
+  const key = scope ? `${workspaceId} ${scope}` : ""
+  return useSyncExternalStore(
+    subscribeComposerRegistry,
+    useCallback(() => (key ? mountedComposerCount(key) : 0), [key])
+  )
+}
+
+/**
  * Whether this composer is the one host that consumes a `?stash=` deep link for
  * its scope. Exactly one mounted composer per scope answers true; the rest defer,
  * leaving the param for the claimant rather than each restoring it.
@@ -284,10 +298,7 @@ export function useDraftComposer({
   useEffect(() => {
     const isScopeChange = prevScopeIdRef.current !== null && prevScopeIdRef.current !== scopeId
 
-    // On scope change, reset state
-    if (isScopeChange) {
-      resetForReinit()
-    }
+    if (isScopeChange) resetForReinit()
 
     // Track scope changes
     if (prevScopeIdRef.current !== scopeId) {

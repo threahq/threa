@@ -8,10 +8,16 @@ import {
   useStreamOrDraft,
   useComposerHeightPublish,
   useStashComposer,
+  useStashParamDraftRow,
   useDecryptedDraftPreviews,
   useMentionStreamContext,
+  useComposerTarget,
+  useMountedComposerCount,
+  setComposerTarget,
+  clearComposerTarget,
 } from "@/hooks"
 import { useIsMobile } from "@/hooks/use-mobile"
+import { stashLoadedDraft } from "@/hooks/use-draft-message"
 import { useComposeTrace } from "@/lib/compose-trace"
 import { usePreferences } from "@/contexts"
 import { useConnectionState } from "@/components/layout/connection-status"
@@ -35,6 +41,7 @@ import { useQuoteReply, appendQuoteReplyNode, type QuoteReplyData } from "./quot
 import { useConversationReply, type ConversationReplyData } from "./conversation-reply-context"
 import { useConversationBoardPost } from "@/hooks/use-conversations"
 import { boardPostLastActiveStreamId } from "@/lib/board/reply-plan"
+import { boardReplyDraftKey, parseBoardDraftKey } from "@/lib/board/draft-keys"
 import { usePanel, createConversationPanelId } from "@/contexts"
 import { consumeShareHandoff, consumePlaintextShareHandoff, subscribeShareHandoff } from "@/stores/share-handoff-store"
 import { consumeSnippetRequest, subscribeSnippetRequest } from "@/stores/snippet-request-store"
@@ -43,7 +50,6 @@ import { useComposerCommandSend } from "@/components/composer/use-composer-comma
 import type { JSONContent } from "@threa/types"
 import type { PendingAttachment } from "@/hooks/use-attachments"
 import { ComposerEncryptionNotice } from "@/components/encryption/stream-encryption-affordance"
-import { useConversationTitle } from "@/hooks/use-conversation-title"
 
 interface MessageInputProps {
   workspaceId: string
@@ -237,7 +243,7 @@ function MessageInputComponent({
   const { preferences } = usePreferences()
   const { stream, sendMessage } = useStreamOrDraft(workspaceId, streamId)
   const scheduleMessageMutation = useScheduleMessage(workspaceId)
-  const draftKey = getDraftMessageKey({ type: "stream", streamId })
+  const hostScope = getDraftMessageKey({ type: "stream", streamId })
 
   // Send-time command routing (raw-text `/model ` included, even when the editor
   // never materialized a `slashCommand` node), over the same effective command
@@ -253,10 +259,62 @@ function MessageInputComponent({
   // The encrypted root holds the SSK + wraps (a thread shares its root's key), so
   // both sealing and the repair notice key off the root, not the (maybe-thread) id.
   const e2eRootStreamId = e2eEnabled ? (stream?.rootStreamId ?? streamId) : undefined
+
+  // "Reply in conversation" (Mechanism C) points this host at the conversation's
+  // own draft scope, durably (`composerTarget`). The composer then edits THAT
+  // draft: the arm is which draft is open, not a flag riding whatever is typed
+  // next, so it survives a reload and the strip renders straight from it.
+  const { scope: storedTarget, isResolved: targetResolved } = useComposerTarget(hostScope)
+  const parsedTarget = storedTarget ? parseBoardDraftKey(storedTarget) : null
+  const targetConversationId =
+    parsedTarget && (parsedTarget.kind === "reply" || parsedTarget.kind === "branch-reply")
+      ? parsedTarget.conversationId
+      : null
+  // Topic label for the strip — cached board card or a one-shot by-id fetch. The
+  // same projection carries the conversation's most-recently-active stream: the
+  // latest reply's own stream (a thread under the root), falling back to the
+  // conversation's anchor.
+  const { post: conversationReplyPost, notFound: conversationReplyNotFound } = useConversationBoardPost(
+    workspaceId,
+    targetConversationId
+  )
+  // Never apply the target on an encrypted stream: a board draft is plaintext at
+  // rest, and this composer purges the plaintext drafts of whatever scope it
+  // holds (E2EE-4). `e2eEnabled` and `draftKey` derive from the same `stream`
+  // value in one render, so a late resolve flips both together and the purge can
+  // never see a board scope. An unresolvable target (an unparseable scope, or a
+  // conversation the server says is gone) falls back to the host's own scope
+  // rather than leaving the composer pointed at nothing (INV-11 — report it,
+  // don't strand the user).
+  //
+  // Only a 404 counts as gone. A failed request (`loadFailed`) must HOLD the arm:
+  // clearing on any error would yank the composer's scope out from under whatever
+  // is being typed, on one 502, irreversibly.
+  const targetUnresolvable = (storedTarget !== null && !targetConversationId) || conversationReplyNotFound
+  useEffect(() => {
+    if (!targetUnresolvable) return
+    console.error(`[composer] dropping unresolvable target for ${hostScope}: ${storedTarget}`)
+    void clearComposerTarget(hostScope)
+  }, [targetUnresolvable, hostScope, storedTarget])
+  const effectiveTarget =
+    targetResolved && !e2eEnabled && targetConversationId && !targetUnresolvable ? storedTarget : null
+  // Includes this composer once it is pointed at the scope, so >1 means someone else.
+  const mountedOnTarget = useMountedComposerCount(workspaceId, effectiveTarget)
+  const armedConversationId = effectiveTarget ? targetConversationId : null
+  const conversationReplyTopic = conversationReplyPost?.conversation.topicSummary ?? null
+  const conversationReplyLastActiveStreamId = conversationReplyPost
+    ? boardPostLastActiveStreamId(conversationReplyPost)
+    : null
+
+  // The draft scope this composer edits — the target when armed, the stream's own
+  // otherwise. `scopeId` MUST follow it: the composer's rehydrate keys on
+  // `scopeId` (`use-draft-composer.ts`), so a mismatched pair renders one draft
+  // while every save targets another.
+  const draftKey = effectiveTarget ?? hostScope
   const composer = useDraftComposer({
     workspaceId,
     draftKey,
-    scopeId: streamId,
+    scopeId: draftKey,
     e2eStreamId: e2eRootStreamId,
   })
   const quoteReplyCtx = useQuoteReply()
@@ -266,6 +324,15 @@ function MessageInputComponent({
   // many-per-scope stash and the `?stash=<id>` URL auto-restore. Stash + restore
   // are pointer moves, so they work for plaintext and E2E alike (no gating).
   const stash = useStashComposer(composer, workspaceId, draftKey)
+  // A `?stash=` deep link naming one of THIS stream's own stashed rows while the
+  // composer is armed: the stash host is the board scope, so nobody would claim
+  // the param and the URL would carry it forever. Disarm — an explicit "work on
+  // this one" outranks the arm — and the restore proceeds on the next render.
+  // Not by pointing the stash host back at `hostScope`: `handleStashDraft` would
+  // then flush the composer's board content and detach the stream scope's
+  // pointer, stashing the wrong draft.
+  const stashParamRow = useStashParamDraftRow(workspaceId)
+  const stashParamWantsHostScope = !!effectiveTarget && stashParamRow?.scope === hostScope
   // Decrypt-on-read previews for the stash pile (sealed rows decrypt via the
   // shared cache; plaintext rows resolve from contentJson). All entries share
   // this stream's encrypted root.
@@ -301,66 +368,91 @@ function MessageInputComponent({
     })
   }, [quoteReplyCtx])
 
-  // "Reply in conversation" (Mechanism C): the armed conversation rides the send
-  // as an `existing` directive — nothing is inserted into the body. Held as
-  // in-memory state (not part of the durable draft): a stale filing surviving a
-  // reload would silently misfile whatever is typed next, so it resets with the
-  // session and with the stream.
+  // "Reply in conversation" (Mechanism C): arming points this host at the
+  // conversation's draft scope. The send reads the same target for its `existing`
+  // directive — nothing is inserted into the body.
   const conversationReplyCtx = useConversationReply()
   const { openPanel } = usePanel()
-  const [conversationReply, setConversationReply] = useState<ConversationReplyData | null>(null)
+  // Which arm came from the gesture in this session, and on which host. The
+  // target is durable, so "armed" alone can no longer tell a deliberate act from
+  // a page load — and the host is part of it because this component is NOT
+  // remounted per stream: without it, arming in stream A and navigating back to
+  // A (or onto a B that is armed for the same conversation) would read as a
+  // fresh gesture and route on a plain navigation.
+  const gestureArmedIdRef = useRef<{ host: string; conversationId: string } | null>(null)
   useEffect(() => {
     if (!conversationReplyCtx) return
     // Arm only. Focus is deferred to the resolve effect below: focusing the
     // channel composer here would pop the mobile keyboard on it a beat before a
     // thread-follow reply redirects to the conversation panel.
     return conversationReplyCtx.registerHandler((data: ConversationReplyData) => {
-      setConversationReply(data)
+      gestureArmedIdRef.current = { host: hostScope, conversationId: data.conversationId }
+      void setComposerTarget(workspaceId, hostScope, boardReplyDraftKey(data.conversationId))
     })
-  }, [conversationReplyCtx])
+  }, [conversationReplyCtx, workspaceId, hostScope])
+
+  // Disarm: this composer stops pointing at the conversation and reverts to the
+  // stream's own draft. The typed draft is NOT moved — its scope IS its target,
+  // so it stays a draft of that conversation and keeps its filing.
+  //
+  // It must also stop being CHECKED OUT here, though. A draft loaded under a scope
+  // no composer is showing is excluded from every pile on the device (the
+  // checked-out-anywhere rule) and carries no `?stash=` link in the explorer, so
+  // "it stays reachable" would be false: the only way back would be to open that
+  // conversation's own composer. Detaching the pointer turns it into a real stash
+  // entry, which is what makes the sentence above true. Unless another composer is
+  // already mounted on that scope — then it is showing the draft and owns it.
+  const disarm = useCallback(() => {
+    // Cleared here rather than in the routing effect: the gesture sets the ref
+    // synchronously and the target lands an IDB write later, so an effect re-run
+    // in that window would erase the very gesture it is meant to recognise.
+    gestureArmedIdRef.current = null
+    const vacated = effectiveTarget
+    void clearComposerTarget(hostScope)
+    if (vacated && mountedOnTarget <= 1) {
+      void composerRef.current
+        .flushDraft()
+        .catch((err) => console.error("[composer] flush before disarm failed", err))
+        .then(() => stashLoadedDraft(workspaceId, vacated))
+        .catch((err) => console.error("[composer] could not release the disarmed draft", err))
+    }
+  }, [hostScope, workspaceId, effectiveTarget, mountedOnTarget])
+
   useEffect(() => {
-    setConversationReply(null)
-  }, [streamId])
-  // Topic label for the strip — cached board card or a one-shot by-id fetch. The
-  // same projection carries the conversation's most-recently-active stream: the
-  // latest reply's own stream (a thread under the root), falling back to the
-  // conversation's anchor.
-  const { post: conversationReplyPost } = useConversationBoardPost(
-    workspaceId,
-    conversationReply?.conversationId ?? null
-  )
-  const conversationReplyTopic = useConversationTitle(
-    workspaceId,
-    conversationReplyPost?.conversation ?? { streamId: "", topicSummary: null }
-  )
-  const conversationReplyLastActiveStreamId = conversationReplyPost
-    ? boardPostLastActiveStreamId(conversationReplyPost)
-    : null
+    if (stashParamWantsHostScope) disarm()
+  }, [stashParamWantsHostScope, disarm])
+
+  // Two live editors on one draft row is the failure the mounted-composer registry
+  // exists to police: the second never re-reads an ordinary body change, so
+  // whichever saves last silently wins. Arming let this composer occupy a board
+  // scope the conversation panel also mounts, so when the panel opens, yield —
+  // it is the more specific host, the same precedence the panel hand-off already
+  // uses, and the draft is checked out at that scope so it lands there intact.
+  useEffect(() => {
+    if (!effectiveTarget || mountedOnTarget <= 1) return
+    gestureArmedIdRef.current = null
+    void clearComposerTarget(hostScope)
+  }, [effectiveTarget, mountedOnTarget, hostScope])
 
   // Hand the armed conversation off to its side panel (Mechanism B), which renders
   // it across its root + threads and routes the reply recency-biased into the live
   // thread. Shared by the resolve effect (proactive, once the projection loads) and
-  // the send guard (the race where the user sends before it loads).
+  // the send guard (the race where the user sends before it loads). The draft stays
+  // at the conversation's scope, which is the scope the panel's composer opens.
   const redirectReplyToPanel = useCallback(
     (conversationId: string) => {
       requestConversationReplyOpen(conversationId)
       openPanel(createConversationPanelId(conversationId))
-      setConversationReply(null)
+      disarm()
     },
-    [openPanel]
+    [openPanel, disarm]
   )
 
-  // Current stream read through a ref so the routing effect doesn't take `streamId`
-  // as a dep: on a plain stream switch, `streamId` changes while `conversationReply`
-  // still holds the previous stream's armed value (the `[streamId]` reset effect
-  // hasn't committed yet), and a streamId-driven re-run would misread that as a
-  // thread-follow and spuriously open the panel. The reset effect nulls the arm,
-  // which re-runs this effect to a clean no-op.
-  const streamIdRef = useRef(streamId)
-  streamIdRef.current = streamId
-
   // Thread-follow: route the armed reply ONCE, at first resolution of the
-  // projection. A conversation live in THIS stream keeps the inline strip and
+  // projection, and only for an arm the user just made. A restored arm is a page
+  // load, not a gesture: routing it would open the side panel over the channel
+  // the user navigated to (or pop the mobile keyboard) with no action behind it.
+  // A conversation live in THIS stream keeps the inline strip and
   // focuses the composer to type; one that has moved into a thread hands off to
   // the panel — a flat send there would re-interleave the channel, the mess
   // recency-biased continuation avoids (board-view-design.md).
@@ -372,17 +464,29 @@ function MessageInputComponent({
   // explicit send re-checks routing. The latch resets when the arm is cleared.
   const routedArmIdRef = useRef<string | null>(null)
   useEffect(() => {
-    if (!conversationReply) {
+    if (!armedConversationId) {
       routedArmIdRef.current = null
       return
     }
-    if (routedArmIdRef.current === conversationReply.conversationId) return
+    if (routedArmIdRef.current === armedConversationId) return
+    // Restored, not gestured: latch it as routed so it shows the strip and does
+    // nothing else. The send guard still routes when the user actually sends.
+    const gesture = gestureArmedIdRef.current
+    if (gesture?.host !== hostScope || gesture.conversationId !== armedConversationId) {
+      routedArmIdRef.current = armedConversationId
+      return
+    }
     const target = conversationReplyLastActiveStreamId
     if (!target) return
-    routedArmIdRef.current = conversationReply.conversationId
-    if (target === streamIdRef.current) composerFocusRef.current?.focus()
-    else redirectReplyToPanel(conversationReply.conversationId)
-  }, [conversationReply, conversationReplyLastActiveStreamId, redirectReplyToPanel])
+    routedArmIdRef.current = armedConversationId
+    // A gesture routes ONCE. `routedArmIdRef` is reset whenever the arm goes
+    // away (a stream switch does that), so without consuming the gesture here,
+    // navigating back would re-read it as a fresh gesture and route again on a
+    // plain navigation.
+    gestureArmedIdRef.current = null
+    if (target === streamId) composerFocusRef.current?.focus()
+    else redirectReplyToPanel(armedConversationId)
+  }, [armedConversationId, conversationReplyLastActiveStreamId, redirectReplyToPanel, streamId, hostScope])
 
   // Consume any pending share handoff for this stream, pre-inserting the
   // shared-message pointer into the composer and leaving the cursor after it.
@@ -581,15 +685,15 @@ function MessageInputComponent({
       // Armed for "Reply in conversation" but not confirmed live in THIS stream
       // (thread-live, or the board-post projection hasn't resolved yet): filing
       // flat here would re-interleave the channel. Hand off to the conversation
-      // panel and keep the composer content — nothing typed is lost, the user
-      // continues in the panel. The inline flat send below only runs once the
+      // panel: the draft already lives at the conversation's own scope, which is
+      // exactly the scope the panel's composer opens, so the text follows. The inline flat send below only runs once the
       // conversation is confirmed same-stream. A toast because the send didn't do
       // the obvious thing (post here): the panel can cover this view on mobile, so
       // the kept draft needs a word or the message reads as vanished (INV-63:
       // deferred action, no other on-screen signal).
-      if (conversationReply && conversationReplyLastActiveStreamId !== streamId) {
-        redirectReplyToPanel(conversationReply.conversationId)
-        toast.info("Opening the conversation to reply — your draft was kept here.")
+      if (armedConversationId && conversationReplyLastActiveStreamId !== streamId) {
+        redirectReplyToPanel(armedConversationId)
+        toast.info("Opening the conversation to reply — your draft came with it.")
         composer.setIsSending(false)
         return
       }
@@ -617,12 +721,10 @@ function MessageInputComponent({
           // Armed by "Reply in conversation": file this send into the
           // conversation synchronously (Mechanism C). Cleared only on success —
           // a failed send keeps the filing armed alongside the restored content.
-          conversation: conversationReply
-            ? { intent: "existing", conversationId: conversationReply.conversationId }
-            : undefined,
+          conversation: armedConversationId ? { intent: "existing", conversationId: armedConversationId } : undefined,
         })
 
-        setConversationReply(null)
+        disarm()
         composer.setContent(EMPTY_DOC)
         composer.resolveDraft()
         composer.clearAttachments()
@@ -646,8 +748,9 @@ function MessageInputComponent({
       streamId,
       planSend,
       dispatchCommand,
-      conversationReply,
+      armedConversationId,
       conversationReplyLastActiveStreamId,
+      disarm,
       redirectReplyToPanel,
       takeComposeTrace,
     ]
@@ -680,7 +783,7 @@ function MessageInputComponent({
       // doesn't read as a flat channel send (INV-63: deferred action, no other
       // on-screen signal). Same-stream stays silent (the strip already shows it).
       const filesIntoDriftedConversation =
-        conversationReply !== null && conversationReplyLastActiveStreamId !== streamId
+        armedConversationId !== null && conversationReplyLastActiveStreamId !== streamId
 
       try {
         composer.setContent(EMPTY_DOC)
@@ -696,11 +799,9 @@ function MessageInputComponent({
           // Unlike the live send there's no thread-follow routing — the fired
           // message posts into this stream and the assigner attaches it to the
           // conversation by id (cross-stream within one root is allowed).
-          conversation: conversationReply
-            ? { intent: "existing", conversationId: conversationReply.conversationId }
-            : undefined,
+          conversation: armedConversationId ? { intent: "existing", conversationId: armedConversationId } : undefined,
         })
-        setConversationReply(null)
+        disarm()
         composer.resolveDraft()
         composer.clearAttachments()
         if (filesIntoDriftedConversation) {
@@ -714,7 +815,7 @@ function MessageInputComponent({
         composer.setIsSending(false)
       }
     },
-    [composer, scheduleMessageMutation, streamId, conversationReply, conversationReplyLastActiveStreamId]
+    [composer, scheduleMessageMutation, streamId, armedConversationId, conversationReplyLastActiveStreamId, disarm]
   )
 
   if (disabled && disabledReason) {
@@ -837,14 +938,10 @@ function MessageInputComponent({
     ),
   } as const
 
-  // Armed "Reply in conversation" strip — the send's only signal that it will
-  // file into a conversation, so it renders wherever the composer does (inline
-  // and expanded). Dismissible: X disarms without touching the typed content.
-  const conversationReplyStrip = conversationReply ? (
-    <ConversationReplyStrip
-      title={conversationReplyTopic ?? "conversation"}
-      onCancel={() => setConversationReply(null)}
-    />
+  // The filing strip is informational here. Dismissing it required relocating
+  // a live synced draft solely to preserve an uncommon inline undo action.
+  const conversationReplyStrip = armedConversationId ? (
+    <ConversationReplyStrip title={conversationReplyTopic ?? "conversation"} />
   ) : null
 
   const StreamGlyph = stream ? STREAM_ICONS[stream.type] : null
