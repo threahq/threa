@@ -20,6 +20,7 @@ export interface AcceptedWindowResult {
 export interface VoicePolishWindow {
   chunkId: string
   predecessorChunkId?: string
+  predecessorSeparator: "" | " "
   firstRevision: number
   latestRevision: number
   rawParts: string[]
@@ -152,13 +153,17 @@ export class IncrementalVoiceEngine {
 
     const firstIndex = sourceIndexes[0]!
     const sources = this.windows.slice(firstIndex, targetIndex + 1)
+    const collapsedRaw = sources
+      .map((source, index) => `${index > 0 ? source.predecessorSeparator : ""}${this.raw(source)}`)
+      .join("")
     const collapsed: VoicePolishWindow = {
       chunkId: pending.result.resultChunkId,
       predecessorChunkId: sources[0]!.predecessorChunkId,
+      predecessorSeparator: sources[0]!.predecessorSeparator,
       firstRevision: sources[0]!.firstRevision,
       latestRevision: Math.max(...sources.map((source) => source.latestRevision)),
-      rawParts: [sources.map((source) => this.raw(source)).join(" ")],
-      rawCharCount: scalarLength(sources.map((source) => this.raw(source)).join(" ")),
+      rawParts: [collapsedRaw],
+      rawCharCount: scalarLength(collapsedRaw),
       finalCount: sources.reduce((sum, source) => sum + source.finalCount, 0),
       state: "sealed",
       logicalSpanCount: Math.min(
@@ -206,9 +211,11 @@ export class IncrementalVoiceEngine {
       window.rawCharCount + addedChars > VOICE_POLISH_WINDOW_MAX_CHARS
     ) {
       if (window) window.state = "sealed"
+      const predecessorSeparator = window && newFinal ? " " : ""
       window = {
         chunkId: ulid(),
         predecessorChunkId: window?.chunkId,
+        predecessorSeparator,
         firstRevision: this.revision + 1,
         latestRevision: this.revision + 1,
         rawParts: [],

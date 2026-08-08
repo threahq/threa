@@ -152,7 +152,7 @@ export class IncrementalPolishCoordinator {
 
       if (predecessorSnapshot.logicalSpanCount + snapshot.logicalSpanCount > VOICE_POLISH_WIDEN_MAX_WINDOWS)
         return { status: "preserve_raw", scope: "preserve_raw" }
-      const widenedRaw = `${predecessorSnapshot.raw} ${currentRaw}`
+      const widenedRaw = `${predecessorSnapshot.raw}${window.predecessorSeparator}${currentRaw}`
       if (scalarLength(widenedRaw) > VOICE_POLISH_WINDOW_MAX_CHARS * VOICE_POLISH_WIDEN_MAX_WINDOWS)
         return { status: "preserve_raw", scope: "preserve_raw" }
       if (performance.now() >= expiresAt) return { status: "timeout" }

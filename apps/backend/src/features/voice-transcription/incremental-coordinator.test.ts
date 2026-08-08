@@ -155,6 +155,49 @@ describe("IncrementalPolishCoordinator", () => {
     expect(engine.activeWindow!.rawCharCount).toBe(Array.from(`${engine.raw(predecessor)} continue`).length)
   })
 
+  it("widens a hard scalar split without inventing boundary whitespace", async () => {
+    const raw = "😀".repeat(1_201)
+    const engine = new IncrementalVoiceEngine()
+    engine.appendFinal(raw)
+    const [predecessor, current] = engine.windows
+    engine.registerOperation({
+      operationId: "accepted-hard-prefix",
+      sources: [{ chunkId: predecessor!.chunkId, throughRevision: predecessor!.latestRevision }],
+      resultChunkId: predecessor!.chunkId,
+      markdown: engine.raw(predecessor!),
+      contentJson,
+      rawMarkdown: engine.raw(predecessor!),
+      rawContentJson: contentJson,
+    })
+    expect(engine.acknowledge("accepted-hard-prefix", "applied")).toBe(true)
+
+    const formatterInputs: Array<{ rawTranscript: string; stage?: string }> = []
+    const operationRaw: string[] = []
+    const coordinator = new IncrementalPolishCoordinator({
+      engine,
+      polishTranscript: async (input) => {
+        formatterInputs.push(input)
+        return success(input)
+      },
+      decideBoundaryScope: async () => ({ status: "success", scope: "widen_previous" }),
+      applyOperation: async (operation) => {
+        operationRaw.push(operation.raw)
+        return "applied"
+      },
+      context,
+    })
+
+    expect(await coordinator.run(current!, "final", true)).toMatchObject({ status: "applied", widened: true })
+    expect(formatterInputs.find((input) => input.stage === "format_widen")?.rawTranscript).toBe(raw)
+    expect(operationRaw).toEqual([raw])
+    expect(engine.raw(engine.activeWindow!)).toBe(raw)
+    expect(engine.maxMutableLength).toBeLessThanOrEqual(2_400)
+
+    const continuation = engine.appendFinal("next")[0]!
+    expect(continuation.afterChunkId).toBe(engine.windows[0]!.chunkId)
+    expect(continuation.window.predecessorSeparator).toBe(" ")
+  })
+
   it("preserves raw on scope refusal and clears rejected or timed-out pending operations", async () => {
     const engine = new IncrementalVoiceEngine()
     acceptedPredecessor(engine)

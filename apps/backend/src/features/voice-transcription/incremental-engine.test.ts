@@ -32,6 +32,50 @@ describe("IncrementalVoiceEngine", () => {
     expect(whitespaceSplit[1]?.joinPrevious).toBeUndefined()
   })
 
+  it("records exact separators for hard, whitespace, and independent rollover boundaries", () => {
+    const hard = new IncrementalVoiceEngine()
+    hard.appendFinal("x".repeat(1_201))
+    expect(hard.windows.map((window) => window.predecessorSeparator)).toEqual(["", ""])
+
+    const whitespace = new IncrementalVoiceEngine()
+    whitespace.appendFinal(`${"x".repeat(1_199)} hello`)
+    expect(whitespace.windows.map((window) => window.predecessorSeparator)).toEqual(["", ""])
+    expect(whitespace.windows.map((window) => whitespace.raw(window)).join("")).toBe(`${"x".repeat(1_199)} hello`)
+
+    const independent = new IncrementalVoiceEngine()
+    independent.appendFinal("x".repeat(1_200))
+    independent.appendFinal("next")
+    expect(independent.windows[1]!.predecessorSeparator).toBe(" ")
+  })
+
+  it("preserves hard-split boundaries through collapse and later window insertion", () => {
+    const engine = new IncrementalVoiceEngine()
+    engine.appendFinal("😀".repeat(1_201))
+    const [predecessor, current] = engine.windows
+    expect(current!.predecessorSeparator).toBe("")
+    expect(
+      engine.registerOperation({
+        operationId: "hard-collapse",
+        sources: [
+          { chunkId: predecessor!.chunkId, throughRevision: predecessor!.latestRevision },
+          { chunkId: current!.chunkId, throughRevision: current!.latestRevision },
+        ],
+        resultChunkId: "hard-result",
+        markdown: "formatted",
+        contentJson: doc,
+        rawMarkdown: "😀".repeat(1_201),
+        rawContentJson: doc,
+      })
+    ).toBe(true)
+    expect(engine.acknowledge("hard-collapse", "applied")).toBe(true)
+    expect(engine.raw(engine.activeWindow!)).toBe("😀".repeat(1_201))
+    expect(engine.activeWindow!.predecessorSeparator).toBe("")
+
+    const continuation = engine.appendFinal("next")[0]!
+    expect(continuation.afterChunkId).toBe("hard-result")
+    expect(continuation.joinPrevious).toBeUndefined()
+  })
+
   it("accepts exact sealed-window results after a later window opens but rejects stale current results", () => {
     const engine = new IncrementalVoiceEngine()
     for (const text of ["a", "b", "c", "d"]) engine.appendFinal(text)
