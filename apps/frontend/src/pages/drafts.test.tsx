@@ -1,7 +1,8 @@
 import { MemoryRouter, Route, Routes } from "react-router-dom"
-import { describe, expect, it, vi, beforeEach } from "vitest"
+import { describe, expect, it, vi, beforeEach, afterEach } from "vitest"
 import { toast } from "sonner"
-import { render, screen, userEvent, within, waitFor } from "@/test"
+import { act, fireEvent, render, screen, userEvent, within, waitFor } from "@/test"
+import * as touchCapableModule from "@/hooks/use-touch-capable"
 import { DraftsPage } from "./drafts"
 import { SidebarProvider } from "@/contexts"
 import * as hooksModule from "@/hooks"
@@ -14,6 +15,8 @@ function draft(overrides: Partial<UnifiedDraft> & { id: string; displayName: str
     type: "channel",
     streamId: `stream_${overrides.id}`,
     preview: "some text",
+    contentMarkdown: "some text",
+    contentStatus: "ready" as const,
     attachmentCount: 0,
     updatedAt: 0,
     href: `/w/${WS}/s/stream_${overrides.id}`,
@@ -39,6 +42,9 @@ function renderPage() {
       <MemoryRouter initialEntries={[`/w/${WS}/drafts`]}>
         <Routes>
           <Route path="/w/:workspaceId/drafts" element={<DraftsPage />} />
+          {/* Any navigation away renders this, so a test can assert a click did
+              NOT route without reaching for a navigate spy. */}
+          <Route path="*" element={<div data-testid="navigated-away" />} />
         </Routes>
       </MemoryRouter>
     </SidebarProvider>
@@ -201,5 +207,132 @@ describe("DraftsPage batch delete", () => {
 
     expect(screen.getByRole("button", { name: "Select drafts" })).toBeInTheDocument()
     expect(screen.queryByRole("button", { name: "Cancel selection" })).not.toBeInTheDocument()
+  })
+})
+
+describe("DraftsPage row context menu", () => {
+  const writeText = vi.fn(async () => {})
+
+  beforeEach(() => {
+    vi.restoreAllMocks()
+    deleteDraft.mockReset()
+    deleteDraft.mockResolvedValue(undefined)
+    writeText.mockClear()
+    Object.assign(navigator, { clipboard: { writeText } })
+  })
+
+  async function openMenu(name: RegExp) {
+    await userEvent.click(screen.getByRole("button", { name }))
+  }
+
+  it("exposes copy, open and delete for a readable draft", async () => {
+    mockDrafts([draft({ id: "a", displayName: "Alpha", contentMarkdown: "**bold** body" })])
+    renderPage()
+
+    await openMenu(/Draft actions: Alpha/)
+
+    expect(await screen.findByRole("menuitem", { name: "Open draft" })).toBeInTheDocument()
+    expect(screen.getByRole("menuitem", { name: "Copy as Markdown" })).toBeInTheDocument()
+    expect(screen.getByRole("menuitem", { name: "Delete draft" })).toBeInTheDocument()
+  })
+
+  it("copies the draft's markdown", async () => {
+    mockDrafts([draft({ id: "a", displayName: "Alpha", contentMarkdown: "**bold** body" })])
+    renderPage()
+
+    await openMenu(/Draft actions: Alpha/)
+    await userEvent.click(await screen.findByRole("menuitem", { name: "Copy as Markdown" }))
+
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith("**bold** body"))
+  })
+
+  it("copies the draft as plain text", async () => {
+    mockDrafts([draft({ id: "a", displayName: "Alpha", contentMarkdown: "**bold** body" })])
+    renderPage()
+
+    await openMenu(/Draft actions: Alpha/)
+    // The copy pair is a split group: the alternatives live behind the chevron.
+    await userEvent.click(await screen.findByRole("menuitem", { name: "Other copy" }))
+    await userEvent.click(await screen.findByRole("menuitem", { name: "Copy as Plain text" }))
+
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith("bold body"))
+  })
+
+  it("disables copy for a sealed draft that has not decrypted", async () => {
+    mockDrafts([
+      draft({
+        id: "a",
+        displayName: "Alpha",
+        preview: "Decrypting…",
+        contentMarkdown: "",
+        contentStatus: "decrypting",
+      }),
+    ])
+    renderPage()
+
+    await openMenu(/Draft actions: Alpha/)
+
+    expect(await screen.findByRole("menuitem", { name: "Copy as Markdown" })).toHaveAttribute("aria-disabled", "true")
+    await userEvent.click(screen.getByRole("menuitem", { name: "Copy as Markdown" }))
+    expect(writeText).not.toHaveBeenCalled()
+  })
+
+  it("routes Delete through the confirm dialog", async () => {
+    mockDrafts([draft({ id: "a", displayName: "Alpha" })])
+    renderPage()
+
+    await openMenu(/Draft actions: Alpha/)
+    await userEvent.click(await screen.findByRole("menuitem", { name: "Delete draft" }))
+
+    expect(await screen.findByRole("alertdialog")).toBeInTheDocument()
+    expect(deleteDraft).not.toHaveBeenCalled()
+
+    await userEvent.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: /delete/i }))
+    await waitFor(() => expect(deleteDraft).toHaveBeenCalledWith("a"))
+  })
+
+  it("keeps the row's own open path", async () => {
+    mockDrafts([draft({ id: "a", displayName: "Alpha" })])
+    renderPage()
+
+    expect(screen.getByRole("option", { name: /Alpha/ })).toHaveAttribute("href", `/w/${WS}/s/stream_a`)
+  })
+})
+
+describe("DraftsPage touch long-press", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks()
+    mockDrafts([draft({ id: "a", displayName: "Alpha" })])
+    vi.spyOn(touchCapableModule, "useTouchCapable").mockReturnValue(true)
+  })
+  afterEach(() => vi.useRealTimers())
+
+  // The row IS an <a href>, so a defer-to-interactive-elements guard would match
+  // the row itself via closest() and refuse every touch — the whole mobile half
+  // of this surface would be dead with nothing failing.
+  it("opens the action drawer from a long press on a row that navigates", () => {
+    vi.useFakeTimers()
+    renderPage()
+
+    const row = screen.getByRole("option", { name: /Alpha/i })
+    fireEvent.touchStart(row, { touches: [{ clientX: 10, clientY: 10 }] })
+    act(() => vi.advanceTimersByTime(600))
+
+    expect(screen.queryByRole("button", { name: /Copy as Markdown/i })).toBeNull()
+    fireEvent.touchEnd(row)
+    expect(screen.getByRole("button", { name: /Copy as Markdown/i })).toBeInTheDocument()
+  })
+
+  it("does not navigate on the click that follows the hold", () => {
+    vi.useFakeTimers()
+    renderPage()
+
+    const row = screen.getByRole("option", { name: /Alpha/i })
+    fireEvent.touchStart(row, { touches: [{ clientX: 10, clientY: 10 }] })
+    act(() => vi.advanceTimersByTime(600))
+    fireEvent.touchEnd(row)
+    fireEvent.click(row)
+
+    expect(screen.queryByTestId("navigated-away")).toBeNull()
   })
 })

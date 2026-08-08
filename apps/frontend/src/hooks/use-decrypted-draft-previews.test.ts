@@ -71,21 +71,21 @@ describe("useDecryptedDraftPreviews", () => {
   it("returns plaintext previews straight from contentJson", () => {
     const draft = plaintextDraft("draft_p", "hello plain")
     const { result } = renderHook(() => useDecryptedDraftPreviews(workspaceId, [{ draft, rootStreamId: undefined }]))
-    expect(result.current.get("draft_p")).toEqual({ text: "hello plain", status: "ready" })
+    expect(result.current.get("draft_p")).toEqual({ text: "hello plain", markdown: "hello plain", status: "ready" })
   })
 
   it("returns the decrypted body for a sealed draft already in the shared cache", () => {
     const draft = sealedDraft("draft_e")
     seedDecryption("draft_e", { contentMarkdown: "secret body", contentJson: makeDoc("secret body") })
     const { result } = renderHook(() => useDecryptedDraftPreviews(workspaceId, [{ draft, rootStreamId }]))
-    expect(result.current.get("draft_e")).toEqual({ text: "secret body", status: "ready" })
+    expect(result.current.get("draft_e")).toEqual({ text: "secret body", markdown: "secret body", status: "ready" })
   })
 
   it("reports a sealed draft as locked while the session is locked (no decrypt attempted)", () => {
     vi.spyOn(e2eSessionStore, "useE2eSession").mockReturnValue(locked)
     const draft = sealedDraft("draft_e")
     const { result } = renderHook(() => useDecryptedDraftPreviews(workspaceId, [{ draft, rootStreamId }]))
-    expect(result.current.get("draft_e")).toEqual({ text: "", status: "locked" })
+    expect(result.current.get("draft_e")).toEqual({ text: "", markdown: "", status: "locked" })
   })
 
   it("reports decrypting for an unlocked sealed draft whose body hasn't landed yet", () => {
@@ -93,7 +93,7 @@ describe("useDecryptedDraftPreviews", () => {
     vi.spyOn(messageEnvelope, "tryDecryptMessagePayload").mockReturnValue(new Promise(() => {}))
     const draft = sealedDraft("draft_e")
     const { result } = renderHook(() => useDecryptedDraftPreviews(workspaceId, [{ draft, rootStreamId }]))
-    expect(result.current.get("draft_e")).toEqual({ text: "", status: "decrypting" })
+    expect(result.current.get("draft_e")).toEqual({ text: "", markdown: "", status: "decrypting" })
   })
 
   it("reports failed when the decrypt returns null", async () => {
@@ -105,7 +105,7 @@ describe("useDecryptedDraftPreviews", () => {
     )
     const draft = sealedDraft("draft_e")
     const { result } = renderHook(() => useDecryptedDraftPreviews(workspaceId, [{ draft, rootStreamId }]))
-    await waitFor(() => expect(result.current.get("draft_e")).toEqual({ text: "", status: "failed" }))
+    await waitFor(() => expect(result.current.get("draft_e")).toEqual({ text: "", markdown: "", status: "failed" }))
   })
 
   it("resolves each id independently across a mixed batch in one render", async () => {
@@ -127,10 +127,14 @@ describe("useDecryptedDraftPreviews", () => {
     ]
     const { result } = renderHook(() => useDecryptedDraftPreviews(workspaceId, inputs))
 
-    await waitFor(() => expect(result.current.get("draft_fail")).toEqual({ text: "", status: "failed" }))
-    expect(result.current.get("draft_plain")).toEqual({ text: "plain body", status: "ready" })
-    expect(result.current.get("draft_seeded")).toEqual({ text: "seeded body", status: "ready" })
-    expect(result.current.get("draft_hang")).toEqual({ text: "", status: "decrypting" })
+    await waitFor(() => expect(result.current.get("draft_fail")).toEqual({ text: "", markdown: "", status: "failed" }))
+    expect(result.current.get("draft_plain")).toEqual({ text: "plain body", markdown: "plain body", status: "ready" })
+    expect(result.current.get("draft_seeded")).toEqual({
+      text: "seeded body",
+      markdown: "seeded body",
+      status: "ready",
+    })
+    expect(result.current.get("draft_hang")).toEqual({ text: "", markdown: "", status: "decrypting" })
     expect(result.current.size).toBe(4)
   })
 })

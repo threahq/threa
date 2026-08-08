@@ -16,6 +16,9 @@ import { toast } from "sonner"
 import { CompanionModes } from "@threa/types"
 import { Button } from "@/components/ui/button"
 import { DeleteDraftConfirmDialog } from "@/components/drafts/delete-draft-confirm-dialog"
+import { DraftContextMenu } from "@/components/drafts/draft-context-menu"
+import { DraftActionDrawer } from "@/components/drafts/draft-action-drawer"
+import type { DraftActionContext } from "@/components/drafts/draft-actions"
 import { ItemList, type QuickSwitcherItem } from "@/components/quick-switcher"
 import { SidebarToggle } from "@/components/layout"
 import { cn } from "@/lib/utils"
@@ -34,6 +37,10 @@ export function DraftsPage() {
   const { drafts, deleteDraft } = useAllDrafts(workspaceId ?? "")
   const [selectedIndex, setSelectedIndex] = useState(0)
   const [draftToDelete, setDraftToDelete] = useState<UnifiedDraft | null>(null)
+  // Long-press target: one drawer for the whole list, holding the row that was
+  // pressed. Read back out of `drafts` so a synced edit/delete can't leave the
+  // sheet acting on a stale copy.
+  const [drawerDraftId, setDrawerDraftId] = useState<string | null>(null)
 
   // Batch-select mode: the whole list becomes tappable toggles (desktop + mobile)
   // with a single bulk-delete action, mirroring the message timeline's selection.
@@ -141,6 +148,17 @@ export function DraftsPage() {
   // rows surface a small bookmark icon inline (in front of the preview) so
   // they're distinguishable at a glance without stealing the stream's own
   // icon from the section header.
+  const draftActionContext = useCallback(
+    (draft: UnifiedDraft): DraftActionContext => ({
+      contentMarkdown: draft.contentMarkdown,
+      contentStatus: draft.contentStatus,
+      href: draft.href ?? undefined,
+      isStashed: draft.isStashed,
+      onDelete: () => handleDeleteClick(draft),
+    }),
+    [handleDeleteClick]
+  )
+
   const items: QuickSwitcherItem[] = useMemo(() => {
     return drafts.map((draft) => {
       let description = draft.preview
@@ -167,12 +185,11 @@ export function DraftsPage() {
         href: draft.href ?? undefined,
         group: draft.groupLabel,
         onSelect: () => handleSelectDraft(draft.href),
-        onAction: () => handleDeleteClick(draft),
-        actionIcon: Trash2,
-        actionLabel: "Delete draft",
+        contextMenu: <DraftContextMenu context={draftActionContext(draft)} label={label} />,
+        onLongPress: () => setDrawerDraftId(draft.id),
       }
     })
-  }, [drafts, handleSelectDraft, handleDeleteClick])
+  }, [drafts, handleSelectDraft, draftActionContext])
 
   const handleSelectItem = useCallback((item: QuickSwitcherItem, withModifier: boolean) => {
     if (withModifier && item.href) {
@@ -181,6 +198,8 @@ export function DraftsPage() {
       item.onSelect()
     }
   }, [])
+
+  const drawerDraft = drafts.find((draft) => draft.id === drawerDraftId) ?? null
 
   if (!workspaceId) {
     return null
@@ -310,6 +329,16 @@ export function DraftsPage() {
           />
         </main>
       </div>
+
+      {drawerDraft && (
+        <DraftActionDrawer
+          open={drawerDraftId !== null}
+          onOpenChange={(open) => !open && setDrawerDraftId(null)}
+          context={draftActionContext(drawerDraft)}
+          label={drawerDraft.isStashed ? drawerDraft.groupLabel : drawerDraft.displayName}
+          preview={drawerDraft.preview || undefined}
+        />
+      )}
 
       <DeleteDraftConfirmDialog
         open={!!draftToDelete}
