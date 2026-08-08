@@ -139,13 +139,13 @@ export const WORKSPACE_PERMISSIONS: readonly WorkspacePermission[] = Object.free
   {
     slug: WORKSPACE_PERMISSION_SCOPES.DELEGATIONS_READ,
     name: "Read delegations",
-    description: "Grants access to list delegated tasks in accessible streams, including open tasks ready to claim.",
+    description: "Grants access to list and inspect delegated tasks in accessible streams.",
   },
   {
     slug: WORKSPACE_PERMISSION_SCOPES.DELEGATIONS_WRITE,
     name: "Work delegations",
     description:
-      "Grants an agent access to claim delegated tasks and report progress, completion (posting the result as the key's identity), or failure.",
+      "Grants an agent access to claim or release delegated tasks and report progress, completion (posting the result as the key's identity), or failure.",
   },
   {
     slug: WORKSPACE_PERMISSION_SCOPES.MEMBERS_WRITE,

@@ -102,8 +102,10 @@ threa labels list
 threa labels add triage "#general"
 threa users list
 threa delegations list
+threa delegations get dlg_...
 threa delegations claim dlg_... --label "My machine"
 threa delegations update dlg_... --note "tests passing"
+threa delegations release dlg_...
 threa delegations finish dlg_... --outcome complete --result - < report.md
 threa mcp serve`}
   />
@@ -141,7 +143,7 @@ threa mcp serve`}
 
   <h2 id="mcp">The MCP server</h2>
   <p>
-    <code>threa mcp serve</code> exposes the same operations as 22 typed MCP
+    <code>threa mcp serve</code> exposes the same operations as 24 typed MCP
     tools over stdio, for hosts that speak MCP rather than a shell. Register it
     with Claude Code:
   </p>
@@ -157,7 +159,8 @@ threa mcp serve`}
     Other MCP hosts use their own registration format with the same command
     and environment. The tool names mirror the CLI surface:
     <code>search</code>, <code>read_stream</code>, <code>send_message</code>,
-    <code>claim_delegation</code>, and so on.
+    <code>get_delegation</code>, <code>claim_delegation</code>,
+    <code>release_delegation</code>, and so on.
   </p>
 
   <h2 id="agents">Using it from agents</h2>
@@ -171,9 +174,11 @@ threa mcp serve`}
   <p>
     The delegation commands close the loop described in
     <a class="link" href="/developers/recipes">Recipes</a>: a Threa persona
-    hands work to your machine, your agent claims it, posts progress, and the
-    finished result lands back in the stream where Threa's memory keeps it.
-    Claim tokens persist in <code>~/.threa/state.json</code>, so a crashed run
-    can pick its claim back up.
+    hands work to your machine, your agent inspects it before claiming, posts
+    progress or a manual heartbeat while working, and completes, fails, or releases
+    the claim. Claim tokens persist in <code>~/.threa/state.json</code>; successful
+    completion or failure clears the stored token. A successful release clears only
+    the matching stored token and preserves a replacement; a failed request leaves
+    the token available for recovery.
   </p>
 </DocsLayout>

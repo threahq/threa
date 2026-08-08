@@ -1149,7 +1149,7 @@ export const PUBLIC_API_ROUTES: PublicApiRoute[] = [
     operationId: "listDelegations",
     summary: "List open delegations",
     description:
-      "List delegated tasks whose current status is open and whose availability changed after `since`, filtered to streams the key can access.",
+      "List accessible delegations with status `open`. When `since` is provided, filters by `statusChangedAt`; returns newly created and reopened tasks whose availability changed after that instant.",
     tags: ["Delegations"],
     scopes: [WORKSPACE_PERMISSION_SCOPES.DELEGATIONS_READ],
     parameters: [workspaceIdParam],
@@ -1162,7 +1162,8 @@ export const PUBLIC_API_ROUTES: PublicApiRoute[] = [
     path: "/api/v1/workspaces/{workspaceId}/delegations/{delegationId}",
     operationId: "getDelegation",
     summary: "Get a delegation",
-    description: "Inspect an accessible delegation's brief, context references, status, and current claim expiry.",
+    description:
+      "Inspect an accessible delegation before claiming it. Returns its brief, context references, status, and current claim expiry, but never a claim token or other claim secret.",
     tags: ["Delegations"],
     scopes: [WORKSPACE_PERMISSION_SCOPES.DELEGATIONS_READ],
     parameters: [workspaceIdParam, delegationIdParam],
@@ -1175,7 +1176,7 @@ export const PUBLIC_API_ROUTES: PublicApiRoute[] = [
     operationId: "claimDelegation",
     summary: "Claim an open or expired delegation",
     description:
-      "Atomically claim an open or historical expired delegation. Returns the brief, context refs, and the claim token (cleartext, exactly once; send it as X-Threa-Callback-Token on every later lifecycle call). A delegation that is no longer open returns 409.",
+      "Atomically claim an open delegation or a historical delegation still stored as `expired`. A matching idempotency key can re-key only the current unexpired claimed or running claim. Returns the brief, context references, and a cleartext claim token exactly once; send the token as X-Threa-Callback-Token on later lifecycle calls. Other non-open states return 409; a missing or inaccessible delegation returns 404.",
     tags: ["Delegations"],
     scopes: [WORKSPACE_PERMISSION_SCOPES.DELEGATIONS_WRITE],
     parameters: [workspaceIdParam, delegationIdParam],
@@ -1191,7 +1192,7 @@ export const PUBLIC_API_ROUTES: PublicApiRoute[] = [
     operationId: "releaseDelegation",
     summary: "Release a delegation claim",
     description:
-      "Release a live claim so the delegation is open again. Authenticated with the per-claim callback token.",
+      "Release an unexpired claimed or running delegation back to the open queue. Requires the per-claim token in X-Threa-Callback-Token. A missing, inaccessible, lapsed, stale, or replaced claim returns 404 without revealing which condition applied.",
     tags: ["Delegations"],
     scopes: [WORKSPACE_PERMISSION_SCOPES.DELEGATIONS_WRITE],
     parameters: [workspaceIdParam, delegationIdParam, delegationTokenHeaderParam],
@@ -1204,7 +1205,7 @@ export const PUBLIC_API_ROUTES: PublicApiRoute[] = [
     operationId: "heartbeatDelegation",
     summary: "Renew a delegation claim",
     description:
-      "Push the claim's expiry forward while the local agent is still working. Liveness only; no status change on the card. Authenticated with the per-claim token in the X-Threa-Callback-Token header.",
+      "Renew a live claim without changing the card status. Any HTTP client can call this endpoint directly while working; send the per-claim token in X-Threa-Callback-Token.",
     tags: ["Delegations"],
     scopes: [WORKSPACE_PERMISSION_SCOPES.DELEGATIONS_WRITE],
     parameters: [workspaceIdParam, delegationIdParam, delegationTokenHeaderParam],
@@ -1232,7 +1233,7 @@ export const PUBLIC_API_ROUTES: PublicApiRoute[] = [
     operationId: "completeDelegation",
     summary: "Complete a delegation",
     description:
-      "Complete the claimed delegation. When resultMarkdown is given, the result is posted in a thread anchored on the delegation card in the same transaction as the completion, authored as the key's user (with via-API provenance) for a user-scoped key, or as the bot for a workspace key. The response includes resultMessageId and resultThreadId. It enters the normal message pipeline, so workspace memory captures the outcome. Authenticated with the per-claim token in the X-Threa-Callback-Token header.",
+      "Complete the claimed delegation. When `resultMarkdown` is provided, the result is posted as a reply in the thread anchored on the delegation card, in the same transaction as the completion; it is authored as the key's user (with via-API provenance) for a user-scoped key, or as the bot for a workspace key. The response then includes `resultMessageId` and `resultThreadId`, and the result enters the normal message pipeline so workspace memory can capture it. Without `resultMarkdown`, the response contains only the delegation summary and no result ids. Send the per-claim token in X-Threa-Callback-Token.",
     tags: ["Delegations"],
     scopes: [WORKSPACE_PERMISSION_SCOPES.DELEGATIONS_WRITE],
     parameters: [workspaceIdParam, delegationIdParam, delegationTokenHeaderParam],

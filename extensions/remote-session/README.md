@@ -21,6 +21,12 @@ published to npm). `extensions/claude-code-remote` is the reference consumer.
   graceful teardown. Active delegation executions are aborted cooperatively and
   live claims are released; shutdown waits briefly for release, then continues.
 
+## Delegation client and runner
+
+`DelegationClient` exposes the harness-independent HTTP protocol: inspect with `get`, claim, call `heartbeat` manually as needed, report progress, then complete, fail, or release. Any HTTP client can use the same endpoints. `DelegationRunner` is optional convenience, not a protocol requirement.
+
+The runner polls for open work or accepts availability nudges, claims directly from either path, and automatically heartbeats held claims. Custom clients can use `DelegationClient.get` for the inspect-first flow before claiming. An executor result completes the task; an executor error marks it failed. Controlled `stop()` aborts execution cooperatively and releases the live claim. A 404 from a claim-authenticated heartbeat or progress call means the claim is known lost: the runner aborts best effort and does not send a terminal or release request with that token. Other heartbeat failures are logged; server-side claim checks remain authoritative.
+
 ## What a connector implements
 
 ```ts

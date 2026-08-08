@@ -25,6 +25,21 @@ async function claim(client: Awaited<ReturnType<typeof connectClient>>): Promise
   })
 }
 
+test("delegation tool registration documents inspect-first, manual heartbeat, release, and availability polling", async () => {
+  const client = await connectClient()
+  const tools = (await client.listTools()).tools
+  const byName = new Map(tools.map((tool) => [tool.name, tool.description ?? ""]))
+
+  expect(byName.has("get_delegation")).toBe(true)
+  expect(byName.has("release_delegation")).toBe(true)
+  expect(byName.get("list_delegations")).toContain("get_delegation")
+  expect(byName.get("list_delegations")).toContain("availability changed")
+  expect(byName.get("get_delegation")).toContain("before deciding whether to claim")
+  expect(byName.get("update_delegation")).toContain("pure heartbeat")
+  expect(byName.get("release_delegation")).toContain("only the matching stored token is cleared")
+  expect(byName.get("release_delegation")).toContain("replacement token is preserved")
+})
+
 test("list_delegations passes status and since as query params", async () => {
   fetchSpy.mockResolvedValue(jsonResponse(200, { data: [{ id: "dlg_1" }] }))
   const client = await connectClient()

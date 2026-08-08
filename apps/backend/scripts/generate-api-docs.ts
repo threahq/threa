@@ -94,7 +94,7 @@ const TAG_DEFS: { name: string; description: string }[] = [
   {
     name: "Delegations",
     description:
-      "Close the loop on delegated tasks: your local agent lists the open queue, claims a task, reports progress, and completes it with a result posted back to the stream.",
+      "Inspect delegated work, claim accepted tasks, report progress or renew the lease, then complete, fail, or release the claim.",
   },
 ]
 

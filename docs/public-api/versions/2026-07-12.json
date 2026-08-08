@@ -3,7 +3,7 @@
   "info": {
     "title": "Threa Public API",
     "version": "2026-07-12",
-    "description": "The Threa Public API lets you programmatically read and write messages, list streams, and search messages, memos, and attachments.\n\n## Authentication\n\nAll requests require a Bearer token in the `Authorization` header:\n\n```\nAuthorization: Bearer threa_uk_your_api_key_here\n```\n\nKeys use two prefixes. A **personal access key** (`threa_uk_…`) carries a member's own\nidentity and access; any member creates one in the Threa app under **Settings > API keys**.\nA **bot key** (`threa_bk_…`) belongs to a bot with its own identity in the workspace\n(a personal bot or a shared workspace bot) and is minted from the bot's settings\n(personal bots by their owner, shared bots by an admin).\nEach key is scoped to a workspace and granted specific permissions (scopes).\n\nHuman-readable docs: https://threa.io/developers (agent-friendly mirror: https://threa.io/llms.txt).\n\n## Scopes\n\nAPI keys are granted specific scopes that control access:\n\n- `messages:search`: Grants access to search messages in public streams in a workspace. Application level stream grants can extend permissions to private streams.\n- `streams:read`: Grants access to list and search accessible streams in a workspace.\n- `messages:read`: Grants access to read messages in accessible streams.\n- `messages:write`: Grants access to send, update, and delete messages in accessible streams.\n- `users:read`: Grants access to list and search workspace users.\n- `memos:read`: Grants access to search preserved workspace memos and inspect their provenance.\n- `attachments:read`: Grants access to search accessible attachments, inspect extracted content, and fetch download URLs.\n- `attachments:write`: Grants access to upload and replace attachments in accessible streams.\n- `labels:read`: Grants access to list workspace labels and their assignments on accessible resources.\n- `labels:write`: Grants access to create, edit, archive, join, and apply labels to accessible resources such as streams.\n- `bot-runtime:read`: Grants access to read bot runtime presence and invocation state.\n- `bot-runtime:write`: Grants access to heartbeat bot runtime presence and link runtime sessions.\n- `bot-invocations:read`: Grants access to read bot invocation state.\n- `bot-invocations:write`: Grants access to claim, complete, or fail bot invocations.\n- `delegations:read`: Grants access to list delegated tasks in accessible streams, including open tasks ready to claim.\n- `delegations:write`: Grants an agent access to claim delegated tasks and report progress, completion (posting the result as the key's identity), or failure.\n\n## Rate Limits\n\nRequests are rate-limited per workspace and per API key. Rate limit headers are included in responses.\n\n## Pagination\n\nList endpoints return paginated results with `hasMore` and `cursor` fields.\nPass the `cursor` value as the `after` query parameter to fetch the next page."
+    "description": "The Threa Public API lets you programmatically read and write messages, list streams, and search messages, memos, and attachments.\n\n## Authentication\n\nAll requests require a Bearer token in the `Authorization` header:\n\n```\nAuthorization: Bearer threa_uk_your_api_key_here\n```\n\nKeys use two prefixes. A **personal access key** (`threa_uk_…`) carries a member's own\nidentity and access; any member creates one in the Threa app under **Settings > API keys**.\nA **bot key** (`threa_bk_…`) belongs to a bot with its own identity in the workspace\n(a personal bot or a shared workspace bot) and is minted from the bot's settings\n(personal bots by their owner, shared bots by an admin).\nEach key is scoped to a workspace and granted specific permissions (scopes).\n\nHuman-readable docs: https://threa.io/developers (agent-friendly mirror: https://threa.io/llms.txt).\n\n## Scopes\n\nAPI keys are granted specific scopes that control access:\n\n- `messages:search`: Grants access to search messages in public streams in a workspace. Application level stream grants can extend permissions to private streams.\n- `streams:read`: Grants access to list and search accessible streams in a workspace.\n- `messages:read`: Grants access to read messages in accessible streams.\n- `messages:write`: Grants access to send, update, and delete messages in accessible streams.\n- `users:read`: Grants access to list and search workspace users.\n- `memos:read`: Grants access to search preserved workspace memos and inspect their provenance.\n- `attachments:read`: Grants access to search accessible attachments, inspect extracted content, and fetch download URLs.\n- `attachments:write`: Grants access to upload and replace attachments in accessible streams.\n- `labels:read`: Grants access to list workspace labels and their assignments on accessible resources.\n- `labels:write`: Grants access to create, edit, archive, join, and apply labels to accessible resources such as streams.\n- `bot-runtime:read`: Grants access to read bot runtime presence and invocation state.\n- `bot-runtime:write`: Grants access to heartbeat bot runtime presence and link runtime sessions.\n- `bot-invocations:read`: Grants access to read bot invocation state.\n- `bot-invocations:write`: Grants access to claim, complete, or fail bot invocations.\n- `delegations:read`: Grants access to list and inspect delegated tasks in accessible streams.\n- `delegations:write`: Grants an agent access to claim or release delegated tasks and report progress, completion (posting the result as the key's identity), or failure.\n\n## Rate Limits\n\nRequests are rate-limited per workspace and per API key. Rate limit headers are included in responses.\n\n## Pagination\n\nList endpoints return paginated results with `hasMore` and `cursor` fields.\nPass the `cursor` value as the `after` query parameter to fetch the next page."
   },
   "servers": [{ "url": "https://app.threa.io", "description": "Production" }],
   "security": [{ "apiKey": [] }],
@@ -3017,7 +3017,7 @@
         "operationId": "listDelegations",
         "summary": "List open delegations",
         "tags": ["Delegations"],
-        "description": "List delegated tasks whose current status is open and whose availability changed after `since`, filtered to streams the key can access.",
+        "description": "List accessible delegations with status `open`. When `since` is provided, filters by `statusChangedAt`; returns newly created and reopened tasks whose availability changed after that instant.",
         "security": [{ "apiKey": ["delegations:read"] }],
         "parameters": [
           { "$ref": "#/components/parameters/ThreaVersion" },
@@ -3110,7 +3110,7 @@
         "operationId": "getDelegation",
         "summary": "Get a delegation",
         "tags": ["Delegations"],
-        "description": "Inspect an accessible delegation's brief, context references, status, and current claim expiry.",
+        "description": "Inspect an accessible delegation before claiming it. Returns its brief, context references, status, and current claim expiry, but never a claim token or other claim secret.",
         "security": [{ "apiKey": ["delegations:read"] }],
         "parameters": [
           { "$ref": "#/components/parameters/ThreaVersion" },
@@ -3213,7 +3213,7 @@
         "operationId": "claimDelegation",
         "summary": "Claim an open or expired delegation",
         "tags": ["Delegations"],
-        "description": "Atomically claim an open or historical expired delegation. Returns the brief, context refs, and the claim token (cleartext, exactly once; send it as X-Threa-Callback-Token on every later lifecycle call). A delegation that is no longer open returns 409.",
+        "description": "Atomically claim an open delegation or a historical delegation still stored as `expired`. A matching idempotency key can re-key only the current unexpired claimed or running claim. Returns the brief, context references, and a cleartext claim token exactly once; send the token as X-Threa-Callback-Token on later lifecycle calls. Other non-open states return 409; a missing or inaccessible delegation returns 404.",
         "security": [{ "apiKey": ["delegations:write"] }],
         "parameters": [
           { "$ref": "#/components/parameters/ThreaVersion" },
@@ -3361,7 +3361,7 @@
         "operationId": "releaseDelegation",
         "summary": "Release a delegation claim",
         "tags": ["Delegations"],
-        "description": "Release a live claim so the delegation is open again. Authenticated with the per-claim callback token.",
+        "description": "Release an unexpired claimed or running delegation back to the open queue. Requires the per-claim token in X-Threa-Callback-Token. A missing, inaccessible, lapsed, stale, or replaced claim returns 404 without revealing which condition applied.",
         "security": [{ "apiKey": ["delegations:write"] }],
         "parameters": [
           { "$ref": "#/components/parameters/ThreaVersion" },
@@ -3459,7 +3459,7 @@
         "operationId": "heartbeatDelegation",
         "summary": "Renew a delegation claim",
         "tags": ["Delegations"],
-        "description": "Push the claim's expiry forward while the local agent is still working. Liveness only; no status change on the card. Authenticated with the per-claim token in the X-Threa-Callback-Token header.",
+        "description": "Renew a live claim without changing the card status. Any HTTP client can call this endpoint directly while working; send the per-claim token in X-Threa-Callback-Token.",
         "security": [{ "apiKey": ["delegations:write"] }],
         "parameters": [
           { "$ref": "#/components/parameters/ThreaVersion" },
@@ -6542,7 +6542,7 @@
     },
     {
       "name": "Delegations",
-      "description": "Close the loop on delegated tasks: your local agent lists the open queue, claims a task, reports progress, and completes it with a result posted back to the stream."
+      "description": "Inspect delegated work, claim accepted tasks, report progress or renew the lease, then complete, fail, or release the claim."
     }
   ]
 }

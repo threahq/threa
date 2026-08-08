@@ -39,6 +39,20 @@ function bodyOf(index: number): Record<string, unknown> {
   return JSON.parse(String((fetchSpy.mock.calls[index]![1] as RequestInit).body)) as Record<string, unknown>
 }
 
+test("delegation help documents inspect, availability polling, manual heartbeat, and successful token clearing", async () => {
+  const noun = await run(["delegations", "--help"], { config: TEST_CONFIG })
+  const list = await run(["delegations", "list", "--help"], { config: TEST_CONFIG })
+  const update = await run(["delegations", "update", "--help"], { config: TEST_CONFIG })
+  const release = await run(["delegations", "release", "--help"], { config: TEST_CONFIG })
+
+  expect(noun.stdout).toContain("get")
+  expect(noun.stdout).toContain("release")
+  expect(list.stdout).toContain("availability changed after")
+  expect(update.stdout).toContain("pure heartbeat")
+  expect(release.stdout).toContain("only a matching stored token is cleared")
+  expect(release.stdout).toContain("replacement token is preserved")
+})
+
 test("get inspects the full delegation without writing token state", async () => {
   fetchSpy.mockResolvedValue(jsonResponse(200, { data: { id: "dlg_1", brief: "do it", contextRefs: ["msg_1"] } }))
   const result = await run(["delegations", "get", "dlg_1", "--json"], { config: TEST_CONFIG })

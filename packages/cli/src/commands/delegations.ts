@@ -32,7 +32,7 @@ function renderLifecycle(payload: unknown): string {
 
 const listVerb: VerbSpec = {
   name: "list",
-  summary: "List open delegations; --since iso returns availability changes after that instant",
+  summary: "List open delegations. --since <iso> returns availability changes after that instant",
   usage: "threa delegations list [--since iso]",
   help:
     "threa delegations list [flags]\n\n" +
@@ -70,12 +70,12 @@ const getVerb: VerbSpec = {
 
 const claimVerb: VerbSpec = {
   name: "claim",
-  summary: "Claim an open task; requires --label; --idempotency-key re-keys a crashed claim",
+  summary: "Claim an open or historical expired task after inspection; requires --label",
   usage: "threa delegations claim <id> --label who [--idempotency-key k]",
   help:
     "threa delegations claim <id> --label who [flags]\n\n" +
-    "Claim an open task. The claim token is persisted to ~/.threa/state.json (mode 0600, keyed by workspace and " +
-    "delegation), so update and finish reuse it across separate `threa` invocations. Claim shows the token once.\n\n" +
+    "Claim an open or historical expired task after inspecting it with `delegations get`. The claim token is persisted to ~/.threa/state.json (mode 0600, keyed by workspace and " +
+    "delegation), so update and finish reuse it across separate `threa` invocations. The token is shown once.\n\n" +
     "Flags:\n" +
     "  --label who           human-readable identity shown on the card (required)\n" +
     "  --idempotency-key k   persist before claiming to re-key a crashed claim (8-128 chars)\n" +
@@ -104,8 +104,8 @@ const releaseVerb: VerbSpec = {
   summary: "Release a live claim back to the open queue",
   usage: "threa delegations release <id> [--claim-token t]",
   help:
-    "threa delegations release <id> [flags]\n\nRelease a live claim. The stored token is cleared only after success.\n\n" +
-    "Flags:\n  --claim-token t    override the stored token\n  --json             force JSON output\n  --help             show this help",
+    "threa delegations release <id> [flags]\n\nRelease a live claim. On success, only a matching stored token is cleared; a replacement token is preserved.\n\n" +
+    "Flags:\n  --claim-token <t>  override the stored token\n  --json             force JSON output\n  --help             show this help",
   options: { "claim-token": { type: "string" } },
   run: (ctx, positionals, values) => {
     const id = positionals[0]
@@ -154,10 +154,10 @@ const finishVerb: VerbSpec = {
     "[--claim-token t]",
   help:
     "threa delegations finish <id> --outcome complete|fail [flags]\n\n" +
-    "Close a claimed task. Reuses the stored claim token; --claim-token overrides it. Finish clears the token.\n\n" +
+    "Complete or fail a claimed task. Reuses the stored claim token; --claim-token overrides it. On success, clears the token.\n\n" +
     "Flags:\n" +
     "  --outcome o        complete | fail (required)\n" +
-    "  --result md        outcome (complete): markdown posted into the stream; `-` reads stdin\n" +
+    "  --result md        outcome (complete): markdown posted in the thread anchored on the delegation card; `-` reads stdin\n" +
     "  --error msg        outcome (fail): why it failed\n" +
     "  --metadata k=v     outcome (complete): stamp the result message; repeatable\n" +
     "  --claim-token t    override the stored token\n" +

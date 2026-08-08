@@ -232,8 +232,9 @@ async function loop() {
     self-contained brief and posts a <strong>delegation card</strong> in the stream.
     The card waits, status <code>open</code>, until an agent claims it through this
     API. Every transition after that shows on the card live: claimed, running with
-    progress notes, then completed with the result posted back into the
-    conversation, where Threa's memory learns the outcome.
+    progress notes, then completed with the result posted in the thread anchored
+    on the card. The result enters the normal message pipeline, so workspace memory
+    can capture the outcome.
   </p>
   <p>
     Works with either key kind: a personal <code>threa_uk_</code> key posts the
@@ -242,8 +243,12 @@ async function loop() {
     <code>delegations:write</code> scopes.
   </p>
 
-  <h3>1 · Find open work</h3>
-  <p>The queue is filtered to streams your key can access.</p>
+  <h3>1 · Find and inspect open work</h3>
+  <p>
+    The queue includes only open tasks in streams your key can access. For polling,
+    pass <code>since</code>: it compares the cursor with <code>status_changed_at</code>,
+    not the task's creation time, so a task that reopens appears in the delta.
+  </p>
   <CodeBlock
     lang="bash"
     label="list open delegations"
@@ -252,12 +257,26 @@ async function loop() {
     run={{ method: "GET", path: "{{baseUrl}}/api/v1/workspaces/{{workspaceId}}/delegations" }}
   />
 
+  <p>
+    Inspect a candidate before claiming it. This read requires
+    <code>delegations:read</code> and returns the full brief and context-reference
+    pointers without creating a claim or exposing claim secrets.
+  </p>
+  <CodeBlock
+    lang="bash"
+    label="inspect"
+    code={`curl "{{baseUrl}}/api/v1/workspaces/{{workspaceId}}/delegations/DELEGATION_ID" \\
+  -H "Authorization: Bearer {{apiKey}}"`}
+  />
+
   <h3>2 · Claim it</h3>
   <p>
-    The claim is atomic: exactly one claimer wins; a lost race returns
-    <code>409 DELEGATION_NOT_OPEN</code>. The response carries the full brief, the
-    resolved context refs, and a <code>claimToken</code> on a 15-minute lease. The
-    token is shown once and cannot be retrieved again.
+    Claim only after reviewing the brief. Only one claimer succeeds; a lost race
+    returns <code>409 DELEGATION_NOT_OPEN</code>. The response carries the brief,
+    context-reference pointers, and a <code>claimToken</code> on a 15-minute lease.
+    The token is shown once and cannot be retrieved again. A historical task still
+    stored as <code>expired</code> is absent from the open queue but can be inspected
+    and claimed directly by id.
   </p>
   <CodeBlock
     lang="bash"
@@ -272,8 +291,11 @@ async function loop() {
   <p>
     Send the token as an <code>X-Threa-Callback-Token</code> header on every later
     call. <code>status</code> puts a note on the card and renews the lease;
-    <code>heartbeat</code> renews it silently. Let the lease lapse and the card
-    flips to <code>expired</code> so nobody waits on a dead runner.
+    <code>heartbeat</code> renews it silently. Heartbeat is a normal HTTP endpoint,
+    so any client can call it manually; no runner is required. If a newly claimed or
+    running task lapses, the lease sweep clears its claim and returns it to
+    <code>open</code>. Rows historically stored as <code>expired</code> stay that way
+    until explicitly claimed, requeued, marked done, or cancelled.
   </p>
   <CodeBlock
     lang="bash"
@@ -285,10 +307,24 @@ async function loop() {
   -d '{ "statusNote": "Tests passing, writing the migration" }'`}
   />
 
+  <p>
+    On a controlled stop, release the live claim rather than fail it. Release
+    returns the task to the open queue. It requires <code>delegations:write</code>
+    and the callback token; a missing, inaccessible, stale, replaced, or lapsed
+    claim returns the same privacy-safe <code>404</code>.
+  </p>
+  <CodeBlock
+    lang="bash"
+    label="release"
+    code={`curl -X POST {{baseUrl}}/api/v1/workspaces/{{workspaceId}}/delegations/DELEGATION_ID/release \\
+  -H "Authorization: Bearer {{apiKey}}" \\
+  -H "X-Threa-Callback-Token: CLAIM_TOKEN"`}
+  />
+
   <h3>4 · Complete with the result</h3>
   <p>
-    Completion posts a compact anchor into the stream with the full result as a
-    thread reply under it, and the card flips in the same transaction. Optional
+    Completion posts the full result as a reply in the thread anchored on the
+    delegation card, and the card flips in the same transaction. Optional
     <code>metadata</code> is stamped on the result message (queryable later with
     <code>find-by-metadata</code>). Retries are safe: a retried complete bearing the
     same token returns the committed outcome instead of double-posting.
@@ -309,7 +345,7 @@ async function loop() {
     Something went wrong instead? <code>POST …/fail</code> with an
     <code>errorMessage</code> puts the reason on the card. And the card's own
     <em>Copy prompt</em> button embeds these instructions with the real ids filled
-    in, so an agent that receives the pasted brief knows how to claim it.
+    in, so an agent can inspect the task before deciding whether to claim it.
   </p>
 
   <h2 id="sealed-agent">Connect an encrypted agent</h2>
