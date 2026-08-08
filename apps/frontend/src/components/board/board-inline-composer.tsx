@@ -220,7 +220,15 @@ export function InlineComposerForm({
     const id = restoreOnMountRef.current
     if (!id || !composer.isLoaded) return
     restoreOnMountRef.current = null
-    void stash.handleRestoreStashed(id)
+    // A refusal here is rare (only a row deleted mid-open survives v2's
+    // take-over) but must not vanish silently (INV-11): the resting button
+    // advertised this draft, so an empty composer needs an explanation in the log.
+    stash.handleRestoreStashed(id).then(
+      (result) => {
+        if (!result.ok) console.error(`[board] mount restore of ${id} refused: ${result.reason}`)
+      },
+      (err) => console.error(`[board] mount restore of ${id} threw`, err)
+    )
   }, [composer.isLoaded, stash])
 
   // Focus-on-signal for always-mounted hosts (skip the mount value — focus on
@@ -246,7 +254,13 @@ export function InlineComposerForm({
     }
     if (!composer.isLoaded) return
     lastRestoreSignalRef.current = restoreOnSignal.signal
-    void stash.handleRestoreStashed(restoreOnSignal.stashId)
+    const stashId = restoreOnSignal.stashId
+    stash.handleRestoreStashed(stashId).then(
+      (result) => {
+        if (!result.ok) console.error(`[board] signal restore of ${stashId} refused: ${result.reason}`)
+      },
+      (err) => console.error(`[board] signal restore of ${stashId} threw`, err)
+    )
   }, [restoreOnSignal, composer.isLoaded, stash])
 
   const composerControlRef = useRef<ComposerControlHandle | null>(null)

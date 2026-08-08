@@ -4,7 +4,7 @@ import { useAttachments, type PendingAttachment, type UploadResult } from "./use
 import type { JSONContent } from "@threa/types"
 import { EMPTY_DOC } from "@/lib/prosemirror-utils"
 import type { DraftContextRef } from "@/lib/context-bag/types"
-import { generateLocalDraftId, type DraftAttachment } from "@/db"
+import { generateLocalDraftId, type CachedDraft, type DraftAttachment } from "@/db"
 import { resolveMigratedDraftId, wasDraftResolvedLocally } from "@/sync/draft-resolution-guard"
 
 // Mounted composers per draft scope, in mount order. More than one live composer
@@ -267,7 +267,7 @@ export function useDraftComposer({
   const savedAttachmentsRef = useRef(savedAttachments)
   savedAttachmentsRef.current = savedAttachments
 
-  const scopeRegistryKey = `${workspaceId} ${draftKey}`
+  const scopeRegistryKey = `${workspaceId} ${draftKey}`
   const composerTokenRef = useRef<string | null>(null)
   if (composerTokenRef.current === null) composerTokenRef.current = `composer_${++composerTokenSeq}`
   const composerToken = composerTokenRef.current
@@ -428,108 +428,149 @@ export function useDraftComposer({
   // cannot cross-write into Y) and then re-run init against Y. Rehydration happens
   // whether or not the user is engaged: the repoint is this same user's own action
   // on this device, so the new draft is what they asked to see.
-  useEffect(() => {
-    const prev = prevLoadedIdRef.current
-    prevLoadedIdRef.current = loadedDraftId ?? null
-    if (loadedDraftId && prev !== loadedDraftId) {
-      if (!prev) {
-        // First pointer for this composer (null → X). With the editor idle — or
-        // when the editor's content already belongs to this very row, i.e. the
-        // pointer merely flickered null and came back — adopt its identity and
-        // hydrate from it as usual.
-        // The pointer merely flickered null and came back to the row the editor's
-        // content already belongs to — nothing to reconcile.
-        if (contentDraftIdRef.current === loadedDraftId) return
-        if (!userEngagedRef.current) {
-          contentDraftIdRef.current = loadedDraftId
-          return
+  // Pointer transitions are handled STRICTLY IN ORDER through a promise chain:
+  // a transition that persists content (an async save) must fully resolve before
+  // the next transition's handler reads the editor state, or a second repoint
+  // landing inside the save's in-flight window (a programmatic double-restore,
+  // a catch-up burst) reads half-updated refs and flushes the wrong content into
+  // the wrong row. `prevLoadedIdRef` still advances synchronously so each queued
+  // handler gets its own (prev, next) pair; everything else is read at RUN time,
+  // after the previous handler settled.
+  // NOT async: a transition with no persistence work completes synchronously
+  // (returns null) so its resets and ref updates land in the same tick the
+  // pointer changed — the pre-chain semantics every hydrate effect depends on.
+  // Only the flush leg returns a promise, and only THAT marks the chain busy.
+  const handlePointerTransition = useCallback(
+    (prev: string | null, next: string | null): Promise<void> | null => {
+      if (!next) {
+        if (!prev) return null
+        // The row can move scopes before its host target catches up. The mounted
+        // editor still owns this identity, so the old pointer going null is not
+        // a removal.
+        if (contentDraftScope && contentDraftScope !== draftKey) return null
+        if (userEngagedRef.current && hasDocContent(contentRef.current)) {
+          // With another composer live on this scope, the vanishing pointer can be
+          // THAT editor's send resolving the shared row while this one holds newer
+          // unsent text that exists only in React state — persist it rather than
+          // merely declining to blank. Both conditions are load-bearing: alone on
+          // the scope the null is a deliberate teardown (relocate/stash/clear/
+          // purge), and only a local resolve-on-send marks the id, so a remote
+          // `draft:deleted` reads false and stays deleted instead of being
+          // resurrected by whichever device happens to hold the composer open.
+          if (mountedComposerCount(scopeRegistryKey) > 1 && wasDraftResolvedLocally(prev)) {
+            return saveDraft(contentRef.current, persistableAttachments(getPendingAttachmentsSnapshot())).then(
+              () => undefined,
+              (err) => {
+                console.error("Failed to persist draft rescued from a resolved row", err)
+              }
+            )
+          }
+          return null
         }
-        if (!hasDocContent(contentRef.current)) {
-          // Engaged but empty (typed, then deleted back to nothing). There is
-          // nothing to preserve, but the debounce is still armed with an EMPTY_DOC
-          // save whose expected id is null — pointer-addressed, it would fire into
-          // the arriving draft and delete it. Drop it without persisting, then
-          // hydrate from the arriving draft like an idle composer would.
-          cancelPendingSave()
-          resetForReinit()
-          contentDraftIdRef.current = loadedDraftId
-          return
-        }
-        // The user typed into a pointer-less scope and a draft was checked into
-        // it underneath them. Their fragment has no identity yet, so the armed
-        // pointer-addressed save would land in the arriving draft and destroy its
-        // body. Persist the fragment as its OWN detached row first (an expected
-        // id no row holds takes the create path, and the occupied pointer is
-        // never stolen); `saveDraft` also clears the armed debounce. Only once it
-        // actually persisted may the editor be blanked — on a locked E2E scope the
-        // save is gated and returns null, and resetting would erase the fragment
-        // from screen and disk both, so the focused composer keeps its content.
-        saveDraft(contentRef.current, persistableAttachments(getPendingAttachmentsSnapshot()), generateLocalDraftId())
-          .then((saved) => {
-            if (!saved) return
-            resetForReinit()
-            contentDraftIdRef.current = loadedDraftId
-          })
-          .catch((err) => {
-            console.error("Failed to persist draft content displaced by a first pointer", err)
-          })
-        return
+        userEngagedRef.current = false
+        contentDraftIdRef.current = null
+        setContent(initialContent)
+        clearAttachments()
+        return null
       }
-      if (resolveMigratedDraftId(prev) === loadedDraftId) {
+      // The pointer flickered away and back to the row the editor's content
+      // already belongs to — nothing to reconcile.
+      if (contentDraftIdRef.current === next) return null
+      if (prev && resolveMigratedDraftId(prev) === next) {
         // Not a repoint: the SAME draft was re-keyed underneath the composer (a
         // split ack / remote-delete preserve). The editor's content still belongs
         // to this row, so nothing is flushed and nothing is reset — the id is
         // simply followed. Any armed save captured the old id and is redirected
         // by the migration map on the write path.
-        contentDraftIdRef.current = loadedDraftId
-        return
+        contentDraftIdRef.current = next
+        return null
       }
-      if (userEngagedRef.current && hasDocContent(contentRef.current)) {
-        saveDraft(contentRef.current, persistableAttachments(getPendingAttachmentsSnapshot()), prev).catch((err) => {
+      if (!userEngagedRef.current) {
+        // Idle. A first pointer (null → X) adopts and lets init/late-hydrate
+        // fill; a repoint re-runs init against the new draft.
+        if (prev) resetForReinit()
+        contentDraftIdRef.current = next
+        return null
+      }
+      if (!hasDocContent(contentRef.current)) {
+        // Engaged but empty (typed, then deleted back to nothing). Nothing to
+        // preserve, but the debounce may still be armed with an EMPTY_DOC save —
+        // fired later it would delete whatever row it resolves to. Drop it
+        // without persisting, then hydrate from the arriving draft.
+        cancelPendingSave()
+        resetForReinit()
+        contentDraftIdRef.current = next
+        return null
+      }
+      // Engaged with content. If the content belongs to a row (an ordinary
+      // repoint), flush it there; if it has no identity — typing that outran
+      // hydration, or a fragment kept on screen by an earlier gated save — it
+      // must NOT touch any existing row, so it detaches into its own fresh one
+      // (a never-existing expected id takes the create path without stealing
+      // the pointer). Only once the save actually persisted may the editor be
+      // blanked: on a locked E2E scope it returns null, and resetting would
+      // erase the content from screen and disk both, so the focused composer
+      // keeps it (and its identity) until it can be saved.
+      const owner = contentDraftIdRef.current
+      return saveDraft(
+        contentRef.current,
+        persistableAttachments(getPendingAttachmentsSnapshot()),
+        owner ?? generateLocalDraftId()
+      ).then(
+        (saved: CachedDraft | null) => {
+          if (!saved) return
+          resetForReinit()
+          contentDraftIdRef.current = next
+        },
+        (err) => {
           console.error("Failed to persist draft content displaced by a repoint", err)
-        })
-      }
-      resetForReinit()
-      contentDraftIdRef.current = loadedDraftId
+        }
+      )
+    },
+    [
+      saveDraft,
+      cancelPendingSave,
+      resetForReinit,
+      initialContent,
+      clearAttachments,
+      scopeRegistryKey,
+      getPendingAttachmentsSnapshot,
+      contentDraftScope,
+      draftKey,
+    ]
+  )
+
+  // Transitions are handled STRICTLY IN ORDER: a transition whose handler
+  // persists content (returns a promise) marks the chain busy, and any
+  // transition arriving before it settles queues behind it — a second repoint
+  // landing inside the save's in-flight window (a programmatic double-restore,
+  // a catch-up burst) must not read half-updated refs and flush the wrong
+  // content into the wrong row. `prevLoadedIdRef` advances synchronously so
+  // each queued handler gets its own (prev, next) pair; everything else is read
+  // at run time, after the previous handler settled.
+  const pointerTransitionTailRef = useRef<Promise<void> | null>(null)
+  useEffect(() => {
+    const prev = prevLoadedIdRef.current
+    const next = loadedDraftId ?? null
+    prevLoadedIdRef.current = next
+    if (prev === next) return
+    const pending = pointerTransitionTailRef.current
+    if (!pending) {
+      const run = handlePointerTransition(prev, next)
+      if (!run) return
+      const tail: Promise<void> = run.then(() => {
+        if (pointerTransitionTailRef.current === tail) pointerTransitionTailRef.current = null
+      })
+      pointerTransitionTailRef.current = tail
       return
     }
-    if (!prev || loadedDraftId) return
-    // A filing-only move can publish the row's new scope before the host target
-    // catches up. The editor still owns this identity, so the old pointer going
-    // null is not a removal.
-    if (contentDraftScope && contentDraftScope !== draftKey) return
-    if (userEngagedRef.current && hasDocContent(contentRef.current)) {
-      // With another composer live on this scope, the vanishing pointer can be
-      // THAT editor's send resolving the shared row while this one holds newer
-      // unsent text that exists only in React state — persist it rather than
-      // merely declining to blank. Both conditions are load-bearing: alone on the
-      // scope the null is a deliberate teardown (relocate/stash/clear/purge), and
-      // only a local resolve-on-send marks the id, so a remote `draft:deleted`
-      // reads false and stays deleted instead of being resurrected by whichever
-      // device happens to hold the composer open.
-      if (mountedComposerCount(scopeRegistryKey) > 1 && wasDraftResolvedLocally(prev)) {
-        saveDraft(contentRef.current, persistableAttachments(getPendingAttachmentsSnapshot())).catch((err) => {
-          console.error("Failed to persist draft rescued from a resolved row", err)
-        })
-      }
-      return
-    }
-    userEngagedRef.current = false
-    contentDraftIdRef.current = null
-    setContent(initialContent)
-    clearAttachments()
-  }, [
-    loadedDraftId,
-    initialContent,
-    clearAttachments,
-    saveDraft,
-    scopeRegistryKey,
-    getPendingAttachmentsSnapshot,
-    resetForReinit,
-    cancelPendingSave,
-    contentDraftScope,
-    draftKey,
-  ])
+    const tail: Promise<void> = pending
+      .then(() => handlePointerTransition(prev, next) ?? undefined)
+      .then(() => {
+        if (pointerTransitionTailRef.current === tail) pointerTransitionTailRef.current = null
+      })
+    pointerTransitionTailRef.current = tail
+  }, [loadedDraftId, handlePointerTransition])
 
   // When attachments change, persist to draft storage. Reserved-but-still-
   // uploading attachments persist too: their id is already real, and a draft

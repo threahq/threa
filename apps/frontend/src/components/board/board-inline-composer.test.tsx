@@ -106,7 +106,7 @@ function stashComposerStub() {
     claimableDrafts: [],
     originByDraftId: new Map(),
     handleStashDraft: vi.fn().mockResolvedValue(undefined),
-    handleRestoreStashed: vi.fn().mockResolvedValue(undefined),
+    handleRestoreStashed: vi.fn().mockResolvedValue({ ok: true }),
     handleDeleteStashed: vi.fn().mockResolvedValue(undefined),
   }
 }
