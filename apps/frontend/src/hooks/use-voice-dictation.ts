@@ -384,19 +384,22 @@ export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDi
   // a take ends before the upstream emits a final delta (manual stop, error, or a
   // dropped connection) so the words the user already saw are kept rather than
   // silently discarded.
-  const flushInterim = useCallback(() => {
+  const flushInterim = useCallback((): boolean => {
     const pending = interimRef.current
-    if (pending) {
-      if (onPolishedChunkInsertedRef.current) {
-        onPolishedChunkInsertedRef.current({
-          chunkId: `local_recovery_${++recoveryChunkSequenceRef.current}`,
-          contentJson: parseMarkdown(pending),
-        })
-      } else {
-        onCommittedTextRef.current(pending)
-      }
+    if (!pending) {
+      updateInterim("")
+      return false
+    }
+    if (onPolishedChunkInsertedRef.current) {
+      onPolishedChunkInsertedRef.current({
+        chunkId: `local_recovery_${++recoveryChunkSequenceRef.current}`,
+        contentJson: parseMarkdown(pending),
+      })
+    } else {
+      onCommittedTextRef.current(pending)
     }
     updateInterim("")
+    return true
   }, [updateInterim])
 
   const teardownAudio = useCallback(() => {
@@ -518,11 +521,14 @@ export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDi
       // before teardown clears the decoration so a transport/provider failure
       // can never erase words the user was already looking at.
       flushInterim()
+      // Recovery chunks have no raw/polished pair to toggle. Drop editor and
+      // hook tracking while leaving every inserted character in the document.
+      lockAllChunks()
       setError(message)
       setState("error")
       teardown()
     },
-    [flushInterim, teardown]
+    [flushInterim, lockAllChunks, teardown]
   )
 
   const start = useCallback(() => {
@@ -759,8 +765,8 @@ export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDi
           // final delta. Preserve the last visible hypothesis before teardown.
           // On the normal path the final delta already cleared this, so the
           // flush is an idempotent no-op rather than a duplicate insertion.
-          flushInterim()
-          if (payload.outcome !== "success" && payload.outcome !== "empty_input") lockAllChunks()
+          const recoveredInterim = flushInterim()
+          if (recoveredInterim || (payload.outcome !== "success" && payload.outcome !== "empty_input")) lockAllChunks()
           teardown()
           setState("idle")
         })
@@ -846,7 +852,7 @@ export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDi
       // The ack callback fires on the server's confirmation or on the timeout —
       // either way we disconnect and return to idle so the UI never wedges.
       const recover = () => {
-        flushInterim()
+        if (flushInterim()) lockAllChunks()
         teardown()
         setState("idle")
       }
@@ -856,7 +862,7 @@ export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDi
     } else {
       // Defensive local recovery for a take whose socket disappeared before
       // stop could be emitted. The visible preview still belongs to the user.
-      flushInterim()
+      if (flushInterim()) lockAllChunks()
       setState("idle")
     }
     // The take is over — start the post-session lock countdown. The user gets a
@@ -928,8 +934,9 @@ export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDi
   }, [])
 
   const prepareSendAsIs = useCallback(() => {
+    let recoveredInterim = false
     if (state === "recording" || state === "connecting" || state === "stopping") {
-      flushInterim()
+      recoveredInterim = flushInterim()
       startGenerationRef.current++
       teardownAudio()
       const socket = socketRef.current
@@ -945,7 +952,12 @@ export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDi
       coordinator.deactivate(coordinatedStop)
       setState("idle")
     }
-    if (chunksRef.current.size > 0 || sessionChunkIdRef.current !== null || lockTimerRef.current !== null)
+    if (
+      recoveredInterim ||
+      chunksRef.current.size > 0 ||
+      sessionChunkIdRef.current !== null ||
+      lockTimerRef.current !== null
+    )
       lockAllChunks()
   }, [state, flushInterim, teardownAudio, coordinator, coordinatedStop, lockAllChunks])
 
@@ -989,7 +1001,7 @@ export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDi
     return () => {
       const sessionId = sessionIdRef.current
       const hadSocket = socketRef.current !== null
-      flushInterim()
+      if (flushInterim()) lockAllChunks()
       teardown()
       if (lockTimerRef.current !== null) {
         clearTimeout(lockTimerRef.current)
@@ -999,7 +1011,7 @@ export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDi
         void dependencies.abortSession(workspaceId, sessionId).catch(() => {})
       }
     }
-  }, [flushInterim, teardown, workspaceId, dependencies])
+  }, [flushInterim, lockAllChunks, teardown, workspaceId, dependencies])
 
   let hasUnlockedChunks = false
   for (const record of chunks.values()) {
