@@ -9,24 +9,23 @@ import { createMigrator } from "../../src/db/migrations"
 import { userId } from "../../src/lib/id"
 import type { Querier } from "../../src/db"
 import { UserRepository, type InsertUserParams } from "../../src/features/workspaces"
+import { getTestDatabaseTarget, quoteDatabaseIdentifier } from "../test-database"
 
 // Re-export production helpers for tests that need to persist data
 export { withClient, withTransaction } from "../../src/db"
-
-const ADMIN_DATABASE_URL = "postgresql://threa:threa@localhost:5454/postgres"
-const TEST_DATABASE_URL = "postgresql://threa:threa@localhost:5454/threa_test"
 
 /**
  * Creates the test database if it doesn't exist.
  */
 export async function ensureTestDatabaseExists(): Promise<void> {
-  const adminPool = new Pool({ connectionString: ADMIN_DATABASE_URL })
+  const { adminUrl, databaseName } = getTestDatabaseTarget()
+  const adminPool = new Pool({ connectionString: adminUrl })
 
   try {
-    const result = await adminPool.query("SELECT 1 FROM pg_database WHERE datname = 'threa_test'")
+    const result = await adminPool.query("SELECT 1 FROM pg_database WHERE datname = $1", [databaseName])
 
     if (result.rows.length === 0) {
-      await adminPool.query("CREATE DATABASE threa_test")
+      await adminPool.query(`CREATE DATABASE ${quoteDatabaseIdentifier(databaseName)}`)
     }
   } finally {
     await adminPool.end()
@@ -37,7 +36,7 @@ export async function ensureTestDatabaseExists(): Promise<void> {
  * Creates a pool connected to the test database.
  */
 export function createTestPool(): Pool {
-  return createDatabasePool(process.env.TEST_DATABASE_URL ?? TEST_DATABASE_URL)
+  return createDatabasePool(getTestDatabaseTarget().connectionUrl)
 }
 
 /**
@@ -58,19 +57,35 @@ export async function setupIsolatedTestDatabase(label: string): Promise<{ pool: 
     .replaceAll(/[^a-z0-9]/g, "_")
     .slice(0, 24)
   const databaseName = `threa_test_${safeLabel}_${crypto.randomUUID().replaceAll("-", "").slice(0, 12)}`
-  const adminPool = new Pool({ connectionString: ADMIN_DATABASE_URL })
-  await adminPool.query(`CREATE DATABASE "${databaseName}"`)
+  const target = getTestDatabaseTarget()
+  const adminPool = new Pool({ connectionString: target.adminUrl })
+  const databaseIdentifier = quoteDatabaseIdentifier(databaseName)
+  let pool: Pool | null = null
+  let databaseCreated = false
 
-  const connectionUrl = new URL(process.env.TEST_DATABASE_URL ?? TEST_DATABASE_URL)
-  connectionUrl.pathname = `/${databaseName}`
-  const pool = createDatabasePool(connectionUrl.toString())
-  await createMigrator(pool).up()
+  try {
+    await adminPool.query(`CREATE DATABASE ${databaseIdentifier}`)
+    databaseCreated = true
 
+    const connectionUrl = new URL(target.connectionUrl)
+    connectionUrl.pathname = `/${databaseName}`
+    pool = createDatabasePool(connectionUrl.toString())
+    await createMigrator(pool).up()
+  } catch (error) {
+    if (pool) await pool.end()
+    if (databaseCreated) await adminPool.query(`DROP DATABASE ${databaseIdentifier} WITH (FORCE)`)
+    await adminPool.end()
+    throw error
+  }
+
+  let cleanedUp = false
   return {
     pool,
     cleanup: async () => {
+      if (cleanedUp) return
+      cleanedUp = true
       await pool.end()
-      await adminPool.query(`DROP DATABASE "${databaseName}" WITH (FORCE)`)
+      await adminPool.query(`DROP DATABASE ${databaseIdentifier} WITH (FORCE)`)
       await adminPool.end()
     },
   }

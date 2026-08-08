@@ -1214,7 +1214,11 @@ export function createPublicApiHandlers({
       if (!link) {
         throw new HttpError("No active runtime session link found", { status: 404, code: "NOT_FOUND" })
       }
-      const updated = await streamService.updateStream(link.activeStreamId, { displayName: data.displayName })
+      const updated = await streamService.updateStream(
+        link.activeStreamId,
+        { displayName: data.displayName },
+        { workspaceId: req.workspaceId!, principal: { kind: "bot", botId: req.botApiKey.botId } }
+      )
       if (!updated) {
         throw new HttpError("Linked stream not found", { status: 404, code: "NOT_FOUND" })
       }
@@ -2136,7 +2140,14 @@ export function createPublicApiHandlers({
         throw new HttpError("No API key context", { status: 401, code: "UNAUTHORIZED" })
       }
 
-      const updated = await streamService.updateStream(streamId, { description, actorId, actorType })
+      const principal = req.userApiKey
+        ? { kind: "user" as const, userId: req.user!.id }
+        : { kind: "bot" as const, botId: req.botApiKey!.botId }
+      const updated = await streamService.updateStream(
+        streamId,
+        { description, actorId, actorType },
+        { workspaceId, principal }
+      )
       if (!updated || updated.archivedAt) {
         throw new HttpError("Stream not found", { status: 404, code: "NOT_FOUND" })
       }

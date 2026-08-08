@@ -86,6 +86,7 @@ describe("Thread Summary", () => {
       parentStreamId: channel.id,
       parentAnchorId: parent.id,
       createdBy: ownerId,
+      principal: { kind: "user", userId: ownerId },
     })
 
     // Create replyUserCount distinct user IDs. We don't need actual User
@@ -263,6 +264,7 @@ describe("Thread Summary", () => {
           parentStreamId: channel.id,
           parentAnchorId: parent.id,
           createdBy: ownerId,
+          principal: { kind: "user", userId: ownerId },
         })
         await eventService.createMessage({
           workspaceId: wsId,

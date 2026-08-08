@@ -90,11 +90,11 @@ describe("public API updateStream", () => {
     const { res, getBody } = createResponse()
     await handlers.updateStream(userRequest({ description: "New blurb" }), res)
 
-    expect(updateStream).toHaveBeenCalledWith("stream_1", {
-      description: "New blurb",
-      actorId: "usr_1",
-      actorType: "user",
-    })
+    expect(updateStream).toHaveBeenCalledWith(
+      "stream_1",
+      { description: "New blurb", actorId: "usr_1", actorType: "user" },
+      { workspaceId: "ws_1", principal: { kind: "user", userId: "usr_1" } }
+    )
     expect(getBody()).toMatchObject({ data: { id: "stream_1", description: "New blurb" } })
   })
 
@@ -108,11 +108,11 @@ describe("public API updateStream", () => {
 
     await handlers.updateStream(botRequest({ description: "From a bot" }), createResponse().res)
 
-    expect(updateStream).toHaveBeenCalledWith("stream_1", {
-      description: "From a bot",
-      actorId: "bot_1",
-      actorType: "bot",
-    })
+    expect(updateStream).toHaveBeenCalledWith(
+      "stream_1",
+      { description: "From a bot", actorId: "bot_1", actorType: "bot" },
+      { workspaceId: "ws_1", principal: { kind: "bot", botId: "bot_1" } }
+    )
   })
 
   it("clears the description with an empty string", async () => {
@@ -124,7 +124,11 @@ describe("public API updateStream", () => {
 
     await handlers.updateStream(userRequest({ description: "" }), createResponse().res)
 
-    expect(updateStream).toHaveBeenCalledWith("stream_1", { description: "", actorId: "usr_1", actorType: "user" })
+    expect(updateStream).toHaveBeenCalledWith(
+      "stream_1",
+      { description: "", actorId: "usr_1", actorType: "user" },
+      { workspaceId: "ws_1", principal: { kind: "user", userId: "usr_1" } }
+    )
   })
 
   it("rejects with 403 when the stream is not accessible", async () => {

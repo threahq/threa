@@ -158,7 +158,10 @@ describe("createStreamHandlers.updateToolPolicy", () => {
 
     await handlers.updateToolPolicy(makeReq({ allowedCategories: ["web"] }), res)
 
-    expect(setStreamToolPolicy).toHaveBeenCalledWith("ws_1", "stream_sp", ["web"])
+    expect(setStreamToolPolicy).toHaveBeenCalledWith("ws_1", "stream_sp", ["web"], {
+      kind: "user",
+      userId: "user_owner",
+    })
     expect(captured.body).toEqual({ data: { allowedToolCategories: ["web"] } })
   })
 
@@ -172,12 +175,17 @@ describe("createStreamHandlers.updateToolPolicy", () => {
 
     await handlers.updateToolPolicy(makeReq({ allowedCategories: null }), res)
 
-    expect(setStreamToolPolicy).toHaveBeenCalledWith("ws_1", "stream_sp", null)
+    expect(setStreamToolPolicy).toHaveBeenCalledWith("ws_1", "stream_sp", null, {
+      kind: "user",
+      userId: "user_owner",
+    })
     expect(captured.body).toEqual({ data: { allowedToolCategories: null } })
   })
 
   it("rejects a non-owner with 403 and never writes", async () => {
-    const setStreamToolPolicy = mock(async () => null)
+    const setStreamToolPolicy = mock(async () => {
+      throw Object.assign(new Error("forbidden"), { status: 403, code: "FORBIDDEN" })
+    })
     const handlers = makeHandlers({
       validateStreamAccess: mock(async () => ({
         ...scratchpad,
@@ -190,11 +198,13 @@ describe("createStreamHandlers.updateToolPolicy", () => {
     await expect(handlers.updateToolPolicy(makeReq({ allowedCategories: ["web"] }), res)).rejects.toMatchObject({
       status: 403,
     })
-    expect(setStreamToolPolicy).not.toHaveBeenCalled()
+    expect(setStreamToolPolicy).toHaveBeenCalled()
   })
 
   it("rejects a non-scratchpad stream with 400 and never writes", async () => {
-    const setStreamToolPolicy = mock(async () => null)
+    const setStreamToolPolicy = mock(async () => {
+      throw Object.assign(new Error("invalid stream"), { status: 400, code: "INVALID_STREAM_TYPE" })
+    })
     const handlers = makeHandlers({
       validateStreamAccess: mock(async () => ({
         ...scratchpad,
@@ -207,7 +217,7 @@ describe("createStreamHandlers.updateToolPolicy", () => {
     await expect(handlers.updateToolPolicy(makeReq({ allowedCategories: ["web"] }), res)).rejects.toMatchObject({
       status: 400,
     })
-    expect(setStreamToolPolicy).not.toHaveBeenCalled()
+    expect(setStreamToolPolicy).toHaveBeenCalled()
   })
 })
 
@@ -252,7 +262,10 @@ describe("createStreamHandlers.update — DM memoryMode", () => {
 
     await handlers.update(makeReq({ memoryMode: "off" }), res)
 
-    expect(updateStream).toHaveBeenCalledWith("stream_dm", expect.objectContaining({ memoryMode: "off" }))
+    expect(updateStream).toHaveBeenCalledWith("stream_dm", expect.objectContaining({ memoryMode: "off" }), {
+      workspaceId: "ws_1",
+      principal: { kind: "user", userId: "user_a" },
+    })
     expect(captured.body).toEqual({ stream: expect.objectContaining({ memoryMode: "off" }) })
   })
 

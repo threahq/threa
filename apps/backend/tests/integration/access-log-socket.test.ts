@@ -10,6 +10,7 @@
 import { describe, test, expect, beforeAll, afterAll } from "bun:test"
 import { io, Socket } from "socket.io-client"
 import { Pool } from "pg"
+import { getTestDatabaseTarget } from "../test-database"
 import {
   TestClient,
   loginAs,
@@ -84,9 +85,7 @@ describe("access-log socket capture", () => {
   let pool: Pool
 
   beforeAll(() => {
-    pool = new Pool({
-      connectionString: process.env.TEST_DATABASE_URL || "postgresql://threa:threa@localhost:5454/threa_test",
-    })
+    pool = new Pool({ connectionString: getTestDatabaseTarget().connectionUrl })
   })
 
   afterAll(async () => {
