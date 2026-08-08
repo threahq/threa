@@ -447,43 +447,70 @@ describe("useVoiceDictation lifecycle", () => {
     expect(harness.sockets[0].stopPayloads).toEqual([{ mode: "abort" }])
   })
 
-  it("commits and locks only the v4 recovery chunk on unexpected disconnect", async () => {
+  it("commits only the v4 recovery chunk immediately and locks accepted chunks after terminal grace", async () => {
     const inserted = vi.fn(() => true)
     const lockChunk = vi.fn()
     const lockAll = vi.fn()
     const harness = hookHarness([{ ok: true, protocolVersion: 4 }], {
       onPolishedChunkInserted: inserted,
+      onChunksReplace: () => "applied",
       onLockChunk: lockChunk,
       onLockAllChunks: lockAll,
     })
     act(() => harness.result.current.start())
     await waitFor(() => expect(harness.result.current.state).toBe("recording"))
-    act(() => {
-      harness.sockets[0].fire("voice:transcript:delta", {
-        protocolVersion: 4,
-        voiceSessionId: "voicesess_1",
-        revision: 1,
-        text: "visible v4 tail",
-        isFinal: false,
+    vi.useFakeTimers()
+    try {
+      act(() => {
+        harness.sockets[0].fire("voice:transcript:delta", {
+          protocolVersion: 4,
+          voiceSessionId: "voicesess_1",
+          revision: 1,
+          text: "accepted raw",
+          isFinal: true,
+          chunkId: "accepted",
+          contentJson: paragraph("accepted raw"),
+        })
+        harness.sockets[0].fire("voice:transcript:polished", {
+          protocolVersion: 4,
+          operationId: "accepted-operation",
+          voiceSessionId: "voicesess_1",
+          authoritative: false,
+          resultChunkId: "accepted",
+          throughRevision: 1,
+          sources: [{ chunkId: "accepted", throughRevision: 1 }],
+          raw: "accepted raw",
+          polished: "Accepted polished.",
+          rawContentJson: paragraph("accepted raw"),
+          polishedContentJson: paragraph("Accepted polished."),
+        })
+        harness.sockets[0].fire("voice:transcript:delta", {
+          protocolVersion: 4,
+          voiceSessionId: "voicesess_1",
+          revision: 1,
+          text: "visible v4 tail",
+          isFinal: false,
+        })
+        harness.sockets[0].fire("disconnect", undefined)
+        harness.sockets[0].fire("disconnect", undefined)
       })
-      harness.sockets[0].fire("disconnect", undefined)
-      harness.sockets[0].fire("disconnect", undefined)
-    })
 
-    expect(inserted).toHaveBeenCalledOnce()
-    expect(inserted).toHaveBeenCalledWith({
-      chunkId: "local_recovery_1",
-      contentJson: {
-        type: "doc",
-        content: [{ type: "paragraph", content: [{ type: "text", text: "visible v4 tail" }] }],
-      },
-    })
-    expect(lockChunk).toHaveBeenCalledOnce()
-    expect(lockChunk).toHaveBeenCalledWith({ chunkId: "local_recovery_1" })
-    // Starting the take clears previous tracking; disconnect itself must not
-    // globally lock already accepted v4 chunks.
-    expect(lockAll).toHaveBeenCalledOnce()
-    expect(harness.result.current.error).toBe("Dictation connection lost")
+      expect(inserted).toHaveBeenCalledTimes(2)
+      expect(inserted).toHaveBeenLastCalledWith({
+        chunkId: "local_recovery_1",
+        contentJson: paragraph("visible v4 tail"),
+      })
+      expect(lockChunk).toHaveBeenCalledWith({ chunkId: "local_recovery_1" })
+      expect(lockAll).toHaveBeenCalledOnce()
+      expect(harness.result.current.chunks.size).toBe(1)
+      expect(harness.result.current.error).toBe("Dictation connection lost")
+
+      act(() => vi.advanceTimersByTime(8_001))
+      expect(lockAll).toHaveBeenCalledTimes(2)
+      expect(harness.result.current.chunks.size).toBe(0)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it("canonically inserts send-as-is interim recovery synchronously before the composer snapshot", async () => {

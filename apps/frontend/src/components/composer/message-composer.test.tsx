@@ -221,7 +221,9 @@ describe("MessageComposer", () => {
       ref: ForwardedRef<{ abort: () => void; prepareSendAsIs: () => void }>
     ) {
       useImperativeHandle(ref, () => ({ abort: vi.fn(), prepareSendAsIs: vi.fn() }))
-      useEffect(() => props.onInsertText("lo", { joinPrevious: true }), [props])
+      useEffect(() => {
+        props.onInsertText("lo", { joinPrevious: true })
+      }, [props])
       return null
     })
     spyOnExport(micButtonModule, "MicButton").mockReturnValue(
