@@ -9,7 +9,11 @@ function deferred() {
   })
   return { promise, resolve }
 }
-const success = (markdown: string): PolishOutcome => ({ status: "success", markdown })
+const success = (markdown: string): PolishOutcome => ({
+  status: "success",
+  markdown,
+  contentJson: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: markdown }] }] },
+})
 
 describe("PolishScheduler", () => {
   it("runs one active pass and only the newest pending snapshot", async () => {

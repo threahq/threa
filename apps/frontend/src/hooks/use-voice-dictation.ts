@@ -1,13 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import { io, type Socket } from "socket.io-client"
 import {
-  VOICE_DRAFT_CONTEXT_MAX_CHARS,
   type VoiceStartAck,
   type VoiceStoppedPayload,
   type VoiceTranscriptDelta,
   type VoiceTranscriptPolished,
 } from "@threa/types"
 import { voiceApi } from "@/api/voice"
+import { parseMarkdown } from "@threa/prosemirror"
+import type { JSONContent } from "@threa/types"
 import { getCachedWsConfig } from "@/lib/cached-ws-config"
 import { useDictationCoordinator, isDictationExternalHeld } from "@/contexts"
 
@@ -19,12 +20,9 @@ type VoicePolishedChunk = VoiceTranscriptPolished
 export interface DictationChunkRecord {
   /** Cumulative raw text the chunk would revert to if the toggle flips to "Show original". */
   raw: string
-  /**
-   * Latest polished snapshot from the backend. Each new final delta triggers
-   * a cumulative polish whose output supersedes this — so an earlier
-   * misspoken phrase can be rewritten by a later self-correction.
-   */
+  rawContentJson?: JSONContent
   polished: string
+  polishedContentJson?: JSONContent
   /** Whether the editor currently shows the polished or the raw text for this chunk. */
   currentlyShowing: "polished" | "raw"
   /**
@@ -61,13 +59,13 @@ interface UseVoiceDictationOptions {
    * can swap it back to raw. The text passed is whatever the toggle currently
    * resolves to (polished by default).
    */
-  onPolishedChunkInserted?: (args: { chunkId: string; text: string }) => void
+  onPolishedChunkInserted?: (args: { chunkId: string; contentJson: JSONContent }) => void
   /**
    * Swap a tracked chunk's text in the editor. Must return true if the swap
    * landed cleanly, false if the chunk was missing or the user edited inside
    * it (the hook then locks that chunk locally so the toggle stops touching it).
    */
-  onChunkSwap?: (args: { chunkId: string; newText: string; expectedText: string }) => boolean
+  onChunkSwap?: (args: { chunkId: string; contentJson: JSONContent }) => boolean
   /** Drop tracking for all polished chunks (e.g. session-expired or new take starting). */
   onLockAllChunks?: () => void
   /**
@@ -77,7 +75,7 @@ interface UseVoiceDictationOptions {
    * tracked range, and we want the actual mapped text rather than a
    * parallel prediction. Returns null when the chunkId isn't tracked.
    */
-  onGetChunkText?: (chunkId: string) => string | null
+  onGetChunkContent?: (chunkId: string) => JSONContent | null
   /**
    * Read the draft text around the caret (where dictation will be inserted)
    * from the editor. Captured once when the take starts and sent with
@@ -282,7 +280,7 @@ export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDi
     onPolishedChunkInserted,
     onChunkSwap,
     onLockAllChunks,
-    onGetChunkText,
+    onGetChunkContent,
     onGetDraftContext,
     language,
     dependencies = DEFAULT_VOICE_DICTATION_DEPENDENCIES,
@@ -345,8 +343,8 @@ export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDi
   onChunkSwapRef.current = onChunkSwap
   const onLockAllChunksRef = useRef(onLockAllChunks)
   onLockAllChunksRef.current = onLockAllChunks
-  const onGetChunkTextRef = useRef(onGetChunkText)
-  onGetChunkTextRef.current = onGetChunkText
+  const onGetChunkContentRef = useRef(onGetChunkContent)
+  onGetChunkContentRef.current = onGetChunkContent
   const onGetDraftContextRef = useRef(onGetDraftContext)
   onGetDraftContextRef.current = onGetDraftContext
   // Read by the socket handler at insert time so the chunk lands in whichever
@@ -374,6 +372,7 @@ export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDi
   // Mirror the interim hypothesis into a ref so teardown/stop/fail can read and
   // flush it synchronously, without those callbacks depending on render state.
   const interimRef = useRef("")
+  const recoveryChunkSequenceRef = useRef(0)
   const updateInterim = useCallback((text: string) => {
     interimRef.current = text
     setInterimText(text)
@@ -384,7 +383,16 @@ export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDi
   // silently discarded.
   const flushInterim = useCallback(() => {
     const pending = interimRef.current
-    if (pending) onCommittedTextRef.current(pending)
+    if (pending) {
+      if (onPolishedChunkInsertedRef.current) {
+        onPolishedChunkInsertedRef.current({
+          chunkId: `local_recovery_${++recoveryChunkSequenceRef.current}`,
+          contentJson: parseMarkdown(pending),
+        })
+      } else {
+        onCommittedTextRef.current(pending)
+      }
+    }
     updateInterim("")
   }, [updateInterim])
 
@@ -687,7 +695,10 @@ export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDi
             // decoration is the source of truth and we read it via
             // onGetChunkText when we need the canonical expectedText.
             if (!sessionChunkIdRef.current) sessionChunkIdRef.current = delta.chunkId
-            onPolishedChunkInsertedRef.current?.({ chunkId: delta.chunkId, text: delta.text })
+            onPolishedChunkInsertedRef.current?.({
+              chunkId: delta.chunkId,
+              contentJson: delta.contentJson ?? parseMarkdown(delta.text),
+            })
           } else if (delta.text) {
             onCommittedTextRef.current(delta.text)
           }
@@ -708,17 +719,13 @@ export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDi
           // hook-side prediction: ProseMirror's mapping is the source of
           // truth for what's currently inside the tracked range (including
           // any spaces the extension absorbed when extending the chunk).
-          const target = showOriginalRef.current ? chunk.raw : chunk.polished
-          const expected = onGetChunkTextRef.current?.(chunk.chunkId) ?? null
-          let accepted = true
-          if (expected === null) {
-            // No tracked chunk in the editor — either it was never inserted
-            // here or it has already been locked/cleared. Drop our tracking
-            // for it so the toggle never tries to act on a missing chunk.
-            accepted = false
-          } else if (target !== expected) {
-            accepted =
-              onChunkSwapRef.current?.({ chunkId: chunk.chunkId, newText: target, expectedText: expected }) ?? false
+          const rawContentJson = chunk.rawContentJson ?? parseMarkdown(chunk.raw)
+          const polishedContentJson = chunk.polishedContentJson ?? parseMarkdown(chunk.polished)
+          const target = showOriginalRef.current ? rawContentJson : polishedContentJson
+          const current = onGetChunkContentRef.current?.(chunk.chunkId) ?? null
+          let accepted = current !== null
+          if (accepted && JSON.stringify(target) !== JSON.stringify(current)) {
+            accepted = onChunkSwapRef.current?.({ chunkId: chunk.chunkId, contentJson: target }) ?? false
           }
           setChunks((prev) => {
             const next = new Map(prev)
@@ -729,7 +736,9 @@ export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDi
             }
             next.set(chunk.chunkId, {
               raw: chunk.raw,
+              rawContentJson,
               polished: chunk.polished,
+              polishedContentJson,
               currentlyShowing: showOriginalRef.current ? "raw" : "polished",
               locked: false,
             })
@@ -756,8 +765,8 @@ export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDi
         // END of the before-text and the START of the after-text; empty sides
         // are omitted so the wire payload stays minimal.
         const draftContext = onGetDraftContextRef.current?.() ?? null
-        const draftBefore = draftContext?.before.slice(-VOICE_DRAFT_CONTEXT_MAX_CHARS).trim() || undefined
-        const draftAfter = draftContext?.after.slice(0, VOICE_DRAFT_CONTEXT_MAX_CHARS).trim() || undefined
+        const draftBefore = draftContext?.before.trim() || undefined
+        const draftAfter = draftContext?.after.trim() || undefined
 
         socket.emit(
           "voice:start",
@@ -869,20 +878,15 @@ export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDi
       const next = new Map(chunks)
       for (const [chunkId, record] of chunks) {
         if (record.locked) continue
-        const newText = target ? record.raw : record.polished
-        // Query the editor for the true current text of this chunk. ProseMirror
-        // mapping absorbs adjacent edits into the tracked range, so the live
-        // decoration text is the only reliable expectedText.
-        const expectedText =
-          onGetChunkTextRef.current?.(chunkId) ?? (record.currentlyShowing === "raw" ? record.raw : record.polished)
-        if (newText === expectedText) {
-          // No textual difference (polish was a no-op for this chunk). Still
-          // update the bookkeeping so currentlyShowing reflects the user's
-          // intent.
+        const contentJson =
+          (target ? record.rawContentJson : record.polishedContentJson) ??
+          parseMarkdown(target ? record.raw : record.polished)
+        const current = onGetChunkContentRef.current?.(chunkId)
+        if (current && JSON.stringify(contentJson) === JSON.stringify(current)) {
           next.set(chunkId, { ...record, currentlyShowing: target ? "raw" : "polished" })
           continue
         }
-        const accepted = onChunkSwapRef.current?.({ chunkId, newText, expectedText }) ?? false
+        const accepted = onChunkSwapRef.current?.({ chunkId, contentJson }) ?? false
         if (accepted) {
           next.set(chunkId, { ...record, currentlyShowing: target ? "raw" : "polished" })
         } else {

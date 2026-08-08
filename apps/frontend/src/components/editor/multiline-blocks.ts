@@ -684,6 +684,25 @@ export function toggleMultilineBlock(editor: Editor, nodeName: "codeBlock" | "bl
   return toggleBlockquoteOff(editor)
 }
 
+export function canonicalContentSlice(schema: Schema, contentJson: JSONContent): Slice | null {
+  try {
+    const doc = schema.nodeFromJSON(contentJson)
+    const blocks = [...doc.content.content]
+    if (blocks.length === 0) return null
+    if (blocks.length === 1 && blocks[0].type.name === "paragraph") {
+      return blocks[0].content.size ? new Slice(blocks[0].content, 0, 0) : null
+    }
+    const fragment = Fragment.fromArray(blocks)
+    return new Slice(
+      fragment,
+      blocks.every((block) => block.type.name === "paragraph") ? 1 : 0,
+      blocks.every((block) => block.type.name === "paragraph") ? 1 : 0
+    )
+  } catch {
+    return null
+  }
+}
+
 function getParsedContent(
   text: string,
   getMentionType?: MentionTypeLookup,
@@ -728,30 +747,19 @@ export function insertPastedText(
   // marks (bold, inline code, link, ...).
   if (blocks.length === 1 && blocks[0].type === "paragraph") {
     const inline = blocks[0].content
-    if (!inline || inline.length === 0) {
-      return false
-    }
-    return editor.commands.insertContent(inline)
+    return inline?.length ? editor.commands.insertContent(inline) : false
   }
 
-  // Multi-paragraph plain-text paste: build a slice open at both ends so the
-  // first and last pasted paragraphs merge with the paragraph surrounding the
-  // cursor, matching native paste behavior.
-  if (blocks.every((block) => block.type === "paragraph")) {
-    const { schema } = editor.state
-    const fragment = Fragment.fromArray(blocks.map((block) => schema.nodeFromJSON(block)))
-    const slice = new Slice(fragment, 1, 1)
-    return editor
-      .chain()
-      .focus()
-      .command(({ tr }) => {
-        tr.replaceSelection(slice)
-        return true
-      })
-      .run()
-  }
-
-  return editor.commands.insertContent(blocks)
+  const slice = canonicalContentSlice(editor.state.schema, { type: "doc", content: blocks })
+  if (!slice) return false
+  return editor
+    .chain()
+    .focus()
+    .command(({ tr }) => {
+      tr.replaceSelection(slice)
+      return true
+    })
+    .run()
 }
 
 /**

@@ -26,7 +26,14 @@ describe("createPolishTranscript", () => {
       sessionId: "voicesess_1",
     })
 
-    expect(out).toEqual({ status: "success", markdown: "Hello, world." })
+    expect(out).toEqual({
+      status: "success",
+      markdown: "Hello, world.",
+      contentJson: {
+        type: "doc",
+        content: [{ type: "paragraph", content: [{ type: "text", text: "Hello, world." }] }],
+      },
+    })
     const call = generateText.mock.calls[0][0]
     expect(call.model).toBe(POLISH_MODEL)
     expect(call.telemetry?.functionId).toBe("voice-transcript-polish")
@@ -202,7 +209,14 @@ describe("createPolishTranscript", () => {
       sessionId: "voicesess_1",
     })
 
-    expect(out).toEqual({ status: "success", markdown: "here's what I'm thinking: pie" })
+    expect(out).toEqual({
+      status: "success",
+      markdown: "here's what I'm thinking: pie",
+      contentJson: {
+        type: "doc",
+        content: [{ type: "paragraph", content: [{ type: "text", text: "here's what I'm thinking: pie" }] }],
+      },
+    })
 
     const sys = generateText.mock.calls[0][0].messages.find((m: { role: string }) => m.role === "system")
     expect(sys?.content).toContain("em dashes")

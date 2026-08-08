@@ -1,3 +1,4 @@
+import type { JSONContent } from "@threa/types"
 import { forwardRef, useEffect, useImperativeHandle, useRef } from "react"
 import { Mic, Loader2, AlertTriangle, Sparkles, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
@@ -73,9 +74,9 @@ interface MicButtonProps {
    * the editor's POV (the backend still emits the events, but nothing tracks
    * them) — surfaces that don't support inline swap can leave this off.
    */
-  onInsertPolishedChunk?: (args: { chunkId: string; text: string }) => void
+  onInsertPolishedChunk?: (args: { chunkId: string; contentJson: JSONContent }) => void
   /** Swap a tracked chunk's text. Returns false if the user edited inside it. */
-  onChunkSwap?: (args: { chunkId: string; newText: string; expectedText: string }) => boolean
+  onChunkSwap?: (args: { chunkId: string; contentJson: JSONContent }) => boolean
   /** Drop tracking for every chunk (post-session lock, or starting a new take). */
   onLockAllChunks?: () => void
   /**
@@ -84,7 +85,7 @@ interface MicButtonProps {
    * editor is the source of truth (mapping accounts for adjacent user edits),
    * so a parallel prediction in the hook drifts.
    */
-  onGetChunkText?: (chunkId: string) => string | null
+  onGetChunkContent?: (chunkId: string) => JSONContent | null
   /**
    * Read the draft text around the caret so the polish model sees the rest of
    * the message as read-only context. Optional — surfaces without a persistent
@@ -105,7 +106,7 @@ export const MicButton = forwardRef<MicButtonHandle, MicButtonProps>(function Mi
     onInsertPolishedChunk,
     onChunkSwap,
     onLockAllChunks,
-    onGetChunkText,
+    onGetChunkContent,
     onGetDraftContext,
     disabled,
     className,
@@ -139,7 +140,7 @@ export const MicButton = forwardRef<MicButtonHandle, MicButtonProps>(function Mi
     onPolishedChunkInserted: onInsertPolishedChunk,
     onChunkSwap,
     onLockAllChunks,
-    onGetChunkText,
+    onGetChunkContent,
     onGetDraftContext,
     language,
   })

@@ -1,5 +1,7 @@
 import type { VoicePolishLevel } from "@threa/types"
 import type { AI } from "@threa/agent-runtime"
+import { parseMarkdown } from "@threa/prosemirror"
+import type { JSONContent } from "@threa/types"
 import { logger } from "../../lib/logger"
 import {
   POLISH_MAX_TOKENS,
@@ -22,7 +24,7 @@ export interface PolishTranscriptInput {
 }
 
 export type PolishOutcome =
-  | { status: "success"; markdown: string }
+  | { status: "success"; markdown: string; contentJson: JSONContent }
   | { status: "empty_input" }
   | { status: "invalid_output"; reason: "empty" | "truncated" | "unparseable" }
   | { status: "timeout" }
@@ -45,7 +47,7 @@ export function createPolishTranscript(deps: { ai: AI }): PolishTranscript {
   }) => {
     const trimmed = rawTranscript.trim()
     if (!trimmed) return { status: "empty_input" }
-    if (level === "none") return { status: "success", markdown: trimmed }
+    if (level === "none") return parsePolishSuccess(trimmed)
 
     const systemPrompt = level === "opinionated" ? POLISH_OPINIONATED_SYSTEM_PROMPT : POLISH_MINOR_SYSTEM_PROMPT
     const userMessage = buildPolishUserMessage({ rawTranscript: trimmed, draftBefore, draftAfter, steeringTerms })
@@ -89,7 +91,7 @@ export function createPolishTranscript(deps: { ai: AI }): PolishTranscript {
       if (finishReason === "length") return { status: "invalid_output", reason: "truncated" }
       const polished = result.value.trim()
       if (!polished) return { status: "invalid_output", reason: "empty" }
-      return { status: "success", markdown: scrubDashes(polished) }
+      return parsePolishSuccess(scrubDashes(polished))
     } catch (err) {
       if (signal?.aborted) return { status: "canceled" }
       if (timedOut) return { status: "timeout" }
@@ -99,6 +101,15 @@ export function createPolishTranscript(deps: { ai: AI }): PolishTranscript {
       clearTimeout(timer)
       signal?.removeEventListener("abort", onCancel)
     }
+  }
+}
+
+function parsePolishSuccess(markdown: string): PolishOutcome {
+  try {
+    const contentJson = parseMarkdown(markdown)
+    return { status: "success", markdown, contentJson }
+  } catch {
+    return { status: "invalid_output", reason: "unparseable" }
   }
 }
 

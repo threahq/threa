@@ -18,6 +18,8 @@ import { useComposerActionSide } from "@/hooks/use-composer-action-side"
 import { usePreferencesOptional } from "@/contexts"
 import { getEffectiveKeyBinding, matchesKeyBinding } from "@/lib/keyboard-shortcuts"
 import { RichEditor, EditorToolbar, EditorActionBar } from "@/components/editor"
+import { getDictationMarkdownContext } from "@/components/editor/dictation-markdown"
+import { VOICE_DRAFT_CONTEXT_MAX_CHARS } from "@threa/types"
 import type { RichEditorHandle } from "@/components/editor"
 import { handleMobileInlineAttachmentPicker } from "@/components/editor/mobile-inline-attachment-picker"
 import { Button } from "@/components/ui/button"
@@ -757,17 +759,17 @@ export function MessageComposer({
   // Polished-chunk wiring: the editor tracks each polished chunk by id so a
   // session-wide toggle can swap them in-place between polished and raw.
   const insertPolishedDictationChunk = useCallback(
-    (args: { chunkId: string; text: string }) => richEditorRef.current?.insertDictationChunk(args),
+    (args: { chunkId: string; contentJson: JSONContent }) => richEditorRef.current?.insertDictationChunk(args),
     []
   )
   const swapDictationChunk = useCallback(
-    (args: { chunkId: string; newText: string; expectedText: string }) =>
-      richEditorRef.current?.replaceDictationChunkText(args) ?? false,
+    (args: { chunkId: string; contentJson: JSONContent }) =>
+      richEditorRef.current?.replaceDictationChunk?.(args) ?? false,
     []
   )
   const lockAllDictationChunks = useCallback(() => richEditorRef.current?.lockAllDictationChunks(), [])
-  const getDictationChunkText = useCallback(
-    (chunkId: string) => richEditorRef.current?.getDictationChunkText(chunkId) ?? null,
+  const getDictationChunkContent = useCallback(
+    (chunkId: string) => richEditorRef.current?.getDictationChunkContent?.(chunkId) ?? null,
     []
   )
   // Draft text around the caret, captured when a take starts and sent as
@@ -780,10 +782,7 @@ export function MessageComposer({
     const editor = richEditorRef.current?.getEditor()
     if (!editor) return null
     const { doc, selection } = editor.state
-    return {
-      before: doc.textBetween(0, selection.from, "\n"),
-      after: doc.textBetween(selection.to, doc.content.size, "\n"),
-    }
+    return getDictationMarkdownContext(doc, selection, VOICE_DRAFT_CONTEXT_MAX_CHARS)
   }, [])
   // Keyed by scopeId so navigating to a different stream remounts the button, tearing down any
   // in-flight dictation session (the unmount cleanup aborts the take) instead of carrying it over.
@@ -798,7 +797,7 @@ export function MessageComposer({
       onInsertPolishedChunk={insertPolishedDictationChunk}
       onChunkSwap={swapDictationChunk}
       onLockAllChunks={lockAllDictationChunks}
-      onGetChunkText={getDictationChunkText}
+      onGetChunkContent={getDictationChunkContent}
       onGetDraftContext={getDictationDraftContext}
       disabled={controlsDisabled}
     />
@@ -814,7 +813,7 @@ export function MessageComposer({
       onInsertPolishedChunk={insertPolishedDictationChunk}
       onChunkSwap={swapDictationChunk}
       onLockAllChunks={lockAllDictationChunks}
-      onGetChunkText={getDictationChunkText}
+      onGetChunkContent={getDictationChunkContent}
       onGetDraftContext={getDictationDraftContext}
       disabled={controlsDisabled}
       className="h-[30px] w-[30px] rounded-md border bg-background shadow-md"
