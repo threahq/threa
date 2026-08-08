@@ -479,8 +479,8 @@ export function useDraftComposer({
           // THAT editor's send resolving the shared row while this one holds newer
           // unsent text that exists only in React state — persist it rather than
           // merely declining to blank. Both conditions are load-bearing: alone on
-          // the scope the null is a deliberate teardown (relocate/stash/clear/
-          // purge), and only a local resolve-on-send marks the id, so a remote
+          // the scope the null is a deliberate teardown (stash/clear/purge), and
+          // only a local resolve-on-send marks the id, so a remote
           // `draft:deleted` reads false and stays deleted instead of being
           // resurrected by whichever device happens to hold the composer open.
           if (mountedComposerCount(scopeRegistryKey) > 1 && wasDraftResolvedLocally(prev)) {

@@ -562,9 +562,9 @@ export async function stashLoadedDraft(
   workspaceId: string,
   scope: string,
   /**
-   * `putAway: false` is a MECHANICAL detach — a disarm dropping a conversation
-   * arm, a relocate displacing the target's loaded draft. The pointer clears but
-   * the draft stays fully advertised (board button, auto-restore, fork
+   * `putAway: false` is a mechanical detach used when a host disarms a
+   * conversation target. The pointer clears but the draft stays fully
+   * advertised (board button, auto-restore, fork
    * indicators): the user never said "put it away", so no surface may act as if
    * they did. Only the deliberate stash gesture (Cmd+S / "Save current") writes
    * the durable marker.

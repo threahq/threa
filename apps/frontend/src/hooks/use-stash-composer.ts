@@ -294,13 +294,11 @@ export function useStashComposer(
         }
 
         if (plan.action === "move") {
-          // Row-preserving: same id, same `baseVersion`, `scope` rewritten. NOT
-          // `relocateLoadedDraft` (it rebuilds the row through `upsertLoadedDraft`
-          // with no seal context, writing plaintext at rest on an encrypted stream)
-          // and NOT a plain coalescing enqueue (a push snapshotted before the move
-          // may be in flight with its claim not yet visible; coalescing onto it
-          // loses the scope change server-side forever). Move + enqueue share one
-          // transaction so the re-scoped row is never visible without its dirty bit.
+          // Row-preserving: same id, same `baseVersion`, `scope` rewritten. Like
+          // loaded-draft relocation, this cannot use a plain coalescing enqueue:
+          // a push snapshotted before the move may already be in flight. Move +
+          // forced enqueue share one transaction, so the re-scoped row is never
+          // visible without its dirty bit and the new scope cannot be skipped.
           // The scope is re-checked INSIDE the txn: drift since planning means the
           // plan may be the wrong ACTION now, so it goes back around for a fresh
           // plan instead of moving from wherever the row happens to live.
