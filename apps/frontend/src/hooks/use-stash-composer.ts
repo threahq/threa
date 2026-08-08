@@ -4,12 +4,18 @@ import { useLiveQuery } from "dexie-react-hooks"
 import { db } from "@/db"
 import { isEmptyContent } from "@/lib/prosemirror-utils"
 import { restoreStashedDraftToComposer, stashLoadedDraft } from "./use-draft-message"
-import { useStashedDrafts, type CachedDraft } from "./use-stashed-drafts"
+import { useStashedDrafts, type CachedDraft, type StashedDraftOrigin } from "./use-stashed-drafts"
 import type { DraftComposerState } from "./use-draft-composer"
 
 export interface UseStashComposerResult {
-  /** Stashed drafts for the current scope, newest first. Empty when `scope` is undefined. */
+  /** The landing-site-wide pile, newest first. Not rendered yet — restore can't leave a scope safely until chunk 4. */
   drafts: CachedDraft[]
+  /** What the picker renders and what `handleRestoreStashed` accepts: this scope's own rows. */
+  claimableDrafts: CachedDraft[]
+  /** Where each pile row came from, keyed by draft id (structured; the caller formats). */
+  originByDraftId: Map<string, StashedDraftOrigin>
+  /** Tell the pile whether the picker is open, so membership latches while it is. */
+  setPileOpen: (open: boolean) => void
   /** Snapshot the current composer content into the stash, clear the editor. Empty composer → silent no-op. */
   handleStashDraft: () => Promise<void>
   /** Swap: stash current content first (if any), then load the chosen stashed row into the composer. */
@@ -41,12 +47,26 @@ export interface UseStashComposerResult {
  * to mount per board card. Returns null when there is no param, the row hasn't
  * synced yet, or it belongs to another workspace.
  */
-export function useStashParamDraftRow(workspaceId: string): { draftId: string; scope: string } | null {
+export function useStashParamDraftRow(
+  workspaceId: string
+): { draftId: string; scope: string; isLoadedForScope: boolean } | null {
   const [searchParams] = useSearchParams()
   const draftId = searchParams.get("stash")
-  const row = useLiveQuery(() => (draftId ? db.drafts.get(draftId) : undefined), [draftId])
-  if (!draftId || !row || row.workspaceId !== workspaceId) return null
-  return { draftId, scope: row.scope }
+  // The pointer is read inside the SAME point query as the row, not through the
+  // workspace-wide composer-loaded store: this hook mounts per board card, and a
+  // store subscription would re-render every one of them whenever any composer
+  // anywhere checks a draft in or out.
+  const found = useLiveQuery(async () => {
+    if (!draftId) return undefined
+    const draft = await db.drafts.get(draftId)
+    if (!draft) return undefined
+    const pointer = await db.composerLoaded.get(draft.scope)
+    return { draft, isLoadedForScope: pointer?.draftId === draftId }
+  }, [draftId])
+  if (!draftId || !found || found.draft.workspaceId !== workspaceId) return null
+  // Already checked out into its own scope's composer: a deep link to it has
+  // nothing to restore, so a consumer must not treat it as a pending one.
+  return { draftId, scope: found.draft.scope, isLoadedForScope: found.isLoadedForScope }
 }
 
 export function useStashComposer(
@@ -77,6 +97,13 @@ export function useStashComposer(
   const handleRestoreStashed = useCallback(
     async (id: string) => {
       if (!scope) return
+      // Restore is a pointer move within the row's own scope: hydration is
+      // pointer-based, so a foreign row would render here and the next debounced
+      // save would rewrite its `scope` to this host's — a silent migration pushed
+      // through a coalescing enqueue that can lose the move server-side. Adopting
+      // or moving a foreign row is chunk 4's job; until then a non-claimable id
+      // does not restore.
+      if (!stashedDrafts.claimableDrafts.some((draft) => draft.id === id)) return
       // Swap semantics: flush whatever the composer holds into its row first so
       // switching drafts never silently destroys work — it stays as a stash entry
       // once the pointer moves off it. `flushDraft` only persists a non-empty
@@ -94,7 +121,7 @@ export function useStashComposer(
       // Re-read the newly-pointed draft into the editor (decrypting it for E2E).
       composer.markNeedsRehydrate()
     },
-    [composer, workspaceId, scope]
+    [composer, workspaceId, scope, stashedDrafts.claimableDrafts]
   )
 
   const handleDeleteStashed = useCallback(
@@ -114,12 +141,15 @@ export function useStashComposer(
   useEffect(() => {
     const stashId = searchParams.get("stash")
     if (!stashId || !scope || !composer.isLoaded) return
-    // Only the host whose scope owns the row consumes the param. Several hosts
-    // can mount this hook at once (stream composer + thread panel + inline
-    // reply forms); restoring a foreign id would point THIS scope's loaded
-    // draft at another scope's row, splitting one draft across two composers.
-    // Skipping (without stripping) leaves the param for the owning host.
-    if (!stashedDrafts.drafts.some((draft) => draft.id === stashId)) return
+    // Two gates, both load-bearing. The row must belong to THIS scope
+    // (`claimableDrafts`, not the landing-site-wide pile): restoring a foreign id
+    // would point this scope's loaded draft at another scope's row, splitting one
+    // draft across two composers. And this composer must hold the scope's claim —
+    // a board card and the conversation panel's footer mount the same scope, so
+    // membership alone let both restore. A non-claimant skips WITHOUT stripping,
+    // leaving the param for the claimant.
+    if (!composer.isStashClaimant) return
+    if (!stashedDrafts.claimableDrafts.some((draft) => draft.id === stashId)) return
     if (pendingStashRestoreRef.current === stashId) return
 
     pendingStashRestoreRef.current = stashId
@@ -136,10 +166,21 @@ export function useStashComposer(
         console.error("Failed to auto-restore stashed draft from URL", err)
       }
     )
-  }, [searchParams, setSearchParams, scope, composer.isLoaded, stashedDrafts.drafts, handleRestoreStashed])
+  }, [
+    searchParams,
+    setSearchParams,
+    scope,
+    composer.isLoaded,
+    composer.isStashClaimant,
+    stashedDrafts.claimableDrafts,
+    handleRestoreStashed,
+  ])
 
   return {
     drafts: stashedDrafts.drafts,
+    claimableDrafts: stashedDrafts.claimableDrafts,
+    originByDraftId: stashedDrafts.originByDraftId,
+    setPileOpen: stashedDrafts.setPileOpen,
     handleStashDraft,
     handleRestoreStashed,
     handleDeleteStashed,
