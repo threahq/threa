@@ -154,6 +154,16 @@ export const BotRepository = {
     return mapRowToBot(result.rows[0])
   },
 
+  async findByIdForUpdate(db: Querier, workspaceId: string, id: string): Promise<Bot | null> {
+    const result = await db.query<BotRow>(sql`
+      SELECT ${sql.raw(BOT_COLUMNS)}
+      FROM bots
+      WHERE id = ${id} AND workspace_id = ${workspaceId}
+      FOR UPDATE
+    `)
+    return result.rows[0] ? mapRowToBot(result.rows[0]) : null
+  },
+
   async findByIds(db: Querier, workspaceId: string, ids: string[]): Promise<Bot[]> {
     if (ids.length === 0) return []
     const result = await db.query<BotRow>(sql`

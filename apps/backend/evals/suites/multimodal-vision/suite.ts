@@ -337,7 +337,7 @@ async function runVisionTask(input: MultimodalVisionInput, ctx: EvalContext): Pr
     }
 
     const editMessage: PersonaAgentDeps["editMessage"] = async (params) => {
-      const message = await evalEventService.editMessage({
+      const message = await evalEventService.editMessageInternal({
         workspaceId: params.workspaceId,
         streamId: params.streamId,
         messageId: params.messageId,
@@ -350,7 +350,7 @@ async function runVisionTask(input: MultimodalVisionInput, ctx: EvalContext): Pr
     }
 
     const deleteMessage: PersonaAgentDeps["deleteMessage"] = async (params) => {
-      const message = await evalEventService.deleteMessage({
+      const message = await evalEventService.deleteMessageInternal({
         workspaceId: params.workspaceId,
         streamId: params.streamId,
         messageId: params.messageId,
@@ -361,7 +361,7 @@ async function runVisionTask(input: MultimodalVisionInput, ctx: EvalContext): Pr
     }
 
     const addReaction: PersonaAgentDeps["addReaction"] = async (params) => {
-      const message = await evalEventService.addReaction({
+      const message = await evalEventService.addReactionInternal({
         workspaceId: params.workspaceId,
         streamId: params.streamId,
         messageId: params.messageId,
@@ -373,7 +373,7 @@ async function runVisionTask(input: MultimodalVisionInput, ctx: EvalContext): Pr
     }
 
     const removeReaction: PersonaAgentDeps["removeReaction"] = async (params) => {
-      const message = await evalEventService.removeReaction({
+      const message = await evalEventService.removeReactionInternal({
         workspaceId: params.workspaceId,
         streamId: params.streamId,
         messageId: params.messageId,

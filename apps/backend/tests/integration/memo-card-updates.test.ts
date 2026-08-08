@@ -328,7 +328,7 @@ describe("memo:updated", () => {
       messageIds: [citing.id],
       actorId: testUserId,
     })
-    await eventService.moveMessagesToThread({
+    await eventService.moveMessagesToThreadInternal({
       workspaceId: testWorkspaceId,
       sourceStreamId: publicChannel,
       targetMessageId: target.id,

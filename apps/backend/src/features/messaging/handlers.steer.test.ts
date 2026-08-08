@@ -30,17 +30,20 @@ describe("message + steer composite send", () => {
       contentMarkdown: "/steer I want option 2",
       ciphertext: null,
     }
-    const eventService = {
-      createMessageReturningConversation: async (
+    const createMessageForPrincipalReturningConversation = mock(
+      async (
+        principal: { kind: string; userId: string },
         params: { contentMarkdown: string },
         onCreated?: (db: unknown, message: unknown) => Promise<void>
       ) => {
         order.push("message")
+        expect(principal).toEqual({ kind: "user", userId: "usr_1" })
         expect(params.contentMarkdown).toBe("/steer I want option 2")
         await onCreated?.({ query: mock(async () => ({ rows: [], rowCount: 0 })) }, message)
         return { message }
-      },
-    }
+      }
+    )
+    const eventService = { createMessageForPrincipalReturningConversation }
     const commandAvailabilityService = {
       resolveCommandInTransaction: mock(async () => ({
         executionKind: CommandKinds.BOT_RUNTIME,
@@ -118,6 +121,7 @@ describe("message + steer composite send", () => {
       response as never
     )
 
+    expect(createMessageForPrincipalReturningConversation).toHaveBeenCalledTimes(1)
     expect(order).toEqual(["message", "message-invocation", "command-event", "steer-invocation"])
     expect(createInvocationInTransaction.mock.calls.map((call: unknown[]) => call[1])).toEqual([
       expect.objectContaining({

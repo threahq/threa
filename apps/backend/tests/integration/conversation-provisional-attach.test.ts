@@ -57,7 +57,7 @@ describe("provisional conversation attach", () => {
       conversation?: { intent: "existing"; conversationId: string }
     } = {}
   ) => {
-    return eventService.createMessageReturningConversation({
+    return eventService.createMessageReturningConversationInternal({
       workspaceId: testWorkspaceId,
       streamId: overrides.streamId ?? testStreamId,
       authorId: overrides.authorId ?? testUserId,

@@ -367,7 +367,7 @@ describe("conversation settling", () => {
     const conversation = await service.processMessage(msgId, testStreamId, testWorkspaceId)
     await pool.query("DELETE FROM outbox")
 
-    await eventService.addReaction({
+    await eventService.addReactionInternal({
       workspaceId: testWorkspaceId,
       streamId: testStreamId,
       messageId: msgId,

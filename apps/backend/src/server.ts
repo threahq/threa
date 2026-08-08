@@ -509,7 +509,7 @@ export async function startServer(): Promise<ServerInstance> {
     // sync with the new content (INV-7). Without this, an agent edit that
     // adds or removes an `attachment:` link leaves stale rows behind.
     const attachmentIds = collectAttachmentReferenceIds(contentJson)
-    return eventService.editMessage({
+    return eventService.editMessageInternal({
       workspaceId: params.workspaceId,
       streamId: params.streamId,
       messageId: params.messageId,
@@ -522,7 +522,7 @@ export async function startServer(): Promise<ServerInstance> {
     })
   }
   const deleteMessage = (params: { workspaceId: string; streamId: string; messageId: string; actorId: string }) =>
-    eventService.deleteMessage({
+    eventService.deleteMessageInternal({
       workspaceId: params.workspaceId,
       streamId: params.streamId,
       messageId: params.messageId,
@@ -536,7 +536,7 @@ export async function startServer(): Promise<ServerInstance> {
     emoji: string
     actorId: string
   }) =>
-    eventService.addReaction({
+    eventService.addReactionInternal({
       workspaceId: params.workspaceId,
       streamId: params.streamId,
       messageId: params.messageId,
@@ -551,7 +551,7 @@ export async function startServer(): Promise<ServerInstance> {
     emoji: string
     actorId: string
   }) =>
-    eventService.removeReaction({
+    eventService.removeReactionInternal({
       workspaceId: params.workspaceId,
       streamId: params.streamId,
       messageId: params.messageId,

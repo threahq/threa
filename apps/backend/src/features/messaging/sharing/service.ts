@@ -131,7 +131,7 @@ export interface ValidateAndRecordSharesParams {
 /**
  * Validates any cross-stream share-nodes in a message's contentJson and
  * writes the corresponding shared_messages rows. Invoked from inside
- * MessageEventService.createMessage and editMessage transactions so the
+ * the EventService message create and edit transactions so the
  * share grant is committed atomically with the event-source + projection
  * (INV-7).
  *

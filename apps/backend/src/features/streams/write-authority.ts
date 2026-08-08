@@ -10,9 +10,11 @@ import {
   type Visibility,
 } from "@threa/types"
 import type { Querier } from "../../db"
+import { StreamNotFoundError } from "../../lib/errors"
 import { BotChannelAccessRepository } from "../api-keys"
 import { resolveEffectiveAccessStream, resolveEffectiveAccessStreams } from "./access"
 import { StreamMemberRepository } from "./member-repository"
+import { StreamRepository, type Stream } from "./repository"
 
 export type StreamWritePrincipal = { kind: "user"; userId: string } | { kind: "bot"; botId: string }
 
@@ -108,6 +110,90 @@ export async function projectStreamsForPrincipal<T extends AuthorityStream>(
     projected.push({ ...target, ...deriveStreamViewerState({ target, root, participates }) })
   }
   return projected
+}
+
+export interface LockedStreamAuthority {
+  target: Stream
+  root: Stream
+  state: StreamViewerState
+}
+
+export async function lockEffectiveStreams(
+  db: Querier,
+  workspaceId: string,
+  streamIds: readonly string[],
+  suppliedSnapshots?: readonly Stream[]
+): Promise<Array<{ target: Stream; root: Stream }>> {
+  const targetIds = [...new Set(streamIds)].sort()
+  if (targetIds.length === 0) return []
+  const snapshots = suppliedSnapshots ?? (await StreamRepository.findByIdsInWorkspace(db, workspaceId, targetIds))
+  const snapshotById = new Map(snapshots.map((stream) => [stream.id, stream]))
+  const lockIds = new Set<string>()
+  for (const targetId of targetIds) {
+    const target = snapshotById.get(targetId)
+    if (!target || target.workspaceId !== workspaceId) throw inaccessibleStream()
+    lockIds.add(target.id)
+    lockIds.add(target.rootStreamId ?? target.id)
+  }
+  const locked = await StreamRepository.findByIdsForUpdateBlocking(db, workspaceId, [...lockIds])
+  const lockedById = new Map(locked.map((stream) => [stream.id, stream]))
+  return targetIds.map((targetId) => {
+    const target = lockedById.get(targetId)
+    const root = target && lockedById.get(target.rootStreamId ?? target.id)
+    if (!target || !root || target.workspaceId !== workspaceId || root.workspaceId !== workspaceId) {
+      throw inaccessibleStream()
+    }
+    return { target, root }
+  })
+}
+
+function inaccessibleStream(): StreamNotFoundError {
+  return new StreamNotFoundError()
+}
+
+/**
+ * Transaction-only authority gate. All callers lock streams in id order first,
+ * then participation rows in root-id order; lifecycle transitions use the same order.
+ */
+export async function resolveLockedStreamAuthorities(
+  db: Querier,
+  params: { workspaceId: string; streamIds: readonly string[]; principal: StreamWritePrincipal }
+): Promise<LockedStreamAuthority[]> {
+  const facts = await lockEffectiveStreams(db, params.workspaceId, params.streamIds)
+  if (facts.length === 0) return []
+
+  const rootIds = [...new Set(facts.map(({ root }) => root.id))].sort()
+  const participatingRootIds =
+    params.principal.kind === "user"
+      ? await StreamMemberRepository.lockMemberships(db, rootIds, params.principal.userId)
+      : await BotChannelAccessRepository.lockGrants(db, params.workspaceId, params.principal.botId, rootIds)
+
+  return facts.map(({ target, root }) => {
+    const participates = participatingRootIds.has(root.id)
+    if (root.visibility !== Visibilities.PUBLIC && !participates) throw inaccessibleStream()
+    return { target, root, state: deriveStreamViewerState({ target, root, participates }) }
+  })
+}
+
+export async function assertStreamsWritable(
+  db: Querier,
+  params: { workspaceId: string; streamIds: readonly string[]; principal: StreamWritePrincipal }
+): Promise<LockedStreamAuthority[]> {
+  const authorities = await resolveLockedStreamAuthorities(db, params)
+  for (const authority of authorities) assertViewerStreamWritable(authority.state)
+  return authorities
+}
+
+export async function assertStreamWritable(
+  db: Querier,
+  params: { workspaceId: string; streamId: string; principal: StreamWritePrincipal }
+): Promise<LockedStreamAuthority> {
+  const [authority] = await assertStreamsWritable(db, {
+    workspaceId: params.workspaceId,
+    streamIds: [params.streamId],
+    principal: params.principal,
+  })
+  return authority
 }
 
 export function projectStreamForUser<T extends AuthorityStream>(

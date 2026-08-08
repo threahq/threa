@@ -814,38 +814,19 @@ export function createPublicApiHandlers({
     })
   }
 
-  /** Find a message, verify stream access, and verify ownership. Used by update/delete. */
-  async function resolveOwnedMessage(messageId: string, req: Request) {
+  /** Resolve mutation actor independently; message snapshot is only a placement hint. */
+  async function resolveMessageMutation(messageId: string, req: Request) {
     const message = await eventService.getMessageById(messageId)
-    if (!message || message.deletedAt) {
-      throw new HttpError("Message not found", { status: 404, code: "NOT_FOUND" })
-    }
-
-    await assertStreamAccessible(req, message.streamId)
-
-    // User-scoped key: can modify own messages (regardless of how they were sent)
     if (req.userApiKey) {
-      if (message.authorId !== req.user!.id) {
-        throw new HttpError("Cannot modify another user's messages", {
-          status: 403,
-          code: "FORBIDDEN",
-        })
-      }
       return { message, actorId: req.user!.id, actorType: AuthorTypes.USER as AuthorType, displayName: req.user!.name }
     }
-
-    // Bot-scoped key: verify the message was authored by the bot this key belongs to
     if (req.botApiKey) {
-      if (message.authorType !== AuthorTypes.BOT || message.authorId !== req.botApiKey.botId) {
-        throw new HttpError("Cannot modify messages created by another bot", { status: 403, code: "FORBIDDEN" })
-      }
-      const bot = await BotRepository.findById(pool, req.workspaceId!, message.authorId)
-      if (!bot) {
-        throw new HttpError("Bot not found", { status: 404, code: "NOT_FOUND" })
+      const bot = await BotRepository.findById(pool, req.workspaceId!, req.botApiKey.botId)
+      if (!bot || bot.archivedAt) {
+        throw new HttpError("Bot not found or archived", { status: 404, code: "NOT_FOUND" })
       }
       return { message, actorId: bot.id, actorType: AuthorTypes.BOT as AuthorType, displayName: bot.name }
     }
-
     throw new HttpError("No API key context", { status: 401, code: "UNAUTHORIZED" })
   }
 
@@ -2459,7 +2440,14 @@ export function createPublicApiHandlers({
 
       const { content, clientMessageId, metadata, conversation } = validateRequest(sendMessageSchema, req.body)
 
-      await assertStreamAccessible(req, streamId)
+      let principal: { kind: "user"; userId: string } | { kind: "bot"; botId: string } | null = null
+      if (req.userApiKey) {
+        principal = { kind: "user", userId: req.user!.id }
+      } else if (req.botApiKey) {
+        principal = { kind: "bot", botId: req.botApiKey.botId }
+      }
+      if (!principal) throw new HttpError("No API key context", { status: 401, code: "UNAUTHORIZED" })
+      await eventService.assertStreamWritableForPrincipal(principal, workspaceId, streamId)
       await assertNotE2eStream(workspaceId, streamId)
 
       const contentMarkdown = normalizeMessage(content)
@@ -2476,19 +2464,22 @@ export function createPublicApiHandlers({
       if (req.userApiKey) {
         const user = req.user!
 
-        const { message, conversationId } = await eventService.createMessageReturningConversation({
-          workspaceId,
-          streamId,
-          authorId: user.id,
-          authorType: AuthorTypes.USER,
-          contentJson,
-          contentMarkdown,
-          attachmentIds: attachmentIds.length > 0 ? attachmentIds : undefined,
-          clientMessageId,
-          sentVia: sentViaApiKey(req.userApiKey.id),
-          metadata,
-          conversation,
-        })
+        const { message, conversationId } = await eventService.createMessageForPrincipalReturningConversation(
+          { kind: "user", userId: user.id },
+          {
+            workspaceId,
+            streamId,
+            authorId: user.id,
+            authorType: AuthorTypes.USER,
+            contentJson,
+            contentMarkdown,
+            attachmentIds: attachmentIds.length > 0 ? attachmentIds : undefined,
+            clientMessageId,
+            sentVia: sentViaApiKey(req.userApiKey.id),
+            metadata,
+            conversation,
+          }
+        )
 
         res.status(201).json({
           data: serializeMessage(message, { authorDisplayName: user.name }),
@@ -2517,19 +2508,22 @@ export function createPublicApiHandlers({
         const runningSession = await AgentSessionRepository.findRunningByStream(pool, streamId)
         const sessionId = runningSession?.personaId === bot.id ? runningSession.id : undefined
 
-        const { message, conversationId } = await eventService.createMessageReturningConversation({
-          workspaceId,
-          streamId,
-          authorId: bot.id,
-          authorType: AuthorTypes.BOT,
-          contentJson,
-          contentMarkdown,
-          attachmentIds: attachmentIds.length > 0 ? attachmentIds : undefined,
-          clientMessageId,
-          metadata,
-          conversation,
-          sessionId,
-        })
+        const { message, conversationId } = await eventService.createMessageForPrincipalReturningConversation(
+          { kind: "bot", botId: bot.id },
+          {
+            workspaceId,
+            streamId,
+            authorId: bot.id,
+            authorType: AuthorTypes.BOT,
+            contentJson,
+            contentMarkdown,
+            attachmentIds: attachmentIds.length > 0 ? attachmentIds : undefined,
+            clientMessageId,
+            metadata,
+            conversation,
+            sessionId,
+          }
+        )
 
         res.status(201).json({
           data: serializeMessage(message, { authorDisplayName: bot.name }),
@@ -2555,8 +2549,7 @@ export function createPublicApiHandlers({
       }
 
       const { content } = result.data
-      const { message: existing, actorId, actorType, displayName } = await resolveOwnedMessage(messageId, req)
-      await assertNotE2eStream(workspaceId, existing.streamId)
+      const { message: existing, actorId, actorType, displayName } = await resolveMessageMutation(messageId, req)
 
       const contentMarkdown = normalizeMessage(content)
       const contentJson = parseMarkdown(contentMarkdown, undefined, toEmoji)
@@ -2564,23 +2557,26 @@ export function createPublicApiHandlers({
       // (INV-7) — same derivation as the user UI handler and the agent adapter.
       const attachmentIds = collectAttachmentReferenceIds(contentJson)
 
-      const updated = await eventService.editMessage({
-        workspaceId,
-        messageId,
-        streamId: existing.streamId,
-        contentJson,
-        contentMarkdown,
-        actorId,
-        actorType,
-        attachmentIds: attachmentIds.length > 0 ? attachmentIds : undefined,
-      })
+      const updated = await eventService.editMessageForPrincipal(
+        actorType === AuthorTypes.BOT ? { kind: "bot", botId: actorId } : { kind: "user", userId: actorId },
+        {
+          workspaceId,
+          messageId,
+          streamId: existing?.streamId ?? "stream_missing",
+          contentJson,
+          contentMarkdown,
+          actorId,
+          actorType,
+          attachmentIds: attachmentIds.length > 0 ? attachmentIds : undefined,
+        }
+      )
 
       if (!updated) {
         throw new HttpError("Message not found or was deleted", { status: 404, code: "NOT_FOUND" })
       }
 
       const [thread, slots] = await Promise.all([
-        StreamRepository.findByAnchor(pool, existing.streamId, messageId),
+        StreamRepository.findByAnchor(pool, updated.streamId, messageId),
         resolveSlots(req, [updated.contentJson]),
       ])
       res.json({
@@ -2596,15 +2592,18 @@ export function createPublicApiHandlers({
       const workspaceId = req.workspaceId!
       const messageId = req.params.messageId
 
-      const { message: existing, actorId, actorType } = await resolveOwnedMessage(messageId, req)
+      const { message: existing, actorId, actorType } = await resolveMessageMutation(messageId, req)
 
-      const deleted = await eventService.deleteMessage({
-        workspaceId,
-        messageId,
-        streamId: existing.streamId,
-        actorId,
-        actorType,
-      })
+      const deleted = await eventService.deleteMessageForPrincipal(
+        actorType === AuthorTypes.BOT ? { kind: "bot", botId: actorId } : { kind: "user", userId: actorId },
+        {
+          workspaceId,
+          messageId,
+          streamId: existing?.streamId ?? "stream_missing",
+          actorId,
+          actorType,
+        }
+      )
 
       if (!deleted) {
         throw new HttpError("Message not found or was deleted", { status: 404, code: "NOT_FOUND" })

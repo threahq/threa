@@ -28,6 +28,7 @@ import {
 } from "../../lib/errors"
 import { formatParticipantNames } from "./display-name"
 import { checkStreamAccess } from "./access"
+import { assertViewerStreamWritable, deriveStreamViewerState, lockEffectiveStreams } from "./write-authority"
 import { UserRepository } from "../workspaces"
 import { BotChannelAccessRepository } from "../api-keys"
 import {
@@ -198,6 +199,33 @@ function buildDmUniquenessKey(userOneId: string, userTwoId: string): string {
   return `${DM_UNIQUENESS_KEY_PREFIX}:${userAId}:${userBId}`
 }
 
+async function lockLifecycleStreams(
+  client: Querier,
+  workspaceId: string,
+  streamId: string
+): Promise<{ target: Stream; root: Stream }> {
+  const snapshot = await StreamRepository.findById(client, streamId)
+  if (!snapshot || snapshot.workspaceId !== workspaceId) throw new StreamNotFoundError()
+  const [facts] = await lockEffectiveStreams(client, workspaceId, [streamId], [snapshot])
+  return facts
+}
+
+async function lockActorAccess(
+  client: Querier,
+  root: Stream,
+  actorId: string,
+  affectedMemberId?: string
+): Promise<void> {
+  const memberIds = [...new Set([actorId, affectedMemberId].filter((id): id is string => Boolean(id)))].sort()
+  const memberships = await StreamMemberRepository.lockMemberPairs(
+    client,
+    memberIds.map((memberId) => ({ streamId: root.id, memberId }))
+  )
+  if (root.visibility !== Visibilities.PUBLIC && !memberships.has(`${root.id}:${actorId}`)) {
+    throw new StreamNotFoundError()
+  }
+}
+
 export class StreamService {
   constructor(private pool: Pool) {}
 
@@ -336,41 +364,17 @@ export class StreamService {
         throw new StreamNotFoundError()
       }
 
-      if (stream.archivedAt) {
-        throw new HttpError("Cannot send messages to an archived stream", { status: 403 })
-      }
-
+      assertViewerStreamWritable(deriveStreamViewerState({ target: stream, root: stream, participates: true }))
       return stream
     }
 
     const stream = await this.getStreamById(params.target.streamId)
-
-    if (!stream || stream.workspaceId !== params.workspaceId) {
-      throw new StreamNotFoundError()
-    }
-
-    if (stream.archivedAt) {
-      throw new HttpError("Cannot send messages to an archived stream", { status: 403 })
-    }
-
-    // A thread inherits its lifecycle from its root (INV-62): archiving marks
-    // only the root row, so the thread itself stays "active" and would otherwise
-    // still accept writes. Reject when the thread's root is archived so an
-    // archived scratchpad/channel seals every nested thread too. The sidebar
-    // already hides these (listWithPreviews excludes them), but this is the
-    // authoritative gate covering deep links, the API, and move-to-thread.
-    if (stream.type === StreamTypes.THREAD && stream.rootStreamId) {
-      const root = await this.getStreamById(stream.rootStreamId)
-      if (root?.archivedAt) {
-        throw new HttpError("Cannot send messages to a thread under an archived stream", { status: 403 })
-      }
-    }
-
-    const isMember = await this.isMember(stream.id, params.userId)
-    if (!isMember) {
-      throw new HttpError("Not a member of this stream", { status: 403 })
-    }
-
+    if (!stream || stream.workspaceId !== params.workspaceId) throw new StreamNotFoundError()
+    const root = stream.rootStreamId ? await this.getStreamById(stream.rootStreamId) : stream
+    if (!root || root.workspaceId !== params.workspaceId) throw new StreamNotFoundError()
+    const participates = await this.isMember(root.id, params.userId)
+    if (root.visibility !== Visibilities.PUBLIC && !participates) throw new StreamNotFoundError()
+    assertViewerStreamWritable(deriveStreamViewerState({ target: stream, root, participates }))
     return stream
   }
 
@@ -670,7 +674,7 @@ export class StreamService {
     let anchorMessage: Message | null = null
     let anchorEventRow: StreamEvent | null = null
     if (anchorId.startsWith("msg_")) {
-      // Lock the anchor message: a concurrent `moveMessagesToThread` re-parents
+      // Lock the anchor message: a concurrent message move re-parents
       // the message (UPDATE messages.stream_id) after an unlocked read would have
       // validated `streamId === parentStreamId`, letting this insert a thread under
       // the stale parent — a distinct row from any thread under the new parent (the
@@ -891,8 +895,13 @@ export class StreamService {
     return StreamPoliciesRepository.getToolPolicy(this.pool, workspaceId, streamId)
   }
 
-  async archiveStream(streamId: string, archivedBy: string): Promise<Stream | null> {
+  async archiveStream(streamId: string, workspaceId: string, archivedBy: string): Promise<Stream | null> {
     return withTransaction(this.pool, async (client) => {
+      const { target, root } = await lockLifecycleStreams(client, workspaceId, streamId)
+      await lockActorAccess(client, root, archivedBy)
+      if (target.createdBy !== archivedBy) {
+        throw new HttpError("Only the creator can archive this stream", { status: 403, code: "FORBIDDEN" })
+      }
       const stream = await StreamRepository.update(client, streamId, { archivedAt: new Date() })
       if (stream) {
         const evtId = eventId()
@@ -932,8 +941,13 @@ export class StreamService {
     })
   }
 
-  async unarchiveStream(streamId: string, unarchivedBy: string): Promise<Stream | null> {
+  async unarchiveStream(streamId: string, workspaceId: string, unarchivedBy: string): Promise<Stream | null> {
     return withTransaction(this.pool, async (client) => {
+      const { target, root } = await lockLifecycleStreams(client, workspaceId, streamId)
+      await lockActorAccess(client, root, unarchivedBy)
+      if (target.createdBy !== unarchivedBy) {
+        throw new HttpError("Only the creator can unarchive this stream", { status: 403, code: "FORBIDDEN" })
+      }
       const stream = await StreamRepository.update(client, streamId, { archivedAt: null })
       if (stream) {
         const evtId = eventId()
@@ -1651,9 +1665,9 @@ export class StreamService {
 
   async joinPublicChannel(streamId: string, workspaceId: string, memberId: string): Promise<StreamMember> {
     return withTransaction(this.pool, async (client) => {
-      const stream = await StreamRepository.findById(client, streamId)
+      const { target: stream } = await lockLifecycleStreams(client, workspaceId, streamId)
 
-      if (!stream || stream.workspaceId !== workspaceId) {
+      if (stream.workspaceId !== workspaceId) {
         throw new StreamNotFoundError()
       }
 
@@ -1661,6 +1675,7 @@ export class StreamService {
         throw new HttpError("Can only join public channels", { status: 403, code: "NOT_PUBLIC_CHANNEL" })
       }
 
+      await StreamMemberRepository.lockMemberships(client, [stream.id], memberId)
       const membership = await StreamMemberRepository.insert(client, streamId, memberId)
 
       const evtId = eventId()
@@ -1717,10 +1732,8 @@ export class StreamService {
 
   async addMember(streamId: string, memberId: string, workspaceId: string, actorId: string): Promise<StreamMember> {
     return withTransaction(this.pool, async (client) => {
-      const stream = await StreamRepository.findById(client, streamId)
-      if (!stream) {
-        throw new StreamNotFoundError()
-      }
+      const { target: stream, root } = await lockLifecycleStreams(client, workspaceId, streamId)
+      await lockActorAccess(client, root, actorId, memberId)
 
       if (stream.type === StreamTypes.DM) {
         throw new HttpError("Cannot add members to direct messages", {
@@ -1747,28 +1760,19 @@ export class StreamService {
   }
 
   /**
-   * Resolve the stream that holds bot grants for `target`. Bot access is
-   * channel-scoped: a thread redirects to its root channel, so grants and
-   * `member_added`/`member_left` events always land on the channel. Threads
-   * inherit mentionability from the channel and do not carry their own
-   * `bot_channel_access` rows.
-   */
-  private async resolveBotGrantStream(client: Querier, target: Stream): Promise<Stream> {
-    if (target.type === StreamTypes.THREAD && target.rootStreamId) {
-      const root = await StreamRepository.findById(client, target.rootStreamId)
-      if (root) return root
-    }
-    return target
-  }
-
-  /**
    * Grant a bot access to a stream. Idempotent and race-safe: emits
    * `member_added` only when a new grant was created. Threads are redirected
-   * to the root channel (see `resolveBotGrantStream`).
+   * to the effective root channel.
    */
-  async addBotToStream(targetStreamId: string, botId: string, workspaceId: string, actorId: string): Promise<void> {
+  async addBotToStream(
+    targetStreamId: string,
+    botId: string,
+    workspaceId: string,
+    actorId: string,
+    personalOwnerId?: string
+  ): Promise<void> {
     return withTransaction(this.pool, (client) =>
-      this.addBotToStreamOn(client, targetStreamId, botId, workspaceId, actorId)
+      this.addBotToStreamOn(client, targetStreamId, botId, workspaceId, actorId, personalOwnerId)
     )
   }
 
@@ -1782,18 +1786,29 @@ export class StreamService {
     targetStreamId: string,
     botId: string,
     workspaceId: string,
-    actorId: string
+    actorId: string,
+    personalOwnerId?: string
   ): Promise<void> {
-    const target = await StreamRepository.findById(client, targetStreamId)
-    if (!target) throw new StreamNotFoundError()
+    const { target, root: grantStream } = await lockLifecycleStreams(client, workspaceId, targetStreamId)
     if (target.workspaceId !== workspaceId) {
       throw new HttpError("Stream does not belong to this workspace", { status: 403, code: "WRONG_WORKSPACE" })
+    }
+    if (target.archivedAt || grantStream.archivedAt) throw new StreamNotFoundError()
+    const bot = await BotRepository.findByIdForUpdate(client, workspaceId, botId)
+    if (!bot || bot.archivedAt) {
+      throw new HttpError("Bot not found or archived", { status: 404, code: "NOT_FOUND" })
+    }
+    if (personalOwnerId) {
+      const ownerMemberships = await StreamMemberRepository.lockMemberships(client, [grantStream.id], personalOwnerId)
+      if (!ownerMemberships.has(grantStream.id)) {
+        throw new HttpError("Forbidden", { status: 403, code: "FORBIDDEN" })
+      }
     }
     // Unlike addMember, DMs are allowed: DM *contacts* are immutable
     // (stream_members), but bot grants live in bot_channel_access and don't
     // touch the peer pair — a bot must be addable so it can see and claim
     // delegations created in the DM.
-    const grantStream = await this.resolveBotGrantStream(client, target)
+    await BotChannelAccessRepository.lockGrants(client, workspaceId, botId, [grantStream.id])
     const inserted = await BotChannelAccessRepository.grantAccess(client, {
       id: streamId(),
       workspaceId,
@@ -1815,8 +1830,6 @@ export class StreamService {
     // Personal bots are visibility-scoped, so other members of the stream may
     // not hold this bot in their roster — the event carries its metadata so
     // their clients can render the new participant without a re-bootstrap.
-    const bot = await BotRepository.findById(client, workspaceId, botId)
-
     await OutboxRepository.insert(client, "stream:member_added", {
       workspaceId: grantStream.workspaceId,
       streamId: grantStream.id,
@@ -1860,12 +1873,10 @@ export class StreamService {
     return event
   }
 
-  async removeMember(streamId: string, memberId: string): Promise<boolean> {
+  async removeMember(streamId: string, memberId: string, workspaceId: string, actorId: string): Promise<boolean> {
     return withTransaction(this.pool, async (client) => {
-      const stream = await StreamRepository.findById(client, streamId)
-      if (!stream) {
-        throw new StreamNotFoundError()
-      }
+      const { target: stream, root } = await lockLifecycleStreams(client, workspaceId, streamId)
+      await lockActorAccess(client, root, actorId, memberId)
 
       if (stream.type === StreamTypes.DM) {
         throw new HttpError("Cannot remove members from direct messages", {
@@ -1916,13 +1927,12 @@ export class StreamService {
    */
   async removeBotFromStream(targetStreamId: string, botId: string, workspaceId: string): Promise<void> {
     return withTransaction(this.pool, async (client) => {
-      const target = await StreamRepository.findById(client, targetStreamId)
-      if (!target) throw new StreamNotFoundError()
+      const { target, root: grantStream } = await lockLifecycleStreams(client, workspaceId, targetStreamId)
       if (target.workspaceId !== workspaceId) {
         throw new HttpError("Stream does not belong to this workspace", { status: 403, code: "WRONG_WORKSPACE" })
       }
 
-      const grantStream = await this.resolveBotGrantStream(client, target)
+      await BotChannelAccessRepository.lockGrants(client, workspaceId, botId, [grantStream.id])
       const deleted = await BotChannelAccessRepository.revokeAccess(client, workspaceId, botId, grantStream.id)
       if (!deleted) return
 

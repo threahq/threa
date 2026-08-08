@@ -208,7 +208,7 @@ describe("Thread Summary", () => {
       const f = await seedThread(1, 1)
       const onlyReply = f.replies[0]!
 
-      await eventService.deleteMessage({
+      await eventService.deleteMessageInternal({
         workspaceId: f.wsId,
         streamId: f.threadId,
         messageId: onlyReply.id,
@@ -321,7 +321,7 @@ describe("Thread Summary", () => {
       const baselineResult = await pool.query("SELECT COALESCE(MAX(id), 0) AS max_id FROM outbox")
       const baselineId = BigInt(baselineResult.rows[0].max_id)
 
-      await eventService.editMessage({
+      await eventService.editMessageInternal({
         workspaceId: f.wsId,
         streamId: f.threadId,
         messageId: latestReply.id,
@@ -354,7 +354,7 @@ describe("Thread Summary", () => {
       const baselineResult = await pool.query("SELECT COALESCE(MAX(id), 0) AS max_id FROM outbox")
       const baselineId = BigInt(baselineResult.rows[0].max_id)
 
-      await eventService.editMessage({
+      await eventService.editMessageInternal({
         workspaceId: f.wsId,
         streamId: f.threadId,
         messageId: latestReply.id,

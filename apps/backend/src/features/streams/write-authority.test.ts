@@ -6,6 +6,7 @@ import { BotChannelAccessRepository } from "../api-keys"
 import { StreamMemberRepository } from "./member-repository"
 import { StreamRepository, type Stream } from "./repository"
 import {
+  assertStreamWritable,
   assertViewerStreamWritable,
   deriveStreamViewerState,
   projectStreamForBot,
@@ -181,6 +182,89 @@ describe("viewer projection", () => {
 
     expect(await projectStreamsForUser(db, { workspaceId: "ws_1", streams: [thread], userId: "usr_1" })).toEqual([])
     expect(memberships).toHaveBeenCalledWith(db, [], "usr_1")
+  })
+})
+
+describe("transactional write authority", () => {
+  test.each([
+    [stream({ archivedAt: new Date(0) }), stream(), "archived"],
+    [
+      stream({ id: "stream_thread", type: "thread", rootStreamId: "stream_archived_root" }),
+      stream({ id: "stream_archived_root", archivedAt: new Date(0) }),
+      "archived",
+    ],
+    [stream({ type: "system" }), stream(), "system_stream"],
+    [stream(), stream(), "not_a_member"],
+  ] as const)("returns the exact denial reason", async (target, root, reason) => {
+    spyOn(StreamRepository, "findByIdsInWorkspace").mockResolvedValue([target])
+    spyOn(StreamRepository, "findByIdsForUpdateBlocking").mockResolvedValue(
+      target.id === root.id ? [target] : [target, root]
+    )
+    spyOn(StreamMemberRepository, "lockMemberships").mockResolvedValue(new Set())
+    await expect(
+      assertStreamWritable(db, {
+        workspaceId: "ws_1",
+        streamId: target.id,
+        principal: { kind: "user", userId: "usr_1" },
+      })
+    ).rejects.toMatchObject({ status: 403, code: "STREAM_READ_ONLY", details: { reason } })
+  })
+
+  test("hides missing, cross-workspace, dangling-root, and private nonparticipant targets", async () => {
+    const cases = [
+      { initial: [], locked: [] },
+      { initial: [stream({ workspaceId: "ws_other" })], locked: [] },
+      {
+        initial: [stream({ id: "thread", type: "thread", rootStreamId: "missing" })],
+        locked: [stream({ id: "thread", type: "thread", rootStreamId: "missing" })],
+      },
+      { initial: [stream({ visibility: "private" })], locked: [stream({ visibility: "private" })] },
+    ]
+    for (const item of cases) {
+      mock.restore()
+      spyOn(StreamRepository, "findByIdsInWorkspace").mockResolvedValue(item.initial)
+      spyOn(StreamRepository, "findByIdsForUpdateBlocking").mockResolvedValue(item.locked)
+      spyOn(StreamMemberRepository, "lockMemberships").mockResolvedValue(new Set())
+      await expect(
+        assertStreamWritable(db, {
+          workspaceId: "ws_1",
+          streamId: item.initial[0]?.id ?? "missing",
+          principal: { kind: "user", userId: "usr_1" },
+        })
+      ).rejects.toMatchObject({ status: 404, code: "STREAM_NOT_FOUND" })
+    }
+  })
+
+  test("locks user membership and bot grants at a thread's effective root", async () => {
+    const root = stream({ visibility: "private" })
+    const thread = stream({ id: "thread", type: "thread", rootStreamId: root.id })
+    spyOn(StreamRepository, "findByIdsInWorkspace").mockResolvedValue([thread])
+    spyOn(StreamRepository, "findByIdsForUpdateBlocking").mockResolvedValue([root, thread])
+    const members = spyOn(StreamMemberRepository, "lockMemberships").mockResolvedValue(new Set([root.id]))
+    expect(
+      (
+        await assertStreamWritable(db, {
+          workspaceId: "ws_1",
+          streamId: thread.id,
+          principal: { kind: "user", userId: "usr_1" },
+        })
+      ).root.id
+    ).toBe(root.id)
+    expect(members).toHaveBeenCalledWith(db, [root.id], "usr_1")
+    mock.restore()
+    spyOn(StreamRepository, "findByIdsInWorkspace").mockResolvedValue([thread])
+    spyOn(StreamRepository, "findByIdsForUpdateBlocking").mockResolvedValue([root, thread])
+    const grants = spyOn(BotChannelAccessRepository, "lockGrants").mockResolvedValue(new Set([root.id]))
+    expect(
+      (
+        await assertStreamWritable(db, {
+          workspaceId: "ws_1",
+          streamId: thread.id,
+          principal: { kind: "bot", botId: "bot_1" },
+        })
+      ).root.id
+    ).toBe(root.id)
+    expect(grants).toHaveBeenCalledWith(db, "ws_1", "bot_1", [root.id])
   })
 })
 

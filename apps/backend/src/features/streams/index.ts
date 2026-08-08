@@ -23,6 +23,9 @@ export {
   deriveStreamViewerState,
   createStreamReadOnlyError,
   assertViewerStreamWritable,
+  assertStreamWritable,
+  assertStreamsWritable,
+  resolveLockedStreamAuthorities,
   projectStreamForPrincipal,
   projectStreamsForPrincipal,
   projectStreamForUser,
@@ -30,7 +33,7 @@ export {
   projectStreamForBot,
   projectStreamsForBot,
 } from "./write-authority"
-export type { StreamWritePrincipal } from "./write-authority"
+export type { StreamWritePrincipal, LockedStreamAuthority } from "./write-authority"
 
 export { prependThreadNamingAnchor, renderNamingEventAnchor } from "./naming-context"
 

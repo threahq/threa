@@ -113,6 +113,10 @@ async function setupTestWorkspace(pool: Pool): Promise<TestContext> {
     slug: `oa-bot-${testRunId}`,
   })
   const botId = (botRes.data as { data: { id: string } }).data.id
+  const grantRes = await client.post(`/api/workspaces/${workspace.id}/bots/${botId}/streams/${channel.id}/grant`, {})
+  if (grantRes.status !== 204) {
+    throw new Error(`Grant bot stream access failed (${grantRes.status}): ${JSON.stringify(grantRes.data)}`)
+  }
 
   const allKeyRes = await client.post(`/api/workspaces/${workspace.id}/bots/${botId}/keys`, {
     name: "all-scopes",
