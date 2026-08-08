@@ -690,6 +690,14 @@ export type {
   UpdateAIBudgetInput,
 } from "./api"
 
+export {
+  ENCLAVE_NAMING_CHECKPOINTS,
+  EnclaveNamingInstructionSchema,
+  EnclaveNamingDecisionSchema,
+  type EnclaveNamingInstruction,
+  type EnclaveNamingDecision,
+} from "./enclave-naming"
+
 // Slots — canonical hydration envelope for renderable pointers
 export type { Slot, SharedMessageSlot, SlotMap } from "./slots"
 export { sharedMessageSlotKey } from "./slots"

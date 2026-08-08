@@ -20,6 +20,11 @@ export interface RawChatRequest {
   tools?: OpenAiTool[]
   temperature?: number
   maxTokens?: number
+  /** Provider-native strict structured output for enclave-local post-processing. */
+  responseFormat?: {
+    type: "json_schema"
+    json_schema: { name: string; strict: true; schema: Record<string, unknown> }
+  }
   /**
    * Caller cancellation (a user Stop), composed with the per-call timeout below.
    * Its abort cancels the in-flight OpenRouter request so a Stop mid-LLM-call
@@ -85,6 +90,7 @@ export function createOpenRouterChat(config: EnclaveConfig): RawChatFn {
         ...(req.tools && req.tools.length > 0 ? { tools: req.tools, tool_choice: "auto" } : {}),
         ...(req.temperature !== undefined ? { temperature: req.temperature } : {}),
         ...(req.maxTokens !== undefined ? { max_tokens: req.maxTokens } : {}),
+        ...(req.responseFormat ? { response_format: req.responseFormat } : {}),
         // Ask OpenRouter to return billed cost (USD) alongside token counts so the
         // backend can record the turn's spend. Accounting only — no message content.
         usage: { include: true },

@@ -46,6 +46,30 @@ describe("createBackendCallbacks callback-token binding (Phase 2.4b)", () => {
   })
 })
 
+describe("createBackendCallbacks naming decision", () => {
+  it("posts metadata and sealed bytes to the session-bound endpoint", async () => {
+    let call: { url: string; body?: string } | undefined
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init: RequestInit) => {
+        call = { url, body: init.body as string }
+        return { ok: true, status: 204 } as Response
+      })
+    )
+    const decision = {
+      action: "keep" as const,
+      confidence: 0.8,
+      observedStateRevision: 4,
+      observedTitleRevision: 2,
+      observedMessageCount: 3,
+      observedCheckpoint: 3 as const,
+    }
+    await createBackendCallbacks(config, "cbtok_1").namingDecision("session_1", decision)
+    expect(call?.url).toBe("http://backend.test/internal/enclave-runtimes/sessions/session_1/naming-decision")
+    expect(JSON.parse(call!.body!)).toEqual(decision)
+  })
+})
+
 describe("createBackendCallbacks.pollMessages (interjection pull)", () => {
   it("GETs the after-cursor URL and returns the sealed rows", async () => {
     const row = {

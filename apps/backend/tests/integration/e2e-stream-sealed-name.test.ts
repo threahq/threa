@@ -243,6 +243,7 @@ describe("E2E sealed stream name", () => {
 
     const updated = await E2eStreamsRepository.updateSealedName(pool, wsId, sId, { ciphertext, envelope: ENVELOPE })
     expect(updated).toBe(true)
+    expect(await E2eStreamsRepository.getSealedName(pool, wsId, sId)).toEqual({ ciphertext, envelope: ENVELOPE })
 
     const stream = await StreamRepository.findById(pool, sId)
     expect(stream?.e2eEnabled).toBe(true)

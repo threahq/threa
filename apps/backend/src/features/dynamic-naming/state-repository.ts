@@ -204,6 +204,46 @@ export const DynamicNamingStateRepository = {
     return result.rows[0] ? mapRow(result.rows[0]) : null
   },
 
+  async advanceOwnedClaimObservation(
+    db: Querier,
+    params: {
+      ownerId: string
+      token: string
+      expectedVersion: number
+      checkpoint: DynamicNamingCheckpoint
+      messageCount: number
+    }
+  ): Promise<DynamicNamingState | null> {
+    const result = await db.query<StateRow>(sql`
+      UPDATE dynamic_naming_state SET
+        claim_checkpoint = ${params.checkpoint}, claim_message_count = ${params.messageCount},
+        version = version + 1, updated_at = NOW()
+      WHERE claim_owner_id = ${params.ownerId} AND claim_token = ${params.token}
+        AND version = ${params.expectedVersion} AND claim_expires_at > NOW()
+        AND claim_checkpoint <= ${params.checkpoint} AND claim_message_count <= ${params.messageCount}
+      RETURNING ${sql.raw(COLUMNS)}
+    `)
+    return result.rows[0] ? mapRow(result.rows[0]) : null
+  },
+
+  async renewOwnedClaimLease(db: Querier, params: { ownerId: string; leaseSeconds: number }): Promise<number> {
+    const result = await db.query(sql`
+      UPDATE dynamic_naming_state SET
+        claim_expires_at = NOW() + (${params.leaseSeconds} || ' seconds')::interval,
+        updated_at = NOW()
+      WHERE claim_owner_id = ${params.ownerId} AND claim_token IS NOT NULL
+    `)
+    return result.rowCount ?? 0
+  },
+
+  async releaseOwnedClaim(db: Querier, ownerId: string): Promise<number> {
+    const result = await db.query(sql`
+      UPDATE dynamic_naming_state SET ${clearClaim}, version = version + 1, updated_at = NOW()
+      WHERE claim_owner_id = ${ownerId} AND claim_token IS NOT NULL
+    `)
+    return result.rowCount ?? 0
+  },
+
   async release(
     db: Querier,
     params: {

@@ -93,6 +93,18 @@ streamed back the moment the loop emits it, so an interim "I'll look into it" la
 ahead of the final answer; then it acks completion (which also flips the claim,
 in the same transaction as the session's completion).
 
+**Sealed dynamic naming.** For a root scratchpad at an eligible `1/3/6/10`
+checkpoint, the backend reserves a revision-fenced naming claim in the same
+transaction as the RUNNING session. The assignment carries count/checkpoint
+metadata plus the current title's ciphertext and the wraps needed to open it —
+never title plaintext. After the reply and a five-second quiet/final interjection
+poll, the enclave evaluates `defer | keep | rename` against decrypted context.
+Only `rename` seals replacement bytes under the current name AAD; keep/defer send
+metadata only. The callback checks the session owner, message count, key
+generation, state revision, and title revision before atomically applying progress
+and an optional sealed replacement. Completion/failure releases an unused claim,
+and a manual rename's revision invalidates any older enclave result.
+
 **Trace parity.** `trace-observer.ts` mirrors the in-process trace lifecycle:
 `step:started` on step open, snapshot `substep`s as research progresses, a CONTEXT
 ("Triggered by") step sealed from the `trigger` metadata, and a finalize on
@@ -118,8 +130,9 @@ backend uses its local abort registry instead.
   tools. It cannot call workspace APIs — that would require plaintext egress, which
   the trust model forbids.
 - **Server short-circuits (INV-E2).** Outbox handlers that read content — companion
-  auto-reply, GAM memo extraction, naming polish, search indexing, mention
+  auto-reply, GAM memo extraction, plaintext naming, search indexing, mention
   extraction — short-circuit on encrypted streams via an `isE2eStream` check.
+  E2E scratchpad naming runs only inside the enclave protocol above.
 - **E2E flag atomicity (INV-E1).** The `e2e_streams` row is written in the same
   transaction as the stream, so there is never a window where the stream exists but
   its E2E flag doesn't. The repository layer (plus a check constraint) carries the
@@ -178,7 +191,10 @@ backend uses its local abort registry instead.
   validation (`assignment.ts` holds the schema).
 - `apps/enclave/src/agent/session-runner.ts` — SSK unwrap, heartbeat-carried
   abort wiring, turn orchestration.
-- `apps/enclave/src/agent/run-turn.ts` — the agent loop, tool gating, CONTEXT step.
+- `apps/enclave/src/agent/run-turn.ts` — the agent loop, tool gating, CONTEXT step,
+  and post-reply sealed naming orchestration.
+- `apps/enclave/src/agent/naming-evaluator.ts` — strict structured title decisions;
+  title plaintext remains enclave-local.
 - `apps/enclave/src/agent/trace-observer.ts` — sealed trace lifecycle parity.
 - `apps/backend/src/features/enclave-runtimes/invocations-repository.ts` — the
   claimable work queue (claim predicate on the EIK's wraps, TTL, park).

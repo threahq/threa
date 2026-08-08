@@ -1,4 +1,9 @@
-import type { EnclaveSessionAssignment, EnclaveStreamEnvelope, ToolPrivacyPolicy } from "@threa/types"
+import type {
+  EnclaveNamingInstruction,
+  EnclaveSessionAssignment,
+  EnclaveStreamEnvelope,
+  ToolPrivacyPolicy,
+} from "@threa/types"
 import type { E2eStream, E2eStreamActor, StreamE2eKeyWrap } from "../../e2e-streams"
 import type { Message } from "../../messaging"
 
@@ -67,6 +72,8 @@ export interface BuildInvokeInputs {
   attachmentCiphertexts?: { attachmentId: string; ciphertext: string }[]
   /** Ask the enclave to generate + seal a title for this (untitled) scratchpad. */
   autoTitle?: boolean
+  /** Revision-fenced dynamic naming work reserved by the session transaction. */
+  naming?: EnclaveNamingInstruction
   /**
    * Sealed `turn_digest` step ciphertext from the stream's recent completed
    * sessions, oldest→newest (C-1). Opaque to the backend — the enclave opens
@@ -155,6 +162,7 @@ export function buildEnclaveSessionAssignment(inputs: BuildInvokeInputs): Enclav
       ? { attachmentCiphertexts: inputs.attachmentCiphertexts }
       : {}),
     ...(inputs.autoTitle ? { autoTitle: true } : {}),
+    ...(inputs.naming ? { naming: inputs.naming } : {}),
     // Prior turns' sealed digests (C-1) — shipped only when present so the
     // no-digest assignment stays byte-identical to before.
     ...(inputs.recentDigests && inputs.recentDigests.length > 0 ? { recentDigests: inputs.recentDigests } : {}),

@@ -1,5 +1,5 @@
 import { z } from "zod"
-import { AUTHOR_TYPES, TOOL_PRIVACY_CATEGORIES } from "@threa/types"
+import { AUTHOR_TYPES, EnclaveNamingInstructionSchema, TOOL_PRIVACY_CATEGORIES } from "@threa/types"
 
 /**
  * Schema for a claimed session assignment — the body of a winning claim
@@ -137,6 +137,8 @@ export const sessionAssignmentSchema = z
     // Whether to auto-title this scratchpad (declared so Zod doesn't strip it —
     // the same failure mode the attachment slice hit).
     autoTitle: z.boolean().optional(),
+    /** Revision-fenced E2E dynamic naming instruction; preferred over autoTitle. */
+    naming: EnclaveNamingInstructionSchema.optional(),
     /**
      * Prior turns' sealed turn_digest steps (C-1), oldest→newest. MUST be
      * declared — Zod strips unknown keys, and silently dropping these would

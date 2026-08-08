@@ -26,6 +26,7 @@ import type {
   EnclaveSealedSubstep,
   EnclaveSealedName,
   EnclaveSealedSummary,
+  EnclaveNamingDecision,
   EnclaveSskWrap,
 } from "@threa/types"
 import {
@@ -55,6 +56,7 @@ import { EnclaveTraceObserver } from "./trace-observer"
 import { buildEnclaveTools } from "./tools"
 import { decodeUtf8 } from "./attachment-tool"
 import { generateTitle } from "./auto-title"
+import { advanceNamingInstruction, evaluateNaming } from "./naming-evaluator"
 
 /**
  * The agent turn, run entirely inside the enclave next to decrypted plaintext.
@@ -116,6 +118,10 @@ export interface EnclaveTurnDeps {
    * no titling.
    */
   onSealedName?: (sealed: EnclaveSealedName) => Promise<void>
+  /** Apply a revision-fenced dynamic naming decision containing ciphertext only. */
+  onNamingDecision?: (decision: EnclaveNamingDecision) => Promise<void>
+  /** Test seam; production defaults to the five-second quiet window. */
+  namingQuietMs?: number
   /**
    * Persist the sealed rolling conversation summary (C-2), best-effort after the
    * turn when the verbatim window overflowed. The enclave folds the overflow
@@ -160,7 +166,7 @@ export async function runEnclaveTurn(
   request: EnclaveSessionAssignment
 ): Promise<EnclaveSessionResult> {
   const { keyPair, rawChat, onMessage, onStepStarted, onStep, onSubstep, onSealedName, tools, abortSignal } = deps
-  const { pollNewMessages, onSealedSummary } = deps
+  const { pollNewMessages, onSealedSummary, onNamingDecision } = deps
 
   // Recover the SSK for every generation the backend wrapped to us. The wrap AAD
   // binds to our own keyId — a wrap addressed elsewhere simply won't open.
@@ -290,6 +296,8 @@ export async function runEnclaveTurn(
   // First reply's plaintext, kept only to seed the auto-title below (never logged
   // or persisted; lives in-process for the turn like all other plaintext here).
   let firstReplyText: string | null = null
+  const replyTexts: string[] = []
+  const namingInterjections = new Map<string, string>()
   // Last reply's plaintext, kept only to ground the turn digest below (same
   // in-process-only lifetime as firstReplyText).
   let lastReplyText: string | null = null
@@ -387,6 +395,7 @@ export async function runEnclaveTurn(
     // sourceless reply seals the bare string, byte-identical to before.
     commitMessage: async ({ content, sources }) => {
       if (firstReplyText === null) firstReplyText = content
+      replyTexts.push(content)
       lastReplyText = content
       const messageId = `msg_${ulid()}`
       const sealed = await sealMessage({
@@ -417,6 +426,7 @@ export async function runEnclaveTurn(
           sessionId: request.sessionId,
           replySenderId: request.reply.senderId,
           pollNewMessages,
+          onOpened: (message) => namingInterjections.set(message.messageId, message.content),
         })
       : declaredUnsupported("Ariadne can't see mid-turn messages in encrypted scratchpads"),
     // Session Stop: the heartbeat's abort flag cancels a pending LLM iteration
@@ -459,12 +469,107 @@ export async function runEnclaveTurn(
     }
   }
 
-  // Auto-title an untitled encrypted scratchpad from the decrypted turn. The
-  // server can't do this (it only holds ciphertext), so the enclave generates a
-  // short title here, seals it under the reply SSK bound to the name slot
-  // (`buildNameAad`), and hands the ciphertext back. Best-effort and last —
-  // never block or fail the turn over a title.
-  if (request.autoTitle && firstReplyText && onSealedName) {
+  // New protocol: wait for one quiet window, pull once more so a fast follow-up
+  // participates in the decision, then evaluate and return metadata + sealed
+  // replacement only. A missing historical wrap/AAD mismatch safely skips the
+  // callback; completion releases the session-owned claim for a later retry.
+  if (request.naming && firstReplyText && onNamingDecision) {
+    try {
+      let quietReached = pollNewMessages === undefined
+      if (pollNewMessages) {
+        let boundary = loopResult.lastProcessedSequence > 0n ? loopResult.lastProcessedSequence : 0n
+        // Bound a stream of fast follow-ups: each observed batch earns a fresh
+        // quiet window, but naming never holds the completed turn indefinitely.
+        for (let poll = 0; poll < 3; poll++) {
+          await new Promise((resolve) => setTimeout(resolve, deps.namingQuietMs ?? 5_000))
+          const finalRows = await pollNewMessages(boundary)
+          if (finalRows.length === 0) {
+            quietReached = true
+            break
+          }
+          for (const row of finalRows) {
+            const sequence = BigInt(row.sequence)
+            if (sequence > boundary) boundary = sequence
+            const ssk = sskByGeneration.get(row.envelope.keyGeneration)
+            if (!ssk) continue
+            try {
+              const raw = await openMessageAsString({
+                key: ssk,
+                envelope: row.envelope,
+                ciphertext: base64ToBytes(row.ciphertext),
+              })
+              namingInterjections.set(row.messageId, parseSealedPayload(raw).contentMarkdown)
+            } catch {
+              continue
+            }
+          }
+        }
+      }
+      if (!quietReached) throw new Error("Naming quiet window not reached")
+
+      let currentTitle: string | null = null
+      if (request.naming.currentSealedTitle) {
+        const sealed = request.naming.currentSealedTitle
+        const titleSsk = sskByGeneration.get(sealed.envelope.keyGeneration)
+        const expectedAad = bytesToBase64(
+          buildNameAad({ streamId: request.streamId, keyGeneration: sealed.envelope.keyGeneration })
+        )
+        if (!titleSsk || sealed.envelope.aad !== expectedAad) throw new Error("Current title wrap unavailable")
+        currentTitle = await openMessageAsString({
+          key: titleSsk,
+          envelope: sealed.envelope,
+          ciphertext: base64ToBytes(sealed.ciphertext),
+        })
+      }
+      const context = [
+        ...opened.map((item) => `${item.role}: ${item.content}`),
+        `user: ${promptText}`,
+        ...replyTexts.map((text) => `assistant: ${text}`),
+        ...namingInterjections.values().map((text) => `user: ${text}`),
+      ].join("\n\n")
+      const observedMessageCount =
+        request.naming.messageCount + Math.max(0, messageIds.length - 1) + namingInterjections.size
+      const effectiveInstruction = advanceNamingInstruction(request.naming, observedMessageCount)
+      const evaluated = await evaluateNaming({
+        rawChat,
+        model: request.model,
+        instruction: effectiveInstruction,
+        currentTitle,
+        context,
+        signal: abortSignal,
+      })
+      if (evaluated) {
+        const observed = {
+          confidence: evaluated.confidence,
+          observedStateRevision: request.naming.stateRevision,
+          observedTitleRevision: request.naming.titleRevision,
+          observedMessageCount,
+          observedCheckpoint: effectiveInstruction.checkpoint,
+        }
+        if (evaluated.action === "rename") {
+          const sealed = await sealMessage({
+            key: replySsk,
+            keyGeneration: request.reply.keyGeneration,
+            payload: evaluated.title,
+            aad: buildNameAad({ streamId: request.streamId, keyGeneration: request.reply.keyGeneration }),
+          })
+          await onNamingDecision({
+            action: "rename",
+            ...observed,
+            sealedReplacement: { ciphertext: bytesToBase64(sealed.ciphertext), envelope: sealed.envelope },
+          })
+        } else {
+          await onNamingDecision({ action: evaluated.action, ...observed })
+        }
+      }
+    } catch {
+      // Naming is non-essential; completion releases an unused/stale claim.
+    }
+  }
+
+  // Legacy rollout path: old backends send only autoTitle and old enclaves use
+  // the sealed-name callback. New assignments prefer the instruction above.
+  if (!request.naming && request.autoTitle && firstReplyText && onSealedName) {
     try {
       const title = await generateTitle({ rawChat, model: request.model, promptText, replyText: firstReplyText })
       if (title) {
@@ -677,8 +782,9 @@ function buildInterjectionAwareness(params: {
   sessionId: string
   replySenderId: string
   pollNewMessages: (afterSequence: bigint) => Promise<EnclaveMidTurnMessage[]>
+  onOpened?: (message: { messageId: string; content: string }) => void
 }): NewMessageAwareness {
-  const { sskByGeneration, refsById, streamId, sessionId, replySenderId, pollNewMessages } = params
+  const { sskByGeneration, refsById, streamId, sessionId, replySenderId, pollNewMessages, onOpened } = params
   return {
     streamId,
     sessionId,
@@ -713,6 +819,7 @@ function buildInterjectionAwareness(params: {
           })
           const { contentMarkdown, attachmentRefs } = parseSealedPayload(raw)
           for (const ref of attachmentRefs) refsById.set(ref.attachmentId, ref)
+          onOpened?.({ messageId: row.messageId, content: contentMarkdown })
           infos.push({
             sequence: BigInt(row.sequence),
             messageId: row.messageId,

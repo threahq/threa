@@ -86,6 +86,45 @@ describe("dynamic naming state repository", () => {
     expect(claims.filter(Boolean)).toHaveLength(1)
   })
 
+  test("session-owned lease renewal preserves its observed revision and terminal release clears it", async () => {
+    const state = await repo.ensure(pool, {
+      workspaceId: workspace,
+      targetKind: "stream",
+      targetId: "stream_dn_session_owner",
+    })
+    const claim = await repo.claim(pool, {
+      workspaceId: workspace,
+      targetKind: "stream",
+      targetId: state.targetId,
+      ownerId: "session_1",
+      checkpoint: 1,
+      messageCount: 1,
+      structureVersion: 0,
+      titleRevision: 0,
+      expectedVersion: state.version,
+      leaseSeconds: 1,
+    })
+    expect(await repo.renewOwnedClaimLease(pool, { ownerId: "session_1", leaseSeconds: 60 })).toBe(1)
+    expect(await repo.find(pool, workspace, "stream", state.targetId)).toMatchObject({
+      version: claim!.version,
+      claimOwnerId: "session_1",
+    })
+    const observed = await repo.advanceOwnedClaimObservation(pool, {
+      ownerId: "session_1",
+      token: claim!.claimToken!,
+      expectedVersion: claim!.version,
+      checkpoint: 3,
+      messageCount: 3,
+    })
+    expect(observed).toMatchObject({ version: claim!.version + 1, claimCheckpoint: 3, claimMessageCount: 3 })
+    expect(await repo.releaseOwnedClaim(pool, "session_1")).toBe(1)
+    expect(await repo.find(pool, workspace, "stream", state.targetId)).toMatchObject({
+      version: claim!.version + 2,
+      claimOwnerId: null,
+      claimToken: null,
+    })
+  })
+
   test("renewal is token/version fenced and renewed claims cannot be reclaimed", async () => {
     const state = await repo.ensure(pool, {
       workspaceId: workspace,

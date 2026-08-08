@@ -1,6 +1,6 @@
 import type { Pool } from "pg"
 import { randomUUID } from "node:crypto"
-import { StreamTypes, type EnclaveSessionAssignment, type EnclaveStreamEnvelope } from "@threa/types"
+import { StreamTypes, TitleSources, type EnclaveSessionAssignment, type EnclaveStreamEnvelope } from "@threa/types"
 import { TURN_DIGEST_INJECT_COUNT } from "@threa/agent-runtime"
 import { sessionId as newSessionId, eventId, enclaveInvocationId } from "../../lib/id"
 import { logger } from "../../lib/logger"
@@ -13,6 +13,11 @@ import { UserRepository } from "../workspaces"
 import type { UserPreferencesService } from "../user-preferences"
 import { E2eStreamActorsRepository, E2eStreamsRepository, StreamE2eKeyWrapsRepository } from "../e2e-streams"
 import { MessageRepository } from "../messaging"
+import {
+  DYNAMIC_NAMING_CLAIM_LEASE_SECONDS,
+  DynamicNamingStateRepository,
+  getNamingEligibility,
+} from "../dynamic-naming"
 import { AttachmentRepository } from "../attachments"
 import {
   AgentSessionRepository,
@@ -482,6 +487,75 @@ export class EnclaveClaimService {
         initialSequence: 0n,
       })
       if (!created) return null
+
+      // Reserve E2E scratchpad naming under this exact session in the same
+      // transaction as RUNNING. A lost/rolled-back session can therefore never
+      // strand an ownerless naming claim. Threads deliberately receive no slot.
+      if (triggerStream.type === StreamTypes.SCRATCHPAD && triggerStream.id === e2eStreamId) {
+        const locked = await StreamRepository.findByIdForUpdateBlocking(tx, triggerStream.id)
+        const source = locked?.displayNameSource ?? (locked?.displayName ? TitleSources.LEGACY : null)
+        if (locked && !locked.archivedAt && (source === null || source === TitleSources.GENERATED)) {
+          const stats = await MessageRepository.getNamingStats(tx, locked.id)
+          // The session has not written its reply yet, but naming runs only after
+          // at least one reply is durably streamed. Reserve against that first
+          // reply so checkpoint 6 is not missed at a pre-turn count of 5; extra
+          // replies/interjections are added to the enclave's observed count.
+          const namingMessageCount = stats.count + 1
+          const state = await DynamicNamingStateRepository.ensure(tx, {
+            workspaceId,
+            targetKind: "stream",
+            targetId: locked.id,
+            initialLastEvaluatedMessageCount: source === TitleSources.GENERATED ? 1 : 0,
+          })
+          const eligibility = getNamingEligibility(
+            {
+              lastEvaluatedMessageCount: state.lastEvaluatedMessageCount,
+              consecutiveKeeps: state.consecutiveKeeps,
+              completed: state.completedAt !== null,
+              structureVersion: state.structureVersion,
+              lastEvaluatedStructureVersion: state.lastEvaluatedStructureVersion,
+            },
+            namingMessageCount
+          )
+          if (
+            eligibility.eligible &&
+            (!state.claimToken || !state.claimExpiresAt || state.claimExpiresAt <= new Date())
+          ) {
+            const claim = await DynamicNamingStateRepository.claim(tx, {
+              workspaceId,
+              targetKind: "stream",
+              targetId: locked.id,
+              ownerId: sid,
+              checkpoint: eligibility.checkpoint,
+              messageCount: namingMessageCount,
+              structureVersion: state.structureVersion,
+              titleRevision: locked.displayNameRevision ?? 0,
+              expectedVersion: state.version,
+              leaseSeconds: DYNAMIC_NAMING_CLAIM_LEASE_SECONDS,
+            })
+            if (claim) {
+              const currentSealedTitle = await E2eStreamsRepository.getSealedName(tx, workspaceId, locked.id)
+              assignment.naming = {
+                stateRevision: claim.version,
+                titleRevision: locked.displayNameRevision ?? 0,
+                checkpoint: eligibility.checkpoint,
+                messageCount: namingMessageCount,
+                forced: eligibility.forced,
+                reason: claim.claimReason!,
+                ...(currentSealedTitle
+                  ? {
+                      currentSealedTitle: {
+                        ciphertext: currentSealedTitle.ciphertext,
+                        envelope: currentSealedTitle.envelope as EnclaveStreamEnvelope,
+                      },
+                    }
+                  : {}),
+              }
+            }
+          }
+        }
+      }
+
       await EnclaveInvocationsRepository.attachSession(tx, { id: invocation.id, sessionId: sid })
       const startedEvent = await StreamEventRepository.insert(tx, {
         id: eventId(),

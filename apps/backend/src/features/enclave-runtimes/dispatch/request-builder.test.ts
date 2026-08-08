@@ -84,6 +84,24 @@ describe("buildEnclaveSessionAssignment", () => {
     expect(assignment).not.toHaveProperty("maxTokens") // null → omitted
   })
 
+  it("ships both legacy autoTitle and opaque revision-fenced naming during rollout", () => {
+    const naming = {
+      stateRevision: 4,
+      titleRevision: 2,
+      checkpoint: 3 as const,
+      messageCount: 3,
+      forced: true,
+      reason: "ordinary" as const,
+      currentSealedTitle: {
+        ciphertext: "Y3Q=",
+        envelope: { v: 2, keyGeneration: 1, iv: "aXY=", aad: "YWFk" },
+      },
+    }
+    const assignment = buildEnclaveSessionAssignment(inputs({ autoTitle: true, naming }))
+    expect(assignment).toMatchObject({ autoTitle: true, naming })
+    expect(JSON.stringify(assignment)).not.toContain("currentTitle")
+  })
+
   it("omits the trigger metadata when the author name can't be resolved", () => {
     const assignment = buildEnclaveSessionAssignment(inputs({ triggerAuthorName: undefined }))
     // No misleading "Unknown" placeholder row — the enclave suppresses the

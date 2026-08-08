@@ -70,6 +70,7 @@ export async function runEnclaveSession(deps: SessionRunnerDeps, assignment: Enc
         onSubstep: (substep) => deps.callbacks.substep(sessionId, substep),
         // Persist a sealed auto-title when the backend flagged this turn for it.
         onSealedName: (sealed) => deps.callbacks.sealedName(sessionId, sealed),
+        onNamingDecision: (decision) => deps.callbacks.namingDecision(sessionId, decision),
         // Persist the sealed rolling conversation summary when the window overflowed (C-2).
         onSealedSummary: (sealed) => deps.callbacks.sealedSummary(sessionId, sealed),
         // Mid-turn interjection (UX-12): let the loop pull the sealed messages

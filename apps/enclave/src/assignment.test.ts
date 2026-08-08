@@ -38,6 +38,23 @@ describe("sessionAssignmentSchema", () => {
     expect(sessionAssignmentSchema.safeParse(rest).success).toBe(false)
   })
 
+  it("keeps the opaque naming instruction and legacy flag through parsing", () => {
+    const naming = {
+      stateRevision: 4,
+      titleRevision: 2,
+      checkpoint: 3 as const,
+      messageCount: 3,
+      forced: true,
+      reason: "ordinary" as const,
+      currentSealedTitle: {
+        ciphertext: "Y3Q=",
+        envelope: { v: 2, keyGeneration: 0, iv: "aXY=", aad: "YWFk" },
+      },
+    }
+    const parsed = sessionAssignmentSchema.parse({ ...BASE, autoTitle: true, naming })
+    expect(parsed).toMatchObject({ autoTitle: true, naming })
+  })
+
   it("keeps recentDigests through parsing", () => {
     const recentDigests = [
       {
