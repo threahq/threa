@@ -48,6 +48,23 @@ export function markDraftResolved(draftId: string, version: number): void {
 }
 
 /**
+ * True when THIS device resolved-on-send the draft that just disappeared. The
+ * discriminator a composer needs when its loaded pointer goes null: only a local
+ * send marks an id here, so a null that is a remote `draft:deleted` or a
+ * deliberate teardown (discard, stash, relocate, purge) reads false and must not
+ * be treated as "another editor sent the row out from under me".
+ */
+export function wasDraftResolvedLocally(draftId: string): boolean {
+  const rec = draftResolvedVersion.get(draftId)
+  if (rec === undefined) return false
+  if (rec.expiresAt <= Date.now()) {
+    draftResolvedVersion.delete(draftId)
+    return false
+  }
+  return true
+}
+
+/**
  * True when an inbound draft row is an echo/re-seed of a draft this device just
  * resolved (same id, at or below the resolved version). A strictly newer version
  * is a real edit from elsewhere and is NOT suppressed.
