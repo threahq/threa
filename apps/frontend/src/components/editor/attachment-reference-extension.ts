@@ -29,6 +29,10 @@ declare module "@tiptap/core" {
        */
       insertAttachmentReference: (attrs: AttachmentReferenceAttrs) => ReturnType
       /**
+       * Insert attachment references together in one editor transaction.
+       */
+      insertAttachmentReferences: (attrs: AttachmentReferenceAttrs[]) => ReturnType
+      /**
        * Update an attachment reference by its temp ID
        */
       updateAttachmentReference: (tempId: string, updates: Partial<AttachmentReferenceAttrs>) => ReturnType
@@ -128,7 +132,14 @@ export const AttachmentReferenceExtension = Node.create({
     return {
       insertAttachmentReference:
         (attrs) =>
+        ({ commands }) =>
+          commands.insertAttachmentReferences([attrs]),
+
+      insertAttachmentReferences:
+        (references) =>
         ({ chain, state }) => {
+          if (references.length === 0) return false
+
           // Get marks at current position to preserve styling
           const { $from } = state.selection
           const { storedMarks } = state
@@ -147,8 +158,10 @@ export const AttachmentReferenceExtension = Node.create({
           return chain()
             .insertContent([
               ...(needsLeadingSpace ? [{ type: "text", text: " ", marks }] : []),
-              { type: "attachmentReference", attrs, marks },
-              { type: "text", text: " ", marks },
+              ...references.flatMap((attrs) => [
+                { type: "attachmentReference", attrs, marks },
+                { type: "text", text: " ", marks },
+              ]),
             ])
             .run()
         },

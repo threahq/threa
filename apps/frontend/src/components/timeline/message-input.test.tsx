@@ -1116,6 +1116,47 @@ describe("MessageInput", () => {
       ).toEqual(content)
     })
 
+    it("keeps IDs and picked ordinals when repeated filenames lose the middle placeholder", () => {
+      const imageReference = (id: string, filename: string, imageIndex: number): JSONContent => ({
+        type: "attachmentReference",
+        attrs: {
+          id,
+          filename,
+          mimeType: "image/jpeg",
+          sizeBytes: 1,
+          status: "uploaded",
+          imageIndex,
+          error: null,
+        },
+      })
+      const content: JSONContent = {
+        type: "doc",
+        content: [
+          {
+            type: "paragraph",
+            content: [imageReference("attach_1", "photo.jpg", 1), imageReference("attach_3", "photo.jpg", 3)],
+          },
+        ],
+      }
+
+      expect(
+        materializePendingAttachmentReferences(content, [
+          { id: "attach_1", filename: "photo.jpg", mimeType: "image/jpeg", sizeBytes: 1, status: "uploaded" },
+          { id: "attach_2", filename: "photo.jpg", mimeType: "image/jpeg", sizeBytes: 1, status: "uploaded" },
+          { id: "attach_3", filename: "photo.jpg", mimeType: "image/jpeg", sizeBytes: 1, status: "uploaded" },
+        ])
+      ).toEqual({
+        ...content,
+        content: [
+          ...(content.content ?? []),
+          {
+            type: "paragraph",
+            content: [imageReference("attach_2", "photo.jpg", 2)],
+          },
+        ],
+      })
+    })
+
     it("materializes a still-uploading reserved attachment with persisted status 'uploaded'", () => {
       // Stored contentJson is never revisited when the bytes land, so the node
       // must not freeze a transient "uploading" into the message (it would

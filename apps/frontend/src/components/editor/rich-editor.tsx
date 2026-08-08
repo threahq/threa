@@ -508,71 +508,75 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
     }
   }, [shouldBeVisible])
 
-  // Helper to handle file insertion from paste or drop
-  const handleFileInsert = useCallback(async (file: File, editorInstance: ReturnType<typeof useEditor>) => {
-    const uploadFn = onFileUploadRef.current
-    if (!uploadFn || !editorInstance) return
-    const uploadScopeVersion = uploadScopeVersionRef.current
-
-    const isImage = file.type.startsWith("image/")
-    const tempId = `temp_${Date.now()}_${Math.random().toString(36).slice(2)}`
-
-    const placeholderAttrs: AttachmentReferenceAttrs = {
-      id: tempId,
-      filename: file.name,
-      mimeType: file.type || "application/octet-stream",
-      sizeBytes: file.size,
-      status: "uploading",
-      imageIndex: null, // Will be set after upload
-      error: null,
-    }
-
-    editorInstance.commands.insertAttachmentReference(placeholderAttrs)
-
-    // Caller is fire-and-forget (paste/drop loops), so swallow the rejection
-    // here and surface it through the placeholder's error state instead of
-    // leaving the node stuck in "uploading" indefinitely.
-    const isStillTargeting = () =>
-      uploadScopeVersion === uploadScopeVersionRef.current &&
-      !editorInstance.isDestroyed &&
-      editorRef.current === editorInstance
-
-    try {
-      const result = await uploadFn(file)
-      if (!isStillTargeting()) return
-      // uploadFn resolves once the id is RESERVED — the bytes may still be
-      // streaming in the background. The node is a reference marker, so it
-      // settles to "uploaded" here (live transfer state renders on the chip
-      // row, and stored content never persists "uploading" — see
-      // materializePendingAttachmentReferences).
-      editorInstance.commands.updateAttachmentReference(tempId, {
-        id: result.attachment.id,
-        status: result.attachment.status === "error" ? "error" : "uploaded",
-        imageIndex: isImage ? result.imageIndex : null,
-        error: result.attachment.error || null,
+  const handleFilesInsert = useCallback(
+    (files: File[], editorInstance: ReturnType<typeof useEditor> | null): boolean => {
+      const uploadFn = onFileUploadRef.current
+      if (!uploadFn || !editorInstance || editorInstance.isDestroyed || files.length === 0) return false
+      const uploadScopeVersion = uploadScopeVersionRef.current
+      const batchId = `${Date.now()}_${Math.random().toString(36).slice(2)}`
+      const insertions = files.map((file, index) => {
+        const tempId = `temp_${batchId}_${index}`
+        const attrs: AttachmentReferenceAttrs = {
+          id: tempId,
+          filename: file.name,
+          mimeType: file.type || "application/octet-stream",
+          sizeBytes: file.size,
+          status: "uploading",
+          imageIndex: null,
+          error: null,
+        }
+        return { file, tempId, isImage: file.type.startsWith("image/"), attrs }
       })
-    } catch (err) {
-      if (!isStillTargeting()) return
-      editorInstance.commands.updateAttachmentReference(tempId, {
-        status: "error",
-        error: err instanceof Error ? err.message : "Upload failed",
-      })
-    }
-  }, [])
 
-  const insertFiles = useCallback(
-    (files: File[]): boolean => {
-      const editorInstance = editorRef.current
-      if (!editorInstance || editorInstance.isDestroyed || !onFileUploadRef.current) return false
-      for (const file of files) void handleFileInsert(file, editorInstance)
+      // A picked batch must reach the controlled editor as one document update;
+      // intermediate renders can otherwise overwrite one placeholder while the
+      // near-simultaneous reservations settle.
+      if (!editorInstance.commands.insertAttachmentReferences(insertions.map(({ attrs }) => attrs))) return false
+
+      for (const { file, tempId, isImage } of insertions) {
+        void (async () => {
+          const isStillTargeting = () =>
+            uploadScopeVersion === uploadScopeVersionRef.current &&
+            !editorInstance.isDestroyed &&
+            editorRef.current === editorInstance
+
+          try {
+            const result = await uploadFn(file)
+            if (!isStillTargeting()) return
+            // uploadFn resolves once the id is RESERVED — the bytes may still be
+            // streaming in the background. The node is a reference marker, so it
+            // settles to "uploaded" here (live transfer state renders on the chip
+            // row, and stored content never persists "uploading" — see
+            // materializePendingAttachmentReferences).
+            editorInstance.commands.updateAttachmentReference(tempId, {
+              id: result.attachment.id,
+              status: result.attachment.status === "error" ? "error" : "uploaded",
+              imageIndex: isImage ? result.imageIndex : null,
+              error: result.attachment.error || null,
+            })
+          } catch (err) {
+            if (!isStillTargeting()) return
+            editorInstance.commands.updateAttachmentReference(tempId, {
+              status: "error",
+              error: err instanceof Error ? err.message : "Upload failed",
+            })
+          }
+        })()
+      }
+
       return true
     },
-    [handleFileInsert]
+    []
+  )
+
+  const insertFiles = useCallback(
+    (files: File[]): boolean => handleFilesInsert(files, editorRef.current),
+    [handleFilesInsert]
   )
 
   // Save the snippet editor's contents as a text attachment, inserting the chip
   // back at the caret position the paste happened at. Reuses the same
-  // upload-and-insert path as pasted images/files (handleFileInsert), so E2E
+  // upload-and-insert path as pasted images/files (handleFilesInsert), so E2E
   // encryption, scope-drift guarding, and the inline chip all come for free.
   const handleSnippetSave = useCallback(
     ({ text, filename }: { text: string; filename: string }) => {
@@ -596,9 +600,9 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
       }
       chain.run()
 
-      void handleFileInsert(file, editorInstance)
+      handleFilesInsert([file], editorInstance)
     },
-    [handleFileInsert]
+    [handleFilesInsert]
   )
 
   // Insert the chosen GIF as an inline embed rendered straight from Giphy's CDN
@@ -683,20 +687,16 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
         const files = event.clipboardData?.files
         if (files && files.length > 0 && onFileUploadRef.current && editorRef.current) {
           event.preventDefault()
-          const fileArray = Array.from(files)
           let pasteImageOffset = 0
-          for (const file of fileArray) {
-            let fileToInsert = file
-            // Rename pasted images to sequential names (pasted-image-1.png, etc.)
-            if (file.type.startsWith("image/")) {
-              pasteImageOffset++
-              const nextIndex = imageCountRef.current + pasteImageOffset
-              const ext = file.name.split(".").pop() || "png"
-              const newName = `pasted-image-${nextIndex}.${ext}`
-              fileToInsert = new File([file], newName, { type: file.type })
-            }
-            handleFileInsert(fileToInsert, editorRef.current)
-          }
+          const filesToInsert = Array.from(files).map((file) => {
+            if (!file.type.startsWith("image/")) return file
+            pasteImageOffset++
+            const nextIndex = imageCountRef.current + pasteImageOffset
+            const ext = file.name.split(".").pop() || "png"
+            const newName = `pasted-image-${nextIndex}.${ext}`
+            return new File([file], newName, { type: file.type })
+          })
+          handleFilesInsert(filesToInsert, editorRef.current)
           return true
         }
 
@@ -812,9 +812,7 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
         const files = event.dataTransfer?.files
         if (files && files.length > 0 && onFileUploadRef.current && editorRef.current) {
           event.preventDefault()
-          for (const file of Array.from(files)) {
-            handleFileInsert(file, editorRef.current)
-          }
+          handleFilesInsert(Array.from(files), editorRef.current)
           return true
         }
         return false

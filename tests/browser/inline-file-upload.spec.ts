@@ -163,6 +163,28 @@ test.describe("Inline File Uploads", () => {
     await expect(page.getByText("pasted-image-2.png")).toBeVisible({ timeout: 5000 })
   })
 
+  test("should keep a mobile multi-pick inline with sequential image numbers", async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 })
+    const editor = page.locator("[contenteditable='true']")
+    if (!(await editor.isVisible())) {
+      await page.getByText("Type a message...").evaluate((element: HTMLElement) => element.click())
+    }
+    await expect(editor).toBeVisible({ timeout: 5000 })
+
+    const imageBuffer = createTestImage()
+    await page.locator('input[type="file"][multiple]').setInputFiles([
+      { name: "one.png", mimeType: "image/png", buffer: imageBuffer },
+      { name: "two.png", mimeType: "image/png", buffer: imageBuffer },
+      { name: "three.png", mimeType: "image/png", buffer: imageBuffer },
+    ])
+
+    const references = editor.locator("span[data-type='attachment-reference']")
+    await expect(references).toHaveCount(3, { timeout: 10000 })
+    await expect(references.nth(0)).toContainText("[Image #1]", { timeout: 10000 })
+    await expect(references.nth(1)).toContainText("[Image #2]", { timeout: 10000 })
+    await expect(references.nth(2)).toContainText("[Image #3]", { timeout: 10000 })
+  })
+
   test("should open lightbox when clicking image link in sent message", async ({ page }) => {
     const editor = page.locator("[contenteditable='true']")
     await editor.click()
