@@ -105,13 +105,13 @@ export function buildDelegationPrompt(
       `(created in Threa under Settings > API keys, scopes delegations:read + delegations:write),`,
       `work it through the API so the card tracks your progress:`,
       "",
-      `1. Inspect: GET ${base}. Review the brief and context refs, which are pointers into Threa.`,
-      `2. If you accept the work, claim it: POST ${base}/claim with body {"claimedByLabel":"<executor label>"}.`,
+      `1. Inspect: \`GET ${base}\`. Review the brief and context refs, which are pointers into Threa.`,
+      `2. If you accept the work, claim it: \`POST ${base}/claim\` with body {"claimedByLabel":"<executor label>"}.`,
       `   The response includes a claimToken shown once and a 15-minute lease.`,
-      `3. Send the token as an X-Threa-Callback-Token header on later calls.`,
-      `   POST ${base}/heartbeat optionally renews the lease; POST ${base}/status {"statusNote":"..."} reports progress.`,
-      `   POST ${base}/complete {"resultMarkdown":"..."} completes the work; POST ${base}/fail {"errorMessage":"..."} reports an execution failure.`,
-      `   For a controlled stop, POST ${base}/release so another executor can claim it.`,
+      `3. Send the token as an \`X-Threa-Callback-Token\` header on later calls.`,
+      `   \`POST ${base}/heartbeat\` optionally renews the lease; \`POST ${base}/status\` {"statusNote":"..."} reports progress.`,
+      `   \`POST ${base}/complete\` {"resultMarkdown":"..."} completes the work; \`POST ${base}/fail\` {"errorMessage":"..."} reports an execution failure.`,
+      `   For a controlled stop, \`POST ${base}/release\` so another executor can claim it.`,
       `   Completing posts your result into the conversation.`,
       "",
       `Without API access, the context refs above are Threa-internal pointers you cannot resolve.`,
@@ -313,7 +313,7 @@ export function DelegationEvent({ event, workspaceId, streamId, statusPatch, isT
   if (status === DelegationStatuses.EXPIRED) {
     actions.push({
       id: "requeue",
-      label: requeueing ? "Requeueing…" : "Requeue",
+      label: requeueing ? "Requeuing…" : "Requeue",
       icon: requeueing ? Loader2 : RotateCcw,
       onSelect: handleRequeue,
       disabled: requeueing,
@@ -424,7 +424,7 @@ export function DelegationEvent({ event, workspaceId, streamId, statusPatch, isT
               {promptText()}
             </pre>
             <p className="mt-1.5 text-[11px] text-muted-foreground">
-              Give this prompt to an executor. With a Threa API key it can inspect the task, claim it if accepted, and
+              Give this prompt to an executor. With a Threa API key, it can inspect the task, claim it if accepted, and
               update this card. Otherwise press Mark done when the work is finished.
             </p>
           </div>

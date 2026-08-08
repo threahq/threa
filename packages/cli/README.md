@@ -90,9 +90,11 @@ threa labels add urgent #eng --color '#ff0000' --emoji 🔥
 threa labels remove urgent #eng
 
 # delegations
-threa delegations list --since 2026-07-16T00:00:00Z
+threa delegations list --since 2026-07-16T00:00:00Z # availability changed after this time
+threa delegations get dlg_123                       # inspect before accepting
 threa delegations claim dlg_123 --label "Kris's MacBook / Claude Code" --idempotency-key run-abc123
-threa delegations update dlg_123 --note "halfway through"
+threa delegations update dlg_123                    # manual heartbeat; --note also reports progress
+threa delegations release dlg_123                   # controlled stop: return it to the open queue
 threa delegations finish dlg_123 --outcome complete --result - < report.md
 threa delegations finish dlg_123 --outcome fail --error "build broke"
 threa delegations request-access dlg_123            # bot-key only
@@ -107,7 +109,7 @@ Any stream argument (`streams read`, `messages send`, `labels add`, `labels remo
 
 ## Delegation state file
 
-Claim tokens are persisted to `~/.threa/state.json` (mode 0600), keyed by workspace and delegation, written atomically. `threa delegations claim` prints the token once and stores it; `delegations update` and `delegations finish` reuse the stored token across separate `threa` invocations, and `finish` clears it. Pass `--claim-token` to override the stored token or to recover it on another machine. The same store backs the MCP head, so a claim made through one head is usable from the other. Override the path with `THREA_STATE_FILE`. A corrupt state file logs one warning to stderr and starts empty; a failed write surfaces as a delegation-command error.
+Claim tokens persist to `~/.threa/state.json` (mode 0600), keyed by workspace and delegation, and are written atomically. `threa delegations claim` prints the token once and stores it. `delegations update`, `delegations finish`, and `delegations release` reuse the stored token across invocations. Successful finish clears the token. Successful release clears only the matching stored token and preserves a replacement token; failed or ambiguous requests preserve it. Pass `--claim-token` to override the stored token or recover it on another machine. The MCP head uses the same store, so a claim from one head is usable from the other. Set `THREA_STATE_FILE` to override the path. A corrupt state file logs one warning to stderr and starts empty. A failed write surfaces as a delegation-command error.
 
 ## MCP head
 
@@ -149,7 +151,7 @@ Claude Code maps every worktree of a repo to the same project entry, so a persis
 }
 ```
 
-The MCP tools mirror the commands: `whoami`, `list_streams`, `read_stream`, `list_users`, `search`, `list_conversations`, `read_conversation`, `find_messages_by_metadata`, `send_message`, `update_message`, `delete_message`, `list_labels`, `apply_label`, `remove_label`, `get_memo`, `get_attachment`, `get_attachment_download_url`, `list_delegations`, `claim_delegation`, `update_delegation`, `finish_delegation`, `request_delegation_access`. Tool results are JSON in the API envelope; failures come back as `isError` results carrying `{ code, message, hint? }`.
+The MCP tools mirror the commands: `whoami`, `list_streams`, `read_stream`, `list_users`, `search`, `list_conversations`, `read_conversation`, `find_messages_by_metadata`, `send_message`, `update_message`, `delete_message`, `list_labels`, `apply_label`, `remove_label`, `get_memo`, `get_attachment`, `get_attachment_download_url`, `list_delegations`, `get_delegation`, `claim_delegation`, `release_delegation`, `update_delegation`, `finish_delegation`, `request_delegation_access`. Tool results are JSON in the API envelope. Failures return `isError` with `{ code, message, hint? }`.
 
 ## Keys
 
@@ -162,20 +164,20 @@ The scopes on the key decide which areas work. A key without a scope does not ge
 
 ### Scopes by area
 
-| Scope               | Unlocks                                                                                                |
-| ------------------- | ------------------------------------------------------------------------------------------------------ |
-| (none)              | `whoami`                                                                                               |
-| `streams:read`      | `streams list`, `streams read` (stream and member legs)                                                |
-| `users:read`        | `users list`                                                                                           |
-| `messages:read`     | `streams read` (messages leg), `conversations read`, `conversations list`, `messages find-by-metadata` |
-| `messages:search`   | `search --what messages`                                                                               |
-| `messages:write`    | `messages send`, `messages edit`, `messages delete`                                                    |
-| `memos:read`        | `search --what memos`, `memos list`, `memos get`                                                       |
-| `attachments:read`  | `search --what attachments`, `attachments list`, `attachments get`, `attachments download`             |
-| `labels:read`       | `labels list`                                                                                          |
-| `labels:write`      | `labels add`, `labels remove`                                                                          |
-| `delegations:read`  | `delegations list`                                                                                     |
-| `delegations:write` | `delegations claim`, `delegations update`, `delegations finish`, `delegations request-access`          |
+| Scope               | Unlocks                                                                                                              |
+| ------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| (none)              | `whoami`                                                                                                             |
+| `streams:read`      | `streams list`, `streams read` (stream and member legs)                                                              |
+| `users:read`        | `users list`                                                                                                         |
+| `messages:read`     | `streams read` (messages leg), `conversations read`, `conversations list`, `messages find-by-metadata`               |
+| `messages:search`   | `search --what messages`                                                                                             |
+| `messages:write`    | `messages send`, `messages edit`, `messages delete`                                                                  |
+| `memos:read`        | `search --what memos`, `memos list`, `memos get`                                                                     |
+| `attachments:read`  | `search --what attachments`, `attachments list`, `attachments get`, `attachments download`                           |
+| `labels:read`       | `labels list`                                                                                                        |
+| `labels:write`      | `labels add`, `labels remove`                                                                                        |
+| `delegations:read`  | `delegations list`, `delegations get`                                                                                |
+| `delegations:write` | `delegations claim`, `delegations release`, `delegations update`, `delegations finish`, `delegations request-access` |
 
 ## Rate limits
 

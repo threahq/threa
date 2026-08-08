@@ -24,12 +24,11 @@ export function registerDelegationTools(
     {
       title: "List open delegations",
       description:
-        "List the delegated tasks that are open to claim (the queue a `delegate_task` hand-off lands in). Only " +
+        "List open delegations (the queue for `delegate_task` hand-offs). Only " +
         "streams this key can access appear. The lifecycle loop is: list_delegations → get_delegation → " +
         "claim_delegation → optional update_delegation while you work → finish_delegation or release_delegation. A completed result is " +
-        "posted into the delegation's stream and GAM memorizes it. `status` is `open` (the only listable state " +
-        "today). `since` is an ISO-8601 datetime that returns tasks whose availability changed after that instant — a cheap " +
-        "delta for a polling runner.",
+        "posted in the thread anchored on the delegation card and enters the normal message pipeline, so workspace memory can capture it. `status` is `open` (the only listable state). " +
+        "`since`: ISO-8601 datetime; returns tasks whose availability changed after that instant. Useful for polling deltas.",
       inputSchema: {
         status: z.literal("open").optional(),
         since: z.string().optional(),
@@ -52,17 +51,16 @@ export function registerDelegationTools(
   server.registerTool(
     "claim_delegation",
     {
-      title: "Claim an open delegation",
+      title: "Claim an open or historical expired delegation",
       description:
-        "Atomically claim an open delegation so you can work it. On success the result carries the brief, the " +
-        "context refs, and `claimToken` — SHOWN ONCE. Every later lifecycle call for this delegation needs that " +
+        "After inspecting with get_delegation, atomically claim an open delegation or a historical task still stored as expired. On success, returns the brief, context refs, and `claimToken` (shown once). Every later lifecycle call for this delegation needs that " +
         "token; this server also stashes it in a persistent state file (`~/.threa/state.json`) so you can omit " +
         "`claim_token` on the follow-up calls, and it survives a server restart. The claim has a 15-minute TTL: " +
         "call update_delegation to renew it before it lapses, or the task returns to the queue. `claimed_by_label` " +
         'is your human-readable identity shown on the card (e.g. "Kris\'s MacBook / Claude Code"). ' +
         "`idempotency_key` re-keys your own live claim after a crash: persist it BEFORE claiming, and a retry " +
         "bearing the same key hands back a fresh token and lease instead of a 409. A 409 DELEGATION_NOT_OPEN means " +
-        "you lost the race — another runner already claimed it. After claiming, keep the lease alive with " +
+        "the task is not currently claimable or re-keyable; inspect its status and claim expiry. A lapsed-but-unswept claim must wait for the sweep to reopen it. After claiming, keep the lease alive with " +
         "update_delegation and close out with finish_delegation.",
       inputSchema: {
         delegation_id: z.string(),
@@ -85,7 +83,7 @@ export function registerDelegationTools(
     {
       title: "Release a delegation claim",
       description:
-        "Return a live claim to the open queue without failing it. Uses the stored token unless `claim_token` overrides it. The stored token is cleared only after a successful release.",
+        "Return a live claim to the open queue without failing it. Uses the stored token unless overridden with `claim_token`. After a successful release, only the matching stored token is cleared; a replacement token is preserved.",
       inputSchema: { delegation_id: z.string(), claim_token: z.string().optional() },
     },
     async ({ delegation_id, claim_token }) =>
@@ -126,9 +124,9 @@ export function registerDelegationTools(
     {
       title: "Finish a delegation",
       description:
-        'Terminally close a claimed delegation. `outcome: "complete"` marks success: provide `result_markdown` ' +
-        "to post the outcome into the delegation's stream (authored as this key's identity, entering the normal " +
-        "message pipeline so GAM memorizes it) or omit it to close without a message, and `metadata` (a flat " +
+        'Complete or fail a claimed delegation. `outcome: "complete"` marks success. Provide `result_markdown` ' +
+        "to post to the thread anchored on the delegation card (authored as this key's identity, entering the normal " +
+        "message pipeline so workspace memory can capture it) or omit it to close without a message, and `metadata` (a flat " +
         "string→string map) stamps the result message for later find_messages_by_metadata lookup. " +
         '`outcome: "fail"` marks failure and REQUIRES `error_message` (recorded on the card so the delegator ' +
         "knows why); it rejects result_markdown/metadata. `error_message` is only valid with outcome=fail. Uses " +

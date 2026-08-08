@@ -4,12 +4,12 @@ description: >-
   Use the Threa workspace client well, either as the `threa` command-line tool
   (on PATH or run in-repo with `bun packages/cli/src/cli.ts`) or as the Threa MCP
   tools (a `threa` stdio server, tools like whoami / search / send_message /
-  claim_delegation). Use when working inside or against a Threa workspace:
+  get_delegation / claim_delegation / release_delegation). Use when working inside or against a Threa workspace:
   answering "what did we decide / how do we do X" from workspace memory, posting
   or resuming a conversation, running a delegated task to completion, searching
   messages or attachments, or paging large lists. Covers the CLI's JSON output and
   exit-code contract, ref forms, identity-first ordering, memory-before-humans,
-  the conversation resume pattern, the delegation claim/update/finish loop with
+  the conversation resume pattern, the delegation inspect/claim/heartbeat/finish-or-release loop with
   persistent tokens, the one `search` command's what selection, cursor paging,
   the 404-may-mean-missing-scope rule, and rate-limit pacing.
 ---
@@ -70,13 +70,15 @@ The resumed conversation must live under the same root stream as the target, or 
 
 A delegation is a task handed to a local agent. Run the whole loop, and treat the claim token as the thing that keeps the task yours.
 
-1. `threa delegations list` (tool `list_delegations`) shows open tasks. Pass `--since <iso>` to poll for a cheap delta.
-2. Before claiming, generate and persist an idempotency key (8 to 128 chars). Then `threa delegations claim <id> --label "who you are" --idempotency-key <key>` (tool `claim_delegation`). The result carries the brief, the context refs, and a `claimToken` shown once.
-3. The token is persisted to `~/.threa/state.json` (mode 0600, keyed by workspace and delegation), so later `update` and `finish` calls reuse it across separate `threa` invocations without you passing it. The MCP head shares the same store.
-4. The claim has a 15-minute TTL. Run `threa delegations update <id>` (tool `update_delegation`) before it lapses to renew it, or the task returns to the queue. Pass `--note "..."` to also report progress on the card; omit it for a pure heartbeat.
-5. Finish with `threa delegations finish <id> --outcome complete|fail` (tool `finish_delegation`). On `complete`, pass `--result <md>` (or `-` to read stdin) to post the outcome into the delegation's stream so GAM memorizes it, and `--metadata k=v` to stamp that message. On `fail`, pass `--error <msg>`. Finish clears the stored token.
+1. Run `whoami` first, as with every workspace task.
+2. `threa delegations list` (tool `list_delegations`) shows open tasks. Pass `--since <ISO>` to poll for tasks whose availability changed after that instant. This uses `status_changed_at`, so automatically reopened tasks appear even when they were created earlier.
+3. Inspect a candidate with `threa delegations get <id>` (tool `get_delegation`) before accepting it. This returns the brief and context-reference pointers without claiming or exposing claim secrets.
+4. To accept it, generate and persist an idempotency key (8 to 128 chars), then run `threa delegations claim <id> --label "who you are" --idempotency-key <key>` (tool `claim_delegation`). The result includes a `claimToken` shown once. Historical rows still stored as `expired` are absent from list results but may be inspected and claimed directly by id.
+5. The token is persisted to `~/.threa/state.json` (mode 0600, keyed by workspace and delegation), so lifecycle calls reuse it across separate invocations. The MCP server shares the same store.
+6. The claim has a 15-minute TTL. Run `threa delegations update <id>` (tool `update_delegation`) before it lapses. Pass `--note "..."` to report progress and renew; omit it for a manual heartbeat. Newly lapsed claimed or running tasks reopen automatically and return to polling results.
+7. Close the attempt using exactly one path: complete or fail using `threa delegations finish <id> --outcome complete|fail` (tool `finish_delegation`), or release a controlled stop with `threa delegations release <id>` (tool `release_delegation`). Completion can post `--result <md>` and `--metadata k=v`; failure requires `--error <msg>`. Successful finish clears the stored token. Successful release clears only the matching stored token, preserving any replacement token; failed or ambiguous calls preserve it.
 
-Token recovery: `update` and `finish` read the stored token, so you normally omit it. Pass `--claim-token <t>` (tool `claim_token`) to override it or to recover it on another machine. If you crashed mid-task, re-run claim with the same persisted idempotency key: it re-keys your own live claim and hands back a fresh token and lease instead of a 409. A plain 409 `DELEGATION_NOT_OPEN` means another runner won the race.
+Token recovery: The `update`, `finish`, and `release` commands read the stored token, so you normally omit it. Pass `--claim-token <t>` (tool parameter `claim_token`) to override it or to recover it on another machine. If you crashed mid-task, re-run `claim` with the same persisted idempotency key: it re-keys your own live claim and hands back a fresh token and lease instead of a 409. A 409 `DELEGATION_NOT_OPEN` means the task is not currently claimable or re-keyable. Inspect its `status` and `claimExpiresAt`; another runner may hold it, it may be settled, or a lapsed-but-unswept claim may need to wait for the sweep to reopen it.
 
 If you are a bot key and cannot claim a task because the bot lacks a grant on its stream, run `threa delegations request-access <id>` (tool `request_delegation_access`) to file an approval card. A user key cannot do this; a user's access follows the person, who should join the stream.
 
