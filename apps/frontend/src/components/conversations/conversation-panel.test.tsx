@@ -480,18 +480,29 @@ describe("ConversationPanel", () => {
     // A foreign scope's stash id (e.g. a thread draft on the same route) must be
     // left for its own host — opening here would strand the restore.
     await seedStashRow("draft_foreign", "thread:msg_9")
+    const originalGet = db.drafts.get.bind(db.drafts) as (
+      key: string
+    ) => ReturnType<typeof db.drafts.get>
+    let rowQueryResolved = false
+    vi.spyOn(db.drafts, "get").mockImplementation(
+      ((key: string) => {
+        const request = originalGet(key)
+        if (key === "draft_foreign") void request.then(() => (rowQueryResolved = true))
+        return request
+      }) as typeof db.drafts.get
+    )
     let captured: number | undefined
+    let renderedAfterQuery = false
     vi.spyOn(boardReplyComposerModule, "BoardReplyComposer").mockImplementation((props) => {
       captured = props.openReplySignal
+      if (rowQueryResolved) renderedAfterQuery = true
       return <></>
     })
     mountPanel({ cached: asCached(makePost()), stashParam: "draft_foreign" })
     await screen.findByText("Opening message body.")
-    // The row read is an IDB point query — give it time to land, or a panel that
-    // opened on ANY param would still read 0 here.
-    await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 60))
-    })
+    // The foreign-row lookup must resolve and propagate through React before the
+    // negative assertion; otherwise the initial collapsed render proves nothing.
+    await waitFor(() => expect(renderedAfterQuery).toBe(true))
     expect(captured).toBe(0)
   })
 
