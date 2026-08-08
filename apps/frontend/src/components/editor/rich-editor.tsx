@@ -79,7 +79,7 @@ export interface RichEditorHandle {
   /** Upload files and insert their reference chips at the current selection. */
   insertFiles(files: File[]): boolean
   /** Append a committed dictation span at the caret. */
-  insertTranscribedText(text: string): void
+  insertTranscribedText(text: string, options?: { joinPrevious?: boolean }): void
   /** Show the live (uncommitted) dictation hypothesis as a caret ghost; empty string clears it. */
   setDictationInterim(text: string): void
   /**
@@ -1117,13 +1117,13 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
   }, [handleTriggerClick])
 
   const insertTranscribedText = useCallback(
-    (text: string) => {
+    (text: string, options?: { joinPrevious?: boolean }) => {
       if (!editor || editor.isDestroyed || !text) return
-      // Separate consecutive committed spans with a space when the caret isn't
-      // already on whitespace, so words don't run together.
+      // Separate independent committed spans, but preserve a backend-declared
+      // hard split when tracked insertion has to fall back to this plain path.
       const { from } = editor.state.selection
       const charBefore = from > 0 ? editor.state.doc.textBetween(from - 1, from) : ""
-      const prefix = charBefore && !/\s/.test(charBefore) ? " " : ""
+      const prefix = !options?.joinPrevious && charBefore && !/\s/.test(charBefore) ? " " : ""
       editor.chain().focus().insertContent(`${prefix}${text}`).run()
     },
     [editor]

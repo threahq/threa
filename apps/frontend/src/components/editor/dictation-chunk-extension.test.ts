@@ -326,8 +326,7 @@ describe("structured dictation chunks", () => {
       contentJson: paragraph("combined"),
       onResult: (result) => (status = result),
     })
-    expect(status).not.toBe("applied")
-    expect(editor.getJSON()).toEqual(edited)
+    expect({ status, doc: editor.getJSON() }).toEqual({ status: "locked", doc: edited })
   })
 
   it("keeps a locked predecessor and appends the next independent source after it", () => {

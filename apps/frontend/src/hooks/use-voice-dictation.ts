@@ -53,7 +53,7 @@ interface UseVoiceDictationOptions {
    * this session. When polish is ON, `onPolishedChunkInserted` is called
    * instead and this never fires for that chunk.
    */
-  onCommittedText: (text: string) => void
+  onCommittedText: (text: string, options?: { joinPrevious?: boolean }) => void
   /**
    * Insert a polished chunk into the editor with tracking, so a later toggle
    * can swap it back to raw. The text passed is whatever the toggle currently
@@ -254,7 +254,10 @@ function appendCanonicalContent(base: JSONContent, suffix: JSONContent, joinPrev
   if (last?.type === "paragraph" && first?.type === "paragraph") {
     const left = [...(last.content ?? [])]
     const right = [...(first.content ?? [])]
-    if (!joinPrevious && left.length && right.length) left.push({ type: "text", text: " " })
+    const endsWithWhitespace = /\s$/u.test(left.at(-1)?.text ?? "")
+    const startsWithWhitespace = /^\s/u.test(right[0]?.text ?? "")
+    if (!joinPrevious && left.length && right.length && !endsWithWhitespace && !startsWithWhitespace)
+      left.push({ type: "text", text: " " })
     before[before.length - 1] = { ...last, content: [...left, ...right] }
     after.shift()
   }
@@ -770,7 +773,7 @@ export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDi
                 contentJson: delta.contentJson,
               }) ?? false
             if (!inserted) {
-              onCommittedTextRef.current(delta.text)
+              onCommittedTextRef.current(delta.text, { joinPrevious: delta.joinPrevious })
               latestRawRevisionByChunkRef.current.set(chunkId, delta.revision)
               unavailableV4ChunksRef.current.add(delta.chunkId)
               unavailableV4ChunksRef.current.add(chunkId)
@@ -783,12 +786,12 @@ export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDi
                 const record = prev.get(chunkId)
                 if (!record) return prev
                 const rawContentJson = appendCanonicalContent(
-                  record.rawContentJson!,
+                  record.rawContentJson ?? parseMarkdown(record.raw),
                   delta.contentJson,
                   !!delta.joinPrevious
                 )
                 const polishedContentJson = appendCanonicalContent(
-                  record.polishedContentJson!,
+                  record.polishedContentJson ?? parseMarkdown(record.polished),
                   delta.contentJson,
                   !!delta.joinPrevious
                 )
@@ -879,13 +882,15 @@ export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDi
                       contentJson: target,
                     }) ?? "missing"
                   if (status === "locked" && onGetChunkContentRef.current) {
-                    const sourceIds = chunk.sources.map((source) => resolveChunkAlias(source.chunkId))
+                    const getChunkContent = onGetChunkContentRef.current
+                    const unavailableSourceIds = chunk.sources
+                      .map((source) => resolveChunkAlias(source.chunkId))
+                      .filter((sourceId) => !getChunkContent(sourceId))
                     setChunks((prev) => {
                       const next = new Map(prev)
-                      for (const sourceId of sourceIds) {
+                      for (const sourceId of unavailableSourceIds) {
                         const record = next.get(sourceId)
-                        if (record && !onGetChunkContentRef.current?.(sourceId))
-                          next.set(sourceId, { ...record, locked: true })
+                        if (record) next.set(sourceId, { ...record, locked: true })
                       }
                       return next
                     })

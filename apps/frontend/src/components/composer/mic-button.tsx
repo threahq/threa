@@ -63,7 +63,7 @@ export interface MicButtonHandle {
 interface MicButtonProps {
   workspaceId: string
   /** Insert a committed transcript span into the editor at the caret. */
-  onInsertText: (text: string) => void
+  onInsertText: (text: string, options?: { joinPrevious?: boolean }) => void
   /** Live (uncommitted) transcript hypothesis, pushed as it grows and cleared ("") when a segment commits or the take ends. */
   onInterimText?: (text: string) => void
   /** Reports whether a take is in flight, so the host can keep its chrome (and this button) mounted while dictating. */

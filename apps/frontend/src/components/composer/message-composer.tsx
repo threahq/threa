@@ -757,7 +757,10 @@ export function MessageComposer({
 
   // Always available on workspace surfaces so dictation can be resumed after the
   // composer already has text — appended at the caret like committed speech.
-  const insertTranscribedText = useCallback((text: string) => richEditorRef.current?.insertTranscribedText(text), [])
+  const insertTranscribedText = useCallback(
+    (text: string, options?: { joinPrevious?: boolean }) => richEditorRef.current?.insertTranscribedText(text, options),
+    []
+  )
   const setDictationInterim = useCallback((text: string) => richEditorRef.current?.setDictationInterim(text), [])
   // Polished-chunk wiring: the editor tracks each polished chunk by id so a
   // session-wide toggle can swap them in-place between polished and raw.
