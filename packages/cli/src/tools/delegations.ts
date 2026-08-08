@@ -1,7 +1,15 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
 import { z } from "zod"
 import type { ThreaApiClient } from "../api-client"
-import { claimDelegation, finishDelegation, listDelegations, requestDelegationAccess, updateDelegation } from "../ops"
+import {
+  claimDelegation,
+  finishDelegation,
+  getDelegation,
+  listDelegations,
+  releaseDelegation,
+  requestDelegationAccess,
+  updateDelegation,
+} from "../ops"
 import type { TokenStore } from "../token-store"
 import { runTool } from "./result"
 
@@ -17,10 +25,10 @@ export function registerDelegationTools(
       title: "List open delegations",
       description:
         "List the delegated tasks that are open to claim (the queue a `delegate_task` hand-off lands in). Only " +
-        "streams this key can access appear. The lifecycle loop is: list_delegations → claim_delegation → " +
-        "update_delegation while you work → finish_delegation (outcome complete or fail). A completed result is " +
+        "streams this key can access appear. The lifecycle loop is: list_delegations → get_delegation → " +
+        "claim_delegation → optional update_delegation while you work → finish_delegation or release_delegation. A completed result is " +
         "posted into the delegation's stream and GAM memorizes it. `status` is `open` (the only listable state " +
-        "today). `since` is an ISO-8601 datetime that returns only tasks created after that instant — a cheap " +
+        "today). `since` is an ISO-8601 datetime that returns tasks whose availability changed after that instant — a cheap " +
         "delta for a polling runner.",
       inputSchema: {
         status: z.literal("open").optional(),
@@ -28,6 +36,17 @@ export function registerDelegationTools(
       },
     },
     async ({ status, since }) => runTool(() => listDelegations(client, { status, since }))
+  )
+
+  server.registerTool(
+    "get_delegation",
+    {
+      title: "Inspect a delegation",
+      description:
+        "Inspect the full brief and context refs before deciding whether to claim. This never creates a claim or token.",
+      inputSchema: { delegation_id: z.string() },
+    },
+    async ({ delegation_id }) => runTool(() => getDelegation(client, delegation_id))
   )
 
   server.registerTool(
@@ -58,6 +77,20 @@ export function registerDelegationTools(
           claimedByLabel: claimed_by_label,
           idempotencyKey: idempotency_key,
         })
+      )
+  )
+
+  server.registerTool(
+    "release_delegation",
+    {
+      title: "Release a delegation claim",
+      description:
+        "Return a live claim to the open queue without failing it. Uses the stored token unless `claim_token` overrides it. The stored token is cleared only after a successful release.",
+      inputSchema: { delegation_id: z.string(), claim_token: z.string().optional() },
+    },
+    async ({ delegation_id, claim_token }) =>
+      runTool(() =>
+        releaseDelegation(client, store, workspaceId, { delegationId: delegation_id, claimToken: claim_token })
       )
   )
 

@@ -2,7 +2,9 @@ import {
   claimDelegation,
   finishDelegation,
   finishDelegationArgError,
+  getDelegation,
   listDelegations,
+  releaseDelegation,
   requestDelegationAccess,
   updateDelegation,
 } from "../ops"
@@ -30,13 +32,13 @@ function renderLifecycle(payload: unknown): string {
 
 const listVerb: VerbSpec = {
   name: "list",
-  summary: "List open delegations; --since iso returns only tasks after that instant",
+  summary: "List open delegations; --since iso returns availability changes after that instant",
   usage: "threa delegations list [--since iso]",
   help:
     "threa delegations list [flags]\n\n" +
     "List open delegations. Pass --since to poll for a cheap delta.\n\n" +
     "Flags:\n" +
-    "  --since iso   tasks created after this ISO-8601 instant\n" +
+    "  --since iso   tasks whose availability changed after this ISO-8601 instant\n" +
     "  --json        force JSON output\n" +
     "  --help        show this help",
   options: {
@@ -50,6 +52,20 @@ const listVerb: VerbSpec = {
       { empty: "(no open delegations)" }
     )
   },
+}
+
+const getVerb: VerbSpec = {
+  name: "get",
+  summary: "Inspect a delegation's brief and context before claiming it",
+  usage: "threa delegations get <id>",
+  help: "threa delegations get <id> [--json]\n\nInspect a delegation without claiming it.\n",
+  options: {},
+  run: (ctx, positionals) => {
+    const id = positionals[0]
+    if (!id) throw new UsageError("delegations get requires a <delegation-id>")
+    return getDelegation(ctx.client, id)
+  },
+  render: (payload) => JSON.stringify(payload, null, 2),
 }
 
 const claimVerb: VerbSpec = {
@@ -78,6 +94,25 @@ const claimVerb: VerbSpec = {
       delegationId: id,
       claimedByLabel: label,
       idempotencyKey: stringFlag(values, "idempotency-key"),
+    })
+  },
+  render: renderLifecycle,
+}
+
+const releaseVerb: VerbSpec = {
+  name: "release",
+  summary: "Release a live claim back to the open queue",
+  usage: "threa delegations release <id> [--claim-token t]",
+  help:
+    "threa delegations release <id> [flags]\n\nRelease a live claim. The stored token is cleared only after success.\n\n" +
+    "Flags:\n  --claim-token t    override the stored token\n  --json             force JSON output\n  --help             show this help",
+  options: { "claim-token": { type: "string" } },
+  run: (ctx, positionals, values) => {
+    const id = positionals[0]
+    if (!id) throw new UsageError("delegations release requires a <delegation-id>")
+    return releaseDelegation(ctx.client, ctx.tokenStore, ctx.config.workspaceId, {
+      delegationId: id,
+      claimToken: stringFlag(values, "claim-token"),
     })
   },
   render: renderLifecycle,
@@ -180,5 +215,5 @@ const requestAccessVerb: VerbSpec = {
 export const delegationsNoun: NounSpec = {
   name: "delegations",
   summary: "Run the delegation lifecycle end to end",
-  verbs: [listVerb, claimVerb, updateVerb, finishVerb, requestAccessVerb],
+  verbs: [listVerb, getVerb, claimVerb, releaseVerb, updateVerb, finishVerb, requestAccessVerb],
 }

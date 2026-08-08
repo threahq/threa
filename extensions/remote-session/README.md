@@ -18,7 +18,8 @@ published to npm). `extensions/claude-code-remote` is the reference consumer.
   busy semantics, `/steer` folding + `/stop`, presence, claim renewal, idle
   timeouts, inbound/outbound attachments, interim sends and final replies.
 - **Lifecycle** — `wireLifecycle` routes every process-death path through one
-  graceful teardown (presence offline + failing in-flight claims).
+  graceful teardown. Active delegation executions are aborted cooperatively and
+  live claims are released; shutdown waits briefly for release, then continues.
 
 ## What a connector implements
 

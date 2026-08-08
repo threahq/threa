@@ -42,6 +42,50 @@ test("list_delegations passes status and since as query params", async () => {
   expect(textPayload(result)).toEqual({ data: [{ id: "dlg_1" }] })
 })
 
+test("get_delegation inspects without a token", async () => {
+  fetchSpy.mockResolvedValue(jsonResponse(200, { data: { id: "dlg_1", brief: "do it", contextRefs: ["msg_1"] } }))
+  const client = await connectClient()
+  const result = (await client.callTool({
+    name: "get_delegation",
+    arguments: { delegation_id: "dlg_1" },
+  })) as CallToolResult
+  expect(result.isError).toBeFalsy()
+  expect(pathOf(0)).toBe("/api/v1/workspaces/ws_1/delegations/dlg_1")
+  expect(callbackHeader()).toBeUndefined()
+})
+
+test("release_delegation supports stored and explicit tokens and retains a token after failure", async () => {
+  const client = await connectClient()
+  await claim(client)
+  fetchSpy.mockResolvedValueOnce(jsonResponse(500, { code: "INTERNAL" }))
+  expect(
+    ((await client.callTool({ name: "release_delegation", arguments: { delegation_id: "dlg_1" } })) as CallToolResult)
+      .isError
+  ).toBe(true)
+  fetchSpy.mockResolvedValueOnce(jsonResponse(200, { data: { id: "dlg_1", status: "open" } }))
+  expect(
+    (
+      (await client.callTool({
+        name: "release_delegation",
+        arguments: { delegation_id: "dlg_1", claim_token: "tok_explicit" },
+      })) as CallToolResult
+    ).isError
+  ).toBeFalsy()
+  expect(callbackHeader(1)).toBe("tok_stored")
+  expect(callbackHeader(2)).toBe("tok_explicit")
+})
+
+test("release_delegation without a token is a tool error", async () => {
+  const client = await connectClient()
+  const result = (await client.callTool({
+    name: "release_delegation",
+    arguments: { delegation_id: "dlg_1" },
+  })) as CallToolResult
+  expect(result.isError).toBe(true)
+  expect(textPayload(result).code).toBe("MISSING_CLAIM_TOKEN")
+  expect(fetchSpy).not.toHaveBeenCalled()
+})
+
 test("claim_delegation maps body fields, stores the token, and returns it", async () => {
   fetchSpy.mockResolvedValue(
     jsonResponse(200, { data: { id: "dlg_1", brief: "do the thing", claimToken: "tok_secret" } })

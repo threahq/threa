@@ -17,10 +17,15 @@ export interface DelegationSummary {
   statusChangedAt: string
 }
 
-/** The claim response: the executor's full working set plus the one-time token. */
-export interface ClaimedDelegation extends DelegationSummary {
+/** Inspect response: the full working set without claim credentials. */
+export interface InspectedDelegation extends DelegationSummary {
   brief: string
   contextRefs: string[]
+  claimExpiresAt?: string
+}
+
+/** The claim response: the executor's full working set plus the one-time token. */
+export interface ClaimedDelegation extends InspectedDelegation {
   /** Cleartext, returned exactly once — send it back as X-Threa-Callback-Token. */
   claimToken: string
   claimExpiresAt: string
@@ -86,6 +91,11 @@ export class DelegationClient {
     return data
   }
 
+  /** Inspect a delegation without claiming it. The response never contains claim credentials. */
+  async get(id: string): Promise<InspectedDelegation> {
+    return this.request(this.path(`/${encodeURIComponent(id)}`))
+  }
+
   /** Open delegations the key can access, oldest first. `since` narrows to a delta. */
   async listOpen(opts?: { since?: string }): Promise<DelegationSummary[]> {
     const query = opts?.since ? `?since=${encodeURIComponent(opts.since)}` : ""
@@ -102,6 +112,15 @@ export class DelegationClient {
     return this.request<ClaimedDelegation>(this.path(`/${id}/claim`), {
       method: "POST",
       body: JSON.stringify(body),
+    })
+  }
+
+  /** Release a live claim back to the open queue. */
+  async release(id: string, claimToken: string): Promise<DelegationSummary> {
+    return this.request(this.path(`/${encodeURIComponent(id)}/release`), {
+      method: "POST",
+      body: "{}",
+      claimToken,
     })
   }
 

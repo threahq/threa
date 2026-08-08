@@ -389,6 +389,10 @@ export function listDelegations(client: ThreaApiClient, p: ListDelegationsParams
   return client.get(`/delegations${buildQuery({ status: p.status, since: p.since })}`)
 }
 
+export function getDelegation(client: ThreaApiClient, delegationId: string): Promise<unknown> {
+  return client.get(`/delegations/${encodeURIComponent(delegationId)}`)
+}
+
 export interface ClaimDelegationParams {
   delegationId: string
   claimedByLabel: string
@@ -425,6 +429,24 @@ function resolveDelegationToken(
     )
   }
   return token
+}
+
+export interface ReleaseDelegationParams {
+  delegationId: string
+  claimToken?: string
+}
+
+export async function releaseDelegation(
+  client: ThreaApiClient,
+  store: TokenStore,
+  workspaceId: string,
+  p: ReleaseDelegationParams
+): Promise<unknown> {
+  const token = resolveDelegationToken(store, workspaceId, p.delegationId, p.claimToken)
+  const headers = { [CALLBACK_TOKEN_HEADER]: token }
+  const response = await client.post(`/delegations/${encodeURIComponent(p.delegationId)}/release`, undefined, headers)
+  store.deleteIfMatches(workspaceId, p.delegationId, token)
+  return response
 }
 
 export interface UpdateDelegationParams {

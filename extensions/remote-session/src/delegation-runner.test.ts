@@ -1,4 +1,4 @@
-import { describe, expect, it } from "bun:test"
+import { describe, expect, it, jest } from "bun:test"
 import { ThreaApiError } from "./client"
 import type { ClaimedDelegation, DelegationClient, DelegationSummary } from "./delegation-client"
 import { DELEGATION_STOP_REASON, DelegationRunner, type DelegationExecutor } from "./delegation-runner"
@@ -30,6 +30,7 @@ interface StubCalls {
   claims: Array<{ id: string; idempotencyKey?: string }>
   completes: Array<{ id: string; token: string; resultMarkdown?: string; metadata?: Record<string, string> }>
   fails: Array<{ id: string; token: string; errorMessage: string }>
+  releases: Array<{ id: string; token: string }>
   statuses: Array<{ id: string; note: string }>
   heartbeats: number
   accessRequests: string[]
@@ -48,6 +49,7 @@ function stubClient(overrides: {
     claims: [],
     completes: [],
     fails: [],
+    releases: [],
     statuses: [],
     heartbeats: 0,
     accessRequests: [],
@@ -85,6 +87,10 @@ function stubClient(overrides: {
       calls.fails.push({ id, token, errorMessage })
       if (overrides.failError) throw overrides.failError
       return { ...summary(id), status: "failed" }
+    },
+    release: async (id: string, token: string) => {
+      calls.releases.push({ id, token })
+      return { ...summary(id), status: "open" }
     },
     requestAccess: async (id: string) => {
       calls.accessRequests.push(id)
@@ -156,6 +162,36 @@ describe("DelegationRunner", () => {
 
     expect(calls.fails).toEqual([{ id: "dlg_1", token: "token-dlg_1", errorMessage: "build exploded" }])
     expect(calls.completes).toHaveLength(0)
+  })
+
+  it("contains a synchronous executor throw, clears its heartbeat, and continues draining", async () => {
+    jest.useFakeTimers()
+    try {
+      const { client, calls } = stubClient({
+        queue: [[summary("dlg_sync"), summary("dlg_next")], [summary("dlg_next")], []],
+      })
+      const runner = makeRunner(
+        client,
+        ((task: ClaimedDelegation) => {
+          if (task.id === "dlg_sync") throw new Error("sync exploded")
+          return Promise.resolve({ resultMarkdown: "done" })
+        }) as DelegationExecutor,
+        { heartbeatMs: 10 }
+      )
+
+      runner.start()
+      for (let index = 0; calls.listOpen < 3 && index < 100; index += 1) await Promise.resolve()
+
+      expect(calls.fails).toEqual([{ id: "dlg_sync", token: "token-dlg_sync", errorMessage: "sync exploded" }])
+      expect(calls.completes.map((call) => call.id)).toEqual(["dlg_next"])
+      expect(calls.releases).toEqual([])
+      jest.advanceTimersByTime(100)
+      await Promise.resolve()
+      expect(calls.heartbeats).toBe(0)
+      await runner.stop()
+    } finally {
+      jest.useRealTimers()
+    }
   })
 
   it("skips quietly past lost claim races (409) and vanished tasks (404), claiming the next", async () => {
@@ -314,7 +350,7 @@ describe("DelegationRunner", () => {
       let releaseClaim!: (task: ClaimedDelegation) => void
       let claimStarted!: () => void
       const started = new Promise<void>((resolve) => (claimStarted = resolve))
-      const calls: StubCalls["fails"] = []
+      const calls: StubCalls["releases"] = []
       const client = {
         listOpen: async () => (trigger === "poll" ? [summary("dlg_race")] : []),
         claim: () =>
@@ -322,8 +358,8 @@ describe("DelegationRunner", () => {
             releaseClaim = resolve
             claimStarted()
           }),
-        fail: async (id: string, token: string, errorMessage: string) => {
-          calls.push({ id, token, errorMessage })
+        release: async (id: string, token: string) => {
+          calls.push({ id, token })
         },
       } as unknown as DelegationClient
       let executions = 0
@@ -340,7 +376,7 @@ describe("DelegationRunner", () => {
 
       expect({ executions, calls }).toEqual({
         executions: 0,
-        calls: [{ id: "dlg_race", token: "token-dlg_race", errorMessage: DELEGATION_STOP_REASON }],
+        calls: [{ id: "dlg_race", token: "token-dlg_race" }],
       })
     })
   }
@@ -359,7 +395,7 @@ describe("DelegationRunner", () => {
             releaseClaim = resolve
             claimStarted()
           }),
-        fail: async () => {
+        release: async () => {
           throw releaseError
         },
       } as unknown as DelegationClient
@@ -373,13 +409,13 @@ describe("DelegationRunner", () => {
 
       await expect(stopped).rejects.toBe(releaseError)
       expect(logs).toEqual([
-        `delegation dlg_race stop fail report failed: ${releaseError.message}`,
+        `delegation dlg_race release failed: ${releaseError.message}`,
         `delegation drain failed: ${releaseError.message}`,
       ])
     })
   }
 
-  it("normal shutdown stop clears an overlapping reconnect strict stop", async () => {
+  it("normal shutdown does not downgrade an overlapping strict stop", async () => {
     let releaseClaim!: (task: ClaimedDelegation) => void
     let claimStarted!: () => void
     const started = new Promise<void>((resolve) => (claimStarted = resolve))
@@ -391,7 +427,7 @@ describe("DelegationRunner", () => {
           releaseClaim = resolve
           claimStarted()
         }),
-      fail: async () => {
+      release: async () => {
         throw releaseError
       },
     } as unknown as DelegationClient
@@ -403,16 +439,82 @@ describe("DelegationRunner", () => {
     const shutdownStop = runner.stop()
     releaseClaim(claimed("dlg_race"))
 
-    await expect(reconnectStop).resolves.toBeUndefined()
+    await expect(reconnectStop).rejects.toBe(releaseError)
     await expect(shutdownStop).resolves.toBeUndefined()
   })
 
-  it("strict stop propagates a failed terminal fail for active work", async () => {
+  for (const phase of ["active", "pending"] as const) {
+    for (const order of ["normal-strict", "strict-normal"] as const) {
+      it(`${phase} overlapping stop applies policy per caller in ${order} order`, async () => {
+        let started!: () => void
+        const operationStarted = new Promise<void>((resolve) => (started = resolve))
+        const releaseError = new Error(`${phase} release failed`)
+        const client =
+          phase === "active"
+            ? {
+                listOpen: async () => [summary("dlg_overlap")],
+                claim: async () => claimed("dlg_overlap"),
+                release: async () => {
+                  throw releaseError
+                },
+              }
+            : {
+                listOpen: async () => [summary("dlg_overlap")],
+                claim: () => {
+                  started()
+                  return new Promise<never>(() => {})
+                },
+              }
+        const runner = makeRunner(
+          client as unknown as DelegationClient,
+          phase === "active"
+            ? async () => {
+                started()
+                return new Promise<never>(() => {})
+              }
+            : async () => {},
+          { shutdownWaitMs: phase === "pending" ? 5 : 100 }
+        )
+        runner.start()
+        await operationStarted
+        const firstStrict = order === "strict-normal"
+        const first = runner.stop(DELEGATION_STOP_REASON, { strict: firstStrict })
+        const second = runner.stop(DELEGATION_STOP_REASON, { strict: !firstStrict })
+        const strict = firstStrict ? first : second
+        const normal = firstStrict ? second : first
+
+        if (phase === "active") await expect(strict).rejects.toBe(releaseError)
+        else await expect(strict).rejects.toThrow("stop timed out after 5ms")
+        await expect(normal).resolves.toBeUndefined()
+      })
+    }
+  }
+
+  it("strict stop rejects on a pending claim timeout", async () => {
+    let started!: () => void
+    const claimStarted = new Promise<void>((resolve) => (started = resolve))
+    const client = {
+      listOpen: async () => [summary("dlg_pending")],
+      claim: () => {
+        started()
+        return new Promise<never>(() => {})
+      },
+    } as unknown as DelegationClient
+    const runner = makeRunner(client, async () => {}, { shutdownWaitMs: 5 })
+    runner.start()
+    await claimStarted
+    await expect(runner.stop(DELEGATION_STOP_REASON, { strict: true })).rejects.toThrow("stop timed out after 5ms")
+  })
+
+  it("strict stop propagates a failed release for active work", async () => {
     let rejectExecution!: (error: Error) => void
     let executionStarted!: () => void
     const started = new Promise<void>((resolve) => (executionStarted = resolve))
-    const releaseError = new Error("terminal fail 500")
-    const { client } = stubClient({ queue: [[summary("dlg_active")]], failError: releaseError })
+    const releaseError = new Error("release 500")
+    const { client } = stubClient({ queue: [[summary("dlg_active")]] })
+    client.release = async () => {
+      throw releaseError
+    }
     const runner = makeRunner(
       client,
       () =>
@@ -428,6 +530,283 @@ describe("DelegationRunner", () => {
     rejectExecution(new Error("reconnect"))
 
     await expect(stopped).rejects.toBe(releaseError)
+  })
+
+  it("releases a stale pre-stop claim after restart without executing it", async () => {
+    let resolveOld!: (task: ClaimedDelegation) => void
+    let listCount = 0
+    const releases: Array<{ id: string; token: string }> = []
+    const executions: string[] = []
+    const client = {
+      listOpen: async () => {
+        listCount += 1
+        if (listCount === 1) return [summary("dlg_old")]
+        if (listCount === 2) return [summary("dlg_new")]
+        return []
+      },
+      claim: async (id: string) =>
+        id === "dlg_old" ? new Promise<ClaimedDelegation>((resolve) => (resolveOld = resolve)) : claimed(id),
+      release: async (id: string, token: string) => {
+        releases.push({ id, token })
+      },
+      complete: async () => summary("done"),
+    } as unknown as DelegationClient
+    const runner = makeRunner(
+      client,
+      async (task) => {
+        executions.push(task.id)
+      },
+      { shutdownWaitMs: 5 }
+    )
+
+    runner.start()
+    await flush()
+    await runner.stop()
+    runner.start()
+    await flush()
+    resolveOld(claimed("dlg_old"))
+    await flush()
+    await runner.stop()
+
+    expect(executions).toEqual(["dlg_new"])
+    expect(releases).toEqual([{ id: "dlg_old", token: "token-dlg_old" }])
+  })
+
+  it("detaches a stopped non-cooperative executor and clears its heartbeat before restart", async () => {
+    let listCount = 0
+    let heartbeats = 0
+    const completes: string[] = []
+    const fails: string[] = []
+    const client = {
+      listOpen: async () => {
+        listCount += 1
+        if (listCount === 1) return [summary("dlg_stuck")]
+        if (listCount === 2) return [summary("dlg_new")]
+        return []
+      },
+      claim: async (id: string) => claimed(id),
+      heartbeat: async () => {
+        heartbeats += 1
+      },
+      release: () => new Promise<never>(() => {}),
+      complete: async (id: string) => {
+        completes.push(id)
+        return summary(id)
+      },
+      fail: async (id: string) => {
+        fails.push(id)
+        return summary(id)
+      },
+    } as unknown as DelegationClient
+    const runner = makeRunner(
+      client,
+      async (task) => {
+        if (task.id === "dlg_stuck") return new Promise<never>(() => {})
+        return { resultMarkdown: "done" }
+      },
+      { heartbeatMs: 2, shutdownWaitMs: 5 }
+    )
+
+    runner.start()
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    await runner.stop()
+    const stoppedHeartbeatCount = heartbeats
+    runner.start()
+    await flush()
+    await runner.stop()
+    await new Promise((resolve) => setTimeout(resolve, 10))
+
+    expect(heartbeats).toBe(stoppedHeartbeatCount)
+    expect(completes).toEqual(["dlg_new"])
+    expect(fails).toEqual([])
+  })
+
+  it("aborts on heartbeat 404 and never completes or releases the lost claim", async () => {
+    const { client, calls } = stubClient({ queue: [[summary("dlg_lost")], []] })
+    client.heartbeat = async () => {
+      calls.heartbeats += 1
+      throw new ThreaApiError("lost", 404, "NOT_FOUND")
+    }
+    let aborted = false
+    const runner = makeRunner(
+      client,
+      async (_task, ctx) => {
+        await new Promise<void>((resolve) =>
+          ctx.signal.addEventListener(
+            "abort",
+            () => {
+              aborted = true
+              resolve()
+            },
+            { once: true }
+          )
+        )
+        return { resultMarkdown: "must not complete" }
+      },
+      { heartbeatMs: 5 }
+    )
+    runner.start()
+    await new Promise((resolve) => setTimeout(resolve, 30))
+    await runner.stop()
+    expect({ aborted, completes: calls.completes, fails: calls.fails, releases: calls.releases }).toEqual({
+      aborted: true,
+      completes: [],
+      fails: [],
+      releases: [],
+    })
+  })
+
+  it("aborts on status-report 404 and suppresses terminal writes", async () => {
+    const { client, calls } = stubClient({ queue: [[summary("dlg_lost")], []] })
+    client.reportStatus = async () => {
+      throw new ThreaApiError("lost", 404, "NOT_FOUND")
+    }
+    const runner = makeRunner(client, async (_task, ctx) => {
+      await ctx.reportStatus("working")
+      return { resultMarkdown: "must not complete" }
+    })
+    runner.start()
+    await flush()
+    await runner.stop()
+    expect({ completes: calls.completes, fails: calls.fails, releases: calls.releases }).toEqual({
+      completes: [],
+      fails: [],
+      releases: [],
+    })
+  })
+
+  for (const failure of [new ThreaApiError("unavailable", 500, "INTERNAL"), new Error("network unavailable")]) {
+    const label = failure instanceof ThreaApiError ? "API 500" : "network error"
+    it(`keeps executing after a transient status-report ${label}`, async () => {
+      const { client, calls } = stubClient({ queue: [[summary("dlg_live")], []] })
+      client.reportStatus = async () => {
+        throw failure
+      }
+      const runner = makeRunner(client, async (_task, ctx) => {
+        await ctx.reportStatus("working")
+        return { resultMarkdown: "done" }
+      })
+      runner.start()
+      await flush()
+      await runner.stop()
+      expect({
+        completes: calls.completes.map((call) => call.id),
+        fails: calls.fails,
+        releases: calls.releases,
+      }).toEqual({
+        completes: ["dlg_live"],
+        fails: [],
+        releases: [],
+      })
+    })
+
+    it(`keeps executing after a transient heartbeat ${label}`, async () => {
+      const { client, calls } = stubClient({ queue: [[summary("dlg_live")], []] })
+      client.heartbeat = async () => {
+        calls.heartbeats += 1
+        throw failure
+      }
+      const runner = makeRunner(
+        client,
+        async () => {
+          await new Promise((resolve) => setTimeout(resolve, 20))
+          return { resultMarkdown: "done" }
+        },
+        { heartbeatMs: 5 }
+      )
+      runner.start()
+      await new Promise((resolve) => setTimeout(resolve, 40))
+      await runner.stop()
+      expect({
+        completes: calls.completes.map((call) => call.id),
+        fails: calls.fails,
+        releases: calls.releases,
+      }).toEqual({
+        completes: ["dlg_live"],
+        fails: [],
+        releases: [],
+      })
+    })
+  }
+
+  for (const trigger of ["heartbeat", "status"] as const) {
+    for (const late of ["resolve", "reject"] as const) {
+      it(`drains after ${trigger} 404 with a non-cooperative executor and safely consumes late ${late}`, async () => {
+        let settleOld!: (value?: { resultMarkdown: string }) => void
+        let rejectOld!: (error: Error) => void
+        let listCount = 0
+        const completes: string[] = []
+        const fails: string[] = []
+        const releases: string[] = []
+        const client = {
+          listOpen: async () => {
+            listCount += 1
+            if (listCount === 1) return [summary("dlg_old")]
+            if (listCount === 2) return [summary("dlg_new")]
+            return []
+          },
+          claim: async (id: string) => claimed(id),
+          heartbeat: async (id: string) => {
+            if (trigger === "heartbeat" && id === "dlg_old") throw new ThreaApiError("lost", 404, "NOT_FOUND")
+          },
+          reportStatus: async (id: string) => {
+            if (trigger === "status" && id === "dlg_old") throw new ThreaApiError("lost", 404, "NOT_FOUND")
+          },
+          complete: async (id: string) => {
+            completes.push(id)
+            return summary(id)
+          },
+          fail: async (id: string) => {
+            fails.push(id)
+            return summary(id)
+          },
+          release: async (id: string) => {
+            releases.push(id)
+            return summary(id)
+          },
+        } as unknown as DelegationClient
+        const runner = makeRunner(
+          client,
+          async (task, ctx) => {
+            if (task.id === "dlg_new") return { resultMarkdown: "done" }
+            if (trigger === "status") await ctx.reportStatus("working")
+            return new Promise((resolve, reject) => {
+              settleOld = resolve
+              rejectOld = reject
+            })
+          },
+          { heartbeatMs: 2 }
+        )
+
+        runner.start()
+        await new Promise((resolve) => setTimeout(resolve, 30))
+        expect(completes).toEqual(["dlg_new"])
+        if (late === "resolve") settleOld({ resultMarkdown: "stale" })
+        else rejectOld(new Error("late failure"))
+        await flush()
+        await runner.stop()
+        expect({ completes, fails, releases }).toEqual({ completes: ["dlg_new"], fails: [], releases: [] })
+      })
+    }
+  }
+
+  it("controlled stop aborts active work and releases instead of completing or failing", async () => {
+    const { client, calls } = stubClient({ queue: [[summary("dlg_active")], []] })
+    let started!: () => void
+    const executionStarted = new Promise<void>((resolve) => (started = resolve))
+    const runner = makeRunner(client, async (_task, ctx) => {
+      started()
+      await new Promise<void>((resolve) => ctx.signal.addEventListener("abort", () => resolve(), { once: true }))
+      return { resultMarkdown: "must not complete" }
+    })
+    runner.start()
+    await executionStarted
+    await runner.stop()
+    expect({ completes: calls.completes, fails: calls.fails, releases: calls.releases }).toEqual({
+      completes: [],
+      fails: [],
+      releases: [{ id: "dlg_active", token: "token-dlg_active" }],
+    })
   })
 
   it("does nothing after stop()", async () => {

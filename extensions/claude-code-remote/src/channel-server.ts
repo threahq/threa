@@ -522,7 +522,6 @@ export class ChannelServer {
     const stopping = this.delegations?.stop(reason, { strict: true }) ?? Promise.resolve()
 
     if (force) {
-      this.failOpenDelegations(reason)
       await stopping
       return
     }
@@ -563,10 +562,6 @@ export class ChannelServer {
     this.shuttingDown = true
     this.tracer.stop()
     this.carryOn?.stop()
-    // Fail an in-flight delegation loudly (its executor promise rejects →
-    // the runner posts the failure) rather than stranding the claim until the
-    // 15-minute lease sweep. stop() resolves after that fail report lands.
-    this.failOpenDelegations("Claude Code channel shut down mid-delegation")
     await this.delegations?.stop()
     for (const [, open] of this.openPermissions) clearTimeout(open.cleanup)
     this.openPermissions.clear()
@@ -621,12 +616,17 @@ export class ChannelServer {
           )
         }
         arm()
+        const onAbort = () => reject(new Error("Delegation claim lost"))
+        ctx.signal.addEventListener("abort", onAbort, { once: true })
         this.openDelegations.set(task.id, {
           resolve,
           reject,
           ctx,
           keepAlive: arm,
-          clear: () => clearTimeout(deadline),
+          clear: () => {
+            clearTimeout(deadline)
+            ctx.signal.removeEventListener("abort", onAbort)
+          },
         })
         void this.notify("notifications/claude/channel", {
           content: formatDelegationContent(task),
@@ -638,11 +638,6 @@ export class ChannelServer {
       this.openDelegations.get(task.id)?.clear()
       this.openDelegations.delete(task.id)
     }
-  }
-
-  private failOpenDelegations(reason: string): void {
-    // Entries remove themselves via each executor's finally.
-    for (const [, open] of this.openDelegations) open.reject(new Error(reason))
   }
 
   // --- Turn delivery ----------------------------------------------------------
