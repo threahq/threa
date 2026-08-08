@@ -316,7 +316,7 @@ describe("shouldEmitFullTrace", () => {
     expect(__testing.shouldEmitFullTrace(invocation({ sealing: sealingState }))).toBe(true)
   })
 
-  test("the toggle opts a sealed turn back to redacted", () => {
+  test("the toggle opts a sealed turn out of full detail", () => {
     __testing.setConfigForTesting({ ...BASE_CONFIG, sealedFullTrace: false })
     expect(__testing.shouldEmitFullTrace(invocation({ sealing: sealingState }))).toBe(false)
   })
@@ -328,9 +328,21 @@ describe("shouldEmitFullTrace", () => {
   })
 })
 
+describe("traceModeForInvocation", () => {
+  test("uses command-only mode for plaintext when configured", () => {
+    __testing.setConfigForTesting({ ...BASE_CONFIG, traceMode: "commands" })
+    expect(__testing.traceModeForInvocation(invocation())).toBe("commands")
+  })
+
+  test("sealed full-trace opt-out uses the configured base mode", () => {
+    __testing.setConfigForTesting({ ...BASE_CONFIG, traceMode: "commands", sealedFullTrace: false })
+    expect(__testing.traceModeForInvocation(invocation({ sealing: sealingState }))).toBe("commands")
+  })
+})
+
 describe("full trace detail (sealed turns)", () => {
   test("tool_call carries the real shell command when full", () => {
-    const payload = JSON.parse(__testing.formatToolCallTrace(bashCall("rm -rf ./build && make"), true)) as {
+    const payload = JSON.parse(__testing.formatToolCallTrace(bashCall("rm -rf ./build && make"), "full")) as {
       sections: Array<{ label: string; body: string; lang: string | null }>
     }
     expect(payload.sections).toEqual([{ label: "Arguments", body: "rm -rf ./build && make", lang: "bash" }])
@@ -345,7 +357,9 @@ describe("full trace detail (sealed turns)", () => {
   })
 
   test("tool_result carries the real output when full, a size summary otherwise", () => {
-    const full = JSON.parse(__testing.formatToolResultTrace(bashResult("total 42\n-rw-r--r-- secrets.txt"), true)) as {
+    const full = JSON.parse(
+      __testing.formatToolResultTrace(bashResult("total 42\n-rw-r--r-- secrets.txt"), "full")
+    ) as {
       sections: Array<{ label: string; body: string }>
     }
     expect(full.sections[0]).toMatchObject({ label: "Output", body: "total 42\n-rw-r--r-- secrets.txt" })
@@ -359,7 +373,7 @@ describe("full trace detail (sealed turns)", () => {
 
   test("tool errors keep real details when full, drop them when redacted", () => {
     const full = JSON.parse(
-      __testing.formatToolResultTrace(bashResult("ENOENT: /home/kris/.aws/credentials", true), true)
+      __testing.formatToolResultTrace(bashResult("ENOENT: /home/kris/.aws/credentials", true), "full")
     ) as { sections: Array<{ label: string; body: string }> }
     expect(full.sections[0]).toMatchObject({ label: "Error output", body: "ENOENT: /home/kris/.aws/credentials" })
 
@@ -383,7 +397,7 @@ describe("full trace detail (sealed turns)", () => {
 
   test("a full trace uses the roomier sealed clamp instead of the 10K plaintext cap", () => {
     const bigOutput = "x".repeat(30_000)
-    const payload = __testing.formatToolResultTrace(bashResult(bigOutput), true)
+    const payload = __testing.formatToolResultTrace(bashResult(bigOutput), "full")
     expect(payload.length).toBeGreaterThan(10_000)
     expect(payload).toContain(bigOutput.slice(0, 1000))
   })

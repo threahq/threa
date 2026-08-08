@@ -43,6 +43,82 @@ describe("Pi remote trace safety", () => {
     )
   })
 
+  test("commands mode shows only the bash command input", () => {
+    const trace = __testing.formatToolCallTrace(
+      {
+        toolName: "bash",
+        toolCallId: "call_1",
+        input: { command: "bun test ./src/trace.test.ts", timeout: 30_000 },
+      } as never,
+      "commands"
+    )
+    const payload = JSON.parse(trace) as {
+      headline: string
+      sections: Array<{ label: string; body: string; lang: string | null }>
+    }
+
+    expect(payload.headline).toBe("Running bun test ./src/trace.test.ts")
+    expect(payload.sections).toEqual([{ label: "Details", body: "bun test ./src/trace.test.ts", lang: "bash" }])
+    expect(trace).not.toContain("timeout")
+  })
+
+  test("commands mode keeps multiline command bodies out of the headline", () => {
+    const trace = __testing.formatToolCallTrace(
+      {
+        toolName: "bash",
+        toolCallId: "call_1",
+        input: { command: "set -e\nbun test ./src/trace.test.ts\nprintf 'done\\n'" },
+      } as never,
+      "commands"
+    )
+    const payload = JSON.parse(trace) as { headline: string; sections: Array<{ body: string }> }
+
+    expect(payload.headline).toBe("Running set -e (+2 lines)")
+    expect(payload.headline).not.toContain("bun test")
+    expect(payload.sections[0]!.body).toContain("bun test ./src/trace.test.ts")
+  })
+
+  test("commands mode bounds long commands and headline size", () => {
+    const trace = __testing.formatToolCallTrace(
+      {
+        toolName: "bash",
+        toolCallId: "call_1",
+        input: { command: `printf '%s' '${"x".repeat(10_000)}'` },
+      } as never,
+      "commands"
+    )
+    const payload = JSON.parse(trace) as { headline: string; sections: Array<{ body: string }> }
+
+    expect(payload.headline.length).toBeLessThanOrEqual(180)
+    expect(payload.sections[0]!.body.length).toBeLessThan(2_200)
+    expect(payload.sections[0]!.body).toContain("trace content truncated")
+  })
+
+  test("commands mode keeps write bodies and tool output hidden", () => {
+    const call = __testing.formatToolCallTrace(
+      {
+        toolName: "write",
+        toolCallId: "call_1",
+        input: { path: "src/config.ts", content: "API_KEY=sk-secret-value" },
+      } as never,
+      "commands"
+    )
+    const result = __testing.formatToolResultTrace(
+      {
+        toolName: "bash",
+        toolCallId: "call_1",
+        isError: false,
+        content: "API_KEY=sk-secret-value",
+      } as never,
+      "commands"
+    )
+
+    expect(call).toContain("File contents and patches omitted for safety")
+    expect(call).not.toContain("sk-secret-value")
+    expect(result).toContain("Tool output omitted for safety")
+    expect(result).not.toContain("sk-secret-value")
+  })
+
   test("omits tool result bodies while preserving output size telemetry", () => {
     const trace = __testing.formatToolResultTrace({
       toolName: "bash",
@@ -486,7 +562,8 @@ describe("Pi remote trace safety", () => {
         "apiKey": " threa_bk_test ",
         "pollMs": 1500,
         "defaultDisplayName": " Local Pi ",
-        "defaultLabel": " Pi remote "
+        "defaultLabel": " Pi remote ",
+        "traceMode": "commands"
       }`)
     ).toEqual({
       baseUrl: "https://app.threa.io/",
@@ -495,7 +572,19 @@ describe("Pi remote trace safety", () => {
       pollMs: 1500,
       defaultDisplayName: "Local Pi",
       defaultLabel: "Pi remote",
+      traceMode: "commands",
     })
+  })
+
+  test("rejects unsupported trace modes in pasted configuration", () => {
+    expect(() =>
+      __testing.parseConfigPatch(`{
+        "baseUrl": "https://app.threa.io",
+        "workspaceId": "ws_123",
+        "apiKey": "threa_bk_test",
+        "traceMode": "everything"
+      }`)
+    ).toThrow("traceMode must be headline or commands")
   })
 
   test("preserves an existing wsCursor when migrating session state", () => {

@@ -78,13 +78,13 @@ function sanitizeTraceSection(section: unknown): SafeTraceSection | null {
 }
 
 // Trace step content is stored as-received from the bot runtime, after
-// best-effort sanitization. The official Pi extension is the security
-// boundary — it is responsible for never forwarding raw tool stdout, file
-// contents, or credentials. Third-party runtimes inherit the trust level
-// of the API key holder; the allowlist + regex here is defense-in-depth,
-// not a guarantee. Do not loosen this (relax the allowlist, drop the
-// length caps, or pass arbitrary fields through) without revisiting the
-// threat model — see extensions/pi-remote/ for the trusted-runtime
+// best-effort sanitization. The official harnesses default to headline-only
+// traces and never send tool-result or write/edit payload bodies as dedicated
+// plaintext sections. Their explicit command mode sends one bounded shell-command
+// field through Details. A command can itself contain credentials or heredoc
+// content, so the regex below remains defense-in-depth rather than a guarantee. Third-party runtimes inherit the trust level of the API key
+// holder. Do not relax the allowlist, length caps, or per-label redaction without
+// revisiting the threat model; see extensions/pi-remote/ for the trusted-runtime
 // contract.
 export function sanitizeInvocationStepContent(content: string): string {
   const redacted = redactSensitiveText(content)

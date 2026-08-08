@@ -64,6 +64,7 @@ export THREA_BASE_URL=https://app.threa.io        # default
 export THREA_DISPLAY_NAME="Claude Code"           # prefix; the project dir is appended
 export THREA_DEFAULT_LABEL="coding"                # label applied to scratchpads this channel creates
 export THREA_PERMISSION_RELAY=1                    # 1 (default) to relay approvals, 0 to disable
+# export THREA_TRACE_MODE=commands                  # optional: include Bash commands in plaintext traces
 ```
 
 `~/.claude/threa-channel/config.json`:
@@ -75,7 +76,8 @@ export THREA_PERMISSION_RELAY=1                    # 1 (default) to relay approv
   "apiKey": "threa_bk_...",
   "displayName": "Claude Code",
   "defaultLabel": "coding",
-  "permissionRelay": true
+  "permissionRelay": true,
+  "traceMode": "headline"
 }
 ```
 
@@ -112,6 +114,14 @@ Open the scratchpad in Threa and type a message. No `@`-mention needed: the bot 
 For harness-managed sessions, `/kick` asks harnessd to send Enter to the session's recorded tmux pane. Use it to accept or move past a blocking Claude Code prompt without opening the terminal. `/reconnect [--force]` is offered only while the exact linked Claude runtime is live in tmux; after acknowledging, it asks harnessd to replace the pane process and resume the same native session. It is not offline recovery and is unavailable after the channel disconnects.
 
 `/key <name>` sends one key to the exact live linked Claude pane. Allowed names are `escape`, `enter`, `up`, `down`, `left`, `right`, `tab`, `backspace`, `ctrl-c`, `ctrl-d`, and `ctrl-u`. Names are case-sensitive; text, aliases, sequences, and repeats are rejected.
+
+## Trace detail
+
+Plaintext traces default to `traceMode: "headline"`. This records tool categories and safe file summaries but hides shell commands, write/edit bodies, and tool results.
+
+Set `traceMode: "commands"` or `THREA_TRACE_MODE=commands` to include the Bash command field. The command is capped at 2,000 characters; other tool inputs and every tool result remain hidden. Multiline commands show only their first line in the headline; the bounded command stays in the collapsed Details section. Inline scripts and heredocs are part of that command and may appear up to the cap. On a plaintext scratchpad, the command is sent to Threa and stored with the trace, so leave headline mode enabled when commands may contain credentials or file content.
+
+Sealed turns still use full trace detail by default because the trace content is encrypted. Set `sealedFullTrace: false` to use the configured `traceMode` on sealed turns too. For command-only traces everywhere, use `traceMode: "commands"` with `sealedFullTrace: false`.
 
 ## Permission relay
 
@@ -165,6 +175,8 @@ Push delivery needs `THREA_BASE_URL` to be the app origin — the workspace rout
 | `THREA_COLD_START_IF_MISSING`   | `coldStartIfMissing`   | `create`               | Missing-link behavior on cold start; harness revival sets `error` to prevent creation    |
 | `THREA_EXPECTED_ROOT_STREAM_ID` | `expectedRootStreamId` | (none)                 | Reject a returned session link to another root; set by harness revival                   |
 | `THREA_PERMISSION_RELAY`        | `permissionRelay`      | `true`                 | Relay tool-approval prompts into the scratchpad                                          |
+| `THREA_TRACE_MODE`              | `traceMode`            | `headline`             | `headline` hides commands; `commands` includes only Bash commands in plaintext traces    |
+| `THREA_SEALED_FULL_TRACE`       | `sealedFullTrace`      | `true`                 | Full encrypted traces; `false` uses `traceMode` for sealed turns                         |
 | `THREA_POLL_MS`                 | `pollMs`               | `3000`                 | Backstop claim poll (the socket pushes faster)                                           |
 | `THREA_IDLE_TIMEOUT_MS`         | `idleTimeoutMs`        | `3600000`              | Force-close a turn after this much inactivity (each `send` / approval resets it)         |
 | `THREA_DELEGATIONS`             | `delegations`          | `false`                | Run the workspace delegation queue in this session (see Delegations)                     |
@@ -194,7 +206,7 @@ Sealed-turn differences: `THREA_ATTACH:` files are encrypted locally under a fre
 
 ## Limitations
 
-- The per-tool trace comes from tailing the session transcript (`~/.claude/projects/<cwd>/<session>.jsonl`), not from lifecycle hooks like Pi's. On plaintext turns tool payloads are redacted to headlines + size telemetry and thinking bodies are withheld; Claude's own narration (the prose it writes between tool calls, including a final message on a turn that ends without `reply`) ships in full, matching Pi. Sealed turns ship full tool detail (it's ciphertext to the server; opt back out with `sealedFullTrace: false`).
+- The per-tool trace comes from tailing the session transcript (`~/.claude/projects/<cwd>/<session>.jsonl`), not from lifecycle hooks like Pi's. Plaintext turns use the configured `traceMode`; thinking bodies and tool results stay hidden in both plaintext modes. Claude's narration (including a final message on a turn that ends without `reply`) ships in full, matching Pi. Sealed turns ship full tool detail unless `sealedFullTrace` is false.
 - Claude can't `send` a heartbeat while blocked on a single long tool call (e.g. a 40-minute test run). The idle timeout must exceed your longest single operation — raise `THREA_IDLE_TIMEOUT_MS` if needed. A turn that goes idle without a `reply` is force-closed (silently if it already `send`-ed something, otherwise with a short "ended without a reply" notice).
 - One turn at a time: a message sent while Claude is still working is handled after the current reply (a permission verdict is the exception and goes through immediately).
 

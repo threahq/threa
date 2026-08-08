@@ -77,6 +77,7 @@ function makeConfig(): RemoteSessionConfig {
     pollMs: 60_000,
     idleTimeoutMs: 60_000,
     sealedFullTrace: true,
+    traceMode: "headline",
   }
 }
 

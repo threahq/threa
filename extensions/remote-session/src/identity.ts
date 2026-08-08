@@ -1,5 +1,9 @@
 import { createHash } from "node:crypto"
 
+export const TRACE_MODES = ["headline", "commands"] as const
+const TRACE_MODE_SET: ReadonlySet<string> = new Set(TRACE_MODES)
+export type TraceMode = (typeof TRACE_MODES)[number]
+
 export interface RemoteSessionConfig {
   baseUrl: string
   workspaceId: string
@@ -39,10 +43,17 @@ export interface RemoteSessionConfig {
   /**
    * Emit FULL trace detail (real commands, file contents, outputs) on sealed
    * (E2EE) turns — safe because sealed step content is ciphertext the server
-   * can't read. Default on; set false to keep sealed traces redacted too. Has
-   * no effect on plaintext turns, which always stay redacted.
+   * can't read. Default on; set false to use `traceMode` on sealed turns too.
+   * Has no effect on plaintext turns, which never emit full detail.
    */
   sealedFullTrace: boolean
+  /**
+   * Base trace detail. `headline` keeps shell commands hidden; `commands`
+   * includes only the Bash command while file bodies, patches, and every tool
+   * result stay hidden. Used for plaintext turns and sealed turns when
+   * `sealedFullTrace` is false. Defaults to `headline`.
+   */
+  traceMode: TraceMode
   /**
    * Create this connector's linked scratchpad end-to-end encrypted: the harness
    * mints the stream key and wraps it to the bot owner's UIK + its own BIK, so
@@ -118,6 +129,7 @@ export interface RawConfig {
   bikPath?: unknown
   e2e?: unknown
   sealedFullTrace?: unknown
+  traceMode?: unknown
   delegations?: unknown
 }
 
@@ -155,6 +167,11 @@ function parseNum(value: unknown, fallback: number, min: number): number {
   return Number.isFinite(n) ? Math.max(min, Math.floor(n)) : fallback
 }
 
+function parseTraceMode(value: unknown): TraceMode | undefined {
+  const mode = str(value)?.toLowerCase()
+  return mode && TRACE_MODE_SET.has(mode) ? (mode as TraceMode) : undefined
+}
+
 export interface LoadConfigInput {
   env: Record<string, string | undefined>
   cwd: string
@@ -187,6 +204,11 @@ export function loadConfig(input: LoadConfigInput, identity: ConnectorIdentity):
     str(env.THREA_DISPLAY_NAME) ?? str(file.displayName)
   )
   const defaultLabel = str(env.THREA_DEFAULT_LABEL) ?? str(file.defaultLabel)
+  const configuredTraceMode = str(env.THREA_TRACE_MODE) ?? file.traceMode
+  const traceMode = configuredTraceMode === undefined ? "headline" : parseTraceMode(configuredTraceMode)
+  if (!traceMode) {
+    return { error: "Invalid traceMode: expected headline or commands." }
+  }
   const seed = `${hostname}:${cwd}`
   const instanceId = sanitizeId(
     str(env.THREA_INSTANCE_ID) ?? str(file.instanceId) ?? deriveStableId(identity.idPrefix, seed)
@@ -217,6 +239,7 @@ export function loadConfig(input: LoadConfigInput, identity: ConnectorIdentity):
       bikPath: str(env.THREA_BIK_PATH) ?? str(file.bikPath),
       e2e: parseBool(env.THREA_E2E ?? file.e2e, false),
       sealedFullTrace: parseBool(env.THREA_SEALED_FULL_TRACE ?? file.sealedFullTrace, true),
+      traceMode,
       delegations: parseBool(env.THREA_DELEGATIONS ?? file.delegations, false),
     },
   }

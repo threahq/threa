@@ -81,6 +81,7 @@ describe("loadConfig", () => {
       expect(result.config.coldStartIfArchived).toBe("replace")
       expect(result.config.coldStartIfMissing).toBe("create")
       expect(result.config.delegations).toBe(false)
+      expect(result.config.traceMode).toBe("headline")
       // Same host+cwd resolves to the same scratchpad on the next launch.
       const again = loadConfig({ ...base, env: { THREA_WORKSPACE_ID: "ws_1", THREA_API_KEY: "threa_bk_x" } }, IDENTITY)
       if ("config" in again) expect(again.config.instanceId).toBe(result.config.instanceId)
@@ -200,6 +201,43 @@ describe("loadConfig", () => {
       expect(result.config.permissionRelay).toBe(false)
       expect(result.config.pollMs).toBe(1000)
     }
+  })
+
+  test("resolves trace mode from env or file, with env winning", () => {
+    const fromFile = loadConfig(
+      {
+        ...base,
+        env: { THREA_WORKSPACE_ID: "ws_1", THREA_API_KEY: "threa_bk_x" },
+        file: { traceMode: "commands" },
+      },
+      IDENTITY
+    )
+    if ("config" in fromFile) expect(fromFile.config.traceMode).toBe("commands")
+
+    const envWins = loadConfig(
+      {
+        ...base,
+        env: {
+          THREA_WORKSPACE_ID: "ws_1",
+          THREA_API_KEY: "threa_bk_x",
+          THREA_TRACE_MODE: "headline",
+        },
+        file: { traceMode: "commands" },
+      },
+      IDENTITY
+    )
+    if ("config" in envWins) expect(envWins.config.traceMode).toBe("headline")
+  })
+
+  test("rejects an unsupported trace mode", () => {
+    const result = loadConfig(
+      {
+        ...base,
+        env: { THREA_WORKSPACE_ID: "ws_1", THREA_API_KEY: "threa_bk_x", THREA_TRACE_MODE: "everything" },
+      },
+      IDENTITY
+    )
+    expect(result).toEqual({ error: "Invalid traceMode: expected headline or commands." })
   })
 
   test("delegations opt-in via env or file", () => {

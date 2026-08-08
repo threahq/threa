@@ -88,6 +88,29 @@ describe("sanitizeInvocationStepContent", () => {
     expect(JSON.stringify(result)).not.toContain("secret")
   })
 
+  test("preserves command-only Details while continuing to redact Output", () => {
+    const payload = JSON.stringify({
+      format: PI_TOOL_TRACE_FORMAT,
+      headline: "Running bun test ./src/trace.test.ts",
+      sections: [
+        { label: PiToolTraceSectionLabels.DETAILS, body: "bun test ./src/trace.test.ts", lang: "bash" },
+        { label: PiToolTraceSectionLabels.OUTPUT, body: "secret test output", lang: null },
+      ],
+    })
+
+    const result = parse(sanitizeInvocationStepContent(payload))
+    const sections = result.sections as Array<Record<string, unknown>>
+
+    expect(result.headline).toBe("Running bun test ./src/trace.test.ts")
+    expect(sections[0]).toEqual({
+      label: PiToolTraceSectionLabels.DETAILS,
+      body: "bun test ./src/trace.test.ts",
+      lang: "bash",
+    })
+    expect(sections[1]!.body).toBe("Tool output omitted for safety.")
+    expect(JSON.stringify(result)).not.toContain("secret test output")
+  })
+
   test("regex-redacts the Details body and the headline", () => {
     const payload = JSON.stringify({
       format: PI_TOOL_TRACE_FORMAT,

@@ -13,11 +13,18 @@ arrive sealed: the extension decrypts the trigger + history locally, runs the
 turn, and seals every reply and trace step back under the stream key — the
 server only ever stores ciphertext.
 
+## Trace detail
+
+Plaintext traces default to `traceMode: "headline"`. This records tool categories and safe file summaries but hides shell commands, file bodies, patches, and tool results.
+
+Set `traceMode: "commands"` in `~/.pi/agent/threa-remote.json` to include only the Bash command field. Commands are capped at 2,000 characters; write/edit payloads and every tool result remain hidden. Multiline commands show only their first line in the headline; the bounded command stays in the collapsed Details section. Inline scripts and heredocs are part of that command and may appear up to the cap. Plaintext commands are sent to Threa and stored with the trace, so leave headline mode enabled when commands may contain credentials or file content.
+
 Because the server can't read sealed step content, sealed turns default to FULL
 trace detail (real commands, file contents, tool output) instead of the
-"omitted for safety" redactions plaintext turns keep. Set `sealedFullTrace:
-false` in the config to opt sealed traces back to redacted; the toggle can never
-enable full detail on a plaintext turn. Attachments (`THREA_ATTACH:`) work on
+"omitted for safety" redactions headline mode keeps. Set `sealedFullTrace:
+false` to use the configured `traceMode` on sealed turns too. For command-only
+traces everywhere, use `traceMode: "commands"` with `sealedFullTrace: false`.
+The toggle can never enable full detail on a plaintext turn. Attachments (`THREA_ATTACH:`) work on
 sealed turns too: the file is encrypted locally under a fresh single-use key,
 only ciphertext is uploaded (placeholder name/mime on the server), and the key
 rides sealed inside the reply payload — inbound attachments are likewise

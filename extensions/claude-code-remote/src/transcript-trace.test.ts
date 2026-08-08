@@ -12,7 +12,7 @@ import {
   type TraceFrame,
 } from "./transcript-trace"
 
-function ctx(mode: "headline" | "full" = "headline"): MapContext {
+function ctx(mode: "headline" | "commands" | "full" = "headline"): MapContext {
   return { mode, toolHeadlines: new Map() }
 }
 
@@ -182,6 +182,90 @@ describe("mapTranscriptLine redaction (headline mode)", () => {
       context
     )
     expect(steps[0]!.content.length).toBeLessThanOrEqual(9_500)
+  })
+})
+
+describe("mapTranscriptLine (commands mode)", () => {
+  test("shows only Bash's command field", () => {
+    const steps = mapTranscriptLine(
+      assistantLine([
+        {
+          type: "tool_use",
+          id: "toolu_commands_1",
+          name: "Bash",
+          input: { command: "bun test ./src/trace.test.ts", timeout: 30_000, description: "Run trace tests" },
+        },
+      ]),
+      ctx("commands")
+    )
+    const payload = JSON.parse(steps[0]!.content) as {
+      headline: string
+      sections: Array<{ label: string; body: string; lang: string | null }>
+    }
+
+    expect(payload.headline).toBe("Running bun test ./src/trace.test.ts")
+    expect(payload.sections).toEqual([{ label: "Details", body: "bun test ./src/trace.test.ts", lang: "bash" }])
+    expect(steps[0]!.content).not.toContain("timeout")
+    expect(steps[0]!.content).not.toContain("Run trace tests")
+  })
+
+  test("keeps multiline command bodies out of the headline", () => {
+    const steps = mapTranscriptLine(
+      assistantLine([
+        {
+          type: "tool_use",
+          id: "toolu_commands_multiline",
+          name: "Bash",
+          input: { command: "set -e\nbun test ./src/trace.test.ts\nprintf 'done\\n'" },
+        },
+      ]),
+      ctx("commands")
+    )
+    const payload = JSON.parse(steps[0]!.content) as { headline: string; sections: Array<{ body: string }> }
+
+    expect(payload.headline).toBe("Running set -e (+2 lines)")
+    expect(payload.headline).not.toContain("bun test")
+    expect(payload.sections[0]!.body).toContain("bun test ./src/trace.test.ts")
+  })
+
+  test("bounds long commands and headline size", () => {
+    const steps = mapTranscriptLine(
+      assistantLine([
+        {
+          type: "tool_use",
+          id: "toolu_commands_long",
+          name: "Bash",
+          input: { command: `printf '%s' '${"x".repeat(10_000)}'` },
+        },
+      ]),
+      ctx("commands")
+    )
+    const payload = JSON.parse(steps[0]!.content) as { headline: string; sections: Array<{ body: string }> }
+
+    expect(payload.headline.length).toBeLessThanOrEqual(180)
+    expect(payload.sections[0]!.body.length).toBeLessThan(2_200)
+    expect(payload.sections[0]!.body).toContain("truncated")
+  })
+
+  test("keeps non-Bash inputs and every tool result hidden", () => {
+    const context = ctx("commands")
+    const call = mapTranscriptLine(
+      assistantLine([
+        {
+          type: "tool_use",
+          id: "toolu_commands_2",
+          name: "Write",
+          input: { file_path: "/repo/config.ts", content: "API_KEY=sk-secret-value" },
+        },
+      ]),
+      context
+    )
+    const result = mapTranscriptLine(toolResultLine("toolu_commands_2", "API_KEY=sk-secret-value"), context)
+
+    expect(JSON.stringify(call)).toContain("File contents and patches omitted for safety")
+    expect(JSON.stringify(call)).not.toContain("sk-secret-value")
+    expect(JSON.stringify(result)).toContain("Tool output omitted for safety")
+    expect(JSON.stringify(result)).not.toContain("sk-secret-value")
   })
 })
 
