@@ -1,6 +1,6 @@
 import { Extension } from "@tiptap/core"
 import { Fragment, Slice, type Node as ProseMirrorNode } from "@tiptap/pm/model"
-import { Plugin, PluginKey, Selection, type EditorState, type Transaction } from "@tiptap/pm/state"
+import { NodeSelection, Plugin, PluginKey, Selection, type EditorState, type Transaction } from "@tiptap/pm/state"
 import { dropPoint } from "@tiptap/pm/transform"
 import { Decoration, DecorationSet, type EditorView } from "@tiptap/pm/view"
 import { LONG_PRESS_MOVE_TOLERANCE_PX, LONG_PRESS_THRESHOLD_MS } from "@/hooks/use-long-press"
@@ -34,6 +34,7 @@ interface PendingDrag {
   sourcePos: number
   startX: number
   startY: number
+  holdElapsed: boolean
   active: boolean
 }
 
@@ -329,7 +330,8 @@ class ComposerPillDragController {
     this.doc.addEventListener("touchcancel", this.onTouchCancel, true)
     this.longPressTimer = this.win.setTimeout(() => {
       if (!this.pending || this.pending.kind !== "touch") return
-      this.activate()
+      this.pending.holdElapsed = true
+      this.longPressTimer = null
     }, LONG_PRESS_THRESHOLD_MS)
   }
 
@@ -369,7 +371,9 @@ class ComposerPillDragController {
   private finish(x: number, y: number) {
     const drag = this.pending
     if (!drag?.active) {
+      const tappedPillPos = drag?.kind === "touch" && !drag.holdElapsed ? drag.sourcePos : null
       this.cancel()
+      if (tappedPillPos !== null) this.selectPill(tappedPillPos)
       return
     }
 
@@ -437,6 +441,15 @@ class ComposerPillDragController {
     this.view.dispatch(this.view.state.tr.setMeta(ComposerPillDragPluginKey, null).setMeta("addToHistory", false))
   }
 
+  private selectPill(pos: number) {
+    const node = this.view.state.doc.nodeAt(pos)
+    if (!isComposerPillNode(node) || !NodeSelection.isSelectable(node)) return
+    this.view.focus()
+    this.view.dispatch(
+      this.view.state.tr.setSelection(NodeSelection.create(this.view.state.doc, pos)).setMeta("pointer", true)
+    )
+  }
+
   private onMouseDown = (event: MouseEvent) => {
     if (!this.view.editable || event.button !== 0) return
     const pill = pillFromDom(this.view, event.target)
@@ -447,6 +460,7 @@ class ComposerPillDragController {
       sourcePos: pill.pos,
       startX: event.clientX,
       startY: event.clientY,
+      holdElapsed: false,
       active: false,
     })
   }
@@ -483,6 +497,7 @@ class ComposerPillDragController {
       sourcePos: pill.pos,
       startX: touch.clientX,
       startY: touch.clientY,
+      holdElapsed: false,
       active: false,
     })
   }
@@ -501,9 +516,14 @@ class ComposerPillDragController {
     const touch = touchById(event.touches, drag.id)
     if (!touch) return
     if (!drag.active) {
-      if (movedBeyondLongPressTolerance(drag, touch.clientX, touch.clientY)) this.cancel()
-      return
+      if (!movedBeyondLongPressTolerance(drag, touch.clientX, touch.clientY)) return
+      if (!drag.holdElapsed) {
+        this.cancel()
+        return
+      }
+      this.activate()
     }
+    if (!this.pending?.active) return
     if (event.cancelable) event.preventDefault()
     event.stopPropagation()
     this.updateDrop(touch.clientX, touch.clientY)
@@ -536,7 +556,16 @@ class ComposerPillDragController {
   }
 
   private onContextMenu = (event: MouseEvent) => {
-    if (this.pending?.kind === "touch") event.preventDefault()
+    if (this.pending?.kind !== "touch") return
+    if (this.pending.active) {
+      event.preventDefault()
+      return
+    }
+    this.pending.holdElapsed = true
+    if (this.longPressTimer !== null) {
+      this.win.clearTimeout(this.longPressTimer)
+      this.longPressTimer = null
+    }
   }
 
   private onNativeDragStart = (event: DragEvent) => {

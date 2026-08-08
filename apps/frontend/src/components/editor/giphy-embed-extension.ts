@@ -38,7 +38,7 @@ export const GiphyEmbedExtension = Node.create({
   name: "giphyEmbed",
   group: "inline",
   inline: true,
-  selectable: false,
+  selectable: true,
   atom: true,
   marks: "_",
 
