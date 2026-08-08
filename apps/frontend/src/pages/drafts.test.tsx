@@ -358,4 +358,18 @@ describe("put-away annotation (durable stash, chunk 4)", () => {
     const roamedRow = screen.getByText("roamed body").closest("a, button, li")
     expect(roamedRow?.textContent).not.toContain("Stashed")
   })
+
+  it("keeps the active preview when a durable marker remains on a locally loaded row", () => {
+    mockDrafts([
+      draft({ id: "c", displayName: "Charlie", isStashed: false, putAway: true, preview: "active-looking body" }),
+    ])
+    renderPage()
+
+    // A cross-device marker can coexist briefly with this device's pointer. The
+    // local loaded state wins: hiding this preview would leave an apparently
+    // active-looking row with a "Stashed" caption (and its preview discarded)
+    // until another sync transition happens.
+    expect(screen.getByText("active-looking body")).toBeInTheDocument()
+    expect(screen.queryByText("Stashed")).not.toBeInTheDocument()
+  })
 })
