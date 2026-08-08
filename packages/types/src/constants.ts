@@ -1,3 +1,12 @@
+export const TITLE_SOURCES = ["generated", "explicit", "legacy"] as const
+export type TitleSource = (typeof TITLE_SOURCES)[number]
+
+export const TitleSources = {
+  GENERATED: "generated",
+  EXPLICIT: "explicit",
+  LEGACY: "legacy",
+} as const satisfies Record<string, TitleSource>
+
 export const STREAM_TYPES = ["scratchpad", "channel", "dm", "thread", "system"] as const
 export type StreamType = (typeof STREAM_TYPES)[number]
 

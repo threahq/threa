@@ -105,13 +105,20 @@ export const E2eStreamsRepository = {
     if (sealed && Buffer.from(sealed.ciphertext, "base64").toString("base64") !== sealed.ciphertext) {
       throw new Error("updateSealedName: ciphertext is not canonical base64")
     }
-    const result = await db.query(sql`
-      UPDATE e2e_streams
-      SET name_ciphertext = ${sealed ? Buffer.from(sealed.ciphertext, "base64") : null},
-          name_envelope = ${sealed ? JSON.stringify(sealed.envelope) : null}
-      WHERE workspace_id = ${workspaceId} AND stream_id = ${streamId}
+    const result = await db.query<{ updated: boolean }>(sql`
+      WITH rollout_guard AS MATERIALIZED (
+        SELECT set_config('threa.coordinated_title_write', '1', true)
+      ), updated AS (
+        UPDATE e2e_streams
+        SET name_ciphertext = ${sealed ? Buffer.from(sealed.ciphertext, "base64") : null},
+            name_envelope = ${sealed ? JSON.stringify(sealed.envelope) : null}
+        FROM rollout_guard
+        WHERE workspace_id = ${workspaceId} AND stream_id = ${streamId}
+        RETURNING 1
+      )
+      SELECT EXISTS(SELECT 1 FROM updated) AS updated
     `)
-    return (result.rowCount ?? 0) > 0
+    return result.rows[0]?.updated ?? false
   },
 
   async getByStreamId(db: Querier, workspaceId: string, streamId: string): Promise<E2eStream | null> {
@@ -141,13 +148,22 @@ export const E2eStreamsRepository = {
     if (Buffer.from(sealed.ciphertext, "base64").toString("base64") !== sealed.ciphertext) {
       throw new Error("setSealedNameIfAbsent: ciphertext is not canonical base64")
     }
-    const result = await db.query(sql`
-      UPDATE e2e_streams
-      SET name_ciphertext = ${Buffer.from(sealed.ciphertext, "base64")},
-          name_envelope = ${JSON.stringify(sealed.envelope)}
-      WHERE workspace_id = ${workspaceId} AND stream_id = ${streamId} AND name_ciphertext IS NULL
+    const result = await db.query<{ updated: boolean }>(sql`
+      WITH rollout_guard AS MATERIALIZED (
+        SELECT set_config('threa.coordinated_title_write', '1', true)
+      ), updated AS (
+        UPDATE e2e_streams
+        SET name_ciphertext = ${Buffer.from(sealed.ciphertext, "base64")},
+            name_envelope = ${JSON.stringify(sealed.envelope)}
+        FROM rollout_guard
+        WHERE workspace_id = ${workspaceId}
+          AND stream_id = ${streamId}
+          AND name_ciphertext IS NULL
+        RETURNING 1
+      )
+      SELECT EXISTS(SELECT 1 FROM updated) AS updated
     `)
-    return (result.rowCount ?? 0) > 0
+    return result.rows[0]?.updated ?? false
   },
 
   /**

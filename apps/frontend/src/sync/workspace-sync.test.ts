@@ -1804,6 +1804,136 @@ describe("registerWorkspaceSocketHandlers", () => {
     subscribeStream: vi.fn(),
   }
 
+  it("revision-orders stream title events and ignores another workspace", async () => {
+    const queryClient = new QueryClient()
+    const current = makeStream("stream_title", {
+      displayName: "revision two",
+      displayNameSource: "explicit",
+      displayNameRevision: 2,
+    })
+    queryClient.setQueryData(
+      workspaceKeys.bootstrap("ws_1"),
+      makeBootstrap({ streams: [{ ...current, lastMessagePreview: null }] })
+    )
+    await db.streams.put({ ...current, _cachedAt: Date.now() })
+    const { socket, emit } = createTestSocket()
+    const cleanup = registerWorkspaceSocketHandlers(socket, "ws_1", queryClient, handlerRefs)
+
+    const title = () =>
+      queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap("ws_1"))?.streams[0]?.displayName
+    emit("stream:display_name_updated", {
+      workspaceId: "ws_1",
+      streamId: current.id,
+      displayName: "lower",
+      source: "generated",
+      revision: 1,
+    })
+    expect(title()).toBe("revision two")
+    emit("stream:display_name_updated", { workspaceId: "ws_1", streamId: current.id, displayName: "missing" })
+    expect(title()).toBe("revision two")
+    emit("stream:display_name_updated", {
+      workspaceId: "ws_other",
+      streamId: current.id,
+      displayName: "foreign",
+      source: "explicit",
+      revision: 3,
+    })
+    expect(title()).toBe("revision two")
+    emit("stream:display_name_updated", {
+      workspaceId: "ws_1",
+      streamId: current.id,
+      displayName: "equal",
+      source: "explicit",
+      revision: 2,
+    })
+    expect(title()).toBe("equal")
+    emit("stream:display_name_updated", {
+      workspaceId: "ws_1",
+      streamId: current.id,
+      displayName: "newer",
+      source: "generated",
+      revision: 3,
+    })
+    expect(title()).toBe("newer")
+    await vi.waitFor(async () => expect((await db.streams.get(current.id))?.displayName).toBe("newer"))
+    cleanup()
+  })
+
+  it("merges a delayed stream:created into cache and IndexedDB without regressing title fields", async () => {
+    const queryClient = new QueryClient()
+    const current = makeStream("stream_delayed_create", {
+      displayName: "new title",
+      displayNameSource: "explicit",
+      displayNameRevision: 4,
+      description: "old description",
+    })
+    queryClient.setQueryData(
+      workspaceKeys.bootstrap("ws_1"),
+      makeBootstrap({ streams: [{ ...current, lastMessagePreview: null }] })
+    )
+    await db.streams.put({ ...current, _cachedAt: Date.now() })
+    const { socket, emit } = createTestSocket()
+    const cleanup = registerWorkspaceSocketHandlers(socket, "ws_1", queryClient, handlerRefs)
+
+    emit("stream:created", {
+      workspaceId: "ws_1",
+      streamId: current.id,
+      stream: {
+        ...current,
+        displayName: "old title",
+        displayNameSource: "generated",
+        displayNameRevision: 2,
+        description: "new description",
+      },
+    })
+
+    const cached = queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap("ws_1"))?.streams[0]
+    expect(cached).toMatchObject({ displayName: "new title", displayNameRevision: 4, description: "new description" })
+    await vi.waitFor(async () =>
+      expect(await db.streams.get(current.id)).toMatchObject({
+        displayName: "new title",
+        displayNameRevision: 4,
+        description: "new description",
+      })
+    )
+    cleanup()
+  })
+
+  it("keeps a newer socket title when an older workspace bootstrap finishes later", async () => {
+    const newer = makeStream("stream_delayed_bootstrap", {
+      displayName: "socket title",
+      displayNameSource: "explicit",
+      displayNameRevision: 3,
+      description: "before fetch",
+    })
+    await db.streams.put({ ...newer, workspaceId: "ws_1", _cachedAt: Date.now() })
+    const stale = makeBootstrap({
+      streams: [
+        {
+          ...newer,
+          displayName: "stale bootstrap title",
+          displayNameSource: "generated",
+          displayNameRevision: 1,
+          description: "from delayed fetch",
+          lastMessagePreview: null,
+        },
+      ],
+    })
+
+    const { bootstrap } = await applyWorkspaceBootstrap("ws_1", stale, Date.now() - 1_000)
+
+    expect(bootstrap.streams[0]).toMatchObject({
+      displayName: "socket title",
+      displayNameRevision: 3,
+      description: "from delayed fetch",
+    })
+    expect(await db.streams.get(newer.id)).toMatchObject({
+      displayName: "socket title",
+      displayNameRevision: 3,
+      description: "from delayed fetch",
+    })
+  })
+
   it("does not run the INV-53 saved/scheduled reconnect invalidations on registration", () => {
     // The workspace catch-up cursor replays the missed user-scoped saved/
     // scheduled entries through these same handlers, so registration never

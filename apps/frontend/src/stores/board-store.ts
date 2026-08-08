@@ -3,6 +3,7 @@ import { useLiveQuery } from "dexie-react-hooks"
 import { db, type CachedBoardPost } from "@/db"
 import { deleteConversationMessages, pruneConversationMessagesToMembership } from "./conversation-messages-store"
 import type { AttachmentSummary, BoardPost, BoardScopeStreamType, ConversationWithStaleness } from "@threa/types"
+import { mergeConversationByTitleRevision } from "@/lib/title-merge"
 
 function lastActivityMs(conversation: { lastActivityAt: string }): number {
   const ms = Date.parse(conversation.lastActivityAt)
@@ -67,7 +68,17 @@ export function useBoardPost(conversationId: string | null): CachedBoardPost | n
  */
 export async function seedBoardPosts(workspaceId: string, posts: BoardPost[]): Promise<void> {
   if (posts.length === 0) return
-  await db.conversations.bulkPut(posts.map((post) => toCached(workspaceId, post)))
+  await db.transaction("rw", db.conversations, async () => {
+    const incoming = posts.map((post) => toCached(workspaceId, post))
+    const existing = await db.conversations.bulkGet(incoming.map((post) => post.id))
+    await db.conversations.bulkPut(
+      incoming.map((post, index) => {
+        const cached = existing[index]
+        if (!cached) return post
+        return { ...post, conversation: mergeConversationByTitleRevision(cached.conversation, post.conversation) }
+      })
+    )
+  })
 }
 
 /** The known facts about a board post the instant the send returns — enough to
@@ -294,9 +305,10 @@ export async function mergeBoardConversation(
     // opener — the row stays put meanwhile (no vanish-and-return motion).
     const openingMoved =
       memberIds !== null && existing.openingMessage !== null && !memberIds.has(existing.openingMessage.id)
+    const mergedConversation = mergeConversationByTitleRevision(existing.conversation, conversation)
     await db.conversations.put({
       ...existing,
-      conversation,
+      conversation: mergedConversation,
       recentMessages,
       // A kept cached set is still pruned to the new membership: an event that
       // omits the field but moves a message out must not leave it marked.

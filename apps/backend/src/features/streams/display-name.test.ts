@@ -39,14 +39,14 @@ describe("thread placeholder display names", () => {
 
   test("a generated thread name wins over any placeholder", () => {
     const result = getEffectiveDisplayName(
-      thread({ displayName: "API redesign", displayNameGeneratedAt: new Date() }),
+      thread({ displayName: "API redesign", displayNameSource: "generated", displayNameGeneratedAt: new Date() }),
       { parentStream: { slug: "general", displayName: null } }
     )
     expect(result).toEqual({ displayName: "API redesign", source: "generated" })
   })
 
   test("a name set at creation wins too, without an auto-namer timestamp", () => {
-    const result = getEffectiveDisplayName(thread({ displayName: "Handover" }), {
+    const result = getEffectiveDisplayName(thread({ displayName: "Handover", displayNameSource: "explicit" }), {
       parentStream: { slug: "general", displayName: null },
     })
     expect(result).toEqual({ displayName: "Handover", source: "explicit" })
@@ -73,13 +73,15 @@ describe("scratchpad display names", () => {
   // database — and `needsAutoNaming` (displayName === null) skipped them, so
   // nothing ever set the timestamp either.
   test("a name set at creation renders instead of the placeholder", () => {
-    const result = getEffectiveDisplayName(scratchpad({ displayName: "CC - threa.conversations-match-timeline" }))
+    const result = getEffectiveDisplayName(
+      scratchpad({ displayName: "CC - threa.conversations-match-timeline", displayNameSource: "explicit" })
+    )
     expect(result).toEqual({ displayName: "CC - threa.conversations-match-timeline", source: "explicit" })
   })
 
   test("an auto-generated name still reports itself as generated", () => {
     const result = getEffectiveDisplayName(
-      scratchpad({ displayName: "Board rollup", displayNameGeneratedAt: new Date() })
+      scratchpad({ displayName: "Board rollup", displayNameSource: "generated", displayNameGeneratedAt: new Date() })
     )
     expect(result).toEqual({ displayName: "Board rollup", source: "generated" })
   })

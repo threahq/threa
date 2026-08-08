@@ -18,6 +18,7 @@ import { useDraftScratchpads } from "./use-draft-scratchpads"
 import { useQueueDraftMessage } from "./use-queue-draft-message"
 import { generateClientId } from "./use-stream-or-draft"
 import { generateConversationId } from "@/lib/ids"
+import { mergeConversationByTitleRevision } from "@/lib/title-merge"
 import { serializeToMarkdown } from "@threa/prosemirror"
 import { type AttachmentSummary } from "./create-optimistic-bootstrap"
 import type { SplitGroupInput } from "@/api/conversations"
@@ -625,7 +626,9 @@ export function useConversations(workspaceId: string, streamId: string, options?
           if (!exists) {
             return [...old, payload.conversation]
           }
-          return old.map((c) => (c.id === payload.conversationId ? payload.conversation : c))
+          return old.map((c) =>
+            c.id === payload.conversationId ? mergeConversationByTitleRevision(c, payload.conversation) : c
+          )
         }
       )
     }
@@ -710,7 +713,11 @@ export function useReassignConversationMessage(workspaceId: string, streamId: st
       )
       queryClient.setQueryData(
         conversationKeys.list(workspaceId, streamId, {}),
-        (old: ConversationWithStaleness[] | undefined) => old?.map((c) => updatedById.get(c.id) ?? c)
+        (old: ConversationWithStaleness[] | undefined) =>
+          old?.map((c) => {
+            const incoming = updatedById.get(c.id)
+            return incoming ? mergeConversationByTitleRevision(c, incoming) : c
+          })
       )
       // Apply the returned aggregates to the board store now, so the board card /
       // panel re-file on the HTTP response instead of waiting for the socket echo
@@ -744,13 +751,20 @@ export function useSettleConversationMessage(workspaceId: string, streamId: stri
     onSuccess: ({ conversation, settlingMessageIds }) => {
       queryClient.setQueryData(
         conversationKeys.list(workspaceId, streamId, {}),
-        (old: ConversationWithStaleness[] | undefined) => old?.map((c) => (c.id === conversation.id ? conversation : c))
+        (old: ConversationWithStaleness[] | undefined) =>
+          old?.map((c) => (c.id === conversation.id ? mergeConversationByTitleRevision(c, conversation) : c))
       )
       void mergeBoardConversation(conversation.id, conversation, settlingMessageIds)
       const boardPostKey = conversationKeys.boardPost(conversation.id)
       if (queryClient.getQueryData(boardPostKey)) {
         queryClient.setQueryData<BoardPost>(boardPostKey, (prev) =>
-          prev ? { ...prev, conversation, settlingMessageIds } : prev
+          prev
+            ? {
+                ...prev,
+                conversation: mergeConversationByTitleRevision(prev.conversation, conversation),
+                settlingMessageIds,
+              }
+            : prev
         )
       }
     },
@@ -784,7 +798,10 @@ export function useReassignMessagesToConversation(workspaceId: string, streamId:
         conversationKeys.list(workspaceId, streamId, {}),
         (old: ConversationWithStaleness[] | undefined) => {
           if (!old) return old
-          const merged = old.map((c) => updatedById.get(c.id) ?? c)
+          const merged = old.map((c) => {
+            const incoming = updatedById.get(c.id)
+            return incoming ? mergeConversationByTitleRevision(c, incoming) : c
+          })
           // A minted destination isn't in the list yet — append it.
           return old.some((c) => c.id === conversation.id) ? merged : [...merged, conversation]
         }
@@ -828,7 +845,10 @@ export function useApplySplit(workspaceId: string, streamId: string) {
         conversationKeys.list(workspaceId, streamId, {}),
         (old: ConversationWithStaleness[] | undefined) => {
           if (!old) return old
-          const merged = old.map((c) => updatedById.get(c.id) ?? c)
+          const merged = old.map((c) => {
+            const incoming = updatedById.get(c.id)
+            return incoming ? mergeConversationByTitleRevision(c, incoming) : c
+          })
           // Minted conversations aren't in the list yet — append the new ones.
           const present = new Set(old.map((c) => c.id))
           return [...merged, ...newConversations.filter((c) => !present.has(c.id))]
@@ -901,7 +921,9 @@ export function useUpdateConversation(workspaceId: string) {
       void mergeBoardConversation(conversationId, conversation)
       const boardPostKey = conversationKeys.boardPost(conversationId)
       if (queryClient.getQueryData(boardPostKey)) {
-        queryClient.setQueryData<BoardPost>(boardPostKey, (prev) => (prev ? { ...prev, conversation } : prev))
+        queryClient.setQueryData<BoardPost>(boardPostKey, (prev) =>
+          prev ? { ...prev, conversation: mergeConversationByTitleRevision(prev.conversation, conversation) } : prev
+        )
       }
     },
   })

@@ -101,6 +101,7 @@ describe("ConversationRepository", () => {
           streamId: testStreamId,
           workspaceId: testWorkspaceId,
           topicSummary: "Discussion about testing",
+          topicSummarySource: "generated",
           completenessScore: 3,
           confidence: 0.85,
           status: ConversationStatuses.ACTIVE,
@@ -131,6 +132,7 @@ describe("ConversationRepository", () => {
           streamId: testStreamId,
           workspaceId: testWorkspaceId,
           topicSummary: "Findable conversation",
+          topicSummarySource: "generated",
         })
       })
 
@@ -177,6 +179,7 @@ describe("ConversationRepository", () => {
           streamId: localStreamId,
           workspaceId: testWorkspaceId,
           topicSummary: "First conversation",
+          topicSummarySource: "generated",
         })
       })
 
@@ -189,6 +192,7 @@ describe("ConversationRepository", () => {
           streamId: localStreamId,
           workspaceId: testWorkspaceId,
           topicSummary: "Second conversation",
+          topicSummarySource: "generated",
         })
       })
 
@@ -336,6 +340,7 @@ describe("ConversationRepository", () => {
           streamId: testStreamId,
           workspaceId: testWorkspaceId,
           topicSummary: "Workspace conversation",
+          topicSummarySource: "generated",
         })
       })
 
@@ -682,16 +687,54 @@ describe("ConversationRepository", () => {
           streamId: testStreamId,
           workspaceId: testWorkspaceId,
           topicSummary: "Original topic",
+          topicSummarySource: "generated",
         })
       })
 
       const updated = await withTransaction(pool, async (client) => {
-        return ConversationRepository.update(client, testWorkspaceId, convId, {
+        return ConversationRepository.updateTopicSummary(client, {
+          workspaceId: testWorkspaceId,
+          conversationId: convId,
           topicSummary: "Updated topic",
+          source: "explicit",
         })
       })
 
       expect(updated?.topicSummary).toBe("Updated topic")
+    })
+
+    test("expected revision, source, and workspace mismatches leave the topic unchanged", async () => {
+      const convId = conversationId()
+      const first = await withTransaction(pool, async (client) => {
+        await ConversationRepository.insert(client, {
+          id: convId,
+          streamId: testStreamId,
+          workspaceId: testWorkspaceId,
+          topicSummary: "Current topic",
+          topicSummarySource: "generated",
+        })
+        return ConversationRepository.findById(client, convId)
+      })
+
+      for (const guard of [
+        { workspaceId: testWorkspaceId, expectedRevision: first!.topicSummaryRevision! + 1 },
+        { workspaceId: testWorkspaceId, expectedSource: "explicit" as const },
+        { workspaceId: workspaceId(), expectedRevision: first!.topicSummaryRevision },
+      ]) {
+        expect(
+          await ConversationRepository.updateTopicSummary(pool, {
+            ...guard,
+            conversationId: convId,
+            topicSummary: "Stale topic",
+            source: "generated",
+          })
+        ).toBeNull()
+      }
+      expect(await ConversationRepository.findById(pool, convId)).toMatchObject({
+        topicSummary: "Current topic",
+        topicSummarySource: "generated",
+        topicSummaryRevision: first!.topicSummaryRevision,
+      })
     })
 
     test("returns null for non-existent conversation", async () => {
@@ -918,12 +961,16 @@ describe("ConversationRepository", () => {
           streamId: otherStreamId,
           workspaceId: otherWorkspaceId,
           topicSummary: "Foreign topic",
+          topicSummarySource: "generated",
         })
       })
 
       const result = await withTransaction(pool, async (client) => {
-        return ConversationRepository.update(client, testWorkspaceId, foreignConvId, {
+        return ConversationRepository.updateTopicSummary(client, {
+          workspaceId: testWorkspaceId,
+          conversationId: foreignConvId,
           topicSummary: "Hijacked topic",
+          source: "explicit",
         })
       })
 

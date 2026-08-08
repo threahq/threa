@@ -742,4 +742,47 @@ describe("useStreamOrDraft scratchpad rename (top-bar editor path)", () => {
     expect(update).toHaveBeenCalledWith("ws_1", streamId, { displayName: "Groceries" })
     expect(sealSpy).not.toHaveBeenCalled()
   })
+
+  it("does not let a delayed rename response replace a newer title revision", async () => {
+    const streamId = await seedScratchpad({
+      e2eEnabled: false,
+      displayName: "Newer socket title",
+      displayNameSource: "explicit",
+      displayNameRevision: 2,
+    })
+    const newer = (await db.streams.get(streamId))!
+    const delayed = {
+      ...newer,
+      displayName: "Stale response title",
+      displayNameRevision: 1,
+      _cachedAt: undefined,
+    }
+    const update = vi.fn().mockResolvedValue(delayed)
+    const queryClient = new QueryClient()
+    queryClient.setQueryData(streamKeys.detail("ws_1", streamId), newer)
+    queryClient.setQueryData(streamKeys.bootstrap("ws_1", streamId), { stream: newer })
+    queryClient.setQueryData(workspaceKeys.bootstrap("ws_1"), { streams: [newer] })
+
+    const { result } = renderHook(() => useStreamOrDraft("ws_1", streamId), {
+      wrapper: createWrapper(queryClient, { streamService: { update } }),
+    })
+    await waitFor(() => expect(result.current.stream?.id).toBe(streamId))
+
+    await act(async () => {
+      await result.current.rename("Attempted rename")
+    })
+
+    expect((await db.streams.get(streamId))?.displayName).toBe("Newer socket title")
+    expect(queryClient.getQueryData<{ displayName: string }>(streamKeys.detail("ws_1", streamId))?.displayName).toBe(
+      "Newer socket title"
+    )
+    expect(
+      queryClient.getQueryData<{ stream: { displayName: string } }>(streamKeys.bootstrap("ws_1", streamId))?.stream
+        .displayName
+    ).toBe("Newer socket title")
+    expect(
+      queryClient.getQueryData<{ streams: Array<{ displayName: string }> }>(workspaceKeys.bootstrap("ws_1"))?.streams[0]
+        ?.displayName
+    ).toBe("Newer socket title")
+  })
 })

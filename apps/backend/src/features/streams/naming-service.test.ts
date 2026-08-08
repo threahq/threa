@@ -72,6 +72,11 @@ describe("StreamNamingService", () => {
     spyOn(StreamRepository, "findByIdForUpdate").mockResolvedValue(mockStream as any)
     spyOn(StreamRepository, "list").mockResolvedValue([])
     spyOn(StreamRepository, "update").mockResolvedValue(undefined as any)
+    spyOn(StreamRepository, "updateDisplayName").mockResolvedValue({
+      ...mockStream,
+      displayNameSource: "generated",
+      displayNameRevision: 1,
+    } as any)
     spyOn(OutboxRepository, "insert").mockResolvedValue(undefined as any)
     spyOn(dbModule, "withClient").mockImplementation((_pool: unknown, fn: any) => fn({}))
     spyOn(dbModule, "withTransaction").mockImplementation((_pool: unknown, fn: any) => fn({}))
@@ -110,10 +115,10 @@ describe("StreamNamingService", () => {
       const result = await service.attemptAutoNaming("stream_123", false)
 
       expect(result).toBe(true)
-      expect(StreamRepository.update).toHaveBeenCalledWith({}, "stream_123", {
-        displayName: "Help Request",
-        displayNameGeneratedAt: expect.any(Date),
-      })
+      expect(StreamRepository.updateDisplayName).toHaveBeenCalledWith(
+        {},
+        expect.objectContaining({ streamId: "stream_123", displayName: "Help Request", source: "generated" })
+      )
     })
   })
 
@@ -142,7 +147,7 @@ describe("StreamNamingService", () => {
       const result = await service.attemptAutoNaming("stream_123", true)
 
       expect(result).toBe(true)
-      expect(StreamRepository.update).toHaveBeenCalled()
+      expect(StreamRepository.updateDisplayName).toHaveBeenCalled()
     })
   })
 
@@ -232,10 +237,10 @@ describe("StreamNamingService", () => {
 
       await service.attemptAutoNaming("stream_123", false)
 
-      expect(StreamRepository.update).toHaveBeenCalledWith({}, "stream_123", {
-        displayName: "Quoted Title",
-        displayNameGeneratedAt: expect.any(Date),
-      })
+      expect(StreamRepository.updateDisplayName).toHaveBeenCalledWith(
+        {},
+        expect.objectContaining({ streamId: "stream_123", displayName: "Quoted Title", source: "generated" })
+      )
     })
 
     test("should reject names that are too long", async () => {

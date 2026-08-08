@@ -7,6 +7,7 @@ import {
   AuthorTypes,
   E2E_PLACEHOLDER_CONTENT_MARKDOWN,
   ENCLAVE_CALLBACK_TOKEN_HEADER,
+  TitleSources,
   type EnclaveMidTurnMessage,
   type EnclaveMidTurnMessagesResponse,
   type EnclaveSessionHeartbeatResponse,
@@ -413,12 +414,23 @@ export function createEnclaveSessionHandlers({ pool, eventService, io, costServi
       if (!stream) throw new HttpError("Stream not found", { status: 404, code: "STREAM_NOT_FOUND" })
 
       await withTransaction(pool, async (client) => {
+        const locked = await StreamRepository.findByIdForUpdateBlocking(client, session.streamId)
+        if (!locked || locked.workspaceId !== stream.workspaceId || locked.displayNameSource !== null) return
         const set = await E2eStreamsRepository.setSealedNameIfAbsent(client, stream.workspaceId, session.streamId, {
           ciphertext: parsed.data.ciphertext,
           envelope: parsed.data.envelope,
         })
         if (!set) return
-        const updated = (await StreamRepository.findById(client, session.streamId)) ?? stream
+        const titled = await StreamRepository.updateDisplayName(client, {
+          workspaceId: stream.workspaceId,
+          streamId: session.streamId,
+          displayName: null,
+          source: TitleSources.GENERATED,
+          expectedRevision: locked.displayNameRevision,
+          expectedSource: null,
+        })
+        if (!titled) throw new Error("Sealed title metadata update lost its stream lock")
+        const updated = (await StreamRepository.findById(client, session.streamId)) ?? titled
         await OutboxRepository.insert(client, "stream:updated", {
           workspaceId: updated.workspaceId,
           streamId: updated.id,

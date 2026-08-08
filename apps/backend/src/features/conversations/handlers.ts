@@ -481,7 +481,13 @@ export function createConversationHandlers({
       // validateStreamAccess handles public visibility + thread root membership
       await streamService.validateStreamAccess(conversation.streamId, workspaceId, userId)
 
-      const result = await conversationService.updateConversation({ workspaceId, conversationId, topicSummary, status })
+      const result = await conversationService.updateConversation({
+        workspaceId,
+        conversationId,
+        topicSummary,
+        status,
+        actorUserId: userId,
+      })
       res.json(result)
     },
 

@@ -62,6 +62,7 @@ import type {
   BotInvocationTrigger,
   BotInvocationCapability,
   E2eActorKind,
+  TitleSource,
 } from "./constants"
 import type { ThreaDocument } from "./prosemirror"
 
@@ -220,6 +221,9 @@ export interface Stream {
   workspaceId: string
   type: StreamType
   displayName: string | null
+  displayNameSource?: TitleSource | null
+  displayNameRevision?: number
+  displayNameUpdatedByUserId?: string | null
   slug: string | null
   /** Markdown projection of the description (derived from `descriptionJson`). */
   description: string | null
@@ -727,6 +731,9 @@ export interface Conversation {
    */
   secondaryMessageIds: string[]
   topicSummary: string | null
+  topicSummarySource?: TitleSource | null
+  topicSummaryRevision?: number
+  topicSummaryUpdatedByUserId?: string | null
   /**
    * Rolling prose summary of what the conversation covers, maintained by the
    * boundary extractor on every pass that touches the conversation. Richer

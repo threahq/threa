@@ -1,6 +1,6 @@
 import type { Stream, StreamType } from "./repository"
 
-export type DisplayNameSource = "slug" | "generated" | "explicit" | "participants" | "placeholder"
+export type DisplayNameSource = "slug" | "generated" | "explicit" | "legacy" | "participants" | "placeholder"
 
 /**
  * A stored name is authoritative however it got there.
@@ -19,7 +19,7 @@ function storedDisplayName(stream: Stream): EffectiveDisplayName | undefined {
   // ever replace it.
   const name = stream.displayName?.trim()
   if (!name) return undefined
-  return { displayName: name, source: stream.displayNameGeneratedAt ? "generated" : "explicit" }
+  return { displayName: name, source: stream.displayNameSource ?? "legacy" }
 }
 
 export interface DisplayNameContext {
@@ -80,7 +80,7 @@ export function getEffectiveDisplayName(stream: Stream, context?: DisplayNameCon
     default:
       return {
         displayName: stream.displayName ?? "Unnamed",
-        source: stream.displayNameGeneratedAt ? "generated" : "placeholder",
+        source: stream.displayName ? (stream.displayNameSource ?? "legacy") : "placeholder",
       }
   }
 }

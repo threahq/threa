@@ -1,4 +1,5 @@
 import { db, sequenceToNum, type CachedEvent } from "@/db"
+import { mergeStreamByTitleRevision } from "@/lib/title-merge"
 import {
   isEventWriteChunkingEnabled,
   isIndexedMessagePatchEnabled,
@@ -498,27 +499,28 @@ async function writeBootstrapEventsAndStream(
   // after this returns) — same reflect-the-preserved-local-value precedent as
   // `applyReconnectBootstrapBatch`'s sidebarConfig.
   if (preservedReadState) bootstrap.readState = preservedReadState
-  const fullStreamData = {
+  const incomingStreamData = {
     ...stream,
     notificationLevel: bootstrap.membership?.notificationLevel,
-    // Mirror the persisted ContextBag into IDB so the timeline can read it
-    // synchronously on first paint via the `useWorkspaceStreams` cache —
-    // matches how attachments live on the message payload (sync from IDB).
     contextBag: bootstrap.contextBag,
     _cachedAt: now,
   }
+  const cachedStream = await db.streams.get(stream.id)
+  const fullStreamData = cachedStream
+    ? mergeStreamByTitleRevision(cachedStream, incomingStreamData)
+    : incomingStreamData
 
   const isDmWithNullName = stream.type === StreamTypes.DM && stream.displayName == null
   if (isDmWithNullName) {
     const { displayName: _, ...withoutDisplayName } = fullStreamData
-    const updated = await db.streams.update(stream.id, withoutDisplayName)
+    const updated = await db.streams.update(stream.id, withoutDisplayName as never)
     if (updated === 0) {
       await db.streams.put(fullStreamData)
     }
     return preservedReadState
   }
 
-  const updated = await db.streams.update(stream.id, fullStreamData)
+  const updated = await db.streams.update(stream.id, fullStreamData as never)
   if (updated === 0) {
     await db.streams.put(fullStreamData)
   }

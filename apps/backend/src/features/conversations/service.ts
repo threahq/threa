@@ -27,6 +27,7 @@ import {
   type ConversationStatus,
   type LinkPreviewSummary,
   type MemoEmbedSummary,
+  TitleSources,
 } from "@threa/types"
 
 export { ConversationWithStaleness }
@@ -763,11 +764,11 @@ export class ConversationService {
     conversationId: string
     topicSummary?: string
     status?: ConversationStatus
+    actorUserId?: string
   }): Promise<{ conversation: ConversationWithStaleness }> {
-    const { workspaceId, conversationId, topicSummary, status } = params
+    const { workspaceId, conversationId, topicSummary, status, actorUserId } = params
     return withTransaction(this.pool, async (client) => {
-      const updated = await ConversationRepository.update(client, workspaceId, conversationId, {
-        topicSummary,
+      let updated = await ConversationRepository.update(client, workspaceId, conversationId, {
         status,
         // A user-set status is authoritative — lock it so the extractor's LLM stops
         // overriding it (user resolution wins over the AI's ruling). Only when the
@@ -776,6 +777,16 @@ export class ConversationService {
       })
       if (!updated) {
         throw new HttpError("Conversation not found", { status: 404, code: "CONVERSATION_NOT_FOUND" })
+      }
+      if (topicSummary !== undefined) {
+        updated = await ConversationRepository.updateTopicSummary(client, {
+          workspaceId,
+          conversationId,
+          topicSummary,
+          source: TitleSources.EXPLICIT,
+          updatedByUserId: actorUserId,
+        })
+        if (!updated) throw new HttpError("Conversation not found", { status: 404, code: "CONVERSATION_NOT_FOUND" })
       }
       const stream = await StreamRepository.findById(client, updated.streamId)
       const { parentStreamId, streamVisibility } = await resolveConversationDelivery(client, stream)
@@ -1366,9 +1377,13 @@ export class ConversationService {
         distinctAuthors(remainingSourceIds, memberMessages)
       )
       if (sourceFullyAnalyzed) {
-        await ConversationRepository.update(client, workspaceId, source.id, {
+        await ConversationRepository.update(client, workspaceId, source.id, { summary: keepGroup.summary })
+        await ConversationRepository.updateTopicSummary(client, {
+          workspaceId,
+          conversationId: source.id,
           topicSummary: keepGroup.title,
-          summary: keepGroup.summary,
+          source: TitleSources.EXPLICIT,
+          updatedByUserId: actorUserId,
         })
       }
       await ConversationRepository.resolveIfEmpty(client, workspaceId, source.id)
@@ -1383,6 +1398,8 @@ export class ConversationService {
           streamId,
           workspaceId,
           topicSummary: g.title,
+          topicSummarySource: TitleSources.EXPLICIT,
+          topicSummaryUpdatedByUserId: actorUserId,
           summary: g.summary,
           confidence: 1,
           status: ConversationStatuses.ACTIVE,

@@ -13,6 +13,7 @@ import {
   type CachedWorkspaceUser,
 } from "@/db"
 import { getPerfCapture } from "@/lib/perf/capture"
+import { mergeConversationByTitleRevision, mergeStreamByTitleRevision } from "@/lib/title-merge"
 import { resolveFeatureFlags } from "@threa/types"
 import {
   diffRows,
@@ -42,6 +43,7 @@ import { streamKeys } from "@/hooks/use-streams"
 import { workspaceKeys } from "@/hooks/use-workspaces"
 import type {
   Stream,
+  StreamWithPreview,
   StreamBootstrap,
   StreamEvent,
   User,
@@ -277,6 +279,8 @@ interface StreamDisplayNameUpdatedPayload {
   workspaceId: string
   streamId: string
   displayName: string
+  source?: Stream["displayNameSource"]
+  revision?: number
 }
 
 interface UserPreferencesUpdatedPayload {
@@ -784,7 +788,7 @@ export function registerWorkspaceSocketHandlers(
     let shouldAddDmPeer = false
     let currentUserId: string | null = null
     let dmPeerUserId: string | null = null
-    let cachedStream: Stream & { lastMessagePreview?: LastMessagePreview | null } = payload.stream
+    let cachedStream: StreamWithPreview = { ...payload.stream, lastMessagePreview: null }
 
     const applied = updateBootstrapOrInvalidate(queryClient, workspaceId, (old) => {
       const streamExists = old.streams.some((s) => s.id === payload.stream.id)
@@ -799,10 +803,15 @@ export function registerWorkspaceSocketHandlers(
       dmPeerUserId = resolveDmPeerUserId(payload.dmUserIds, currentUserId)
       const dmPeerDisplayName =
         dmPeerUserId != null ? (getWorkspaceUsers(old).find((user) => user.id === dmPeerUserId)?.name ?? null) : null
-      cachedStream =
-        payload.stream.type === StreamTypes.DM && dmPeerDisplayName
-          ? { ...payload.stream, displayName: dmPeerDisplayName }
-          : payload.stream
+      const incomingCachedStream: StreamWithPreview = {
+        ...payload.stream,
+        ...(payload.stream.type === StreamTypes.DM && dmPeerDisplayName ? { displayName: dmPeerDisplayName } : {}),
+        lastMessagePreview: null,
+      }
+      const existingStream = old.streams.find((stream) => stream.id === payload.stream.id)
+      cachedStream = existingStream
+        ? mergeStreamByTitleRevision(existingStream, incomingCachedStream)
+        : incomingCachedStream
       const hasMembership = old.streamMemberships.some((m: StreamMember) => m.streamId === payload.stream.id)
       shouldAddMembership = Boolean(currentUserId && !hasMembership && (isCreator || isDmParticipant))
       shouldAddDmPeer = Boolean(
@@ -821,21 +830,11 @@ export function registerWorkspaceSocketHandlers(
       shouldJoinStreamRoom = hasMembership || shouldAddMembership
       shouldCacheStream = payload.stream.type === StreamTypes.DM ? isDmParticipant : !isPrivate || isCreator
 
-      if (streamExists && !shouldAddMembership && !shouldAddDmPeer) return old
-
       return {
         ...old,
         streams: shouldAddStream
           ? [...old.streams, { ...cachedStream, lastMessagePreview: null }]
-          : old.streams.map((stream) =>
-              stream.id === payload.stream.id
-                ? {
-                    ...stream,
-                    ...cachedStream,
-                    displayName: cachedStream.displayName ?? stream.displayName,
-                  }
-                : stream
-            ),
+          : old.streams.map((stream) => (stream.id === payload.stream.id ? cachedStream : stream)),
         streamMemberships: shouldAddMembership
           ? [
               ...old.streamMemberships,
@@ -864,7 +863,9 @@ export function registerWorkspaceSocketHandlers(
       // Cache to IndexedDB — skip other users' scratchpads to avoid stale
       // entries resurfacing on hydration if the event leaks during a deploy race.
       if (shouldCacheStream) {
-        await db.streams.put({ ...cachedStream, _cachedAt: now })
+        const existingStream = await db.streams.get(payload.stream.id)
+        const mergedStream = existingStream ? mergeStreamByTitleRevision(existingStream, cachedStream) : cachedStream
+        await db.streams.put({ ...mergedStream, _cachedAt: now })
       }
 
       // Persist membership to IDB so sidebar correctly filters public channels.
@@ -898,19 +899,17 @@ export function registerWorkspaceSocketHandlers(
     const isDmWithNullName = payload.stream.type === StreamTypes.DM && payload.stream.displayName == null
 
     queryClient.setQueryData<Stream>(streamKeys.detail(workspaceId, payload.stream.id), (old) => {
-      if (isDmWithNullName && old?.displayName) {
-        return { ...payload.stream, displayName: old.displayName }
-      }
-      return payload.stream
+      if (!old) return payload.stream
+      const merged = mergeStreamByTitleRevision(old, payload.stream)
+      return isDmWithNullName && old.displayName ? { ...merged, displayName: old.displayName } : merged
     })
 
     // Update stream bootstrap cache (preserves events, members, etc.)
     queryClient.setQueryData<StreamBootstrap>(streamKeys.bootstrap(workspaceId, payload.stream.id), (old) => {
       if (!old) return old
+      const merged = mergeStreamByTitleRevision(old.stream, payload.stream)
       const stream =
-        isDmWithNullName && old.stream.displayName
-          ? { ...payload.stream, displayName: old.stream.displayName }
-          : payload.stream
+        isDmWithNullName && old.stream.displayName ? { ...merged, displayName: old.stream.displayName } : merged
       return { ...old, stream }
     })
 
@@ -928,14 +927,10 @@ export function registerWorkspaceSocketHandlers(
           ...old,
           streams: old.streams.map((s) =>
             s.id === payload.stream.id
-              ? {
-                  ...s,
-                  ...payload.stream,
-                  displayName:
-                    payload.stream.type === StreamTypes.DM && payload.stream.displayName == null
-                      ? s.displayName
-                      : payload.stream.displayName,
-                }
+              ? (() => {
+                  const merged = mergeStreamByTitleRevision(s, payload.stream)
+                  return isDmWithNullName ? { ...merged, displayName: s.displayName } : merged
+                })()
               : s
           ),
         }
@@ -951,20 +946,23 @@ export function registerWorkspaceSocketHandlers(
     // to preserve cached fields not carried by the Stream payload, notably the
     // last-message preview and notification level. For DMs, also preserve the
     // resolved displayName since the backend sends null.
-    const idbUpdate =
-      payload.stream.type === StreamTypes.DM && payload.stream.displayName == null
-        ? (() => {
-            const { displayName: _, ...rest } = payload.stream
-            return { ...rest, _cachedAt: Date.now() }
-          })()
-        : { ...payload.stream, _cachedAt: Date.now() }
-    db.streams.update(payload.stream.id, idbUpdate)
+    void db.transaction("rw", db.streams, async () => {
+      const old = await db.streams.get(payload.stream.id)
+      if (!old) return
+      const merged = mergeStreamByTitleRevision(old, payload.stream)
+      await db.streams.put({
+        ...merged,
+        ...(isDmWithNullName ? { displayName: old.displayName } : {}),
+        _cachedAt: Date.now(),
+      })
+    })
   }
 
   const handleStreamArchived = (payload: StreamPayload) => {
     queryClient.setQueryData(streamKeys.bootstrap(workspaceId, payload.stream.id), (old: unknown) => {
       if (!old || typeof old !== "object") return old
-      return { ...old, stream: payload.stream }
+      const bootstrap = old as StreamBootstrap
+      return { ...bootstrap, stream: mergeStreamByTitleRevision(bootstrap.stream, payload.stream) }
     })
 
     // Remove from workspace bootstrap cache (sidebar - archived streams don't show)
@@ -990,7 +988,8 @@ export function registerWorkspaceSocketHandlers(
   const handleStreamUnarchived = (payload: StreamPayload) => {
     queryClient.setQueryData(streamKeys.bootstrap(workspaceId, payload.stream.id), (old: unknown) => {
       if (!old || typeof old !== "object") return old
-      return { ...old, stream: payload.stream }
+      const bootstrap = old as StreamBootstrap
+      return { ...bootstrap, stream: mergeStreamByTitleRevision(bootstrap.stream, payload.stream) }
     })
 
     queryClient.setQueryData(workspaceKeys.bootstrap(workspaceId), (old: unknown) => {
@@ -1001,7 +1000,9 @@ export function registerWorkspaceSocketHandlers(
         // Merge to preserve lastMessagePreview.
         return {
           ...bootstrap,
-          streams: bootstrap.streams.map((s) => (s.id === payload.stream.id ? { ...s, ...payload.stream } : s)),
+          streams: bootstrap.streams.map((s) =>
+            s.id === payload.stream.id ? mergeStreamByTitleRevision(s, payload.stream) : s
+          ),
         }
       }
       return {
@@ -1519,16 +1520,23 @@ export function registerWorkspaceSocketHandlers(
 
   // Handle stream display name updated (from auto-naming service)
   const handleStreamDisplayNameUpdated = (payload: StreamDisplayNameUpdatedPayload) => {
+    if (payload.workspaceId !== workspaceId) return
+    const mergeTitle = <T extends Partial<Stream>>(old: T): T =>
+      mergeStreamByTitleRevision(old, {
+        displayName: payload.displayName,
+        displayNameSource: payload.source,
+        displayNameRevision: payload.revision,
+      } as T)
     queryClient.setQueryData(streamKeys.detail(workspaceId, payload.streamId), (old: unknown) => {
       if (!old || typeof old !== "object") return old
-      return { ...old, displayName: payload.displayName }
+      return mergeTitle(old as Stream)
     })
 
     queryClient.setQueryData(streamKeys.bootstrap(workspaceId, payload.streamId), (old: unknown) => {
       if (!old || typeof old !== "object") return old
       const bootstrap = old as { stream?: Stream }
       if (!bootstrap.stream) return old
-      return { ...old, stream: { ...bootstrap.stream, displayName: payload.displayName } }
+      return { ...old, stream: mergeTitle(bootstrap.stream) }
     })
 
     queryClient.setQueryData(workspaceKeys.bootstrap(workspaceId), (old: unknown) => {
@@ -1537,13 +1545,15 @@ export function registerWorkspaceSocketHandlers(
       if (!bootstrap.streams) return old
       return {
         ...bootstrap,
-        streams: bootstrap.streams.map((s) =>
-          s.id === payload.streamId ? { ...s, displayName: payload.displayName } : s
-        ),
+        streams: bootstrap.streams.map((s) => (s.id === payload.streamId ? mergeTitle(s) : s)),
       }
     })
 
-    db.streams.update(payload.streamId, { displayName: payload.displayName, _cachedAt: Date.now() })
+    void db.transaction("rw", [db.streams], async () => {
+      const old = await db.streams.get(payload.streamId)
+      if (!old) return
+      await db.streams.update(payload.streamId, { ...mergeTitle(old), _cachedAt: Date.now() })
+    })
   }
 
   const handleStreamMemberAdded = (payload: {
@@ -2278,7 +2288,7 @@ export function registerWorkspaceSocketHandlers(
             prev
               ? {
                   ...prev,
-                  conversation: payload.conversation,
+                  conversation: mergeConversationByTitleRevision(prev.conversation, payload.conversation),
                   recentMessages: prev.recentMessages.filter((m) => memberIds.has(m.id)),
                   settlingMessageIds: payload.settlingMessageIds ?? prev.settlingMessageIds,
                 }
@@ -2522,11 +2532,15 @@ export function registerWorkspaceSocketHandlers(
  * archive/unarchive can't silently drop the local row (INV-11: no silent loss).
  */
 async function upsertStreamRow(stream: Stream): Promise<void> {
-  const now = Date.now()
-  const updated = await db.streams.update(stream.id, { ...stream, _cachedAt: now })
-  if (updated === 0) {
-    await db.streams.put({ ...stream, lastMessagePreview: null, _cachedAt: now })
-  }
+  await db.transaction("rw", db.streams, async () => {
+    const now = Date.now()
+    const old = await db.streams.get(stream.id)
+    await db.streams.put(
+      old
+        ? { ...mergeStreamByTitleRevision(old, stream), _cachedAt: now }
+        : { ...stream, lastMessagePreview: null, _cachedAt: now }
+    )
+  })
 }
 
 const EMPTY_FLAG_LAYERS: FeatureFlagLayers = { workspace: {}, user: {} }
@@ -2817,14 +2831,13 @@ export async function applyWorkspaceBootstrap(
         ...bootstrap.streams.map((s) => {
           const membership = membershipByStream.get(s.id)
           const existing = existingByStreamId.get(s.id)
-          return {
+          const incoming = {
             ...s,
             notificationLevel: membership?.notificationLevel,
-            // Preserve fields workspace-bootstrap doesn't carry but stream-
-            // bootstrap does (bag mirroring lives in `applyStreamBootstrap`).
             contextBag: existing?.contextBag,
             _cachedAt: now,
           }
+          return existing ? mergeStreamByTitleRevision(existing, incoming) : incoming
         }),
         // Archived roots ship slim (no preview/membership) but must persist so
         // every `useWorkspaceStreams` consumer (drafts, name resolution) keeps
@@ -3118,6 +3131,10 @@ export async function applyWorkspaceBootstrap(
     anyChanged,
     bootstrap: {
       ...bootstrap,
+      streams: bootstrap.streams.map((stream) => {
+        const merged = mergedStreams.find((candidate) => candidate.id === stream.id)
+        return merged ? { ...merged, lastMessagePreview: stream.lastMessagePreview } : stream
+      }),
       streamReadState: effectiveReadStateMap,
       unreadCounts: effectiveUnread.unreadCounts,
       unreadActivities: effectiveUnread.unreadActivities,
@@ -3317,7 +3334,12 @@ export async function applyReconnectBootstrapBatch(
         ? diffSingleton(existingWorkspace, workspaceRow)
         : { write: true, merged: workspaceRow }
       const usersDiff = diffEnabled ? diffRows(byId(existingUsers), userRows) : writeAllRows(userRows)
-      const streamsDiff = diffEnabled ? diffRows(byId(existingStreams), streamRows) : writeAllRows(streamRows)
+      const existingByStreamId = byId(existingStreams)
+      const mergedStreamRows = streamRows.map((incoming) => {
+        const existing = existingByStreamId.get(incoming.id)
+        return existing ? mergeStreamByTitleRevision(existing, incoming) : incoming
+      })
+      const streamsDiff = diffEnabled ? diffRows(existingByStreamId, mergedStreamRows) : writeAllRows(mergedStreamRows)
       const membershipsDiff = diffEnabled
         ? diffRows(byId(existingMemberships), membershipRows)
         : writeAllRows(membershipRows)

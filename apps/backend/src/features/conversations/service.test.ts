@@ -34,11 +34,15 @@ function fakeConversation(over: Partial<Conversation> = {}): Conversation {
 
 describe("ConversationService.updateConversation — user status lock", () => {
   let updateSpy: ReturnType<typeof spyOn>
+  let updateTopicSpy: ReturnType<typeof spyOn>
 
   beforeEach(() => {
     spyOn(dbModule, "withTransaction").mockImplementation((async (_pool: unknown, cb: (client: unknown) => unknown) =>
       cb({})) as never)
     updateSpy = spyOn(ConversationRepository, "update").mockResolvedValue(fakeConversation())
+    updateTopicSpy = spyOn(ConversationRepository, "updateTopicSummary").mockResolvedValue(
+      fakeConversation({ topicSummary: "New title", topicSummarySource: "explicit", topicSummaryRevision: 1 })
+    )
     spyOn(StreamRepository, "findById").mockResolvedValue({ id: "stream_1" } as never)
     spyOn(delivery, "resolveConversationDelivery").mockResolvedValue({
       parentStreamId: null,
@@ -66,9 +70,11 @@ describe("ConversationService.updateConversation — user status lock", () => {
     const service = new ConversationService(POOL)
     await service.updateConversation({ workspaceId: "ws_1", conversationId: "conv_1", topicSummary: "New title" })
 
-    const params = updateSpy.mock.calls[0]![3] as { topicSummary?: string; statusLockedByUser?: boolean }
-    expect(params.topicSummary).toBe("New title")
-    expect(params.statusLockedByUser).toBeUndefined()
+    expect(updateSpy.mock.calls[0]![3]).toEqual(expect.objectContaining({ statusLockedByUser: undefined }))
+    expect(updateTopicSpy).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ topicSummary: "New title", source: "explicit" })
+    )
   })
 })
 
