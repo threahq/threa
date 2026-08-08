@@ -238,6 +238,22 @@ describe("voice polish deterministic evaluators", () => {
         ["correction"]
       )
     ).toBe(true)
+    expect(
+      previousAcceptedVariantShips(
+        { ...qualified, caseRates: { stability: 1, correction: 1 } },
+        { ...qualified, caseRates: { stability: 1, correction: 1 } },
+        ["stability"],
+        ["correction"]
+      )
+    ).toBe(true)
+    expect(
+      previousAcceptedVariantShips(
+        { ...qualified, caseRates: { stability: 5 / 6, correction: 1 } },
+        { ...qualified, caseRates: { stability: 5 / 6, correction: 1 } },
+        ["stability"],
+        ["correction"]
+      )
+    ).toBe(false)
     cases[0]!.evaluations = [{ name: "all-step-valid-success", passed: false, score: 0 }]
     expect(qualifyVoicePolishPermutation(permutation).qualified).toBe(false)
   })

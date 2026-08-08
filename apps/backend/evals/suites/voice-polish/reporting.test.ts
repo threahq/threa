@@ -74,6 +74,21 @@ describe("voice polish comparison decision", () => {
     expect(failed).toMatchObject({ selectedModel: null, exitAllowed: false })
   })
 
+  test("a perfect stability tie clears the ceiling-aware prompt decision", () => {
+    const results = [
+      { suiteName: "voice-polish: production", permutations: [permutation(voicePolishConfig.model, 1000)] },
+      {
+        suiteName: "voice-polish: baseline",
+        permutations: [permutation(voicePolishConfig.model, 1000, "without-previous")],
+      },
+    ] as never
+    expect(decideVoicePolishComparison(results)).toMatchObject({
+      selectedModel: voicePolishConfig.model,
+      previousAcceptedShips: true,
+      exitAllowed: true,
+    })
+  })
+
   test("an unqualified without-previous baseline is evidence, not a blocker", () => {
     // Baseline fails the per-case gate (stability 4/6 < 5/6) while the enabled
     // variant is clean: that gap is exactly what the previous-accepted prompt is

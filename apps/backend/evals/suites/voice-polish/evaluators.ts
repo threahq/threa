@@ -328,10 +328,19 @@ export function previousAcceptedVariantShips(
   const noRegression = correctionCaseIds.every(
     (id) => (enabled.caseRates[id] ?? 0) >= (withoutPrevious.caseRates[id] ?? 0)
   )
-  const stabilityImproves =
-    stabilityCaseIds.some((id) => (enabled.caseRates[id] ?? 0) > (withoutPrevious.caseRates[id] ?? 0)) &&
-    stabilityCaseIds.every((id) => (enabled.caseRates[id] ?? 0) >= (withoutPrevious.caseRates[id] ?? 0))
-  return noRegression && stabilityImproves
+  const stabilityNoRegression = stabilityCaseIds.every(
+    (id) => (enabled.caseRates[id] ?? 0) >= (withoutPrevious.caseRates[id] ?? 0)
+  )
+  const stabilityImproves = stabilityCaseIds.some(
+    (id) => (enabled.caseRates[id] ?? 0) > (withoutPrevious.caseRates[id] ?? 0)
+  )
+  // Strict improvement is impossible when both variants hit the 6/6 ceiling.
+  // Treat an all-perfect tie as non-inferior evidence; ties below the ceiling still
+  // fail so a noisy 5/6 vs 5/6 result cannot justify shipping extra prompt state.
+  const ceilingTie =
+    stabilityCaseIds.length > 0 &&
+    stabilityCaseIds.every((id) => (enabled.caseRates[id] ?? 0) === 1 && (withoutPrevious.caseRates[id] ?? 0) === 1)
+  return noRegression && stabilityNoRegression && (stabilityImproves || ceilingTie)
 }
 export const voicePolishEvaluators = [
   successEvaluator,

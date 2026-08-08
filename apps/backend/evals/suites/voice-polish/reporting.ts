@@ -76,7 +76,9 @@ export function decideVoicePolishComparison(
         correctionIds
       )
       if (!previousAcceptedShips)
-        reasons.push("Previous-accepted prompt did not improve stability without correction regression")
+        reasons.push(
+          "Previous-accepted prompt neither improved nor ceiling-matched stability without correction regression"
+        )
     }
   }
 
