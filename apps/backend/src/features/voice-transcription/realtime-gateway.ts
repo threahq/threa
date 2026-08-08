@@ -173,6 +173,17 @@ export function registerVoiceGateway(io: Server, deps: Dependencies) {
         logger.warn({ err, voiceSessionId: current.voiceSessionId }, "Voice session finalize failed")
       }
       current.phase = "closed"
+      logger.info(
+        {
+          voiceSessionId: current.voiceSessionId,
+          terminationMode: current.terminationMode,
+          finalOutcome: current.finalOutcome,
+          revision: current.revision,
+          rawFinalCount: current.rawFinals.length,
+          totalAudioMs,
+        },
+        "Voice relay session closed"
+      )
     }
 
     function terminate(requestedMode: VoiceTerminationMode, reason: StopReason): Promise<void> {
@@ -330,6 +341,18 @@ export function registerVoiceGateway(io: Server, deps: Dependencies) {
           })
           upstream.onError((error) => {
             if (state !== current || current.phase !== "live") return
+            logger.warn(
+              {
+                voiceSessionId,
+                provider: row.provider,
+                code: error.code,
+                upstreamMessage: error.message,
+                phase: current.phase,
+                revision: current.revision,
+                rawFinalCount: current.rawFinals.length,
+              },
+              "Voice transcription upstream error"
+            )
             socket.emit("voice:transcription:error", { voiceSessionId, ...error })
             void terminate("abort", "stopped")
           })
@@ -364,8 +387,20 @@ export function registerVoiceGateway(io: Server, deps: Dependencies) {
       await terminate(parsed.data.mode, "stopped")
       callback?.({ ok: true })
     })
-    socket.on("disconnect", () => {
+    socket.on("disconnect", (reason) => {
       disconnected = true
+      const current = state
+      logger.info(
+        {
+          voiceSessionId: current?.voiceSessionId ?? null,
+          reason,
+          phase: current?.phase ?? null,
+          terminationMode: current?.terminationMode ?? null,
+          revision: current?.revision ?? null,
+          rawFinalCount: current?.rawFinals.length ?? null,
+        },
+        "Voice relay socket disconnected"
+      )
       return terminate("abort", "stopped")
     })
   })
