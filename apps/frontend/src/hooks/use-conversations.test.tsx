@@ -16,9 +16,9 @@ import {
   useCreateBoardPost,
   useReplyToBoardPost,
   useSettleConversationMessage,
-  planBoardReply,
   conversationKeys,
 } from "./use-conversations"
+import { planBoardReply } from "@/lib/board/reply-plan"
 
 const WORKSPACE_ID = "ws_1"
 const STREAM_ID = "stream_1"
