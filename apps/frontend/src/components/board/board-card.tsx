@@ -61,6 +61,7 @@ import { useBoardCardCollapse } from "@/hooks/use-board-card-collapse"
 import { useSplitThread } from "@/hooks/use-conversations"
 import { applySettlingAll, useBoardCardMessages } from "@/hooks/use-board-card-messages"
 import { useConversationBackfill } from "@/hooks/use-conversation-backfill"
+import { useConversationTitle } from "@/hooks/use-conversation-title"
 import { useInlineBranchComposer } from "@/components/board/use-inline-branch-composer"
 import { useBoardCardRevealAnchor } from "@/hooks/use-board-card-reveal-anchor"
 import { LedgerRow } from "@/components/board/ledger-row"
@@ -139,6 +140,7 @@ export function BoardCard({
   onClearUnread,
 }: BoardCardProps) {
   const { conversation } = post
+  const conversationTitle = useConversationTitle(workspaceId, conversation)
   const flash = useBoardFlash(conversation.id)
   const { getActorName, getActorAvatar } = useActors(workspaceId)
   const currentUserId = useWorkspaceUserId(workspaceId)
@@ -1061,7 +1063,7 @@ export function BoardCard({
         workspaceId={workspaceId}
         conversationId={conversation.id}
         streamId={conversation.streamId}
-        topicSummary={conversation.topicSummary}
+        topicSummary={conversationTitle}
         status={conversation.status}
         triggerClassName="shrink-0"
       />
@@ -1151,7 +1153,7 @@ export function BoardCard({
                 to a small line beneath it. A message-led card (no topic) keeps the
                 locator AS the lead so it never grows a fake title. A resolved topic
                 reads muted with a marker; it also drops out of the Active lens. */}
-            {conversation.topicSummary ? (
+            {conversationTitle ? (
               <>
                 <div className="flex items-center gap-1.5">
                   {chevronToggle}
@@ -1164,7 +1166,7 @@ export function BoardCard({
                       conversation.status === "resolved" ? "font-medium text-muted-foreground" : "font-semibold"
                     )}
                   >
-                    {conversation.topicSummary}
+                    {conversationTitle}
                   </span>
                   {runningChip}
                   {massBadge}
@@ -1210,7 +1212,7 @@ export function BoardCard({
               </button>
             )}
           </div>
-          {conversation.topicSummary && (
+          {conversationTitle && (
             <div data-board-card-context-spacer aria-hidden className={cn("h-0 sm:hidden", headerStuck && "h-6")} />
           )}
 
@@ -1286,7 +1288,7 @@ export function BoardCard({
                 post={post}
                 hostStreamType={streamType}
                 openReplySignal={openReplySignal}
-                contextChip={conversation.topicSummary ?? contextLabel}
+                contextChip={conversationTitle ?? contextLabel}
                 // The conversation's most-recently-active stream — the latest displayed
                 // reply's own stream (a thread under the root), INCLUDING the viewer's own
                 // pending reply and any expand-backfilled rows, so a continuation follows

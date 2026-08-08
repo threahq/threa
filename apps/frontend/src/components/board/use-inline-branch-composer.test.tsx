@@ -21,11 +21,11 @@ const index = {
   threadsByAnchorId: new Map([["msg_fork_b", { id: "stream_thread_1" }]]),
 } as unknown as StreamStructuralIndex
 
-function makeGraph(): ConversationGraph {
+function makeGraph(topicSummary?: string): ConversationGraph {
   const branchPost = {
     id: "conv_branch",
     workspaceId,
-    conversation: { id: "conv_branch", streamId: "stream_thread_1", messageIds: ["msg_branch_1"] },
+    conversation: { id: "conv_branch", streamId: "stream_thread_1", messageIds: ["msg_branch_1"], topicSummary },
   }
   return {
     conversationByAnchorStreamId: new Map([["stream_thread_1", branchPost]]),
@@ -349,6 +349,29 @@ describe("useInlineBranchComposer panel arming (onArmBranchReply)", () => {
     )
     // Armed, not opened inline — the docked footer owns the editor.
     expect(result.current.openComposer).toBeNull()
+  })
+
+  it("arms a stashed branch with its effective inline title", async () => {
+    const draftId = await seedDraft("board:branch-reply:conv_branch")
+    renderHook(
+      () =>
+        useInlineBranchComposer({
+          workspaceId,
+          conversationId: PARENT_ID,
+          memberMessageIds: ["msg_fork", "msg_fork_b"],
+          index,
+          graph: makeGraph("[Auth redesign](https://example.com)"),
+          onArmBranchReply: onArmBranchReply as never,
+        }),
+      { wrapper: wrapperWithStash(draftId) }
+    )
+
+    await waitFor(() =>
+      expect(onArmBranchReply).toHaveBeenCalledWith(
+        { conversationId: "conv_branch", threadStreamId: "stream_thread_1", title: "Auth redesign" },
+        draftId
+      )
+    )
   })
 
   it("queueExistingBranchReply routes an existing-conversation directive into the branch thread", async () => {

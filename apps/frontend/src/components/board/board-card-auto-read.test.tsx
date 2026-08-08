@@ -135,7 +135,6 @@ beforeEach(() => {
       lastReadEventId: "evt_old",
     },
   ] as never)
-  vi.spyOn(workspaceStoreModule, "useWorkspaceStreams").mockReturnValue([] as never)
   vi.spyOn(workspaceStoreModule, "useWorkspaceUsers").mockReturnValue([] as never)
   vi.spyOn(workspaceStoreModule, "useWorkspaceDmPeers").mockReturnValue([] as never)
   vi.spyOn(workspaceStoreModule, "useWorkspacePersonas").mockReturnValue([] as never)

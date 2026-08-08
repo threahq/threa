@@ -21,6 +21,7 @@ export {
 
 export { StreamNamingService } from "./naming-service"
 export type { GenerateNameResult } from "./naming-service"
+export { prependThreadNamingAnchor, renderNamingEventAnchor } from "./naming-context"
 export { StubStreamNamingService } from "./naming-service.stub"
 export { createNamingWorker } from "./naming-worker"
 export type { StreamNamingServiceLike, NamingWorkerDeps } from "./naming-worker"

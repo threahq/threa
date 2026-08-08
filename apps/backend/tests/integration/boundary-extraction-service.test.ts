@@ -1087,7 +1087,7 @@ describe("BoundaryExtractionService", () => {
       expect(result2?.messageIds).toContain(msg2Id)
     })
 
-    test("uses stream display name as conversation topic", async () => {
+    test("leaves the conversation topic null when the scratchpad stream has a title", async () => {
       const localStreamId = streamId()
       const msgId = messageId()
 
@@ -1114,10 +1114,12 @@ describe("BoundaryExtractionService", () => {
 
       const result = await service.processMessage(msgId, localStreamId, testWorkspaceId)
 
-      expect(result?.topicSummary).toBe("Project Ideas")
+      // The scratchpad stream is the sole title owner. Copying its title here
+      // creates a second, independently mutable source of truth.
+      expect(result?.topicSummary).toBeNull()
     })
 
-    test("falls back to 'Scratchpad' when stream has no display name", async () => {
+    test("leaves the conversation topic null when the scratchpad stream is unnamed", async () => {
       const localStreamId = streamId()
       const msgId = messageId()
 
@@ -1144,7 +1146,9 @@ describe("BoundaryExtractionService", () => {
 
       const result = await service.processMessage(msgId, localStreamId, testWorkspaceId)
 
-      expect(result?.topicSummary).toBe("Scratchpad")
+      // Generic UI fallback text is derived at read time, never persisted as
+      // an independently owned conversation title.
+      expect(result?.topicSummary).toBeNull()
     })
   })
 })

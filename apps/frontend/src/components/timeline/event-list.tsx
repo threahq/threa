@@ -300,6 +300,7 @@ export function annotateConversationRevivals(
       if (blockStart && (isDeclared || seen.has(conversationId))) {
         revival = {
           conversationId,
+          streamId: conversationsById.get(conversationId)?.streamId ?? "",
           topicSummary: conversationsById.get(conversationId)?.topicSummary ?? null,
           previousActivityAt: lastActivityByConversation.get(conversationId),
         }
@@ -844,6 +845,7 @@ function TimelineItemContentImpl({ item, ctx, deferSecondaryHydration }: Timelin
           annotation={item.conversationRow}
           messageId={overlayMessageId}
           messageCreatedAt={item.event.createdAt}
+          workspaceId={ctx.workspaceId}
           // Split-select keeps the overlay mounted for its coloring, but the row
           // is a selection toggle then — hide the single-message correction swatch
           // so it can't steal the tap (it renders outside the row's `inert` slot).

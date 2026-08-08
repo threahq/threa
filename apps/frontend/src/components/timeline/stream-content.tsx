@@ -46,6 +46,7 @@ import {
   useWorkspaceStreamReadStates,
 } from "@/stores/workspace-store"
 import { resolveFrontierEventId, resolveFrontierSequence } from "@/lib/read-frontier"
+import { effectiveConversationTitle } from "@/lib/conversations/title"
 import { useUser } from "@/auth"
 import { Button } from "@/components/ui/button"
 import { toast } from "sonner"
@@ -2524,6 +2525,7 @@ export function StreamContent({
                       (batchIntent === "splitConversation" ? (
                         <SplitSelectionBar
                           count={selectedMessageIds.size}
+                          workspaceId={workspaceId}
                           conversations={conversationOverlay?.model.conversations ?? streamConversations}
                           colorIndexById={conversationOverlay?.model.colorIndexById}
                           busy={isSplitting}
@@ -3475,6 +3477,7 @@ function BatchSelectionBar({ count, onCancel }: { count: number; onCancel: () =>
  */
 function SplitSelectionBar({
   count,
+  workspaceId,
   conversations,
   colorIndexById,
   busy,
@@ -3483,6 +3486,7 @@ function SplitSelectionBar({
   onCancel,
 }: {
   count: number
+  workspaceId: string
   conversations: ConversationWithStaleness[]
   colorIndexById?: ReadonlyMap<string, number>
   busy: boolean
@@ -3491,6 +3495,7 @@ function SplitSelectionBar({
   onCancel: () => void
 }) {
   const disabled = count === 0 || busy
+  const streams = useWorkspaceStreams(workspaceId)
 
   return (
     <div
@@ -3551,7 +3556,12 @@ function SplitSelectionBar({
                   className="h-2.5 w-2.5 shrink-0 rounded-full"
                   style={{ backgroundColor: conversationColor(colorIndexById?.get(conversation.id) ?? 0) }}
                 />
-                <span className="min-w-0 flex-1 truncate">{conversation.topicSummary || "Untitled conversation"}</span>
+                <span className="min-w-0 flex-1 truncate">
+                  {effectiveConversationTitle(
+                    conversation,
+                    streams.find((stream) => stream.id === conversation.streamId)
+                  ) || "Untitled conversation"}
+                </span>
                 <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
                   {conversation.messageIds.length}
                 </span>

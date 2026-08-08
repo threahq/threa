@@ -43,6 +43,7 @@ import { Link, useLocation, useNavigate } from "react-router-dom"
 import { cn } from "@/lib/utils"
 import { useIsMobile } from "@/hooks/use-mobile"
 import { useInputMode } from "@/hooks/use-input-mode"
+import { useConversationTitle } from "@/hooks/use-conversation-title"
 import { useTouchCapable } from "@/hooks/use-touch-capable"
 import { useLongPress } from "@/hooks/use-long-press"
 import { AttachmentList } from "./attachment-list"
@@ -291,10 +292,10 @@ function MessageLinkPreviews({
  * not Ariadne's structural gold line. The topic label mirrors the overlay's
  * `topicSummary || fallback` rendering.
  */
-function ConversationProvenanceChip({ revival }: { revival: ConversationRevival }) {
+function ConversationProvenanceChip({ revival, workspaceId }: { revival: ConversationRevival; workspaceId: string }) {
   const { getPanelUrl } = usePanel()
   const href = getPanelUrl(createConversationPanelId(revival.conversationId))
-  const topic = revival.topicSummary || "an earlier conversation"
+  const topic = useConversationTitle(workspaceId, revival) || "an earlier conversation"
   return (
     <Link
       to={href}
@@ -1299,7 +1300,7 @@ function SentMessageEvent({
   } else {
     footerContent = (
       <>
-        {revival && <ConversationProvenanceChip revival={revival} />}
+        {revival && <ConversationProvenanceChip revival={revival} workspaceId={workspaceId} />}
         {payload.reactions && Object.keys(payload.reactions).length > 0 && (
           <MessageReactions
             reactions={payload.reactions}
@@ -1569,6 +1570,7 @@ function SentMessageEvent({
           annotation={conversationOverlayRow.annotation}
           messageId={payload.messageId}
           messageCreatedAt={event.createdAt}
+          workspaceId={workspaceId}
         />
       )}
     </>

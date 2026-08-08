@@ -57,6 +57,7 @@ import {
   BotInvocationCapabilities,
   BotInvocationTriggers,
   MemoryModes,
+  StreamTypes,
   E2E_PLACEHOLDER_CONTENT_MARKDOWN,
   THREA_CALLBACK_TOKEN_HEADER,
   sentViaApiKey,
@@ -222,12 +223,17 @@ function serializeMessage(
   }
 }
 
-function serializeConversation(conversation: Conversation, rootStreamId: string): WireConversation {
+function serializeConversation(conversation: Conversation, stream: Stream | undefined): WireConversation {
+  const rootStreamId = stream?.rootStreamId ?? stream?.id ?? conversation.streamId
+  let topicSummary = conversation.topicSummary
+  if (stream?.type === StreamTypes.SCRATCHPAD) {
+    topicSummary = stream.e2eEnabled ? null : stream.displayName
+  }
   return {
     id: conversation.id,
     streamId: conversation.streamId,
     rootStreamId,
-    topicSummary: conversation.topicSummary,
+    topicSummary,
     summary: conversation.summary,
     status: conversation.status,
     messageCount: conversation.messageIds.length,
@@ -242,11 +248,11 @@ function serializeConversation(conversation: Conversation, rootStreamId: string)
  * Map each conversation's anchor stream to its effective root
  * (`COALESCE(root_stream_id, id)`, INV-62) for the wire `rootStreamId`.
  */
-async function resolveConversationRoots(pool: Pool, conversations: Conversation[]): Promise<Map<string, string>> {
+async function resolveConversationStreams(pool: Pool, conversations: Conversation[]): Promise<Map<string, Stream>> {
   const streamIds = [...new Set(conversations.map((c) => c.streamId))]
   if (streamIds.length === 0) return new Map()
   const streams = await StreamRepository.findByIds(pool, streamIds)
-  return new Map(streams.map((s) => [s.id, s.rootStreamId ?? s.id]))
+  return new Map(streams.map((stream) => [stream.id, stream]))
 }
 
 // Label domain dates are already ISO strings on the wire shape; the only
@@ -2318,11 +2324,11 @@ export function createPublicApiHandlers({
 
       const hasMore = rows.length > limit
       const page = hasMore ? rows.slice(0, limit) : rows
-      const rootByStream = await resolveConversationRoots(pool, page)
+      const streamsById = await resolveConversationStreams(pool, page)
       const last = page[page.length - 1]
 
       res.json({
-        data: page.map((c) => serializeConversation(c, rootByStream.get(c.streamId) ?? c.streamId)),
+        data: page.map((conversation) => serializeConversation(conversation, streamsById.get(conversation.streamId))),
         hasMore,
         cursor: last ? encodeCursor(last.lastActivityAt, last.id) : null,
       })
@@ -2330,9 +2336,9 @@ export function createPublicApiHandlers({
 
     async getConversation(req: Request, res: Response) {
       const conversation = await resolveAccessibleConversation(req, req.params.conversationId)
-      const rootByStream = await resolveConversationRoots(pool, [conversation])
+      const streamsById = await resolveConversationStreams(pool, [conversation])
       res.json({
-        data: serializeConversation(conversation, rootByStream.get(conversation.streamId) ?? conversation.streamId),
+        data: serializeConversation(conversation, streamsById.get(conversation.streamId)),
       })
     },
 

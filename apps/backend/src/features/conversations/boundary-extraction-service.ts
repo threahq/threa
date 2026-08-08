@@ -367,7 +367,6 @@ export class BoundaryExtractionService {
           }
         : {
             assignments: [{ conversationId: null, isPrimary: true }],
-            newTopic: stream.displayName ?? "Scratchpad",
             confidence: 1.0,
             reassignments: [],
             validUpdateTargets: new Set(),

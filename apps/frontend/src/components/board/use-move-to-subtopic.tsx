@@ -5,6 +5,8 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import { useReassignConversationMessage } from "@/hooks/use-conversations"
 import { useBoardPosts } from "@/stores/board-store"
 import type { BranchConversationView } from "@/lib/board/branch-grouping"
+import { effectiveConversationTitle } from "@/lib/conversations/title"
+import { useWorkspaceStreams } from "@/stores/workspace-store"
 
 interface MoveTarget {
   conversationId: string
@@ -54,6 +56,15 @@ export function useMoveToSubtopic(params: {
     settling: boolean
   } | null>(null)
   const reassign = useReassignConversationMessage(workspaceId, conversation.streamId)
+  const streams = useWorkspaceStreams(workspaceId)
+  const titleFor = useCallback(
+    (item: { streamId: string; topicSummary: string | null }) =>
+      effectiveConversationTitle(
+        item,
+        streams.find((stream) => stream.id === item.streamId)
+      ),
+    [streams]
+  )
 
   // Every branch at any depth (sub-topics nest to depth 2 — a grandchild is as
   // valid a target as its parent; the server's one-root rule resolves any depth
@@ -95,10 +106,10 @@ export function useMoveToSubtopic(params: {
       .slice(0, SETTLING_SIBLING_TARGET_CAP)
       .map((post) => ({
         conversationId: post.conversation.id,
-        title: post.conversation.topicSummary ?? "Untitled topic",
+        title: titleFor(post.conversation) ?? "Untitled topic",
         kind: "main" as const,
       }))
-  }, [boardPosts, conversation.streamId, conversation.id])
+  }, [boardPosts, conversation.streamId, conversation.id, titleFor])
 
   const targetsFor = useCallback(
     (currentConversationId: string, settling = false): MoveTarget[] => {
@@ -107,7 +118,7 @@ export function useMoveToSubtopic(params: {
           ? [
               {
                 conversationId: conversation.id,
-                title: conversation.topicSummary ?? "Main topic",
+                title: titleFor(conversation) ?? "Main topic",
                 kind: "main" as const,
               },
             ]
@@ -120,7 +131,7 @@ export function useMoveToSubtopic(params: {
       const seen = new Set([currentConversationId, ...targets.map((t) => t.conversationId)])
       return [...targets, ...siblings.filter((s) => !seen.has(s.conversationId))]
     },
-    [conversation.id, conversation.topicSummary, branches, siblings]
+    [conversation, branches, siblings, titleFor]
   )
 
   // Ignore opens and picks while a move is already in flight (mirrors the

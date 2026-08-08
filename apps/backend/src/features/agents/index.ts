@@ -267,6 +267,7 @@ export {
   GENERAL_RESEARCH_TOOL_POLICY,
 } from "./general-researcher"
 
+export { findThreadAnchorContext, serializeThreadAnchorCard } from "./thread-anchor-context"
 export { ToolGuardianService } from "./guardian/service"
 export type { ToolGuardianServiceDeps, ToolGuardianTurn } from "./guardian/service"
 export {

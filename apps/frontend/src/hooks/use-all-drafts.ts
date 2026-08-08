@@ -18,6 +18,7 @@ import { purgeScopeDrafts } from "./use-draft-message"
 import { isEmptyContent } from "@/lib/prosemirror-utils"
 import { getStreamName, streamFallbackLabel, streamLabel } from "@/lib/streams"
 import { draftInlineText, draftPreviewStatusLabel } from "@/lib/drafts/decryption"
+import { effectiveConversationTitle } from "@/lib/conversations/title"
 import { useDecryptedDraftPreviews, type DraftPreview, type DraftPreviewInput } from "./use-decrypted-draft-previews"
 
 export type DraftType = "scratchpad" | "channel" | "dm" | "thread"
@@ -255,7 +256,8 @@ function resolveBoardDraftLocation(
   if (parsed.kind === "subtopic") {
     const host = subtopicHostByMessageId.get(parsed.messageId)
     const stream = streamMap.get(parsed.streamId)
-    const context = host?.conversation.topicSummary ?? (stream ? streamLabel(stream, "sidebar") : null)
+    let context = stream ? streamLabel(stream, "sidebar") : null
+    if (host) context = effectiveConversationTitle(host.conversation, streamMap.get(host.conversation.streamId))
     const displayName = context ? `New sub-topic in ${context}` : "New sub-topic"
     return {
       draftType: streamDraftType(stream),
@@ -272,7 +274,8 @@ function resolveBoardDraftLocation(
   const post = boardPostMap.get(parsed.conversationId)
   const anchorStreamId = post?.conversation.streamId ?? null
   const stream = anchorStreamId ? streamMap.get(anchorStreamId) : undefined
-  const target = post?.conversation.topicSummary ?? (stream ? streamLabel(stream, "sidebar") : null)
+  let target = stream ? streamLabel(stream, "sidebar") : null
+  if (post) target = effectiveConversationTitle(post.conversation, streamMap.get(post.conversation.streamId))
   const displayName = target ? `Reply in ${target}` : "Conversation reply"
   const shared = { draftType: streamDraftType(stream), streamId: anchorStreamId, displayName, groupLabel: displayName }
 

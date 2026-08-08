@@ -200,7 +200,6 @@ beforeEach(async () => {
     ...REPLY_IDS.map((id, i) => messageEvent(id, 10 + i, `Reply ${i + 1}.`)),
   ])
   await db.conversations.put(post())
-  vi.spyOn(workspaceStoreModule, "useWorkspaceStreams").mockReturnValue([] as never)
   vi.spyOn(workspaceStoreModule, "useWorkspaceUsers").mockReturnValue([] as never)
   vi.spyOn(workspaceStoreModule, "useWorkspaceDmPeers").mockReturnValue([] as never)
   vi.spyOn(workspaceStoreModule, "useWorkspacePersonas").mockReturnValue([] as never)

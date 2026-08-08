@@ -5,6 +5,8 @@ import { resolveInternalAppPath } from "@/lib/internal-url"
 import { useInAppLinkChip } from "@/hooks/use-in-app-link-chip"
 import { useResolvedInAppLink } from "@/components/timeline/in-app-link-preview-card"
 import { InAppLinkChip } from "./in-app-link-chip"
+import { effectiveConversationTitle } from "@/lib/conversations/title"
+import { useWorkspaceStreams } from "@/stores/workspace-store"
 
 /**
  * Posted-message rendering of an in-app stream/message link: the same chip the
@@ -68,6 +70,7 @@ export function InAppLinkInline({
 export function ConversationLinkInline({ href, workspaceId }: { href: string; workspaceId: string }) {
   const navigate = useNavigate()
   const { data } = useResolvedInAppLink(workspaceId, undefined, href, true)
+  const streams = useWorkspaceStreams(workspaceId)
 
   if (data?.accessTier === "cross_workspace") {
     return <InAppLinkChip icon={Globe} label="Another workspace" />
@@ -76,7 +79,13 @@ export function ConversationLinkInline({ href, workspaceId }: { href: string; wo
     return <InAppLinkChip icon={Lock} label="Private conversation" />
   }
 
-  const label = (data?.kind === "conversation" && data.topicSummary) || "Conversation"
+  const label =
+    data?.kind === "conversation"
+      ? effectiveConversationTitle(
+          { streamId: data.streamId ?? "", topicSummary: data.topicSummary ?? null },
+          streams.find((stream) => stream.id === data.streamId)
+        ) || "Conversation"
+      : "Conversation"
   const chip = <InAppLinkChip icon={MessagesSquare} label={label} />
 
   const internalPath = resolveInternalAppPath(href)

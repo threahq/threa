@@ -11,7 +11,7 @@ function textDoc(text: string): JSONContent {
 }
 
 /** Render a threadable card event as the terse markdown the agent needs to know what the thread is about. */
-function serializeCardAnchor(eventType: string, payload: unknown): string | null {
+export function serializeThreadAnchorCard(eventType: string, payload: unknown): string | null {
   if (eventType === "delegation:created") {
     const p = payload as DelegationCreatedEventPayload
     const brief = p.brief.length > MAX_BRIEF_CHARS ? `${p.brief.slice(0, MAX_BRIEF_CHARS)}…` : p.brief
@@ -40,7 +40,7 @@ export async function findThreadAnchorContext(db: Querier, stream: Stream): Prom
 
   const event = await StreamEventRepository.findById(db, anchorId)
   if (!event) return null
-  const text = serializeCardAnchor(event.eventType, event.payload)
+  const text = serializeThreadAnchorCard(event.eventType, event.payload)
   if (!text) return null
 
   return {

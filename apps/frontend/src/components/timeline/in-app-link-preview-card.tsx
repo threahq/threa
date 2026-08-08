@@ -21,6 +21,7 @@ import { actorTypeFromId } from "@/hooks/use-actors"
 import { stripMarkdownToInline } from "@/lib/markdown"
 import { classifyDraftLink } from "@/lib/in-app-links"
 import { useStreamName } from "@/hooks/use-stream-name"
+import { useConversationTitle } from "@/hooks/use-conversation-title"
 import { DELEGATION_STATUS_LABEL, delegationStatusPillClass } from "@/lib/delegation-display"
 import { AccentGlow } from "./link-preview-primitives"
 import { linkPreviewsApi } from "@/api"
@@ -449,6 +450,10 @@ function ConversationLinkCard({
   reserve: boolean
   onDismiss?: () => void
 }) {
+  const effectiveTitle = useConversationTitle(workspaceId, {
+    streamId: data.streamId ?? "",
+    topicSummary: data.topicSummary ?? null,
+  })
   if (data.accessTier === "cross_workspace") {
     return (
       <MinimalCard
@@ -491,7 +496,7 @@ function ConversationLinkCard({
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-1.5">
             <h4 className="truncate text-sm font-semibold leading-snug text-foreground">
-              {data.topicSummary ?? "Conversation"}
+              {effectiveTitle ?? "Conversation"}
             </h4>
             {conversationStatusBadge(data.status)}
           </div>

@@ -15,6 +15,7 @@ import { MessageFormatter } from "../../lib/ai/message-formatter"
 import { awaitAttachmentProcessing } from "../attachments"
 import { awaitLinkPreviewProcessing, enrichMessagesWithLinkPreviewMap } from "../link-previews"
 import { MAX_MESSAGES_FOR_NAMING, MAX_EXISTING_NAMES, buildNamingSystemPrompt } from "./naming-config"
+import { prependThreadNamingAnchor } from "./naming-context"
 
 export interface GenerateNameResult {
   name: string | null
@@ -102,9 +103,10 @@ export class StreamNamingService {
         return { stream: null, messages: [], otherStreams: [], attachmentIds: [] }
       }
 
-      const messages = await MessageRepository.list(client, streamId, {
+      const replies = await MessageRepository.list(client, streamId, {
         limit: MAX_MESSAGES_FOR_NAMING,
       })
+      const messages = await prependThreadNamingAnchor(client, stream, replies)
 
       if (messages.length === 0) {
         return { stream: null, messages: [], otherStreams: [], attachmentIds: [] }

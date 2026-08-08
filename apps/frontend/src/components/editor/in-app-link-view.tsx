@@ -5,7 +5,9 @@ import { useParams } from "react-router-dom"
 import { InAppLinkChip } from "@/components/in-app-link/in-app-link-chip"
 import { useInAppLinkChip } from "@/hooks/use-in-app-link-chip"
 import { useResolvedInAppLink } from "@/components/timeline/in-app-link-preview-card"
+import { useConversationTitleDetails } from "@/hooks/use-conversation-title"
 import type { InAppLinkAttrs } from "./in-app-link-extension"
+import { conversationChipLabel } from "./conversation-chip-label"
 
 /**
  * In-composer chip for an in-app link (TipTap NodeView). A conversation link has
@@ -87,8 +89,12 @@ function ConversationChipView({
   updateAttributes: (attrs: Record<string, unknown>) => void
 }) {
   const { data } = useResolvedInAppLink(workspaceId, undefined, attrs.url, true)
-
-  const resolvedName = data?.kind === "conversation" && data.accessTier === "full" ? (data.topicSummary ?? null) : null
+  const conversation = data?.kind === "conversation" ? data : null
+  const titleDetails = useConversationTitleDetails(workspaceId, {
+    streamId: conversation?.streamId ?? "",
+    topicSummary: conversation?.topicSummary ?? null,
+  })
+  const resolvedName = conversation?.accessTier === "full" ? titleDetails.title : null
 
   useEffect(() => {
     if (resolvedName && !attrs.name) {
@@ -97,16 +103,14 @@ function ConversationChipView({
   }, [resolvedName, attrs.name, updateAttributes])
 
   let icon = MessagesSquare
-  let label = attrs.name || "Conversation"
-  if (data?.accessTier === "cross_workspace") {
-    icon = Globe
-    label = "Another workspace"
-  } else if (data?.accessTier === "private") {
-    icon = Lock
-    label = "Private conversation"
-  } else if (resolvedName) {
-    label = resolvedName
-  }
+  if (data?.accessTier === "cross_workspace") icon = Globe
+  else if (data?.accessTier === "private" || (conversation?.accessTier === "full" && titleDetails.isE2e)) icon = Lock
+  const label = conversationChipLabel({
+    accessTier: data?.accessTier,
+    resolvedName,
+    isE2e: titleDetails.isE2e,
+    pending: titleDetails.pending,
+  })
 
   return (
     <NodeViewWrapper as="span" data-type="in-app-link">

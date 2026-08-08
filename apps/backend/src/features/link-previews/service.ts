@@ -12,7 +12,7 @@ import type {
   MessageLinkPreviewData,
   JSONContent,
 } from "@threa/types"
-import { getAvatarUrl, isInAppLinkContentType, stripMarkdownToInline } from "@threa/types"
+import { getAvatarUrl, isInAppLinkContentType, stripMarkdownToInline, StreamTypes } from "@threa/types"
 import { LinkPreviewRepository, type LinkPreview, type UpdateLinkPreviewParams } from "./repository"
 import { MessageRepository } from "../messaging"
 import { UserRepository } from "../workspaces"
@@ -561,7 +561,7 @@ export class LinkPreviewService {
       authorName,
       authorAvatarUrl,
       contentPreview,
-      streamName: stream.displayName ?? stream.slug ?? undefined,
+      streamName: stream.e2eEnabled ? undefined : (stream.displayName ?? stream.slug ?? undefined),
       streamType: stream.type,
       recipientName,
       authorId: message.authorId,
@@ -591,7 +591,7 @@ export class LinkPreviewService {
     return {
       kind: "stream",
       accessTier: "full",
-      streamName: stream.displayName ?? stream.slug ?? undefined,
+      streamName: stream.e2eEnabled ? undefined : (stream.displayName ?? stream.slug ?? undefined),
       streamType: stream.type,
       visibility: stream.visibility,
       description,
@@ -669,16 +669,21 @@ export class LinkPreviewService {
     }
 
     const summary = conversation.summary ? buildPreviewSnippet(conversation.summary) : undefined
+    let topicSummary = conversation.topicSummary ?? undefined
+    if (stream.type === StreamTypes.SCRATCHPAD) {
+      topicSummary = stream.e2eEnabled ? undefined : (stream.displayName ?? undefined)
+    }
 
     return {
       kind: "conversation",
       accessTier: "full",
-      topicSummary: conversation.topicSummary ?? undefined,
+      streamId: conversation.streamId,
+      topicSummary,
       summary,
       status: conversation.status,
       messageCount: conversation.messageIds.length,
       participantIds: conversation.participantIds,
-      streamName: stream.displayName ?? stream.slug ?? undefined,
+      streamName: stream.e2eEnabled ? undefined : (stream.displayName ?? stream.slug ?? undefined),
       streamType: stream.type,
     }
   }

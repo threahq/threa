@@ -42,6 +42,7 @@ import { useComposerCommandSend } from "@/components/composer/use-composer-comma
 import type { JSONContent } from "@threa/types"
 import type { PendingAttachment } from "@/hooks/use-attachments"
 import { ComposerEncryptionNotice } from "@/components/encryption/stream-encryption-affordance"
+import { useConversationTitle } from "@/hooks/use-conversation-title"
 
 interface MessageInputProps {
   workspaceId: string
@@ -327,7 +328,10 @@ function MessageInputComponent({
     workspaceId,
     conversationReply?.conversationId ?? null
   )
-  const conversationReplyTopic = conversationReplyPost?.conversation.topicSummary ?? null
+  const conversationReplyTopic = useConversationTitle(
+    workspaceId,
+    conversationReplyPost?.conversation ?? { streamId: "", topicSummary: null }
+  )
   const conversationReplyLastActiveStreamId = conversationReplyPost
     ? boardPostLastActiveStreamId(conversationReplyPost)
     : null
