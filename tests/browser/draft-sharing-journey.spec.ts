@@ -88,6 +88,14 @@ test.describe("draft sharing across surfaces", () => {
     await expect(boardComposer).toContainText("board reply to put away")
     await page.waitForTimeout(900)
 
+    // Prove the preview has hydrated and advertises the live draft before
+    // testing its transition to absent after stashing.
+    await page.goto(`/w/${workspaceId}/board?lens=all`)
+    const persistedPreview = page.getByText("board reply to put away").first()
+    await expect(persistedPreview).toBeVisible({ timeout: 15_000 })
+    await persistedPreview.click()
+    await expect(page.locator("[contenteditable='true']").last()).toContainText("board reply to put away")
+
     await page
       .getByRole("button", { name: /drafts/i })
       .last()
@@ -121,6 +129,11 @@ test.describe("draft sharing across surfaces", () => {
       await composer.click()
       await composer.pressSequentially(text.slice(0, 6), { delay: 3 })
       await page.waitForTimeout(560) // let a mid-typing debounce fire
+      if (text.startsWith("Second")) {
+        // Observe the positive state before the final no-draft assertion: the
+        // debounce-created row must make the sidebar affordance active first.
+        await expect(page.locator('a[href*="/drafts"]')).not.toHaveClass(/text-muted-foreground/)
+      }
       await composer.pressSequentially(text.slice(6), { delay: 2 })
       await page.keyboard.press("Enter")
       await page.waitForTimeout(900)

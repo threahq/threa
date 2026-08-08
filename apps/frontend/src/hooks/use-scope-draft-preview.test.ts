@@ -280,17 +280,21 @@ describe("staging repro: stash on the board sticks", () => {
     await upsertLoadedDraft(workspaceId, rtScope, { contentJson: doc("typed on the board"), attachments: [] })
     await seedDraftCacheFromIdb(workspaceId)
 
+    // Observe the loaded advertisement first so the negative assertion below
+    // cannot pass merely because the live query has not hydrated yet.
+    const preview = renderHook(() => useScopeDraftPreview(workspaceId, rtScope))
+    await waitFor(() => expect(preview.result.current).toMatchObject({ preview: "typed on the board" }))
+
     const stashedId = await stashLoadedDraft(workspaceId, rtScope)
     expect(stashedId).not.toBeNull()
 
     // Button rests: nothing advertised, so the open-time auto-restore
     // (restoreStashedIdOnMount derives from this same preview) has nothing to fire.
-    const preview = renderHook(() => useScopeDraftPreview(workspaceId, rtScope))
+    await waitFor(() => expect(preview.result.current).toBeNull())
     // The pile still offers the row — stash hides it from the button, never
     // from the picker.
     const pile = renderHook(() => useStashedDrafts(workspaceId, rtScope))
     await waitFor(() => expect(pile.result.current.drafts.map((d) => d.id)).toContain(stashedId))
-    expect(preview.result.current).toBeNull()
     preview.unmount()
     pile.unmount()
   })
