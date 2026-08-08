@@ -252,6 +252,72 @@ describe("IncrementalPolishCoordinator", () => {
     expect(window.accepted?.markdown).toBe("FIRST")
   })
 
+  it("does not reopen a widened result when newer raw speech arrived before its applied ack", async () => {
+    const engine = new IncrementalVoiceEngine()
+    for (const value of ["a", "b", "c", "d", "e"]) engine.appendFinal(value)
+    const [predecessor, current] = engine.windows
+    engine.registerOperation({
+      operationId: "wide-with-tail",
+      sources: [
+        { chunkId: predecessor!.chunkId, throughRevision: predecessor!.latestRevision },
+        { chunkId: current!.chunkId, throughRevision: current!.latestRevision },
+      ],
+      resultChunkId: "wide-result",
+      markdown: "Accepted widened result.",
+      contentJson,
+      rawMarkdown: "a b c d e",
+      rawContentJson: contentJson,
+    })
+    engine.appendFinal("new raw suffix")
+    expect(engine.acknowledge("wide-with-tail", "applied")).toBe(true)
+    const polish = mock(success)
+    const coordinator = new IncrementalPolishCoordinator({
+      engine,
+      polishTranscript: polish,
+      applyOperation: async () => "applied",
+      context,
+    })
+    expect(await coordinator.run(engine.activeWindow!, "final", true)).toEqual({
+      status: "preserve_raw",
+      scope: "preserve_raw",
+    })
+    expect(polish).not.toHaveBeenCalled()
+    expect(engine.visibleMarkdown(engine.activeWindow!)).toBe("Accepted widened result. new raw suffix")
+  })
+
+  it("preserves raw instead of reporting timeout when the separator would exceed the widen bound", async () => {
+    const engine = new IncrementalVoiceEngine()
+    const predecessor = engine.appendFinal("a".repeat(1_200))[0]!.window
+    engine.registerOperation({
+      operationId: "full-predecessor",
+      sources: [{ chunkId: predecessor.chunkId, throughRevision: predecessor.latestRevision }],
+      resultChunkId: predecessor.chunkId,
+      markdown: "Accepted predecessor.",
+      contentJson,
+      rawMarkdown: engine.raw(predecessor),
+      rawContentJson: contentJson,
+    })
+    engine.acknowledge("full-predecessor", "applied")
+    const current = engine.appendFinal("b".repeat(1_200))[0]!.window
+    const polish = mock(success)
+    const applyOperation = mock(async () => "applied" as const)
+    const coordinator = new IncrementalPolishCoordinator({
+      engine,
+      polishTranscript: polish,
+      decideBoundaryScope: async () => ({ status: "success", scope: "widen_previous" }),
+      applyOperation,
+      context,
+    })
+    expect(await coordinator.run(current, "final", true)).toEqual({
+      status: "preserve_raw",
+      scope: "preserve_raw",
+    })
+    expect(polish).toHaveBeenCalledTimes(1)
+    expect(polish.mock.calls[0]?.[0].rawTranscript).toHaveLength(1_200)
+    expect(applyOperation).not.toHaveBeenCalled()
+    expect(engine.windows).toHaveLength(2)
+  })
+
   it("does not recursively widen a previously collapsed two-window span", async () => {
     const engine = new IncrementalVoiceEngine()
     const predecessor = acceptedPredecessor(engine)

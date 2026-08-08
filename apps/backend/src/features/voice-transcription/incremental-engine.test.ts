@@ -59,6 +59,57 @@ describe("IncrementalVoiceEngine", () => {
     ).toBe(false)
   })
 
+  it("accepts an applied single-source result as a prefix when newer raw speech arrived before its ack", () => {
+    const engine = new IncrementalVoiceEngine()
+    const first = engine.appendFinal("raw")[0]!
+    expect(
+      engine.registerOperation({
+        operationId: "prefix",
+        sources: [{ chunkId: first.chunkId, throughRevision: first.revision }],
+        resultChunkId: first.chunkId,
+        markdown: "Polished.",
+        contentJson: doc,
+        rawMarkdown: "raw",
+        rawContentJson: doc,
+      })
+    ).toBe(true)
+    engine.appendFinal("later")
+    expect(engine.acknowledge("prefix", "applied")).toBe(true)
+    expect(engine.activeWindow).toMatchObject({ latestRevision: 2, accepted: { throughRevision: 1 } })
+    expect(engine.visibleMarkdown(engine.activeWindow!)).toBe("Polished. later")
+  })
+
+  it("collapses an applied widened result while retaining raw speech that arrived before its ack", () => {
+    const engine = new IncrementalVoiceEngine()
+    for (const value of ["a", "b", "c", "d", "e"]) engine.appendFinal(value)
+    const [predecessor, current] = engine.windows
+    expect(
+      engine.registerOperation({
+        operationId: "wide-prefix",
+        sources: [
+          { chunkId: predecessor!.chunkId, throughRevision: predecessor!.latestRevision },
+          { chunkId: current!.chunkId, throughRevision: current!.latestRevision },
+        ],
+        resultChunkId: "collapsed-prefix",
+        markdown: "Combined.",
+        contentJson: doc,
+        rawMarkdown: "a b c d e",
+        rawContentJson: doc,
+      })
+    ).toBe(true)
+    engine.appendFinal("later")
+    expect(engine.acknowledge("wide-prefix", "applied")).toBe(true)
+    expect(engine.windows).toHaveLength(1)
+    expect(engine.activeWindow).toMatchObject({
+      chunkId: "collapsed-prefix",
+      latestRevision: 6,
+      state: "sealed",
+      accepted: { throughRevision: 5 },
+    })
+    expect(engine.visibleMarkdown(engine.activeWindow!)).toBe("Combined. later")
+    expect(engine.exactCurrentAccepted()).toBeUndefined()
+  })
+
   it("atomically collapses two acknowledged sources to the editor result id", () => {
     const engine = new IncrementalVoiceEngine()
     for (const value of ["a", "b", "c", "d", "e"]) engine.appendFinal(value)

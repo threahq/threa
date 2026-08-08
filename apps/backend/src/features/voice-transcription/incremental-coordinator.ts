@@ -75,6 +75,12 @@ export class IncrementalPolishCoordinator {
         acceptedMarkdown: window.accepted?.markdown,
       }
       const currentRaw = snapshot.raw
+      if (
+        snapshot.logicalSpanCount >= VOICE_POLISH_WIDEN_MAX_WINDOWS &&
+        snapshot.acceptedMarkdown &&
+        !this.deps.engine.isExactlyAccepted(window)
+      )
+        return { status: "preserve_raw", scope: "preserve_raw" }
       if (scalarLength(currentRaw) > VOICE_POLISH_WINDOW_MAX_CHARS)
         throw new RangeError("normal voice polish input exceeded bound")
       const includePrevious = this.deps.includePreviousAccepted !== false
@@ -147,11 +153,9 @@ export class IncrementalPolishCoordinator {
       if (predecessorSnapshot.logicalSpanCount + snapshot.logicalSpanCount > VOICE_POLISH_WIDEN_MAX_WINDOWS)
         return { status: "preserve_raw", scope: "preserve_raw" }
       const widenedRaw = `${predecessorSnapshot.raw} ${currentRaw}`
-      if (
-        scalarLength(widenedRaw) > VOICE_POLISH_WINDOW_MAX_CHARS * VOICE_POLISH_WIDEN_MAX_WINDOWS ||
-        performance.now() >= expiresAt
-      )
-        return { status: "timeout" }
+      if (scalarLength(widenedRaw) > VOICE_POLISH_WINDOW_MAX_CHARS * VOICE_POLISH_WIDEN_MAX_WINDOWS)
+        return { status: "preserve_raw", scope: "preserve_raw" }
+      if (performance.now() >= expiresAt) return { status: "timeout" }
       const widened = await this.deps.polishTranscript({
         ...this.polishInput(widenedRaw, deadline, controller.signal),
         previousAcceptedMarkdown: predecessorSnapshot.markdown,

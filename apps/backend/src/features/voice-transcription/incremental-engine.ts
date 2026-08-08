@@ -133,17 +133,13 @@ export class IncrementalVoiceEngine {
       this.counters[status]++
       return false
     }
-    if (!this.sourcesExact(pending.sources)) {
+    const sourceIndexes = this.sourceIndexesAtOrAfter(pending.sources)
+    if (!sourceIndexes) {
       this.counters.stale++
       return false
     }
     this.counters.applied++
-    const sourceIds = new Set(pending.sources.map((source) => source.chunkId))
-    const sourceIndexes = this.windows
-      .map((window, index) => (sourceIds.has(window.chunkId) ? index : -1))
-      .filter((index) => index >= 0)
-    const targetIndex = sourceIndexes.at(-1)
-    if (targetIndex === undefined) return false
+    const targetIndex = sourceIndexes.at(-1)!
     if (pending.sources.length === 1) {
       this.windows[targetIndex]!.accepted = pending.result
       return true
@@ -155,7 +151,7 @@ export class IncrementalVoiceEngine {
       chunkId: pending.result.resultChunkId,
       predecessorChunkId: sources[0]!.predecessorChunkId,
       firstRevision: sources[0]!.firstRevision,
-      latestRevision: pending.result.throughRevision,
+      latestRevision: Math.max(...sources.map((source) => source.latestRevision)),
       rawParts: [sources.map((source) => this.raw(source)).join(" ")],
       rawCharCount: scalarLength(sources.map((source) => this.raw(source)).join(" ")),
       finalCount: sources.reduce((sum, source) => sum + source.finalCount, 0),
@@ -234,13 +230,23 @@ export class IncrementalVoiceEngine {
   }
 
   private sourcesExact(sources: Array<{ chunkId: string; throughRevision: number }>): boolean {
-    if (sources.length < 1 || sources.length > VOICE_POLISH_WIDEN_MAX_WINDOWS) return false
+    const indices = this.sourceIndexesAtOrAfter(sources)
+    return Boolean(
+      indices &&
+      sources.every((source, index) => this.windows[indices[index]!]!.latestRevision === source.throughRevision)
+    )
+  }
+
+  private sourceIndexesAtOrAfter(sources: Array<{ chunkId: string; throughRevision: number }>): number[] | undefined {
+    if (sources.length < 1 || sources.length > VOICE_POLISH_WIDEN_MAX_WINDOWS) return undefined
     const indices = sources.map((source) =>
       this.windows.findIndex(
-        (window) => window.chunkId === source.chunkId && window.latestRevision === source.throughRevision
+        (window) => window.chunkId === source.chunkId && window.latestRevision >= source.throughRevision
       )
     )
-    return indices.every((index) => index >= 0) && (indices.length === 1 || indices[1] === indices[0] + 1)
+    if (indices.some((index) => index < 0)) return undefined
+    if (indices.some((index, position) => position > 0 && index !== indices[position - 1]! + 1)) return undefined
+    return indices
   }
 }
 
