@@ -237,6 +237,7 @@ export function registerVoiceGateway(io: Server, deps: Dependencies) {
             isFinal: true,
             chunkId: delta.chunkId,
             ...(delta.afterChunkId ? { afterChunkId: delta.afterChunkId } : {}),
+            ...(delta.joinPrevious ? { joinPrevious: true } : {}),
             contentJson: parseMarkdown(delta.text),
           })
           if (schedule && current.phase === "live" && current.polishLevel !== "none")

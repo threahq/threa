@@ -41,6 +41,8 @@ export type VoiceTranscriptDeltaV4 =
       isFinal: true
       chunkId: string
       afterChunkId?: string
+      /** Preserve a hard scalar split without inserting whitespace between chunks. */
+      joinPrevious?: boolean
       contentJson: JSONContent
     })
 

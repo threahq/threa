@@ -306,6 +306,20 @@ describe("registerVoiceGateway voice:start", () => {
     await socket.trigger("disconnect", "client namespace disconnect")
   })
 
+  it("marks hard-split v4 continuations so the client does not invent whitespace", async () => {
+    const { socket, upstream } = setup({ voicePolishLevel: "none" })
+    await socket.trigger(
+      "voice:start",
+      { ...START_PAYLOAD, maxProtocolVersion: 4 },
+      mock(() => {})
+    )
+    upstream.fireDelta({ text: "😀".repeat(1_201), isFinal: true })
+    const deltas = socket.emitted.filter((event) => event.event === "voice:transcript:delta")
+    expect(deltas).toHaveLength(2)
+    expect(deltas[1]?.payload).toMatchObject({ isFinal: true, joinPrevious: true })
+    await socket.trigger("disconnect", "client namespace disconnect")
+  })
+
   it("emits each v4 raw delta before its acknowledged replacement", async () => {
     const { socket, upstream } = setup({ voicePolishLevel: "opinionated" })
     await socket.trigger(

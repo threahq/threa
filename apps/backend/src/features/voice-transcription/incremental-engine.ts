@@ -35,6 +35,7 @@ export interface RawWindowDelta {
   afterChunkId?: string
   revision: number
   text: string
+  joinPrevious?: boolean
   window: VoicePolishWindow
 }
 
@@ -64,7 +65,11 @@ export class IncrementalVoiceEngine {
   appendFinal(text: string): RawWindowDelta[] {
     const pieces = splitUnicodeFinal(text, VOICE_POLISH_WINDOW_MAX_CHARS)
     const deltas: RawWindowDelta[] = []
-    for (const [index, piece] of pieces.entries()) deltas.push(this.appendPiece(piece, index === 0))
+    for (const [index, piece] of pieces.entries()) {
+      const priorPiece = pieces[index - 1]
+      const joinPrevious = index > 0 && priorPiece !== undefined && !/\s$/u.test(priorPiece) && !/^\s/u.test(piece)
+      deltas.push(this.appendPiece(piece, index === 0, joinPrevious))
+    }
     return deltas
   }
 
@@ -190,7 +195,7 @@ export class IncrementalVoiceEngine {
     return takeLastScalars(older, VOICE_POLISH_READ_ONLY_SUFFIX_MAX_CHARS)
   }
 
-  private appendPiece(piece: string, newFinal: boolean): RawWindowDelta {
+  private appendPiece(piece: string, newFinal: boolean, joinPrevious: boolean): RawWindowDelta {
     let window = this.activeWindow
     const separator = newFinal && window?.rawParts.length ? " " : ""
     const addedChars = scalarLength(separator + piece)
@@ -225,6 +230,7 @@ export class IncrementalVoiceEngine {
       afterChunkId: window.rawParts.length === 1 ? window.predecessorChunkId : undefined,
       revision: this.revision,
       text: piece,
+      ...(joinPrevious ? { joinPrevious: true } : {}),
       window,
     }
   }

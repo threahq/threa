@@ -23,6 +23,13 @@ describe("IncrementalVoiceEngine", () => {
     const pieces = splitUnicodeFinal(input, 1_200)
     expect(pieces.join("")).toBe(input)
     expect(pieces.every((piece) => scalarLength(piece) <= 1_200)).toBe(true)
+
+    const hardSplit = new IncrementalVoiceEngine().appendFinal("😀".repeat(1_201))
+    expect(hardSplit).toHaveLength(2)
+    expect(hardSplit[1]?.joinPrevious).toBe(true)
+    const whitespaceSplit = new IncrementalVoiceEngine().appendFinal(`${"x".repeat(1_199)} hello`)
+    expect(whitespaceSplit).toHaveLength(2)
+    expect(whitespaceSplit[1]?.joinPrevious).toBeUndefined()
   })
 
   it("accepts exact sealed-window results after a later window opens but rejects stale current results", () => {
