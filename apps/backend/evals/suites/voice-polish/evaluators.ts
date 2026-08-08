@@ -1,6 +1,11 @@
 import { parseMarkdown, serializeToMarkdown } from "@threa/prosemirror"
 import type { CaseResult, Evaluator, EvaluatorResult, PermutationResult, RunEvaluator } from "../../framework/types"
 import type { VoicePolishExpected, VoicePolishOutput, VoicePolishStepOutput } from "./types"
+import {
+  VOICE_POLISH_WIDEN_MAX_WINDOWS,
+  VOICE_POLISH_WINDOW_MAX_CHARS,
+  voicePolishConfig,
+} from "../../../src/features/voice-transcription/config"
 
 const result = (name: string, passed: boolean, details?: string): EvaluatorResult => ({
   name,
@@ -275,10 +280,7 @@ export const lifecycleEvaluator: Evaluator<VoicePolishOutput, VoicePolishExpecte
     const final = output.steps.at(-1)
     if (!final) return result("declared-lifecycle-outcome", !expected.expectedFinalResult)
     const resultStatus = final.coordinatorResult?.status
-    const statusMatches =
-      !expected.expectedFinalResult ||
-      resultStatus === expected.expectedFinalResult ||
-      (expected.expectedFinalResult === "rejected" && resultStatus === "rejected")
+    const statusMatches = !expected.expectedFinalResult || resultStatus === expected.expectedFinalResult
     const ackMatches =
       !expected.expectedAckStatus ||
       (final.coordinatorResult?.status === "rejected" &&
@@ -299,9 +301,12 @@ export const attemptBoundsEvaluator: Evaluator<VoicePolishOutput, VoicePolishExp
     const attempts = output.steps.flatMap((step) => step.attempts ?? [])
     const invalid = attempts.filter(
       (attempt) =>
-        attempt.sourceWindowCount > 2 ||
-        attempt.rawScalarLength > (attempt.stage === "widen" ? 2400 : 1200) ||
-        attempt.reasoningEffort !== "medium"
+        attempt.sourceWindowCount > VOICE_POLISH_WIDEN_MAX_WINDOWS ||
+        attempt.rawScalarLength >
+          (attempt.stage === "widen"
+            ? VOICE_POLISH_WINDOW_MAX_CHARS * VOICE_POLISH_WIDEN_MAX_WINDOWS
+            : VOICE_POLISH_WINDOW_MAX_CHARS) ||
+        attempt.reasoningEffort !== voicePolishConfig.reasoningEffort
     )
     return result("attempt-input-reasoning-bounds", invalid.length === 0, `Invalid attempts: ${invalid.length}`)
   },

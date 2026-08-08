@@ -65,6 +65,7 @@ export async function runVoicePolishTask(input: VoicePolishInput, ctx: EvalConte
     const result = window
       ? await coordinator.run(window, deadline, deadline === "final")
       : { status: "empty_input" as const }
+    const durationMs = Math.round(performance.now() - started)
     const document = composedDocument(engine)
     let outcome: PolishOutcome
     if (result.status === "applied" || result.status === "reused") outcome = document
@@ -88,7 +89,7 @@ export async function runVoicePolishTask(input: VoicePolishInput, ctx: EvalConte
       composedDocument: document,
       attempts,
       scope: "scope" in result ? result.scope : undefined,
-      durationMs: Math.round(performance.now() - started),
+      durationMs,
       deadline,
       sourceWindowCount: result.status === "applied" && result.widened ? 2 : 1,
       rawCharCount: scalarLength(raw),

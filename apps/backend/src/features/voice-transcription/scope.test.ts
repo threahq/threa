@@ -22,36 +22,56 @@ describe("createDecideVoiceBoundaryScope", () => {
       return logger
     })
     const decide = createDecideVoiceBoundaryScope({ ai: { generateObject } as never })
-    expect(await decide(input)).toEqual({ status: "success", scope: "tail" })
-    expect(generateObject).toHaveBeenCalledWith(
-      expect.objectContaining({
-        maxTokens: voicePolishConfig.maxTokens,
-        reasoningEffort: "medium",
-        telemetry: expect.objectContaining({
-          functionId: "voice-transcript-boundary-scope",
-          metadata: expect.objectContaining({ stage: "scope_live", sourceWindowCount: 2 }),
-        }),
+    try {
+      expect(await decide(input)).toEqual({ status: "success", scope: "tail" })
+      expect(generateObject).toHaveBeenCalledWith(
+        expect.objectContaining({
+          maxTokens: voicePolishConfig.maxTokens,
+          reasoningEffort: "medium",
+          telemetry: expect.objectContaining({
+            functionId: "voice-transcript-boundary-scope",
+            metadata: expect.objectContaining({ stage: "scope_live", sourceWindowCount: 2 }),
+          }),
+        })
+      )
+      expect(logs[0]?.[0]).toMatchObject({
+        outcome: "success",
+        scope: "tail",
+        stage: "scope_live",
+        protocolVersion: 4,
+        sourceWindowCount: 2,
       })
-    )
-    expect(logs[0]?.[0]).toMatchObject({
-      outcome: "success",
-      scope: "tail",
-      stage: "scope_live",
-      protocolVersion: 4,
-      sourceWindowCount: 2,
-    })
-    expect(JSON.stringify(logs)).not.toContain(input.currentRaw)
-    info.mockRestore()
+      expect(JSON.stringify(logs)).not.toContain(input.currentRaw)
+    } finally {
+      info.mockRestore()
+    }
   })
 
-  it("returns typed provider failure without exposing the provider error", async () => {
+  it("returns typed provider failure with only bounded sanitized diagnostics", async () => {
+    const sentinel = "secret transcript and provider code"
+    const logs: unknown[][] = []
+    const info = spyOn(logger, "info").mockImplementation((...args: unknown[]) => {
+      logs.push(args)
+      return logger
+    })
     const decide = createDecideVoiceBoundaryScope({
       ai: {
         generateObject: async () => {
-          throw new Error("secret transcript")
+          throw Object.assign(new Error(sentinel), { code: sentinel, status: 429 })
         },
       } as never,
     })
-    expect(await decide(input)).toEqual({ status: "provider_error" })
+    try {
+      expect(await decide(input)).toEqual({ status: "provider_error" })
+      expect(logs[0]?.[0]).toMatchObject({
+        outcome: "provider_error",
+        errorName: "Error",
+        errorCode: "other",
+        errorStatus: 429,
+      })
+      expect(JSON.stringify(logs)).not.toContain(sentinel)
+    } finally {
+      info.mockRestore()
+    }
   })
 })

@@ -34,6 +34,7 @@ import { safeDisconnectReason, safeProviderError } from "./safe-error"
 import type { UserPreferencesService } from "../user-preferences"
 import type { WorkspaceSettingsService } from "../workspace-settings"
 
+const maxProtocolVersionSchema = z.number().finite()
 const startPayloadSchema = z.object({
   workspaceId: z.string().min(1),
   voiceSessionId: z.string().min(1),
@@ -85,9 +86,9 @@ interface RelayState {
 }
 
 function negotiateProtocol(value: unknown): number {
-  if (value === undefined) return VOICE_LEGACY_PROTOCOL_VERSION
-  if (typeof value !== "number" || !Number.isFinite(value) || value < 1) return VOICE_LEGACY_PROTOCOL_VERSION
-  return Math.min(VOICE_PROTOCOL_VERSION, Math.floor(value))
+  const parsed = maxProtocolVersionSchema.safeParse(value)
+  if (!parsed.success) return VOICE_LEGACY_PROTOCOL_VERSION
+  return Math.min(VOICE_PROTOCOL_VERSION, Math.max(VOICE_LEGACY_PROTOCOL_VERSION, Math.floor(parsed.data)))
 }
 
 function toBuffer(frame: unknown): Buffer | null {

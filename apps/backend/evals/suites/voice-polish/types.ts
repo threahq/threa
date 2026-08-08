@@ -1,13 +1,15 @@
-import type { JSONContent, VoicePolishLevel } from "@threa/types"
+import type { JSONContent, VoicePolishLevel, VoiceReplacementAckStatus } from "@threa/types"
 import type { PolishOutcome, VoicePolishAttempt } from "../../../src/features/voice-transcription/polish"
 import type { IncrementalPolishResult } from "../../../src/features/voice-transcription/incremental-coordinator"
+
+type VoicePolishScope = Extract<IncrementalPolishResult, { scope: unknown }>["scope"]
 
 export interface VoicePolishStep {
   rawTranscript: string
   deadline?: "live" | "final"
   draftBefore?: string
   draftAfter?: string
-  ackStatus?: "applied" | "stale" | "locked" | "missing" | "non_contiguous" | "invalid" | "timeout"
+  ackStatus?: VoiceReplacementAckStatus | "timeout"
   stopWithoutNewFinal?: boolean
 }
 
@@ -29,7 +31,7 @@ export interface VoicePolishExpected {
   forbiddenTranslations?: string[]
   stability?: "prior-content"
   correctionOrStructure?: boolean
-  expectedScope?: "tail" | "widen_previous" | "preserve_raw"
+  expectedScope?: VoicePolishScope
   predecessorStable?: boolean
   expectedFinalResult?: "reused" | "rejected"
   expectedAckStatus?: VoicePolishStep["ackStatus"]
@@ -41,11 +43,9 @@ export interface VoicePolishStepOutput {
   coordinatorResult?: IncrementalPolishResult
   composedDocument?: PolishOutcome
   attempts?: VoicePolishAttempt[]
-  scope?: "tail" | "widen_previous" | "preserve_raw"
+  scope?: VoicePolishScope
   durationMs: number
   deadline: "live" | "final"
-  previousAcceptedMarkdown?: string
-  stage?: "scope" | "normal_live" | "normal_final" | "widen"
   sourceWindowCount?: number
   rawCharCount?: number
   reasoningEffort?: string

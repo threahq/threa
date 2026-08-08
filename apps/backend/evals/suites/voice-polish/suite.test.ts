@@ -3,11 +3,18 @@ import type { AI } from "@threa/agent-runtime"
 import type { EvalContext } from "../../framework/types"
 import { runVoicePolishTask } from "./suite"
 
-function context(generateText: (options: any) => Promise<any>, model = "openrouter:openai/gpt-5.4-mini"): EvalContext {
+function context(
+  generateText: (options: any) => Promise<any>,
+  model = "openrouter:openai/gpt-5.4-mini",
+  onGenerateObject?: (options: any) => void
+): EvalContext {
   return {
     ai: {
       generateText,
-      generateObject: async () => ({ value: { scope: "tail" }, usage: {} }),
+      generateObject: async (options: any) => {
+        onGenerateObject?.(options)
+        return { value: { scope: "tail" }, usage: {} }
+      },
     } as unknown as AI,
     workspaceId: "ws_eval",
     userId: "usr_eval",
@@ -39,10 +46,14 @@ describe("voice polish eval production entrypoint", () => {
 
   test("captures composer context once and ignores later-step context", async () => {
     const calls: any[] = []
-    const ctx = context(async (options) => {
-      calls.push(options)
-      return { value: "Accepted.", finishReason: "stop", usage: {} }
-    })
+    const ctx = context(
+      async (options) => {
+        calls.push(options)
+        return { value: "Accepted.", finishReason: "stop", usage: {} }
+      },
+      undefined,
+      (options) => calls.push(options)
+    )
     await runVoicePolishTask(
       {
         steps: [
@@ -53,6 +64,7 @@ describe("voice polish eval production entrypoint", () => {
       ctx
     )
     const prompts = calls.map((call) => call.messages[1].content)
+    expect(prompts.length).toBeGreaterThan(0)
     expect(prompts.every((prompt) => prompt.includes("START_CONTEXT") && prompt.includes("START_AFTER"))).toBe(true)
     expect(prompts.some((prompt) => prompt.includes("LATER_SECRET") || prompt.includes("LATER_AFTER"))).toBe(false)
   })

@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { parseMarkdown } from "@threa/prosemirror"
 import type { PolishOutcome } from "../../../src/features/voice-transcription/polish"
 import {
+  attemptBoundsEvaluator,
   blockShapeEvaluator,
   challengerBeatsProduction,
   contextNonEchoEvaluator,
@@ -21,6 +22,11 @@ import {
 } from "./evaluators"
 import type { VoicePolishOutput } from "./types"
 import { toJsonReport } from "../../run"
+import {
+  VOICE_POLISH_WIDEN_MAX_WINDOWS,
+  VOICE_POLISH_WINDOW_MAX_CHARS,
+  voicePolishConfig,
+} from "../../../src/features/voice-transcription/config"
 
 const success = (markdown: string): Extract<PolishOutcome, { status: "success" }> => ({
   status: "success",
@@ -145,6 +151,33 @@ describe("voice polish deterministic evaluators", () => {
     expect(
       (await scopeEvaluator.evaluate(value, { expectedScope: "preserve_raw", predecessorStable: true }, ctx)).passed
     ).toBe(true)
+  })
+
+  test("attempt bounds use the production window and reasoning configuration", async () => {
+    const value = output(success("done"))
+    value.steps[0]!.attempts = [
+      {
+        stage: "normal_live",
+        deadline: "live",
+        durationMs: 1,
+        outcome: "success",
+        rawScalarLength: VOICE_POLISH_WINDOW_MAX_CHARS,
+        sourceWindowCount: 1,
+        reasoningEffort: voicePolishConfig.reasoningEffort,
+      },
+      {
+        stage: "widen",
+        deadline: "final",
+        durationMs: 1,
+        outcome: "success",
+        rawScalarLength: VOICE_POLISH_WINDOW_MAX_CHARS * VOICE_POLISH_WIDEN_MAX_WINDOWS,
+        sourceWindowCount: VOICE_POLISH_WIDEN_MAX_WINDOWS,
+        reasoningEffort: voicePolishConfig.reasoningEffort,
+      },
+    ]
+    expect((await attemptBoundsEvaluator.evaluate(value, {}, ctx)).passed).toBe(true)
+    value.steps[0]!.attempts[0]!.rawScalarLength = VOICE_POLISH_WINDOW_MAX_CHARS + 1
+    expect((await attemptBoundsEvaluator.evaluate(value, {}, ctx)).passed).toBe(false)
   })
 
   test("declared stop reuse and locked acknowledgement require exact lifecycle evidence", async () => {

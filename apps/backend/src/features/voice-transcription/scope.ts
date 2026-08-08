@@ -3,6 +3,7 @@ import type { AI } from "@threa/agent-runtime"
 import { VOICE_POLISH_WIDEN_MAX_WINDOWS, voicePolishConfig, type VoicePolishConfig } from "./config"
 import type { VoicePolishAttemptObserver } from "./polish"
 import { logger } from "../../lib/logger"
+import { safeProviderError } from "./safe-error"
 
 export const voiceBoundaryScopeSchema = z.object({
   scope: z.enum(["tail", "widen_previous", "preserve_raw"]),
@@ -50,6 +51,7 @@ export function createDecideVoiceBoundaryScope(deps: {
     let usage: { promptTokens?: number; completionTokens?: number; reasoningTokens?: number } | undefined
     let outcome: VoiceBoundaryScopeOutcome["status"] = "provider_error"
     let chosenScope: VoiceBoundaryScope | undefined
+    let providerError: ReturnType<typeof safeProviderError> | undefined
     const startedAt = performance.now()
     const timeoutMs = input.deadline === "final" ? config.finalTimeoutMs : config.liveTimeoutMs
     const timer = setTimeout(() => {
@@ -118,10 +120,13 @@ export function createDecideVoiceBoundaryScope(deps: {
       outcome = "success"
       chosenScope = result.value.scope
       return { status: "success", scope: chosenScope }
-    } catch {
+    } catch (error) {
       if (input.signal?.aborted) outcome = "canceled"
       else if (timedOut) outcome = "timeout"
-      else outcome = "provider_error"
+      else {
+        outcome = "provider_error"
+        providerError = safeProviderError(error)
+      }
       return { status: outcome }
     } finally {
       const durationMs = Math.round(performance.now() - startedAt)
@@ -148,6 +153,7 @@ export function createDecideVoiceBoundaryScope(deps: {
           promptTokens: usage?.promptTokens,
           completionTokens: usage?.completionTokens,
           reasoningTokens: usage?.reasoningTokens,
+          ...providerError,
         },
         "Voice transcript scope attempt completed"
       )
