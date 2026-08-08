@@ -363,6 +363,14 @@ export const StreamRepository = {
     return result.rows.map(mapRowToStream)
   },
 
+  async findByIdsInWorkspace(db: Querier, workspaceId: string, ids: readonly string[]): Promise<Stream[]> {
+    if (ids.length === 0) return []
+    const result = await db.query<StreamRow>(
+      sql`SELECT ${sql.raw(SELECT_FIELDS_WITH_E2E)} FROM ${sql.raw(FROM_STREAMS_WITH_E2E)} WHERE s.workspace_id = ${workspaceId} AND s.id = ANY(${ids})`
+    )
+    return result.rows.map(mapRowToStream)
+  },
+
   /**
    * Returns true when `ancestorCandidateId` equals `streamId`, is its parent
    * anywhere up the chain, or is the non-thread root (`root_stream_id`) of any

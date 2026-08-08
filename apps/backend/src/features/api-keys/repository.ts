@@ -2,6 +2,23 @@ import type { Querier } from "../../db"
 import { sql } from "../../db"
 
 export const BotChannelAccessRepository = {
+  async filterGrantedStreamIds(
+    db: Querier,
+    workspaceId: string,
+    botId: string,
+    streamIds: readonly string[]
+  ): Promise<Set<string>> {
+    if (streamIds.length === 0) return new Set()
+    const result = await db.query<{ stream_id: string }>(sql`
+      SELECT stream_id
+      FROM bot_channel_access
+      WHERE workspace_id = ${workspaceId}
+        AND bot_id = ${botId}
+        AND stream_id = ANY(${streamIds as string[]})
+    `)
+    return new Set(result.rows.map((row) => row.stream_id))
+  },
+
   async getGrantedStreamIds(db: Querier, workspaceId: string, botId: string): Promise<string[]> {
     const result = await db.query<{ stream_id: string }>(sql`
       SELECT a.stream_id FROM bot_channel_access a

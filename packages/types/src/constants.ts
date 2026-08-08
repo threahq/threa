@@ -20,6 +20,19 @@ export const StreamTypes = {
 
 export const DM_PARTICIPANT_COUNT = 2
 
+export const STREAM_READ_ONLY_REASONS = ["archived", "system_stream", "not_a_member"] as const
+export type StreamReadOnlyReason = (typeof STREAM_READ_ONLY_REASONS)[number]
+
+export const StreamReadOnlyReasons = {
+  ARCHIVED: "archived",
+  SYSTEM_STREAM: "system_stream",
+  NOT_A_MEMBER: "not_a_member",
+} as const satisfies Record<string, StreamReadOnlyReason>
+
+export const StreamErrorCodes = {
+  READ_ONLY: "STREAM_READ_ONLY",
+} as const
+
 // A stream's system purpose, when it exists to power a feature rather than to be
 // a user-facing chat. NULL (the common case) is an ordinary stream. `persona_test`
 // marks the ephemeral scratchpad bound to a persona-editor draft: it is a real,
