@@ -26,6 +26,8 @@ export interface UpsertDraftParams {
    */
   priorWriteIds: string[]
   clientUpdatedAt: Date
+  /** undefined = field absent on the wire (legacy client) → preserve the row's current value. */
+  stashedAt: Date | null | undefined
   contentJson: JSONContent | null
   contentMarkdown: string | null
   attachmentIds: string[]
@@ -122,6 +124,7 @@ export class DraftsService {
         envelope: params.envelope,
         e2eVersion: params.e2eVersion,
         clientUpdatedAt: params.clientUpdatedAt,
+        stashedAt: params.stashedAt ?? null,
         lastClientWriteId: params.writeId,
       }
 
@@ -183,6 +186,7 @@ export class DraftsService {
           envelope: params.envelope,
           e2eVersion: params.e2eVersion,
           clientUpdatedAt: params.clientUpdatedAt,
+          stashedAt: params.stashedAt,
           lastClientWriteId: params.writeId,
         })
         if (updated) {

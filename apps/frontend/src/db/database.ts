@@ -527,6 +527,13 @@ export interface CachedDraft {
   /** Authoring-device clock (ms); drives recency ordering. */
   clientUpdatedAt: number
   /**
+   * Epoch ms while the draft is stashed ("put away"): no surface advertises or
+   * auto-restores it until a restore clears the flag. Synced via the draft row;
+   * null/absent = active. Plain field, deliberately unindexed (no Dexie
+   * version bump) — every read path filters in code.
+   */
+  stashedAt?: number | null
+  /**
    * Server attachment ids for this draft (Stage 3 sync). The wire `Draft`
    * carries only attachment ids, not the `DraftAttachment` display metadata
    * (filename/mime/size), so a draft arriving from another device keeps its ids

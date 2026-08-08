@@ -4,6 +4,8 @@ import type { JSONContent } from "@threa/types"
 import { db } from "@/db"
 import {
   useScopeDraftPreview,
+  useBoardDraftPayloadScopes,
+  useBoardScopeDraftIndex,
   useBoardSubtopicDraftIndex,
   useBoardCheckedOutDraftScopes,
   useBoardDraftsReady,
@@ -144,5 +146,100 @@ describe("useBoardCheckedOutDraftScopes", () => {
     const ready = renderHook(() => useBoardDraftsReady(workspaceId))
     await waitFor(() => expect(ready.result.current).toBe(true))
     expect([...result.current]).toEqual([])
+  })
+})
+
+describe("stashed rows (durable stash, chunk 4)", () => {
+  it("never advertises a stashed row — the resting button rests instead of un-doing the stash", async () => {
+    await db.drafts.add({
+      id: "d_stashed",
+      workspaceId,
+      scope,
+      contentJson: doc("put away"),
+      attachments: [],
+      clientUpdatedAt: 2000,
+      stashedAt: 1500,
+    })
+    // Control: an OLDER roamed (non-stashed) sibling is what gets advertised —
+    // proving the filter picked by flag, not by recency accident.
+    await seed("d_roamed", scope, "roamed body", 1000)
+
+    const { result } = renderHook(() => useScopeDraftPreview(workspaceId, scope))
+    await waitFor(() => expect(result.current?.draftId).toBe("d_roamed"))
+  })
+
+  it("returns null when every payload row is stashed", async () => {
+    await db.drafts.add({
+      id: "d_only_stashed",
+      workspaceId,
+      scope,
+      contentJson: doc("put away"),
+      attachments: [],
+      clientUpdatedAt: 2000,
+      stashedAt: 1500,
+    })
+    // Control on the same snapshot: a sibling scope with a live row still
+    // advertises, so the null is the flag's doing, not an empty snapshot.
+    await seed("d_live", "board:reply:conv_2", "live", 1000)
+
+    const { result } = renderHook(() => useScopeDraftPreview(workspaceId, scope))
+    const control = renderHook(() => useScopeDraftPreview(workspaceId, "board:reply:conv_2"))
+    await waitFor(() => expect(control.result.current?.draftId).toBe("d_live"))
+    expect(result.current).toBeNull()
+  })
+})
+
+describe("membership vs advertising (payloadScopes)", () => {
+  it("keeps a stashed-only scope in the membership set while the advertise index drops it", async () => {
+    await db.drafts.add({
+      id: "d_member",
+      workspaceId,
+      scope,
+      contentJson: doc("stashed away"),
+      attachments: [],
+      clientUpdatedAt: 2000,
+      stashedAt: 1500,
+    })
+    await seed("d_other", "board:reply:conv_2", "live", 1000)
+
+    const membership = renderHook(() => useBoardDraftPayloadScopes(workspaceId))
+    const advertise = renderHook(() => useBoardScopeDraftIndex(workspaceId))
+    await waitFor(() => expect(membership.result.current.has(scope)).toBe(true))
+    expect(membership.result.current.has("board:reply:conv_2")).toBe(true)
+    expect(advertise.result.current.has(scope)).toBe(false)
+    expect(advertise.result.current.has("board:reply:conv_2")).toBe(true)
+  })
+})
+
+describe("sub-topic indicator is membership, not advertising", () => {
+  it("keeps the fork-message entry for a put-away sub-topic draft while the reply button drops its preview", async () => {
+    const subScope = "board:subtopic:stream_9:msg_fork"
+    await db.drafts.add({
+      id: "d_sub_stashed",
+      workspaceId,
+      scope: subScope,
+      contentJson: doc("forked thought"),
+      attachments: [],
+      clientUpdatedAt: 2000,
+      stashedAt: 1500,
+    })
+    // Control on the same snapshot: a conversation-reply scope with a put-away
+    // row loses its ADVERTISING preview — that filter is real and untouched.
+    await db.drafts.add({
+      id: "d_conv_stashed",
+      workspaceId,
+      scope,
+      contentJson: doc("stashed reply"),
+      attachments: [],
+      clientUpdatedAt: 2000,
+      stashedAt: 1500,
+    })
+
+    const subtopics = renderHook(() => useBoardSubtopicDraftIndex(workspaceId))
+    const preview = renderHook(() => useScopeDraftPreview(workspaceId, scope))
+    await waitFor(() => expect(subtopics.result.current.get("msg_fork")?.draftId).toBe("d_sub_stashed"))
+    expect(preview.result.current).toBeNull()
+    subtopics.unmount()
+    preview.unmount()
   })
 })

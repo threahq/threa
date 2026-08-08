@@ -31,6 +31,17 @@ const TYPE_ICONS: Record<DraftType, React.ComponentType<{ className?: string }>>
   thread: MessageSquare,
 }
 
+/**
+ * The put-away annotation ("Stashed"). Gated on BOTH flags: `putAway` alone can
+ * coexist with a locally checked-out row (another device stashed while this one
+ * holds the composer pointer — the board resolves that in favor of checked-out),
+ * and annotating an active-looking row "Stashed" while its preview is discarded
+ * reads as a contradiction. Only a row that is put away AND detached here says so.
+ */
+function stashedRowDescription(draft: UnifiedDraft): string | null {
+  return draft.putAway && draft.isStashed ? "Stashed" : null
+}
+
 export function DraftsPage() {
   const { workspaceId } = useParams<{ workspaceId: string }>()
   const navigate = useNavigate()
@@ -180,7 +191,9 @@ export function DraftsPage() {
       return {
         id: draft.id,
         label,
-        description: draft.isStashed ? undefined : description,
+        // A put-away row says so (INV-46: structured flag, formatted here) — a
+        // merely-roamed row shows nothing, exactly like before.
+        description: stashedRowDescription(draft) ?? (draft.isStashed ? undefined : description),
         icon,
         href: draft.href ?? undefined,
         group: draft.groupLabel,

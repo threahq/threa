@@ -50,6 +50,7 @@ function wireDraft(overrides: Partial<Draft> = {}): Draft {
     e2eVersion: null,
     version: 1,
     clientUpdatedAt: new Date(1000).toISOString(),
+    stashedAt: null,
     createdAt: new Date(1000).toISOString(),
     updatedAt: new Date(1000).toISOString(),
     ...overrides,
@@ -95,6 +96,13 @@ describe("cachedDraftFromWire", () => {
   it("drops empty contextRefs to undefined", () => {
     expect(cachedDraftFromWire(wireDraft({ contextRefs: [] })).contextRefs).toBeUndefined()
     expect(cachedDraftFromWire(wireDraft({ contextRefs: [{ kind: "x" }] })).contextRefs).toEqual([{ kind: "x" }])
+  })
+
+  it("round-trips stashedAt as epoch ms (null stays null)", () => {
+    expect(cachedDraftFromWire(wireDraft({ stashedAt: "2026-08-06T12:00:00.000Z" })).stashedAt).toBe(
+      Date.parse("2026-08-06T12:00:00.000Z")
+    )
+    expect(cachedDraftFromWire(wireDraft({ stashedAt: null })).stashedAt).toBeNull()
   })
 
   it("maps the E2E triple and uses the placeholder body for a sealed row", () => {

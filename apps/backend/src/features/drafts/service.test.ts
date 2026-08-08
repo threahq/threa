@@ -27,6 +27,7 @@ function fakeDraft(overrides: Partial<Draft> = {}): Draft {
     e2eVersion: null,
     version: 1,
     lastClientWriteId: "write_1",
+    stashedAt: null,
     supersededWriteIds: null,
     clientUpdatedAt: NOW,
     createdAt: NOW,
@@ -38,6 +39,7 @@ function fakeDraft(overrides: Partial<Draft> = {}): Draft {
 
 function baseUpsertParams() {
   return {
+    stashedAt: null,
     workspaceId: WORKSPACE_ID,
     userId: USER_ID,
     id: DRAFT_ID,

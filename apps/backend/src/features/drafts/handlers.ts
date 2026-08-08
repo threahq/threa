@@ -39,6 +39,10 @@ const upsertSchema = z
     ciphertext: z.string().min(1).nullable().optional(),
     envelope: z.unknown().optional(),
     e2eVersion: z.number().int().nullable().optional(),
+    // Absent means PRESERVE: a client that predates this field (or a stale PWA
+    // bundle) must not erase a stash set elsewhere with its next autosave. New
+    // clients always send the value — explicit null clears, a timestamp sets.
+    stashedAt: z.string().datetime().nullable().optional(),
   })
   .refine((d) => !(d.contentJson && d.ciphertext), {
     message: "A draft carries either plaintext contentJson or an E2E ciphertext, not both",
@@ -54,6 +58,12 @@ const resolveSchema = z.object({
 const deleteSchema = z.object({
   supersededWriteIds: z.array(writeIdSchema).max(64).optional(),
 })
+
+/** undefined = absent on the wire (preserve), null = clear, string = set. */
+function parseStashedAt(value: string | null | undefined): Date | null | undefined {
+  if (value === undefined) return undefined
+  return value ? new Date(value) : null
+}
 
 interface Dependencies {
   draftsService: DraftsService
@@ -93,6 +103,7 @@ export function createDraftsHandlers({ draftsService }: Dependencies) {
         writeId: data.writeId,
         priorWriteIds: data.priorWriteIds ?? [],
         clientUpdatedAt: new Date(data.clientUpdatedAt),
+        stashedAt: parseStashedAt(data.stashedAt),
         contentJson,
         contentMarkdown: contentJson ? deriveContentMarkdown(contentJson) : null,
         attachmentIds: data.attachmentIds ?? [],

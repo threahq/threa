@@ -20,6 +20,7 @@ interface DraftRow {
   last_client_write_id: string | null
   superseded_write_ids: string[] | null
   client_updated_at: Date
+  stashed_at: Date | null
   created_at: Date
   updated_at: Date
   deleted_at: Date | null
@@ -60,6 +61,8 @@ export interface Draft {
    */
   supersededWriteIds: string[] | null
   clientUpdatedAt: Date
+  /** Set while the draft is stashed; null = active. Synced verbatim, cleared on restore. */
+  stashedAt: Date | null
   createdAt: Date
   updatedAt: Date
   deletedAt: Date | null
@@ -81,6 +84,7 @@ export interface InsertDraftParams {
   envelope: unknown | null
   e2eVersion: number | null
   clientUpdatedAt: Date
+  stashedAt: Date | null
   lastClientWriteId: string
 }
 
@@ -108,11 +112,13 @@ export interface CasUpdateDraftParams {
   envelope: unknown | null
   e2eVersion: number | null
   clientUpdatedAt: Date
+  /** undefined = preserve the row's current value (field absent on the wire — legacy client). */
+  stashedAt: Date | null | undefined
   lastClientWriteId: string
 }
 
 const COLUMNS =
-  "id, workspace_id, user_id, scope, root_stream_id, content_json, content_markdown, attachment_ids, command, context_refs, ciphertext, envelope, e2e_version, version, last_client_write_id, superseded_write_ids, client_updated_at, created_at, updated_at, deleted_at"
+  "id, workspace_id, user_id, scope, root_stream_id, content_json, content_markdown, attachment_ids, command, context_refs, ciphertext, envelope, e2e_version, version, last_client_write_id, superseded_write_ids, client_updated_at, stashed_at, created_at, updated_at, deleted_at"
 
 function mapRow(row: DraftRow): Draft {
   return {
@@ -133,6 +139,7 @@ function mapRow(row: DraftRow): Draft {
     lastClientWriteId: row.last_client_write_id,
     supersededWriteIds: Array.isArray(row.superseded_write_ids) ? row.superseded_write_ids : null,
     clientUpdatedAt: row.client_updated_at,
+    stashedAt: row.stashed_at,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     deletedAt: row.deleted_at,
@@ -156,7 +163,7 @@ export const DraftsRepository = {
         id, workspace_id, user_id, scope, root_stream_id,
         content_json, content_markdown, attachment_ids, command, context_refs,
         ciphertext, envelope, e2e_version, version, last_client_write_id,
-        client_updated_at
+        client_updated_at, stashed_at
       )
       VALUES (
         ${params.id},
@@ -174,7 +181,8 @@ export const DraftsRepository = {
         ${params.e2eVersion},
         1,
         ${params.lastClientWriteId},
-        ${params.clientUpdatedAt}
+        ${params.clientUpdatedAt},
+        ${params.stashedAt}
       )
       ON CONFLICT (id) DO NOTHING
       RETURNING ${sql.raw(COLUMNS)}
@@ -226,6 +234,7 @@ export const DraftsRepository = {
         e2e_version = ${params.e2eVersion},
         last_client_write_id = ${params.lastClientWriteId},
         client_updated_at = ${params.clientUpdatedAt},
+        stashed_at = CASE WHEN ${params.stashedAt === undefined} THEN stashed_at ELSE ${params.stashedAt ?? null} END,
         updated_at = NOW(),
         version = version + 1
       WHERE id = ${params.id}

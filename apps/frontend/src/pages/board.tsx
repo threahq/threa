@@ -34,7 +34,7 @@ import {
 import {
   useBoardDraftsReady,
   useBoardCheckedOutDraftScopes,
-  useBoardScopeDraftIndex,
+  useBoardDraftPayloadScopes,
   useBoardSubtopicDraftIndex,
 } from "@/hooks/use-scope-draft-preview"
 import { parseBoardDraftKey } from "@/lib/board/draft-keys"
@@ -330,34 +330,39 @@ function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: Boar
   // drafts are written, no refetch. No fail-open gate: the board's reveal holds
   // first paint on `useBoardDraftsReady`, so the snapshot is settled by then.
   const draftsOnly = searchParams.get(BOARD_DRAFTS_PARAM) === BOARD_DRAFTS_ON
-  const scopeDraftIndex = useBoardScopeDraftIndex(workspaceId)
   const subtopicDraftIndex = useBoardSubtopicDraftIndex(workspaceId)
   // A scope checked out into a composer counts as a draft even with no payload:
   // select-all + Backspace mid-rewrite must not yank the card out from under the
   // focused composer. The row is deleted on send/discard — that is when it sheds.
   const checkedOutDraftScopes = useBoardCheckedOutDraftScopes(workspaceId)
+  // Membership, not advertising: a STASHED draft's conversation must stay in
+  // the ?drafts=true narrowing even though no resting button advertises it —
+  // otherwise stashing makes the draft unreachable from the drafts view.
+  const payloadDraftScopes = useBoardDraftPayloadScopes(workspaceId)
   // Signature-memoized like `archivedRootSignature`: the draft indexes get a new
   // Map identity on every keystroke, and these sets feed the feed filter.
   const draftConversationSignature = useMemo(() => {
     const ids = new Set<string>()
-    for (const scope of [...scopeDraftIndex.keys(), ...checkedOutDraftScopes]) {
+    for (const scope of [...payloadDraftScopes, ...checkedOutDraftScopes]) {
       const parsed = parseBoardDraftKey(scope)
       if (parsed && (parsed.kind === "reply" || parsed.kind === "branch-reply")) ids.add(parsed.conversationId)
     }
     return [...ids].sort().join(",")
-  }, [scopeDraftIndex, checkedOutDraftScopes])
+  }, [payloadDraftScopes, checkedOutDraftScopes])
   const draftConversationIds = useMemo(
     () => new Set<string>(draftConversationSignature ? draftConversationSignature.split(",") : []),
     [draftConversationSignature]
   )
   const subtopicMessageSignature = useMemo(() => {
     const ids = new Set<string>(subtopicDraftIndex.keys())
-    for (const scope of checkedOutDraftScopes) {
+    // Same membership-vs-advertising split as conversations: a stashed
+    // sub-topic draft shows no pill but keeps its message in the drafts view.
+    for (const scope of [...payloadDraftScopes, ...checkedOutDraftScopes]) {
       const parsed = parseBoardDraftKey(scope)
       if (parsed?.kind === "subtopic") ids.add(parsed.messageId)
     }
     return [...ids].sort().join(",")
-  }, [subtopicDraftIndex, checkedOutDraftScopes])
+  }, [subtopicDraftIndex, payloadDraftScopes, checkedOutDraftScopes])
   const subtopicDraftMessageIds = useMemo(
     () => new Set<string>(subtopicMessageSignature ? subtopicMessageSignature.split(",") : []),
     [subtopicMessageSignature]

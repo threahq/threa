@@ -38,15 +38,25 @@ function toPreview(best: CachedDraft, loadedDraftId: string | null): ScopeDraftP
   }
 }
 
-/** The checked-out row when there is one, else the newest — what a resting
- *  affordance should advertise. */
+/**
+ * The checked-out row when there is one, else the newest NON-STASHED row — what
+ * a resting affordance should advertise. A stashed row (`stashedAt` set) is the
+ * user's durable "put away": advertising it — and the open-time auto-restore
+ * that follows the advertisement — would un-do the stash on the next tap, which
+ * is exactly the v1 board bug. A ROAMED row (no pointer here, not stashed)
+ * keeps the zero-tap continue. Checked-out wins even over the stash flag: a
+ * row can be BOTH on a second device (another device stashes while this one
+ * has it checked out — pointers are device-local, and the flag rides
+ * last-writer-wins content), and a composer that visibly holds the draft must
+ * keep advertising what it holds.
+ */
 function bestRow(rows: CachedDraft[], loadedDraftId: string | null): CachedDraft | null {
   const withPayload = rows.filter(hasPayload)
-  if (withPayload.length === 0) return null
-  return (
-    withPayload.find((row) => row.id === loadedDraftId) ??
-    withPayload.reduce((a, b) => (b.clientUpdatedAt > a.clientUpdatedAt ? b : a))
-  )
+  const checkedOut = withPayload.find((row) => row.id === loadedDraftId)
+  if (checkedOut) return checkedOut
+  const advertisable = withPayload.filter((row) => row.stashedAt == null)
+  if (advertisable.length === 0) return null
+  return advertisable.reduce((a, b) => (b.clientUpdatedAt > a.clientUpdatedAt ? b : a))
 }
 
 interface BoardDraftsSnapshot {
@@ -55,12 +65,21 @@ interface BoardDraftsSnapshot {
   /** Scopes whose row is checked out into this device's composer, payload or
    *  not — an empty checked-out row is a composer mid-edit, not a resolved one. */
   checkedOutScopes: Set<string>
+  /**
+   * Every scope with at least one PAYLOAD row, stashed or not — the MEMBERSHIP
+   * set. Advertising (`previewByScope`) filters stashed rows out, but a stashed
+   * draft still exists: the board's `?drafts=true` narrowing and other
+   * membership surfaces must keep its conversation, or a stash makes the draft
+   * unreachable from the very view named after drafts.
+   */
+  payloadScopes: Set<string>
 }
 
 const EMPTY_SNAPSHOT: BoardDraftsSnapshot = {
   previewByScope: new Map(),
   subtopicByMessageId: new Map(),
   checkedOutScopes: new Set(),
+  payloadScopes: new Set(),
 }
 
 interface BoardDraftsEntry {
@@ -83,24 +102,35 @@ function buildSnapshot(rows: CachedDraft[], loadedByScope: Map<string, string | 
   const previewByScope = new Map<string, ScopeDraftPreview>()
   const subtopicByMessageId = new Map<string, SubtopicDraftEntry>()
   const checkedOutScopes = new Set<string>()
+  const payloadScopes = new Set<string>()
   for (const [scope, scopeRows] of byScope) {
     const loadedDraftId = loadedByScope.get(scope) ?? null
     if (loadedDraftId !== null && scopeRows.some((row) => row.id === loadedDraftId)) checkedOutScopes.add(scope)
+    if (scopeRows.some(hasPayload)) payloadScopes.add(scope)
     const best = bestRow(scopeRows, loadedDraftId)
-    if (!best) continue
-    const preview = toPreview(best, loadedDraftId)
-    previewByScope.set(scope, preview)
+    if (best) previewByScope.set(scope, toPreview(best, loadedDraftId))
     const parsed = parseBoardDraftKey(scope)
     if (parsed?.kind === "subtopic") {
-      subtopicByMessageId.set(parsed.messageId, {
-        ...preview,
-        scope,
-        streamId: parsed.streamId,
-        messageId: parsed.messageId,
-      })
+      // The fork indicator is MEMBERSHIP, not advertising: it marks "an unsent
+      // sub-topic draft exists here" and its tap is an explicit open — the
+      // in-situ equivalent of a pile row — so a put-away draft keeps it (the
+      // required presentation per Kris's 2026-07-13 ruling). Only the
+      // auto-restoring resting affordances read the stash-filtered preview.
+      const withPayload = scopeRows.filter(hasPayload)
+      const member =
+        withPayload.find((row) => row.id === loadedDraftId) ??
+        (withPayload.length > 0 ? withPayload.reduce((a, b) => (b.clientUpdatedAt > a.clientUpdatedAt ? b : a)) : null)
+      if (member) {
+        subtopicByMessageId.set(parsed.messageId, {
+          ...toPreview(member, loadedDraftId),
+          scope,
+          streamId: parsed.streamId,
+          messageId: parsed.messageId,
+        })
+      }
     }
   }
-  return { previewByScope, subtopicByMessageId, checkedOutScopes }
+  return { previewByScope, subtopicByMessageId, checkedOutScopes, payloadScopes }
 }
 
 // INV-9 exception: one shared board-drafts liveQuery per workspace, ref-counted
@@ -228,6 +258,22 @@ export function useBoardCheckedOutDraftScopes(workspaceId: string): ReadonlySet<
   const subscribe = useBoardDraftsSubscription(workspaceId)
   const getSnapshot = useCallback(
     () => boardDraftsRegistry.get(workspaceId)?.snapshot.checkedOutScopes ?? EMPTY_SNAPSHOT.checkedOutScopes,
+    [workspaceId]
+  )
+  return useSyncExternalStore(subscribe, getSnapshot)
+}
+
+/**
+ * Board scopes holding at least one payload draft row, STASHED INCLUDED — the
+ * membership set for surfaces that answer "does this conversation have a
+ * draft?" (the board's `?drafts=true` narrowing). Deliberately wider than
+ * {@link useBoardScopeDraftIndex}, which is the ADVERTISE set and hides
+ * stashed rows so resting buttons don't un-do a stash.
+ */
+export function useBoardDraftPayloadScopes(workspaceId: string): ReadonlySet<string> {
+  const subscribe = useBoardDraftsSubscription(workspaceId)
+  const getSnapshot = useCallback(
+    () => boardDraftsRegistry.get(workspaceId)?.snapshot.payloadScopes ?? EMPTY_SNAPSHOT.payloadScopes,
     [workspaceId]
   )
   return useSyncExternalStore(subscribe, getSnapshot)

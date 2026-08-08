@@ -60,6 +60,7 @@ const INSERT_PARAMS = {
   e2eVersion: null,
   clientUpdatedAt: NOW,
   lastClientWriteId: "write_1",
+  stashedAt: null,
 }
 
 describe("DraftsRepository.insertIfAbsent", () => {
@@ -131,6 +132,7 @@ describe("DraftsRepository.casUpdate", () => {
       e2eVersion: null,
       clientUpdatedAt: NOW,
       lastClientWriteId: "write_2",
+      stashedAt: null,
     })
 
     expect(captured.text).toContain("UPDATE drafts SET")
@@ -168,6 +170,7 @@ describe("DraftsRepository.casUpdate", () => {
       e2eVersion: null,
       clientUpdatedAt: NOW,
       lastClientWriteId: "write_3",
+      stashedAt: null,
     })
 
     expect(result).toBeNull()
