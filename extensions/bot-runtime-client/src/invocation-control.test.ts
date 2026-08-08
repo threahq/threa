@@ -95,6 +95,10 @@ class FakeScheduler implements InvocationControlScheduler {
     return this.fired
   }
 
+  get pendingDelays(): number[] {
+    return [...this.tasks.values()].map((task) => task.at - this.nowMs)
+  }
+
   setTimeout(callback: () => void, delayMs: number): unknown {
     const id = this.nextId++
     this.tasks.set(id, { at: this.nowMs + delayMs, callback })
@@ -279,6 +283,23 @@ describe("InvocationControlManager", () => {
     expect(cancelled).toHaveBeenCalledTimes(1)
   })
 
+  it("schedules a 15-second lease renewal at two-thirds TTL with a capped ack budget", async () => {
+    const scheduler = new FakeScheduler()
+    const now = 1_000
+    const { manager, requests } = setup(async () => active(2, undefined, new Date(now + 15_000).toISOString()), {
+      now: () => now,
+      scheduler,
+    })
+    const handle = manager.observe({ ...params(), claimTtlSeconds: 15 })
+    await handle.sync()
+
+    expect({ delays: scheduler.pendingDelays, ackTimeoutMs: requests[0]?.ackTimeoutMs }).toEqual({
+      delays: [10_000],
+      ackTimeoutMs: 2_500,
+    })
+    handle.unregister()
+  })
+
   it("renews from authoritative expiry while an adapter callback remains blocked", async () => {
     let release!: () => void
     const gate = new Promise<void>((resolve) => {
@@ -461,6 +482,48 @@ describe("InvocationControlManager", () => {
     manager.hint({ invocationId: "binv_1", sourceRevision: 2, reason: "source_deleted" }, true)
     expect(handle.sealing).toBeUndefined()
     await waitFor(() => cancelled.mock.calls.length === 1)
+  })
+
+  it("dispose invalidates a cancellation blocked on the adapter queue", async () => {
+    const gate = deferred<void>()
+    const cancelled = mock(() => {})
+    const { manager } = setup(async () => active(3, "three"))
+    const handle = manager.observe(
+      params(async () => {
+        await gate.promise
+        return "applied" as const
+      }, cancelled)
+    )
+    await flushMicrotasks()
+
+    manager.hint({ invocationId: "binv_1", sourceRevision: 3, reason: "source_deleted" }, true)
+    handle.dispose()
+    gate.resolve()
+    await flushMicrotasks()
+
+    expect(cancelled).toHaveBeenCalledTimes(0)
+  })
+
+  it("same-ID replacement invalidates a cancellation blocked on the adapter queue", async () => {
+    const gate = deferred<void>()
+    const cancelled = mock(() => {})
+    let calls = 0
+    const { manager } = setup(async () => (++calls === 1 ? active(3, "three") : active(2)))
+    manager.observe(
+      params(async () => {
+        await gate.promise
+        return "applied" as const
+      }, cancelled)
+    )
+    await flushMicrotasks()
+
+    manager.hint({ invocationId: "binv_1", sourceRevision: 3, reason: "source_deleted" }, true)
+    const replacement = manager.observe(params())
+    gate.resolve()
+    await flushMicrotasks()
+
+    expect(cancelled).toHaveBeenCalledTimes(0)
+    replacement.unregister()
   })
 
   it("disconnect suppresses a queued cancellation callback", async () => {

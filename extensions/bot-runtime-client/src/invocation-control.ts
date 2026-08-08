@@ -87,6 +87,7 @@ export interface InvocationControlSyncRequest {
   knownSourceRevision: number
   minimumSourceRevision: number
   restartRequiredRevision?: number
+  ackTimeoutMs: number
   signal: AbortSignal
 }
 
@@ -134,6 +135,7 @@ interface InvocationControlManagerOptions {
 
 export class InvocationControlManager {
   private readonly observations = new Map<string, Observation>()
+  private readonly pendingCancellationGenerations = new Map<string, number>()
   private queue: Promise<void> = Promise.resolve()
   private stopped = false
   private generation = 0
@@ -160,6 +162,7 @@ export class InvocationControlManager {
   }
 
   observe(params: ObserveClaimParams): ObservedClaimHandle {
+    this.pendingCancellationGenerations.delete(params.invocationId)
     const prior = this.observations.get(params.invocationId)
     if (prior) this.unregister(prior)
     const observation: Observation = {
@@ -256,6 +259,7 @@ export class InvocationControlManager {
 
   stop(): void {
     this.stopped = true
+    this.pendingCancellationGenerations.clear()
     for (const observation of [...this.observations.values()]) this.unregister(observation)
   }
 
@@ -286,6 +290,7 @@ export class InvocationControlManager {
         knownSourceRevision,
         minimumSourceRevision: observation.appliedRevision,
         ...(restartRevision === undefined ? {} : { restartRequiredRevision: restartRevision }),
+        ackTimeoutMs: Math.min(5_000, (observation.claimTtlSeconds * 1_000) / 6),
         signal: observation.abortController.signal,
       }
       const authorityBehind = await this.runSync(observation, request)
@@ -448,17 +453,24 @@ export class InvocationControlManager {
     }
     this.scrub(observation)
     if (!callback || !cancellation) return
+    const { generation, invocationId } = observation
+    this.pendingCancellationGenerations.set(invocationId, generation)
     void this.enqueue(async () => {
-      if (this.stopped) return
+      if (this.stopped || this.pendingCancellationGenerations.get(invocationId) !== generation) return
       try {
         await callback(cancellation)
       } finally {
-        // Observation secrets were scrubbed before this job was queued.
+        if (this.pendingCancellationGenerations.get(invocationId) === generation) {
+          this.pendingCancellationGenerations.delete(invocationId)
+        }
       }
     })
   }
 
   private unregister(observation: Observation): void {
+    if (this.pendingCancellationGenerations.get(observation.invocationId) === observation.generation) {
+      this.pendingCancellationGenerations.delete(observation.invocationId)
+    }
     if (!observation.active && observation.terminal) return
     observation.active = false
     observation.terminal = true
@@ -485,7 +497,7 @@ export class InvocationControlManager {
     if (!this.isCurrent(observation)) return
     if (observation.timer !== undefined) this.scheduler.clearTimeout(observation.timer)
     const nominalLeaseMs = observation.claimTtlSeconds * 1_000
-    const safetyMs = Math.min(30_000, Math.max(this.minRenewDelayMs, nominalLeaseMs / 4))
+    const safetyMs = Math.min(30_000, Math.max(this.minRenewDelayMs, nominalLeaseMs / 3))
     const authoritativeDelay =
       observation.claimExpiresAtMs === undefined
         ? this.retryDelayMs

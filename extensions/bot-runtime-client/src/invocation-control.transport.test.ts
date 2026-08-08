@@ -493,6 +493,24 @@ describe("BotRuntimeTransport observed claims", () => {
     })
   })
 
+  it("caps a custom observed-control WS timeout for a 15-second lease", async () => {
+    const requests = stubFetch(() => json(active("binv_1", 2)))
+    const timeoutBudgets: number[] = []
+    const socket = fakeSocket((_event, _payload, callback) => callback(new Error("timeout")))
+    socket.timeout = (timeoutMs?: unknown) => {
+      timeoutBudgets.push(timeoutMs as number)
+      return { emit: (...args) => socket.emit(...args) }
+    }
+    const transport = makeTransport({ wsAckTimeoutMs: 9_000 })
+    attachReadySocket(transport, socket)
+    const handle = transport.observeClaim({ ...observation(() => "applied"), claimTtlSeconds: 15 })
+    await waitFor(() => requests.length === 1)
+
+    expect({ timeoutBudgets, httpCalls: requests.length }).toEqual({ timeoutBudgets: [2_500], httpCalls: 1 })
+    handle.unregister()
+    transport.disconnect()
+  })
+
   it("unregister/re-register during WS wait aborts old generations before HTTP fallback", async () => {
     const requests = stubFetch(() => json({}))
     const callbacks: ((error: unknown, ack?: unknown) => void)[] = []

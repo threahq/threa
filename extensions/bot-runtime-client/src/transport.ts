@@ -425,7 +425,8 @@ export class BotRuntimeTransport {
   private emitWrite(
     event: string,
     payload: unknown,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    timeoutMs = this.wsAckTimeoutMs
   ): Promise<{ sent: boolean; ack: BotWriteAck | null; aborted?: boolean }> {
     const socket = this.socket
     if (signal?.aborted) return Promise.resolve({ sent: false, ack: null, aborted: true })
@@ -441,7 +442,7 @@ export class BotRuntimeTransport {
       }
       signal?.addEventListener("abort", onAbort, { once: true })
       try {
-        socket.timeout(this.wsAckTimeoutMs).emit(event, payload, (err: unknown, ack: unknown) => {
+        socket.timeout(timeoutMs).emit(event, payload, (err: unknown, ack: unknown) => {
           done({ sent: true, ack: err ? null : normalizeAck(ack) })
         })
       } catch (error) {
@@ -520,7 +521,12 @@ export class BotRuntimeTransport {
         ? {}
         : { restartRequiredRevision: request.restartRequiredRevision }),
     }
-    const ws = await this.emitWrite("bot:invocation:renew", payload, request.signal)
+    const ws = await this.emitWrite(
+      "bot:invocation:renew",
+      payload,
+      request.signal,
+      Math.min(this.wsAckTimeoutMs, request.ackTimeoutMs)
+    )
     if (request.signal.aborted || ws.aborted) return { kind: "aborted" }
     if (ws.ack?.ok) {
       const parsed = parseControlState(ws.ack.data, request.invocationId, request.minimumSourceRevision)
