@@ -268,6 +268,23 @@ describe("useAttachments", () => {
       expect(doc!.imageIndex).toBeNull()
       expect(second!.imageIndex).toBe(2)
     })
+
+    it("assigns distinct indices when a picker starts multiple image uploads together", async () => {
+      mockReserve()
+      vi.spyOn(xhrTransport, "xhrUpload").mockResolvedValue({ status: 201, body: {} })
+
+      const { result } = renderHook(() => useAttachments(workspaceId))
+      let uploads: Awaited<ReturnType<typeof result.current.uploadFile>>[] = []
+      await act(async () => {
+        uploads = await Promise.all([
+          result.current.uploadFile(createFile("image1.png", "image/png")),
+          result.current.uploadFile(createFile("image2.png", "image/png")),
+          result.current.uploadFile(createFile("pasted.png", "image/png")),
+        ])
+      })
+
+      expect(uploads.map((upload) => upload.imageIndex)).toEqual([1, 2, 3])
+    })
   })
 
   describe("restore", () => {

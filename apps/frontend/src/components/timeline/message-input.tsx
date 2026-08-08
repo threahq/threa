@@ -112,6 +112,10 @@ export function materializePendingAttachmentReferences(
   pendingAttachments: PendingAttachment[]
 ): JSONContent {
   const uploadedQueues = new Map<string, PendingAttachment[]>()
+  const materializableAttachments: PendingAttachment[] = []
+  const materializableAttachmentById = new Map<string, PendingAttachment>()
+  const imageIndexByAttachment = new Map<PendingAttachment, number>()
+  let pickedImageIndex = 1
   for (const attachment of pendingAttachments) {
     // Reserved-but-still-uploading attachments materialize like uploaded ones
     // (send-while-uploading): their id is real and the message binds it while
@@ -122,6 +126,11 @@ export function materializePendingAttachmentReferences(
     // state rides the message's attachment summaries instead. Errors and
     // still-reserving (temp-id) files stay out of the message.
     if (attachment.status === "error" || attachment.id.startsWith("temp_")) continue
+    materializableAttachments.push(attachment)
+    materializableAttachmentById.set(attachment.id, attachment)
+    if (attachment.mimeType.startsWith("image/")) {
+      imageIndexByAttachment.set(attachment, pickedImageIndex++)
+    }
     const key = attachmentMatchKey(attachment)
     const queue = uploadedQueues.get(key)
     if (queue) {
@@ -131,7 +140,15 @@ export function materializePendingAttachmentReferences(
     }
   }
 
-  let nextImageIndex = 1
+  const matchedAttachments = new Set<PendingAttachment>()
+  const takeUnmatchedAttachment = (key: string): PendingAttachment | undefined => {
+    const queue = uploadedQueues.get(key)
+    let attachment = queue?.shift()
+    while (attachment && matchedAttachments.has(attachment)) {
+      attachment = queue?.shift()
+    }
+    return attachment
+  }
 
   const visitNode = (node: JSONContent): JSONContent => {
     if (node.type === "attachmentReference") {
@@ -141,16 +158,18 @@ export function materializePendingAttachmentReferences(
           ? node.attrs.mimeType
           : "application/octet-stream"
       const isImage = mimeType.startsWith("image/")
-      const matchedUpload = uploadedQueues.get(attachmentMatchKey({ filename, mimeType }))?.shift()
-      let imageIndex = node.attrs?.imageIndex
-      if (isImage && typeof node.attrs?.imageIndex === "number" && node.attrs.imageIndex > 0) {
-        imageIndex = node.attrs.imageIndex
-      } else if (isImage && matchedUpload) {
-        imageIndex = nextImageIndex
-      }
+      const nodeId = typeof node.attrs?.id === "string" ? node.attrs.id : ""
+      const hasRealId = nodeId.length > 0 && !nodeId.startsWith("temp_")
+      const matchedUpload = hasRealId
+        ? materializableAttachmentById.get(nodeId)
+        : takeUnmatchedAttachment(attachmentMatchKey({ filename, mimeType }))
+      const existingImageIndex =
+        isImage && typeof node.attrs?.imageIndex === "number" && node.attrs.imageIndex > 0
+          ? node.attrs.imageIndex
+          : null
 
       if (matchedUpload) {
-        if (isImage) nextImageIndex += 1
+        matchedAttachments.add(matchedUpload)
         return {
           ...node,
           attrs: {
@@ -160,14 +179,10 @@ export function materializePendingAttachmentReferences(
             mimeType: matchedUpload.mimeType,
             sizeBytes: matchedUpload.sizeBytes,
             status: "uploaded",
-            imageIndex: isImage ? imageIndex : null,
+            imageIndex: isImage ? (existingImageIndex ?? imageIndexByAttachment.get(matchedUpload) ?? null) : null,
             error: null,
           },
         }
-      }
-
-      if (isImage && typeof imageIndex === "number" && imageIndex > 0) {
-        nextImageIndex = Math.max(nextImageIndex, imageIndex + 1)
       }
     }
 
@@ -182,7 +197,7 @@ export function materializePendingAttachmentReferences(
   }
 
   const materializedContent = visitNode(content)
-  const remainingAttachments = Array.from(uploadedQueues.values()).flatMap((queue) => queue)
+  const remainingAttachments = materializableAttachments.filter((attachment) => !matchedAttachments.has(attachment))
   if (remainingAttachments.length === 0) {
     return materializedContent
   }
@@ -191,7 +206,9 @@ export function materializePendingAttachmentReferences(
     type: "paragraph",
     content: remainingAttachments.flatMap((attachment, index) => {
       const isImage = attachment.mimeType.startsWith("image/")
-      const imageIndex = isImage ? nextImageIndex++ : null
+      // The pending list preserves picker order even when an inline placeholder
+      // is lost, so the send-time fallback keeps that original image ordinal.
+      const imageIndex = isImage ? (imageIndexByAttachment.get(attachment) ?? null) : null
 
       const nodes: JSONContent[] = [
         {

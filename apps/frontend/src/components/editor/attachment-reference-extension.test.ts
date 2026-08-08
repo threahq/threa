@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest"
+import { afterEach, describe, expect, it, vi } from "vitest"
 import { Editor } from "@tiptap/core"
 import { DOMParser as PMDOMParser, DOMSerializer, type Slice } from "@tiptap/pm/model"
 import { NodeSelection, TextSelection } from "@tiptap/pm/state"
@@ -102,6 +102,30 @@ describe("attachment reference insertion", () => {
       beforeChip: editor.state.doc.textBetween(0, at),
       afterChip: editor.state.doc.textBetween(at + 1, at + 2),
     }).toEqual({ beforeChip: expectedBeforeChip, afterChip: " " })
+  })
+
+  it("inserts a picked batch atomically", () => {
+    const editor = new Editor({
+      element: document.createElement("div"),
+      extensions: createEditorExtensions({ placeholder: "Type a message..." }),
+      content: { type: "doc", content: [{ type: "paragraph" }] },
+    })
+    openEditors.push(editor)
+    const onUpdate = vi.fn()
+    editor.on("update", onUpdate)
+
+    editor.commands.insertAttachmentReferences(
+      ["temp_1", "temp_2", "temp_3"].map((id) => ({ ...CHIP_ATTRS, id, status: "uploading" }))
+    )
+    const ids: string[] = []
+    editor.state.doc.descendants((node) => {
+      if (node.type.name === "attachmentReference") ids.push(node.attrs.id as string)
+    })
+
+    expect({ ids, updateCalls: onUpdate.mock.calls.length }).toEqual({
+      ids: ["temp_1", "temp_2", "temp_3"],
+      updateCalls: 1,
+    })
   })
 
   it("does not add a leading space after a hard break", () => {
