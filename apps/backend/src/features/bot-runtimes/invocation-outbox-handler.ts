@@ -73,6 +73,8 @@ export class BotInvocationOutboxHandler implements OutboxHandler {
           await this.processMessageCreated(event.payload)
         } else if (event.eventType === "message:deleted") {
           await this.processMessageDeleted(event.payload)
+        } else if (event.eventType === "agent_session:started") {
+          await this.processAgentSessionStarted(event.payload)
         } else if (event.eventType === "stream:archived") {
           await this.processStreamArchived(event.payload as StreamArchivedOutboxPayload)
         } else if (event.eventType === "stream:unarchived") {
@@ -109,6 +111,18 @@ export class BotInvocationOutboxHandler implements OutboxHandler {
       workspaceId: payload.workspaceId,
       rootStreamId: payload.streamId,
     })
+  }
+
+  private async processAgentSessionStarted(payload: unknown): Promise<void> {
+    if (!payload || typeof payload !== "object") return
+    const value = payload as Record<string, unknown>
+    const event = value.event
+    if (!event || typeof event !== "object") return
+    const eventPayload = (event as Record<string, unknown>).payload
+    if (!eventPayload || typeof eventPayload !== "object") return
+    const sessionId = (eventPayload as Record<string, unknown>).sessionId
+    if (typeof value.workspaceId !== "string" || typeof sessionId !== "string") return
+    await this.service.repairDeletedSourceSession({ workspaceId: value.workspaceId, sessionId })
   }
 
   private async processMessageDeleted(payload: unknown): Promise<void> {

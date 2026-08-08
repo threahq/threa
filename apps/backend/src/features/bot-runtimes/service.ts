@@ -647,6 +647,13 @@ export class BotRuntimeService {
     return withTransaction(this.pool, (db) => this.cancelInvocationsForDeletedSourceInTransaction(db, params))
   }
 
+  async repairDeletedSourceSession(params: { workspaceId: string; sessionId: string }): Promise<boolean> {
+    const source = await BotInvocationRepository.findDeletedSourceForRunningSession(this.pool, params)
+    if (!source) return false
+    await this.cancelInvocationsForDeletedSource(source)
+    return true
+  }
+
   /**
    * Repair rows a migration cancelled before application lifecycle code could
    * run. The RUNNING-session predicate is the CAS: concurrent backend startups

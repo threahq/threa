@@ -132,5 +132,34 @@ describe("bot invocation source revisions migration", () => {
       completed_at: expect.any(Date),
     })
     expect(lifecycleOutbox.rows).toEqual([{ session_id: "binv_deleted" }])
+
+    // Rolling-deploy race: an old replica can insert the session after the new
+    // replica's startup scan. Its agent_session:started event drives this
+    // targeted, invocation-PK repair path.
+    await pool.query(
+      `INSERT INTO bot_invocations
+         (id, workspace_id, root_stream_id, active_stream_id, source_message_id, response_stream_id,
+          actor_type, actor_id, trigger, required_capability, prompt_markdown, source_message_revision,
+          author_user_id, status, cancellation_reason)
+       VALUES
+         ('binv_late', 'ws_migration', 'stream_migration', 'stream_migration', 'msg_deleted',
+          'stream_migration', 'bot', 'bot_2', 'mention', 'mentionable', 'gone', 3,
+          'usr_1', 'cancelled', 'source_deleted')`
+    )
+    await AgentSessionRepository.insertRunningOrSkip(pool, {
+      id: "binv_late",
+      streamId: "stream_migration",
+      personaId: "bot_2",
+      triggerMessageId: "msg_deleted",
+      initialSequence: 0n,
+    })
+    expect(
+      await new BotRuntimeService({ pool }).repairDeletedSourceSession({
+        workspaceId: "ws_migration",
+        sessionId: "binv_late",
+      })
+    ).toBe(true)
+    const lateSession = await pool.query<{ status: string }>("SELECT status FROM agent_sessions WHERE id = 'binv_late'")
+    expect(lateSession.rows).toEqual([{ status: "deleted" }])
   }, 30_000)
 })

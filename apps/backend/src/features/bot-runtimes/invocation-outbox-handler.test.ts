@@ -354,6 +354,20 @@ describe("BotInvocationOutboxHandler canonical reconciliation", () => {
 
     expect(reconcile).toHaveBeenCalledWith({ workspaceId: "ws_1", sourceMessageId: "msg_1" })
   })
+
+  it("repairs a migration-cancelled session if an old replica starts it after startup", async () => {
+    const repair = spyOn(BotRuntimeService.prototype, "repairDeletedSourceSession").mockResolvedValue(true)
+    const handler = new BotInvocationOutboxHandler(pool)
+
+    await (
+      handler as unknown as { processAgentSessionStarted(payload: unknown): Promise<void> }
+    ).processAgentSessionStarted({
+      workspaceId: "ws_1",
+      event: { payload: { sessionId: "binv_late" } },
+    })
+
+    expect(repair).toHaveBeenCalledWith({ workspaceId: "ws_1", sessionId: "binv_late" })
+  })
 })
 
 describe("BotInvocationOutboxHandler stream lifecycle", () => {

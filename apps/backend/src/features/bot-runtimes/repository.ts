@@ -930,6 +930,24 @@ export const BotInvocationRepository = {
     return result.rows[0]?.exists ?? false
   },
 
+  async findDeletedSourceForRunningSession(
+    db: Querier,
+    params: { workspaceId: string; sessionId: string }
+  ): Promise<{ workspaceId: string; sourceMessageId: string } | null> {
+    const result = await db.query<{ workspace_id: string; source_message_id: string }>(sql`
+      SELECT i.workspace_id, i.source_message_id
+      FROM bot_invocations i
+      JOIN agent_sessions s ON s.id = i.id
+      WHERE i.id = ${params.sessionId}
+        AND i.workspace_id = ${params.workspaceId}
+        AND i.status = 'cancelled'
+        AND i.cancellation_reason = 'source_deleted'
+        AND s.status = 'running'
+    `)
+    const row = result.rows[0]
+    return row ? { workspaceId: row.workspace_id, sourceMessageId: row.source_message_id } : null
+  },
+
   async findDeletedSourcesWithRunningSessions(
     db: Querier,
     limit: number
