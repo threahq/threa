@@ -63,6 +63,7 @@ import type {
   BotInvocationCapability,
   E2eActorKind,
   TitleSource,
+  StreamReadOnlyReason,
 } from "./constants"
 import type { ThreaDocument } from "./prosemirror"
 
@@ -326,6 +327,14 @@ export interface LastMessagePreview {
 export interface StreamWithPreview extends Stream {
   lastMessagePreview: LastMessagePreview | null
 }
+
+export interface StreamViewerState {
+  readOnly: boolean
+  readOnlyReason: StreamReadOnlyReason | null
+}
+
+export type ViewerStream = Stream & StreamViewerState
+export type ViewerStreamWithPreview = StreamWithPreview & StreamViewerState
 
 export interface StreamActiveActor {
   id: string

@@ -19,6 +19,19 @@ export {
   streamAccessPredicateSql,
 } from "./access"
 
+export {
+  deriveStreamViewerState,
+  createStreamReadOnlyError,
+  assertViewerStreamWritable,
+  projectStreamForPrincipal,
+  projectStreamsForPrincipal,
+  projectStreamForUser,
+  projectStreamsForUser,
+  projectStreamForBot,
+  projectStreamsForBot,
+} from "./write-authority"
+export type { StreamWritePrincipal } from "./write-authority"
+
 export { prependThreadNamingAnchor, renderNamingEventAnchor } from "./naming-context"
 
 export { NOTIFICATION_CONFIG, isAllowedLevel, getDefaultLevel, getEffectiveLevel } from "./notification-config"
