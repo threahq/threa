@@ -161,8 +161,14 @@ describe("voice polish deterministic evaluators", () => {
       },
     ]
     const cases = [...completed, ...timedOut] as never
-    expect(latencyMetrics(cases)).toMatchObject({ live: { p95: 19, timeouts: 1 }, timeouts: 1 })
-    expect((await metricsEvaluator.evaluate(cases)).passed).toBe(true)
+    expect(latencyMetrics(cases)).toMatchObject({
+      live: { p95: 19, timeouts: 1, timeoutRate: 0.05 },
+      final: { timeouts: 0, timeoutRate: 0 },
+      timeouts: 1,
+    })
+    const passingMetrics = await metricsEvaluator.evaluate(cases)
+    expect(passingMetrics.passed).toBe(true)
+    expect(passingMetrics.details).toContain("timeouts=1 (5.0%)")
     const catastrophic = Array.from({ length: 6 }, () => ({
       output: {
         ...output(success("ok")),

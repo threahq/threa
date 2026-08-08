@@ -201,9 +201,9 @@ async function main(): Promise<void> {
       const voicePolishDecision = decideVoicePolishComparison(results as any)
       // In a model-comparison config, disqualified challengers are expected input to
       // the selection rule — they must not independently fail the whole command.
-      // The structured voice-polish decision owns those permutations' exit status;
-      // ordinary per-case thresholds still apply to every non-voice suite.
-      const hasFailures = hasCaseRateFailures(results, minPassRate, voicePolishDecision !== null)
+      // Keep the generic per-case threshold on the selected production permutation
+      // and every non-voice suite; the structured decision owns the other candidates.
+      const hasFailures = hasCaseRateFailures(results, minPassRate, voicePolishDecision?.selectedModel ?? undefined)
       const comparisonFailure = voicePolishDecision?.exitAllowed === false
       process.exit(hasFailures || comparisonFailure ? 1 : 0)
     } catch (error) {
@@ -264,15 +264,22 @@ async function main(): Promise<void> {
 export function hasCaseRateFailures(
   results: Array<any>,
   minPassRate: number,
-  skipVoicePolishComparisons = false
+  selectedVoicePolishModel?: string
 ): boolean {
   return results.some((result) => {
-    if (
-      skipVoicePolishComparisons &&
-      (result.suiteName === "voice-polish" || result.suiteName.startsWith("voice-polish:"))
-    )
-      return false
-    return result.permutations.some((permutation: any) =>
+    const isVoicePolish = result.suiteName === "voice-polish" || result.suiteName.startsWith("voice-polish:")
+    let permutations = result.permutations
+    if (selectedVoicePolishModel && isVoicePolish) {
+      permutations = permutations.filter(
+        (permutation: any) =>
+          permutation.permutation.model === selectedVoicePolishModel &&
+          permutation.permutation.promptVariant !== "without-previous"
+      )
+      // Config files emit one suite result per candidate; non-selected results
+      // have no matching permutation here and are intentionally skipped.
+      if (permutations.length === 0) return false
+    }
+    return permutations.some((permutation: any) =>
       aggregateCases(permutation).some((caseResult) => caseResult.passes / caseResult.total < minPassRate)
     )
   })

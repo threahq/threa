@@ -181,7 +181,10 @@ const SAMPLE_RATE_HZ = 16_000
 // If the server never acks voice:stop (dropped connection mid-stop), fall
 // through anyway so the button can't hang in the "stopping" state forever.
 const STOP_ACK_TIMEOUT_MS = 3000
-const FORMAT_STOP_ACK_TIMEOUT_MS = 7000
+// Must cover the backend's provider flush barrier (up to 1.5s), calibrated
+// final-polish deadline (8s), and socket/cleanup margin. Expiring first would
+// commit raw recovery and discard an authoritative Luna result still in flight.
+const FORMAT_STOP_ACK_TIMEOUT_MS = 12_000
 
 // Silence-detection thresholds. Two failure modes to catch:
 //

@@ -53,7 +53,7 @@ provider latency has a random tail, so:
   has nothing to grade and is neutral.
 - **Latency is gated run-level**, where sample sizes make it meaningful:
   final-cohort p95 of completed calls + 750ms must fit the 8s cap, and the
-  final-cohort timeout rate must stay under 15% (loose catastrophe bound;
+  final-cohort timeout rate must stay at or below 15% (loose catastrophe bound;
   worst observed provider-jitter rate is ~4%). Live metrics are reported, not
   gated.
 - A `voicePolishDecision` block in the JSON report records qualification, the

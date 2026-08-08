@@ -13,15 +13,6 @@ const successfulMarkdown = (output: VoicePolishOutput) =>
   output.outcome.status === "success" ? output.outcome.markdown : ""
 
 /**
- * Interim (live-deadline) polish passes are discardable by architecture: a slow
- * pass times out non-destructively, raw text stays visible, and a later pass or
- * the final recovers. A live timeout is therefore a valid outcome on every case —
- * measured models have a small random tail on any call, and zero timeouts across a
- * matrix would be a dice roll, not a behavior gate. The authoritative final pass
- * must still succeed, and any other non-success status (provider_error,
- * invalid_output, empty_input) always fails.
- */
-/**
  * A timeout (live or final, any case) is a typed, non-destructive outcome: the
  * caller keeps the last accepted result plus the raw tail. Per-call latency to a
  * hosted provider has a small random tail (even a 7-word input occasionally
@@ -202,9 +193,11 @@ export function latencyMetrics(cases: CaseResult<VoicePolishOutput, VoicePolishE
       .filter((step) => step.outcome.status !== "timeout")
       .map((step) => step.durationMs)
       .sort((a, b) => a - b)
+    const timeouts = all.length - values.length
     return {
       count: values.length,
-      timeouts: all.length - values.length,
+      timeouts,
+      timeoutRate: all.length ? timeouts / all.length : 0,
       p50: nearestRank(values, 0.5),
       p95: nearestRank(values, 0.95),
       recommendedDeadlineMs: Math.ceil((nearestRank(values, 0.95) + 750) / 250) * 250,
@@ -227,15 +220,13 @@ export const metricsEvaluator: RunEvaluator<VoicePolishOutput, VoicePolishExpect
   name: "live-final-latency-timeout-metrics",
   evaluate: (cases) => {
     const m = latencyMetrics(cases)
-    const total = m.final.count + m.final.timeouts
     const passed =
       m.final.recommendedDeadlineMs <= VOICE_POLISH_FINAL_DEADLINE_CAP_MS &&
-      m.final.timeouts <= total * FINAL_TIMEOUT_MAX_RATE
-    return result(
-      "live-final-latency-timeout-metrics",
-      passed,
-      `live p50=${m.live.p50} p95=${m.live.p95} deadline=${m.live.recommendedDeadlineMs} timeouts=${m.live.timeouts}; final p50=${m.final.p50} p95=${m.final.p95} deadline=${m.final.recommendedDeadlineMs} timeouts=${m.final.timeouts}`
-    )
+      m.final.timeoutRate <= FINAL_TIMEOUT_MAX_RATE
+    const details = `live p50=${m.live.p50} p95=${m.live.p95} deadline=${m.live.recommendedDeadlineMs} timeouts=${m.live.timeouts} (${(m.live.timeoutRate * 100).toFixed(1)}%); final p50=${m.final.p50} p95=${m.final.p95} deadline=${m.final.recommendedDeadlineMs} timeouts=${m.final.timeouts} (${(m.final.timeoutRate * 100).toFixed(1)}%)`
+    // Metrics are report data even when the gate passes; do not use result(),
+    // which intentionally suppresses details for ordinary passing evaluators.
+    return { name: "live-final-latency-timeout-metrics", score: passed ? 1 : 0, passed, details }
   },
 }
 

@@ -16,11 +16,11 @@ const c = (
   expectedOutput,
 })
 
-// 10 sections ≈ 25s of continuous dictation. The production model's final pass
-// stays inside the 8s deadline with margin at this length; at 12+ sections the
-// heavy tail exceeds it often enough to make the gate a dice roll. That measured
-// limitation is documented in the dictation evals PR; the case still stresses
-// repeated-pattern retention and a retroactive correction.
+// 10 sections ≈ 25s of continuous dictation. This is the representative upper
+// bound for content-retention grading; provider jitter can exceed the deadline at
+// any length, and at 12+ sections the frequency rises materially. Timeout behavior
+// is owned by the run-level distribution gate; this case still stresses repeated-
+// pattern retention and a retroactive correction on completed passes.
 const longTake = Array.from(
   { length: 10 },
   (_, i) =>
