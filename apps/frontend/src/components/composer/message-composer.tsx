@@ -9,6 +9,7 @@ import {
   useState,
   useEffect,
   useId,
+  useLayoutEffect,
 } from "react"
 import { flushSync } from "react-dom"
 import { ArrowUp, X, Plus, AtSign, Slash, Paperclip } from "lucide-react"
@@ -381,6 +382,12 @@ export function MessageComposer({
   // dictation take when it sends or clears the draft (drops the polish toggle
   // and any warning chrome rather than letting them ride out a timer).
   const micRef = useRef<MicButtonHandle | null>(null)
+  // Preserve a live ghost while both the mic and editor refs are still mounted.
+  // Hook-level passive cleanup is too late when the whole composer unmounts:
+  // React has already detached the RichEditor imperative ref by then.
+  useLayoutEffect(() => {
+    return () => micRef.current?.prepareSendAsIs()
+  }, [scopeId])
   // Edge-detect the composer emptying (send-clear, manual delete, stash) so we
   // tear down the dictation session exactly once on the non-empty → empty transition.
   const wasEmptyRef = useRef(isEmptyContent(content))

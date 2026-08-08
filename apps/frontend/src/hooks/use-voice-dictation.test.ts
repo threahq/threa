@@ -274,6 +274,163 @@ describe("useVoiceDictation lifecycle", () => {
     expect(harness.sockets).toHaveLength(0)
   })
 
+  it.each([
+    ["transport disconnect", "disconnect", undefined],
+    ["upstream error", "voice:transcription:error", { code: "UPSTREAM_CLOSED" }],
+  ])("commits the exact visible interim once before teardown on %s", async (_label, event, payload) => {
+    const inserted = vi.fn()
+    const harness = hookHarness([{ ok: true, protocolVersion: 3 }], { onPolishedChunkInserted: inserted })
+    act(() => harness.result.current.start())
+    await waitFor(() => expect(harness.result.current.state).toBe("recording"))
+    act(() =>
+      harness.sockets[0].fire("voice:transcript:delta", {
+        voiceSessionId: "voicesess_1",
+        revision: 1,
+        text: "the last visible words",
+        isFinal: false,
+      })
+    )
+
+    act(() => {
+      harness.sockets[0].fire(event, payload)
+      // A provider error can be followed by both terminal and disconnect
+      // notifications. Detached callbacks must not recover the same text twice.
+      harness.sockets[0].fire("voice:stopped", { reason: "stopped", revision: 1, outcome: "provider_error" })
+      harness.sockets[0].fire("disconnect", undefined)
+    })
+
+    expect(inserted).toHaveBeenCalledOnce()
+    expect(inserted).toHaveBeenCalledWith({
+      chunkId: "local_recovery_1",
+      contentJson: {
+        type: "doc",
+        content: [{ type: "paragraph", content: [{ type: "text", text: "the last visible words" }] }],
+      },
+    })
+    expect(harness.result.current.interimText).toBe("")
+    expect(harness.result.current.state).toBe("error")
+  })
+
+  it("flushes visible interim before a terminal provider outcome locks tracking", async () => {
+    const order: string[] = []
+    const inserted = vi.fn(() => order.push("insert"))
+    const lockAll = vi.fn(() => order.push("lock"))
+    const harness = hookHarness([{ ok: true, protocolVersion: 3 }], {
+      onPolishedChunkInserted: inserted,
+      onLockAllChunks: lockAll,
+    })
+    act(() => harness.result.current.start())
+    await waitFor(() => expect(harness.result.current.state).toBe("recording"))
+    lockAll.mockClear()
+    order.length = 0
+    act(() => {
+      harness.sockets[0].fire("voice:transcript:delta", {
+        voiceSessionId: "voicesess_1",
+        revision: 1,
+        text: "keep this tail",
+        isFinal: false,
+      })
+      harness.sockets[0].fire("voice:stopped", {
+        reason: "stopped",
+        revision: 1,
+        outcome: "provider_error",
+      })
+    })
+
+    expect(order).toEqual(["insert", "lock"])
+    expect(inserted).toHaveBeenCalledOnce()
+    expect(inserted).toHaveBeenCalledWith({
+      chunkId: "local_recovery_1",
+      contentJson: {
+        type: "doc",
+        content: [{ type: "paragraph", content: [{ type: "text", text: "keep this tail" }] }],
+      },
+    })
+    expect(harness.result.current.interimText).toBe("")
+    expect(harness.result.current.state).toBe("idle")
+  })
+
+  it("preserves visible interim as-is when the page is backgrounded", async () => {
+    const inserted = vi.fn()
+    const harness = hookHarness([{ ok: true, protocolVersion: 3 }], { onPolishedChunkInserted: inserted })
+    act(() => harness.result.current.start())
+    await waitFor(() => expect(harness.result.current.state).toBe("recording"))
+    act(() =>
+      harness.sockets[0].fire("voice:transcript:delta", {
+        voiceSessionId: "voicesess_1",
+        revision: 1,
+        text: "survive the network switch",
+        isFinal: false,
+      })
+    )
+
+    const previous = Object.getOwnPropertyDescriptor(document, "visibilityState")
+    Object.defineProperty(document, "visibilityState", { configurable: true, value: "hidden" })
+    try {
+      act(() => document.dispatchEvent(new Event("visibilitychange")))
+    } finally {
+      if (previous) Object.defineProperty(document, "visibilityState", previous)
+      else delete (document as unknown as { visibilityState?: string }).visibilityState
+    }
+
+    expect(inserted).toHaveBeenCalledOnce()
+    expect(inserted).toHaveBeenCalledWith({
+      chunkId: "local_recovery_1",
+      contentJson: {
+        type: "doc",
+        content: [{ type: "paragraph", content: [{ type: "text", text: "survive the network switch" }] }],
+      },
+    })
+    expect(harness.sockets[0].stopPayloads).toEqual([{ mode: "send_as_is" }])
+    expect(harness.result.current.state).toBe("idle")
+  })
+
+  it("commits visible interim when scope navigation unmounts the active take", async () => {
+    const inserted = vi.fn()
+    const harness = hookHarness([{ ok: true, protocolVersion: 3 }], { onPolishedChunkInserted: inserted })
+    act(() => harness.result.current.start())
+    await waitFor(() => expect(harness.result.current.state).toBe("recording"))
+    act(() =>
+      harness.sockets[0].fire("voice:transcript:delta", {
+        voiceSessionId: "voicesess_1",
+        revision: 1,
+        text: "keep this across navigation",
+        isFinal: false,
+      })
+    )
+
+    harness.unmount()
+
+    expect(inserted).toHaveBeenCalledOnce()
+    expect(inserted).toHaveBeenCalledWith({
+      chunkId: "local_recovery_1",
+      contentJson: {
+        type: "doc",
+        content: [{ type: "paragraph", content: [{ type: "text", text: "keep this across navigation" }] }],
+      },
+    })
+  })
+
+  it("keeps explicit abort as the only terminal path that discards interim", async () => {
+    const inserted = vi.fn()
+    const harness = hookHarness([{ ok: true, protocolVersion: 3 }], { onPolishedChunkInserted: inserted })
+    act(() => harness.result.current.start())
+    await waitFor(() => expect(harness.result.current.state).toBe("recording"))
+    act(() => {
+      harness.sockets[0].fire("voice:transcript:delta", {
+        voiceSessionId: "voicesess_1",
+        revision: 1,
+        text: "discard intentionally",
+        isFinal: false,
+      })
+      harness.result.current.abort()
+    })
+
+    expect(inserted).not.toHaveBeenCalled()
+    expect(harness.committed).not.toHaveBeenCalled()
+    expect(harness.sockets[0].stopPayloads).toEqual([{ mode: "abort" }])
+  })
+
   it("canonically inserts send-as-is interim recovery synchronously before the composer snapshot", async () => {
     const order: string[] = []
     const inserted = vi.fn(({ contentJson }: { contentJson: JSONContent }) => {

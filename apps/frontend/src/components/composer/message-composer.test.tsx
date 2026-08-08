@@ -17,6 +17,7 @@ import { queueComposerCommandRequest } from "@/stores/composer-command-request-s
 let isMobileMockValue = false
 const mockRichEditorFocus = vi.fn()
 const mockInsertFiles = vi.fn(() => true)
+const mockInsertDictationChunk = vi.fn()
 
 type MockEditorInstance = {
   id: string
@@ -34,6 +35,7 @@ const MockRichEditor = forwardRef<
     insertEmoji: () => void
     openSnippetEditor: () => void
     insertFiles: (files: File[]) => boolean
+    insertDictationChunk: (args: { chunkId: string; contentJson: JSONContent }) => void
     getEditor: () => MockEditorInstance | null
   },
   {
@@ -73,6 +75,7 @@ const MockRichEditor = forwardRef<
       insertEmoji: () => undefined,
       openSnippetEditor: () => undefined,
       insertFiles: mockInsertFiles,
+      insertDictationChunk: mockInsertDictationChunk,
       getEditor: () => editorInstance,
     }),
     [editorInstance]
@@ -147,6 +150,7 @@ describe("MessageComposer", () => {
     vi.restoreAllMocks()
     mockRichEditorFocus.mockClear()
     mockInsertFiles.mockClear()
+    mockInsertDictationChunk.mockClear()
     isMobileMockValue = false
     vi.useRealTimers()
     vi.spyOn(useMobileModule, "useIsMobile").mockImplementation(() => isMobileMockValue)
@@ -173,6 +177,39 @@ describe("MessageComposer", () => {
     onSubmit: vi.fn(),
     canSubmit: false,
   }
+
+  it("preserves active interim before the composer and editor refs unmount", () => {
+    const recovered: JSONContent = {
+      type: "doc",
+      content: [{ type: "paragraph", content: [{ type: "text", text: "visible interim" }] }],
+    }
+    const prepareSendAsIs = vi.fn()
+    const MockMicButton = forwardRef(function MockMicButton(
+      props: { onInsertPolishedChunk: (args: { chunkId: string; contentJson: JSONContent }) => void },
+      ref: ForwardedRef<{ abort: () => void; prepareSendAsIs: () => void }>
+    ) {
+      useImperativeHandle(ref, () => ({
+        abort: vi.fn(),
+        prepareSendAsIs: () => {
+          prepareSendAsIs()
+          props.onInsertPolishedChunk({ chunkId: "local_recovery_1", contentJson: recovered })
+        },
+      }))
+      return null
+    })
+    spyOnExport(micButtonModule, "MicButton").mockReturnValue(
+      MockMicButton as unknown as typeof micButtonModule.MicButton
+    )
+
+    const { unmount } = render(<MessageComposer {...defaultProps} workspaceId="ws_1" scopeId="stream_a" />)
+    unmount()
+
+    expect(prepareSendAsIs).toHaveBeenCalledOnce()
+    expect(mockInsertDictationChunk).toHaveBeenCalledWith({
+      chunkId: "local_recovery_1",
+      contentJson: recovered,
+    })
+  })
 
   it("aborts active dictation when a nonempty draft is cleared", async () => {
     const abort = vi.fn()
