@@ -63,6 +63,7 @@ interface RelayState {
   terminationMode: VoiceTerminationMode | null
   terminationPromise: Promise<void> | null
   interruptFlush: (() => void) | null
+  flushSettled: boolean
   closePromise: Promise<number> | null
   polishLevel: VoicePolishLevel
   steeringTerms: string[]
@@ -364,6 +365,10 @@ export function registerVoiceGateway(io: Server, deps: Dependencies) {
           } finally {
             current.flushDurationMs = Math.max(0, Math.round(performance.now() - flushStarted))
             current.interruptFlush = null
+            // The flush contract has ended. A provider final arriving after its
+            // timeout/quiet window must not duplicate the interim promoted below
+            // or invalidate the authoritative snapshot while it is formatting.
+            current.flushSettled = true
           }
           if (current.terminationMode === "format") {
             if (current.lastInterim.trim()) commitFinal(current, current.lastInterim, false)
@@ -484,6 +489,7 @@ export function registerVoiceGateway(io: Server, deps: Dependencies) {
             terminationMode: null,
             terminationPromise: null,
             interruptFlush: null,
+            flushSettled: false,
             closePromise: null,
             polishLevel,
             steeringTerms,
@@ -528,6 +534,7 @@ export function registerVoiceGateway(io: Server, deps: Dependencies) {
           state = current
           upstream.onDelta((delta) => {
             if (state !== current || (current.phase !== "live" && current.phase !== "formatting")) return
+            if (current.phase === "formatting" && current.flushSettled) return
             if (!delta.isFinal) {
               current.lastInterim = delta.text ?? ""
               socket.emit(

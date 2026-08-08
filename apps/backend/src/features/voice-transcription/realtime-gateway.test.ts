@@ -496,6 +496,63 @@ describe("registerVoiceGateway lifecycle", () => {
     expect(stopCb).toHaveBeenCalledWith({ ok: true })
   })
 
+  it("ignores a provider final that arrives after flush settled while authoritative v4 formatting runs", async () => {
+    let markFinalStarted!: () => void
+    let resolveFinal!: (value: string) => void
+    const finalStarted = new Promise<void>((resolve) => {
+      markFinalStarted = resolve
+    })
+    const finalResult = new Promise<string>((resolve) => {
+      resolveFinal = resolve
+    })
+    const { socket, upstream } = setup({
+      voicePolishLevel: "opinionated",
+      polishTranscript: async () => {
+        markFinalStarted()
+        return await finalResult
+      },
+    })
+    await socket.trigger(
+      "voice:start",
+      { ...START_PAYLOAD, maxProtocolVersion: 4 },
+      mock(() => {})
+    )
+    upstream.fireDelta({ text: "the visible tail", isFinal: false })
+
+    const stopping = socket.trigger(
+      "voice:stop",
+      { mode: "format" },
+      mock(() => {})
+    ) as Promise<void>
+    await finalStarted
+    // A provider may deliver this after its flush timeout has already resolved.
+    // The promoted interim is now the terminal source of truth.
+    upstream.fireDelta({ text: "the visible tail", isFinal: true })
+    resolveFinal("The visible tail.")
+
+    let operation = socket.emitted.find((event) => event.event === "voice:transcript:polished")
+    for (let attempts = 0; attempts < 10 && !operation; attempts++) {
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      operation = socket.emitted.find((event) => event.event === "voice:transcript:polished")
+    }
+    expect(operation).toBeDefined()
+    const operationPayload = operation!.payload as { operationId: string; sources: unknown[] }
+    operation!.callback?.({ operationId: operationPayload.operationId, status: "applied" })
+    await stopping
+
+    const finalDeltas = socket.emitted.filter(
+      (event) => event.event === "voice:transcript:delta" && (event.payload as { isFinal: boolean }).isFinal
+    )
+    expect(finalDeltas.map((event) => event.payload)).toEqual([
+      expect.objectContaining({ revision: 1, text: "the visible tail", isFinal: true }),
+    ])
+    expect(operationPayload.sources).toEqual([{ chunkId: expect.any(String), throughRevision: 1 }])
+    expect(socket.emitted).toContainEqual({
+      event: "voice:stopped",
+      payload: { reason: "stopped", revision: 1, outcome: "success" },
+    })
+  })
+
   it("max duration follows the authoritative format path before disconnecting", async () => {
     jest.useFakeTimers()
     const { socket, upstream, voiceTranscriptionService } = setup({ voicePolishLevel: "opinionated" })
