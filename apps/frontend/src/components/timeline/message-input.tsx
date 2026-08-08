@@ -44,7 +44,12 @@ import { useConversationBoardPost } from "@/hooks/use-conversations"
 import { boardPostLastActiveStreamId } from "@/lib/board/reply-plan"
 import { boardReplyDraftKey, parseBoardDraftKey } from "@/lib/board/draft-keys"
 import { usePanel, createConversationPanelId } from "@/contexts"
-import { consumeShareHandoff, consumePlaintextShareHandoff, subscribeShareHandoff } from "@/stores/share-handoff-store"
+import {
+  acknowledgeShareHandoffBatch,
+  peekShareHandoffBatch,
+  subscribeShareHandoff,
+  type ShareHandoffBatch,
+} from "@/stores/share-handoff-store"
 import { consumeSnippetRequest, subscribeSnippetRequest } from "@/stores/snippet-request-store"
 import { requestConversationReplyOpen } from "@/stores/conversation-reply-open-store"
 import { useComposerCommandSend } from "@/components/composer/use-composer-command-send"
@@ -409,11 +414,15 @@ function MessageInputComponent({
   // Use a ref so the handler always reads fresh composer state without
   // re-registering on every render (composer object is not memoized).
   const composerRef = useRef(composer)
+  const stashRef = useRef(stash)
+  const draftKeyRef = useRef(draftKey)
   const armConversationPendingRef = useRef(false)
   const removeConversationFilingPendingRef = useRef(false)
   const mobileChromeOpenRef = useRef(false)
   const [preserveConversationStripSpace, setPreserveConversationStripSpace] = useState(false)
   composerRef.current = composer
+  stashRef.current = stash
+  draftKeyRef.current = draftKey
 
   // Imperative handle for programmatic focus from outside (e.g. quote reply insertion)
   const composerFocusRef = useRef<ComposerControlHandle | null>(null)
@@ -564,115 +573,146 @@ function MessageInputComponent({
     else redirectReplyToPanel(armedConversationId)
   }, [armedConversationId, conversationReplyLastActiveStreamId, redirectReplyToPanel, streamId, hostScope])
 
-  // Consume any pending share handoff for this stream, pre-inserting the
-  // shared-message pointer into the composer and leaving the cursor after it.
-  // We drive this through the editor directly (not React state) so the cursor
-  // positioning lands atomically with the content change — going through the
-  // useState path meant setContent committed one frame after the focus call,
-  // and TipTap would reset the selection to 0 in the process.
-  //
-  // Two trigger paths: (a) on mount / streamId change, pick up any handoff
-  // queued before this composer existed; (b) subscribe to the store so a
-  // share queued while we're already mounted (e.g. share-to-parent fired
-  // from a thread panel of the parent we're already viewing) reaches us
-  // without a remount.
+  // A share gets a fresh composer. Keep the handoff queued until the destination
+  // draft is stashed, then replace the editor with the share and a typing line.
   useEffect(() => {
-    let pendingRaf: number | null = null
-    // Buffer of share nodes consumed from the store but not yet inserted
-    // into the editor (editor not mounted, RAF retry pending). A second
-    // handoff arriving mid-retry appends to this buffer and the RAF inserts
-    // both in one chain — previously, cancelling the retry dropped the
-    // first share's already-consumed payload from the closure. Order is
-    // preserved: first queued ends up first in the doc.
-    const buffered: JSONContent[] = []
+    let pendingFrame: { id: number; resolve: (active: boolean) => void } | null = null
+    let processing = false
+    let cancelled = false
 
-    const cancelPendingRaf = () => {
-      if (pendingRaf !== null) {
-        cancelAnimationFrame(pendingRaf)
-        pendingRaf = null
-      }
-    }
-
-    const tryConsume = () => {
-      const pending = consumeShareHandoff(streamId)
-      if (pending) {
-        buffered.push({
-          type: "sharedMessage",
-          attrs: pending as unknown as Record<string, unknown>,
+    const hasPending = () => peekShareHandoffBatch(streamId) !== null
+    const waitForFrame = () =>
+      new Promise<boolean>((resolve) => {
+        const id = requestAnimationFrame(() => {
+          if (pendingFrame?.id === id) pendingFrame = null
+          resolve(!cancelled)
         })
-      }
-      // A message shared OUT of an E2E scratchpad: the decrypted plaintext was
-      // captured (behind a confirmation) and is inserted as a public blockquote,
-      // not a sealed pointer recipients couldn't open.
-      const pendingPlaintext = consumePlaintextShareHandoff(streamId)
-      if (pendingPlaintext) {
-        const parsed = parseMarkdown(pendingPlaintext.markdown)
-        const inner = parsed.content && parsed.content.length > 0 ? parsed.content : [{ type: "paragraph" }]
-        buffered.push({ type: "blockquote", content: inner })
-      }
-      if (buffered.length === 0) return
-
-      // Reset any in-flight retry — we'll restart it below covering the
-      // updated buffer. Safe because the retry's only side-effect is
-      // requestAnimationFrame; the editor write only happens inside
-      // `insert()` which we re-run on the new RAF.
-      cancelPendingRaf()
-
-      const insert = (): boolean => {
-        const editor = composerFocusRef.current?.getEditor?.()
-        if (!editor || editor.isDestroyed) return false
-
-        const currentDoc = editor.getJSON() as JSONContent
-        const existingBlocks = currentDoc.content ?? []
-        const trimmedBlocks = [...existingBlocks]
-        while (
-          trimmedBlocks.length > 0 &&
-          trimmedBlocks[trimmedBlocks.length - 1].type === "paragraph" &&
-          (trimmedBlocks[trimmedBlocks.length - 1].content?.length ?? 0) === 0
-        ) {
-          trimmedBlocks.pop()
-        }
-
-        // Drain the buffer atomically with the setContent so a notification
-        // arriving between getJSON and setContent doesn't double-insert.
-        const nodesToInsert = buffered.splice(0)
-        editor
-          .chain()
-          .setContent({
-            type: "doc",
-            content: [...trimmedBlocks, ...nodesToInsert, { type: "paragraph" }],
-          })
-          .focus("end")
-          .run()
-        pendingRaf = null
-        return true
-      }
-
-      if (insert()) return
-
-      // Editor not mounted yet on the first tick after a route change —
-      // retry on the next frame until it lands. Bound the chain with a
-      // deadline so a permanently-unmounted host (e.g. the
-      // `disabled && disabledReason` early return below) doesn't burn
-      // a frame per tick forever and silently swallow the share. Mirrors
-      // the deadline pattern on `triggerEditLast` further down.
-      const deadline = performance.now() + 1500
-      pendingRaf = requestAnimationFrame(function retry() {
-        if (insert()) return
-        if (performance.now() >= deadline) {
-          pendingRaf = null
-          return
-        }
-        pendingRaf = requestAnimationFrame(retry)
+        pendingFrame = { id, resolve }
       })
+    const nodesForBatch = (batch: ShareHandoffBatch): JSONContent[] =>
+      batch.handoffs.map((handoff) => {
+        if (handoff.kind === "pointer") {
+          return { type: "sharedMessage", attrs: handoff.attrs as unknown as Record<string, unknown> }
+        }
+        const parsed = parseMarkdown(handoff.markdown)
+        return {
+          type: "blockquote",
+          content: parsed.content && parsed.content.length > 0 ? parsed.content : [{ type: "paragraph" }],
+        }
+      })
+
+    const processPending = async () => {
+      if (processing || !hasPending()) return
+      processing = true
+      let failed = false
+      const deadline = performance.now() + 5000
+      let readyScope: string | null = null
+      const retry = async (message: string) => {
+        if (cancelled) return false
+        if (performance.now() >= deadline) throw new Error(message)
+        return waitForFrame()
+      }
+
+      try {
+        while (!cancelled && hasPending()) {
+          const scope = draftKeyRef.current
+          const current = composerRef.current
+          const editor = composerFocusRef.current?.getEditor?.()
+          if (!current.isLoaded || !editor || editor.isDestroyed) {
+            readyScope = null
+            if (!(await retry("destination composer did not become ready"))) return
+            continue
+          }
+          // Route changes reuse this component; wait for the destination draft's
+          // state update instead of reading the previous stream's editor document.
+          if (readyScope !== scope) {
+            readyScope = scope
+            if (!(await retry("destination draft did not hydrate"))) return
+            continue
+          }
+
+          const attachments = current.getPendingAttachmentsSnapshot()
+          if (attachments.some((attachment) => attachment.status === "error")) {
+            throw new Error("destination composer has a failed attachment")
+          }
+          if (attachments.some((attachment) => attachment.id.startsWith("temp_"))) {
+            if (!(await retry("destination attachment was not reserved in time"))) return
+            continue
+          }
+
+          const liveContent = editor.getJSON() as JSONContent
+          const hadLivePayload = hasDocContent(liveContent) || attachments.length > 0 || current.contextRefs.length > 0
+          const stashed = await stashRef.current.handleStashBeforeReplace(liveContent)
+          if (cancelled) return
+          if (draftKeyRef.current !== scope) {
+            readyScope = null
+            continue
+          }
+          if (hadLivePayload && !stashed) throw new Error("destination draft could not be persisted")
+
+          if (stashed) {
+            // A second clear frame lets the pointer-null transition finish before
+            // insertion; its late reset would otherwise erase the new share.
+            let clearFrames = 0
+            while (!cancelled && draftKeyRef.current === scope) {
+              const reset = composerRef.current
+              const resetEditor = composerFocusRef.current?.getEditor?.()
+              const isClear =
+                resetEditor &&
+                !resetEditor.isDestroyed &&
+                !hasDocContent(reset.content) &&
+                !hasDocContent(resetEditor.getJSON() as JSONContent) &&
+                reset.getPendingAttachmentsSnapshot().length === 0 &&
+                reset.contextRefs.length === 0
+              clearFrames = isClear ? clearFrames + 1 : 0
+              if (clearFrames >= 2) break
+              if (!(await retry("destination composer did not clear"))) return
+            }
+            if (cancelled) return
+            if (draftKeyRef.current !== scope) {
+              readyScope = null
+              continue
+            }
+          }
+
+          const destinationEditor = composerFocusRef.current?.getEditor?.()
+          if (!destinationEditor || destinationEditor.isDestroyed) {
+            readyScope = null
+            if (!(await retry("destination composer was removed"))) return
+            continue
+          }
+          const batch = peekShareHandoffBatch(streamId)
+          if (!batch) return
+          const shareContent: JSONContent = {
+            type: "doc",
+            content: [...nodesForBatch(batch), { type: "paragraph" }],
+          }
+          const inserted = destinationEditor.chain().setContent(shareContent).focus("end").run()
+          if (!inserted) throw new Error("destination editor rejected the share")
+          acknowledgeShareHandoffBatch(streamId, batch)
+          const persisted = await composerRef.current.flushDraftWithResult({ contentJson: shareContent })
+          if (!persisted) toast.error("Couldn't save the shared message as a draft. Keep this composer open.")
+        }
+      } catch (err) {
+        failed = true
+        console.error("[composer] failed to prepare share handoff", err)
+        toast.error("Couldn't prepare this composer for sharing. Your draft was kept.")
+      } finally {
+        processing = false
+        if (!cancelled && !failed && hasPending()) void processPending()
+      }
     }
 
-    tryConsume()
-    const unsubscribe = subscribeShareHandoff(streamId, tryConsume)
-
+    void processPending()
+    const unsubscribe = subscribeShareHandoff(streamId, () => void processPending())
     return () => {
+      cancelled = true
       unsubscribe()
-      cancelPendingRaf()
+      const frame = pendingFrame
+      if (!frame) return
+      cancelAnimationFrame(frame.id)
+      pendingFrame = null
+      frame.resolve(false)
     }
   }, [streamId])
 

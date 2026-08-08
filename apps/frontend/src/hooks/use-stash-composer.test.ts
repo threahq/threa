@@ -136,6 +136,29 @@ describe("stash restore — no-limbo invariant (real data layer)", () => {
     await waitFor(() => expect(result.current.stash.drafts.some((d) => d.id === ambientId)).toBe(true))
   })
 
+  it("does not detach a loaded draft when the live payload cannot be persisted", async () => {
+    const { ambientId } = await seedStashAndAmbient()
+    const detachSpy = vi.spyOn(draftMessageModule, "stashLoadedDraft")
+
+    function useFailedFlushHarness() {
+      const composer = useDraftComposer({ workspaceId, draftKey, scopeId: streamId })
+      const wrapped = { ...composer, flushDraftWithResult: async () => false }
+      const stash = useStashComposer(wrapped as never, workspaceId, draftKey)
+      return { composer, stash }
+    }
+
+    const { result } = renderHook(() => useFailedFlushHarness(), { wrapper })
+    await waitFor(() => expect(result.current.composer.content).toEqual(AMBIENT_BODY))
+
+    await act(async () => {
+      expect(await result.current.stash.handleStashBeforeReplace(BIG_BODY)).toBe(false)
+    })
+
+    expect(detachSpy).not.toHaveBeenCalled()
+    expect((await db.composerLoaded.get(draftKey))?.draftId).toBe(ambientId)
+    expect(result.current.composer.content).toEqual(AMBIENT_BODY)
+  })
+
   it("refuses to restore a foreign row into a host whose home stream is unresolvable", async () => {
     const { bigId } = await seedStashAndAmbient()
     const restoreSpy = vi.spyOn(draftMessageModule, "restoreStashedDraftToComposer")

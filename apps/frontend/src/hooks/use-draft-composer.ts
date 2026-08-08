@@ -169,7 +169,9 @@ export interface DraftComposerState {
    * stash/restore calls avoid the empty→delete path; filing-only scope moves may
    * preserve an existing row after the user deliberately cleared its body.
    */
-  flushDraft: (options?: { keepEmpty?: boolean }) => Promise<void>
+  flushDraft: (options?: { keepEmpty?: boolean; contentJson?: JSONContent }) => Promise<void>
+  /** Same flush, reporting false when a payload was present but could not be persisted. */
+  flushDraftWithResult: (options?: { keepEmpty?: boolean; contentJson?: JSONContent }) => Promise<boolean>
   /**
    * Re-run the composer's init from whatever draft is now loaded for the scope.
    * Called after a stash/restore pointer move so the editor re-reads (and, for
@@ -311,18 +313,24 @@ export function useDraftComposer({
   // while the editor is still mid-hydration (transiently empty) — taking the
   // empty→delete path then would silently destroy the loaded draft. An
   // intentional clear is handled by the debounced save, never here.
-  const flushDraft = useCallback(
-    async (options?: { keepEmpty?: boolean }) => {
+  const flushDraftWithResult = useCallback(
+    async (options?: { keepEmpty?: boolean; contentJson?: JSONContent }) => {
+      const contentJson = options?.contentJson ?? contentRef.current
       const attachments = persistableAttachments(getPendingAttachmentsSnapshot())
       if (options?.keepEmpty) {
-        await saveDraft(contentRef.current, attachments, undefined, options)
-      } else if (hasDocContent(contentRef.current)) {
-        await saveDraft(contentRef.current)
-      } else if (attachments.length > 0) {
-        await saveDraft(contentRef.current, attachments)
+        return (await saveDraft(contentJson, attachments, undefined, { keepEmpty: true })) !== null
       }
+      if (hasDocContent(contentJson)) return (await saveDraft(contentJson)) !== null
+      if (attachments.length > 0) return (await saveDraft(contentJson, attachments)) !== null
+      return true
     },
     [getPendingAttachmentsSnapshot, saveDraft]
+  )
+  const flushDraft = useCallback(
+    async (options?: { keepEmpty?: boolean; contentJson?: JSONContent }) => {
+      await flushDraftWithResult(options)
+    },
+    [flushDraftWithResult]
   )
 
   // Blank the composer to an un-initialized state so the init effect below
@@ -721,6 +729,7 @@ export function useDraftComposer({
 
     // Flush / re-hydrate (used by stash + restore)
     flushDraft,
+    flushDraftWithResult,
     markNeedsRehydrate: resetForReinit,
 
     // Clear helpers

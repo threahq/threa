@@ -869,7 +869,7 @@ describe("MessageInput", () => {
         </Wrapper>
       )
       await arm("conv_1")
-      expect(mockComposerFocus).toHaveBeenCalledTimes(1)
+      await waitFor(() => expect(mockComposerFocus).toHaveBeenCalledTimes(1))
       expect(mockOpenPanel).not.toHaveBeenCalled()
 
       vi.spyOn(useConversationsModule, "useConversationBoardPost").mockReturnValue({
