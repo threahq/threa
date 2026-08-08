@@ -129,6 +129,7 @@ User: How long do reviews usually take?`,
       category: "minimal",
     },
     expectedOutput: {
+      expectedAction: "defer",
       expectNotEnoughContext: true,
     },
   },
@@ -141,6 +142,7 @@ User: How long do reviews usually take?`,
       category: "minimal",
     },
     expectedOutput: {
+      expectedAction: "defer",
       expectNotEnoughContext: true,
     },
   },
@@ -154,6 +156,7 @@ AI: Hello! How can I help you today?`,
       category: "minimal",
     },
     expectedOutput: {
+      expectedAction: "rename",
       expectNotEnoughContext: false,
       wordCountRange: { min: 2, max: 5 },
       allowGeneric: true, // Generic names acceptable for minimal context
@@ -257,6 +260,41 @@ User: The tricky part is keeping the two families apart`,
     expectedOutput: {
       nameContains: ["seating", "wedding", "table"],
       nameNotContains: ["discussion about", "chat about", "conversation about"],
+      wordCountRange: { min: 2, max: 5 },
+    },
+  },
+  {
+    id: "checkpoint-current-title-keep-001",
+    name: "Checkpoint: Preserve an accurate current title",
+    input: {
+      conversationText: `User: OAuth access tokens fail with 401 responses
+User: The token scopes are correct
+User: We suspect clock skew in verification`,
+      currentTitle: "OAuth token failures",
+      checkpoint: 6,
+      category: "technical",
+    },
+    expectedOutput: {
+      expectedAction: "keep",
+      nameContains: ["oauth", "token"],
+      wordCountRange: { min: 2, max: 5 },
+    },
+  },
+  {
+    id: "checkpoint-material-change-rename-001",
+    name: "Checkpoint: Rename after the material subject changes",
+    input: {
+      conversationText: `User: OAuth access tokens fail with 401 responses
+User: That issue is fixed now
+User: The production database migration failed halfway through
+User: We need a safe rollback for orphaned account records`,
+      currentTitle: "OAuth token failures",
+      checkpoint: 6,
+      category: "technical",
+    },
+    expectedOutput: {
+      expectedAction: "rename",
+      nameContains: ["database", "migration", "rollback"],
       wordCountRange: { min: 2, max: 5 },
     },
   },

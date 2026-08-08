@@ -28,6 +28,7 @@ import type { EvalSuite, EvalContext } from "../../framework/types"
 import { streamNamingCases } from "./cases"
 import type { StreamNamingInput, StreamNamingOutput, StreamNamingExpected } from "./types"
 import {
+  actionEvaluator,
   notEnoughContextEvaluator,
   wordCountEvaluator,
   nameContainsEvaluator,
@@ -36,47 +37,46 @@ import {
   accuracyEvaluator,
   wordCountComplianceEvaluator,
 } from "./evaluators"
-import { STREAM_NAMING_MODEL_ID, STREAM_NAMING_TEMPERATURE } from "../../../src/features/streams"
-import { StreamNamingService } from "../../../src/features/streams"
-import { MessageFormatter } from "../../../src/lib/ai/message-formatter"
+import {
+  DYNAMIC_NAMING_MODEL_ID,
+  DYNAMIC_NAMING_TEMPERATURE,
+  DynamicNamingEvaluator,
+} from "../../../src/features/dynamic-naming"
 
-/**
- * Task function that generates a stream name.
- * Uses the PRODUCTION StreamNamingService.generateName() method directly (INV-45).
- */
+/** Calls the production structured evaluator directly (INV-45). */
 async function runStreamNamingTask(input: StreamNamingInput, ctx: EvalContext): Promise<StreamNamingOutput> {
-  const existingNames = input.existingNames ?? []
-  const requireName = input.requireName ?? false
-
-  // Use the production StreamNamingService
-  const messageFormatter = new MessageFormatter()
-  const namingService = new StreamNamingService(ctx.pool, ctx.ai, ctx.configResolver, messageFormatter)
+  const checkpoint = input.checkpoint ?? (input.requireName === false ? 1 : 3)
+  const forced = input.forced ?? checkpoint >= 3
+  const evaluator = new DynamicNamingEvaluator(ctx.ai, ctx.configResolver)
 
   try {
-    const result = await namingService.generateName(input.conversationText, existingNames, requireName, {
-      workspaceId: ctx.workspaceId,
-    })
-
+    const decision = await evaluator.decide(
+      {
+        workspaceId: ctx.workspaceId,
+        targetKind: "stream",
+        targetId: "stream_eval",
+        checkpoint,
+        forced,
+        messageCount: checkpoint,
+        currentTitle: input.currentTitle ?? null,
+        context: input.conversationText,
+        existingTitles: input.existingNames ?? [],
+      },
+      new AbortController().signal
+    )
     return {
       input,
-      name: result.name,
-      notEnoughContext: result.notEnoughContext,
+      action: decision.action,
+      name: decision.action === "rename" ? decision.title : (input.currentTitle ?? null),
+      notEnoughContext: decision.action === "defer",
     }
   } catch (error) {
-    // requireName=true throws on NOT_ENOUGH_CONTEXT, which we catch and convert
-    const errorMsg = error instanceof Error ? error.message : String(error)
-    if (errorMsg.includes("NOT_ENOUGH_CONTEXT")) {
-      return {
-        input,
-        name: null,
-        notEnoughContext: true,
-      }
-    }
     return {
       input,
+      action: "defer",
       name: null,
       notEnoughContext: false,
-      error: errorMsg,
+      error: error instanceof Error ? error.message : String(error),
     }
   }
 }
@@ -93,6 +93,7 @@ export const streamNamingSuite: EvalSuite<StreamNamingInput, StreamNamingOutput,
   task: runStreamNamingTask,
 
   evaluators: [
+    actionEvaluator,
     notEnoughContextEvaluator,
     wordCountEvaluator,
     nameContainsEvaluator,
@@ -104,8 +105,8 @@ export const streamNamingSuite: EvalSuite<StreamNamingInput, StreamNamingOutput,
 
   defaultPermutations: [
     {
-      model: STREAM_NAMING_MODEL_ID,
-      temperature: STREAM_NAMING_TEMPERATURE,
+      model: DYNAMIC_NAMING_MODEL_ID,
+      temperature: DYNAMIC_NAMING_TEMPERATURE,
     },
   ],
 }

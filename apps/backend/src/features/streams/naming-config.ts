@@ -1,13 +1,14 @@
-// Co-located config (INV-43): both production and evals import from here.
+import {
+  DYNAMIC_NAMING_MAX_EXISTING_TITLES,
+  DYNAMIC_NAMING_MAX_MESSAGES,
+  DYNAMIC_NAMING_MODEL_ID,
+  DYNAMIC_NAMING_TEMPERATURE,
+} from "../dynamic-naming/config"
 
-export const STREAM_NAMING_MODEL_ID = "openrouter:openai/gpt-5.6-luna"
-
-// Low for consistent naming across runs
-export const STREAM_NAMING_TEMPERATURE = 0.3
-
-export const MAX_MESSAGES_FOR_NAMING = 10
-
-export const MAX_EXISTING_NAMES = 10
+export const STREAM_NAMING_MODEL_ID = DYNAMIC_NAMING_MODEL_ID
+export const STREAM_NAMING_TEMPERATURE = DYNAMIC_NAMING_TEMPERATURE
+export const MAX_MESSAGES_FOR_NAMING = DYNAMIC_NAMING_MAX_MESSAGES
+export const MAX_EXISTING_NAMES = DYNAMIC_NAMING_MAX_EXISTING_TITLES
 
 export function buildNamingSystemPrompt(existingNames: string[], requireName: boolean): string {
   return `Your task is to generate a short, descriptive title in 2-5 words for the provided conversation.

@@ -10,8 +10,11 @@ export interface StreamNamingInput {
   conversationText: string
   /** Existing stream names to avoid */
   existingNames?: string[]
-  /** Whether a name is required (true for agent messages) */
+  /** Compatibility shorthand: true maps to forced checkpoint 3; false to checkpoint 1. */
   requireName?: boolean
+  currentTitle?: string | null
+  checkpoint?: 1 | 3 | 6 | 10
+  forced?: boolean
   /** Category for organizing test cases */
   category?: "technical" | "casual" | "question" | "minimal" | "duplicate-avoidance" | "language"
 }
@@ -22,7 +25,8 @@ export interface StreamNamingInput {
 export interface StreamNamingOutput {
   /** The input that was provided */
   input: StreamNamingInput
-  /** Generated name or null if NOT_ENOUGH_CONTEXT */
+  action: "defer" | "keep" | "rename"
+  /** Generated name, or the current title for keep. */
   name: string | null
   /** Whether NOT_ENOUGH_CONTEXT was returned */
   notEnoughContext: boolean
@@ -34,7 +38,8 @@ export interface StreamNamingOutput {
  * Expected output for evaluation.
  */
 export interface StreamNamingExpected {
-  /** Should return NOT_ENOUGH_CONTEXT */
+  expectedAction?: "defer" | "keep" | "rename"
+  /** Should return defer. */
   expectNotEnoughContext?: boolean
   /** Name should contain these words/phrases (case-insensitive) */
   nameContains?: string[]

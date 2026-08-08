@@ -65,10 +65,18 @@ import {
   StreamNamingService,
   StubStreamNamingService,
   StreamBriefService,
-  NamingHandler,
   createNamingWorker,
 } from "./features/streams"
 import { EventService } from "./features/messaging"
+import {
+  DynamicNamingEvaluator,
+  DynamicNamingOutboxHandler,
+  DynamicNamingService,
+  DynamicNamingStreamTarget,
+  QueueDynamicNamingScheduler,
+  StubDynamicNamingEvaluator,
+  createDynamicNamingWorker,
+} from "./features/dynamic-naming"
 import { AttachmentService, createAttachmentUploadSweepWorker } from "./features/attachments"
 import { MessageFormatter } from "./lib/ai/message-formatter"
 import { SearchService } from "./features/search"
@@ -375,6 +383,17 @@ export async function startServer(): Promise<ServerInstance> {
       },
     },
   })
+  const dynamicNamingScheduler = new QueueDynamicNamingScheduler(jobQueue)
+  const dynamicNamingTarget = new DynamicNamingStreamTarget(pool, messageFormatter)
+  const dynamicNamingEvaluator = config.useStubAI
+    ? new StubDynamicNamingEvaluator()
+    : new DynamicNamingEvaluator(ai, configResolver)
+  const dynamicNamingService = new DynamicNamingService(
+    pool,
+    new Map([["stream", dynamicNamingTarget]]),
+    dynamicNamingEvaluator,
+    dynamicNamingScheduler
+  )
 
   const workspaceService = new WorkspaceService(pool, avatarService, jobQueue, workosOrgService, {
     requireWorkspaceCreationInvite: config.workspaceCreationRequiresInvite,
@@ -1084,6 +1103,10 @@ export async function startServer(): Promise<ServerInstance> {
     tier: QueueTiers.LIGHT,
     fairness: QueueFairness.NONE,
   })
+  jobQueue.registerHandler(JobQueues.DYNAMIC_NAMING_EVALUATE, createDynamicNamingWorker(dynamicNamingService), {
+    tier: QueueTiers.LIGHT,
+    fairness: QueueFairness.NONE,
+  })
 
   const embeddingWorker = createEmbeddingWorker({ pool, embeddingService })
   jobQueue.registerHandler(JobQueues.EMBEDDING_GENERATE, embeddingWorker, {
@@ -1452,7 +1475,7 @@ export async function startServer(): Promise<ServerInstance> {
   // matching the claim/callback routes.
   const enclaveDispatchHandler = config.enclaveInternalApiKey ? new EnclaveDispatchHandler(pool) : null
   const contextBagPrecomputeHandler = new ContextBagPrecomputeHandler(pool, jobQueue)
-  const namingHandler = new NamingHandler(pool, jobQueue)
+  const dynamicNamingHandler = new DynamicNamingOutboxHandler(pool, dynamicNamingScheduler)
   const emojiUsageHandler = new EmojiUsageHandler(pool)
   const embeddingHandler = new EmbeddingHandler(pool, jobQueue)
   const boundaryExtractionHandler = new BoundaryExtractionHandler(pool, jobQueue)
@@ -1490,7 +1513,7 @@ export async function startServer(): Promise<ServerInstance> {
     broadcastHandler,
     companionHandler,
     contextBagPrecomputeHandler,
-    namingHandler,
+    dynamicNamingHandler,
     emojiUsageHandler,
     embeddingHandler,
     boundaryExtractionHandler,

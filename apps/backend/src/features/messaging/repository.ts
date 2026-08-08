@@ -727,6 +727,19 @@ export const MessageRepository = {
     return Number(result.rows[0]?.count ?? 0)
   },
 
+  async getNamingStats(db: Querier, streamId: string): Promise<{ count: number; latestMessageAt: Date | null }> {
+    const result = await db.query<{ count: string; latest_message_at: Date | null }>(sql`
+      SELECT COUNT(*)::text AS count, MAX(created_at) AS latest_message_at
+      FROM messages
+      WHERE stream_id = ${streamId}
+        AND deleted_at IS NULL
+    `)
+    return {
+      count: Number(result.rows[0]?.count ?? 0),
+      latestMessageAt: result.rows[0]?.latest_message_at ?? null,
+    }
+  },
+
   /**
    * Batched variant of `countByStream` — returns a Map keyed by streamId so a
    * caller fanning over N refs (context-bag, sidebar previews) can avoid an

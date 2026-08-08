@@ -120,11 +120,16 @@ export function dynamicNamingClaimId(): string {
 export const DynamicNamingStateRepository = {
   async ensure(
     db: Querier,
-    params: { workspaceId: string; targetKind: DynamicNamingTargetKind; targetId: string }
+    params: {
+      workspaceId: string
+      targetKind: DynamicNamingTargetKind
+      targetId: string
+      initialLastEvaluatedMessageCount?: number
+    }
   ): Promise<DynamicNamingState> {
     const result = await db.query<StateRow>(sql`
-      INSERT INTO dynamic_naming_state (id, workspace_id, target_kind, target_id)
-      VALUES (${`dnstate_${ulid()}`}, ${params.workspaceId}, ${params.targetKind}, ${params.targetId})
+      INSERT INTO dynamic_naming_state (id, workspace_id, target_kind, target_id, last_evaluated_message_count)
+      VALUES (${`dnstate_${ulid()}`}, ${params.workspaceId}, ${params.targetKind}, ${params.targetId}, ${params.initialLastEvaluatedMessageCount ?? 0})
       ON CONFLICT (workspace_id, target_kind, target_id) DO UPDATE
       SET workspace_id = EXCLUDED.workspace_id
       RETURNING ${sql.raw(COLUMNS)}
