@@ -11,7 +11,7 @@
 //
 // Usage: bun run extensions/claude-code-remote/install-local.ts [destDir]
 
-import { cpSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs"
+import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs"
 import { dirname, join, relative, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 import { homedir } from "node:os"
@@ -37,6 +37,9 @@ const VENDORED = [
       "harness-kick.ts",
       "harness-reconnect.ts",
       "tmux-key.ts",
+      "tmux-window.ts",
+      "archive-grace.ts",
+      "harness-links.ts",
     ],
     dir: "bot-runtime-client",
   },
@@ -74,6 +77,25 @@ for (const pkg of VENDORED) {
   const vendorDir = join(vendorRoot, pkg.dir)
   mkdirSync(vendorDir, { recursive: true })
   for (const f of pkg.files) cpSync(join(pkg.src, "src", f), join(vendorDir, f))
+}
+
+const missingImports: string[] = []
+const relativeImportPattern = /(?:\bfrom\s+|\bimport\s*(?:\(\s*)?)["'](\.\.?\/[^"']+)["']/g
+for (const pkg of VENDORED) {
+  const vendorDir = join(vendorRoot, pkg.dir)
+  for (const file of pkg.files) {
+    const source = readFileSync(join(vendorDir, file), "utf8")
+    for (const [, specifier] of source.matchAll(relativeImportPattern)) {
+      const target = resolve(dirname(join(vendorDir, file)), specifier)
+      const extensionlessTarget = target.replace(/\.[cm]?js$/, "")
+      if (![target, `${target}.ts`, `${extensionlessTarget}.ts`, join(target, "index.ts")].some(existsSync)) {
+        missingImports.push(`${pkg.dep}/${file} imports ${specifier}`)
+      }
+    }
+  }
+}
+if (missingImports.length > 0) {
+  throw new Error(`vendored packages are incomplete:\n  ${missingImports.join("\n  ")}`)
 }
 
 // 4. Repoint every import of the vendored deps at the vendored copies — in the
