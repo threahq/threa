@@ -119,6 +119,7 @@ export interface BotInvocation {
   targetInstanceId: string | null
   targetRuntimeSessionId: string | null
   claimedByInstanceId: string | null
+  claimedRuntimeSessionId: string | null
   claimToken: string | null
   claimExpiresAt: Date | null
   attempts: number
@@ -199,6 +200,7 @@ interface BotInvocationRow {
   target_instance_id: string | null
   target_runtime_session_id: string | null
   claimed_by_instance_id: string | null
+  claimed_runtime_session_id: string | null
   claim_token: string | null
   claim_expires_at: Date | null
   attempts: number
@@ -435,6 +437,7 @@ function mapInvocation(row: BotInvocationRow): BotInvocation {
     targetInstanceId: row.target_instance_id,
     targetRuntimeSessionId: row.target_runtime_session_id,
     claimedByInstanceId: row.claimed_by_instance_id,
+    claimedRuntimeSessionId: row.claimed_runtime_session_id,
     claimToken: row.claim_token,
     claimExpiresAt: row.claim_expires_at,
     attempts: row.attempts,
@@ -1123,6 +1126,7 @@ export const BotInvocationRepository = {
       BotInvocation,
       | "status"
       | "claimedByInstanceId"
+      | "claimedRuntimeSessionId"
       | "claimToken"
       | "claimExpiresAt"
       | "attempts"
@@ -1339,7 +1343,7 @@ export const BotInvocationRepository = {
         LIMIT 1
       )
       UPDATE bot_invocations i
-      SET status = 'claimed', claimed_by_instance_id = ${params.instanceId}, claim_token = ${params.claimToken}, claim_expires_at = NOW() + (${params.claimTtlSeconds} || ' seconds')::interval, attempts = attempts + 1, updated_at = NOW(),
+      SET status = 'claimed', claimed_by_instance_id = ${params.instanceId}, claimed_runtime_session_id = ${params.runtimeSessionId ?? null}, claim_token = ${params.claimToken}, claim_expires_at = NOW() + (${params.claimTtlSeconds} || ' seconds')::interval, attempts = attempts + 1, updated_at = NOW(),
           claimed_source_message_revision = CASE WHEN i.trigger = 'session-control' THEN 0 ELSE NULL END,
           claimed_input_update_mode = (
             SELECT r.manifest -> 'input' ->> 'updates'
@@ -1652,7 +1656,7 @@ export const BotInvocationRepository = {
           AND actor_id = ${params.botId}
           AND status = 'claimed'
           AND claimed_by_instance_id = ${params.instanceId}
-          AND (target_runtime_session_id IS NULL OR target_runtime_session_id = ${params.runtimeSessionId})
+          AND claimed_runtime_session_id IS NOT DISTINCT FROM ${params.runtimeSessionId}
           AND claim_expires_at > NOW()
         ORDER BY created_at ASC, id ASC
         LIMIT 200`)
@@ -1663,7 +1667,7 @@ export const BotInvocationRepository = {
           AND status = 'cancelled'
           AND cancellation_reason IS NOT NULL
           AND claimed_by_instance_id = ${params.instanceId}
-          AND (target_runtime_session_id IS NULL OR target_runtime_session_id = ${params.runtimeSessionId})
+          AND claimed_runtime_session_id IS NOT DISTINCT FROM ${params.runtimeSessionId}
           AND (${params.since}::timestamptz IS NULL OR updated_at >= ${params.since})
         ORDER BY updated_at DESC, id DESC
         LIMIT 200`)
@@ -1675,7 +1679,8 @@ export const BotInvocationRepository = {
         sourceRevision: row.source_message_revision,
         reason: row.cancellation_reason as BotInvocationCancellationReason,
         targetInstanceId: row.claimed_by_instance_id!,
-        targetRuntimeSessionId: row.target_runtime_session_id,
+        targetRuntimeSessionId:
+          row.claimed_runtime_session_id ?? (row.claimed_by_instance_id == null ? row.target_runtime_session_id : null),
       })),
     }
   },

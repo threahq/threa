@@ -643,7 +643,9 @@ export class BotRuntimeService {
         invocationId: invocation.id,
         sourceRevision: invocation.sourceMessageRevision,
         targetInstanceId: invocation.claimedByInstanceId ?? invocation.targetInstanceId,
-        targetRuntimeSessionId: invocation.targetRuntimeSessionId,
+        targetRuntimeSessionId:
+          invocation.claimedRuntimeSessionId ??
+          (invocation.claimedByInstanceId == null ? invocation.targetRuntimeSessionId : null),
         reason: invocation.cancellationReason,
       })
     }
@@ -744,7 +746,9 @@ export class BotRuntimeService {
           invocationId: invocation.id,
           sourceRevision: invocation.sourceMessageRevision,
           targetInstanceId: invocation.claimedByInstanceId ?? invocation.targetInstanceId,
-          targetRuntimeSessionId: invocation.targetRuntimeSessionId,
+          targetRuntimeSessionId:
+            invocation.claimedRuntimeSessionId ??
+            (invocation.claimedByInstanceId == null ? invocation.targetRuntimeSessionId : null),
         })
         return
       }

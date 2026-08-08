@@ -213,6 +213,7 @@ function makeInvocationRow(overrides: Record<string, unknown> = {}) {
     target_instance_id: null,
     target_runtime_session_id: null,
     claimed_by_instance_id: "inst_42",
+    claimed_runtime_session_id: null,
     claim_token: "tok_1",
     claim_expires_at: new Date(),
     attempts: 1,
@@ -393,12 +394,13 @@ describe("BotInvocationRepository.claimOne", () => {
 
   it("only claims invocations under the attempt budget and increments attempts", async () => {
     const captured: Captured = { text: null, values: null }
-    const db = createQuerier(captured, [makeInvocationRow()])
+    const db = createQuerier(captured, [makeInvocationRow({ claimed_runtime_session_id: "session-a" })])
 
-    await BotInvocationRepository.claimOne(db, {
+    const claimed = await BotInvocationRepository.claimOne(db, {
       workspaceId: "ws_1",
       botId: "bot_alice",
       instanceId: "inst_42",
+      runtimeSessionId: "session-a",
       runtimeKind: "pi-local",
       claimToken: "tok_1",
       supportedCapabilities: ["active-scratchpad"],
@@ -411,6 +413,8 @@ describe("BotInvocationRepository.claimOne", () => {
     expect(captured.text).toContain("attempts = attempts + 1")
     expect(captured.text).toContain("CASE WHEN i.trigger = 'session-control' THEN 1 ELSE 0 END ASC")
     expect(captured.values).toContain(BOT_CLAIM_MAX_ATTEMPTS)
+    expect(captured.values).toContain("session-a")
+    expect(claimed?.claimedRuntimeSessionId).toBe("session-a")
   })
 
   it("gates sealed streams on the claiming instance's BIK covering both generations (§2.6)", async () => {

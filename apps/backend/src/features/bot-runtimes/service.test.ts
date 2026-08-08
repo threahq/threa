@@ -48,6 +48,7 @@ function makeInvocation(overrides: Partial<BotInvocation> = {}): BotInvocation {
     metadata: {},
     status: "pending",
     claimedByInstanceId: null,
+    claimedRuntimeSessionId: null,
     claimToken: null,
     claimExpiresAt: null,
     attempts: 0,

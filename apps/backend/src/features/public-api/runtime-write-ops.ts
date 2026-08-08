@@ -164,82 +164,86 @@ export function createBotRuntimeWriteOps(deps: BotRuntimeWriteOpsDeps): BotRunti
         }
 
         let update: InvocationInputUpdateWire | undefined
-        if (params.knownSourceRevision != null && params.knownSourceRevision < renewed.sourceMessageRevision) {
-          const sealing = await resolveSealingContext(db, {
+        const sealing = await resolveSealingContext(db, {
+          workspaceId: renewed.workspaceId,
+          streamId: renewed.activeStreamId,
+          actor: { kind: "bot", botId: renewed.actorId },
+        })
+        const verdict = resolveDeliveryVerdict({ trust: TrustTiers.THIRD_PARTY, sealing })
+        if (verdict.delivery === "denied") {
+          const cancelled = await botRuntimeService.cancelOwnedClaimForKeyGrantLossInTransaction(db, renewed)
+          if (!cancelled) throw new HttpError("Invocation claim not found", { status: 404, code: "NOT_FOUND" })
+          await db.query("COMMIT")
+          return {
+            invocationId: cancelled.id,
+            status: "cancelled" as const,
+            sourceRevision: cancelled.sourceMessageRevision,
+            reason: "key_grant_lost" as const,
+          }
+        }
+        const needsUpdate =
+          params.knownSourceRevision != null && params.knownSourceRevision < renewed.sourceMessageRevision
+        if (needsUpdate && verdict.delivery === "plaintext") {
+          update = {
+            delivery: "plaintext",
+            sourceRevision: renewed.sourceMessageRevision,
+            promptMarkdown: renewed.promptMarkdown,
+            mentionedActorSlugs: renewed.mentionedActorSlugs,
+          }
+        } else if (needsUpdate) {
+          const instance = await BotRuntimeInstanceRepository.findByInstance(db, {
             workspaceId: renewed.workspaceId,
-            streamId: renewed.activeStreamId,
-            actor: { kind: "bot", botId: renewed.actorId },
+            botId: renewed.actorId,
+            instanceId: params.instanceId,
           })
-          const verdict = resolveDeliveryVerdict({ trust: TrustTiers.THIRD_PARTY, sealing })
-          switch (verdict.delivery) {
-            case "plaintext":
-              update = {
-                delivery: "plaintext",
-                sourceRevision: renewed.sourceMessageRevision,
-                promptMarkdown: renewed.promptMarkdown,
-                mentionedActorSlugs: renewed.mentionedActorSlugs,
-              }
-              break
-            case "sealed": {
-              const instance = await BotRuntimeInstanceRepository.findByInstance(db, {
-                workspaceId: renewed.workspaceId,
-                botId: renewed.actorId,
-                instanceId: params.instanceId,
-              })
-              const e2e = await E2eStreamsRepository.getByStreamId(db, renewed.workspaceId, renewed.rootStreamId)
-              const wraps = await StreamE2eKeyWrapsRepository.listForStream(
-                db,
-                renewed.workspaceId,
-                renewed.rootStreamId
-              )
-              const trigger = await MessageRepository.findInvocationSourceStateForShare(db, {
-                workspaceId: renewed.workspaceId,
-                messageId: renewed.sourceMessageId,
-              })
-              if (
-                !trigger ||
-                trigger.deleted ||
-                trigger.streamId !== renewed.activeStreamId ||
-                trigger.revision !== renewed.sourceMessageRevision
-              ) {
-                throw new HttpError("Invocation control state changed; retry renewal", {
-                  status: 409,
-                  code: "INVOCATION_CONTROL_RETRY",
-                })
-              }
-              update =
-                instance?.publicKeyId && e2e
-                  ? (buildSealedInputUpdate({
-                      e2e,
-                      bikKeyId: instance.publicKeyId,
-                      wraps,
-                      trigger,
-                      replySenderId: renewed.actorId,
-                      sourceRevision: renewed.sourceMessageRevision,
-                    }) ?? undefined)
-                  : undefined
-              if (update) break
-              const cancelled = await botRuntimeService.cancelOwnedClaimForKeyGrantLossInTransaction(db, renewed)
-              if (!cancelled) throw new HttpError("Invocation claim not found", { status: 404, code: "NOT_FOUND" })
-              await db.query("COMMIT")
-              return {
-                invocationId: cancelled.id,
-                status: "cancelled" as const,
-                sourceRevision: cancelled.sourceMessageRevision,
-                reason: "key_grant_lost" as const,
-              }
+          const e2e = await E2eStreamsRepository.getByStreamId(db, renewed.workspaceId, renewed.rootStreamId)
+          const wraps = await StreamE2eKeyWrapsRepository.listForStream(db, renewed.workspaceId, renewed.rootStreamId)
+          const trigger = await MessageRepository.findInvocationSourceStateForShare(db, {
+            workspaceId: renewed.workspaceId,
+            messageId: renewed.sourceMessageId,
+          })
+          if (
+            !trigger ||
+            trigger.deleted ||
+            trigger.streamId !== renewed.activeStreamId ||
+            trigger.revision !== renewed.sourceMessageRevision
+          ) {
+            throw new HttpError("Invocation control state changed; retry renewal", {
+              status: 409,
+              code: "INVOCATION_CONTROL_RETRY",
+            })
+          }
+          const sealedUpdate =
+            instance?.publicKeyId && e2e
+              ? (buildSealedInputUpdate({
+                  e2e,
+                  bikKeyId: instance.publicKeyId,
+                  wraps,
+                  trigger,
+                  replySenderId: renewed.actorId,
+                  sourceRevision: renewed.sourceMessageRevision,
+                }) ?? undefined)
+              : undefined
+          if (!sealedUpdate) {
+            const cancelled = await botRuntimeService.cancelOwnedClaimForKeyGrantLossInTransaction(db, renewed)
+            if (!cancelled) throw new HttpError("Invocation claim not found", { status: 404, code: "NOT_FOUND" })
+            await db.query("COMMIT")
+            return {
+              invocationId: cancelled.id,
+              status: "cancelled" as const,
+              sourceRevision: cancelled.sourceMessageRevision,
+              reason: "key_grant_lost" as const,
             }
-            case "denied": {
-              const cancelled = await botRuntimeService.cancelOwnedClaimForKeyGrantLossInTransaction(db, renewed)
-              if (!cancelled) throw new HttpError("Invocation claim not found", { status: 404, code: "NOT_FOUND" })
-              await db.query("COMMIT")
-              return {
-                invocationId: cancelled.id,
-                status: "cancelled" as const,
-                sourceRevision: cancelled.sourceMessageRevision,
-                reason: "key_grant_lost" as const,
-              }
-            }
+          }
+          if (sealedUpdate.delivery !== "sealed") throw new Error("Expected sealed invocation input update")
+          update = sealedUpdate
+          const updatedSession = await AgentSessionRepository.updateInvocationReplyKeyGeneration(db, {
+            workspaceId: renewed.workspaceId,
+            invocationId: renewed.id,
+            replyKeyGeneration: sealedUpdate.reply.keyGeneration,
+          })
+          if (!updatedSession) {
+            throw new HttpError("Invocation session not found", { status: 409, code: "INVOCATION_CONTROL_RETRY" })
           }
         }
         await db.query("COMMIT")

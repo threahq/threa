@@ -33,6 +33,7 @@ function invocation(overrides: Partial<BotInvocation> = {}): BotInvocation {
     targetInstanceId: null,
     targetRuntimeSessionId: null,
     claimedByInstanceId: "inst_1",
+    claimedRuntimeSessionId: null,
     claimToken: "tok_1",
     claimExpiresAt: new Date("2030-01-01T00:00:00.000Z"),
     attempts: 1,
@@ -78,6 +79,7 @@ function setup(serviceOverrides: Partial<BotRuntimeService> = {}) {
     ...serviceOverrides,
   } as unknown as BotRuntimeService
   spyOn(AgentSessionRepository, "updateHeartbeat").mockResolvedValue(undefined as never)
+  spyOn(AgentSessionRepository, "updateInvocationReplyKeyGeneration").mockResolvedValue(true)
   return {
     client,
     queries,
@@ -150,7 +152,7 @@ describe("runtime renew control snapshot", () => {
     spyOn(agentRuntime, "resolveDeliveryVerdict").mockReturnValue({ delivery: "denied", reason: "no-key-grant" })
     const { client, service, ops } = setup()
 
-    const result = await ops.renewClaim(params)
+    const result = await ops.renewClaim({ ...params, knownSourceRevision: 2 })
 
     expect(result).toEqual({
       invocationId: "binv_1",
@@ -160,6 +162,21 @@ describe("runtime renew control snapshot", () => {
     })
     expect(service.cancelOwnedClaimForKeyGrantLossInTransaction).toHaveBeenCalledWith(client, expect.any(Object))
     expect(result).not.toHaveProperty("update")
+  })
+
+  it("returns durable key-grant cancellation without duplicating its transition", async () => {
+    const cancelled = invocation({ status: "cancelled", cancellationReason: "key_grant_lost" })
+    const { ops, service } = setup({ renewInvocationClaimInTransaction: mock(async () => cancelled) })
+
+    const result = await ops.renewClaim({ ...params, knownSourceRevision: 2 })
+
+    expect(result).toEqual({
+      invocationId: "binv_1",
+      status: "cancelled",
+      sourceRevision: 2,
+      reason: "key_grant_lost",
+    })
+    expect(service.cancelOwnedClaimForKeyGrantLossInTransaction).not.toHaveBeenCalled()
   })
 
   it("assembles a sealed delta sequentially from one repeatable-read client", async () => {
@@ -215,6 +232,11 @@ describe("runtime renew control snapshot", () => {
       update: { delivery: "sealed", sourceRevision: 2 },
     })
     expect(result).not.toHaveProperty("update.promptMarkdown")
+    expect(AgentSessionRepository.updateInvocationReplyKeyGeneration).toHaveBeenCalledWith(client, {
+      workspaceId: "ws_1",
+      invocationId: "binv_1",
+      replyKeyGeneration: 2,
+    })
   })
 
   it("returns a retry conflict instead of labelling a newer trigger as the locked revision", async () => {

@@ -8,7 +8,7 @@ import {
 } from "../../src/features/bot-runtimes"
 import { withTransaction } from "../../src/db"
 import { MessageRepository } from "../../src/features/messaging"
-import { AgentSessionRepository } from "../../src/features/agents"
+import { AgentSessionRepository, assertReplyKeyGeneration } from "../../src/features/agents"
 import { BotRepository } from "../../src/features/public-api/bot-repository"
 import { messageId, streamId, userId, workspaceId } from "../../src/lib/id"
 
@@ -107,11 +107,12 @@ describe("bot invocation control protocol", () => {
     ])
   }
 
-  async function claim(token: string, id = instance) {
+  async function claim(token: string, id = instance, runtimeSessionId?: string) {
     return service().claimNextInvocation({
       workspaceId: workspace,
       botId: bot,
       instanceId: id,
+      runtimeSessionId,
       runtimeKind: "openclaw",
       claimToken: token,
       supportedCapabilities: ["active-scratchpad"],
@@ -159,6 +160,115 @@ describe("bot invocation control protocol", () => {
       )
     ).rows
   }
+
+  test("reply generation transition updates only the running invocation session callback fence", async () => {
+    await setMode("live")
+    await createSource()
+    const claimed = await claim("reply-generation")
+    await AgentSessionRepository.insertRunningOrSkip(pool, {
+      id: claimed!.id,
+      streamId: stream,
+      personaId: bot,
+      triggerMessageId: claimed!.sourceMessageId,
+      triggerMessageRevision: claimed!.sourceMessageRevision,
+      initialSequence: 0n,
+      callbackTokenHash: "hash",
+      replyKeyGeneration: 1,
+    })
+
+    const transitioned = await AgentSessionRepository.updateInvocationReplyKeyGeneration(pool, {
+      workspaceId: workspace,
+      invocationId: claimed!.id,
+      replyKeyGeneration: 2,
+    })
+    const session = await AgentSessionRepository.findById(pool, claimed!.id)
+
+    expect({ transitioned, generation: session?.replyKeyGeneration }).toEqual({ transitioned: true, generation: 2 })
+    expect(() => assertReplyKeyGeneration(session!, { keyGeneration: 2 })).not.toThrow()
+    expect(() => assertReplyKeyGeneration(session!, { keyGeneration: 1 })).toThrow()
+  })
+
+  test("claim ownership follows the actual runtime session across bootstrap, cancellation, and reclaim", async () => {
+    const source = await createSource()
+    const claimedByA = await claim("owner-a", instance, "session-a")
+    const bootstrapA = await service().getBootstrapForRuntime({
+      workspaceId: workspace,
+      botId: bot,
+      instanceId: instance,
+      runtimeSessionId: "session-a",
+      supportedCapabilities: ["active-scratchpad"],
+    })
+    const bootstrapB = await service().getBootstrapForRuntime({
+      workspaceId: workspace,
+      botId: bot,
+      instanceId: instance,
+      runtimeSessionId: "session-b",
+      supportedCapabilities: ["active-scratchpad"],
+    })
+    await pool.query("UPDATE bot_invocations SET claim_expires_at = NOW() - INTERVAL '1 second' WHERE id = $1", [
+      claimedByA!.id,
+    ])
+    const reclaimedByB = await claim("owner-b", instance, "session-b")
+    await MessageRepository.softDelete(pool, source.id)
+    await service().reconcileInvocationSource({ workspaceId: workspace, sourceMessageId: source.id })
+    const cancelledB = await service().getBootstrapForRuntime({
+      workspaceId: workspace,
+      botId: bot,
+      instanceId: instance,
+      runtimeSessionId: "session-b",
+      supportedCapabilities: ["active-scratchpad"],
+    })
+    const cancelledA = await service().getBootstrapForRuntime({
+      workspaceId: workspace,
+      botId: bot,
+      instanceId: instance,
+      runtimeSessionId: "session-a",
+      supportedCapabilities: ["active-scratchpad"],
+    })
+    const hints = (await controlOutbox()).filter((row) => row.event_type === "bot_invocation:cancelled")
+    expect({
+      ownedA: bootstrapA.ownedClaims.map((row) => row.id),
+      ownedB: bootstrapB.ownedClaims.map((row) => row.id),
+      reclaimedOwner: reclaimedByB!.claimedRuntimeSessionId,
+      cancelledA: cancelledA.recentCancellations,
+      cancelledB: cancelledB.recentCancellations.map((row) => row.targetRuntimeSessionId),
+      hintTargets: hints.map((row) => row.payload.targetRuntimeSessionId),
+    }).toEqual({
+      ownedA: [claimedByA!.id],
+      ownedB: [],
+      reclaimedOwner: "session-b",
+      cancelledA: [],
+      cancelledB: ["session-b"],
+      hintTargets: ["session-b"],
+    })
+  })
+
+  test("sessionless claims are recovered only by sessionless bootstrap", async () => {
+    const source = await createSource()
+    const claimed = await claim("sessionless")
+    const sessionless = await service().getBootstrapForRuntime({
+      workspaceId: workspace,
+      botId: bot,
+      instanceId: instance,
+      supportedCapabilities: ["active-scratchpad"],
+    })
+    const named = await service().getBootstrapForRuntime({
+      workspaceId: workspace,
+      botId: bot,
+      instanceId: instance,
+      runtimeSessionId: "named",
+      supportedCapabilities: ["active-scratchpad"],
+    })
+    expect({
+      sourceId: source.id,
+      sessionless: sessionless.ownedClaims.map((row) => row.id),
+      named: named.ownedClaims,
+    }).toEqual({
+      sourceId: source.id,
+      sessionless: [claimed!.id],
+      named: [],
+    })
+  })
 
   test("claim pins absent, live, and restart manifests from the winner and ignores later changes", async () => {
     const result: Array<{ mode: string | null; pinned: string | null; after: string | null }> = []
