@@ -198,16 +198,14 @@ async function main(): Promise<void> {
       }
 
       const minPassRate = options.minPassRate ?? 1
-      const hasFailures = results.some((r) =>
-        r.permutations.some((p) => aggregateCases(p).some((c) => c.passes / c.total < minPassRate))
-      )
-      const qualificationFailure = results.some(
-        (r) =>
-          r.suiteName.startsWith("voice-polish") &&
-          r.permutations.some((p) => !qualifyVoicePolishPermutation(p as any).qualified)
-      )
-      const comparisonFailure = decideVoicePolishComparison(results as any)?.exitAllowed === false
-      process.exit(hasFailures || qualificationFailure || comparisonFailure ? 1 : 0)
+      const voicePolishDecision = decideVoicePolishComparison(results as any)
+      // In a model-comparison config, disqualified challengers are expected input to
+      // the selection rule — they must not independently fail the whole command.
+      // The structured voice-polish decision owns those permutations' exit status;
+      // ordinary per-case thresholds still apply to every non-voice suite.
+      const hasFailures = hasCaseRateFailures(results, minPassRate, voicePolishDecision !== null)
+      const comparisonFailure = voicePolishDecision?.exitAllowed === false
+      process.exit(hasFailures || comparisonFailure ? 1 : 0)
     } catch (error) {
       console.error("\nEvaluation failed with error:")
       console.error(error)
@@ -248,9 +246,7 @@ async function main(): Promise<void> {
     // A case passes when its pass rate over the repeat runs clears the
     // threshold (default 1 = every run, matching single-run behavior).
     const minPassRate = options.minPassRate ?? 1
-    const hasFailures = results.some((r) =>
-      r.permutations.some((p) => aggregateCases(p).some((c) => c.passes / c.total < minPassRate))
-    )
+    const hasFailures = hasCaseRateFailures(results, minPassRate)
     const qualificationFailure = results.some(
       (r) =>
         r.suiteName === "voice-polish" && r.permutations.some((p) => !qualifyVoicePolishPermutation(p as any).qualified)
@@ -263,6 +259,23 @@ async function main(): Promise<void> {
     console.error(error)
     process.exit(1)
   }
+}
+
+export function hasCaseRateFailures(
+  results: Array<any>,
+  minPassRate: number,
+  skipVoicePolishComparisons = false
+): boolean {
+  return results.some((result) => {
+    if (
+      skipVoicePolishComparisons &&
+      (result.suiteName === "voice-polish" || result.suiteName.startsWith("voice-polish:"))
+    )
+      return false
+    return result.permutations.some((permutation: any) =>
+      aggregateCases(permutation).some((caseResult) => caseResult.passes / caseResult.total < minPassRate)
+    )
+  })
 }
 
 interface CaseAggregate {
