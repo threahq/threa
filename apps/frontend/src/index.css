@@ -640,6 +640,79 @@ html[data-input="mouse"] .message-hover-wash:hover {
   background-color: hsl(var(--primary) / 0.08);
 }
 
+/* Composer atoms drag without a floating clone: source stays put and this
+   zero-size widget previews the eventual insertion point (INV-21). */
+.ProseMirror
+  :is(
+    [data-type="mention"],
+    [data-type="channelLink"],
+    [data-type="slashCommand"],
+    [data-type="attachment-reference"],
+    [data-type="memo-embed"],
+    [data-type="in-app-link"],
+    [data-type="giphy-embed"]
+  ) {
+  -webkit-touch-callout: none;
+  -webkit-user-drag: none;
+  user-select: none;
+}
+
+html[data-input="mouse"]
+  .ProseMirror
+  :is(
+    [data-type="mention"],
+    [data-type="channelLink"],
+    [data-type="slashCommand"],
+    [data-type="attachment-reference"],
+    [data-type="memo-embed"],
+    [data-type="in-app-link"],
+    [data-type="giphy-embed"]
+  ),
+html[data-input="mouse"]
+  .ProseMirror
+  :is(
+    [data-type="mention"],
+    [data-type="channelLink"],
+    [data-type="slashCommand"],
+    [data-type="attachment-reference"],
+    [data-type="memo-embed"],
+    [data-type="in-app-link"],
+    [data-type="giphy-embed"]
+  )
+  * {
+  cursor: grab;
+}
+
+.ProseMirror.composer-pill-drag-active,
+.ProseMirror.composer-pill-drag-active * {
+  cursor: grabbing !important;
+}
+
+.ProseMirror .composer-pill-dragging {
+  border-radius: 0.375rem;
+  outline: 2px solid hsl(var(--primary) / 0.55);
+  outline-offset: 2px;
+}
+
+.composer-pill-drop-cursor {
+  position: relative;
+  display: inline;
+  pointer-events: none;
+}
+
+.composer-pill-drop-cursor::after {
+  content: "";
+  position: absolute;
+  bottom: -0.35em;
+  left: -1px;
+  z-index: 2;
+  width: 2px;
+  height: 1.7em;
+  border-radius: 999px;
+  background: hsl(var(--primary));
+  box-shadow: 0 0 0 1px hsl(var(--background) / 0.75);
+}
+
 .ProseMirror > *:not(.ProseMirror-gapcursor) + *:not(.ProseMirror-gapcursor) {
   @apply mt-2;
 }

@@ -36,6 +36,7 @@ import { GiphyEmbedExtension } from "./giphy-embed-extension"
 import { MemoSearchExtension, type MemoSearchOptions } from "./triggers/memo-search-extension"
 import { DictationPreview } from "./dictation-preview-extension"
 import { DictationChunkExtension } from "./dictation-chunk-extension"
+import { ComposerPillDragExtension } from "./composer-pill-drag-extension"
 
 const lowlight = createLowlight(common)
 
@@ -131,6 +132,8 @@ export function createEditorExtensions(options: CreateEditorExtensionsOptions | 
     InAppLinkExtension,
 
     GiphyEmbedExtension,
+
+    ComposerPillDragExtension,
 
     // Live dictation hypothesis ghost (inert unless actively dictating)
     DictationPreview,
