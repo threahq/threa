@@ -209,6 +209,12 @@ function bashCommand(input: unknown): string | undefined {
   return input.command.trim() || undefined
 }
 
+function truncateCommandForTrace(command: string): string {
+  if (command.length <= COMMAND_TRACE_MAX_CHARS) return command
+  const marker = "\n\n…[trace content truncated]"
+  return `${command.slice(0, COMMAND_TRACE_MAX_CHARS - marker.length).trimEnd()}${marker}`
+}
+
 function commandHeadline(command: string, fallback: string): string {
   const lines = command
     .split(/\r?\n/)
@@ -285,7 +291,7 @@ function toolUseStep(part: Record<string, unknown>, ctx: MapContext): MappedStep
     // bounded, regex-scrubbed lane for an explicitly enabled command trace.
     section = {
       label: SECTION_LABELS.DETAILS,
-      body: truncateForTrace(command, COMMAND_TRACE_MAX_CHARS),
+      body: truncateCommandForTrace(command),
       lang: "bash",
     }
   } else {

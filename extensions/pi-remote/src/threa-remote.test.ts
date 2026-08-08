@@ -90,7 +90,7 @@ describe("Pi remote trace safety", () => {
     const payload = JSON.parse(trace) as { headline: string; sections: Array<{ body: string }> }
 
     expect(payload.headline.length).toBeLessThanOrEqual(180)
-    expect(payload.sections[0]!.body.length).toBeLessThan(2_200)
+    expect(payload.sections[0]!.body.length).toBeLessThanOrEqual(2_000)
     expect(payload.sections[0]!.body).toContain("trace content truncated")
   })
 

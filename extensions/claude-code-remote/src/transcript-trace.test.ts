@@ -243,7 +243,7 @@ describe("mapTranscriptLine (commands mode)", () => {
     const payload = JSON.parse(steps[0]!.content) as { headline: string; sections: Array<{ body: string }> }
 
     expect(payload.headline.length).toBeLessThanOrEqual(180)
-    expect(payload.sections[0]!.body.length).toBeLessThan(2_200)
+    expect(payload.sections[0]!.body.length).toBeLessThanOrEqual(2_000)
     expect(payload.sections[0]!.body).toContain("truncated")
   })
 
