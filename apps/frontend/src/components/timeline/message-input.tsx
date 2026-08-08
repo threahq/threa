@@ -307,13 +307,13 @@ function MessageInputComponent({
   // stream's own draft. The typed draft is NOT moved — its scope IS its target,
   // so it stays a draft of that conversation and keeps its filing.
   //
-  // It must also stop being CHECKED OUT here. A draft loaded under a scope no
-  // composer is showing is excluded from every pile on the device (the
-  // checked-out-anywhere rule) and carries no `?stash=` link in the explorer, so
-  // "it stays reachable" would be false — the only way back would be to open that
-  // conversation. Detaching the pointer turns it into a real stash entry, which
-  // is what makes that sentence true. Unless another composer is already mounted
-  // on the scope: then it is showing the draft and owns it.
+  // It must also stop being CHECKED OUT here. Piles now offer loaded rows too
+  // (v2 take-over), but the drafts EXPLORER still keys `isStashed` on the
+  // pointer and offers a `?stash=` deep link only to detached rows — so without
+  // this detach the disarmed draft would carry no link there and "it stays
+  // reachable" would be weaker than promised. Detaching the pointer turns it
+  // into a real stash entry. Unless another composer is already mounted on the
+  // scope: then it is showing the draft and owns it.
   //
   // ONE disarm, for every path that drops the target: clearing the target alone
   // strands the gesture latch, and a stranded latch makes the NEXT arm read as a

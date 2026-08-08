@@ -9,6 +9,8 @@ export interface StashedDraftRowOrigin {
   tier: "own" | "borrowed"
   /** Always a displayable string — an unresolved place degrades to the explorer's wording. */
   label: string
+  /** Another scope's composer holds this draft; a tap takes it over (quiet hint, never a gate). */
+  checkedOutElsewhere: boolean
 }
 
 /**
@@ -52,7 +54,9 @@ export function useStashedDraftOrigins(
       }
     }
     const map = new Map<string, StashedDraftRowOrigin>()
-    for (const [draftId, origin] of originByDraftId) map.set(draftId, { tier: origin.tier, label: label(origin) })
+    for (const [draftId, origin] of originByDraftId) {
+      map.set(draftId, { tier: origin.tier, label: label(origin), checkedOutElsewhere: origin.checkedOutElsewhere })
+    }
     return map
   }, [originByDraftId, streams, users, dmPeers])
 }

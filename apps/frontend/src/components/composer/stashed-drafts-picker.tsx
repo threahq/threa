@@ -378,14 +378,18 @@ export function StashedDraftsPicker({
                           // target), so it says the part that is true either way
                           // rather than guessing — and does it in the accessible
                           // name and the tooltip, which cost no layout (INV-21).
+                          // `aria-label` REPLACES the content-derived name, so
+                          // the "open elsewhere" hint must ride inside it too —
+                          // as a visible-only span it would be dropped from the
+                          // accessible name on exactly the rows that carry it.
                           title={
                             isBorrowed
-                              ? `From ${origin.label}. Picking it changes where this composer files.`
+                              ? `From ${origin.label}.${origin.checkedOutElsewhere ? " Open in another composer — picking it takes it over." : ""} Picking it changes where this composer files.`
                               : undefined
                           }
                           aria-label={
                             isBorrowed
-                              ? `${preview} — from ${origin.label}. Picking it changes where this composer files.`
+                              ? `${preview} — from ${origin.label}.${origin.checkedOutElsewhere ? " Open in another composer — picking it takes it over." : ""} Picking it changes where this composer files.`
                               : undefined
                           }
                           className="flex-1 min-w-0 text-left focus:outline-none"
@@ -422,6 +426,15 @@ export function StashedDraftsPicker({
                               {formatRelativeTime(new Date(draft.clientUpdatedAt), now, undefined, { terse: true })}
                               {attachmentCount > 0 && <span className="ml-1.5">· {attachmentCount} 📎</span>}
                             </span>
+                            {/* Quiet hint on the shared meta line (no layout
+                                shift, INV-21): the row is still fully loadable —
+                                a tap takes the draft over — this just says the
+                                take-over will detach another composer. */}
+                            {origin?.checkedOutElsewhere && (
+                              <span data-draft-open-elsewhere className="shrink-0 truncate">
+                                · open elsewhere
+                              </span>
+                            )}
                           </p>
                         </button>
                         <Button

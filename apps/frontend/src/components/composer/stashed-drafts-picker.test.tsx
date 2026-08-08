@@ -274,8 +274,12 @@ describe("StashedDraftsPicker", () => {
 
   describe("origin and the own/borrowed seam", () => {
     const open = () => userEvent.click(screen.getByRole("button", { name: /drafts/i }))
-    const own: StashedDraftRowOrigin = { tier: "own", label: "#general" }
-    const borrowed = (label: string): StashedDraftRowOrigin => ({ tier: "borrowed", label })
+    const own: StashedDraftRowOrigin = { tier: "own", label: "#general", checkedOutElsewhere: false }
+    const borrowed = (label: string, checkedOutElsewhere = false): StashedDraftRowOrigin => ({
+      tier: "borrowed",
+      label,
+      checkedOutElsewhere,
+    })
     const rows = [makeDraft("draft_own", "mine"), makeDraft("draft_borrowed", "theirs")]
 
     it("draws the seam between the last own row and the first borrowed one", async () => {
@@ -292,6 +296,24 @@ describe("StashedDraftsPicker", () => {
       expect(items[0]).toContain("mine")
       expect(items[1]).toContain("From elsewhere")
       expect(items[2]).toContain("theirs")
+    })
+
+    it("hints a row checked out by another composer, without gating it", async () => {
+      renderPicker({
+        drafts: rows,
+        originById: new Map([
+          ["draft_own", own],
+          ["draft_borrowed", borrowed("Reply in Pizza plans", true)],
+        ]),
+      })
+      await open()
+
+      const items = Array.from(screen.getByRole("list").children).map((el) => el.textContent)
+      // Control: the un-checked-out row carries no hint.
+      expect(items[0]).not.toContain("open elsewhere")
+      expect(items[2]).toContain("open elsewhere")
+      // Still a live action, not a disabled row.
+      expect(screen.getByText("theirs").closest("button")).not.toBeDisabled()
     })
 
     it("renders no seam when every row is own", async () => {
