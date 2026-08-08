@@ -37,6 +37,29 @@ bun run eval -- --config evals/example-config.yaml
 | `multimodal-vision`   | Vision/attachment understanding     |
 | `memo-classifier`     | Knowledge-worthiness classification |
 | `memorizer`           | Memo generation from messages       |
+| `voice-polish`        | Dictation correction and structure  |
+
+### voice-polish gating semantics
+
+The dictation suite grades the user-visible guarantee, not internal retry
+mechanics. Interim (live-deadline) passes are discardable by architecture — a
+slow pass times out non-destructively while raw STT stays visible — and hosted
+provider latency has a random tail, so:
+
+- **Timeouts (live or final) are valid typed outcomes case-level.** Case
+  evaluators assert outcome type (never raw-text-as-success, never
+  empty/truncated/provider-error) and grade the content, structure, language,
+  and stability of every _successful_ pass. A case whose final pass timed out
+  has nothing to grade and is neutral.
+- **Latency is gated run-level**, where sample sizes make it meaningful:
+  final-cohort p95 of completed calls + 750ms must fit the 8s cap, and the
+  final-cohort timeout rate must stay at or below 15% (loose catastrophe bound;
+  worst observed provider-jitter rate is ~4%). Live metrics are reported, not
+  gated.
+- A `voicePolishDecision` block in the JSON report records qualification, the
+  mechanical model/prompt selection, and whether the run may pass; the exit
+  code enforces it, so a comparison cannot complete silently without a
+  selection decision.
 
 ## Run from a PR comment (`/eval`)
 
@@ -141,7 +164,7 @@ Each suite supports specific component keys:
 - `companion` - Main agent model
 - `researcher` - Research subcomponent (if integrated)
 
-**stream-naming**, **boundary-extraction**, **memo-classifier**, **memorizer**:
+**stream-naming**, **boundary-extraction**, **memo-classifier**, **memorizer**, **voice-polish**:
 
 - Single model, use the suite name as the component key
 

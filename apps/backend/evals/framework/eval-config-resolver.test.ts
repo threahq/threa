@@ -13,7 +13,7 @@ describe("EvalConfigResolver", () => {
     const resolver = createEvalConfigResolver({ base })
 
     const config = await resolver.resolve(COMPONENT_PATHS.BOUNDARY_EXTRACTION)
-    expect(config.modelId).toBe("openrouter:openai/gpt-5.4-mini")
+    expect(config.modelId).toBe("openrouter:openai/gpt-5.6-luna")
     expect(config.temperature).toBe(0.2)
   })
 

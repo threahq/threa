@@ -20,6 +20,9 @@ import { memoClassifierSuite } from "./suites/memo-classifier/suite"
 import { memorizerSuite } from "./suites/memorizer/suite"
 import { briefCorrectionSuite } from "./suites/brief-correction/suite"
 import { personaStyleSuite } from "./suites/persona-style/suite"
+import { voicePolishSuite } from "./suites/voice-polish/suite"
+import { qualifyVoicePolishPermutation } from "./suites/voice-polish/evaluators"
+import { decideVoicePolishComparison } from "./suites/voice-polish/reporting"
 import { isConfigFilePath } from "./framework/config-loader"
 
 // All available suites
@@ -32,6 +35,7 @@ const allSuites = [
   memorizerSuite,
   briefCorrectionSuite,
   personaStyleSuite,
+  voicePolishSuite,
 ]
 
 function printHelp(): void {
@@ -194,10 +198,14 @@ async function main(): Promise<void> {
       }
 
       const minPassRate = options.minPassRate ?? 1
-      const hasFailures = results.some((r) =>
-        r.permutations.some((p) => aggregateCases(p).some((c) => c.passes / c.total < minPassRate))
-      )
-      process.exit(hasFailures ? 1 : 0)
+      const voicePolishDecision = decideVoicePolishComparison(results as any)
+      // In a model-comparison config, disqualified challengers are expected input to
+      // the selection rule — they must not independently fail the whole command.
+      // Keep the generic per-case threshold on the selected production permutation
+      // and every non-voice suite; the structured decision owns the other candidates.
+      const hasFailures = hasCaseRateFailures(results, minPassRate, voicePolishDecision?.selectedModel ?? undefined)
+      const comparisonFailure = voicePolishDecision?.exitAllowed === false
+      process.exit(hasFailures || comparisonFailure ? 1 : 0)
     } catch (error) {
       console.error("\nEvaluation failed with error:")
       console.error(error)
@@ -238,16 +246,43 @@ async function main(): Promise<void> {
     // A case passes when its pass rate over the repeat runs clears the
     // threshold (default 1 = every run, matching single-run behavior).
     const minPassRate = options.minPassRate ?? 1
-    const hasFailures = results.some((r) =>
-      r.permutations.some((p) => aggregateCases(p).some((c) => c.passes / c.total < minPassRate))
+    const hasFailures = hasCaseRateFailures(results, minPassRate)
+    const qualificationFailure = results.some(
+      (r) =>
+        r.suiteName === "voice-polish" && r.permutations.some((p) => !qualifyVoicePolishPermutation(p as any).qualified)
     )
+    const comparisonFailure = decideVoicePolishComparison(results as any)?.exitAllowed === false
 
-    process.exit(hasFailures ? 1 : 0)
+    process.exit(hasFailures || qualificationFailure || comparisonFailure ? 1 : 0)
   } catch (error) {
     console.error("\nEvaluation failed with error:")
     console.error(error)
     process.exit(1)
   }
+}
+
+export function hasCaseRateFailures(
+  results: Array<any>,
+  minPassRate: number,
+  selectedVoicePolishModel?: string
+): boolean {
+  return results.some((result) => {
+    const isVoicePolish = result.suiteName === "voice-polish" || result.suiteName.startsWith("voice-polish:")
+    let permutations = result.permutations
+    if (selectedVoicePolishModel && isVoicePolish) {
+      permutations = permutations.filter(
+        (permutation: any) =>
+          permutation.permutation.model === selectedVoicePolishModel &&
+          permutation.permutation.promptVariant !== "without-previous"
+      )
+      // Config files emit one suite result per candidate; non-selected results
+      // have no matching permutation here and are intentionally skipped.
+      if (permutations.length === 0) return false
+    }
+    return permutations.some((permutation: any) =>
+      aggregateCases(permutation).some((caseResult) => caseResult.passes / caseResult.total < minPassRate)
+    )
+  })
 }
 
 interface CaseAggregate {
@@ -278,13 +313,15 @@ function aggregateCases(p: {
   return [...byCase.values()]
 }
 
-function toJsonReport(results: Array<any>) {
+export function toJsonReport(results: Array<any>) {
   return {
+    voicePolishDecision: decideVoicePolishComparison(results),
     suites: results.map((r) => ({
       suiteName: r.suiteName,
       permutations: r.permutations.map((p: any) => ({
         model: p.permutation.model,
         temperature: p.permutation.temperature ?? null,
+        promptVariant: p.permutation.promptVariant ?? null,
         runs: p.runs,
         executedModels: p.executedModels,
         usage: p.usage ?? null,
@@ -302,10 +339,11 @@ function toJsonReport(results: Array<any>) {
           runs: c.total,
           passRate: c.passes / c.total,
           lastFailure: c.lastFailure ?? null,
+          evaluations: p.cases.filter((item: any) => item.caseId === c.caseId).map((item: any) => item.evaluations),
         })),
       })),
     })),
   }
 }
 
-main()
+if (import.meta.main) main()

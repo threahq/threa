@@ -328,7 +328,10 @@ async function runPermutation<TInput, TOutput, TExpected>(
   // exact bug this guard exists for) — fail loudly (INV-11). Suites whose
   // sub-components legitimately call other models still pass as long as the
   // requested model executed at least once.
-  if (options.model && Object.keys(executedModels).length > 0 && !(permutation.model in executedModels)) {
+  if (
+    (options.model || getPrimaryComponentOverride(suite.name, options.componentOverrides)?.model) &&
+    !(permutation.model in executedModels)
+  ) {
     throw new Error(
       `Model override ${permutation.model} never executed — AI calls used: ${Object.keys(executedModels).join(", ")}. ` +
         `The comparison would be invalid; check the ConfigResolver wiring.`
@@ -705,6 +708,11 @@ export async function runSuites(
  * Config files allow detailed per-component overrides for complex suites
  * like the companion agent.
  */
+const companionBackedSuites = new Set(["persona-style", "brief-correction", "multimodal-vision"])
+export function getPrimaryComponentOverride(suiteName: string, components?: ComponentOverrides) {
+  return components?.[suiteName] ?? (companionBackedSuites.has(suiteName) ? components?.companion : undefined)
+}
+
 export async function runFromConfigFile(
   configPath: string,
   allSuites: EvalSuite<unknown, unknown, unknown>[],
@@ -739,14 +747,17 @@ export async function runFromConfigFile(
     // Create permutation from config
     const basePermutation = suite.defaultPermutations[0] || { model: "openrouter:anthropic/claude-haiku-4.5" }
 
-    // Apply component overrides to determine the "main" model
-    // Use companion model if specified, otherwise the base permutation model
-    const mainModel = runConfig.components?.companion?.model ?? basePermutation.model
-    const mainTemperature = runConfig.components?.companion?.temperature ?? basePermutation.temperature
+    // A suite's same-named component is its primary model (including the
+    // established companion/companion convention). Object insertion order
+    // must not decide comparison attribution.
+    const primaryOverride = getPrimaryComponentOverride(suite.name, runConfig.components)
+    const mainModel = primaryOverride?.model ?? basePermutation.model
+    const mainTemperature = primaryOverride?.temperature ?? basePermutation.temperature
 
     const permutation: EvalPermutation = {
       model: mainModel,
       temperature: mainTemperature,
+      promptVariant: primaryOverride?.prompt,
       runTitle: runConfig.title,
     }
 

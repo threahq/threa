@@ -4,11 +4,10 @@ import { parseMarkdown } from "@threa/prosemirror"
 import type { JSONContent } from "@threa/types"
 import { logger } from "../../lib/logger"
 import {
-  POLISH_MAX_TOKENS,
   POLISH_MINOR_SYSTEM_PROMPT,
-  POLISH_MODEL,
   POLISH_OPINIONATED_SYSTEM_PROMPT,
-  POLISH_TIMEOUT_MS,
+  voicePolishConfig,
+  type VoicePolishConfig,
 } from "./config"
 
 export interface PolishTranscriptInput {
@@ -20,6 +19,8 @@ export interface PolishTranscriptInput {
   draftBefore?: string
   draftAfter?: string
   steeringTerms?: string[]
+  previousAcceptedMarkdown?: string
+  deadline?: "live" | "final"
   signal?: AbortSignal
 }
 
@@ -33,7 +34,8 @@ export type PolishOutcome =
 
 export type PolishTranscript = (input: PolishTranscriptInput) => Promise<PolishOutcome>
 
-export function createPolishTranscript(deps: { ai: AI }): PolishTranscript {
+export function createPolishTranscript(deps: { ai: AI; config?: VoicePolishConfig }): PolishTranscript {
+  const config = deps.config ?? voicePolishConfig
   return async ({
     rawTranscript,
     level,
@@ -43,6 +45,8 @@ export function createPolishTranscript(deps: { ai: AI }): PolishTranscript {
     draftBefore,
     draftAfter,
     steeringTerms,
+    previousAcceptedMarkdown,
+    deadline = "live",
     signal,
   }) => {
     const trimmed = rawTranscript.trim()
@@ -50,26 +54,35 @@ export function createPolishTranscript(deps: { ai: AI }): PolishTranscript {
     if (level === "none") return parsePolishSuccess(trimmed)
 
     const systemPrompt = level === "opinionated" ? POLISH_OPINIONATED_SYSTEM_PROMPT : POLISH_MINOR_SYSTEM_PROMPT
-    const userMessage = buildPolishUserMessage({ rawTranscript: trimmed, draftBefore, draftAfter, steeringTerms })
+    const userMessage = buildPolishUserMessage({
+      rawTranscript: trimmed,
+      draftBefore,
+      draftAfter,
+      steeringTerms,
+      previousAcceptedMarkdown,
+    })
     const controller = new AbortController()
     let timedOut = false
     const onCancel = () => controller.abort()
     signal?.addEventListener("abort", onCancel, { once: true })
-    const timer = setTimeout(() => {
-      timedOut = true
-      controller.abort()
-    }, POLISH_TIMEOUT_MS)
+    const timer = setTimeout(
+      () => {
+        timedOut = true
+        controller.abort()
+      },
+      deadline === "final" ? config.finalTimeoutMs : config.liveTimeoutMs
+    )
 
     try {
       if (signal?.aborted) return { status: "canceled" }
       const result = await deps.ai.generateText({
-        model: POLISH_MODEL,
+        model: config.model,
         messages: [
           { role: "system", content: systemPrompt },
           { role: "user", content: userMessage },
         ],
-        maxTokens: POLISH_MAX_TOKENS,
-        temperature: 0.2,
+        maxTokens: config.maxTokens,
+        temperature: config.temperature,
         telemetry: {
           functionId: "voice-transcript-polish",
           metadata: {
@@ -118,14 +131,20 @@ export function buildPolishUserMessage(args: {
   draftBefore?: string
   draftAfter?: string
   steeringTerms?: string[]
+  previousAcceptedMarkdown?: string
 }): string {
   const sections: string[] = []
   const before = args.draftBefore?.trim()
   const after = args.draftAfter?.trim()
   const steeringTerms = args.steeringTerms?.filter((t) => t.trim())
+  const previousAccepted = args.previousAcceptedMarkdown?.trim()
   if (steeringTerms?.length)
     sections.push(
       `Spelling reference (normalize mis-transcriptions to these exact spellings):\n${steeringTerms.join(", ")}`
+    )
+  if (previousAccepted)
+    sections.push(
+      `Previously accepted polish (READ-ONLY revision reference):\n${previousAccepted}\n\nCopy its wording and Markdown block structure verbatim, then apply only the correction or extension introduced by the cumulative raw transcript. Keep existing list type, list-item boundaries, paragraph boundaries, capitalization, and punctuation unless the new speech explicitly changes them. Output the complete dictated take only; never echo this section separately.`
     )
   if (before)
     sections.push(`Existing draft text before the insertion point (context only, never output it):\n${before}`)
