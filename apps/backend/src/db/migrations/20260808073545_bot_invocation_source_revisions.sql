@@ -2,13 +2,20 @@ ALTER TABLE messages
   ADD COLUMN revision INTEGER NOT NULL DEFAULT 1;
 
 UPDATE messages m
-SET revision = 1 + versions.version_count
+SET revision = revision + versions.version_count
 FROM (
   SELECT message_id, COUNT(*)::integer AS version_count
   FROM message_versions
   GROUP BY message_id
 ) versions
 WHERE versions.message_id = m.id;
+
+-- Deletion is a canonical source mutation just like an edit. Historical
+-- tombstones therefore consume one revision even though the legacy delete path
+-- did not write a message_versions row.
+UPDATE messages
+SET revision = revision + 1
+WHERE deleted_at IS NOT NULL;
 
 ALTER TABLE bot_invocations
   ADD COLUMN source_message_revision INTEGER NOT NULL DEFAULT 0,

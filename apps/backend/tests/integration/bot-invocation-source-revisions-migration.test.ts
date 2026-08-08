@@ -2,6 +2,8 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test"
 import { resolve } from "node:path"
 import type { Pool } from "pg"
 import { setupIsolatedTestDatabase } from "./setup"
+import { AgentSessionRepository } from "../../src/features/agents"
+import { BotRuntimeService } from "../../src/features/bot-runtimes"
 
 const MIGRATION_PATH = resolve(
   import.meta.dir,
@@ -32,9 +34,9 @@ describe("bot invocation source revisions migration", () => {
         UNIQUE (workspace_id, source_message_id, actor_type, actor_id, trigger);
       ALTER TABLE messages DROP COLUMN revision;
     `)
-  })
+  }, 30_000)
 
-  afterAll(async () => cleanup())
+  afterAll(async () => cleanup?.())
 
   test("backfills initial and edited messages, live claims, and deleted-source cancellation from the artifact", async () => {
     await pool.query(
@@ -54,7 +56,8 @@ describe("bot invocation source revisions migration", () => {
          (id, message_id, version_number, content_json, content_markdown, edited_by)
        VALUES
          ('mver_1', 'msg_edited', 1, '{"type":"doc"}', 'initial', 'usr_1'),
-         ('mver_2', 'msg_edited', 2, '{"type":"doc"}', 'second', 'usr_1')`
+         ('mver_2', 'msg_edited', 2, '{"type":"doc"}', 'second', 'usr_1'),
+         ('mver_deleted', 'msg_deleted', 1, '{"type":"doc"}', 'before deletion', 'usr_1')`
     )
     await pool.query(
       `INSERT INTO bot_invocations
@@ -64,10 +67,18 @@ describe("bot invocation source revisions migration", () => {
          ('binv_live', 'ws_migration', 'stream_migration', 'stream_migration', 'msg_edited',
           'stream_migration', 'bot', 'bot_1', 'active-scratchpad', 'active-scratchpad', 'third', 'usr_1', 'claimed'),
          ('binv_deleted', 'ws_migration', 'stream_migration', 'stream_migration', 'msg_deleted',
-          'stream_migration', 'bot', 'bot_1', 'mention', 'mentionable', 'gone', 'usr_1', 'pending')`
+          'stream_migration', 'bot', 'bot_1', 'mention', 'mentionable', 'gone', 'usr_1', 'claimed')`
     )
+    await AgentSessionRepository.insertRunningOrSkip(pool, {
+      id: "binv_deleted",
+      streamId: "stream_migration",
+      personaId: "bot_1",
+      triggerMessageId: "msg_deleted",
+      initialSequence: 0n,
+    })
 
     await pool.query(migrationSql)
+    const repairedSources = await new BotRuntimeService({ pool }).repairDeletedSourceSessions()
 
     const messages = await pool.query<{ id: string; revision: number }>(
       `SELECT id, revision FROM messages WHERE stream_id = 'stream_migration' ORDER BY id`
@@ -83,15 +94,26 @@ describe("bot invocation source revisions migration", () => {
        FROM bot_invocations WHERE workspace_id = 'ws_migration' ORDER BY id`
     )
 
+    const repairedSession = await pool.query<{ status: string; error: string; completed_at: Date | null }>(
+      "SELECT status, error, completed_at FROM agent_sessions WHERE id = 'binv_deleted'"
+    )
+    const lifecycleOutbox = await pool.query<{ session_id: string }>(
+      `SELECT payload #>> '{event,payload,sessionId}' AS session_id
+       FROM outbox
+       WHERE event_type = 'agent_session:deleted'
+         AND payload->>'workspaceId' = 'ws_migration'`
+    )
+
+    expect(repairedSources).toBe(1)
     expect(messages.rows).toEqual([
-      { id: "msg_deleted", revision: 1 },
+      { id: "msg_deleted", revision: 3 },
       { id: "msg_edited", revision: 3 },
       { id: "msg_initial", revision: 1 },
     ])
     expect(invocations.rows).toEqual([
       {
         id: "binv_deleted",
-        source_message_revision: 1,
+        source_message_revision: 3,
         claimed_source_message_revision: null,
         status: "cancelled",
         cancellation_reason: "source_deleted",
@@ -104,5 +126,11 @@ describe("bot invocation source revisions migration", () => {
         cancellation_reason: null,
       },
     ])
-  })
+    expect(repairedSession.rows[0]).toEqual({
+      status: "deleted",
+      error: "Invocation source deleted",
+      completed_at: expect.any(Date),
+    })
+    expect(lifecycleOutbox.rows).toEqual([{ session_id: "binv_deleted" }])
+  }, 30_000)
 })

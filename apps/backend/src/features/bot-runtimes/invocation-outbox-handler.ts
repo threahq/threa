@@ -55,6 +55,7 @@ export class BotInvocationOutboxHandler implements OutboxHandler {
 
   async ensureListener(): Promise<void> {
     await ensureListenerFromLatest(this.pool, this.listenerId)
+    await this.service.repairDeletedSourceSessions()
   }
 
   handle(): void {

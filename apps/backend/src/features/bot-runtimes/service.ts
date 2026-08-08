@@ -47,6 +47,8 @@ interface BotRuntimeServiceDeps {
 
 class ClaimCandidateFenceLost extends Error {}
 
+const DELETED_SOURCE_SESSION_REPAIR_BATCH_SIZE = 100
+
 function serializeBotForOutbox(bot: Bot) {
   const common = {
     id: bot.id,
@@ -629,6 +631,42 @@ export class BotRuntimeService {
     }
   }
 
+  private async cancelInvocationsForDeletedSourceInTransaction(
+    db: Querier,
+    params: { workspaceId: string; sourceMessageId: string }
+  ): Promise<number> {
+    const cancelled = await BotInvocationRepository.cancelActiveBySource(db, {
+      ...params,
+      reason: "source_deleted",
+    })
+    await this.terminalizeCancelledSessions(db, params.workspaceId, cancelled, "deleted")
+    return cancelled.length
+  }
+
+  async cancelInvocationsForDeletedSource(params: { workspaceId: string; sourceMessageId: string }): Promise<number> {
+    return withTransaction(this.pool, (db) => this.cancelInvocationsForDeletedSourceInTransaction(db, params))
+  }
+
+  /**
+   * Repair rows a migration cancelled before application lifecycle code could
+   * run. The RUNNING-session predicate is the CAS: concurrent backend startups
+   * may discover the same source, but only one transaction emits each deletion.
+   */
+  async repairDeletedSourceSessions(): Promise<number> {
+    let repairedSources = 0
+    for (;;) {
+      const sources = await BotInvocationRepository.findDeletedSourcesWithRunningSessions(
+        this.pool,
+        DELETED_SOURCE_SESSION_REPAIR_BATCH_SIZE
+      )
+      if (sources.length === 0) return repairedSources
+      for (const source of sources) {
+        await this.cancelInvocationsForDeletedSource(source)
+        repairedSources += 1
+      }
+    }
+  }
+
   private async insertCanonicalRoute(
     db: Querier,
     source: InvocationSourceState,
@@ -676,11 +714,7 @@ export class BotRuntimeService {
         messageId: params.sourceMessageId,
       })
       if (!source || source.deleted) {
-        const cancelled = await BotInvocationRepository.cancelActiveBySource(db, {
-          ...params,
-          reason: "source_deleted",
-        })
-        await this.terminalizeCancelledSessions(db, params.workspaceId, cancelled, "deleted")
+        await this.cancelInvocationsForDeletedSourceInTransaction(db, params)
         return []
       }
 
