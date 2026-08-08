@@ -1,5 +1,8 @@
 import { useRef, useCallback, useState, useEffect } from "react"
 
+export const LONG_PRESS_THRESHOLD_MS = 500
+export const LONG_PRESS_MOVE_TOLERANCE_PX = 10
+
 interface UseLongPressOptions {
   /** Duration in ms before long press fires (default: 500) */
   threshold?: number
@@ -47,7 +50,7 @@ interface UseLongPressReturn {
 }
 
 export function useLongPress({
-  threshold = 500,
+  threshold = LONG_PRESS_THRESHOLD_MS,
   onLongPress,
   triggerOnTouchEnd = false,
   enabled = true,
@@ -138,8 +141,8 @@ export function useLongPress({
       }
       const dx = touch.clientX - startPos.current.x
       const dy = touch.clientY - startPos.current.y
-      // Cancel if moved more than 10px (user is scrolling)
-      if (Math.abs(dx) > 10 || Math.abs(dy) > 10) {
+      // Cancel once movement reads as scrolling rather than a held touch.
+      if (Math.abs(dx) > LONG_PRESS_MOVE_TOLERANCE_PX || Math.abs(dy) > LONG_PRESS_MOVE_TOLERANCE_PX) {
         clear()
       }
     },

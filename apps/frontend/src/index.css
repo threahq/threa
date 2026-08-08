@@ -640,6 +640,154 @@ html[data-input="mouse"] .message-hover-wash:hover {
   background-color: hsl(var(--primary) / 0.08);
 }
 
+/* Composer atoms drag without a floating clone: source stays put and this
+   zero-size widget previews the eventual insertion point (INV-21). */
+.ProseMirror
+  :is(
+    [data-type="mention"],
+    [data-type="channelLink"],
+    [data-type="slashCommand"],
+    [data-type="attachment-reference"],
+    [data-type="memo-embed"],
+    [data-type="in-app-link"],
+    [data-type="giphy-embed"]
+  ) {
+  -webkit-touch-callout: none;
+  -webkit-user-drag: none;
+  user-select: none;
+}
+
+html[data-input="mouse"]
+  .ProseMirror
+  :is(
+    [data-type="mention"],
+    [data-type="channelLink"],
+    [data-type="slashCommand"],
+    [data-type="attachment-reference"],
+    [data-type="memo-embed"],
+    [data-type="in-app-link"],
+    [data-type="giphy-embed"]
+  ),
+html[data-input="mouse"]
+  .ProseMirror
+  :is(
+    [data-type="mention"],
+    [data-type="channelLink"],
+    [data-type="slashCommand"],
+    [data-type="attachment-reference"],
+    [data-type="memo-embed"],
+    [data-type="in-app-link"],
+    [data-type="giphy-embed"]
+  )
+  * {
+  cursor: grab;
+}
+
+.ProseMirror.composer-pill-drag-active,
+.ProseMirror.composer-pill-drag-active * {
+  cursor: grabbing !important;
+}
+
+.ProseMirror .composer-pill-dragging {
+  border-radius: 0.375rem;
+  opacity: 0.42;
+  filter: grayscale(1) saturate(0.2);
+  outline: 1px dashed hsl(var(--muted-foreground) / 0.5);
+  outline-offset: 2px;
+}
+
+/* Touch keeps the real caret in the document and mirrors its immediate context
+   in a compact loupe above the thumb. The overlay is fixed and pointer-less, so
+   it never shifts the composer or steals the active gesture (INV-21). */
+.composer-pill-touch-guide {
+  position: fixed;
+  z-index: 80;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: calc(100vw - 24px);
+  min-height: 32px;
+  padding: 6px 9px;
+  color: hsl(var(--foreground));
+  font-size: 13px;
+  line-height: 1;
+  white-space: nowrap;
+  background: hsl(var(--popover) / 0.96);
+  border: 1px solid hsl(var(--primary) / 0.42);
+  border-radius: 8px;
+  box-shadow: 0 6px 18px hsl(var(--foreground) / 0.16);
+  pointer-events: none;
+  transform: translate(-50%, -100%);
+}
+
+.composer-pill-touch-guide::after {
+  content: "";
+  position: absolute;
+  bottom: -5px;
+  left: 50%;
+  width: 8px;
+  height: 8px;
+  background: hsl(var(--popover));
+  border-right: 1px solid hsl(var(--primary) / 0.42);
+  border-bottom: 1px solid hsl(var(--primary) / 0.42);
+  transform: translateX(-50%) rotate(45deg);
+}
+
+.composer-pill-touch-guide--below {
+  transform: translate(-50%, 0);
+}
+
+.composer-pill-touch-guide--below::after {
+  top: -5px;
+  bottom: auto;
+  border: 0;
+  border-top: 1px solid hsl(var(--primary) / 0.42);
+  border-left: 1px solid hsl(var(--primary) / 0.42);
+}
+
+.composer-pill-touch-guide--hidden {
+  display: none;
+}
+
+.composer-pill-touch-guide__context {
+  max-width: 7rem;
+  overflow: hidden;
+  color: hsl(var(--muted-foreground));
+  text-overflow: ellipsis;
+}
+
+.composer-pill-touch-guide__context:empty {
+  display: none;
+}
+
+.composer-pill-touch-guide__cursor {
+  width: 2px;
+  height: 20px;
+  flex: 0 0 2px;
+  border-radius: 999px;
+  background: hsl(var(--primary));
+  box-shadow: 0 0 0 1px hsl(var(--background) / 0.7);
+}
+
+.composer-pill-drop-cursor {
+  position: relative;
+  display: inline;
+  pointer-events: none;
+}
+
+.composer-pill-drop-cursor::after {
+  content: "";
+  position: absolute;
+  bottom: -0.35em;
+  left: -1px;
+  z-index: 2;
+  width: 2px;
+  height: 1.7em;
+  border-radius: 999px;
+  background: hsl(var(--primary));
+  box-shadow: 0 0 0 1px hsl(var(--background) / 0.75);
+}
+
 .ProseMirror > *:not(.ProseMirror-gapcursor) + *:not(.ProseMirror-gapcursor) {
   @apply mt-2;
 }
