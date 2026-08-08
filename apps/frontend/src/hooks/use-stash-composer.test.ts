@@ -3,12 +3,14 @@ import { renderHook, act, waitFor } from "@testing-library/react"
 import { MemoryRouter } from "react-router-dom"
 import { createElement, type ReactNode } from "react"
 import type { JSONContent } from "@threa/types"
-import { db } from "@/db"
+import { db, type CachedDraft } from "@/db"
 import { resetDraftStoreCache, seedDraftCacheFromIdb } from "@/stores/draft-store"
 import { resetDraftResolutionGuard } from "@/sync/draft-resolution-guard"
+import { __clearBoardDraftContextRegistry } from "./use-board-draft-context"
 import { useDraftComposer } from "./use-draft-composer"
-import { useStashComposer, useStashParamDraftRow } from "./use-stash-composer"
+import { useStashComposer, useStashParamDraftRow, planDraftRestore } from "./use-stash-composer"
 import { upsertLoadedDraft, stashLoadedDraft, restoreStashedDraftToComposer } from "./use-draft-message"
+import { clearComposerTarget } from "./use-composer-target"
 import * as draftMessageModule from "./use-draft-message"
 import * as currentUserHook from "./use-current-workspace-user-id"
 import * as e2eSessionStore from "@/stores/e2e-session-store"
@@ -135,13 +137,14 @@ describe("stash restore — no-limbo invariant (real data layer)", () => {
     await waitFor(() => expect(result.current.stash.drafts.some((d) => d.id === ambientId)).toBe(true))
   })
 
-  it("refuses to restore a row this scope cannot claim", async () => {
+  it("refuses to restore a foreign row into a host whose home stream is unresolvable", async () => {
     const { bigId } = await seedStashAndAmbient()
     const restoreSpy = vi.spyOn(draftMessageModule, "restoreStashedDraftToComposer")
     const foreignKey = "board:reply:conv_1"
 
-    // Restore is a pointer move within the row's own scope; adopting a foreign row
-    // is chunk 4's job. Until then a foreign id must not migrate the row's scope.
+    // Nothing is cached for `conv_1`, so the host's home stream doesn't resolve
+    // and it cannot be confirmed plaintext + active. An unconfirmable host never
+    // takes another scope's row (INV-11), adopt or move.
     const { result } = renderHook(() => useRestoreHarness(foreignKey, foreignKey), { wrapper })
     await waitFor(() => expect(result.current.composer.isLoaded).toBe(true))
 
@@ -228,5 +231,312 @@ describe("stash restore — no-limbo invariant (real data layer)", () => {
       await seedDraftCacheFromIdb(workspaceId)
     })
     await waitFor(() => expect(result.current?.isLoadedForScope).toBe(true))
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Chunk 4: restoring a row that belongs to another surface.
+// ---------------------------------------------------------------------------
+
+const aoWorkspaceId = "ws_adopt"
+const aoStreamId = "stream_ao"
+const aoHostScope = `stream:${aoStreamId}`
+const aoConversationId = "conv_ao"
+const aoConversationScope = `board:reply:${aoConversationId}`
+const aoBranchScope = "board:branch-reply:conv_ao_branch"
+
+function seedAoStream(overrides: Record<string, unknown> = {}): Promise<unknown> {
+  return db.streams.put({
+    id: aoStreamId,
+    workspaceId: aoWorkspaceId,
+    type: "channel",
+    visibility: "private",
+    rootStreamId: null,
+    archivedAt: null,
+    ...overrides,
+  } as never)
+}
+
+function seedAoConversation(): Promise<unknown> {
+  return db.conversations.put({
+    id: aoConversationId,
+    workspaceId: aoWorkspaceId,
+    _lastActivityMs: 1,
+    _cachedAt: 1,
+    conversation: { id: aoConversationId, streamId: aoStreamId, messageIds: ["msg_1", "msg_2"] },
+    openingMessage: { id: "msg_1" },
+    recentMessages: [],
+  } as never)
+}
+
+function aoDraft(id: string, scope: string, extra: Partial<CachedDraft> = {}): CachedDraft {
+  return {
+    id,
+    workspaceId: aoWorkspaceId,
+    scope,
+    contentJson: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: id }] }] },
+    attachments: [],
+    clientUpdatedAt: 1000,
+    baseVersion: 7,
+    ...extra,
+  } as CachedDraft
+}
+
+function useAoHarness(key: string, targetHost?: string) {
+  const composer = useDraftComposer({ workspaceId: aoWorkspaceId, draftKey: key, scopeId: key })
+  const stash = useStashComposer(
+    composer,
+    aoWorkspaceId,
+    key,
+    // Stands in for `message-input`'s disarm, which also clears its gesture latch;
+    // that half is pinned in `message-input.composer-target.test.tsx`.
+    targetHost ? { targetHost, disarmTarget: () => clearComposerTarget(targetHost) } : undefined
+  )
+  return { composer, stash }
+}
+
+async function upsertOpsFor(draftId: string) {
+  const ops = await db.pendingOperations.where("type").equals("upsert_draft").toArray()
+  return ops.filter((op) => op.payload.draftId === draftId)
+}
+
+describe("restoring a draft that belongs to another surface (adopt vs move)", () => {
+  beforeEach(async () => {
+    vi.restoreAllMocks()
+    resetDraftStoreCache()
+    resetDraftResolutionGuard()
+    __clearBoardDraftContextRegistry()
+    await db.drafts.clear()
+    await db.composerLoaded.clear()
+    await db.composerTarget.clear()
+    await db.pendingOperations.clear()
+    await db.streams.clear()
+    await db.conversations.clear()
+    vi.spyOn(currentUserHook, "useCurrentWorkspaceUserId").mockReturnValue(null)
+    vi.spyOn(e2eSessionStore, "useE2eSession").mockReturnValue(LOCKED_SESSION)
+    await seedAoStream()
+    await seedAoConversation()
+  })
+
+  afterEach(() => {
+    __clearBoardDraftContextRegistry()
+    vi.restoreAllMocks()
+  })
+
+  it("adopts a conversation's draft in the timeline: the row never moves, the host targets it", async () => {
+    await db.drafts.bulkAdd([aoDraft("draft_conv", aoConversationScope), aoDraft("draft_host", aoHostScope)])
+    await db.composerLoaded.put({ scope: aoHostScope, workspaceId: aoWorkspaceId, draftId: "draft_host" })
+    await seedDraftCacheFromIdb(aoWorkspaceId)
+
+    const { result } = renderHook(() => useAoHarness(aoHostScope, aoHostScope), { wrapper })
+    await waitFor(() => expect(result.current.stash.drafts.map((d) => d.id)).toContain("draft_conv"))
+
+    await act(async () => {
+      await result.current.stash.handleRestoreStashed("draft_conv")
+    })
+
+    // The row keeps its filing — this is the whole point of the feature.
+    expect((await db.drafts.get("draft_conv"))?.scope).toBe(aoConversationScope)
+    expect(await upsertOpsFor("draft_conv")).toHaveLength(0)
+    // Checked out under its OWN scope, with the host pointed at it — that durable
+    // target is what raises the "Replying in <C>" strip and files the send into C.
+    expect((await db.composerLoaded.get(aoConversationScope))?.draftId).toBe("draft_conv")
+    expect((await db.composerTarget.get(aoHostScope))?.scope).toBe(aoConversationScope)
+    // The stream's own draft is untouched, still checked out under its own scope.
+    expect((await db.composerLoaded.get(aoHostScope))?.draftId).toBe("draft_host")
+  })
+
+  // The timeline holds a `board:branch-reply:` target exactly as it holds a
+  // `board:reply:` one (`message-input` derives `targetConversationId` from
+  // both), so moving one would rewrite a branch draft's scope to the channel and
+  // destroy the filing this feature exists to keep — with no undo.
+  // Adopting a branch reply looks right — the timeline can hold the target and
+  // render the strip — but a branch conversation lives in a thread by
+  // construction, so the send guard always finds it not-live-here and hands off
+  // to a panel that opens the conversation's own reply scope, not the branch
+  // tail: the message is never sent and the draft is stranded. Moving is worse —
+  // it rewrites the scope and destroys the filing with no undo.
+  it("refuses a branch reply rather than adopting or moving it", () => {
+    expect(
+      planDraftRestore({
+        hostScope: aoHostScope,
+        targetHost: aoHostScope,
+        draftScope: aoBranchScope,
+        draftSource: { kind: "branch", conversationId: "conv_ao_branch" },
+      })
+    ).toEqual({ action: "refuse", reason: "branch-elsewhere" })
+
+    // A plain conversation reply is still adopted — the row keeps its filing.
+    expect(
+      planDraftRestore({
+        hostScope: aoHostScope,
+        targetHost: aoHostScope,
+        draftScope: aoConversationScope,
+        draftSource: { kind: "conversation", conversationId: aoConversationId },
+      })
+    ).toEqual({ action: "adopt", targetHost: aoHostScope, targetScope: aoConversationScope })
+  })
+  it("adopting the host's own scope while armed elsewhere is a disarm, not a move", async () => {
+    await db.drafts.bulkAdd([aoDraft("draft_conv", aoConversationScope), aoDraft("draft_host", aoHostScope)])
+    await db.composerTarget.put({ host: aoHostScope, workspaceId: aoWorkspaceId, scope: aoConversationScope })
+    await db.composerLoaded.put({ scope: aoConversationScope, workspaceId: aoWorkspaceId, draftId: "draft_conv" })
+    await seedDraftCacheFromIdb(aoWorkspaceId)
+
+    // The armed timeline: its stash host is the conversation's scope.
+    const { result } = renderHook(() => useAoHarness(aoConversationScope, aoHostScope), { wrapper })
+    await waitFor(() => expect(result.current.stash.drafts.map((d) => d.id)).toContain("draft_host"))
+
+    await act(async () => {
+      await result.current.stash.handleRestoreStashed("draft_host")
+    })
+
+    expect((await db.drafts.get("draft_host"))?.scope).toBe(aoHostScope)
+    expect(await db.composerTarget.get(aoHostScope)).toBeUndefined()
+    expect((await db.composerLoaded.get(aoHostScope))?.draftId).toBe("draft_host")
+  })
+
+  it("moves a stream draft into a conversation composer, preserving the row and forcing the push", async () => {
+    await db.drafts.bulkAdd([aoDraft("draft_stream", aoHostScope), aoDraft("draft_host", aoConversationScope)])
+    await db.composerLoaded.put({ scope: aoConversationScope, workspaceId: aoWorkspaceId, draftId: "draft_host" })
+    // A push snapshotted before the move whose claim is not visible yet: the
+    // worker claims an op and snapshots the row in separate transactions, so
+    // "never attempted" is exactly what an in-flight push looks like here.
+    await db.pendingOperations.add({
+      id: "op_inflight",
+      workspaceId: aoWorkspaceId,
+      type: "upsert_draft",
+      payload: { draftId: "draft_stream", writeId: "write_inflight" },
+      createdAt: 1,
+      retryCount: 0,
+    } as never)
+    await seedDraftCacheFromIdb(aoWorkspaceId)
+
+    // The board's conversation composer can't be un-armed, so it takes the row.
+    const { result } = renderHook(() => useAoHarness(aoConversationScope), { wrapper })
+    await waitFor(() => expect(result.current.stash.drafts.map((d) => d.id)).toContain("draft_stream"))
+
+    await act(async () => {
+      await result.current.stash.handleRestoreStashed("draft_stream")
+    })
+
+    // Row-preserving: same id, same baseVersion, only the scope changed.
+    const moved = await db.drafts.get("draft_stream")
+    expect(moved).toMatchObject({ id: "draft_stream", scope: aoConversationScope, baseVersion: 7 })
+    // A FRESH op carrying the in-flight lineage — never a coalesce onto the
+    // doomed one, whose completion would lose the scope change server-side.
+    const ops = await upsertOpsFor("draft_stream")
+    expect(ops).toHaveLength(1)
+    expect(ops[0].id).not.toBe("op_inflight")
+    expect(ops[0].startedAt).toBeUndefined()
+    expect(ops[0].payload.priorWriteIds).toContain("write_inflight")
+    // Swap, not clobber: the host's own draft survives as a stash sibling.
+    expect((await db.composerLoaded.get(aoConversationScope))?.draftId).toBe("draft_stream")
+    expect(await db.drafts.get("draft_host")).toBeDefined()
+  })
+
+  it("leaves both drafts untouched when the row is checked out under another scope", async () => {
+    await db.drafts.bulkAdd([aoDraft("draft_stream", aoHostScope), aoDraft("draft_host", aoConversationScope)])
+    await db.composerLoaded.put({ scope: aoConversationScope, workspaceId: aoWorkspaceId, draftId: "draft_host" })
+    await seedDraftCacheFromIdb(aoWorkspaceId)
+
+    const { result } = renderHook(() => useAoHarness(aoConversationScope), { wrapper })
+    await waitFor(() => expect(result.current.stash.drafts.map((d) => d.id)).toContain("draft_stream"))
+    // Another composer checks it out between the pile render and the click.
+    await db.composerLoaded.put({ scope: aoHostScope, workspaceId: aoWorkspaceId, draftId: "draft_stream" })
+
+    await act(async () => {
+      expect(await result.current.stash.handleRestoreStashed("draft_stream")).toEqual({
+        ok: false,
+        reason: "checked-out",
+      })
+    })
+
+    expect((await db.drafts.get("draft_stream"))?.scope).toBe(aoHostScope)
+    expect(await upsertOpsFor("draft_stream")).toHaveLength(0)
+    expect((await db.composerLoaded.get(aoConversationScope))?.draftId).toBe("draft_host")
+  })
+
+  it("leaves both drafts untouched when the row is gone by the time the click lands", async () => {
+    await db.drafts.bulkAdd([aoDraft("draft_stream", aoHostScope), aoDraft("draft_host", aoConversationScope)])
+    await db.composerLoaded.put({ scope: aoConversationScope, workspaceId: aoWorkspaceId, draftId: "draft_host" })
+    await seedDraftCacheFromIdb(aoWorkspaceId)
+
+    const { result } = renderHook(() => useAoHarness(aoConversationScope), { wrapper })
+    await waitFor(() => expect(result.current.stash.drafts.map((d) => d.id)).toContain("draft_stream"))
+    // Deleted on another device; the pile the user is looking at is a render old.
+    await db.drafts.delete("draft_stream")
+
+    await act(async () => {
+      expect(await result.current.stash.handleRestoreStashed("draft_stream")).toEqual({
+        ok: false,
+        reason: "missing",
+      })
+    })
+
+    expect((await db.composerLoaded.get(aoConversationScope))?.draftId).toBe("draft_host")
+    expect(await db.composerTarget.get(aoHostScope)).toBeUndefined()
+  })
+
+  // The E2EE item this feature creates: a plaintext board draft targeted from a
+  // stream that resolves encrypted is deleted by `purgePlaintextScopeDrafts` on
+  // the next composer mount. The pile-time filter can't close it — the resolve
+  // can land after the picker rendered.
+  it("refuses to adopt once the host stream resolves encrypted", async () => {
+    await db.drafts.bulkAdd([aoDraft("draft_conv", aoConversationScope), aoDraft("draft_host", aoHostScope)])
+    await db.composerLoaded.put({ scope: aoHostScope, workspaceId: aoWorkspaceId, draftId: "draft_host" })
+    await seedDraftCacheFromIdb(aoWorkspaceId)
+
+    const { result } = renderHook(() => useAoHarness(aoHostScope, aoHostScope), { wrapper })
+    await waitFor(() => expect(result.current.stash.drafts.map((d) => d.id)).toContain("draft_conv"))
+    // Latch the pile the way an open picker does, so the row stays on screen and
+    // the ONLY thing that can refuse the restore is the mutation's own re-check.
+    act(() => result.current.stash.setPileOpen(true))
+    await seedAoStream({ e2eEnabled: true })
+    await waitFor(() => expect(result.current.stash.drafts.map((d) => d.id)).toContain("draft_conv"))
+
+    await act(async () => {
+      expect(await result.current.stash.handleRestoreStashed("draft_conv")).toEqual({
+        ok: false,
+        reason: "host-ineligible",
+      })
+    })
+
+    expect(await db.composerTarget.get(aoHostScope)).toBeUndefined()
+    expect(await db.composerLoaded.get(aoConversationScope)).toBeUndefined()
+    expect((await db.drafts.get("draft_conv"))?.scope).toBe(aoConversationScope)
+  })
+
+  // The pre-checks prove the RESTORED ROW is checked out nowhere; they say nothing
+  // about the scope being pointed at. A conversation can hold one draft in its own
+  // composer and have another stashed — repointing would leave that composer
+  // rendering its old body against our draft's id (its loaded id changes value
+  // rather than going null, so nothing blanks it) and its next save would write
+  // that body into the row we adopted.
+  it("refuses to adopt into a conversation scope that already holds a different draft", async () => {
+    await db.drafts.bulkAdd([
+      aoDraft("draft_conv", aoConversationScope),
+      aoDraft("draft_other", aoConversationScope),
+      aoDraft("draft_host", aoHostScope),
+    ])
+    await db.composerLoaded.bulkPut([
+      { scope: aoHostScope, workspaceId: aoWorkspaceId, draftId: "draft_host" },
+      { scope: aoConversationScope, workspaceId: aoWorkspaceId, draftId: "draft_other" },
+    ])
+    await seedDraftCacheFromIdb(aoWorkspaceId)
+
+    const { result } = renderHook(() => useAoHarness(aoHostScope, aoHostScope), { wrapper })
+    await waitFor(() => expect(result.current.stash.drafts.map((d) => d.id)).toContain("draft_conv"))
+
+    await act(async () => {
+      expect(await result.current.stash.handleRestoreStashed("draft_conv")).toEqual({
+        ok: false,
+        reason: "target-busy",
+      })
+    })
+
+    // The other composer keeps its draft, and ours was not adopted.
+    expect((await db.composerLoaded.get(aoConversationScope))?.draftId).toBe("draft_other")
+    expect(await db.composerTarget.get(aoHostScope)).toBeUndefined()
+    expect((await db.drafts.get("draft_conv"))?.scope).toBe(aoConversationScope)
   })
 })

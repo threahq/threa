@@ -375,13 +375,14 @@ describe("InlineComposerForm restore-on-mount", () => {
     expect(stashStub.handleRestoreStashed).toHaveBeenCalledTimes(1)
   })
 
-  it("hands the picker the claimable (scope-exact) list, not the landing-site-wide pile", async () => {
-    // Restore can't leave a scope safely until chunk 4, so the widened pile is
-    // computed but not rendered. Wiring `drafts` here must be a deliberate change.
-    const wide = { id: "draft_foreign", scope: "stream:stream_1" }
-    const claimable = { id: "draft_own", scope: "board:reply:conv_1" }
-    stashStub.drafts = [wide, claimable] as never
-    stashStub.claimableDrafts = [claimable] as never
+  it("hands the picker the landing-site-wide pile, borrowed rows included", async () => {
+    // A borrowed row restores here by MOVING to this conversation's scope, so the
+    // picker offers the whole pile. `claimableDrafts` stays scope-exact for the
+    // `?stash=` deep link only.
+    const borrowed = { id: "draft_foreign", scope: "stream:stream_1" }
+    const own = { id: "draft_own", scope: "board:reply:conv_1" }
+    stashStub.drafts = [own, borrowed] as never
+    stashStub.claimableDrafts = [own] as never
 
     render(<Anchored>{form()}</Anchored>)
 
@@ -389,7 +390,7 @@ describe("InlineComposerForm restore-on-mount", () => {
     const props = editorSpy.mock.calls.at(-1)![0] as MessageComposerProps
     for (const trigger of [props.stashedDraftsTrigger, props.stashedDraftsTriggerFab]) {
       const pickerProps = (trigger as { props: { drafts: { id: string }[] } }).props
-      expect(pickerProps.drafts.map((draft) => draft.id)).toEqual(["draft_own"])
+      expect(pickerProps.drafts.map((draft) => draft.id)).toEqual(["draft_own", "draft_foreign"])
     }
   })
 

@@ -291,15 +291,68 @@ function MessageInputComponent({
   // clearing on any error would yank the composer's scope out from under whatever
   // is being typed, on one 502, irreversibly.
   const targetUnresolvable = (storedTarget !== null && !targetConversationId) || conversationReplyNotFound
+
+  // Which arm came from the gesture in this session, and on which host. The
+  // target is durable, so "armed" alone can no longer tell a deliberate act from
+  // a page load — and the host is part of it because this component is NOT
+  // remounted per stream: without it, arming in stream A and navigating back to
+  // A (or onto a B that is armed for the same conversation) would read as a
+  // fresh gesture and route on a plain navigation.
+  const gestureArmedIdRef = useRef<{ host: string; conversationId: string } | null>(null)
+
+  // Disarm: this composer stops pointing at the conversation and reverts to the
+  // stream's own draft. The typed draft is NOT moved — its scope IS its target,
+  // so it stays a draft of that conversation and keeps its filing.
+  //
+  // It must also stop being CHECKED OUT here. A draft loaded under a scope no
+  // composer is showing is excluded from every pile on the device (the
+  // checked-out-anywhere rule) and carries no `?stash=` link in the explorer, so
+  // "it stays reachable" would be false — the only way back would be to open that
+  // conversation. Detaching the pointer turns it into a real stash entry, which
+  // is what makes that sentence true. Unless another composer is already mounted
+  // on the scope: then it is showing the draft and owns it.
+  //
+  // ONE disarm, for every path that drops the target: clearing the target alone
+  // strands the gesture latch, and a stranded latch makes the NEXT arm read as a
+  // fresh gesture — which redirects to the panel and wipes the target that arm
+  // just set. The ref is cleared here rather than in the routing effect because
+  // the gesture sets it synchronously while the target lands an IDB write later:
+  // an effect re-run in that window would erase the very gesture it recognises.
+  // Read through refs: `disarmTarget` is handed to `useStashComposer`, so a new
+  // identity on every target change would churn its callbacks for nothing.
+  const effectiveTargetRef = useRef<string | null>(null)
+  const mountedOnTargetRef = useRef(0)
+  const disarmTarget = useCallback(async () => {
+    gestureArmedIdRef.current = null
+    const vacated = effectiveTargetRef.current
+    await clearComposerTarget(hostScope)
+    if (!vacated || mountedOnTargetRef.current > 1) return
+    try {
+      await composerRef.current.flushDraft()
+    } catch (err) {
+      console.error("[composer] flush before disarm failed", err)
+    }
+    try {
+      await stashLoadedDraft(workspaceId, vacated)
+    } catch (err) {
+      console.error("[composer] could not release the disarmed draft", err)
+    }
+  }, [hostScope, workspaceId])
+  const disarm = useCallback(() => {
+    void disarmTarget()
+  }, [disarmTarget])
+
   useEffect(() => {
     if (!targetUnresolvable) return
     console.error(`[composer] dropping unresolvable target for ${hostScope}: ${storedTarget}`)
-    void clearComposerTarget(hostScope)
-  }, [targetUnresolvable, hostScope, storedTarget])
+    disarm()
+  }, [targetUnresolvable, hostScope, storedTarget, disarm])
   const effectiveTarget =
     targetResolved && !e2eEnabled && targetConversationId && !targetUnresolvable ? storedTarget : null
   // Includes this composer once it is pointed at the scope, so >1 means someone else.
   const mountedOnTarget = useMountedComposerCount(workspaceId, effectiveTarget)
+  effectiveTargetRef.current = effectiveTarget
+  mountedOnTargetRef.current = mountedOnTarget
   const armedConversationId = effectiveTarget ? targetConversationId : null
   const conversationReplyTopic = conversationReplyPost?.conversation.topicSummary ?? null
   const conversationReplyLastActiveStreamId = conversationReplyPost
@@ -323,7 +376,10 @@ function MessageInputComponent({
   // Active DraftMessage stays one-per-scope; this hook manages the sibling
   // many-per-scope stash and the `?stash=<id>` URL auto-restore. Stash + restore
   // are pointer moves, so they work for plaintext and E2E alike (no gating).
-  const stash = useStashComposer(composer, workspaceId, draftKey)
+  // `targetHost` is what makes ADOPT reachable here: this is the one composer
+  // that can point itself at another scope, so restoring a conversation's draft
+  // keeps the row where it is and raises the strip instead of moving it.
+  const stash = useStashComposer(composer, workspaceId, draftKey, { targetHost: hostScope, disarmTarget })
   // A `?stash=` deep link naming one of THIS stream's own stashed rows while the
   // composer is armed: the stash host is the board scope, so nobody would claim
   // the param and the URL would carry it forever. Disarm — an explicit "work on
@@ -337,8 +393,8 @@ function MessageInputComponent({
   // shared cache; plaintext rows resolve from contentJson). All entries share
   // this stream's encrypted root.
   const stashPreviewInputs = useMemo(
-    () => stash.claimableDrafts.map((draft) => ({ draft, rootStreamId: e2eRootStreamId })),
-    [stash.claimableDrafts, e2eRootStreamId]
+    () => stash.drafts.map((draft) => ({ draft, rootStreamId: e2eRootStreamId })),
+    [stash.drafts, e2eRootStreamId]
   )
   const stashPreviews = useDecryptedDraftPreviews(workspaceId, stashPreviewInputs)
 
@@ -373,13 +429,6 @@ function MessageInputComponent({
   // directive — nothing is inserted into the body.
   const conversationReplyCtx = useConversationReply()
   const { openPanel } = usePanel()
-  // Which arm came from the gesture in this session, and on which host. The
-  // target is durable, so "armed" alone can no longer tell a deliberate act from
-  // a page load — and the host is part of it because this component is NOT
-  // remounted per stream: without it, arming in stream A and navigating back to
-  // A (or onto a B that is armed for the same conversation) would read as a
-  // fresh gesture and route on a plain navigation.
-  const gestureArmedIdRef = useRef<{ host: string; conversationId: string } | null>(null)
   useEffect(() => {
     if (!conversationReplyCtx) return
     // Arm only. Focus is deferred to the resolve effect below: focusing the
@@ -390,33 +439,6 @@ function MessageInputComponent({
       void setComposerTarget(workspaceId, hostScope, boardReplyDraftKey(data.conversationId))
     })
   }, [conversationReplyCtx, workspaceId, hostScope])
-
-  // Disarm: this composer stops pointing at the conversation and reverts to the
-  // stream's own draft. The typed draft is NOT moved — its scope IS its target,
-  // so it stays a draft of that conversation and keeps its filing.
-  //
-  // It must also stop being CHECKED OUT here, though. A draft loaded under a scope
-  // no composer is showing is excluded from every pile on the device (the
-  // checked-out-anywhere rule) and carries no `?stash=` link in the explorer, so
-  // "it stays reachable" would be false: the only way back would be to open that
-  // conversation's own composer. Detaching the pointer turns it into a real stash
-  // entry, which is what makes the sentence above true. Unless another composer is
-  // already mounted on that scope — then it is showing the draft and owns it.
-  const disarm = useCallback(() => {
-    // Cleared here rather than in the routing effect: the gesture sets the ref
-    // synchronously and the target lands an IDB write later, so an effect re-run
-    // in that window would erase the very gesture it is meant to recognise.
-    gestureArmedIdRef.current = null
-    const vacated = effectiveTarget
-    void clearComposerTarget(hostScope)
-    if (vacated && mountedOnTarget <= 1) {
-      void composerRef.current
-        .flushDraft()
-        .catch((err) => console.error("[composer] flush before disarm failed", err))
-        .then(() => stashLoadedDraft(workspaceId, vacated))
-        .catch((err) => console.error("[composer] could not release the disarmed draft", err))
-    }
-  }, [hostScope, workspaceId, effectiveTarget, mountedOnTarget])
 
   useEffect(() => {
     if (stashParamWantsHostScope) disarm()
@@ -894,7 +916,7 @@ function MessageInputComponent({
     onStashDraft: stash.handleStashDraft,
     stashedDraftsTrigger: (
       <StashedDraftsPicker
-        drafts={stash.claimableDrafts}
+        drafts={stash.drafts}
         previewById={stashPreviews}
         canStashCurrent={composer.canSend}
         onStashCurrent={stash.handleStashDraft}
@@ -906,7 +928,7 @@ function MessageInputComponent({
     ),
     stashedDraftsTriggerFab: (
       <StashedDraftsPicker
-        drafts={stash.claimableDrafts}
+        drafts={stash.drafts}
         previewById={stashPreviews}
         canStashCurrent={composer.canSend}
         onStashCurrent={stash.handleStashDraft}

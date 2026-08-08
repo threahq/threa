@@ -371,6 +371,52 @@ describe("the timeline composer's durable target", () => {
     expect(await db.composerTarget.get(hostScope)).toBeDefined()
   })
 
+  // Every path that drops the target goes through the one disarm, which clears
+  // the gesture latch with it. A latch left behind by an arm that never routed
+  // (its board post was still loading) makes the NEXT arm read as a fresh
+  // gesture: it redirects to the panel and wipes the target that arm just set.
+  it("clears the gesture latch when an unresolvable target is dropped, so the next arm is not misread", async () => {
+    await seedDrafts()
+    // The board post never arrives, so the gesture arms and the routing effect
+    // bails before consuming the latch.
+    loadFailed = true
+
+    const view = mount()
+    await waitFor(() => expect(screen.getByTestId("editor-body")).toHaveTextContent("stream body"))
+    await act(async () => {
+      registeredConversationReplyHandler?.({ conversationId: "conv_1" })
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+    await waitFor(async () => expect(await db.composerTarget.get(hostScope)).toBeDefined())
+    expect(openPanelSpy).not.toHaveBeenCalled()
+
+    // The conversation turns out to be gone: the target is dropped.
+    loadFailed = false
+    notFound = true
+    // `MessageInput` is memoized, so a re-render needs a prop change: navigate
+    // away and back, exactly as the app does (same component, refs intact).
+    rerenderAtStream(view, "stream_other")
+    await settle()
+    rerenderAtStream(view, streamId)
+    await waitFor(async () => expect(await db.composerTarget.get(hostScope)).toBeUndefined())
+
+    // A later arm for the same conversation that is NOT a gesture — a restore
+    // adopting the row, or a page load. It must show the strip and nothing else.
+    notFound = false
+    lastActiveStreamId = "stream_thread"
+    await act(async () => {
+      await setComposerTarget(workspaceId, hostScope, boardScope)
+    })
+    rerenderAtStream(view, "stream_other")
+    await settle()
+    rerenderAtStream(view, streamId)
+    await waitFor(() => expect(screen.getByTestId("conversation-reply-strip")).toBeInTheDocument())
+    await settle()
+
+    expect(openPanelSpy).not.toHaveBeenCalled()
+    expect(await db.composerTarget.get(hostScope)).toBeDefined()
+  })
+
   it("still routes an arm made by the gesture when the conversation lives in a thread", async () => {
     await seedDrafts()
     lastActiveStreamId = "stream_thread"

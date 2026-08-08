@@ -364,12 +364,24 @@ export function useAllDrafts(workspaceId: string) {
   const syncEngine = useOptionalSyncEngine()
 
   // scope -> loaded draft id, the device-local "checked out into the composer"
-  // pointer. A draft is "stashed" (vs. ambient/loaded) when it is not the one
-  // its scope points at.
+  // pointer.
   const loadedByScope = useMemo(() => {
     const map = new Map<string, string | null>()
     for (const row of composerLoaded) map.set(row.scope, row.draftId)
     return map
+  }, [composerLoaded])
+
+  // A draft is "stashed" when no composer on this device holds it — keyed by
+  // draft id, the same checked-out-anywhere rule the stash pile excludes on, so
+  // the explorer can never offer a `?stash=` deep link the destination refuses.
+  // Every writer of `composerLoaded` keeps pointer-scope == row-scope (adopt
+  // checks the row out under its own scope; move rewrites the scope first), so
+  // an id-keyed and a scope-keyed rule agree on every reachable state; id-keyed
+  // is the one that stays true if that ever stops holding.
+  const loadedDraftIds = useMemo(() => {
+    const ids = new Set<string>()
+    for (const row of composerLoaded) if (row.draftId) ids.add(row.draftId)
+    return ids
   }, [composerLoaded])
 
   // Stable signature over the set of draft scopes so the board-context queries
@@ -503,7 +515,7 @@ export function useAllDrafts(workspaceId: string) {
       // nested thread through the root check inside `isStreamArchived`.
       if (isStreamArchived(resolved.streamId, streamMap, archivedStreamIds)) continue
 
-      const isStashed = (loadedByScope.get(draft.scope) ?? null) !== draft.id
+      const isStashed = !loadedDraftIds.has(draft.id)
 
       // A stashed row deep-links via `?stash=<draftId>` so the composer host
       // pops + restores it on arrival; the loaded (ambient) row navigates
@@ -541,6 +553,7 @@ export function useAllDrafts(workspaceId: string) {
     allDrafts,
     draftsById,
     loadedByScope,
+    loadedDraftIds,
     streamMap,
     archivedStreamIds,
     messageToStreamMap,

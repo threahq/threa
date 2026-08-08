@@ -1,0 +1,26 @@
+/** Why a restore did not happen. Every guard returns one; none is silent (INV-11). */
+export type DraftRestoreRefusal =
+  | "missing"
+  | "checked-out"
+  | "target-busy"
+  | "host-ineligible"
+  | "branch-elsewhere"
+  | "raced"
+
+export type DraftRestoreResult = { ok: true } | { ok: false; reason: DraftRestoreRefusal }
+
+/**
+ * User-facing copy for a refused restore, shared by the picker and the `?stash=`
+ * deep link so the two can't drift (INV-35). Each line names what happened to
+ * the DRAFT, not which predicate failed — `host-ineligible` stays deliberately
+ * general because it covers encrypted, archived and unresolvable alike, and
+ * naming any one of them would be wrong most of the time.
+ */
+export const RESTORE_REFUSAL_MESSAGE: Record<DraftRestoreRefusal, string> = {
+  missing: "That draft is no longer there.",
+  "checked-out": "That draft is open in another composer.",
+  "target-busy": "That conversation already has a different draft open.",
+  "host-ineligible": "This stream can't hold that draft — it stays where it is.",
+  "branch-elsewhere": "Open the conversation to continue that branch reply.",
+  raced: "That draft moved before it could be restored.",
+}
