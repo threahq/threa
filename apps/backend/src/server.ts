@@ -18,6 +18,7 @@ import {
   createVoiceSessionSweeper,
   registerVoiceGateway,
   createPolishTranscript,
+  createDecideVoiceBoundaryScope,
 } from "./features/voice-transcription"
 import {
   CallService,
@@ -851,6 +852,7 @@ export async function startServer(): Promise<ServerInstance> {
   // Dedicated voice relay on its own namespace so audio frames don't share the
   // main namespace's room fan-out.
   const polishTranscript = createPolishTranscript({ ai })
+  const decideBoundaryScope = createDecideVoiceBoundaryScope({ ai })
   registerVoiceGateway(io, {
     authService,
     voiceTranscriptionService,
@@ -858,6 +860,7 @@ export async function startServer(): Promise<ServerInstance> {
     userPreferencesService,
     workspaceSettingsService,
     polishTranscript,
+    decideBoundaryScope,
   })
 
   // Dedicated /calls control namespace (mirrors the /voice gateway shape). Media

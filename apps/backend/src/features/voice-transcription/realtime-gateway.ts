@@ -5,19 +5,32 @@ import type { AuthService } from "@threa/backend-common"
 import { parseMarkdown } from "@threa/prosemirror"
 import {
   VOICE_DRAFT_CONTEXT_MAX_CHARS,
+  VOICE_LEGACY_PROTOCOL_VERSION,
   VOICE_PROTOCOL_VERSION,
+  VOICE_REPLACEMENT_ACK_STATUSES,
+  type VoiceReplacementAckStatus,
   type VoicePolishLevel,
   type VoiceRelayPhase,
   type VoiceTerminationMode,
+  type VoiceStoppedOutcome,
 } from "@threa/types"
 import { createSocketAuthMiddleware } from "../../lib/socket-auth"
 import { logger } from "../../lib/logger"
 import { HttpError } from "../../lib/errors"
-import { voiceConfig, resolveSteeringTerms } from "./config"
+import {
+  voiceConfig,
+  resolveSteeringTerms,
+  VOICE_REPLACEMENT_ACK_TIMEOUT_MS,
+  VOICE_REPLACEMENT_SETTLE_MARGIN_MS,
+} from "./config"
 import type { VoiceTranscriptionService } from "./service"
 import type { Transcription, TranscriptionSession } from "./transcription/strategy"
 import type { PolishOutcome, PolishTranscript } from "./polish"
 import { PolishScheduler } from "./polish-scheduler"
+import { IncrementalVoiceEngine } from "./incremental-engine"
+import { IncrementalPolishCoordinator, type IncrementalOperation } from "./incremental-coordinator"
+import type { DecideVoiceBoundaryScopeInput, VoiceBoundaryScopeOutcome } from "./scope"
+import { safeDisconnectReason, safeProviderError } from "./safe-error"
 import type { UserPreferencesService } from "../user-preferences"
 import type { WorkspaceSettingsService } from "../workspace-settings"
 
@@ -26,6 +39,7 @@ const startPayloadSchema = z.object({
   voiceSessionId: z.string().min(1),
   draftBefore: z.string().optional(),
   draftAfter: z.string().optional(),
+  maxProtocolVersion: z.unknown().optional(),
 })
 const stopPayloadSchema = z.object({ mode: z.enum(["format", "send_as_is", "abort"]) })
 
@@ -37,6 +51,7 @@ interface Dependencies {
   userPreferencesService: UserPreferencesService
   workspaceSettingsService: WorkspaceSettingsService
   polishTranscript: PolishTranscript
+  decideBoundaryScope?: (input: DecideVoiceBoundaryScopeInput) => Promise<VoiceBoundaryScopeOutcome>
 }
 interface RelayState {
   workspaceId: string
@@ -59,7 +74,19 @@ interface RelayState {
   revision: number
   previousAcceptedMarkdown?: string
   scheduler: PolishScheduler
-  finalOutcome: PolishOutcome["status"]
+  finalOutcome: VoiceStoppedOutcome
+  negotiatedProtocol: number
+  incrementalEngine?: IncrementalVoiceEngine
+  finalReused: boolean
+  coordinator?: IncrementalPolishCoordinator
+  flushDurationMs?: number
+  finalDurationMs?: number
+}
+
+function negotiateProtocol(value: unknown): number {
+  if (value === undefined) return VOICE_LEGACY_PROTOCOL_VERSION
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 1) return VOICE_LEGACY_PROTOCOL_VERSION
+  return Math.min(VOICE_PROTOCOL_VERSION, Math.floor(value))
 }
 
 function toBuffer(frame: unknown): Buffer | null {
@@ -94,7 +121,12 @@ export function registerVoiceGateway(io: Server, deps: Dependencies) {
         draftBefore: current.draftBefore,
         draftAfter: current.draftAfter,
         steeringTerms: current.steeringTerms,
-        previousAcceptedMarkdown: current.previousAcceptedMarkdown,
+        previousAcceptedMarkdown:
+          current.incrementalEngine?.windows.find((window) => window.latestRevision === revision)?.accepted?.markdown ??
+          current.previousAcceptedMarkdown,
+        targetMode: current.incrementalEngine ? "tail" : "legacy",
+        sourceWindowCount: 1,
+        finalCount: current.incrementalEngine?.windows.find((window) => window.latestRevision === revision)?.finalCount,
         deadline: current.phase === "formatting" ? "final" : "live",
         signal,
       })
@@ -103,15 +135,39 @@ export function registerVoiceGateway(io: Server, deps: Dependencies) {
         : outcome
     }
 
+    const runIncrementalSnapshot = async (
+      current: RelayState,
+      revision: number,
+      signal: AbortSignal,
+      authoritative: boolean
+    ): Promise<PolishOutcome> => {
+      const window = current.incrementalEngine!.windows.find((candidate) => candidate.latestRevision === revision)
+      if (!window) return { status: "canceled" }
+      const result = await current.coordinator!.run(
+        window,
+        current.phase === "formatting" ? "final" : "live",
+        authoritative,
+        signal
+      )
+      if (result.status === "applied" || result.status === "reused")
+        return { status: "success", markdown: "", contentJson: { type: "doc" } }
+      if (result.status === "rejected") return { status: "replacement_rejected" }
+      if (result.status === "preserve_raw") return { status: "preserve_raw" }
+      if (result.status === "invalid_output") return { status: "invalid_output", reason: result.reason }
+      return { status: result.status }
+    }
+
     function emitPolish(
       current: RelayState,
       revision: number,
       raw: string,
       outcome: PolishOutcome,
       authoritative: boolean
-    ) {
-      if (state !== current || current.phase === "closing" || current.phase === "closed") return
-      if (revision !== current.revision || outcome.status !== "success") return
+    ): Promise<void> {
+      if (state !== current || current.phase === "closing" || current.phase === "closed") return Promise.resolve()
+      if (outcome.status !== "success") return Promise.resolve()
+      if (current.negotiatedProtocol === 4 && current.incrementalEngine) return Promise.resolve()
+      if (revision !== current.revision) return Promise.resolve()
       current.previousAcceptedMarkdown = outcome.markdown
       socket.emit("voice:transcript:polished", {
         voiceSessionId: current.voiceSessionId,
@@ -123,12 +179,74 @@ export function registerVoiceGateway(io: Server, deps: Dependencies) {
         rawContentJson: parseMarkdown(raw),
         polishedContentJson: outcome.contentJson,
       })
+      return Promise.resolve()
+    }
+
+    function sendV4Operation(
+      current: RelayState,
+      operation: IncrementalOperation
+    ): Promise<VoiceReplacementAckStatus | "timeout"> {
+      return new Promise((resolve) => {
+        let settled = false
+        const finish = (payload?: unknown) => {
+          if (settled) return
+          settled = true
+          clearTimeout(timer)
+          if (!payload || typeof payload !== "object") return resolve("timeout")
+          const ack = payload as { operationId?: unknown; status?: unknown }
+          if (
+            ack.operationId !== operation.operationId ||
+            !VOICE_REPLACEMENT_ACK_STATUSES.includes(ack.status as VoiceReplacementAckStatus)
+          )
+            return resolve("invalid")
+          resolve(ack.status as VoiceReplacementAckStatus)
+        }
+        const timer = setTimeout(() => finish(), VOICE_REPLACEMENT_ACK_TIMEOUT_MS)
+        socket.emit(
+          "voice:transcript:polished",
+          {
+            protocolVersion: 4,
+            operationId: operation.operationId,
+            voiceSessionId: current.voiceSessionId,
+            authoritative: operation.authoritative,
+            resultChunkId: operation.resultChunkId,
+            throughRevision: Math.max(...operation.sources.map((source) => source.throughRevision)),
+            sources: operation.sources,
+            raw: operation.raw,
+            polished: operation.outcome.markdown,
+            rawContentJson: parseMarkdown(operation.raw),
+            polishedContentJson: operation.outcome.contentJson,
+          },
+          finish
+        )
+      })
     }
 
     function commitFinal(current: RelayState, text: string, schedule = true) {
       const raw = text.trim()
       if (!raw || (current.phase !== "live" && current.phase !== "formatting")) return
       current.lastInterim = ""
+      if (current.negotiatedProtocol === 4 && current.incrementalEngine) {
+        for (const delta of current.incrementalEngine.appendFinal(raw)) {
+          current.revision = delta.revision
+          socket.emit("voice:transcript:delta", {
+            protocolVersion: 4,
+            voiceSessionId: current.voiceSessionId,
+            revision: delta.revision,
+            text: delta.text,
+            isFinal: true,
+            chunkId: delta.chunkId,
+            ...(delta.afterChunkId ? { afterChunkId: delta.afterChunkId } : {}),
+            contentJson: parseMarkdown(delta.text),
+          })
+          if (schedule && current.phase === "live" && current.polishLevel !== "none")
+            current.scheduler.scheduleLive({
+              revision: delta.revision,
+              run: (signal) => runIncrementalSnapshot(current, delta.revision, signal, false),
+            })
+        }
+        return
+      }
       current.rawFinals.push(raw)
       const revision = ++current.revision
       socket.emit("voice:transcript:delta", {
@@ -150,7 +268,10 @@ export function registerVoiceGateway(io: Server, deps: Dependencies) {
           .close()
           .then((result) => result.totalAudioMs)
           .catch((err) => {
-            logger.warn({ err, voiceSessionId: current.voiceSessionId }, "Voice upstream close failed")
+            logger.warn(
+              { ...safeProviderError(err), voiceSessionId: current.voiceSessionId },
+              "Voice upstream close failed"
+            )
             return 0
           })
       }
@@ -170,7 +291,10 @@ export function registerVoiceGateway(io: Server, deps: Dependencies) {
         if (abort) await deps.voiceTranscriptionService.abortSession(input)
         else await deps.voiceTranscriptionService.finishSession(input)
       } catch (err) {
-        logger.warn({ err, voiceSessionId: current.voiceSessionId }, "Voice session finalize failed")
+        logger.warn(
+          { ...safeProviderError(err), voiceSessionId: current.voiceSessionId },
+          "Voice session finalize failed"
+        )
       }
       current.phase = "closed"
       logger.info(
@@ -179,7 +303,24 @@ export function registerVoiceGateway(io: Server, deps: Dependencies) {
           terminationMode: current.terminationMode,
           finalOutcome: current.finalOutcome,
           revision: current.revision,
-          rawFinalCount: current.rawFinals.length,
+          rawFinalCount: current.incrementalEngine
+            ? current.incrementalEngine.windows.reduce((sum, window) => sum + window.finalCount, 0)
+            : current.rawFinals.length,
+          windowCount: current.incrementalEngine?.windows.length,
+          rawCharCount: current.incrementalEngine?.windows.reduce((sum, window) => sum + window.rawCharCount, 0),
+          acceptedResultCount: current.incrementalEngine?.windows.filter((window) =>
+            current.incrementalEngine!.isExactlyAccepted(window)
+          ).length,
+          rawWindowCount: current.incrementalEngine?.windows.filter(
+            (window) => !current.incrementalEngine!.isExactlyAccepted(window)
+          ).length,
+          lockedAckCount: current.incrementalEngine?.counters.locked,
+          ackStatusCounts: current.incrementalEngine?.counters,
+          maxMutableTargetLength: current.incrementalEngine?.maxMutableLength,
+          flushDurationMs: current.flushDurationMs,
+          finalDurationMs: current.finalDurationMs,
+          finalReused: current.finalReused,
+          protocolVersion: current.negotiatedProtocol,
           totalAudioMs,
         },
         "Voice relay session closed"
@@ -204,31 +345,51 @@ export function registerVoiceGateway(io: Server, deps: Dependencies) {
         clearTimeout(current.maxDurationTimer)
         if (current.terminationMode === "format") {
           current.phase = "formatting"
-          current.scheduler.cancel()
+          if (current.incrementalEngine)
+            await current.scheduler.cancelAndSettle(
+              VOICE_REPLACEMENT_ACK_TIMEOUT_MS + VOICE_REPLACEMENT_SETTLE_MARGIN_MS
+            )
+          else current.scheduler.cancel()
           let interruptFlush!: () => void
           const interrupted = new Promise<void>((resolve) => {
             interruptFlush = resolve
           })
           current.interruptFlush = interruptFlush
+          const flushStarted = performance.now()
           try {
             await Promise.race([current.upstream.flush(), interrupted])
           } catch (err) {
-            logger.warn({ err, voiceSessionId: current.voiceSessionId }, "Voice flush failed")
+            logger.warn({ ...safeProviderError(err), voiceSessionId: current.voiceSessionId }, "Voice flush failed")
           } finally {
+            current.flushDurationMs = Math.max(0, Math.round(performance.now() - flushStarted))
             current.interruptFlush = null
           }
           if (current.terminationMode === "format") {
             if (current.lastInterim.trim()) commitFinal(current, current.lastInterim, false)
-            const raw = current.rawFinals.join(" ")
-            if (current.polishLevel !== "none") {
+            const raw = current.incrementalEngine?.activeWindow
+              ? current.incrementalEngine.raw(current.incrementalEngine.activeWindow)
+              : current.rawFinals.join(" ")
+            if (!raw) current.finalOutcome = "empty_input"
+            else if (current.polishLevel !== "none") {
               const revision = current.revision
-              const outcome = await current.scheduler.formatFinal({
-                revision,
-                run: (signal) => runPolish(current, revision, raw, signal),
-              })
-              current.finalOutcome = outcome.status
-              if (current.terminationMode === "format") emitPolish(current, revision, raw, outcome, true)
-            } else current.finalOutcome = raw ? "success" : "empty_input"
+              const reusable = current.incrementalEngine?.exactCurrentAccepted()
+              if (reusable) {
+                current.finalOutcome = "success"
+                current.finalReused = true
+              } else {
+                const finalStarted = performance.now()
+                const outcome = await current.scheduler.formatFinal({
+                  revision,
+                  run: (signal) =>
+                    current.incrementalEngine
+                      ? runIncrementalSnapshot(current, revision, signal, true)
+                      : runPolish(current, revision, raw, signal),
+                })
+                current.finalDurationMs = Math.max(0, Math.round(performance.now() - finalStarted))
+                current.finalOutcome = outcome.status
+                if (current.terminationMode === "format") await emitPolish(current, revision, raw, outcome, true)
+              }
+            } else current.finalOutcome = "success"
           }
         }
         current.phase = "closing"
@@ -247,14 +408,18 @@ export function registerVoiceGateway(io: Server, deps: Dependencies) {
         payload: unknown,
         callback?: (result: { ok: boolean; error?: string; protocolVersion: number }) => void
       ) => {
+        const requestedProtocol =
+          payload && typeof payload === "object"
+            ? negotiateProtocol((payload as { maxProtocolVersion?: unknown }).maxProtocolVersion)
+            : VOICE_LEGACY_PROTOCOL_VERSION
         if (state || starting)
-          return callback?.({ ok: false, error: "Session already started", protocolVersion: VOICE_PROTOCOL_VERSION })
+          return callback?.({ ok: false, error: "Session already started", protocolVersion: requestedProtocol })
         const parsed = startPayloadSchema.safeParse(payload)
         if (!parsed.success)
           return callback?.({
             ok: false,
             error: "workspaceId and voiceSessionId required",
-            protocolVersion: VOICE_PROTOCOL_VERSION,
+            protocolVersion: requestedProtocol,
           })
         const { workspaceId, voiceSessionId } = parsed.data
         starting = true
@@ -272,12 +437,12 @@ export function registerVoiceGateway(io: Server, deps: Dependencies) {
           ])
           if (prefs.status === "rejected")
             logger.warn(
-              { err: prefs.reason, workspaceId, userId: row.userId, voiceSessionId },
+              { ...safeProviderError(prefs.reason), workspaceId, userId: row.userId, voiceSessionId },
               "Voice user preferences lookup failed"
             )
           if (settings.status === "rejected")
             logger.warn(
-              { err: settings.reason, workspaceId, userId: row.userId, voiceSessionId },
+              { ...safeProviderError(settings.reason), workspaceId, userId: row.userId, voiceSessionId },
               "Voice workspace settings lookup failed"
             )
           const polishLevel = prefs.status === "fulfilled" ? prefs.value.voicePolishLevel : "none"
@@ -298,12 +463,16 @@ export function registerVoiceGateway(io: Server, deps: Dependencies) {
             return callback?.({
               ok: false,
               error: "Session ended before it started",
-              protocolVersion: VOICE_PROTOCOL_VERSION,
+              protocolVersion: requestedProtocol,
             })
           }
           const current = {} as RelayState
           const scheduler = new PolishScheduler((snapshot, outcome) => {
-            emitPolish(current, snapshot.revision, current.rawFinals.join(" "), outcome, false)
+            const window = current.incrementalEngine?.windows.find(
+              (candidate) => candidate.latestRevision === snapshot.revision
+            )
+            const raw = window ? current.incrementalEngine!.raw(window) : current.rawFinals.join(" ")
+            void emitPolish(current, snapshot.revision, raw, outcome, false)
           })
           Object.assign(current, {
             workspaceId,
@@ -325,19 +494,56 @@ export function registerVoiceGateway(io: Server, deps: Dependencies) {
             revision: 0,
             scheduler,
             finalOutcome: "empty_input",
+            negotiatedProtocol: requestedProtocol,
+            incrementalEngine: requestedProtocol === 4 ? new IncrementalVoiceEngine() : undefined,
+            finalReused: false,
             maxDurationTimer: setTimeout(
               () => void terminate("format", "max_duration").finally(() => socket.disconnect(true)),
               voiceConfig.maxSessionMs
             ),
           } satisfies Partial<RelayState>)
+          if (current.incrementalEngine) {
+            current.coordinator = new IncrementalPolishCoordinator({
+              engine: current.incrementalEngine,
+              polishTranscript: async (input) => {
+                const outcome = await deps.polishTranscript(input)
+                return typeof outcome === "string"
+                  ? { status: "success", markdown: outcome, contentJson: parseMarkdown(outcome) }
+                  : outcome
+              },
+              decideBoundaryScope: deps.decideBoundaryScope,
+              applyOperation: (operation) => sendV4Operation(current, operation),
+              context: {
+                level: current.polishLevel,
+                workspaceId: current.workspaceId,
+                userId: current.userId,
+                sessionId: current.voiceSessionId,
+                draftBefore: current.draftBefore,
+                draftAfter: current.draftAfter,
+                steeringTerms: current.steeringTerms,
+              },
+            })
+          }
           state = current
           upstream.onDelta((delta) => {
             if (state !== current || (current.phase !== "live" && current.phase !== "formatting")) return
             if (!delta.isFinal) {
               current.lastInterim = delta.text ?? ""
-              socket.emit("voice:transcript:delta", { voiceSessionId, revision: current.revision, ...delta })
+              socket.emit(
+                "voice:transcript:delta",
+                current.negotiatedProtocol === 4
+                  ? {
+                      protocolVersion: 4,
+                      voiceSessionId,
+                      revision: current.revision,
+                      text: delta.text ?? "",
+                      isFinal: false,
+                    }
+                  : { voiceSessionId, revision: current.revision, ...delta }
+              )
             } else if (delta.text?.trim()) commitFinal(current, delta.text, current.phase === "live")
-            else socket.emit("voice:transcript:delta", { voiceSessionId, revision: current.revision, ...delta })
+            else if (current.negotiatedProtocol !== 4)
+              socket.emit("voice:transcript:delta", { voiceSessionId, revision: current.revision, ...delta })
           })
           upstream.onError((error) => {
             if (state !== current || current.phase !== "live") return
@@ -345,8 +551,7 @@ export function registerVoiceGateway(io: Server, deps: Dependencies) {
               {
                 voiceSessionId,
                 provider: row.provider,
-                code: error.code,
-                upstreamMessage: error.message,
+                ...safeProviderError(error),
                 phase: current.phase,
                 revision: current.revision,
                 rawFinalCount: current.rawFinals.length,
@@ -356,14 +561,14 @@ export function registerVoiceGateway(io: Server, deps: Dependencies) {
             socket.emit("voice:transcription:error", { voiceSessionId, ...error })
             void terminate("abort", "stopped")
           })
-          callback?.({ ok: true, protocolVersion: VOICE_PROTOCOL_VERSION })
+          callback?.({ ok: true, protocolVersion: requestedProtocol })
         } catch (err) {
           if (resolvedUserId)
             await deps.voiceTranscriptionService
               .abortSession({ workspaceId, userId: resolvedUserId, sessionId: voiceSessionId, totalAudioMs: 0 })
               .catch(() => {})
           const error = err instanceof HttpError ? err.message : "Failed to start voice session"
-          callback?.({ ok: false, error, protocolVersion: VOICE_PROTOCOL_VERSION })
+          callback?.({ ok: false, error, protocolVersion: requestedProtocol })
         } finally {
           starting = false
         }
@@ -393,11 +598,13 @@ export function registerVoiceGateway(io: Server, deps: Dependencies) {
       logger.info(
         {
           voiceSessionId: current?.voiceSessionId ?? null,
-          reason,
+          reason: safeDisconnectReason(reason),
           phase: current?.phase ?? null,
           terminationMode: current?.terminationMode ?? null,
           revision: current?.revision ?? null,
-          rawFinalCount: current?.rawFinals.length ?? null,
+          rawFinalCount: current?.incrementalEngine
+            ? current.incrementalEngine.windows.reduce((sum, window) => sum + window.finalCount, 0)
+            : (current?.rawFinals.length ?? null),
         },
         "Voice relay socket disconnected"
       )

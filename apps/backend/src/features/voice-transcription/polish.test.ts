@@ -206,6 +206,7 @@ describe("createPolishTranscript", () => {
       raw: "RAW PRIVATE SENTINEL",
       draft: "DRAFT PRIVATE SENTINEL",
       steering: "STEERING PRIVATE SENTINEL",
+      predecessor: "PREDECESSOR PRIVATE SENTINEL",
       output: "OUTPUT PRIVATE SENTINEL",
       error: "ERROR PRIVATE SENTINEL",
       timeoutError: "TIMEOUT ERROR PRIVATE SENTINEL",
@@ -215,6 +216,7 @@ describe("createPolishTranscript", () => {
       rawTranscript: sentinels.raw,
       draftBefore: sentinels.draft,
       steeringTerms: [sentinels.steering],
+      readOnlyPredecessorMarkdown: sentinels.predecessor,
       level: "minor" as const,
       workspaceId: "ws_1",
       userId: "user_1",
@@ -573,6 +575,19 @@ describe("buildPolishUserMessage", () => {
     expect(message).toContain("Existing draft text before the insertion point")
     expect(message).toContain("draft start")
     expect(message).not.toContain("after the insertion point")
+  })
+
+  it("distinguishes the same mutable revision from the immutable predecessor", () => {
+    const message = buildPolishUserMessage({
+      rawTranscript: "complete current raw",
+      previousAcceptedMarkdown: "Accepted current prefix.",
+      readOnlyPredecessorMarkdown: "Immutable predecessor.",
+      targetMode: "tail",
+    })
+    expect(message).toContain("SAME mutable window")
+    expect(message).toContain("output the complete current window")
+    expect(message).toContain("Immediate predecessor accepted Markdown (READ-ONLY context)")
+    expect(message).toContain("never copy or rewrite this section")
   })
 
   it("adds a Spelling reference section when steering terms are present, omits it otherwise", () => {
