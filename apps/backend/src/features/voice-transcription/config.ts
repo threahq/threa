@@ -3,7 +3,7 @@
  * and is read via ModelRegistry (INV-33).
  */
 
-import { parseModelId } from "@threa/agent-runtime"
+import { parseModelId, type ReasoningEffort } from "@threa/agent-runtime"
 import { VOICE_STEERING_BASE_TERMS, VOICE_STEERING_WORDS_MAX } from "@threa/types"
 
 export const VOICE_DEFAULT_MODEL = "elevenlabs:scribe-v2-realtime"
@@ -73,6 +73,7 @@ export interface VoicePolishConfig {
   finalTimeoutMs: number
   maxTokens: number
   temperature: number
+  reasoningEffort: ReasoningEffort
 }
 
 // Deadlines calibrated by the voice-polish eval matrix. Live passes are
@@ -86,6 +87,7 @@ export const voicePolishConfig: VoicePolishConfig = {
   finalTimeoutMs: 8000,
   maxTokens: 2048,
   temperature: 0.2,
+  reasoningEffort: "medium",
 }
 
 // The example vocabulary in both prompts is English; without this note,

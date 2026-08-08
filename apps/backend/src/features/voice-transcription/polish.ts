@@ -1,5 +1,5 @@
 import type { VoicePolishLevel } from "@threa/types"
-import type { AI } from "@threa/agent-runtime"
+import type { AI, UsageWithCost } from "@threa/agent-runtime"
 import { parseMarkdown } from "@threa/prosemirror"
 import type { JSONContent } from "@threa/types"
 import { logger } from "../../lib/logger"
@@ -34,8 +34,13 @@ export type PolishOutcome =
 
 export type PolishTranscript = (input: PolishTranscriptInput) => Promise<PolishOutcome>
 
-export function createPolishTranscript(deps: { ai: AI; config?: VoicePolishConfig }): PolishTranscript {
+export function createPolishTranscript(deps: {
+  ai: AI
+  config?: VoicePolishConfig
+  parseMarkdown?: (markdown: string) => JSONContent
+}): PolishTranscript {
   const config = deps.config ?? voicePolishConfig
+  const parse = deps.parseMarkdown ?? parseMarkdown
   return async ({
     rawTranscript,
     level,
@@ -51,7 +56,7 @@ export function createPolishTranscript(deps: { ai: AI; config?: VoicePolishConfi
   }) => {
     const trimmed = rawTranscript.trim()
     if (!trimmed) return { status: "empty_input" }
-    if (level === "none") return parsePolishSuccess(trimmed)
+    if (level === "none") return parsePolishSuccess(trimmed, parse)
 
     const systemPrompt = level === "opinionated" ? POLISH_OPINIONATED_SYSTEM_PROMPT : POLISH_MINOR_SYSTEM_PROMPT
     const userMessage = buildPolishUserMessage({
@@ -62,6 +67,9 @@ export function createPolishTranscript(deps: { ai: AI; config?: VoicePolishConfi
       previousAcceptedMarkdown,
     })
     const controller = new AbortController()
+    const startedAt = performance.now()
+    const draftLength = (draftBefore?.length ?? 0) + (draftAfter?.length ?? 0)
+    let usage: UsageWithCost | undefined
     let timedOut = false
     const onCancel = () => controller.abort()
     signal?.addEventListener("abort", onCancel, { once: true })
@@ -73,8 +81,33 @@ export function createPolishTranscript(deps: { ai: AI; config?: VoicePolishConfi
       deadline === "final" ? config.finalTimeoutMs : config.liveTimeoutMs
     )
 
+    const complete = (outcome: PolishOutcome, providerError?: unknown): PolishOutcome => {
+      logger.info(
+        {
+          sessionId,
+          workspaceId,
+          level,
+          outcome: outcome.status,
+          invalidReason: outcome.status === "invalid_output" ? outcome.reason : undefined,
+          deadline,
+          deadlineMs: deadline === "final" ? config.finalTimeoutMs : config.liveTimeoutMs,
+          durationMs: Math.round(performance.now() - startedAt),
+          rawLength: trimmed.length,
+          draftLength,
+          steeringTermCount: steeringTerms?.length ?? 0,
+          reasoningEffort: config.reasoningEffort,
+          promptTokens: usage?.promptTokens,
+          completionTokens: usage?.completionTokens,
+          reasoningTokens: usage?.reasoningTokens,
+          ...(providerError === undefined ? {} : safeProviderError(providerError)),
+        },
+        "Voice transcript polish attempt completed"
+      )
+      return outcome
+    }
+
     try {
-      if (signal?.aborted) return { status: "canceled" }
+      if (signal?.aborted) return complete({ status: "canceled" })
       const result = await deps.ai.generateText({
         model: config.model,
         messages: [
@@ -83,33 +116,38 @@ export function createPolishTranscript(deps: { ai: AI; config?: VoicePolishConfi
         ],
         maxTokens: config.maxTokens,
         temperature: config.temperature,
+        reasoningEffort: config.reasoningEffort,
         telemetry: {
           functionId: "voice-transcript-polish",
           metadata: {
             sessionId,
             rawLen: trimmed.length,
-            draftContextLen: (draftBefore?.length ?? 0) + (draftAfter?.length ?? 0),
+            draftContextLen: draftLength,
             steeringTermCount: steeringTerms?.length ?? 0,
             level,
+            stage: deadline === "final" ? "format_final" : "format_live",
+            deadline,
+            deadlineMs: deadline === "final" ? config.finalTimeoutMs : config.liveTimeoutMs,
+            reasoningEffort: config.reasoningEffort,
           },
         },
         context: { workspaceId, userId, origin: "user" },
         abortSignal: controller.signal,
       })
-      if (signal?.aborted) return { status: "canceled" }
-      if (timedOut) return { status: "timeout" }
+      usage = result.usage
+      if (signal?.aborted) return complete({ status: "canceled" })
+      if (timedOut) return complete({ status: "timeout" })
       const finishReason =
         (result as { finishReason?: string; response?: { finishReason?: string } }).finishReason ??
         (result as { response?: { finishReason?: string } }).response?.finishReason
-      if (finishReason === "length") return { status: "invalid_output", reason: "truncated" }
+      if (finishReason === "length") return complete({ status: "invalid_output", reason: "truncated" })
       const polished = result.value.trim()
-      if (!polished) return { status: "invalid_output", reason: "empty" }
-      return parsePolishSuccess(scrubDashes(polished))
+      if (!polished) return complete({ status: "invalid_output", reason: "empty" })
+      return complete(parsePolishSuccess(scrubDashes(polished), parse))
     } catch (err) {
-      if (signal?.aborted) return { status: "canceled" }
-      if (timedOut) return { status: "timeout" }
-      logger.warn({ err, sessionId, workspaceId, level }, "Voice transcript polish provider failed")
-      return { status: "provider_error" }
+      if (signal?.aborted) return complete({ status: "canceled" })
+      if (timedOut) return complete({ status: "timeout" })
+      return complete({ status: "provider_error" }, err)
     } finally {
       clearTimeout(timer)
       signal?.removeEventListener("abort", onCancel)
@@ -117,9 +155,23 @@ export function createPolishTranscript(deps: { ai: AI; config?: VoicePolishConfi
   }
 }
 
-function parsePolishSuccess(markdown: string): PolishOutcome {
+function safeProviderError(error: unknown): Record<string, string | number> {
+  if (!error || typeof error !== "object") return { errorType: typeof error }
+  const value = error as Record<string, unknown>
+  const safe: Record<string, string | number> = {}
+  if (isErrorClassification(value.name)) safe.errorName = value.name
+  if (isErrorClassification(value.code)) safe.errorCode = value.code
+  if (typeof value.status === "number" && Number.isFinite(value.status)) safe.errorStatus = value.status
+  return safe
+}
+
+function isErrorClassification(value: unknown): value is string {
+  return typeof value === "string" && /^[A-Za-z][A-Za-z0-9_.-]{0,63}$/.test(value)
+}
+
+function parsePolishSuccess(markdown: string, parse: (markdown: string) => JSONContent): PolishOutcome {
   try {
-    const contentJson = parseMarkdown(markdown)
+    const contentJson = parse(markdown)
     return { status: "success", markdown, contentJson }
   } catch {
     return { status: "invalid_output", reason: "unparseable" }

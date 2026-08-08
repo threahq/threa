@@ -18,13 +18,26 @@ import type { ComponentOverrides } from "./config-types"
  * Accumulates token usage and cost across AI calls.
  * Call recordUsage() after each AI call to track costs.
  */
+export interface EvalUsage {
+  inputTokens: number
+  outputTokens: number
+  reasoningTokens?: number
+  totalCost: number
+}
+
 export interface UsageAccumulator {
   /** Record usage from an AI call */
-  recordUsage(usage: { promptTokens?: number; completionTokens?: number; totalTokens?: number; cost?: number }): void
+  recordUsage(usage: {
+    promptTokens?: number
+    completionTokens?: number
+    reasoningTokens?: number
+    totalTokens?: number
+    cost?: number
+  }): void
   /** Record the model id an AI call actually executed with */
   recordModel(modelId: string): void
   /** Get accumulated totals */
-  getTotal(): { inputTokens: number; outputTokens: number; totalCost: number }
+  getTotal(): EvalUsage
   /** Executed model ids → call counts. The ground truth a -m override is verified against. */
   getModels(): Record<string, number>
 }
@@ -35,6 +48,7 @@ export interface UsageAccumulator {
 export function createUsageAccumulator(): UsageAccumulator {
   let inputTokens = 0
   let outputTokens = 0
+  let reasoningTokens = 0
   let totalCost = 0
   const models: Record<string, number> = {}
 
@@ -42,13 +56,14 @@ export function createUsageAccumulator(): UsageAccumulator {
     recordUsage(usage) {
       inputTokens += usage.promptTokens ?? 0
       outputTokens += usage.completionTokens ?? 0
+      reasoningTokens += usage.reasoningTokens ?? 0
       totalCost += usage.cost ?? 0
     },
     recordModel(modelId) {
       models[modelId] = (models[modelId] ?? 0) + 1
     },
     getTotal() {
-      return { inputTokens, outputTokens, totalCost }
+      return { inputTokens, outputTokens, reasoningTokens, totalCost }
     },
     getModels() {
       return { ...models }
@@ -204,11 +219,7 @@ export interface PermutationResult<TOutput, TExpected> {
   /** Total duration in milliseconds */
   totalDurationMs: number
   /** Token usage stats */
-  usage?: {
-    inputTokens: number
-    outputTokens: number
-    totalCost?: number
-  }
+  usage?: EvalUsage
 }
 
 /**
