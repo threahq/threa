@@ -44,7 +44,7 @@ export const InAppLinkExtension = Node.create({
   name: "inAppLink",
   group: "inline",
   inline: true,
-  selectable: false,
+  selectable: true,
   atom: true,
   marks: "_",
 

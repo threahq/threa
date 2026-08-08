@@ -30,7 +30,7 @@ export const MemoEmbedExtension = Node.create({
   name: "memoEmbed",
   group: "inline",
   inline: true,
-  selectable: false,
+  selectable: true,
   atom: true,
   marks: "_", // Allow all marks (bold, italic, etc.)
 
