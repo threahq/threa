@@ -1,4 +1,4 @@
-import type { JSONContent } from "@threa/types"
+import type { JSONContent, VoiceReplacementAckStatus, VoiceTranscriptReplacementSourceV4 } from "@threa/types"
 import { forwardRef, useEffect, useImperativeHandle, useRef } from "react"
 import { Mic, Loader2, AlertTriangle, Sparkles, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
@@ -69,14 +69,25 @@ interface MicButtonProps {
   /** Reports whether a take is in flight, so the host can keep its chrome (and this button) mounted while dictating. */
   onActiveChange?: (active: boolean) => void
   /**
-   * Insert a polished chunk into the editor with tracking so a later toggle can
-   * swap it. When omitted, the polished pipeline is essentially disabled from
-   * the editor's POV (the backend still emits the events, but nothing tracks
-   * them) — surfaces that don't support inline swap can leave this off.
+   * Insert a transcript chunk with tracking so a later formatter operation can
+   * replace it. Surfaces without inline tracking may omit this; finals then use
+   * the committed-text path and formatter operations acknowledge `missing`.
    */
-  onInsertPolishedChunk?: (args: { chunkId: string; contentJson: JSONContent }) => void
+  onInsertPolishedChunk?: (args: {
+    chunkId: string
+    contentJson: JSONContent
+    afterChunkId?: string
+    joinPrevious?: boolean
+  }) => boolean
   /** Swap a tracked chunk's text. Returns false if the user edited inside it. */
   onChunkSwap?: (args: { chunkId: string; contentJson: JSONContent }) => boolean
+  onChunksReplace?: (args: {
+    sources: VoiceTranscriptReplacementSourceV4[]
+    resultChunkId: string
+    contentJson: JSONContent
+  }) => VoiceReplacementAckStatus
+  /** Lock one locally recovered raw chunk without affecting accepted chunks. */
+  onLockChunk?: (args: { chunkId: string }) => void
   /** Drop tracking for every chunk (post-session lock, or starting a new take). */
   onLockAllChunks?: () => void
   /**
@@ -105,6 +116,8 @@ export const MicButton = forwardRef<MicButtonHandle, MicButtonProps>(function Mi
     onActiveChange,
     onInsertPolishedChunk,
     onChunkSwap,
+    onChunksReplace,
+    onLockChunk,
     onLockAllChunks,
     onGetChunkContent,
     onGetDraftContext,
@@ -139,6 +152,8 @@ export const MicButton = forwardRef<MicButtonHandle, MicButtonProps>(function Mi
     onCommittedText: onInsertText,
     onPolishedChunkInserted: onInsertPolishedChunk,
     onChunkSwap,
+    onChunksReplace,
+    onLockChunk,
     onLockAllChunks,
     onGetChunkContent,
     onGetDraftContext,

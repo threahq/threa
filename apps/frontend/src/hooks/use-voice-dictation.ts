@@ -1,10 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import { io, type Socket } from "socket.io-client"
 import {
+  VOICE_PROTOCOL_VERSION,
+  type VoiceReplacementAckStatus,
   type VoiceStartAck,
   type VoiceStoppedPayload,
-  type VoiceTranscriptDeltaV3,
-  type VoiceTranscriptPolishedV3,
+  type VoiceTranscriptDelta,
+  type VoiceTranscriptPolished,
+  type VoiceTranscriptReplacementV4,
 } from "@threa/types"
 import { voiceApi } from "@/api/voice"
 import { parseMarkdown } from "@threa/prosemirror"
@@ -13,11 +16,6 @@ import { getCachedWsConfig } from "@/lib/cached-ws-config"
 import { useDictationCoordinator, isDictationExternalHeld } from "@/contexts"
 
 export type VoiceDictationState = "idle" | "connecting" | "recording" | "stopping" | "error"
-
-// This PR keeps the current client pinned to negotiated v3. The v4 event
-// consumers replace these aliases when multi-chunk activation lands.
-type VoiceDelta = VoiceTranscriptDeltaV3
-type VoicePolishedChunk = VoiceTranscriptPolishedV3
 
 export interface DictationChunkRecord {
   /** Cumulative raw text the chunk would revert to if the toggle flips to "Show original". */
@@ -61,13 +59,25 @@ interface UseVoiceDictationOptions {
    * can swap it back to raw. The text passed is whatever the toggle currently
    * resolves to (polished by default).
    */
-  onPolishedChunkInserted?: (args: { chunkId: string; contentJson: JSONContent }) => void
+  onPolishedChunkInserted?: (args: {
+    chunkId: string
+    contentJson: JSONContent
+    afterChunkId?: string
+    joinPrevious?: boolean
+  }) => boolean
   /**
    * Swap a tracked chunk's text in the editor. Must return true if the swap
    * landed cleanly, false if the chunk was missing or the user edited inside
    * it (the hook then locks that chunk locally so the toggle stops touching it).
    */
   onChunkSwap?: (args: { chunkId: string; contentJson: JSONContent }) => boolean
+  onChunksReplace?: (args: {
+    sources: VoiceTranscriptReplacementV4["sources"]
+    resultChunkId: string
+    contentJson: JSONContent
+  }) => VoiceReplacementAckStatus
+  /** Lock one locally recovered raw chunk without affecting accepted chunks. */
+  onLockChunk?: (args: { chunkId: string }) => void
   /** Drop tracking for all polished chunks (e.g. session-expired or new take starting). */
   onLockAllChunks?: () => void
   /**
@@ -231,6 +241,26 @@ export function noAudioWarningMessage(args: { deviceLabel: string | null; everHa
     : `We're not hearing audio from ${device} — try a different input device`
 }
 
+function appendTranscriptText(base: string, suffix: string, joinPrevious: boolean): string {
+  if (!base || !suffix || joinPrevious || /\s$/u.test(base) || /^\s/u.test(suffix)) return `${base}${suffix}`
+  return `${base} ${suffix}`
+}
+
+function appendCanonicalContent(base: JSONContent, suffix: JSONContent, joinPrevious: boolean): JSONContent {
+  const before = [...(base.content ?? [])]
+  const after = [...(suffix.content ?? [])]
+  const last = before.at(-1)
+  const first = after[0]
+  if (last?.type === "paragraph" && first?.type === "paragraph") {
+    const left = [...(last.content ?? [])]
+    const right = [...(first.content ?? [])]
+    if (!joinPrevious && left.length && right.length) left.push({ type: "text", text: " " })
+    before[before.length - 1] = { ...last, content: [...left, ...right] }
+    after.shift()
+  }
+  return { type: "doc", content: [...before, ...after] }
+}
+
 function detectSupport(): { supported: boolean; reason: string | null } {
   if (typeof window === "undefined") return { supported: false, reason: "Voice input is unavailable here" }
   if (!navigator.mediaDevices?.getUserMedia) {
@@ -284,6 +314,8 @@ export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDi
     onCommittedText,
     onPolishedChunkInserted,
     onChunkSwap,
+    onChunksReplace,
+    onLockChunk,
     onLockAllChunks,
     onGetChunkContent,
     onGetDraftContext,
@@ -346,6 +378,10 @@ export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDi
   onPolishedChunkInsertedRef.current = onPolishedChunkInserted
   const onChunkSwapRef = useRef(onChunkSwap)
   onChunkSwapRef.current = onChunkSwap
+  const onChunksReplaceRef = useRef(onChunksReplace)
+  onChunksReplaceRef.current = onChunksReplace
+  const onLockChunkRef = useRef(onLockChunk)
+  onLockChunkRef.current = onLockChunk
   const onLockAllChunksRef = useRef(onLockAllChunks)
   onLockAllChunksRef.current = onLockAllChunks
   const onGetChunkContentRef = useRef(onGetChunkContent)
@@ -366,6 +402,28 @@ export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDi
   // The session-wide chunkId for the active take, set on the first final
   // delta the backend tags. Reset when a new take starts.
   const sessionChunkIdRef = useRef<string | null>(null)
+  const latestRawRevisionByChunkRef = useRef(new Map<string, number>())
+  const operationStatusesRef = useRef(new Map<string, VoiceReplacementAckStatus>())
+  const chunkAliasesRef = useRef(new Map<string, { resultChunkId: string; throughRevision: number }>())
+  const unavailableV4ChunksRef = useRef(new Set<string>())
+
+  const resetV4State = useCallback(() => {
+    latestRawRevisionByChunkRef.current.clear()
+    operationStatusesRef.current.clear()
+    chunkAliasesRef.current.clear()
+    unavailableV4ChunksRef.current.clear()
+  }, [])
+  const resolveChunkAlias = useCallback((chunkId: string): string => {
+    const seen = new Set<string>()
+    let current = chunkId
+    while (!seen.has(current)) {
+      seen.add(current)
+      const alias = chunkAliasesRef.current.get(current)
+      if (!alias) break
+      current = alias.resultChunkId
+    }
+    return current
+  }, [])
 
   // Only one take dictates at a time across all composers. Starting a take stops
   // whichever was active first (flushing its tail). `coordinatedStop` is a stable
@@ -392,14 +450,13 @@ export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDi
       updateInterim("")
       return false
     }
-    if (onPolishedChunkInsertedRef.current) {
-      onPolishedChunkInsertedRef.current({
-        chunkId: `local_recovery_${++recoveryChunkSequenceRef.current}`,
-        contentJson: parseMarkdown(pending),
-      })
-    } else {
-      onCommittedTextRef.current(pending)
-    }
+    const chunkId = `local_recovery_${++recoveryChunkSequenceRef.current}`
+    const inserted = onPolishedChunkInsertedRef.current?.({
+      chunkId,
+      contentJson: parseMarkdown(pending),
+    })
+    if (inserted) onLockChunkRef.current?.({ chunkId })
+    else onCommittedTextRef.current(pending)
     updateInterim("")
     return true
   }, [updateInterim])
@@ -498,10 +555,11 @@ export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDi
     socketRef.current?.disconnect()
     socketRef.current = null
     sessionIdRef.current = null
+    resetV4State()
     setMaxDurationMs(null)
     updateInterim("")
     coordinator.deactivate(coordinatedStop)
-  }, [teardownAudio, updateInterim, coordinator, coordinatedStop])
+  }, [teardownAudio, updateInterim, coordinator, coordinatedStop, resetV4State])
 
   // Drop tracking for every polished chunk: tell the editor to drop its
   // decorations, clear our local map, and reset the toggle. Used by the
@@ -517,20 +575,26 @@ export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDi
     sessionChunkIdRef.current = null
   }, [])
 
+  const scheduleChunkLock = useCallback(() => {
+    if (lockTimerRef.current !== null) return
+    lockTimerRef.current = setTimeout(() => {
+      lockTimerRef.current = null
+      lockAllChunks()
+    }, POST_SESSION_LOCK_MS)
+  }, [lockAllChunks])
+
   const fail = useCallback(
     (message: string) => {
       // The preview is view-only editor decoration. Commit it to the document
       // before teardown clears the decoration so a transport/provider failure
       // can never erase words the user was already looking at.
       flushInterim()
-      // Recovery chunks have no raw/polished pair to toggle. Drop editor and
-      // hook tracking while leaving every inserted character in the document.
-      lockAllChunks()
       setError(message)
       setState("error")
       teardown()
+      scheduleChunkLock()
     },
-    [flushInterim, lockAllChunks, teardown]
+    [flushInterim, teardown, scheduleChunkLock]
   )
 
   const start = useCallback(() => {
@@ -541,6 +605,7 @@ export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDi
     if (isDictationExternalHeld()) return
 
     resetVoiceTakeProtocol({ acceptedRevision: acceptedRevisionRef, protocolVersion: protocolVersionRef })
+    resetV4State()
 
     // Take the single active slot, flushing+stopping any other composer's take.
     coordinator.activate(coordinatedStop)
@@ -684,10 +749,66 @@ export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDi
         })
         socketRef.current = socket
 
-        socket.on("voice:transcript:delta", (delta: VoiceDelta) => {
+        socket.on("voice:transcript:delta", (delta: VoiceTranscriptDelta) => {
+          if (delta.voiceSessionId !== sessionIdRef.current) return
+          if (protocolVersionRef.current >= 4 && "protocolVersion" in delta && delta.protocolVersion === 4) {
+            if (!delta.isFinal) {
+              updateInterim(delta.text)
+              return
+            }
+            const alias = chunkAliasesRef.current.get(delta.chunkId)
+            if (alias && delta.revision <= alias.throughRevision) return
+            const chunkId = resolveChunkAlias(delta.chunkId)
+            const observedRevision = latestRawRevisionByChunkRef.current.get(chunkId)
+            if (observedRevision !== undefined && delta.revision <= observedRevision) return
+            const afterChunkId = delta.afterChunkId ? resolveChunkAlias(delta.afterChunkId) : undefined
+            const inserted =
+              onPolishedChunkInsertedRef.current?.({
+                chunkId,
+                afterChunkId,
+                joinPrevious: delta.joinPrevious,
+                contentJson: delta.contentJson,
+              }) ?? false
+            if (!inserted) {
+              onCommittedTextRef.current(delta.text)
+              latestRawRevisionByChunkRef.current.set(chunkId, delta.revision)
+              unavailableV4ChunksRef.current.add(delta.chunkId)
+              unavailableV4ChunksRef.current.add(chunkId)
+              updateInterim("")
+              return
+            }
+            latestRawRevisionByChunkRef.current.set(chunkId, delta.revision)
+            if (alias) {
+              setChunks((prev) => {
+                const record = prev.get(chunkId)
+                if (!record) return prev
+                const rawContentJson = appendCanonicalContent(
+                  record.rawContentJson!,
+                  delta.contentJson,
+                  !!delta.joinPrevious
+                )
+                const polishedContentJson = appendCanonicalContent(
+                  record.polishedContentJson!,
+                  delta.contentJson,
+                  !!delta.joinPrevious
+                )
+                const next = new Map(prev)
+                next.set(chunkId, {
+                  ...record,
+                  raw: appendTranscriptText(record.raw, delta.text, !!delta.joinPrevious),
+                  polished: appendTranscriptText(record.polished, delta.text, !!delta.joinPrevious),
+                  rawContentJson,
+                  polishedContentJson,
+                })
+                return next
+              })
+            }
+            updateInterim("")
+            return
+          }
           // Ignore deltas from a session we've already moved past so a stale
           // socket can't leak text into a new take (plan §3).
-          if (delta.voiceSessionId !== sessionIdRef.current || delta.revision < acceptedRevisionRef.current) return
+          if (delta.revision < acceptedRevisionRef.current) return
           acceptedRevisionRef.current = delta.revision
           if (!delta.isFinal) {
             // Running hypothesis for the current segment — each partial replaces
@@ -707,70 +828,165 @@ export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDi
             // decoration is the source of truth and we read it via
             // onGetChunkText when we need the canonical expectedText.
             if (!sessionChunkIdRef.current) sessionChunkIdRef.current = delta.chunkId
-            onPolishedChunkInsertedRef.current?.({
+            const inserted = onPolishedChunkInsertedRef.current?.({
               chunkId: delta.chunkId,
               contentJson: delta.contentJson ?? parseMarkdown(delta.text),
             })
+            if (!inserted) onCommittedTextRef.current(delta.text)
           } else if (delta.text) {
             onCommittedTextRef.current(delta.text)
           }
           updateInterim("")
         })
-        socket.on("voice:transcript:polished", (chunk: VoicePolishedChunk) => {
-          // Stale chunk from a previous take — ignore it so polishing latency
-          // can't leak text into a new session.
-          if (chunk.voiceSessionId !== sessionIdRef.current || chunk.revision < acceptedRevisionRef.current) return
-          acceptedRevisionRef.current = chunk.revision
-          if (chunk.chunkId !== sessionChunkIdRef.current) return
-          // Swap the editor's session chunk to whichever mode the toggle is
-          // showing right now (the toggle can be flipped mid-session). If the
-          // editor accepts, update bookkeeping; if it rejects (the user edited
-          // inside the chunk), lock and forget — the user's edit wins.
-          //
-          // The expectedText comes from the editor itself rather than a
-          // hook-side prediction: ProseMirror's mapping is the source of
-          // truth for what's currently inside the tracked range (including
-          // any spaces the extension absorbed when extending the chunk).
-          const rawContentJson = chunk.rawContentJson ?? parseMarkdown(chunk.raw)
-          const polishedContentJson = chunk.polishedContentJson ?? parseMarkdown(chunk.polished)
-          const target = showOriginalRef.current ? rawContentJson : polishedContentJson
-          const current = onGetChunkContentRef.current?.(chunk.chunkId) ?? null
-          let accepted = current !== null
-          if (accepted && JSON.stringify(target) !== JSON.stringify(current)) {
-            accepted = onChunkSwapRef.current?.({ chunkId: chunk.chunkId, contentJson: target }) ?? false
-          }
-          setChunks((prev) => {
-            const next = new Map(prev)
-            if (!accepted) {
-              const existing = prev.get(chunk.chunkId)
-              if (existing) next.set(chunk.chunkId, { ...existing, locked: true })
-              return next
+        socket.on(
+          "voice:transcript:polished",
+          (
+            chunk: VoiceTranscriptPolished,
+            acknowledge?: (ack: { operationId: string; status: VoiceReplacementAckStatus }) => void
+          ) => {
+            if ("protocolVersion" in chunk && chunk.protocolVersion === 4) {
+              const reply = (status: VoiceReplacementAckStatus) =>
+                acknowledge?.({ operationId: chunk.operationId, status })
+              const recorded = operationStatusesRef.current.get(chunk.operationId)
+              if (recorded) {
+                reply(recorded)
+                return
+              }
+              let status: VoiceReplacementAckStatus = "stale"
+              if (chunk.voiceSessionId === sessionIdRef.current && protocolVersionRef.current >= 4) {
+                const unavailable = chunk.sources.some(
+                  (source) =>
+                    unavailableV4ChunksRef.current.has(source.chunkId) ||
+                    unavailableV4ChunksRef.current.has(resolveChunkAlias(source.chunkId))
+                )
+                if (unavailable) status = "missing"
+                const exact =
+                  !unavailable &&
+                  chunk.sources.every(
+                    (source) =>
+                      latestRawRevisionByChunkRef.current.get(resolveChunkAlias(source.chunkId)) ===
+                      source.throughRevision
+                  )
+                if (exact) {
+                  const target = showOriginalRef.current ? chunk.rawContentJson : chunk.polishedContentJson
+                  status =
+                    onChunksReplaceRef.current?.({
+                      sources: chunk.sources.map((source) => ({
+                        ...source,
+                        chunkId: resolveChunkAlias(source.chunkId),
+                      })),
+                      resultChunkId: chunk.resultChunkId,
+                      contentJson: target,
+                    }) ?? "missing"
+                  if (status === "locked" && onGetChunkContentRef.current) {
+                    const sourceIds = chunk.sources.map((source) => resolveChunkAlias(source.chunkId))
+                    setChunks((prev) => {
+                      const next = new Map(prev)
+                      for (const sourceId of sourceIds) {
+                        const record = next.get(sourceId)
+                        if (record && !onGetChunkContentRef.current?.(sourceId))
+                          next.set(sourceId, { ...record, locked: true })
+                      }
+                      return next
+                    })
+                  }
+                  if (status === "applied") {
+                    const nextRecord: DictationChunkRecord = {
+                      raw: chunk.raw,
+                      rawContentJson: chunk.rawContentJson,
+                      polished: chunk.polished,
+                      polishedContentJson: chunk.polishedContentJson,
+                      currentlyShowing: showOriginalRef.current ? "raw" : "polished",
+                      locked: false,
+                    }
+                    const sourceIds = chunk.sources.map((source) => resolveChunkAlias(source.chunkId))
+                    for (const [index, source] of chunk.sources.entries()) {
+                      const sourceId = sourceIds[index]
+                      chunkAliasesRef.current.set(source.chunkId, {
+                        resultChunkId: chunk.resultChunkId,
+                        throughRevision: source.throughRevision,
+                      })
+                      chunkAliasesRef.current.set(sourceId, {
+                        resultChunkId: chunk.resultChunkId,
+                        throughRevision: source.throughRevision,
+                      })
+                      latestRawRevisionByChunkRef.current.delete(sourceId)
+                    }
+                    latestRawRevisionByChunkRef.current.set(chunk.resultChunkId, chunk.throughRevision)
+                    setChunks((prev) => {
+                      const next = new Map(prev)
+                      for (const sourceId of sourceIds) next.delete(sourceId)
+                      next.set(chunk.resultChunkId, nextRecord)
+                      return next
+                    })
+                  }
+                }
+              }
+              operationStatusesRef.current.set(chunk.operationId, status)
+              reply(status)
+              return
             }
-            next.set(chunk.chunkId, {
-              raw: chunk.raw,
-              rawContentJson,
-              polished: chunk.polished,
-              polishedContentJson,
-              currentlyShowing: showOriginalRef.current ? "raw" : "polished",
-              locked: false,
+            const legacyChunk = chunk as Exclude<VoiceTranscriptPolished, VoiceTranscriptReplacementV4>
+            // Stale chunk from a previous take — ignore it so polishing latency
+            // can't leak text into a new session.
+            if (
+              legacyChunk.voiceSessionId !== sessionIdRef.current ||
+              legacyChunk.revision < acceptedRevisionRef.current
+            )
+              return
+            acceptedRevisionRef.current = legacyChunk.revision
+            if (legacyChunk.chunkId !== sessionChunkIdRef.current) return
+            // Swap the editor's session chunk to whichever mode the toggle is
+            // showing right now (the toggle can be flipped mid-session). If the
+            // editor accepts, update bookkeeping; if it rejects (the user edited
+            // inside the chunk), lock and forget — the user's edit wins.
+            //
+            // The expectedText comes from the editor itself rather than a
+            // hook-side prediction: ProseMirror's mapping is the source of
+            // truth for what's currently inside the tracked range (including
+            // any spaces the extension absorbed when extending the chunk).
+            const rawContentJson = legacyChunk.rawContentJson ?? parseMarkdown(legacyChunk.raw)
+            const polishedContentJson = legacyChunk.polishedContentJson ?? parseMarkdown(legacyChunk.polished)
+            const target = showOriginalRef.current ? rawContentJson : polishedContentJson
+            const current = onGetChunkContentRef.current?.(legacyChunk.chunkId) ?? null
+            let accepted = current !== null
+            if (accepted && JSON.stringify(target) !== JSON.stringify(current)) {
+              accepted = onChunkSwapRef.current?.({ chunkId: legacyChunk.chunkId, contentJson: target }) ?? false
+            }
+            setChunks((prev) => {
+              const next = new Map(prev)
+              if (!accepted) {
+                const existing = prev.get(legacyChunk.chunkId)
+                if (existing) next.set(legacyChunk.chunkId, { ...existing, locked: true })
+                return next
+              }
+              next.set(legacyChunk.chunkId, {
+                raw: legacyChunk.raw,
+                rawContentJson,
+                polished: legacyChunk.polished,
+                polishedContentJson,
+                currentlyShowing: showOriginalRef.current ? "raw" : "polished",
+                locked: false,
+              })
+              return next
             })
-            return next
-          })
-          if (!accepted) sessionChunkIdRef.current = null
-        })
+            if (!accepted) sessionChunkIdRef.current = null
+          }
+        )
         socket.on("voice:transcription:error", (e: { code?: string }) => {
           if (socketRef.current === socket) fail(friendlyTranscriptionError(e?.code))
         })
         socket.on("voice:stopped", (payload: VoiceStoppedPayload) => {
           if (socketRef.current !== socket) return
-          // A provider/relay terminal event is allowed to arrive without a
-          // final delta. Preserve the last visible hypothesis before teardown.
-          // On the normal path the final delta already cleared this, so the
-          // flush is an idempotent no-op rather than a duplicate insertion.
-          const recoveredInterim = flushInterim()
-          if (recoveredInterim || (payload.outcome !== "success" && payload.outcome !== "empty_input")) lockAllChunks()
+          // A provider/relay terminal event can arrive without a final delta.
+          // Preserve the visible hypothesis first; a normal final already
+          // cleared it, making this an idempotent no-op.
+          flushInterim()
+          if (protocolVersionRef.current < 4 && payload.outcome !== "success" && payload.outcome !== "empty_input")
+            lockAllChunks()
           teardown()
           setState("idle")
+          scheduleChunkLock()
         })
         socket.on("disconnect", () => {
           if (socketRef.current === socket && workletRef.current) fail("Dictation connection lost")
@@ -787,7 +1003,13 @@ export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDi
 
         socket.emit(
           "voice:start",
-          { workspaceId, voiceSessionId: session.voiceSessionId, draftBefore, draftAfter },
+          {
+            workspaceId,
+            voiceSessionId: session.voiceSessionId,
+            draftBefore,
+            draftAfter,
+            maxProtocolVersion: VOICE_PROTOCOL_VERSION,
+          },
           (result: VoiceStartAck) => {
             // The user stopped (or we tore down) while this ACK was in flight —
             // don't resurrect a dead take into the "recording" state.
@@ -854,9 +1076,10 @@ export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDi
       // The ack callback fires on the server's confirmation or on the timeout —
       // either way we disconnect and return to idle so the UI never wedges.
       const recover = () => {
-        if (flushInterim()) lockAllChunks()
+        flushInterim()
         teardown()
         setState("idle")
+        scheduleChunkLock()
       }
       if (protocolVersionRef.current >= 2)
         socket.timeout(FORMAT_STOP_ACK_TIMEOUT_MS).emit("voice:stop", { mode: "format" }, recover)
@@ -864,18 +1087,11 @@ export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDi
     } else {
       // Defensive local recovery for a take whose socket disappeared before
       // stop could be emitted. The visible preview still belongs to the user.
-      if (flushInterim()) lockAllChunks()
+      flushInterim()
       setState("idle")
+      scheduleChunkLock()
     }
-    // The take is over — start the post-session lock countdown. The user gets a
-    // grace window to flip the toggle and read what landed before the chunks
-    // freeze as plain text. A new take or another stop resets the timer.
-    if (lockTimerRef.current !== null) clearTimeout(lockTimerRef.current)
-    lockTimerRef.current = setTimeout(() => {
-      lockTimerRef.current = null
-      lockAllChunks()
-    }, POST_SESSION_LOCK_MS)
-  }, [state, teardownAudio, flushInterim, teardown, coordinator, coordinatedStop, lockAllChunks])
+  }, [state, teardownAudio, flushInterim, teardown, coordinator, coordinatedStop, scheduleChunkLock])
   // Keep the stable coordinator handle pointed at the latest stop().
   stopRef.current = stop
 
@@ -944,6 +1160,7 @@ export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDi
       const socket = socketRef.current
       socketRef.current = null
       sessionIdRef.current = null
+      resetV4State()
       if (socket) {
         if (protocolVersionRef.current >= 2) {
           socket.timeout(STOP_ACK_TIMEOUT_MS).emit("voice:stop", { mode: "send_as_is" }, () => socket.disconnect())
@@ -961,7 +1178,7 @@ export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDi
       lockTimerRef.current !== null
     )
       lockAllChunks()
-  }, [state, flushInterim, teardownAudio, coordinator, coordinatedStop, lockAllChunks])
+  }, [state, flushInterim, teardownAudio, coordinator, coordinatedStop, lockAllChunks, resetV4State])
 
   const abort = useCallback(() => {
     startGenerationRef.current++
@@ -971,6 +1188,7 @@ export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDi
     const sessionId = sessionIdRef.current
     socketRef.current = null
     sessionIdRef.current = null
+    resetV4State()
     if (socket) {
       if (protocolVersionRef.current >= 2) socket.emit("voice:stop", { mode: "abort" })
       socket.disconnect()
@@ -980,7 +1198,16 @@ export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDi
     coordinator.deactivate(coordinatedStop)
     lockAllChunks()
     setState("idle")
-  }, [teardownAudio, updateInterim, workspaceId, coordinator, coordinatedStop, dependencies, lockAllChunks])
+  }, [
+    teardownAudio,
+    updateInterim,
+    workspaceId,
+    coordinator,
+    coordinatedStop,
+    dependencies,
+    lockAllChunks,
+    resetV4State,
+  ])
 
   // Backgrounding the tab throttles the rAF meter and can suspend capture or
   // networking entirely. Preserve the visible hypothesis synchronously and end

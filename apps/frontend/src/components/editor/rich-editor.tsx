@@ -60,7 +60,12 @@ import { usePreferences } from "@/contexts"
 import { getEffectiveEditorBindings } from "@/lib/keyboard-shortcuts"
 import type { UploadResult } from "@/hooks/use-attachments"
 import type { AttachmentReferenceAttrs } from "./attachment-reference-extension"
-import type { MessageSendMode, JSONContent } from "@threa/types"
+import type {
+  MessageSendMode,
+  JSONContent,
+  VoiceReplacementAckStatus,
+  VoiceTranscriptReplacementSourceV4,
+} from "@threa/types"
 import type { MentionStreamContext } from "@/hooks/use-mentionables"
 
 export interface RichEditorHandle {
@@ -82,13 +87,23 @@ export interface RichEditorHandle {
    * later be swapped (Show original / Show polished) or locked when the user
    * edits inside it.
    */
-  insertDictationChunk(args: { chunkId: string; contentJson: JSONContent }): void
+  insertDictationChunk(args: {
+    chunkId: string
+    contentJson: JSONContent
+    afterChunkId?: string
+    joinPrevious?: boolean
+  }): boolean
   /**
    * Swap a tracked chunk's text in place. Returns true if the swap happened,
    * false if the chunk was missing or the user edited inside it (the chunk is
    * locked in that case and the swap is skipped).
    */
   replaceDictationChunk?(args: { chunkId: string; contentJson: JSONContent }): boolean
+  replaceDictationChunks?(args: {
+    sources: VoiceTranscriptReplacementSourceV4[]
+    resultChunkId: string
+    contentJson: JSONContent
+  }): VoiceReplacementAckStatus
   /** Drop tracking for a single chunk (leaves its text in the doc). */
   lockDictationChunk(args: { chunkId: string }): void
   /** Drop tracking for every chunk. */
@@ -1123,9 +1138,9 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
   )
 
   const insertDictationChunk = useCallback(
-    ({ chunkId, contentJson }: { chunkId: string; contentJson: JSONContent }) => {
-      if (!editor || editor.isDestroyed) return
-      editor.chain().focus().insertDictationChunk({ chunkId, contentJson }).run()
+    (args: { chunkId: string; contentJson: JSONContent; afterChunkId?: string; joinPrevious?: boolean }) => {
+      if (!editor || editor.isDestroyed) return false
+      return editor.chain().focus().insertDictationChunk(args).run()
     },
     [editor]
   )
@@ -1134,6 +1149,20 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
     ({ chunkId, contentJson }: { chunkId: string; contentJson: JSONContent }) => {
       if (!editor || editor.isDestroyed) return false
       return editor.chain().replaceDictationChunk({ chunkId, contentJson }).run()
+    },
+    [editor]
+  )
+
+  const replaceDictationChunks = useCallback(
+    (args: {
+      sources: VoiceTranscriptReplacementSourceV4[]
+      resultChunkId: string
+      contentJson: JSONContent
+    }): VoiceReplacementAckStatus => {
+      if (!editor || editor.isDestroyed) return "missing"
+      let status: VoiceReplacementAckStatus = "invalid"
+      editor.commands.replaceDictationChunks({ ...args, onResult: (result) => (status = result) })
+      return status
     },
     [editor]
   )
@@ -1173,6 +1202,7 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
       setDictationInterim,
       insertDictationChunk,
       replaceDictationChunk,
+      replaceDictationChunks,
       lockDictationChunk,
       lockAllDictationChunks,
       getDictationChunkContent,
@@ -1190,6 +1220,7 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
       setDictationInterim,
       insertDictationChunk,
       replaceDictationChunk,
+      replaceDictationChunks,
       lockDictationChunk,
       lockAllDictationChunks,
       getDictationChunkContent,
