@@ -212,7 +212,7 @@ describe("loadConfig", () => {
       },
       IDENTITY
     )
-    if ("config" in fromFile) expect(fromFile.config.traceMode).toBe("commands")
+    expect(fromFile).toEqual({ config: expect.objectContaining({ traceMode: "commands" }) })
 
     const envWins = loadConfig(
       {
@@ -226,7 +226,7 @@ describe("loadConfig", () => {
       },
       IDENTITY
     )
-    if ("config" in envWins) expect(envWins.config.traceMode).toBe("headline")
+    expect(envWins).toEqual({ config: expect.objectContaining({ traceMode: "headline" }) })
   })
 
   test("rejects an unsupported trace mode", () => {
