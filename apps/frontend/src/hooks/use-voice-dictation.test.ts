@@ -339,6 +339,13 @@ describe("useVoiceDictation lifecycle", () => {
 
     expect(order).toEqual(["insert", "lock"])
     expect(inserted).toHaveBeenCalledOnce()
+    expect(inserted).toHaveBeenCalledWith({
+      chunkId: "local_recovery_1",
+      contentJson: {
+        type: "doc",
+        content: [{ type: "paragraph", content: [{ type: "text", text: "keep this tail" }] }],
+      },
+    })
     expect(harness.result.current.interimText).toBe("")
     expect(harness.result.current.state).toBe("idle")
   })
@@ -367,6 +374,13 @@ describe("useVoiceDictation lifecycle", () => {
     }
 
     expect(inserted).toHaveBeenCalledOnce()
+    expect(inserted).toHaveBeenCalledWith({
+      chunkId: "local_recovery_1",
+      contentJson: {
+        type: "doc",
+        content: [{ type: "paragraph", content: [{ type: "text", text: "survive the network switch" }] }],
+      },
+    })
     expect(harness.sockets[0].stopPayloads).toEqual([{ mode: "send_as_is" }])
     expect(harness.result.current.state).toBe("idle")
   })
