@@ -99,6 +99,7 @@ function arrange(
   const activeClaim = { id: "binv_1", responseStreamId: "stream_thread" }
   const findActiveClaimForUpdate = mock(async () => (claimCompleted ? activeClaim : null))
   const validateClaimSourceForCompletion = mock(async () => true)
+  const reconcileStaleCompletionInTransaction = mock(async () => {})
   const completeInvocationInTransaction = mock(async (_db: unknown, _params: unknown) =>
     claimCompleted ? activeClaim : null
   )
@@ -114,6 +115,7 @@ function arrange(
     botRuntimeService: {
       findActiveClaimForUpdate,
       validateClaimSourceForCompletion,
+      reconcileStaleCompletionInTransaction,
       completeInvocationInTransaction,
     } as unknown as PublicApiDeps["botRuntimeService"],
     labelService: {} as PublicApiDeps["labelService"],
@@ -258,7 +260,7 @@ describe("completeBotInvocationSealed", () => {
         req({ reply: { messageId: "msg_reply", ciphertext: "c2VhbGVk", envelope: REPLY_ENVELOPE } }),
         res
       )
-    ).rejects.toMatchObject({ status: 404, code: "NOT_FOUND" })
+    ).rejects.toMatchObject({ status: 409, code: "INVOCATION_INPUT_STALE" })
 
     expect({
       messages: arranged.createMessageInTransaction.mock.calls.length,

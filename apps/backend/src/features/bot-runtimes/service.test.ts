@@ -458,9 +458,10 @@ describe("BotRuntimeService outbox emission", () => {
         authorId: "usr_owner",
         authorType: "user",
       })
-      spyOn(BotInvocationRepository, "cancelActiveBySource").mockResolvedValue([
-        makeInvocation({ status: "cancelled", cancellationReason: "source_deleted" }),
-      ])
+      spyOn(BotInvocationRepository, "cancelActiveBySource").mockResolvedValue({
+        transitioned: [makeInvocation({ status: "cancelled", cancellationReason: "source_deleted" })],
+        sessionRepairCandidates: [],
+      })
       const completedAt = new Date("2026-05-26T12:01:00Z")
       const updateStatus = spyOn(AgentSessionRepository, "updateStatus").mockResolvedValue({
         id: "inv_1",
@@ -523,7 +524,7 @@ describe("BotRuntimeService outbox emission", () => {
         status: SessionStatuses.SUPERSEDED,
       } as never)
       const insertEvent = spyOn(StreamEventRepository, "insert")
-      const insertOutbox = spyOn(OutboxRepository, "insert")
+      const insertOutbox = spyOn(OutboxRepository, "insert").mockResolvedValue(undefined as never)
 
       await new BotRuntimeService({ pool: fakePool }).reconcileInvocationSource({
         workspaceId: "ws_1",
@@ -536,13 +537,12 @@ describe("BotRuntimeService outbox emission", () => {
         SessionStatuses.SUPERSEDED,
         expect.objectContaining({ onlyIfStatus: SessionStatuses.RUNNING })
       )
-      expect({
-        lifecycleEvents: insertEvent.mock.calls.length,
-        lifecycleOutbox: insertOutbox.mock.calls.length,
-      }).toEqual({
-        lifecycleEvents: 0,
-        lifecycleOutbox: 0,
-      })
+      expect(insertEvent).not.toHaveBeenCalled()
+      expect(insertOutbox).toHaveBeenCalledWith(
+        fakeQuerier,
+        "bot_invocation:cancelled",
+        expect.objectContaining({ invocationId: "inv_1", sourceRevision: 1, reason: "routing_changed" })
+      )
     })
 
     it("inserts reconciled actors in canonical actor-source lock order", async () => {
@@ -757,6 +757,7 @@ describe("BotRuntimeService outbox emission", () => {
       const findSpy = spyOn(BotInvocationRepository, "findBootstrapInvocations").mockResolvedValue({
         available: [makeInvocation()],
         ownedClaims: [],
+        recentCancellations: [],
       })
       spyOn(StreamActiveActorRepository, "findActiveForBot").mockResolvedValue([actor])
       spyOn(BotRuntimeSessionLinkRepository, "findActiveByBotInstance").mockResolvedValue([link])
@@ -778,10 +779,40 @@ describe("BotRuntimeService outbox emission", () => {
       expect(findSpy.mock.calls[0]?.[1]).toMatchObject({ maxAttempts: BOT_CLAIM_MAX_ATTEMPTS })
     })
 
+    it("does not overlap repository reads on the snapshot PoolClient", async () => {
+      patchWithClient()
+      let active = false
+      const guarded = async <T>(value: T): Promise<T> => {
+        if (active) throw new Error("overlapping PoolClient query")
+        active = true
+        await new Promise((resolve) => setTimeout(resolve, 1))
+        active = false
+        return value
+      }
+      spyOn(BotInvocationRepository, "findBootstrapInvocations").mockImplementation(() =>
+        guarded({ available: [], ownedClaims: [], recentCancellations: [] })
+      )
+      spyOn(StreamActiveActorRepository, "findActiveForBot").mockImplementation(() => guarded([]))
+      spyOn(BotRuntimeSessionLinkRepository, "findActiveByBotInstance").mockImplementation(() => guarded([]))
+
+      await expect(
+        new BotRuntimeService({ pool: fakePool }).getBootstrapForRuntime({
+          workspaceId: "ws_1",
+          botId: "bot_alice",
+          instanceId: "inst_42",
+          supportedCapabilities: ["active-scratchpad"],
+        })
+      ).resolves.toMatchObject({ available: [], ownedClaims: [] })
+    })
+
     it("opens a REPEATABLE READ READ ONLY transaction so all reads share a snapshot", async () => {
       patchWithClient()
       const querySpy = spyOn(fakeQuerier, "query") as unknown as { mock: { calls: unknown[][] } }
-      spyOn(BotInvocationRepository, "findBootstrapInvocations").mockResolvedValue({ available: [], ownedClaims: [] })
+      spyOn(BotInvocationRepository, "findBootstrapInvocations").mockResolvedValue({
+        available: [],
+        ownedClaims: [],
+        recentCancellations: [],
+      })
       spyOn(StreamActiveActorRepository, "findActiveForBot").mockResolvedValue([])
       spyOn(BotRuntimeSessionLinkRepository, "findActiveByBotInstance").mockResolvedValue([])
 
@@ -803,6 +834,7 @@ describe("BotRuntimeService outbox emission", () => {
       const findSpy = spyOn(BotInvocationRepository, "findBootstrapInvocations").mockResolvedValue({
         available: [],
         ownedClaims: [],
+        recentCancellations: [],
       })
       spyOn(StreamActiveActorRepository, "findActiveForBot").mockResolvedValue([])
       spyOn(BotRuntimeSessionLinkRepository, "findActiveByBotInstance").mockResolvedValue([])
@@ -829,6 +861,7 @@ describe("BotRuntimeService outbox emission", () => {
       const findSpy = spyOn(BotInvocationRepository, "findBootstrapInvocations").mockResolvedValue({
         available: [],
         ownedClaims: [],
+        recentCancellations: [],
       })
       spyOn(StreamActiveActorRepository, "findActiveForBot").mockResolvedValue([])
       spyOn(BotRuntimeSessionLinkRepository, "findActiveByBotInstance").mockResolvedValue([])

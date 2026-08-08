@@ -445,7 +445,17 @@ describe("bot invocation canonical source mutations", () => {
       workspaceId: workspace,
       sourceMessageId: message.id,
       sourceMessageRevision: 2,
-      desiredRoutes: [{ actorType: "bot", actorId: bot, trigger: "mention" }],
+      desiredRoutes: [
+        {
+          actorType: "bot",
+          actorId: bot,
+          trigger: "mention",
+          activeStreamId: stream,
+          responseStreamId: stream,
+          targetInstanceId: null,
+          targetRuntimeSessionId: null,
+        },
+      ],
     })
     expect([cancelled.map((row) => row.id), mention.invocation.status, active.invocation.id]).toEqual([
       [active.invocation.id],
@@ -713,6 +723,7 @@ describe("bot invocation canonical source mutations", () => {
         invocationId: claimed!.id,
         instanceId: instance,
         claimToken: "completion-vs-reconciliation",
+        sourceRevision: claimed!.claimedSourceMessageRevision!,
       })
       await completer.query("COMMIT")
       committed = true
@@ -790,6 +801,7 @@ describe("bot invocation canonical source mutations", () => {
         invocationId: claimed!.id,
         instanceId: instance,
         claimToken: "completion-first",
+        sourceRevision: claimed!.claimedSourceMessageRevision!,
       })
       await completer.query("COMMIT")
       expect(completed?.status).toBe("completed")
@@ -890,6 +902,7 @@ describe("bot invocation canonical source mutations", () => {
         invocationId: claimed!.id,
         instanceId: instance,
         claimToken: "claim-token",
+        sourceRevision: 1,
       })
     ).toBeNull()
     const cancelled = await BotInvocationRepository.cancelActiveBySource(pool, {
@@ -897,6 +910,6 @@ describe("bot invocation canonical source mutations", () => {
       sourceMessageId: message.id,
       reason: "source_deleted",
     })
-    expect(cancelled.map((row) => row.cancellationReason)).toEqual(["source_deleted"])
+    expect(cancelled.transitioned.map((row) => row.cancellationReason)).toEqual(["source_deleted"])
   })
 })

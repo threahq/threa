@@ -69,6 +69,7 @@ function makeBootstrap(
   overrides: {
     available?: BotInvocation[]
     ownedClaims?: BotInvocation[]
+    recentCancellations?: never[]
     activeActorByStream?: StreamActiveActor[]
     activeSessionLinks?: BotRuntimeSessionLink[]
     serverGeneratedAt?: Date
@@ -78,6 +79,7 @@ function makeBootstrap(
     serverGeneratedAt: overrides.serverGeneratedAt ?? new Date("2026-05-26T12:00:00Z"),
     available: overrides.available ?? [],
     ownedClaims: overrides.ownedClaims ?? [],
+    recentCancellations: overrides.recentCancellations ?? [],
     activeActorByStream: overrides.activeActorByStream ?? [],
     activeSessionLinks: overrides.activeSessionLinks ?? [],
   }
@@ -415,6 +417,18 @@ describe("attachBotNamespace bot:hello", () => {
     expect(call.sinceCursor.toISOString()).toBe("2026-05-26T11:00:00.000Z")
   })
 
+  it("treats omitted hello manifest as an explicit legacy registration", async () => {
+    const { socket, botRuntimeService } = setup()
+    const ack = mock((_r: BotHelloResponse) => {})
+
+    await socket.trigger("bot:hello", VALID_HELLO, ack)
+
+    const call = (botRuntimeService.upsertPresenceFromBotKey as ReturnType<typeof mock>).mock.calls[0]?.[0] as {
+      manifest: unknown
+    }
+    expect(call.manifest).toBeNull()
+  })
+
   it("forwards a registered BIK (publicKey + publicKeyId) to presence", async () => {
     const { socket, botRuntimeService } = setup()
     const ack = mock((_r: BotHelloResponse) => {})
@@ -639,6 +653,7 @@ describe("bot:presence:update", () => {
       instanceId: "inst_42",
       status: "busy",
       acceptingInvocations: false,
+      manifest: null,
     })
     expect(ack.mock.calls[0]?.[0]).toEqual({ ok: true })
   })

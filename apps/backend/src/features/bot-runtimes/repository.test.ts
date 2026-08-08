@@ -486,7 +486,17 @@ describe("BotInvocationRepository source mutation locks", () => {
       workspaceId: "ws_1",
       sourceMessageId: "msg_src",
       sourceMessageRevision: 2,
-      desiredRoutes: [{ actorType: "bot", actorId: "bot_alice", trigger: "mention" }],
+      desiredRoutes: [
+        {
+          actorType: "bot",
+          actorId: "bot_alice",
+          trigger: "mention",
+          activeStreamId: "stream_active",
+          responseStreamId: "stream_resp",
+          targetInstanceId: null,
+          targetRuntimeSessionId: null,
+        },
+      ],
     })
 
     expect(query.mock.calls.map((call) => call[1])).toEqual([
@@ -578,9 +588,33 @@ describe("BotInvocationRepository.parkExhausted", () => {
 describe("BotInvocationRepository.findBootstrapInvocations", () => {
   afterEach(() => mock.restore())
 
+  it("executes bootstrap reads sequentially on one PoolClient", async () => {
+    let active = false
+    const db: Querier = {
+      query: mock(async () => {
+        if (active) throw new Error("overlapping PoolClient query")
+        active = true
+        await new Promise((resolve) => setTimeout(resolve, 1))
+        active = false
+        return { rows: [], rowCount: 0 } as unknown as QueryResult
+      }),
+    }
+
+    await expect(
+      BotInvocationRepository.findBootstrapInvocations(db, {
+        workspaceId: "ws_1",
+        botId: "bot_alice",
+        instanceId: "inst_42",
+        runtimeSessionId: "session-a",
+        supportedCapabilities: ["active-scratchpad"],
+        since: null,
+        maxAttempts: BOT_CLAIM_MAX_ATTEMPTS,
+      })
+    ).resolves.toEqual({ available: [], ownedClaims: [], recentCancellations: [] })
+  })
+
   it("excludes attempt-exhausted rows from the available list (mirrors claimOne)", async () => {
-    // Two queries run via Promise.all (available + ownedClaims); capture every
-    // text so the assertion targets the available query specifically.
+    // Capture every statement so the assertion targets the available query specifically.
     const texts: string[] = []
     const db: Querier = {
       query: mock(async (q) => {

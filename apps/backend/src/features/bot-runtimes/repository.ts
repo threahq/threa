@@ -8,6 +8,8 @@ import {
   type BotInvocationCapability,
   type BotInvocationStatus,
   type BotInvocationTrigger,
+  type BotInputUpdateMode,
+  type BotInvocationCancellationReason,
   type BotRuntimeKind,
   type BotRuntimeManifest,
   type BotRuntimeSessionLinkStatus,
@@ -56,8 +58,7 @@ export interface BotRuntimeInstance {
   status: BotRuntimeStatus
   acceptingInvocations: boolean
   capabilities: Record<string, unknown>
-  // Declared-output manifest from bot:hello; null = legacy default profile,
-  // which the reject-undeclared boundary leaves unenforced (Phase 2.3b).
+  // Runtime manifest from bot:hello; null = legacy default profile.
   manifest: BotRuntimeManifest | null
   statusText: string | null
   // BIK — the runtime's per-session X25519 public key (base64) and the short id
@@ -87,6 +88,14 @@ export interface BotRuntimeSessionLink {
   updatedAt: Date
 }
 
+export interface BotInvocationCancellation {
+  invocationId: string
+  sourceRevision: number
+  reason: BotInvocationCancellationReason
+  targetInstanceId: string
+  targetRuntimeSessionId: string | null
+}
+
 export interface BotInvocation {
   id: string
   workspaceId: string
@@ -101,8 +110,8 @@ export interface BotInvocation {
   promptMarkdown: string
   sourceMessageRevision: number
   claimedSourceMessageRevision: number | null
-  claimedInputUpdateMode: string | null
-  cancellationReason: string | null
+  claimedInputUpdateMode: BotInputUpdateMode | null
+  cancellationReason: BotInvocationCancellationReason | null
   availableAt: Date
   authorUserId: string
   mentionedActorSlugs: string[]
@@ -204,6 +213,16 @@ interface BotInvocationRowWithInsertMarker extends BotInvocationRow {
   was_newly_inserted: boolean
 }
 
+export interface DesiredInvocationRouteIdentity {
+  actorType: string
+  actorId: string
+  trigger: string
+  activeStreamId: string
+  responseStreamId: string
+  targetInstanceId: string | null
+  targetRuntimeSessionId: string | null
+}
+
 interface BotInvocationActorSourceRow {
   workspace_id: string
   source_message_id: string
@@ -290,7 +309,7 @@ async function findInvocationActorSource(
 
 async function lockCanonicalInvocationSource(
   db: Querier,
-  params: { workspaceId: string; botId: string; invocationId: string }
+  params: { workspaceId: string; botId: string; invocationId: string; sourceRevision?: number }
 ): Promise<boolean> {
   const result = await db.query<{ id: string }>(sql`
     SELECT m.id
@@ -304,7 +323,15 @@ async function lockCanonicalInvocationSource(
       AND s.workspace_id = i.workspace_id
       AND m.stream_id = i.active_stream_id
       AND m.deleted_at IS NULL
-      AND m.revision = i.claimed_source_message_revision
+      AND m.revision = COALESCE(${params.sourceRevision ?? null}, i.claimed_source_message_revision)
+      AND (
+        ${params.sourceRevision ?? null}::int IS NULL
+        OR i.claimed_source_message_revision = ${params.sourceRevision ?? null}
+        OR (
+          i.claimed_input_update_mode = 'live'
+          AND ${params.sourceRevision ?? null} > i.claimed_source_message_revision
+        )
+      )
     FOR SHARE OF m
   `)
   return result.rows.length > 0
@@ -399,8 +426,8 @@ function mapInvocation(row: BotInvocationRow): BotInvocation {
     promptMarkdown: row.prompt_markdown,
     sourceMessageRevision: row.source_message_revision,
     claimedSourceMessageRevision: row.claimed_source_message_revision,
-    claimedInputUpdateMode: row.claimed_input_update_mode,
-    cancellationReason: row.cancellation_reason,
+    claimedInputUpdateMode: row.claimed_input_update_mode as BotInputUpdateMode | null,
+    cancellationReason: row.cancellation_reason as BotInvocationCancellationReason | null,
     availableAt: row.available_at,
     authorUserId: row.author_user_id,
     mentionedActorSlugs: row.mentioned_actor_slugs,
@@ -533,6 +560,7 @@ export const BotRuntimeInstanceRepository = {
       publicKeyId?: string | null
       mergeCapabilities?: boolean
       retainBik?: boolean
+      retainManifest?: boolean
     }
   ): Promise<BotRuntimeInstance> {
     // BIK is per-session key material, so a presence write OVERWRITES it by
@@ -549,10 +577,13 @@ export const BotRuntimeInstanceRepository = {
     const bikSet = params.retainBik
       ? "public_key = COALESCE(EXCLUDED.public_key, bot_runtime_instances.public_key), public_key_id = COALESCE(EXCLUDED.public_key_id, bot_runtime_instances.public_key_id)"
       : "public_key = EXCLUDED.public_key, public_key_id = EXCLUDED.public_key_id"
+    const manifestSet = params.retainManifest
+      ? "manifest = COALESCE(EXCLUDED.manifest, bot_runtime_instances.manifest)"
+      : "manifest = EXCLUDED.manifest"
     const result =
       await db.query<BotRuntimeInstanceRow>(sql`INSERT INTO bot_runtime_instances (id, workspace_id, bot_id, runtime_kind, instance_id, display_name, status, accepting_invocations, capabilities, manifest, status_text, public_key, public_key_id)
       VALUES (${params.id}, ${params.workspaceId}, ${params.botId}, ${params.runtimeKind}, ${params.instanceId}, ${params.displayName ?? null}, ${params.status}, ${params.acceptingInvocations}, ${params.capabilities}, ${params.manifest ?? null}, ${params.statusText ?? null}, ${publicKey}, ${publicKeyId})
-      ON CONFLICT (workspace_id, bot_id, instance_id) DO UPDATE SET runtime_kind = EXCLUDED.runtime_kind, display_name = EXCLUDED.display_name, status = EXCLUDED.status, accepting_invocations = EXCLUDED.accepting_invocations, ${sql.raw(capabilitiesSet)}, manifest = COALESCE(EXCLUDED.manifest, bot_runtime_instances.manifest), status_text = EXCLUDED.status_text, ${sql.raw(bikSet)}, last_seen_at = NOW(), updated_at = NOW()
+      ON CONFLICT (workspace_id, bot_id, instance_id) DO UPDATE SET runtime_kind = EXCLUDED.runtime_kind, display_name = EXCLUDED.display_name, status = EXCLUDED.status, accepting_invocations = EXCLUDED.accepting_invocations, ${sql.raw(capabilitiesSet)}, ${sql.raw(manifestSet)}, status_text = EXCLUDED.status_text, ${sql.raw(bikSet)}, last_seen_at = NOW(), updated_at = NOW()
       RETURNING *`)
     return mapRuntimeInstance(result.rows[0]!)
   },
@@ -974,8 +1005,9 @@ export const BotInvocationRepository = {
       workspaceId: string
       sourceMessageId: string
       sourceMessageRevision: number
-      desiredRoutes: Array<{ actorType: string; actorId: string; trigger: string }>
-    }
+      desiredRoutes: DesiredInvocationRouteIdentity[]
+    },
+    options: { locksHeld?: boolean } = {}
   ): Promise<BotInvocation[]> {
     return withTransactionIfPool(db, async (lockedDb) => {
       const sourceIdentity = { workspaceId: params.workspaceId, sourceMessageId: params.sourceMessageId }
@@ -983,21 +1015,24 @@ export const BotInvocationRepository = {
       // before its actor lock. Take it before reading/cancelling active routes
       // so a route-changing edit can never hold an invocation row while waiting
       // on a completion that already holds the actor lock (INV-20).
-      await acquireSourceLocks(lockedDb, [sourceIdentity])
-      const active = await lockedDb.query<BotInvocationActorSourceRow>(sql`
-        SELECT DISTINCT workspace_id, source_message_id, actor_type, actor_id
-        FROM bot_invocations
-        WHERE workspace_id = ${params.workspaceId}
-          AND source_message_id = ${params.sourceMessageId}
-          AND status IN ('pending', 'claimed')
-      `)
-      await acquireActorLocks(lockedDb, [
-        ...active.rows.map(mapActorSourceIdentity),
-        ...params.desiredRoutes.map((route) => ({ ...sourceIdentity, ...route })),
-      ])
+      if (!options.locksHeld) {
+        await acquireSourceLocks(lockedDb, [sourceIdentity])
+        const active = await lockedDb.query<BotInvocationActorSourceRow>(sql`
+          SELECT DISTINCT workspace_id, source_message_id, actor_type, actor_id
+          FROM bot_invocations
+          WHERE workspace_id = ${params.workspaceId}
+            AND source_message_id = ${params.sourceMessageId}
+            AND status IN ('pending', 'claimed')
+        `)
+        await acquireActorLocks(lockedDb, [
+          ...active.rows.map(mapActorSourceIdentity),
+          ...params.desiredRoutes.map((route) => ({ ...sourceIdentity, ...route })),
+        ])
+      }
       const result = await lockedDb.query<BotInvocationRow>(sql`
         UPDATE bot_invocations i
-        SET status = 'cancelled', cancellation_reason = 'routing_changed', updated_at = NOW()
+        SET status = 'cancelled', cancellation_reason = 'routing_changed',
+            source_message_revision = GREATEST(source_message_revision, ${params.sourceMessageRevision}), updated_at = NOW()
         WHERE i.workspace_id = ${params.workspaceId}
           AND i.source_message_id = ${params.sourceMessageId}
           AND i.status IN ('pending', 'claimed')
@@ -1009,6 +1044,15 @@ export const BotInvocationRepository = {
             WHERE desired ->> 'actorType' = i.actor_type
               AND desired ->> 'actorId' = i.actor_id
               AND desired ->> 'trigger' = i.trigger
+              AND (
+                i.status = 'pending'
+                OR (
+                  desired ->> 'activeStreamId' = i.active_stream_id
+                  AND desired ->> 'responseStreamId' = i.response_stream_id
+                  AND (desired ->> 'targetInstanceId') IS NOT DISTINCT FROM i.target_instance_id
+                  AND (desired ->> 'targetRuntimeSessionId') IS NOT DISTINCT FROM i.target_runtime_session_id
+                )
+              )
           )
         RETURNING i.*
       `)
@@ -1032,35 +1076,44 @@ export const BotInvocationRepository = {
 
   async cancelActiveBySource(
     db: Querier,
-    params: { workspaceId: string; sourceMessageId: string; reason: string }
-  ): Promise<BotInvocation[]> {
+    params: { workspaceId: string; sourceMessageId: string; reason: string },
+    options: { locksHeld?: boolean } = {}
+  ): Promise<{ transitioned: BotInvocation[]; sessionRepairCandidates: BotInvocation[] }> {
     return withTransactionIfPool(db, async (lockedDb) => {
       const sourceIdentity = { workspaceId: params.workspaceId, sourceMessageId: params.sourceMessageId }
-      await acquireSourceLocks(lockedDb, [sourceIdentity])
-      const active = await lockedDb.query<BotInvocationActorSourceRow>(sql`
-        SELECT DISTINCT workspace_id, source_message_id, actor_type, actor_id
-        FROM bot_invocations
-        WHERE workspace_id = ${params.workspaceId}
-          AND source_message_id = ${params.sourceMessageId}
-          AND status IN ('pending', 'claimed')
-      `)
-      await acquireActorLocks(lockedDb, active.rows.map(mapActorSourceIdentity))
-      const result = await lockedDb.query<BotInvocationRow>(sql`
-        WITH newly_cancelled AS (
-          UPDATE bot_invocations
-          SET status = 'cancelled', cancellation_reason = ${params.reason}, updated_at = NOW()
-          WHERE workspace_id = ${params.workspaceId} AND source_message_id = ${params.sourceMessageId}
+      if (!options.locksHeld) {
+        await acquireSourceLocks(lockedDb, [sourceIdentity])
+        const active = await lockedDb.query<BotInvocationActorSourceRow>(sql`
+          SELECT DISTINCT workspace_id, source_message_id, actor_type, actor_id
+          FROM bot_invocations
+          WHERE workspace_id = ${params.workspaceId}
+            AND source_message_id = ${params.sourceMessageId}
             AND status IN ('pending', 'claimed')
-          RETURNING *
-        )
-        SELECT * FROM newly_cancelled
-        UNION ALL
+        `)
+        await acquireActorLocks(lockedDb, active.rows.map(mapActorSourceIdentity))
+      }
+      const transitionedResult = await lockedDb.query<BotInvocationRow>(sql`
+        UPDATE bot_invocations
+        SET status = 'cancelled', cancellation_reason = ${params.reason},
+            source_message_revision = GREATEST(source_message_revision, COALESCE((
+              SELECT m.revision FROM messages m JOIN streams s ON s.id = m.stream_id
+              WHERE m.id = bot_invocations.source_message_id AND s.workspace_id = bot_invocations.workspace_id
+            ), source_message_revision)), updated_at = NOW()
+        WHERE workspace_id = ${params.workspaceId} AND source_message_id = ${params.sourceMessageId}
+          AND status IN ('pending', 'claimed')
+        RETURNING *
+      `)
+      const repairResult = await lockedDb.query<BotInvocationRow>(sql`
         SELECT i.* FROM bot_invocations i
+        JOIN agent_sessions session ON session.id = i.id AND session.status = 'running'
         WHERE i.workspace_id = ${params.workspaceId} AND i.source_message_id = ${params.sourceMessageId}
           AND i.status = 'cancelled' AND i.cancellation_reason = ${params.reason}
-          AND NOT EXISTS (SELECT 1 FROM newly_cancelled n WHERE n.id = i.id)
+          AND NOT (i.id = ANY(${transitionedResult.rows.map((row) => row.id)}))
       `)
-      return result.rows.map(mapInvocation)
+      return {
+        transitioned: transitionedResult.rows.map(mapInvocation),
+        sessionRepairCandidates: repairResult.rows.map(mapInvocation),
+      }
     })
   },
 
@@ -1081,15 +1134,28 @@ export const BotInvocationRepository = {
       | "createdAt"
       | "updatedAt"
       | "completedAt"
-    >
-  ): Promise<{ invocation: BotInvocation; wasNewlyInserted: boolean }> {
+    >,
+    options: { locksHeld?: boolean } = {}
+  ): Promise<{
+    invocation: BotInvocation
+    wasNewlyInserted: boolean
+    didAdvanceSourceRevision?: boolean
+    routingDestinationChanged?: boolean
+  }> {
     // `xmax = 0` is the Postgres idiom for "this row was inserted, not updated"
     // — it stays zero on a fresh INSERT and becomes non-zero on ON CONFLICT DO
     // UPDATE, even when the UPDATE writes the same value. Lets callers (the
     // bot-runtime service) decide whether to emit `bot_invocation:available`
     // without paying for a pre-check round-trip.
     return withTransactionIfPool(db, async (lockedDb) => {
-      await acquireActorSourceLocks(lockedDb, [params])
+      if (!options.locksHeld) await acquireActorSourceLocks(lockedDb, [params])
+      const previous = await lockedDb.query<BotInvocationRow>(sql`
+        SELECT * FROM bot_invocations
+        WHERE workspace_id = ${params.workspaceId} AND source_message_id = ${params.sourceMessageId}
+          AND actor_type = ${params.actorType} AND actor_id = ${params.actorId}
+          AND trigger = ${params.trigger} AND status IN ('pending', 'claimed')
+        LIMIT 1
+      `)
       const result =
         await lockedDb.query<BotInvocationRowWithInsertMarker>(sql`INSERT INTO bot_invocations (id, workspace_id, root_stream_id, active_stream_id, source_message_id, response_stream_id, actor_type, actor_id, trigger, required_capability, prompt_markdown, author_user_id, mentioned_actor_slugs, target_instance_id, target_runtime_session_id, metadata, source_message_revision)
         SELECT ${params.id}, ${params.workspaceId}, ${params.rootStreamId}, ${params.activeStreamId}, ${params.sourceMessageId}, ${params.responseStreamId}, ${params.actorType}, ${params.actorId}, ${params.trigger}, ${params.requiredCapability}, ${params.promptMarkdown}, ${params.authorUserId}, ${params.mentionedActorSlugs}, ${params.targetInstanceId}, ${params.targetRuntimeSessionId}, ${params.metadata}, ${params.sourceMessageRevision}
@@ -1103,11 +1169,11 @@ export const BotInvocationRepository = {
         )
         ON CONFLICT (workspace_id, source_message_id, actor_type, actor_id, trigger) WHERE status IN ('pending', 'claimed') DO UPDATE SET
           prompt_markdown = CASE
-            WHEN bot_invocations.status = 'pending' THEN EXCLUDED.prompt_markdown
+            WHEN bot_invocations.status = 'pending' OR bot_invocations.claimed_input_update_mode = 'live' THEN EXCLUDED.prompt_markdown
             ELSE bot_invocations.prompt_markdown
           END,
           mentioned_actor_slugs = CASE
-            WHEN bot_invocations.status = 'pending' THEN EXCLUDED.mentioned_actor_slugs
+            WHEN bot_invocations.status = 'pending' OR bot_invocations.claimed_input_update_mode = 'live' THEN EXCLUDED.mentioned_actor_slugs
             ELSE bot_invocations.mentioned_actor_slugs
           END,
           active_stream_id = CASE
@@ -1132,7 +1198,22 @@ export const BotInvocationRepository = {
         WHERE bot_invocations.source_message_revision < EXCLUDED.source_message_revision
         RETURNING *, (xmax = 0) AS was_newly_inserted`)
       const row = result.rows[0]
-      if (row) return { invocation: mapInvocation(row), wasNewlyInserted: row.was_newly_inserted }
+      if (row) {
+        const prior = previous.rows[0]
+        const routingDestinationChanged =
+          !row.was_newly_inserted &&
+          prior?.status === "pending" &&
+          (prior.active_stream_id !== params.activeStreamId ||
+            prior.response_stream_id !== params.responseStreamId ||
+            prior.target_instance_id !== params.targetInstanceId ||
+            prior.target_runtime_session_id !== params.targetRuntimeSessionId)
+        return {
+          invocation: mapInvocation(row),
+          wasNewlyInserted: row.was_newly_inserted,
+          didAdvanceSourceRevision: !row.was_newly_inserted,
+          routingDestinationChanged,
+        }
+      }
       const existing = await lockedDb.query<BotInvocationRow>(sql`
         SELECT * FROM bot_invocations
         WHERE workspace_id = ${params.workspaceId} AND source_message_id = ${params.sourceMessageId}
@@ -1145,8 +1226,62 @@ export const BotInvocationRepository = {
         LIMIT 1
       `)
       if (!existing.rows[0]) throw new Error(`Active invocation conflict disappeared for ${params.sourceMessageId}`)
-      return { invocation: mapInvocation(existing.rows[0]), wasNewlyInserted: false }
+      return {
+        invocation: mapInvocation(existing.rows[0]),
+        wasNewlyInserted: false,
+        didAdvanceSourceRevision: false,
+        routingDestinationChanged: false,
+      }
     })
+  },
+
+  async cancelStaleClaim(
+    db: Querier,
+    params: {
+      workspaceId: string
+      botId: string
+      invocationId: string
+      instanceId: string
+      claimToken: string
+      claimedSourceMessageRevision: number
+      sourceMessageRevision: number
+    }
+  ): Promise<BotInvocation | null> {
+    const result = await db.query<BotInvocationRow>(sql`
+      UPDATE bot_invocations
+      SET status = 'cancelled', cancellation_reason = 'input_stale',
+          source_message_revision = GREATEST(source_message_revision, ${params.sourceMessageRevision}), updated_at = NOW()
+      WHERE id = ${params.invocationId} AND workspace_id = ${params.workspaceId}
+        AND actor_type = 'bot' AND actor_id = ${params.botId} AND status = 'claimed'
+        AND claimed_by_instance_id = ${params.instanceId} AND claim_token = ${params.claimToken}
+        AND claimed_source_message_revision = ${params.claimedSourceMessageRevision}
+      RETURNING *
+    `)
+    return result.rows[0] ? mapInvocation(result.rows[0]) : null
+  },
+
+  async cancelClaimedForInputRestart(
+    db: Querier,
+    params: {
+      workspaceId: string
+      invocationId: string
+      sourceMessageRevision: number
+      reason: BotInvocationCancellationReason
+      instanceId?: string
+      claimToken?: string
+    }
+  ): Promise<BotInvocation | null> {
+    const result = await db.query<BotInvocationRow>(sql`
+      UPDATE bot_invocations
+      SET status = 'cancelled', cancellation_reason = ${params.reason},
+          source_message_revision = GREATEST(source_message_revision, ${params.sourceMessageRevision}), updated_at = NOW()
+      WHERE id = ${params.invocationId} AND workspace_id = ${params.workspaceId} AND status = 'claimed'
+        AND source_message_revision = ${params.sourceMessageRevision}
+        AND (${params.instanceId ?? null}::text IS NULL OR claimed_by_instance_id = ${params.instanceId ?? null})
+        AND (${params.claimToken ?? null}::text IS NULL OR claim_token = ${params.claimToken ?? null})
+      RETURNING *
+    `)
+    return result.rows[0] ? mapInvocation(result.rows[0]) : null
   },
 
   async claimOne(
@@ -1206,7 +1341,12 @@ export const BotInvocationRepository = {
       UPDATE bot_invocations i
       SET status = 'claimed', claimed_by_instance_id = ${params.instanceId}, claim_token = ${params.claimToken}, claim_expires_at = NOW() + (${params.claimTtlSeconds} || ' seconds')::interval, attempts = attempts + 1, updated_at = NOW(),
           claimed_source_message_revision = CASE WHEN i.trigger = 'session-control' THEN 0 ELSE NULL END,
-          claimed_input_update_mode = NULL
+          claimed_input_update_mode = (
+            SELECT r.manifest -> 'input' ->> 'updates'
+            FROM bot_runtime_instances r
+            WHERE r.workspace_id = i.workspace_id AND r.bot_id = i.actor_id
+              AND r.instance_id = ${params.instanceId} AND r.runtime_kind = ${params.runtimeKind}
+          )
       FROM candidate
       WHERE i.id = candidate.id
       RETURNING i.*`)
@@ -1228,7 +1368,6 @@ export const BotInvocationRepository = {
       UPDATE bot_invocations
       SET source_message_revision = ${params.revision},
           claimed_source_message_revision = ${params.revision},
-          claimed_input_update_mode = NULL,
           prompt_markdown = ${params.promptMarkdown},
           updated_at = NOW()
       WHERE id = ${params.invocationId}
@@ -1265,6 +1404,22 @@ export const BotInvocationRepository = {
     })
   },
 
+  async findClaimControl(
+    db: Querier,
+    params: { workspaceId: string; botId: string; invocationId: string; instanceId: string; claimToken: string }
+  ): Promise<BotInvocation | null> {
+    const identity = await findInvocationActorSource(db, params)
+    if (!identity) return null
+    await acquireActorSourceLocks(db, [identity])
+    const result = await db.query<BotInvocationRow>(sql`SELECT * FROM bot_invocations
+      WHERE id = ${params.invocationId} AND workspace_id = ${params.workspaceId}
+        AND actor_type = 'bot' AND actor_id = ${params.botId}
+        AND claimed_by_instance_id = ${params.instanceId} AND claim_token = ${params.claimToken}
+        AND status IN ('claimed', 'cancelled')
+      FOR UPDATE`)
+    return result.rows[0] ? mapInvocation(result.rows[0]) : null
+  },
+
   async renewClaim(
     db: Querier,
     params: {
@@ -1290,12 +1445,20 @@ export const BotInvocationRepository = {
   // there. Identical SQL when an instance is supplied.
   async completeClaim(
     db: Querier,
-    params: { workspaceId: string; botId: string; invocationId: string; instanceId?: string; claimToken: string }
+    params: {
+      workspaceId: string
+      botId: string
+      invocationId: string
+      instanceId?: string
+      claimToken: string
+      sourceRevision: number
+    },
+    options: { locksHeld?: boolean } = {}
   ): Promise<BotInvocation | null> {
     return withTransactionIfPool(db, async (lockedDb) => {
       const identity = await findInvocationActorSource(lockedDb, params)
       if (!identity) return null
-      await acquireActorSourceLocks(lockedDb, [identity])
+      if (!options.locksHeld) await acquireActorSourceLocks(lockedDb, [identity])
       if (identity.trigger !== "session-control" && !(await lockCanonicalInvocationSource(lockedDb, params)))
         return null
       const result =
@@ -1307,7 +1470,14 @@ export const BotInvocationRepository = {
               AND s.workspace_id = i.workspace_id
               AND m.stream_id = i.active_stream_id
               AND m.deleted_at IS NULL
-              AND m.revision = i.claimed_source_message_revision
+              AND m.revision = ${params.sourceRevision}
+              AND (
+                i.claimed_source_message_revision = ${params.sourceRevision}
+                OR (
+                  i.claimed_input_update_mode = 'live'
+                  AND ${params.sourceRevision} > i.claimed_source_message_revision
+                )
+              )
           ))
         RETURNING i.*`)
       return result.rows[0] ? mapInvocation(result.rows[0]) : null
@@ -1456,10 +1626,13 @@ export const BotInvocationRepository = {
       since: Date | null
       maxAttempts: number
     }
-  ): Promise<{ available: BotInvocation[]; ownedClaims: BotInvocation[] }> {
+  ): Promise<{
+    available: BotInvocation[]
+    ownedClaims: BotInvocation[]
+    recentCancellations: BotInvocationCancellation[]
+  }> {
     // Bootstrap order must match claimOne for same-timestamp message + steer rows.
-    const [availableResult, ownedClaimsResult] = await Promise.all([
-      db.query<BotInvocationRow>(composeSql`SELECT i.* FROM bot_invocations i
+    const availableResult = await db.query<BotInvocationRow>(composeSql`SELECT i.* FROM bot_invocations i
         WHERE i.workspace_id = ${params.workspaceId}
           AND i.actor_type = 'bot'
           AND i.actor_id = ${params.botId}
@@ -1467,24 +1640,43 @@ export const BotInvocationRepository = {
           AND (i.target_instance_id IS NULL OR i.target_instance_id = ${params.instanceId})
           AND (i.target_runtime_session_id IS NULL OR i.target_runtime_session_id = ${params.runtimeSessionId})
           AND (i.status = 'pending' OR (i.status = 'claimed' AND i.claim_expires_at < NOW()))
+          AND i.available_at <= NOW()
           AND i.attempts < ${params.maxAttempts}
           AND (${params.since}::timestamptz IS NULL OR i.created_at >= ${params.since})
           AND ${sealedStreamClaimGateSql(params.instanceId)}
         ORDER BY i.created_at ASC, CASE WHEN i.trigger = 'session-control' THEN 1 ELSE 0 END ASC, i.id ASC
-        LIMIT 200`),
-      db.query<BotInvocationRow>(sql`SELECT * FROM bot_invocations
+        LIMIT 200`)
+    const ownedClaimsResult = await db.query<BotInvocationRow>(sql`SELECT * FROM bot_invocations
         WHERE workspace_id = ${params.workspaceId}
           AND actor_type = 'bot'
           AND actor_id = ${params.botId}
           AND status = 'claimed'
           AND claimed_by_instance_id = ${params.instanceId}
+          AND (target_runtime_session_id IS NULL OR target_runtime_session_id = ${params.runtimeSessionId})
           AND claim_expires_at > NOW()
         ORDER BY created_at ASC, id ASC
-        LIMIT 200`),
-    ])
+        LIMIT 200`)
+    const cancellationResult = await db.query<BotInvocationRow>(sql`SELECT * FROM bot_invocations
+        WHERE workspace_id = ${params.workspaceId}
+          AND actor_type = 'bot'
+          AND actor_id = ${params.botId}
+          AND status = 'cancelled'
+          AND cancellation_reason IS NOT NULL
+          AND claimed_by_instance_id = ${params.instanceId}
+          AND (target_runtime_session_id IS NULL OR target_runtime_session_id = ${params.runtimeSessionId})
+          AND (${params.since}::timestamptz IS NULL OR updated_at >= ${params.since})
+        ORDER BY updated_at DESC, id DESC
+        LIMIT 200`)
     return {
       available: availableResult.rows.map(mapInvocation),
       ownedClaims: ownedClaimsResult.rows.map(mapInvocation),
+      recentCancellations: cancellationResult.rows.map((row) => ({
+        invocationId: row.id,
+        sourceRevision: row.source_message_revision,
+        reason: row.cancellation_reason as BotInvocationCancellationReason,
+        targetInstanceId: row.claimed_by_instance_id!,
+        targetRuntimeSessionId: row.target_runtime_session_id,
+      })),
     }
   },
 }

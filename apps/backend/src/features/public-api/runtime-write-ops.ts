@@ -1,7 +1,9 @@
 import type { Pool } from "pg"
+import { withClient } from "../../db"
 import type { Server } from "socket.io"
 import { HttpError } from "@threa/backend-common"
-import { BotRuntimeKinds } from "@threa/types"
+import { BotRuntimeKinds, type InvocationInputUpdateWire } from "@threa/types"
+import { resolveDeliveryVerdict, TrustTiers } from "@threa/agent-runtime"
 import {
   assertManifestAllows,
   type BotRuntimeInstance,
@@ -18,7 +20,10 @@ import {
   type RecordSealedStepsResult,
 } from "../bot-runtimes"
 import { authorizeSealedCallback, finalizeSealedStep } from "./sealed-callbacks"
-import { E2eStreamsRepository } from "../e2e-streams"
+import { E2eStreamsRepository, StreamE2eKeyWrapsRepository, resolveSealingContext } from "../e2e-streams"
+import { MessageRepository } from "../messaging"
+import { BotRuntimeInstanceRepository } from "../bot-runtimes"
+import { buildSealedInputUpdate } from "./sealed-turn-context"
 import { BotChannelAccessRepository, type BotChannelService } from "../api-keys"
 import { AgentSessionRepository } from "../agents"
 import { BotRepository } from "./bot-repository"
@@ -107,6 +112,7 @@ export function createBotRuntimeWriteOps(deps: BotRuntimeWriteOpsDeps): BotRunti
         ...(params.capabilities ?? {}),
         ...(params.runtimeSessionId ? { runtimeSessionId: params.runtimeSessionId } : {}),
       },
+      manifest: params.manifest ?? null,
       statusText: sanitizeStatusText(params.statusText),
       publicKey: params.publicKey,
       publicKeyId: params.publicKeyId,
@@ -130,6 +136,7 @@ export function createBotRuntimeWriteOps(deps: BotRuntimeWriteOpsDeps): BotRunti
         // Invocation-side touch carries no BIK; preserve the key the live
         // session registered rather than clearing it on every poll tick.
         retainBik: true,
+        retainManifest: true,
       })
       await broadcastBotPresence(params.workspaceId, params.botId, presence)
     } catch (err) {
@@ -141,28 +148,115 @@ export function createBotRuntimeWriteOps(deps: BotRuntimeWriteOpsDeps): BotRunti
   }
 
   async function renewClaim(params: RenewClaimParams): Promise<RenewClaimResult> {
-    const renewed = await botRuntimeService.renewInvocationClaim({
-      workspaceId: params.workspaceId,
-      botId: params.botId,
-      invocationId: params.invocationId,
-      instanceId: params.instanceId,
-      claimToken: params.claimToken,
-      claimTtlSeconds: params.claimTtlSeconds,
+    const result = await withClient(pool, async (db) => {
+      await db.query("BEGIN ISOLATION LEVEL REPEATABLE READ")
+      try {
+        const renewed = await botRuntimeService.renewInvocationClaimInTransaction(db, params)
+        if (!renewed) throw new HttpError("Invocation claim not found", { status: 404, code: "NOT_FOUND" })
+        if (renewed.status === "cancelled") {
+          await db.query("COMMIT")
+          return {
+            invocationId: renewed.id,
+            status: "cancelled" as const,
+            sourceRevision: renewed.sourceMessageRevision,
+            reason: renewed.cancellationReason ?? "routing_changed",
+          }
+        }
+
+        let update: InvocationInputUpdateWire | undefined
+        if (params.knownSourceRevision != null && params.knownSourceRevision < renewed.sourceMessageRevision) {
+          const sealing = await resolveSealingContext(db, {
+            workspaceId: renewed.workspaceId,
+            streamId: renewed.activeStreamId,
+            actor: { kind: "bot", botId: renewed.actorId },
+          })
+          const verdict = resolveDeliveryVerdict({ trust: TrustTiers.THIRD_PARTY, sealing })
+          switch (verdict.delivery) {
+            case "plaintext":
+              update = {
+                delivery: "plaintext",
+                sourceRevision: renewed.sourceMessageRevision,
+                promptMarkdown: renewed.promptMarkdown,
+                mentionedActorSlugs: renewed.mentionedActorSlugs,
+              }
+              break
+            case "sealed": {
+              const instance = await BotRuntimeInstanceRepository.findByInstance(db, {
+                workspaceId: renewed.workspaceId,
+                botId: renewed.actorId,
+                instanceId: params.instanceId,
+              })
+              const e2e = await E2eStreamsRepository.getByStreamId(db, renewed.workspaceId, renewed.rootStreamId)
+              const wraps = await StreamE2eKeyWrapsRepository.listForStream(
+                db,
+                renewed.workspaceId,
+                renewed.rootStreamId
+              )
+              const trigger = await MessageRepository.findInvocationSourceStateForShare(db, {
+                workspaceId: renewed.workspaceId,
+                messageId: renewed.sourceMessageId,
+              })
+              if (
+                !trigger ||
+                trigger.deleted ||
+                trigger.streamId !== renewed.activeStreamId ||
+                trigger.revision !== renewed.sourceMessageRevision
+              ) {
+                throw new HttpError("Invocation control state changed; retry renewal", {
+                  status: 409,
+                  code: "INVOCATION_CONTROL_RETRY",
+                })
+              }
+              update =
+                instance?.publicKeyId && e2e
+                  ? (buildSealedInputUpdate({
+                      e2e,
+                      bikKeyId: instance.publicKeyId,
+                      wraps,
+                      trigger,
+                      replySenderId: renewed.actorId,
+                      sourceRevision: renewed.sourceMessageRevision,
+                    }) ?? undefined)
+                  : undefined
+              if (update) break
+              const cancelled = await botRuntimeService.cancelOwnedClaimForKeyGrantLossInTransaction(db, renewed)
+              if (!cancelled) throw new HttpError("Invocation claim not found", { status: 404, code: "NOT_FOUND" })
+              await db.query("COMMIT")
+              return {
+                invocationId: cancelled.id,
+                status: "cancelled" as const,
+                sourceRevision: cancelled.sourceMessageRevision,
+                reason: "key_grant_lost" as const,
+              }
+            }
+            case "denied": {
+              const cancelled = await botRuntimeService.cancelOwnedClaimForKeyGrantLossInTransaction(db, renewed)
+              if (!cancelled) throw new HttpError("Invocation claim not found", { status: 404, code: "NOT_FOUND" })
+              await db.query("COMMIT")
+              return {
+                invocationId: cancelled.id,
+                status: "cancelled" as const,
+                sourceRevision: cancelled.sourceMessageRevision,
+                reason: "key_grant_lost" as const,
+              }
+            }
+          }
+        }
+        await db.query("COMMIT")
+        return {
+          invocationId: renewed.id,
+          status: "active" as const,
+          claimExpiresAt: renewed.claimExpiresAt!.toISOString(),
+          sourceRevision: renewed.sourceMessageRevision,
+          ...(update ? { update } : {}),
+        }
+      } catch (error) {
+        await db.query("ROLLBACK").catch(() => {})
+        throw error
+      }
     })
-    if (!renewed) throw new HttpError("Invocation claim not found", { status: 404, code: "NOT_FOUND" })
-    // A claim renewal is the external runtime's liveness signal between trace
-    // steps. Bot invocations reuse the invocation id as the agent session id,
-    // so bump the session heartbeat too — otherwise a long-running turn that
-    // renews its claim but goes longer than orphan-session-cleanup's stale
-    // threshold without recording steps is falsely marked orphaned (FAILED)
-    // while it is in fact alive. No-ops for session-control invocations, which
-    // create no agent session.
     await AgentSessionRepository.updateHeartbeat(pool, params.invocationId)
-    return {
-      invocationId: renewed.id,
-      status: renewed.status,
-      claimExpiresAt: renewed.claimExpiresAt?.toISOString() ?? null,
-    }
+    return result
   }
 
   async function recordSteps(params: RecordStepsParams): Promise<RecordStepsResult> {

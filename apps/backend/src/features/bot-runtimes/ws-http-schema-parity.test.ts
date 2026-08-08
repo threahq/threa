@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test"
 import {
+  helloSchema,
   presenceUpdateSchema,
   invocationRenewSchema,
   invocationStepFrameSchema,
@@ -68,6 +69,17 @@ describe("WS ↔ HTTP schema parity", () => {
       parity(wsRenew({ claimTtlSeconds: 14 }).success, httpRenew({ claimTtlSeconds: 14 }).success, false)
       parity(wsRenew({ claimTtlSeconds: 301 }).success, httpRenew({ claimTtlSeconds: 301 }).success, false)
     })
+
+    it("accepts both nonnegative revision fields and rejects negative values on both", () => {
+      const revisions = { knownSourceRevision: 2, restartRequiredRevision: 3 }
+      parity(wsRenew(revisions).success, httpRenew(revisions).success, true)
+      parity(wsRenew({ knownSourceRevision: -1 }).success, httpRenew({ knownSourceRevision: -1 }).success, false)
+      parity(
+        wsRenew({ restartRequiredRevision: -1 }).success,
+        httpRenew({ restartRequiredRevision: -1 }).success,
+        false
+      )
+    })
   })
 
   describe("sealed step: stepId / ciphertext / envelope / durationMs", () => {
@@ -93,6 +105,37 @@ describe("WS ↔ HTTP schema parity", () => {
       parity(wsSealed({ durationMs: -1 }).success, httpSealed({ durationMs: -1 }).success, false)
       const tooLong = "x".repeat(129)
       parity(wsSealed({ stepId: tooLong }).success, httpSealed({ stepId: tooLong }).success, false)
+    })
+  })
+
+  describe("manifest input mode", () => {
+    const helloBase = {
+      runtimeKind: "pi-local",
+      instanceId: "inst",
+      supportedCapabilities: ["active-scratchpad"],
+    }
+    const httpBase = {
+      runtimeKind: "pi-local",
+      instanceId: "inst",
+      status: "available",
+      acceptingInvocations: true,
+    }
+    const wsManifest = (manifest: unknown) => helloSchema.safeParse({ ...helloBase, manifest }).success
+    const httpManifest = (manifest: unknown) => upsertPresenceSchema.safeParse({ ...httpBase, manifest }).success
+
+    it("keeps omission, null, live, and restart behavior identical on real registration surfaces", () => {
+      const output = { reply: true, trace: true, sources: false }
+      for (const manifest of [
+        undefined,
+        null,
+        { output },
+        { output, input: { updates: "live" } },
+        { output, input: { updates: "restart" } },
+      ]) {
+        parity(wsManifest(manifest), httpManifest(manifest), true)
+      }
+      const invalid = { output, input: { updates: "replace" } }
+      parity(wsManifest(invalid), httpManifest(invalid), false)
     })
   })
 

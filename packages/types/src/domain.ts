@@ -63,8 +63,11 @@ import type {
   BotInvocationCapability,
   E2eActorKind,
   TitleSource,
+  BotInputUpdateMode,
+  BotInvocationCancellationReason,
 } from "./constants"
 import type { ThreaDocument } from "./prosemirror"
+import type { EnclaveSealedMessage, EnclaveSskWrap } from "./api"
 
 export interface Workspace {
   id: string
@@ -429,7 +432,30 @@ export interface BotOutputManifest {
 
 export interface BotRuntimeManifest {
   output: BotOutputManifest
+  input?: { updates: BotInputUpdateMode }
 }
+
+export type SealedMessageWire = EnclaveSealedMessage
+export type SealedSskWrap = EnclaveSskWrap
+
+export type InvocationInputUpdateWire =
+  | {
+      delivery: "plaintext"
+      sourceRevision: number
+      promptMarkdown: string
+      mentionedActorSlugs: string[]
+    }
+  | {
+      delivery: "sealed"
+      sourceRevision: number
+      prompt: SealedMessageWire
+      wraps: SealedSskWrap[]
+      reply: { keyGeneration: number; senderId: string }
+    }
+
+export type InvocationControlState =
+  | { status: "active"; claimExpiresAt: string; sourceRevision: number; update?: InvocationInputUpdateWire }
+  | { status: "cancelled"; sourceRevision: number; reason: BotInvocationCancellationReason }
 
 /**
  * User-defined organizational label. Every label is private — owned by and

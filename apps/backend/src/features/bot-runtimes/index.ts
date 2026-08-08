@@ -18,6 +18,7 @@ export {
 } from "./socket-handler"
 export { createBotSocketAuthMiddleware, type BotSocketData } from "./socket-auth"
 export { assertManifestAllows } from "./assert-manifest-allows"
+export { botRuntimeManifestSchema } from "./manifest-schema"
 export { ExternalTurnDriver } from "./external-turn-driver"
 export type {
   BotRuntimeWriteOps,

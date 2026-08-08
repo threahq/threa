@@ -1,4 +1,10 @@
-import type { AgentStepType, BotRuntimeKind, BotRuntimeStatus } from "@threa/types"
+import type {
+  AgentStepType,
+  BotRuntimeKind,
+  BotRuntimeManifest,
+  BotRuntimeStatus,
+  InvocationControlState,
+} from "@threa/types"
 import type { BotRuntimeInstance } from "./repository"
 
 /**
@@ -50,6 +56,7 @@ export interface ApplyPresenceParams {
   status: BotRuntimeStatus
   acceptingInvocations: boolean
   capabilities?: Record<string, unknown>
+  manifest?: BotRuntimeManifest | null
   statusText?: string | null
   publicKey?: string | null
   publicKeyId?: string | null
@@ -73,13 +80,11 @@ export interface RenewClaimParams {
   instanceId: string
   claimToken: string
   claimTtlSeconds: number
+  knownSourceRevision?: number
+  restartRequiredRevision?: number
 }
 
-export interface RenewClaimResult {
-  invocationId: string
-  status: string
-  claimExpiresAt: string | null
-}
+export type RenewClaimResult = InvocationControlState & { invocationId: string }
 
 export interface RecordStepFrame {
   stepType: AgentStepType

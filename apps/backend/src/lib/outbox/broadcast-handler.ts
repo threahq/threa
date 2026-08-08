@@ -1,10 +1,13 @@
 import { Server, type Namespace } from "socket.io"
+import { z } from "zod"
+import { BOT_INVOCATION_CANCELLATION_REASONS } from "@threa/types"
 import type { Pool } from "pg"
 import {
   OutboxRepository,
   isOutboxEventType,
   type OutboxEvent,
   type BotInvocationAvailableOutboxPayload,
+  type BotInvocationControlOutboxPayload,
   type BotInvocationClaimedOutboxPayload,
   type BotActiveActorChangedOutboxPayload,
   type BotResyncOutboxPayload,
@@ -68,6 +71,18 @@ const DEFAULT_CONFIG = {
  * Uses time-based cursor locking for exclusive access without
  * holding database connections during processing.
  */
+const botInvocationControlPayloadSchema = z.object({
+  workspaceId: z.string().min(1),
+  botId: z.string().min(1),
+  invocationId: z.string().min(1),
+  sourceRevision: z.number().int().min(0),
+  targetInstanceId: z.string().nullable(),
+  targetRuntimeSessionId: z.string().nullable(),
+})
+const botInvocationCancelledPayloadSchema = botInvocationControlPayloadSchema.extend({
+  reason: z.enum(BOT_INVOCATION_CANCELLATION_REASONS),
+})
+
 export class BroadcastHandler implements OutboxHandler {
   readonly listenerId = "broadcast"
 
@@ -303,6 +318,23 @@ export class BroadcastHandler implements OutboxHandler {
       } else {
         botNs.to(`bot:${workspaceId}:bot:${payload.botId}`).emit(event.eventType, payload)
       }
+      return
+    }
+
+    if (
+      isOutboxEventType(event, "bot_invocation:input_updated") ||
+      isOutboxEventType(event, "bot_invocation:cancelled")
+    ) {
+      const payload = (
+        isOutboxEventType(event, "bot_invocation:cancelled")
+          ? botInvocationCancelledPayloadSchema
+          : botInvocationControlPayloadSchema
+      ).parse(event.payload) as BotInvocationControlOutboxPayload
+      let room = `bot:${workspaceId}:bot:${payload.botId}`
+      if (payload.targetInstanceId) room = `${room}:instance:${payload.targetInstanceId}`
+      if (payload.targetRuntimeSessionId)
+        room = `bot:${workspaceId}:bot:${payload.botId}:session:${payload.targetRuntimeSessionId}`
+      botNs.to(room).emit(event.eventType, payload)
       return
     }
 

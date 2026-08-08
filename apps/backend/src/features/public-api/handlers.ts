@@ -942,6 +942,7 @@ export function createPublicApiHandlers({
         status: data.status,
         acceptingInvocations: data.acceptingInvocations,
         capabilities: data.capabilities,
+        manifest: data.manifest ?? null,
         statusText: data.statusText,
         publicKey: data.publicKey,
         publicKeyId: data.publicKeyId,
@@ -1412,6 +1413,7 @@ export function createPublicApiHandlers({
           trigger: invocation.trigger,
           requiredCapability: invocation.requiredCapability,
           promptMarkdown: invocation.promptMarkdown,
+          sourceRevision: invocation.sourceMessageRevision,
           authorUserId: invocation.authorUserId,
           mentionedActorSlugs: invocation.mentionedActorSlugs,
           claimToken: invocation.claimToken!,
@@ -1435,6 +1437,8 @@ export function createPublicApiHandlers({
         instanceId: data.instanceId,
         claimToken: data.claimToken,
         claimTtlSeconds: data.claimTtlSeconds,
+        knownSourceRevision: data.knownSourceRevision,
+        restartRequiredRevision: data.restartRequiredRevision,
       })
       res.json({ data: renewed })
     },
@@ -1583,15 +1587,17 @@ export function createPublicApiHandlers({
       const { session, stream, bot, callbackToken } = await authorizeSealedInvocationCallback(req)
       if (data.reply) assertReplyKeyGeneration(session, data.reply.envelope)
 
-      const { message, sessionFinalized } = await withTransaction(pool, async (client) => {
+      const completionResult = await withTransaction(pool, async (client) => {
         const claim = await botRuntimeService.findActiveClaimForUpdate(client, {
           workspaceId: req.workspaceId!,
           botId: bot.id,
           invocationId: session.id,
           claimToken: callbackToken,
         })
-        if (!claim || !(await botRuntimeService.validateClaimSourceForCompletion(client, claim))) {
-          throw new HttpError("Invocation claim not found", { status: 404, code: "NOT_FOUND" })
+        if (!claim) throw new HttpError("Invocation claim not found", { status: 404, code: "NOT_FOUND" })
+        if (!(await botRuntimeService.validateClaimSourceForCompletion(client, claim, data.sourceRevision))) {
+          await botRuntimeService.reconcileStaleCompletionInTransaction(client, claim)
+          return { stale: true as const }
         }
         const reply = data.reply
         const message = reply
@@ -1625,6 +1631,7 @@ export function createPublicApiHandlers({
           botId: bot.id,
           invocationId: session.id,
           claimToken: callbackToken,
+          sourceRevision: data.sourceRevision ?? claim.claimedSourceMessageRevision!,
         })
         if (!completed) throw new HttpError("Invocation claim not found", { status: 404, code: "NOT_FOUND" })
 
@@ -1663,6 +1670,10 @@ export function createPublicApiHandlers({
         })
         return { message, sessionFinalized: true }
       })
+      if ("stale" in completionResult) {
+        throw new HttpError("Invocation input is stale", { status: 409, code: "INVOCATION_INPUT_STALE" })
+      }
+      const { message, sessionFinalized } = completionResult
 
       // Live-update an open trace dialog (session room) the way the enclave/in-process
       // completes do — the outbox broadcast does not reach the session room, so the
@@ -1697,7 +1708,7 @@ export function createPublicApiHandlers({
       if (data.sources && data.sources.length > 0) assertManifestAllows(manifest, "sources")
       const contentJson = contentMarkdown ? parseMarkdown(contentMarkdown, undefined, toEmoji) : null
       const attachmentIds = contentJson ? collectAttachmentReferenceIds(contentJson) : []
-      const { completed, message, sessionFinalized, synthesizedSteps } = await withTransaction(pool, async (client) => {
+      const completionResult = await withTransaction(pool, async (client) => {
         const claim = await botRuntimeService.findActiveClaimForUpdate(client, {
           workspaceId: req.workspaceId!,
           botId: req.botApiKey!.botId,
@@ -1705,8 +1716,10 @@ export function createPublicApiHandlers({
           instanceId: data.instanceId,
           claimToken: data.claimToken,
         })
-        if (!claim || !(await botRuntimeService.validateClaimSourceForCompletion(client, claim))) {
-          throw new HttpError("Invocation claim not found", { status: 404, code: "NOT_FOUND" })
+        if (!claim) throw new HttpError("Invocation claim not found", { status: 404, code: "NOT_FOUND" })
+        if (!(await botRuntimeService.validateClaimSourceForCompletion(client, claim, data.sourceRevision))) {
+          await botRuntimeService.reconcileStaleCompletionInTransaction(client, claim)
+          return { stale: true as const }
         }
         await assertStreamAccessible(req, claim.responseStreamId)
         // E2EE-2: a plaintext completion MESSAGE into an E2E stream would break
@@ -1772,6 +1785,7 @@ export function createPublicApiHandlers({
           invocationId: req.params.invocationId,
           instanceId: data.instanceId,
           claimToken: data.claimToken,
+          sourceRevision: data.sourceRevision ?? claim.claimedSourceMessageRevision!,
         })
         if (!completed) throw new HttpError("Invocation claim not found", { status: 404, code: "NOT_FOUND" })
         const runtimeCommand = parseRuntimeCommandInvocationMetadata(completed.metadata)
@@ -1850,6 +1864,10 @@ export function createPublicApiHandlers({
         }
         return { completed, message, sessionFinalized: false, synthesizedSteps: [] }
       })
+      if ("stale" in completionResult) {
+        throw new HttpError("Invocation input is stale", { status: 409, code: "INVOCATION_INPUT_STALE" })
+      }
+      const { completed, message, sessionFinalized, synthesizedSteps } = completionResult
       // Best-effort live frames for an open trace dialog, emitted after the
       // transaction releases its connection (INV-41) — the durable record is
       // the rows + outbox event committed above. Synthesized steps first, then

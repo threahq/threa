@@ -89,8 +89,10 @@ function arrangeCompletion(params: { existingSteps: unknown[]; manifest?: unknow
     getLatestSequence: mock(() => Promise.resolve(7n)),
   } as unknown as EventService
   const validateClaimSourceForCompletion = mock(() => Promise.resolve(true))
+  const reconcileStaleCompletionInTransaction = mock(() => Promise.resolve())
   const botRuntimeService = {
     validateClaimSourceForCompletion,
+    reconcileStaleCompletionInTransaction,
     findActiveClaimForUpdate: mock(() => Promise.resolve({ id: "binv_1", responseStreamId: "stream_1" })),
     findPresenceByInstance: mock(() => Promise.resolve({ manifest: params.manifest ?? null })),
     completeInvocationInTransaction: mock(() =>
@@ -204,8 +206,8 @@ describe("completeBotInvocation synthesized-trace floor", () => {
     arranged.validateClaimSourceForCompletion.mockResolvedValue(false)
 
     await expect(arranged.handlers.completeBotInvocation(arranged.req, createResponse())).rejects.toMatchObject({
-      status: 404,
-      code: "NOT_FOUND",
+      status: 409,
+      code: "INVOCATION_INPUT_STALE",
     })
 
     expect({

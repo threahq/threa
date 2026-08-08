@@ -1,7 +1,11 @@
 import { describe, expect, it } from "bun:test"
 import type { Message } from "../messaging"
 import type { E2eStream, StreamE2eKeyWrap } from "../e2e-streams"
-import { buildSealedTurnContext, type BuildSealedTurnContextInputs } from "./sealed-turn-context"
+import {
+  buildSealedInputUpdate,
+  buildSealedTurnContext,
+  type BuildSealedTurnContextInputs,
+} from "./sealed-turn-context"
 
 const E2E: E2eStream = {
   streamId: "stream_1",
@@ -49,6 +53,54 @@ function inputs(over: Partial<BuildSealedTurnContextInputs> = {}): BuildSealedTu
     ...over,
   }
 }
+
+describe("buildSealedInputUpdate", () => {
+  it("returns only current trigger material, addressed bot wraps, and reply binding", () => {
+    const trigger = msg("msg_trigger", "usr_kris", "secret", 0)
+    const update = buildSealedInputUpdate({
+      e2e: E2E,
+      bikKeyId: "bik_live",
+      wraps: [
+        botWrap("bik_live", 0),
+        botWrap("bik_live", 1),
+        botWrap("bik_other", 1),
+        { ...botWrap("bik_live", 1), recipientKind: "enclave" },
+      ],
+      trigger,
+      replySenderId: "bot_pi",
+      sourceRevision: 3,
+    })
+    expect(update).toEqual({
+      delivery: "sealed",
+      sourceRevision: 3,
+      prompt: {
+        ciphertext: Buffer.from("cipher:secret").toString("base64"),
+        envelope: { v: 2, keyGeneration: 0, iv: "aXY=", aad: "YWFk" },
+      },
+      wraps: [
+        { keyGeneration: 0, wrapEnc: "enc_bik_live_0", wrapCt: "ct_bik_live_0" },
+        { keyGeneration: 1, wrapEnc: "enc_bik_live_1", wrapCt: "ct_bik_live_1" },
+      ],
+      reply: { keyGeneration: 1, senderId: "bot_pi" },
+    })
+    expect(update).not.toHaveProperty("promptMarkdown")
+    expect(update).not.toHaveProperty("mentionedActorSlugs")
+  })
+
+  it("requires coverage for both trigger and reply generations", () => {
+    const trigger = msg("msg_trigger", "usr_kris", "secret", 0)
+    expect(
+      buildSealedInputUpdate({
+        e2e: E2E,
+        bikKeyId: "bik_live",
+        wraps: [botWrap("bik_live", 1)],
+        trigger,
+        replySenderId: "bot_pi",
+        sourceRevision: 2,
+      })
+    ).toBeNull()
+  })
+})
 
 describe("buildSealedTurnContext", () => {
   it("builds the sealed context for the claiming BIK", () => {
@@ -116,6 +168,17 @@ describe("buildSealedTurnContext", () => {
     expect(ctx).not.toBeNull()
     expect(ctx!.wraps.map((w) => w.keyGeneration).sort()).toEqual([0, 1])
     expect(ctx!.reply.keyGeneration).toBe(1) // reply still seals under current
+  })
+
+  it("keeps older-generation wraps needed only by encrypted history", () => {
+    const ctx = buildSealedTurnContext(
+      inputs({
+        wraps: [botWrap("bik_live", 0), botWrap("bik_live", 1)],
+        priorMessages: [msg("msg_old", "usr_kris", "older", 0)],
+      })
+    )
+    expect(ctx?.wraps.map((wrap) => wrap.keyGeneration)).toEqual([0, 1])
+    expect(ctx?.history[0]?.envelope.keyGeneration).toBe(0)
   })
 
   it("maps prior messages to roles by author and drops non-E2E rows", () => {

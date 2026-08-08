@@ -115,6 +115,8 @@ export type OutboxEventType =
   | "attachment:upload_status_changed"
   | "bot_invocation:available"
   | "bot_invocation:claimed"
+  | "bot_invocation:input_updated"
+  | "bot_invocation:cancelled"
   | "bot:active_actor_changed"
   | "bot:resync"
   | "bot:session_archived"
@@ -1079,6 +1081,19 @@ export interface BotInvocationAvailableOutboxPayload extends WorkspaceScopedPayl
   createdAt: string
 }
 
+export interface BotInvocationControlOutboxPayload extends WorkspaceScopedPayload {
+  botId: string
+  invocationId: string
+  sourceRevision: number
+  targetInstanceId: string | null
+  targetRuntimeSessionId: string | null
+}
+
+export interface BotInvocationInputUpdatedOutboxPayload extends BotInvocationControlOutboxPayload {}
+export interface BotInvocationCancelledOutboxPayload extends BotInvocationControlOutboxPayload {
+  reason: import("@threa/types").BotInvocationCancellationReason
+}
+
 export interface BotInvocationClaimedOutboxPayload extends WorkspaceScopedPayload {
   botId: string
   invocationId: string
@@ -1278,6 +1293,8 @@ export interface OutboxEventPayloadMap {
   "attachment:extraction_completed": AttachmentExtractionCompletedOutboxPayload
   "bot_invocation:available": BotInvocationAvailableOutboxPayload
   "bot_invocation:claimed": BotInvocationClaimedOutboxPayload
+  "bot_invocation:input_updated": BotInvocationInputUpdatedOutboxPayload
+  "bot_invocation:cancelled": BotInvocationCancelledOutboxPayload
   "bot:active_actor_changed": BotActiveActorChangedOutboxPayload
   "bot:resync": BotResyncOutboxPayload
   "bot:session_archived": BotSessionArchivedOutboxPayload
@@ -1461,6 +1478,8 @@ export function isUserScopedEvent(event: OutboxEvent): event is OutboxEvent<User
 export type BotScopedEventType =
   | "bot_invocation:available"
   | "bot_invocation:claimed"
+  | "bot_invocation:input_updated"
+  | "bot_invocation:cancelled"
   | "bot:active_actor_changed"
   | "bot:resync"
   | "bot:session_archived"
@@ -1469,6 +1488,8 @@ export type BotScopedEventType =
 const BOT_SCOPED_EVENTS: BotScopedEventType[] = [
   "bot_invocation:available",
   "bot_invocation:claimed",
+  "bot_invocation:input_updated",
+  "bot_invocation:cancelled",
   "bot:active_actor_changed",
   "bot:resync",
   "bot:session_archived",
