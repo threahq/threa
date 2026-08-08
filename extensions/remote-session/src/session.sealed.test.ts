@@ -65,6 +65,7 @@ function makeConfig(bikPath: string): RemoteSessionConfig {
     pollMs: 3000,
     idleTimeoutMs: 3_600_000,
     sealedFullTrace: true,
+    traceMode: "headline",
     bikPath,
   }
 }

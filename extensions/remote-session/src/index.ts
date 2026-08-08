@@ -30,6 +30,7 @@ export {
   type ThreaClientOptions,
 } from "./client"
 export {
+  TRACE_MODES,
   loadConfig,
   parseConfigFile,
   sanitizeId,
@@ -40,6 +41,7 @@ export {
   type LoadConfigResult,
   type RawConfig,
   type RemoteSessionConfig,
+  type TraceMode,
 } from "./identity"
 export {
   downloadInboundAttachments,

@@ -71,7 +71,7 @@ The channel reports `runtimeKind: "claude-code-channel"`. Originally only `pi-lo
 
    Claude sees `<channel source="threa" invocation_id="…">…</channel>` and starts working against your real files.
 
-4. The channel tracks the invocation as "in-flight", flips presence to `busy`, and records one trace step so the scratchpad's session card shows activity.
+4. The channel tracks the invocation as "in-flight", flips presence to `busy`, and tails Claude Code's local transcript for narration and per-tool trace steps. Plaintext trace detail follows the configured `traceMode`; sealed turns use full encrypted detail by default.
 
 A claim holds a lease (`claimTtlSeconds`, max 300) that expires if not renewed, so the channel renews every in-flight claim on a timer for as long as Claude is still working.
 
@@ -126,7 +126,7 @@ The local terminal dialog stays open the whole time, so whichever answer arrives
 | Where it runs                             | Inside Pi, via Pi's extension API                         | A subprocess Claude Code spawns over stdio                           |
 | How it gets a prompt                      | Claims invocation, injects via `pi.sendUserMessage`       | Claims invocation, pushes a `notifications/claude/channel` event     |
 | How it returns a reply                    | Hooks Pi's `agent_end`, posts the captured assistant text | Claude calls `send` for progress and `reply` to finish the turn      |
-| Trace detail                              | Rich per-tool steps (it hooks Pi's tool events)           | One "working" step (a channel can't see Claude's tool calls)         |
+| Trace detail                              | Rich per-tool steps from Pi tool events                   | Per-tool steps tailed from Claude Code's local transcript            |
 | Session control (`/compact`, `/model`, …) | Yes                                                       | No (a channel can't drive Claude's session)                          |
 | Permission prompts                        | N/A (Pi runs the model in-process)                        | Relayed into the scratchpad as messages                              |
 | Attachments                               | Downloads inbound, `THREA_ATTACH:` uploads outbound       | Same, but inbound needs an extra stream-messages fetch to find them  |
@@ -134,5 +134,5 @@ The local terminal dialog stays open the whole time, so whichever answer arrives
 
 ## Limits today
 
-- Single "working" trace step rather than a per-tool trace.
+- Transcript tracing depends on Claude Code's local JSONL format and may stop for a turn if it cannot bind the matching session file.
 - No session-control commands (a channel can't drive Claude's host session).

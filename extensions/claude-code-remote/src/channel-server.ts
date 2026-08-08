@@ -501,6 +501,7 @@ export class ChannelServer {
     // Steps ship only while the SDK holds the turn in flight — recordSteps
     // returns false once the invocation closes, which stops the tail.
     this.tracer = new TranscriptTracer({
+      mode: config.traceMode,
       emit: (invocationId, frames, statusText) => this.session.recordSteps(invocationId, frames, statusText),
       onApiError: (invocationId, text) => this.carryOn?.onApiError(invocationId, text),
       log,
@@ -650,7 +651,7 @@ export class ChannelServer {
     // Window the transcript tail BEFORE the content is pushed, so the tracer's
     // start offset precedes the prompt echo it binds on.
     // A sealed turn's steps are ciphertext to the server, so the tracer may
-    // run full-detail (the owner opted back to redacted via sealedFullTrace=false).
+    // run full-detail. Turning that off falls back to the configured base mode.
     this.tracer.beginTurn(turn.invocationId, turn.sealed && this.config.sealedFullTrace ? "full" : undefined)
     this.carryOn?.onTurnStarted(turn.invocationId, turn.streamId)
     await this.notify("notifications/claude/channel", {

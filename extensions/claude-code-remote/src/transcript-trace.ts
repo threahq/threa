@@ -13,17 +13,18 @@ import { basename, join } from "node:path"
  * (over the /bot socket) while a turn is in flight.
  *
  * Privacy model (mirrors pi-remote's): in the default `headline` mode no tool
- * payload leaves the machine — tool calls ship a category headline plus at
- * most a file *basename*; shell commands, file contents, tool outputs, and
- * thinking bodies are replaced with "omitted for safety" markers carrying only
- * size telemetry. Assistant narration ships in FULL in both modes, exactly as
- * pi ships its narration: it is prose the model writes for the stream's
- * reader, and it is the only surviving record of a turn's final message when
- * the model ends without calling `reply` (Kris's ruling — redacting it left
- * such turns showing nothing but an "omitted" stub). Thinking stays withheld
- * in headline mode: it is internal and can quote file contents wholesale. The
- * `full` mode ships everything; the channel enables it per-turn for sealed
- * (E2EE) turns, whose steps are ciphertext to the server.
+ * payload leaves the machine. Tool calls ship a category headline plus at most
+ * a file basename; shell commands, file contents, tool outputs, and thinking
+ * bodies are replaced with "omitted for safety" markers carrying only size
+ * telemetry. The opt-in `commands` mode includes only the Bash command field;
+ * all other inputs and every tool result stay redacted. Assistant narration
+ * ships in full in every mode, exactly as Pi ships its narration. It is prose
+ * the model writes for the stream's reader, and it is the only surviving record
+ * of a turn's final message when the model ends without calling `reply` (Kris's
+ * ruling: redacting it left such turns showing nothing but an "omitted" stub).
+ * Thinking stays withheld outside full mode because it can quote file contents
+ * wholesale. The `full` mode ships everything; the channel enables it per-turn
+ * for sealed (E2EE) turns, whose steps are ciphertext to the server.
  */
 
 // Wire format shared with pi-remote and parsed by the frontend trace dialog
@@ -41,6 +42,8 @@ const SECTION_LABELS = {
 type SectionLabel = (typeof SECTION_LABELS)[keyof typeof SECTION_LABELS]
 
 const TRACE_CONTENT_MAX_CHARS = 9_500
+const COMMAND_TRACE_MAX_CHARS = 2_000
+const COMMAND_HEADLINE_MAX_CHARS = 180
 const DEFAULT_POLL_MS = 500
 const DEFAULT_BIND_TIMEOUT_MS = 60_000
 const DEFAULT_MAX_FRAMES_PER_TURN = 400
@@ -53,7 +56,7 @@ const MAX_LINE_CHARS = 2_000_000
 // dir accumulates every historical session, and dead files never append.
 const MAX_CANDIDATES = 12
 
-export type RedactionMode = "headline" | "full"
+export type RedactionMode = "headline" | "commands" | "full"
 
 export interface TraceFrame {
   stepType: string
@@ -201,6 +204,33 @@ function safeToolArgumentSummary(name: string, input: unknown): string {
   return `Arguments for ${safeToolName(name)} omitted for safety.`
 }
 
+function bashCommand(input: unknown): string | undefined {
+  if (!isObject(input) || typeof input.command !== "string") return undefined
+  return input.command.trim() || undefined
+}
+
+function truncateCommandForTrace(command: string): string {
+  if (command.length <= COMMAND_TRACE_MAX_CHARS) return command
+  const marker = "\n\n…[trace content truncated]"
+  return `${command.slice(0, COMMAND_TRACE_MAX_CHARS - marker.length).trimEnd()}${marker}`
+}
+
+function commandHeadline(command: string, fallback: string): string {
+  const lines = command
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+  const firstLine = lines[0]?.replace(/\s+/g, " ")
+  if (!firstLine) return fallback
+  const extraLines = lines.length - 1
+  const suffix = extraLines > 0 ? ` (+${extraLines} ${extraLines === 1 ? "line" : "lines"})` : ""
+  const prefix = "Running "
+  const available = COMMAND_HEADLINE_MAX_CHARS - prefix.length - suffix.length
+  const summary =
+    firstLine.length <= available ? firstLine : `${firstLine.slice(0, Math.max(0, available - 1)).trimEnd()}…`
+  return `${prefix}${summary}${suffix}`
+}
+
 function textFromToolResult(content: unknown): string {
   if (typeof content === "string") return content
   if (!Array.isArray(content)) return ""
@@ -243,19 +273,35 @@ function toolUseStep(part: Record<string, unknown>, ctx: MapContext): MappedStep
     if (id) ctx.toolHeadlines.set(id, "")
     return null
   }
-  const { headline, statusText } = describeClaudeTool(name, part.input)
+  const described = describeClaudeTool(name, part.input)
+  const command = name.toLowerCase() === "bash" ? bashCommand(part.input) : undefined
+  const headline =
+    ctx.mode === "commands" && command ? commandHeadline(command, described.headline) : described.headline
   if (id) ctx.toolHeadlines.set(id, headline)
-  const body =
-    ctx.mode === "full"
-      ? truncateForTrace(JSON.stringify(part.input ?? {}, null, 1))
-      : safeToolArgumentSummary(name, part.input)
+
+  let section: { label: SectionLabel; body: string; lang: string | null }
+  if (ctx.mode === "full") {
+    section = {
+      label: SECTION_LABELS.ARGUMENTS,
+      body: truncateForTrace(JSON.stringify(part.input ?? {}, null, 1)),
+      lang: "json",
+    }
+  } else if (ctx.mode === "commands" && command) {
+    // Plaintext Arguments sections are hard-redacted by the API. Details is the
+    // bounded, regex-scrubbed lane for an explicitly enabled command trace.
+    section = {
+      label: SECTION_LABELS.DETAILS,
+      body: truncateCommandForTrace(command),
+      lang: "bash",
+    }
+  } else {
+    section = { label: SECTION_LABELS.ARGUMENTS, body: safeToolArgumentSummary(name, part.input), lang: null }
+  }
+
   return {
     stepType: "tool_call",
-    content: formatStructuredToolTrace({
-      headline,
-      sections: [{ label: SECTION_LABELS.ARGUMENTS, body, lang: ctx.mode === "full" ? "json" : null }],
-    }),
-    statusText,
+    content: formatStructuredToolTrace({ headline, sections: [section] }),
+    statusText: described.statusText,
   }
 }
 

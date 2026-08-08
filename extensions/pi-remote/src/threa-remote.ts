@@ -100,6 +100,8 @@ const CLAIM_RENEW_INTERVAL_MS = Math.floor((CLAIM_TTL_SECONDS * 1000) / 3)
 const NO_SOCKET_POLL_CAP_MS = 2 * 60 * 1000
 const WS_RECONNECTION_DELAY_MAX_MS = 30_000
 const TRACE_CONTENT_MAX_CHARS = 9_500
+const COMMAND_TRACE_MAX_CHARS = 2_000
+const COMMAND_HEADLINE_MAX_CHARS = 180
 // Sealed steps carry ciphertext the server never reads, so the plaintext step
 // schema's 10K cap doesn't apply — a full-detail sealed trace (real command,
 // patch, stdout) gets a much roomier clamp, bounded only to keep frames sane.
@@ -148,6 +150,11 @@ const PI_TOOL_TRACE_SECTION_LABELS = {
 
 type PiToolTraceSectionLabel = (typeof PI_TOOL_TRACE_SECTION_LABELS)[keyof typeof PI_TOOL_TRACE_SECTION_LABELS]
 
+const BASE_TRACE_MODES = ["headline", "commands"] as const
+const BASE_TRACE_MODE_SET: ReadonlySet<string> = new Set(BASE_TRACE_MODES)
+type BaseTraceMode = (typeof BASE_TRACE_MODES)[number]
+type ToolTraceMode = BaseTraceMode | "full"
+
 type Config = {
   baseUrl: string
   workspaceId: string
@@ -164,11 +171,18 @@ type Config = {
    * output) on a sealed (E2EE) turn. Safe because sealed step content is
    * ciphertext the server can't read — the point is giving the owner more
    * without giving the server anything. Defaults to ON for sealed turns; has
-   * no effect on plaintext turns, which always stay redacted (the toggle can
-   * never leak plaintext to the server). Set `false` to keep sealed traces
-   * redacted too.
+   * no effect on plaintext turns, which never emit full detail (the toggle can
+   * never leak full tool payloads to the server). Set `false` to use the
+   * configured `traceMode` on sealed turns too.
    */
   sealedFullTrace?: boolean
+  /**
+   * Base trace detail. `headline` keeps shell commands hidden; `commands`
+   * includes only the Bash command while file bodies, patches, and every tool
+   * result stay hidden. Used for plaintext turns and sealed turns when
+   * `sealedFullTrace` is false. Defaults to `headline`.
+   */
+  traceMode?: BaseTraceMode
   /**
    * Create new linked scratchpads end-to-end encrypted: the harness mints the
    * stream key and wraps it to the bot owner's UIK + its own BIK, so the
@@ -214,6 +228,7 @@ type ConfigPatch = Pick<
   | "preferredModels"
   | "defaultLabel"
   | "sealedFullTrace"
+  | "traceMode"
   | "e2e"
 >
 
@@ -360,6 +375,10 @@ function validateConfig(value: unknown): Config | undefined {
       return undefined
     }
     candidate.defaultLabel = candidate.defaultLabel.trim() || undefined
+  }
+  if (candidate.traceMode !== undefined && !BASE_TRACE_MODE_SET.has(candidate.traceMode)) {
+    console.error(`Invalid ${CONFIG_PATH}: traceMode must be headline or commands`)
+    return undefined
   }
   return migrateSessionState(candidate as Config)
 }
@@ -1144,10 +1163,62 @@ function safeToolArgumentSummary(event: ToolCallEvent): string {
   return `Arguments for ${toolName} omitted for safety.`
 }
 
+function bashCommand(event: ToolCallEvent): string | undefined {
+  const input = "input" in event ? event.input : undefined
+  if (event.toolName !== "bash" || !isObject(input) || typeof input.command !== "string") return undefined
+  return input.command.trim() || undefined
+}
+
+function truncateCommandForTrace(command: string): string {
+  if (command.length <= COMMAND_TRACE_MAX_CHARS) return command
+  const marker = "\n\n…[trace content truncated]"
+  return `${command.slice(0, COMMAND_TRACE_MAX_CHARS - marker.length).trimEnd()}${marker}`
+}
+
+function commandHeadline(command: string, fallback: string): string {
+  const lines = command
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+  const firstLine = lines[0]?.replace(/\s+/g, " ")
+  if (!firstLine) return fallback
+  const extraLines = lines.length - 1
+  const suffix = extraLines > 0 ? ` (+${extraLines} ${extraLines === 1 ? "line" : "lines"})` : ""
+  const prefix = "Running "
+  const available = COMMAND_HEADLINE_MAX_CHARS - prefix.length - suffix.length
+  const summary =
+    firstLine.length <= available ? firstLine : `${firstLine.slice(0, Math.max(0, available - 1)).trimEnd()}…`
+  return `${prefix}${summary}${suffix}`
+}
+
+function toolTraceHeadline(event: ToolCallEvent, mode: ToolTraceMode): string {
+  const fallback = describeToolCall(event).replace(/…$/, "")
+  const command = mode === "commands" ? bashCommand(event) : undefined
+  return command ? commandHeadline(command, fallback) : fallback
+}
+
+function commandToolArgumentSummary(event: ToolCallEvent): {
+  label: PiToolTraceSectionLabel
+  body: string
+  lang: string | null
+} {
+  const command = bashCommand(event)
+  if (!command) {
+    return { label: PI_TOOL_TRACE_SECTION_LABELS.DETAILS, body: safeToolArgumentSummary(event), lang: null }
+  }
+  // Plaintext Arguments sections are hard-redacted by the API. Details is the
+  // bounded, regex-scrubbed lane for an explicitly enabled command trace.
+  return {
+    label: PI_TOOL_TRACE_SECTION_LABELS.DETAILS,
+    body: truncateCommandForTrace(command),
+    lang: "bash",
+  }
+}
+
 /**
  * The real tool arguments, for a sealed (E2EE) trace: the actual shell command,
  * the actual file path + contents/patch. Only ever serialized into sealed step
- * content — the plaintext path stays on `safeToolArgumentSummary`.
+ * content. Plaintext turns use the headline or command-only paths above.
  */
 function fullToolArgumentSummary(event: ToolCallEvent): { body: string; lang: string | null } {
   const input = "input" in event ? event.input : undefined
@@ -1166,22 +1237,30 @@ function fullToolArgumentSummary(event: ToolCallEvent): { body: string; lang: st
 /**
  * Whether this invocation's trace should carry FULL tool detail. True only when
  * the turn is sealed (content is ciphertext to the server) AND the user hasn't
- * opted sealed traces back to redacted via `sealedFullTrace: false`. `full`
- * defaults to `false` at every formatter, so a missed call site fails safe
- * (redacted) — the toggle can never turn full detail ON for a plaintext turn.
+ * opted sealed traces out of full detail via `sealedFullTrace: false`. Formatters
+ * default to `headline`, so a missed call site fails safe. The toggle can never
+ * turn full detail on for a plaintext turn.
  */
 function shouldEmitFullTrace(invocation: ClaimedInvocation | undefined): boolean {
   return invocation?.sealing !== undefined && config?.sealedFullTrace !== false
 }
 
-function formatToolCallTrace(event: ToolCallEvent, full = false): string {
-  const detail = full
-    ? { label: PI_TOOL_TRACE_SECTION_LABELS.ARGUMENTS, ...fullToolArgumentSummary(event) }
-    : { label: PI_TOOL_TRACE_SECTION_LABELS.DETAILS, body: safeToolArgumentSummary(event), lang: null }
+function traceModeForInvocation(invocation: ClaimedInvocation | undefined): ToolTraceMode {
+  if (shouldEmitFullTrace(invocation)) return "full"
+  return config?.traceMode === "commands" ? "commands" : "headline"
+}
+
+function formatToolCallTrace(event: ToolCallEvent, mode: ToolTraceMode = "headline"): string {
+  const detail =
+    mode === "full"
+      ? { label: PI_TOOL_TRACE_SECTION_LABELS.ARGUMENTS, ...fullToolArgumentSummary(event) }
+      : mode === "commands"
+        ? commandToolArgumentSummary(event)
+        : { label: PI_TOOL_TRACE_SECTION_LABELS.DETAILS, body: safeToolArgumentSummary(event), lang: null }
   return formatStructuredToolTrace({
-    headline: describeToolCall(event).replace(/…$/, ""),
+    headline: toolTraceHeadline(event, mode),
     sections: [detail],
-    ...(full ? { maxChars: SEALED_TRACE_CONTENT_MAX_CHARS } : {}),
+    ...(mode === "full" ? { maxChars: SEALED_TRACE_CONTENT_MAX_CHARS } : {}),
   })
 }
 
@@ -1192,11 +1271,11 @@ function summarizeToolOutput(output: string): string {
   return `Tool output omitted for safety. Captured locally: ${text.length} characters across ${lines} ${lines === 1 ? "line" : "lines"}.`
 }
 
-function formatToolResultTrace(event: ToolResultEvent, full = false): string {
+function formatToolResultTrace(event: ToolResultEvent, mode: ToolTraceMode = "headline"): string {
   const call = pendingToolCalls.get(event.toolCallId)
   const output = textFromToolContent(event.content)
   const sections: Array<{ label: PiToolTraceSectionLabel; body: string; lang: string | null }> = []
-  if (full) {
+  if (mode === "full") {
     sections.push({
       label: event.isError ? PI_TOOL_TRACE_SECTION_LABELS.ERROR_OUTPUT : PI_TOOL_TRACE_SECTION_LABELS.OUTPUT,
       body: output.trim() || "Tool produced no textual output.",
@@ -1214,7 +1293,7 @@ function formatToolResultTrace(event: ToolResultEvent, full = false): string {
   return formatStructuredToolTrace({
     headline: call?.headline ?? `Used ${safeToolName(event.toolName)}`,
     sections,
-    ...(full ? { maxChars: SEALED_TRACE_CONTENT_MAX_CHARS } : {}),
+    ...(mode === "full" ? { maxChars: SEALED_TRACE_CONTENT_MAX_CHARS } : {}),
   })
 }
 
@@ -2023,8 +2102,11 @@ function configTemplate(existing: Partial<Config> | undefined): string {
       defaultLabel: existing?.defaultLabel ?? "",
       preferredModels: existing?.preferredModels ?? [],
       // Full tool args/output in the trace on end-to-end-encrypted turns only
-      // (the server sees ciphertext). Plaintext turns always stay redacted.
+      // (the server sees ciphertext). Plaintext turns never use full mode.
       sealedFullTrace: existing?.sealedFullTrace ?? true,
+      // Base mode that can include only Bash's command field. Tool results and
+      // write/edit payloads remain hidden.
+      traceMode: existing?.traceMode ?? "headline",
       // Create new linked scratchpads end-to-end encrypted (requires the bot
       // owner to have set up encryption in Threa).
       e2e: existing?.e2e ?? false,
@@ -2063,6 +2145,9 @@ function parseConfigPatch(text: string): ConfigPatch {
   if (candidate.sealedFullTrace !== undefined && typeof candidate.sealedFullTrace !== "boolean") {
     throw new Error("sealedFullTrace must be a boolean")
   }
+  if (candidate.traceMode !== undefined && !BASE_TRACE_MODE_SET.has(candidate.traceMode)) {
+    throw new Error("traceMode must be headline or commands")
+  }
   if (candidate.e2e !== undefined && typeof candidate.e2e !== "boolean") {
     throw new Error("e2e must be a boolean")
   }
@@ -2076,6 +2161,7 @@ function parseConfigPatch(text: string): ConfigPatch {
     defaultLabel: candidate.defaultLabel?.trim() || undefined,
     preferredModels: candidate.preferredModels?.map((value) => value.trim()).filter((value) => value.length > 0),
     sealedFullTrace: candidate.sealedFullTrace,
+    traceMode: candidate.traceMode,
     e2e: candidate.e2e,
   }
 }
@@ -4134,6 +4220,7 @@ export const __testing = {
   formatToolResultTrace,
   fullToolArgumentSummary,
   shouldEmitFullTrace,
+  traceModeForInvocation,
   completeSealedWithMarkdown,
   downloadSealedContextAttachments,
   setConfigForTesting: (value: unknown) => {
@@ -4428,15 +4515,16 @@ export default function (pi: ExtensionAPI): void {
   pi.on("tool_call", async (event, ctx) => {
     if (!pending || !shouldHandleSessionEvents(ctx)) return
     const description = describeToolCall(event)
-    pendingToolCalls.set(event.toolCallId, { headline: description.replace(/…$/, "") })
-    await recordTraceStep("tool_call", formatToolCallTrace(event, shouldEmitFullTrace(pending)), description)
+    const traceMode = traceModeForInvocation(pending)
+    pendingToolCalls.set(event.toolCallId, { headline: toolTraceHeadline(event, traceMode) })
+    await recordTraceStep("tool_call", formatToolCallTrace(event, traceMode), description)
   })
 
   pi.on("tool_result", async (event, ctx) => {
     if (!pending || !shouldHandleSessionEvents(ctx)) return
     await recordTraceStep(
       event.isError ? "tool_error" : "tool_call",
-      formatToolResultTrace(event, shouldEmitFullTrace(pending)),
+      formatToolResultTrace(event, traceModeForInvocation(pending)),
       event.isError ? `${event.toolName} failed` : `Finished ${event.toolName}`
     )
     pendingToolCalls.delete(event.toolCallId)
