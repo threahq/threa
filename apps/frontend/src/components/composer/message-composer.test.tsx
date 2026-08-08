@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest"
 import { spyOnExport } from "@/test/spy"
 import { render, screen, fireEvent, act, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
-import { forwardRef, useEffect, useImperativeHandle, useState } from "react"
+import { forwardRef, useEffect, useImperativeHandle, useState, type ForwardedRef } from "react"
 import { MessageComposer } from "./message-composer"
 import { StashedDraftsPicker } from "./stashed-drafts-picker"
 import type { CachedDraft } from "@/hooks"
@@ -11,6 +11,7 @@ import type { JSONContent } from "@threa/types"
 import * as useMobileModule from "@/hooks/use-mobile"
 import * as contextsModule from "@/contexts"
 import * as editorModule from "@/components/editor"
+import * as micButtonModule from "./mic-button"
 import { queueComposerCommandRequest } from "@/stores/composer-command-request-store"
 
 let isMobileMockValue = false
@@ -172,6 +173,30 @@ describe("MessageComposer", () => {
     onSubmit: vi.fn(),
     canSubmit: false,
   }
+
+  it("aborts active dictation when a nonempty draft is cleared", async () => {
+    const abort = vi.fn()
+    const MockMicButton = forwardRef(function MockMicButton(
+      props: { onActiveChange: (active: boolean) => void },
+      ref: ForwardedRef<{ abort: () => void; prepareSendAsIs: () => void }>
+    ) {
+      useImperativeHandle(ref, () => ({ abort, prepareSendAsIs: vi.fn() }))
+      useEffect(() => props.onActiveChange(true), [props])
+      return null
+    })
+    spyOnExport(micButtonModule, "MicButton").mockReturnValue(
+      MockMicButton as unknown as typeof micButtonModule.MicButton
+    )
+    const nonempty: JSONContent = {
+      type: "doc",
+      content: [{ type: "paragraph", content: [{ type: "text", text: "draft" }] }],
+    }
+    const { rerender } = render(<MessageComposer {...defaultProps} workspaceId="ws_1" content={nonempty} />)
+
+    rerender(<MessageComposer {...defaultProps} workspaceId="ws_1" content={EMPTY_DOC} />)
+
+    await waitFor(() => expect(abort).toHaveBeenCalledOnce())
+  })
 
   describe("rendering", () => {
     it("should render the editor", () => {

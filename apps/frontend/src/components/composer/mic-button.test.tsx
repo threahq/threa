@@ -93,7 +93,8 @@ describe("MicButton state surfaces", () => {
       dismissError: vi.fn(),
       start: vi.fn(),
       stop: vi.fn(),
-      endSession: vi.fn(),
+      prepareSendAsIs: vi.fn(),
+      abort: vi.fn(),
       ...overrides,
     })
   }
@@ -188,8 +189,8 @@ describe("MicButton state surfaces", () => {
 describe("MicButton imperative handle", () => {
   afterEach(() => vi.restoreAllMocks())
 
-  it("exposes endSession through the forwarded ref so the composer can end a take on send", () => {
-    const endSession = vi.fn()
+  it("exposes prepareSendAsIs through the forwarded ref so the composer can end a take on send", () => {
+    const prepareSendAsIs = vi.fn()
     vi.spyOn(voiceDictation, "useVoiceDictation").mockReturnValue({
       state: "recording",
       supported: true,
@@ -208,7 +209,8 @@ describe("MicButton imperative handle", () => {
       dismissError: vi.fn(),
       start: vi.fn(),
       stop: vi.fn(),
-      endSession,
+      prepareSendAsIs,
+      abort: vi.fn(),
     })
 
     const ref = createRef<MicButtonHandle>()
@@ -218,7 +220,7 @@ describe("MicButton imperative handle", () => {
       </TooltipProvider>
     )
 
-    ref.current?.endSession()
-    expect(endSession).toHaveBeenCalledOnce()
+    ref.current?.prepareSendAsIs()
+    expect(prepareSendAsIs).toHaveBeenCalledOnce()
   })
 })

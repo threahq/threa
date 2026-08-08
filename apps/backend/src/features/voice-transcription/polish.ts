@@ -15,45 +15,51 @@ export interface PolishTranscriptInput {
   workspaceId: string
   userId: string
   sessionId: string
-  /**
-   * Draft text already in the composer around the dictation insertion point,
-   * captured client-side at `voice:start`. Read-only context for the model
-   * (vocabulary, names, sentence continuation) — never part of the output.
-   */
   draftBefore?: string
   draftAfter?: string
-  /**
-   * Spelling reference (product names, custom steering words) the model should
-   * normalize mis-transcriptions to. Reinforces the STT-layer keyterm biasing so
-   * a mis-heard product name is corrected even when the provider couldn't bias it.
-   */
   steeringTerms?: string[]
+  signal?: AbortSignal
 }
 
-export type PolishTranscript = (input: PolishTranscriptInput) => Promise<string>
+export type PolishOutcome =
+  | { status: "success"; markdown: string }
+  | { status: "empty_input" }
+  | { status: "invalid_output"; reason: "empty" | "truncated" | "unparseable" }
+  | { status: "timeout" }
+  | { status: "canceled" }
+  | { status: "provider_error" }
 
-/**
- * Builds the polish entrypoint used by the voice relay. `level` controls rewrite
- * aggressiveness ("minor" vs "opinionated"); "none" short-circuits in the gateway
- * and never reaches here. On timeout or upstream error this never throws: it logs
- * and returns the raw text so dictation always commits something.
- */
+export type PolishTranscript = (input: PolishTranscriptInput) => Promise<PolishOutcome>
+
 export function createPolishTranscript(deps: { ai: AI }): PolishTranscript {
-  return async ({ rawTranscript, level, workspaceId, userId, sessionId, draftBefore, draftAfter, steeringTerms }) => {
+  return async ({
+    rawTranscript,
+    level,
+    workspaceId,
+    userId,
+    sessionId,
+    draftBefore,
+    draftAfter,
+    steeringTerms,
+    signal,
+  }) => {
     const trimmed = rawTranscript.trim()
-    if (!trimmed) return rawTranscript
-    // Defense-in-depth: the gateway short-circuits before reaching here, but an
-    // explicit guard prevents a future caller from silently falling through to
-    // the "minor" branch (INV-11).
-    if (level === "none") return rawTranscript
+    if (!trimmed) return { status: "empty_input" }
+    if (level === "none") return { status: "success", markdown: trimmed }
 
     const systemPrompt = level === "opinionated" ? POLISH_OPINIONATED_SYSTEM_PROMPT : POLISH_MINOR_SYSTEM_PROMPT
     const userMessage = buildPolishUserMessage({ rawTranscript: trimmed, draftBefore, draftAfter, steeringTerms })
-
     const controller = new AbortController()
-    const timer = setTimeout(() => controller.abort(), POLISH_TIMEOUT_MS)
+    let timedOut = false
+    const onCancel = () => controller.abort()
+    signal?.addEventListener("abort", onCancel, { once: true })
+    const timer = setTimeout(() => {
+      timedOut = true
+      controller.abort()
+    }, POLISH_TIMEOUT_MS)
 
     try {
+      if (signal?.aborted) return { status: "canceled" }
       const result = await deps.ai.generateText({
         model: POLISH_MODEL,
         messages: [
@@ -75,27 +81,27 @@ export function createPolishTranscript(deps: { ai: AI }): PolishTranscript {
         context: { workspaceId, userId, origin: "user" },
         abortSignal: controller.signal,
       })
-
+      if (signal?.aborted) return { status: "canceled" }
+      if (timedOut) return { status: "timeout" }
+      const finishReason =
+        (result as { finishReason?: string; response?: { finishReason?: string } }).finishReason ??
+        (result as { response?: { finishReason?: string } }).response?.finishReason
+      if (finishReason === "length") return { status: "invalid_output", reason: "truncated" }
       const polished = result.value.trim()
-      if (!polished) return rawTranscript
-      // Providers slip em-dashes through despite the prompt rule; strip them
-      // deterministically so the user never sees one they didn't dictate.
-      return scrubDashes(polished)
+      if (!polished) return { status: "invalid_output", reason: "empty" }
+      return { status: "success", markdown: scrubDashes(polished) }
     } catch (err) {
-      logger.warn({ err, sessionId, workspaceId, level }, "Voice transcript polish failed; falling back to raw")
-      return rawTranscript
+      if (signal?.aborted) return { status: "canceled" }
+      if (timedOut) return { status: "timeout" }
+      logger.warn({ err, sessionId, workspaceId, level }, "Voice transcript polish provider failed")
+      return { status: "provider_error" }
     } finally {
       clearTimeout(timer)
+      signal?.removeEventListener("abort", onCancel)
     }
   }
 }
 
-/**
- * Assembles the polish user message. Draft text around the insertion point is
- * included as labeled read-only sections so the model can match the draft's
- * vocabulary and make the polished text flow with its surroundings; the prompt's
- * hard rules forbid echoing these sections into the output.
- */
 export function buildPolishUserMessage(args: {
   rawTranscript: string
   draftBefore?: string
@@ -106,28 +112,17 @@ export function buildPolishUserMessage(args: {
   const before = args.draftBefore?.trim()
   const after = args.draftAfter?.trim()
   const steeringTerms = args.steeringTerms?.filter((t) => t.trim())
-  if (steeringTerms && steeringTerms.length > 0) {
+  if (steeringTerms?.length)
     sections.push(
       `Spelling reference (normalize mis-transcriptions to these exact spellings):\n${steeringTerms.join(", ")}`
     )
-  }
-  if (before) {
+  if (before)
     sections.push(`Existing draft text before the insertion point (context only, never output it):\n${before}`)
-  }
-  if (after) {
-    sections.push(`Existing draft text after the insertion point (context only, never output it):\n${after}`)
-  }
+  if (after) sections.push(`Existing draft text after the insertion point (context only, never output it):\n${after}`)
   sections.push(`Raw transcript:\n${args.rawTranscript}`)
   return sections.join("\n\n")
 }
 
-/**
- * Replace em/en dashes the model slipped past the prompt rule with natural
- * punctuation:
- *   - " — " / " – " between clauses → ": " (clause expansion / explanation)
- *   - "word—word" / "word–word"     → "word, word" (interruption / list)
- * A regular ASCII hyphen "-" is left alone (legitimate compounds).
- */
 export function scrubDashes(text: string): string {
   return text.replace(/\s+[—–]\s+/g, ": ").replace(/[—–]/g, ", ")
 }

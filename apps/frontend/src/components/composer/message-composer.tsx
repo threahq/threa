@@ -388,19 +388,14 @@ export function MessageComposer({
   // dictation take when it sends or clears the draft (drops the polish toggle
   // and any warning chrome rather than letting them ride out a timer).
   const micRef = useRef<MicButtonHandle | null>(null)
-  // Mirror so the content-empty effect can read it without re-subscribing.
-  const voiceActiveRef = useRef(voiceActive)
-  voiceActiveRef.current = voiceActive
   // Edge-detect the composer emptying (send-clear, manual delete, stash) so we
-  // tear down the dictation session exactly once on the non-empty → empty
-  // transition. Skipped while a take is live — clearing text mid-dictation
-  // shouldn't stop the recording.
+  // tear down the dictation session exactly once on the non-empty → empty transition.
   const wasEmptyRef = useRef(isEmptyContent(content))
   useEffect(() => {
     const empty = isEmptyContent(content)
     const wasEmpty = wasEmptyRef.current
     wasEmptyRef.current = empty
-    if (empty && !wasEmpty && !voiceActiveRef.current) micRef.current?.endSession()
+    if (empty && !wasEmpty) micRef.current?.abort()
   }, [content])
 
   // Close inline format toolbar and collapse expansion when navigating to a different stream/scope.
@@ -602,7 +597,7 @@ export function MessageComposer({
     // End any in-flight take first: this flushes the live hypothesis into the
     // editor (so the tail lands in the message) and drops the polish toggle +
     // warnings before we snapshot the content below.
-    micRef.current?.endSession()
+    micRef.current?.prepareSendAsIs()
     onSubmit(richEditorRef.current?.getEditor()?.getJSON() as JSONContent | undefined)
   }, [onSubmit])
 

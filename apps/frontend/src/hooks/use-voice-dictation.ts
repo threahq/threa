@@ -1,31 +1,20 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import { io, type Socket } from "socket.io-client"
-import { VOICE_DRAFT_CONTEXT_MAX_CHARS } from "@threa/types"
+import {
+  VOICE_DRAFT_CONTEXT_MAX_CHARS,
+  type VoiceStartAck,
+  type VoiceStoppedPayload,
+  type VoiceTranscriptDelta,
+  type VoiceTranscriptPolished,
+} from "@threa/types"
 import { voiceApi } from "@/api/voice"
 import { getCachedWsConfig } from "@/lib/cached-ws-config"
 import { useDictationCoordinator, isDictationExternalHeld } from "@/contexts"
 
 export type VoiceDictationState = "idle" | "connecting" | "recording" | "stopping" | "error"
 
-interface VoiceDelta {
-  voiceSessionId: string
-  text: string
-  isFinal: boolean
-  /**
-   * Present only on finals when polish is enabled for the session. The same
-   * chunkId is reused for every final + every polished event in the session,
-   * so the editor tracks one growing range and the end-of-session polish swap
-   * targets it directly.
-   */
-  chunkId?: string
-}
-
-interface VoicePolishedChunk {
-  voiceSessionId: string
-  chunkId: string
-  raw: string
-  polished: string
-}
+type VoiceDelta = VoiceTranscriptDelta
+type VoicePolishedChunk = VoiceTranscriptPolished
 
 export interface DictationChunkRecord {
   /** Cumulative raw text the chunk would revert to if the toggle flips to "Show original". */
@@ -46,8 +35,21 @@ export interface DictationChunkRecord {
   locked: boolean
 }
 
+export interface VoiceDictationDependencies {
+  createSocket: typeof io
+  createSession: typeof voiceApi.createSession
+  abortSession: typeof voiceApi.abortSession
+}
+
+const DEFAULT_VOICE_DICTATION_DEPENDENCIES: VoiceDictationDependencies = {
+  createSocket: io,
+  createSession: voiceApi.createSession,
+  abortSession: voiceApi.abortSession,
+}
+
 interface UseVoiceDictationOptions {
   workspaceId: string
+  dependencies?: VoiceDictationDependencies
   /**
    * Called with a committed (final) transcript span when polish is OFF for
    * this session. When polish is ON, `onPolishedChunkInserted` is called
@@ -157,7 +159,8 @@ interface UseVoiceDictationResult {
    * draft: the message is gone, so the toggle pill and warnings have nothing
    * left to act on and shouldn't linger on a timer. Idempotent.
    */
-  endSession: () => void
+  prepareSendAsIs: () => void
+  abort: () => void
 }
 
 // Phrase structured upstream error codes as short, human copy. The raw provider
@@ -180,6 +183,7 @@ const SAMPLE_RATE_HZ = 16_000
 // If the server never acks voice:stop (dropped connection mid-stop), fall
 // through anyway so the button can't hang in the "stopping" state forever.
 const STOP_ACK_TIMEOUT_MS = 3000
+const FORMAT_STOP_ACK_TIMEOUT_MS = 7000
 
 // Silence-detection thresholds. Two failure modes to catch:
 //
@@ -207,6 +211,14 @@ export function shouldWarnNoAudio(args: { elapsedMs: number; silenceMs: number; 
     return args.silenceMs >= NO_AUDIO_SILENCE_WAIT_MS
   }
   return args.elapsedMs >= NO_AUDIO_INITIAL_WAIT_MS
+}
+
+export function resetVoiceTakeProtocol(refs: {
+  acceptedRevision: { current: number }
+  protocolVersion: { current: number }
+}): void {
+  refs.acceptedRevision.current = 0
+  refs.protocolVersion.current = 1
 }
 
 export function noAudioWarningMessage(args: { deviceLabel: string | null; everHadSignal: boolean }): string {
@@ -273,6 +285,7 @@ export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDi
     onGetChunkText,
     onGetDraftContext,
     language,
+    dependencies = DEFAULT_VOICE_DICTATION_DEPENDENCIES,
   } = options
   const [state, setState] = useState<VoiceDictationState>("idle")
   const [error, setError] = useState<string | null>(null)
@@ -289,6 +302,8 @@ export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDi
   const audioContextRef = useRef<AudioContext | null>(null)
   const workletRef = useRef<AudioWorkletNode | null>(null)
   const sessionIdRef = useRef<string | null>(null)
+  const protocolVersionRef = useRef(1)
+  const acceptedRevisionRef = useRef(0)
   // Live input-level metering: an AnalyserNode taps the mic source and a rAF
   // loop computes a smoothed RMS level + elapsed time while recording.
   const analyserRef = useRef<AnalyserNode | null>(null)
@@ -490,12 +505,12 @@ export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDi
     (message: string) => {
       // Don't throw away words the user already saw mid-segment — commit the
       // pending hypothesis before tearing the failed take down.
-      flushInterim()
+      updateInterim("")
       setError(message)
       setState("error")
       teardown()
     },
-    [teardown, flushInterim]
+    [teardown, updateInterim]
   )
 
   const start = useCallback(() => {
@@ -504,6 +519,8 @@ export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDi
     // Composer dictation is disabled while a call holds the mic — two concurrent
     // getUserMedia captures conflict (fatally on iOS). The call owns the seam.
     if (isDictationExternalHeld()) return
+
+    resetVoiceTakeProtocol({ acceptedRevision: acceptedRevisionRef, protocolVersion: protocolVersionRef })
 
     // Take the single active slot, flushing+stopping any other composer's take.
     coordinator.activate(coordinatedStop)
@@ -557,7 +574,11 @@ export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDi
           return
         }
 
-        const session = await voiceApi.createSession(workspaceId, { language })
+        const session = await dependencies.createSession(workspaceId, { language })
+        if (generation !== startGenerationRef.current) {
+          void dependencies.abortSession(workspaceId, session.voiceSessionId).catch(() => {})
+          return
+        }
         sessionIdRef.current = session.voiceSessionId
         setMaxDurationMs(session.maxDurationMs)
 
@@ -571,6 +592,11 @@ export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDi
         const stream = await navigator.mediaDevices.getUserMedia({
           audio: { channelCount: 1, echoCancellation: false, noiseSuppression: false, autoGainControl: false },
         })
+        if (generation !== startGenerationRef.current) {
+          stream.getTracks().forEach((track) => track.stop())
+          void dependencies.abortSession(workspaceId, session.voiceSessionId).catch(() => {})
+          return
+        }
         streamRef.current = stream
         const track = stream.getAudioTracks()[0]
         // Capture the device label so the silence-detection warning can name
@@ -601,6 +627,10 @@ export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDi
         }
 
         await audioContext.audioWorklet.addModule("/worklets/pcm16-processor.js")
+        if (generation !== startGenerationRef.current) {
+          stream.getTracks().forEach((track) => track.stop())
+          return
+        }
 
         const source = audioContext.createMediaStreamSource(stream)
         const worklet = new AudioWorkletNode(audioContext, "pcm16-processor", {
@@ -627,13 +657,18 @@ export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDi
         // the synchronous resume lost a race with this async setup.
         if (audioContext.state === "suspended") await audioContext.resume().catch(() => {})
 
-        const socket = io(voiceUrl, { path: "/socket.io/", withCredentials: true, autoConnect: true })
+        const socket = dependencies.createSocket(voiceUrl, {
+          path: "/socket.io/",
+          withCredentials: true,
+          autoConnect: true,
+        })
         socketRef.current = socket
 
         socket.on("voice:transcript:delta", (delta: VoiceDelta) => {
           // Ignore deltas from a session we've already moved past so a stale
           // socket can't leak text into a new take (plan §3).
-          if (delta.voiceSessionId !== sessionIdRef.current) return
+          if (delta.voiceSessionId !== sessionIdRef.current || delta.revision < acceptedRevisionRef.current) return
+          acceptedRevisionRef.current = delta.revision
           if (!delta.isFinal) {
             // Running hypothesis for the current segment — each partial replaces
             // the prior one rather than appending.
@@ -661,7 +696,8 @@ export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDi
         socket.on("voice:transcript:polished", (chunk: VoicePolishedChunk) => {
           // Stale chunk from a previous take — ignore it so polishing latency
           // can't leak text into a new session.
-          if (chunk.voiceSessionId !== sessionIdRef.current) return
+          if (chunk.voiceSessionId !== sessionIdRef.current || chunk.revision < acceptedRevisionRef.current) return
+          acceptedRevisionRef.current = chunk.revision
           if (chunk.chunkId !== sessionChunkIdRef.current) return
           // Swap the editor's session chunk to whichever mode the toggle is
           // showing right now (the toggle can be flipped mid-session). If the
@@ -701,18 +737,17 @@ export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDi
           })
           if (!accepted) sessionChunkIdRef.current = null
         })
-        socket.on("voice:transcription:error", (e: { code?: string }) => fail(friendlyTranscriptionError(e?.code)))
-        socket.on("voice:stopped", () => {
-          // Server-initiated stop (e.g. the max-duration guard). Keep any pending
-          // hypothesis and leave the recording state, not just tear down audio.
-          flushInterim()
+        socket.on("voice:transcription:error", (e: { code?: string }) => {
+          if (socketRef.current === socket) fail(friendlyTranscriptionError(e?.code))
+        })
+        socket.on("voice:stopped", (payload: VoiceStoppedPayload) => {
+          if (socketRef.current !== socket) return
+          if (payload.outcome !== "success" && payload.outcome !== "empty_input") lockAllChunks()
           teardown()
           setState("idle")
         })
         socket.on("disconnect", () => {
-          // An unexpected drop while still capturing ends the take — surface it
-          // so the button leaves its recording state instead of hanging.
-          if (workletRef.current) fail("Dictation connection lost")
+          if (socketRef.current === socket && workletRef.current) fail("Dictation connection lost")
         })
 
         // Snapshot the draft around the caret as polish context. Captured at
@@ -727,19 +762,20 @@ export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDi
         socket.emit(
           "voice:start",
           { workspaceId, voiceSessionId: session.voiceSessionId, draftBefore, draftAfter },
-          (result: { ok: boolean; error?: string }) => {
+          (result: VoiceStartAck) => {
             // The user stopped (or we tore down) while this ACK was in flight —
             // don't resurrect a dead take into the "recording" state.
             if (generation !== startGenerationRef.current) {
               socket.disconnect()
               return
             }
+            protocolVersionRef.current = result.protocolVersion ?? 1
             if (!result?.ok) {
               fail(result?.error || "Couldn't start dictation")
               return
             }
             worklet.port.onmessage = (event: MessageEvent<ArrayBuffer>) => {
-              socketRef.current?.emit("voice:audio", event.data)
+              if (socketRef.current === socket) socket.emit("voice:audio", event.data)
             }
             recordingStartRef.current = performance.now()
             lastElapsedTickRef.current = 0
@@ -767,11 +803,11 @@ export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDi
     language,
     fail,
     teardown,
-    flushInterim,
     runMeter,
     coordinator,
     coordinatedStop,
     lockAllChunks,
+    dependencies,
   ])
 
   const stop = useCallback(() => {
@@ -781,22 +817,23 @@ export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDi
     // Keep the in-flight hypothesis: the backend commits buffered audio on stop,
     // but we've already advanced past this session id (below), so its final delta
     // would be dropped — flush the local hypothesis so the tail isn't lost.
-    flushInterim()
     // Invalidate any in-flight `voice:start` ACK so a late accept can't flip us
     // back to "recording" after we've decided to stop.
     startGenerationRef.current++
     // Stop capture immediately; tell the backend to commit the buffered audio.
     teardownAudio()
     const socket = socketRef.current
-    socketRef.current = null
-    sessionIdRef.current = null
     if (socket) {
       // The ack callback fires on the server's confirmation or on the timeout —
       // either way we disconnect and return to idle so the UI never wedges.
-      socket.timeout(STOP_ACK_TIMEOUT_MS).emit("voice:stop", () => {
-        socket.disconnect()
+      const recover = () => {
+        flushInterim()
+        teardown()
         setState("idle")
-      })
+      }
+      if (protocolVersionRef.current >= 2)
+        socket.timeout(FORMAT_STOP_ACK_TIMEOUT_MS).emit("voice:stop", { mode: "format" }, recover)
+      else socket.timeout(STOP_ACK_TIMEOUT_MS).emit("voice:stop", recover)
     } else {
       setState("idle")
     }
@@ -808,7 +845,7 @@ export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDi
       lockTimerRef.current = null
       lockAllChunks()
     }, POST_SESSION_LOCK_MS)
-  }, [state, teardownAudio, flushInterim, coordinator, coordinatedStop, lockAllChunks])
+  }, [state, teardownAudio, flushInterim, teardown, coordinator, coordinatedStop, lockAllChunks])
   // Keep the stable coordinator handle pointed at the latest stop().
   stopRef.current = stop
 
@@ -873,28 +910,46 @@ export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDi
     setState("idle")
   }, [])
 
-  const endSession = useCallback(() => {
-    // Stop a live take first so its tail flushes into the editor before we drop
-    // tracking (the user's words on a manual send should still land).
-    if (state === "recording" || state === "connecting") stop()
-    // Drop polished-chunk tracking + reset the toggle right now instead of
-    // waiting out the post-session grace window. Guarded so a speculative call
-    // (e.g. on every composer clear) doesn't dispatch a no-op editor transaction
-    // when there was nothing tracked. stop() above sets the lock timer, so the
-    // timer-ref check also covers the just-stopped case.
-    if (chunksRef.current.size > 0 || sessionChunkIdRef.current !== null || lockTimerRef.current !== null) {
-      lockAllChunks()
-    }
-    if (state === "error") {
-      setError(null)
+  const prepareSendAsIs = useCallback(() => {
+    if (state === "recording" || state === "connecting" || state === "stopping") {
+      flushInterim()
+      startGenerationRef.current++
+      teardownAudio()
+      const socket = socketRef.current
+      socketRef.current = null
+      sessionIdRef.current = null
+      if (socket) {
+        if (protocolVersionRef.current >= 2) {
+          socket.timeout(STOP_ACK_TIMEOUT_MS).emit("voice:stop", { mode: "send_as_is" }, () => socket.disconnect())
+        } else {
+          socket.disconnect()
+        }
+      }
+      coordinator.deactivate(coordinatedStop)
       setState("idle")
     }
-    if (warningShownRef.current) {
-      warningShownRef.current = false
-      setNoAudioWarning(null)
+    if (chunksRef.current.size > 0 || sessionChunkIdRef.current !== null || lockTimerRef.current !== null)
+      lockAllChunks()
+  }, [state, flushInterim, teardownAudio, coordinator, coordinatedStop, lockAllChunks])
+
+  const abort = useCallback(() => {
+    startGenerationRef.current++
+    updateInterim("")
+    teardownAudio()
+    const socket = socketRef.current
+    const sessionId = sessionIdRef.current
+    socketRef.current = null
+    sessionIdRef.current = null
+    if (socket) {
+      if (protocolVersionRef.current >= 2) socket.emit("voice:stop", { mode: "abort" })
+      socket.disconnect()
+    } else if (sessionId) {
+      void dependencies.abortSession(workspaceId, sessionId).catch(() => {})
     }
-    noAudioDismissedRef.current = false
-  }, [state, stop, lockAllChunks])
+    coordinator.deactivate(coordinatedStop)
+    lockAllChunks()
+    setState("idle")
+  }, [teardownAudio, updateInterim, workspaceId, coordinator, coordinatedStop, dependencies, lockAllChunks])
 
   // Backgrounding the tab throttles the rAF meter and (on mobile) suspends audio
   // capture, so a take left "recording" would silently record nothing while the
@@ -903,11 +958,11 @@ export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDi
   // their words and an idle mic rather than a dead one they think is recording.
   useEffect(() => {
     const onVisibilityChange = () => {
-      if (document.visibilityState === "hidden") stopRef.current()
+      if (document.visibilityState === "hidden") abort()
     }
     document.addEventListener("visibilitychange", onVisibilityChange)
     return () => document.removeEventListener("visibilitychange", onVisibilityChange)
-  }, [])
+  }, [abort])
 
   // Abort a still-open session on unmount: disconnecting the socket makes the
   // gateway finalize it as aborted; if the socket never opened, abort over HTTP
@@ -923,10 +978,10 @@ export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDi
         lockTimerRef.current = null
       }
       if (sessionId && !hadSocket) {
-        void voiceApi.abortSession(workspaceId, sessionId).catch(() => {})
+        void dependencies.abortSession(workspaceId, sessionId).catch(() => {})
       }
     }
-  }, [teardown, workspaceId])
+  }, [teardown, workspaceId, dependencies])
 
   let hasUnlockedChunks = false
   for (const record of chunks.values()) {
@@ -954,6 +1009,7 @@ export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDi
     dismissError,
     start,
     stop,
-    endSession,
+    prepareSendAsIs,
+    abort,
   }
 }

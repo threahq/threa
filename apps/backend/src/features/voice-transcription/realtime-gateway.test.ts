@@ -1,6 +1,7 @@
-import { describe, expect, it, mock } from "bun:test"
+import { afterEach, describe, expect, it, jest, mock, spyOn } from "bun:test"
 import type { Server } from "socket.io"
 import { VOICE_DRAFT_CONTEXT_MAX_CHARS } from "@threa/types"
+import { logger } from "../../lib/logger"
 import { registerVoiceGateway } from "./realtime-gateway"
 import type { TranscriptionSession } from "./transcription/strategy"
 
@@ -73,7 +74,8 @@ function setup(overrides?: {
     steeringTerms?: string[]
     draftBefore?: string
     draftAfter?: string
-  }) => Promise<string>
+    signal?: AbortSignal
+  }) => Promise<unknown>
 }) {
   const upstream = fakeUpstream()
   const transcription = { open: mock(overrides?.open ?? (async () => upstream)) }
@@ -138,6 +140,8 @@ function setup(overrides?: {
 
 const START_PAYLOAD = { workspaceId: "ws_1", voiceSessionId: "voicesess_1" }
 
+afterEach(() => jest.useRealTimers())
+
 describe("registerVoiceGateway voice:start", () => {
   it("opens the upstream and relays deltas as voice:transcript:delta tagged with the session id", async () => {
     const { socket, upstream, transcription } = setup()
@@ -145,7 +149,7 @@ describe("registerVoiceGateway voice:start", () => {
 
     await socket.trigger("voice:start", START_PAYLOAD, cb)
 
-    expect(cb).toHaveBeenCalledWith({ ok: true })
+    expect(cb).toHaveBeenCalledWith({ ok: true, protocolVersion: 2 })
     expect(transcription.open).toHaveBeenCalledWith({
       model: "elevenlabs:scribe-v2-realtime",
       language: undefined,
@@ -161,7 +165,7 @@ describe("registerVoiceGateway voice:start", () => {
 
     expect(socket.emitted).toContainEqual({
       event: "voice:transcript:delta",
-      payload: { voiceSessionId: "voicesess_1", text: "hi", isFinal: true },
+      payload: { voiceSessionId: "voicesess_1", revision: 1, text: "hi", isFinal: true },
     })
     expect(socket.emitted).toContainEqual({
       event: "voice:transcription:error",
@@ -215,7 +219,8 @@ describe("registerVoiceGateway voice:start", () => {
     )
   })
 
-  it("keeps polish and per-user steering when the workspace-settings lookup fails", async () => {
+  it("keeps polish and per-user steering while warning when workspace settings fail", async () => {
+    const warn = spyOn(logger, "warn").mockImplementation(() => logger)
     const seenLevels: string[] = []
     const { socket, upstream, transcription } = setup({
       voicePolishLevel: "opinionated",
@@ -240,9 +245,14 @@ describe("registerVoiceGateway voice:start", () => {
     upstream.fireDelta({ text: "hi", isFinal: true })
     await new Promise((r) => setTimeout(r, 0))
     expect(seenLevels).toEqual(["opinionated"])
+    expect(warn).toHaveBeenCalledWith(
+      expect.objectContaining({ workspaceId: "ws_1" }),
+      "Voice workspace settings lookup failed"
+    )
   })
 
-  it("keeps workspace steering when the user-prefs lookup fails (polish defaults off)", async () => {
+  it("keeps workspace steering while warning when user preferences fail", async () => {
+    const warn = spyOn(logger, "warn").mockImplementation(() => logger)
     const { socket, transcription } = setup({
       workspaceSteeringWords: ["Acme"],
       userPrefsThrows: true,
@@ -258,6 +268,10 @@ describe("registerVoiceGateway voice:start", () => {
     expect(transcription.open).toHaveBeenCalledWith(
       expect.objectContaining({ vocabulary: ["Threa", "Ariadne", "Acme"] })
     )
+    expect(warn).toHaveBeenCalledWith(
+      expect.objectContaining({ workspaceId: "ws_1" }),
+      "Voice user preferences lookup failed"
+    )
   })
 
   it("refuses a start that is missing identifiers", async () => {
@@ -266,7 +280,7 @@ describe("registerVoiceGateway voice:start", () => {
 
     await socket.trigger("voice:start", {}, cb)
 
-    expect(cb).toHaveBeenCalledWith({ ok: false, error: "workspaceId and voiceSessionId required" })
+    expect(cb).toHaveBeenCalledWith({ ok: false, error: "workspaceId and voiceSessionId required", protocolVersion: 2 })
     expect(transcription.open).not.toHaveBeenCalled()
   })
 
@@ -281,7 +295,7 @@ describe("registerVoiceGateway voice:start", () => {
     const cb = mock(() => {})
     await socket.trigger("voice:start", START_PAYLOAD, cb)
 
-    expect(cb).toHaveBeenCalledWith({ ok: false, error: "Session already started" })
+    expect(cb).toHaveBeenCalledWith({ ok: false, error: "Session already started", protocolVersion: 2 })
   })
 
   it("tears down the upstream when the socket disconnects mid-start", async () => {
@@ -306,7 +320,7 @@ describe("registerVoiceGateway voice:start", () => {
       sessionId: "voicesess_1",
       totalAudioMs: 0,
     })
-    expect(cb).toHaveBeenCalledWith({ ok: false, error: "Session ended before it started" })
+    expect(cb).toHaveBeenCalledWith({ ok: false, error: "Session ended before it started", protocolVersion: 2 })
   })
 
   it("aborts the resolved session when opening the upstream fails", async () => {
@@ -325,7 +339,7 @@ describe("registerVoiceGateway voice:start", () => {
       sessionId: "voicesess_1",
       totalAudioMs: 0,
     })
-    expect(cb).toHaveBeenCalledWith({ ok: false, error: "Failed to start voice session" })
+    expect(cb).toHaveBeenCalledWith({ ok: false, error: "Failed to start voice session", protocolVersion: 2 })
   })
 })
 
@@ -349,8 +363,35 @@ describe("registerVoiceGateway lifecycle", () => {
       sessionId: "voicesess_1",
       totalAudioMs: 0,
     })
-    expect(socket.emitted).toContainEqual({ event: "voice:stopped", payload: { reason: "stopped" } })
+    expect(socket.emitted).toContainEqual({
+      event: "voice:stopped",
+      payload: { reason: "stopped", revision: 0, outcome: "empty_input" },
+    })
     expect(stopCb).toHaveBeenCalledWith({ ok: true })
+  })
+
+  it("max duration follows the authoritative format path before disconnecting", async () => {
+    jest.useFakeTimers()
+    const { socket, upstream, voiceTranscriptionService } = setup({ voicePolishLevel: "opinionated" })
+    await socket.trigger(
+      "voice:start",
+      START_PAYLOAD,
+      mock(() => {})
+    )
+    upstream.fireDelta({ text: "final words", isFinal: false })
+
+    jest.advanceTimersByTime(10 * 60 * 1_000)
+    jest.useRealTimers()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(upstream.flush).toHaveBeenCalledTimes(1)
+    expect(voiceTranscriptionService.finishSession).toHaveBeenCalledTimes(1)
+    expect(voiceTranscriptionService.abortSession).not.toHaveBeenCalled()
+    expect(socket.emitted).toContainEqual({
+      event: "voice:stopped",
+      payload: expect.objectContaining({ reason: "max_duration", outcome: "success" }),
+    })
+    expect(socket.disconnected).toBe(true)
   })
 
   it("disconnect aborts the session without flushing", async () => {
@@ -371,6 +412,109 @@ describe("registerVoiceGateway lifecycle", () => {
       totalAudioMs: 0,
     })
     expect(voiceTranscriptionService.finishSession).not.toHaveBeenCalled()
+  })
+
+  it("a send-as-is upgrade interrupts an in-flight format flush and finishes once", async () => {
+    let releaseFlush!: () => void
+    const flush = new Promise<void>((resolve) => {
+      releaseFlush = resolve
+    })
+    const { socket, upstream, voiceTranscriptionService } = setup()
+    upstream.flush = mock(() => flush)
+    await socket.trigger(
+      "voice:start",
+      START_PAYLOAD,
+      mock(() => {})
+    )
+
+    const formatting = socket.trigger(
+      "voice:stop",
+      { mode: "format" },
+      mock(() => {})
+    ) as Promise<void>
+    await Promise.resolve()
+    const sending = socket.trigger(
+      "voice:stop",
+      { mode: "send_as_is" },
+      mock(() => {})
+    ) as Promise<void>
+    await sending
+
+    expect(upstream.close).toHaveBeenCalledTimes(1)
+    expect(voiceTranscriptionService.finishSession).toHaveBeenCalledTimes(1)
+    expect(voiceTranscriptionService.abortSession).not.toHaveBeenCalled()
+    releaseFlush()
+    await formatting
+  })
+
+  it("abort wins while send-as-is is blocked closing", async () => {
+    let releaseClose!: (result: { totalAudioMs: number }) => void
+    const close = new Promise<{ totalAudioMs: number }>((resolve) => {
+      releaseClose = resolve
+    })
+    const { socket, upstream, voiceTranscriptionService } = setup()
+    upstream.close = mock(() => close)
+    await socket.trigger(
+      "voice:start",
+      START_PAYLOAD,
+      mock(() => {})
+    )
+
+    const sending = socket.trigger(
+      "voice:stop",
+      { mode: "send_as_is" },
+      mock(() => {})
+    ) as Promise<void>
+    await Promise.resolve()
+    const aborting = socket.trigger("disconnect") as Promise<void>
+    releaseClose({ totalAudioMs: 12 })
+    await Promise.all([sending, aborting])
+
+    expect(voiceTranscriptionService.abortSession).toHaveBeenCalledTimes(1)
+    expect(voiceTranscriptionService.finishSession).not.toHaveBeenCalled()
+    expect(socket.emitted.some((event) => event.event === "voice:stopped")).toBe(false)
+  })
+
+  it("send-as-is cancels authoritative formatting without waiting for a late provider", async () => {
+    let startedFinal!: () => void
+    let resolveFinal!: (value: string) => void
+    const finalStarted = new Promise<void>((resolve) => {
+      startedFinal = resolve
+    })
+    const final = new Promise<string>((resolve) => {
+      resolveFinal = resolve
+    })
+    const { socket, upstream, voiceTranscriptionService } = setup({
+      voicePolishLevel: "opinionated",
+      polishTranscript: async ({ signal }) => {
+        if (!signal?.aborted) startedFinal()
+        return final
+      },
+    })
+    await socket.trigger(
+      "voice:start",
+      START_PAYLOAD,
+      mock(() => {})
+    )
+    upstream.fireDelta({ text: "tail", isFinal: false })
+
+    const formatting = socket.trigger(
+      "voice:stop",
+      { mode: "format" },
+      mock(() => {})
+    ) as Promise<void>
+    await finalStarted
+    const sending = socket.trigger(
+      "voice:stop",
+      { mode: "send_as_is" },
+      mock(() => {})
+    ) as Promise<void>
+    await sending
+
+    expect(voiceTranscriptionService.finishSession).toHaveBeenCalledTimes(1)
+    expect(socket.emitted.some((event) => event.event === "voice:transcript:polished")).toBe(false)
+    resolveFinal("late")
+    await formatting
   })
 
   it("pushes decoded audio frames to the upstream", async () => {
@@ -434,7 +578,7 @@ describe("registerVoiceGateway polish", () => {
 
     expect(polishTranscript).not.toHaveBeenCalled()
     const interimDelta = socket.emitted.find((e) => e.event === "voice:transcript:delta")
-    expect(interimDelta?.payload).toEqual({ voiceSessionId: "voicesess_1", text: "hello", isFinal: false })
+    expect(interimDelta?.payload).toEqual({ voiceSessionId: "voicesess_1", revision: 0, text: "hello", isFinal: false })
   })
 
   it("leaves the raw delta in place when polish rejects, with no polished event", async () => {
@@ -476,7 +620,7 @@ describe("registerVoiceGateway polish", () => {
     expect(polishTranscript).not.toHaveBeenCalled()
     expect(socket.emitted).toContainEqual({
       event: "voice:transcript:delta",
-      payload: { voiceSessionId: "voicesess_1", text: "   ", isFinal: true },
+      payload: { voiceSessionId: "voicesess_1", revision: 0, text: "   ", isFinal: true },
     })
   })
 
@@ -523,7 +667,7 @@ describe("registerVoiceGateway polish", () => {
 
     // The error must not have shipped yet — polish hasn't resolved.
     await Promise.resolve()
-    expect(socket.emitted.find((e) => e.event === "voice:transcription:error")).toBeUndefined()
+    expect(socket.emitted.find((e) => e.event === "voice:transcription:error")).toBeDefined()
 
     // Resolve the polish. The drain awaits it, then emits the error.
     resolvePolish!()
@@ -532,8 +676,8 @@ describe("registerVoiceGateway polish", () => {
 
     const errorIdx = socket.emitted.findIndex((e) => e.event === "voice:transcription:error")
     const polishedIdx = socket.emitted.findIndex((e) => e.event === "voice:transcript:polished")
-    expect(polishedIdx).toBeGreaterThanOrEqual(0)
-    expect(errorIdx).toBeGreaterThan(polishedIdx)
+    expect(polishedIdx).toBe(-1)
+    expect(errorIdx).toBeGreaterThanOrEqual(0)
   })
 
   it("forwards the capped draft context from voice:start to every polish pass", async () => {
@@ -622,26 +766,10 @@ describe("registerVoiceGateway polish", () => {
     await new Promise((r) => setTimeout(r, 0))
     await new Promise((r) => setTimeout(r, 0))
 
-    expect(polishTranscript).toHaveBeenCalledTimes(1)
-    expect(polishTranscript).toHaveBeenCalledWith(
-      expect.objectContaining({ rawTranscript: "let me start at nine no sorry eight" })
-    )
-
-    const finalDeltas = socket.emitted.filter(
-      (e) => e.event === "voice:transcript:delta" && (e.payload as { isFinal: boolean }).isFinal
-    )
-    expect(finalDeltas).toHaveLength(1)
-    expect(finalDeltas[0].payload).toMatchObject({
-      voiceSessionId: "voicesess_1",
-      text: "let me start at nine no sorry eight",
-      isFinal: true,
-    })
-    expect((finalDeltas[0].payload as { chunkId?: string }).chunkId).toBeTruthy()
-
-    const polishedIdx = socket.emitted.findIndex((e) => e.event === "voice:transcript:polished")
-    const errorIdx = socket.emitted.findIndex((e) => e.event === "voice:transcription:error")
-    expect(polishedIdx).toBeGreaterThanOrEqual(0)
-    expect(errorIdx).toBeGreaterThan(polishedIdx)
+    expect(polishTranscript).not.toHaveBeenCalled()
+    expect(
+      socket.emitted.filter((e) => e.event === "voice:transcript:delta" && (e.payload as { isFinal: boolean }).isFinal)
+    ).toHaveLength(0)
   })
 
   it("a real final clears the pending interim so the error path doesn't re-emit it", async () => {
@@ -686,16 +814,8 @@ describe("registerVoiceGateway polish", () => {
     await new Promise((r) => setTimeout(r, 0))
 
     expect(polishTranscript).not.toHaveBeenCalled()
-    const finalDeltas = socket.emitted.filter(
-      (e) => e.event === "voice:transcript:delta" && (e.payload as { isFinal: boolean }).isFinal
-    )
-    expect(finalDeltas).toHaveLength(1)
-    expect(finalDeltas[0].payload).toEqual({
-      voiceSessionId: "voicesess_1",
-      text: "halfway through a thought",
-      isFinal: true,
-    })
-    // No chunkId, since polish is off and the client should commit as plain text.
-    expect((finalDeltas[0].payload as { chunkId?: string }).chunkId).toBeUndefined()
+    expect(
+      socket.emitted.filter((e) => e.event === "voice:transcript:delta" && (e.payload as { isFinal: boolean }).isFinal)
+    ).toHaveLength(0)
   })
 })

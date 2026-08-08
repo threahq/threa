@@ -131,7 +131,7 @@ describe("RealtimeDeepgramStrategy audio + transcripts", () => {
     expect(result.totalAudioMs).toBe(1000)
   })
 
-  test("flush sends CloseStream and resolves when the final Results frame arrives", async () => {
+  test("flush ignores a prior final and resolves at the post-CloseStream Metadata boundary", async () => {
     const { session, socket } = await openSession()
     const deltas: TranscriptionDelta[] = []
     session.onDelta((d) => deltas.push(d))
@@ -141,6 +141,19 @@ describe("RealtimeDeepgramStrategy audio + transcripts", () => {
     const msg = JSON.parse(socket.sent.at(-1) as string)
     expect(msg).toEqual({ type: "CloseStream" })
 
+    let resolved = false
+    void flushed.then(() => {
+      resolved = true
+    })
+    socket.dispatch("message", {
+      data: JSON.stringify({
+        type: "Results",
+        is_final: true,
+        channel: { alternatives: [{ transcript: "prior final" }] },
+      }),
+    })
+    await Promise.resolve()
+    expect(resolved).toBe(false)
     socket.dispatch("message", {
       data: JSON.stringify({
         type: "Results",
@@ -148,9 +161,13 @@ describe("RealtimeDeepgramStrategy audio + transcripts", () => {
         channel: { alternatives: [{ transcript: "last word" }] },
       }),
     })
+    socket.dispatch("message", { data: JSON.stringify({ type: "Metadata" }) })
 
     await flushed
-    expect(deltas).toEqual([{ text: "last word", isFinal: true }])
+    expect(deltas).toEqual([
+      { text: "prior final", isFinal: true },
+      { text: "last word", isFinal: true },
+    ])
   })
 
   test("flush resolves on its safety timeout when no final frame ever lands", async () => {
@@ -165,6 +182,13 @@ describe("RealtimeDeepgramStrategy audio + transcripts", () => {
     expect(elapsed).toBeGreaterThanOrEqual(1400)
   }, 5000)
 
+  test("close releases a pending flush without waiting for its timeout", async () => {
+    const { session } = await openSession()
+    const flushed = session.flush()
+    await session.close()
+    await flushed
+  })
+
   test("a server-initiated close after a successful flush does NOT surface an error", async () => {
     const { session, socket } = await openSession()
     const errors: TranscriptionError[] = []
@@ -178,6 +202,7 @@ describe("RealtimeDeepgramStrategy audio + transcripts", () => {
         channel: { alternatives: [{ transcript: "ok" }] },
       }),
     })
+    socket.dispatch("message", { data: JSON.stringify({ type: "Metadata" }) })
     await flushed
     // Deepgram closes the socket itself right after the final frame. That
     // socket teardown must not look like an unsolicited upstream drop.
