@@ -45,7 +45,7 @@ describe("bot invocation canonical source mutations", () => {
       actorId: bot,
       createdBy: author,
     })
-  })
+  }, 30_000)
 
   beforeEach(async () => {
     await pool.query("DELETE FROM agent_sessions WHERE stream_id = $1", [stream])
@@ -53,6 +53,7 @@ describe("bot invocation canonical source mutations", () => {
   })
 
   afterAll(async () => {
+    if (!pool) return cleanup?.()
     await pool.query("DELETE FROM agent_sessions WHERE stream_id = $1", [stream])
     await pool.query("DELETE FROM bot_invocations WHERE workspace_id = $1", [workspace])
     await pool.query("DELETE FROM bot_runtime_instances WHERE workspace_id = $1", [workspace])
@@ -61,7 +62,7 @@ describe("bot invocation canonical source mutations", () => {
     await pool.query("DELETE FROM messages WHERE stream_id = $1", [stream])
     await pool.query("DELETE FROM streams WHERE id = $1", [stream])
     await cleanup()
-  })
+  }, 30_000)
 
   function mentionContent() {
     return {
