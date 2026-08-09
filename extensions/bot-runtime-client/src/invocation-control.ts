@@ -38,6 +38,8 @@ export interface InvocationCancellation {
 export interface InvocationControlCallbacks {
   onInputUpdated(update: InvocationInputUpdate): Promise<InputUpdateDisposition> | InputUpdateDisposition
   onCancelled(cancellation: InvocationCancellation): Promise<void> | void
+  /** The authoritative claim no longer exists, without a typed backend cancellation. */
+  onClaimLost?(): Promise<void> | void
 }
 
 export interface ObserveClaimParams {
@@ -135,7 +137,7 @@ interface InvocationControlManagerOptions {
 
 export class InvocationControlManager {
   private readonly observations = new Map<string, Observation>()
-  private readonly pendingCancellationGenerations = new Map<string, number>()
+  private readonly pendingTerminalGenerations = new Map<string, number>()
   private queue: Promise<void> = Promise.resolve()
   private stopped = false
   private generation = 0
@@ -162,7 +164,7 @@ export class InvocationControlManager {
   }
 
   observe(params: ObserveClaimParams): ObservedClaimHandle {
-    this.pendingCancellationGenerations.delete(params.invocationId)
+    this.pendingTerminalGenerations.delete(params.invocationId)
     const prior = this.observations.get(params.invocationId)
     if (prior) this.unregister(prior)
     const observation: Observation = {
@@ -259,7 +261,7 @@ export class InvocationControlManager {
 
   stop(): void {
     this.stopped = true
-    this.pendingCancellationGenerations.clear()
+    this.pendingTerminalGenerations.clear()
     for (const observation of [...this.observations.values()]) this.unregister(observation)
   }
 
@@ -323,7 +325,8 @@ export class InvocationControlManager {
         observation.restartPendingRevision = undefined
         observation.dirty = true
       } else {
-        this.makeTerminal(observation, undefined, false)
+        const callback = observation.callbacks?.onClaimLost
+        this.makeTerminal(observation, callback)
       }
       return false
     }
@@ -432,17 +435,13 @@ export class InvocationControlManager {
     if (!this.isCurrent(observation) || cancellation.sourceRevision < this.highestLocallyKnownRevision(observation)) {
       return false
     }
-    this.makeTerminal(observation, cancellation, true)
+    const callback = observation.callbacks?.onCancelled
+    this.makeTerminal(observation, callback ? () => callback(cancellation) : undefined)
     return true
   }
 
-  private makeTerminal(
-    observation: Observation,
-    cancellation: InvocationCancellation | undefined,
-    notify: boolean
-  ): void {
+  private makeTerminal(observation: Observation, callback?: () => void | Promise<void>): void {
     if (!this.isCurrent(observation)) return
-    const callback = notify ? observation.callbacks?.onCancelled : undefined
     observation.active = false
     observation.terminal = true
     observation.abortController.abort()
@@ -452,24 +451,24 @@ export class InvocationControlManager {
       this.observations.delete(observation.invocationId)
     }
     this.scrub(observation)
-    if (!callback || !cancellation) return
+    if (!callback) return
     const { generation, invocationId } = observation
-    this.pendingCancellationGenerations.set(invocationId, generation)
+    this.pendingTerminalGenerations.set(invocationId, generation)
     void this.enqueue(async () => {
-      if (this.stopped || this.pendingCancellationGenerations.get(invocationId) !== generation) return
+      if (this.stopped || this.pendingTerminalGenerations.get(invocationId) !== generation) return
       try {
-        await callback(cancellation)
+        await callback()
       } finally {
-        if (this.pendingCancellationGenerations.get(invocationId) === generation) {
-          this.pendingCancellationGenerations.delete(invocationId)
+        if (this.pendingTerminalGenerations.get(invocationId) === generation) {
+          this.pendingTerminalGenerations.delete(invocationId)
         }
       }
     })
   }
 
   private unregister(observation: Observation): void {
-    if (this.pendingCancellationGenerations.get(observation.invocationId) === observation.generation) {
-      this.pendingCancellationGenerations.delete(observation.invocationId)
+    if (this.pendingTerminalGenerations.get(observation.invocationId) === observation.generation) {
+      this.pendingTerminalGenerations.delete(observation.invocationId)
     }
     if (!observation.active && observation.terminal) return
     observation.active = false

@@ -31,7 +31,8 @@ const active = (revision: number, promptMarkdown?: string, claimExpiresAt = expi
 
 function params(
   onInputUpdated: ObserveClaimParams["callbacks"]["onInputUpdated"] = () => "applied",
-  onCancelled: ObserveClaimParams["callbacks"]["onCancelled"] = () => {}
+  onCancelled: ObserveClaimParams["callbacks"]["onCancelled"] = () => {},
+  onClaimLost?: ObserveClaimParams["callbacks"]["onClaimLost"]
 ): ObserveClaimParams {
   return {
     invocationId: "binv_1",
@@ -39,7 +40,7 @@ function params(
     claimToken: "claim_secret",
     sourceRevision: 2,
     claimTtlSeconds: 60,
-    callbacks: { onInputUpdated, onCancelled },
+    callbacks: { onInputUpdated, onCancelled, ...(onClaimLost ? { onClaimLost } : {}) },
   }
 }
 
@@ -327,22 +328,24 @@ describe("InvocationControlManager", () => {
     handle.unregister()
   })
 
-  it("treats not-found as terminal without inventing cancellation", async () => {
+  it("reports terminal not-found as claim loss without inventing cancellation", async () => {
     const cancelled = mock(() => {})
+    const lost = mock(() => {})
     const { manager, sync } = setup(async () => ({ kind: "not_found" }))
-    const handle = manager.observe(params(() => "applied", cancelled))
-    await waitFor(() => sync.mock.calls.length === 1)
-    await Bun.sleep(10)
+    const handle = manager.observe(params(() => "applied", cancelled, lost))
+    await handle.sync()
 
     manager.hint({ invocationId: "binv_1", sourceRevision: 3 }, false)
     await Bun.sleep(5)
     expect({
       syncCalls: sync.mock.calls.length,
       cancellations: cancelled.mock.calls.length,
+      losses: lost.mock.calls.length,
       sealing: handle.sealing,
     }).toEqual({
       syncCalls: 1,
       cancellations: 0,
+      losses: 1,
       sealing: undefined,
     })
   })
@@ -482,6 +485,32 @@ describe("InvocationControlManager", () => {
     manager.hint({ invocationId: "binv_1", sourceRevision: 2, reason: "source_deleted" }, true)
     expect(handle.sealing).toBeUndefined()
     await waitFor(() => cancelled.mock.calls.length === 1)
+  })
+
+  it("dispose invalidates claim loss blocked on the adapter queue", async () => {
+    const gate = deferred<void>()
+    const lost = mock(() => {})
+    let calls = 0
+    const { manager } = setup(async () => (++calls === 1 ? active(3, "three") : { kind: "not_found" }))
+    const handle = manager.observe(
+      params(
+        async () => {
+          await gate.promise
+          return "applied" as const
+        },
+        () => {},
+        lost
+      )
+    )
+    await flushMicrotasks()
+
+    void handle.sync()
+    await waitFor(() => calls === 2)
+    handle.dispose()
+    gate.resolve()
+    await flushMicrotasks()
+
+    expect(lost).toHaveBeenCalledTimes(0)
   })
 
   it("dispose invalidates a cancellation blocked on the adapter queue", async () => {
