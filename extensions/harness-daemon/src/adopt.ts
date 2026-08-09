@@ -280,7 +280,14 @@ export async function adoptClaudeSessionUnlocked(options: AdoptOptions, deps: Ad
   // target NOTHING on this machine binds to this directory.
   const derived = resolveRuntimeIdentity(cwd, {}, config)
   const launch = pane ? parseClaudeChannelLaunch(pane.startCommand) : undefined
-  const recorded = identityRecordsFor(cwd, identities, (path) => canonicalOrRaw(path, deps.disk.canonical))
+  // Claude namespace only: a coexisting Pi's record binds the directory for
+  // pi-local, which says nothing about which Claude session may adopt it.
+  const recorded = identityRecordsFor(
+    cwd,
+    identities,
+    (path) => canonicalOrRaw(path, deps.disk.canonical),
+    "claude-code-channel"
+  )
   // Filtering to the requested id BEFORE looking makes a record that binds this
   // directory to a DIFFERENT session invisible, and a link record is then enough
   // to take over: the takeover resumes the newest transcript in a directory the

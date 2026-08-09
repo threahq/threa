@@ -245,7 +245,7 @@ test("two identity records naming one worktree refuse instead of minting a third
 
   expect(outcome).toEqual({
     status: "refused",
-    reason: `2 identity records name ${WORKTREE}: ccs-one, ccs-two`,
+    reason: `2 claude-code-channel identity records name ${WORKTREE}: ccs-one, ccs-two`,
   })
   expect(written).toEqual([])
 })
@@ -336,15 +336,55 @@ test("a spawn refuses a directory a live Claude already occupies, even an identi
   expect(written).toEqual([])
 })
 
-test("a record for another runtime is never reused as this one's identity", async () => {
-  const { deps: mintDeps } = deps({
-    identities: () => [identity({ runtimeSessionId: "pi-uuid", instanceId: "pi-uuid", runtimeKind: "pi-local" })],
+test("a live Pi in the directory does not make a Claude spawn non-vacant", async () => {
+  // The refusal that motivated per-kind identity: a reusable Pi living in the
+  // operator's home directory must not block spawning a Claude there.
+  const pi = identity({ runtimeSessionId: "pi-uuid", instanceId: "pi-uuid", runtimeKind: "pi-local" })
+  const piPane = pane({
+    paneId: "%9",
+    panePid: 5151,
+    startCommand: "pi --session-id 095ed570-f6ce-4fd6-a33e-ac0d71c4625f",
   })
+  const { deps: mintDeps, written } = deps({ identities: () => [pi], panes: () => [piPane] })
+
+  const outcome = await mintRuntimeIdentity(
+    { worktree: WORKTREE, runtimeKind: "claude-code-channel", requireVacant: true },
+    mintDeps
+  )
+
+  expect(outcome).toMatchObject({ status: "minted" })
+  expect(written.map((record) => record.runtimeKind)).toEqual(["claude-code-channel"])
+})
+
+test("a coexisting runtime's record is neither reused nor grounds to refuse", async () => {
+  // Identity is per (directory, runtime kind): a Pi already recorded in the
+  // cwd must not block a Claude spawn there, and vice versa — but its id must
+  // never be reused, or both pane finders match one session.
+  const pi = identity({ runtimeSessionId: "pi-uuid", instanceId: "pi-uuid", runtimeKind: "pi-local" })
+  const { deps: mintDeps, written } = deps({ identities: () => [pi] })
 
   const outcome = await mintRuntimeIdentity({ worktree: WORKTREE, runtimeKind: "claude-code-channel" }, mintDeps)
 
   expect(outcome).toEqual({
-    status: "refused",
-    reason: `${WORKTREE} is recorded for pi-uuid (pi-local), not claude-code-channel`,
+    status: "minted",
+    runtimeSessionId: "ccs-abcdef0123456789",
+    instanceId: "cc-abcdef0123456789",
+    worktree: WORKTREE,
+  })
+  expect(written.map((record) => record.runtimeKind)).toEqual(["claude-code-channel"])
+})
+
+test("a coexisting Pi record does not stop the Claude record from being reused", async () => {
+  const pi = identity({ runtimeSessionId: "pi-uuid", instanceId: "pi-uuid", runtimeKind: "pi-local" })
+  const { deps: mintDeps } = deps({ identities: () => [pi, identity()] })
+
+  const outcome = await mintRuntimeIdentity({ worktree: WORKTREE, runtimeKind: "claude-code-channel" }, mintDeps)
+
+  expect(outcome).toEqual({
+    status: "reused",
+    runtimeSessionId: "ccs-stored",
+    instanceId: "cc-stored",
+    worktree: WORKTREE,
+    source: "store",
   })
 })

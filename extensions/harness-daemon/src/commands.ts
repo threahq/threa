@@ -472,7 +472,12 @@ export function defaultReviveDeps(): ReviveDeps {
     // a row whose profile declares its own setup would otherwise silently run
     // `bun run setup:worktree` on revival instead.
     restoreWorktree: (agent) =>
-      restoreManagedWorktree(agent, agent.worktree ? profileForWorktree(agent.worktree) : DEFAULT_PROFILE),
+      restoreManagedWorktree(
+        agent,
+        agent.worktree
+          ? profileForWorktree(agent.worktree, agent.runtime === "pi" ? "pi-local" : "claude-code-channel")
+          : DEFAULT_PROFILE
+      ),
     restorableWorktree: restorableWorktreeSource,
     piLink: readPiRemoteSession,
     claudeIdentity: claudeAgentIdentity,

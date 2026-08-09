@@ -224,6 +224,24 @@ describe("resolveManagedAgentPane", () => {
     expect(resolved).toEqual({ status: "found", pane: live })
   })
 
+  test("the worktree fallback ignores a coexisting runtime's pane", () => {
+    // Without the filter a Pi sharing the cwd makes every legacy
+    // worktree-keyed row ambiguous — or a lone Pi pane reads as "found".
+    const piPane = pane({
+      paneId: "%9",
+      windowId: "@8",
+      startCommand: "pi --session-id 095ed570-f6ce-4fd6-a33e-ac0d71c4625f",
+    })
+    expect(resolveManagedAgentPane(agent, [pane(), piPane], config, host)).toEqual({
+      status: "found",
+      pane: pane(),
+    })
+    expect(resolveManagedAgentPane(agent, [piPane], config, host)).toEqual({ status: "missing" })
+    expect(
+      resolveManagedAgentPane({ runtime: "pi", worktree: agent.worktree }, [pane(), piPane], config, host)
+    ).toEqual({ status: "found", pane: piPane })
+  })
+
   test("two panes in one worktree with no matching id is ambiguous, not a guess", () => {
     const resolved = resolveManagedAgentPane(
       { ...agent, tmuxPaneId: "%99" },

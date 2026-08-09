@@ -59,6 +59,10 @@ Tracked fields:
 
 The first version briefly used JSON, but SQLite is the intended default because lifecycle reconciliation needs atomic updates and queryable state.
 
+## Runtime identity
+
+Recorded, never derived: one file per session under `~/.threa/harnessd/identities/`, keyed by **(directory, runtime kind)** — a Pi and a Claude coexist in one cwd as two independent identities, and each kind's spawn/adopt/revive/backfill/profile paths resolve only within their own namespace (`unknown` counts as Claude). Destruction stays per-directory: the reaper mutates nothing in a directory another kind's record or live pane still claims. Records are not permanent — the reaper retires them when the directory goes away, and deleting the file releases the binding. Full model: `extensions/harness-daemon/README.md`.
+
 ## Minimal inference layer
 
 `harnessd do <text>` intentionally stays shallow:

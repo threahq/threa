@@ -87,6 +87,9 @@ test("a Pi spawn records the profile its directory was provisioned under", () =>
     profile,
   })
 
-  expect(profileForWorktree("/repo/orchestrator")).toEqual(profile)
-  expect(windDownPolicyFor(profileForWorktree("/repo/orchestrator"))).toEqual({ preserve: "none", reclaim: false })
+  expect(profileForWorktree("/repo/orchestrator", "pi-local")).toEqual(profile)
+  expect(windDownPolicyFor(profileForWorktree("/repo/orchestrator", "pi-local"))).toEqual({
+    preserve: "none",
+    reclaim: false,
+  })
 })

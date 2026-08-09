@@ -137,17 +137,13 @@ function mintRuntimeIdentityUnlocked(request: MintRequest, deps: MintDeps): Mint
     const occupied = occupancyVeto(worktree, deps, new Set())
     if (occupied) return { status: "refused", reason: occupied }
   }
-  const recorded = identityRecordsFor(worktree, records, deps.canonicalPath)
+  // Scoped to the requested kind: identity is per (directory, runtime kind), so
+  // a Pi and a Claude coexist in one cwd. Another kind's record is neither
+  // reusable — handing a Claude the live Pi's session id makes both pane
+  // finders match it — nor grounds to refuse.
+  const recorded = identityRecordsFor(worktree, records, deps.canonicalPath, request.runtimeKind)
   if (recorded.length === 1) {
     const record = recorded[0]!
-    // Reusing across runtimes hands a Claude the live Pi's session id, and both
-    // pane finders then match it.
-    if (record.runtimeKind !== request.runtimeKind) {
-      return {
-        status: "refused",
-        reason: `${worktree} is recorded for ${record.runtimeSessionId} (${record.runtimeKind}), not ${request.runtimeKind}`,
-      }
-    }
     return {
       status: "reused",
       runtimeSessionId: record.runtimeSessionId,
@@ -161,10 +157,13 @@ function mintRuntimeIdentityUnlocked(request: MintRequest, deps: MintDeps): Mint
   // to the hostname derivation this store exists to retire. The write side has
   // to refuse louder than the read side, not quieter.
   if (recorded.length > 1) {
-    return { status: "refused", reason: ambiguity("identity records", worktree, recorded) }
+    return { status: "refused", reason: ambiguity(`${request.runtimeKind} identity records`, worktree, recorded) }
   }
 
-  const attested = attestedRuntimes(deps.links())
+  // The link ledger only attests Claude channel sessions, so its rungs answer
+  // nothing about any other kind's identity.
+  const attestedAll = attestedRuntimes(deps.links())
+  const attested = request.runtimeKind === "claude-code-channel" ? attestedAll : []
   const claimants = attested.filter((entry) => deps.canonicalPath(entry.worktree) === worktree)
   if (claimants.length > 1) {
     return { status: "refused", reason: ambiguity("harness link records", worktree, claimants) }
@@ -180,9 +179,11 @@ function mintRuntimeIdentityUnlocked(request: MintRequest, deps: MintDeps): Mint
     }
   }
 
+  // The occupancy exemption stays kind-blind: any store that identifies a live
+  // pane's declared session means that pane is not a stranger.
   const identified = new Set([
     ...records.map((record) => record.runtimeSessionId),
-    ...attested.map((entry) => entry.runtimeSessionId),
+    ...attestedAll.map((entry) => entry.runtimeSessionId),
   ])
   const veto = occupancyVeto(worktree, deps, identified)
   if (veto) return { status: "refused", reason: veto }

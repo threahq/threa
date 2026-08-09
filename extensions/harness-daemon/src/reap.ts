@@ -10,6 +10,8 @@ import { pushBranchAndRemoveWorktree } from "./archive-wind-down"
 import { liveClaudePidsIn } from "./claude-registry"
 import {
   forgetMintedIdentitiesFor,
+  identityRecordsFor,
+  matchesRuntimeKind,
   profileForWorktree,
   readMintedIdentities,
   type MintedIdentity,
@@ -21,6 +23,8 @@ import {
   canonicalOrRaw,
   conflictingAttestations,
   listLocalTmuxPanes,
+  parseClaudeChannelLaunch,
+  parsePiLaunch,
   resolveManagedAgentPane,
   type LocalTmuxPane,
 } from "./discovery"
@@ -105,8 +109,8 @@ export interface ReapDeps {
     log: (message: string) => void,
     policy: WindDownPolicy
   ) => { pushed: boolean; removed: boolean; reason?: string }
-  /** The profile this worktree was provisioned under; no mint record ⇒ the built-in default profile. */
-  profileFor: (worktree: string) => Profile
+  /** The profile this worktree was provisioned under for one runtime kind; no mint record ⇒ the built-in default profile. */
+  profileFor: (worktree: string, runtimeKind: string) => Profile
   /** The profile's teardown commands, bounded. Runs before anything destructive. */
   teardown: (cwd: string, commands: string[]) => { ok: boolean; reason?: string }
   killWindow: (windowId: string) => void
@@ -130,7 +134,7 @@ export function defaultReapDeps(target: { baseUrl: string; workspaceId: string; 
     archivedAt: (streamId) => fetchScratchpadArchivedAt({ ...target, streamId }),
     pathExists: existsSync,
     windDown: pushBranchAndRemoveWorktree,
-    profileFor: (worktree) => profileForWorktree(worktree),
+    profileFor: (worktree, runtimeKind) => profileForWorktree(worktree, runtimeKind),
     teardown: runTeardownCommands,
     killWindow: (windowId) => {
       output(["tmux", "kill-window", "-t", windowId], { allowFailure: true })
@@ -149,6 +153,39 @@ export function defaultReapDeps(target: { baseUrl: string; workspaceId: string; 
 
 function conflictReason(link: HarnessLink, conflict: string[]): string {
   return `identity evidence for ${link.worktree} disagrees: ${conflict.join(", ")}`
+}
+
+/** `unknown` predates kinds and every such record was a Claude session — the convention every store reader applies. */
+function linkRuntimeKind(link: HarnessLink): string {
+  return link.runtimeKind === "pi-local" ? "pi-local" : "claude-code-channel"
+}
+
+function belongsToOtherKind(pane: LocalTmuxPane, kind: string): boolean {
+  return kind === "pi-local"
+    ? Boolean(parseClaudeChannelLaunch(pane.startCommand))
+    : Boolean(parsePiLaunch(pane.startCommand))
+}
+
+/**
+ * Who else claims this directory: another kind's identity records, or another
+ * kind's live panes. Identity is per (directory, kind), so coexistence is
+ * legitimate — but the wind-down mutates the DIRECTORY (commit, push, remove),
+ * and doing that under a coexisting session destroys work this record never
+ * owned. A shared directory is wound down under `preserve: "none"`.
+ */
+function sharedDirectoryClaimants(link: HarnessLink, panes: LocalTmuxPane[], deps: ReapDeps): string[] {
+  const kind = linkRuntimeKind(link)
+  const worktree = deps.canonicalPath(link.worktree)
+  const records = identityRecordsFor(link.worktree, deps.identities(), deps.canonicalPath).filter(
+    (record) => !matchesRuntimeKind(record.runtimeKind, kind)
+  )
+  const foreignPanes = panes.filter(
+    (pane) => deps.canonicalPath(pane.cwd) === worktree && belongsToOtherKind(pane, kind)
+  )
+  return [
+    ...records.map((record) => `${record.runtimeSessionId} (${record.runtimeKind})`),
+    ...foreignPanes.map((pane) => `pane ${pane.paneId}`),
+  ]
 }
 
 type WindowDecision =
@@ -181,19 +218,37 @@ function decideWindow(link: HarnessLink, panes: LocalTmuxPane[], deps: ReapDeps)
   // path; on macOS /tmp vs /private/tmp alone is enough to read an occupied
   // worktree as empty, which is the one misreading that ends in a removal.
   const worktree = deps.canonicalPath(link.worktree)
-  const occupants = panes.filter((pane) => deps.canonicalPath(pane.cwd) === worktree)
+  const kind = linkRuntimeKind(link)
+  const inWorktree = panes.filter((pane) => deps.canonicalPath(pane.cwd) === worktree)
+  // A pane that provably belongs to the OTHER runtime kind is a coexisting
+  // session's, never this record's business: it neither counts as this
+  // record's occupant nor may be killed. `sharedDirectoryClaimants` keeps the
+  // directory itself safe for it.
+  const occupants = inWorktree.filter((pane) => !belongsToOtherKind(pane, kind))
   const livePids = deps.claudeProcessesIn(link.worktree)
+  // The pid a coexisting Claude pane owns is accounted for the same way the
+  // kill branch accounts a record's own pane pid. A claude-kind record gets no
+  // exemption: every claude pid in the directory is its namespace's to explain.
+  const foreignClaudePanePids = new Set(
+    kind === "pi-local"
+      ? inWorktree.filter((pane) => parseClaudeChannelLaunch(pane.startCommand)).map((pane) => pane.panePid)
+      : []
+  )
+  const unaccountedPids = livePids.filter((pid) => !foreignClaudePanePids.has(pid))
 
   const conflict = conflictingAttestations(
     link.worktree,
     attestedRuntimes(deps.links(), deps.canonicalPath),
     deps.identities(),
-    deps.canonicalPath
+    deps.canonicalPath,
+    kind
   )
 
   if (occupants.length === 0) {
     // Nobody is in the worktree: the offline case this reaper exists for —
-    // unless a paneless Claude is still running there.
+    // unless a paneless Claude is still running there. A paneless Claude vetoes
+    // even a pi-local record: what a reap can destroy is a directory, and a
+    // live Claude in it is fatal whichever runtime the record names.
     //
     // Empty means no PROCESS, not no owner. When two records name this directory
     // the other one may belong to a scratchpad that is still active, and its
@@ -201,13 +256,13 @@ function decideWindow(link: HarnessLink, panes: LocalTmuxPane[], deps: ReapDeps)
     // record's archived word destroys a live session's work. So the record is
     // still drained (or the duplication wedges the directory forever), but
     // nothing is destroyed while it is in doubt.
-    if (livePids.length === 0) {
+    if (unaccountedPids.length === 0) {
       return conflict.length > 0 ? { kind: "drain", reason: conflictReason(link, conflict) } : { kind: "none" }
     }
     return {
       kind: "refuse",
       status: "skipped occupied",
-      reason: `Claude is still running in ${link.worktree} with no pane (pid ${livePids.join(", ")})`,
+      reason: `Claude is still running in ${link.worktree} with no pane (pid ${unaccountedPids.join(", ")})`,
     }
   }
 
@@ -245,7 +300,7 @@ function decideWindow(link: HarnessLink, panes: LocalTmuxPane[], deps: ReapDeps)
     // The pane's own Claude is `panePid` (the same equivalence `reconnect`
     // relies on). Any other live pid in the directory is a session killing this
     // window would not stop.
-    const strangers = livePids.filter((pid) => pid !== resolved.pane.panePid)
+    const strangers = unaccountedPids.filter((pid) => pid !== resolved.pane.panePid)
     if (strangers.length === 0) return { kind: "kill", pane: resolved.pane }
     return {
       kind: "refuse",
@@ -296,7 +351,8 @@ export async function reapLink(link: HarnessLink, deps: ReapDeps, dryRun: boolea
     why = `archived ${Math.round(age / 60_000)}m ago`
   }
 
-  const window = decideWindow(link, deps.panes(), deps)
+  const panes = deps.panes()
+  const window = decideWindow(link, panes, deps)
   if (window.kind === "refuse") return { ...base, status: window.status, detail: window.reason }
 
   // Drop the record, touch nothing else. Leaving it would wedge the directory
@@ -331,7 +387,7 @@ export async function reapLink(link: HarnessLink, deps: ReapDeps, dryRun: boolea
   // runs one level up, before the window is killed and before anything is
   // pushed or removed. A failure refuses the whole wind-down: a teardown that
   // did not run is not a teardown with nothing to do.
-  const profile = deps.profileFor(link.worktree)
+  const profile = deps.profileFor(link.worktree, linkRuntimeKind(link))
   const teardown = deps.teardown(link.worktree, profile.teardown)
   if (!teardown.ok) {
     return { ...base, status: "skipped teardown failed", detail: teardown.reason ?? "teardown failed" }
@@ -341,10 +397,14 @@ export async function reapLink(link: HarnessLink, deps: ReapDeps, dryRun: boolea
     deps.killWindow(window.pane.windowId)
     await deps.awaitExit(window.pane.panePid)
   }
+  const shared = sharedDirectoryClaimants(link, panes, deps)
+  if (shared.length > 0) {
+    deps.log(`${link.worktree}: shared with ${shared.join(", ")}; leaving the directory and its branch untouched`)
+  }
   const report = deps.windDown(
     link.worktree,
     (message) => deps.log(`${link.worktree}: ${message}`),
-    windDownPolicyFor(profile)
+    shared.length > 0 ? { preserve: "none", reclaim: false } : windDownPolicyFor(profile)
   )
   // Forgotten either way, matching the pre-existing contract for a refused
   // wind-down: the branch is the thing that had to survive, and a directory
