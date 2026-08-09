@@ -793,7 +793,7 @@ describe("applyWorkspaceBootstrap (real IndexedDB)", () => {
     })
   })
 
-  describe("bootstrapDiff", () => {
+  describe("the bootstrap row diff", () => {
     interface DiffTable {
       name: string
       toArray: () => Promise<Array<{ id: string; _cachedAt: number }>>
@@ -838,7 +838,6 @@ describe("applyWorkspaceBootstrap (real IndexedDB)", () => {
 
     function diffBootstrap(overrides: Partial<WorkspaceBootstrap> = {}): WorkspaceBootstrap {
       diffBase ??= makeBootstrap({
-        featureFlags: { workspace: { bootstrapDiff: "on" }, user: {} },
         users: [makeWorkspaceUser()],
         streams: [
           { ...makeStream("stream_d1"), lastMessagePreview: null },
@@ -1105,16 +1104,9 @@ describe("applyWorkspaceBootstrap (real IndexedDB)", () => {
       expect(await cachedAtSnapshot()).toEqual(before)
     })
 
-    async function warmThenOlderReconnect(
-      flagOn: boolean,
-      reconnectOverrides: Partial<WorkspaceBootstrap>
-    ): Promise<void> {
-      const flags: WorkspaceBootstrap["featureFlags"] = flagOn
-        ? { workspace: { bootstrapDiff: "on" }, user: {} }
-        : { workspace: {}, user: {} }
+    async function warmThenOlderReconnect(reconnectOverrides: Partial<WorkspaceBootstrap>): Promise<void> {
       const warm = (): WorkspaceBootstrap =>
         diffBootstrap({
-          featureFlags: flags,
           streamReadState: {
             stream_d1: { lastReadEventId: "evt_9", lastReadSequence: "9", lastReadAt: "2026-01-02T00:00:00Z" },
           },
@@ -1127,7 +1119,7 @@ describe("applyWorkspaceBootstrap (real IndexedDB)", () => {
 
       await applyReconnectBootstrapBatch(
         "ws_1",
-        diffBootstrap({ featureFlags: flags, ...reconnectOverrides }),
+        diffBootstrap({ ...reconnectOverrides }),
         new Map(),
         new Set(),
         new Set(),
@@ -1153,17 +1145,7 @@ describe("applyWorkspaceBootstrap (real IndexedDB)", () => {
     })
 
     it("a reconnect carrying an older frontier cannot regress a row the diff just confirmed", async () => {
-      await warmThenOlderReconnect(true, {
-        streamReadState: {
-          stream_d1: { lastReadEventId: "evt_2", lastReadSequence: "2", lastReadAt: "2026-01-01T00:00:00Z" },
-        },
-      })
-
-      expect((await db.streamReadState.get("ws_1:stream_d1"))?.lastReadSequence).toBe("9")
-    })
-
-    it("with bootstrapDiff off, an older reconnect frontier still loses to the freshly written row", async () => {
-      await warmThenOlderReconnect(false, {
+      await warmThenOlderReconnect({
         streamReadState: {
           stream_d1: { lastReadEventId: "evt_2", lastReadSequence: "2", lastReadAt: "2026-01-01T00:00:00Z" },
         },
@@ -1174,7 +1156,7 @@ describe("applyWorkspaceBootstrap (real IndexedDB)", () => {
 
     it("a reconnect carrying an older displayName cannot clobber a stream row the diff just confirmed", async () => {
       const base = diffBootstrap()
-      await warmThenOlderReconnect(true, {
+      await warmThenOlderReconnect({
         streams: base.streams.map((s) => (s.id === "stream_d1" ? { ...s, displayName: "Older Name" } : s)),
       })
 
@@ -1182,7 +1164,7 @@ describe("applyWorkspaceBootstrap (real IndexedDB)", () => {
     })
 
     it("a reconnect carrying an older notificationLevel cannot clobber a membership row the diff just confirmed", async () => {
-      await warmThenOlderReconnect(true, {
+      await warmThenOlderReconnect({
         streamMemberships: [
           {
             streamId: "stream_d1",
@@ -1259,21 +1241,6 @@ describe("applyWorkspaceBootstrap (real IndexedDB)", () => {
       await applyWorkspaceBootstrap("ws_1", diffBootstrap(), Date.now())
 
       expect(getCachedWorkspaceTables("ws_1").streams).toBe(first)
-    })
-
-    it("with bootstrapDiff off, every row is rewritten", async () => {
-      // Explicit off override — the registry default is "on" since the go-live
-      // flip, so empty layers no longer select this arm.
-      const off = (): WorkspaceBootstrap =>
-        diffBootstrap({ featureFlags: { workspace: { bootstrapDiff: "off" }, user: {} } })
-      await applyWorkspaceBootstrap("ws_1", off(), Date.now() - 5000)
-      await stampCachedAt(1)
-
-      await applyWorkspaceBootstrap("ws_1", off(), Date.now())
-
-      const snapshot = await cachedAtSnapshot()
-      expect(Object.keys(snapshot).length).toBeGreaterThan(0)
-      expect(Object.entries(snapshot).filter(([, value]) => value === 1)).toEqual([])
     })
   })
 })

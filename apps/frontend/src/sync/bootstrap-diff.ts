@@ -94,10 +94,6 @@ export function diffRows<T extends { id: string }>(
   return { toWrite, merged, skipped }
 }
 
-export function writeAllRows<T extends { id: string }>(candidates: T[]): RowDiff<T> {
-  return { toWrite: candidates, merged: candidates, skipped: 0 }
-}
-
 export function diffSingleton<T>(
   existing: T | undefined,
   candidate: T,

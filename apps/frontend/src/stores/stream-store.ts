@@ -305,17 +305,12 @@ interface TailAnchor {
  */
 export function useStreamEvents(
   streamId: string | undefined,
-  fromSequenceNum?: number | null,
-  options?: { boundedRead?: boolean }
+  fromSequenceNum?: number | null
 ): CachedEvent[] | undefined {
   const floor = fromSequenceNum ?? null
   // Floorless callers keep the single capped read: their bound is the count cap,
-  // and a tail/prefix split there would change what that cap means. The flag
-  // resolves at the caller and can arrive after the first render (cold direct
-  // link), so it is read every render rather than latched — a flip re-arms the
-  // window, which costs one extra read and cannot mis-render because both arms
-  // mount the same two hooks.
-  const bounded = options?.boundedRead === true && floor !== null
+  // and a tail/prefix split there would change what that cap means.
+  const bounded = floor !== null
 
   const [anchor, setAnchor] = useState<TailAnchor | null>(null)
   // The tail floor is latched ONCE per stream and never moves while the stream

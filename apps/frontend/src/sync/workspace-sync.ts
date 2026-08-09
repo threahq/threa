@@ -14,7 +14,6 @@ import {
 } from "@/db"
 import { getPerfCapture } from "@/lib/perf/capture"
 import { mergeConversationByTitleRevision, mergeStreamByTitleRevision } from "@/lib/title-merge"
-import { resolveFeatureFlags } from "@threa/types"
 import {
   diffRows,
   diffSingleton,
@@ -23,7 +22,6 @@ import {
   removeRowConfirmations,
   semanticEqual,
   SERVER_STAMP_IGNORED_KEYS,
-  writeAllRows,
 } from "./bootstrap-diff"
 import { getCachedWorkspaceTables, seedWorkspaceCache, upsertWorkspaceUserInCache } from "@/stores/workspace-store"
 import {
@@ -2543,8 +2541,6 @@ async function upsertStreamRow(stream: Stream): Promise<void> {
   })
 }
 
-const EMPTY_FLAG_LAYERS: FeatureFlagLayers = { workspace: {}, user: {} }
-
 function byId<T extends { id: string }>(rows: T[]): Map<string, T> {
   return new Map(rows.map((row) => [row.id, row]))
 }
@@ -2690,7 +2686,6 @@ export async function applyWorkspaceBootstrap(
   const now = Date.now()
   const capture = getPerfCapture()
   primeEventWriteFlags(workspaceId, bootstrap.featureFlags)
-  const diffEnabled = resolveFeatureFlags(bootstrap.featureFlags ?? EMPTY_FLAG_LAYERS).bootstrapDiff === "on"
 
   // Build membership lookup for O(1) access when merging onto streams
   const membershipByStream = new Map(bootstrap.streamMemberships.map((sm) => [sm.streamId, sm]))
@@ -2811,19 +2806,17 @@ export async function applyWorkspaceBootstrap(
         existingLabels,
         existingLabelAssignments,
         existingMetadata,
-      ] = diffEnabled
-        ? await Promise.all([
-            db.workspaces.get(workspaceId),
-            db.workspaceUsers.where("workspaceId").equals(workspaceId).toArray(),
-            db.streamMemberships.where("workspaceId").equals(workspaceId).toArray(),
-            db.dmPeers.where("workspaceId").equals(workspaceId).toArray(),
-            db.personas.where("workspaceId").equals(workspaceId).toArray(),
-            db.bots.where("workspaceId").equals(workspaceId).toArray(),
-            db.labels.where("workspaceId").equals(workspaceId).toArray(),
-            db.labelAssignments.where("workspaceId").equals(workspaceId).toArray(),
-            db.workspaceMetadata.get(workspaceId),
-          ])
-        : [undefined, [], [], [], [], [], [], [], undefined]
+      ] = await Promise.all([
+        db.workspaces.get(workspaceId),
+        db.workspaceUsers.where("workspaceId").equals(workspaceId).toArray(),
+        db.streamMemberships.where("workspaceId").equals(workspaceId).toArray(),
+        db.dmPeers.where("workspaceId").equals(workspaceId).toArray(),
+        db.personas.where("workspaceId").equals(workspaceId).toArray(),
+        db.bots.where("workspaceId").equals(workspaceId).toArray(),
+        db.labels.where("workspaceId").equals(workspaceId).toArray(),
+        db.labelAssignments.where("workspaceId").equals(workspaceId).toArray(),
+        db.workspaceMetadata.get(workspaceId),
+      ])
       stopPreRead()
 
       const stopDiff = capture.time("bootstrap.diff")
@@ -2846,24 +2839,16 @@ export async function applyWorkspaceBootstrap(
         ...mapArchivedStreamRows(bootstrap.archivedStreams ?? [], existingByStreamId, now),
       ])
 
-      const workspaceDiff = diffEnabled
-        ? diffSingleton(existingWorkspace, workspaceRow)
-        : { write: true, merged: workspaceRow }
-      const usersDiff = diffEnabled ? diffRows(byId(existingUsers), userRows) : writeAllRows(userRows)
-      const streamsDiff = diffEnabled ? diffRows(existingByStreamId, streamCandidates) : writeAllRows(streamCandidates)
-      const membershipsDiff = diffEnabled
-        ? diffRows(byId(existingMemberships), membershipRows)
-        : writeAllRows(membershipRows)
-      const dmPeersDiff = diffEnabled ? diffRows(byId(existingDmPeers), dmPeerRows) : writeAllRows(dmPeerRows)
-      const personasDiff = diffEnabled ? diffRows(byId(existingPersonas), personaRows) : writeAllRows(personaRows)
-      const botsDiff = diffEnabled ? diffRows(byId(existingBots), botRows) : writeAllRows(botRows)
-      const labelsDiff = diffEnabled ? diffRows(byId(existingLabels), labelRows) : writeAllRows(labelRows)
-      const labelAssignmentsDiff = diffEnabled
-        ? diffRows(byId(existingLabelAssignments), labelAssignmentRows)
-        : writeAllRows(labelAssignmentRows)
-      const metadataDiff = diffEnabled
-        ? diffSingleton(existingMetadata, metadataRow)
-        : { write: true, merged: metadataRow }
+      const workspaceDiff = diffSingleton(existingWorkspace, workspaceRow)
+      const usersDiff = diffRows(byId(existingUsers), userRows)
+      const streamsDiff = diffRows(existingByStreamId, streamCandidates)
+      const membershipsDiff = diffRows(byId(existingMemberships), membershipRows)
+      const dmPeersDiff = diffRows(byId(existingDmPeers), dmPeerRows)
+      const personasDiff = diffRows(byId(existingPersonas), personaRows)
+      const botsDiff = diffRows(byId(existingBots), botRows)
+      const labelsDiff = diffRows(byId(existingLabels), labelRows)
+      const labelAssignmentsDiff = diffRows(byId(existingLabelAssignments), labelAssignmentRows)
+      const metadataDiff = diffSingleton(existingMetadata, metadataRow)
       stopDiff()
 
       mergedWorkspace = workspaceDiff.merged
@@ -2931,7 +2916,7 @@ export async function applyWorkspaceBootstrap(
       const existingUnread = await db.unreadState.get(workspaceId)
       effectiveUnread = mergeBootstrapUnreadFields(bootstrap, existingUnread, fetchStartedAt)
       const unreadRow = { id: workspaceId, workspaceId, ...effectiveUnread, _cachedAt: now }
-      const unreadDiff = diffEnabled ? diffSingleton(existingUnread, unreadRow) : { write: true, merged: unreadRow }
+      const unreadDiff = diffSingleton(existingUnread, unreadRow)
       if (unreadDiff.write) {
         rowsWritten += 1
         await db.unreadState.put(unreadRow)
@@ -2978,9 +2963,7 @@ export async function applyWorkspaceBootstrap(
             _cachedAt: now,
           })
         }
-        const readStateDiff = diffEnabled
-          ? diffRows(new Map(existingRows.map((row) => [row.id, row])), serverRows)
-          : writeAllRows(serverRows)
+        const readStateDiff = diffRows(new Map(existingRows.map((row) => [row.id, row])), serverRows)
         if (readStateDiff.toWrite.length > 0) {
           await db.streamReadState.bulkPut(readStateDiff.toWrite)
         }
@@ -2999,7 +2982,7 @@ export async function applyWorkspaceBootstrap(
           workspaceId,
           _cachedAt: now,
         }
-        if (diffEnabled && existingPrefs && semanticEqual(existingPrefs, prefsRow, SERVER_STAMP_IGNORED_KEYS)) {
+        if (existingPrefs && semanticEqual(existingPrefs, prefsRow, SERVER_STAMP_IGNORED_KEYS)) {
           rowsSkipped += 1
         } else {
           rowsWritten += 1
@@ -3015,7 +2998,7 @@ export async function applyWorkspaceBootstrap(
           config: bootstrap.sidebarConfig,
           _cachedAt: now,
         }
-        if (diffEnabled && existingSidebar && semanticEqual(existingSidebar, sidebarRow)) {
+        if (existingSidebar && semanticEqual(existingSidebar, sidebarRow)) {
           rowsSkipped += 1
         } else {
           rowsWritten += 1
@@ -3184,7 +3167,6 @@ export async function applyReconnectBootstrapBatch(
   })
 
   primeEventWriteFlags(workspaceId, finalBootstrap.featureFlags)
-  const diffEnabled = resolveFeatureFlags(finalBootstrap.featureFlags ?? EMPTY_FLAG_LAYERS).bootstrapDiff === "on"
 
   const membershipByStream = new Map(finalBootstrap.streamMemberships.map((sm) => [sm.streamId, sm]))
 
@@ -3311,51 +3293,39 @@ export async function applyReconnectBootstrapBatch(
         existingLabelAssignments,
         existingUnread,
         existingMetadata,
-      ] = diffEnabled
-        ? await Promise.all([
-            db.workspaces.get(workspaceId),
-            db.workspaceUsers.where("workspaceId").equals(workspaceId).toArray(),
-            db.streams.where("workspaceId").equals(workspaceId).toArray(),
-            db.streamMemberships.where("workspaceId").equals(workspaceId).toArray(),
-            db.streamReadState.where("workspaceId").equals(workspaceId).toArray(),
-            db.dmPeers.where("workspaceId").equals(workspaceId).toArray(),
-            db.personas.where("workspaceId").equals(workspaceId).toArray(),
-            db.bots.where("workspaceId").equals(workspaceId).toArray(),
-            db.labels.where("workspaceId").equals(workspaceId).toArray(),
-            db.labelAssignments.where("workspaceId").equals(workspaceId).toArray(),
-            db.unreadState.get(workspaceId),
-            db.workspaceMetadata.get(workspaceId),
-          ])
-        : [undefined, [], [], [], [], [], [], [], [], [], undefined, undefined]
+      ] = await Promise.all([
+        db.workspaces.get(workspaceId),
+        db.workspaceUsers.where("workspaceId").equals(workspaceId).toArray(),
+        db.streams.where("workspaceId").equals(workspaceId).toArray(),
+        db.streamMemberships.where("workspaceId").equals(workspaceId).toArray(),
+        db.streamReadState.where("workspaceId").equals(workspaceId).toArray(),
+        db.dmPeers.where("workspaceId").equals(workspaceId).toArray(),
+        db.personas.where("workspaceId").equals(workspaceId).toArray(),
+        db.bots.where("workspaceId").equals(workspaceId).toArray(),
+        db.labels.where("workspaceId").equals(workspaceId).toArray(),
+        db.labelAssignments.where("workspaceId").equals(workspaceId).toArray(),
+        db.unreadState.get(workspaceId),
+        db.workspaceMetadata.get(workspaceId),
+      ])
 
       const stopDiff = capture.time("bootstrap.diff")
-      const workspaceDiff = diffEnabled
-        ? diffSingleton(existingWorkspace, workspaceRow)
-        : { write: true, merged: workspaceRow }
-      const usersDiff = diffEnabled ? diffRows(byId(existingUsers), userRows) : writeAllRows(userRows)
+      const workspaceDiff = diffSingleton(existingWorkspace, workspaceRow)
+      const usersDiff = diffRows(byId(existingUsers), userRows)
       const existingByStreamId = byId(existingStreams)
       const mergedStreamRows = streamRows.map((incoming) => {
         const existing = existingByStreamId.get(incoming.id)
         return existing ? mergeStreamByTitleRevision(existing, incoming) : incoming
       })
-      const streamsDiff = diffEnabled ? diffRows(existingByStreamId, mergedStreamRows) : writeAllRows(mergedStreamRows)
-      const membershipsDiff = diffEnabled
-        ? diffRows(byId(existingMemberships), membershipRows)
-        : writeAllRows(membershipRows)
-      const readStatesDiff = diffEnabled
-        ? diffRows(byId(existingReadStates), readStateRows)
-        : writeAllRows(readStateRows)
-      const dmPeersDiff = diffEnabled ? diffRows(byId(existingDmPeers), dmPeerRows) : writeAllRows(dmPeerRows)
-      const personasDiff = diffEnabled ? diffRows(byId(existingPersonas), personaRows) : writeAllRows(personaRows)
-      const botsDiff = diffEnabled ? diffRows(byId(existingBots), botRows) : writeAllRows(botRows)
-      const labelsDiff = diffEnabled ? diffRows(byId(existingLabels), labelRows) : writeAllRows(labelRows)
-      const labelAssignmentsDiff = diffEnabled
-        ? diffRows(byId(existingLabelAssignments), labelAssignmentRows)
-        : writeAllRows(labelAssignmentRows)
-      const unreadDiff = diffEnabled ? diffSingleton(existingUnread, unreadRow) : { write: true, merged: unreadRow }
-      const metadataDiff = diffEnabled
-        ? diffSingleton(existingMetadata, metadataRow)
-        : { write: true, merged: metadataRow }
+      const streamsDiff = diffRows(existingByStreamId, mergedStreamRows)
+      const membershipsDiff = diffRows(byId(existingMemberships), membershipRows)
+      const readStatesDiff = diffRows(byId(existingReadStates), readStateRows)
+      const dmPeersDiff = diffRows(byId(existingDmPeers), dmPeerRows)
+      const personasDiff = diffRows(byId(existingPersonas), personaRows)
+      const botsDiff = diffRows(byId(existingBots), botRows)
+      const labelsDiff = diffRows(byId(existingLabels), labelRows)
+      const labelAssignmentsDiff = diffRows(byId(existingLabelAssignments), labelAssignmentRows)
+      const unreadDiff = diffSingleton(existingUnread, unreadRow)
+      const metadataDiff = diffSingleton(existingMetadata, metadataRow)
       stopDiff()
 
       mergedWorkspace = workspaceDiff.merged
@@ -3431,11 +3401,7 @@ export async function applyReconnectBootstrapBatch(
           workspaceId,
           _cachedAt: now,
         }
-        if (
-          !diffEnabled ||
-          !existingUserPreferences ||
-          !semanticEqual(existingUserPreferences, prefsRow, SERVER_STAMP_IGNORED_KEYS)
-        ) {
+        if (!existingUserPreferences || !semanticEqual(existingUserPreferences, prefsRow, SERVER_STAMP_IGNORED_KEYS)) {
           rowsWritten += 1
           await db.userPreferences.put(prefsRow)
         } else {
@@ -3451,7 +3417,7 @@ export async function applyReconnectBootstrapBatch(
           config: finalBootstrap.sidebarConfig,
           _cachedAt: now,
         }
-        if (!diffEnabled || !existingSidebarConfig || !semanticEqual(existingSidebarConfig, sidebarRow)) {
+        if (!existingSidebarConfig || !semanticEqual(existingSidebarConfig, sidebarRow)) {
           rowsWritten += 1
           await db.sidebarConfigs.put(sidebarRow)
         } else {
@@ -3599,7 +3565,7 @@ export async function applyReconnectBootstrapBatch(
 }
 
 // Every keep-set below derives from the BOOTSTRAP PAYLOAD, never from the set of
-// rows the apply actually wrote. Under `bootstrapDiff` a row present in the
+// rows the apply actually wrote: a row present in the
 // payload can be skipped and keep an old `_cachedAt` — narrowing these sets to
 // "the ids we wrote" would sweep exactly those rows. Presence in the payload is
 // the protection; `_cachedAt >= now` only shields rows the payload never
