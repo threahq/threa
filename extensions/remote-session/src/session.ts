@@ -294,6 +294,8 @@ interface ObservedClaim {
   phase: ObservedClaimPhase
   updateInProgress: boolean
   restartPending: boolean
+  /** Running turn whose input incorporated this folded/swept claim. */
+  runningOwnerInvocationId?: string
 }
 
 interface Inflight {
@@ -820,6 +822,7 @@ export class RemoteSession {
       callbacks: {
         onInputUpdated: (update) => this.applyInputUpdate(invocation.id, update),
         onCancelled: (cancellation) => this.cancelObservedClaim(invocation.id, cancellation),
+        onClaimLost: () => this.claimLost(invocation.id),
       },
       ...(invocation.sealing && identity
         ? {
@@ -874,16 +877,27 @@ export class RemoteSession {
     context.restartPending = true
     context.updateInProgress = false
     this.cancelledInvocations.add(context.invocation)
-    const running = this.inflight.get(context.invocation.id)
+    this.abortRunningTurnForContext(context, "Folded input changed while the turn was running.")
+  }
+
+  private abortRunningTurnForContext(context: ObservedClaim, ownerFailure: string): void {
+    const ownerId = context.runningOwnerInvocationId
+    const running = this.inflight.get(context.invocation.id) ?? (ownerId ? this.inflight.get(ownerId) : undefined)
     if (!running) return
     try {
       this.delegate.sessionControl?.interrupt()
     } catch {
-      // Backend restart remains authoritative when native control is gone.
+      // Backend authority still fences output when native control is gone.
     }
-    this.clearInflight(context.invocation.id)
+    this.clearInflight(running.invocation.id)
     if (this.activeTurnStream === running.invocation.responseStreamId) this.activeTurnStream = undefined
     void this.syncPresence()
+
+    // During delivery, deliverTurn observes the dependency cancellation and its
+    // caller fails the owner. Once delivery has returned, no caller owns that
+    // cleanup, so terminalize the interrupted primary here.
+    const owner = ownerId ? this.observedClaims.get(ownerId) : undefined
+    if (owner && owner.phase === "running") void this.failInvocation(owner.invocation, ownerFailure)
   }
 
   private async applyInputUpdate(
@@ -937,23 +951,22 @@ export class RemoteSession {
     }
   }
 
-  private async cancelObservedClaim(invocationId: string, _cancellation: InvocationCancellation): Promise<void> {
+  private cancelObservedClaim(invocationId: string, _cancellation: InvocationCancellation): void {
+    this.terminalizeObservedClaim(invocationId, "Folded input was cancelled while the turn was running.")
+  }
+
+  private claimLost(invocationId: string): void {
+    this.terminalizeObservedClaim(invocationId, "Folded claim ownership was lost while the turn was running.")
+  }
+
+  private terminalizeObservedClaim(invocationId: string, ownerFailure: string): void {
     const context = this.observedClaims.get(invocationId)
     if (!context || context.phase === "terminal") return
     context.phase = "terminal"
     context.updateInProgress = false
     context.restartPending = false
     this.cancelledInvocations.add(context.invocation)
-    const running = this.inflight.get(invocationId)
-    if (running) {
-      try {
-        this.delegate.sessionControl?.interrupt()
-      } catch {
-        // Cancellation is authoritative even when runtime control was lost.
-      }
-      this.clearInflight(invocationId)
-      if (this.activeTurnStream === running.invocation.responseStreamId) this.activeTurnStream = undefined
-    }
+    this.abortRunningTurnForContext(context, ownerFailure)
     context.handle.dispose()
     this.observedClaims.delete(invocationId)
     if (!this.stopped && !this.archive.detached) void this.syncPresence()
@@ -1012,9 +1025,11 @@ export class RemoteSession {
     // of its verdict; routing it onward could execute a cancelled command/turn.
     if (this.isClaimCancelled(invocation)) return true
     if (!intercepted) return false
-    await this.completeTurn(invocation, { noResponse: true }).catch((error) =>
-      this.log(`intercepted-claim ack failed: ${this.summarize(error)}`)
-    )
+    try {
+      await this.completeTurn(invocation, { noResponse: true })
+    } catch (error) {
+      await this.failAfterTerminalWrite(invocation, error, "intercepted-claim acknowledgement")
+    }
     return true
   }
 
@@ -1079,6 +1094,7 @@ export class RemoteSession {
       // content that is no longer canonical.
       const liveFolded = folded.filter((item) => !this.isClaimCancelled(item))
       const content = buildSteerContent([parts[0]!, ...liveFolded.map((item) => formatInvocationContent(item))])
+      this.bindRunningOwner(invocation.id, liveFolded)
       await this.deliverTurn(invocation, content, liveFolded)
       // Only after the turn is registered: a delivery that throws must leave the
       // folded messages claimed-but-open rather than silently closed.
@@ -1098,6 +1114,13 @@ export class RemoteSession {
       await Promise.all(folded.map((item) => this.failInvocation(item, reason).catch(() => undefined)))
     }
     return control
+  }
+
+  private bindRunningOwner(ownerInvocationId: string, dependencies: ClaimedInvocation[]): void {
+    for (const dependency of dependencies) {
+      const context = this.observedClaims.get(dependency.id)
+      if (context && context.invocation === dependency) context.runningOwnerInvocationId = ownerInvocationId
+    }
   }
 
   /** Register an invocation as the in-flight turn and push its content to the runtime. */
@@ -1372,6 +1395,10 @@ export class RemoteSession {
       return
     }
     combined = buildSteerContent(currentParts)
+    const owner = [...this.inflight.values()].find(
+      (entry) => entry.invocation.responseStreamId === invocation.responseStreamId
+    )?.invocation
+    if (owner) this.bindRunningOwner(owner.id, liveSwept)
     if (!(await steer(combined))) {
       // Nothing was injected: the swept messages were claimed but not
       // delivered — fail them loudly so they don't vanish into a silent close.
@@ -1386,7 +1413,7 @@ export class RemoteSession {
     await this.completeTurn(invocation, {
       noResponse: true,
       metadata: { "remote.invocationId": invocation.id, "remote.sessionControl": "true", "remote.steered": "true" },
-    }).catch((error) => this.log(`steer close failed: ${this.summarize(error)}`))
+    }).catch((error) => this.failAfterTerminalWrite(invocation, error, "steer completion"))
   }
 
   /**
@@ -1538,7 +1565,7 @@ export class RemoteSession {
         this.releaseObservation(invocation.id)
         return true
       } catch (error) {
-        this.log(`sealed session-control ack failed: ${this.summarize(error)}`)
+        await this.failAfterTerminalWrite(invocation, error, "sealed session-control acknowledgement")
         return false
       }
     }
@@ -1563,11 +1590,11 @@ export class RemoteSession {
           await this.completeTurn(invocation, { noResponse: true })
           return false
         } catch (inner) {
-          this.log(`session-control silent ack failed: ${this.summarize(inner)}`)
+          await this.failAfterTerminalWrite(invocation, inner, "session-control silent acknowledgement")
           return false
         }
       }
-      this.log(`session-control ack failed: ${this.summarize(error)}`)
+      await this.failAfterTerminalWrite(invocation, error, "session-control acknowledgement")
       return false
     }
     this.releaseObservation(invocation.id)
@@ -1575,10 +1602,24 @@ export class RemoteSession {
   }
 
   private async completeNoResponse(invocation: ClaimedInvocation): Promise<void> {
-    await this.completeTurn(invocation, {
-      noResponse: true,
-      metadata: { "remote.invocationId": invocation.id, "remote.steered": "true" },
-    }).catch((error) => this.log(`steered close failed: ${this.summarize(error)}`))
+    try {
+      await this.completeTurn(invocation, {
+        noResponse: true,
+        metadata: { "remote.invocationId": invocation.id, "remote.steered": "true" },
+      })
+    } catch (error) {
+      await this.failAfterTerminalWrite(invocation, error, "no-response completion")
+    }
+  }
+
+  private async failAfterTerminalWrite(
+    invocation: ClaimedInvocation,
+    error: unknown,
+    operation: string
+  ): Promise<void> {
+    this.log(`${operation} failed: ${this.summarize(error)}`)
+    if (this.isClaimCancelled(invocation)) return
+    await this.failInvocation(invocation, `Could not persist ${operation}.`)
   }
 
   private async failInvocation(invocation: ClaimedInvocation, errorMessage: string): Promise<void> {
@@ -1593,7 +1634,12 @@ export class RemoteSession {
         errorMessage: scrubbed,
       })
       .then(() => this.releaseObservation(invocation.id))
-      .catch((error) => this.log(`session-control fail failed: ${this.summarize(error)}`))
+      .catch((error) => {
+        this.log(`invocation fail write failed: ${this.summarize(error)}`)
+        // There is no local retry owner on explicit-failure paths. Stop
+        // renewing so backend lease recovery can reclaim the invocation.
+        if (!this.isClaimCancelled(invocation)) this.releaseObservation(invocation.id)
+      })
   }
 
   /**
@@ -1618,7 +1664,7 @@ export class RemoteSession {
         return this.completeTurn(entry.invocation, {
           ...(silent ? { noResponse: true as const } : { markdown: `_${note}_` }),
           metadata: { "remote.invocationId": id, "remote.interrupted": "true" },
-        }).catch((error) => this.log(`interrupted-turn close failed: ${this.summarize(error)}`))
+        }).catch((error) => this.failAfterTerminalWrite(entry.invocation, error, "interrupted-turn completion"))
       })
     )
   }
@@ -1939,7 +1985,7 @@ export class RemoteSession {
         ? { noResponse: true as const }
         : { markdown: "_The session ended the turn without sending a reply._" }),
       metadata: { "remote.invocationId": invocationId, "remote.timedOut": "true" },
-    }).catch((error) => this.log(`timeout completion failed: ${this.summarize(error)}`))
+    }).catch((error) => this.failAfterTerminalWrite(entry.invocation, error, "timeout completion"))
     if (this.activeTurnStream === entry.invocation.responseStreamId) this.activeTurnStream = undefined
     await this.syncPresence()
   }

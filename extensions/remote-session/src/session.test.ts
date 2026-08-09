@@ -79,7 +79,7 @@ function makeFakeClient() {
   return { client: client as unknown as ThreaClient, calls }
 }
 
-function makeFakeTransport() {
+function makeFakeTransport(onSync?: (params: ObserveClaimParams) => void | Promise<void>) {
   const presence: Record<string, unknown>[] = []
   const steps: Array<{ invocationId: string; frames: Array<{ stepType: string; content: string }> }> = []
   let renewCalls = 0
@@ -92,6 +92,7 @@ function makeFakeTransport() {
       revision: number
       update(update: InvocationInputUpdate): Promise<"applied" | "restart-required">
       cancel(cancellation: InvocationCancellation): Promise<void>
+      lose(): Promise<void>
     }
   >()
   const transport = {
@@ -124,6 +125,9 @@ function makeFakeTransport() {
         async cancel(cancellation: InvocationCancellation) {
           await params.callbacks.onCancelled(cancellation)
         },
+        async lose() {
+          await params.callbacks.onClaimLost?.()
+        },
       }
       observations.set(params.invocationId, record)
       return {
@@ -133,7 +137,9 @@ function makeFakeTransport() {
         get sealing() {
           return params.sealed?.sealing
         },
-        sync: async () => {},
+        sync: async () => {
+          await onSync?.(params)
+        },
         unregister: () => {
           record.unregistered = true
         },
@@ -2032,7 +2038,8 @@ async function waitUntil(predicate: () => boolean, timeoutMs = 500): Promise<voi
 function makeObservedControlSession(
   queue: ClaimedInvocation[],
   delegate: Partial<RemoteSessionDelegate> = {},
-  runtime: RuntimeDescriptor = RUNTIME
+  runtime: RuntimeDescriptor = RUNTIME,
+  onSync?: (params: ObserveClaimParams) => void | Promise<void>
 ) {
   const { client, calls } = makeFakeClient()
   ;(client as unknown as { claim: (body: Record<string, unknown>) => Promise<ClaimedInvocation | null> }).claim =
@@ -2045,7 +2052,7 @@ function makeObservedControlSession(
       return index === -1 ? null : queue.splice(index, 1)[0]!
     }
   ;(client as unknown as { listStreamMessages: () => Promise<unknown[]> }).listStreamMessages = async () => []
-  const fake = makeFakeTransport()
+  const fake = makeFakeTransport(onSync)
   const delivered: Array<{ invocationId: string; content: string }> = []
   const steered: string[] = []
   const interrupts: string[] = []
@@ -2117,6 +2124,22 @@ describe("invocation source controls", () => {
     ).toBe("applied")
     expect(claimed).toMatchObject({ promptMarkdown: "canonical before start", sourceRevision: 2 })
     expect({ delivered, steered }).toEqual({ delivered: [], steered: [] })
+    await session.shutdown()
+  })
+
+  test("authoritative claim loss during initial sync prevents all processing and terminal writes", async () => {
+    const queue = [makeInvocation({ id: "binv_lost_before_start" })]
+    const { session, fake, delivered, calls } = makeObservedControlSession(queue, {}, RUNTIME, async (params) =>
+      params.callbacks.onClaimLost?.()
+    )
+
+    await claimDrain(session)
+
+    expect(delivered).toEqual([])
+    expect(calls.complete).toEqual([])
+    expect(calls.fail).toEqual([])
+    expect(fake.observations.get("binv_lost_before_start")?.disposed).toBe(true)
+    expect(session.isInflight("binv_lost_before_start")).toBe(false)
     await session.shutdown()
   })
 
@@ -2317,6 +2340,68 @@ describe("invocation source controls", () => {
       completed: [],
       failed: [],
     })
+    await session.shutdown()
+  })
+
+  test("a failed folded no-response close falls back to failure and stops observation renewal", async () => {
+    const queue = [
+      makeInvocation({ id: "binv_fold_owner", promptMarkdown: "owner" }),
+      makeInvocation({ id: "binv_fold_close", promptMarkdown: "folded" }),
+    ]
+    const { session, client, fake, calls } = makeObservedControlSession(queue)
+    ;(client as unknown as { complete: (id: string) => Promise<void> }).complete = async (id) => {
+      if (id === "binv_fold_close") throw new Error("completion transport unavailable")
+    }
+
+    await claimDrain(session)
+
+    expect(calls.fail.map((call) => call.id)).toContain("binv_fold_close")
+    expect(fake.observations.get("binv_fold_close")?.unregistered).toBe(true)
+    await session.shutdown()
+  })
+
+  test("an edited folded claim interrupts and terminalizes its running owner before stale output", async () => {
+    const queue = [
+      makeInvocation({ id: "binv_fold_running", promptMarkdown: "owner", sourceRevision: 1 }),
+      makeInvocation({ id: "binv_fold_dependency", promptMarkdown: "old folded", sourceRevision: 1 }),
+    ]
+    const { session, client, fake, calls, interrupts, delivered } = makeObservedControlSession(queue)
+    let closeStarted = false
+    let releaseClose!: () => void
+    ;(client as unknown as { complete: (id: string, body: Record<string, unknown>) => Promise<void> }).complete =
+      async (id, body) => {
+        if (id !== "binv_fold_dependency") {
+          calls.complete.push({ id, body })
+          return
+        }
+        closeStarted = true
+        await new Promise<void>((resolve) => {
+          releaseClose = resolve
+        })
+        throw new ThreaApiError("stale", 409, "INVOCATION_INPUT_STALE")
+      }
+
+    const draining = claimDrain(session)
+    await waitUntil(() => closeStarted)
+    expect(
+      await fake.observations.get("binv_fold_dependency")!.update({
+        invocationId: "binv_fold_dependency",
+        sourceMessageId: "src",
+        sourceRevision: 2,
+        delivery: "plaintext",
+        promptMarkdown: "current folded",
+        attachmentRefs: [],
+      })
+    ).toBe("restart-required")
+    await waitUntil(() => calls.fail.some((call) => call.id === "binv_fold_running"))
+    releaseClose()
+    await draining
+
+    expect(delivered).toHaveLength(1)
+    expect(delivered[0]?.content).toContain("old folded")
+    expect(interrupts).toEqual(["interrupt"])
+    expect(session.isInflight("binv_fold_running")).toBe(false)
+    expect(calls.complete.some((call) => call.id === "binv_fold_dependency")).toBe(false)
     await session.shutdown()
   })
 
