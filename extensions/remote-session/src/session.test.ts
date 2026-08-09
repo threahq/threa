@@ -1,10 +1,17 @@
-import { describe, expect, test } from "bun:test"
-import type { BotRuntimeTransport } from "@threa/bot-runtime-client"
+import { describe, expect, spyOn, test } from "bun:test"
+import type {
+  BotRuntimeHello,
+  BotRuntimeTransport,
+  InvocationCancellation,
+  InvocationInputUpdate,
+  ObserveClaimParams,
+} from "@threa/bot-runtime-client"
 import {
   RECONNECT_HANDOFF_FALLBACK_MS,
   RemoteSession,
   buildSteerContent,
   claimCapabilitiesFor,
+  effectiveRuntimeManifest,
   formatInvocationContent,
   isSessionControlInvocation,
   parseSessionControlCommand,
@@ -15,7 +22,7 @@ import {
   type SessionControlActuator,
 } from "./session"
 import type { RemoteSessionConfig } from "./identity"
-import { mkdtempSync } from "node:fs"
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { ThreaApiError, type ClaimedInvocation, type ThreaClient } from "./client"
@@ -75,6 +82,18 @@ function makeFakeClient() {
 function makeFakeTransport() {
   const presence: Record<string, unknown>[] = []
   const steps: Array<{ invocationId: string; frames: Array<{ stepType: string; content: string }> }> = []
+  let renewCalls = 0
+  const observations = new Map<
+    string,
+    {
+      params: ObserveClaimParams
+      disposed: boolean
+      unregistered: boolean
+      revision: number
+      update(update: InvocationInputUpdate): Promise<"applied" | "restart-required">
+      cancel(cancellation: InvocationCancellation): Promise<void>
+    }
+  >()
   const transport = {
     connect: async () => {},
     disconnect: () => {},
@@ -87,12 +106,55 @@ function makeFakeTransport() {
     ) => {
       steps.push({ invocationId, frames })
     },
-    renewClaim: async () => ({ notFound: false }),
+    renewClaim: async () => {
+      renewCalls++
+      return { notFound: false }
+    },
+    observeClaim: (params: ObserveClaimParams) => {
+      const record = {
+        params,
+        disposed: false,
+        unregistered: false,
+        revision: params.sourceRevision,
+        async update(update: InvocationInputUpdate) {
+          const disposition = await params.callbacks.onInputUpdated(update)
+          if (disposition === "applied") record.revision = update.sourceRevision
+          return disposition
+        },
+        async cancel(cancellation: InvocationCancellation) {
+          await params.callbacks.onCancelled(cancellation)
+        },
+      }
+      observations.set(params.invocationId, record)
+      return {
+        get currentRevision() {
+          return record.revision
+        },
+        get sealing() {
+          return params.sealed?.sealing
+        },
+        sync: async () => {},
+        unregister: () => {
+          record.unregistered = true
+        },
+        dispose: () => {
+          record.disposed = true
+        },
+      }
+    },
     updatePresence: async (body: Record<string, unknown>) => {
       presence.push(body)
     },
   }
-  return { transport: transport as unknown as BotRuntimeTransport, presence, steps }
+  return {
+    transport: transport as unknown as BotRuntimeTransport,
+    presence,
+    steps,
+    observations,
+    get renewCalls() {
+      return renewCalls
+    },
+  }
 }
 
 function makeSession(
@@ -122,6 +184,7 @@ function makeInvocation(partial: Partial<ClaimedInvocation>): ClaimedInvocation 
     rootStreamId: "stream_root",
     activeStreamId: "stream_root",
     sourceMessageId: "src",
+    sourceRevision: 1,
     responseStreamId: "stream_root",
     actor: { type: "bot", id: "bot_1", slug: "claude" },
     trigger: "active-scratchpad",
@@ -136,6 +199,30 @@ function makeInvocation(partial: Partial<ClaimedInvocation>): ClaimedInvocation 
     ...partial,
   }
 }
+
+describe("effectiveRuntimeManifest", () => {
+  const actuator = (steer?: SessionControlActuator["steer"]): SessionControlActuator => ({
+    commands: [],
+    interrupt: () => true,
+    ...(steer ? { steer } : {}),
+    runCommand: async () => ({ ok: true, message: "ok" }),
+  })
+
+  test("derives update mode only from native steering and preserves output", () => {
+    expect({
+      live: effectiveRuntimeManifest(
+        { input: { updates: "restart" }, output: { reply: true, trace: false } },
+        actuator(async () => true)
+      ),
+      restart: effectiveRuntimeManifest({ input: { updates: "live" }, output: { sources: true } }, actuator()),
+      none: effectiveRuntimeManifest(undefined, undefined),
+    }).toEqual({
+      live: { input: { updates: "live" }, output: { reply: true, trace: false } },
+      restart: { input: { updates: "restart" }, output: { sources: true } },
+      none: { input: { updates: "restart" }, output: {} },
+    })
+  })
+})
 
 describe("parseSessionControlCommand", () => {
   test("reads name + args from structured command metadata", () => {
@@ -1746,8 +1833,8 @@ describe("folding queued messages into one turn", () => {
       },
       sendMessage: async () => {},
     } as unknown as ThreaClient
-    const { transport } = makeFakeTransport()
-    const session = makeSession(client, transport, {
+    const fake = makeFakeTransport()
+    const session = makeSession(client, fake.transport, {
       deliverTurn:
         overrides.deliverTurn ??
         (async (turn: { invocationId: string; content: string }) => {
@@ -1762,13 +1849,13 @@ describe("folding queued messages into one turn", () => {
         runCommand: async () => ({ ok: true, message: "ok" }),
       },
     })
-    return { session, delivered, completed, failed, claims, interrupts }
+    return { session, delivered, completed, failed, claims, interrupts, observations: fake.observations }
   }
 
   test("N messages queued behind one become a single turn that sees all of them", async () => {
     // The lag this fixes: each queued message used to become its own turn, so
     // the reply to the first arrived after the user had sent three more.
-    const { session, delivered, completed } = makeFoldSession([
+    const { session, delivered, completed, observations } = makeFoldSession([
       makeInvocation({ id: "binv_1", promptMarkdown: "first" }),
       makeInvocation({ id: "binv_2", promptMarkdown: "second" }),
       makeInvocation({ id: "binv_3", promptMarkdown: "third" }),
@@ -1783,6 +1870,7 @@ describe("folding queued messages into one turn", () => {
     // The primary keeps the reply; the folded ones close without one, exactly
     // as the steer sweep closes what it folds.
     expect(completed.map((item) => item.id)).toEqual(["binv_2", "binv_3"])
+    expect([observations.get("binv_2")?.unregistered, observations.get("binv_3")?.unregistered]).toEqual([true, true])
     await session.shutdown()
   })
 
@@ -1929,6 +2017,456 @@ describe("folding queued messages into one turn", () => {
     expect(failed[0]?.body.errorMessage).toContain("pane is gone")
     // And the swept /stop still runs rather than hanging to its claim TTL.
     expect(interrupts).toHaveLength(1)
+    await session.shutdown()
+  })
+})
+
+async function waitUntil(predicate: () => boolean, timeoutMs = 500): Promise<void> {
+  const deadline = Date.now() + timeoutMs
+  while (!predicate()) {
+    if (Date.now() >= deadline) throw new Error("condition timed out")
+    await Bun.sleep(1)
+  }
+}
+
+function makeObservedControlSession(
+  queue: ClaimedInvocation[],
+  delegate: Partial<RemoteSessionDelegate> = {},
+  runtime: RuntimeDescriptor = RUNTIME
+) {
+  const { client, calls } = makeFakeClient()
+  ;(client as unknown as { claim: (body: Record<string, unknown>) => Promise<ClaimedInvocation | null> }).claim =
+    async (body) => {
+      const scope = body.responseStreamId
+      const caps = (body.supportedCapabilities ?? []) as string[]
+      const index = queue.findIndex(
+        (item) => caps.includes(item.requiredCapability) && (!scope || item.responseStreamId === scope)
+      )
+      return index === -1 ? null : queue.splice(index, 1)[0]!
+    }
+  ;(client as unknown as { listStreamMessages: () => Promise<unknown[]> }).listStreamMessages = async () => []
+  const fake = makeFakeTransport()
+  const delivered: Array<{ invocationId: string; content: string }> = []
+  const steered: string[] = []
+  const interrupts: string[] = []
+  const actuator: SessionControlActuator = {
+    commands: ["stop", "steer"],
+    interrupt: () => {
+      interrupts.push("interrupt")
+      return true
+    },
+    steer: async (text) => {
+      steered.push(text)
+      return true
+    },
+    runCommand: async () => ({ ok: true, message: "ok" }),
+  }
+  const session = new RemoteSession({
+    config: makeConfig(),
+    client,
+    transport: fake.transport,
+    runtime,
+    delegate: {
+      deliverTurn: async (turn) => void delivered.push({ invocationId: turn.invocationId, content: turn.content }),
+      sessionControl: actuator,
+      ...delegate,
+    },
+  })
+  return { session, client, calls, fake, delivered, steered, interrupts, actuator }
+}
+
+describe("invocation source controls", () => {
+  const claimDrain = (session: RemoteSession) =>
+    (session as unknown as { claimDrain: () => Promise<boolean> }).claimDrain()
+
+  test("publishes capability-derived manifest on hello and every presence update for every runtime kind", async () => {
+    for (const kind of ["hermes", "openclaw", "claude-code-channel", "custom"]) {
+      const runtime = { ...RUNTIME, kind, manifest: { output: { reply: true, trace: false } } }
+      const { session, fake } = makeObservedControlSession([], {}, runtime)
+      const internal = session as unknown as {
+        hello: BotRuntimeHello
+        syncPresence: () => Promise<void>
+      }
+      expect(internal.hello.manifest).toEqual({
+        output: { reply: true, trace: false },
+        input: { updates: "live" },
+      })
+      await internal.syncPresence()
+      expect(fake.presence.at(-1)?.manifest).toEqual(internal.hello.manifest)
+      await session.shutdown()
+    }
+  })
+
+  test("installs a bootstrap-time update before any interceptor or runtime delivery sees the claim", async () => {
+    const queue = [makeInvocation({ id: "binv_bootstrap_update", promptMarkdown: "old", sourceRevision: 1 })]
+    const { session, fake, delivered, steered } = makeObservedControlSession(queue)
+    const claimed = await (
+      session as unknown as { claimNext: (busy: boolean) => Promise<ClaimedInvocation | null> }
+    ).claimNext(false)
+    expect(claimed).not.toBeNull()
+
+    expect(
+      await fake.observations.get("binv_bootstrap_update")!.update({
+        invocationId: "binv_bootstrap_update",
+        sourceMessageId: "src",
+        sourceRevision: 2,
+        delivery: "plaintext",
+        promptMarkdown: "canonical before start",
+        attachmentRefs: [],
+      })
+    ).toBe("applied")
+    expect(claimed).toMatchObject({ promptMarkdown: "canonical before start", sourceRevision: 2 })
+    expect({ delivered, steered }).toEqual({ delivered: [], steered: [] })
+    await session.shutdown()
+  })
+
+  test("observes before delivery, applies ordered live updates, and completes the latest revision", async () => {
+    const queue = [makeInvocation({ id: "binv_live", promptMarkdown: "one", sourceRevision: 1 })]
+    const { session, calls, fake, delivered, steered } = makeObservedControlSession(queue)
+
+    await claimDrain(session)
+    const observed = fake.observations.get("binv_live")!
+    expect(delivered).toEqual([{ invocationId: "binv_live", content: "one" }])
+    expect(fake.renewCalls).toBe(0)
+
+    expect(
+      await observed.update({
+        invocationId: "binv_live",
+        sourceMessageId: "src",
+        sourceRevision: 2,
+        delivery: "plaintext",
+        promptMarkdown: "two",
+        attachmentRefs: [],
+      })
+    ).toBe("applied")
+    expect(
+      await observed.update({
+        invocationId: "binv_live",
+        sourceMessageId: "src",
+        sourceRevision: 3,
+        delivery: "plaintext",
+        promptMarkdown: "three",
+        attachmentRefs: [],
+      })
+    ).toBe("applied")
+    expect(steered).toEqual(["two", "three"])
+
+    expect(await session.reply("binv_live", "done")).toEqual({ ok: true, message: "sent" })
+    expect(calls.complete.at(-1)?.body.sourceRevision).toBe(3)
+    expect(observed.unregistered).toBe(true)
+    await session.shutdown()
+  })
+
+  test("refreshes plaintext attachment discovery from the edited source before live steering", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "remote-input-update-"))
+    const queue = [makeInvocation({ id: "binv_attach", promptMarkdown: "old", sourceRevision: 1 })]
+    const { session, client, fake, steered } = makeObservedControlSession(queue)
+    const cwdSpy = spyOn(process, "cwd").mockReturnValue(dir)
+    const fetchSpy = spyOn(globalThis, "fetch").mockImplementation(
+      (async () => new Response("current attachment")) as unknown as typeof fetch
+    )
+    ;(client as unknown as { listStreamMessages: () => Promise<unknown[]> }).listStreamMessages = async () => [
+      {
+        id: "src",
+        attachments: [{ id: "att_current", filename: "current.txt", mimeType: "text/plain", sizeBytes: 18 }],
+      },
+    ]
+    ;(client as unknown as { getAttachmentDownloadUrl: (id: string) => Promise<string> }).getAttachmentDownloadUrl =
+      async (id) => `https://signed.example/${id}`
+    try {
+      await claimDrain(session)
+      expect(
+        await fake.observations.get("binv_attach")!.update({
+          invocationId: "binv_attach",
+          sourceMessageId: "src",
+          sourceRevision: 2,
+          delivery: "plaintext",
+          promptMarkdown: "use the current file",
+          attachmentRefs: [],
+        })
+      ).toBe("applied")
+      expect(steered.at(-1)).toContain("use the current file")
+      expect(steered.at(-1)).toContain("current.txt")
+    } finally {
+      await session.shutdown()
+      cwdSpy.mockRestore()
+      fetchSpy.mockRestore()
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  test("pauses interim, final, and trace output while an authoritative update is being steered", async () => {
+    const queue = [makeInvocation({ id: "binv_output_fence", sourceRevision: 1 })]
+    let steerEntered = false
+    let releaseSteer!: () => void
+    const { session, fake, calls } = makeObservedControlSession(queue, {
+      sessionControl: {
+        commands: ["stop", "steer"],
+        interrupt: () => true,
+        steer: async () => {
+          steerEntered = true
+          await new Promise<void>((resolve) => {
+            releaseSteer = resolve
+          })
+          return true
+        },
+        runCommand: async () => ({ ok: true, message: "ok" }),
+      },
+    })
+    await claimDrain(session)
+    const updating = fake.observations.get("binv_output_fence")!.update({
+      invocationId: "binv_output_fence",
+      sourceMessageId: "src",
+      sourceRevision: 2,
+      delivery: "plaintext",
+      promptMarkdown: "updated",
+      attachmentRefs: [],
+    })
+    await waitUntil(() => steerEntered)
+    const stepCount = fake.steps.length
+
+    expect((await session.sendInterim("binv_output_fence", "old interim")).retryable).toBe(true)
+    expect((await session.reply("binv_output_fence", "old final")).retryable).toBe(true)
+    expect(await session.recordSteps("binv_output_fence", [{ stepType: "thinking", content: "old trace" }])).toBe(true)
+    expect(fake.steps).toHaveLength(stepCount)
+    expect(calls.sendMessage).toEqual([])
+    expect(calls.complete).toEqual([])
+
+    releaseSteer()
+    expect(await updating).toBe("applied")
+    await session.shutdown()
+  })
+
+  test("an update that wins while a reply is preparing attachments fences the old completion", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "remote-reply-race-"))
+    const file = join(dir, "old.txt")
+    writeFileSync(file, "old output")
+    const queue = [makeInvocation({ id: "binv_reply_race", sourceRevision: 1 })]
+    const { session, client, fake, calls } = makeObservedControlSession(queue)
+    let uploadStarted = false
+    let releaseUpload!: () => void
+    ;(client as unknown as { uploadAttachment: () => Promise<Record<string, unknown>> }).uploadAttachment =
+      async () => {
+        uploadStarted = true
+        await new Promise<void>((resolve) => {
+          releaseUpload = resolve
+        })
+        return { id: "att_old", filename: "old.txt", mimeType: "text/plain", sizeBytes: 10 }
+      }
+    try {
+      await claimDrain(session)
+      const replying = session.reply("binv_reply_race", `old answer\nTHREA_ATTACH: ${file}`)
+      await waitUntil(() => uploadStarted)
+      const observed = fake.observations.get("binv_reply_race")!
+      expect(
+        await observed.update({
+          invocationId: "binv_reply_race",
+          sourceMessageId: "src",
+          sourceRevision: 2,
+          delivery: "plaintext",
+          promptMarkdown: "edited while replying",
+          attachmentRefs: [],
+        })
+      ).toBe("restart-required")
+      releaseUpload()
+
+      expect(await replying).toEqual({ ok: false, message: "Request binv_reply_race is closed; its source changed." })
+      expect(calls.complete).toEqual([])
+      // Keep observing until PR3 has sent restartRequiredRevision and delivers
+      // the backend's authoritative cancellation; unregistering here would
+      // abort that handshake.
+      expect(observed.unregistered).toBe(false)
+      await observed.cancel({ invocationId: "binv_reply_race", sourceRevision: 2, reason: "input_restart" })
+    } finally {
+      await session.shutdown()
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  test("an edit during attachment preparation requests restart and never delivers stale content", async () => {
+    const queue = [makeInvocation({ id: "binv_prepare", promptMarkdown: "old", sourceRevision: 1 })]
+    const { session, client, fake, delivered, calls } = makeObservedControlSession(queue)
+    let releaseScan!: () => void
+    let scanStarted = false
+    ;(client as unknown as { listStreamMessages: () => Promise<unknown[]> }).listStreamMessages = async () => {
+      scanStarted = true
+      await new Promise<void>((resolve) => {
+        releaseScan = resolve
+      })
+      return []
+    }
+
+    const draining = claimDrain(session)
+    await waitUntil(() => scanStarted)
+    const observed = fake.observations.get("binv_prepare")!
+    expect(
+      await observed.update({
+        invocationId: "binv_prepare",
+        sourceMessageId: "src",
+        sourceRevision: 2,
+        delivery: "plaintext",
+        promptMarkdown: "new",
+        attachmentRefs: [],
+      })
+    ).toBe("restart-required")
+    releaseScan()
+    await draining
+
+    expect({ delivered, completed: calls.complete, failed: calls.fail }).toEqual({
+      delivered: [],
+      completed: [],
+      failed: [],
+    })
+    await session.shutdown()
+  })
+
+  test("cancellation interrupts without terminal writes and drains a fresh replacement after callback return", async () => {
+    const queue = [makeInvocation({ id: "binv_old", promptMarkdown: "old" })]
+    const { session, fake, delivered, interrupts, calls } = makeObservedControlSession(queue)
+    await claimDrain(session)
+    await session.sendInterim("binv_old", "already posted")
+    queue.push(makeInvocation({ id: "binv_new", promptMarkdown: "new" }))
+
+    await fake.observations.get("binv_old")!.cancel({
+      invocationId: "binv_old",
+      sourceRevision: 2,
+      reason: "source_deleted",
+    })
+    await waitUntil(() => delivered.some((turn) => turn.invocationId === "binv_new"))
+
+    expect(interrupts).toEqual(["interrupt"])
+    expect(calls.sendMessage).toHaveLength(1)
+    expect(calls.complete.some((call) => call.id === "binv_old")).toBe(false)
+    expect(calls.fail.some((call) => call.id === "binv_old")).toBe(false)
+    expect((await session.reply("binv_old", "late")).ok).toBe(false)
+    await session.shutdown()
+  })
+
+  test("cancellation while an interceptor returns false prevents session-control actuation", async () => {
+    const command = makeInvocation({
+      id: "binv_command",
+      trigger: "session-control",
+      requiredCapability: "session-control",
+      promptMarkdown: "/model opus",
+      sourceRevision: 0,
+      metadata: { command: { executionKind: "bot-runtime", name: "model", args: "opus" } },
+    })
+    let release!: () => void
+    let entered = false
+    const commands: string[] = []
+    const { session, fake, calls } = makeObservedControlSession([command], {
+      interceptClaimed: async () => {
+        entered = true
+        await new Promise<void>((resolve) => {
+          release = resolve
+        })
+        return false
+      },
+      sessionControl: {
+        commands: ["model"],
+        interrupt: () => true,
+        runCommand: async (name) => {
+          commands.push(name)
+          return { ok: true, message: "ok" }
+        },
+      },
+    })
+
+    const draining = claimDrain(session)
+    await waitUntil(() => entered)
+    await fake.observations.get("binv_command")!.cancel({
+      invocationId: "binv_command",
+      sourceRevision: 0,
+      reason: "routing_changed",
+    })
+    release()
+    await draining
+
+    expect({ commands, complete: calls.complete, fail: calls.fail }).toEqual({ commands: [], complete: [], fail: [] })
+    await session.shutdown()
+  })
+
+  test("cancellation while an awaited runtime command is executing suppresses its acknowledgement", async () => {
+    const command = makeInvocation({
+      id: "binv_awaited_command",
+      trigger: "session-control",
+      requiredCapability: "session-control",
+      sourceRevision: 1,
+      metadata: { command: { executionKind: "bot-runtime", name: "model", args: "opus" } },
+    })
+    let entered = false
+    let release!: () => void
+    const { session, fake, calls } = makeObservedControlSession([command], {
+      sessionControl: {
+        commands: ["model"],
+        interrupt: () => true,
+        runCommand: async () => {
+          entered = true
+          await new Promise<void>((resolve) => {
+            release = resolve
+          })
+          return { ok: true, message: "model changed" }
+        },
+      },
+    })
+    const draining = claimDrain(session)
+    await waitUntil(() => entered)
+    await fake.observations.get("binv_awaited_command")!.cancel({
+      invocationId: "binv_awaited_command",
+      sourceRevision: 1,
+      reason: "source_deleted",
+    })
+    release()
+    await draining
+
+    expect(calls.complete).toEqual([])
+    expect(calls.fail).toEqual([])
+    await session.shutdown()
+  })
+
+  test("failed live actuation aborts local output and requests restart without advancing a completion", async () => {
+    const queue = [makeInvocation({ id: "binv_restart", promptMarkdown: "old", sourceRevision: 1 })]
+    const { session, fake, calls, interrupts } = makeObservedControlSession(queue, {
+      sessionControl: {
+        commands: ["stop", "steer"],
+        interrupt: () => {
+          interrupts.push("interrupt")
+          return true
+        },
+        steer: async () => false,
+        runCommand: async () => ({ ok: true, message: "ok" }),
+      },
+    })
+    await claimDrain(session)
+    const disposition = await fake.observations.get("binv_restart")!.update({
+      invocationId: "binv_restart",
+      sourceMessageId: "src",
+      sourceRevision: 2,
+      delivery: "plaintext",
+      promptMarkdown: "new",
+      attachmentRefs: [],
+    })
+
+    expect(disposition).toBe("restart-required")
+    expect(interrupts).toEqual(["interrupt"])
+    expect((await session.reply("binv_restart", "old output")).ok).toBe(false)
+    expect(calls.complete).toEqual([])
+    await session.shutdown()
+  })
+
+  test("stale completion is terminal locally and never rearms old output", async () => {
+    const queue = [makeInvocation({ id: "binv_stale", sourceRevision: 1 })]
+    const { session, client, fake } = makeObservedControlSession(queue)
+    ;(client as unknown as { complete: () => Promise<void> }).complete = async () => {
+      throw new ThreaApiError("stale", 409, "INVOCATION_INPUT_STALE")
+    }
+    await claimDrain(session)
+    const result = await session.reply("binv_stale", "captured old output")
+
+    expect(result).toEqual({ ok: false, message: "Request binv_stale is closed; its source changed." })
+    expect(session.isInflight("binv_stale")).toBe(false)
+    expect(fake.observations.get("binv_stale")?.unregistered).toBe(true)
+    expect((await session.reply("binv_stale", "retry")).retryable).not.toBe(true)
     await session.shutdown()
   })
 })

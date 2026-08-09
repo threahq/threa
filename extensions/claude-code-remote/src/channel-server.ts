@@ -312,6 +312,10 @@ async function runSlash(slash: string): Promise<{ ok: boolean; message: string }
  * (fail-safe: no control → no commands offered). `carryOn` is late-bound: the
  * controller needs the constructed session, which needs this actuator first.
  */
+export function formatClaudeSteerInput(text: string): string {
+  return `[Steer from the Threa scratchpad — fold into the current work]\n${text}`
+}
+
 export function createClaudeSessionControl(
   carryOn: () => CarryOnController | undefined = () => undefined,
   runtimeSessionId?: string,
@@ -356,7 +360,7 @@ export function createClaudeSessionControl(
       // would submit a fresh turn that dies the same way. Queue it instead.
       const absorbed = carryOn()?.absorbSteer(text)
       if (absorbed !== undefined) return true
-      return steerText(`[Steer from the Threa scratchpad — fold into the current work]\n${text}`)
+      return steerText(formatClaudeSteerInput(text))
     },
     runCommand: (name, args, context) =>
       runClaudeCommand(

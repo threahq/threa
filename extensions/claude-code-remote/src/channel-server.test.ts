@@ -89,6 +89,15 @@ function makeFakeTransport(): BotRuntimeTransport {
     sendHello: () => {},
     recordSteps: async () => {},
     renewClaim: async () => ({ notFound: false }),
+    observeClaim: (params: { sourceRevision: number }) => ({
+      get currentRevision() {
+        return params.sourceRevision
+      },
+      sealing: undefined,
+      sync: async () => {},
+      unregister: () => {},
+      dispose: () => {},
+    }),
     updatePresence: async () => {},
   } as unknown as BotRuntimeTransport
 }
@@ -310,6 +319,7 @@ function makeInvocation(partial: Partial<ClaimedInvocation>): ClaimedInvocation 
     rootStreamId: "stream_root",
     activeStreamId: "stream_root",
     sourceMessageId: "src",
+    sourceRevision: 1,
     responseStreamId: "stream_root",
     actor: { type: "bot", id: "bot_1", slug: "claude" },
     trigger: "active-scratchpad",

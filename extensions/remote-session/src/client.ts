@@ -54,6 +54,7 @@ export interface ClaimedInvocation {
   rootStreamId: string
   activeStreamId: string
   sourceMessageId: string
+  sourceRevision: number
   responseStreamId: string
   actor: { type: "bot"; id: string; slug: string }
   trigger: string
@@ -232,7 +233,7 @@ export class ThreaClient {
   async completeSealed(
     invocationId: string,
     callbackToken: string,
-    body: { reply: SealedWireReply } | { noResponse: true }
+    body: ({ reply: SealedWireReply } | { noResponse: true }) & { sourceRevision: number }
   ): Promise<void> {
     await this.request(this.workspacePath(`/bot-invocations/${invocationId}/sealed-complete`), {
       method: "POST",

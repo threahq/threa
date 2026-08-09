@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test"
-import { createClaudeSessionControl, runClaudeCommand } from "./channel-server"
+import { createClaudeSessionControl, formatClaudeSteerInput, runClaudeCommand } from "./channel-server"
 
 function withTmuxEnv<T>(env: { TMUX?: string; TMUX_PANE?: string }, fn: () => T): T {
   const saved = {
@@ -24,6 +24,12 @@ function withTmuxEnv<T>(env: { TMUX?: string; TMUX_PANE?: string }, fn: () => T)
 }
 
 describe("createClaudeSessionControl", () => {
+  it("formats authoritative input updates as one existing native steer submission", () => {
+    expect(formatClaudeSteerInput("Use the edited request")).toBe(
+      "[Steer from the Threa scratchpad — fold into the current work]\nUse the edited request"
+    )
+  })
+
   it("returns no actuator outside tmux (fail-safe: no control → no commands offered)", () => {
     withTmuxEnv({}, () => {
       expect(createClaudeSessionControl()).toBeUndefined()
