@@ -90,7 +90,7 @@ function makeFakeTransport(onSync?: (params: ObserveClaimParams) => void | Promi
       disposed: boolean
       unregistered: boolean
       revision: number
-      update(update: InvocationInputUpdate): Promise<"applied" | "restart-required">
+      update(update: InvocationInputUpdate, signal?: AbortSignal): Promise<"applied" | "restart-required">
       cancel(cancellation: InvocationCancellation): Promise<void>
       lose(): Promise<void>
     }
@@ -117,8 +117,8 @@ function makeFakeTransport(onSync?: (params: ObserveClaimParams) => void | Promi
         disposed: false,
         unregistered: false,
         revision: params.sourceRevision,
-        async update(update: InvocationInputUpdate) {
-          const disposition = await params.callbacks.onInputUpdated(update)
+        async update(update: InvocationInputUpdate, signal = new AbortController().signal) {
+          const disposition = await params.callbacks.onInputUpdated(update, signal)
           if (disposition === "applied") record.revision = update.sourceRevision
           return disposition
         },
@@ -180,7 +180,13 @@ function makeSession(
 /** Seed an in-flight turn the way deliverTurn would, with a harmless deadline timer. */
 function seedInflight(session: RemoteSession, invocation: ClaimedInvocation, sentCount = 0): void {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  ;(session as any).inflight.set(invocation.id, { invocation, deadline: setTimeout(() => {}, 1e9), sentCount })
+  ;(session as any).inflight.set(invocation.id, {
+    invocation,
+    deadline: setTimeout(() => {}, 1e9),
+    sentCount,
+    contributors: [],
+    execution: new AbortController(),
+  })
 }
 
 function makeInvocation(partial: Partial<ClaimedInvocation>): ClaimedInvocation {
@@ -958,11 +964,14 @@ describe("RemoteSession.shutdown", () => {
     const session = makeSession(client, transport)
     seedInflight(session, makeInvocation({ id: "binv_a", claimToken: "tok_a" }))
     seedInflight(session, makeInvocation({ id: "binv_b", claimToken: "tok_b" }))
+    ;(session as any).inflight
+      .get("binv_a")
+      .contributors.push(makeInvocation({ id: "binv_a_dependency", claimToken: "tok_a_dependency" }))
 
     await session.shutdown()
 
     expect(presence.at(-1)?.status).toBe("offline")
-    expect(failed.map((entry) => entry.id).sort()).toEqual(["binv_a", "binv_b"])
+    expect(failed.map((entry) => entry.id).sort()).toEqual(["binv_a", "binv_a_dependency", "binv_b"])
     const a = failed.find((entry) => entry.id === "binv_a")
     expect(a?.body.claimToken).toBe("tok_a")
     expect(a?.body.errorMessage).toBe("Test runtime shut down")
@@ -1001,7 +1010,14 @@ describe("session control via the actuator", () => {
     ).handleSessionControl(invocation)
 
     expect(ran).toEqual([{ name: "model", args: "opus", rootStreamId: "stream_root" }])
-    expect(calls.complete[0]?.body.finalMessageMarkdown).toBe("Set model to `opus`.")
+    expect(calls.complete[0]?.body).toMatchObject({
+      finalMessageMarkdown: "Set model to `opus`.",
+      metadata: {
+        command: { executionKind: "bot-runtime", id: "cmd_1", name: "model", args: "opus" },
+        "remote.invocationId": "binv_cmd",
+        "remote.sessionControl": "true",
+      },
+    })
   })
 
   test("refreshes hello with the current nonaccepting handoff state", () => {
@@ -1238,6 +1254,143 @@ describe("session control via the actuator", () => {
     expect(presence.at(-1)).toMatchObject({ status: "busy", acceptingInvocations: false })
   })
 
+  test("preserves command metadata on a sealed acknowledgement", async () => {
+    const { client, calls } = makeFakeClient()
+    const { transport } = makeFakeTransport()
+    const session = makeSession(client, transport, {
+      sessionControl: {
+        commands: ["model"],
+        interrupt: () => true,
+        runCommand: async () => ({ ok: true, message: "model changed" }),
+      },
+    })
+    ;(session as any).sealSessionControlAck = async () => ({
+      messageId: "msg_ack",
+      ciphertext: "ciphertext",
+      envelope: {},
+    })
+    const command = { executionKind: "bot-runtime", id: "cmd_sealed", name: "model", args: "opus" }
+    await (session as any).handleSessionControl(
+      makeInvocation({ id: "binv_sealed_ack", trigger: "session-control", sealedAck: {}, metadata: { command } })
+    )
+
+    expect(calls.complete[0]?.body).toMatchObject({
+      sealedReply: { messageId: "msg_ack" },
+      metadata: {
+        command,
+        "remote.invocationId": "binv_sealed_ack",
+        "remote.sessionControl": "true",
+      },
+    })
+  })
+
+  test("treats a stale acknowledgement as terminal without falling through to fail", async () => {
+    const { client, calls } = makeFakeClient()
+    ;(client as unknown as { complete: () => Promise<void> }).complete = async () => {
+      throw new ThreaApiError("stale", 409, "INVOCATION_INPUT_STALE")
+    }
+    const { transport } = makeFakeTransport()
+    const session = makeSession(client, transport, {
+      sessionControl: {
+        commands: ["model"],
+        interrupt: () => true,
+        runCommand: async () => ({ ok: true, message: "model changed" }),
+      },
+    })
+
+    await (session as any).handleSessionControl(
+      makeInvocation({
+        id: "binv_stale_ack",
+        trigger: "session-control",
+        metadata: { command: { executionKind: "bot-runtime", id: "cmd_stale", name: "model", args: "opus" } },
+      })
+    )
+
+    expect(calls.fail).toEqual([])
+  })
+
+  test("cancellation while acknowledgement is awaited aborts the stale write and post-ack action", async () => {
+    const command = makeInvocation({
+      id: "binv_cancel_ack",
+      trigger: "session-control",
+      requiredCapability: "session-control",
+      metadata: { command: { executionKind: "bot-runtime", id: "cmd_cancel", name: "reload", args: "" } },
+    })
+    const { session, client, fake, calls } = makeObservedControlSession([command], {
+      sessionControl: {
+        commands: ["reload"],
+        interrupt: () => true,
+        runCommand: async () => ({ ok: true, message: "accepted", afterAck: () => actions.push("after") }),
+      },
+    })
+    const actions: string[] = []
+    let ackStarted = false
+    ;(
+      client as unknown as {
+        complete: (id: string, body: Record<string, unknown>, signal?: AbortSignal) => Promise<void>
+      }
+    ).complete = async (_id, _body, signal) => {
+      ackStarted = true
+      await new Promise<void>((_resolve, reject) => {
+        signal?.addEventListener("abort", () => reject(new Error("aborted")), { once: true })
+      })
+    }
+    const draining = (session as any).claimDrain()
+    await waitUntil(() => ackStarted)
+    await fake.observations.get("binv_cancel_ack")!.cancel({
+      invocationId: "binv_cancel_ack",
+      sourceRevision: 1,
+      reason: "source_deleted",
+    })
+    await draining
+
+    expect({ actions, complete: calls.complete, fail: calls.fail }).toEqual({ actions: [], complete: [], fail: [] })
+    await session.shutdown()
+  })
+
+  test("a restart while the actuator is awaited suppresses acknowledgement and post-ack work", async () => {
+    const command = makeInvocation({
+      id: "binv_restart_command",
+      trigger: "session-control",
+      requiredCapability: "session-control",
+      sourceRevision: 1,
+      metadata: { command: { executionKind: "bot-runtime", id: "cmd_restart", name: "reload", args: "" } },
+    })
+    let actuatorStarted = false
+    let releaseActuator!: () => void
+    const actions: string[] = []
+    const { session, fake, calls } = makeObservedControlSession([command], {
+      sessionControl: {
+        commands: ["reload"],
+        interrupt: () => true,
+        runCommand: async () => {
+          actuatorStarted = true
+          await new Promise<void>((resolve) => {
+            releaseActuator = resolve
+          })
+          return { ok: true, message: "accepted", afterAck: () => actions.push("after") }
+        },
+      },
+    })
+    const draining = (session as any).claimDrain()
+    await waitUntil(() => actuatorStarted)
+    expect(
+      await fake.observations.get("binv_restart_command")!.update({
+        invocationId: "binv_restart_command",
+        sourceMessageId: "src",
+        sourceRevision: 2,
+        delivery: "plaintext",
+        promptMarkdown: "/reload",
+        attachmentRefs: [],
+      })
+    ).toBe("restart-required")
+    releaseActuator()
+    await draining
+
+    expect({ actions, complete: calls.complete, fail: calls.fail }).toEqual({ actions: [], complete: [], fail: [] })
+    await session.shutdown()
+  })
+
   test("a failed /key actuator calls /fail and never /complete", async () => {
     const { client, calls } = makeFakeClient()
     const { transport } = makeFakeTransport()
@@ -1420,7 +1573,7 @@ describe("steer into the running turn (native steer support)", () => {
         runCommand: async () => ({ ok: true, message: "ok" }),
       },
     })
-    seedInflight(session, makeInvocation({ id: "binv_running", responseStreamId: "stream_turn" }))
+    seedInflight(session, makeInvocation({ id: "binv_running" }))
     ;(client as unknown as { claim: () => Promise<ClaimedInvocation | null> }).claim = async () =>
       queued.shift() ?? null
 
@@ -1432,10 +1585,11 @@ describe("steer into the running turn (native steer support)", () => {
     const combined = steered[0]!
     expect(combined.indexOf("also bump the deps")).toBeLessThan(combined.indexOf("and update the docs"))
     expect(combined.indexOf("and update the docs")).toBeLessThan(combined.indexOf("the steer text"))
+    expect(calls.complete.filter((entry) => entry.id === "binv_q1" || entry.id === "binv_q2")).toEqual([])
+    expect(await session.reply("binv_running", "done")).toEqual({ ok: true, message: "sent" })
     const sweptCloses = calls.complete.filter((entry) => entry.id === "binv_q1" || entry.id === "binv_q2")
     expect(sweptCloses).toHaveLength(2)
     for (const close of sweptCloses) expect(close.body.noResponse).toBe(true)
-    ;(session as unknown as { clearInflight: (id: string) => void }).clearInflight("binv_running")
   })
 
   test("acks without steering when there is no text and nothing queued", async () => {
@@ -1580,7 +1734,9 @@ describe("steer into the running turn (native steer support)", () => {
     expect(steered[0]).not.toContain("yes abcde")
     const verdictClose = calls.complete.find((entry) => entry.id === "binv_verdict")
     expect(verdictClose?.body.noResponse).toBe(true)
-    ;(session as unknown as { clearInflight: (id: string) => void }).clearInflight("binv_running")
+    expect(calls.complete.some((entry) => entry.id === "binv_q1")).toBe(false)
+    await session.reply("binv_running", "done")
+    expect(calls.complete.find((entry) => entry.id === "binv_q1")?.body.noResponse).toBe(true)
   })
 
   test("an empty steer whose sweep only intercepts a reply acks the routing, not 'nothing to steer'", async () => {
@@ -1873,10 +2029,40 @@ describe("folding queued messages into one turn", () => {
     expect(delivered[0]?.invocationId).toBe("binv_1")
     expect(delivered[0]?.content).toContain("Handle all of the following together (most recent last)")
     for (const text of ["first", "second", "third"]) expect(delivered[0]?.content).toContain(text)
-    // The primary keeps the reply; the folded ones close without one, exactly
-    // as the steer sweep closes what it folds.
-    expect(completed.map((item) => item.id)).toEqual(["binv_2", "binv_3"])
+    expect(completed).toEqual([])
+    expect([observations.get("binv_2")?.unregistered, observations.get("binv_3")?.unregistered]).toEqual([false, false])
+    expect(await session.reply("binv_1", "done")).toEqual({ ok: true, message: "sent" })
+    expect(completed.map((item) => item.id)).toEqual(["binv_1", "binv_2", "binv_3"])
     expect([observations.get("binv_2")?.unregistered, observations.get("binv_3")?.unregistered]).toEqual([true, true])
+    await session.shutdown()
+  })
+
+  test("a failed owner reply keeps folded ownership through retry", async () => {
+    const { session, completed, observations } = makeFoldSession([
+      makeInvocation({ id: "binv_retry_owner", promptMarkdown: "owner" }),
+      makeInvocation({ id: "binv_retry_dependency", promptMarkdown: "dependency" }),
+    ])
+    const internal = session as unknown as { client: ThreaClient }
+    const complete = internal.client.complete.bind(internal.client)
+    let failOwnerOnce = true
+    ;(
+      internal.client as unknown as { complete: (id: string, body: Record<string, unknown>) => Promise<void> }
+    ).complete = async (id, body) => {
+      if (id === "binv_retry_owner" && failOwnerOnce) {
+        failOwnerOnce = false
+        throw new Error("temporary completion outage")
+      }
+      await complete(id, body)
+    }
+
+    await asInternal(session).claimDrain()
+    expect((await session.reply("binv_retry_owner", "done")).retryable).toBe(true)
+    expect(completed).toEqual([])
+    expect(observations.get("binv_retry_dependency")?.unregistered).toBe(false)
+
+    expect(await session.reply("binv_retry_owner", "done")).toEqual({ ok: true, message: "sent" })
+    expect(completed.map((item) => item.id)).toEqual(["binv_retry_owner", "binv_retry_dependency"])
+    expect(observations.get("binv_retry_dependency")?.unregistered).toBe(true)
     await session.shutdown()
   })
 
@@ -1902,7 +2088,7 @@ describe("folding queued messages into one turn", () => {
       requiredCapability: "session-control",
       metadata: { command: { executionKind: "bot-runtime", id: "cmd_1", name: "stop", args: "" } },
     })
-    const { session, delivered, interrupts } = makeFoldSession([
+    const { session, delivered, completed, interrupts } = makeFoldSession([
       makeInvocation({ id: "binv_1", promptMarkdown: "first" }),
       makeInvocation({ id: "binv_2", promptMarkdown: "second" }),
       stop,
@@ -1917,6 +2103,7 @@ describe("folding queued messages into one turn", () => {
     // The point of not folding it: it has to actually stop the turn the fold
     // just started. Asserting only on the prompt text proved nothing.
     expect(interrupts).toHaveLength(1)
+    expect(completed.map((item) => item.id).sort()).toEqual(["binv_1", "binv_2", "binv_stop"])
     await session.shutdown()
   })
 
@@ -2218,6 +2405,159 @@ describe("invocation source controls", () => {
     }
   })
 
+  test("keeps initial plaintext attachment hydration best-effort", async () => {
+    const queue = [makeInvocation({ id: "binv_initial_attach", promptMarkdown: "keep going" })]
+    const { session, client, delivered } = makeObservedControlSession(queue)
+    ;(client as unknown as { listStreamMessages: () => Promise<unknown[]> }).listStreamMessages = async () => [
+      {
+        id: "src",
+        attachments: [{ id: "att_missing", filename: "missing.txt", mimeType: "text/plain", sizeBytes: 1 }],
+      },
+    ]
+    ;(client as unknown as { getAttachmentDownloadUrl: () => Promise<string> }).getAttachmentDownloadUrl = async () => {
+      throw new Error("signed URL unavailable")
+    }
+
+    await claimDrain(session)
+
+    expect(delivered).toEqual([{ invocationId: "binv_initial_attach", content: "keep going" }])
+    await session.shutdown()
+  })
+
+  test("a failed plaintext file in a live rebuild rejects the whole update", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "remote-strict-update-"))
+    const queue = [makeInvocation({ id: "binv_strict_attach", promptMarkdown: "old", sourceRevision: 1 })]
+    const { session, client, fake, steered, interrupts } = makeObservedControlSession(queue)
+    const cwdSpy = spyOn(process, "cwd").mockReturnValue(dir)
+    let scans = 0
+    ;(client as unknown as { listStreamMessages: () => Promise<unknown[]> }).listStreamMessages = async () => {
+      scans++
+      if (scans === 1) return []
+      return [
+        {
+          id: "src",
+          attachments: [
+            { id: "att_ok", filename: "ok.txt", mimeType: "text/plain", sizeBytes: 2 },
+            { id: "att_bad", filename: "bad.txt", mimeType: "text/plain", sizeBytes: 3 },
+          ],
+        },
+      ]
+    }
+    ;(client as unknown as { getAttachmentDownloadUrl: (id: string) => Promise<string> }).getAttachmentDownloadUrl =
+      async (id) => {
+        if (id === "att_bad") throw new Error("per-file URL failure")
+        return `https://signed.example/${id}`
+      }
+    const fetchSpy = spyOn(globalThis, "fetch").mockResolvedValue(new Response("ok"))
+    try {
+      await claimDrain(session)
+      const result = await fake.observations.get("binv_strict_attach")!.update({
+        invocationId: "binv_strict_attach",
+        sourceMessageId: "src",
+        sourceRevision: 2,
+        delivery: "plaintext",
+        promptMarkdown: "new",
+        attachmentRefs: [],
+      })
+
+      expect(result).toBe("restart-required")
+      expect(steered).toEqual([])
+      expect(interrupts).toEqual(["interrupt"])
+    } finally {
+      await session.shutdown()
+      cwdSpy.mockRestore()
+      fetchSpy.mockRestore()
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  test("abort during a live attachment rebuild prevents stale actuation", async () => {
+    const queue = [makeInvocation({ id: "binv_abort_rebuild", sourceRevision: 1 })]
+    const { session, client, fake, steered, interrupts } = makeObservedControlSession(queue)
+    let scans = 0
+    let rebuildStarted = false
+    let releaseRebuild!: () => void
+    ;(client as unknown as { listStreamMessages: () => Promise<unknown[]> }).listStreamMessages = async () => {
+      scans++
+      if (scans === 1) return []
+      rebuildStarted = true
+      await new Promise<void>((resolve) => {
+        releaseRebuild = resolve
+      })
+      return []
+    }
+    await claimDrain(session)
+    const controller = new AbortController()
+    const updating = fake.observations.get("binv_abort_rebuild")!.update(
+      {
+        invocationId: "binv_abort_rebuild",
+        sourceMessageId: "src",
+        sourceRevision: 2,
+        delivery: "plaintext",
+        promptMarkdown: "deleted input",
+        attachmentRefs: [],
+      },
+      controller.signal
+    )
+    await waitUntil(() => rebuildStarted)
+    controller.abort()
+    releaseRebuild()
+
+    expect(await updating).toBe("restart-required")
+    expect({ steered, interrupts, inflight: session.isInflight("binv_abort_rebuild") }).toEqual({
+      steered: [],
+      interrupts: ["interrupt"],
+      inflight: false,
+    })
+    await session.shutdown()
+  })
+
+  test("abort while native steer is blocked interrupts synchronously and fences output", async () => {
+    const queue = [makeInvocation({ id: "binv_abort_steer", sourceRevision: 1 })]
+    let steerStarted = false
+    let releaseSteer!: () => void
+    const { session, fake, interrupts, calls } = makeObservedControlSession(queue, {
+      sessionControl: {
+        commands: ["steer"],
+        interrupt: () => {
+          interrupts.push("interrupt")
+          return true
+        },
+        steer: async () => {
+          steerStarted = true
+          await new Promise<void>((resolve) => {
+            releaseSteer = resolve
+          })
+          return true
+        },
+        runCommand: async () => ({ ok: true, message: "ok" }),
+      },
+    })
+    await claimDrain(session)
+    const controller = new AbortController()
+    const updating = fake.observations.get("binv_abort_steer")!.update(
+      {
+        invocationId: "binv_abort_steer",
+        sourceMessageId: "src",
+        sourceRevision: 2,
+        delivery: "plaintext",
+        promptMarkdown: "deleted while steering",
+        attachmentRefs: [],
+      },
+      controller.signal
+    )
+    await waitUntil(() => steerStarted)
+    controller.abort()
+    expect(interrupts).toEqual(["interrupt"])
+    expect(session.isInflight("binv_abort_steer")).toBe(false)
+    releaseSteer()
+
+    expect(await updating).toBe("restart-required")
+    expect(session.isInflight("binv_abort_steer")).toBe(false)
+    expect(calls.complete).toEqual([])
+    await session.shutdown()
+  })
+
   test("pauses interim, final, and trace output while an authoritative update is being steered", async () => {
     const queue = [makeInvocation({ id: "binv_output_fence", sourceRevision: 1 })]
     let steerEntered = false
@@ -2354,6 +2694,7 @@ describe("invocation source controls", () => {
     }
 
     await claimDrain(session)
+    await session.reply("binv_fold_owner", "done")
 
     expect(calls.fail.map((call) => call.id)).toContain("binv_fold_close")
     expect(fake.observations.get("binv_fold_close")?.unregistered).toBe(true)
@@ -2365,24 +2706,10 @@ describe("invocation source controls", () => {
       makeInvocation({ id: "binv_fold_running", promptMarkdown: "owner", sourceRevision: 1 }),
       makeInvocation({ id: "binv_fold_dependency", promptMarkdown: "old folded", sourceRevision: 1 }),
     ]
-    const { session, client, fake, calls, interrupts, delivered } = makeObservedControlSession(queue)
-    let closeStarted = false
-    let releaseClose!: () => void
-    ;(client as unknown as { complete: (id: string, body: Record<string, unknown>) => Promise<void> }).complete =
-      async (id, body) => {
-        if (id !== "binv_fold_dependency") {
-          calls.complete.push({ id, body })
-          return
-        }
-        closeStarted = true
-        await new Promise<void>((resolve) => {
-          releaseClose = resolve
-        })
-        throw new ThreaApiError("stale", 409, "INVOCATION_INPUT_STALE")
-      }
+    const { session, fake, calls, interrupts, delivered } = makeObservedControlSession(queue)
 
-    const draining = claimDrain(session)
-    await waitUntil(() => closeStarted)
+    await claimDrain(session)
+    expect(calls.complete).toEqual([])
     expect(
       await fake.observations.get("binv_fold_dependency")!.update({
         invocationId: "binv_fold_dependency",
@@ -2394,14 +2721,191 @@ describe("invocation source controls", () => {
       })
     ).toBe("restart-required")
     await waitUntil(() => calls.fail.some((call) => call.id === "binv_fold_running"))
-    releaseClose()
-    await draining
 
     expect(delivered).toHaveLength(1)
     expect(delivered[0]?.content).toContain("old folded")
     expect(interrupts).toEqual(["interrupt"])
     expect(session.isInflight("binv_fold_running")).toBe(false)
     expect(calls.complete.some((call) => call.id === "binv_fold_dependency")).toBe(false)
+    await session.shutdown()
+  })
+
+  test("a cancelled folded dependency fences its owner and siblings without leaving renewals", async () => {
+    const queue = [
+      makeInvocation({ id: "binv_cancel_owner", promptMarkdown: "owner" }),
+      makeInvocation({ id: "binv_cancel_dependency", promptMarkdown: "dependency" }),
+      makeInvocation({ id: "binv_cancel_sibling", promptMarkdown: "sibling" }),
+    ]
+    const { session, fake, calls, interrupts } = makeObservedControlSession(queue)
+    await claimDrain(session)
+
+    await fake.observations.get("binv_cancel_dependency")!.cancel({
+      invocationId: "binv_cancel_dependency",
+      sourceRevision: 2,
+      reason: "source_deleted",
+    })
+    await waitUntil(() => calls.fail.length === 2)
+
+    expect(calls.fail.map((call) => call.id).sort()).toEqual(["binv_cancel_owner", "binv_cancel_sibling"])
+    expect(fake.observations.get("binv_cancel_sibling")?.disposed).toBe(true)
+    expect(calls.fail.some((call) => call.id === "binv_cancel_dependency")).toBe(false)
+    expect({ interrupts, inflight: session.isInflight("binv_cancel_owner") }).toEqual({
+      interrupts: ["interrupt"],
+      inflight: false,
+    })
+    await session.shutdown()
+  })
+
+  test("timeout closes folded contributors no-response with their owner", async () => {
+    const queue = [
+      makeInvocation({ id: "binv_timeout_owner", promptMarkdown: "owner" }),
+      makeInvocation({ id: "binv_timeout_dependency", promptMarkdown: "dependency" }),
+    ]
+    const { session, calls, fake } = makeObservedControlSession(queue)
+    await claimDrain(session)
+    await (session as any).onReplyTimeout("binv_timeout_owner")
+
+    expect(calls.complete.map((call) => call.id)).toEqual(["binv_timeout_owner", "binv_timeout_dependency"])
+    expect(calls.complete.find((call) => call.id === "binv_timeout_dependency")?.body.noResponse).toBe(true)
+    expect(fake.observations.get("binv_timeout_dependency")?.unregistered).toBe(true)
+    await session.shutdown()
+  })
+
+  test("a swept dependency cancelled while native steer is blocked fences the running owner and siblings", async () => {
+    const queue = [makeInvocation({ id: "binv_native_owner", promptMarkdown: "owner" })]
+    let steerStarted = false
+    let releaseSteer!: () => void
+    const { session, fake, calls, interrupts } = makeObservedControlSession(queue, {
+      sessionControl: {
+        commands: ["steer"],
+        interrupt: () => {
+          interrupts.push("interrupt")
+          return true
+        },
+        steer: async () => {
+          steerStarted = true
+          await new Promise<void>((resolve) => {
+            releaseSteer = resolve
+          })
+          return true
+        },
+        runCommand: async () => ({ ok: true, message: "ok" }),
+      },
+    })
+    await claimDrain(session)
+    queue.push(
+      makeInvocation({ id: "binv_native_dependency", promptMarkdown: "dependency" }),
+      makeInvocation({ id: "binv_native_sibling", promptMarkdown: "sibling" })
+    )
+    const steering = (session as any).handleSessionControl(
+      makeInvocation({
+        id: "binv_native_command",
+        trigger: "session-control",
+        requiredCapability: "session-control",
+        promptMarkdown: "/steer continue",
+        metadata: { command: { executionKind: "bot-runtime", id: "cmd_native", name: "steer", args: "continue" } },
+      })
+    )
+    await waitUntil(() => steerStarted)
+    await fake.observations.get("binv_native_dependency")!.cancel({
+      invocationId: "binv_native_dependency",
+      sourceRevision: 2,
+      reason: "source_deleted",
+    })
+    expect(session.isInflight("binv_native_owner")).toBe(false)
+    releaseSteer()
+    await steering
+    await waitUntil(() => calls.fail.length === 3)
+
+    expect(calls.fail.map((call) => call.id).sort()).toEqual([
+      "binv_native_command",
+      "binv_native_owner",
+      "binv_native_sibling",
+    ])
+    expect(fake.observations.get("binv_native_sibling")?.disposed).toBe(true)
+    expect(interrupts).toEqual(["interrupt"])
+    await session.shutdown()
+  })
+
+  test("cancellation while native steer actuation is awaited interrupts the owner without stale completion", async () => {
+    const queue = [makeInvocation({ id: "binv_control_owner", promptMarkdown: "owner" })]
+    let steerStarted = false
+    let releaseSteer!: () => void
+    const { session, fake, calls, interrupts } = makeObservedControlSession(queue, {
+      sessionControl: {
+        commands: ["steer"],
+        interrupt: () => {
+          interrupts.push("interrupt")
+          return true
+        },
+        steer: async () => {
+          steerStarted = true
+          await new Promise<void>((resolve) => {
+            releaseSteer = resolve
+          })
+          return true
+        },
+        runCommand: async () => ({ ok: true, message: "ok" }),
+      },
+    })
+    await claimDrain(session)
+    queue.push(
+      makeInvocation({
+        id: "binv_control_steer",
+        trigger: "session-control",
+        requiredCapability: "session-control",
+        promptMarkdown: "/steer stale text",
+        metadata: { command: { executionKind: "bot-runtime", id: "cmd_control", name: "steer", args: "stale text" } },
+      })
+    )
+    const steering = claimDrain(session)
+    await waitUntil(() => steerStarted)
+    await fake.observations.get("binv_control_steer")!.cancel({
+      invocationId: "binv_control_steer",
+      sourceRevision: 1,
+      reason: "source_deleted",
+    })
+    expect(session.isInflight("binv_control_owner")).toBe(false)
+    releaseSteer()
+    await steering
+    await waitUntil(() => calls.fail.some((call) => call.id === "binv_control_owner"))
+
+    expect(interrupts).toEqual(["interrupt"])
+    expect(calls.complete.some((call) => call.id === "binv_control_steer")).toBe(false)
+    expect(calls.fail.some((call) => call.id === "binv_control_steer")).toBe(false)
+    await session.shutdown()
+  })
+
+  test("interrupt/redelivery steer retains swept ownership until the combined reply", async () => {
+    const queue = [makeInvocation({ id: "binv_interrupt_owner", promptMarkdown: "owner" })]
+    const { session, calls, fake } = makeObservedControlSession(queue, {
+      sessionControl: {
+        commands: ["steer"],
+        interrupt: () => true,
+        runCommand: async () => ({ ok: true, message: "ok" }),
+      },
+    })
+    await claimDrain(session)
+    queue.push(makeInvocation({ id: "binv_interrupt_dependency", promptMarkdown: "dependency" }))
+    const command = makeInvocation({
+      id: "binv_interrupt_command",
+      trigger: "session-control",
+      requiredCapability: "session-control",
+      promptMarkdown: "/steer continue",
+      metadata: { command: { executionKind: "bot-runtime", id: "cmd_interrupt", name: "steer", args: "continue" } },
+    })
+
+    await (session as any).handleSessionControl(command)
+
+    expect(calls.complete.map((call) => call.id)).toEqual(["binv_interrupt_owner"])
+    expect(fake.observations.get("binv_interrupt_dependency")?.unregistered).toBe(false)
+    expect(await session.reply("binv_interrupt_command", "combined answer")).toEqual({ ok: true, message: "sent" })
+    expect(calls.complete.map((call) => call.id)).toEqual([
+      "binv_interrupt_owner",
+      "binv_interrupt_command",
+      "binv_interrupt_dependency",
+    ])
+    expect(fake.observations.get("binv_interrupt_dependency")?.unregistered).toBe(true)
     await session.shutdown()
   })
 

@@ -104,6 +104,9 @@ export class ThreaClient {
 
   private async request<T>(path: string, init?: RequestInit): Promise<T> {
     const controller = new AbortController()
+    const abortFromCaller = () => controller.abort(init?.signal?.reason)
+    if (init?.signal?.aborted) abortFromCaller()
+    else init?.signal?.addEventListener("abort", abortFromCaller, { once: true })
     const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS)
     // A FormData body must keep its multipart boundary header, which fetch sets
     // only when Content-Type is left unset — so never force JSON on uploads.
@@ -121,6 +124,7 @@ export class ThreaClient {
       })
     } finally {
       clearTimeout(timeout)
+      init?.signal?.removeEventListener("abort", abortFromCaller)
     }
     if (!response.ok) {
       // Read the structured `code` so callers can branch on the specific error
@@ -180,10 +184,11 @@ export class ThreaClient {
     return result.data
   }
 
-  async complete(invocationId: string, body: Record<string, unknown>): Promise<void> {
+  async complete(invocationId: string, body: Record<string, unknown>, signal?: AbortSignal): Promise<void> {
     await this.request(this.workspacePath(`/bot-invocations/${invocationId}/complete`), {
       method: "POST",
       body: JSON.stringify(body),
+      signal,
     })
   }
 
@@ -233,12 +238,14 @@ export class ThreaClient {
   async completeSealed(
     invocationId: string,
     callbackToken: string,
-    body: ({ reply: SealedWireReply } | { noResponse: true }) & { sourceRevision: number }
+    body: ({ reply: SealedWireReply } | { noResponse: true }) & { sourceRevision: number },
+    signal?: AbortSignal
   ): Promise<void> {
     await this.request(this.workspacePath(`/bot-invocations/${invocationId}/sealed-complete`), {
       method: "POST",
       headers: { [THREA_CALLBACK_TOKEN_HEADER]: callbackToken },
       body: JSON.stringify(body),
+      signal,
     })
   }
 

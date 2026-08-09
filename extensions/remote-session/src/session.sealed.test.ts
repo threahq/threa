@@ -155,7 +155,7 @@ function makeSealedSession(delegate: Partial<RemoteSessionDelegate> = {}) {
       params: ObserveClaimParams
       revision: number
       unregistered: boolean
-      asyncUpdate(update: InvocationInputUpdate): Promise<"applied" | "restart-required">
+      asyncUpdate(update: InvocationInputUpdate, signal?: AbortSignal): Promise<"applied" | "restart-required">
       asyncCancel(cancellation: InvocationCancellation): Promise<void>
     }
   >()
@@ -176,8 +176,8 @@ function makeSealedSession(delegate: Partial<RemoteSessionDelegate> = {}) {
         params,
         revision: params.sourceRevision,
         unregistered: false,
-        async asyncUpdate(update: InvocationInputUpdate) {
-          const result = await params.callbacks.onInputUpdated(update)
+        async asyncUpdate(update: InvocationInputUpdate, signal = new AbortController().signal) {
+          const result = await params.callbacks.onInputUpdated(update, signal)
           if (result === "applied") record.revision = update.sourceRevision
           return result
         },
@@ -348,6 +348,92 @@ describe("sealed claim hydration + delivery", () => {
     expect(delivered[0]).toContain("spec.md (text/markdown, 15 bytes)")
     expect(delivered[0]).toContain("[attached to the message you just received]")
     expect(new TextDecoder().decode(readFileSync(localPath))).toBe("the secret spec")
+  })
+
+  test("keeps initial sealed attachment hydration best-effort", async () => {
+    const encrypted = await encryptAttachmentBytes(new TextEncoder().encode("ciphertext"))
+    const wrong = await encryptAttachmentBytes(new TextEncoder().encode("wrong key"))
+    const ref: AttachmentRef = {
+      attachmentId: "att_initial_bad",
+      key: wrong.key,
+      iv: wrong.iv,
+      filename: "secret.txt",
+      mimeType: "text/plain",
+      sizeBytes: 10,
+    }
+    const delivered: string[] = []
+    const fetchSpy = spyOn(globalThis, "fetch").mockResolvedValue(new Response(encrypted.ciphertext))
+    try {
+      await startSealedTurn(
+        { deliverTurn: async (turn) => void delivered.push(turn.content) },
+        { attachmentRefs: [ref] }
+      )
+    } finally {
+      fetchSpy.mockRestore()
+    }
+
+    expect(delivered).toHaveLength(1)
+    expect(delivered[0]).toContain("Please refactor the auth module")
+    expect(delivered[0]).not.toContain("secret.txt")
+  })
+
+  test("a failed sealed file in a live rebuild rejects the whole update", async () => {
+    const ciphertext = await encryptAttachmentBytes(new TextEncoder().encode("current ciphertext"))
+    const wrong = await encryptAttachmentBytes(new TextEncoder().encode("wrong key"))
+    const ref: AttachmentRef = {
+      attachmentId: "att_update_bad",
+      key: wrong.key,
+      iv: wrong.iv,
+      filename: "current.md",
+      mimeType: "text/markdown",
+      sizeBytes: 18,
+    }
+    const nextSsk = new Uint8Array(32)
+    crypto.getRandomValues(nextSsk)
+    const steered: string[] = []
+    const interrupts: string[] = []
+    const fetchSpy = spyOn(globalThis, "fetch").mockResolvedValue(new Response(ciphertext.ciphertext))
+    try {
+      const made = await startSealedTurn({
+        sessionControl: {
+          commands: ["steer"],
+          interrupt: () => {
+            interrupts.push("interrupt")
+            return true
+          },
+          steer: async (text) => {
+            steered.push(text)
+            return true
+          },
+          runCommand: async () => ({ ok: true, message: "ok" }),
+        },
+      })
+      expect(
+        await made.observations.get("binv_sealed")!.asyncUpdate({
+          invocationId: "binv_sealed",
+          sourceMessageId: "msg_trigger",
+          sourceRevision: 2,
+          delivery: "sealed",
+          promptMarkdown: "Use the replacement",
+          attachmentRefs: [ref],
+          sealing: {
+            streamId: ROOT_STREAM,
+            replyKeyGeneration: 2,
+            replySenderId: BOT_SENDER,
+            replySsk: nextSsk,
+            callbackToken: "cbtok",
+          },
+        })
+      ).toBe("restart-required")
+      expect({ steered, interrupts, completeSealed: made.calls.completeSealed }).toEqual({
+        steered: [],
+        interrupts: ["interrupt"],
+        completeSealed: [],
+      })
+      await made.session.shutdown()
+    } finally {
+      fetchSpy.mockRestore()
+    }
   })
 
   test("a live sealed update replaces attachment refs, sealing generation, and completion revision before steering", async () => {

@@ -294,6 +294,7 @@ interface ObservedClaim {
   phase: ObservedClaimPhase
   updateInProgress: boolean
   restartPending: boolean
+  lifecycle: AbortController
   /** Running turn whose input incorporated this folded/swept claim. */
   runningOwnerInvocationId?: string
 }
@@ -319,6 +320,12 @@ interface Inflight {
   // post different content at the same seq, which must build a fresh body
   // rather than silently replay the stale one.
   pendingSealedInterim?: { seq: number; text: string; body: SealedReplyBody; attachmentIds: string[] }
+  /** Source-backed inputs incorporated into this owner's provider execution. */
+  contributors: ClaimedInvocation[]
+  /** Fences owner delivery/completion when any incorporated source changes. */
+  execution: AbortController
+  /** Final completion is awaiting preparation/persistence; idle timeout is disarmed. */
+  closing?: boolean
 }
 
 export interface RemoteSessionOptions {
@@ -560,16 +567,17 @@ export class RemoteSession {
     // than waiting on an ack from a connection that's already going away.
     this.transport.disconnect()
     const inflight = [...this.inflight]
+    const ownedClaims = inflight.flatMap(([, entry]) => [entry.invocation, ...(entry.contributors ?? [])])
     for (const context of this.observedClaims.values()) context.handle.dispose()
     this.observedClaims.clear()
     for (const [, entry] of inflight) clearTimeout(entry.deadline)
     this.inflight.clear()
     await this.transport.updatePresence(this.presenceBody("offline")).catch(() => undefined)
     await Promise.allSettled(
-      inflight.map(([id, entry]) =>
-        this.client.fail(id, {
+      ownedClaims.map((invocation) =>
+        this.client.fail(invocation.id, {
           instanceId: this.config.instanceId,
-          claimToken: entry.invocation.claimToken,
+          claimToken: invocation.claimToken,
           // The shutdown message is a fixed string (never turn content), so it
           // is safe on sealed turns too.
           errorMessage: this.runtime.shutdownErrorMessage,
@@ -820,7 +828,7 @@ export class RemoteSession {
       claimTtlSeconds: CLAIM_TTL_SECONDS,
       instanceId: this.config.instanceId,
       callbacks: {
-        onInputUpdated: (update) => this.applyInputUpdate(invocation.id, update),
+        onInputUpdated: (update, signal) => this.applyInputUpdate(invocation.id, update, signal),
         onCancelled: (cancellation) => this.cancelObservedClaim(invocation.id, cancellation),
         onClaimLost: () => this.claimLost(invocation.id),
       },
@@ -841,6 +849,7 @@ export class RemoteSession {
       phase: "unstarted",
       updateInProgress: false,
       restartPending: false,
+      lifecycle: new AbortController(),
     })
     await handle.sync()
     return this.isClaimCancelled(invocation) ? null : invocation
@@ -889,28 +898,36 @@ export class RemoteSession {
     } catch {
       // Backend authority still fences output when native control is gone.
     }
+    running.execution.abort()
     this.clearInflight(running.invocation.id)
     if (this.activeTurnStream === running.invocation.responseStreamId) this.activeTurnStream = undefined
-    void this.syncPresence()
 
-    // During delivery, deliverTurn observes the dependency cancellation and its
-    // caller fails the owner. Once delivery has returned, no caller owns that
-    // cleanup, so terminalize the interrupted primary here.
-    const owner = ownerId ? this.observedClaims.get(ownerId) : undefined
-    if (owner && owner.phase === "running") void this.failInvocation(owner.invocation, ownerFailure)
+    const affected = [running.invocation, ...(running.contributors ?? [])].filter(
+      (invocation) => invocation !== context.invocation
+    )
+    for (const invocation of affected) this.fenceObservedClaim(invocation)
+    void Promise.all(affected.map((invocation) => this.failFencedInvocation(invocation, ownerFailure))).finally(() => {
+      void this.syncPresence()
+    })
   }
 
   private async applyInputUpdate(
     invocationId: string,
-    update: InvocationInputUpdate
+    update: InvocationInputUpdate,
+    signal: AbortSignal
   ): Promise<"applied" | "restart-required"> {
     const context = this.observedClaims.get(invocationId)
-    if (!context || context.phase === "terminal" || (update.delivery === "sealed" && !update.sealing)) {
+    if (
+      signal.aborted ||
+      !context ||
+      context.phase === "terminal" ||
+      (update.delivery === "sealed" && !update.sealing)
+    ) {
       return "restart-required"
     }
     if (context.phase === "unstarted") {
       this.installInputUpdate(context, update)
-      return "applied"
+      return signal.aborted ? "restart-required" : "applied"
     }
     if (context.phase !== "running" || context.restartPending) {
       this.abortForInputRestart(context)
@@ -921,7 +938,7 @@ export class RemoteSession {
     // reply() removes the entry before its first await. If renewal wins during
     // reply preparation, do not steer a turn that is already closing; fence its
     // pending output and let the backend perform the restart instead.
-    if (!steer || !this.inflight.has(invocationId)) {
+    if (!steer || !this.inflight.has(invocationId) || this.inflight.get(invocationId)?.closing) {
       this.abortForInputRestart(context)
       return "restart-required"
     }
@@ -933,12 +950,19 @@ export class RemoteSession {
     context.updateInProgress = true
     this.installInputUpdate(context, update)
     try {
-      const content = await this.buildTurnContent(context.invocation)
-      if (this.isClaimCancelled(context.invocation) || !(await steer.call(this.delegate.sessionControl, content))) {
-        this.abortForInputRestart(context)
-        return "restart-required"
+      if (signal.aborted) throw signal.reason
+      const content = await this.buildTurnContent(context.invocation, { strictAttachments: true, signal })
+      if (signal.aborted || this.isClaimCancelled(context.invocation)) throw signal.reason
+      const interruptOnAbort = () => this.abortForInputRestart(context)
+      signal.addEventListener("abort", interruptOnAbort, { once: true })
+      let steered: boolean
+      try {
+        if (signal.aborted) throw signal.reason
+        steered = await steer.call(this.delegate.sessionControl, content)
+      } finally {
+        signal.removeEventListener("abort", interruptOnAbort)
       }
-      if (this.isClaimCancelled(context.invocation)) {
+      if (signal.aborted || this.isClaimCancelled(context.invocation) || !steered) {
         this.abortForInputRestart(context)
         return "restart-required"
       }
@@ -965,6 +989,7 @@ export class RemoteSession {
     context.phase = "terminal"
     context.updateInProgress = false
     context.restartPending = false
+    context.lifecycle.abort()
     this.cancelledInvocations.add(context.invocation)
     this.abortRunningTurnForContext(context, ownerFailure)
     context.handle.dispose()
@@ -1014,6 +1039,29 @@ export class RemoteSession {
     context.phase = "terminal"
     context.handle.unregister()
     this.observedClaims.delete(invocationId)
+  }
+
+  private fenceObservedClaim(invocation: ClaimedInvocation): void {
+    this.cancelledInvocations.add(invocation)
+    const context = this.observedClaims.get(invocation.id)
+    if (!context) return
+    context.phase = "terminal"
+    context.updateInProgress = false
+    context.restartPending = false
+    context.lifecycle.abort()
+    context.handle.dispose()
+    this.observedClaims.delete(invocation.id)
+  }
+
+  private async failFencedInvocation(invocation: ClaimedInvocation, errorMessage: string): Promise<void> {
+    const scrubbed = invocation.sealing ? "Sealed turn failed" : errorMessage.slice(0, 1000)
+    await this.client
+      .fail(invocation.id, {
+        instanceId: this.config.instanceId,
+        claimToken: invocation.claimToken,
+        errorMessage: scrubbed,
+      })
+      .catch((error) => this.log(`invocation fail write failed: ${this.summarize(error)}`))
   }
 
   /** Consult the connector's intercept. True = the delegate consumed the invocation and it was closed silently. */
@@ -1096,9 +1144,6 @@ export class RemoteSession {
       const content = buildSteerContent([parts[0]!, ...liveFolded.map((item) => formatInvocationContent(item))])
       this.bindRunningOwner(invocation.id, liveFolded)
       await this.deliverTurn(invocation, content, liveFolded)
-      // Only after the turn is registered: a delivery that throws must leave the
-      // folded messages claimed-but-open rather than silently closed.
-      await Promise.all(liveFolded.map((item) => this.completeNoResponse(item)))
     } catch (error) {
       // Never throw past here. Control claimed by the sweep has to run even when
       // delivery failed — otherwise a swept /stop is claimed, never handled, and
@@ -1117,10 +1162,35 @@ export class RemoteSession {
   }
 
   private bindRunningOwner(ownerInvocationId: string, dependencies: ClaimedInvocation[]): void {
+    const running = this.inflight.get(ownerInvocationId)
     for (const dependency of dependencies) {
       const context = this.observedClaims.get(dependency.id)
-      if (context && context.invocation === dependency) context.runningOwnerInvocationId = ownerInvocationId
+      if (context && context.invocation === dependency) {
+        context.runningOwnerInvocationId = ownerInvocationId
+        if (context.phase === "processing") context.phase = "running"
+      }
+      if (running && !running.contributors.some((item) => item.id === dependency.id)) {
+        running.contributors.push(dependency)
+      }
     }
+  }
+
+  private unbindRunningOwner(ownerInvocationId: string, dependencies: ClaimedInvocation[]): void {
+    const ids = new Set(dependencies.map((item) => item.id))
+    const running = this.inflight.get(ownerInvocationId)
+    if (running) running.contributors = running.contributors.filter((item) => !ids.has(item.id))
+    for (const dependency of dependencies) {
+      const context = this.observedClaims.get(dependency.id)
+      if (context?.runningOwnerInvocationId === ownerInvocationId) context.runningOwnerInvocationId = undefined
+    }
+  }
+
+  private async completeContributors(entry: Inflight): Promise<void> {
+    await Promise.all((entry.contributors ?? []).map((invocation) => this.completeNoResponse(invocation)))
+  }
+
+  private async failContributors(entry: Inflight, reason: string): Promise<void> {
+    await Promise.all((entry.contributors ?? []).map((invocation) => this.failInvocation(invocation, reason)))
   }
 
   /** Register an invocation as the in-flight turn and push its content to the runtime. */
@@ -1134,6 +1204,8 @@ export class RemoteSession {
       invocation,
       deadline: this.scheduleIdleTimeout(invocation.id),
       sentCount: 0,
+      contributors: [...inputDependencies],
+      execution: new AbortController(),
     })
     // This is the turn the runtime is now executing; a permission prompt it
     // triggers belongs in this invocation's stream.
@@ -1172,6 +1244,10 @@ export class RemoteSession {
     }
     const observed = this.observedClaims.get(invocation.id)
     if (observed && observed.phase === "processing") observed.phase = "running"
+    for (const dependency of inputDependencies) {
+      const context = this.observedClaims.get(dependency.id)
+      if (context && context.phase === "processing") context.phase = "running"
+    }
   }
 
   /** The turn-handed-to-runtime trace note — sealed under the stream key on an E2E turn. */
@@ -1210,9 +1286,11 @@ export class RemoteSession {
       /** Sealed turns only: refs seal into the payload, ids bind the rows on the wire. */
       attachmentRefs?: AttachmentRef[]
       attachmentIds?: string[]
+      signal?: AbortSignal
     }
   ): Promise<void> {
-    if (this.isClaimCancelled(invocation)) throw new Error("invocation request is closed")
+    const signal = body.signal ?? this.observedClaims.get(invocation.id)?.lifecycle.signal
+    if (signal?.aborted || this.isClaimCancelled(invocation)) throw new Error("invocation request is closed")
     const sourceRevision = invocation.sourceRevision
     if (invocation.sealing) {
       const sealing = invocation.sealing
@@ -1220,32 +1298,58 @@ export class RemoteSession {
         const extras =
           body.attachmentRefs && body.attachmentRefs.length > 0 ? { attachmentRefs: body.attachmentRefs } : undefined
         const reply = await sealReply(sealing, body.markdown, extras)
-        if (!this.isOutputCurrent(invocation, sourceRevision)) throw new Error("invocation request is closed")
-        await this.client.completeSealed(invocation.id, sealing.callbackToken, {
-          sourceRevision,
-          reply: {
-            ...reply,
-            ...(body.attachmentIds && body.attachmentIds.length > 0 && { attachmentIds: body.attachmentIds }),
+        if (signal?.aborted || !this.isOutputCurrent(invocation, sourceRevision)) {
+          throw new Error("invocation request is closed")
+        }
+        await this.client.completeSealed(
+          invocation.id,
+          sealing.callbackToken,
+          {
+            sourceRevision,
+            reply: {
+              ...reply,
+              ...(body.attachmentIds && body.attachmentIds.length > 0 && { attachmentIds: body.attachmentIds }),
+            },
           },
-        })
+          signal
+        )
       } else {
-        if (!this.isOutputCurrent(invocation, sourceRevision)) throw new Error("invocation request is closed")
-        await this.client.completeSealed(invocation.id, sealing.callbackToken, {
-          noResponse: true,
-          sourceRevision,
-        })
+        if (signal?.aborted || !this.isOutputCurrent(invocation, sourceRevision)) {
+          throw new Error("invocation request is closed")
+        }
+        await this.client.completeSealed(
+          invocation.id,
+          sealing.callbackToken,
+          {
+            noResponse: true,
+            sourceRevision,
+          },
+          signal
+        )
+      }
+      if (signal?.aborted || !this.isOutputCurrent(invocation, sourceRevision)) {
+        throw new Error("invocation request is closed")
       }
       this.releaseObservation(invocation.id)
       return
     }
-    if (!this.isOutputCurrent(invocation, sourceRevision)) throw new Error("invocation request is closed")
-    await this.client.complete(invocation.id, {
-      instanceId: this.config.instanceId,
-      claimToken: invocation.claimToken,
-      sourceRevision,
-      ...(body.markdown ? { finalMessageMarkdown: body.markdown } : { noResponse: true }),
-      ...(body.metadata ? { metadata: body.metadata } : {}),
-    })
+    if (signal?.aborted || !this.isOutputCurrent(invocation, sourceRevision)) {
+      throw new Error("invocation request is closed")
+    }
+    await this.client.complete(
+      invocation.id,
+      {
+        instanceId: this.config.instanceId,
+        claimToken: invocation.claimToken,
+        sourceRevision,
+        ...(body.markdown ? { finalMessageMarkdown: body.markdown } : { noResponse: true }),
+        ...(body.metadata ? { metadata: this.completionMetadata(invocation, body.metadata) } : {}),
+      },
+      signal
+    )
+    if (signal?.aborted || !this.isOutputCurrent(invocation, sourceRevision)) {
+      throw new Error("invocation request is closed")
+    }
     this.releaseObservation(invocation.id)
   }
 
@@ -1360,7 +1464,11 @@ export class RemoteSession {
         // "nothing to steer" acknowledgement.
         await this.completeTurn(invocation, {
           noResponse: true,
-          metadata: { "remote.invocationId": invocation.id, "remote.sessionControl": "true", "remote.steered": "true" },
+          metadata: this.completionMetadata(invocation, {
+            "remote.invocationId": invocation.id,
+            "remote.sessionControl": "true",
+            "remote.steered": "true",
+          }),
         })
         return
       }
@@ -1398,21 +1506,26 @@ export class RemoteSession {
     const owner = [...this.inflight.values()].find(
       (entry) => entry.invocation.responseStreamId === invocation.responseStreamId
     )?.invocation
-    if (owner) this.bindRunningOwner(owner.id, liveSwept)
+    if (owner) this.bindRunningOwner(owner.id, [invocation, ...liveSwept])
     if (!(await steer(combined))) {
       // Nothing was injected: the swept messages were claimed but not
       // delivered — fail them loudly so they don't vanish into a silent close.
+      if (owner) this.unbindRunningOwner(owner.id, [invocation, ...liveSwept])
       await Promise.all(
         liveSwept.map((item) => this.failInvocation(item, "Steer not delivered (runtime control unavailable); resend."))
       )
       await this.completeAck(invocation, "Could not steer the session (runtime control unavailable).")
       return
     }
-    if (this.isClaimCancelled(invocation)) return
-    await Promise.all(liveSwept.map((item) => this.completeNoResponse(item)))
+    if (this.isClaimCancelled(invocation) || (owner && !this.inflight.has(owner.id))) return
+    if (owner) this.unbindRunningOwner(owner.id, [invocation])
     await this.completeTurn(invocation, {
       noResponse: true,
-      metadata: { "remote.invocationId": invocation.id, "remote.sessionControl": "true", "remote.steered": "true" },
+      metadata: this.completionMetadata(invocation, {
+        "remote.invocationId": invocation.id,
+        "remote.sessionControl": "true",
+        "remote.steered": "true",
+      }),
     }).catch((error) => this.failAfterTerminalWrite(invocation, error, "steer completion"))
   }
 
@@ -1451,12 +1564,6 @@ export class RemoteSession {
     const { swept, interceptedCount } = await this.sweepQueuedForSteer(text)
     if (this.isClaimCancelled(invocation)) return
 
-    // Close every swept message with no response — its content is folded into the
-    // single combined turn the primary (this steer invocation) will answer.
-    await Promise.all(swept.map((item) => this.completeNoResponse(item)))
-    if (this.isClaimCancelled(invocation)) return
-    // A renewal can beat one of those no-response completions. Re-derive after
-    // the awaits and omit any such claim rather than delivering its stale text.
     const liveSwept = swept.filter((item) => !this.isClaimCancelled(item))
     const currentParts = liveSwept.map((item) => {
       if (!isSessionControlInvocation(item)) return item.promptMarkdown.trim() || "(empty message)"
@@ -1477,7 +1584,8 @@ export class RemoteSession {
       return
     }
 
-    await this.deliverTurn(invocation, buildSteerContent(deliverableParts))
+    this.bindRunningOwner(invocation.id, liveSwept)
+    await this.deliverTurn(invocation, buildSteerContent(deliverableParts), liveSwept)
   }
 
   /**
@@ -1546,22 +1654,35 @@ export class RemoteSession {
     }
   }
 
+  private completionMetadata(invocation: ClaimedInvocation, remote: Record<string, unknown>): Record<string, unknown> {
+    return { ...invocation.metadata, ...remote }
+  }
+
   private async completeAck(invocation: ClaimedInvocation, markdown: string): Promise<boolean> {
     if (this.isClaimCancelled(invocation)) return false
+    const signal = this.observedClaims.get(invocation.id)?.lifecycle.signal
     // Sealed session-control ack on E2E: seal the confirmation under the stream
     // key and post it as `sealedReply`. Falls through to the plaintext path when
     // the bot can't seal (no wrap / key race), which silently closes on E2E.
     const sealedReply = await this.sealSessionControlAck(invocation, markdown)
-    if (this.isClaimCancelled(invocation)) return false
+    if (signal?.aborted || this.isClaimCancelled(invocation)) return false
     if (sealedReply) {
       try {
-        await this.client.complete(invocation.id, {
-          instanceId: this.config.instanceId,
-          claimToken: invocation.claimToken,
-          sourceRevision: invocation.sourceRevision,
-          sealedReply,
-          metadata: { "remote.invocationId": invocation.id, "remote.sessionControl": "true" },
-        })
+        await this.client.complete(
+          invocation.id,
+          {
+            instanceId: this.config.instanceId,
+            claimToken: invocation.claimToken,
+            sourceRevision: invocation.sourceRevision,
+            sealedReply,
+            metadata: this.completionMetadata(invocation, {
+              "remote.invocationId": invocation.id,
+              "remote.sessionControl": "true",
+            }),
+          },
+          signal
+        )
+        if (signal?.aborted || this.isClaimCancelled(invocation)) return false
         this.releaseObservation(invocation.id)
         return true
       } catch (error) {
@@ -1570,14 +1691,22 @@ export class RemoteSession {
       }
     }
     try {
-      if (this.isClaimCancelled(invocation)) return false
-      await this.client.complete(invocation.id, {
-        instanceId: this.config.instanceId,
-        claimToken: invocation.claimToken,
-        sourceRevision: invocation.sourceRevision,
-        finalMessageMarkdown: markdown,
-        metadata: { "remote.invocationId": invocation.id, "remote.sessionControl": "true" },
-      })
+      if (signal?.aborted || this.isClaimCancelled(invocation)) return false
+      await this.client.complete(
+        invocation.id,
+        {
+          instanceId: this.config.instanceId,
+          claimToken: invocation.claimToken,
+          sourceRevision: invocation.sourceRevision,
+          finalMessageMarkdown: markdown,
+          metadata: this.completionMetadata(invocation, {
+            "remote.invocationId": invocation.id,
+            "remote.sessionControl": "true",
+          }),
+        },
+        signal
+      )
+      if (signal?.aborted || this.isClaimCancelled(invocation)) return false
     } catch (error) {
       // Reached only when the ack couldn't be sealed (no BIK / wrap race, so
       // `sealSessionControlAck` returned undefined). On an E2E scratchpad the
@@ -1605,7 +1734,10 @@ export class RemoteSession {
     try {
       await this.completeTurn(invocation, {
         noResponse: true,
-        metadata: { "remote.invocationId": invocation.id, "remote.steered": "true" },
+        metadata: this.completionMetadata(invocation, {
+          "remote.invocationId": invocation.id,
+          "remote.steered": "true",
+        }),
       })
     } catch (error) {
       await this.failAfterTerminalWrite(invocation, error, "no-response completion")
@@ -1619,6 +1751,10 @@ export class RemoteSession {
   ): Promise<void> {
     this.log(`${operation} failed: ${this.summarize(error)}`)
     if (this.isClaimCancelled(invocation)) return
+    if (error instanceof ThreaApiError && error.status === 409 && error.code === "INVOCATION_INPUT_STALE") {
+      this.releaseObservation(invocation.id)
+      return
+    }
     await this.failInvocation(invocation, `Could not persist ${operation}.`)
   }
 
@@ -1659,18 +1795,29 @@ export class RemoteSession {
       if (this.activeTurnStream === entry.invocation.responseStreamId) this.activeTurnStream = undefined
     }
     await Promise.all(
-      entries.map(([id, entry]) => {
+      entries.map(async ([id, entry]) => {
         const silent = entry.sentCount > 0 && !opts.alwaysNote
-        return this.completeTurn(entry.invocation, {
-          ...(silent ? { noResponse: true as const } : { markdown: `_${note}_` }),
-          metadata: { "remote.invocationId": id, "remote.interrupted": "true" },
-        }).catch((error) => this.failAfterTerminalWrite(entry.invocation, error, "interrupted-turn completion"))
+        try {
+          await this.completeTurn(entry.invocation, {
+            ...(silent ? { noResponse: true as const } : { markdown: `_${note}_` }),
+            metadata: { "remote.invocationId": id, "remote.interrupted": "true" },
+            signal: entry.execution.signal,
+          })
+          await this.completeContributors(entry)
+        } catch (error) {
+          await this.failAfterTerminalWrite(entry.invocation, error, "interrupted-turn completion")
+          await this.failContributors(entry, "The owning turn could not be closed after interruption.")
+        }
       })
     )
   }
 
   /** The prompt + history the runtime reads, with any downloaded attachments appended as a manifest. */
-  private async buildTurnContent(invocation: ClaimedInvocation): Promise<string> {
+  private async buildTurnContent(
+    invocation: ClaimedInvocation,
+    options: { strictAttachments?: boolean; signal?: AbortSignal } = {}
+  ): Promise<string> {
+    if (options.signal?.aborted) throw options.signal.reason
     const base = formatInvocationContent(invocation)
     // A sealed turn's attachments come from the refs hydration opened out of the
     // sealed payloads — the plaintext message list only holds ciphertext
@@ -1685,10 +1832,14 @@ export class RemoteSession {
           invocationId: invocation.id,
           cwd: process.cwd(),
           log: this.log,
+          strict: options.strictAttachments,
+          signal: options.signal,
         })
+        if (options.signal?.aborted) throw options.signal.reason
         const manifest = formatInboundAttachmentManifest(downloaded)
         return manifest ? `${base}\n\n${manifest}` : base
       } catch (error) {
+        if (options.strictAttachments || options.signal?.aborted) throw error
         this.log(`sealed inbound attachment fetch failed: ${this.summarize(error)}`)
         return base
       }
@@ -1704,10 +1855,14 @@ export class RemoteSession {
         cwd: process.cwd(),
         scanLimit: ATTACHMENT_SCAN_LIMIT,
         log: this.log,
+        strict: options.strictAttachments,
+        signal: options.signal,
       })
+      if (options.signal?.aborted) throw options.signal.reason
       const manifest = formatInboundAttachmentManifest(downloaded)
       return manifest ? `${base}\n\n${manifest}` : base
     } catch (error) {
+      if (options.strictAttachments || options.signal?.aborted) throw error
       this.log(`inbound attachment scan failed: ${this.summarize(error)}`)
       return base
     }
@@ -1724,8 +1879,12 @@ export class RemoteSession {
         message: `No open request with invocation_id ${invocationId} — interim messages need an open request (it may have been answered or closed).`,
       }
     }
-    if (this.observedClaims.get(invocationId)?.updateInProgress) {
-      return { ok: false, message: "Input update is still being applied; retry this send.", retryable: true }
+    if (this.observedClaims.get(invocationId)?.updateInProgress || entry.closing) {
+      return {
+        ok: false,
+        message: "Input update or completion is still in progress; retry this send.",
+        retryable: true,
+      }
     }
     const sourceRevision = entry.invocation.sourceRevision
     // Stable per-send client id so a retry after a network failure dedupes
@@ -1818,13 +1977,18 @@ export class RemoteSession {
         message: `No open request with invocation_id ${invocationId} (already answered, expired, or unknown).`,
       }
     }
-    if (this.observedClaims.get(invocationId)?.updateInProgress) {
-      return { ok: false, message: "Input update is still being applied; retry this reply.", retryable: true }
+    if (this.observedClaims.get(invocationId)?.updateInProgress || entry.closing) {
+      return {
+        ok: false,
+        message: "Input update or completion is still in progress; retry this reply.",
+        retryable: true,
+      }
     }
     const sourceRevision = entry.invocation.sourceRevision
-    // Clear the entry (and its deadline) before awaiting complete(), so the
-    // reply-timeout can't fire mid-await and double-complete the invocation.
-    this.clearInflight(invocationId)
+    // Keep contributor ownership visible while completion awaits, but disarm
+    // the idle timeout and reject parallel output so nothing can double-close.
+    clearTimeout(entry.deadline)
+    entry.closing = true
     // Reuse a prior attempt's uploads (cached on a complete() failure) so a
     // retry doesn't re-upload every attachment and orphan the first copy.
     let prepared = entry.prepared
@@ -1841,6 +2005,7 @@ export class RemoteSession {
         }
       }
       if (!this.isOutputCurrent(entry.invocation, sourceRevision)) {
+        this.clearInflight(invocationId)
         if (this.activeTurnStream === entry.invocation.responseStreamId) this.activeTurnStream = undefined
         await this.syncPresence()
         return { ok: false, message: `Request ${invocationId} is closed; its source changed.` }
@@ -1849,6 +2014,7 @@ export class RemoteSession {
         markdown: prepared.markdown,
         attachmentIds: prepared.attachmentIds,
         ...(prepared.attachmentRefs && { attachmentRefs: prepared.attachmentRefs }),
+        signal: entry.execution.signal,
         metadata: {
           "remote.invocationId": invocationId,
           "remote.instanceId": this.config.instanceId,
@@ -1857,24 +2023,24 @@ export class RemoteSession {
       })
     } catch (error) {
       if (this.isClaimCancelled(entry.invocation)) {
+        this.clearInflight(invocationId)
         if (this.activeTurnStream === entry.invocation.responseStreamId) this.activeTurnStream = undefined
         await this.syncPresence()
         return { ok: false, message: `Request ${invocationId} is closed; its source changed.` }
       }
       if (error instanceof ThreaApiError && error.status === 409 && error.code === "INVOCATION_INPUT_STALE") {
+        this.clearInflight(invocationId)
         this.releaseObservation(invocationId)
+        await this.failContributors(entry, "The owning turn input became stale during completion.")
         if (this.activeTurnStream === entry.invocation.responseStreamId) this.activeTurnStream = undefined
         await this.syncPresence()
         return { ok: false, message: `Request ${invocationId} is closed; its source changed.` }
       }
-      // Re-arm (with a fresh deadline) so the runtime can retry the reply. Safe
-      // from double-complete because the original deadline was already cleared.
-      this.inflight.set(invocationId, {
-        invocation: entry.invocation,
-        deadline: this.scheduleIdleTimeout(invocationId),
-        sentCount: entry.sentCount,
-        prepared,
-      })
+      // Re-arm (with a fresh deadline) so the runtime can retry the reply. The
+      // same entry retains contributor ownership and prepared uploads.
+      entry.deadline = this.scheduleIdleTimeout(invocationId)
+      entry.prepared = prepared
+      entry.closing = false
       await this.syncPresence()
       return {
         ok: false,
@@ -1882,6 +2048,8 @@ export class RemoteSession {
         retryable: true,
       }
     }
+    this.clearInflight(invocationId)
+    await this.completeContributors(entry)
     if (this.activeTurnStream === entry.invocation.responseStreamId) this.activeTurnStream = undefined
     await this.syncPresence()
     return { ok: true, message: "sent" }
@@ -1900,6 +2068,7 @@ export class RemoteSession {
   async recordSteps(invocationId: string, frames: StepFrame[], statusText?: string): Promise<boolean> {
     const entry = this.inflight.get(invocationId)
     if (!entry) return false
+    if (entry.closing) return true
     // Keep the tracer alive but do not emit old-turn frames while the runtime is
     // being steered onto a newer authoritative input.
     if (this.observedClaims.get(invocationId)?.updateInProgress) return true
@@ -1980,12 +2149,19 @@ export class RemoteSession {
     this.clearInflight(invocationId)
     // If the turn already posted interim messages, the user has heard from it —
     // close silently rather than posting a misleading "no reply" notice.
-    await this.completeTurn(entry.invocation, {
-      ...(entry.sentCount > 0
-        ? { noResponse: true as const }
-        : { markdown: "_The session ended the turn without sending a reply._" }),
-      metadata: { "remote.invocationId": invocationId, "remote.timedOut": "true" },
-    }).catch((error) => this.failAfterTerminalWrite(entry.invocation, error, "timeout completion"))
+    try {
+      await this.completeTurn(entry.invocation, {
+        ...(entry.sentCount > 0
+          ? { noResponse: true as const }
+          : { markdown: "_The session ended the turn without sending a reply._" }),
+        metadata: { "remote.invocationId": invocationId, "remote.timedOut": "true" },
+        signal: entry.execution.signal,
+      })
+      await this.completeContributors(entry)
+    } catch (error) {
+      await this.failAfterTerminalWrite(entry.invocation, error, "timeout completion")
+      await this.failContributors(entry, "The owning turn timed out without a durable completion.")
+    }
     if (this.activeTurnStream === entry.invocation.responseStreamId) this.activeTurnStream = undefined
     await this.syncPresence()
   }
@@ -2048,6 +2224,7 @@ export class RemoteSession {
    */
   private async detachForArchive(rootStreamId: string): Promise<void> {
     const inflight = [...this.inflight]
+    const ownedClaims = inflight.flatMap(([, entry]) => [entry.invocation, ...(entry.contributors ?? [])])
     for (const [, entry] of inflight) clearTimeout(entry.deadline)
     this.inflight.clear()
     for (const context of this.observedClaims.values()) context.handle.dispose()
@@ -2062,10 +2239,10 @@ export class RemoteSession {
     // zero probes inside the grace window if the restore push is then missed.
     this.reschedulePoll(this.archive.probeDelayMs)
     await Promise.allSettled(
-      inflight.map(([id, entry]) =>
-        this.client.fail(id, {
+      ownedClaims.map((invocation) =>
+        this.client.fail(invocation.id, {
           instanceId: this.config.instanceId,
-          claimToken: entry.invocation.claimToken,
+          claimToken: invocation.claimToken,
           errorMessage: this.runtime.shutdownErrorMessage,
         })
       )
