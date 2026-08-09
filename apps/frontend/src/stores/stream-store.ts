@@ -4,7 +4,6 @@ import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore
 import { db, sequenceToNum, type CachedEvent, type CachedStream } from "@/db"
 import { getPerfCapture } from "@/lib/perf/capture"
 import {
-  allocateWorkspaceTableToken,
   findSharedRowWorkspace,
   getWorkspaceTableRow,
   hasResolvedSharedEntry,
@@ -452,37 +451,30 @@ type StreamRowFallback = CachedStream | typeof REGISTRY_OWNED_ROW | undefined
  * ran ~4× the rendered window on every write before.
  *
  * Fallback (D7, fail-open): an id no shared entry holds — a socket write that
- * landed before bootstrap, or the `sharedWorkspaceReads=off` arm, where entries
- * are private to a token this hook does not have and the fast path therefore
- * misses by design — resolves through today's per-key `db.streams.get`. Both
- * paths mount the same hooks unconditionally; only the work inside them differs.
+ * landed before bootstrap — resolves through today's per-key `db.streams.get`.
+ * Both paths mount the same hooks unconditionally; only the work inside them
+ * differs.
  *
  * `undefined` means "genuinely not resolved anywhere". `resolveDecryptContext`
  * reads that as "hold, never attempt", and a decrypt attempted against an
  * unhydrated row caches its failure forever — so a value already resolved on
- * either path is held across a registry flip rather than flickering to
+ * either path is held across an ownership change rather than flickering to
  * `undefined`.
  */
 export function useStreamFromStore(streamId: string | undefined): CachedStream | undefined {
-  const tokenRef = useRef<number | null>(null)
-  tokenRef.current ??= allocateWorkspaceTableToken()
-  const token = tokenRef.current
-
   const registryWorkspaceId = streamId ? findSharedRowWorkspace("streams", streamId) : undefined
 
   const subscribe = useCallback(
     (onStoreChange: () => void) => {
       if (!streamId || !registryWorkspaceId) return () => {}
-      return subscribeWorkspaceTableRow(registryWorkspaceId, "streams", streamId, token, onStoreChange)
+      return subscribeWorkspaceTableRow(registryWorkspaceId, "streams", streamId, onStoreChange)
     },
-    [streamId, registryWorkspaceId, token]
+    [streamId, registryWorkspaceId]
   )
   const readRegistryRow = useCallback(
     () =>
-      streamId && registryWorkspaceId
-        ? getWorkspaceTableRow(registryWorkspaceId, "streams", streamId, token)
-        : undefined,
-    [streamId, registryWorkspaceId, token]
+      streamId && registryWorkspaceId ? getWorkspaceTableRow(registryWorkspaceId, "streams", streamId) : undefined,
+    [streamId, registryWorkspaceId]
   )
   const registryRow = useSyncExternalStore(subscribe, readRegistryRow, readRegistryRow)
 

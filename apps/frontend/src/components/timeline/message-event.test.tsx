@@ -21,10 +21,8 @@ import { useStreamFromStore } from "@/stores/stream-store"
 import { resetActorLookups } from "@/stores/actor-lookup"
 import { resetWorkspaceStoreCache } from "@/stores/workspace-store"
 import {
-  allocateWorkspaceTableToken,
   getWorkspaceTableSnapshot,
   resetWorkspaceTableRegistry,
-  setWorkspaceReadMode,
   subscribeWorkspaceTable,
 } from "@/stores/workspace-table-registry"
 import { EditLastMessageContext } from "./edit-last-message-context"
@@ -680,7 +678,6 @@ describe("row-tree read fan-out", () => {
     // The real lookup, not the suite's stub: this test is about what the row
     // tree reads from IDB.
     vi.spyOn(hooksModule, "useActors").mockRestore()
-    setWorkspaceReadMode("shared")
     const where = vi.spyOn(workspaceUsersTable(), "where")
 
     render(
@@ -694,24 +691,6 @@ describe("row-tree read fan-out", () => {
     await screen.findAllByText("row 0")
 
     expect(where).toHaveBeenCalledTimes(1)
-  })
-
-  it("fifty rows open one users read per consumer when sharing is off", async () => {
-    vi.spyOn(hooksModule, "useActors").mockRestore()
-    setWorkspaceReadMode("off")
-    const where = vi.spyOn(workspaceUsersTable(), "where")
-
-    render(
-      <>
-        {rowEvents.map((event) => (
-          <MessageEvent key={event.id} event={event} workspaceId={workspaceId} streamId={streamId} />
-        ))}
-      </>,
-      { wrapper: Wrapper }
-    )
-    await screen.findAllByText("row 0")
-
-    expect(where.mock.calls.length).toBeGreaterThan(50)
   })
 
   // Runs under the suite's stubbed `useActors`, so it covers the pre-existing
@@ -762,9 +741,8 @@ describe("MessageEvent stream-row reads", () => {
   const rootStreamId = "stream_root"
 
   async function primeStreamRegistry(): Promise<() => void> {
-    const token = allocateWorkspaceTableToken()
-    const unsubscribe = subscribeWorkspaceTable(workspaceId, "streams", token, () => {})
-    await waitFor(() => expect(getWorkspaceTableSnapshot(workspaceId, "streams", token)).toBeDefined())
+    const unsubscribe = subscribeWorkspaceTable(workspaceId, "streams", () => {})
+    await waitFor(() => expect(getWorkspaceTableSnapshot(workspaceId, "streams")).toBeDefined())
     return unsubscribe
   }
 
@@ -795,7 +773,6 @@ describe("MessageEvent stream-row reads", () => {
     await clearWorkspaceActorTables()
     await seedWorkspaceUser(workspaceId, "member_123")
     await clearStreams()
-    setWorkspaceReadMode("shared")
   })
 
   afterEach(() => {

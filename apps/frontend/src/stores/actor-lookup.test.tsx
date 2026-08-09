@@ -6,7 +6,7 @@ import * as perfCapture from "@/lib/perf/capture"
 import { useActors } from "@/hooks/use-actors"
 import { useWorkspaceStreams, resetWorkspaceStoreCache, upsertWorkspacePersonaCache } from "./workspace-store"
 import { resetActorLookups } from "./actor-lookup"
-import { resetWorkspaceTableRegistry, setWorkspaceReadMode } from "./workspace-table-registry"
+import { resetWorkspaceTableRegistry } from "./workspace-table-registry"
 
 const WORKSPACE = "ws_1"
 
@@ -103,7 +103,6 @@ describe("actor lookup", () => {
     await db.bots.clear()
     await db.workspaceMetadata.clear()
     await db.streams.clear()
-    setWorkspaceReadMode("shared")
   })
 
   afterEach(() => {
@@ -175,8 +174,7 @@ describe("actor lookup", () => {
     await waitFor(() => expect(result.current.getActorName("persona_1", "persona")).toBe("Ariadne"))
   })
 
-  it("each consumer keeps its own lookup identity across a re-render when sharing is off", async () => {
-    setWorkspaceReadMode("off")
+  it("a consumer keeps its lookup identity across a re-render", async () => {
     await db.workspaceUsers.put(makeUser("usr_1", "Ada"))
     await db.workspaceMetadata.put(makeMetadata())
     const seen: Array<[unknown, unknown]> = []
@@ -198,7 +196,6 @@ describe("actor lookup", () => {
   })
 
   it("the lookup build count is bounded by the consumer count and does not grow on re-render", async () => {
-    setWorkspaceReadMode("off")
     await db.workspaceUsers.put(makeUser("usr_1", "Ada"))
     await db.workspaceMetadata.put(makeMetadata())
     const time = vi.fn((_name: string) => () => {})
@@ -219,12 +216,11 @@ describe("actor lookup", () => {
     rerender(<TwoConsumers tick={2} seen={seen} />)
     await findByText("Ada-Ada-2")
 
-    // One sample per emoji-index build (the only producer): two consumers each
-    // build their own while the rows resolve — a per-consumer constant, not a
-    // per-render one.
+    // One sample per emoji-index build (the only producer): both consumers read
+    // the one shared entry, so the index is built once while the rows resolve —
+    // a constant, not a per-render or per-consumer cost.
     expect({ settled, grew: builds() - settled }).toEqual({ settled, grew: 0 })
-    // One emoji-index build per consumer, and nothing else samples this timer.
-    expect(settled).toBe(2)
+    expect(settled).toBe(1)
   })
 
   it("an unknown actor id falls back exactly as before", async () => {

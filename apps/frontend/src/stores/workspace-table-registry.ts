@@ -67,17 +67,9 @@ const WORKSPACE_TABLE_QUERIES: Record<WorkspaceTableKey, TableQuery> = {
   metadata: async (workspaceId) => oneRow(await db.workspaceMetadata.get(workspaceId)),
 }
 
-/** `shared` = one live query per (workspace, table); `off` = one per subscriber, as before the registry. */
-export type WorkspaceReadMode = "shared" | "off"
-
 interface WorkspaceTableEntry {
   workspaceId: string
   tableKey: WorkspaceTableKey
-  // Set from the key form at creation, not re-derived from the current mode: a
-  // token-keyed entry can outlive an off→shared flip inside the teardown grace,
-  // and `findSharedRowWorkspace` must not report ownership under a key a
-  // tokenless reader cannot resolve.
-  shared: boolean
   rows: IdentifiedRow[] | undefined
   byId: Map<string, IdentifiedRow>
   resolved: boolean
@@ -92,7 +84,6 @@ interface WorkspaceTableEntry {
 interface RegistrationBase {
   workspaceId: string
   tableKey: WorkspaceTableKey
-  token: number
   listener: () => void
   entryKey: string
 }
@@ -107,18 +98,14 @@ type Registration = (RegistrationBase & { kind: "table" }) | (RegistrationBase &
 // rows. A context provider would re-render its whole subtree on every table
 // change — which is the cost this exists to remove.
 const entries = new Map<string, WorkspaceTableEntry>()
-// Keyed by an internal registration id, not by the consumer token: one token can
-// hold several registrations, and `unsubscribe` must resolve ITS entry key here
-// at call time — a captured key goes stale the moment a mode flip re-keys it,
-// which leaks the listener and pins `refCount` for the session.
+// Keyed by an internal registration id: one consumer can hold several
+// registrations, and `unsubscribe` must resolve ITS entry here at call time.
 const registrations = new Map<number, Registration>()
 
 // Matches `RAIL_TEARDOWN_GRACE_MS`: a remount unsubscribes before it
 // re-subscribes, and tearing the query down in between would re-read the table.
 const TABLE_TEARDOWN_GRACE_MS = 5_000
 
-let mode: WorkspaceReadMode = "off"
-let nextToken = 1
 let nextRegistrationId = 1
 let lastMarkedLiveEntries = -1
 
@@ -130,41 +117,15 @@ let lastMarkedLiveEntries = -1
  */
 const COMPARE_ALL_KEYS: ReadonlySet<string> = new Set()
 
-/** A stable token for one consumer, so the `off` mode can key a private entry per subscriber. */
-export function allocateWorkspaceTableToken(): number {
-  return nextToken++
-}
-
 let emissionCounter = 0
 
-function sharedEntryKeyFor(workspaceId: string, tableKey: WorkspaceTableKey): string {
+function entryKeyFor(workspaceId: string, tableKey: WorkspaceTableKey): string {
   return `${workspaceId}|${tableKey}`
-}
-
-function entryKeyFor(workspaceId: string, tableKey: WorkspaceTableKey, token: number): string {
-  return mode === "shared" ? sharedEntryKeyFor(workspaceId, tableKey) : `${workspaceId}|${tableKey}|${token}`
 }
 
 function applyEmission(entryKey: string, incoming: IdentifiedRow[]): void {
   const entry = entries.get(entryKey)
   if (!entry) return
-
-  // Private (token-keyed) entries have exactly one consumer and match the
-  // pre-registry useLiveQuery behaviour: fresh rows, notify on every emission.
-  // The per-row semantic compare would be pure added cost there — for the
-  // metadata singleton it deep-walks the ~356KB emoji row once per consumer
-  // per reaction, and the rows genuinely changed so everyone re-renders anyway.
-  if (entryKey.split("|").length === 3) {
-    entry.byId = new Map(incoming.map((row) => [row.id, row]))
-    entry.rows = incoming
-    entry.resolved = true
-    entry.emissionSeq = ++emissionCounter
-    for (const notify of entry.listeners) notify()
-    for (const keyed of entry.keyListeners.values()) {
-      for (const notify of keyed) notify()
-    }
-    return
-  }
 
   const previous = entry.rows
   const byId = new Map<string, IdentifiedRow>()
@@ -217,23 +178,13 @@ function liveEntryCount(): number {
 }
 
 function markLiveEntries(): void {
-  // The mark measures the shared-arm subscription economy. In `off` mode the
-  // count tracks consumer mounts (~700 per window) — emitting it would flood
-  // the 2000-sample capture ring and evict the marks the A/B compares, and
-  // liveEntryCount() itself is O(entries) on a hot path.
-  if (mode !== "shared") return
   const count = liveEntryCount()
   if (count === lastMarkedLiveEntries) return
   lastMarkedLiveEntries = count
   perfCapture.getPerfCapture().mark("store.tableSubscriptions", count)
 }
 
-function ensureEntry(
-  entryKey: string,
-  workspaceId: string,
-  tableKey: WorkspaceTableKey,
-  seed?: WorkspaceTableEntry
-): WorkspaceTableEntry {
+function ensureEntry(entryKey: string, workspaceId: string, tableKey: WorkspaceTableKey): WorkspaceTableEntry {
   const existing = entries.get(entryKey)
   if (existing) {
     if (existing.teardown) {
@@ -247,7 +198,6 @@ function ensureEntry(
   const created: WorkspaceTableEntry = {
     workspaceId,
     tableKey,
-    shared: entryKey === sharedEntryKeyFor(workspaceId, tableKey),
     rows: undefined,
     byId: new Map(),
     resolved: false,
@@ -261,12 +211,6 @@ function ensureEntry(
   // Register BEFORE subscribing so a synchronous first emission finds the entry;
   // the callback re-reads it from the map, so a late emission after teardown is
   // a no-op.
-  if (seed?.resolved) {
-    created.rows = seed.rows
-    created.byId = new Map(seed.byId)
-    created.resolved = true
-    created.emissionSeq = seed.emissionSeq
-  }
   entries.set(entryKey, created)
   created.subscription = liveQuery(() => WORKSPACE_TABLE_QUERIES[tableKey](workspaceId)).subscribe((rows) =>
     applyEmission(entryKey, rows)
@@ -275,57 +219,33 @@ function ensureEntry(
   return created
 }
 
-function releaseEntry(entryKey: string, immediate: boolean): void {
+function releaseEntry(entryKey: string): void {
   const entry = entries.get(entryKey)
   if (!entry) return
   if (entry.refCount > 0 || entry.listeners.size > 0 || entry.keyListeners.size > 0) return
-  // Private (token-keyed) entries tear down immediately: their one consumer is
-  // gone, nobody else can adopt them, and the grace window would keep a
-  // whole-table liveQuery re-reading for 5s per unmounted consumer — a
-  // behaviour change vs the pre-registry useLiveQuery cleanup in the arm every
-  // user ships with. A StrictMode remount just re-creates the private query.
-  if (immediate) {
-    if (entry.teardown) clearTimeout(entry.teardown)
-    entry.subscription.unsubscribe()
-    entries.delete(entryKey)
-    markLiveEntries()
-    return
-  }
   if (entry.teardown) return
-  // Private (token-keyed) entries get a zero-delay grace: their one consumer is
-  // gone and nobody else can adopt them, so the 5s window would keep a
-  // whole-table liveQuery re-reading per unmounted consumer — a behaviour
-  // change vs the pre-registry useLiveQuery cleanup in the default arm. Zero
-  // delay still absorbs a same-task unsubscribe/resubscribe (StrictMode
-  // remount): the callback re-checks liveness and aborts.
-  const graceMs = entryKey.split("|").length === 3 ? 0 : TABLE_TEARDOWN_GRACE_MS
   entry.teardown = setTimeout(() => {
     const live = entries.get(entryKey)
     if (!live || live.refCount > 0 || live.listeners.size > 0 || live.keyListeners.size > 0) return
     live.subscription.unsubscribe()
     entries.delete(entryKey)
     markLiveEntries()
-  }, graceMs)
+  }, TABLE_TEARDOWN_GRACE_MS)
   markLiveEntries()
 }
 
-/**
- * Subscribe one consumer to a workspace table. `token` comes from
- * {@link allocateWorkspaceTableToken} and must be stable for the consumer's
- * lifetime — in `off` mode it is what keeps the subscription private.
- */
+/** Subscribe one consumer to a workspace table. */
 export function subscribeWorkspaceTable(
   workspaceId: string,
   tableKey: WorkspaceTableKey,
-  token: number,
   listener: () => void
 ): () => void {
-  const entryKey = entryKeyFor(workspaceId, tableKey, token)
+  const entryKey = entryKeyFor(workspaceId, tableKey)
   const entry = ensureEntry(entryKey, workspaceId, tableKey)
   entry.listeners.add(listener)
   entry.refCount += 1
   const registrationId = nextRegistrationId++
-  registrations.set(registrationId, { kind: "table", workspaceId, tableKey, token, listener, entryKey })
+  registrations.set(registrationId, { kind: "table", workspaceId, tableKey, listener, entryKey })
 
   return () => {
     const registration = registrations.get(registrationId)
@@ -335,24 +255,18 @@ export function subscribeWorkspaceTable(
     if (!current) return
     current.listeners.delete(listener)
     current.refCount -= 1
-    if (current.refCount <= 0) releaseEntry(registration.entryKey, false)
+    if (current.refCount <= 0) releaseEntry(registration.entryKey)
   }
 }
 
-/** Subscribe to one row of a shared table, so a change to row X wakes only X's readers (D6). */
+/** Subscribe to one row of a table, so a change to row X wakes only X's readers (D6). */
 export function subscribeWorkspaceTableRow(
   workspaceId: string,
   tableKey: WorkspaceTableKey,
   rowId: string,
-  token: number,
   listener: () => void
 ): () => void {
-  // Row reads are a shared-mode feature: a shared→off flip landing between a
-  // reader's render and this subscribe effect would otherwise mint one private
-  // whole-table query per reader that no drop machinery unwinds. The off arm's
-  // consumer falls back to its own live query.
-  if (mode !== "shared") return () => {}
-  const entryKey = entryKeyFor(workspaceId, tableKey, token)
+  const entryKey = entryKeyFor(workspaceId, tableKey)
   const entry = ensureEntry(entryKey, workspaceId, tableKey)
   let keyed = entry.keyListeners.get(rowId)
   if (!keyed) {
@@ -362,7 +276,7 @@ export function subscribeWorkspaceTableRow(
   keyed.add(listener)
   entry.refCount += 1
   const registrationId = nextRegistrationId++
-  registrations.set(registrationId, { kind: "row", workspaceId, tableKey, rowId, token, listener, entryKey })
+  registrations.set(registrationId, { kind: "row", workspaceId, tableKey, rowId, listener, entryKey })
 
   return () => {
     const registration = registrations.get(registrationId)
@@ -376,43 +290,35 @@ export function subscribeWorkspaceTableRow(
       if (set.size === 0) current.keyListeners.delete(rowId)
     }
     current.refCount -= 1
-    if (current.refCount <= 0) releaseEntry(registration.entryKey, false)
+    if (current.refCount <= 0) releaseEntry(registration.entryKey)
   }
 }
 
 /** The table's rows, or `undefined` while the first read is in flight (`useLiveQuery`'s contract). */
 export function getWorkspaceTableSnapshot<K extends WorkspaceTableKey>(
   workspaceId: string,
-  tableKey: K,
-  token: number
+  tableKey: K
 ): WorkspaceTableRowTypes[K][] | undefined {
-  const entry = entries.get(entryKeyFor(workspaceId, tableKey, token))
+  const entry = entries.get(entryKeyFor(workspaceId, tableKey))
   return entry?.rows as WorkspaceTableRowTypes[K][] | undefined
 }
 
 export function getWorkspaceTableRow<K extends WorkspaceTableKey>(
   workspaceId: string,
   tableKey: K,
-  rowId: string,
-  token: number
+  rowId: string
 ): WorkspaceTableRowTypes[K] | undefined {
-  const entry = entries.get(entryKeyFor(workspaceId, tableKey, token))
+  const entry = entries.get(entryKeyFor(workspaceId, tableKey))
   return entry?.byId.get(rowId) as WorkspaceTableRowTypes[K] | undefined
 }
 
 /**
- * The workspace whose **shared** entry currently holds `rowId`, or `undefined`.
+ * The workspace whose entry currently holds `rowId`, or `undefined`.
  *
  * For consumers that know a row id but not its workspace (`useStreamFromStore`).
- * Only shared entries qualify: with the mode `off` an entry is keyed by its
- * subscriber's token, so a tokenless consumer would open a private live query of
- * its own — the very cost the fast path removes — and the caller must fall back
- * to a per-key read instead (D5, D7).
  */
 export function findSharedRowWorkspace(tableKey: WorkspaceTableKey, rowId: string): string | undefined {
-  if (mode !== "shared") return undefined
   for (const entry of entries.values()) {
-    if (!entry.shared) continue
     if (entry.tableKey !== tableKey) continue
     if (entry.byId.has(rowId)) return entry.workspaceId
   }
@@ -420,116 +326,15 @@ export function findSharedRowWorkspace(tableKey: WorkspaceTableKey, rowId: strin
 }
 
 /**
- * True when the shared (workspace, table) entry is live and has resolved.
+ * True when the (workspace, table) entry is live and has resolved.
  *
  * Lets a reader tell a row's genuine removal — that entry still answering, just
- * without the id — from an ownership drop (mode flip, teardown), where the row
- * is unchanged and only the reader's route to it went away.
+ * without the id — from a teardown, where the row is unchanged and only the
+ * reader's route to it went away.
  */
 export function hasResolvedSharedEntry(workspaceId: string, tableKey: WorkspaceTableKey): boolean {
-  if (mode !== "shared") return false
-  const entry = entries.get(sharedEntryKeyFor(workspaceId, tableKey))
-  return Boolean(entry?.shared && entry.resolved && !entry.teardown)
-}
-
-function detach(entry: WorkspaceTableEntry, registration: Registration): void {
-  if (registration.kind === "table") {
-    entry.listeners.delete(registration.listener)
-  } else {
-    const set = entry.keyListeners.get(registration.rowId)
-    if (set) {
-      set.delete(registration.listener)
-      if (set.size === 0) entry.keyListeners.delete(registration.rowId)
-    }
-  }
-  entry.refCount -= 1
-}
-
-function attach(entry: WorkspaceTableEntry, registration: Registration): void {
-  if (registration.kind === "table") {
-    entry.listeners.add(registration.listener)
-  } else {
-    let keyed = entry.keyListeners.get(registration.rowId)
-    if (!keyed) {
-      keyed = new Set()
-      entry.keyListeners.set(registration.rowId, keyed)
-    }
-    keyed.add(registration.listener)
-  }
-  entry.refCount += 1
-}
-
-function visibleSnapshot(entry: WorkspaceTableEntry | undefined, registration: Registration): unknown {
-  if (!entry) return undefined
-  return registration.kind === "table" ? entry.rows : entry.byId.get(registration.rowId)
-}
-
-/**
- * Flip sharing on or off. Every live **table** registration is moved to its new
- * entry key synchronously, so the flag can arrive or change mid-session without
- * a single hook count changing (D5).
- *
- * Row registrations are DROPPED instead of moved. They belong to readers that
- * found the entry by id rather than by token (`useStreamFromStore`), and there
- * are several per rendered message row — migrating them would open one private
- * whole-table live query per registration on the very flip that exists to kill
- * whole-table reads, and the seeded rows being identity-equal means no listener
- * would ever fire to unwind it. Each dropped listener is fired unconditionally
- * so its reader re-renders, finds no shared owner, and falls back to its own
- * per-key read; the registration is deleted, so its `unsubscribe` closure is a
- * no-op and a fresh subscribe from the same reader starts clean.
- *
- * The new entry is seeded from the most recently emitted resolved predecessor
- * for the same (workspace, table): the query is identical, but private entries
- * emit independently, so an older resolved snapshot can still be sitting in the
- * map and would republish rolled-back rows. Publishing an unresolved entry
- * instead would regress every consumer to its bootstrap-era cache fallback for a frame — and the flag itself is read
- * through this registry, so an unresolved metadata entry would flip the mode back
- * and loop.
- */
-export function setWorkspaceReadMode(next: WorkspaceReadMode): void {
-  if (next === mode) return
-  const all = [...registrations.entries()]
-  const active = all.filter(([, registration]) => registration.kind === "table")
-  const dropped = all.filter(([, registration]) => registration.kind === "row")
-  const before = new Map<number, unknown>()
-  const seeds = new Map<string, WorkspaceTableEntry>()
-
-  for (const [id, registration] of all) {
-    const entry = entries.get(registration.entryKey)
-    before.set(id, visibleSnapshot(entry, registration))
-    if (!entry) continue
-    detach(entry, registration)
-  }
-  for (const [id] of dropped) registrations.delete(id)
-  for (const entry of entries.values()) {
-    const seedKey = `${entry.workspaceId}|${entry.tableKey}`
-    if (!entry.resolved) continue
-    const held = seeds.get(seedKey)
-    if (!held || entry.emissionSeq > held.emissionSeq) seeds.set(seedKey, entry)
-  }
-
-  mode = next
-
-  for (const [id, registration] of active) {
-    const entryKey = entryKeyFor(registration.workspaceId, registration.tableKey, registration.token)
-    const entry = ensureEntry(
-      entryKey,
-      registration.workspaceId,
-      registration.tableKey,
-      seeds.get(`${registration.workspaceId}|${registration.tableKey}`)
-    )
-    attach(entry, registration)
-    registrations.set(id, { ...registration, entryKey })
-  }
-  for (const [, registration] of all) releaseEntry(registration.entryKey, true)
-
-  for (const [id] of active) {
-    const current = registrations.get(id)
-    if (!current) continue
-    if (visibleSnapshot(entries.get(current.entryKey), current) !== before.get(id)) current.listener()
-  }
-  for (const [, registration] of dropped) registration.listener()
+  const entry = entries.get(entryKeyFor(workspaceId, tableKey))
+  return Boolean(entry?.resolved && !entry.teardown)
 }
 
 /** Live Dexie subscriptions on workspace tables, teardown-grace ones included. */
@@ -544,6 +349,5 @@ export function resetWorkspaceTableRegistry(): void {
   }
   entries.clear()
   registrations.clear()
-  mode = "off"
   lastMarkedLiveEntries = -1
 }

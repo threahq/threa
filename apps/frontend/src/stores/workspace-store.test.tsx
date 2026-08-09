@@ -3,7 +3,7 @@ import { renderHook, act, render, waitFor } from "@testing-library/react"
 import { LabelableResourceTypes } from "@threa/types"
 import { db, type CachedLabelAssignment, type CachedStream, type CachedWorkspaceUser } from "@/db"
 import * as streamNameCache from "@/lib/crypto/stream-name-cache"
-import { resetWorkspaceTableRegistry, setWorkspaceReadMode } from "./workspace-table-registry"
+import { resetWorkspaceTableRegistry } from "./workspace-table-registry"
 import {
   resetWorkspaceStoreCache,
   seedWorkspaceCache,
@@ -240,7 +240,6 @@ describe("workspace store cache subscriptions", () => {
     // Same contract as the case above, re-asserted through the shared registry:
     // an emptied IDB must win over the bootstrap cache, or a socket unassign is
     // masked until the next bootstrap.
-    setWorkspaceReadMode("shared")
     await db.labelAssignments.clear()
     const assignment: CachedLabelAssignment = {
       id: "workspace_1:stream:stream_9:label_9:user_1",
@@ -284,7 +283,6 @@ describe("workspace store cache subscriptions", () => {
   })
 
   it("the decrypted-name overlay is applied once per workspace, not once per consumer", async () => {
-    setWorkspaceReadMode("shared")
     await db.streams.clear()
     const stream: CachedStream = {
       id: "stream_overlay",
