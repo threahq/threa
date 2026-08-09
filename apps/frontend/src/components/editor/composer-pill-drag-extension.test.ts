@@ -180,6 +180,12 @@ describe("composer pill moves", () => {
 })
 
 describe("composer pill drag gestures", () => {
+  it("exposes the active touch drag mode on the editor root", () => {
+    const editor = createPillEditor()
+
+    expect(editor.view.dom).toHaveAttribute("data-composer-pill-drag-mode", "hold-or-selected")
+  })
+
   it("shows only source state and an insertion cursor while a mouse drag is in flight", () => {
     const editor = createPillEditor()
     const source = editor.view.dom.querySelector<HTMLElement>('[data-type="mention"]')!
