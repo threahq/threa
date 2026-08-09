@@ -1,14 +1,20 @@
 import type { Pool } from "pg"
 import { randomUUID } from "node:crypto"
-import { StreamTypes, TitleSources, type EnclaveSessionAssignment, type EnclaveStreamEnvelope } from "@threa/types"
+import {
+  AuthorTypes,
+  StreamTypes,
+  TitleSources,
+  type EnclaveSessionAssignment,
+  type EnclaveStreamEnvelope,
+} from "@threa/types"
 import { TURN_DIGEST_INJECT_COUNT } from "@threa/agent-runtime"
 import { sessionId as newSessionId, eventId, enclaveInvocationId } from "../../lib/id"
 import { logger } from "../../lib/logger"
-import { withTransaction } from "../../db"
+import { withTransaction, type Querier } from "../../db"
 import { OutboxRepository } from "../../lib/outbox"
 import type { StorageProvider } from "../../lib/storage/s3-client"
 import { notifyEnclaveInvocationAvailable } from "./claim-nudge"
-import { StreamEventRepository, StreamPoliciesRepository, StreamRepository } from "../streams"
+import { assertStreamWritable, StreamEventRepository, StreamPoliciesRepository, StreamRepository } from "../streams"
 import { UserRepository } from "../workspaces"
 import type { UserPreferencesService } from "../user-preferences"
 import { E2eStreamActorsRepository, E2eStreamsRepository, StreamE2eKeyWrapsRepository } from "../e2e-streams"
@@ -172,15 +178,70 @@ export class EnclaveClaimService {
 
     for (let i = 0; i < MAX_NO_OP_CLAIMS_PER_POLL; i++) {
       const claimToken = randomUUID()
-      const invocation = await EnclaveInvocationsRepository.claimNext(this.pool, {
-        keyId,
-        claimToken,
-        claimTtlSeconds: ENCLAVE_CLAIM_TTL_SECONDS,
-        maxAttempts: ENCLAVE_CLAIM_MAX_ATTEMPTS,
-      })
-      if (!invocation) return null
+      const accepted = await withTransaction(this.pool, async (tx) => {
+        const candidate = await EnclaveInvocationsRepository.findNextClaimable(tx, {
+          keyId,
+          maxAttempts: ENCLAVE_CLAIM_MAX_ATTEMPTS,
+        })
+        if (!candidate) return { kind: "none" as const }
 
-      const outcome = await this.buildTurn(invocation, keyId, claimToken)
+        const trigger = await MessageRepository.findById(tx, candidate.messageId)
+        if (!trigger || trigger.authorType !== AuthorTypes.USER) {
+          const claimed = await EnclaveInvocationsRepository.claimNext(tx, {
+            keyId,
+            claimToken,
+            claimTtlSeconds: ENCLAVE_CLAIM_TTL_SECONDS,
+            maxAttempts: ENCLAVE_CLAIM_MAX_ATTEMPTS,
+            invocationId: candidate.id,
+          })
+          if (claimed) {
+            await EnclaveInvocationsRepository.failClaimed(tx, {
+              id: claimed.id,
+              keyId,
+              claimToken,
+              errorMessage: "STREAM_READ_ONLY:missing_initiating_user",
+            })
+          }
+          return { kind: "no_op" as const }
+        }
+
+        let denialReason: string | null = null
+        try {
+          await assertStreamWritable(tx, {
+            workspaceId: candidate.workspaceId,
+            streamId: candidate.streamId,
+            principal: { kind: "user", userId: trigger.authorId },
+          })
+        } catch (error) {
+          const denial = error as { code?: string; details?: { reason?: string } }
+          if (denial.code !== "STREAM_READ_ONLY" && denial.code !== "STREAM_NOT_FOUND") throw error
+          denialReason =
+            denial.code === "STREAM_NOT_FOUND" ? "not_a_member" : (denial.details?.reason ?? "not_a_member")
+        }
+
+        const invocation = await EnclaveInvocationsRepository.claimNext(tx, {
+          keyId,
+          claimToken,
+          claimTtlSeconds: ENCLAVE_CLAIM_TTL_SECONDS,
+          maxAttempts: ENCLAVE_CLAIM_MAX_ATTEMPTS,
+          invocationId: candidate.id,
+        })
+        if (!invocation) return { kind: "none" as const }
+        if (denialReason) {
+          await EnclaveInvocationsRepository.failClaimed(tx, {
+            id: invocation.id,
+            keyId,
+            claimToken,
+            errorMessage: `STREAM_READ_ONLY:${denialReason}`,
+          })
+          return { kind: "no_op" as const }
+        }
+        return { kind: "claimed" as const, invocation }
+      })
+      if (accepted.kind === "none") return null
+      if (accepted.kind === "no_op") continue
+
+      const outcome = await this.buildTurn(accepted.invocation, keyId, claimToken)
       if (outcome.kind === "assignment") return outcome.assignment
       if (outcome.kind === "defer") return null
       // No-op claim — the row was completed in place; take the next one.
@@ -471,6 +532,35 @@ export class EnclaveClaimService {
     // the payload carries only ids + the persona name. last_seen_sequence is
     // an inert placeholder here; mid-turn reconsideration is a later slice.
     const session = await withTransaction(pool, async (tx) => {
+      const currentTrigger = await MessageRepository.findById(tx, triggerId)
+      if (!currentTrigger || currentTrigger.authorType !== "user") {
+        await EnclaveInvocationsRepository.failClaimed(tx, {
+          id: invocation.id,
+          keyId,
+          claimToken,
+          errorMessage: "STREAM_READ_ONLY:missing_initiating_user",
+        })
+        return null
+      }
+      try {
+        await assertStreamWritable(tx, {
+          workspaceId,
+          streamId,
+          principal: { kind: "user", userId: currentTrigger.authorId },
+        })
+      } catch (error) {
+        const denial = error as { code?: string; details?: { reason?: string } }
+        if (denial.code !== "STREAM_READ_ONLY" && denial.code !== "STREAM_NOT_FOUND") throw error
+        await EnclaveInvocationsRepository.failClaimed(tx, {
+          id: invocation.id,
+          keyId,
+          claimToken,
+          errorMessage: `STREAM_READ_ONLY:${
+            denial.code === "STREAM_NOT_FOUND" ? "not_a_member" : (denial.details?.reason ?? "not_a_member")
+          }`,
+        })
+        return null
+      }
       const created = await AgentSessionRepository.insertRunningOrSkip(tx, {
         id: sid,
         streamId,
@@ -654,7 +744,7 @@ export class EnclaveClaimService {
  * (idempotent insert, existing row wins).
  */
 export async function enqueueEnclaveInvocation(
-  db: Pool,
+  db: Querier,
   params: {
     workspaceId: string
     streamId: string

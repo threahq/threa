@@ -12,7 +12,7 @@ import { Pool } from "pg"
 import { withTransaction } from "../../src/db"
 import { withTestTransaction, addTestMember, testMessageContent } from "./setup"
 import { WorkspaceRepository } from "../../src/features/workspaces"
-import { StreamService, StreamRepository, type Stream } from "../../src/features/streams"
+import { StreamService, StreamRepository, StreamMemberRepository, type Stream } from "../../src/features/streams"
 import { getEffectiveDisplayName, formatParticipantNames } from "../../src/features/streams/display-name"
 import { setupTestDatabase } from "./setup"
 import { messageId, streamId, userId, workspaceId } from "../../src/lib/id"
@@ -326,14 +326,19 @@ describe("Dynamic plaintext stream naming", () => {
   }
 
   test("renames an unnamed scratchpad and records generated provenance", async () => {
-    const { wsId, stream } = await createScratchpad()
+    const { ownerId, wsId, stream } = await createScratchpad()
     const service = buildService(async (input) => {
       expect(input).toMatchObject({ checkpoint: 1, forced: false, currentTitle: null, messageCount: 1 })
       expect(input.context).toContain("lunar gardening")
       return { action: "rename", title: "Lunar gardening" }
     })
 
-    expect(await service.evaluate({ workspaceId: wsId, targetKind: "stream", targetId: stream.id }, "job_1")).toEqual({
+    expect(
+      await service.evaluate(
+        { workspaceId: wsId, targetKind: "stream", targetId: stream.id, initiatingUserId: ownerId },
+        "job_1"
+      )
+    ).toEqual({
       status: "evaluated",
       action: "rename",
       revision: 1,
@@ -359,7 +364,10 @@ describe("Dynamic plaintext stream naming", () => {
     })
 
     expect(
-      await service.evaluate({ workspaceId: wsId, targetKind: "stream", targetId: stream.id }, "job_manual")
+      await service.evaluate(
+        { workspaceId: wsId, targetKind: "stream", targetId: stream.id, initiatingUserId: ownerId },
+        "job_manual"
+      )
     ).toEqual({ status: "stale" })
     expect(await StreamRepository.findById(pool, stream.id)).toMatchObject({
       displayName: "My garden notes",
@@ -369,7 +377,7 @@ describe("Dynamic plaintext stream naming", () => {
   })
 
   test("two jobs for one checkpoint make one model call", async () => {
-    const { wsId, stream } = await createScratchpad()
+    const { ownerId, wsId, stream } = await createScratchpad()
     let calls = 0
     let startEvaluation: (() => void) | undefined
     const evaluationStarted = new Promise<void>((resolve) => {
@@ -387,9 +395,15 @@ describe("Dynamic plaintext stream naming", () => {
       return { action: "rename", title: "One model title" }
     }, scheduled)
 
-    const first = service.evaluate({ workspaceId: wsId, targetKind: "stream", targetId: stream.id }, "job_a")
+    const first = service.evaluate(
+      { workspaceId: wsId, targetKind: "stream", targetId: stream.id, initiatingUserId: ownerId },
+      "job_a"
+    )
     await evaluationStarted
-    const second = await service.evaluate({ workspaceId: wsId, targetKind: "stream", targetId: stream.id }, "job_b")
+    const second = await service.evaluate(
+      { workspaceId: wsId, targetKind: "stream", targetId: stream.id, initiatingUserId: ownerId },
+      "job_b"
+    )
     finishEvaluation?.()
     await first
 
@@ -407,6 +421,13 @@ describe("Dynamic plaintext stream naming", () => {
     const threadId = streamId()
     const anchorId = messageId()
     await withTransaction(pool, async (client) => {
+      await WorkspaceRepository.insert(client, {
+        id: wsId,
+        name: "Dynamic Thread Naming Workspace",
+        slug: `dynamic-thread-naming-${wsId}`,
+        createdBy: ownerId,
+      })
+      await addTestMember(client, wsId, ownerId)
       await StreamRepository.insert(client, {
         id: rootId,
         workspaceId: wsId,
@@ -416,6 +437,7 @@ describe("Dynamic plaintext stream naming", () => {
         companionMode: "off",
         createdBy: ownerId,
       })
+      await StreamMemberRepository.insert(client, rootId, ownerId)
       await MessageRepository.insert(client, {
         id: anchorId,
         streamId: rootId,
@@ -453,12 +475,64 @@ describe("Dynamic plaintext stream naming", () => {
     })
 
     expect(
-      await service.evaluate({ workspaceId: wsId, targetKind: "stream", targetId: threadId }, "job_thread")
+      await service.evaluate(
+        { workspaceId: wsId, targetKind: "stream", targetId: threadId, initiatingUserId: ownerId },
+        "job_thread"
+      )
     ).toMatchObject({ status: "evaluated", action: "rename" })
   })
 
+  test("an archive during provider evaluation prevents the generated title CAS", async () => {
+    const { ownerId, wsId, stream } = await createScratchpad()
+    let providerStarted!: () => void
+    const started = new Promise<void>((resolve) => {
+      providerStarted = resolve
+    })
+    let releaseProvider!: () => void
+    const release = new Promise<void>((resolve) => {
+      releaseProvider = resolve
+    })
+    const service = buildService(async () => {
+      providerStarted()
+      await release
+      return { action: "rename", title: "Must not land" }
+    })
+
+    const evaluation = service.evaluate(
+      { workspaceId: wsId, targetKind: "stream", targetId: stream.id, initiatingUserId: ownerId },
+      "job_archive_race"
+    )
+    await started
+    await pool.query("UPDATE streams SET archived_at=NOW() WHERE id=$1", [stream.id])
+    releaseProvider()
+
+    expect(await evaluation).toEqual({ status: "stale" })
+    expect(await StreamRepository.findById(pool, stream.id)).toMatchObject({
+      displayName: null,
+      displayNameRevision: 0,
+    })
+  })
+
+  test("an already archived target skips the dynamic-naming provider", async () => {
+    const { ownerId, wsId, stream } = await createScratchpad()
+    await pool.query("UPDATE streams SET archived_at=NOW() WHERE id=$1", [stream.id])
+    let providerCalls = 0
+    const service = buildService(async () => {
+      providerCalls += 1
+      return { action: "rename", title: "Must not run" }
+    })
+
+    expect(
+      await service.evaluate(
+        { workspaceId: wsId, targetKind: "stream", targetId: stream.id, initiatingUserId: ownerId },
+        "job_pre_provider_archive"
+      )
+    ).toEqual({ status: "protected" })
+    expect(providerCalls).toBe(0)
+  })
+
   test("waits for the five-second quiet deadline before claiming", async () => {
-    const { wsId, stream } = await createScratchpad()
+    const { ownerId, wsId, stream } = await createScratchpad()
     let calls = 0
     const scheduled: Date[] = []
     const service = new DynamicNamingService(
@@ -477,7 +551,10 @@ describe("Dynamic plaintext stream naming", () => {
       }
     )
 
-    const result = await service.evaluate({ workspaceId: wsId, targetKind: "stream", targetId: stream.id }, "job_quiet")
+    const result = await service.evaluate(
+      { workspaceId: wsId, targetKind: "stream", targetId: stream.id, initiatingUserId: ownerId },
+      "job_quiet"
+    )
     expect({ status: result.status, calls, scheduled: scheduled.length }).toEqual({
       status: "requeued",
       calls: 0,
@@ -492,7 +569,12 @@ describe("Dynamic plaintext stream naming", () => {
       checkpoints.push(input.checkpoint)
       return input.checkpoint === 1 ? { action: "rename", title: "Lunar garden" } : { action: "keep" }
     })
-    const ref = { workspaceId: wsId, targetKind: "stream" as const, targetId: stream.id }
+    const ref = {
+      workspaceId: wsId,
+      targetKind: "stream" as const,
+      targetId: stream.id,
+      initiatingUserId: ownerId,
+    }
 
     await service.evaluate(ref, "job_cp1")
     await withTransaction(pool, async (client) => {
@@ -527,7 +609,7 @@ describe("Dynamic plaintext stream naming", () => {
   })
 
   test("an old-path generated title starts refinement after checkpoint 1", async () => {
-    const { wsId, stream } = await createScratchpad(3)
+    const { ownerId, wsId, stream } = await createScratchpad(3)
     await StreamRepository.updateDisplayName(pool, {
       workspaceId: wsId,
       streamId: stream.id,
@@ -540,7 +622,10 @@ describe("Dynamic plaintext stream naming", () => {
       return { action: "keep" }
     })
 
-    await service.evaluate({ workspaceId: wsId, targetKind: "stream", targetId: stream.id }, "job_seed")
+    await service.evaluate(
+      { workspaceId: wsId, targetKind: "stream", targetId: stream.id, initiatingUserId: ownerId },
+      "job_seed"
+    )
     expect(observedCheckpoint).toBe(3)
   })
 })

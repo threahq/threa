@@ -97,6 +97,10 @@ const resolveEffectiveStreamAdapter: ResolveEffectiveStream = async (db, source)
   }
 }
 
+type MessageMutationAuthority =
+  | { kind: "internal" }
+  | { kind: "principal"; principal: StreamWritePrincipal; presentationOwnerId?: string }
+
 export interface MessageCreatedPayload {
   messageId: string
   contentJson: JSONContent
@@ -437,7 +441,13 @@ export interface ConversationAssigner {
    *  send response for an optimistic board card. */
   assignInTransaction(
     client: PoolClient,
-    params: { workspaceId: string; message: Message; directive: ConversationDirective }
+    params: {
+      workspaceId: string
+      message: Message
+      directive: ConversationDirective
+      /** Human who initiated this explicit structural assignment. */
+      initiatingUserId?: string
+    }
   ): Promise<string>
 
   /** Attaches an UNDECLARED message to a cheap structural candidate, marked
@@ -585,7 +595,7 @@ export class EventService {
   }
 
   private async createMessageReturningConversationWithAuthority(
-    authority: { kind: "internal" } | { kind: "principal"; principal: StreamWritePrincipal },
+    authority: MessageMutationAuthority,
     params: CreateMessageParams,
     onCreated?: (client: PoolClient, message: Message) => Promise<void>
   ): Promise<{ message: Message; conversationId?: string }> {
@@ -619,9 +629,44 @@ export class EventService {
     }
   }
 
+  async createGeneratedMessage(principal: StreamWritePrincipal, params: CreateMessageParams): Promise<Message> {
+    return withTransaction(
+      this.pool,
+      async (client) => (await this.createMessageForPrincipalInTransaction(client, principal, params)).message
+    )
+  }
+
+  async createMessageForPrincipalInTransaction(
+    client: PoolClient,
+    principal: StreamWritePrincipal,
+    params: CreateMessageParams
+  ): Promise<{ message: Message; conversationId?: string; created: boolean }> {
+    if (params.clientMessageId) {
+      const existing = await MessageRepository.findByClientMessageId(client, params.streamId, params.clientMessageId)
+      if (existing) {
+        await resolveLockedStreamAuthorities(client, {
+          workspaceId: params.workspaceId,
+          streamIds: [existing.streamId],
+          principal,
+        })
+        if (existing.authorId !== params.authorId || existing.authorType !== params.authorType) {
+          throw new HttpError("Cannot return another actor's message", { status: 403, code: "FORBIDDEN" })
+        }
+        return { message: existing, created: false }
+      }
+    }
+    await assertStreamWritable(client, {
+      workspaceId: params.workspaceId,
+      streamId: params.streamId,
+      principal,
+    })
+    return this.createMessageInTransaction(client, params, principal.kind === "user" ? principal.userId : undefined)
+  }
+
   async createMessageInTransaction(
     client: PoolClient,
-    params: CreateMessageParams
+    params: CreateMessageParams,
+    initiatingUserId?: string
   ): Promise<{ message: Message; conversationId?: string; created: boolean }> {
     // Fast path for sequential retries: return the existing message without
     // writes. No conversation id — the first send already surfaced it; a retry
@@ -1023,6 +1068,7 @@ export class EventService {
         workspaceId: params.workspaceId,
         message,
         directive: params.conversation,
+        initiatingUserId,
       })
     } else if (this.conversationAssigner) {
       // Undeclared: attach to a structural candidate, marked settling, so the
@@ -1067,7 +1113,7 @@ export class EventService {
   }
 
   private async _createMessageTxn(
-    authority: { kind: "internal" } | { kind: "principal"; principal: StreamWritePrincipal },
+    authority: MessageMutationAuthority,
     params: CreateMessageParams,
     onCreated?: (client: PoolClient, message: Message) => Promise<void>
   ): Promise<{ message: Message; conversationId?: string; created: boolean }> {
@@ -1105,7 +1151,11 @@ export class EventService {
           principal: authority.principal,
         })
       }
-      const result = await this.createMessageInTransaction(client, gatedParams)
+      const result = await this.createMessageInTransaction(
+        client,
+        gatedParams,
+        authority.kind === "principal" && authority.principal.kind === "user" ? authority.principal.userId : undefined
+      )
       if (result.created) await onCreated?.(client, result.message)
       return result
     })
@@ -1135,8 +1185,12 @@ export class EventService {
     return this.editMessageWithAuthority({ kind: "principal", principal }, params)
   }
 
+  async editGeneratedMessage(principal: StreamWritePrincipal, params: EditMessageParams): Promise<Message | null> {
+    return this.editMessageWithAuthority({ kind: "principal", principal, presentationOwnerId: params.actorId }, params)
+  }
+
   private async editMessageWithAuthority(
-    authority: { kind: "internal" } | { kind: "principal"; principal: StreamWritePrincipal },
+    authority: MessageMutationAuthority,
     params: EditMessageParams
   ): Promise<Message | null> {
     let streamId =
@@ -1168,7 +1222,9 @@ export class EventService {
         if (!existing || existing.deletedAt) return { kind: "done" as const, value: null }
         if (existing.streamId !== streamId) return { kind: "retry" as const, streamId: existing.streamId }
         if (authority.kind === "principal") {
-          const ownerId = authority.principal.kind === "user" ? authority.principal.userId : authority.principal.botId
+          const ownerId =
+            authority.presentationOwnerId ??
+            (authority.principal.kind === "user" ? authority.principal.userId : authority.principal.botId)
           if (existing.authorId !== ownerId) {
             throw new HttpError("Cannot modify another actor's message", { status: 403, code: "FORBIDDEN" })
           }
@@ -1430,8 +1486,15 @@ export class EventService {
     return this.deleteMessageWithAuthority({ kind: "principal", principal }, params)
   }
 
+  async deleteGeneratedMessage(principal: StreamWritePrincipal, params: DeleteMessageParams): Promise<Message | null> {
+    return this.deleteMessageWithAuthority(
+      { kind: "principal", principal, presentationOwnerId: params.actorId },
+      params
+    )
+  }
+
   private async deleteMessageWithAuthority(
-    authority: { kind: "internal" } | { kind: "principal"; principal: StreamWritePrincipal },
+    authority: MessageMutationAuthority,
     params: DeleteMessageParams
   ): Promise<Message | null> {
     let streamId =
@@ -1452,7 +1515,9 @@ export class EventService {
         if (!existing || existing.deletedAt) return { kind: "done" as const, value: null }
         if (existing.streamId !== streamId) return { kind: "retry" as const, streamId: existing.streamId }
         if (authority.kind === "principal") {
-          const ownerId = authority.principal.kind === "user" ? authority.principal.userId : authority.principal.botId
+          const ownerId =
+            authority.presentationOwnerId ??
+            (authority.principal.kind === "user" ? authority.principal.userId : authority.principal.botId)
           if (existing.authorId !== ownerId) {
             throw new HttpError("Cannot modify another actor's message", { status: 403, code: "FORBIDDEN" })
           }
@@ -1528,7 +1593,7 @@ export class EventService {
   }
 
   private async moveMessagesToThreadWithAuthority(
-    authority: { kind: "internal" } | { kind: "principal"; principal: StreamWritePrincipal },
+    authority: MessageMutationAuthority,
     params: MoveMessagesToThreadParams
   ): Promise<MoveMessagesToThreadResult> {
     const uniqueMessageIds = Array.from(new Set(params.messageIds))
@@ -2144,7 +2209,7 @@ export class EventService {
   }
 
   private async addReactionWithAuthority(
-    authority: { kind: "internal" } | { kind: "principal"; principal: StreamWritePrincipal },
+    authority: MessageMutationAuthority,
     params: AddReactionParams
   ): Promise<Message | null> {
     const actorType = params.actorType ?? AuthorTypes.USER
@@ -2218,7 +2283,7 @@ export class EventService {
   }
 
   private async removeReactionWithAuthority(
-    authority: { kind: "internal" } | { kind: "principal"; principal: StreamWritePrincipal },
+    authority: MessageMutationAuthority,
     params: RemoveReactionParams
   ): Promise<Message | null> {
     const actorType = params.actorType ?? AuthorTypes.USER

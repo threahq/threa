@@ -1,6 +1,6 @@
 import type { Pool } from "pg"
 import { z } from "zod"
-import { withClient, type Querier } from "../../db"
+import { withClient, withTransaction, type Querier } from "../../db"
 import {
   AgentStepTypes,
   AuthorTypes,
@@ -14,7 +14,7 @@ import {
 } from "@threa/types"
 import type { UserPreferencesService } from "../user-preferences"
 import type { WorkspaceIntegrationService } from "../workspace-integrations"
-import { StreamPoliciesRepository, StreamRepository, resolveBriefStreamId } from "../streams"
+import { assertStreamWritable, StreamPoliciesRepository, StreamRepository, resolveBriefStreamId } from "../streams"
 import { MessageRepository, MessageVersionRepository } from "../messaging"
 import { UserRepository } from "../workspaces"
 import { resolveEligibleConversation } from "./companion/conversation-highlight"
@@ -110,9 +110,11 @@ export interface PersonaAgentDeps {
   storage: StorageProvider
   modelRegistry: ModelRegistry
   workspaceIntegrationService?: WorkspaceIntegrationService
+  assertInitiatorWritable?: typeof assertStreamWritable
   tavilyApiKey?: string
   stubResponse?: string
   createMessage: (params: {
+    initiatingUserId: string
     workspaceId: string
     streamId: string
     authorId: string
@@ -139,6 +141,7 @@ export interface PersonaAgentDeps {
     conversation?: ConversationDirective
   }) => Promise<{ id: string }>
   editMessage: (params: {
+    initiatingUserId: string
     workspaceId: string
     streamId: string
     messageId: string
@@ -148,12 +151,14 @@ export interface PersonaAgentDeps {
     accessibleStreamIds?: string[]
   }) => Promise<{ id: string } | null>
   deleteMessage: (params: {
+    initiatingUserId: string
     workspaceId: string
     streamId: string
     messageId: string
     actorId: string
   }) => Promise<{ id: string } | null>
   addReaction: (params: {
+    initiatingUserId: string
     workspaceId: string
     streamId: string
     messageId: string
@@ -161,6 +166,7 @@ export interface PersonaAgentDeps {
     actorId: string
   }) => Promise<{ id: string } | null>
   removeReaction: (params: {
+    initiatingUserId: string
     workspaceId: string
     streamId: string
     messageId: string
@@ -168,6 +174,7 @@ export interface PersonaAgentDeps {
     actorId: string
   }) => Promise<{ id: string } | null>
   createThread: (params: {
+    initiatingUserId: string
     workspaceId: string
     parentStreamId: string
     parentAnchorId: string
@@ -180,6 +187,7 @@ export interface PersonaAgentDeps {
    * follow-ups aren't wired (e.g. some test harnesses), which disables the tool.
    */
   scheduleFollowUp?: (params: {
+    initiatingUserId: string
     workspaceId: string
     streamId: string
     personaId: string
@@ -205,6 +213,7 @@ export interface PersonaAgentDeps {
     followUpId: string
   }) => Promise<import("./tools/tool-deps").CancelFollowUpToolResult>
   updateFollowUp?: (params: {
+    initiatingUserId: string
     workspaceId: string
     streamId: string
     followUpId: string
@@ -230,8 +239,10 @@ export interface PersonaAgentDeps {
    * `update_stream_brief` tool.
    */
   updateBrief?: (params: {
+    initiatingUserId: string
     workspaceId: string
     streamId: string
+    requestedStreamId: string
     personaId: string
     content: string
     reason: string
@@ -245,6 +256,7 @@ export interface PersonaAgentDeps {
    * delegations aren't wired, which disables the `delegate_task` tool.
    */
   delegateTask?: (params: {
+    initiatingUserId: string
     workspaceId: string
     streamId: string
     personaId: string
@@ -257,12 +269,13 @@ export interface PersonaAgentDeps {
     contextRefs: string[]
   }) => Promise<import("./tools/tool-deps").DelegateTaskToolResult>
   /**
-   * Write an agent-authored memo (roadmap 6.2), bound to `MemoService.saveMemo`
+   * Write an agent-authored memo (roadmap 6.2), bound to `MemoService.saveMemoGenerated`
    * in server.ts. The turn supplies its workspace/stream/session identity; the
    * tool supplies the memo content + source-message anchors. Absent in harnesses
    * that don't wire memos, which disables the `save_memo` tool.
    */
   saveMemo?: (params: {
+    initiatingUserId: string
     workspaceId: string
     streamId: string
     sessionId: string | null
@@ -292,6 +305,8 @@ export interface PersonaAgentInput {
    * agent loads its row and injects the "why you woke up" prompt section.
    */
   purpose: TurnPurpose
+  /** Human principal that authorized this generated turn. */
+  initiatingUserId: string
   /** Invocation time override for deterministic evals/tests. Production leaves this unset. */
   currentTime?: Date
   /**
@@ -469,22 +484,52 @@ export class PersonaAgent {
     }
     const isFollowUp = followUpContext !== undefined
 
-    // Create the thread eagerly so session events go there for channel mentions.
+    const sessionOptions = (targetStreamId: string, targetInitialSequence: bigint) => ({
+      pool,
+      triggerMessageId: messageId,
+      streamId: targetStreamId,
+      rootStreamId: stream.rootStreamId ?? stream.id,
+      personaId: persona.id,
+      personaName: persona.name,
+      workspaceId,
+      serverId,
+      initialSequence: targetInitialSequence,
+      triggerMessageRevision,
+      supersedesSessionId,
+      rerunContext,
+      attempt,
+      maxAttempts,
+    })
+
+    // Create the thread eagerly so successful session events go there for
+    // channel mentions. If principal thread creation is denied, run that error
+    // through a parent-stream session lifecycle: there is no child stream to
+    // own the failure, but the consumed job must still terminalize exactly once.
     const isChannelMention = purpose.kind === "mention" && stream.type === StreamTypes.CHANNEL
     let sessionStreamId = streamId
     let parentStreamId: string | undefined
     let parentMessageId: string | undefined
+    let eagerThreadDenialResult: WithSessionResult | null = null
     if (isChannelMention) {
-      const thread = await createThread({
-        workspaceId,
-        parentStreamId: streamId,
-        parentAnchorId: messageId,
-        createdBy: persona.id,
-      })
-      sessionStreamId = thread.id
-      parentStreamId = streamId
-      parentMessageId = messageId
-      logger.info({ threadId: thread.id, streamId, messageId }, "Created thread for channel mention (eager)")
+      try {
+        const thread = await createThread({
+          initiatingUserId: input.initiatingUserId,
+          workspaceId,
+          parentStreamId: streamId,
+          parentAnchorId: messageId,
+          createdBy: persona.id,
+        })
+        sessionStreamId = thread.id
+        parentStreamId = streamId
+        parentMessageId = messageId
+        logger.info({ threadId: thread.id, streamId, messageId }, "Created thread for channel mention (eager)")
+      } catch (error) {
+        const code = typeof error === "object" && error !== null && "code" in error ? error.code : null
+        if (code !== "STREAM_READ_ONLY" && code !== "STREAM_NOT_FOUND") throw error
+        eagerThreadDenialResult = await withCompanionSession(sessionOptions(streamId, initialSequence), async () => {
+          throw error
+        })
+      }
     } else if (stream.type === StreamTypes.THREAD && stream.parentStreamId && stream.parentAnchorId) {
       // Session in an existing thread: viewers of the parent timeline watch it
       // through the thread slot on the anchor (message or card), so the inline
@@ -495,23 +540,69 @@ export class PersonaAgent {
       parentMessageId = stream.parentAnchorId ?? undefined
     }
 
+    const finalizeSessionResult = (result: WithSessionResult): PersonaAgentResult => {
+      // Notify trace rooms about terminal status
+      if (
+        result.status === "completed" ||
+        result.status === "failed" ||
+        (result.status === "skipped" && result.sessionId)
+      ) {
+        const trace = traceEmitter.forSession({
+          sessionId: result.sessionId!,
+          workspaceId,
+          streamId: sessionStreamId,
+          triggerMessageId: messageId,
+          personaName: persona.name,
+          parentStreamId,
+          parentMessageId,
+        })
+        if (result.status === "completed") {
+          trace.notifyCompleted()
+        } else if (result.status === "failed" && !result.willRetry) {
+          // A retryable attempt isn't terminal — don't flash the trace dialog red
+          // (the retry resumes this session). notifyActivityEnded still fires to stop
+          // the live ticker; the retry re-emits notifyActivityStarted.
+          trace.notifyFailed()
+        }
+        trace.notifyActivityEnded()
+      }
+
+      switch (result.status) {
+        case "skipped":
+          return {
+            sessionId: result.sessionId,
+            messagesSent: 0,
+            sentMessageIds: [],
+            status: "skipped",
+            skipReason: result.reason,
+          }
+
+        case "failed":
+          return {
+            sessionId: result.sessionId,
+            messagesSent: 0,
+            sentMessageIds: [],
+            status: "failed",
+            retryable: result.retryable,
+          }
+
+        case "completed":
+          return {
+            sessionId: result.sessionId,
+            messagesSent: result.messagesSent,
+            sentMessageIds: result.sentMessageIds,
+            status: "completed",
+            lastSeenSequence: result.lastSeenSequence,
+            streamId,
+            personaId,
+          }
+      }
+    }
+
+    if (eagerThreadDenialResult) return finalizeSessionResult(eagerThreadDenialResult)
+
     const result = await withCompanionSession(
-      {
-        pool,
-        triggerMessageId: messageId,
-        streamId: sessionStreamId,
-        rootStreamId: stream.rootStreamId ?? stream.id,
-        personaId: persona.id,
-        personaName: persona.name,
-        workspaceId,
-        serverId,
-        initialSequence: isChannelMention ? BigInt(0) : initialSequence,
-        triggerMessageRevision,
-        supersedesSessionId,
-        rerunContext,
-        attempt,
-        maxAttempts,
-      },
+      sessionOptions(sessionStreamId, isChannelMention ? BigInt(0) : initialSequence),
       async (session, db) => {
         const trace = traceEmitter.forSession({
           sessionId: session.id,
@@ -523,6 +614,18 @@ export class PersonaAgent {
           parentMessageId,
         })
         trace.notifyActivityStarted()
+
+        // The worker intentionally does not preflight authority: this durable
+        // session must own denial bookkeeping. Reject before context hydration
+        // can spend AI work, then recheck again at the final provider boundary
+        // below so a transition during hydration cannot slip through.
+        await withTransaction(db, (tx) =>
+          (this.deps.assertInitiatorWritable ?? assertStreamWritable)(tx, {
+            workspaceId,
+            streamId: sessionStreamId,
+            principal: { kind: "user", userId: input.initiatingUserId },
+          })
+        )
 
         // Resolve the per-turn hydration policy at the dispatch (`Hydrate`)
         // seam — window budget + whether prior turn digests carry — and hand it
@@ -726,6 +829,7 @@ export class PersonaAgent {
               // refuses them and the catch below falls through to
               // createMessage, which seals sources into the payload.
               const editedMessage = await editMessage({
+                initiatingUserId: input.initiatingUserId,
                 workspaceId,
                 streamId: targetStreamId,
                 messageId: reusableMessageId,
@@ -756,6 +860,7 @@ export class PersonaAgent {
           // conversation the original send already declared.
           const declaredConversationId = await resolveTriggerConversationId()
           const message = await createMessage({
+            initiatingUserId: input.initiatingUserId,
             workspaceId,
             streamId: targetStreamId,
             authorId: persona.id,
@@ -806,9 +911,17 @@ export class PersonaAgent {
         // user.
         const reactionDeps: import("./tools/tool-deps").ReactionToolDeps = {
           addReaction: ({ streamId: targetStream, messageId: targetMessage, emoji }) =>
-            addReaction({ workspaceId, streamId: targetStream, messageId: targetMessage, emoji, actorId: persona.id }),
+            addReaction({
+              initiatingUserId: input.initiatingUserId,
+              workspaceId,
+              streamId: targetStream,
+              messageId: targetMessage,
+              emoji,
+              actorId: persona.id,
+            }),
           removeReaction: ({ streamId: targetStream, messageId: targetMessage, emoji }) =>
             removeReaction({
+              initiatingUserId: input.initiatingUserId,
               workspaceId,
               streamId: targetStream,
               messageId: targetMessage,
@@ -826,6 +939,7 @@ export class PersonaAgent {
             ? {
                 scheduleFollowUp: async ({ note, scheduledFor }) =>
                   scheduleFollowUp({
+                    initiatingUserId: input.initiatingUserId,
                     workspaceId,
                     streamId: session.streamId,
                     personaId: persona.id,
@@ -838,7 +952,14 @@ export class PersonaAgent {
                 cancelFollowUp: ({ followUpId }) =>
                   cancelFollowUp({ workspaceId, streamId: session.streamId, followUpId }),
                 updateFollowUp: ({ followUpId, note, scheduledFor }) =>
-                  updateFollowUp({ workspaceId, streamId: session.streamId, followUpId, note, scheduledFor }),
+                  updateFollowUp({
+                    initiatingUserId: input.initiatingUserId,
+                    workspaceId,
+                    streamId: session.streamId,
+                    followUpId,
+                    note,
+                    scheduledFor,
+                  }),
               }
             : undefined
 
@@ -852,8 +973,10 @@ export class PersonaAgent {
           ? {
               updateBrief: ({ content, reason, expectedVersion }) =>
                 updateBrief({
+                  initiatingUserId: input.initiatingUserId,
                   workspaceId,
                   streamId: briefStreamId,
+                  requestedStreamId: session.streamId,
                   personaId: persona.id,
                   content,
                   reason,
@@ -875,6 +998,7 @@ export class PersonaAgent {
             ? {
                 delegateTask: async ({ title, brief, contextRefs }) =>
                   delegateTask({
+                    initiatingUserId: input.initiatingUserId,
                     workspaceId,
                     streamId: session.streamId,
                     personaId: persona.id,
@@ -934,6 +1058,7 @@ export class PersonaAgent {
           ? {
               saveMemo: (params) =>
                 saveMemo({
+                  initiatingUserId: input.initiatingUserId,
                   workspaceId,
                   streamId: session.streamId,
                   sessionId: session.id,
@@ -1306,6 +1431,13 @@ export class PersonaAgent {
         }
 
         try {
+          await withTransaction(db, (tx) =>
+            (this.deps.assertInitiatorWritable ?? assertStreamWritable)(tx, {
+              workspaceId,
+              streamId: targetStreamId,
+              principal: { kind: "user", userId: input.initiatingUserId },
+            })
+          )
           const loopResult = await this.turnDriver.runTurn(turnRequest, turnSink)
           const retainedMessageIds =
             isSupersedeRerun && loopResult.sentMessageIds.length === 0
@@ -1336,6 +1468,7 @@ export class PersonaAgent {
             await this.reconcileSupersededMessages({
               workspaceId,
               streamId: targetStreamId,
+              initiatingUserId: input.initiatingUserId,
               personaId: persona.id,
               sessionId: session.id,
               supersedesSessionId,
@@ -1381,62 +1514,7 @@ export class PersonaAgent {
       }
     )
 
-    // Notify trace rooms about terminal status
-    if (
-      result.status === "completed" ||
-      result.status === "failed" ||
-      (result.status === "skipped" && result.sessionId)
-    ) {
-      const trace = traceEmitter.forSession({
-        sessionId: result.sessionId!,
-        workspaceId,
-        streamId: sessionStreamId,
-        triggerMessageId: messageId,
-        personaName: persona.name,
-        parentStreamId,
-        parentMessageId,
-      })
-      if (result.status === "completed") {
-        trace.notifyCompleted()
-      } else if (result.status === "failed" && !result.willRetry) {
-        // A retryable attempt isn't terminal — don't flash the trace dialog red
-        // (the retry resumes this session). notifyActivityEnded still fires to stop
-        // the live ticker; the retry re-emits notifyActivityStarted.
-        trace.notifyFailed()
-      }
-      trace.notifyActivityEnded()
-    }
-
-    switch (result.status) {
-      case "skipped":
-        return {
-          sessionId: result.sessionId,
-          messagesSent: 0,
-          sentMessageIds: [],
-          status: "skipped",
-          skipReason: result.reason,
-        }
-
-      case "failed":
-        return {
-          sessionId: result.sessionId,
-          messagesSent: 0,
-          sentMessageIds: [],
-          status: "failed",
-          retryable: result.retryable,
-        }
-
-      case "completed":
-        return {
-          sessionId: result.sessionId,
-          messagesSent: result.messagesSent,
-          sentMessageIds: result.sentMessageIds,
-          status: "completed",
-          lastSeenSequence: result.lastSeenSequence,
-          streamId,
-          personaId,
-        }
-    }
+    return finalizeSessionResult(result)
   }
 
   /**
@@ -1553,6 +1631,7 @@ export class PersonaAgent {
   private async reconcileSupersededMessages(params: {
     workspaceId: string
     streamId: string
+    initiatingUserId: string
     personaId: string
     sessionId: string
     supersedesSessionId?: string
@@ -1563,6 +1642,7 @@ export class PersonaAgent {
     const {
       workspaceId,
       streamId,
+      initiatingUserId,
       personaId,
       sessionId,
       supersedesSessionId,
@@ -1576,6 +1656,7 @@ export class PersonaAgent {
     for (const messageId of staleMessageIds) {
       try {
         await deleteMessage({
+          initiatingUserId,
           workspaceId,
           streamId,
           messageId,

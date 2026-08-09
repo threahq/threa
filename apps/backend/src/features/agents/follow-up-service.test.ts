@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, mock, spyOn } from "bun:test"
+import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from "bun:test"
 import type { Pool, PoolClient } from "pg"
 import { AuthorTypes, FollowUpStatuses } from "@threa/types"
 import { AgentFollowUpService } from "./follow-up-service"
@@ -7,9 +7,13 @@ import { JobQueues, QueueRepository } from "../../lib/queue"
 import { OutboxRepository } from "../../lib/outbox"
 import { logger } from "../../lib/logger"
 import { StreamEventRepository, StreamRepository } from "../streams"
+import * as streamsModule from "../streams"
+import { MessageRepository } from "../messaging"
+import { AgentSessionRepository } from "./session-repository"
 import { StreamContextRepository } from "../stream-context"
 import * as dbModule from "../../db"
 import { DEFAULT_MAX_PENDING_FOLLOW_UPS } from "./config"
+import { HttpError } from "../../lib/errors"
 
 /**
  * Stub the timeline-event append the service performs inside its transactions
@@ -58,9 +62,15 @@ function makeService(maxPendingFollowUps: number = DEFAULT_MAX_PENDING_FOLLOW_UP
   })
 }
 
+beforeEach(() => {
+  spyOn(streamsModule, "assertStreamWritable").mockResolvedValue({} as never)
+})
+
 const scheduleParams = {
   workspaceId: "ws_1",
   streamId: "stream_1",
+  requestedStreamId: "stream_1",
+  initiatingUserId: "usr_1",
   personaId: "persona_system_ariadne",
   sessionId: "session_1",
   sourceConversationId: null,
@@ -70,6 +80,24 @@ const scheduleParams = {
 
 describe("AgentFollowUpService.schedule", () => {
   afterEach(() => mock.restore())
+
+  for (const reason of ["archived", "system_stream", "not_member"] as const) {
+    it(`denies ${reason} before cap or persistence writes`, async () => {
+      spyOn(dbModule, "withTransaction").mockImplementation(async (_pool: any, fn: any) => fn({} as PoolClient))
+      spyOn(streamsModule, "assertStreamWritable").mockRejectedValue(
+        new HttpError("Stream is read-only", { status: 403, code: "STREAM_READ_ONLY", details: { reason } })
+      )
+      const acquireCapLock = spyOn(AgentFollowUpRepository, "acquireStreamCapLock").mockResolvedValue(undefined)
+      const insert = spyOn(AgentFollowUpRepository, "insertIfUnderCap").mockResolvedValue(fakeFollowUp())
+
+      await expect(makeService().schedule(scheduleParams)).rejects.toMatchObject({
+        code: "STREAM_READ_ONLY",
+        details: { reason },
+      })
+      expect(acquireCapLock).not.toHaveBeenCalled()
+      expect(insert).not.toHaveBeenCalled()
+    })
+  }
 
   it("inserts under the cap, enqueues a fire job, and reports the cap + count", async () => {
     spyOn(dbModule, "withTransaction").mockImplementation(async (_pool: any, fn: any) => fn({} as PoolClient))
@@ -347,6 +375,8 @@ describe("AgentFollowUpService.update", () => {
     const result = await makeService().update({
       workspaceId: "ws_1",
       streamId: "stream_1",
+      requestedStreamId: "stream_1",
+      initiatingUserId: "usr_1",
       id: "agfu_01",
       note: "new note",
       scheduledFor: NEW_TIME,
@@ -372,6 +402,8 @@ describe("AgentFollowUpService.update", () => {
     const result = await makeService().update({
       workspaceId: "ws_1",
       streamId: "stream_1",
+      requestedStreamId: "stream_1",
+      initiatingUserId: "usr_1",
       id: "agfu_01",
       note: "new note",
     })
@@ -387,7 +419,14 @@ describe("AgentFollowUpService.update", () => {
     spyOn(dbModule, "withTransaction").mockImplementation(async (_pool: any, fn: any) => fn({} as PoolClient))
     const updatePending = spyOn(AgentFollowUpRepository, "updatePending").mockResolvedValue(fakeFollowUp())
 
-    await makeService().update({ workspaceId: "ws_1", streamId: "stream_1", id: "agfu_01", note: "just the note" })
+    await makeService().update({
+      workspaceId: "ws_1",
+      streamId: "stream_1",
+      requestedStreamId: "stream_1",
+      initiatingUserId: "usr_1",
+      id: "agfu_01",
+      note: "just the note",
+    })
 
     expect(updatePending.mock.calls[0]?.[1]).toMatchObject({ note: "just the note", scheduledFor: null })
   })
@@ -397,7 +436,14 @@ describe("AgentFollowUpService.update", () => {
     const updatePending = spyOn(AgentFollowUpRepository, "updatePending").mockResolvedValue(null)
     spyOn(AgentFollowUpRepository, "findById").mockResolvedValue(null)
 
-    const result = await makeService().update({ workspaceId: "ws_1", streamId: "stream_1", id: "agfu_x", note: "n" })
+    const result = await makeService().update({
+      workspaceId: "ws_1",
+      streamId: "stream_1",
+      requestedStreamId: "stream_1",
+      initiatingUserId: "usr_1",
+      id: "agfu_x",
+      note: "n",
+    })
 
     expect(result).toEqual({ ok: false, reason: "not_found" })
     expect(updatePending).toHaveBeenCalled()
@@ -408,7 +454,14 @@ describe("AgentFollowUpService.update", () => {
     spyOn(AgentFollowUpRepository, "updatePending").mockResolvedValue(null)
     spyOn(AgentFollowUpRepository, "findById").mockResolvedValue(fakeFollowUp({ streamId: "stream_other" }))
 
-    const result = await makeService().update({ workspaceId: "ws_1", streamId: "stream_1", id: "agfu_01", note: "n" })
+    const result = await makeService().update({
+      workspaceId: "ws_1",
+      streamId: "stream_1",
+      requestedStreamId: "stream_1",
+      initiatingUserId: "usr_1",
+      id: "agfu_01",
+      note: "n",
+    })
 
     expect(result).toEqual({ ok: false, reason: "not_found" })
   })
@@ -418,7 +471,14 @@ describe("AgentFollowUpService.update", () => {
     spyOn(AgentFollowUpRepository, "updatePending").mockResolvedValue(null)
     spyOn(AgentFollowUpRepository, "findById").mockResolvedValue(fakeFollowUp({ status: FollowUpStatuses.FIRED }))
 
-    const result = await makeService().update({ workspaceId: "ws_1", streamId: "stream_1", id: "agfu_01", note: "n" })
+    const result = await makeService().update({
+      workspaceId: "ws_1",
+      streamId: "stream_1",
+      requestedStreamId: "stream_1",
+      initiatingUserId: "usr_1",
+      id: "agfu_01",
+      note: "n",
+    })
 
     expect(result).toEqual({ ok: false, reason: "not_pending" })
   })
@@ -429,6 +489,10 @@ describe("AgentFollowUpService.fire", () => {
 
   it("CASes to fired and enqueues a PERSONA_AGENT job carrying followUpId", async () => {
     spyOn(dbModule, "withTransaction").mockImplementation(async (_pool: any, fn: any) => fn({} as PoolClient))
+    spyOn(AgentFollowUpRepository, "findById").mockResolvedValue(fakeFollowUp())
+    spyOn(AgentSessionRepository, "findById").mockResolvedValue({ triggerMessageId: "msg_1" } as never)
+    spyOn(MessageRepository, "findById").mockResolvedValue({ authorId: "usr_1", authorType: AuthorTypes.USER } as never)
+    spyOn(streamsModule, "assertStreamWritable").mockResolvedValue({} as never)
     spyOn(AgentFollowUpRepository, "markFired").mockResolvedValue(fakeFollowUp({ status: FollowUpStatuses.FIRED }))
     const queueInsert = spyOn(QueueRepository, "insert").mockResolvedValue({} as never)
 
@@ -444,6 +508,10 @@ describe("AgentFollowUpService.fire", () => {
 
   it("no-ops when the row is no longer pending (cancelled before firing)", async () => {
     spyOn(dbModule, "withTransaction").mockImplementation(async (_pool: any, fn: any) => fn({} as PoolClient))
+    spyOn(AgentFollowUpRepository, "findById").mockResolvedValue(fakeFollowUp())
+    spyOn(AgentSessionRepository, "findById").mockResolvedValue({ triggerMessageId: "msg_1" } as never)
+    spyOn(MessageRepository, "findById").mockResolvedValue({ authorId: "usr_1", authorType: AuthorTypes.USER } as never)
+    spyOn(streamsModule, "assertStreamWritable").mockResolvedValue({} as never)
     spyOn(AgentFollowUpRepository, "markFired").mockResolvedValue(null)
     const queueInsert = spyOn(QueueRepository, "insert").mockResolvedValue({} as never)
 

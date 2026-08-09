@@ -12,6 +12,7 @@ import type { ConversationClassification } from "./classifier"
 import { OutboxRepository } from "../../lib/outbox"
 import { StreamEventRepository, StreamStateRepository, StreamRepository, type Stream } from "../streams"
 import type { StreamEvent } from "../streams"
+import * as streamsModule from "../streams"
 import { ConversationRepository } from "../conversations"
 import { MessageRepository } from "../messaging"
 import { LinkPreviewRepository } from "../link-previews"
@@ -720,6 +721,26 @@ describe("MemoService.saveMemo — agent-authored memo (roadmap 6.2)", () => {
     expect(outboxInsertMany).toHaveBeenCalledWith(expect.anything(), [
       { eventType: "stream:memos_captured", payload: expect.objectContaining({ streamId: STREAM_ID }) },
     ])
+  })
+
+  it("authorizes a generated save in the memo write transaction before any shared effect", async () => {
+    const { service, insert, streamEventInsertMany, outboxInsert } = setupSaveMemo()
+    const authority = spyOn(streamsModule, "assertStreamWritable").mockRejectedValue(
+      streamsModule.createStreamReadOnlyError("archived")
+    )
+
+    await expect(
+      service.saveMemoGenerated({ kind: "user", userId: "usr_initiator" }, saveMemoInput)
+    ).rejects.toMatchObject({ code: "STREAM_READ_ONLY", details: { reason: "archived" } })
+
+    expect(authority).toHaveBeenCalledWith(expect.anything(), {
+      workspaceId: WORKSPACE_ID,
+      streamId: STREAM_ID,
+      principal: { kind: "user", userId: "usr_initiator" },
+    })
+    expect(insert).not.toHaveBeenCalled()
+    expect(streamEventInsertMany).not.toHaveBeenCalled()
+    expect(outboxInsert).not.toHaveBeenCalled()
   })
 
   it("defaults a save in a shared stream to workspace scope (roadmap 6.4)", async () => {

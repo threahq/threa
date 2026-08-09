@@ -155,6 +155,7 @@ describe("ConversationService.reassignMessage", () => {
       // The event names the MESSAGE's stream — membership moved, the row didn't.
       streamId: "chan_1",
       messageId: "m1",
+      initiatingUserId: ACTOR_ID,
       fromConversationId: "conv_main",
       toConversationId: "conv_sub",
       reason: "user_correction",

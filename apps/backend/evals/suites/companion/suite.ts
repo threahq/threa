@@ -450,6 +450,7 @@ async function runCompanionTask(input: CompanionInput, ctx: EvalContext): Promis
       messageId,
       personaId,
       serverId: `eval-server-${ulid()}`,
+      initiatingUserId: ctx.userId,
       purpose: input.trigger === "mention" ? { kind: "mention" } : { kind: "catch_up" },
       currentTime: input.currentTime ? new Date(input.currentTime) : undefined,
     }

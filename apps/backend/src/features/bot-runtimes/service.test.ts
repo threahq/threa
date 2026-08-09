@@ -13,6 +13,7 @@ import {
 import { OutboxRepository } from "../../lib/outbox"
 import { logger } from "../../lib/logger"
 import * as db from "../../db"
+import * as streamsModule from "../streams"
 
 const fakeQuerier = { query: mock(async () => ({ rows: [], rowCount: 0 })) }
 const fakePool = fakeQuerier as never
@@ -58,6 +59,7 @@ describe("BotRuntimeService outbox emission", () => {
   // querier without needing a real Postgres pool. The repo methods get spied
   // independently below to capture the calls.
   function patchWithTransaction() {
+    spyOn(streamsModule, "assertStreamWritable").mockResolvedValue({} as never)
     return spyOn(db, "withTransaction").mockImplementation(async (_pool, fn) => fn(fakeQuerier as never))
   }
 
@@ -132,6 +134,7 @@ describe("BotRuntimeService outbox emission", () => {
     it("emits bot_invocation:claimed when a row is locked", async () => {
       patchWithTransaction()
       spyOn(BotInvocationRepository, "parkExhausted").mockResolvedValue([])
+      spyOn(BotInvocationRepository, "findNextClaimable").mockResolvedValue(makeInvocation())
       const claimSpy = spyOn(BotInvocationRepository, "claimOne").mockResolvedValue(
         makeInvocation({ status: "claimed" })
       )
@@ -163,6 +166,7 @@ describe("BotRuntimeService outbox emission", () => {
       patchWithTransaction()
       const exhausted = makeInvocation({ id: "inv_dead", status: "parked", attempts: BOT_CLAIM_MAX_ATTEMPTS })
       const parkSpy = spyOn(BotInvocationRepository, "parkExhausted").mockResolvedValue([exhausted])
+      spyOn(BotInvocationRepository, "findNextClaimable").mockResolvedValue(null)
       spyOn(BotInvocationRepository, "claimOne").mockResolvedValue(null)
       spyOn(OutboxRepository, "insert").mockResolvedValue(undefined as never)
       const warnSpy = spyOn(logger, "warn").mockReturnValue(undefined as never)
@@ -192,8 +196,44 @@ describe("BotRuntimeService outbox emission", () => {
       expect(warnedInvocationIds).toContain("inv_dead")
     })
 
+    it("terminal-fails a claimed invocation whose response target is no longer writable", async () => {
+      patchWithTransaction()
+      spyOn(streamsModule, "assertStreamWritable").mockRejectedValue(
+        Object.assign(new Error("read only"), { code: "STREAM_READ_ONLY", details: { reason: "archived" } })
+      )
+      spyOn(BotInvocationRepository, "parkExhausted").mockResolvedValue([])
+      spyOn(BotInvocationRepository, "findNextClaimable").mockResolvedValue(makeInvocation())
+      spyOn(BotInvocationRepository, "claimOne").mockResolvedValue(makeInvocation({ status: "claimed" }))
+      const failClaim = spyOn(BotInvocationRepository, "failClaim").mockResolvedValue(
+        makeInvocation({ status: "failed" })
+      )
+      const insertSpy = spyOn(OutboxRepository, "insert").mockResolvedValue(undefined as never)
+
+      const result = await new BotRuntimeService({ pool: fakePool }).claimNextInvocation({
+        workspaceId: "ws_1",
+        botId: "bot_alice",
+        instanceId: "inst_42",
+        runtimeKind: "pi-local",
+        claimToken: "tok_1",
+        supportedCapabilities: ["active-scratchpad"],
+        claimTtlSeconds: 60,
+      })
+
+      expect(result).toBeNull()
+      expect(failClaim).toHaveBeenCalledWith(
+        fakeQuerier,
+        expect.objectContaining({
+          invocationId: "inv_1",
+          errorMessage: "STREAM_READ_ONLY:archived",
+        })
+      )
+      expect(insertSpy).not.toHaveBeenCalled()
+    })
+
     it("does not emit when no row was available to claim", async () => {
       patchWithTransaction()
+      spyOn(BotInvocationRepository, "parkExhausted").mockResolvedValue([])
+      spyOn(BotInvocationRepository, "findNextClaimable").mockResolvedValue(null)
       spyOn(BotInvocationRepository, "claimOne").mockResolvedValue(null)
       const insertSpy = spyOn(OutboxRepository, "insert").mockResolvedValue(undefined as never)
 

@@ -47,7 +47,7 @@ describe("createPersonaAgentWorker", () => {
       streamId: "stream_1",
       messageId: "followup_agfu_01",
       personaId: "persona_ariadne",
-      triggeredBy: "system",
+      triggeredBy: "usr_1",
       followUpId: "agfu_01",
     }
     await worker({ id: "job_1", name: "persona.agent", data })
@@ -75,6 +75,38 @@ describe("createPersonaAgentWorker", () => {
     await worker({ id: "job_2", name: "persona.agent", data })
 
     expect(captured?.purpose).toEqual({ kind: "catch_up" })
+  })
+
+  it("delegates deterministic authority failure to the agent session lifecycle", async () => {
+    const run = mock(async () => ({
+      sessionId: "session_denied",
+      messagesSent: 0,
+      sentMessageIds: [],
+      status: "failed" as const,
+      retryable: false,
+    }))
+    const worker = createPersonaAgentWorker({
+      agent: { run },
+      serverId: "srv_1",
+      pool: {} as Pool,
+      jobQueue: {} as QueueManager,
+    })
+
+    await expect(
+      worker({
+        id: "job_denied",
+        name: "persona.agent",
+        data: {
+          workspaceId: "ws_1",
+          streamId: "stream_1",
+          messageId: "msg_1",
+          personaId: "persona_ariadne",
+          triggeredBy: "usr_initiator",
+        },
+      })
+    ).resolves.toBeUndefined()
+
+    expect(run).toHaveBeenCalledWith(expect.objectContaining({ initiatingUserId: "usr_initiator" }))
   })
 
   describe("failed sessions", () => {
@@ -140,7 +172,7 @@ describe("createPersonaAgentWorker", () => {
 
     it("enqueues an episode-summary job when a completed session replied", async () => {
       // No unseen messages, so the follow-up nudge stays out of the way.
-      spyOn(StreamEventRepository, "getLatestUserMessageSequence").mockResolvedValue(null)
+      spyOn(StreamEventRepository, "getLatestUnseenUserMessage").mockResolvedValue(null)
       const send = mock((_q: unknown, _d: unknown) => Promise.resolve("queue_1"))
       const worker = createPersonaAgentWorker({
         agent: makeCompletedAgent({ messagesSent: 2 }),
@@ -158,7 +190,7 @@ describe("createPersonaAgentWorker", () => {
     })
 
     it("does not enqueue an episode summary when the completed session sent no messages", async () => {
-      spyOn(StreamEventRepository, "getLatestUserMessageSequence").mockResolvedValue(null)
+      spyOn(StreamEventRepository, "getLatestUnseenUserMessage").mockResolvedValue(null)
       const send = mock((_q: unknown, _d: unknown) => Promise.resolve("queue_1"))
       const worker = createPersonaAgentWorker({
         agent: makeCompletedAgent({ messagesSent: 0, sentMessageIds: [] }),
@@ -176,7 +208,7 @@ describe("createPersonaAgentWorker", () => {
     it("enqueues a reflective-capture job on completion even when the session sent no messages", async () => {
       // Reflective capture must cover the replyless research turn the episode gate
       // above skips (roadmap 6.3) — the service self-gates on research residue.
-      spyOn(StreamEventRepository, "getLatestUserMessageSequence").mockResolvedValue(null)
+      spyOn(StreamEventRepository, "getLatestUnseenUserMessage").mockResolvedValue(null)
       const send = mock((_q: unknown, _d: unknown) => Promise.resolve("queue_1"))
       const worker = createPersonaAgentWorker({
         agent: makeCompletedAgent({ messagesSent: 0, sentMessageIds: [] }),

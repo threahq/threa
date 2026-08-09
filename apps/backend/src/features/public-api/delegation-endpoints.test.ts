@@ -412,6 +412,7 @@ describe("completeDelegation", () => {
     isE2e?: boolean
   }) {
     spyOn(db, "withTransaction").mockImplementation(async (_pool, fn) => fn({} as PoolClient))
+    spyOn(streams, "assertStreamWritable").mockResolvedValue({} as never)
     spyOn(E2eStreamsRepository, "isE2eStream").mockResolvedValue(overrides.isE2e ?? false)
     const createMessageInTransaction =
       overrides.createMessageInTransaction ??
@@ -435,6 +436,16 @@ describe("completeDelegation", () => {
     const createThreadOn = mock(
       async () => ({ id: "stream_thread" }) as never
     ) as unknown as StreamService["createThreadOn"]
+    const createThreadForPrincipalOn = (async (client: unknown, _principal: unknown, params: unknown) =>
+      (createThreadOn as unknown as (client: unknown, params: unknown) => Promise<unknown>)(
+        client,
+        params
+      )) as StreamService["createThreadForPrincipalOn"]
+    const createMessageForPrincipalInTransaction = (async (client: unknown, _principal: unknown, params: unknown) =>
+      (createMessageInTransaction as unknown as (client: unknown, params: unknown) => Promise<unknown>)(
+        client,
+        params
+      )) as EventService["createMessageForPrincipalInTransaction"]
     return {
       handlers: makeHandlers({
         delegationService: {
@@ -443,9 +454,13 @@ describe("completeDelegation", () => {
           findClaimedForUpdate,
           findCreatedEventId,
         },
-        streamService: { tryAccess: mock(async () => ({ id: "stream_1" }) as never), createThreadOn },
+        streamService: {
+          tryAccess: mock(async () => ({ id: "stream_1" }) as never),
+          createThreadOn,
+          createThreadForPrincipalOn,
+        },
         botChannelService: { isStreamAccessibleForBot: mock(async () => true) },
-        eventService: { createMessageInTransaction },
+        eventService: { createMessageInTransaction, createMessageForPrincipalInTransaction },
       }),
       createMessageInTransaction,
       completeInTransaction,
@@ -667,6 +682,7 @@ describe("completeDelegation", () => {
   })
 
   it("still 404s a retry bearing the wrong token", async () => {
+    spyOn(streams, "assertStreamWritable").mockResolvedValue({} as never)
     spyOn(db, "withTransaction").mockImplementation(async (_pool, fn) => fn({} as PoolClient))
     spyOn(E2eStreamsRepository, "isE2eStream").mockResolvedValue(false)
     const committed = makeDelegation({

@@ -71,6 +71,10 @@ export class StreamBriefService {
     return this.updateInTransaction(params, true)
   }
 
+  async updateGenerated(params: UpdateBriefParams): Promise<UpdateBriefResult> {
+    return this.updateInTransaction(params, true)
+  }
+
   async updateInternal(params: Omit<UpdateBriefParams, "principal" | "requestedStreamId">): Promise<UpdateBriefResult> {
     return this.updateInTransaction(params, false)
   }

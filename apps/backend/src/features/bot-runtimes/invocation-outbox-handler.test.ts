@@ -1,19 +1,27 @@
-import { afterEach, describe, expect, it, mock, spyOn } from "bun:test"
+import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from "bun:test"
 import type { Pool } from "pg"
 import { BotInvocationOutboxHandler } from "./invocation-outbox-handler"
 import { BotRuntimeService } from "./service"
+import { ExternalTurnDriver } from "./external-turn-driver"
 import {
   BotRuntimeInstanceRepository,
   BotRuntimeSessionLinkRepository,
   StreamActiveActorRepository,
 } from "./repository"
 import { StreamRepository } from "../streams"
+import * as streamsModule from "../streams"
+import * as dbModule from "../../db"
 import { BotRepository } from "../public-api/bot-repository"
 import { EventService } from "../messaging"
 import { E2eStreamActorsRepository, E2eStreamsRepository } from "../e2e-streams"
 import * as e2eStreams from "../e2e-streams"
 import * as outbox from "../../lib/outbox"
 import { E2E_PLACEHOLDER_CONTENT_MARKDOWN } from "@threa/types"
+
+beforeEach(() => {
+  spyOn(dbModule, "withTransaction").mockImplementation(async (_pool: any, fn: any) => fn({}))
+  spyOn(streamsModule, "assertStreamWritable").mockResolvedValue({} as never)
+})
 
 afterEach(() => mock.restore())
 
@@ -97,7 +105,7 @@ describe("BotInvocationOutboxHandler E2E delivery verdict", () => {
     } as never)
     // The missing-link notice would be a plaintext system message — on an E2E
     // stream the verdict gate must fire before that write (INV-E1).
-    const createMessage = spyOn(EventService.prototype, "createMessage").mockResolvedValue(undefined as never)
+    const createMessage = spyOn(EventService.prototype, "createGeneratedMessage").mockResolvedValue(undefined as never)
     const findActiveLink = spyOn(BotRuntimeSessionLinkRepository, "findActiveByStream")
 
     await runProcessMessageCreated({})
@@ -170,6 +178,43 @@ describe("BotInvocationOutboxHandler mention extraction (INV-54/INV-58)", () => 
         mentionedActorSlugs: ["аріадна"],
       })
     )
+  })
+
+  it("skips dispatch when a mentioned bot loses its grant after selection", async () => {
+    spyOn(StreamRepository, "findById").mockResolvedValue(channelStream as never)
+    spyOn(E2eStreamsRepository, "isE2eStream").mockResolvedValue(false)
+    spyOn(BotRepository, "findInvocableByIds").mockResolvedValue([
+      { id: "bot_1", slug: "scout", name: "Scout", archivedAt: null, traits: ["mentionable"] },
+    ] as never)
+    const authority = spyOn(streamsModule, "assertStreamWritable").mockRejectedValue(
+      streamsModule.createStreamReadOnlyError("not_a_member")
+    )
+    const dispatchTurn = spyOn(ExternalTurnDriver.prototype, "dispatchTurn").mockResolvedValue({
+      invocationId: "inv_1",
+      status: "dispatched",
+    })
+    const createInvocation = spyOn(BotRuntimeService.prototype, "createInvocation").mockResolvedValue({
+      invocation: { id: "inv_1" },
+      wasNewlyInserted: true,
+    } as never)
+
+    await runProcessMessageCreated(
+      userMessagePayload({
+        contentMarkdown: "@scout hi",
+        contentJson: docWithMention({ id: "bot_1", slug: "scout", mentionType: "bot" }),
+      })
+    )
+
+    expect(authority).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        workspaceId: "ws_1",
+        streamId: "stream_1",
+        principal: { kind: "bot", botId: "bot_1" },
+      })
+    )
+    expect(dispatchTurn).not.toHaveBeenCalled()
+    expect(createInvocation).not.toHaveBeenCalled()
   })
 
   it("ignores an unresolved (bare-slug) mention node — selection never runs", async () => {
@@ -247,7 +292,7 @@ describe("BotInvocationOutboxHandler active-scratchpad session-link policy", () 
       invocation: { id: "inv_1" },
       wasNewlyInserted: true,
     } as never)
-    const createMessage = spyOn(EventService.prototype, "createMessage").mockResolvedValue(undefined as never)
+    const createMessage = spyOn(EventService.prototype, "createGeneratedMessage").mockResolvedValue(undefined as never)
     return { createInvocation, createMessage }
   }
 
@@ -260,11 +305,25 @@ describe("BotInvocationOutboxHandler active-scratchpad session-link policy", () 
 
     expect(createInvocation).not.toHaveBeenCalled()
     expect(createMessage).toHaveBeenCalledWith(
+      { kind: "bot", botId: "bot_1" },
       expect.objectContaining({
         contentMarkdown: "**Scout is not linked to this scratchpad.** Run `/remote-control` in Pi to link a session.",
         metadata: { "bot_runtime.notice": "missing_session_link" },
       })
     )
+  })
+
+  it("skips a missing-link notice when bot authority changed after selection", async () => {
+    const { createInvocation, createMessage } = setupActiveScratchpad({ instance: { runtimeKind: "pi-local" } })
+    createMessage.mockRejectedValue(streamsModule.createStreamReadOnlyError("not_a_member"))
+
+    await expect(runProcessMessageCreated(plainUserMessage)).resolves.toBeUndefined()
+
+    expect(createMessage).toHaveBeenCalledWith(
+      { kind: "bot", botId: "bot_1" },
+      expect.objectContaining({ metadata: { "bot_runtime.notice": "missing_session_link" } })
+    )
+    expect(createInvocation).not.toHaveBeenCalled()
   })
 
   it("defaults to the pi-local policy when the bot has no runtime instance", async () => {
@@ -274,6 +333,7 @@ describe("BotInvocationOutboxHandler active-scratchpad session-link policy", () 
 
     expect(createInvocation).not.toHaveBeenCalled()
     expect(createMessage).toHaveBeenCalledWith(
+      { kind: "bot", botId: "bot_1" },
       expect.objectContaining({ metadata: { "bot_runtime.notice": "missing_session_link" } })
     )
   })
@@ -349,6 +409,7 @@ describe("BotInvocationOutboxHandler active-scratchpad session-link policy", () 
 
     expect(createInvocation).not.toHaveBeenCalled()
     expect(createMessage).toHaveBeenCalledWith(
+      { kind: "bot", botId: "bot_1" },
       expect.objectContaining({
         contentMarkdown: expect.stringContaining("Claude Code with the Threa channel"),
         metadata: { "bot_runtime.notice": "missing_session_link" },

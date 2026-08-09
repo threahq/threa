@@ -1,4 +1,4 @@
-import type { Pool } from "pg"
+import type { Pool, PoolClient } from "pg"
 import type { Server } from "socket.io"
 import { HttpError } from "@threa/backend-common"
 import type { AgentStepType } from "@threa/types"
@@ -38,7 +38,7 @@ export interface SealedCallbackContext {
  * resolution.
  */
 export async function authorizeSealedCallback(
-  pool: Pool,
+  pool: Pool | PoolClient,
   params: { workspaceId: string; botId: string; invocationId: string; callbackToken: string | undefined }
 ): Promise<SealedCallbackContext> {
   const session = await AgentSessionRepository.findById(pool, params.invocationId)
@@ -99,7 +99,7 @@ export interface SealedStepFinalizeFrame {
  * external sibling of the enclave's `/steps`.
  */
 export async function finalizeSealedStep(
-  deps: { pool: Pool; io: Server },
+  deps: { pool: Pool | PoolClient; io: Server },
   ctx: SealedCallbackContext,
   frame: SealedStepFinalizeFrame
 ): Promise<AgentSessionStep> {
