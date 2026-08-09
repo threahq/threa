@@ -403,6 +403,83 @@ describe("bot invocation control protocol", () => {
     })
   })
 
+  test("renew reconciles plaintext and sealed edits and deletions while the mutation listener is paused", async () => {
+    await setMode("live")
+    const results: Array<Record<string, unknown>> = []
+    for (const delivery of ["plaintext", "sealed"] as const) {
+      const source = await MessageRepository.insert(pool, {
+        id: messageId(),
+        streamId: stream,
+        sequence: BigInt(Date.now()) + BigInt(results.length),
+        authorId: author,
+        authorType: "user",
+        contentJson: testContentJson(delivery === "plaintext" ? "before" : ""),
+        contentMarkdown: delivery === "plaintext" ? "before" : "",
+        ...(delivery === "sealed"
+          ? {
+              ciphertext: Buffer.from("sealed-before"),
+              envelope: { v: 2, keyGeneration: 1, iv: "aXY=", aad: "YWFk" },
+              e2eVersion: 2,
+            }
+          : {}),
+      })
+      await service().reconcileInvocationSource({ workspaceId: workspace, sourceMessageId: source.id })
+      const token = `${delivery}-paused-listener`
+      const claimed = await claim(token)
+      if (delivery === "plaintext") {
+        await MessageRepository.updateContent(pool, source.id, testContentJson("after"), "after")
+      } else {
+        await pool.query(
+          `UPDATE messages
+           SET ciphertext = $2, envelope = $3, edited_at = NOW(), revision = revision + 1
+           WHERE id = $1`,
+          [source.id, Buffer.from("sealed-after"), { v: 2, keyGeneration: 1, iv: "aXY=", aad: "YWFk" }]
+        )
+      }
+
+      const edited = await service().renewInvocationClaim({
+        workspaceId: workspace,
+        botId: bot,
+        invocationId: claimed!.id,
+        instanceId: instance,
+        claimToken: token,
+        claimTtlSeconds: 60,
+        knownSourceRevision: 1,
+      })
+      const deleted = await MessageRepository.softDelete(pool, source.id)
+      const cancelled = await service().renewInvocationClaim({
+        workspaceId: workspace,
+        botId: bot,
+        invocationId: claimed!.id,
+        instanceId: instance,
+        claimToken: token,
+        claimTtlSeconds: 60,
+        knownSourceRevision: 2,
+      })
+      results.push({
+        delivery,
+        editedStatus: edited?.status,
+        editedRevision: edited?.sourceMessageRevision,
+        deletedRevision: deleted?.revision,
+        cancelledStatus: cancelled?.status,
+        cancelledRevision: cancelled?.sourceMessageRevision,
+        cancellationReason: cancelled?.cancellationReason,
+      })
+    }
+
+    expect(results).toEqual(
+      ["plaintext", "sealed"].map((delivery) => ({
+        delivery,
+        editedStatus: "claimed",
+        editedRevision: 2,
+        deletedRevision: 3,
+        cancelledStatus: "cancelled",
+        cancelledRevision: 3,
+        cancellationReason: "source_deleted",
+      }))
+    )
+  })
+
   test("deletion is recoverable through renew at the highest revision and scoped bootstrap cancellation", async () => {
     await setMode("live")
     const source = await createSource()
@@ -499,6 +576,48 @@ describe("bot invocation control protocol", () => {
         revision: 2,
       })
     }
+  })
+
+  test("renew cancels route drift without waiting for a source revision", async () => {
+    const link = (runtimeSessionId: string) =>
+      BotRuntimeSessionLinkRepository.upsert(pool, {
+        id: `brsl_${crypto.randomUUID().replaceAll("-", "")}`,
+        workspaceId: workspace,
+        botId: bot,
+        runtimeKind: "openclaw",
+        instanceId: instance,
+        runtimeSessionId,
+        rootStreamId: stream,
+        activeStreamId: stream,
+        linkedBy: author,
+      })
+    await link("session-a")
+    const source = await createSource("route A")
+    const claimed = await claim("route-drift-token", instance, "session-a")
+    await link("session-b")
+
+    const renewed = await service().renewInvocationClaim({
+      workspaceId: workspace,
+      botId: bot,
+      invocationId: claimed!.id,
+      instanceId: instance,
+      claimToken: "route-drift-token",
+      claimTtlSeconds: 60,
+      knownSourceRevision: source.revision,
+    })
+    const persisted = await pool.query<{ status: string; target_runtime_session_id: string }>(
+      `SELECT status, target_runtime_session_id
+       FROM bot_invocations WHERE source_message_id = $1 ORDER BY created_at, id`,
+      [source.id]
+    )
+    expect({ status: renewed?.status, reason: renewed?.cancellationReason, rows: persisted.rows }).toEqual({
+      status: "cancelled",
+      reason: "routing_changed",
+      rows: [
+        { status: "cancelled", target_runtime_session_id: "session-a" },
+        { status: "pending", target_runtime_session_id: "session-b" },
+      ],
+    })
   })
 
   test("pending and claimed routes retarget to the current runtime session", async () => {

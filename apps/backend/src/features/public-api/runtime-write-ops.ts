@@ -1,4 +1,4 @@
-import type { Pool } from "pg"
+import type { Pool, PoolClient } from "pg"
 import { withClient } from "../../db"
 import type { Server } from "socket.io"
 import { HttpError } from "@threa/backend-common"
@@ -36,6 +36,17 @@ export interface BotRuntimeWriteOpsDeps {
   io: Server
   botRuntimeService: BotRuntimeService
   botChannelService: BotChannelService
+}
+
+async function withRenewalSerializationRetry<T>(pool: Pool, operation: (db: PoolClient) => Promise<T>) {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      return await withClient(pool, operation)
+    } catch (error) {
+      if ((error as { code?: string }).code !== "40001" || attempt === 2) throw error
+    }
+  }
+  throw new Error("Invocation renewal retry exhausted without a result")
 }
 
 /**
@@ -148,7 +159,7 @@ export function createBotRuntimeWriteOps(deps: BotRuntimeWriteOpsDeps): BotRunti
   }
 
   async function renewClaim(params: RenewClaimParams): Promise<RenewClaimResult> {
-    const result = await withClient(pool, async (db) => {
+    const result = await withRenewalSerializationRetry(pool, async (db) => {
       await db.query("BEGIN ISOLATION LEVEL REPEATABLE READ")
       try {
         const renewed = await botRuntimeService.renewInvocationClaimInTransaction(db, params)
@@ -158,6 +169,7 @@ export function createBotRuntimeWriteOps(deps: BotRuntimeWriteOpsDeps): BotRunti
           return {
             invocationId: renewed.id,
             status: "cancelled" as const,
+            claimExpiresAt: null,
             sourceRevision: renewed.sourceMessageRevision,
             reason: renewed.cancellationReason ?? "routing_changed",
           }
@@ -177,6 +189,7 @@ export function createBotRuntimeWriteOps(deps: BotRuntimeWriteOpsDeps): BotRunti
           return {
             invocationId: cancelled.id,
             status: "cancelled" as const,
+            claimExpiresAt: null,
             sourceRevision: cancelled.sourceMessageRevision,
             reason: "key_grant_lost" as const,
           }
@@ -231,6 +244,7 @@ export function createBotRuntimeWriteOps(deps: BotRuntimeWriteOpsDeps): BotRunti
             return {
               invocationId: cancelled.id,
               status: "cancelled" as const,
+              claimExpiresAt: null,
               sourceRevision: cancelled.sourceMessageRevision,
               reason: "key_grant_lost" as const,
             }

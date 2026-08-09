@@ -53,3 +53,7 @@ ALTER TABLE bot_invocations
 CREATE UNIQUE INDEX idx_bot_invocations_active_source_actor_trigger
   ON bot_invocations (workspace_id, source_message_id, actor_type, actor_id, trigger)
   WHERE status IN ('pending', 'claimed');
+
+CREATE INDEX idx_bot_invocations_active_source_cancellation
+  ON bot_invocations (workspace_id, actor_id, source_message_id)
+  WHERE status IN ('pending', 'claimed');

@@ -23,6 +23,7 @@ describe("bot invocation source revisions migration", () => {
 
     await pool.query(`
       DROP INDEX idx_bot_invocations_active_source_actor_trigger;
+      DROP INDEX idx_bot_invocations_active_source_cancellation;
       ALTER TABLE bot_invocations
         DROP COLUMN source_message_revision,
         DROP COLUMN claimed_source_message_revision,
@@ -94,6 +95,9 @@ describe("bot invocation source revisions migration", () => {
        FROM bot_invocations WHERE workspace_id = 'ws_migration' ORDER BY id`
     )
 
+    const cancellationIndex = await pool.query<{ indexdef: string }>(
+      "SELECT indexdef FROM pg_indexes WHERE indexname = 'idx_bot_invocations_active_source_cancellation'"
+    )
     const repairedSession = await pool.query<{ status: string; error: string; completed_at: Date | null }>(
       "SELECT status, error, completed_at FROM agent_sessions WHERE id = 'binv_deleted'"
     )
@@ -126,6 +130,9 @@ describe("bot invocation source revisions migration", () => {
         cancellation_reason: null,
       },
     ])
+    expect(cancellationIndex.rows[0]?.indexdef).toContain(
+      "(workspace_id, actor_id, source_message_id) WHERE (status = ANY (ARRAY['pending'::text, 'claimed'::text]))"
+    )
     expect(repairedSession.rows[0]).toEqual({
       status: "deleted",
       error: "Invocation source deleted",

@@ -1040,7 +1040,6 @@ export const BotInvocationRepository = {
           AND i.source_message_id = ${params.sourceMessageId}
           AND i.status IN ('pending', 'claimed')
           AND i.trigger <> 'session-control'
-          AND i.source_message_revision < ${params.sourceMessageRevision}
           AND NOT EXISTS (
             SELECT 1
             FROM jsonb_array_elements(${JSON.stringify(params.desiredRoutes)}::jsonb) desired
@@ -1415,6 +1414,18 @@ export const BotInvocationRepository = {
     const identity = await findInvocationActorSource(db, params)
     if (!identity) return null
     await acquireActorSourceLocks(db, [identity])
+    const result = await db.query<BotInvocationRow>(sql`SELECT * FROM bot_invocations
+      WHERE id = ${params.invocationId} AND workspace_id = ${params.workspaceId}
+        AND actor_type = 'bot' AND actor_id = ${params.botId}
+        AND claimed_by_instance_id = ${params.instanceId} AND claim_token = ${params.claimToken}
+        AND status IN ('claimed', 'cancelled')`)
+    return result.rows[0] ? mapInvocation(result.rows[0]) : null
+  },
+
+  async findClaimControlAfterLocks(
+    db: Querier,
+    params: { workspaceId: string; botId: string; invocationId: string; instanceId: string; claimToken: string }
+  ): Promise<BotInvocation | null> {
     const result = await db.query<BotInvocationRow>(sql`SELECT * FROM bot_invocations
       WHERE id = ${params.invocationId} AND workspace_id = ${params.workspaceId}
         AND actor_type = 'bot' AND actor_id = ${params.botId}

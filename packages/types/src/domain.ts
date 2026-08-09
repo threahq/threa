@@ -455,7 +455,7 @@ export type InvocationInputUpdateWire =
 
 export type InvocationControlState =
   | { status: "active"; claimExpiresAt: string; sourceRevision: number; update?: InvocationInputUpdateWire }
-  | { status: "cancelled"; sourceRevision: number; reason: BotInvocationCancellationReason }
+  | { status: "cancelled"; claimExpiresAt: null; sourceRevision: number; reason: BotInvocationCancellationReason }
 
 /**
  * User-defined organizational label. Every label is private — owned by and

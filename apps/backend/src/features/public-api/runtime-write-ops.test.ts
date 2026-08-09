@@ -55,7 +55,8 @@ function setup(serviceOverrides: Partial<BotRuntimeService> = {}) {
     }),
     release: mock(() => {}),
   } as unknown as PoolClient
-  const pool = { connect: mock(async () => client) } as unknown as Pool
+  const connect = mock(async () => client)
+  const pool = { connect } as unknown as Pool
   const service = {
     renewInvocationClaimInTransaction: mock(async () => invocation()),
     cancelOwnedClaimForKeyGrantLossInTransaction: mock(async () =>
@@ -82,6 +83,8 @@ function setup(serviceOverrides: Partial<BotRuntimeService> = {}) {
   spyOn(AgentSessionRepository, "updateInvocationReplyKeyGeneration").mockResolvedValue(true)
   return {
     client,
+    connect,
+    pool,
     queries,
     service,
     ops: createBotRuntimeWriteOps({
@@ -105,6 +108,38 @@ const params = {
 
 describe("runtime renew control snapshot", () => {
   afterEach(() => mock.restore())
+
+  it("retries serialization failures with a rolled-back fresh transaction only", async () => {
+    const serializationFailure = Object.assign(new Error("serialization failure"), { code: "40001" })
+    const arbitraryFailure = Object.assign(new Error("arbitrary failure"), { code: "XX000" })
+    const renew = mock(async () => {
+      if (renew.mock.calls.length === 1) throw serializationFailure
+      return invocation()
+    })
+    const { ops, connect, queries } = setup({ renewInvocationClaimInTransaction: renew })
+    spyOn(e2eStreams, "resolveSealingContext").mockResolvedValue({
+      streamIsE2e: false,
+      actorHasGrant: false,
+      externalSealedDelivery: false,
+    })
+    spyOn(agentRuntime, "resolveDeliveryVerdict").mockReturnValue({ delivery: "plaintext" })
+
+    await expect(ops.renewClaim(params)).resolves.toMatchObject({ status: "active" })
+    expect({
+      connections: connect.mock.calls.length,
+      rollbacks: queries.filter((query) => query === "ROLLBACK"),
+    }).toEqual({
+      connections: 2,
+      rollbacks: ["ROLLBACK"],
+    })
+
+    renew.mockImplementation(async () => {
+      throw arbitraryFailure
+    })
+    const connectionsBefore = connect.mock.calls.length
+    await expect(ops.renewClaim(params)).rejects.toBe(arbitraryFailure)
+    expect(connect.mock.calls.length - connectionsBefore).toBe(1)
+  })
 
   it("plumbs HTTP presence manifest to explicit registration", async () => {
     spyOn(BotChannelAccessRepository, "getGrantedStreamIds").mockResolvedValue([])
@@ -157,6 +192,7 @@ describe("runtime renew control snapshot", () => {
     expect(result).toEqual({
       invocationId: "binv_1",
       status: "cancelled",
+      claimExpiresAt: null,
       sourceRevision: 2,
       reason: "key_grant_lost",
     })
@@ -173,6 +209,7 @@ describe("runtime renew control snapshot", () => {
     expect(result).toEqual({
       invocationId: "binv_1",
       status: "cancelled",
+      claimExpiresAt: null,
       sourceRevision: 2,
       reason: "key_grant_lost",
     })

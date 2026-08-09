@@ -657,6 +657,7 @@ const renewedInvocationSchema = z.discriminatedUnion("status", [
   z.object({
     invocationId: z.string(),
     status: z.literal("cancelled"),
+    claimExpiresAt: z.null(),
     sourceRevision: z.number().int().min(0),
     reason: z.enum(BOT_INVOCATION_CANCELLATION_REASONS),
   }),

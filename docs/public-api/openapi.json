@@ -2154,6 +2154,7 @@
                           "properties": {
                             "invocationId": { "type": "string" },
                             "status": { "type": "string", "const": "cancelled" },
+                            "claimExpiresAt": { "type": "null" },
                             "sourceRevision": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
                             "reason": {
                               "type": "string",
@@ -2167,7 +2168,7 @@
                               ]
                             }
                           },
-                          "required": ["invocationId", "status", "sourceRevision", "reason"],
+                          "required": ["invocationId", "status", "claimExpiresAt", "sourceRevision", "reason"],
                           "additionalProperties": false
                         }
                       ]

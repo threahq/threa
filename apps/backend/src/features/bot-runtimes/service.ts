@@ -1199,9 +1199,26 @@ export class BotRuntimeService {
       restartRequiredRevision?: number
     }
   ): Promise<BotInvocation | null> {
-    const control = await BotInvocationRepository.findClaimControl(db, params)
+    let control = await BotInvocationRepository.findClaimControl(db, params)
     if (!control) return null
     if (control.status === "cancelled") return control
+    if (control.trigger !== "session-control") {
+      const source = await MessageRepository.findInvocationSourceStateForShare(db, {
+        workspaceId: params.workspaceId,
+        messageId: control.sourceMessageId,
+      })
+      // `findClaimControl` owns the source and current-actor advisory locks, but
+      // reconciliation can discover other actors after opening the canonical
+      // source. Let the repositories acquire that complete actor set rather
+      // than pretending the one claim's actor lock covers every route.
+      await this.reconcileInvocationSourceInTransaction(
+        db,
+        { workspaceId: params.workspaceId, sourceMessageId: control.sourceMessageId },
+        { source }
+      )
+    }
+    control = await BotInvocationRepository.findClaimControlAfterLocks(db, params)
+    if (!control || control.status === "cancelled") return control
     if (
       params.knownSourceRevision != null &&
       (params.knownSourceRevision < (control.claimedSourceMessageRevision ?? 0) ||
