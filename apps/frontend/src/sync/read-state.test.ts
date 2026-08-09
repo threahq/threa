@@ -7,7 +7,6 @@ import type { Socket } from "socket.io-client"
 import { CatchUpBatch, commitCounterMutation } from "./catch-up-batch"
 import { registerStreamSocketHandlers } from "./stream-sync"
 import { registerWorkspaceSocketHandlers } from "./workspace-sync"
-import { primeEventWriteFlags, resetEventWriteFlags } from "@/db/event-writes"
 import { applyStreamsReadAllOrdinals } from "./unread-counters"
 import {
   applyReadStateSnapshotsIdb,
@@ -640,12 +639,7 @@ describe("replayed message:created entries and the preview write", () => {
     }
   }
 
-  async function replay(streamId: string, singlePreviewWriter: boolean): Promise<number> {
-    resetEventWriteFlags()
-    primeEventWriteFlags("ws_1", {
-      workspace: { singlePreviewWriter: singlePreviewWriter ? "on" : "off" },
-      user: {},
-    })
+  async function replay(streamId: string): Promise<number> {
     await db.events.clear()
     await db.streams.clear()
     await db.streams.put({
@@ -666,11 +660,8 @@ describe("replayed message:created entries and the preview write", () => {
     return calls
   }
 
-  it("live message:created delivery writes no preview when the single writer is on", async () => {
-    const on = await replay("stream_replay_on", true)
-    const off = await replay("stream_replay_off", false)
-    expect({ on, off }).toEqual({ on: 0, off: 3 })
-    resetEventWriteFlags()
+  it("live message:created delivery writes no preview — stream:activity is the only writer", async () => {
+    expect(await replay("stream_replay_on")).toBe(0)
   })
 
   it("a catch-up replay's batched stream:activity previews land on flush, last write winning", async () => {

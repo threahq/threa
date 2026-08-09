@@ -10,7 +10,7 @@ import { makeQueryClient } from "@/contexts/query-client"
 import { resetWorkspaceStoreCache } from "@/stores/workspace-store"
 import { resetWorkspaceTableRegistry } from "@/stores/workspace-table-registry"
 import { resetActorLookups } from "@/stores/actor-lookup"
-import { bumpAccountGeneration, resetEventWriteFlags } from "@/db/event-writes"
+import { bumpAccountGeneration } from "@/db/event-writes"
 import { resetStreamStoreCache } from "@/stores/stream-store"
 import { resetDraftStoreCache } from "@/stores/draft-store"
 import { resetShareHandoffStoreCache } from "@/stores/share-handoff-store"
@@ -81,7 +81,6 @@ function flushModuleStoreCaches(): void {
   resetWorkspaceStoreCache()
   resetWorkspaceTableRegistry()
   resetActorLookups()
-  resetEventWriteFlags()
   // The `db` proxy is repointed on a switch, so any write deferred past this
   // point would land in the new account's database — deferred writers capture
   // this generation and bail when it moves.

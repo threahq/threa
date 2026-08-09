@@ -19,7 +19,7 @@ import { streamKeys } from "@/hooks/use-streams"
 import { workspaceKeys } from "@/hooks/use-workspaces"
 import { commandsApi } from "@/api"
 import { clearDecryptCache, getCachedDecryption } from "@/lib/crypto/decrypt-cache"
-import { primeEventWriteFlags, resetEventWriteFlags } from "@/db/event-writes"
+import { NO_CAPTURE, PerfCapture, armPerfCapture } from "@/lib/perf/capture"
 import { sharedMessageSlotKey } from "@threa/types"
 import type {
   AttachmentSummary,
@@ -4360,17 +4360,6 @@ describe("registerStreamSocketHandlers — one handler set per (event source, st
     }
   }
 
-  function enableSharing(enabled: boolean) {
-    primeEventWriteFlags("ws_1", {
-      // `singlePreviewWriter` is pinned off, not inherited: these cases count
-      // `db.streams.update` calls to tell one apply from two, and that writer
-      // only exists on this arm. Inheriting a default scheduled to flip would
-      // silently retarget the assertion at nothing.
-      workspace: { sharedStreamRegistration: enabled ? "on" : "off", singlePreviewWriter: "off" },
-      user: {},
-    })
-  }
-
   function messageCreated(streamId: string, id: string, sequence: string, extraPayload: Record<string, unknown> = {}) {
     return {
       workspaceId: "ws_1",
@@ -4407,16 +4396,13 @@ describe("registerStreamSocketHandlers — one handler set per (event source, st
     await db.streamContextItems.clear()
     await db.pendingMessages.clear()
     clearDecryptCache()
-    resetEventWriteFlags()
   })
 
   afterEach(() => {
     vi.restoreAllMocks()
-    resetEventWriteFlags()
   })
 
   it("two registrations against one event source bind the listener set once", async () => {
-    enableSharing(true)
     const streamId = "stream_shared_once"
     await db.streams.put({
       id: streamId,
@@ -4426,8 +4412,8 @@ describe("registerStreamSocketHandlers — one handler set per (event source, st
     } as never)
 
     const { socket, emit } = createCountingSocket()
+    // One scope read per apply — two bindings would read twice.
     const scopeReads = vi.spyOn(db.streams, "get")
-    const previewWrites = vi.spyOn(db.streams, "update")
     const queryClient = new QueryClient()
 
     const releaseA = registerStreamSocketHandlers(socket, "ws_1", streamId, queryClient)
@@ -4437,45 +4423,14 @@ describe("registerStreamSocketHandlers — one handler set per (event source, st
 
     expect({
       scopeReads: scopeReads.mock.calls.length,
-      previewWrites: previewWrites.mock.calls.length,
       persisted: (await db.events.get("evt_shared"))?.sequence,
-    }).toEqual({ scopeReads: 1, previewWrites: 1, persisted: "10" })
-
-    releaseA()
-    releaseB()
-  })
-
-  it("binds the listener set twice and applies twice when the flag is off", async () => {
-    enableSharing(false)
-    const streamId = "stream_unshared"
-    await db.streams.put({
-      id: streamId,
-      workspaceId: "ws_1",
-      rootStreamId: streamId,
-      _cachedAt: Date.now(),
-    } as never)
-
-    const { socket, emit } = createCountingSocket()
-    const scopeReads = vi.spyOn(db.streams, "get")
-    const previewWrites = vi.spyOn(db.streams, "update")
-    const queryClient = new QueryClient()
-
-    const releaseA = registerStreamSocketHandlers(socket, "ws_1", streamId, queryClient)
-    const releaseB = registerStreamSocketHandlers(socket, "ws_1", streamId, queryClient)
-
-    await emit("message:created", messageCreated(streamId, "evt_unshared", "10"))
-
-    expect({
-      scopeReads: scopeReads.mock.calls.length,
-      previewWrites: previewWrites.mock.calls.length,
-    }).toEqual({ scopeReads: 2, previewWrites: 2 })
+    }).toEqual({ scopeReads: 1, persisted: "10" })
 
     releaseA()
     releaseB()
   })
 
   it("the listeners survive until the last release", async () => {
-    enableSharing(true)
     const streamId = "stream_last_release"
     const { socket, emit } = createCountingSocket()
     const queryClient = new QueryClient()
@@ -4493,7 +4448,6 @@ describe("registerStreamSocketHandlers — one handler set per (event source, st
   })
 
   it("releasing twice does not tear down a live registration", async () => {
-    enableSharing(true)
     const streamId = "stream_strictmode"
     const { socket, emit } = createCountingSocket()
     const queryClient = new QueryClient()
@@ -4511,7 +4465,6 @@ describe("registerStreamSocketHandlers — one handler set per (event source, st
   })
 
   it("a registration without an engine is not shared with the gated one", async () => {
-    enableSharing(true)
     const streamId = "stream_two_sources"
     const gated = createCountingSocket()
     const raw = createCountingSocket()
@@ -4531,7 +4484,6 @@ describe("registerStreamSocketHandlers — one handler set per (event source, st
   })
 
   it("a second registrant with mismatched wiring throws", () => {
-    enableSharing(true)
     const streamId = "stream_mismatch"
     const { socket } = createCountingSocket()
     const queryClient = new QueryClient()
@@ -4550,7 +4502,6 @@ describe("registerStreamSocketHandlers — one handler set per (event source, st
   })
 
   it("every registrant's gap callback fires, and a released one stops", async () => {
-    enableSharing(true)
     const streamId = "stream_gap_fanout"
     const { socket, emit } = createCountingSocket()
     const queryClient = new QueryClient()
@@ -4587,7 +4538,6 @@ describe("registerStreamSocketHandlers — one handler set per (event source, st
   })
 
   it("two registrants sharing ONE callback reference keep the survivor's subscription", async () => {
-    enableSharing(true)
     const streamId = "stream_gap_same_reference"
     const { socket, emit } = createCountingSocket()
     const queryClient = new QueryClient()
@@ -4609,7 +4559,6 @@ describe("registerStreamSocketHandlers — one handler set per (event source, st
   })
 
   it("a registrant that joins a gap-less registration still receives gaps", async () => {
-    enableSharing(true)
     const streamId = "stream_gap_late_join"
     const { socket, emit } = createCountingSocket()
     const queryClient = new QueryClient()
@@ -4630,7 +4579,6 @@ describe("registerStreamSocketHandlers — one handler set per (event source, st
   })
 
   it("an E2E self-send seeds the decrypt cache exactly once", async () => {
-    enableSharing(true)
     const streamId = "stream_e2e_shared"
     const plaintextJson = { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "secret" }] }] }
     await db.events.put({
@@ -4649,7 +4597,10 @@ describe("registerStreamSocketHandlers — one handler set per (event source, st
     })
 
     const { socket, emit } = createCountingSocket()
-    const previewWrites = vi.spyOn(db.streams, "update")
+    // One `stream.eventApply` sample per handler run — the direct count of how
+    // many times the shared binding applied this event.
+    const capture = new PerfCapture()
+    armPerfCapture(capture)
     const queryClient = new QueryClient()
 
     const releaseA = registerStreamSocketHandlers(socket, "ws_1", streamId, queryClient)
@@ -4670,15 +4621,15 @@ describe("registerStreamSocketHandlers — one handler set per (event source, st
     expect({
       status: cached?.status,
       markdown: cached?.value?.contentMarkdown,
-      applies: previewWrites.mock.calls.length,
+      applies: capture.snapshot().filter((sample) => sample.name === "stream.eventApply").length,
     }).toEqual({ status: "decrypted", markdown: "secret", applies: 1 })
 
+    armPerfCapture(NO_CAPTURE)
     releaseA()
     releaseB()
   })
 
   it("the registry drops its entry when the last holder releases", async () => {
-    enableSharing(true)
     const streamId = "stream_registry_drop"
     const { socket, emit } = createCountingSocket()
     const queryClient = new QueryClient()
@@ -4722,13 +4673,6 @@ describe("registerStreamSocketHandlers — stream:activity is the single preview
         await Promise.all(Array.from(handlers.get(event) ?? []).map((handler) => handler(payload)))
       },
     }
-  }
-
-  function enableSinglePreviewWriter(enabled: boolean) {
-    primeEventWriteFlags("ws_1", {
-      workspace: { singlePreviewWriter: enabled ? "on" : "off" },
-      user: {},
-    })
   }
 
   const contentJson = {
@@ -4776,16 +4720,13 @@ describe("registerStreamSocketHandlers — stream:activity is the single preview
     await db.streamContextItems.clear()
     await db.pendingMessages.clear()
     await db.slots.clear()
-    resetEventWriteFlags()
   })
 
   afterEach(() => {
     vi.restoreAllMocks()
-    resetEventWriteFlags()
   })
 
   it("a live message writes no preview and no bootstrap cache entry", async () => {
-    enableSinglePreviewWriter(true)
     const streamId = "stream_single_writer"
     await seedStream(streamId)
 
@@ -4809,38 +4750,7 @@ describe("registerStreamSocketHandlers — stream:activity is the single preview
     cleanup()
   })
 
-  it("the flag off writes the preview exactly as today", async () => {
-    enableSinglePreviewWriter(false)
-    const streamId = "stream_single_writer_off"
-    await seedStream(streamId)
-
-    const queryClient = new QueryClient()
-    queryClient.setQueryData(workspaceKeys.bootstrap("ws_1"), {
-      streams: [{ id: streamId, lastMessagePreview: bootstrapPreview }],
-    } as unknown as WorkspaceBootstrap)
-
-    const { socket, emit } = createTestSocket()
-    const cleanup = registerStreamSocketHandlers(socket, "ws_1", streamId, queryClient)
-
-    await emit("message:created", messageCreated(streamId, "evt_single_off", "10"))
-
-    const written = {
-      authorId: "user_7",
-      authorType: "user",
-      content: contentJson,
-      createdAt: "2026-08-04T10:00:00.000Z",
-    }
-    expect({
-      preview: (await db.streams.get(streamId))?.lastMessagePreview,
-      cached: queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap("ws_1"))?.streams[0]
-        .lastMessagePreview,
-    }).toEqual({ preview: written, cached: written })
-
-    cleanup()
-  })
-
   it("a message:created applied without a SyncEngine still writes the event and does not throw", async () => {
-    enableSinglePreviewWriter(true)
     const streamId = "stream_no_engine"
     const queryClient = new QueryClient()
 
@@ -4861,7 +4771,6 @@ describe("registerStreamSocketHandlers — stream:activity is the single preview
   })
 
   it("the share-fallback invalidation still fires for a map-less share-bearing event", async () => {
-    enableSinglePreviewWriter(true)
     const streamId = "stream_share_fallback"
     await seedStream(streamId)
 

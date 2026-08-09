@@ -55,14 +55,11 @@ export function defineFlag<
  */
 export const FEATURE_FLAGS = {
   calls: defineFlag({ values: ["off", "on"], scopes: ["workspace"], default: "on" }),
-  coalescedLiveCommit: defineFlag({ values: ["off", "on"], scopes: ["workspace", "user"], default: "off" }),
   composeTraces: defineFlag({ values: ["off", "capture"], scopes: ["workspace"], default: "off" }),
   // Availability only: "available" offers the Diagnostics settings toggle. The
   // user's own opt-in preference is the consent, and the upload path re-checks
   // both server-side.
   perfDiagnostics: defineFlag({ values: ["off", "available"], scopes: ["workspace", "user"], default: "off" }),
-  sharedStreamRegistration: defineFlag({ values: ["off", "on"], scopes: ["workspace", "user"], default: "off" }),
-  singlePreviewWriter: defineFlag({ values: ["off", "on"], scopes: ["workspace", "user"], default: "off" }),
 } as const satisfies FeatureFlagRegistry
 
 export type FeatureFlagKey = keyof typeof FEATURE_FLAGS

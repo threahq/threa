@@ -34,7 +34,6 @@ export const PERF_MARK_NAMES = [
   "stream.idbTransaction",
   "stream.eventTx",
   "stream.contextRows",
-  "stream.previewWrite",
   "stream.activityApply",
   "stream.liveCommitFold",
   "stream.eventDuplicate",

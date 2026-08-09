@@ -11,7 +11,7 @@ import {
 import type { Socket } from "socket.io-client"
 import Dexie from "dexie"
 import { db } from "@/db"
-import { bumpAccountGeneration, primeEventWriteFlags, resetEventWriteFlags } from "@/db/event-writes"
+import { bumpAccountGeneration } from "@/db/event-writes"
 import { NO_CAPTURE, PerfCapture, armPerfCapture } from "@/lib/perf/capture"
 import { workspaceKeys } from "@/hooks/use-workspaces"
 import { CatchUpBatch, LiveCommitBatch } from "./catch-up-batch"
@@ -200,14 +200,10 @@ type Harness = {
   setCatchUpBatch: (batch: CatchUpBatch | null) => void
 }
 
-/** Registers the workspace handlers exactly as the SyncEngine does, with the
- *  flag primed. `commitCounter`/`commitPreview` read the flag synchronously per
- *  event, so a mid-task flip takes effect on the next event with no reconnect. */
+/** Registers the workspace handlers exactly as the SyncEngine does. `coalesced`
+ *  false withholds the batch — the per-event path handlers built without an
+ *  engine still take, and the baseline the folded arm is compared against. */
 async function register(queryClient: QueryClient, coalesced: boolean): Promise<Harness> {
-  primeEventWriteFlags(WORKSPACE_ID, {
-    workspace: { coalescedLiveCommit: coalesced ? "on" : "off" },
-    user: {},
-  })
   const liveBatch = new LiveCommitBatch(queryClient, WORKSPACE_ID)
   let catchUpBatch: CatchUpBatch | null = null
   const { socket, emit } = createTestSocket()
@@ -216,7 +212,7 @@ async function register(queryClient: QueryClient, coalesced: boolean): Promise<H
     getCurrentUser: () => ({ id: "workos_1" }),
     subscribeStream: vi.fn(),
     getCatchUpBatch: () => catchUpBatch,
-    getLiveCommitBatch: () => liveBatch,
+    getLiveCommitBatch: () => (coalesced ? liveBatch : null),
   })
   return {
     emit,
@@ -242,12 +238,10 @@ function bootstrapOf(queryClient: QueryClient): WorkspaceBootstrap | undefined {
 
 describe("LiveCommitBatch", () => {
   beforeEach(async () => {
-    resetEventWriteFlags()
     await Promise.all([db.streams.clear(), db.unreadState.clear()])
   })
 
   afterEach(() => {
-    resetEventWriteFlags()
     vi.restoreAllMocks()
   })
 
@@ -276,24 +270,6 @@ describe("LiveCommitBatch", () => {
       unread: 1,
       cachePreview: "message 6",
       idbPreview: "message 6",
-    })
-
-    harness.cleanup()
-  })
-
-  it("the flag off keeps today's two transactions and two publications", async () => {
-    const queryClient = new QueryClient()
-    await seedFixture(queryClient, ["stream_1"])
-    const transaction = vi.spyOn(Dexie.prototype, "transaction")
-    const setQueryData = vi.spyOn(queryClient, "setQueryData")
-    const harness = await register(queryClient, false)
-
-    harness.emit("stream:activity", activity("stream_1", 6))
-    await settle()
-
-    expect({ transactions: transaction.mock.calls.length, publications: setQueryData.mock.calls.length }).toEqual({
-      transactions: 2,
-      publications: 2,
     })
 
     harness.cleanup()
@@ -345,7 +321,6 @@ describe("LiveCommitBatch", () => {
 
     await db.streams.clear()
     await db.unreadState.clear()
-    resetEventWriteFlags()
 
     const immediateClient = new QueryClient()
     await seedFixture(immediateClient, ["stream_1", "stream_2"])
@@ -488,53 +463,6 @@ describe("LiveCommitBatch", () => {
     batch.destroy()
   })
 
-  it("flipping the flag off disarms the coalescing on the next event, with no reconnect", async () => {
-    const queryClient = new QueryClient()
-    await seedFixture(queryClient, ["stream_1"])
-    const harness = await register(queryClient, true)
-
-    harness.emit("stream:activity", activity("stream_1", 6))
-    await settle()
-
-    // What a `feature_flags:updated` socket event does to the module map.
-    primeEventWriteFlags(WORKSPACE_ID, { workspace: { coalescedLiveCommit: "off" }, user: {} })
-    const transaction = vi.spyOn(Dexie.prototype, "transaction")
-    const setQueryData = vi.spyOn(queryClient, "setQueryData")
-
-    harness.emit("stream:activity", activity("stream_1", 7))
-    await settle()
-
-    expect({ transactions: transaction.mock.calls.length, publications: setQueryData.mock.calls.length }).toEqual({
-      transactions: 2,
-      publications: 2,
-    })
-
-    harness.cleanup()
-  })
-
-  it("flipping the flag on arms the coalescing on the next event, with no reconnect", async () => {
-    const queryClient = new QueryClient()
-    await seedFixture(queryClient, ["stream_1"])
-    const harness = await register(queryClient, false)
-
-    harness.emit("stream:activity", activity("stream_1", 6))
-    await settle()
-
-    primeEventWriteFlags(WORKSPACE_ID, { workspace: { coalescedLiveCommit: "on" }, user: {} })
-    const transaction = vi.spyOn(Dexie.prototype, "transaction")
-    const setQueryData = vi.spyOn(queryClient, "setQueryData")
-
-    harness.emit("stream:activity", activity("stream_1", 7))
-    await settle()
-
-    expect({ transactions: transaction.mock.calls.length, publications: setQueryData.mock.calls.length }).toEqual({
-      transactions: 1,
-      publications: 1,
-    })
-
-    harness.cleanup()
-  })
-
   it("the activity path's stream.idbTransaction count falls from two to one", async () => {
     const counts = async (coalesced: boolean): Promise<number> => {
       const queryClient = new QueryClient()
@@ -554,7 +482,7 @@ describe("LiveCommitBatch", () => {
     expect({ off: await counts(false), on: await counts(true) }).toEqual({ off: 2, on: 1 })
   })
 
-  it("the fold has its own mark: stream.activityApply stays one handler sample per event in both arms", async () => {
+  it("the fold has its own mark: stream.activityApply stays one handler sample per event with or without the batch", async () => {
     const marks = async (coalesced: boolean) => {
       const queryClient = new QueryClient()
       await seedFixture(queryClient, ["stream_1"])
@@ -668,98 +596,6 @@ describe("LiveCommitBatch", () => {
 
     expect({ afterFirst, total: onFlushFailed.mock.calls.length }).toEqual({ afterFirst: 1, total: 2 })
     batch.destroy()
-  })
-
-  it("flipping the flag off drains the pending fold before the next immediate commit", async () => {
-    const queryClient = new QueryClient()
-    await seedFixture(queryClient, ["stream_1"])
-    const harness = await register(queryClient, true)
-
-    // Buffered under the armed flag; the flip lands in the same task, so the
-    // newer immediate commit must not be overwritten by the older fold.
-    harness.emit("stream:activity", activity("stream_1", 6))
-    primeEventWriteFlags(WORKSPACE_ID, { workspace: { coalescedLiveCommit: "off" }, user: {} })
-    harness.emit("stream:activity", activity("stream_1", 7))
-    await settle()
-
-    expect({
-      cachePreview: bootstrapOf(queryClient)?.streams.find((s) => s.id === "stream_1")?.lastMessagePreview?.content,
-      idbPreview: (await db.streams.get("stream_1"))?.lastMessagePreview?.content,
-    }).toEqual({ cachePreview: "message 7", idbPreview: "message 7" })
-
-    harness.cleanup()
-  })
-
-  it("flipping the flag off drains a fold that is already in flight", async () => {
-    const queryClient = new QueryClient()
-    await seedFixture(queryClient, ["stream_1"])
-    const harness = await register(queryClient, true)
-
-    let release!: () => void
-    const gate = new Promise<void>((resolve) => {
-      release = resolve
-    })
-    const realTransaction = Dexie.prototype.transaction
-    vi.spyOn(Dexie.prototype, "transaction").mockImplementationOnce(function (this: Dexie, ...args: unknown[]) {
-      const running = (realTransaction as (...a: unknown[]) => Promise<unknown>).apply(this, args)
-      return gate.then(() => running) as never
-    })
-
-    // A is buffered and its commit begins: the buffers are already empty and the
-    // transaction is awaiting, so `hasPending()` alone reads false here.
-    harness.emit("stream:activity", activity("stream_1", 6))
-    await new Promise((resolve) => setTimeout(resolve, 0))
-    expect({ pending: harness.liveBatch.hasPending(), flushing: harness.liveBatch.isFlushing() }).toEqual({
-      pending: false,
-      flushing: true,
-    })
-
-    primeEventWriteFlags(WORKSPACE_ID, { workspace: { coalescedLiveCommit: "off" }, user: {} })
-    harness.emit("stream:activity", activity("stream_1", 7))
-    release()
-    await settle()
-
-    expect({
-      cachePreview: bootstrapOf(queryClient)?.streams.find((s) => s.id === "stream_1")?.lastMessagePreview?.content,
-      idbPreview: (await db.streams.get("stream_1"))?.lastMessagePreview?.content,
-    }).toEqual({ cachePreview: "message 7", idbPreview: "message 7" })
-
-    harness.cleanup()
-  })
-
-  it("an off-then-on flip during an in-flight fold still lands the newest commit last", async () => {
-    const queryClient = new QueryClient()
-    await seedFixture(queryClient, ["stream_1"])
-    const harness = await register(queryClient, true)
-
-    let release!: () => void
-    const gate = new Promise<void>((resolve) => {
-      release = resolve
-    })
-    const realTransaction = Dexie.prototype.transaction
-    vi.spyOn(Dexie.prototype, "transaction").mockImplementationOnce(function (this: Dexie, ...args: unknown[]) {
-      const running = (realTransaction as (...a: unknown[]) => Promise<unknown>).apply(this, args)
-      return gate.then(() => running) as never
-    })
-
-    harness.emit("stream:activity", activity("stream_1", 6))
-    await new Promise((resolve) => setTimeout(resolve, 0))
-
-    // Off: #7 takes the deferred immediate arm while #6's commit is in flight.
-    primeEventWriteFlags(WORKSPACE_ID, { workspace: { coalescedLiveCommit: "off" }, user: {} })
-    harness.emit("stream:activity", activity("stream_1", 7))
-    // Back on: #8 buffers, and must publish AFTER the deferred #7.
-    primeEventWriteFlags(WORKSPACE_ID, { workspace: { coalescedLiveCommit: "on" }, user: {} })
-    harness.emit("stream:activity", activity("stream_1", 8))
-    release()
-    await settle()
-
-    expect({
-      cachePreview: bootstrapOf(queryClient)?.streams.find((s) => s.id === "stream_1")?.lastMessagePreview?.content,
-      idbPreview: (await db.streams.get("stream_1"))?.lastMessagePreview?.content,
-    }).toEqual({ cachePreview: "message 8", idbPreview: "message 8" })
-
-    harness.cleanup()
   })
 
   it("a fold buffered before an account switch writes nothing after it", async () => {
