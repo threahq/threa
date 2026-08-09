@@ -46,15 +46,21 @@ export const PROVISIONAL_ATTACH_WINDOW_MINUTES = 30
  *    parentMessageId ∈ the parent conversation), so no parent id is written.
  */
 export const conversationAssigner: ConversationAssigner = {
-  async assignInTransaction(client, { workspaceId, message, directive }) {
+  async assignInTransaction(client, { workspaceId, message, directive, initiatingUserId }) {
     if (directive.intent === ConversationIntents.THREAD_FROM_MESSAGE) {
-      const sourceId = await attachThreadReplyToSource(client, workspaceId, message, directive.sourceConversationId)
+      const sourceId = await attachThreadReplyToSource(
+        client,
+        workspaceId,
+        message,
+        directive.sourceConversationId,
+        initiatingUserId
+      )
       if (sourceId) return sourceId
-      return mintConversationForMessage(client, workspaceId, message)
+      return mintConversationForMessage(client, workspaceId, message, undefined, initiatingUserId)
     }
 
     if (directive.intent === ConversationIntents.NEW_SUBTOPIC) {
-      return mintOrAttachSubtopicConversation(client, workspaceId, message)
+      return mintOrAttachSubtopicConversation(client, workspaceId, message, initiatingUserId)
     }
 
     if (directive.intent === ConversationIntents.NEW) {
@@ -62,7 +68,7 @@ export const conversationAssigner: ConversationAssigner = {
       // slotted its card optimistically keyed by this id — INV-20 idempotency
       // rides the upstream `clientMessageId` dedup, which skips this assigner on a
       // retry, so the id inserts exactly once). Omitted → mint server-side.
-      return mintConversationForMessage(client, workspaceId, message, directive.conversationId)
+      return mintConversationForMessage(client, workspaceId, message, directive.conversationId, initiatingUserId)
     }
 
     // `existing`. Workspace-scoped + row-locked (INV-8, INV-20): a stale/foreign
@@ -98,6 +104,7 @@ export const conversationAssigner: ConversationAssigner = {
       conversationId: target.id,
       created: false,
       reason: "declared",
+      initiatingUserId,
     })
     return target.id
   },
@@ -172,7 +179,8 @@ async function mintConversationForMessage(
   client: PoolClient,
   workspaceId: string,
   message: Message,
-  preferredId?: string
+  preferredId?: string,
+  initiatingUserId?: string
 ): Promise<string> {
   const newId = preferredId ?? conversationId()
   await ConversationRepository.insert(client, {
@@ -190,6 +198,7 @@ async function mintConversationForMessage(
     conversationId: newId,
     created: true,
     reason: "declared",
+    initiatingUserId,
   })
   return newId
 }
@@ -206,12 +215,13 @@ async function mintConversationForMessage(
 async function mintOrAttachSubtopicConversation(
   client: PoolClient,
   workspaceId: string,
-  message: Message
+  message: Message,
+  initiatingUserId?: string
 ): Promise<string> {
   await client.query(sql`SELECT id FROM streams WHERE id = ${message.streamId} FOR UPDATE`)
   const active = (await ConversationRepository.findActiveByStream(client, message.streamId))[0]
   if (!active) {
-    return mintConversationForMessage(client, workspaceId, message)
+    return mintConversationForMessage(client, workspaceId, message, undefined, initiatingUserId)
   }
   await ConversationRepository.addPrimaryMessage(client, workspaceId, active.id, message.id, message.authorId)
   await ConversationRepository.bumpActivityForIds(client, workspaceId, [active.id])
@@ -221,6 +231,7 @@ async function mintOrAttachSubtopicConversation(
     conversationId: active.id,
     created: false,
     reason: "declared",
+    initiatingUserId,
   })
   return active.id
 }
@@ -243,7 +254,8 @@ async function attachThreadReplyToSource(
   client: PoolClient,
   workspaceId: string,
   message: Message,
-  sourceConversationId: string
+  sourceConversationId: string,
+  initiatingUserId?: string
 ): Promise<string | null> {
   const thread = await StreamRepository.findById(client, message.streamId)
   const source = await ConversationRepository.findByIdForUpdate(client, workspaceId, sourceConversationId)
@@ -267,6 +279,7 @@ async function attachThreadReplyToSource(
     conversationId: source.id,
     created: false,
     reason: "declared",
+    initiatingUserId,
   })
   return source.id
 }

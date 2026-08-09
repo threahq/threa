@@ -204,14 +204,50 @@ export const EnclaveInvocationsRepository = {
    * snapshotted onto the row) and the prompt's (the trigger envelope's).
    * Race-safe across concurrent pollers via FOR UPDATE SKIP LOCKED (INV-20).
    */
+  async findNextClaimable(
+    db: Querier,
+    params: { keyId: string; maxAttempts: number }
+  ): Promise<EnclaveInvocation | null> {
+    const result = await db.query<EnclaveInvocationRow>(sql`
+      SELECT i.* FROM enclave_invocations i
+      WHERE (i.status = 'pending' OR (i.status = 'claimed' AND i.claim_expires_at < NOW()))
+        AND i.attempts < ${params.maxAttempts}
+        AND EXISTS (
+          SELECT 1
+          FROM stream_e2e_key_wraps w
+          JOIN e2e_streams e
+            ON e.workspace_id = i.workspace_id AND e.stream_id = i.root_stream_id
+          WHERE w.workspace_id = i.workspace_id
+            AND w.stream_id = i.root_stream_id
+            AND w.recipient_kind = 'enclave'
+            AND w.recipient_key_id = ${params.keyId}
+            AND w.key_generation = e.current_key_generation
+        )
+        AND EXISTS (
+          SELECT 1
+          FROM stream_e2e_key_wraps w
+          JOIN messages m ON m.id = i.message_id
+          WHERE w.workspace_id = i.workspace_id
+            AND w.stream_id = i.root_stream_id
+            AND w.recipient_kind = 'enclave'
+            AND w.recipient_key_id = ${params.keyId}
+            AND w.key_generation = (m.envelope ->> 'keyGeneration')::int
+        )
+      ORDER BY i.created_at ASC, i.id ASC
+      LIMIT 1
+    `)
+    return result.rows[0] ? mapRow(result.rows[0]) : null
+  },
+
   async claimNext(
     db: Querier,
-    params: { keyId: string; claimToken: string; claimTtlSeconds: number; maxAttempts: number }
+    params: { keyId: string; claimToken: string; claimTtlSeconds: number; maxAttempts: number; invocationId?: string }
   ): Promise<EnclaveInvocation | null> {
     const result = await db.query<EnclaveInvocationRow>(sql`
       WITH candidate AS (
         SELECT i.id FROM enclave_invocations i
         WHERE (i.status = 'pending' OR (i.status = 'claimed' AND i.claim_expires_at < NOW()))
+          AND (${params.invocationId ?? null}::text IS NULL OR i.id = ${params.invocationId ?? null})
           AND i.attempts < ${params.maxAttempts}
           AND EXISTS (
             SELECT 1
@@ -276,6 +312,21 @@ export const EnclaveInvocationsRepository = {
       UPDATE enclave_invocations
       SET status = 'completed', completed_at = NOW(), updated_at = NOW()
       WHERE id = ${id} AND status = 'claimed'
+    `)
+  },
+
+  async failClaimed(
+    db: Querier,
+    params: { id: string; keyId: string; claimToken: string; errorMessage: string }
+  ): Promise<void> {
+    await db.query(sql`
+      UPDATE enclave_invocations
+      SET status = 'failed', error_message = ${params.errorMessage}, updated_at = NOW()
+      WHERE id = ${params.id}
+        AND status = 'claimed'
+        AND claimed_by_key_id = ${params.keyId}
+        AND claim_token = ${params.claimToken}
+        AND claim_expires_at > NOW()
     `)
   },
 

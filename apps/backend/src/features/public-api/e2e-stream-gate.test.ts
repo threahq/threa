@@ -7,6 +7,7 @@ import { AgentSessionRepository } from "../agents"
 import * as dbModule from "../../db"
 import type { EventService } from "../messaging"
 import type { StreamService } from "../streams"
+import * as streamsModule from "../streams"
 
 const SEALED_ENVELOPE = { v: 2, keyGeneration: 3, iv: "aXY=", aad: "YWFk" }
 
@@ -26,11 +27,20 @@ function createResponse(): Response {
 // (rather than `as never`) means a real shape change to the factory contract —
 // a renamed or removed dep — fails this test at compile time.
 function createHandlers(overrides: Partial<PublicApiDeps> = {}): ReturnType<typeof createPublicApiHandlers> {
+  spyOn(streamsModule, "assertStreamWritable").mockResolvedValue({} as never)
+  spyOn(streamsModule, "resolveLockedStreamAuthorities").mockResolvedValue([
+    { state: { readOnly: false, readOnlyReason: null } },
+  ] as never)
   const eventService = {
     createMessage: mock(() => Promise.resolve({ id: "msg_new" })),
     assertStreamWritableForPrincipal: mock(() => Promise.resolve()),
     createMessageForPrincipalReturningConversation: mock(() => Promise.resolve({ message: { id: "msg_new" } })),
     editMessageForPrincipal: mock(() => Promise.resolve({ id: "msg_new" })),
+    createMessageForPrincipalInTransaction: mock((...args: unknown[]) =>
+      (
+        overrides.eventService as unknown as { createMessageInTransaction?: (...params: unknown[]) => unknown }
+      )?.createMessageInTransaction?.(...args)
+    ),
     getMessageById: mock(() =>
       Promise.resolve({ id: "msg_1", streamId: "stream_1", authorId: "usr_1", deletedAt: null })
     ),
@@ -150,12 +160,16 @@ describe("public API E2E-stream plaintext gate", () => {
   it("rejects a bot-invocation completion targeting an E2E stream with 400 (E2EE-2)", async () => {
     spyOn(E2eStreamsRepository, "isE2eStream").mockResolvedValue(true)
     spyOn(BotRepository, "findById").mockResolvedValue({ id: "bot_1", archivedAt: null } as never)
+    spyOn(AgentSessionRepository, "findById").mockResolvedValue(null as never)
     const createMessageInTransaction = mock(() => Promise.resolve({ id: "msg_new" }))
     // withTransaction runs the callback against a sentinel client.
     spyOn(dbModule, "withTransaction").mockImplementation(((_pool: unknown, fn: (c: unknown) => unknown) =>
       fn({})) as never)
+    const activeClaim = { id: "claim_1", responseStreamId: "stream_1", status: "claimed" }
     const botRuntimeService = {
-      findActiveClaimForUpdate: mock(() => Promise.resolve({ id: "claim_1", responseStreamId: "stream_1" })),
+      findInvocationForCallback: mock(() => Promise.resolve(activeClaim)),
+      findCompletedInvocationForReplay: mock(() => Promise.resolve(null)),
+      findActiveClaimForUpdate: mock(() => Promise.resolve(activeClaim)),
       findPresenceByInstance: mock(() => Promise.resolve({ manifest: null })),
       completeInvocationInTransaction: mock(() => Promise.resolve({ id: "inv_1" })),
     } as unknown as PublicApiDeps["botRuntimeService"]
@@ -190,7 +204,7 @@ describe("public API E2E-stream plaintext gate", () => {
     spyOn(AgentSessionRepository, "findById").mockResolvedValue(null as never)
     spyOn(dbModule, "withTransaction").mockImplementation(((_pool: unknown, fn: (c: unknown) => unknown) =>
       fn({})) as never)
-    const createMessageInTransaction = mock((_client: unknown, params: Record<string, unknown>) =>
+    const createMessageInTransaction = mock((_client: unknown, _principal: unknown, params: Record<string, unknown>) =>
       Promise.resolve({
         message: {
           id: params.id,
@@ -207,10 +221,17 @@ describe("public API E2E-stream plaintext gate", () => {
         },
       })
     )
+    const activeClaim = {
+      id: "claim_1",
+      responseStreamId: "stream_1",
+      metadata: {},
+      authorUserId: "usr_1",
+      status: "claimed",
+    }
     const botRuntimeService = {
-      findActiveClaimForUpdate: mock(() =>
-        Promise.resolve({ id: "claim_1", responseStreamId: "stream_1", metadata: {}, authorUserId: "usr_1" })
-      ),
+      findInvocationForCallback: mock(() => Promise.resolve(activeClaim)),
+      findCompletedInvocationForReplay: mock(() => Promise.resolve(null)),
+      findActiveClaimForUpdate: mock(() => Promise.resolve(activeClaim)),
       findPresenceByInstance: mock(() => Promise.resolve({ manifest: null })),
       completeInvocationInTransaction: mock(() =>
         Promise.resolve({ id: "inv_1", responseStreamId: "stream_1", metadata: {} })
@@ -237,7 +258,7 @@ describe("public API E2E-stream plaintext gate", () => {
     } as unknown as Request
 
     await handlers.completeBotInvocation(req, createResponse())
-    const params = createMessageInTransaction.mock.calls[0]?.[1] as unknown as Record<string, unknown>
+    const params = createMessageInTransaction.mock.calls[0]?.[2] as unknown as Record<string, unknown>
     expect(params).toMatchObject({ id: "msg_ack", streamId: "stream_1", e2eVersion: 2, envelope: SEALED_ENVELOPE })
     expect(Buffer.isBuffer(params.ciphertext)).toBe(true)
     // No plaintext content — placeholder only, ciphertext carries the ack.
@@ -249,9 +270,13 @@ describe("public API E2E-stream plaintext gate", () => {
     spyOn(BotRepository, "findById").mockResolvedValue({ id: "bot_1", archivedAt: null } as never)
     spyOn(dbModule, "withTransaction").mockImplementation(((_pool: unknown, fn: (c: unknown) => unknown) =>
       fn({})) as never)
+    spyOn(AgentSessionRepository, "findById").mockResolvedValue(null as never)
     const createMessageInTransaction = mock(() => Promise.resolve({ id: "msg_ack" }))
+    const activeClaim = { id: "claim_1", responseStreamId: "stream_1", status: "claimed" }
     const botRuntimeService = {
-      findActiveClaimForUpdate: mock(() => Promise.resolve({ id: "claim_1", responseStreamId: "stream_1" })),
+      findInvocationForCallback: mock(() => Promise.resolve(activeClaim)),
+      findCompletedInvocationForReplay: mock(() => Promise.resolve(null)),
+      findActiveClaimForUpdate: mock(() => Promise.resolve(activeClaim)),
       findPresenceByInstance: mock(() => Promise.resolve({ manifest: null })),
     } as unknown as PublicApiDeps["botRuntimeService"]
     const botChannelService = {
@@ -284,10 +309,17 @@ describe("public API E2E-stream plaintext gate", () => {
   it("rejects a plaintext trace step targeting an E2E stream with 400 (INV-E7 step sink)", async () => {
     const isE2e = spyOn(E2eStreamsRepository, "isE2eStream").mockResolvedValue(true)
     const findById = spyOn(BotRepository, "findById").mockResolvedValue({ id: "bot_1", archivedAt: null } as never)
+    spyOn(dbModule, "withTransaction").mockImplementation(((_pool: unknown, fn: (c: unknown) => unknown) =>
+      fn({})) as never)
+    const activeClaim = {
+      id: "claim_1",
+      responseStreamId: "stream_1",
+      sourceMessageId: "msg_t",
+      status: "claimed",
+    }
     const botRuntimeService = {
-      findActiveClaim: mock(() =>
-        Promise.resolve({ id: "claim_1", responseStreamId: "stream_1", sourceMessageId: "msg_t" })
-      ),
+      findInvocationForCallback: mock(() => Promise.resolve(activeClaim)),
+      findActiveClaimForUpdate: mock(() => Promise.resolve(activeClaim)),
     } as unknown as PublicApiDeps["botRuntimeService"]
     const botChannelService = {
       isStreamAccessibleForBot: mock(() => Promise.resolve(true)),

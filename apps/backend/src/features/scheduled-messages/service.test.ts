@@ -71,29 +71,42 @@ function fakeScheduled(overrides: Partial<ScheduledMessage> = {}): ScheduledMess
   }
 }
 
-const fakeEventService = (override: Partial<EventService> = {}): EventService =>
-  ({
-    createMessage: mock(async () => ({
-      id: "msg_42",
-      streamId: STREAM_ID,
-      sequence: 1n,
-      authorId: USER_ID,
-      authorType: "user" as const,
-      contentJson: { type: "doc", content: [] },
-      contentMarkdown: "hello",
-      replyCount: 0,
-      clientMessageId: null,
-      sentVia: null,
-      reactions: {},
-      metadata: {},
-      editedAt: null,
-      deletedAt: null,
-      createdAt: NOW,
+const fakeEventService = (override: Partial<EventService> = {}): EventService => {
+  const createMessage = mock(async () => ({
+    id: "msg_42",
+    streamId: STREAM_ID,
+    sequence: 1n,
+    authorId: USER_ID,
+    authorType: "user" as const,
+    contentJson: { type: "doc", content: [] },
+    contentMarkdown: "hello",
+    replyCount: 0,
+    clientMessageId: null,
+    sentVia: null,
+    reactions: {},
+    metadata: {},
+    editedAt: null,
+    deletedAt: null,
+    createdAt: NOW,
+  }))
+  return {
+    createMessage,
+    createMessageForPrincipalInTransaction: mock(async () => ({
+      message: await createMessage(),
+      created: true,
     })),
     ...override,
-  }) as unknown as EventService
+  } as unknown as EventService
+}
 
 function setupService(eventService: EventService = fakeEventService()) {
+  if (!eventService.createMessageForPrincipalInTransaction) {
+    const createMessage = eventService.createMessage.bind(eventService)
+    eventService.createMessageForPrincipalInTransaction = mock(async (_client, _principal, params) => ({
+      message: await createMessage(params),
+      created: true,
+    }))
+  }
   spyOn(dbModule, "withTransaction").mockImplementation(async (_pool: any, fn: any) => fn({} as PoolClient))
   spyOn(streamsModule, "assertStreamWritable").mockResolvedValue({ target: fakeStream() } as never)
   spyOn(streamsModule, "resolveLockedStreamAuthorities").mockResolvedValue([])

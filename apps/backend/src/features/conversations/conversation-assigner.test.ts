@@ -61,6 +61,7 @@ describe("conversationAssigner — threadFromMessage", () => {
       workspaceId: WORKSPACE_ID,
       message: reply,
       directive: { intent: "threadFromMessage", sourceConversationId },
+      initiatingUserId: "usr_operator",
     })
   }
 
@@ -76,6 +77,7 @@ describe("conversationAssigner — threadFromMessage", () => {
     expect(emitAssignmentEvents.mock.calls[0][1]).toMatchObject({
       conversationId: "conv_src",
       created: false,
+      initiatingUserId: "usr_operator",
       message: expect.objectContaining({ id: "msg_reply" }),
     })
   })

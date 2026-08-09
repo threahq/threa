@@ -1,6 +1,6 @@
 import { z } from "zod"
 import type { Request, Response } from "express"
-import type { Pool } from "pg"
+import type { Pool, PoolClient } from "pg"
 import type { Server } from "socket.io"
 import {
   AGENT_STEP_TYPES,
@@ -34,7 +34,7 @@ import {
   type AgentSession,
 } from "../agents"
 import { UserRepository } from "../workspaces"
-import { StreamRepository, StreamEventRepository } from "../streams"
+import { assertStreamWritable, StreamRepository, StreamEventRepository } from "../streams"
 import { E2eStreamsRepository } from "../e2e-streams"
 import { serializeTraceStep } from "../public-api"
 import { MessageRepository, type EventService } from "../messaging"
@@ -47,6 +47,17 @@ import type { AICostServiceLike } from "../ai-usage"
 import { enqueueEnclaveInvocation } from "./claim-service"
 import { EnclaveInvocationsRepository, ENCLAVE_CLAIM_TTL_SECONDS } from "./invocations-repository"
 import { parseModelId } from "@threa/agent-runtime"
+
+async function resolveInitiatingUserId(db: Pool | PoolClient, session: AgentSession): Promise<string> {
+  if (!session.triggerMessageId) {
+    throw new HttpError("Enclave session has no initiating user", { status: 403, code: "STREAM_READ_ONLY" })
+  }
+  const trigger = await MessageRepository.findById(db, session.triggerMessageId)
+  if (!trigger || trigger.authorType !== AuthorTypes.USER) {
+    throw new HttpError("Enclave session has no initiating user", { status: 403, code: "STREAM_READ_ONLY" })
+  }
+  return trigger.authorId
+}
 
 /**
  * Session callbacks the enclave calls while it owns an assigned turn. The enclave
@@ -212,6 +223,33 @@ function emitInlineProgress(
 }
 
 export function createEnclaveSessionHandlers({ pool, eventService, io, costService }: Dependencies) {
+  const terminalizeGeneratedDenial = async (req: Request, error: unknown): Promise<never> => {
+    const denial = error as { code?: string; details?: { reason?: string } }
+    if (denial.code !== "STREAM_READ_ONLY" && denial.code !== "STREAM_NOT_FOUND") throw error
+    const sessionId = req.params.id
+    const session = sessionId ? await AgentSessionRepository.findById(pool, sessionId) : null
+    const reason =
+      denial.code === "STREAM_NOT_FOUND" ? "not_a_member" : (denial.details?.reason ?? "missing_initiating_user")
+    const terminalError = `STREAM_READ_ONLY:${reason}`
+    if (session?.status === SessionStatuses.RUNNING) {
+      await failSessionWithLifecycle(pool, io, session, terminalError, async (tx) => {
+        await EnclaveInvocationsRepository.failBySession(tx, { sessionId: session.id, errorMessage: terminalError })
+        await DynamicNamingStateRepository.releaseOwnedClaim(tx, session.id)
+      })
+    }
+    throw error
+  }
+
+  const guardGenerated =
+    (handler: (req: Request, res: Response) => Promise<void>) =>
+    async (req: Request, res: Response): Promise<void> => {
+      try {
+        await handler(req, res)
+      } catch (error) {
+        await terminalizeGeneratedDenial(req, error)
+      }
+    }
+
   return {
     /**
      * POST /internal/enclave-runtimes/sessions/:id/heartbeat
@@ -247,7 +285,7 @@ export function createEnclaveSessionHandlers({ pool, eventService, io, costServi
      * appear in real time). The created message broadcasts via the normal outbox
      * path. Idempotent: the enclave-minted id keys a clientMessageId dedupe.
      */
-    async message(req: Request, res: Response) {
+    message: guardGenerated(async (req: Request, res: Response) => {
       const id = req.params.id
       if (!id) throw new HttpError("Missing session id", { status: 400, code: "VALIDATION_ERROR" })
 
@@ -262,29 +300,36 @@ export function createEnclaveSessionHandlers({ pool, eventService, io, costServi
       if (!stream) throw new HttpError("Stream not found", { status: 404, code: "STREAM_NOT_FOUND" })
 
       const reply = parsed.data
-      await eventService.createMessage({
-        id: reply.messageId,
-        workspaceId: stream.workspaceId,
-        streamId: session.streamId,
-        // Stamp the session so the message is reachable via session→messages
-        // reverse lookup — required for orphan/supersede cleanup of a reply that
-        // was streamed before the turn failed mid-flight.
-        sessionId: id,
-        authorId: session.personaId,
-        authorType: AuthorTypes.PERSONA,
-        contentJson: E2E_PLACEHOLDER_CONTENT_JSON,
-        contentMarkdown: E2E_PLACEHOLDER_CONTENT_MARKDOWN,
-        ciphertext: Buffer.from(reply.ciphertext, "base64"),
-        envelope: reply.envelope,
-        e2eVersion: 2,
-        // Restrict the agent's reach to this scratchpad; dedupe a redelivered
-        // stream so a reply can't post twice (keyed by the enclave-minted id).
-        accessibleStreamIds: [session.streamId],
-        clientMessageId: `enclave-reply:${id}:${reply.messageId}`,
+      await withTransaction(pool, async (tx) => {
+        const initiatingUserId = await resolveInitiatingUserId(tx, session)
+        await eventService.createMessageForPrincipalInTransaction(
+          tx,
+          { kind: "user", userId: initiatingUserId },
+          {
+            id: reply.messageId,
+            workspaceId: stream.workspaceId,
+            streamId: session.streamId,
+            // Stamp the session so the message is reachable via session→messages
+            // reverse lookup — required for orphan/supersede cleanup of a reply that
+            // was streamed before the turn failed mid-flight.
+            sessionId: id,
+            authorId: session.personaId,
+            authorType: AuthorTypes.PERSONA,
+            contentJson: E2E_PLACEHOLDER_CONTENT_JSON,
+            contentMarkdown: E2E_PLACEHOLDER_CONTENT_MARKDOWN,
+            ciphertext: Buffer.from(reply.ciphertext, "base64"),
+            envelope: reply.envelope,
+            e2eVersion: 2,
+            // Restrict the agent's reach to this scratchpad; dedupe a redelivered
+            // stream so a reply can't post twice (keyed by the enclave-minted id).
+            accessibleStreamIds: [session.streamId],
+            clientMessageId: `enclave-reply:${id}:${reply.messageId}`,
+          }
+        )
       })
 
       res.status(204).end()
-    },
+    }),
 
     /**
      * GET /internal/enclave-runtimes/sessions/:id/messages?after=<seq>
@@ -400,7 +445,7 @@ export function createEnclaveSessionHandlers({ pool, eventService, io, costServi
      * crosses this boundary. The session-owned state claim binds the decision
      * to the runner that received the instruction.
      */
-    async namingDecision(req: Request, res: Response) {
+    namingDecision: guardGenerated(async (req: Request, res: Response) => {
       const id = req.params.id
       if (!id) throw new HttpError("Missing session id", { status: 400, code: "VALIDATION_ERROR" })
       const parsed = EnclaveNamingDecisionSchema.safeParse(req.body)
@@ -420,7 +465,19 @@ export function createEnclaveSessionHandlers({ pool, eventService, io, costServi
         }
       }
 
+      const streamSnapshot = await StreamRepository.findById(pool, session.streamId)
+      if (!streamSnapshot) throw new HttpError("Stream not found", { status: 404, code: "STREAM_NOT_FOUND" })
+
       await withTransaction(pool, async (tx) => {
+        const initiatingUserId = await resolveInitiatingUserId(tx, session)
+        await assertStreamWritable(tx, {
+          workspaceId: streamSnapshot.workspaceId,
+          streamId: session.streamId,
+          principal: { kind: "user", userId: initiatingUserId },
+        })
+        // Authority locked the target/root in canonical order. Re-reading the
+        // already-held target lock gives the title revision used by the CAS
+        // without introducing a target-before-root lock inversion.
         const stream = await StreamRepository.findByIdForUpdateBlocking(tx, session.streamId)
         if (!stream) return
         const decision = parsed.data
@@ -511,7 +568,7 @@ export function createEnclaveSessionHandlers({ pool, eventService, io, costServi
       })
 
       res.status(204).end()
-    },
+    }),
 
     /**
      * POST /internal/enclave-runtimes/sessions/:id/sealed-summary
@@ -524,7 +581,7 @@ export function createEnclaveSessionHandlers({ pool, eventService, io, costServi
      * raced fold idempotent (an older cursor no-ops). No broadcast — the summary
      * is turn context, never a user-visible row.
      */
-    async sealedSummary(req: Request, res: Response) {
+    sealedSummary: guardGenerated(async (req: Request, res: Response) => {
       const id = req.params.id
       if (!id) throw new HttpError("Missing session id", { status: 400, code: "VALIDATION_ERROR" })
 
@@ -538,23 +595,31 @@ export function createEnclaveSessionHandlers({ pool, eventService, io, costServi
       const stream = await StreamRepository.findById(pool, session.streamId)
       if (!stream) throw new HttpError("Stream not found", { status: 404, code: "STREAM_NOT_FOUND" })
 
-      await ConversationSummaryRepository.upsert(pool, {
-        // A fresh id only matters on the insert path; ON CONFLICT (stream_id,
-        // persona_id) keeps the existing row's id, so a per-call id is safe.
-        id: agentConversationSummaryId(),
-        workspaceId: stream.workspaceId,
-        streamId: session.streamId,
-        personaId: ARIADNE_AGENT_ID,
-        sealed: {
-          ciphertext: parsed.data.ciphertext,
-          envelope: parsed.data.envelope,
-          keyGeneration: parsed.data.envelope.keyGeneration,
-        },
-        lastSummarizedSequence: BigInt(parsed.data.lastSummarizedSequence),
+      await withTransaction(pool, async (tx) => {
+        const initiatingUserId = await resolveInitiatingUserId(tx, session)
+        await assertStreamWritable(tx, {
+          workspaceId: stream.workspaceId,
+          streamId: session.streamId,
+          principal: { kind: "user", userId: initiatingUserId },
+        })
+        await ConversationSummaryRepository.upsert(tx, {
+          // A fresh id only matters on the insert path; ON CONFLICT (stream_id,
+          // persona_id) keeps the existing row's id, so a per-call id is safe.
+          id: agentConversationSummaryId(),
+          workspaceId: stream.workspaceId,
+          streamId: session.streamId,
+          personaId: ARIADNE_AGENT_ID,
+          sealed: {
+            ciphertext: parsed.data.ciphertext,
+            envelope: parsed.data.envelope,
+            keyGeneration: parsed.data.envelope.keyGeneration,
+          },
+          lastSummarizedSequence: BigInt(parsed.data.lastSummarizedSequence),
+        })
       })
 
       res.status(204).end()
-    },
+    }),
 
     /**
      * POST /internal/enclave-runtimes/sessions/:id/steps/started
@@ -565,7 +630,7 @@ export function createEnclaveSessionHandlers({ pool, eventService, io, costServi
      * absent for tools (no result yet); only `stepType` is clear. A later
      * `/steps` POST finalizes this same `stepId` in place.
      */
-    async stepStarted(req: Request, res: Response) {
+    stepStarted: guardGenerated(async (req: Request, res: Response) => {
       const id = req.params.id
       if (!id) throw new HttpError("Missing session id", { status: 400, code: "VALIDATION_ERROR" })
 
@@ -588,6 +653,12 @@ export function createEnclaveSessionHandlers({ pool, eventService, io, costServi
       // matching current_step_type. step_number is computed atomically in the
       // INSERT (INV-20) so concurrent starts never clobber each other.
       const persisted = await withTransaction(pool, async (tx) => {
+        const initiatingUserId = await resolveInitiatingUserId(tx, session)
+        await assertStreamWritable(tx, {
+          workspaceId: stream.workspaceId,
+          streamId: session.streamId,
+          principal: { kind: "user", userId: initiatingUserId },
+        })
         const created = await AgentSessionRepository.appendStep(tx, {
           id: step.stepId,
           sessionId: id,
@@ -615,7 +686,7 @@ export function createEnclaveSessionHandlers({ pool, eventService, io, costServi
       emitInlineProgress(io, session, stream.workspaceId, persisted.stepNumber, persisted.stepType)
 
       res.status(204).end()
-    },
+    }),
 
     /**
      * POST /internal/enclave-runtimes/sessions/:id/steps
@@ -625,7 +696,7 @@ export function createEnclaveSessionHandlers({ pool, eventService, io, costServi
      * the browser decrypts it with the stream key (INV-E7). If the start POST was
      * dropped, fall back to a race-safe completed insert so the trace still lands.
      */
-    async steps(req: Request, res: Response) {
+    steps: guardGenerated(async (req: Request, res: Response) => {
       const id = req.params.id
       if (!id) throw new HttpError("Missing session id", { status: 400, code: "VALIDATION_ERROR" })
 
@@ -644,11 +715,19 @@ export function createEnclaveSessionHandlers({ pool, eventService, io, costServi
 
       // Finalize the in-flight row opened at step:started — sealed content +
       // completed_at, in place (started_at is preserved, so duration is real).
-      let persisted = await AgentSessionRepository.updateStep(pool, step.stepId, {
-        contentCiphertext: step.ciphertext,
-        contentEnvelope: step.envelope,
-        messageId: step.messageId,
-        completedAt,
+      let persisted = await withTransaction(pool, async (tx) => {
+        const initiatingUserId = await resolveInitiatingUserId(tx, session)
+        await assertStreamWritable(tx, {
+          workspaceId: stream.workspaceId,
+          streamId: session.streamId,
+          principal: { kind: "user", userId: initiatingUserId },
+        })
+        return AgentSessionRepository.updateStep(tx, step.stepId, {
+          contentCiphertext: step.ciphertext,
+          contentEnvelope: step.envelope,
+          messageId: step.messageId,
+          completedAt,
+        })
       })
 
       // Fallback: the start POST never landed (dropped/raced), so there's no row
@@ -657,6 +736,12 @@ export function createEnclaveSessionHandlers({ pool, eventService, io, costServi
       if (!persisted) {
         const startedAt = new Date(completedAt.getTime() - (step.durationMs ?? 0))
         persisted = await withTransaction(pool, async (tx) => {
+          const initiatingUserId = await resolveInitiatingUserId(tx, session)
+          await assertStreamWritable(tx, {
+            workspaceId: stream.workspaceId,
+            streamId: session.streamId,
+            principal: { kind: "user", userId: initiatingUserId },
+          })
           const created = await AgentSessionRepository.appendStep(tx, {
             id: step.stepId,
             sessionId: id,
@@ -683,7 +768,7 @@ export function createEnclaveSessionHandlers({ pool, eventService, io, costServi
       })
 
       res.status(204).end()
-    },
+    }),
 
     /**
      * POST /internal/enclave-runtimes/sessions/:id/substeps
@@ -696,7 +781,7 @@ export function createEnclaveSessionHandlers({ pool, eventService, io, costServi
      * the trace mid-run replays the phases so far — mirroring `updateSubsteps`.
      * Everything is ciphertext the browser decrypts (INV-E7); only `stepType` is clear.
      */
-    async substep(req: Request, res: Response) {
+    substep: guardGenerated(async (req: Request, res: Response) => {
       const id = req.params.id
       if (!id) throw new HttpError("Missing session id", { status: 400, code: "VALIDATION_ERROR" })
 
@@ -717,16 +802,24 @@ export function createEnclaveSessionHandlers({ pool, eventService, io, costServi
       // completion) so a bootstrap refetch recovers the phase timeline. The
       // browser decrypts step.content → { substeps } exactly as for a finalized
       // step. Skipped when the step row isn't known yet (broadcast-only).
-      if (sub.stepId && sub.snapshotCiphertext && sub.snapshotEnvelope) {
-        // `requireRunning` guards the finalize race: a snapshot that lands after
-        // the step's `/steps` finalize (reordering / retry) must not overwrite the
-        // final content with a mid-run partial. Once finalized this no-ops.
-        await AgentSessionRepository.updateStep(pool, sub.stepId, {
-          contentCiphertext: sub.snapshotCiphertext,
-          contentEnvelope: sub.snapshotEnvelope,
-          requireRunning: true,
+      await withTransaction(pool, async (tx) => {
+        const initiatingUserId = await resolveInitiatingUserId(tx, session)
+        await assertStreamWritable(tx, {
+          workspaceId: stream.workspaceId,
+          streamId: session.streamId,
+          principal: { kind: "user", userId: initiatingUserId },
         })
-      }
+        if (sub.stepId && sub.snapshotCiphertext && sub.snapshotEnvelope) {
+          // `requireRunning` guards the finalize race: a snapshot that lands after
+          // the step's `/steps` finalize (reordering / retry) must not overwrite the
+          // final content with a mid-run partial. Once finalized this no-ops.
+          await AgentSessionRepository.updateStep(tx, sub.stepId, {
+            contentCiphertext: sub.snapshotCiphertext,
+            contentEnvelope: sub.snapshotEnvelope,
+            requireRunning: true,
+          })
+        }
+      })
 
       const payload = {
         workspaceId: stream.workspaceId,
@@ -742,7 +835,7 @@ export function createEnclaveSessionHandlers({ pool, eventService, io, costServi
       io.to(`ws:${stream.workspaceId}:agent_session:${id}`).emit("agent_session:substep", payload)
 
       res.status(204).end()
-    },
+    }),
 
     /**
      * POST /internal/enclave-runtimes/sessions/:id/complete
@@ -894,13 +987,20 @@ export function createEnclaveSessionHandlers({ pool, eventService, io, costServi
             const seenBoundary = reported > triggerSeq ? reported : triggerSeq
             const unseen = await StreamEventRepository.getLatestUnseenUserMessage(pool, session.streamId, seenBoundary)
             if (unseen) {
-              await enqueueEnclaveInvocation(pool, {
-                workspaceId: stream.workspaceId,
-                streamId: session.streamId,
-                rootStreamId: stream.rootStreamId ?? session.streamId,
-                messageId: unseen.messageId,
-                triggeredBy: unseen.authorId,
-                reopen: true,
+              await withTransaction(pool, async (tx) => {
+                await assertStreamWritable(tx, {
+                  workspaceId: stream.workspaceId,
+                  streamId: session.streamId,
+                  principal: { kind: "user", userId: unseen.authorId },
+                })
+                await enqueueEnclaveInvocation(tx, {
+                  workspaceId: stream.workspaceId,
+                  streamId: session.streamId,
+                  rootStreamId: stream.rootStreamId ?? session.streamId,
+                  messageId: unseen.messageId,
+                  triggeredBy: unseen.authorId,
+                  reopen: true,
+                })
               })
             }
           }

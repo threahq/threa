@@ -671,6 +671,19 @@ export class StreamService {
     })
   }
 
+  async createThreadForPrincipalOn(
+    client: Querier,
+    principal: StreamWritePrincipal,
+    params: CreateThreadParams
+  ): Promise<Stream> {
+    await assertStreamWritable(client, {
+      workspaceId: params.workspaceId,
+      streamId: params.parentStreamId,
+      principal,
+    })
+    return this.createThreadOn(client, params)
+  }
+
   async createThreadInternal(params: CreateThreadParams): Promise<Stream> {
     return withTransaction(this.pool, (client) => this.createThreadOn(client, params))
   }
@@ -1707,6 +1720,7 @@ export class StreamService {
         targetKind: "stream",
         targetId: streamId,
         deferred: e2e,
+        ...(principal.kind === "user" ? { initiatingUserId: principal.userId } : {}),
       })
       logger.info({ workspaceId, targetKind: "stream", source, e2e }, "Dynamic title regeneration requested")
       return { stream: projected, deferred: e2e }

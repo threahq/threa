@@ -11,7 +11,9 @@ import {
   type AgentFollowUpScheduledEventPayload,
   type AgentFollowUpCancelledEventPayload,
 } from "@threa/types"
-import { StreamEventRepository, StreamRepository } from "../streams"
+import { assertStreamWritable, StreamEventRepository, StreamRepository } from "../streams"
+import { MessageRepository } from "../messaging"
+import { AgentSessionRepository } from "./session-repository"
 import { StreamContextRepository, contextSnippet } from "../stream-context"
 import { AgentFollowUpRepository, type AgentFollowUp } from "./follow-up-repository"
 
@@ -34,6 +36,8 @@ interface AgentFollowUpServiceDeps {
 export interface ScheduleFollowUpParams {
   workspaceId: string
   streamId: string
+  requestedStreamId: string
+  initiatingUserId: string
   personaId: string
   sessionId: string
   sourceConversationId: string | null
@@ -93,6 +97,12 @@ export class AgentFollowUpService {
     const limit = await this.resolveFollowUpLimit(params.workspaceId)
 
     return withTransaction(this.pool, async (client) => {
+      await assertStreamWritable(client, {
+        workspaceId: params.workspaceId,
+        streamId: params.requestedStreamId,
+        principal: { kind: "user", userId: params.initiatingUserId },
+      })
+
       // Serialize concurrent creates for the same stream so the count-guarded
       // insert sees an exact pending count (INV-20). Distinct personas can run
       // sessions in one stream at the same time, so without this two near-cap
@@ -288,11 +298,19 @@ export class AgentFollowUpService {
   async update(params: {
     workspaceId: string
     streamId: string
+    requestedStreamId: string
+    initiatingUserId: string
     id: string
     note?: string
     scheduledFor?: Date
   }): Promise<UpdateFollowUpResult> {
     return withTransaction(this.pool, async (client) => {
+      await assertStreamWritable(client, {
+        workspaceId: params.workspaceId,
+        streamId: params.requestedStreamId,
+        principal: { kind: "user", userId: params.initiatingUserId },
+      })
+
       // Single atomic CAS — no service-side read-then-set (INV-20). `COALESCE`
       // applies only the fields the caller changed; the returned row carries the
       // queue id as of the row lock, so the reschedule below cancels the live
@@ -345,18 +363,56 @@ export class AgentFollowUpService {
    */
   async fire(params: { workspaceId: string; followUpId: string }): Promise<{ fired: boolean }> {
     return withTransaction(this.pool, async (client) => {
+      const pending = await AgentFollowUpRepository.findById(client, params.workspaceId, params.followUpId)
+      if (!pending) return { fired: false }
+      const sourceSession = await AgentSessionRepository.findById(client, pending.sessionId)
+      const triggerMessage = sourceSession
+        ? await MessageRepository.findById(client, sourceSession.triggerMessageId)
+        : null
+      if (!sourceSession || !triggerMessage || triggerMessage.authorType !== AuthorTypes.USER) {
+        logger.warn({ ...params }, "agent follow-up fire rejected without an initiating user")
+        await this.terminalizePending(client, pending)
+        return { fired: false }
+      }
+      try {
+        await assertStreamWritable(client, {
+          workspaceId: pending.workspaceId,
+          streamId: pending.streamId,
+          principal: { kind: "user", userId: triggerMessage.authorId },
+        })
+      } catch (error) {
+        const denial = error as { code?: string }
+        if (denial.code !== "STREAM_READ_ONLY" && denial.code !== "STREAM_NOT_FOUND") throw error
+        logger.warn({ ...params }, "agent follow-up fire denied by stream authority")
+        await this.terminalizePending(client, pending)
+        return { fired: false }
+      }
       const fired = await AgentFollowUpRepository.markFired(client, params.workspaceId, params.followUpId)
       if (!fired) {
         logger.debug({ ...params }, "agent follow-up fire skipped — not pending (cancelled or already fired)")
         return { fired: false }
       }
 
-      await this.enqueuePersonaTurn(client, fired)
+      await this.enqueuePersonaTurn(client, fired, triggerMessage.authorId)
       logger.info(
         { workspaceId: fired.workspaceId, followUpId: fired.id, streamId: fired.streamId, personaId: fired.personaId },
         "agent follow-up fired"
       )
       return { fired: true }
+    })
+  }
+
+  private async terminalizePending(client: PoolClient, pending: AgentFollowUp): Promise<void> {
+    const cancelled = await AgentFollowUpRepository.markCancelled(client, pending.workspaceId, pending.id)
+    if (!cancelled) return
+    if (cancelled.queueMessageId) await QueueRepository.cancelById(client, cancelled.queueMessageId)
+    await this.appendFollowUpEvent(client, {
+      workspaceId: cancelled.workspaceId,
+      streamId: cancelled.streamId,
+      eventType: "agent:follow_up_cancelled",
+      payload: { followUpId: cancelled.id },
+      actorId: cancelled.personaId,
+      actorType: AuthorTypes.PERSONA,
     })
   }
 
@@ -366,13 +422,17 @@ export class AgentFollowUpService {
    * until roadmap 1.2 reads `followUpId` and assembles the "why you woke up"
    * context. Enqueued in the caller's transaction for atomicity with the CAS.
    */
-  private async enqueuePersonaTurn(client: PoolClient, followUp: AgentFollowUp): Promise<void> {
+  private async enqueuePersonaTurn(
+    client: PoolClient,
+    followUp: AgentFollowUp,
+    initiatingUserId: string
+  ): Promise<void> {
     const payload: PersonaAgentJobData = {
       workspaceId: followUp.workspaceId,
       streamId: followUp.streamId,
       messageId: `followup_${followUp.id}`,
       personaId: followUp.personaId,
-      triggeredBy: "system",
+      triggeredBy: initiatingUserId,
       followUpId: followUp.id,
     }
     await enqueueQueuedJob(client, {

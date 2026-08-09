@@ -66,6 +66,7 @@ export interface DynamicNamingTargetLockParams {
 }
 
 export interface DynamicNamingTargetAdapter {
+  resolveAuthorityStreamId(client: PoolClient, params: DynamicNamingTargetLockParams): Promise<string | null>
   lockAndValidate(
     client: PoolClient,
     params: DynamicNamingTargetLockParams

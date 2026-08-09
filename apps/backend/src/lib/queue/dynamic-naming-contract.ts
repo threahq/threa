@@ -8,5 +8,6 @@ export const DynamicNamingEvaluateJobSchema = z.object({
   workspaceId: z.string().min(1),
   targetKind: DynamicNamingTargetKindSchema,
   targetId: z.string().min(1),
+  initiatingUserId: z.string().min(1).optional(),
 })
 export type DynamicNamingEvaluateJobData = z.infer<typeof DynamicNamingEvaluateJobSchema>

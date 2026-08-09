@@ -10,6 +10,7 @@ import { MessageRepository } from "./repository"
 import { SharedMessageRepository } from "./sharing/repository"
 import * as sharing from "./sharing"
 import { MessageVersionRepository } from "./version-repository"
+import * as streamsModule from "../streams"
 import {
   StreamEventRepository,
   StreamMemberRepository,
@@ -1144,6 +1145,7 @@ describe("EventService.createMessage conversation declaration (Mechanism C)", ()
   beforeEach(() => {
     assignInTransaction.mockClear()
     attachProvisionalInTransaction.mockClear()
+    spyOn(streamsModule, "assertStreamWritable").mockResolvedValue({} as never)
     spyOn(db, "withTransaction").mockImplementation(((_db: unknown, callback: (client: any) => Promise<unknown>) =>
       callback({})) as any)
     spyOn(StreamRepository, "findById").mockResolvedValue({ id: "stream_1", type: "scratchpad" } as any)
@@ -1206,6 +1208,20 @@ describe("EventService.createMessage conversation declaration (Mechanism C)", ()
       })
     )
     expect(assignInTransaction).toHaveBeenCalled()
+  })
+
+  it("passes the initiating human to a declared conversation assignment", async () => {
+    const service = new EventService({} as any, conversationAssigner)
+
+    await service.createMessageForPrincipalReturningConversation(
+      { kind: "user", userId: "usr_operator" },
+      { ...baseParams, conversation: { intent: ConversationIntents.NEW } }
+    )
+
+    expect(assignInTransaction).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ initiatingUserId: "usr_operator" })
+    )
   })
 
   it("omits declaredConversationId for a new-conversation directive — a fresh topic is a chip-less opener", async () => {

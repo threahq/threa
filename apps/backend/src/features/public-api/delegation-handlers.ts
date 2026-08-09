@@ -14,8 +14,8 @@ import { withTransaction } from "../../db"
 import { validateRequest } from "../../lib/validation"
 import { normalizeMessage, toEmoji } from "../emoji"
 import { MessageRepository, type EventService } from "../messaging"
-import type { StreamService } from "../streams"
-import { listAccessibleStreamIds, StreamRepository } from "../streams"
+import type { StreamService, StreamWritePrincipal } from "../streams"
+import { assertStreamWritable, listAccessibleStreamIds, StreamRepository } from "../streams"
 import { E2eStreamsRepository } from "../e2e-streams"
 import type { BotChannelService } from "../api-keys"
 import { hashCallbackToken } from "../agents"
@@ -290,6 +290,8 @@ export function createDelegationPublicApiHandlers({
         return
       }
 
+      const principal: StreamWritePrincipal =
+        identity.kind === "user" ? { kind: "user", userId: identity.userId } : { kind: "bot", botId: identity.botId }
       let author: { authorId: string; authorType: AuthorType; sentVia?: string } | null = null
       if (resultMarkdown) {
         // Defensive: delegations are never created on sealed streams (the tool
@@ -326,6 +328,13 @@ export function createDelegationPublicApiHandlers({
       const anchorJson = anchorMarkdown ? parseMarkdown(anchorMarkdown, undefined, toEmoji) : null
 
       const { completed, resultMessageId, resultThreadId } = await withTransaction(pool, async (client: PoolClient) => {
+        if (contentMarkdown) {
+          await assertStreamWritable(client, {
+            workspaceId,
+            streamId: delegation.streamId,
+            principal,
+          })
+        }
         // Validate the claim BEFORE any write (FOR UPDATE, token-guarded): an
         // invalid or lapsed token does no work, and the row lock serializes
         // complete-vs-cancel — the findActiveClaimForUpdate shape.
@@ -341,7 +350,7 @@ export function createDelegationPublicApiHandlers({
           if (useLegacyResultAnchor && anchorMarkdown && anchorJson) {
             // Preserve the 2026-07-12 contract: resultMessageId names the compact
             // message in the delegation stream, whose child thread holds the result.
-            const { message: anchor } = await eventService.createMessageInTransaction(client, {
+            const { message: anchor } = await eventService.createMessageForPrincipalInTransaction(client, principal, {
               workspaceId,
               streamId: delegation.streamId,
               authorId: author.authorId,
@@ -366,14 +375,14 @@ export function createDelegationPublicApiHandlers({
             threadAnchorId = createdEventId
           }
 
-          const thread = await streamService.createThreadOn(client, {
+          const thread = await streamService.createThreadForPrincipalOn(client, principal, {
             workspaceId,
             parentStreamId: delegation.streamId,
             parentAnchorId: threadAnchorId,
             createdBy: author.authorId,
             createdByType: author.authorType === AuthorTypes.BOT ? "bot" : "user",
           })
-          const { message: result } = await eventService.createMessageInTransaction(client, {
+          const { message: result } = await eventService.createMessageForPrincipalInTransaction(client, principal, {
             workspaceId,
             streamId: thread.id,
             authorId: author.authorId,

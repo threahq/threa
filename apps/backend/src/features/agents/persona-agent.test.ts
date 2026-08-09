@@ -2,9 +2,10 @@ import { afterEach, describe, expect, it, mock, spyOn } from "bun:test"
 import { StreamTypes } from "@threa/types"
 import * as dbModule from "../../db"
 import { OutboxRepository } from "../../lib/outbox"
+import { HttpError } from "../../lib/errors"
 import { MessageVersionRepository } from "../messaging"
 import { StreamPoliciesRepository, StreamRepository, StreamEventRepository } from "../streams"
-import { PersonaAgent, type PersonaAgentDeps } from "./persona-agent"
+import { PersonaAgent, type PersonaAgentDeps, type PersonaAgentInput } from "./persona-agent"
 import { PersonaRepository, type Persona } from "./persona-repository"
 import { AgentSessionRepository, SessionStatuses, type AgentSession } from "./session-repository"
 import { SessionAbortRegistry } from "./session-abort-registry"
@@ -98,7 +99,13 @@ function makeFakeIo() {
  * which model the agent loop is invoked with (the "stubbed AI capture" the
  * roadmap 2.3 Done-when asks for).
  */
-async function runSupersedeRerun(params: { supersededFailedValidation: boolean }) {
+async function runSupersedeRerun(params: {
+  supersededFailedValidation: boolean
+  authorityError?: Error
+  threadError?: Error
+  streamOverride?: Record<string, unknown>
+  purpose?: PersonaAgentInput["purpose"]
+}) {
   const supersededSession = makeSession({
     id: SUPERSEDED_SESSION_ID,
     status: SessionStatuses.SUPERSEDED,
@@ -111,7 +118,7 @@ async function runSupersedeRerun(params: { supersededFailedValidation: boolean }
   spyOn(dbModule, "withTransaction").mockImplementation(async (_pool, callback: any) => callback(emptyDb))
 
   spyOn(PersonaRepository, "findById").mockResolvedValue(persona)
-  spyOn(StreamRepository, "findById").mockResolvedValue(stream)
+  spyOn(StreamRepository, "findById").mockResolvedValue({ ...stream, ...params.streamOverride })
   spyOn(StreamPoliciesRepository, "getToolPolicy").mockResolvedValue(null)
   spyOn(MessageVersionRepository, "getCurrentRevision").mockResolvedValue(1)
   spyOn(StreamEventRepository, "insert").mockImplementation(
@@ -151,6 +158,13 @@ async function runSupersedeRerun(params: { supersededFailedValidation: boolean }
   const markResponseValidationFailed = spyOn(AgentSessionRepository, "markResponseValidationFailed").mockResolvedValue(
     undefined as any
   )
+  const updateStatus = spyOn(AgentSessionRepository, "updateStatus").mockResolvedValue(
+    makeSession({
+      status: SessionStatuses.FAILED,
+      error: (params.authorityError ?? params.threadError)?.message ?? null,
+    })
+  )
+  spyOn(AgentSessionRepository, "findStepsBySession").mockResolvedValue([])
 
   const capturedModelStrings: string[] = []
   const ai = {
@@ -169,9 +183,18 @@ async function runSupersedeRerun(params: { supersededFailedValidation: boolean }
   } as any
 
   const createMessage = mock(async () => ({ id: "msg_new_1" }))
+  const createThread = mock(async () => {
+    if (params.threadError) throw params.threadError
+    return { id: "thread_1" }
+  })
 
+  const assertInitiatorWritable = mock(async () => {
+    if (params.authorityError) throw params.authorityError
+    return {} as never
+  })
   const deps = {
     pool: emptyDb,
+    assertInitiatorWritable,
     ai,
     traceEmitter: new TraceEmitter({ io: makeFakeIo(), pool: emptyDb }),
     sessionAbortRegistry: new SessionAbortRegistry(),
@@ -189,7 +212,7 @@ async function runSupersedeRerun(params: { supersededFailedValidation: boolean }
     deleteMessage: async () => null,
     addReaction: async () => ({ id: "reaction_1" }),
     removeReaction: async () => null,
-    createThread: async () => ({ id: "thread_1" }),
+    createThread,
     scheduleFollowUp: async () => ({}),
     listFollowUps: async () => [],
     cancelFollowUp: async () => ({}),
@@ -203,15 +226,27 @@ async function runSupersedeRerun(params: { supersededFailedValidation: boolean }
     messageId: TRIGGER_MESSAGE_ID,
     personaId: PERSONA_ID,
     serverId: "server_1",
-    purpose: {
-      kind: "supersede_rerun",
-      supersedesSessionId: SUPERSEDED_SESSION_ID,
-      rerunContext: { cause: "invoking_message_edited", editedMessageId: TRIGGER_MESSAGE_ID },
-    },
+    initiatingUserId: "usr_1",
+    purpose:
+      params.purpose ??
+      ({
+        kind: "supersede_rerun",
+        supersedesSessionId: SUPERSEDED_SESSION_ID,
+        rerunContext: { cause: "invoking_message_edited", editedMessageId: TRIGGER_MESSAGE_ID },
+      } as const),
   })
 
   const escalationSteps = upsertStep.mock.calls.filter(([, input]: any[]) => input.stepType === "model_escalated")
-  return { result, capturedModelStrings, escalationSteps, markResponseValidationFailed, createMessage }
+  return {
+    result,
+    capturedModelStrings,
+    escalationSteps,
+    markResponseValidationFailed,
+    createMessage,
+    createThread,
+    updateStatus,
+    assertInitiatorWritable,
+  }
 }
 
 describe("PersonaAgent per-turn model resolution (roadmap 2.3)", () => {
@@ -246,5 +281,49 @@ describe("PersonaAgent per-turn model resolution (roadmap 2.3)", () => {
     expect(result.status).toBe("completed")
     expect(capturedModelStrings).toEqual([SONNET])
     expect(escalationSteps).toHaveLength(0)
+  })
+
+  it("terminalizes a denied channel-mention thread creation on the parent stream", async () => {
+    const denial = new HttpError("read only", {
+      status: 403,
+      code: "STREAM_READ_ONLY",
+      details: { reason: "archived" },
+    })
+    const { result, capturedModelStrings, createMessage, createThread, updateStatus } = await runSupersedeRerun({
+      supersededFailedValidation: false,
+      threadError: denial,
+      streamOverride: { type: StreamTypes.CHANNEL },
+      purpose: { kind: "mention" },
+    })
+
+    expect(createThread).toHaveBeenCalledTimes(1)
+    expect(updateStatus).toHaveBeenCalledTimes(1)
+    expect(updateStatus).toHaveBeenCalledWith(expect.anything(), RUNNING_SESSION_ID, SessionStatuses.FAILED, {
+      error: "HttpError: read only",
+    })
+    expect(result).toMatchObject({ status: "failed", retryable: false, messagesSent: 0, sentMessageIds: [] })
+    expect(capturedModelStrings).toEqual([])
+    expect(createMessage).not.toHaveBeenCalled()
+  })
+
+  it("rechecks the initiating user immediately before provider execution and terminalizes denial", async () => {
+    const denial = new HttpError("read only", {
+      status: 403,
+      code: "STREAM_READ_ONLY",
+      details: { reason: "archived" },
+    })
+    const { result, capturedModelStrings, createMessage, assertInitiatorWritable } = await runSupersedeRerun({
+      supersededFailedValidation: false,
+      authorityError: denial,
+    })
+
+    expect(assertInitiatorWritable).toHaveBeenCalledWith(expect.anything(), {
+      workspaceId: WORKSPACE_ID,
+      streamId: STREAM_ID,
+      principal: { kind: "user", userId: "usr_1" },
+    })
+    expect(result).toMatchObject({ status: "failed", retryable: false, messagesSent: 0, sentMessageIds: [] })
+    expect(capturedModelStrings).toEqual([])
+    expect(createMessage).not.toHaveBeenCalled()
   })
 })

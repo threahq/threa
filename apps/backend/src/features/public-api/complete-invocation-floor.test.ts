@@ -8,8 +8,9 @@ import * as dbModule from "../../db"
 import { AgentSessionRepository } from "../agents"
 import { UserRepository } from "../workspaces"
 import { StreamEventRepository } from "../streams"
+import * as streamsModule from "../streams"
 import { OutboxRepository } from "../../lib/outbox"
-import type { EventService } from "../messaging"
+import { MessageRepository, type EventService } from "../messaging"
 
 // The synthesized-trace floor (N-6): a reply-only bot that never POSTed /steps
 // completes with a reconstructed context_received → message_sent trace, written
@@ -24,6 +25,10 @@ function createResponse(): Response {
 }
 
 function arrangeCompletion(params: { existingSteps: unknown[]; manifest?: unknown; sessionStatus?: string }) {
+  spyOn(streamsModule, "assertStreamWritable").mockResolvedValue({} as never)
+  spyOn(streamsModule, "resolveLockedStreamAuthorities").mockResolvedValue([
+    { state: { readOnly: false, readOnlyReason: null } },
+  ] as never)
   spyOn(E2eStreamsRepository, "isE2eStream").mockResolvedValue(false)
   spyOn(BotRepository, "findById").mockResolvedValue({ id: "bot_1", name: "Pi", archivedAt: null } as never)
   spyOn(dbModule, "withTransaction").mockImplementation(((_pool: unknown, fn: (c: unknown) => unknown) =>
@@ -81,15 +86,18 @@ function arrangeCompletion(params: { existingSteps: unknown[]; manifest?: unknow
     editedAt: null,
     createdAt: new Date("2026-06-11T09:00:04.000Z"),
   }
-  const createMessageInTransaction = mock((_client: unknown, _params: Record<string, unknown>) =>
+  const createMessageInTransaction = mock((_client: unknown, _principal: unknown, _params: Record<string, unknown>) =>
     Promise.resolve({ message })
   )
   const eventService = {
-    createMessageInTransaction,
+    createMessageForPrincipalInTransaction: createMessageInTransaction,
     getLatestSequence: mock(() => Promise.resolve(7n)),
   } as unknown as EventService
+  const activeClaim = { id: "binv_1", responseStreamId: "stream_1", status: "claimed" }
   const botRuntimeService = {
-    findActiveClaimForUpdate: mock(() => Promise.resolve({ id: "binv_1", responseStreamId: "stream_1" })),
+    findInvocationForCallback: mock(() => Promise.resolve(activeClaim)),
+    findCompletedInvocationForReplay: mock(() => Promise.resolve(null)),
+    findActiveClaimForUpdate: mock(() => Promise.resolve(activeClaim)),
     findPresenceByInstance: mock(() => Promise.resolve({ manifest: params.manifest ?? null })),
     completeInvocationInTransaction: mock(() =>
       Promise.resolve({
@@ -102,7 +110,7 @@ function arrangeCompletion(params: { existingSteps: unknown[]; manifest?: unknow
         metadata: {},
       })
     ),
-  } as unknown as PublicApiDeps["botRuntimeService"]
+  }
   const botChannelService = {
     isStreamAccessibleForBot: mock(() => Promise.resolve(true)),
   } as unknown as PublicApiDeps["botChannelService"]
@@ -114,7 +122,7 @@ function arrangeCompletion(params: { existingSteps: unknown[]; manifest?: unknow
     memoExplorerService: {} as PublicApiDeps["memoExplorerService"],
     attachmentService: {} as PublicApiDeps["attachmentService"],
     botChannelService,
-    botRuntimeService,
+    botRuntimeService: botRuntimeService as unknown as PublicApiDeps["botRuntimeService"],
     labelService: {} as PublicApiDeps["labelService"],
     labelAssignmentService: {} as PublicApiDeps["labelAssignmentService"],
     pool: {} as PublicApiDeps["pool"],
@@ -128,7 +136,16 @@ function arrangeCompletion(params: { existingSteps: unknown[]; manifest?: unknow
     body: { instanceId: "inst_1", claimToken: "tok_1", finalMessageMarkdown: "High tide is at 14:32." },
   } as unknown as Request
 
-  return { handlers, req, emitted, appendStep, insertEvent, createMessageInTransaction, completeSession }
+  return {
+    handlers,
+    req,
+    emitted,
+    appendStep,
+    insertEvent,
+    createMessageInTransaction,
+    completeSession,
+    botRuntimeService,
+  }
 }
 
 describe("completeBotInvocation synthesized-trace floor", () => {
@@ -189,6 +206,49 @@ describe("completeBotInvocation synthesized-trace floor", () => {
   })
 })
 
+describe("completeBotInvocation raced replay", () => {
+  afterEach(() => {
+    mock.restore()
+  })
+
+  it("returns the committed winner when archive lands after its stale claimed snapshot", async () => {
+    const { handlers, req, createMessageInTransaction, botRuntimeService } = arrangeCompletion({ existingSteps: [] })
+    spyOn(streamsModule, "resolveLockedStreamAuthorities").mockResolvedValue([
+      { state: { readOnly: true, readOnlyReason: "archived" } },
+    ] as never)
+    botRuntimeService.findCompletedInvocationForReplay.mockResolvedValue({
+      id: "binv_1",
+      responseStreamId: "stream_1",
+    } as never)
+    spyOn(AgentSessionRepository, "findById").mockResolvedValue({
+      id: "binv_1",
+      status: AgentSessionStatuses.COMPLETED,
+      personaId: "bot_1",
+      streamId: "stream_1",
+      callbackTokenHash: null,
+      responseMessageId: "msg_reply",
+    } as never)
+    spyOn(MessageRepository, "findById").mockResolvedValue({
+      id: "msg_reply",
+      streamId: "stream_1",
+      sequence: 7n,
+      authorId: "bot_1",
+      authorType: "bot",
+      contentJson: { type: "doc", content: [] },
+      contentMarkdown: "High tide is at 14:32.",
+      reactions: {},
+      metadata: {},
+      editedAt: null,
+      createdAt: new Date("2026-06-11T09:00:04.000Z"),
+    } as never)
+
+    await expect(handlers.completeBotInvocation(req, createResponse())).resolves.toBeUndefined()
+
+    expect(botRuntimeService.findActiveClaimForUpdate).not.toHaveBeenCalled()
+    expect(createMessageInTransaction).not.toHaveBeenCalled()
+  })
+})
+
 describe("completeBotInvocation orphan recovery", () => {
   afterEach(() => {
     mock.restore()
@@ -227,7 +287,7 @@ describe("completeBotInvocation sources", () => {
     await handlers.completeBotInvocation(req, createResponse())
 
     expect(createMessageInTransaction).toHaveBeenCalledTimes(1)
-    expect(createMessageInTransaction.mock.calls[0]?.[1]).toMatchObject({ sources })
+    expect(createMessageInTransaction.mock.calls[0]?.[2]).toMatchObject({ sources })
   })
 
   it("commits no sources field when the completion declares none", async () => {
@@ -235,7 +295,7 @@ describe("completeBotInvocation sources", () => {
 
     await handlers.completeBotInvocation(req, createResponse())
 
-    expect(createMessageInTransaction.mock.calls[0]?.[1].sources).toBeUndefined()
+    expect((createMessageInTransaction.mock.calls[0]?.[2] as Record<string, unknown>).sources).toBeUndefined()
   })
 })
 
@@ -268,7 +328,7 @@ describe("completeBotInvocation manifest enforcement", () => {
 
     await handlers.completeBotInvocation(req, createResponse())
 
-    expect(createMessageInTransaction.mock.calls[0]?.[1]).toMatchObject({ sources })
+    expect(createMessageInTransaction.mock.calls[0]?.[2]).toMatchObject({ sources })
   })
 
   it("rejects a reply a declared manifest did not allow", async () => {
@@ -289,6 +349,6 @@ describe("completeBotInvocation manifest enforcement", () => {
 
     await handlers.completeBotInvocation(req, createResponse())
 
-    expect(createMessageInTransaction.mock.calls[0]?.[1]).toMatchObject({ sources })
+    expect(createMessageInTransaction.mock.calls[0]?.[2]).toMatchObject({ sources })
   })
 })

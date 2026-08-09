@@ -36,9 +36,18 @@ export function createPersonaAgentWorker(deps: PersonaAgentWorkerDeps): JobHandl
   const { agent, serverId, pool, jobQueue } = deps
 
   return async (job) => {
-    const { workspaceId, streamId, messageId, personaId, trigger, followUpId } = job.data
+    const { workspaceId, streamId, messageId, personaId, trigger, followUpId, triggeredBy } = job.data
 
     logger.info({ jobId: job.id, streamId, messageId, personaId, trigger, followUpId }, "Processing persona agent job")
+
+    if (!triggeredBy || triggeredBy === "system") {
+      logger.warn({ jobId: job.id, streamId }, "Persona agent job rejected without an initiating user")
+      return
+    }
+    // PersonaAgent creates/resumes the durable session before its final
+    // pre-provider authority check. Do not preflight authority here: a denial
+    // must flow through that lifecycle boundary so the consumed job leaves one
+    // terminal session event instead of disappearing without bookkeeping.
 
     // Map the in-flight wire payload to the turn's purpose at the boundary — the
     // job fields stay as-is so already-enqueued rows still decode (roadmap 1.5).
@@ -49,6 +58,7 @@ export function createPersonaAgentWorker(deps: PersonaAgentWorkerDeps): JobHandl
       personaId,
       serverId,
       purpose: resolveTurnPurpose(job.data),
+      initiatingUserId: triggeredBy,
       // Retry accounting so a failed-but-retryable turn emits a non-terminal
       // "Interrupted, retrying…" event instead of a terminal `failed` that would
       // flash red on the card before the retry completes.
@@ -136,9 +146,9 @@ export async function checkForUnseenMessages(params: {
   const { pool, jobQueue, workspaceId, streamId, personaId, lastSeenSequence, trigger, previousJobId } = params
 
   // Only check for USER messages - ignore persona responses to avoid infinite loops (single query, INV-30)
-  const latestUserMessageSequence = await StreamEventRepository.getLatestUserMessageSequence(pool, streamId)
+  const latestUserMessage = await StreamEventRepository.getLatestUnseenUserMessage(pool, streamId, lastSeenSequence)
 
-  if (!latestUserMessageSequence || latestUserMessageSequence <= lastSeenSequence) {
+  if (!latestUserMessage) {
     return
   }
 
@@ -146,7 +156,7 @@ export async function checkForUnseenMessages(params: {
     {
       streamId,
       lastSeenSequence: lastSeenSequence.toString(),
-      latestUserMessageSequence: latestUserMessageSequence.toString(),
+      latestUserMessageSequence: latestUserMessage.sequence.toString(),
       previousJobId,
     },
     "Found unseen user messages after session completion, dispatching follow-up job"
@@ -158,7 +168,7 @@ export async function checkForUnseenMessages(params: {
     streamId,
     messageId: `followup_${previousJobId}`,
     personaId,
-    triggeredBy: "system",
+    triggeredBy: latestUserMessage.authorId,
     trigger,
   })
 }

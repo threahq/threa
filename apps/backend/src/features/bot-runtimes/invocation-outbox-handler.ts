@@ -11,7 +11,8 @@ import {
   type StreamUnarchivedOutboxPayload,
 } from "../../lib/outbox"
 import { logger } from "../../lib/logger"
-import { StreamRepository } from "../streams"
+import { assertStreamWritable, StreamRepository } from "../streams"
+import { withTransaction } from "../../db"
 import { resolveSealingContext } from "../e2e-streams"
 import { BotRepository } from "../public-api/bot-repository"
 import { BotRuntimeService } from "./service"
@@ -177,6 +178,7 @@ export class BotInvocationOutboxHandler implements OutboxHandler {
 
     for (const mentionedBot of mentionableBots) {
       if (!(await this.verdictAllowsExternalDispatch(message.workspaceId, stream.id, mentionedBot.id))) continue
+      if (!(await this.botCanStillWrite(message.workspaceId, stream.id, mentionedBot.id))) continue
       await this.turnDriver.dispatchTurn(
         {
           delivery: TurnDeliveries.EXTERNAL,
@@ -238,6 +240,7 @@ export class BotInvocationOutboxHandler implements OutboxHandler {
       if (kindConfig.sessionLinking === "required") {
         await this.createMissingLinkNotice({
           workspaceId: message.workspaceId,
+          botId: bot.id,
           streamId: stream.id,
           contentMarkdown: kindConfig.missingSessionLinkNotice(bot.name),
           rootStreamId: rootStream.id,
@@ -255,6 +258,7 @@ export class BotInvocationOutboxHandler implements OutboxHandler {
           "",
           message.event.payload.contentMarkdown,
         ].join("\n")
+    if (!(await this.botCanStillWrite(message.workspaceId, stream.id, bot.id))) return
     await this.turnDriver.dispatchTurn(
       {
         delivery: TurnDeliveries.EXTERNAL,
@@ -290,6 +294,19 @@ export class BotInvocationOutboxHandler implements OutboxHandler {
    * active-scratchpad one. Inert until the switch flips: `resolveSealingContext`
    * reports `externalSealedDelivery` off, so no verdict resolves to `sealed`.
    */
+  private async botCanStillWrite(workspaceId: string, streamId: string, botId: string): Promise<boolean> {
+    try {
+      await withTransaction(this.pool, (client) =>
+        assertStreamWritable(client, { workspaceId, streamId, principal: { kind: "bot", botId } })
+      )
+      return true
+    } catch (error) {
+      const denial = error as { code?: string }
+      if (denial.code !== "STREAM_READ_ONLY" && denial.code !== "STREAM_NOT_FOUND") throw error
+      return false
+    }
+  }
+
   private async verdictAllowsExternalDispatch(workspaceId: string, streamId: string, botId: string): Promise<boolean> {
     const sealing = await resolveSealingContext(this.pool, { workspaceId, streamId, actor: { kind: "bot", botId } })
     const verdict = resolveDeliveryVerdict({ trust: TrustTiers.THIRD_PARTY, sealing })
@@ -303,20 +320,30 @@ export class BotInvocationOutboxHandler implements OutboxHandler {
 
   private async createMissingLinkNotice(params: {
     workspaceId: string
+    botId: string
     streamId: string
     contentMarkdown: string
     rootStreamId: string
     sourceMessageId: string
   }): Promise<void> {
-    await this.eventService.createMessage({
-      workspaceId: params.workspaceId,
-      streamId: params.streamId,
-      authorId: AuthorTypes.SYSTEM,
-      authorType: AuthorTypes.SYSTEM,
-      contentJson: parseMarkdown(params.contentMarkdown),
-      contentMarkdown: params.contentMarkdown,
-      clientMessageId: `bot-runtime-unlinked:${params.rootStreamId}:${params.sourceMessageId}`,
-      metadata: { "bot_runtime.notice": "missing_session_link" },
-    })
+    try {
+      await this.eventService.createGeneratedMessage(
+        { kind: "bot", botId: params.botId },
+        {
+          workspaceId: params.workspaceId,
+          streamId: params.streamId,
+          authorId: AuthorTypes.SYSTEM,
+          authorType: AuthorTypes.SYSTEM,
+          contentJson: parseMarkdown(params.contentMarkdown),
+          contentMarkdown: params.contentMarkdown,
+          clientMessageId: `bot-runtime-unlinked:${params.rootStreamId}:${params.sourceMessageId}`,
+          metadata: { "bot_runtime.notice": "missing_session_link" },
+        }
+      )
+    } catch (error) {
+      const denial = error as { code?: string }
+      if (denial.code === "STREAM_READ_ONLY" || denial.code === "STREAM_NOT_FOUND") return
+      throw error
+    }
   }
 }

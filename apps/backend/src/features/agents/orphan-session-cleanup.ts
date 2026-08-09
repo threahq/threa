@@ -28,6 +28,47 @@ const ORPHAN_ERROR = "Session orphaned (stale heartbeat)"
  * won — for bookkeeping that must flip atomically with the session (INV-7),
  * e.g. the enclave claim's terminal-fail.
  */
+export async function failSessionWithLifecycleInTransaction(
+  tx: Querier,
+  session: { id: string; streamId: string; personaId: string },
+  stream: Awaited<ReturnType<typeof StreamRepository.findById>>,
+  error: string,
+  onFailed?: (tx: Querier) => Promise<void>
+): Promise<boolean> {
+  const { id: sessionId, streamId, personaId } = session
+  const failed = await AgentSessionRepository.updateStatus(tx, sessionId, SessionStatuses.FAILED, {
+    error,
+    onlyIfStatus: SessionStatuses.RUNNING,
+  })
+  if (!failed) return false
+  if (onFailed) await onFailed(tx)
+  if (stream) {
+    const steps = await AgentSessionRepository.findStepsBySession(tx, sessionId)
+    const streamEvent = await StreamEventRepository.insert(tx, {
+      id: eventId(),
+      streamId,
+      eventType: "agent_session:failed",
+      payload: {
+        sessionId,
+        stepCount: steps.length,
+        effects: collectSessionEffects(steps),
+        error,
+        traceId: sessionId,
+        failedAt: new Date().toISOString(),
+      },
+      actorId: personaId,
+      actorType: "persona",
+    })
+    await OutboxRepository.insert(tx, "agent_session:failed", {
+      workspaceId: stream.workspaceId,
+      streamId,
+      rootStreamId: stream.rootStreamId ?? stream.id,
+      event: streamEvent,
+    })
+  }
+  return true
+}
+
 export async function failSessionWithLifecycle(
   pool: Pool,
   io: Server,
@@ -43,45 +84,9 @@ export async function failSessionWithLifecycle(
   // Mark FAILED + write the lifecycle event in one transaction (INV-7), and only
   // when we actually win the RUNNING→FAILED transition — so a session that
   // completed concurrently isn't clobbered and we don't double-emit a failure.
-  const won = await withTransaction(pool, async (tx) => {
-    const failed = await AgentSessionRepository.updateStatus(tx, sessionId, SessionStatuses.FAILED, {
-      error,
-      onlyIfStatus: SessionStatuses.RUNNING,
-    })
-    if (!failed) return false
-    if (onFailed) await onFailed(tx)
-    // The stream event + outbox is what unblocks the UI (clears the inline
-    // indicator and keeps a refresh consistent). Without a stream we can't address
-    // the rooms, but the session is still durably FAILED.
-    if (stream) {
-      const steps = await AgentSessionRepository.findStepsBySession(tx, sessionId)
-      const streamEvent = await StreamEventRepository.insert(tx, {
-        id: eventId(),
-        streamId,
-        eventType: "agent_session:failed",
-        payload: {
-          sessionId,
-          stepCount: steps.length,
-          // This path is where a crashed turn's writes would otherwise vanish:
-          // the steps committed during the turn, the in-process emitter never
-          // ran, and a settings write has no bespoke card to fall back on.
-          effects: collectSessionEffects(steps),
-          error,
-          traceId: sessionId,
-          failedAt: new Date().toISOString(),
-        },
-        actorId: personaId,
-        actorType: "persona",
-      })
-      await OutboxRepository.insert(tx, "agent_session:failed", {
-        workspaceId: stream.workspaceId,
-        streamId,
-        rootStreamId: stream.rootStreamId ?? stream.id,
-        event: streamEvent,
-      })
-    }
-    return true
-  })
+  const won = await withTransaction(pool, (tx) =>
+    failSessionWithLifecycleInTransaction(tx, session, stream, error, onFailed)
+  )
 
   // Live-update an open trace dialog (session room) the way the in-process
   // `trace.notifyFailed()` does — the outbox does not reach the session room.

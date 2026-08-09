@@ -255,7 +255,10 @@ export async function withCompanionSession(
     // says don't retry) — repeating a deterministic rejection only burns tokens. It
     // is not the same as `willRetry: false`, which also covers the last attempt of
     // an ordinary failure.
-    const retryable = !(APICallError.isInstance(err) && err.isRetryable === false)
+    const errorCode =
+      typeof err === "object" && err !== null && "code" in err && typeof err.code === "string" ? err.code : null
+    const authorityDenial = errorCode === "STREAM_READ_ONLY" || errorCode === "STREAM_NOT_FOUND"
+    const retryable = !authorityDenial && !(APICallError.isInstance(err) && err.isRetryable === false)
     const willRetry = retryable && attempt !== undefined && maxAttempts !== undefined && attempt + 1 < maxAttempts
 
     await withTransaction(pool, async (db) => {

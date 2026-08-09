@@ -576,6 +576,8 @@ export interface ConversationUpdatedOutboxPayload extends StreamScopedPayload {
  */
 export interface ConversationMessageAssignedOutboxPayload extends StreamScopedPayload {
   messageId: string
+  /** Human who initiated an explicit structural assignment; absent for extractor-driven placement. */
+  initiatingUserId?: string
   conversationId: string
   isPrimary: boolean
   reason: string
@@ -593,6 +595,8 @@ export interface ConversationMessageAssignedOutboxPayload extends StreamScopedPa
  */
 export interface ConversationMessageReassignedOutboxPayload extends StreamScopedPayload {
   messageId: string
+  /** Human who initiated an explicit structural reassignment; absent for extractor-driven placement. */
+  initiatingUserId?: string
   fromConversationId: string
   toConversationId: string
   reason: string
@@ -1191,6 +1195,7 @@ export interface DynamicNamingRequestedOutboxPayload {
   targetKind: "stream" | "conversation"
   targetId: string
   deferred: boolean
+  initiatingUserId?: string
 }
 
 export interface OutboxEventPayloadMap {

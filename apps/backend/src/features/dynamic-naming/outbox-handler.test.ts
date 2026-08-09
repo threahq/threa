@@ -3,6 +3,7 @@ import { AuthorTypes, StreamTypes } from "@threa/types"
 import { ConversationRepository } from "../conversations"
 import { E2eStreamsRepository } from "../e2e-streams"
 import { StreamRepository } from "../streams"
+import { MessageRepository } from "../messaging"
 import type { OutboxEvent } from "../../lib/outbox"
 import { DYNAMIC_NAMING_QUIET_MS } from "./config"
 import { DynamicNamingOutboxHandler } from "./outbox-handler"
@@ -47,7 +48,12 @@ const stream = {
 describe("dynamic naming outbox handler", () => {
   const schedule = mock(
     async (
-      _data: { workspaceId: string; targetKind: "stream" | "conversation"; targetId: string },
+      _data: {
+        workspaceId: string
+        targetKind: "stream" | "conversation"
+        targetId: string
+        initiatingUserId?: string
+      },
       _processAfter?: Date
     ) => {}
   )
@@ -57,6 +63,11 @@ describe("dynamic naming outbox handler", () => {
     spyOn(StreamRepository, "findById").mockResolvedValue(stream as never)
     spyOn(E2eStreamsRepository, "isE2eStream").mockResolvedValue(false)
     spyOn(DynamicNamingStateRepository, "find").mockResolvedValue(null)
+    spyOn(MessageRepository, "findById").mockResolvedValue({
+      id: "msg_1",
+      authorId: "usr_1",
+      authorType: AuthorTypes.USER,
+    } as never)
   })
 
   afterEach(() => {
@@ -67,7 +78,7 @@ describe("dynamic naming outbox handler", () => {
     const handler = new TestHandler({} as never, { schedule })
     await handler.process(event)
     expect(schedule).toHaveBeenCalledWith(
-      { workspaceId: "ws_1", targetKind: "stream", targetId: "stream_1" },
+      { workspaceId: "ws_1", targetKind: "stream", targetId: "stream_1", initiatingUserId: "usr_1" },
       new Date(createdAt.getTime() + DYNAMIC_NAMING_QUIET_MS)
     )
   })
@@ -105,6 +116,7 @@ describe("dynamic naming outbox handler", () => {
         workspaceId: "ws_1",
         streamId: "stream_1",
         messageId: "msg_1",
+        initiatingUserId: "usr_operator",
         conversationId: "conv_1",
         isPrimary: true,
         reason: "classifier",
@@ -112,7 +124,12 @@ describe("dynamic naming outbox handler", () => {
       createdAt,
     } as unknown as OutboxEvent)
     expect(schedule).toHaveBeenCalledWith(
-      { workspaceId: "ws_1", targetKind: "conversation", targetId: "conv_1" },
+      {
+        workspaceId: "ws_1",
+        targetKind: "conversation",
+        targetId: "conv_1",
+        initiatingUserId: "usr_operator",
+      },
       new Date(createdAt.getTime() + DYNAMIC_NAMING_QUIET_MS)
     )
   })
@@ -127,6 +144,7 @@ describe("dynamic naming outbox handler", () => {
         workspaceId: "ws_1",
         streamId: "stream_1",
         messageId: "msg_1",
+        initiatingUserId: "usr_operator",
         fromConversationId: "conv_from",
         toConversationId: "conv_to",
         reason: "user_correction",
@@ -134,8 +152,18 @@ describe("dynamic naming outbox handler", () => {
       createdAt,
     } as unknown as OutboxEvent)
     expect(recordStructuralEvent.mock.calls.map((call) => call[0])).toEqual([
-      { workspaceId: "ws_1", targetKind: "conversation", targetId: "conv_from" },
-      { workspaceId: "ws_1", targetKind: "conversation", targetId: "conv_to" },
+      {
+        workspaceId: "ws_1",
+        targetKind: "conversation",
+        targetId: "conv_from",
+        initiatingUserId: "usr_operator",
+      },
+      {
+        workspaceId: "ws_1",
+        targetKind: "conversation",
+        targetId: "conv_to",
+        initiatingUserId: "usr_operator",
+      },
     ])
   })
 
@@ -145,11 +173,13 @@ describe("dynamic naming outbox handler", () => {
       ({
         id,
         eventType: "dynamic_naming:requested",
-        payload: { workspaceId: "ws_1", targetKind: "stream", targetId, deferred },
+        payload: { workspaceId: "ws_1", targetKind: "stream", targetId, deferred, initiatingUserId: "usr_1" },
         createdAt,
       }) as unknown as OutboxEvent
     await handler.processAll([requested(10n, "stream_1", false), event, requested(11n, "stream_e2e", true)])
-    expect(schedule.mock.calls[0]).toEqual([{ workspaceId: "ws_1", targetKind: "stream", targetId: "stream_1" }])
+    expect(schedule.mock.calls[0]).toEqual([
+      { workspaceId: "ws_1", targetKind: "stream", targetId: "stream_1", initiatingUserId: "usr_1" },
+    ])
     expect(schedule.mock.calls).toHaveLength(2)
   })
 

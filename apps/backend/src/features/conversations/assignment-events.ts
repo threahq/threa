@@ -27,10 +27,12 @@ export async function emitAssignmentEvents(
     conversationId: string
     created: boolean
     reason: string
+    /** Human who initiated an explicit structural assignment. */
+    initiatingUserId?: string
     settling?: boolean
   }
 ): Promise<Conversation> {
-  const { workspaceId, message, conversationId, created, reason, settling = false } = params
+  const { workspaceId, message, conversationId, created, reason, initiatingUserId, settling = false } = params
 
   const stream = await StreamRepository.findById(client, message.streamId)
   const { parentStreamId, streamVisibility } = await resolveConversationDelivery(client, stream)
@@ -63,6 +65,7 @@ export async function emitAssignmentEvents(
     streamId: message.streamId,
     parentStreamId,
     messageId: message.id,
+    ...(initiatingUserId && { initiatingUserId }),
     conversationId: refreshed.id,
     isPrimary: true,
     reason,

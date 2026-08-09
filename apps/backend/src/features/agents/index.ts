@@ -116,7 +116,11 @@ export { createReflectiveCaptureWorker } from "./reflective-capture-worker"
 export { collectSessionEffects } from "./session-effects"
 export { buildSessionDigest } from "./session-digest"
 export type { SessionDigest } from "./session-digest"
-export { createOrphanSessionCleanup, failSessionWithLifecycle } from "./orphan-session-cleanup"
+export {
+  createOrphanSessionCleanup,
+  failSessionWithLifecycle,
+  failSessionWithLifecycleInTransaction,
+} from "./orphan-session-cleanup"
 export type { OrphanSessionCleanup } from "./orphan-session-cleanup"
 
 export { PersonaRepository } from "./persona-repository"

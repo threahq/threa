@@ -83,6 +83,7 @@ function makeMemoService(result: CaptureSessionReflectionResult) {
   const service = {
     processBatch: async () => ({ processed: 0, memosCreated: 0 }),
     saveMemo: async () => ({ ok: false as const, reason: "no_source_messages" as const }),
+    saveMemoGenerated: async () => ({ ok: false as const, reason: "no_source_messages" as const }),
     captureSessionReflection,
   } satisfies MemoServiceLike
   return { service, captureSessionReflection }
@@ -190,6 +191,7 @@ describe("ReflectiveCaptureService", () => {
     const memoService = {
       processBatch: async () => ({ processed: 0, memosCreated: 0 }),
       saveMemo: async () => ({ ok: false as const, reason: "no_source_messages" as const }),
+      saveMemoGenerated: async () => ({ ok: false as const, reason: "no_source_messages" as const }),
       captureSessionReflection,
     } satisfies MemoServiceLike
     spyOn(AgentSessionRepository, "findById").mockResolvedValue(makeSession())

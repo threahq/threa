@@ -1,11 +1,12 @@
 import type { Pool } from "pg"
-import { StreamTypes, TitleSources } from "@threa/types"
+import { AuthorTypes, StreamTypes, TitleSources } from "@threa/types"
 import { isOutboxEventType, parseMessagePayload } from "../../lib/outbox"
 import { DebouncedOutboxHandler, type DebouncedOutboxHandlerConfig, type OutboxEvent } from "../../lib/outbox"
 import { JobQueues, type QueueManager } from "../../lib/queue"
 import { ConversationRepository } from "../conversations"
 import { E2eStreamsRepository } from "../e2e-streams"
 import { StreamRepository } from "../streams"
+import { MessageRepository } from "../messaging"
 import { DYNAMIC_NAMING_QUIET_MS } from "./config"
 import { DynamicNamingStateRepository } from "./state-repository"
 import type { DynamicNamingService } from "./service"
@@ -37,7 +38,12 @@ export class DynamicNamingOutboxHandler extends DebouncedOutboxHandler {
     const ordinary = new Map<string, OutboxEvent>()
     const structural = new Map<
       string,
-      { ref: { workspaceId: string; targetKind: "conversation"; targetId: string }; eventId: bigint }
+      {
+        ref: { workspaceId: string; targetKind: "conversation"; targetId: string }
+        eventId: bigint
+        messageId: string
+        initiatingUserId?: string
+      }
     >()
     for (const event of events) {
       if (isOutboxEventType(event, "dynamic_naming:requested")) {
@@ -50,6 +56,8 @@ export class DynamicNamingOutboxHandler extends DebouncedOutboxHandler {
             structural.set(key, {
               ref: { workspaceId: event.payload.workspaceId, targetKind: "conversation", targetId },
               eventId: event.id,
+              messageId: event.payload.messageId,
+              initiatingUserId: event.payload.initiatingUserId,
             })
           }
         }
@@ -66,9 +74,14 @@ export class DynamicNamingOutboxHandler extends DebouncedOutboxHandler {
     for (const event of ordinary.values()) await this.processEvent(event)
     if (this.lifecycle) {
       await Promise.all(
-        [...structural.values()].map(({ ref, eventId }) =>
-          this.lifecycle!.recordStructuralEvent(ref, eventId.toString())
-        )
+        [...structural.values()].map(async ({ ref, eventId, messageId, initiatingUserId }) => {
+          const authorityUserId = await this.resolveInitiatingUserId(messageId, initiatingUserId)
+          if (!authorityUserId) return false
+          return this.lifecycle!.recordStructuralEvent(
+            { ...ref, initiatingUserId: authorityUserId },
+            eventId.toString()
+          )
+        })
       )
     }
     return events.map((event) => event.id)
@@ -76,11 +89,12 @@ export class DynamicNamingOutboxHandler extends DebouncedOutboxHandler {
 
   protected async processEvent(event: OutboxEvent): Promise<void> {
     if (isOutboxEventType(event, "dynamic_naming:requested")) {
-      if (!event.payload.deferred) {
+      if (!event.payload.deferred && event.payload.initiatingUserId) {
         await this.scheduler.schedule({
           workspaceId: event.payload.workspaceId,
           targetKind: event.payload.targetKind,
           targetId: event.payload.targetId,
+          initiatingUserId: event.payload.initiatingUserId,
         })
       }
       return
@@ -89,8 +103,15 @@ export class DynamicNamingOutboxHandler extends DebouncedOutboxHandler {
       const payload = event.payload
       if (!payload.isPrimary || !(await this.isEligibleConversation(payload.workspaceId, payload.conversationId)))
         return
+      const initiatingUserId = await this.resolveInitiatingUserId(payload.messageId, payload.initiatingUserId)
+      if (!initiatingUserId) return
       await this.scheduler.schedule(
-        { workspaceId: payload.workspaceId, targetKind: "conversation", targetId: payload.conversationId },
+        {
+          workspaceId: payload.workspaceId,
+          targetKind: "conversation",
+          targetId: payload.conversationId,
+          initiatingUserId,
+        },
         new Date(event.createdAt.getTime() + DYNAMIC_NAMING_QUIET_MS)
       )
       return
@@ -98,13 +119,25 @@ export class DynamicNamingOutboxHandler extends DebouncedOutboxHandler {
     if (isOutboxEventType(event, "conversation:message_reassigned")) {
       if (!this.lifecycle) return
       const payload = event.payload
+      const initiatingUserId = await this.resolveInitiatingUserId(payload.messageId, payload.initiatingUserId)
+      if (!initiatingUserId) return
       await Promise.all([
         this.lifecycle.recordStructuralEvent(
-          { workspaceId: payload.workspaceId, targetKind: "conversation", targetId: payload.fromConversationId },
+          {
+            workspaceId: payload.workspaceId,
+            targetKind: "conversation",
+            targetId: payload.fromConversationId,
+            initiatingUserId,
+          },
           event.id.toString()
         ),
         this.lifecycle.recordStructuralEvent(
-          { workspaceId: payload.workspaceId, targetKind: "conversation", targetId: payload.toConversationId },
+          {
+            workspaceId: payload.workspaceId,
+            targetKind: "conversation",
+            targetId: payload.toConversationId,
+            initiatingUserId,
+          },
           event.id.toString()
         ),
       ])
@@ -112,7 +145,7 @@ export class DynamicNamingOutboxHandler extends DebouncedOutboxHandler {
     }
     if (event.eventType !== "message:created") return
     const payload = parseMessagePayload(event.payload)
-    if (!payload) return
+    if (!payload || payload.event.actorType !== AuthorTypes.USER || !payload.event.actorId) return
 
     const stream = await StreamRepository.findById(this.db, payload.streamId)
     if (!stream || stream.workspaceId !== payload.workspaceId || stream.archivedAt) return
@@ -124,9 +157,20 @@ export class DynamicNamingOutboxHandler extends DebouncedOutboxHandler {
     if (state?.completedAt && state.structureVersion <= state.lastEvaluatedStructureVersion) return
 
     await this.scheduler.schedule(
-      { workspaceId: payload.workspaceId, targetKind: "stream", targetId: payload.streamId },
+      {
+        workspaceId: payload.workspaceId,
+        targetKind: "stream",
+        targetId: payload.streamId,
+        initiatingUserId: payload.event.actorId,
+      },
       new Date(event.createdAt.getTime() + DYNAMIC_NAMING_QUIET_MS)
     )
+  }
+
+  private async resolveInitiatingUserId(messageId: string, explicitUserId?: string): Promise<string | null> {
+    if (explicitUserId) return explicitUserId
+    const message = await MessageRepository.findById(this.db, messageId)
+    return message?.authorType === AuthorTypes.USER ? message.authorId : null
   }
 
   private async isEligibleConversation(workspaceId: string, conversationId: string): Promise<boolean> {

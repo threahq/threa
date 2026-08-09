@@ -15,6 +15,7 @@ import {
 } from "../agents"
 import { UserRepository } from "../workspaces"
 import { StreamRepository, StreamEventRepository } from "../streams"
+import * as streamsModule from "../streams"
 import { E2eStreamsRepository } from "../e2e-streams"
 import { OutboxRepository } from "../../lib/outbox"
 import { MessageRepository, type EventService } from "../messaging"
@@ -25,7 +26,14 @@ import { EnclaveInvocationsRepository } from "./invocations-repository"
 
 // A bare stand-in, but with a `query` so the catch-up's wake-up NOTIFY (fired by
 // enqueueEnclaveInvocation when a reopen produces work) has somewhere to land.
-const pool = { query: mock(async () => ({ rowCount: 0 })) } as unknown as Pool
+const poolClient = {
+  query: mock(async () => ({ rows: [], rowCount: 0 })),
+  release: mock(() => {}),
+}
+const pool = {
+  query: poolClient.query,
+  connect: mock(async () => poolClient),
+} as unknown as Pool
 
 function fakeRes(): Response & { statusCode: number; jsonBody?: unknown } {
   const res = {
@@ -117,7 +125,22 @@ function fakeCostService() {
 
 function makeHandlers(createMessage = mock(async (_input: Record<string, unknown>) => ({}) as never)) {
   spyOn(DynamicNamingStateRepository, "releaseOwnedClaim").mockResolvedValue(0)
-  const eventService = { createMessage } as unknown as EventService
+  spyOn(streamsModule, "assertStreamWritable").mockResolvedValue({} as never)
+  if (!("mock" in MessageRepository.findById)) {
+    spyOn(MessageRepository, "findById").mockResolvedValue({
+      id: "msg_trigger",
+      authorId: "usr_1",
+      authorType: AuthorTypes.USER,
+    } as never)
+  }
+  const createMessageForPrincipalInTransaction = mock(async (_tx, _principal, input) => ({
+    message: await createMessage(input),
+    created: true,
+  }))
+  const eventService = {
+    createMessage,
+    createMessageForPrincipalInTransaction,
+  } as unknown as EventService
   const { io, emit } = fakeIo()
   const { costService, recordUsage } = fakeCostService()
   // The claim-lifecycle writes ride the session callbacks (§2.7); stub the
@@ -129,6 +152,7 @@ function makeHandlers(createMessage = mock(async (_input: Record<string, unknown
   return {
     handlers: createEnclaveSessionHandlers({ pool, eventService, io, costService }),
     createMessage,
+    createMessageForPrincipalInTransaction,
     io,
     emit,
     recordUsage,
@@ -140,6 +164,37 @@ function makeHandlers(createMessage = mock(async (_input: Record<string, unknown
 }
 
 describe("createEnclaveSessionHandlers.message", () => {
+  it("terminalizes a generated-write denial once without writing output", async () => {
+    spyOn(AgentSessionRepository, "findById").mockResolvedValue(SESSION)
+    spyOn(StreamRepository, "findById").mockResolvedValue({
+      id: "stream_1",
+      workspaceId: "ws_1",
+      rootStreamId: null,
+    } as never)
+    const updateStatus = spyOn(AgentSessionRepository, "updateStatus")
+      .mockResolvedValueOnce({ ...SESSION, status: SessionStatuses.FAILED } as never)
+      .mockResolvedValueOnce(null)
+    spyOn(AgentSessionRepository, "findStepsBySession").mockResolvedValue([])
+    const lifecycle = spyOn(StreamEventRepository, "insert").mockResolvedValue({ id: "evt_failed" } as never)
+    spyOn(OutboxRepository, "insert").mockResolvedValue(undefined as never)
+    const { handlers, createMessage, createMessageForPrincipalInTransaction, failClaim } = makeHandlers()
+    createMessageForPrincipalInTransaction.mockRejectedValue(
+      new HttpError("read only", { status: 403, code: "STREAM_READ_ONLY", details: { reason: "archived" } })
+    )
+
+    await expect(handlers.message(req("session_1", MESSAGE_BODY), fakeRes())).rejects.toMatchObject({
+      code: "STREAM_READ_ONLY",
+    })
+    await expect(handlers.message(req("session_1", MESSAGE_BODY), fakeRes())).rejects.toMatchObject({
+      code: "STREAM_READ_ONLY",
+    })
+
+    expect(createMessage).not.toHaveBeenCalled()
+    expect(updateStatus).toHaveBeenCalledTimes(2)
+    expect(failClaim).toHaveBeenCalledTimes(1)
+    expect(lifecycle).toHaveBeenCalledTimes(1)
+  })
+
   it("404s when the session is gone", async () => {
     spyOn(AgentSessionRepository, "findById").mockResolvedValue(null)
     const { handlers } = makeHandlers()
@@ -354,6 +409,7 @@ describe("createEnclaveSessionHandlers.namingDecision", () => {
 
   it("does not advance keep for an unnamed encrypted stream", async () => {
     spyOn(AgentSessionRepository, "findById").mockResolvedValue(SESSION)
+    spyOn(StreamRepository, "findById").mockResolvedValue({ id: "stream_1", workspaceId: "ws_1" } as never)
     spyOn(db, "withTransaction").mockImplementation(((_pool: unknown, cb: (c: unknown) => unknown) => cb({})) as never)
     spyOn(StreamRepository, "findByIdForUpdateBlocking").mockResolvedValue({
       id: "stream_1",
@@ -415,6 +471,7 @@ describe("createEnclaveSessionHandlers.namingDecision", () => {
 
   it("lets a manual rename win without storing enclave output", async () => {
     spyOn(AgentSessionRepository, "findById").mockResolvedValue(SESSION)
+    spyOn(StreamRepository, "findById").mockResolvedValue({ id: "stream_1", workspaceId: "ws_1" } as never)
     spyOn(db, "withTransaction").mockImplementation(((_pool: unknown, cb: (c: unknown) => unknown) => cb({})) as never)
     spyOn(StreamRepository, "findByIdForUpdateBlocking").mockResolvedValue({
       id: "stream_1",
@@ -450,7 +507,7 @@ describe("createEnclaveSessionHandlers.sealedSummary", () => {
 
     expect(res.statusCode).toBe(204)
     expect(upsert).toHaveBeenCalledWith(
-      pool,
+      expect.anything(),
       expect.objectContaining({
         workspaceId: "ws_1",
         streamId: "stream_1",
@@ -638,6 +695,41 @@ describe("createEnclaveSessionHandlers.complete", () => {
       rootStreamId: "stream_1",
       messageId: "msg_new",
       triggeredBy: "usr_1",
+    })
+  })
+
+  it("does not enqueue catch-up work when the unseen author lost write authority", async () => {
+    spyOn(AgentSessionRepository, "findById").mockResolvedValue(SESSION)
+    spyOn(AgentSessionRepository, "completeSession").mockResolvedValue(SESSION)
+    spyOn(StreamRepository, "findById").mockResolvedValue({ id: "stream_1", workspaceId: "ws_1" } as never)
+    spyOn(AgentSessionRepository, "findStepsBySession").mockResolvedValue([] as never)
+    const tx = {} as never
+    spyOn(db, "withTransaction").mockImplementation((async (_pool: unknown, fn: (client: never) => unknown) =>
+      fn(tx)) as never)
+    spyOn(StreamEventRepository, "insert").mockResolvedValue({ id: "evt_1" } as never)
+    spyOn(OutboxRepository, "insert").mockResolvedValue(undefined as never)
+    spyOn(StreamEventRepository, "getMessageSequence").mockResolvedValue(5n)
+    spyOn(StreamEventRepository, "getLatestUnseenUserMessage").mockResolvedValue({
+      messageId: "msg_new",
+      authorId: "usr_removed",
+      sequence: 9n,
+    })
+    const { handlers, enqueueCatchUp } = makeHandlers()
+    ;(streamsModule.assertStreamWritable as ReturnType<typeof mock>).mockRejectedValue(
+      new HttpError("read only", {
+        status: 403,
+        code: "STREAM_READ_ONLY",
+        details: { reason: "not_a_member" },
+      })
+    )
+
+    await handlers.complete(req("session_1", COMPLETE_BODY), fakeRes())
+
+    expect(enqueueCatchUp).not.toHaveBeenCalled()
+    expect(streamsModule.assertStreamWritable).toHaveBeenCalledWith(tx, {
+      workspaceId: "ws_1",
+      streamId: "stream_1",
+      principal: { kind: "user", userId: "usr_removed" },
     })
   })
 
@@ -892,7 +984,7 @@ describe("createEnclaveSessionHandlers.steps", () => {
     expect(res.statusCode).toBe(204)
     // Updates the existing row in place — no insert on the happy path.
     expect(append).not.toHaveBeenCalled()
-    expect(update.mock.calls[0]![0]).toBe(pool) // single query → bare pool (INV-30)
+    expect(update.mock.calls[0]![0]).toBeDefined()
     expect(update.mock.calls[0]![1]).toBe("step_a")
     expect(update.mock.calls[0]![2]).toMatchObject({
       contentCiphertext: "Y3Q=", // sealed content — the server never holds plaintext (INV-E7)

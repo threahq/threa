@@ -46,6 +46,12 @@ export class DynamicNamingConversationTarget implements DynamicNamingTargetAdapt
     private readonly messageFormatter: MessageFormatter
   ) {}
 
+  async resolveAuthorityStreamId(client: PoolClient, params: DynamicNamingTargetLockParams): Promise<string | null> {
+    if (params.targetKind !== "conversation") return null
+    const conversation = await ConversationRepository.findById(client, params.targetId)
+    return conversation?.workspaceId === params.workspaceId ? conversation.streamId : null
+  }
+
   async lockAndValidate(
     client: PoolClient,
     params: DynamicNamingTargetLockParams

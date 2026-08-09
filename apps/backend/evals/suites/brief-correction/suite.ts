@@ -304,6 +304,7 @@ async function runBriefCorrectionTask(input: BriefCorrectionInput, ctx: EvalCont
       messageId,
       personaId,
       serverId: `eval-server-${ulid()}`,
+      initiatingUserId: ctx.userId,
       purpose: { kind: "catch_up" },
       currentTime: EVAL_CLOCK,
     }
