@@ -267,7 +267,7 @@ describe("composer pill drag gestures", () => {
     const source = editor.view.dom.querySelector<HTMLElement>('[data-type="mention"]')!
 
     fireEvent.touchStart(source, { touches: [touch(7, 10, 10)] })
-    vi.advanceTimersByTime(500)
+    vi.advanceTimersByTime(901)
     fireEvent.touchMove(document, { touches: [touch(7, 21, 10)] })
     fireEvent.touchEnd(document, { touches: [], changedTouches: [touch(7, 21, 10)] })
 
@@ -395,6 +395,7 @@ describe("composer pill drag gestures", () => {
     const source = editor.view.dom.querySelector<HTMLElement>('[data-type="mention"]')!
 
     tapPill(source)
+    vi.advanceTimersByTime(401)
     fireEvent.touchStart(source, { touches: [touch(3, 10, 10)] })
     fireEvent.touchMove(document, { touches: [touch(3, 21, 10)] })
     expect(editor.view.dom.querySelector(".composer-pill-dragging")).not.toBeNull()
@@ -402,7 +403,17 @@ describe("composer pill drag gestures", () => {
     fireEvent.touchStart(document.body, { touches: [touch(3, 21, 10), touch(4, 50, 50)] })
     fireEvent.touchEnd(document, { touches: [touch(4, 50, 50)], changedTouches: [touch(3, 10, 10)] })
 
+    const compatibilityMouseDown = new MouseEvent("mousedown", {
+      bubbles: true,
+      cancelable: true,
+      button: 0,
+      clientX: 21,
+      clientY: 10,
+    })
+    source.dispatchEvent(compatibilityMouseDown)
+
     expect(childTypes(editor)).toEqual(["mention", "channelLink", "slashCommand"])
+    expect(compatibilityMouseDown.defaultPrevented).toBe(true)
     expect(editor.view.dom.querySelector(".composer-pill-dragging")).toBeNull()
     expect(document.querySelector(".composer-pill-touch-guide")).toBeNull()
   })
