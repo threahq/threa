@@ -101,13 +101,12 @@ stream page, twenty-four or more on the board — so a sample cannot be attribut
 to one timeline. Disambiguating would mean a per-caller mark name and the
 registry is closed on purpose (D15), so read them as a page total.
 
-They are also not like-for-like across arms: with `boundedTimelineRead` on, only
-the prefix read emits `liveQuery.rerun`/`liveQuery.load`, so an on-vs-off
-comparison is prefix-only after against whole-read before. That is the intended
-reading of the win (the tail is what the arriving message wakes), but it is not a
-measurement of the same population. `timeline.tailLoad` is emitted by the bounded
-tail read alone: it exists in the on arm only, so its presence is what proves the
-flag armed, and its duration is the cost of the read a live arrival triggers.
+They also cover only part of a floored read: the window is split into an
+immutable tail and a widening prefix, and only the prefix emits
+`liveQuery.rerun`/`liveQuery.load`. `timeline.tailLoad` is the tail read's own
+mark — its duration is the cost of the read a live arrival triggers. Any
+comparison against a capture taken before the split (pre-#1745) is prefix-only
+after against whole-read before, not the same population.
 
 ### Reading `stream.idbTransaction` / `stream.activityApply` (scenarios 4, 15)
 
@@ -143,20 +142,17 @@ total work halves. Compare sample counts × mean, not means.
 
 `workspace-wide` is the only profile that crosses Dexie's 50-row threshold in
 `streams` and `streamMemberships`, which is the amplifier the bootstrap diff
-removes. Run it as an A/B on one device, same fixture and same workspace in both
-arms — `bootstrapDiff` defaults to `off`, so the arms are a flag flip, not a
-build swap:
+removes. The diff is now unconditional, so this is a single-arm reading — load,
+hard-refresh, hard-refresh again, then idle, and read `bootstrap.preRead`,
+`bootstrap.diff` and the written/skipped row counts on the third load:
 
 ```bash
-# BEFORE — flag off (the default). Load, hard-refresh, hard-refresh again, then idle.
 open 'http://localhost:4004/w/<workspaceId>?perfCapture=1'
 #    devtools console, on the third load: copy(JSON.stringify(__threaPerfCapture.export()))
-
-# AFTER — open the backoffice the stack recipe already boots on :4006, pick the
-# workspace, Feature flags → bootstrapDiff = on (it propagates live), then repeat
-# the three loads above unchanged. Set it back to off before re-running BEFORE.
-open 'http://localhost:4006'
 ```
+
+A before/after against the pre-diff behaviour needs a build swap (the flag that
+used to provide it was deleted once the rollout finished).
 
 What to read — the _third_ load's samples. Load 2 still writes: the first load's
 read watermark and `counterTouchedAt` settle against the previous fetch window,

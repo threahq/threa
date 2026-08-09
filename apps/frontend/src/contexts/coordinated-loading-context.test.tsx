@@ -925,7 +925,6 @@ describe("CoordinatedLoadingProvider store publication", () => {
     bootstrapBase = {
       ...makeWorkspaceBootstrap(),
       workspace: { id: WS, name: "CLP", slug: "clp", createdBy: "user_1", createdAt: now, updatedAt: now },
-      featureFlags: { workspace: { bootstrapDiff: "on" }, user: {} },
       users: [
         {
           id: "user_1",

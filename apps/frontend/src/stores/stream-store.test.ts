@@ -918,10 +918,9 @@ describe("useStreamEvents with the bounded read armed", () => {
 
     const { ranges, restore } = recordRanges()
     try {
-      const { result, rerender } = renderHook(
-        ({ floor }: { floor: number }) => useStreamEvents(STREAM, floor, { boundedRead: true }),
-        { initialProps: { floor: 200 } }
-      )
+      const { result, rerender } = renderHook(({ floor }: { floor: number }) => useStreamEvents(STREAM, floor), {
+        initialProps: { floor: 200 },
+      })
       await waitFor(() => expect(result.current?.length).toBe(101))
 
       const tailRanges = ranges.filter((args) => Array.isArray(args[1]) && (args[1] as unknown[])[1] === Dexie.maxKey)
@@ -956,7 +955,7 @@ describe("useStreamEvents with the bounded read armed", () => {
       const seen: (CachedEvent[] | undefined)[] = []
       const { result, rerender } = renderHook(
         ({ floor }: { floor: number }) => {
-          const events = useStreamEvents(STREAM, floor, { boundedRead: true })
+          const events = useStreamEvents(STREAM, floor)
           seen.push(events)
           return events
         },
@@ -1006,7 +1005,7 @@ describe("useStreamEvents with the bounded read armed", () => {
     const seen: (CachedEvent[] | undefined)[] = []
     const { result, rerender } = renderHook(
       ({ streamId }: { streamId: string }) => {
-        const events = useStreamEvents(streamId, 1, { boundedRead: true })
+        const events = useStreamEvents(streamId, 1)
         seen.push(events)
         return events
       },

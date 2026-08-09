@@ -54,8 +54,6 @@ export function defineFlag<
  * the moment the rollout is done. A flag that survives long here is a smell.
  */
 export const FEATURE_FLAGS = {
-  bootstrapDiff: defineFlag({ values: ["off", "on"], scopes: ["workspace", "user"], default: "on" }),
-  boundedTimelineRead: defineFlag({ values: ["off", "on"], scopes: ["workspace", "user"], default: "on" }),
   calls: defineFlag({ values: ["off", "on"], scopes: ["workspace"], default: "on" }),
   coalescedLiveCommit: defineFlag({ values: ["off", "on"], scopes: ["workspace", "user"], default: "off" }),
   composeTraces: defineFlag({ values: ["off", "capture"], scopes: ["workspace"], default: "off" }),

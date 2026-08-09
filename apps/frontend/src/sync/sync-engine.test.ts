@@ -2202,7 +2202,7 @@ describe("SyncEngine active-mode reconnect bootstrap slimming", () => {
   })
 })
 
-describe("SyncEngine bootstrap query-cache identity (bootstrapDiff)", () => {
+describe("SyncEngine bootstrap query-cache identity", () => {
   beforeEach(async () => {
     resetRevealGate()
     resetApplyWindow()
@@ -2232,7 +2232,6 @@ describe("SyncEngine bootstrap query-cache identity (bootstrapDiff)", () => {
   function diffOnBootstrap(overrides: Partial<WorkspaceBootstrap> = {}): WorkspaceBootstrap {
     diffBase ??= {
       ...makeWorkspaceBootstrap(),
-      featureFlags: { workspace: { bootstrapDiff: "on" }, user: {} },
       streams: [
         {
           ...makeStreamBootstrap("stream_id_1").stream,
