@@ -1,6 +1,11 @@
 import { parseMarkdown, serializeToMarkdown } from "@threa/prosemirror"
 import type { CaseResult, Evaluator, EvaluatorResult, PermutationResult, RunEvaluator } from "../../framework/types"
 import type { VoicePolishExpected, VoicePolishOutput, VoicePolishStepOutput } from "./types"
+import {
+  VOICE_POLISH_WIDEN_MAX_WINDOWS,
+  VOICE_POLISH_WINDOW_MAX_CHARS,
+  voicePolishConfig,
+} from "../../../src/features/voice-transcription/config"
 
 const result = (name: string, passed: boolean, details?: string): EvaluatorResult => ({
   name,
@@ -9,8 +14,9 @@ const result = (name: string, passed: boolean, details?: string): EvaluatorResul
   details: passed ? undefined : details,
 })
 const lower = (value: string) => value.toLocaleLowerCase()
-const successfulMarkdown = (output: VoicePolishOutput) =>
-  output.outcome.status === "success" ? output.outcome.markdown : ""
+const successfulMarkdown = (output: VoicePolishOutput) => output.markdown ?? ""
+const gradableStepDocument = (step: VoicePolishStepOutput) =>
+  step.outcome.status === "success" ? step.outcome : step.composedDocument
 
 /**
  * A timeout (live or final, any case) is a typed, non-destructive outcome: the
@@ -26,12 +32,18 @@ const finalTimedOut = (output: VoicePolishOutput) => output.steps.at(-1)?.outcom
 
 export const successEvaluator: Evaluator<VoicePolishOutput, VoicePolishExpected> = {
   name: "all-step-valid-success",
-  evaluate: (output) =>
+  evaluate: (output, expected) =>
     result(
       "all-step-valid-success",
-      output.steps.every(
-        (step) => (step.outcome.status === "success" && step.outcome.markdown.trim().length > 0) || isTimeout(step)
-      ),
+      output.steps.every((step, index) => {
+        if (isTimeout(step)) return true
+        if (step.outcome.status === "success") return step.outcome.markdown.trim().length > 0
+        const isFinalStep = index === output.steps.length - 1
+        if (step.outcome.status === "preserve_raw") return expected.expectedScope === "preserve_raw"
+        if (step.outcome.status === "replacement_rejected")
+          return isFinalStep && expected.expectedFinalResult === "rejected"
+        return false
+      }),
       `Outcomes: ${output.steps.map((step) => step.outcome.status).join(", ")}`
     ),
 }
@@ -65,14 +77,29 @@ export const forbiddenTermsEvaluator: Evaluator<VoicePolishOutput, VoicePolishEx
     return result("forbidden-terms", present.length === 0, `Present: ${present.join(", ")}`)
   },
 }
+export const scopeEvaluator: Evaluator<VoicePolishOutput, VoicePolishExpected> = {
+  name: "boundary-scope",
+  evaluate: (output, expected) => {
+    if (!expected.expectedScope || finalTimedOut(output)) return result("boundary-scope", true)
+    const scoped = [...output.steps].reverse().find((step) => step.scope)
+    const stable = !expected.predecessorStable || scoped?.predecessorStable === true
+    return result(
+      "boundary-scope",
+      scoped?.scope === expected.expectedScope && stable,
+      `Expected ${expected.expectedScope}; got ${scoped?.scope ?? "none"}; predecessorStable=${stable}`
+    )
+  },
+}
 export const contextNonEchoEvaluator: Evaluator<VoicePolishOutput, VoicePolishExpected> = {
   name: "all-step-context-non-echo",
   evaluate: (output, expected) => {
     const echoed: string[] = []
-    for (const [index, step] of output.steps.entries())
-      if (step.outcome.status === "success")
+    for (const [index, step] of output.steps.entries()) {
+      const document = gradableStepDocument(step)
+      if (document?.status === "success")
         for (const term of new Set([...(expected.forbiddenContextTerms ?? []), ...step.forbiddenContextTerms]))
-          if (lower(step.outcome.markdown).includes(lower(term))) echoed.push(`step ${index + 1}: ${term}`)
+          if (lower(document.markdown).includes(lower(term))) echoed.push(`step ${index + 1}: ${term}`)
+    }
     return result("all-step-context-non-echo", echoed.length === 0, `Echoed: ${echoed.join(", ")}`)
   },
 }
@@ -101,10 +128,11 @@ export const roundTripEvaluator: Evaluator<VoicePolishOutput, VoicePolishExpecte
   evaluate: (output) => {
     for (const [index, step] of output.steps.entries()) {
       if (isTimeout(step)) continue
-      if (step.outcome.status !== "success")
+      const document = gradableStepDocument(step)
+      if (document?.status !== "success")
         return result("all-step-parse-serialize-valid", false, `Step ${index + 1}: ${step.outcome.status}`)
       try {
-        const reparsed = parseMarkdown(serializeToMarkdown(step.outcome.contentJson))
+        const reparsed = parseMarkdown(serializeToMarkdown(document.contentJson))
         if (!reparsed.content?.length)
           return result("all-step-parse-serialize-valid", false, `Step ${index + 1}: empty document`)
       } catch (error) {
@@ -122,14 +150,15 @@ export const languageEvaluator: Evaluator<VoicePolishOutput, VoicePolishExpected
   name: "all-step-language-non-translation",
   evaluate: (output, expected) => {
     const failures: string[] = []
-    for (const [index, step] of output.steps.entries())
-      if (step.outcome.status === "success") {
-        const value = lower(step.outcome.markdown)
-        const missing = (expected.languageMarkers ?? []).filter((term) => !value.includes(lower(term)))
-        const translated = (expected.forbiddenTranslations ?? []).filter((term) => value.includes(lower(term)))
-        if (missing.length || translated.length)
-          failures.push(`step ${index + 1}: missing ${missing.join("|")}; translated ${translated.join("|")}`)
-      }
+    for (const [index, step] of output.steps.entries()) {
+      const document = gradableStepDocument(step)
+      if (document?.status !== "success") continue
+      const value = lower(document.markdown)
+      const missing = (expected.languageMarkers ?? []).filter((term) => !value.includes(lower(term)))
+      const translated = (expected.forbiddenTranslations ?? []).filter((term) => value.includes(lower(term)))
+      if (missing.length || translated.length)
+        failures.push(`step ${index + 1}: missing ${missing.join("|")}; translated ${translated.join("|")}`)
+    }
     return result("all-step-language-non-translation", failures.length === 0, failures.join("; "))
   },
 }
@@ -205,7 +234,36 @@ export function latencyMetrics(cases: CaseResult<VoicePolishOutput, VoicePolishE
   }
   const live = measure("live")
   const final = measure("final")
-  return { live, final, timeouts: live.timeouts + final.timeouts }
+  const stageNames = ["scope", "normal_live", "normal_final", "widen"] as const
+  const attempts = cases.flatMap((item) => item.output?.steps.flatMap((step) => step.attempts ?? []) ?? [])
+  const stages = Object.fromEntries(
+    stageNames.map((stage) => {
+      const all = attempts.filter((attempt) => attempt.stage === stage)
+      const completed = all.filter((attempt) => attempt.outcome !== "timeout")
+      const values = completed.map((attempt) => attempt.durationMs).sort((a, b) => a - b)
+      const tokenMetric = (key: "promptTokens" | "completionTokens" | "reasoningTokens") => {
+        const tokens = completed
+          .flatMap((attempt) => (attempt[key] === undefined ? [] : [attempt[key]]))
+          .sort((a, b) => a - b)
+        return { p50: nearestRank(tokens, 0.5), p95: nearestRank(tokens, 0.95) }
+      }
+      const timeouts = all.length - completed.length
+      return [
+        stage,
+        {
+          count: completed.length,
+          timeouts,
+          timeoutRate: all.length ? timeouts / all.length : 0,
+          p50: nearestRank(values, 0.5),
+          p95: nearestRank(values, 0.95),
+          promptTokens: tokenMetric("promptTokens"),
+          completionTokens: tokenMetric("completionTokens"),
+          reasoningTokens: tokenMetric("reasoningTokens"),
+        },
+      ]
+    })
+  )
+  return { live, final, stages, timeouts: live.timeouts + final.timeouts }
 }
 
 /**
@@ -216,6 +274,44 @@ export function latencyMetrics(cases: CaseResult<VoicePolishOutput, VoicePolishE
  * are the accepted interim-discard mechanism and are reported but not bounded.
  */
 const FINAL_TIMEOUT_MAX_RATE = 0.15
+export const lifecycleEvaluator: Evaluator<VoicePolishOutput, VoicePolishExpected> = {
+  name: "declared-lifecycle-outcome",
+  evaluate: (output, expected) => {
+    const final = output.steps.at(-1)
+    if (!final) return result("declared-lifecycle-outcome", !expected.expectedFinalResult)
+    const resultStatus = final.coordinatorResult?.status
+    const statusMatches = !expected.expectedFinalResult || resultStatus === expected.expectedFinalResult
+    const ackMatches =
+      !expected.expectedAckStatus ||
+      (final.coordinatorResult?.status === "rejected" &&
+        final.coordinatorResult.ackStatus === expected.expectedAckStatus)
+    const callsMatch =
+      expected.expectedFinalModelCalls === undefined || final.finalModelCallCount === expected.expectedFinalModelCalls
+    return result(
+      "declared-lifecycle-outcome",
+      statusMatches && ackMatches && callsMatch,
+      `result=${resultStatus}; ack=${final.coordinatorResult?.status === "rejected" ? final.coordinatorResult.ackStatus : "none"}; calls=${final.finalModelCallCount}`
+    )
+  },
+}
+
+export const attemptBoundsEvaluator: Evaluator<VoicePolishOutput, VoicePolishExpected> = {
+  name: "attempt-input-reasoning-bounds",
+  evaluate: (output) => {
+    const attempts = output.steps.flatMap((step) => step.attempts ?? [])
+    const invalid = attempts.filter(
+      (attempt) =>
+        attempt.sourceWindowCount > VOICE_POLISH_WIDEN_MAX_WINDOWS ||
+        attempt.rawScalarLength >
+          (attempt.stage === "widen"
+            ? VOICE_POLISH_WINDOW_MAX_CHARS * VOICE_POLISH_WIDEN_MAX_WINDOWS
+            : VOICE_POLISH_WINDOW_MAX_CHARS) ||
+        attempt.reasoningEffort !== voicePolishConfig.reasoningEffort
+    )
+    return result("attempt-input-reasoning-bounds", invalid.length === 0, `Invalid attempts: ${invalid.length}`)
+  },
+}
+
 export const metricsEvaluator: RunEvaluator<VoicePolishOutput, VoicePolishExpected> = {
   name: "live-final-latency-timeout-metrics",
   evaluate: (cases) => {
@@ -223,7 +319,7 @@ export const metricsEvaluator: RunEvaluator<VoicePolishOutput, VoicePolishExpect
     const passed =
       m.final.recommendedDeadlineMs <= VOICE_POLISH_FINAL_DEADLINE_CAP_MS &&
       m.final.timeoutRate <= FINAL_TIMEOUT_MAX_RATE
-    const details = `live p50=${m.live.p50} p95=${m.live.p95} deadline=${m.live.recommendedDeadlineMs} timeouts=${m.live.timeouts} (${(m.live.timeoutRate * 100).toFixed(1)}%); final p50=${m.final.p50} p95=${m.final.p95} deadline=${m.final.recommendedDeadlineMs} timeouts=${m.final.timeouts} (${(m.final.timeoutRate * 100).toFixed(1)}%)`
+    const details = JSON.stringify({ live: m.live, final: m.final, stages: m.stages })
     // Metrics are report data even when the gate passes; do not use result(),
     // which intentionally suppresses details for ordinary passing evaluators.
     return { name: "live-final-latency-timeout-metrics", score: passed ? 1 : 0, passed, details }
@@ -265,12 +361,19 @@ export function qualifyVoicePolishPermutation(
     caseRates[id] = passes / cases.length
     if (cases[0]?.expectedOutput.correctionOrStructure && (cases.length !== 6 || passes < 5))
       reasons.push(`${id}: correction/structure ${passes}/${cases.length}`)
+    if (
+      (cases[0]?.expectedOutput.expectedScope === "tail" ||
+        cases[0]?.expectedOutput.expectedScope === "preserve_raw") &&
+      passes !== cases.length
+    )
+      reasons.push(`${id}: bounded scope ${passes}/${cases.length}`)
   }
   if (permutation.runs !== 6) reasons.push(`requires 6 runs, got ${permutation.runs}`)
   const metrics = latencyMetrics(permutation.cases)
   if (metrics.final.recommendedDeadlineMs > VOICE_POLISH_FINAL_DEADLINE_CAP_MS)
     reasons.push("final latency cap exceeded")
-  const takes = permutation.cases.reduce((sum, item) => sum + (item.output?.steps.length ?? 0), 0)
+  if (metrics.final.timeoutRate > FINAL_TIMEOUT_MAX_RATE) reasons.push("final timeout rate exceeded")
+  const takes = permutation.cases.length
   return {
     qualified: reasons.length === 0,
     caseRates,
@@ -338,8 +441,11 @@ export const voicePolishEvaluators = [
   requiredTermsEvaluator,
   forbiddenTermsEvaluator,
   contextNonEchoEvaluator,
+  scopeEvaluator,
   blockShapeEvaluator,
   roundTripEvaluator,
   languageEvaluator,
   stabilityEvaluator,
+  lifecycleEvaluator,
+  attemptBoundsEvaluator,
 ]

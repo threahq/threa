@@ -67,6 +67,13 @@ export const voiceConfig = {
 
 // Voice-transcript polish config (INV-44: colocated with the feature, shared
 // by production and evals).
+export const VOICE_POLISH_WINDOW_MAX_CHARS = 1_200
+export const VOICE_POLISH_WINDOW_MAX_FINALS = 4
+export const VOICE_POLISH_WIDEN_MAX_WINDOWS = 2
+export const VOICE_POLISH_READ_ONLY_SUFFIX_MAX_CHARS = 1_200
+export const VOICE_REPLACEMENT_ACK_TIMEOUT_MS = 500
+export const VOICE_REPLACEMENT_SETTLE_MARGIN_MS = 100
+
 export interface VoicePolishConfig {
   model: string
   liveTimeoutMs: number
@@ -136,6 +143,7 @@ Apply OPINIONATED corrections to make the message land cleanly:
 - Fix transcription artifacts conservatively: capitalize sentence starts, restore apostrophes, and pick obvious homophones ("there"/"their", "your"/"you're", "to"/"too") only when context makes them unambiguous.
 - Punctuate sparingly. Add a period (or ? / !) only where the speaker clearly ended a thought. Do NOT pepper a sentence with commas around every short clause, conjunction, transition word, or affirmation. When in doubt, leave the comma out: one sentence with two commas reads cleaner than the same sentence with five.
 - Format lists ONLY when the speaker clearly enumerates discrete items. Explicit numbered narration ("number one X, number two Y") becomes a Markdown ordered list. Other clear enumeration ("first X, second Y" or "one X, two Y") becomes a Markdown bullet list. The Markdown marker replaces the spoken enumeration marker: output "- X", not "- First X", and "1. X", not "1. Number one X". Do not turn flowing prose into a list.
+- Preserve explicitly narrated paragraph boundaries. When the speaker clearly uses the equivalent of "new paragraph" or "next paragraph" as a dictation command, remove that narration and start a new Markdown paragraph. Do not treat those words as a command when they are ordinary sentence content. Keep subsequent continuation in that paragraph until another boundary is narrated.
 - Convert spoken emoji shortcodes to markdown shortcodes: "colon blush colon" -> ":blush:", "colon thinking face colon" -> ":thinking_face:". Only when the speaker clearly framed it as a shortcode (literal "colon X colon"). Do not invent emoji that weren't dictated.
 - Convert spoken mentions and slash commands when the speaker frames them explicitly: "at sign john" / "at-mention john" -> "@john", "slash command voice memo" -> "/voice-memo". Skip if the framing is ambiguous.
 

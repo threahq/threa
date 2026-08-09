@@ -33,10 +33,134 @@ const timeoutTake = Array.from(
 ).join(" ")
 
 export const voicePolishCases = [
-  c("incremental-append", "Clean incremental append", ["We ship Friday", "We ship Friday after lunch"], {
+  c(
+    "four-final-rollover",
+    "Exact four-final rollover",
+    [
+      "Project Alpha belongs to Ana",
+      "Project Beta belongs to Bo",
+      "Project Gamma belongs to Gia",
+      "Project Delta belongs to Dan",
+      "Project Epsilon belongs to Eva",
+    ],
+    { requiredTerms: ["Alpha", "Ana", "Epsilon", "Eva"] }
+  ),
+  c("scalar-rollover", "Exact 1,200-scalar rollover", [longTake.slice(0, 1_200), "final omega marker"], {
+    requiredTerms: ["Section 1", "omega marker"],
+  }),
+  c(
+    "boundary-list-continuation",
+    "Cross-boundary list continuation",
+    ["first apples", "second pears", "third plums", "fourth bread", "fifth coffee"],
+    {
+      requiredTerms: ["apples", "coffee"],
+      blockTypes: ["bulletList"],
+      listItemCounts: [5],
+      correctionOrStructure: true,
+      expectedScope: "widen_previous",
+    }
+  ),
+  c(
+    "boundary-paragraph-continuation",
+    "Cross-boundary paragraph continuation",
+    [
+      "First paragraph covers the launch",
+      "and its owners",
+      "New paragraph covers evidence",
+      "for each region",
+      "with rollback triggers",
+    ],
+    {
+      requiredTerms: ["launch", "rollback triggers"],
+      blockTypes: ["paragraph", "paragraph"],
+      correctionOrStructure: true,
+      expectedScope: "widen_previous",
+    }
+  ),
+  c(
+    "predecessor-correction-en",
+    "Immediate predecessor correction in English",
+    ["The meeting is Monday", "with Sam", "in Stockholm", "at nine", "Actually Tuesday, not Monday"],
+    {
+      requiredTerms: ["Tuesday"],
+      forbiddenTerms: ["Monday"],
+      correctionOrStructure: true,
+      expectedScope: "widen_previous",
+    }
+  ),
+  c(
+    "predecessor-correction-sv",
+    "Immediate predecessor correction in Swedish",
+    ["Mötet är på måndag", "med Sam", "i Stockholm", "klockan nio", "Nej tisdag, inte måndag"],
+    {
+      requiredTerms: ["tisdag"],
+      forbiddenTerms: ["måndag"],
+      correctionOrStructure: true,
+      expectedScope: "widen_previous",
+    }
+  ),
+  c(
+    "predecessor-correction-de",
+    "Immediate predecessor correction in German",
+    ["Das Treffen ist Montag", "mit Sam", "in Berlin", "um neun", "Nein Dienstag, nicht Montag"],
+    {
+      requiredTerms: ["Dienstag"],
+      forbiddenTerms: ["Montag"],
+      correctionOrStructure: true,
+      expectedScope: "widen_previous",
+    }
+  ),
+  c(
+    "out-of-horizon",
+    "Out-of-horizon correction preserves raw",
+    [
+      "The first date is Monday",
+      "Second detail",
+      "Third detail",
+      "Fourth detail",
+      "Fifth detail",
+      "Sixth detail",
+      "Seventh detail",
+      "Eighth detail",
+      "Change the first date to Tuesday",
+    ],
+    { requiredTerms: ["Monday", "Tuesday"], expectedScope: "preserve_raw", predecessorStable: true }
+  ),
+  c(
+    "stop-exact-reuse",
+    "Stop without a new final reuses the acknowledged live result",
+    [
+      { rawTranscript: "Ready to ship", deadline: "live" },
+      { rawTranscript: "", deadline: "final", stopWithoutNewFinal: true },
+    ],
+    { requiredTerms: ["Ready to ship"], expectedFinalResult: "reused", expectedFinalModelCalls: 0 }
+  ),
+  c(
+    "final-locked-retains-raw",
+    "Rejected final retains accepted prefix and raw tail",
+    [
+      "accepted one",
+      "accepted two",
+      "accepted three",
+      { rawTranscript: "accepted four", deadline: "live" },
+      { rawTranscript: "raw locked tail", deadline: "final", ackStatus: "locked" },
+    ],
+    { requiredTerms: ["accepted one", "raw locked tail"], expectedFinalResult: "rejected", expectedAckStatus: "locked" }
+  ),
+  c("incremental-append", "Clean incremental append", ["We ship Friday", "after lunch"], {
     requiredTerms: ["ship", "Friday", "after lunch"],
     stability: "prior-content",
   }),
+  c(
+    "clean-boundary-tail",
+    "Clean later window stays tail",
+    ["one", "two", "three", "four", "Separately, the budget review starts tomorrow"],
+    {
+      requiredTerms: ["one", "budget review starts tomorrow"],
+      expectedScope: "tail",
+      predecessorStable: true,
+    }
+  ),
   c("inline-correction", "Inline correction", ["Meet at nine no sorry eight"], {
     requiredTerms: ["eight"],
     forbiddenTerms: ["nine", "sorry"],
@@ -65,25 +189,17 @@ export const voicePolishCases = [
     forbiddenTerms: ["Monday", "start over"],
     correctionOrStructure: true,
   }),
-  c(
-    "bullets",
-    "Spoken bullets remain stable",
-    ["First buy milk second call Anna", "First buy milk second call Anna third deploy the fix"],
-    {
-      requiredTerms: ["milk", "Anna", "deploy"],
-      blockTypes: ["bulletList"],
-      listItemCounts: [3],
-      stability: "prior-content",
-      correctionOrStructure: true,
-    }
-  ),
+  c("bullets", "Spoken bullets remain stable", ["First buy milk second call Anna", "third deploy the fix"], {
+    requiredTerms: ["milk", "Anna", "deploy"],
+    blockTypes: ["bulletList"],
+    listItemCounts: [3],
+    stability: "prior-content",
+    correctionOrStructure: true,
+  }),
   c(
     "ordered-list",
     "Explicit numbered list remains stable",
-    [
-      "Number one open settings number two enable voice",
-      "Number one open settings number two enable voice number three save",
-    ],
+    ["Number one open settings number two enable voice", "number three save"],
     {
       requiredTerms: ["settings", "voice", "save"],
       blockTypes: ["orderedList"],
@@ -95,10 +211,7 @@ export const voicePolishCases = [
   c(
     "paragraphs",
     "Paragraph structure remains stable",
-    [
-      "First paragraph covers the launch new paragraph Risks include timing",
-      "First paragraph covers the launch new paragraph Risks include timing and staffing",
-    ],
+    ["First paragraph covers the launch new paragraph Risks include timing", "and staffing"],
     {
       requiredTerms: ["launch", "Risks", "staffing"],
       blockTypes: ["paragraph", "paragraph"],
@@ -128,7 +241,7 @@ export const voicePolishCases = [
     "Genuinely long take with late correction",
     [
       { rawTranscript: `${longTake} The launch is Wednesday.`, deadline: "live" },
-      { rawTranscript: `${longTake} The launch is Wednesday, wait, that should be Thursday.`, deadline: "final" },
+      { rawTranscript: "Wait, the launch should be Thursday, not Wednesday.", deadline: "final" },
     ],
     {
       requiredTerms: ["Section 1", "Section 10", "Thursday"],
@@ -141,7 +254,7 @@ export const voicePolishCases = [
     "Natural timeout-bound take",
     [
       { rawTranscript: timeoutTake, deadline: "live" },
-      { rawTranscript: `${timeoutTake} Final approval belongs to the release manager.`, deadline: "final" },
+      { rawTranscript: "Final approval belongs to the release manager.", deadline: "final" },
     ],
     {
       requiredTerms: ["release note 1", "release note 10", "release manager"],
@@ -151,7 +264,7 @@ export const voicePolishCases = [
   ),
   c(
     "structured-context",
-    "Type dictate type dictate with fresh formatted context",
+    "Multi-final take keeps its initial composer context",
     [
       {
         rawTranscript: "First review access second verify backups",
@@ -160,10 +273,8 @@ export const voicePolishCases = [
         draftAfter: "## Appendix",
       },
       {
-        rawTranscript: "First review access second verify backups third notify Anna",
+        rawTranscript: "third notify Anna",
         deadline: "final",
-        draftBefore: "# Existing roadmap\n\n- Typed owner: Sam\n\n- Review access\n- Verify backups",
-        draftAfter: "## Appendix\n\nTyped closing note",
       },
     ],
     {

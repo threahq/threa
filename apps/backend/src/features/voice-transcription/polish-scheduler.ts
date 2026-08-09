@@ -38,6 +38,16 @@ export class PolishScheduler {
     return outcome
   }
 
+  async cancelAndSettle(maxWaitMs: number): Promise<void> {
+    const active = this.active
+    this.generation++
+    this.pending = null
+    this.active = null
+    active?.controller.abort()
+    if (!active) return
+    await Promise.race([active.promise, new Promise<void>((resolve) => setTimeout(resolve, maxWaitMs))])
+  }
+
   cancel(): void {
     this.generation++
     this.pending = null

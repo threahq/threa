@@ -1,7 +1,12 @@
 // Branded ID types
 export type { UserId, MemberId, WorkspaceId } from "./ids"
 
-export { VOICE_PROTOCOL_VERSION } from "./voice-dictation"
+export {
+  VOICE_PROTOCOL_VERSION,
+  VOICE_LEGACY_PROTOCOL_VERSION,
+  VOICE_REPLACEMENT_ACK_STATUSES,
+  VOICE_STOPPED_OUTCOMES,
+} from "./voice-dictation"
 export type {
   VoiceTerminationMode,
   VoiceRelayPhase,
@@ -9,8 +14,16 @@ export type {
   VoiceStopPayload,
   VoiceStopAck,
   VoiceTranscriptDelta,
+  VoiceTranscriptDeltaV3,
+  VoiceTranscriptDeltaV4,
   VoiceTranscriptPolished,
+  VoiceTranscriptPolishedV3,
+  VoiceTranscriptReplacementV4,
+  VoiceTranscriptReplacementSourceV4,
+  VoiceTranscriptReplacementAck,
+  VoiceReplacementAckStatus,
   VoiceStoppedPayload,
+  VoiceStoppedOutcome,
 } from "./voice-dictation"
 
 // Constants and their types

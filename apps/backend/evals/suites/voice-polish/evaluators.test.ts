@@ -2,24 +2,33 @@ import { describe, expect, test } from "bun:test"
 import { parseMarkdown } from "@threa/prosemirror"
 import type { PolishOutcome } from "../../../src/features/voice-transcription/polish"
 import {
+  attemptBoundsEvaluator,
   blockShapeEvaluator,
   challengerBeatsProduction,
   contextNonEchoEvaluator,
   forbiddenTermsEvaluator,
   languageEvaluator,
   latencyMetrics,
+  lifecycleEvaluator,
   metricsEvaluator,
   previousAcceptedVariantShips,
   qualifyVoicePolishPermutation,
   requiredTermsEvaluator,
   roundTripEvaluator,
   selectVoicePolishModel,
+  scopeEvaluator,
   stabilityEvaluator,
   successEvaluator,
 } from "./evaluators"
 import type { VoicePolishOutput } from "./types"
+import { toJsonReport } from "../../run"
+import {
+  VOICE_POLISH_WIDEN_MAX_WINDOWS,
+  VOICE_POLISH_WINDOW_MAX_CHARS,
+  voicePolishConfig,
+} from "../../../src/features/voice-transcription/config"
 
-const success = (markdown: string): PolishOutcome => ({
+const success = (markdown: string): Extract<PolishOutcome, { status: "success" }> => ({
   status: "success",
   markdown,
   contentJson: parseMarkdown(markdown),
@@ -108,6 +117,91 @@ describe("voice polish deterministic evaluators", () => {
     expect((await stabilityEvaluator.evaluate(stable, { stability: "prior-content" }, ctx)).passed).toBe(false)
   })
 
+  test("declared preserve-raw remains typed while content and round-trip grade the composed document", async () => {
+    const composed = success("Accepted Monday.\n\nChange the first date to Tuesday")
+    const value = output({ status: "preserve_raw" })
+    value.markdown = composed.markdown
+    value.contentJson = composed.contentJson
+    value.composedDocument = composed
+    value.steps[0]!.composedDocument = composed
+    value.steps[0]!.scope = "preserve_raw"
+    value.steps[0]!.predecessorStable = true
+    expect((await successEvaluator.evaluate(value, { expectedScope: "preserve_raw" }, ctx)).passed).toBe(true)
+    expect((await requiredTermsEvaluator.evaluate(value, { requiredTerms: ["Monday", "Tuesday"] }, ctx)).passed).toBe(
+      true
+    )
+    expect((await roundTripEvaluator.evaluate(value, {}, ctx)).passed).toBe(true)
+    expect(
+      (await scopeEvaluator.evaluate(value, { expectedScope: "preserve_raw", predecessorStable: true }, ctx)).passed
+    ).toBe(true)
+    expect(value.outcome.status).toBe("preserve_raw")
+    expect((await successEvaluator.evaluate(value, {}, ctx)).passed).toBe(false)
+    const earlierSafePreserve = output([{ status: "preserve_raw" }, success("Final")])
+    expect((await successEvaluator.evaluate(earlierSafePreserve, { expectedScope: "preserve_raw" }, ctx)).passed).toBe(
+      true
+    )
+    value.steps.unshift({
+      outcome: success("Earlier"),
+      durationMs: 1,
+      deadline: "live",
+      scope: "widen_previous",
+      predecessorStable: false,
+      forbiddenContextTerms: [],
+    })
+    expect(
+      (await scopeEvaluator.evaluate(value, { expectedScope: "preserve_raw", predecessorStable: true }, ctx)).passed
+    ).toBe(true)
+  })
+
+  test("attempt bounds use the production window and reasoning configuration", async () => {
+    const value = output(success("done"))
+    value.steps[0]!.attempts = [
+      {
+        stage: "normal_live",
+        deadline: "live",
+        durationMs: 1,
+        outcome: "success",
+        rawScalarLength: VOICE_POLISH_WINDOW_MAX_CHARS,
+        sourceWindowCount: 1,
+        reasoningEffort: voicePolishConfig.reasoningEffort,
+      },
+      {
+        stage: "widen",
+        deadline: "final",
+        durationMs: 1,
+        outcome: "success",
+        rawScalarLength: VOICE_POLISH_WINDOW_MAX_CHARS * VOICE_POLISH_WIDEN_MAX_WINDOWS,
+        sourceWindowCount: VOICE_POLISH_WIDEN_MAX_WINDOWS,
+        reasoningEffort: voicePolishConfig.reasoningEffort,
+      },
+    ]
+    expect((await attemptBoundsEvaluator.evaluate(value, {}, ctx)).passed).toBe(true)
+    value.steps[0]!.attempts[0]!.rawScalarLength = VOICE_POLISH_WINDOW_MAX_CHARS + 1
+    expect((await attemptBoundsEvaluator.evaluate(value, {}, ctx)).passed).toBe(false)
+  })
+
+  test("declared stop reuse and locked acknowledgement require exact lifecycle evidence", async () => {
+    const reused = output(success("done"))
+    reused.steps[0]!.coordinatorResult = { status: "reused" }
+    reused.steps[0]!.finalModelCallCount = 0
+    expect(
+      (await lifecycleEvaluator.evaluate(reused, { expectedFinalResult: "reused", expectedFinalModelCalls: 0 }, ctx))
+        .passed
+    ).toBe(true)
+    const rejected = output({ status: "replacement_rejected" })
+    rejected.steps[0]!.coordinatorResult = { status: "rejected", operationId: "op", ackStatus: "locked" }
+    rejected.steps[0]!.finalModelCallCount = 1
+    expect(
+      (
+        await lifecycleEvaluator.evaluate(
+          rejected,
+          { expectedFinalResult: "rejected", expectedAckStatus: "locked" },
+          ctx
+        )
+      ).passed
+    ).toBe(true)
+  })
+
   test("timeouts are valid typed outcomes; other failures never are", async () => {
     const interimTimeout = output([{ status: "timeout" }, success("Clean final")])
     expect((await successEvaluator.evaluate(interimTimeout, {}, ctx)).passed).toBe(true)
@@ -168,8 +262,9 @@ describe("voice polish deterministic evaluators", () => {
     })
     const passingMetrics = await metricsEvaluator.evaluate(cases)
     expect(passingMetrics.passed).toBe(true)
-    expect(passingMetrics.details).toContain("timeouts=1 (5.0%)")
-    const catastrophic = Array.from({ length: 6 }, () => ({
+    expect(JSON.parse(passingMetrics.details!).live).toMatchObject({ timeouts: 1, timeoutRate: 0.05 })
+    expect(JSON.parse(passingMetrics.details!).stages).toHaveProperty("scope")
+    const catastrophicValues = Array.from({ length: 6 }, () => ({
       output: {
         ...output(success("ok")),
         steps: [
@@ -181,8 +276,22 @@ describe("voice polish deterministic evaluators", () => {
           },
         ],
       },
-    })) as never
+    }))
+    const catastrophic = catastrophicValues as never
     expect((await metricsEvaluator.evaluate(catastrophic)).passed).toBe(false)
+    const timedOutPermutation = {
+      runs: 6,
+      cases: catastrophicValues.map((item) => ({
+        ...item,
+        caseId: "timeout",
+        expectedOutput: {},
+        evaluations: [],
+      })),
+      usage: { totalCost: 0 },
+    } as never
+    const timeoutQualification = qualifyVoicePolishPermutation(timedOutPermutation)
+    expect(timeoutQualification.qualified).toBe(false)
+    expect(selectVoicePolishModel("luna", [{ model: "luna", qualification: timeoutQualification }])).toBeNull()
     const slowFinal = Array.from({ length: 6 }, () => ({
       output: {
         ...output(success("ok")),
@@ -193,6 +302,34 @@ describe("voice polish deterministic evaluators", () => {
       },
     })) as never
     expect((await metricsEvaluator.evaluate(slowFinal)).passed).toBe(false)
+
+    const metric = await metricsEvaluator.evaluate(completed as never)
+    const report = toJsonReport([
+      {
+        suiteName: "voice-polish",
+        permutations: [
+          {
+            permutation: { model: "luna" },
+            runs: 1,
+            executedModels: {},
+            usage: {},
+            totalDurationMs: 1,
+            runEvaluations: [metric],
+            cases: [],
+          },
+        ],
+      },
+    ])
+    const details = JSON.parse(report.suites[0]!.permutations[0]!.runEvaluations[0]!.details as string)
+    for (const stage of ["scope", "normal_live", "normal_final", "widen"])
+      expect(details.stages[stage]).toEqual(
+        expect.objectContaining({
+          timeoutRate: expect.any(Number),
+          promptTokens: expect.any(Object),
+          completionTokens: expect.any(Object),
+          reasoningTokens: expect.any(Object),
+        })
+      )
   })
 
   test("latency uses nearest rank and separate live/final cohorts", () => {
@@ -222,8 +359,24 @@ describe("voice polish deterministic evaluators", () => {
       output: output(success("ok")),
     }))
     const permutation = { runs: 6, cases, usage: { totalCost: 6 } } as never
+    cases[0]!.output.steps.push({
+      outcome: success("ok"),
+      durationMs: 1,
+      deadline: "live",
+      forbiddenContextTerms: [],
+    })
     const qualified = qualifyVoicePolishPermutation(permutation)
-    expect(qualified).toMatchObject({ qualified: true, caseRates: { correction: 1 } })
+    expect(qualified).toMatchObject({ qualified: true, caseRates: { correction: 1 }, costPerTake: 1 })
+    const strictScopeCases = cases.map((item, index) => ({
+      ...item,
+      caseId: "clean-boundary",
+      expectedOutput: { expectedScope: "tail" as const },
+      evaluations:
+        index === 0 ? [...item.evaluations, { name: "boundary-scope", passed: false, score: 0 }] : item.evaluations,
+    }))
+    expect(
+      qualifyVoicePolishPermutation({ runs: 6, cases: strictScopeCases, usage: { totalCost: 6 } } as never).reasons
+    ).toContain("clean-boundary: bounded scope 5/6")
     const production = { ...qualified, p95: { live: 1000, final: 1000 }, costPerTake: 1 }
     const challenger = { ...qualified, p95: { live: 800, final: 800 }, costPerTake: 1 }
     expect(challengerBeatsProduction(production, challenger)).toBe(true)

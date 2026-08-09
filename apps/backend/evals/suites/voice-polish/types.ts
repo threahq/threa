@@ -1,11 +1,16 @@
-import type { JSONContent, VoicePolishLevel } from "@threa/types"
-import type { PolishOutcome } from "../../../src/features/voice-transcription/polish"
+import type { JSONContent, VoicePolishLevel, VoiceReplacementAckStatus } from "@threa/types"
+import type { PolishOutcome, VoicePolishAttempt } from "../../../src/features/voice-transcription/polish"
+import type { IncrementalPolishResult } from "../../../src/features/voice-transcription/incremental-coordinator"
+
+type VoicePolishScope = Extract<IncrementalPolishResult, { scope: unknown }>["scope"]
 
 export interface VoicePolishStep {
   rawTranscript: string
   deadline?: "live" | "final"
   draftBefore?: string
   draftAfter?: string
+  ackStatus?: VoiceReplacementAckStatus | "timeout"
+  stopWithoutNewFinal?: boolean
 }
 
 export interface VoicePolishInput {
@@ -26,19 +31,35 @@ export interface VoicePolishExpected {
   forbiddenTranslations?: string[]
   stability?: "prior-content"
   correctionOrStructure?: boolean
+  expectedScope?: VoicePolishScope
+  predecessorStable?: boolean
+  expectedFinalResult?: "reused" | "rejected"
+  expectedAckStatus?: VoicePolishStep["ackStatus"]
+  expectedFinalModelCalls?: number
 }
 
 export interface VoicePolishStepOutput {
   outcome: PolishOutcome
+  coordinatorResult?: IncrementalPolishResult
+  composedDocument?: PolishOutcome
+  attempts?: VoicePolishAttempt[]
+  scope?: VoicePolishScope
   durationMs: number
   deadline: "live" | "final"
-  previousAcceptedMarkdown?: string
+  sourceWindowCount?: number
+  rawCharCount?: number
+  reasoningEffort?: string
+  finalCallMade?: boolean
+  finalModelCallCount?: number
+  reused?: boolean
+  predecessorStable?: boolean
   forbiddenContextTerms: string[]
 }
 
 export interface VoicePolishOutput {
   steps: VoicePolishStepOutput[]
   outcome: PolishOutcome
+  composedDocument?: PolishOutcome
   markdown?: string
   contentJson?: JSONContent
   durationMs: number

@@ -3,8 +3,8 @@ import { io, type Socket } from "socket.io-client"
 import {
   type VoiceStartAck,
   type VoiceStoppedPayload,
-  type VoiceTranscriptDelta,
-  type VoiceTranscriptPolished,
+  type VoiceTranscriptDeltaV3,
+  type VoiceTranscriptPolishedV3,
 } from "@threa/types"
 import { voiceApi } from "@/api/voice"
 import { parseMarkdown } from "@threa/prosemirror"
@@ -14,8 +14,10 @@ import { useDictationCoordinator, isDictationExternalHeld } from "@/contexts"
 
 export type VoiceDictationState = "idle" | "connecting" | "recording" | "stopping" | "error"
 
-type VoiceDelta = VoiceTranscriptDelta
-type VoicePolishedChunk = VoiceTranscriptPolished
+// This PR keeps the current client pinned to negotiated v3. The v4 event
+// consumers replace these aliases when multi-chunk activation lands.
+type VoiceDelta = VoiceTranscriptDeltaV3
+type VoicePolishedChunk = VoiceTranscriptPolishedV3
 
 export interface DictationChunkRecord {
   /** Cumulative raw text the chunk would revert to if the toggle flips to "Show original". */

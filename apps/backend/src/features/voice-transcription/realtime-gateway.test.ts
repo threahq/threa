@@ -37,15 +37,15 @@ function fakeUpstream(): FakeUpstream {
 
 function fakeSocket(workosUserId = "workos_1") {
   const handlers = new Map<string, (...args: unknown[]) => unknown>()
-  const emitted: Array<{ event: string; payload?: unknown }> = []
+  const emitted: Array<{ event: string; payload?: unknown; callback?: (payload: unknown) => void }> = []
   let disconnected = false
   return {
     data: { workosUserId },
     on(event: string, cb: (...args: unknown[]) => unknown) {
       handlers.set(event, cb)
     },
-    emit(event: string, payload?: unknown) {
-      emitted.push({ event, payload })
+    emit(event: string, payload?: unknown, callback?: (payload: unknown) => void) {
+      emitted.push({ event, payload, ...(callback ? { callback } : {}) })
     },
     disconnect() {
       disconnected = true
@@ -274,6 +274,71 @@ describe("registerVoiceGateway voice:start", () => {
     )
   })
 
+  it("negotiates v4 and clamps invalid or future requests safely", async () => {
+    for (const [requested, expected] of [
+      [4, 4],
+      [99, 4],
+      ["bad", 3],
+    ] as const) {
+      const { socket } = setup()
+      const cb = mock(() => {})
+      await socket.trigger("voice:start", { ...START_PAYLOAD, maxProtocolVersion: requested }, cb)
+      expect(cb).toHaveBeenCalledWith({ ok: true, protocolVersion: expected })
+      await socket.trigger("disconnect")
+    }
+  })
+
+  it("emits discriminated v4 interim deltas and omits empty committed deltas", async () => {
+    const { socket, upstream } = setup({ voicePolishLevel: "opinionated" })
+    await socket.trigger(
+      "voice:start",
+      { ...START_PAYLOAD, maxProtocolVersion: 4 },
+      mock(() => {})
+    )
+    upstream.fireDelta({ text: "draft", isFinal: false })
+    upstream.fireDelta({ text: "   ", isFinal: true })
+    expect(socket.emitted.filter((event) => event.event === "voice:transcript:delta")).toEqual([
+      {
+        event: "voice:transcript:delta",
+        payload: { protocolVersion: 4, voiceSessionId: "voicesess_1", revision: 0, text: "draft", isFinal: false },
+      },
+    ])
+    await socket.trigger("disconnect", "client namespace disconnect")
+  })
+
+  it("marks hard-split v4 continuations so the client does not invent whitespace", async () => {
+    const { socket, upstream } = setup({ voicePolishLevel: "none" })
+    await socket.trigger(
+      "voice:start",
+      { ...START_PAYLOAD, maxProtocolVersion: 4 },
+      mock(() => {})
+    )
+    upstream.fireDelta({ text: "😀".repeat(1_201), isFinal: true })
+    const deltas = socket.emitted.filter((event) => event.event === "voice:transcript:delta")
+    expect(deltas).toHaveLength(2)
+    expect(deltas[1]?.payload).toMatchObject({ isFinal: true, joinPrevious: true })
+    await socket.trigger("disconnect", "client namespace disconnect")
+  })
+
+  it("emits each v4 raw delta before its acknowledged replacement", async () => {
+    const { socket, upstream } = setup({ voicePolishLevel: "opinionated" })
+    await socket.trigger(
+      "voice:start",
+      { ...START_PAYLOAD, maxProtocolVersion: 4 },
+      mock(() => {})
+    )
+    upstream.fireDelta({ text: "hello", isFinal: true })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    const rawIndex = socket.emitted.findIndex((event) => event.event === "voice:transcript:delta")
+    const operationIndex = socket.emitted.findIndex((event) => event.event === "voice:transcript:polished")
+    expect(rawIndex).toBeGreaterThanOrEqual(0)
+    expect(operationIndex).toBeGreaterThan(rawIndex)
+    const operation = socket.emitted[operationIndex]!
+    const operationId = (operation.payload as { operationId: string }).operationId
+    operation.callback?.({ operationId, status: "applied" })
+    await socket.trigger("disconnect")
+  })
+
   it("refuses a start that is missing identifiers", async () => {
     const { socket, transcription } = setup()
     const cb = mock(() => {})
@@ -344,6 +409,67 @@ describe("registerVoiceGateway voice:start", () => {
 })
 
 describe("registerVoiceGateway lifecycle", () => {
+  it("keeps gateway failure and disconnect diagnostics content-free", async () => {
+    const sentinel = "PRIVATE_TRANSCRIPT_ERROR_REASON_SENTINEL"
+    const logs: unknown[][] = []
+    const info = spyOn(logger, "info").mockImplementation((...args: unknown[]) => {
+      logs.push(args)
+      return logger
+    })
+    const warn = spyOn(logger, "warn").mockImplementation((...args: unknown[]) => {
+      logs.push(args)
+      return logger
+    })
+    try {
+      const { socket, upstream, voiceTranscriptionService } = setup()
+      upstream.flush = mock(async () => {
+        throw new Error(sentinel)
+      })
+      upstream.close = mock(async () => {
+        throw Object.assign(new Error(sentinel), { code: sentinel })
+      })
+      voiceTranscriptionService.finishSession.mockImplementation(async () => {
+        throw new Error(sentinel)
+      })
+      await socket.trigger(
+        "voice:start",
+        START_PAYLOAD,
+        mock(() => {})
+      )
+      await socket.trigger(
+        "voice:stop",
+        { mode: "format" },
+        mock(() => {})
+      )
+      await socket.trigger("disconnect", sentinel)
+      const serialized = JSON.stringify(logs)
+      expect(serialized).not.toContain(sentinel)
+      expect(serialized).toContain('"reason":"other"')
+    } finally {
+      info.mockRestore()
+      warn.mockRestore()
+    }
+  })
+
+  it("stops an empty v4 session without coordinator or polish work", async () => {
+    const { socket, polishTranscript } = setup({ voicePolishLevel: "opinionated" })
+    await socket.trigger(
+      "voice:start",
+      { ...START_PAYLOAD, maxProtocolVersion: 4 },
+      mock(() => {})
+    )
+    await socket.trigger(
+      "voice:stop",
+      { mode: "format" },
+      mock(() => {})
+    )
+    expect(polishTranscript).not.toHaveBeenCalled()
+    expect(socket.emitted).toContainEqual({
+      event: "voice:stopped",
+      payload: { reason: "stopped", revision: 0, outcome: "empty_input" },
+    })
+  })
+
   it("voice:stop flushes, closes, finishes the session, and emits voice:stopped", async () => {
     const { socket, upstream, voiceTranscriptionService } = setup()
     await socket.trigger(
@@ -368,6 +494,63 @@ describe("registerVoiceGateway lifecycle", () => {
       payload: { reason: "stopped", revision: 0, outcome: "empty_input" },
     })
     expect(stopCb).toHaveBeenCalledWith({ ok: true })
+  })
+
+  it("ignores a provider final that arrives after flush settled while authoritative v4 formatting runs", async () => {
+    let markFinalStarted!: () => void
+    let resolveFinal!: (value: string) => void
+    const finalStarted = new Promise<void>((resolve) => {
+      markFinalStarted = resolve
+    })
+    const finalResult = new Promise<string>((resolve) => {
+      resolveFinal = resolve
+    })
+    const { socket, upstream } = setup({
+      voicePolishLevel: "opinionated",
+      polishTranscript: async () => {
+        markFinalStarted()
+        return await finalResult
+      },
+    })
+    await socket.trigger(
+      "voice:start",
+      { ...START_PAYLOAD, maxProtocolVersion: 4 },
+      mock(() => {})
+    )
+    upstream.fireDelta({ text: "the visible tail", isFinal: false })
+
+    const stopping = socket.trigger(
+      "voice:stop",
+      { mode: "format" },
+      mock(() => {})
+    ) as Promise<void>
+    await finalStarted
+    // A provider may deliver this after its flush timeout has already resolved.
+    // The promoted interim is now the terminal source of truth.
+    upstream.fireDelta({ text: "the visible tail", isFinal: true })
+    resolveFinal("The visible tail.")
+
+    let operation = socket.emitted.find((event) => event.event === "voice:transcript:polished")
+    for (let attempts = 0; attempts < 10 && !operation; attempts++) {
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      operation = socket.emitted.find((event) => event.event === "voice:transcript:polished")
+    }
+    expect(operation).toBeDefined()
+    const operationPayload = operation!.payload as { operationId: string; sources: unknown[] }
+    operation!.callback?.({ operationId: operationPayload.operationId, status: "applied" })
+    await stopping
+
+    const finalDeltas = socket.emitted.filter(
+      (event) => event.event === "voice:transcript:delta" && (event.payload as { isFinal: boolean }).isFinal
+    )
+    expect(finalDeltas.map((event) => event.payload)).toEqual([
+      expect.objectContaining({ revision: 1, text: "the visible tail", isFinal: true }),
+    ])
+    expect(operationPayload.sources).toEqual([{ chunkId: expect.any(String), throughRevision: 1 }])
+    expect(socket.emitted).toContainEqual({
+      event: "voice:stopped",
+      payload: { reason: "stopped", revision: 1, outcome: "success" },
+    })
   })
 
   it("max duration follows the authoritative format path before disconnecting", async () => {
