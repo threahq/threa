@@ -202,6 +202,34 @@ describe("composer pill drag gestures", () => {
     expect(editor.view.dom.querySelector(".composer-pill-drop-cursor")).toBeNull()
   })
 
+  it("allows another mouse press after a drag while suppressing its trailing click", () => {
+    const editor = createPillEditor()
+    const source = editor.view.dom.querySelector<HTMLElement>('[data-type="mention"]')!
+    const dropPos = nodePos(editor, "slashCommand") + 1
+    vi.spyOn(editor.view, "posAtCoords").mockReturnValue({ pos: dropPos, inside: -1 })
+
+    fireEvent.mouseDown(source, { button: 0, clientX: 10, clientY: 10 })
+    fireEvent.mouseMove(document, { buttons: 1, clientX: 18, clientY: 10 })
+    fireEvent.mouseUp(source, { button: 0, clientX: 18, clientY: 10 })
+
+    const movedSource = editor.view.dom.querySelector<HTMLElement>('[data-type="mention"]')!
+    const followupMouseDown = new MouseEvent("mousedown", {
+      bubbles: true,
+      cancelable: true,
+      button: 0,
+      clientX: 18,
+      clientY: 10,
+    })
+    movedSource.dispatchEvent(followupMouseDown)
+    expect(followupMouseDown.defaultPrevented).toBe(false)
+    fireEvent.mouseMove(document, { buttons: 1, clientX: 26, clientY: 10 })
+    fireEvent.mouseUp(movedSource, { button: 0, clientX: 26, clientY: 10 })
+
+    const trailingClick = new MouseEvent("click", { bubbles: true, cancelable: true })
+    editor.view.dom.querySelector<HTMLElement>('[data-type="mention"]')!.dispatchEvent(trailingClick)
+    expect(trailingClick.defaultPrevented).toBe(true)
+  })
+
   it("drags attachment React node views through the same path", () => {
     const editor = createPillEditor([
       {
