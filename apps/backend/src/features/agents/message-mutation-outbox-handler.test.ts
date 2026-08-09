@@ -9,7 +9,7 @@ import { MessageVersionRepository } from "../messaging"
 import { StreamEventRepository, StreamRepository } from "../streams"
 import { E2eStreamsRepository } from "../e2e-streams"
 import { AgentMessageMutationHandler } from "./message-mutation-outbox-handler"
-import { AgentSessionRepository, SessionStatuses } from "./session-repository"
+import { AgentSessionRepository, SessionStatuses, type AgentSession } from "./session-repository"
 
 function makeFakeCursorLock(onRun?: (result: ProcessResult) => void) {
   return () => ({
@@ -24,9 +24,41 @@ function mockCursorLock(onRun?: (result: ProcessResult) => void) {
   ;(spyOn(cursorLockModule, "CursorLock") as any).mockImplementation(makeFakeCursorLock(onRun))
 }
 
-function createHandler(botInvocationOwned = false) {
+function makeSession(overrides: Partial<AgentSession> = {}): AgentSession {
+  return {
+    id: "session_persona",
+    streamId: "stream_1",
+    personaId: "persona_1",
+    triggerMessageId: "msg_trigger",
+    triggerMessageRevision: 1,
+    supersedesSessionId: null,
+    status: SessionStatuses.COMPLETED,
+    currentStep: 0,
+    currentStepType: null,
+    serverId: null,
+    callbackTokenHash: null,
+    replyKeyGeneration: null,
+    heartbeatAt: null,
+    abortRequestedAt: null,
+    responseMessageId: "msg_response",
+    error: null,
+    lastSeenSequence: 10n,
+    sentMessageIds: ["msg_response"],
+    contextMessageIds: [],
+    episodeSummary: null,
+    responseValidationFailed: false,
+    reflectiveCapturedAt: null,
+    createdAt: new Date("2026-02-19T11:00:00.000Z"),
+    completedAt: new Date("2026-02-19T11:30:00.000Z"),
+    ...overrides,
+  }
+}
+
+function createHandler(botInvocationOwned: boolean | ((sessionId: string) => boolean) = false) {
   mockCursorLock()
-  spyOn(BotInvocationRepository, "isBotInvocationSession").mockResolvedValue(botInvocationOwned)
+  spyOn(BotInvocationRepository, "isBotInvocationSession").mockImplementation(async (_db, _workspaceId, sessionId) =>
+    typeof botInvocationOwned === "function" ? botInvocationOwned(sessionId) : botInvocationOwned
+  )
   spyOn(MessageVersionRepository, "findLatestByMessageId").mockResolvedValue(null)
 
   const eventService = {
@@ -943,6 +975,113 @@ describe("AgentMessageMutationHandler", () => {
       updates: update.mock.calls.length,
       jobs: jobQueue.send.mock.calls.length,
     }).toEqual({ revisionReads: 0, updates: 0, jobs: 0 })
+  })
+
+  it("selects the latest persona trigger session behind newer bot-owned rows", async () => {
+    const editedAt = new Date("2026-02-19T12:00:00.000Z")
+    spyOn(OutboxRepository, "fetchAfterId").mockResolvedValue([
+      {
+        id: 1n,
+        eventType: "message:edited",
+        payload: {
+          workspaceId: "ws_1",
+          streamId: "stream_1",
+          event: { actorId: "usr_editor", payload: { messageId: "msg_trigger" } },
+        },
+        createdAt: editedAt,
+      } as any,
+    ])
+    const newestBot = makeSession({ id: "session_bot_new", createdAt: new Date("2026-02-19T11:50:00.000Z") })
+    const olderBot = makeSession({ id: "session_bot_old", createdAt: new Date("2026-02-19T11:40:00.000Z") })
+    const persona = makeSession()
+    const find = spyOn(AgentSessionRepository, "findByTriggerMessage")
+      .mockResolvedValueOnce(newestBot)
+      .mockResolvedValueOnce(olderBot)
+      .mockResolvedValueOnce(persona)
+    spyOn(MessageVersionRepository, "getCurrentRevision").mockResolvedValue(2)
+    spyOn(StreamEventRepository, "listMessageIdsBySession").mockResolvedValue([])
+    spyOn(AgentSessionRepository, "updateStatus").mockResolvedValue(
+      makeSession({ status: SessionStatuses.SUPERSEDED, error: "Superseded by invoking message edit" })
+    )
+    const { handler, jobQueue } = createHandler((sessionId) => sessionId.startsWith("session_bot_"))
+
+    handler.handle()
+    await waitForDebounce()
+
+    expect(find.mock.calls.map((call) => call[2])).toEqual([
+      undefined,
+      { createdAt: newestBot.createdAt, id: newestBot.id },
+      { createdAt: olderBot.createdAt, id: olderBot.id },
+    ])
+    expect(AgentSessionRepository.updateStatus).toHaveBeenCalledWith(
+      {},
+      persona.id,
+      SessionStatuses.SUPERSEDED,
+      expect.any(Object)
+    )
+    expect(jobQueue.send).toHaveBeenCalledWith(
+      "persona.agent",
+      expect.objectContaining({ personaId: persona.personaId, supersedesSessionId: persona.id }),
+      { messageId: `queue_rerun_${persona.id}` }
+    )
+  })
+
+  it("selects the latest persona context session behind newer bot-owned stream rows", async () => {
+    const editedAt = new Date("2026-02-19T12:00:00.000Z")
+    spyOn(OutboxRepository, "fetchAfterId").mockResolvedValue([
+      {
+        id: 1n,
+        eventType: "message:edited",
+        payload: {
+          workspaceId: "ws_1",
+          streamId: "stream_1",
+          event: {
+            actorId: "usr_editor",
+            sequence: "9",
+            payload: { messageId: "msg_context" },
+          },
+        },
+        createdAt: editedAt,
+      } as any,
+    ])
+    spyOn(AgentSessionRepository, "findByTriggerMessage").mockResolvedValue(null)
+    const newestBot = makeSession({ id: "session_bot_new", createdAt: new Date("2026-02-19T11:50:00.000Z") })
+    const olderBot = makeSession({ id: "session_bot_old", createdAt: new Date("2026-02-19T11:40:00.000Z") })
+    const persona = makeSession({ contextMessageIds: ["msg_context"] })
+    const find = spyOn(AgentSessionRepository, "findLatestByStream")
+      .mockResolvedValueOnce(newestBot)
+      .mockResolvedValueOnce(olderBot)
+      .mockResolvedValueOnce(persona)
+    spyOn(StreamEventRepository, "listMessageIdsBySession").mockResolvedValue([])
+    spyOn(AgentSessionRepository, "updateStatus").mockResolvedValue(
+      makeSession({ status: SessionStatuses.SUPERSEDED, error: "Superseded by referenced message edit" })
+    )
+    const { handler, jobQueue } = createHandler((sessionId) => sessionId.startsWith("session_bot_"))
+
+    handler.handle()
+    await waitForDebounce()
+
+    expect(find.mock.calls.map((call) => call[2])).toEqual([
+      undefined,
+      { createdAt: newestBot.createdAt, id: newestBot.id },
+      { createdAt: olderBot.createdAt, id: olderBot.id },
+    ])
+    expect(AgentSessionRepository.updateStatus).toHaveBeenCalledWith(
+      {},
+      persona.id,
+      SessionStatuses.SUPERSEDED,
+      expect.any(Object)
+    )
+    expect(jobQueue.send).toHaveBeenCalledWith(
+      "persona.agent",
+      expect.objectContaining({
+        messageId: persona.triggerMessageId,
+        personaId: persona.personaId,
+        supersedesSessionId: persona.id,
+        rerunContext: expect.objectContaining({ cause: "referenced_message_edited", editedMessageId: "msg_context" }),
+      }),
+      { messageId: `queue_rerun_${persona.id}` }
+    )
   })
 
   it("skips persona rerun for a bot-owned session referencing the edited message", async () => {
