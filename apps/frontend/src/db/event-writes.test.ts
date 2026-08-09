@@ -3,9 +3,8 @@ import { liveQuery } from "dexie"
 import { db, sequenceToNum, type CachedEvent } from "@/db"
 import {
   EVENT_BULK_PUT_LIMIT,
-  isEventWriteChunkingEnabled,
   isSharedStreamRegistrationEnabledSync,
-  readEventWriteFlagsFresh,
+  isSinglePreviewWriterEnabled,
   primeEventWriteFlags,
   primeEventWriteFlagsIfAbsent,
   putEventsBounded,
@@ -62,27 +61,27 @@ describe("putEventsBounded", () => {
     const rows = makePage("stream_a", 50)
     const bulkPut = vi.spyOn(db.events, "bulkPut")
 
-    await putEventsBounded(db.events, rows, true)
+    await putEventsBounded(db.events, rows)
 
     expect(bulkPut).toHaveBeenCalledTimes(2)
     expect(bulkPut.mock.calls.map((call) => (call[0] as CachedEvent[]).length)).toEqual([EVENT_BULK_PUT_LIMIT, 1])
     expect(await db.events.where("streamId").equals("stream_a").count()).toBe(50)
   })
 
-  it("writes a single bulkPut when chunking is off", async () => {
+  it("a page at the limit is written as one bulkPut", async () => {
     const bulkPut = vi.spyOn(db.events, "bulkPut")
 
-    await putEventsBounded(db.events, makePage("stream_a", 50), false)
+    await putEventsBounded(db.events, makePage("stream_a", EVENT_BULK_PUT_LIMIT))
 
     expect(bulkPut).toHaveBeenCalledTimes(1)
-    expect(await db.events.where("streamId").equals("stream_a").count()).toBe(50)
+    expect(await db.events.where("streamId").equals("stream_a").count()).toBe(EVENT_BULK_PUT_LIMIT)
   })
 })
 
 describe("skipNoOpEventRewrites", () => {
   it("re-writing an identical page writes nothing", async () => {
     const rows = makePage("stream_a", 50)
-    await putEventsBounded(db.events, rows, true)
+    await putEventsBounded(db.events, rows)
 
     const existingRows = await db.events.bulkGet(rows.map((row) => row.id))
     const existingById = new Map(
@@ -91,7 +90,7 @@ describe("skipNoOpEventRewrites", () => {
     const candidates = rows.map((row) => ({ ...row, _cachedAt: 999 }))
     const bulkPut = vi.spyOn(db.events, "bulkPut")
 
-    await putEventsBounded(db.events, skipNoOpEventRewrites(existingById, candidates), true)
+    await putEventsBounded(db.events, skipNoOpEventRewrites(existingById, candidates))
 
     expect(bulkPut).toHaveBeenCalledTimes(0)
     const after = await db.events.where("streamId").equals("stream_a").toArray()
@@ -154,23 +153,26 @@ describe("live-query wake set (D1)", () => {
   }
 
   it("a 50-row page does not wake a live query ranged on another stream", async () => {
-    const chunkedEmissions = await countEmissions(async () => {
-      await putEventsBounded(db.events, makePage("stream_b", 50), true)
+    const boundedEmissions = await countEmissions(async () => {
+      await putEventsBounded(db.events, makePage("stream_b", 50))
     })
-    expect(chunkedEmissions).toBe(0)
+    expect(boundedEmissions).toBe(0)
 
     await db.events.clear()
 
-    const unchunkedEmissions = await countEmissions(async () => {
-      await putEventsBounded(db.events, makePage("stream_b", 50), false)
+    // Control: the same page through a single bulkPut is what trips Dexie's
+    // FULL_RANGE marking, so a 0 above means the slicing worked, not that the
+    // subscription was deaf.
+    const singlePutEmissions = await countEmissions(async () => {
+      await db.events.bulkPut(makePage("stream_b", 50))
     })
-    expect(unchunkedEmissions).toBeGreaterThan(0)
+    expect(singlePutEmissions).toBeGreaterThan(0)
   })
 
   it("a page written inside one wrapping transaction still does not wake another stream's query", async () => {
     const emissions = await countEmissions(async () => {
       await db.transaction("rw", [db.events], async () => {
-        await putEventsBounded(db.events, makePage("stream_b", 50), true)
+        await putEventsBounded(db.events, makePage("stream_b", 50))
       })
     })
 
@@ -182,57 +184,54 @@ describe("live-query wake set (D1)", () => {
     await db.events.put(makeRow("stream_a", 0))
 
     const emissions = await countEmissions(async () => {
-      await putEventsBounded(
-        db.events,
-        [makeRow("stream_a", 0, { payload: { messageId: "evt_stream_a_0", contentMarkdown: "edited" } })],
-        true
-      )
+      await putEventsBounded(db.events, [
+        makeRow("stream_a", 0, { payload: { messageId: "evt_stream_a_0", contentMarkdown: "edited" } }),
+      ])
     })
 
     expect(emissions).toBeGreaterThan(0)
   })
 })
 
-describe("isEventWriteChunkingEnabled", () => {
+describe("the primed flag cache", () => {
   it("resolves a persisted layered row and caches it", async () => {
-    await putMetadata({ workspace: { eventWriteChunking: "on" }, user: {} })
+    await putMetadata({ workspace: { singlePreviewWriter: "on" }, user: {} })
     const get = vi.spyOn(db.workspaceMetadata, "get")
 
-    expect(await isEventWriteChunkingEnabled(db, "ws_1")).toBe(true)
-    expect(await isEventWriteChunkingEnabled(db, "ws_1")).toBe(true)
+    expect(await isSinglePreviewWriterEnabled(db, "ws_1")).toBe(true)
+    expect(await isSinglePreviewWriterEnabled(db, "ws_1")).toBe(true)
     expect(get).toHaveBeenCalledTimes(1)
   })
 
   it("a pre-#1455 flat row neither throws nor overrides the registry default", async () => {
     // A flat legacy row is IGNORED (coerced away), so the resolved value is the
-    // registry default — "on" since the go-live flip — never the flat row's own
-    // field, and never a crash.
-    await putMetadata({ eventWriteChunking: "off" })
+    // registry default, never the flat row's own field, and never a crash.
+    await putMetadata({ singlePreviewWriter: "on" })
 
-    expect(await isEventWriteChunkingEnabled(db, "ws_1")).toBe(true)
+    expect(await isSinglePreviewWriterEnabled(db, "ws_1")).toBe(false)
   })
 
   it("a primed value wins without reading the row", async () => {
-    await putMetadata({ workspace: { eventWriteChunking: "off" }, user: {} })
+    await putMetadata({ workspace: { singlePreviewWriter: "off" }, user: {} })
     const get = vi.spyOn(db.workspaceMetadata, "get")
-    primeEventWriteFlags("ws_1", { workspace: {}, user: { eventWriteChunking: "on" } })
+    primeEventWriteFlags("ws_1", { workspace: {}, user: { singlePreviewWriter: "on" } })
 
-    expect(await isEventWriteChunkingEnabled(db, "ws_1")).toBe(true)
+    expect(await isSinglePreviewWriterEnabled(db, "ws_1")).toBe(true)
     expect(get).not.toHaveBeenCalled()
   })
 
   it("resetEventWriteFlags clears the primed value", async () => {
-    // Primed "off" (an explicit override), then reset: with no persisted row
-    // the resolve falls back to the registry default "on" — proving the primed
-    // override was dropped, not retained.
-    primeEventWriteFlags("ws_1", { workspace: { eventWriteChunking: "off" }, user: {} })
+    // Primed "on" (an explicit override), then reset: with no persisted row the
+    // resolve falls back to the registry default — proving the primed override
+    // was dropped, not retained.
+    primeEventWriteFlags("ws_1", { workspace: { singlePreviewWriter: "on" }, user: {} })
     resetEventWriteFlags()
 
-    expect(await isEventWriteChunkingEnabled(db, "ws_1")).toBe(true)
+    expect(await isSinglePreviewWriterEnabled(db, "ws_1")).toBe(false)
   })
 
   it("a prime landing mid-read wins over the older persisted row", async () => {
-    await putMetadata({ workspace: { eventWriteChunking: "off" }, user: {} })
+    await putMetadata({ workspace: { singlePreviewWriter: "off" }, user: {} })
     let release: () => void = () => {}
     const gate = new Promise<void>((resolve) => {
       release = resolve
@@ -241,36 +240,12 @@ describe("isEventWriteChunkingEnabled", () => {
     vi.spyOn(db.workspaceMetadata, "get").mockImplementation(((key: string) =>
       gate.then(() => real(key))) as unknown as typeof db.workspaceMetadata.get)
 
-    const inFlight = isEventWriteChunkingEnabled(db, "ws_1")
-    primeEventWriteFlags("ws_1", { workspace: { eventWriteChunking: "on" }, user: {} })
+    const inFlight = isSinglePreviewWriterEnabled(db, "ws_1")
+    primeEventWriteFlags("ws_1", { workspace: { singlePreviewWriter: "on" }, user: {} })
     release()
 
     expect(await inFlight).toBe(true)
-    expect(await isEventWriteChunkingEnabled(db, "ws_1")).toBe(true)
-  })
-
-  it("readEventWriteFlagsFresh ignores the cache and re-reads the row every call", async () => {
-    await putMetadata({ workspace: { eventWriteChunking: "on" }, user: {} })
-    primeEventWriteFlags("ws_1", { workspace: { eventWriteChunking: "off" }, user: {} })
-
-    const first = await readEventWriteFlagsFresh(db, "ws_1")
-    await putMetadata({ workspace: { eventWriteChunking: "off" }, user: {} })
-    const second = await readEventWriteFlagsFresh(db, "ws_1")
-
-    expect({ first, second }).toEqual({
-      first: {
-        chunking: true,
-        sharedStreamRegistration: false,
-        singlePreviewWriter: false,
-        coalescedLiveCommit: false,
-      },
-      second: {
-        chunking: false,
-        sharedStreamRegistration: false,
-        singlePreviewWriter: false,
-        coalescedLiveCommit: false,
-      },
-    })
+    expect(await isSinglePreviewWriterEnabled(db, "ws_1")).toBe(true)
   })
 })
 

@@ -112,7 +112,7 @@ import {
   Visibilities,
   normalizeSidebarConfig,
 } from "@threa/types"
-import { isCoalescedLiveCommitEnabledSync, isEventWriteChunkingEnabled, primeEventWriteFlags } from "@/db/event-writes"
+import { isCoalescedLiveCommitEnabledSync, primeEventWriteFlags } from "@/db/event-writes"
 import { applyStreamBootstrapInCurrentTransaction } from "./stream-sync"
 import { deleteStreamSlots, deleteSlotsForStreams } from "@/stores/slot-store"
 import { applyDraftDeleted, applyDraftUpserted } from "./draft-sync"
@@ -3184,7 +3184,6 @@ export async function applyReconnectBootstrapBatch(
   })
 
   primeEventWriteFlags(workspaceId, finalBootstrap.featureFlags)
-  const chunked = await isEventWriteChunkingEnabled(db, workspaceId)
   const diffEnabled = resolveFeatureFlags(finalBootstrap.featureFlags ?? EMPTY_FLAG_LAYERS).bootstrapDiff === "on"
 
   const membershipByStream = new Map(finalBootstrap.streamMemberships.map((sm) => [sm.streamId, sm]))
@@ -3466,7 +3465,7 @@ export async function applyReconnectBootstrapBatch(
         // Carry the fetch window so a per-stream envelope's stale `readState`
         // never clobbers a frontier touched during the reconnect (same rule
         // the workspace map merge above applies).
-        await applyStreamBootstrapInCurrentTransaction(workspaceId, streamId, bootstrap, now, chunked, fetchStartedAt)
+        await applyStreamBootstrapInCurrentTransaction(workspaceId, streamId, bootstrap, now, fetchStartedAt)
       }
 
       if (terminalStreamIds.size > 0) {

@@ -3,7 +3,7 @@ import { useStreamBootstrap } from "./use-streams"
 import { useStreamService } from "@/contexts"
 import { useQueryClient, useInfiniteQuery } from "@tanstack/react-query"
 import { db, sequenceToNum } from "@/db"
-import { isEventWriteChunkingEnabled, putEventsBounded, skipNoOpEventRewrites } from "@/db/event-writes"
+import { putEventsBounded, skipNoOpEventRewrites } from "@/db/event-writes"
 import { EVENT_PAGE_SIZE } from "@/lib/constants"
 import { useStreamEvents } from "@/stores/stream-store"
 import { useFeatureFlag } from "@/hooks/use-feature-flags"
@@ -281,7 +281,6 @@ export async function cacheToIndexedDB(
   carrier?: SlotCarrier
 ) {
   const now = Date.now()
-  const chunked = await isEventWriteChunkingEnabled(db, workspaceId)
   await db.transaction("rw", [db.events, db.slots], async () => {
     if (events.length > 0) {
       const existingRows = await db.events.bulkGet(events.map((e) => e.id))
@@ -304,7 +303,7 @@ export async function cacheToIndexedDB(
           _patchedAt: existing._patchedAt,
         }
       })
-      await putEventsBounded(db.events, chunked ? skipNoOpEventRewrites(existingById, candidates) : candidates, chunked)
+      await putEventsBounded(db.events, skipNoOpEventRewrites(existingById, candidates))
     }
     // Persist the page's slot carrier alongside its events so pointers in pages
     // older than the bootstrap window hydrate from the store (Amendment A2).
