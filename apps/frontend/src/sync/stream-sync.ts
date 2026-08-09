@@ -1,7 +1,6 @@
 import { db, sequenceToNum, type CachedEvent } from "@/db"
 import { mergeStreamByTitleRevision } from "@/lib/title-merge"
 import {
-  isEventWriteChunkingEnabled,
   isSinglePreviewWriterEnabled,
   isNoOpRewrite,
   isSharedStreamRegistrationEnabledSync,
@@ -118,7 +117,7 @@ export function toCachedStreamBootstrap(
   }
 }
 
-async function resolveUnknownOptimisticAnchors(streamId: string, chunked: boolean): Promise<void> {
+async function resolveUnknownOptimisticAnchors(streamId: string): Promise<void> {
   const unresolved = (await db.events.where("_status").anyOf(["pending", "failed", "editing"]).toArray()).filter(
     (event) => event.streamId === streamId && event._anchorSequenceNum == null
   )
@@ -142,7 +141,7 @@ async function resolveUnknownOptimisticAnchors(streamId: string, chunked: boolea
       anchor ?? Math.max(0, Math.min(...persistedEvents.map((persisted) => persisted._sequenceNum)) - 1)
     return [{ ...event, _anchorSequenceNum: resolvedAnchor, _cachedAt: now }]
   })
-  await putEventsBounded(db.events, resolved, chunked)
+  await putEventsBounded(db.events, resolved)
 }
 
 export async function bumpLaterOptimisticAnchors(
@@ -287,7 +286,6 @@ async function writeBootstrapEventsAndStream(
   streamId: string,
   bootstrap: StreamBootstrap,
   now: number,
-  chunked: boolean,
   fetchStartedAt?: number
 ): Promise<StreamReadFrontier | undefined> {
   await cleanupStaleOptimisticEvents(streamId)
@@ -447,8 +445,8 @@ async function writeBootstrapEventsAndStream(
       }
     }
 
-    await putEventsBounded(db.events, toWrite, chunked)
-    await resolveUnknownOptimisticAnchors(streamId, chunked)
+    await putEventsBounded(db.events, toWrite)
+    await resolveUnknownOptimisticAnchors(streamId)
 
     // Real rows are in place (bulkPut above, or already present via a skipped
     // rewrite) — now drop the optimistic copies and their outbox entries so a
@@ -694,7 +692,6 @@ export async function applyStreamBootstrap(
   options?: StreamBootstrapApplyOptions
 ): Promise<void> {
   const now = Date.now()
-  const chunked = await isEventWriteChunkingEnabled(db, workspaceId)
   let preservedReadState: StreamReadFrontier | undefined
   await db.transaction(
     "rw",
@@ -705,7 +702,6 @@ export async function applyStreamBootstrap(
         streamId,
         bootstrap,
         now,
-        chunked,
         options?.fetchStartedAt
       )
     }
@@ -747,10 +743,9 @@ export async function applyStreamBootstrapInCurrentTransaction(
   streamId: string,
   bootstrap: StreamBootstrap,
   now = Date.now(),
-  chunked: boolean,
   fetchStartedAt?: number
 ): Promise<void> {
-  await writeBootstrapEventsAndStream(workspaceId, streamId, bootstrap, now, chunked, fetchStartedAt)
+  await writeBootstrapEventsAndStream(workspaceId, streamId, bootstrap, now, fetchStartedAt)
   seedStreamActiveCall(workspaceId, streamId, bootstrap)
 }
 
@@ -1219,7 +1214,6 @@ function bindStreamSocketHandlers(
       // after the transaction commits so the backfill never runs inside it.
       let gapAfterSequence: string | null = null
 
-      const chunked = await isEventWriteChunkingEnabled(db, workspaceId)
       // Same primed map, so this resolves without a second IDB read.
       const singlePreviewWriter = await isSinglePreviewWriterEnabled(db, workspaceId)
       getPerfCapture().count("stream.idbTransaction")
@@ -1285,7 +1279,7 @@ function bindStreamSocketHandlers(
             _sequenceNum: sequenceToNum(newEvent.sequence),
             _cachedAt: now,
           })
-          await resolveUnknownOptimisticAnchors(streamId, chunked)
+          await resolveUnknownOptimisticAnchors(streamId)
 
           if (newPayload.clientMessageId) {
             if (optimistic) {
@@ -1479,7 +1473,6 @@ function bindStreamSocketHandlers(
     if (payload.sourceStreamId !== streamId && payload.destinationStreamId !== streamId) return
 
     const now = Date.now()
-    const chunked = await isEventWriteChunkingEnabled(db, workspaceId)
     await db.transaction("rw", [db.events, db.streams, db.slots], async () => {
       if (payload.sourceStreamId === streamId) {
         await db.events.bulkDelete(payload.removedEventIds)
@@ -1517,8 +1510,7 @@ function bindStreamSocketHandlers(
             workspaceId,
             _sequenceNum: sequenceToNum(event.sequence),
             _cachedAt: now,
-          })),
-          chunked
+          }))
         )
         // B3: the moved messages' pointer cards would skeleton in the
         // destination panel (cross-stream sources aren't in the local event
@@ -1696,7 +1688,6 @@ function bindStreamSocketHandlers(
     // Set when this event's sequence reveals missed events behind it; reported
     // after the transaction commits so the backfill never runs inside it.
     let gapAfterSequence: string | null = null
-    const chunked = await isEventWriteChunkingEnabled(db, workspaceId)
     // Same transactional shape as handleMessageCreated: dedupe, gap-read, and
     // put must be atomic, or a concurrent append can land between the gap read
     // and this write and make the cursor lie in either direction.
@@ -1719,7 +1710,7 @@ function bindStreamSocketHandlers(
         _sequenceNum: sequenceToNum(payload.event.sequence),
         _cachedAt: now,
       })
-      await resolveUnknownOptimisticAnchors(streamId, chunked)
+      await resolveUnknownOptimisticAnchors(streamId)
       if (commandClientId && optimisticCommand) {
         await bumpLaterOptimisticAnchors(
           streamId,

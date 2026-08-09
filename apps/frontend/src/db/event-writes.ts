@@ -15,13 +15,13 @@ type EventTable = EntityTable<CachedEvent, "id">
 const EMPTY_FLAG_LAYERS: FeatureFlagLayers = { workspace: {}, user: {} }
 
 /**
- * Writes events in slices below Dexie's FULL_RANGE threshold when `chunked`,
- * and as today's single `bulkPut` when not. Opens no transaction of its own —
- * the caller's transaction is what makes the slices atomic.
+ * Writes events in slices below Dexie's FULL_RANGE threshold. Opens no
+ * transaction of its own — the caller's transaction is what makes the slices
+ * atomic.
  */
-export async function putEventsBounded(table: EventTable, rows: CachedEvent[], chunked: boolean): Promise<void> {
+export async function putEventsBounded(table: EventTable, rows: CachedEvent[]): Promise<void> {
   if (rows.length === 0) return
-  if (!chunked || rows.length <= EVENT_BULK_PUT_LIMIT) {
+  if (rows.length <= EVENT_BULK_PUT_LIMIT) {
     await table.bulkPut(rows)
     return
   }
@@ -73,7 +73,6 @@ export function skipNoOpEventRewrites(
 // event write costs more than the write. Resolve once per workspace per module
 // instance instead, primed from the network bootstrap and socket flag flips.
 type EventWriteFlags = {
-  chunking: boolean
   sharedStreamRegistration: boolean
   singlePreviewWriter: boolean
   coalescedLiveCommit: boolean
@@ -101,7 +100,6 @@ export function getAccountGeneration(): number {
 function resolveEventWriteFlags(layers: FeatureFlagLayers | null | undefined): EventWriteFlags {
   const resolved = resolveFeatureFlags(coerceLayers(layers ?? null) ?? EMPTY_FLAG_LAYERS)
   return {
-    chunking: resolved.eventWriteChunking === "on",
     sharedStreamRegistration: resolved.sharedStreamRegistration === "on",
     singlePreviewWriter: resolved.singlePreviewWriter === "on",
     coalescedLiveCommit: resolved.coalescedLiveCommit === "on",
@@ -144,27 +142,6 @@ async function getEventWriteFlags(database: ThreaDatabase, workspaceId: string):
   if (primeGeneration !== generation) return flagsByWorkspace.get(workspaceId) ?? flags
   flagsByWorkspace.set(workspaceId, flags)
   return flags
-}
-
-/**
- * The viewer's `eventWriteChunking` value — the primed value when one exists,
- * otherwise resolved once from the layers persisted for a warm start. Tolerates
- * the pre-#1455 flat `featureFlags` shape rather than throwing on it.
- */
-export async function isEventWriteChunkingEnabled(database: ThreaDatabase, workspaceId: string): Promise<boolean> {
-  return (await getEventWriteFlags(database, workspaceId)).chunking
-}
-
-/**
- * The chunking flag read straight from the persisted row, bypassing the module
- * cache. The service worker runs its own module instance that nothing primes
- * and nothing resets, so a cached value there would outlive an account switch
- * and hide a backoffice flip until the worker restarts; the per-account
- * `database` handle makes a fresh read account-correct by construction.
- */
-export async function readEventWriteFlagsFresh(database: ThreaDatabase, workspaceId: string): Promise<EventWriteFlags> {
-  const metadata = await database.workspaceMetadata.get(workspaceId)
-  return resolveEventWriteFlags(metadata?.featureFlags)
 }
 
 /** The viewer's `singlePreviewWriter` value, resolved through the same primed cache. */

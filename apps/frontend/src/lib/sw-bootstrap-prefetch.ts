@@ -1,6 +1,6 @@
 import { AuthorTypes, type LastMessagePreview, type StreamEvent } from "@threa/types"
 import type { CachedEvent, ThreaDatabase } from "../db/database"
-import { putEventsBounded, readEventWriteFlagsFresh } from "../db/event-writes"
+import { putEventsBounded } from "../db/event-writes"
 import { writeSlotCarrier } from "../stores/slot-store"
 
 // Push bootstrap pre-fetch — warm stream data so it's instant on notification tap
@@ -142,7 +142,6 @@ async function prefetchEventsAround(
     if (data?.events?.length > 0) {
       const now = Date.now()
       const [db, { sequenceToNum }] = await Promise.all([openAccountDb(workosUserId), import("../db/database")])
-      const { chunking: chunked } = await readEventWriteFlagsFresh(db, workspaceId)
       await db.transaction("rw", [db.events, db.slots], async () => {
         await putEventsBounded(
           db.events,
@@ -151,8 +150,7 @@ async function prefetchEventsAround(
             workspaceId,
             _sequenceNum: sequenceToNum(e.sequence as string),
             _cachedAt: now,
-          })) as CachedEvent[],
-          chunked
+          })) as CachedEvent[]
         )
         // Warm the pointer slots this prefetch exists to preserve; an
         // events-around window merges (it is not an authoritative snapshot).
@@ -192,7 +190,6 @@ async function prefetchStreamBootstrap(workosUserId: string, workspaceId: string
     // sink the stream into "Other". Merge via update() so lastMessagePreview
     // and membership-derived fields (notificationLevel) from
     // applyWorkspaceBootstrap survive.
-    const { chunking: chunked } = await readEventWriteFlagsFresh(db, workspaceId)
     await db.transaction("rw", [db.events, db.streams, db.slots], async () => {
       await putEventsBounded(
         db.events,
@@ -201,8 +198,7 @@ async function prefetchStreamBootstrap(workosUserId: string, workspaceId: string
           workspaceId,
           _sequenceNum: sequenceToNum(e.sequence),
           _cachedAt: now,
-        })),
-        chunked
+        }))
       )
 
       // Warm the bootstrap's pointer slots in the same transaction; a cold
