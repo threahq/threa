@@ -276,6 +276,7 @@ class ComposerPillDragController {
   private pending: PendingDrag | null = null
   private longPressTimer: number | null = null
   private suppressMouseUntil = 0
+  private readonly awaitingTouchCompletions = new Set<number>()
   private touchGuide: ComposerPillTouchGuide | null = null
 
   constructor(view: EditorView) {
@@ -309,7 +310,8 @@ class ComposerPillDragController {
     this.view.dom.removeEventListener("click", this.onClick, true)
     this.view.dom.removeEventListener("contextmenu", this.onContextMenu, true)
     this.view.dom.removeEventListener("dragstart", this.onNativeDragStart, true)
-    this.clearPending()
+    this.clearPending(true)
+    this.clearAwaitedTouchCompletions()
     this.view.dom.classList.remove("composer-pill-drag-active")
   }
 
@@ -380,7 +382,7 @@ class ComposerPillDragController {
     if (!drag?.active) {
       const touchedPill = drag?.kind === "touch"
       const tappedPillPos = touchedPill && !drag.holdElapsed ? drag.sourcePos : null
-      this.cancel()
+      this.cancel(touchedPill)
       if (tappedPillPos !== null) this.selectPill(tappedPillPos)
       return
     }
@@ -393,7 +395,7 @@ class ComposerPillDragController {
         : createComposerPillMoveTransaction(this.view.state, current.sourcePos, current.dropPos)
 
     const touchDrop = drag.kind === "touch"
-    this.clearPending()
+    this.clearPending(touchDrop)
     if (tr) {
       this.view.dispatch(tr.setMeta(ComposerPillDragPluginKey, null).setMeta("uiEvent", "drop"))
       if (touchDrop) vibrate(this.win, TOUCH_DROP_HAPTIC_PATTERN_MS)
@@ -402,14 +404,15 @@ class ComposerPillDragController {
     }
   }
 
-  private cancel = () => {
+  private cancel = (touchFinished = false) => {
     const wasActive = this.pending?.active === true
-    this.clearPending()
+    this.clearPending(touchFinished)
     if (wasActive) this.clearDragState()
   }
 
-  private clearPending() {
-    if (this.pending?.kind === "touch" || this.pending?.active) {
+  private clearPending(touchFinished = false) {
+    const touchId = this.pending?.kind === "touch" ? this.pending.id : null
+    if (touchId !== null || this.pending?.active) {
       this.suppressMouseUntil = Date.now() + COMPATIBILITY_MOUSE_WINDOW_MS
     }
     if (this.longPressTimer !== null) {
@@ -426,6 +429,45 @@ class ComposerPillDragController {
     this.win.removeEventListener("blur", this.onWindowBlur)
     this.removeTouchGuide()
     this.pending = null
+    if (touchId !== null) {
+      if (touchFinished) this.stopAwaitingTouchCompletion(touchId)
+      else this.awaitTouchCompletion(touchId)
+    }
+  }
+
+  private awaitTouchCompletion(id: number) {
+    if (this.awaitingTouchCompletions.has(id)) return
+    if (this.awaitingTouchCompletions.size === 0) {
+      this.doc.addEventListener("touchend", this.onAwaitedTouchCompletion, true)
+      this.doc.addEventListener("touchcancel", this.onAwaitedTouchCompletion, true)
+    }
+    this.awaitingTouchCompletions.add(id)
+  }
+
+  private stopAwaitingTouchCompletion(id: number) {
+    this.awaitingTouchCompletions.delete(id)
+    if (this.awaitingTouchCompletions.size === 0) this.removeAwaitedTouchCompletionListeners()
+  }
+
+  private clearAwaitedTouchCompletions() {
+    this.awaitingTouchCompletions.clear()
+    this.removeAwaitedTouchCompletionListeners()
+  }
+
+  private removeAwaitedTouchCompletionListeners() {
+    this.doc.removeEventListener("touchend", this.onAwaitedTouchCompletion, true)
+    this.doc.removeEventListener("touchcancel", this.onAwaitedTouchCompletion, true)
+  }
+
+  private onAwaitedTouchCompletion = (event: TouchEvent) => {
+    let completed = false
+    for (const id of this.awaitingTouchCompletions) {
+      if (!touchById(event.changedTouches, id) && touchById(event.touches, id)) continue
+      this.awaitingTouchCompletions.delete(id)
+      completed = true
+    }
+    if (completed) this.suppressMouseUntil = Date.now() + COMPATIBILITY_MOUSE_WINDOW_MS
+    if (this.awaitingTouchCompletions.size === 0) this.removeAwaitedTouchCompletionListeners()
   }
 
   private updateTouchGuide(x: number, y: number, dropPos: number | null) {
@@ -556,7 +598,7 @@ class ComposerPillDragController {
     this.finish(touch.clientX, touch.clientY)
   }
 
-  private onTouchCancel = () => this.cancel()
+  private onTouchCancel = () => this.cancel(true)
 
   private onKeyDown = (event: KeyboardEvent) => {
     if (event.key !== "Escape") return

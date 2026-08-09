@@ -269,6 +269,7 @@ describe("composer pill drag gestures", () => {
     fireEvent.touchStart(source, { touches: [touch(7, 10, 10)] })
     vi.advanceTimersByTime(901)
     fireEvent.touchMove(document, { touches: [touch(7, 21, 10)] })
+    vi.advanceTimersByTime(401)
     fireEvent.touchEnd(document, { touches: [], changedTouches: [touch(7, 21, 10)] })
 
     const compatibilityMouseDown = new MouseEvent("mousedown", {
@@ -401,6 +402,7 @@ describe("composer pill drag gestures", () => {
     expect(editor.view.dom.querySelector(".composer-pill-dragging")).not.toBeNull()
 
     fireEvent.touchStart(document.body, { touches: [touch(3, 21, 10), touch(4, 50, 50)] })
+    vi.advanceTimersByTime(401)
     fireEvent.touchEnd(document, { touches: [touch(4, 50, 50)], changedTouches: [touch(3, 10, 10)] })
 
     const compatibilityMouseDown = new MouseEvent("mousedown", {
