@@ -340,7 +340,6 @@ class ComposerPillDragController {
     this.longPressTimer = this.win.setTimeout(() => {
       if (!this.pending || this.pending.kind !== "touch") return
       this.pending.holdElapsed = true
-      this.pending.touchDragEligible = false
       this.suppressMouseUntil = Date.now() + COMPATIBILITY_MOUSE_WINDOW_MS
       this.longPressTimer = null
     }, LONG_PRESS_THRESHOLD_MS)
@@ -582,7 +581,7 @@ class ComposerPillDragController {
     if (!touch) return
     if (!drag.active) {
       if (!movedBeyondLongPressTolerance(drag, touch.clientX, touch.clientY)) return
-      if (!drag.touchDragEligible || !isComposerPillSelected(this.view.state, drag.sourcePos)) {
+      if (!drag.holdElapsed && (!drag.touchDragEligible || !isComposerPillSelected(this.view.state, drag.sourcePos))) {
         this.cancel()
         return
       }
@@ -629,7 +628,6 @@ class ComposerPillDragController {
       return
     }
     this.pending.holdElapsed = true
-    this.pending.touchDragEligible = false
     this.suppressMouseUntil = Date.now() + COMPATIBILITY_MOUSE_WINDOW_MS
     if (this.longPressTimer !== null) {
       this.win.clearTimeout(this.longPressTimer)
