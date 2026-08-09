@@ -1681,22 +1681,63 @@ async function cancelObservedTurn(target: ClaimedInvocation, pi: ExtensionAPI, c
   const otherContributors = ownsCombinedTurn
     ? contributors.filter((invocation) => invocation !== target && !cancelledInvocations.has(invocation))
     : []
-  cancelPendingRetryTimer()
-  clearRecoveredCompletionTimer()
-  resetPendingTurnTexts()
-  if ((ownsCombinedTurn || ownsControlTurn) && !observed.abortIssued && !ctx.isIdle()) {
-    observed.abortIssued = true
-    ctx.abort()
-  }
-  for (const invocation of contributors) releaseObservation(invocation)
-  releaseObservation(target)
-  if (ownsCombinedTurn) clearTurnState(ctx)
-  scheduleClaimDrain(pi, ctx)
-  void Promise.all(
-    otherContributors.map((invocation) =>
-      failInvocation(invocation, "Combined Pi turn cancelled because one contributing invocation ended")
+  if (ownsCombinedTurn) {
+    cancelPendingRetryTimer()
+    clearRecoveredCompletionTimer()
+    resetPendingTurnTexts()
+    if (!observed.abortIssued && !ctx.isIdle()) {
+      observed.abortIssued = true
+      ctx.abort()
+    }
+    for (const invocation of contributors) releaseObservation(invocation)
+    clearTurnState(ctx)
+    void Promise.all(
+      otherContributors.map((invocation) =>
+        failInvocation(invocation, "Combined Pi turn cancelled because one contributing invocation ended")
+      )
     )
+  } else {
+    // A standalone control or not-yet-delivered claim owns no provider output.
+    // Its cancellation must not stop/release an unrelated retrying turn.
+    if (ownsControlTurn && !observed.abortIssued && !ctx.isIdle()) {
+      observed.abortIssued = true
+      ctx.abort()
+    }
+    releaseObservation(target)
+  }
+  scheduleClaimDrain(pi, ctx)
+}
+
+function abortForInputRestart(observed: ObservedInvocationContext, reason: string): void {
+  const invocation = observed.invocation
+  const contributors = [pending, ...steeredInvocations.map((item) => item.invocation)].filter(
+    (item): item is ClaimedInvocation => item !== undefined
   )
+  // A claim being prepared (notably a standalone session-control command
+  // claimed during a provider retry wait) has not contributed input to the Pi
+  // turn yet. Restart only that claim; clearing the combined turn here would
+  // discard unrelated canonical retry/carry-on state.
+  if (!contributors.includes(invocation)) return
+  const otherContributors = contributors.filter((contributor) => contributor !== invocation)
+  for (const contributor of otherContributors) releaseObservation(contributor)
+  if (!observed.abortIssued && !observed.ctx.isIdle()) {
+    observed.abortIssued = true
+    observed.ctx.abort()
+  }
+  clearTurnState(observed.ctx)
+  void Promise.all(otherContributors.map((contributor) => failInvocation(contributor, reason)))
+}
+
+function installUpdatedCommandMetadata(invocation: ClaimedInvocation, promptMarkdown: string): boolean {
+  const command = getRuntimeCommand(invocation)
+  if (!command) return true
+  const parsed = parseSessionControlCommand(promptMarkdown)
+  if (!parsed) return false
+  invocation.metadata = {
+    ...invocation.metadata,
+    command: { ...command, name: parsed.name, args: parsed.args },
+  }
+  return true
 }
 
 async function applyInvocationUpdate(
@@ -1705,23 +1746,14 @@ async function applyInvocationUpdate(
 ): Promise<"applied" | "restart-required"> {
   const invocation = observed.invocation
   if (observed.state === "terminal" || cancelledInvocations.has(invocation)) return "restart-required"
+  if (!installUpdatedCommandMetadata(invocation, update.promptMarkdown)) {
+    observed.restartRequested = true
+    abortForInputRestart(observed, "Combined Pi turn restarted after session-control input changed shape")
+    return "restart-required"
+  }
   if (observed.state === "processing" || observed.state === "recovery") {
     observed.restartRequested = true
-    const contributors = [pending, ...steeredInvocations.map((item) => item.invocation)].filter(
-      (item): item is ClaimedInvocation => item !== undefined
-    )
-    const otherContributors = contributors.filter((contributor) => contributor !== invocation)
-    for (const contributor of otherContributors) releaseObservation(contributor)
-    if (!observed.abortIssued && !observed.ctx.isIdle()) {
-      observed.abortIssued = true
-      observed.ctx.abort()
-    }
-    clearTurnState(observed.ctx)
-    void Promise.all(
-      otherContributors.map((contributor) =>
-        failInvocation(contributor, "Combined Pi turn restarted after an input preparation race")
-      )
-    )
+    abortForInputRestart(observed, "Combined Pi turn restarted after an input preparation race")
     return "restart-required"
   }
   observed.updateInProgress = true
@@ -1757,7 +1789,13 @@ async function applyInvocationUpdate(
     }
     if (cancelledInvocations.has(invocation) || observedInvocations.get(invocation) !== observed)
       return "restart-required"
-    const rebuilt = await buildInvocationPrompt(invocation, observed.ctx, true)
+    const updatedCommand = getRuntimeCommand(invocation)
+    const rebuilt = await buildInvocationPrompt(
+      invocation,
+      observed.ctx,
+      true,
+      updatedCommand?.name === "steer" ? updatedCommand.args : undefined
+    )
     if (
       cancelledInvocations.has(invocation) ||
       observedInvocations.get(invocation) !== observed ||
@@ -1774,21 +1812,7 @@ async function applyInvocationUpdate(
     return "applied"
   } catch {
     observed.restartRequested = true
-    const contributors = [pending, ...steeredInvocations.map((item) => item.invocation)].filter(
-      (contributor): contributor is ClaimedInvocation => contributor !== undefined
-    )
-    const otherContributors = contributors.filter((contributor) => contributor !== invocation)
-    for (const contributor of otherContributors) releaseObservation(contributor)
-    if (!observed.abortIssued && !observed.ctx.isIdle()) {
-      observed.abortIssued = true
-      observed.ctx.abort()
-    }
-    clearTurnState(observed.ctx)
-    void Promise.all(
-      otherContributors.map((contributor) =>
-        failInvocation(contributor, "Combined Pi turn restarted after input steering failed")
-      )
-    )
+    abortForInputRestart(observed, "Combined Pi turn restarted after input steering failed")
     return "restart-required"
   } finally {
     observed.updateInProgress = false
@@ -2098,17 +2122,33 @@ async function restorePendingAfterReload(pi: ExtensionAPI, ctx: ExtensionContext
       ? waiting.carryOnTexts.filter((text): text is string => typeof text === "string")
       : []
   }
-  const recoveredState: ObservedInvocationState = waiting ? "running" : ctx.isIdle() ? "recovery" : "running"
+  // A combined turn is recovered conservatively: no contributor may steer
+  // before every sibling has synchronized. Any missed edit requests a clean
+  // restart, while a completely clean set transitions to running together.
+  const recoveredState: ObservedInvocationState = waiting
+    ? restoredSteers.length > 0
+      ? "recovery"
+      : "running"
+    : ctx.isIdle() || restoredSteers.length > 0
+      ? "recovery"
+      : "running"
   if (!(await observeInvocation(pi, ctx, invocation, recoveredState))) {
     discardRestoredPending(ctx)
     return
   }
-  for (const item of [...steeredInvocations]) {
+  if (pending !== invocation) return
+  for (const item of restoredSteers) {
     if (!(await observeInvocation(pi, ctx, item.invocation, recoveredState))) {
       discardRestoredPending(ctx)
       return
     }
+    if (pending !== invocation) return
   }
+  const restoredObserved = [invocation, ...restoredSteers.map((item) => item.invocation)].map((item) =>
+    observedInvocations.get(item)
+  )
+  if (restoredObserved.some((item) => !item || item.state === "terminal" || item.restartRequested)) return
+  for (const item of restoredObserved) if (item?.state === "recovery") item.state = "running"
   await recordTraceStep(
     "context_received",
     "Pi reloaded its extensions; resuming the in-flight invocation.",
@@ -2994,7 +3034,8 @@ async function completeInvocationWithMarkdown(
 async function buildInvocationPrompt(
   invocation: ClaimedInvocation,
   ctx: ExtensionContext,
-  strict = false
+  strict = false,
+  promptMarkdown = invocation.promptMarkdown
 ): Promise<{ prompt: string; steerPrompt: string; cursor?: string; context: string }> {
   // A sealed turn never touches the plaintext messages API — its context is
   // what was already decrypted at claim time (the server would only return
@@ -3017,7 +3058,7 @@ async function buildInvocationPrompt(
   return {
     context,
     cursor,
-    steerPrompt: formatSteerPrompt(invocation.promptMarkdown, steerContext),
+    steerPrompt: formatSteerPrompt(promptMarkdown, steerContext),
     prompt: [
       `Remote Threa invocation ${invocation.id}.`,
       `Source message: ${invocation.sourceMessageId}`,
@@ -3027,7 +3068,7 @@ async function buildInvocationPrompt(
         : "To attach a local file to your reply, add a line exactly like `THREA_ATTACH: path/to/file`; the extension will upload it and replace it with an attachment link.",
       context ? `\n${context}` : "",
       "\nSource message prompt:",
-      invocation.promptMarkdown,
+      promptMarkdown,
     ].join("\n"),
   }
 }
@@ -3348,7 +3389,7 @@ async function runReloadCommand(
       "Reloading Pi extensions, skills, prompts, and themes…",
       ctx
     )
-    if (!completed || !isCurrent()) {
+    if (!completed) {
       reloadPending = false
       const busy = pending !== undefined || !ctx.isIdle()
       await heartbeat(busy ? "busy" : "available", busy ? "Busy in Pi…" : undefined, ctx).catch(() => undefined)
@@ -3687,7 +3728,7 @@ async function runReconnectCommand(
       getSessionInstanceId(ctx) !== instanceId ||
       invocation.rootStreamId !== invocationFacts.rootStreamId ||
       invocation.claimedInstanceId !== invocationFacts.claimedInstanceId
-    if (!acknowledged || !isCurrent() || lifecycleChanged) {
+    if (!acknowledged || lifecycleChanged) {
       reconnectPending = false
       const enabled = isEnabled(ctx)
       await sendHeartbeat(

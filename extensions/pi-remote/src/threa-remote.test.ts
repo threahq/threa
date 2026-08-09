@@ -2567,7 +2567,96 @@ describe("invocation edit regressions", () => {
     }
   })
 
-  test("reload sync steers the newest primary and secondary revisions", async () => {
+  test("initial sync rewrites structured command metadata before command actuation", async () => {
+    configure()
+    const claim = {
+      ...invocation("binv_command_sync", 1, "/thinking low"),
+      requiredCapability: "session-control",
+      metadata: {
+        command: { id: "cmd_thinking", name: "thinking", args: "low", executionKind: "bot-runtime" },
+      },
+    }
+    const ctx = context({ idle: true })
+    const observation = await observe(claim, {}, ctx, {
+      initialState: "unstarted",
+      sync: async (callbacks) => {
+        expect(await callbacks.onInputUpdated(plaintextUpdate(claim, 2, "/thinking high"))).toBe("applied")
+      },
+    })
+    let level = "low"
+    const writes: Array<Record<string, unknown>> = []
+    const fetchSpy = spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      if (String(input).endsWith(`/bot-invocations/${claim.id}/complete`)) {
+        writes.push(JSON.parse(String(init?.body)) as Record<string, unknown>)
+      }
+      return json({ data: {} })
+    })
+    try {
+      await __testing.handleSessionControlInvocation(
+        {
+          getThinkingLevel: () => level,
+          setThinkingLevel: (next: string) => {
+            level = next
+          },
+        } as never,
+        ctx,
+        claim as never
+      )
+      expect(level).toBe("high")
+      expect(writes).toEqual([
+        expect.objectContaining({ sourceRevision: 2, finalMessageMarkdown: expect.stringContaining("high") }),
+      ])
+      expect(observation.unregisters()).toBe(1)
+    } finally {
+      fetchSpy.mockRestore()
+    }
+  })
+
+  test("running structured steer update sends canonical args rather than stale command markdown", async () => {
+    configure()
+    const claim = {
+      ...invocation("binv_command_steer", 1, "/steer old direction"),
+      requiredCapability: "session-control",
+      metadata: {
+        command: { id: "cmd_steer", name: "steer", args: "old direction", executionKind: "bot-runtime" },
+      },
+    }
+    const ctx = context({ idle: false })
+    const sends: string[] = []
+    __testing.beginPendingInvocation(claim as never)
+    __testing.setPendingRuntimeForTesting({ invocationPrompt: "old direction" })
+    const observation = await observe(claim, { sendUserMessage: (text: string) => sends.push(text) }, ctx, {
+      initialState: "running",
+    })
+    const fetchSpy = spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      if (String(input).includes("/streams/stream_1/messages?")) {
+        return json({
+          data: [
+            {
+              id: claim.sourceMessageId,
+              authorType: "user",
+              sequence: "1",
+              content: "/steer new direction",
+              createdAt: "2026-01-01T00:00:00Z",
+            },
+          ],
+        })
+      }
+      return json({ data: {} })
+    })
+    try {
+      expect(await observation.callbacks.onInputUpdated(plaintextUpdate(claim, 2, "/steer new direction"))).toBe(
+        "applied"
+      )
+      expect(sends).toEqual([expect.stringContaining("new direction")])
+      expect(sends[0]).not.toContain("/steer")
+      expect(sends[0]).not.toContain("old direction")
+    } finally {
+      fetchSpy.mockRestore()
+    }
+  })
+
+  test("combined reload synchronizes every contributor before a missed edit requests restart", async () => {
     configure(true)
     const primary = invocation("binv_reload_primary", 1, "primary old")
     const secondary = invocation("binv_reload_secondary", 1, "secondary old")
@@ -2583,74 +2672,52 @@ describe("invocation edit regressions", () => {
 
     await __testing.resetRuntimeForTesting()
     configure(true)
-    const sends: Array<{ text: string; options?: { deliverAs: string } }> = []
-    const pi = {
-      sendUserMessage: (text: string, options?: { deliverAs: string }) => sends.push({ text, options }),
-    }
+    const sends: string[] = []
+    const unregisters = new Map<string, number>()
+    let secondaryCallbacks: any
+    let disposition: string | undefined
     __testing.setTransportForTesting({
-      observeClaim: (params: any) => ({
-        sync: () =>
-          params.callbacks.onInputUpdated(
-            plaintextUpdate(
-              params.invocationId === primary.id ? primary : secondary,
-              2,
-              params.invocationId === primary.id ? "primary edited" : "secondary edited"
-            )
-          ),
-        unregister: () => {},
-      }),
+      observeClaim: (params: any) => {
+        if (params.invocationId === secondary.id) secondaryCallbacks = params.callbacks
+        return {
+          sync: async () => {
+            if (params.invocationId === secondary.id) {
+              disposition = await params.callbacks.onInputUpdated(
+                plaintextUpdate(secondary, 2, "secondary edited during reload")
+              )
+            }
+          },
+          unregister: () => unregisters.set(params.invocationId, (unregisters.get(params.invocationId) ?? 0) + 1),
+        }
+      },
       recordSteps: async () => {},
       updatePresence: async () => {},
       disconnect: () => {},
     })
-    const fetchSpy = spyOn(globalThis, "fetch").mockImplementation(async (input) => {
-      const url = String(input)
-      if (url.includes("/streams/stream_1/messages?")) {
-        return json({
-          data: [
-            {
-              id: primary.sourceMessageId,
-              authorType: "user",
-              sequence: "1",
-              content: "primary edited",
-              createdAt: "2026-01-01T00:00:00Z",
-            },
-            {
-              id: secondary.sourceMessageId,
-              authorType: "user",
-              sequence: "2",
-              content: "secondary edited",
-              createdAt: "2026-01-01T00:00:01Z",
-            },
-          ],
-        })
-      }
-      return json({ data: {} })
+
+    await __testing.restorePendingAfterReload({ sendUserMessage: (text: string) => sends.push(text) } as never, ctx)
+    expect({ disposition, sends, pending: __testing.pendingInvocationId() }).toEqual({
+      disposition: "restart-required",
+      sends: [],
+      pending: undefined,
     })
-    try {
-      await __testing.restorePendingAfterReload(pi as never, ctx)
-      expect(sends).toHaveLength(2)
-      expect(sends.map((send) => send.options)).toEqual([{ deliverAs: "steer" }, { deliverAs: "steer" }])
-      expect(sends[0]!.text).toContain("primary edited")
-      expect(sends[1]!.text).toContain("secondary edited")
-      expect(__testing.pendingInvocationState()).toMatchObject({ sourceRevision: 2, promptMarkdown: "primary edited" })
-      expect(__testing.pendingRuntimeState().steered).toEqual([
-        expect.objectContaining({ sourceRevision: 2, retryPrompt: expect.stringContaining("secondary edited") }),
-      ])
-    } finally {
-      fetchSpy.mockRestore()
-    }
+    expect(unregisters.get(primary.id)).toBe(1)
+    expect(unregisters.get(secondary.id) ?? 0).toBe(0)
+    await secondaryCallbacks.onCancelled({
+      invocationId: secondary.id,
+      sourceRevision: 2,
+      reason: "adapter_restart_required",
+    })
+    expect(unregisters.get(secondary.id)).toBe(1)
   })
 
-  test("reload retry applies primary and secondary edits before composing one retry", async () => {
+  test("single-claim reload retry applies a missed edit before provider delivery", async () => {
     configure(true)
     const primary = invocation("binv_retry_primary", 1, "primary old")
-    const secondary = invocation("binv_retry_secondary", 1, "secondary old")
     const ctx = context({ idle: true })
     __testing.beginPendingInvocation(primary as never)
     __testing.setPendingRuntimeForTesting({
       invocationPrompt: "primary old full",
-      steered: [{ invocation: secondary as never, retryPrompt: "secondary old steer" }],
       waitingForRetry: true,
       retryAt: Date.now() + 60_000,
       retryAttempts: 1,
@@ -2663,14 +2730,7 @@ describe("invocation edit regressions", () => {
     const pi = { sendUserMessage: (text: string) => sends.push(text) }
     __testing.setTransportForTesting({
       observeClaim: (params: any) => ({
-        sync: () =>
-          params.callbacks.onInputUpdated(
-            plaintextUpdate(
-              params.invocationId === primary.id ? primary : secondary,
-              2,
-              params.invocationId === primary.id ? "primary newest" : "secondary newest"
-            )
-          ),
+        sync: () => params.callbacks.onInputUpdated(plaintextUpdate(primary, 2, "primary newest")),
         unregister: () => {},
       }),
       recordSteps: async () => {},
@@ -2688,6 +2748,66 @@ describe("invocation edit regressions", () => {
               content: "primary newest",
               createdAt: "2026-01-01T00:00:00Z",
             },
+          ],
+        })
+      }
+      return json({ data: {} })
+    })
+    try {
+      await __testing.restorePendingAfterReload(pi as never, ctx)
+      expect(sends).toEqual([])
+      expect(__testing.pendingRuntimeState()).toMatchObject({
+        waitingForRetry: true,
+        invocationPrompt: expect.stringContaining("primary newest"),
+        steered: [],
+      })
+      __testing.setPendingRuntimeForTesting({ waitingForRetry: true, retryAttempts: 1 })
+      await __testing.executeProviderRetry(pi as never, ctx, 1, __testing.sessionLifecycleGeneration())
+      expect(sends).toHaveLength(1)
+      expect(sends[0]).toContain("primary newest")
+      expect(sends[0]).not.toContain("primary old full")
+    } finally {
+      fetchSpy.mockRestore()
+    }
+  })
+
+  test("rate-limit retry composes the edited secondary prompt without replacing the primary", async () => {
+    configure(true)
+    const primary = invocation("binv_retry_composed_primary", 1, "primary source")
+    const secondary = invocation("binv_retry_composed_secondary", 1, "secondary old")
+    const ctx = context({ idle: true })
+    const callbacks = new Map<string, any>()
+    __testing.setTransportForTesting({
+      observeClaim: (params: any) => {
+        callbacks.set(params.invocationId, params.callbacks)
+        return { sync: async () => {}, unregister: () => {} }
+      },
+      recordSteps: async () => {},
+      updatePresence: async () => {},
+      disconnect: () => {},
+    })
+    const pi = { sendUserMessage: (_text: string) => {} }
+    __testing.beginPendingInvocation(primary as never)
+    __testing.setPendingRuntimeForTesting({
+      invocationPrompt: "primary canonical full prompt",
+      steered: [{ invocation: secondary as never, retryPrompt: "secondary old steer" }],
+      waitingForRetry: true,
+      retryAttempts: 1,
+    })
+    expect(await __testing.observeInvocation(pi as never, ctx, primary as never, "running")).toBe(true)
+    expect(await __testing.observeInvocation(pi as never, ctx, secondary as never, "running")).toBe(true)
+    const sends: string[] = []
+    const fetchSpy = spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      if (String(input).includes("/streams/stream_1/messages?")) {
+        return json({
+          data: [
+            {
+              id: primary.sourceMessageId,
+              authorType: "user",
+              sequence: "1",
+              content: "primary source",
+              createdAt: "2026-01-01T00:00:00Z",
+            },
             {
               id: secondary.sourceMessageId,
               authorType: "user",
@@ -2701,24 +2821,29 @@ describe("invocation edit regressions", () => {
       return json({ data: {} })
     })
     try {
-      await __testing.restorePendingAfterReload(pi as never, ctx)
-      expect(sends).toEqual([])
+      expect(await callbacks.get(secondary.id).onInputUpdated(plaintextUpdate(secondary, 2, "secondary newest"))).toBe(
+        "applied"
+      )
       expect(__testing.pendingRuntimeState()).toMatchObject({
-        waitingForRetry: true,
-        invocationPrompt: expect.stringContaining("primary newest"),
+        invocationPrompt: "primary canonical full prompt",
         steered: [{ retryPrompt: expect.stringContaining("secondary newest") }],
       })
-      expect(__testing.observedInvocationStates()).toEqual([
-        expect.objectContaining({ id: primary.id, state: "running", updateInProgress: false }),
-        expect.objectContaining({ id: secondary.id, state: "running", updateInProgress: false }),
-      ])
-      __testing.setPendingRuntimeForTesting({ waitingForRetry: true, retryAttempts: 1 })
-      await __testing.executeProviderRetry(pi as never, ctx, 1, __testing.sessionLifecycleGeneration())
+      __testing.savePendingSnapshot(ctx)
+      const snapshot = JSON.parse(
+        readFileSync(__testing.pendingSnapshotPathForTesting(runtimeSessionId), "utf8")
+      ) as any
+      expect(snapshot.steered[0].retryPrompt).toContain("secondary newest")
+      await __testing.executeProviderRetry(
+        { sendUserMessage: (text: string) => sends.push(text) } as never,
+        ctx,
+        1,
+        __testing.sessionLifecycleGeneration()
+      )
       expect(sends).toHaveLength(1)
-      expect(sends[0]).toContain("primary newest")
+      expect(sends[0]).toContain("primary canonical full prompt")
       expect(sends[0]).toContain("secondary newest")
       expect(sends[0]).not.toContain("secondary old steer")
-      expect(sends[0]!.indexOf("primary newest")).toBeLessThan(sends[0]!.indexOf("secondary newest"))
+      expect(sends[0]!.indexOf("primary canonical full prompt")).toBeLessThan(sends[0]!.indexOf("secondary newest"))
     } finally {
       fetchSpy.mockRestore()
     }
@@ -3196,6 +3321,75 @@ describe("invocation edit regressions", () => {
     }
   })
 
+  test("restarting a standalone control preserves an unrelated provider retry", async () => {
+    configure()
+    const primary = invocation("binv_waiting_primary", 4, "primary canonical")
+    const control = {
+      ...invocation("binv_waiting_control", 1, "/thinking high"),
+      requiredCapability: "session-control",
+      metadata: {
+        command: { id: "cmd_waiting", name: "thinking", args: "high", executionKind: "bot-runtime" },
+      },
+    }
+    const ctx = context({ idle: true })
+    __testing.beginPendingInvocation(primary as never)
+    __testing.setPendingRuntimeForTesting({
+      invocationPrompt: "primary canonical full prompt",
+      waitingForRetry: true,
+      retryAt: Date.now() + 60_000,
+      retryAttempts: 2,
+      carryOns: ["keep this carry-on"],
+    })
+    const primaryObservation = await observe(primary, {}, ctx, { initialState: "running" })
+    const traceGate = deferred<void>()
+    let traceStarted = false
+    const controlObservation = await observe(control, {}, ctx, {
+      initialState: "processing",
+      recordSteps: async () => {
+        traceStarted = true
+        await traceGate.promise
+      },
+    })
+    const handling = __testing.handleSessionControlInvocation(
+      {
+        getThinkingLevel: () => "low",
+        setThinkingLevel: () => {},
+      } as never,
+      ctx,
+      control as never
+    )
+    await waitFor(() => traceStarted, "standalone control trace")
+    expect(await controlObservation.callbacks.onInputUpdated(plaintextUpdate(control, 2, "/thinking xhigh"))).toBe(
+      "restart-required"
+    )
+    traceGate.resolve()
+    await handling
+    expect(__testing.pendingInvocationState()).toMatchObject({ id: primary.id, sourceRevision: 4 })
+    expect(__testing.pendingRuntimeState()).toMatchObject({
+      waitingForRetry: true,
+      invocationPrompt: "primary canonical full prompt",
+    })
+    expect(__testing.observedInvocationStates()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: primary.id, state: "running", restartRequested: false }),
+        expect.objectContaining({ id: control.id, state: "processing", restartRequested: true }),
+      ])
+    )
+    expect(primaryObservation.unregisters()).toBe(0)
+    await controlObservation.callbacks.onCancelled({
+      invocationId: control.id,
+      sourceRevision: 2,
+      reason: "adapter_restart_required",
+    })
+    expect(controlObservation.unregisters()).toBe(1)
+    expect(__testing.pendingInvocationId()).toBe(primary.id)
+    expect(__testing.pendingRuntimeState()).toMatchObject({ waitingForRetry: true })
+    expect(__testing.observedInvocationStates()).toEqual([
+      expect.objectContaining({ id: primary.id, state: "running", restartRequested: false }),
+    ])
+    expect(primaryObservation.unregisters()).toBe(0)
+  })
+
   test("cancelling a shell control while its helper trace is blocked prevents actuation", async () => {
     configure()
     const marker = join(testStorageDirectory, "must-not-exist")
@@ -3284,7 +3478,7 @@ describe("invocation edit regressions", () => {
       expect(observation.unregisters()).toBe(0)
       helperTraceGate.resolve()
       await handling
-      expect({ exists: existsSync(marker), aborts }).toEqual({ exists: false, aborts: 1 })
+      expect({ exists: existsSync(marker), aborts }).toEqual({ exists: false, aborts: 0 })
       expect(requests.some((url) => url.endsWith("/complete") || url.endsWith("/fail"))).toBe(false)
       await observation.callbacks.onCancelled({
         invocationId: claim.id,
@@ -3293,6 +3487,64 @@ describe("invocation edit regressions", () => {
       })
       expect(observation.unregisters()).toBe(1)
     } finally {
+      fetchSpy.mockRestore()
+    }
+  })
+
+  test("successful observed reload acknowledgement still queues the reload handoff", async () => {
+    configure()
+    const claim = {
+      ...invocation("binv_observed_reload", 0, "/reload"),
+      requiredCapability: "session-control",
+      metadata: { command: { id: "cmd_reload", name: "reload", args: "", executionKind: "bot-runtime" } },
+    }
+    const ctx = context({ idle: true })
+    const followUps: Array<{ text: string; options: unknown }> = []
+    const pi = { sendUserMessage: (text: string, options: unknown) => followUps.push({ text, options }) }
+    const observation = await observe(claim, pi, ctx, { initialState: "processing" })
+    const fetchSpy = spyOn(globalThis, "fetch").mockResolvedValue(json({ data: {} }))
+    try {
+      await __testing.handleSessionControlInvocation(pi as never, ctx, claim as never)
+      expect(followUps).toEqual([{ text: "/threa-remote-reload", options: { deliverAs: "followUp" } }])
+      expect({ unregisters: observation.unregisters(), reloadPending: __testing.reloadPending() }).toEqual({
+        unregisters: 1,
+        reloadPending: true,
+      })
+    } finally {
+      fetchSpy.mockRestore()
+    }
+  })
+
+  test("successful observed reconnect acknowledgement still starts the prepared handoff", async () => {
+    configure(true)
+    const claim = {
+      ...invocation("binv_observed_reconnect", 0, "/reconnect"),
+      requiredCapability: "session-control",
+      metadata: { command: { id: "cmd_reconnect", name: "reconnect", args: "", executionKind: "bot-runtime" } },
+    }
+    const ctx = context({ idle: true })
+    const observation = await observe(claim, {}, ctx, { initialState: "processing" })
+    let starts = 0
+    process.env.TMUX_PANE = "%pi-matrix"
+    const fetchSpy = spyOn(globalThis, "fetch").mockResolvedValue(json({ data: {} }))
+    try {
+      await __testing.runReconnectCommand(
+        claim as never,
+        "",
+        ctx,
+        {
+          available: () => true,
+          prepare: () => () => {
+            starts++
+          },
+          complete: __testing.completeInvocationWithMarkdown,
+          heartbeat: async () => {},
+        } as never,
+        () => __testing.observedInvocationCount() > 0
+      )
+      expect({ starts, unregisters: observation.unregisters() }).toEqual({ starts: 1, unregisters: 1 })
+    } finally {
+      delete process.env.TMUX_PANE
       fetchSpy.mockRestore()
     }
   })
