@@ -360,6 +360,20 @@ describe("composer pill drag gestures", () => {
     expect(vibrate.mock.calls.map(([pattern]) => pattern)).toEqual([10, 10, [10, 20, 10]])
   })
 
+  it("cancels touch drag when the pill loses selection before movement", () => {
+    const editor = createPillEditor()
+    const source = editor.view.dom.querySelector<HTMLElement>('[data-type="mention"]')!
+
+    tapPill(source)
+    fireEvent.touchStart(source, { touches: [touch(7, 10, 10)] })
+    editor.commands.setTextSelection(nodePos(editor, "channelLink"))
+    fireEvent.touchMove(document, { touches: [touch(7, 21, 10)] })
+
+    expect(childTypes(editor)).toEqual(["mention", "channelLink", "slashCommand"])
+    expect(editor.view.dom.querySelector(".composer-pill-dragging")).toBeNull()
+    expect(document.querySelector(".composer-pill-touch-guide")).toBeNull()
+  })
+
   it("shows words across formatting-isolated whitespace in the touch guide", () => {
     vi.useFakeTimers()
     const editor = createPillEditor([
