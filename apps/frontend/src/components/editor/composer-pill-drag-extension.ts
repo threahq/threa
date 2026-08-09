@@ -22,6 +22,7 @@ const COMPATIBILITY_MOUSE_WINDOW_MS = 400
 const TOUCH_ACTIVATION_HAPTIC_MS = 10
 const TOUCH_TARGET_HAPTIC_MS = 10
 const TOUCH_DROP_HAPTIC_PATTERN_MS = [10, 20, 10]
+const TOUCH_DRAG_MODE = "hold-or-selected"
 
 interface ComposerPillDragState {
   sourcePos: number
@@ -288,6 +289,7 @@ class ComposerPillDragController {
   constructor(view: EditorView) {
     this.view = view
     this.doc = view.dom.ownerDocument
+    view.dom.dataset.composerPillDragMode = TOUCH_DRAG_MODE
     this.win = this.doc.defaultView ?? window
     view.dom.addEventListener("mousedown", this.onMouseDown, true)
     view.dom.addEventListener("touchstart", this.onTouchStart, { capture: true, passive: true })
@@ -319,6 +321,7 @@ class ComposerPillDragController {
     this.clearPending(true)
     this.clearAwaitedTouchCompletions()
     this.view.dom.classList.remove("composer-pill-drag-active")
+    delete this.view.dom.dataset.composerPillDragMode
   }
 
   private begin(drag: PendingDrag) {
