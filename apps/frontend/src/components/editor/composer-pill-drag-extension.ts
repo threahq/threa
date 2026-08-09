@@ -347,10 +347,6 @@ class ComposerPillDragController {
       if (!pending || pending.kind !== "touch") return
       pending.holdElapsed = true
       this.suppressMouseUntil = Date.now() + COMPATIBILITY_MOUSE_WINDOW_MS
-      if (pending.touchDragEligible) {
-        this.clearPending()
-        return
-      }
       this.activate()
     }, LONG_PRESS_THRESHOLD_MS)
   }
@@ -627,10 +623,8 @@ class ComposerPillDragController {
   private onTouchCancel = () => this.cancel(true)
 
   private onSelectStart = (event: Event) => {
-    const drag = this.pending
-    if (!drag || drag.kind !== "touch") return
-    const nativeSelectionAllowed = !drag.active && drag.touchDragEligible
-    if (!nativeSelectionAllowed) event.preventDefault()
+    if (this.pending?.kind !== "touch") return
+    event.preventDefault()
   }
 
   private onKeyDown = (event: KeyboardEvent) => {
@@ -653,15 +647,8 @@ class ComposerPillDragController {
   private onContextMenu = (event: MouseEvent) => {
     const pending = this.pending
     if (!pending || pending.kind !== "touch") return
-    if (pending.active) {
-      event.preventDefault()
-      return
-    }
-    if (pending.touchDragEligible) {
-      this.clearPending()
-      return
-    }
     event.preventDefault()
+    if (pending.active) return
     pending.holdElapsed = true
     this.suppressMouseUntil = Date.now() + COMPATIBILITY_MOUSE_WINDOW_MS
     this.activate()

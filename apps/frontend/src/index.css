@@ -640,8 +640,10 @@ html[data-input="mouse"] .message-hover-wash:hover {
   background-color: hsl(var(--primary) / 0.08);
 }
 
-/* Pills stay atomic under native touch selection; only native element dragging
-   is disabled until the app's own drag gesture takes over. */
+/* Selection and copy on a pill are app-owned (NodeSelection plus the touch copy
+   chip). Blink resolves a native long press inside a contenteditable against its
+   own heuristics, not `user-select: all`, so inviting one costs the exact
+   selection the app already holds and hands the gesture to the OS mid-drag. */
 .ProseMirror
   :is(
     [data-type="mention"],
@@ -651,12 +653,8 @@ html[data-input="mouse"] .message-hover-wash:hover {
     [data-type="memo-embed"],
     [data-type="in-app-link"],
     [data-type="giphy-embed"]
-  ) {
-  -webkit-user-drag: none;
-}
-
-html[data-input="touch"]
-  .ProseMirror
+  ),
+.ProseMirror
   :is(
     [data-type="mention"],
     [data-type="channelLink"],
@@ -665,9 +663,11 @@ html[data-input="touch"]
     [data-type="memo-embed"],
     [data-type="in-app-link"],
     [data-type="giphy-embed"]
-  ) {
-  -webkit-touch-callout: default;
-  user-select: all;
+  )
+  * {
+  -webkit-user-drag: none;
+  -webkit-touch-callout: none;
+  user-select: none;
 }
 
 html[data-input="mouse"]
@@ -693,9 +693,7 @@ html[data-input="mouse"]
     [data-type="giphy-embed"]
   )
   * {
-  -webkit-touch-callout: none;
   cursor: grab;
-  user-select: none;
 }
 
 .ProseMirror.composer-pill-drag-active,

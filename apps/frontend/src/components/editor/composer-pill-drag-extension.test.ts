@@ -325,7 +325,7 @@ describe("composer pill drag gestures", () => {
     expect(selectedSource).toHaveClass("ProseMirror-selectednode")
   })
 
-  it("leaves a selected pill's stationary hold to the native copy menu", () => {
+  it("claims a selected pill's stationary hold instead of offering native selection", () => {
     vi.useFakeTimers()
     const editor = createPillEditor()
     const source = editor.view.dom.querySelector<HTMLElement>('[data-type="mention"]')!
@@ -334,34 +334,34 @@ describe("composer pill drag gestures", () => {
     fireEvent.touchStart(source, { touches: [touch(7, 10, 10)] })
     const selectStart = new Event("selectstart", { bubbles: true, cancelable: true })
     source.dispatchEvent(selectStart)
-    expect(selectStart.defaultPrevented).toBe(false)
-    editor.commands.setTextSelection(nodePos(editor, "channelLink"))
+    expect(selectStart.defaultPrevented).toBe(true)
 
     vi.advanceTimersByTime(500)
-    const contextMenu = new MouseEvent("contextmenu", { bubbles: true, cancelable: true })
-    source.dispatchEvent(contextMenu)
-    expect(contextMenu.defaultPrevented).toBe(false)
+    expect(editor.view.dom.querySelector(".composer-pill-dragging")).not.toBeNull()
+    expect(document.querySelector(".composer-pill-touch-guide")).not.toBeNull()
 
     fireEvent.touchEnd(document, { touches: [], changedTouches: [touch(7, 10, 10)] })
+    expect(editor.state.selection).toBeInstanceOf(NodeSelection)
+    expect(editor.state.selection.from).toBe(nodePos(editor, "mention"))
     expect(editor.view.dom.querySelector(".composer-pill-dragging")).toBeNull()
   })
 
-  it("stands down when a selected pill's native context menu arrives before the timer", () => {
+  it("claims a selected pill's context menu rather than standing down for it", () => {
     vi.useFakeTimers()
     const editor = createPillEditor()
     const source = editor.view.dom.querySelector<HTMLElement>('[data-type="mention"]')!
 
     tapPill(source)
     fireEvent.touchStart(source, { touches: [touch(7, 10, 10)] })
-    editor.commands.setTextSelection(nodePos(editor, "channelLink"))
     const contextMenu = new MouseEvent("contextmenu", { bubbles: true, cancelable: true })
     source.dispatchEvent(contextMenu)
-    expect(contextMenu.defaultPrevented).toBe(false)
 
-    vi.advanceTimersByTime(500)
-    expect(editor.view.dom.querySelector(".composer-pill-dragging")).toBeNull()
+    expect(contextMenu.defaultPrevented).toBe(true)
+    expect(editor.view.dom.querySelector(".composer-pill-dragging")).not.toBeNull()
+
     fireEvent.touchEnd(document, { touches: [], changedTouches: [touch(7, 10, 10)] })
-    expect(editor.view.dom.querySelector(".composer-pill-dragging")).toBeNull()
+    expect(editor.state.selection).toBeInstanceOf(NodeSelection)
+    expect(editor.state.selection.from).toBe(nodePos(editor, "mention"))
   })
 
   it("does not select an unselected claimed hold after touchcancel", () => {
@@ -437,7 +437,7 @@ describe("composer pill drag gestures", () => {
     expect(childTypes(editor)).toEqual(["channelLink", "slashCommand", "mention"])
   })
 
-  it("drags an already-selected pill before the native hold takes over", () => {
+  it("drags an already-selected pill before the hold timer fires", () => {
     vi.useFakeTimers()
     const vibrate = mockVibrate()
     const editor = createPillEditor()
