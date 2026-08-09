@@ -112,6 +112,7 @@ export { createKeepResponseTool } from "./tools/keep-response-tool"
 
 export {
   createAI,
+  extractUsageWithCost,
   parseModelId,
   providerRequiresCacheBreakpoints,
   applyCacheBreakpoints,
@@ -139,6 +140,7 @@ export {
   type MessageRole,
   type ObjectResult,
   type ParsedModel,
+  type ReasoningEffort,
   type RepairFunction,
   type SingleEmbedResult,
   type TelemetryConfig,

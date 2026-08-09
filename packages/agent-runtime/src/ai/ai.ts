@@ -187,11 +187,14 @@ export interface Message {
   content: MessageContent
 }
 
+export type ReasoningEffort = "none" | "minimal" | "low" | "medium" | "high" | "xhigh"
+
 export interface GenerateTextOptions {
   model: string
   messages: Message[]
   maxTokens?: number
   temperature?: number
+  reasoningEffort?: ReasoningEffort
   telemetry?: TelemetryConfig
   /** When provided, usage will be recorded to the database */
   context?: CostContext
@@ -259,6 +262,7 @@ export interface GenerateObjectOptions<T extends z.ZodType> {
   messages: Message[]
   maxTokens?: number
   temperature?: number
+  reasoningEffort?: ReasoningEffort
   /** Set to false to disable repair, or provide custom repair function */
   repair?: RepairFunction | false
   telemetry?: TelemetryConfig
@@ -306,6 +310,7 @@ export interface UsageWithCost {
    * for its 1.25x write premium on a given surface.
    */
   cachedPromptTokens?: number
+  reasoningTokens?: number
   /** Cost in USD from OpenRouter, if available */
   cost?: number
 }
@@ -564,6 +569,52 @@ export function parseModelId(providerModelString: string): ParsedModel {
   return { provider, modelId, modelProvider, modelName }
 }
 
+export function extractUsageWithCost(response: {
+  usage?:
+    | {
+        promptTokens?: number
+        completionTokens?: number
+        totalTokens?: number
+        outputTokenDetails?: { reasoningTokens?: number }
+      }
+    | { tokens?: number }
+  providerMetadata?: {
+    openrouter?: {
+      usage?: {
+        cost?: number
+        totalTokens?: number
+        promptTokens?: number
+        completionTokens?: number
+        promptTokensDetails?: { cachedTokens?: number }
+        completionTokensDetails?: { reasoningTokens?: number }
+      }
+    }
+  }
+}): UsageWithCost {
+  const usage = response.usage ?? {}
+  const openrouterUsage = response.providerMetadata?.openrouter?.usage
+
+  if ("tokens" in usage && usage.tokens !== undefined) {
+    return { totalTokens: usage.tokens, cost: openrouterUsage?.cost }
+  }
+
+  const langUsage = usage as {
+    promptTokens?: number
+    completionTokens?: number
+    totalTokens?: number
+    outputTokenDetails?: { reasoningTokens?: number }
+  }
+  return {
+    promptTokens: openrouterUsage?.promptTokens ?? langUsage.promptTokens,
+    completionTokens: openrouterUsage?.completionTokens ?? langUsage.completionTokens,
+    totalTokens: openrouterUsage?.totalTokens ?? langUsage.totalTokens,
+    cachedPromptTokens: openrouterUsage?.promptTokensDetails?.cachedTokens,
+    reasoningTokens:
+      langUsage.outputTokenDetails?.reasoningTokens ?? openrouterUsage?.completionTokensDetails?.reasoningTokens,
+    cost: openrouterUsage?.cost,
+  }
+}
+
 export function createAI(config: AIConfig): AI {
   const providers = {
     openrouter: config.openrouter ? createOpenRouter({ apiKey: config.openrouter.apiKey }) : null,
@@ -809,56 +860,6 @@ export function createAI(config: AIConfig): AI {
   }
 
   /**
-   * Extract usage with cost from AI SDK response.
-   * OpenRouter provides cost via providerMetadata.openrouter.usage.cost
-   *
-   * Handles two different usage shapes:
-   * - Language model: { promptTokens, completionTokens, totalTokens }
-   * - Embedding model: { tokens }
-   */
-  function extractUsageWithCost(response: {
-    // Language model usage shape
-    usage?:
-      | { promptTokens?: number; completionTokens?: number; totalTokens?: number }
-      // Embedding model usage shape
-      | { tokens?: number }
-    // AI SDK v7 uses providerMetadata (not experimental_providerMetadata)
-    providerMetadata?: {
-      openrouter?: {
-        usage?: {
-          cost?: number
-          totalTokens?: number
-          promptTokens?: number
-          completionTokens?: number
-          promptTokensDetails?: { cachedTokens?: number }
-        }
-      }
-    }
-  }): UsageWithCost {
-    const usage = response.usage ?? {}
-    // OpenRouter provides detailed usage via providerMetadata
-    const openrouterUsage = response.providerMetadata?.openrouter?.usage
-
-    // Handle embedding model usage (only has 'tokens')
-    if ("tokens" in usage && usage.tokens !== undefined) {
-      return {
-        totalTokens: usage.tokens,
-        cost: openrouterUsage?.cost,
-      }
-    }
-
-    // Handle language model usage - prefer OpenRouter data if available
-    const langUsage = usage as { promptTokens?: number; completionTokens?: number; totalTokens?: number }
-    return {
-      promptTokens: openrouterUsage?.promptTokens ?? langUsage.promptTokens,
-      completionTokens: openrouterUsage?.completionTokens ?? langUsage.completionTokens,
-      totalTokens: openrouterUsage?.totalTokens ?? langUsage.totalTokens,
-      cachedPromptTokens: openrouterUsage?.promptTokensDetails?.cachedTokens,
-      cost: openrouterUsage?.cost,
-    }
-  }
-
-  /**
    * Emit a `disclose` access-log row for this egress, if a sink is configured.
    * Fired synchronously at send time — the content crosses the trust boundary the
    * moment it is dispatched, so a provider call that errors after receiving the
@@ -966,6 +967,9 @@ export function createAI(config: AIConfig): AI {
         maxOutputTokens: options.maxTokens,
         temperature: options.temperature,
         abortSignal: options.abortSignal,
+        ...(options.reasoningEffort
+          ? { providerOptions: { openrouter: { reasoning: { effort: options.reasoningEffort, exclude: true } } } }
+          : {}),
         experimental_telemetry: buildTelemetry(options.telemetry),
       })
 
@@ -1081,6 +1085,9 @@ export function createAI(config: AIConfig): AI {
         maxOutputTokens: options.maxTokens,
         temperature: options.temperature,
         abortSignal: options.abortSignal,
+        ...(options.reasoningEffort
+          ? { providerOptions: { openrouter: { reasoning: { effort: options.reasoningEffort, exclude: true } } } }
+          : {}),
         experimental_repairText: repair,
         experimental_telemetry: buildTelemetry(options.telemetry),
       })

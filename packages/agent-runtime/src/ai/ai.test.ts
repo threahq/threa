@@ -1,5 +1,6 @@
-import { describe, it, expect, mock } from "bun:test"
-import { parseModelId, createAI, AIBudgetExceededError, applyCacheBreakpoints } from "./ai"
+import { describe, it, expect, mock, spyOn } from "bun:test"
+import { z } from "zod"
+import { parseModelId, createAI, AIBudgetExceededError, applyCacheBreakpoints, extractUsageWithCost } from "./ai"
 
 // Import fixture data captured from real OpenRouter API calls (2026-01-06)
 import fixtures from "./fixtures/openrouter-responses.json"
@@ -211,6 +212,112 @@ describe("budget enforcement", () => {
       budget_current_usage_usd: 85,
       budget_limit_usd: 100,
     })
+  })
+})
+
+describe("generation reasoning and usage", () => {
+  function openRouterResponse(content: string, usage: Record<string, unknown> = {}) {
+    return new Response(
+      JSON.stringify({
+        id: "gen_test",
+        model: "openai/gpt-5.6-luna",
+        choices: [{ index: 0, message: { role: "assistant", content }, finish_reason: "stop" }],
+        usage: { prompt_tokens: 10, completion_tokens: 6, total_tokens: 16, ...usage },
+      }),
+      { status: 200, headers: { "content-type": "application/json" } }
+    )
+  }
+
+  it("forwards medium reasoning for text and omits reasoning options when unset", async () => {
+    const bodies: Array<Record<string, unknown>> = []
+    const fetchSpy = spyOn(globalThis, "fetch").mockImplementation((async (
+      _input: Parameters<typeof globalThis.fetch>[0],
+      init: Parameters<typeof globalThis.fetch>[1]
+    ) => {
+      bodies.push(JSON.parse(String(init?.body)))
+      return openRouterResponse("ok")
+    }) as unknown as typeof globalThis.fetch)
+    try {
+      const ai = createAI({ openrouter: { apiKey: "test-key" } })
+      await ai.generateText({
+        model: "openrouter:openai/gpt-5.6-luna",
+        messages: [{ role: "user", content: "test" }],
+        reasoningEffort: "medium",
+      })
+      await ai.generateText({
+        model: "openrouter:openai/gpt-5.6-luna",
+        messages: [{ role: "user", content: "test" }],
+      })
+      expect(bodies[0]?.reasoning).toEqual({ effort: "medium", exclude: true })
+      expect(bodies[1]).not.toHaveProperty("reasoning")
+    } finally {
+      fetchSpy.mockRestore()
+    }
+  })
+
+  it("forwards medium reasoning for object generation", async () => {
+    const bodies: Array<Record<string, unknown>> = []
+    const fetchSpy = spyOn(globalThis, "fetch").mockImplementation((async (
+      _input: Parameters<typeof globalThis.fetch>[0],
+      init: Parameters<typeof globalThis.fetch>[1]
+    ) => {
+      bodies.push(JSON.parse(String(init?.body)))
+      return openRouterResponse('{"answer":"ok"}')
+    }) as unknown as typeof globalThis.fetch)
+    try {
+      const ai = createAI({ openrouter: { apiKey: "test-key" } })
+      await ai.generateObject({
+        model: "openrouter:openai/gpt-5.6-luna",
+        schema: z.object({ answer: z.string() }),
+        messages: [{ role: "user", content: "test" }],
+        reasoningEffort: "medium",
+      })
+      expect(bodies[0]?.reasoning).toEqual({ effort: "medium", exclude: true })
+    } finally {
+      fetchSpy.mockRestore()
+    }
+  })
+
+  it("prefers standard reasoning-token details and falls back to OpenRouter metadata", () => {
+    expect(
+      extractUsageWithCost({
+        usage: { outputTokenDetails: { reasoningTokens: 5 } },
+        providerMetadata: {
+          openrouter: { usage: { completionTokensDetails: { reasoningTokens: 3 } } },
+        },
+      }).reasoningTokens
+    ).toBe(5)
+    expect(
+      extractUsageWithCost({
+        usage: {},
+        providerMetadata: {
+          openrouter: { usage: { completionTokensDetails: { reasoningTokens: 3 } } },
+        },
+      }).reasoningTokens
+    ).toBe(3)
+  })
+
+  it("extracts standard reasoning tokens and forwards them to the cost recorder", async () => {
+    const recorded: Array<{ usage: { reasoningTokens?: number } }> = []
+    const recordUsage = mock(async (params: { usage: { reasoningTokens?: number } }) => {
+      recorded.push(params)
+    })
+    const fetchSpy = spyOn(globalThis, "fetch").mockImplementation((async () =>
+      openRouterResponse("ok", {
+        completion_tokens_details: { reasoning_tokens: 4 },
+      })) as unknown as typeof globalThis.fetch)
+    try {
+      const ai = createAI({ openrouter: { apiKey: "test-key" }, costRecorder: { recordUsage } })
+      const result = await ai.generateText({
+        model: "openrouter:openai/gpt-5.6-luna",
+        messages: [{ role: "user", content: "test" }],
+        context: { workspaceId: "ws_1" },
+      })
+      expect(result.usage.reasoningTokens).toBe(4)
+      expect(recorded[0]?.usage.reasoningTokens).toBe(4)
+    } finally {
+      fetchSpy.mockRestore()
+    }
   })
 })
 

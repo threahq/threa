@@ -348,6 +348,7 @@ async function runPermutation<TInput, TOutput, TExpected>(
     usage: {
       inputTokens: totalUsage.inputTokens,
       outputTokens: totalUsage.outputTokens,
+      reasoningTokens: totalUsage.reasoningTokens,
       totalCost: totalUsage.totalCost,
     },
   }

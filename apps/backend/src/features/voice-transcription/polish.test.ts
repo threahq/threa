@@ -1,7 +1,8 @@
-import { describe, expect, it, mock } from "bun:test"
+import { describe, expect, it, mock, spyOn } from "bun:test"
 import { buildPolishUserMessage, createPolishTranscript, scrubDashes } from "./polish"
 import { voicePolishConfig } from "./config"
 import type { AI } from "@threa/agent-runtime"
+import { logger } from "../../lib/logger"
 
 type GenerateTextArgs = Parameters<AI["generateText"]>[0]
 
@@ -36,9 +37,264 @@ describe("createPolishTranscript", () => {
     })
     const call = generateText.mock.calls[0][0]
     expect(call.model).toBe(voicePolishConfig.model)
+    expect(call.reasoningEffort).toBe("medium")
     expect(call.telemetry?.functionId).toBe("voice-transcript-polish")
-    expect(call.telemetry?.metadata).toMatchObject({ level: "opinionated" })
+    expect(call.telemetry?.metadata).toMatchObject({
+      level: "opinionated",
+      stage: "format_live",
+      deadline: "live",
+      reasoningEffort: "medium",
+    })
     expect(call.context).toMatchObject({ workspaceId: "ws_1", userId: "user_1", origin: "user" })
+  })
+
+  it("allows injected config to override reasoning effort", async () => {
+    const generateText = mock(async (_args: GenerateTextArgs) => textResult("Polished.") as never)
+    const polish = createPolishTranscript({
+      ai: fakeAI(generateText),
+      config: { ...voicePolishConfig, reasoningEffort: "low" },
+    })
+
+    await polish({
+      rawTranscript: "raw",
+      level: "minor",
+      workspaceId: "ws_1",
+      userId: "user_1",
+      sessionId: "voicesess_1",
+      deadline: "final",
+    })
+
+    expect(generateText.mock.calls[0][0]).toMatchObject({
+      reasoningEffort: "low",
+      telemetry: { metadata: { reasoningEffort: "low", stage: "format_final", deadline: "final" } },
+    })
+  })
+
+  it("logs one privacy-safe completion diagnostic with usage", async () => {
+    const rawSentinel = "RAW_SECRET_SENTINEL"
+    const draftSentinel = "DRAFT_SECRET_SENTINEL"
+    const logs: unknown[][] = []
+    const info = spyOn(logger, "info").mockImplementation((...args: unknown[]) => {
+      logs.push(args)
+      return logger
+    })
+    try {
+      const generateText = mock(
+        async () =>
+          ({
+            ...textResult("Safe output."),
+            usage: { promptTokens: 11, completionTokens: 7, reasoningTokens: 3 },
+          }) as never
+      )
+      const polish = createPolishTranscript({ ai: fakeAI(generateText) })
+      await polish({
+        rawTranscript: rawSentinel,
+        draftBefore: draftSentinel,
+        steeringTerms: ["STEERING_SECRET_SENTINEL"],
+        level: "minor",
+        workspaceId: "ws_1",
+        userId: "user_1",
+        sessionId: "voicesess_1",
+      })
+
+      expect(logs).toHaveLength(1)
+      expect(logs[0]?.[0]).toMatchObject({
+        outcome: "success",
+        deadline: "live",
+        rawLength: rawSentinel.length,
+        draftLength: draftSentinel.length,
+        steeringTermCount: 1,
+        reasoningEffort: "medium",
+        promptTokens: 11,
+        completionTokens: 7,
+        reasoningTokens: 3,
+      })
+      const serialized = JSON.stringify(logs)
+      expect(serialized).not.toContain(rawSentinel)
+      expect(serialized).not.toContain(draftSentinel)
+      expect(serialized).not.toContain("STEERING_SECRET_SENTINEL")
+    } finally {
+      info.mockRestore()
+    }
+  })
+
+  it("logs timeouts without transcript or draft content", async () => {
+    const logs: unknown[][] = []
+    const info = spyOn(logger, "info").mockImplementation((...args: unknown[]) => {
+      logs.push(args)
+      return logger
+    })
+    try {
+      const generateText = mock(async (args: GenerateTextArgs) => {
+        await new Promise<void>((resolve) =>
+          args.abortSignal?.addEventListener("abort", () => resolve(), { once: true })
+        )
+        throw new Error("TIMEOUT_PROVIDER_SENTINEL")
+      })
+      const polish = createPolishTranscript({
+        ai: fakeAI(generateText),
+        config: { ...voicePolishConfig, liveTimeoutMs: 1 },
+      })
+      expect(
+        await polish({
+          rawTranscript: "TIMEOUT_RAW_SENTINEL",
+          draftBefore: "TIMEOUT_DRAFT_SENTINEL",
+          level: "minor",
+          workspaceId: "ws_1",
+          userId: "user_1",
+          sessionId: "voicesess_1",
+        })
+      ).toEqual({ status: "timeout" })
+
+      expect(logs).toHaveLength(1)
+      expect(logs[0]?.[0]).toMatchObject({ outcome: "timeout", deadline: "live", deadlineMs: 1 })
+      expect(JSON.stringify(logs)).not.toContain("SENTINEL")
+    } finally {
+      info.mockRestore()
+    }
+  })
+
+  it("logs provider failures without provider error content", async () => {
+    const errorSentinel = "PROVIDER_ERROR_SECRET_SENTINEL"
+    const logs: unknown[][] = []
+    const info = spyOn(logger, "info").mockImplementation((...args: unknown[]) => {
+      logs.push(args)
+      return logger
+    })
+    try {
+      const generateText = mock(async () => {
+        const error = new Error(errorSentinel) as Error & { code: string; status: number; requestBody: string }
+        error.code = "SAFE_CODE"
+        error.status = 503
+        error.requestBody = errorSentinel
+        throw error
+      })
+      const polish = createPolishTranscript({ ai: fakeAI(generateText) })
+      await polish({
+        rawTranscript: "RAW_PROVIDER_SENTINEL",
+        draftAfter: "DRAFT_PROVIDER_SENTINEL",
+        level: "minor",
+        workspaceId: "ws_1",
+        userId: "user_1",
+        sessionId: "voicesess_1",
+      })
+
+      expect(logs).toHaveLength(1)
+      expect(logs[0]?.[0]).toMatchObject({
+        outcome: "provider_error",
+        errorName: "Error",
+        errorCode: "SAFE_CODE",
+        errorStatus: 503,
+      })
+      const serialized = JSON.stringify(logs)
+      expect(serialized).not.toContain("SENTINEL")
+      expect(serialized).not.toContain(errorSentinel)
+    } finally {
+      info.mockRestore()
+    }
+  })
+
+  it("keeps completion diagnostics private across all attempted outcomes", async () => {
+    const logs: unknown[][] = []
+    const spies = (["info", "warn", "error"] as const).map((level) =>
+      spyOn(logger, level).mockImplementation((...args: unknown[]) => {
+        logs.push([level, ...args])
+        return logger
+      })
+    )
+    const sentinels = {
+      raw: "RAW PRIVATE SENTINEL",
+      draft: "DRAFT PRIVATE SENTINEL",
+      steering: "STEERING PRIVATE SENTINEL",
+      output: "OUTPUT PRIVATE SENTINEL",
+      error: "ERROR PRIVATE SENTINEL",
+      timeoutError: "TIMEOUT ERROR PRIVATE SENTINEL",
+      parserError: "PARSER ERROR PRIVATE SENTINEL",
+    }
+    const input = {
+      rawTranscript: sentinels.raw,
+      draftBefore: sentinels.draft,
+      steeringTerms: [sentinels.steering],
+      level: "minor" as const,
+      workspaceId: "ws_1",
+      userId: "user_1",
+      sessionId: "voicesess_1",
+    }
+
+    try {
+      const results = []
+      results.push(
+        await createPolishTranscript({
+          ai: fakeAI(mock(async () => textResult(sentinels.output) as never)),
+        })(input)
+      )
+      results.push(
+        await createPolishTranscript({
+          ai: fakeAI(mock(async () => textResult("   ") as never)),
+        })(input)
+      )
+      results.push(
+        await createPolishTranscript({
+          ai: fakeAI(mock(async () => ({ ...textResult(sentinels.output), finishReason: "length" }) as never)),
+        })(input)
+      )
+      results.push(
+        await createPolishTranscript({
+          ai: fakeAI(
+            mock(async () => {
+              throw {
+                name: sentinels.error,
+                code: 8675309,
+                status: 502,
+                message: sentinels.error,
+                requestBody: sentinels.raw,
+              }
+            })
+          ),
+        })(input)
+      )
+      results.push(
+        await createPolishTranscript({
+          ai: fakeAI(
+            mock(async (args: GenerateTextArgs) => {
+              await new Promise<void>((resolve) =>
+                args.abortSignal?.addEventListener("abort", () => resolve(), { once: true })
+              )
+              throw new Error(sentinels.timeoutError)
+            })
+          ),
+          config: { ...voicePolishConfig, liveTimeoutMs: 1 },
+        })(input)
+      )
+      results.push(
+        await createPolishTranscript({
+          ai: fakeAI(mock(async () => textResult(sentinels.output) as never)),
+          parseMarkdown: () => {
+            throw new Error(sentinels.parserError)
+          },
+        })(input)
+      )
+
+      expect(results).toEqual([
+        expect.objectContaining({ status: "success" }),
+        { status: "invalid_output", reason: "empty" },
+        { status: "invalid_output", reason: "truncated" },
+        { status: "provider_error" },
+        { status: "timeout" },
+        { status: "invalid_output", reason: "unparseable" },
+      ])
+      expect(logs).toHaveLength(results.length)
+      expect(logs.map((call) => (call[1] as { outcome: string }).outcome)).toEqual(
+        results.map((result) => result.status)
+      )
+      expect(logs[3]?.[1]).toMatchObject({ errorStatus: 502 })
+      expect(logs[3]?.[1]).not.toHaveProperty("errorName")
+      expect(logs[3]?.[1]).not.toHaveProperty("errorCode")
+      const serialized = JSON.stringify(logs)
+      for (const sentinel of Object.values(sentinels)) expect(serialized).not.toContain(sentinel)
+    } finally {
+      for (const spy of spies) spy.mockRestore()
+    }
   })
 
   it("sends the full cumulative transcript in the user message", async () => {
