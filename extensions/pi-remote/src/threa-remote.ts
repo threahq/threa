@@ -96,8 +96,8 @@ const PI_MANIFEST = {
 // spinning at pollMs (3s) burns ~29k billed edge requests/day. Empty idle ticks
 // back off exponentially to this cap; a claim, an active turn, or a socket
 // reconnect resets to the fast cadence. Turns in flight never back off, so
-// steer/stop and queued follow-ups stay responsive mid-turn (renewal itself is
-// covered by the dedicated claim-renew timer either way).
+// steer/stop and queued follow-ups stay responsive mid-turn; the shared
+// observation client independently maintains claim authority.
 const NO_SOCKET_POLL_CAP_MS = 2 * 60 * 1000
 const WS_RECONNECTION_DELAY_MAX_MS = 30_000
 const TRACE_CONTENT_MAX_CHARS = 9_500
@@ -109,6 +109,10 @@ const COMMAND_HEADLINE_MAX_CHARS = 180
 const SEALED_TRACE_CONTENT_MAX_CHARS = 60_000
 const MAX_AUTO_RETRY_MS = 4 * 60 * 60 * 1000
 const MAX_RETRY_ATTEMPTS = 3
+const CONTRIBUTOR_FAIL_RETRY_DELAYS_MS = [10, 25] as const
+const MAX_CONTRIBUTOR_FAIL_ATTEMPTS = 6
+const CONTRIBUTOR_FAIL_RETRY_BATCH_DELAY_MS = 100
+const CONTRIBUTOR_FAIL_RETRY_COOLDOWN_MS = 30_000
 const PI_TOOL_TRACE_FORMAT = "pi_tool_trace"
 const SESSION_CONTROL_CAPABILITY = "session-control"
 const RELOAD_HANDOFF_COMMAND = "threa-remote-reload"
@@ -299,7 +303,8 @@ let config: Config | undefined
 let timer: ReturnType<typeof setTimeout> | undefined
 let pollInFlightRunId: number | undefined
 let pending: ClaimedInvocation | undefined
-let steeredInvocations: Array<{ invocation: ClaimedInvocation; cursor?: string; retryPrompt: string }> = []
+type SteeredInvocation = { invocation: ClaimedInvocation; cursor?: string; retryPrompt: string }
+let steeredInvocations: SteeredInvocation[] = []
 let pendingContextCursor: string | undefined
 let pendingAssistantTexts: string[] = []
 let pendingNonAssistantTexts: Array<{ role: string; text: string }> = []
@@ -326,11 +331,11 @@ type PendingOutputState = {
   retryAfterMs?: number
 }
 let activeOutputState: PendingOutputState | undefined
-// User texts queued via /carry-on (and messages swept while rate-limited),
-// folded into the retry prompt when the wait ends.
+// Immutable text supplied by /carry-on controls and folded into the retry prompt.
+// Source-backed messages remain revision-owned steeredInvocations.
 let carryOnTexts: string[] = []
 let lastTraceHeartbeat: { text: string; at: number } | undefined
-type ObservedInvocationState = "unstarted" | "processing" | "running" | "recovery" | "terminal"
+type ObservedInvocationState = "unstarted" | "processing" | "running" | "recovery" | "terminalizing" | "terminal"
 type ObservedInvocationContext = {
   invocation: ClaimedInvocation
   handle: ObservedClaimHandle
@@ -343,6 +348,16 @@ type ObservedInvocationContext = {
 }
 const observedInvocations = new Map<ClaimedInvocation, ObservedInvocationContext>()
 const cancelledInvocations = new WeakSet<ClaimedInvocation>()
+type ContributorTerminalWrite = {
+  invocation: ClaimedInvocation
+  phase: "complete" | "fail"
+  failAttempts: number
+  running?: Promise<boolean>
+  timer?: ReturnType<typeof setTimeout>
+  ctx?: ExtensionContext
+}
+const contributorTerminalWrites = new Map<ClaimedInvocation, ContributorTerminalWrite>()
+let primaryCompletionCommitted = false
 let activeControlInvocation: ClaimedInvocation | undefined
 let consecutivePollFailures = 0
 let consecutiveQuietPolls = 0
@@ -720,13 +735,23 @@ function summarizeError(error: unknown): string {
   return [message, causeCode ? `(${causeCode})` : ""].filter(Boolean).join(" ").replace(/\s+/g, " ").slice(0, 180)
 }
 
+function throwIfAborted(signal?: AbortSignal): void {
+  if (!signal?.aborted) return
+  throw signal.reason instanceof Error ? signal.reason : new Error("operation aborted")
+}
+
 async function fetchWithTimeout(url: string, init?: RequestInit): Promise<Response> {
   const controller = new AbortController()
+  const externalSignal = init?.signal
+  const abortFromExternal = () => controller.abort(externalSignal?.reason)
+  if (externalSignal?.aborted) abortFromExternal()
+  else externalSignal?.addEventListener("abort", abortFromExternal, { once: true })
   const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS)
   try {
     return await fetch(url, { ...init, signal: controller.signal })
   } finally {
     clearTimeout(timeout)
+    externalSignal?.removeEventListener("abort", abortFromExternal)
   }
 }
 
@@ -1617,8 +1642,8 @@ function releaseObservation(invocation: ClaimedInvocation): void {
   const observed = observedInvocations.get(invocation)
   if (!observed) return
   observed.state = "terminal"
-  observed.handle.unregister()
   observedInvocations.delete(invocation)
+  observed.handle.unregister()
 }
 
 function isInvocationWriteCurrent(
@@ -1641,7 +1666,16 @@ function releaseAllObservations(): void {
   for (const invocation of [...observedInvocations.keys()]) releaseObservation(invocation)
 }
 
+function clearContributorTerminalWrites(): void {
+  for (const owner of contributorTerminalWrites.values()) {
+    if (owner.timer) clearTimeout(owner.timer)
+  }
+  contributorTerminalWrites.clear()
+}
+
 function clearTurnState(ctx?: ExtensionContext): void {
+  clearContributorTerminalWrites()
+  primaryCompletionCommitted = false
   pending = undefined
   steeredInvocations = []
   pendingContextCursor = undefined
@@ -1667,11 +1701,23 @@ function scheduleClaimDrain(pi: ExtensionAPI, ctx: ExtensionContext): void {
   setTimeout(() => void claimIfIdle(pi, ctx).catch(() => undefined), 0)
 }
 
-async function cancelObservedTurn(target: ClaimedInvocation, pi: ExtensionAPI, ctx: ExtensionContext): Promise<void> {
+function cancelObservedTurn(target: ClaimedInvocation, pi: ExtensionAPI, ctx: ExtensionContext): void {
   const observed = observedInvocations.get(target)
-  if (!observed) return
+  if (!observed || (observed.state === "terminal" && cancelledInvocations.has(target))) return
+  const wasTerminalizing = observed.state === "terminalizing"
   cancelledInvocations.add(target)
   observed.state = "terminal"
+  const terminalWrite = contributorTerminalWrites.get(target)
+  if (terminalWrite?.timer) clearTimeout(terminalWrite.timer)
+  contributorTerminalWrites.delete(target)
+  // The provider result is already durably posted once contributor closure
+  // begins. A late contributor cancellation closes only that terminal lag; it
+  // must not tear down the committed primary or discard sibling close owners.
+  if (wasTerminalizing && primaryCompletionCommitted) {
+    releaseObservation(target)
+    void maybeFinalizeCommittedTurn(ctx)
+    return
+  }
   const contributors = [pending, ...steeredInvocations.map((item) => item.invocation)].filter(
     (item): item is ClaimedInvocation => item !== undefined
   )
@@ -1742,9 +1788,15 @@ function installUpdatedCommandMetadata(invocation: ClaimedInvocation, promptMark
 
 async function applyInvocationUpdate(
   observed: ObservedInvocationContext,
-  update: InvocationInputUpdate
+  update: InvocationInputUpdate,
+  signal: AbortSignal = new AbortController().signal
 ): Promise<"applied" | "restart-required"> {
   const invocation = observed.invocation
+  const fenceAbortedUpdate = () => cancelObservedTurn(invocation, observed.pi, observed.ctx)
+  if (signal.aborted) {
+    fenceAbortedUpdate()
+    return "restart-required"
+  }
   if (observed.state === "terminal" || cancelledInvocations.has(invocation)) return "restart-required"
   if (!installUpdatedCommandMetadata(invocation, update.promptMarkdown)) {
     observed.restartRequested = true
@@ -1756,12 +1808,20 @@ async function applyInvocationUpdate(
     abortForInputRestart(observed, "Combined Pi turn restarted after an input preparation race")
     return "restart-required"
   }
+  signal.addEventListener("abort", fenceAbortedUpdate, { once: true })
+  if (signal.aborted) {
+    fenceAbortedUpdate()
+    signal.removeEventListener("abort", fenceAbortedUpdate)
+    return "restart-required"
+  }
   observed.updateInProgress = true
   invocation.sourceRevision = update.sourceRevision
   invocation.promptMarkdown = update.promptMarkdown
   if (update.sealing) invocation.sealing = update.sealing
   if (update.delivery === "sealed") invocation.sealedSourceAttachmentRefs = update.attachmentRefs
   try {
+    throwIfAborted(signal)
+    if (observed.state === "terminalizing") return "applied"
     // Initial synchronization only installs canonical metadata. Attachment I/O
     // happens once, after sync, in prepareSealedClaim; doing it here would make
     // the authoritative handshake wait on stale local file work.
@@ -1773,8 +1833,10 @@ async function applyInvocationUpdate(
         [],
         invocation,
         observed.ctx.cwd,
-        true
+        true,
+        signal
       )
+      throwIfAborted(signal)
       const sourceAttachmentContext =
         attachmentLines.sourceLines.length > 0
           ? [
@@ -1787,6 +1849,7 @@ async function applyInvocationUpdate(
         .filter(Boolean)
         .join("\n\n")
     }
+    throwIfAborted(signal)
     if (cancelledInvocations.has(invocation) || observedInvocations.get(invocation) !== observed)
       return "restart-required"
     const updatedCommand = getRuntimeCommand(invocation)
@@ -1794,8 +1857,10 @@ async function applyInvocationUpdate(
       invocation,
       observed.ctx,
       true,
-      updatedCommand?.name === "steer" ? updatedCommand.args : undefined
+      updatedCommand?.name === "steer" ? updatedCommand.args : undefined,
+      signal
     )
+    throwIfAborted(signal)
     if (
       cancelledInvocations.has(invocation) ||
       observedInvocations.get(invocation) !== observed ||
@@ -1807,14 +1872,19 @@ async function applyInvocationUpdate(
     if (secondary) secondary.retryPrompt = rebuilt.steerPrompt
     else pendingInvocationPrompt = rebuilt.prompt
     if (isWaitingForRetry) return "applied"
+    throwIfAborted(signal)
+    if (observedInvocations.get(invocation) !== observed) return "restart-required"
     observed.pi.sendUserMessage(rebuilt.steerPrompt, { deliverAs: "steer" })
     observed.state = "running"
     return "applied"
   } catch {
-    observed.restartRequested = true
-    abortForInputRestart(observed, "Combined Pi turn restarted after input steering failed")
+    if (!signal.aborted && observedInvocations.get(invocation) === observed) {
+      observed.restartRequested = true
+      abortForInputRestart(observed, "Combined Pi turn restarted after input steering failed")
+    }
     return "restart-required"
   } finally {
+    signal.removeEventListener("abort", fenceAbortedUpdate)
     observed.updateInProgress = false
   }
 }
@@ -1828,6 +1898,7 @@ async function observeInvocation(
   const activeTransport = ensureTransport(pi, ctx)
   if (!activeTransport) return false
   const identity = invocation.sealedIdentity
+  let observed!: ObservedInvocationContext
   const handle = activeTransport.observeClaim({
     invocationId: invocation.id,
     sourceMessageId: invocation.sourceMessageId,
@@ -1836,7 +1907,7 @@ async function observeInvocation(
     claimTtlSeconds: CLAIM_TTL_SECONDS,
     instanceId: getInvocationInstanceId(invocation),
     callbacks: {
-      onInputUpdated: (update) => applyInvocationUpdate(observedInvocations.get(invocation)!, update),
+      onInputUpdated: (update, signal) => applyInvocationUpdate(observed, update, signal),
       onCancelled: () => cancelObservedTurn(invocation, pi, ctx),
       onClaimLost: () => cancelObservedTurn(invocation, pi, ctx),
     },
@@ -1851,7 +1922,7 @@ async function observeInvocation(
         }
       : {}),
   })
-  const observed: ObservedInvocationContext = {
+  observed = {
     invocation,
     handle,
     state: initialState,
@@ -1877,6 +1948,7 @@ type PendingTurnSnapshot = {
   steered: Array<{ invocation: Record<string, unknown>; cursor?: string; retryPrompt?: string }>
   contextCursor?: string
   invocationPrompt?: string
+  primaryCompleted?: boolean
   waitingForRetry?: { retryAt: number; attempts: number; carryOnTexts: string[] }
 }
 
@@ -1953,6 +2025,7 @@ function savePendingSnapshot(ctx: ExtensionContext): void {
     })),
     ...(pendingContextCursor ? { contextCursor: pendingContextCursor } : {}),
     ...(pendingInvocationPrompt ? { invocationPrompt: pendingInvocationPrompt } : {}),
+    ...(primaryCompletionCommitted ? { primaryCompleted: true } : {}),
     ...(isWaitingForRetry && pendingRetry
       ? {
           waitingForRetry: {
@@ -2105,14 +2178,29 @@ async function restorePendingAfterReload(pi: ExtensionAPI, ctx: ExtensionContext
       ? [{ invocation: restored, cursor: item.cursor, retryPrompt: item.retryPrompt ?? restored.promptMarkdown }]
       : []
   })
-  if (invocation.sealing) invocation.sealedIdentity = (await bikKeystore.ensure()) ?? undefined
-  for (const item of restoredSteers) {
-    if (item.invocation.sealing) item.invocation.sealedIdentity = (await bikKeystore.ensure()) ?? undefined
-  }
+  await Promise.all(
+    [invocation, ...restoredSteers.map((item) => item.invocation)].map(async (restored) => {
+      if (restored.sealing) restored.sealedIdentity = (await bikKeystore.ensure()) ?? undefined
+    })
+  )
   pending = invocation
   steeredInvocations = restoredSteers
   pendingContextCursor = typeof snapshot.contextCursor === "string" ? snapshot.contextCursor : undefined
   pendingInvocationPrompt = typeof snapshot.invocationPrompt === "string" ? snapshot.invocationPrompt : undefined
+  primaryCompletionCommitted = snapshot.primaryCompleted === true
+  if (primaryCompletionCommitted) {
+    for (const item of restoredSteers) {
+      if (!(await observeInvocation(pi, ctx, item.invocation, "terminalizing"))) {
+        discardRestoredPending(ctx)
+        return
+      }
+      if (pending !== invocation) return
+    }
+    savePendingSnapshot(ctx)
+    await Promise.all(restoredSteers.map((item) => completeInvocationNoResponse(item.invocation, ctx)))
+    await maybeFinalizeCommittedTurn(ctx)
+    return
+  }
   armPendingOutput()
   const restoreEpoch = promptEpoch
   const waiting = snapshot.waitingForRetry
@@ -2580,16 +2668,22 @@ function safeFilename(filename: string): string {
 async function downloadAttachment(
   attachment: AttachmentSummary,
   invocation: ClaimedInvocation,
-  cwd: string
+  cwd: string,
+  signal?: AbortSignal
 ): Promise<string> {
   if (!config) throw new Error("Threa remote config not loaded")
   const revision = invocation.sourceRevision
+  throwIfAborted(signal)
   const body = await request<{ data: { url: string } }>(
-    `/api/v1/workspaces/${config.workspaceId}/attachments/${attachment.id}/url`
+    `/api/v1/workspaces/${config.workspaceId}/attachments/${attachment.id}/url`,
+    { signal }
   )
-  const response = await fetch(body.data.url)
+  throwIfAborted(signal)
+  const response = await fetch(body.data.url, { signal })
+  throwIfAborted(signal)
   if (!response.ok) throw new Error(`download failed with ${response.status}`)
   const bytes = new Uint8Array(await response.arrayBuffer())
+  throwIfAborted(signal)
   if (cancelledInvocations.has(invocation) || invocation.sourceRevision !== revision)
     throw new Error("invocation changed")
   const dir = join(cwd, ".threa-attachments", invocation.id)
@@ -2608,17 +2702,24 @@ async function downloadAttachment(
 async function downloadSealedAttachment(
   ref: AttachmentRef,
   invocation: ClaimedInvocation,
-  cwd: string
+  cwd: string,
+  signal?: AbortSignal
 ): Promise<string> {
   if (!config) throw new Error("Threa remote config not loaded")
   const revision = invocation.sourceRevision
+  throwIfAborted(signal)
   const body = await request<{ data: { url: string } }>(
-    `/api/v1/workspaces/${config.workspaceId}/attachments/${ref.attachmentId}/url`
+    `/api/v1/workspaces/${config.workspaceId}/attachments/${ref.attachmentId}/url`,
+    { signal }
   )
-  const response = await fetch(body.data.url)
+  throwIfAborted(signal)
+  const response = await fetch(body.data.url, { signal })
+  throwIfAborted(signal)
   if (!response.ok) throw new Error(`download failed with ${response.status}`)
   const ciphertext = new Uint8Array(await response.arrayBuffer())
+  throwIfAborted(signal)
   const bytes = await decryptAttachmentBytes({ ciphertext, key: ref.key, iv: ref.iv })
+  throwIfAborted(signal)
   if (cancelledInvocations.has(invocation) || invocation.sourceRevision !== revision)
     throw new Error("invocation changed")
   const dir = join(cwd, ".threa-attachments", invocation.id)
@@ -2638,7 +2739,8 @@ async function downloadSealedContextAttachments(
   historyRefs: readonly AttachmentRef[],
   invocation: ClaimedInvocation,
   cwd: string,
-  strict = false
+  strict = false,
+  signal?: AbortSignal
 ): Promise<{ contextLines: string[]; historyLines: string[]; sourceLines: string[] }> {
   const seen = new Set<string>()
   const historyLines: string[] = []
@@ -2651,7 +2753,9 @@ async function downloadSealedContextAttachments(
       if (seen.has(ref.attachmentId)) continue
       seen.add(ref.attachmentId)
       try {
-        const path = await downloadSealedAttachment(ref, invocation, cwd)
+        throwIfAborted(signal)
+        const path = await downloadSealedAttachment(ref, invocation, cwd, signal)
+        throwIfAborted(signal)
         const line = `- ${ref.filename} (${ref.mimeType}, ${ref.sizeBytes} bytes) → ${path}`
         if (isSource) sourceLines.push(line)
         else historyLines.push(line)
@@ -2672,13 +2776,16 @@ async function downloadContextAttachments(
   messages: StreamMessage[],
   invocation: ClaimedInvocation,
   cwd: string,
-  strict = false
+  strict = false,
+  signal?: AbortSignal
 ): Promise<Map<string, string>> {
   const downloaded = new Map<string, string>()
   for (const message of messages) {
     for (const attachment of message.attachments ?? []) {
       try {
-        downloaded.set(attachment.id, await downloadAttachment(attachment, invocation, cwd))
+        throwIfAborted(signal)
+        downloaded.set(attachment.id, await downloadAttachment(attachment, invocation, cwd, signal))
+        throwIfAborted(signal)
       } catch (error) {
         if (strict) throw error
         console.warn(`Failed to download Threa attachment ${attachment.id}: ${String(error)}`)
@@ -2692,27 +2799,34 @@ async function fetchInvocationContext(
   invocation: ClaimedInvocation,
   cwd: string,
   sessionLink: RuntimeSessionLink | undefined,
-  strict = false
+  strict = false,
+  signal?: AbortSignal
 ): Promise<{ context: string; steerContext: string; cursor?: string }> {
   if (!config) return { context: "", steerContext: "" }
   const cursor = sessionLink?.streamCursors?.[invocation.activeStreamId]
   const query = cursor ? `after=${encodeURIComponent(cursor)}&limit=50` : "limit=12"
+  throwIfAborted(signal)
   const body = await request<{ data: StreamMessage[] }>(
-    `/api/v1/workspaces/${config.workspaceId}/streams/${invocation.activeStreamId}/messages?${query}`
+    `/api/v1/workspaces/${config.workspaceId}/streams/${invocation.activeStreamId}/messages?${query}`,
+    { signal }
   )
+  throwIfAborted(signal)
 
   let sourceIncluded = body.data.some((message) => message.id === invocation.sourceMessageId)
   const messages = sourceIncluded
     ? body.data
     : (
         await request<{ data: StreamMessage[] }>(
-          `/api/v1/workspaces/${config.workspaceId}/streams/${invocation.activeStreamId}/messages?limit=12`
+          `/api/v1/workspaces/${config.workspaceId}/streams/${invocation.activeStreamId}/messages?limit=12`,
+          { signal }
         )
       ).data
+  throwIfAborted(signal)
   sourceIncluded = messages.some((message) => message.id === invocation.sourceMessageId)
   if (strict && !sourceIncluded) throw new Error("source message missing from invocation context")
   const orderedMessages = [...messages].sort((a, b) => (BigInt(a.sequence) < BigInt(b.sequence) ? -1 : 1))
-  const downloadedAttachments = await downloadContextAttachments(orderedMessages, invocation, cwd, strict)
+  const downloadedAttachments = await downloadContextAttachments(orderedMessages, invocation, cwd, strict, signal)
+  throwIfAborted(signal)
 
   return {
     context: formatInvocationContext(orderedMessages, invocation.sourceMessageId, downloadedAttachments),
@@ -3035,12 +3149,14 @@ async function buildInvocationPrompt(
   invocation: ClaimedInvocation,
   ctx: ExtensionContext,
   strict = false,
-  promptMarkdown = invocation.promptMarkdown
+  promptMarkdown = invocation.promptMarkdown,
+  signal?: AbortSignal
 ): Promise<{ prompt: string; steerPrompt: string; cursor?: string; context: string }> {
   // A sealed turn never touches the plaintext messages API — its context is
   // what was already decrypted at claim time (the server would only return
   // ciphertext placeholders anyway; inbound files were decrypted from the
   // payload refs during hydration).
+  throwIfAborted(signal)
   const sealed = invocation.sealing !== undefined
   const { context, steerContext, cursor } = sealed
     ? {
@@ -3048,13 +3164,14 @@ async function buildInvocationPrompt(
         steerContext: invocation.sealedSteerContextText ?? "",
         cursor: undefined,
       }
-    : await fetchInvocationContext(invocation, ctx.cwd, getCurrentSessionLink(ctx), strict).catch(
+    : await fetchInvocationContext(invocation, ctx.cwd, getCurrentSessionLink(ctx), strict, signal).catch(
         (error): { context: string; steerContext: string; cursor?: string } => {
           if (strict) throw error
           ctx.ui.notify(`Threa remote context fetch failed: ${summarizeError(error)}`, "warning")
           return { context: "", steerContext: "" }
         }
       )
+  throwIfAborted(signal)
   return {
     context,
     cursor,
@@ -3074,6 +3191,8 @@ async function buildInvocationPrompt(
 }
 
 function beginPendingInvocation(invocation: ClaimedInvocation, cursor?: string): void {
+  clearContributorTerminalWrites()
+  primaryCompletionCommitted = false
   pending = invocation
   pendingContextCursor = cursor
   pendingAssistantTexts = []
@@ -3988,16 +4107,79 @@ async function executeProviderRetry(
   await heartbeat("busy", "Retrying after rate limit…", ctx).catch(() => undefined)
   if (sessionTearingDown || lifecycleGeneration !== sessionLifecycleGeneration || isTerminallyInvalid()) return
   if (deferWhileUpdating()) return
-  if (isTerminallyInvalid() || deferWhileUpdating()) return
   const primaryPrompt = pendingInvocationPrompt
   if (!primaryPrompt) return
   const queued = [...carryOnTexts]
-  const contributorPrompts = steeredInvocations.map((item) => item.retryPrompt)
+  const contributorPrompts = steeredInvocations.flatMap((item) =>
+    observedInvocations.get(item.invocation)?.state === "processing" ? [] : [item.retryPrompt]
+  )
   pendingRetry = undefined
   isWaitingForRetry = false
   carryOnTexts = []
   armPendingOutput()
   pi.sendUserMessage(buildRetryPrompt([primaryPrompt, ...contributorPrompts].join("\n\n"), queued))
+}
+
+async function prepareRetryWaitContributor(
+  pi: ExtensionAPI,
+  ctx: ExtensionContext,
+  invocation: ClaimedInvocation,
+  observed: ObservedInvocationContext,
+  lifecycleGeneration: number
+): Promise<boolean> {
+  const revision = invocation.sourceRevision
+  const contributor: SteeredInvocation = {
+    invocation,
+    retryPrompt: invocation.promptMarkdown.trim() || "(empty message)",
+  }
+  steeredInvocations.push(contributor)
+  const isCurrent = () =>
+    !sessionTearingDown &&
+    lifecycleGeneration === sessionLifecycleGeneration &&
+    observedInvocations.get(invocation) === observed &&
+    observed.state !== "terminal" &&
+    !observed.restartRequested &&
+    invocation.sourceRevision === revision &&
+    steeredInvocations.includes(contributor)
+  const discard = () => {
+    const index = steeredInvocations.indexOf(contributor)
+    if (index >= 0) steeredInvocations.splice(index, 1)
+  }
+  try {
+    if (invocation.sealing) await prepareSealedClaim(invocation, ctx)
+    if (!isCurrent()) {
+      discard()
+      return false
+    }
+    const { steerPrompt, cursor, context } = await buildInvocationPrompt(invocation, ctx, true)
+    if (!isCurrent()) {
+      discard()
+      return false
+    }
+    await recordInvocationTraceStep(
+      invocation,
+      "context_received",
+      formatInvocationTrace(invocation, context),
+      isWaitingForRetry ? "Queued for retry…" : "Steering…"
+    )
+    if (!isCurrent()) {
+      discard()
+      return false
+    }
+    contributor.cursor = cursor
+    contributor.retryPrompt = steerPrompt
+    observed.state = "running"
+    // Persist ownership before either returning to a long retry wait or
+    // steering a retry that fired while preparation awaited context I/O.
+    savePendingSnapshot(ctx)
+    if (isWaitingForRetry) return true
+    armPendingOutput()
+    pi.sendUserMessage(steerPrompt, { deliverAs: "steer" })
+    return true
+  } catch (error) {
+    discard()
+    throw error
+  }
 }
 
 function claimIfIdle(pi: ExtensionAPI, ctx: ExtensionContext): Promise<boolean> {
@@ -4022,6 +4204,10 @@ async function claimIfIdlePass(pi: ExtensionAPI, ctx: ExtensionContext, lifecycl
   // No claims while detached: the scratchpad is archived, so any claimable work
   // predates it and would answer into a closed stream. A reattach re-drains.
   if (archive?.detached) return false
+  if (primaryCompletionCommitted) {
+    await heartbeatBusyIfStale("Closing combined Threa contributors…", ctx)
+    return true
+  }
   if (isWaitingForRetry) {
     const retryAt = pendingRetry ? formatLocalTime(new Date(pendingRetry.retryAt)) : "soon"
     await heartbeatBusyIfStale(`Rate limited; retrying around ${retryAt}`, ctx)
@@ -4049,22 +4235,16 @@ async function claimIfIdlePass(pi: ExtensionAPI, ctx: ExtensionContext, lifecycl
         // A /stop cancelled the wait (and possibly the turn) — stop sweeping.
         if (!isWaitingForRetry || reconnectPending) break
       } else {
-        const text = invocation.promptMarkdown.trim() || "(empty message)"
-        await recordTraceStep("steer", `Queued while rate-limited:\n\n${text}`, "Queued for retry…").catch(
-          () => undefined
-        )
-        await completeInvocationNoResponse(invocation)
-        // The retry timer can fire during the awaits above and drain
-        // carryOnTexts without this text. Check-and-push with no await in
-        // between: still waiting → queue for the retry; wait over → the
-        // retried turn is running, so steer the text into it live instead of
-        // stranding it in a queue nothing will read.
-        if (isWaitingForRetry) {
-          carryOnTexts.push(text)
-        } else {
-          pi.sendUserMessage(text, pending !== undefined || !ctx.isIdle() ? { deliverAs: "steer" } : undefined)
-          break
+        try {
+          if (!(await prepareRetryWaitContributor(pi, ctx, invocation, observed, lifecycleGeneration))) continue
+        } catch (error) {
+          if (!cancelledInvocations.has(invocation)) await failInvocation(invocation, error)
+          continue
         }
+        // Preparation races the retry timer. A contributor installed while the
+        // wait is still active is folded into the retry prompt; one installed
+        // after it fires is steered live by prepareRetryWaitContributor.
+        if (!isWaitingForRetry) break
       }
     }
     if (isWaitingForRetry && !sessionTearingDown && lifecycleGeneration === sessionLifecycleGeneration) {
@@ -4462,41 +4642,135 @@ async function prepareFinalMarkdown(
   }
 }
 
-async function completeInvocationNoResponse(invocation: ClaimedInvocation): Promise<void> {
-  if (!config) return
-  const revision = invocation.sourceRevision
-  const observed = observedInvocations.get(invocation) ?? null
-  if (!isInvocationWriteCurrent(invocation, revision, observed)) return
-  try {
-    if (invocation.sealing) {
-      await request(`/api/v1/workspaces/${config.workspaceId}/bot-invocations/${invocation.id}/sealed-complete`, {
-        method: "POST",
-        headers: { [THREA_CALLBACK_TOKEN_HEADER]: invocation.sealing.callbackToken },
-        body: JSON.stringify({ noResponse: true, sourceRevision: revision }),
-      }).catch(() => undefined)
-      return
-    }
-    await request(`/api/v1/workspaces/${config.workspaceId}/bot-invocations/${invocation.id}/complete`, {
+function isAuthoritativeInvocationTerminalError(error: unknown): boolean {
+  return (
+    error instanceof ThreaApiError &&
+    (error.status === 404 || (error.status === 409 && error.code === "INVOCATION_INPUT_STALE"))
+  )
+}
+
+async function postInvocationNoResponse(invocation: ClaimedInvocation, revision: number): Promise<void> {
+  if (!config) throw new Error("Threa remote config not loaded")
+  if (invocation.sealing) {
+    await request(`/api/v1/workspaces/${config.workspaceId}/bot-invocations/${invocation.id}/sealed-complete`, {
       method: "POST",
-      body: JSON.stringify({
-        instanceId: getInvocationInstanceId(invocation),
-        claimToken: invocation.claimToken,
-        sourceRevision: revision,
-        noResponse: true,
-        metadata: {
-          "pi.remote.invocationId": invocation.id,
-          "pi.remote.instanceId": getInvocationInstanceId(invocation),
-          "pi.remote.noResponse": "true",
-          "pi.remote.steered": "true",
-        },
-      }),
-    }).catch(() => undefined)
-  } finally {
-    // A concurrent restart callback still owns the disposition handshake. All
-    // other terminal outcomes (including a final write failure) have no local
-    // retry owner, so stop renewal now.
-    if (isInvocationWriteCurrent(invocation, revision, observed)) releaseObservation(invocation)
+      headers: { [THREA_CALLBACK_TOKEN_HEADER]: invocation.sealing.callbackToken },
+      body: JSON.stringify({ noResponse: true, sourceRevision: revision }),
+    })
+    return
   }
+  await request(`/api/v1/workspaces/${config.workspaceId}/bot-invocations/${invocation.id}/complete`, {
+    method: "POST",
+    body: JSON.stringify({
+      instanceId: getInvocationInstanceId(invocation),
+      claimToken: invocation.claimToken,
+      sourceRevision: revision,
+      noResponse: true,
+      metadata: {
+        "pi.remote.invocationId": invocation.id,
+        "pi.remote.instanceId": getInvocationInstanceId(invocation),
+        "pi.remote.noResponse": "true",
+        "pi.remote.steered": "true",
+      },
+    }),
+  })
+}
+
+async function postInvocationTerminalFailure(invocation: ClaimedInvocation): Promise<void> {
+  if (!config) throw new Error("Threa remote config not loaded")
+  await request(`/api/v1/workspaces/${config.workspaceId}/bot-invocations/${invocation.id}/fail`, {
+    method: "POST",
+    body: JSON.stringify({
+      instanceId: getInvocationInstanceId(invocation),
+      claimToken: invocation.claimToken,
+      errorMessage: "Combined Pi turn produced no separate response for this contributor",
+    }),
+  })
+}
+
+async function finishContributorTerminalWrite(owner: ContributorTerminalWrite): Promise<boolean> {
+  if (contributorTerminalWrites.get(owner.invocation) !== owner) return false
+  if (owner.timer) clearTimeout(owner.timer)
+  contributorTerminalWrites.delete(owner.invocation)
+  releaseObservation(owner.invocation)
+  if (owner.ctx) await maybeFinalizeCommittedTurn(owner.ctx)
+  return true
+}
+
+async function runContributorTerminalWrite(owner: ContributorTerminalWrite): Promise<boolean> {
+  const invocation = owner.invocation
+  const observed = observedInvocations.get(invocation) ?? null
+  const revision = invocation.sourceRevision
+  if (!isInvocationWriteCurrent(invocation, revision, observed)) {
+    contributorTerminalWrites.delete(invocation)
+    return false
+  }
+  if (owner.phase === "complete") {
+    try {
+      await postInvocationNoResponse(invocation, revision)
+      return finishContributorTerminalWrite(owner)
+    } catch (error) {
+      if (isAuthoritativeInvocationTerminalError(error)) return finishContributorTerminalWrite(owner)
+      owner.phase = "fail"
+    }
+  }
+  for (
+    let batchAttempt = 0;
+    batchAttempt <= CONTRIBUTOR_FAIL_RETRY_DELAYS_MS.length && owner.failAttempts < MAX_CONTRIBUTOR_FAIL_ATTEMPTS;
+    batchAttempt++
+  ) {
+    if (
+      contributorTerminalWrites.get(invocation) !== owner ||
+      !isInvocationWriteCurrent(invocation, invocation.sourceRevision, observed)
+    ) {
+      return false
+    }
+    if (batchAttempt > 0) await Bun.sleep(CONTRIBUTOR_FAIL_RETRY_DELAYS_MS[batchAttempt - 1]!)
+    if (
+      contributorTerminalWrites.get(invocation) !== owner ||
+      !isInvocationWriteCurrent(invocation, invocation.sourceRevision, observed)
+    ) {
+      return false
+    }
+    owner.failAttempts++
+    try {
+      await postInvocationTerminalFailure(invocation)
+      return finishContributorTerminalWrite(owner)
+    } catch (error) {
+      if (isAuthoritativeInvocationTerminalError(error)) return finishContributorTerminalWrite(owner)
+    }
+  }
+  if (!sessionTearingDown && contributorTerminalWrites.get(invocation) === owner) {
+    const batchExhausted = owner.failAttempts >= MAX_CONTRIBUTOR_FAIL_ATTEMPTS
+    if (batchExhausted) owner.failAttempts = 0
+    owner.timer = setTimeout(
+      () => {
+        owner.timer = undefined
+        owner.running = runContributorTerminalWrite(owner).finally(() => {
+          if (contributorTerminalWrites.get(invocation) === owner) owner.running = undefined
+        })
+      },
+      batchExhausted ? CONTRIBUTOR_FAIL_RETRY_COOLDOWN_MS : CONTRIBUTOR_FAIL_RETRY_BATCH_DELAY_MS
+    )
+  }
+  return false
+}
+
+async function completeInvocationNoResponse(invocation: ClaimedInvocation, ctx?: ExtensionContext): Promise<boolean> {
+  if (!config) return false
+  let owner = contributorTerminalWrites.get(invocation)
+  if (!owner) {
+    owner = { invocation, phase: "complete", failAttempts: 0, ctx }
+    contributorTerminalWrites.set(invocation, owner)
+  } else if (ctx) {
+    owner.ctx = ctx
+  }
+  if (!owner.running && !owner.timer) {
+    owner.running = runContributorTerminalWrite(owner).finally(() => {
+      if (contributorTerminalWrites.get(invocation) === owner) owner.running = undefined
+    })
+  }
+  return owner.running
 }
 
 async function failInvocation(invocation: ClaimedInvocation, error: unknown): Promise<void> {
@@ -4615,6 +4889,25 @@ async function completeSealedWithMarkdown(
   })
 }
 
+async function maybeFinalizeCommittedTurn(ctx: ExtensionContext): Promise<boolean> {
+  if (!primaryCompletionCommitted || !pending) return false
+  if (contributorTerminalWrites.size > 0) return false
+  if (steeredInvocations.some((item) => observedInvocations.has(item.invocation))) return false
+  const invocation = pending
+  const steered = [...steeredInvocations]
+  const primaryCursor = pendingContextCursor
+  advanceStreamCursor(invocation, ctx, primaryCursor)
+  for (const item of steered) advanceStreamCursor(item.invocation, ctx, item.cursor)
+  releaseObservation(invocation)
+  for (const item of steered) releaseObservation(item.invocation)
+  clearTurnState()
+  lastBusyHeartbeatAt = 0
+  clearPendingSnapshot(ctx)
+  clearRecoveredCompletionTimer()
+  await heartbeat("available", undefined, ctx).catch(() => undefined)
+  return true
+}
+
 async function completePending(
   markdown: string,
   ctx: ExtensionContext,
@@ -4631,48 +4924,49 @@ async function completePending(
     return
   const observed = observedInvocations.get(invocation) ?? null
   const revision = invocation.sourceRevision
-  if (!isInvocationWriteCurrent(invocation, revision, observed) || observed?.updateInProgress) return
-  const steered = steeredInvocations
-  if (invocation.sealing) {
-    await completeSealedWithMarkdown(invocation, invocation.sealing, markdown, ctx.cwd)
-  } else {
-    const { finalMarkdown, uploadedAttachments } = await prepareFinalMarkdown(markdown, ctx.cwd)
-    if (
-      !isInvocationWriteCurrent(invocation, revision, observed) ||
-      observed?.updateInProgress ||
-      (expected && promptEpoch !== expected.epoch)
-    )
-      return
-    const noResponse = finalMarkdown === NO_RESPONSE_MARKER
-    await request(`/api/v1/workspaces/${config.workspaceId}/bot-invocations/${invocation.id}/complete`, {
-      method: "POST",
-      body: JSON.stringify({
-        instanceId: getInvocationInstanceId(invocation),
-        claimToken: invocation.claimToken,
-        sourceRevision: invocation.sourceRevision,
-        ...(noResponse ? { noResponse: true } : { finalMessageMarkdown: finalMarkdown }),
-        metadata: {
-          "pi.remote.invocationId": invocation.id,
-          "pi.remote.instanceId": getInvocationInstanceId(invocation),
-          ...(noResponse && { "pi.remote.noResponse": "true" }),
-          ...(uploadedAttachments.length > 0 && {
-            "pi.remote.attachmentIds": uploadedAttachments.map((attachment) => attachment.id).join(","),
-          }),
-        },
-      }),
-    })
+  if (!primaryCompletionCommitted) {
+    if (!isInvocationWriteCurrent(invocation, revision, observed) || observed?.updateInProgress) return
+    if (invocation.sealing) {
+      await completeSealedWithMarkdown(invocation, invocation.sealing, markdown, ctx.cwd)
+    } else {
+      const { finalMarkdown, uploadedAttachments } = await prepareFinalMarkdown(markdown, ctx.cwd)
+      if (
+        !isInvocationWriteCurrent(invocation, revision, observed) ||
+        observed?.updateInProgress ||
+        (expected && promptEpoch !== expected.epoch)
+      )
+        return
+      const noResponse = finalMarkdown === NO_RESPONSE_MARKER
+      await request(`/api/v1/workspaces/${config.workspaceId}/bot-invocations/${invocation.id}/complete`, {
+        method: "POST",
+        body: JSON.stringify({
+          instanceId: getInvocationInstanceId(invocation),
+          claimToken: invocation.claimToken,
+          sourceRevision: invocation.sourceRevision,
+          ...(noResponse ? { noResponse: true } : { finalMessageMarkdown: finalMarkdown }),
+          metadata: {
+            "pi.remote.invocationId": invocation.id,
+            "pi.remote.instanceId": getInvocationInstanceId(invocation),
+            ...(noResponse && { "pi.remote.noResponse": "true" }),
+            ...(uploadedAttachments.length > 0 && {
+              "pi.remote.attachmentIds": uploadedAttachments.map((attachment) => attachment.id).join(","),
+            }),
+          },
+        }),
+      })
+    }
+    if (!isInvocationWriteCurrent(invocation, revision, observed)) return
+    primaryCompletionCommitted = true
+    releaseObservation(invocation)
+    for (const item of steeredInvocations) {
+      const contributor = observedInvocations.get(item.invocation)
+      if (contributor) contributor.state = "terminalizing"
+    }
+    savePendingSnapshot(ctx)
   }
-  if (!isInvocationWriteCurrent(invocation, revision, observed)) return
-  await Promise.all(steered.map((item) => completeInvocationNoResponse(item.invocation)))
-  advanceStreamCursor(invocation, ctx, pendingContextCursor)
-  for (const item of steered) advanceStreamCursor(item.invocation, ctx, item.cursor)
-  releaseObservation(invocation)
-  for (const item of steered) releaseObservation(item.invocation)
-  clearTurnState()
-  lastBusyHeartbeatAt = 0
-  clearPendingSnapshot(ctx)
-  clearRecoveredCompletionTimer()
-  await heartbeat("available", undefined, ctx)
+  const steered = [...steeredInvocations]
+  await Promise.all(steered.map((item) => completeInvocationNoResponse(item.invocation, ctx)))
+  await maybeFinalizeCommittedTurn(ctx)
 }
 
 async function failPending(error: unknown, ctx?: ExtensionContext): Promise<void> {
@@ -4728,6 +5022,8 @@ async function resetRuntimeForTesting(): Promise<void> {
   pollInFlightRunId = undefined
   pending = undefined
   steeredInvocations = []
+  clearContributorTerminalWrites()
+  primaryCompletionCommitted = false
   pendingContextCursor = undefined
   pendingAssistantTexts = []
   pendingNonAssistantTexts = []
@@ -4802,6 +5098,8 @@ export const __testing = {
           sourceRevision: pending.sourceRevision,
           promptMarkdown: pending.promptMarkdown,
           invocationPrompt: pendingInvocationPrompt,
+          sealedHistoryContextText: pending.sealedHistoryContextText,
+          sealedContextText: pending.sealedContextText,
         }
       : undefined,
   observedInvocationCount: () => observedInvocations.size,
@@ -4819,7 +5117,18 @@ export const __testing = {
   prepareSealedClaim,
   handleSessionControlInvocation,
   executeProviderRetry,
+  prepareRetryWaitContributor: (
+    pi: ExtensionAPI,
+    ctx: ExtensionContext,
+    invocation: ClaimedInvocation,
+    lifecycleGeneration: number
+  ) => {
+    const observed = observedInvocations.get(invocation)
+    if (!observed) throw new Error("invocation is not observed")
+    return prepareRetryWaitContributor(pi, ctx, invocation, observed, lifecycleGeneration)
+  },
   completeInvocationNoResponse,
+  completePending,
   failInvocation,
   armPendingOutputForTesting: () => armPendingOutput(),
   activatePendingOutputForTesting: (turnIndex = 0) => activatePendingOutput(turnIndex),
@@ -4855,6 +5164,8 @@ export const __testing = {
     })),
     promptEpoch,
     outputEpoch: activeOutputState?.epoch,
+    primaryCompleted: primaryCompletionCommitted,
+    terminalWriteOwners: contributorTerminalWrites.size,
   }),
   setTransportForTesting: (value: unknown) => {
     transport = value as BotRuntimeTransport | undefined
@@ -4904,6 +5215,8 @@ export const __testing = {
   beginPendingInvocation,
   clearPendingForTesting: () => {
     releaseAllObservations()
+    clearContributorTerminalWrites()
+    primaryCompletionCommitted = false
     pending = undefined
     steeredInvocations = []
     reconnectPending = false
@@ -5249,7 +5562,7 @@ export default function (pi: ExtensionAPI): void {
           revision: expectedRevision,
           epoch: expectedEpoch,
         })
-        setRemoteStatus(ctx, "Threa remote: linked")
+        setRemoteStatus(ctx, primaryCompletionCommitted ? "Threa remote: closing contributors" : "Threa remote: linked")
       } catch (error) {
         if (error instanceof ThreaApiError && error.status === 409 && error.code === "INVOCATION_INPUT_STALE") {
           releaseAllObservations()
