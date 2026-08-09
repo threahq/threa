@@ -186,7 +186,7 @@ function setupService(options: { memoContents: MemoContent[]; pendingItem?: Part
   }
 }
 
-describe("MemoService.processBatch — memos:captured timeline event (INV-62)", () => {
+describe("MemoService.processBatch — memos:captured timeline event (INV-69)", () => {
   afterEach(() => mock.restore())
 
   it("appends a memos:captured stream event with memo provenance in the save transaction", async () => {
@@ -698,7 +698,7 @@ describe("MemoService.saveMemo — agent-authored memo (roadmap 6.2)", () => {
       streamId: STREAM_ID,
       memoId: expect.stringMatching(/^memo_/),
     })
-    // Visible in situ (INV-62): capture event on the stream, no conversationId.
+    // Visible in situ (INV-69): capture event on the stream, no conversationId.
     expect(streamEventInsertMany).toHaveBeenCalledWith(expect.anything(), [
       expect.objectContaining({
         streamId: STREAM_ID,
@@ -779,7 +779,7 @@ describe("MemoService.saveMemo — agent-authored memo (roadmap 6.2)", () => {
 
   it("still broadcasts the capture for a user-scope save in the owner's own private scratchpad", async () => {
     const { service, streamEventInsertMany } = setupSaveMemo()
-    // Audience == owner, so the capture is visible in situ (INV-62) as normal.
+    // Audience == owner, so the capture is visible in situ (INV-69) as normal.
     spyOn(StreamRepository, "findById").mockResolvedValue(
       fakeStream({ type: "scratchpad", visibility: "private", createdBy: "usr_owner" })
     )
@@ -988,7 +988,7 @@ describe("MemoService.captureSessionReflection — reflective capture (roadmap 6
       streamId: STREAM_ID,
       memoId: expect.stringMatching(/^memo_/),
     })
-    // Visible in situ (INV-62): capture event on the session's stream, no conversationId.
+    // Visible in situ (INV-69): capture event on the session's stream, no conversationId.
     expect(streamEventInsertMany).toHaveBeenCalledWith(expect.anything(), [
       expect.objectContaining({
         streamId: STREAM_ID,

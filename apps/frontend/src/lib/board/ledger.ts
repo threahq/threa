@@ -173,7 +173,7 @@ function stepsLabel(count: number): string {
 
 /**
  * A board event row compressed to its ledger line. Titles and counts only —
- * a capture line carries its memos' TITLES, never their content (INV-62): the
+ * a capture line carries its memos' TITLES, never their content (INV-69): the
  * memo body is the preview dialog's, one tap away.
  */
 export function ledgerEventContent(row: BoardEventRow, ctx: LedgerEventContentCtx): LedgerEventContent {

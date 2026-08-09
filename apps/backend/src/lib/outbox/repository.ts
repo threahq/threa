@@ -340,7 +340,7 @@ export interface StreamMemberRemovedOutboxPayload extends StreamScopedPayload {
 }
 
 /**
- * Carries a `memos:captured` timeline event (INV-62) to the source stream's
+ * Carries a `memos:captured` timeline event (INV-69) to the source stream's
  * room. Same envelope shape as the membership events: the full stream event
  * rides along so clients append it without a fetch.
  */

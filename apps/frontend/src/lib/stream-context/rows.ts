@@ -182,7 +182,7 @@ export function contextItemsFromEvent(
 }
 
 /**
- * Memo rows from a `memos:captured` broadcast (INV-62): one per captured memo,
+ * Memo rows from a `memos:captured` broadcast (INV-69): one per captured memo,
  * anchored on its source messages exactly as `indexCapturedMemos` anchors the
  * server's row — the LATEST resolvable source's timestamp (capture time lands
  * minutes late; extraction is debounced) and the FIRST resolvable source as the

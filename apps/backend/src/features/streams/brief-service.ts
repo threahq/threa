@@ -123,7 +123,7 @@ export class StreamBriefService {
 
   /**
    * Append a `brief_updated` timeline broadcast row (+ its outbox row) in the
-   * caller's transaction (INV-4/7), so a brief change is never silent (INV-62
+   * caller's transaction (INV-4/7), so a brief change is never silent (INV-69
    * spirit) and every member sees who changed it and why. Same envelope as the
    * memos/description capture events — the full stream event rides the outbox
    * payload so clients append it without a fetch. The row lands on the effective

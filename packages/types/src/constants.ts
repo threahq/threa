@@ -199,7 +199,7 @@ export const TIMELINE_BROADCAST_EVENT_TYPES = [
   // The stream's durable brief changed (roadmap 4.2): every member sees the row,
   // so it takes a broadcast slot like `description_set`. Emitted for user edits
   // and persona `update_stream_brief` writes alike — brief changes are never
-  // silent (INV-62 spirit).
+  // silent (INV-69 spirit).
   "brief_updated",
   // A delegated task was handed off (roadmap 5.1): every member sees the
   // delegation card, so it takes a broadcast slot like `agent:follow_up_scheduled`.

@@ -3,7 +3,7 @@
 A catalog of what exists in the codebase today, bucketed the way this tree is organized,
 so backfill can proceed deliberately instead of ad hoc. Compiled from a code sweep on
 2026-06-02: backend feature folders (`apps/backend/src/features/*`), frontend routes and
-components, the CLAUDE.md invariants, and the packages and services. Re-swept 2026-06-11:
+components, the AGENTS.md invariants, and the packages and services. Re-swept 2026-06-11:
 added rows the first sweep missed (messages-and-timeline, user-status, giphy, onboarding),
 reconciled rows whose docs had landed without a checkmark, and recorded which surfaces are
 currently in flux (see "In flux right now").
@@ -106,9 +106,9 @@ this tree. See Decisions below.
 - **Service topology** (control-plane, workspace-router, backoffice, db-read-proxy):
   `docs/system-overview.md` already covers it. Link, don't duplicate.
 - **Coding conventions** (DI factories, service-owned transactions, thin handlers,
-  append-only migrations): CLAUDE.md and `docs/backend/` own these. A concept doc here
+  append-only migrations): AGENTS.md and `docs/backend/` own these. A concept doc here
   would just restate them.
-- **Solo-first philosophy**: belongs in the scratchpads public doc and CLAUDE.md, not a
+- **Solo-first philosophy**: belongs in the scratchpads public doc and AGENTS.md, not a
   standalone concept.
 - **Minor infra** (operation-leases, observability/metrics wiring, emoji data and
   usage tracking, user profile cards, bot channel access grants in `features/api-keys`):

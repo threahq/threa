@@ -1689,7 +1689,7 @@ function bindStreamSocketHandlers(
     }
 
     // `memos:captured` is the only appended row that carries context artifacts
-    // (INV-62 — the capture broadcast names each memo and its source messages).
+    // (INV-69 — the capture broadcast names each memo and its source messages).
     if (payload.event.eventType === "memos:captured") {
       await applyContextRowsForEvent(workspaceId, streamId, {
         ...payload.event,

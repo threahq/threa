@@ -1222,7 +1222,7 @@ export interface CapturedMemoSummary {
 }
 
 /**
- * Payload for `memos:captured` timeline events (INV-62): appended to the
+ * Payload for `memos:captured` timeline events (INV-69): appended to the
  * source stream when GAM extracts memos from one of its conversations, in
  * the same transaction as the memo rows. The event lands at the broadcast
  * position where extraction completed — per-stream debouncing means that is
@@ -1433,7 +1433,7 @@ export interface DescriptionSetEventPayload {
  * Payload for `brief_updated` timeline events (roadmap 4.2): appended when a
  * stream's durable brief is written — by a persona via `update_stream_brief`, or
  * by a member via the settings editor — in the same transaction as the brief
- * write (INV-4/7). Brief changes are never silent (INV-62 spirit): the row names
+ * write (INV-4/7). Brief changes are never silent (INV-69 spirit): the row names
  * who changed it (the event's `actorId`/`actorType`), the resulting `version`,
  * and, for a persona write, the `reason` it gave. `version === 1` marks the
  * brief's creation ("created" vs "updated"); `reason` is `null` for member edits
