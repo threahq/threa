@@ -1,16 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest"
 import { liveQuery } from "dexie"
 import { db, sequenceToNum, type CachedEvent } from "@/db"
-import {
-  EVENT_BULK_PUT_LIMIT,
-  isSharedStreamRegistrationEnabledSync,
-  isSinglePreviewWriterEnabled,
-  primeEventWriteFlags,
-  primeEventWriteFlagsIfAbsent,
-  putEventsBounded,
-  resetEventWriteFlags,
-  skipNoOpEventRewrites,
-} from "./event-writes"
+import { EVENT_BULK_PUT_LIMIT, putEventsBounded, skipNoOpEventRewrites } from "./event-writes"
 
 function makeRow(streamId: string, index: number, overrides: Partial<CachedEvent> = {}): CachedEvent {
   const sequence = String(1000 + index)
@@ -35,22 +26,9 @@ function makePage(streamId: string, count: number): CachedEvent[] {
 }
 
 beforeEach(async () => {
-  resetEventWriteFlags()
   await db.events.clear()
   await db.workspaceMetadata.clear()
 })
-
-async function putMetadata(featureFlags: unknown): Promise<void> {
-  await db.workspaceMetadata.put({
-    id: "ws_1",
-    workspaceId: "ws_1",
-    emojis: [],
-    emojiWeights: {},
-    commands: [],
-    featureFlags,
-    _cachedAt: 1,
-  } as unknown as Parameters<typeof db.workspaceMetadata.put>[0])
-}
 
 afterEach(() => {
   vi.restoreAllMocks()
@@ -190,76 +168,5 @@ describe("live-query wake set (D1)", () => {
     })
 
     expect(emissions).toBeGreaterThan(0)
-  })
-})
-
-describe("the primed flag cache", () => {
-  it("resolves a persisted layered row and caches it", async () => {
-    await putMetadata({ workspace: { singlePreviewWriter: "on" }, user: {} })
-    const get = vi.spyOn(db.workspaceMetadata, "get")
-
-    expect(await isSinglePreviewWriterEnabled(db, "ws_1")).toBe(true)
-    expect(await isSinglePreviewWriterEnabled(db, "ws_1")).toBe(true)
-    expect(get).toHaveBeenCalledTimes(1)
-  })
-
-  it("a pre-#1455 flat row neither throws nor overrides the registry default", async () => {
-    // A flat legacy row is IGNORED (coerced away), so the resolved value is the
-    // registry default, never the flat row's own field, and never a crash.
-    await putMetadata({ singlePreviewWriter: "on" })
-
-    expect(await isSinglePreviewWriterEnabled(db, "ws_1")).toBe(false)
-  })
-
-  it("a primed value wins without reading the row", async () => {
-    await putMetadata({ workspace: { singlePreviewWriter: "off" }, user: {} })
-    const get = vi.spyOn(db.workspaceMetadata, "get")
-    primeEventWriteFlags("ws_1", { workspace: {}, user: { singlePreviewWriter: "on" } })
-
-    expect(await isSinglePreviewWriterEnabled(db, "ws_1")).toBe(true)
-    expect(get).not.toHaveBeenCalled()
-  })
-
-  it("resetEventWriteFlags clears the primed value", async () => {
-    // Primed "on" (an explicit override), then reset: with no persisted row the
-    // resolve falls back to the registry default — proving the primed override
-    // was dropped, not retained.
-    primeEventWriteFlags("ws_1", { workspace: { singlePreviewWriter: "on" }, user: {} })
-    resetEventWriteFlags()
-
-    expect(await isSinglePreviewWriterEnabled(db, "ws_1")).toBe(false)
-  })
-
-  it("a prime landing mid-read wins over the older persisted row", async () => {
-    await putMetadata({ workspace: { singlePreviewWriter: "off" }, user: {} })
-    let release: () => void = () => {}
-    const gate = new Promise<void>((resolve) => {
-      release = resolve
-    })
-    const real = db.workspaceMetadata.get.bind(db.workspaceMetadata)
-    vi.spyOn(db.workspaceMetadata, "get").mockImplementation(((key: string) =>
-      gate.then(() => real(key))) as unknown as typeof db.workspaceMetadata.get)
-
-    const inFlight = isSinglePreviewWriterEnabled(db, "ws_1")
-    primeEventWriteFlags("ws_1", { workspace: { singlePreviewWriter: "on" }, user: {} })
-    release()
-
-    expect(await inFlight).toBe(true)
-    expect(await isSinglePreviewWriterEnabled(db, "ws_1")).toBe(true)
-  })
-})
-
-describe("primeEventWriteFlagsIfAbsent", () => {
-  it("primeEventWriteFlagsIfAbsent fills an empty cache", () => {
-    primeEventWriteFlagsIfAbsent("ws_1", { workspace: { sharedStreamRegistration: "on" }, user: {} })
-
-    expect(isSharedStreamRegistrationEnabledSync("ws_1")).toBe(true)
-  })
-
-  it("primeEventWriteFlagsIfAbsent never overwrites a value already primed", () => {
-    primeEventWriteFlags("ws_1", { workspace: { sharedStreamRegistration: "on" }, user: {} })
-    primeEventWriteFlagsIfAbsent("ws_1", { workspace: { sharedStreamRegistration: "off" }, user: {} })
-
-    expect(isSharedStreamRegistrationEnabledSync("ws_1")).toBe(true)
   })
 })

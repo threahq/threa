@@ -156,7 +156,6 @@ export class LiveCommitBatch {
   /** Flushes run one at a time and in schedule order, so an awaited `flush()`
    *  drains everything buffered before it (the catch-up window's guarantee). */
   private chain: Promise<void> = Promise.resolve()
-  private flushing = false
 
   constructor(
     private readonly queryClient: QueryClient,
@@ -194,20 +193,6 @@ export class LiveCommitBatch {
     this.schedule()
   }
 
-  /** Whether anything is buffered and not yet committed. Callers taking the
-   *  immediate path (the flag flipped off mid-task) drain first, so a pending
-   *  fold can't land on top of a newer immediate commit. */
-  hasPending(): boolean {
-    return this.counterMutators.length > 0 || this.streamPreviews.size > 0 || this.readAllSnapshots.length > 0
-  }
-
-  /** Whether a commit has emptied the buffers but not yet published. Immediate
-   *  callers drain on this too: `hasPending()` alone is false in that window, so
-   *  an older in-flight fold would publish on top of a newer direct commit. */
-  isFlushing(): boolean {
-    return this.flushing
-  }
-
   /** Commit everything buffered so far. Awaited by the engine when a catch-up
    *  window opens, so a live fold can never interleave into a replay fold. */
   flush(): Promise<void> {
@@ -218,24 +203,6 @@ export class LiveCommitBatch {
     // throwing inside publish) would poison every later flush permanently.
     this.chain = attempt.catch(this.logFlushFailure)
     return attempt
-  }
-
-  /** Drain, then run `fn` — on the batch's OWN chain, so anything buffered after
-   *  this call queues BEHIND `fn` instead of racing it. Branching off `flush()`'s
-   *  returned promise inverts order: that promise settles when its drain runs,
-   *  and that drain commits whatever was buffered by then, which can be newer
-   *  than `fn`. */
-  runAfterDrain(fn: () => void): void {
-    this.scheduled = false
-    // Taken NOW, not when the drain runs: a commit that re-reads the buffers at
-    // execution time would sweep up whatever was buffered after this call and
-    // publish it BEFORE `fn`.
-    const drained = this.takePending()
-    this.chain = this.chain
-      .then(() => this.commit(drained))
-      .catch(this.logFlushFailure)
-      .then(fn)
-      .catch(this.logFlushFailure)
   }
 
   private readonly logFlushFailure = (error: unknown): void => {
@@ -273,13 +240,8 @@ export class LiveCommitBatch {
     return pending
   }
 
-  private async commit(pending?: PendingFold): Promise<void> {
-    this.flushing = true
-    try {
-      await this.runCommit(pending ?? this.takePending())
-    } finally {
-      this.flushing = false
-    }
+  private async commit(): Promise<void> {
+    await this.runCommit(this.takePending())
   }
 
   private async runCommit({ mutators, previews, snapshots }: PendingFold): Promise<void> {

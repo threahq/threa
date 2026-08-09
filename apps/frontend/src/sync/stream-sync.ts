@@ -1,11 +1,6 @@
 import { db, sequenceToNum, type CachedEvent } from "@/db"
 import { mergeStreamByTitleRevision } from "@/lib/title-merge"
-import {
-  isSinglePreviewWriterEnabled,
-  isNoOpRewrite,
-  isSharedStreamRegistrationEnabledSync,
-  putEventsBounded,
-} from "@/db/event-writes"
+import { isNoOpRewrite, putEventsBounded } from "@/db/event-writes"
 import {
   StreamTypes,
   THREAD_ANCHORABLE_EVENT_TYPES,
@@ -13,7 +8,6 @@ import {
   type Stream,
   type StreamBootstrap,
   type StreamReadFrontier,
-  type LastMessagePreview,
   type LinkPreviewSummary,
   type MemoEmbedSummary,
   type ThreadSummary,
@@ -1214,8 +1208,6 @@ function bindStreamSocketHandlers(
       // after the transaction commits so the backfill never runs inside it.
       let gapAfterSequence: string | null = null
 
-      // Same primed map, so this resolves without a second IDB read.
-      const singlePreviewWriter = await isSinglePreviewWriterEnabled(db, workspaceId)
       getPerfCapture().count("stream.idbTransaction")
       // Read after the transaction only: the `return` it drives stays inside the
       // callback, so the write path's control flow is unchanged.
@@ -1320,41 +1312,6 @@ function bindStreamSocketHandlers(
       // ciphertext); for plaintext sends the render path ignores the cache.
       if (optimisticPlaintext && isEncryptedPayload(newEvent.payload)) {
         seedDecryption(newEvent.id, optimisticPlaintext)
-      }
-
-      // `stream:activity` is emitted in the same backend transaction as this
-      // event and carries the server markdown, so it is the single preview
-      // writer; this arm only exists as the kill switch.
-      if (!singlePreviewWriter) {
-        // Update sidebar preview in both TanStack cache and IDB so the sort order
-        // and preview text survive cold starts (offline-first).
-        const newPreview: LastMessagePreview = {
-          authorId: newEvent.actorId ?? "",
-          authorType: newEvent.actorType ?? "user",
-          content: newPayload.contentJson as string,
-          createdAt: newEvent.createdAt,
-        }
-
-        const stopPreviewWrite = getPerfCapture().time("stream.previewWrite")
-        try {
-          await db.streams.update(streamId, {
-            lastMessagePreview: newPreview,
-            _cachedAt: Date.now(),
-          })
-
-          queryClient.setQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap(workspaceId), (old) => {
-            if (!old) return old
-            return {
-              ...old,
-              streams: old.streams.map((stream) => {
-                if (stream.id !== streamId) return stream
-                return { ...stream, lastMessagePreview: newPreview }
-              }),
-            }
-          })
-        } finally {
-          stopPreviewWrite()
-        }
       }
 
       if (!(payload.slots || payload.sharedMessages) && contentHasSharedMessage(newPayload.contentJson)) {
@@ -2005,10 +1962,10 @@ function describeSignatureConflicts(
 
 /**
  * Registers the stream handler set, sharing one binding per
- * `(eventSource, streamId)` when `sharedStreamRegistration` is on. The open
- * stream is registered twice — once per membership by the SyncEngine, once by
- * `useStreamSocket` — through the same event gate, so without sharing every
- * handler runs twice for every event on that stream.
+ * `(eventSource, streamId)`. The open stream is registered twice — once per
+ * membership by the SyncEngine, once by `useStreamSocket` — through the same
+ * event gate, so without sharing every handler runs twice for every event on
+ * that stream.
  */
 export function registerStreamSocketHandlers(
   socket: SyncEventSource,
@@ -2021,10 +1978,6 @@ export function registerStreamSocketHandlers(
   // A fresh wrapper per registration: two registrants may pass the same
   // function reference, and a release must remove only its own listener.
   const listener: SequenceGapListener | null = onSequenceGap ? (gap) => onSequenceGap(gap) : null
-
-  if (!isSharedStreamRegistrationEnabledSync(workspaceId)) {
-    return bindStreamSocketHandlers(socket, workspaceId, streamId, queryClient, new Set(listener ? [listener] : []))
-  }
 
   const signature = { workspaceId, queryClient }
   let byStream = streamRegistrations.get(socket)

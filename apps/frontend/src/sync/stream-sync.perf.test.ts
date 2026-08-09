@@ -5,7 +5,6 @@ import type { PerformanceSample, StreamEvent } from "@threa/types"
 import { db } from "@/db"
 import { NO_CAPTURE, PerfCapture, armPerfCapture, getPerfCapture } from "@/lib/perf/capture"
 import { registerStreamSocketHandlers } from "./stream-sync"
-import { primeEventWriteFlags, resetEventWriteFlags } from "@/db/event-writes"
 
 function createTestSocket() {
   const handlers = new Map<string, Set<(payload: unknown) => void>>()
@@ -84,25 +83,22 @@ async function resetTables(): Promise<void> {
 
 beforeEach(async () => {
   await resetTables()
-  primeEventWriteFlags("ws_1", { workspace: { singlePreviewWriter: "off" }, user: {} })
 })
 
 afterEach(() => {
   armPerfCapture(NO_CAPTURE)
-  resetEventWriteFlags()
 })
 
 describe("message:created sub-marks", () => {
-  it("an applied message records one eventTx and one previewWrite sample", async () => {
+  it("an applied message records one eventTx and one contextRows sample", async () => {
     const capture = new PerfCapture()
     armPerfCapture(capture)
 
     await deliver("stream_perf", ["evt_1"])
 
     expect(samplesNamed(capture, "stream.eventTx")).toHaveLength(1)
-    expect(samplesNamed(capture, "stream.previewWrite")).toHaveLength(1)
     expect(samplesNamed(capture, "stream.contextRows")).toHaveLength(1)
-    for (const name of ["stream.eventTx", "stream.previewWrite", "stream.contextRows"] as const) {
+    for (const name of ["stream.eventTx", "stream.contextRows"] as const) {
       expect(samplesNamed(capture, name)[0].value).toBeTypeOf("number")
     }
     expect(samplesNamed(capture, "stream.eventDuplicate")).toEqual([])

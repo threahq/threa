@@ -110,7 +110,6 @@ import {
   Visibilities,
   normalizeSidebarConfig,
 } from "@threa/types"
-import { isCoalescedLiveCommitEnabledSync, primeEventWriteFlags } from "@/db/event-writes"
 import { applyStreamBootstrapInCurrentTransaction } from "./stream-sync"
 import { deleteStreamSlots, deleteSlotsForStreams } from "@/stores/slot-store"
 import { applyDraftDeleted, applyDraftUpserted } from "./draft-sync"
@@ -693,9 +692,9 @@ export function registerWorkspaceSocketHandlers(
      *  and sidebar order never flicker through intermediate replay values.
      *  Absent → live, write-immediately. */
     getCatchUpBatch?: () => CatchUpBatch | null
-    /** The engine's live-commit batch, used when `coalescedLiveCommit` is on:
-     *  one task's counter and preview writes fold into one transaction and one
-     *  cache publication instead of two of each per event. */
+    /** The engine's live-commit batch: one task's counter and preview writes
+     *  fold into one transaction and one cache publication instead of two of
+     *  each per event. Absent only for handlers built without an engine. */
     getLiveCommitBatch?: () => LiveCommitBatch | null
   }
 ): () => void {
@@ -705,50 +704,24 @@ export function registerWorkspaceSocketHandlers(
   // batch when one is active, else commit immediately (live). Read-pointer
   // mirrors and feed invalidations are not coalesced — they stay on their own
   // immediate paths in the handlers below.
-  /** The live batch when the flag is armed, else null. Re-read per event: a
-   *  backoffice flip re-primes the flag map, so arming and disarming both take
-   *  effect on the next event. */
-  const armedLiveBatch = (): LiveCommitBatch | null =>
-    isCoalescedLiveCommitEnabledSync(workspaceId) ? (refs.getLiveCommitBatch?.() ?? null) : null
-
-  /** Run an immediate (unbatched) commit, draining a still-pending fold first.
-   *  Without this, an off-flip mid-task lets an older buffered preview flush
-   *  AFTER a newer immediate commit and overwrite it in cache and IDB. */
-  const commitImmediate = (commit: () => void): void => {
-    const pending = refs.getLiveCommitBatch?.() ?? null
-    if (pending?.hasPending() || pending?.isFlushing()) {
-      pending.runAfterDrain(commit)
-      return
-    }
-    commit()
-  }
+  const liveBatch = (): LiveCommitBatch | null => refs.getLiveCommitBatch?.() ?? null
 
   const commitCounter = (mutate: CounterMutator): void => {
-    const batch = refs.getCatchUpBatch?.() ?? null
+    const batch = refs.getCatchUpBatch?.() ?? liveBatch()
     if (batch) {
       batch.applyCounter(mutate)
       return
     }
-    const live = armedLiveBatch()
-    if (live) {
-      live.applyCounter(mutate)
-      return
-    }
-    commitImmediate(() => commitCounterMutation(queryClient, workspaceId, mutate))
+    commitCounterMutation(queryClient, workspaceId, mutate)
   }
 
   const commitPreview = (streamId: string, preview: LastMessagePreview | null): void => {
-    const batch = refs.getCatchUpBatch?.() ?? null
+    const batch = refs.getCatchUpBatch?.() ?? liveBatch()
     if (batch) {
       batch.setStreamPreview(streamId, preview)
       return
     }
-    const live = armedLiveBatch()
-    if (live) {
-      live.setStreamPreview(streamId, preview)
-      return
-    }
-    commitImmediate(() => commitStreamPreview(queryClient, workspaceId, streamId, preview))
+    commitStreamPreview(queryClient, workspaceId, streamId, preview)
   }
 
   // Activity-feed invalidation seam. During catch-up it marks the feed stale on
@@ -1212,12 +1185,12 @@ export function registerWorkspaceSocketHandlers(
     // commit from ONE ordered buffer: routing it around the batch would open its
     // transaction at handler time and drop held rows BEFORE the buffered fold
     // inserts them, resurrecting an already-read mention.
-    const batch = refs.getCatchUpBatch?.() ?? armedLiveBatch()
+    const batch = refs.getCatchUpBatch?.() ?? liveBatch()
     if (batch) {
       batch.applyCounter((state) => applyStreamsReadAllOrdinals(state, payload.reads))
       batch.applyReadAllFrontiers(payload.frontiers)
     } else {
-      commitImmediate(() => void commitReadAll(queryClient, workspaceId, payload.reads, payload.frontiers))
+      void commitReadAll(queryClient, workspaceId, payload.reads, payload.frontiers)
     }
 
     // Standalone frontier (read cutover): read_all carries ordinals, no event
@@ -1784,10 +1757,7 @@ export function registerWorkspaceSocketHandlers(
     }))
     if (!patched) return
     const layers = queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap(workspaceId))?.featureFlags
-    if (layers) {
-      primeEventWriteFlags(workspaceId, layers)
-      void db.workspaceMetadata.update(workspaceId, { featureFlags: layers })
-    }
+    if (layers) void db.workspaceMetadata.update(workspaceId, { featureFlags: layers })
   }
 
   const handleFeatureFlagsUpdated = (payload: FeatureFlagsUpdatedPayload) => {
@@ -2685,7 +2655,6 @@ export async function applyWorkspaceBootstrap(
 ): Promise<AppliedWorkspaceBootstrap> {
   const now = Date.now()
   const capture = getPerfCapture()
-  primeEventWriteFlags(workspaceId, bootstrap.featureFlags)
 
   // Build membership lookup for O(1) access when merging onto streams
   const membershipByStream = new Map(bootstrap.streamMemberships.map((sm) => [sm.streamId, sm]))
@@ -3165,8 +3134,6 @@ export async function applyReconnectBootstrapBatch(
     localUnreadState: localUnreadState ?? undefined,
     fetchStartedAt,
   })
-
-  primeEventWriteFlags(workspaceId, finalBootstrap.featureFlags)
 
   const membershipByStream = new Map(finalBootstrap.streamMemberships.map((sm) => [sm.streamId, sm]))
 

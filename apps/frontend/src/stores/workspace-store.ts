@@ -6,7 +6,6 @@ import {
   type WorkspaceTableKey,
   type WorkspaceTableRowTypes,
 } from "./workspace-table-registry"
-import { primeEventWriteFlagsIfAbsent } from "@/db/event-writes"
 // Namespace import so the shared overlay memo below is spy-able against the
 // module (INV-48) — the "once per workspace, not once per consumer" property is
 // only assertable through the real call.
@@ -216,8 +215,6 @@ export async function seedCacheFromIdb(workspaceId: string): Promise<boolean> {
     publishWorkspaceCache(workspaceId)
     return true
   }
-
-  primeEventWriteFlagsIfAbsent(workspaceId, metadata?.featureFlags)
 
   seedWorkspaceCache(workspaceId, {
     workspace,
