@@ -108,6 +108,22 @@ describe("composer pill moves", () => {
     )
   })
 
+  it("paints pills a text selection covers and leaves the ones it stops short of", () => {
+    const editor = createPillEditor([pill("mention"), { type: "text", text: "hi" }, pill("channelLink")])
+    const mentionPos = nodePos(editor, "mention")
+    const channelPos = nodePos(editor, "channelLink")
+
+    editor.commands.setTextSelection({ from: mentionPos, to: channelPos })
+    expect(editor.view.dom.querySelectorAll(".composer-pill-in-selection")).toHaveLength(1)
+    expect(editor.view.dom.querySelector('[data-type="mention"]')).toHaveClass("composer-pill-in-selection")
+
+    editor.commands.setTextSelection({ from: mentionPos, to: channelPos + 1 })
+    expect(editor.view.dom.querySelectorAll(".composer-pill-in-selection")).toHaveLength(2)
+
+    editor.commands.setNodeSelection(mentionPos)
+    expect(editor.view.dom.querySelectorAll(".composer-pill-in-selection")).toHaveLength(0)
+  })
+
   it("builds one transaction that leaves the document unchanged until dispatch", () => {
     const editor = createPillEditor()
     const sourcePos = nodePos(editor, "mention")

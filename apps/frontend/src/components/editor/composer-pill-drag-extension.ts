@@ -145,11 +145,29 @@ export function createComposerPillMoveTransaction(
   return tr
 }
 
-function dragDecorations(state: EditorState): DecorationSet | null {
+/**
+ * Pills are `user-select: none`, so no engine paints the selection highlight
+ * over one even when it sits squarely inside the range — the surrounding text
+ * highlights and the pill looks untouched. The range is real (copy carries the
+ * pill), so the only thing missing is the paint, and the app supplies it.
+ */
+function selectedPillDecorations(state: EditorState): Decoration[] {
+  const { selection } = state
+  if (selection.empty || selection instanceof NodeSelection) return []
+
+  const decorations: Decoration[] = []
+  state.doc.nodesBetween(selection.from, selection.to, (node, pos) => {
+    if (!isComposerPillNode(node) || pos < selection.from || pos + node.nodeSize > selection.to) return
+    decorations.push(Decoration.node(pos, pos + node.nodeSize, { class: "composer-pill-in-selection" }))
+  })
+  return decorations
+}
+
+function dragDecorations(state: EditorState): Decoration[] {
   const drag = ComposerPillDragPluginKey.getState(state)
-  if (!drag) return null
+  if (!drag) return []
   const source = state.doc.nodeAt(drag.sourcePos)
-  if (!isComposerPillNode(source)) return null
+  if (!isComposerPillNode(source)) return []
 
   const decorations: Decoration[] = [
     Decoration.node(drag.sourcePos, drag.sourcePos + source.nodeSize, {
@@ -177,7 +195,12 @@ function dragDecorations(state: EditorState): DecorationSet | null {
     )
   }
 
-  return DecorationSet.create(state.doc, decorations)
+  return decorations
+}
+
+function pillDecorations(state: EditorState): DecorationSet | null {
+  const decorations = [...dragDecorations(state), ...selectedPillDecorations(state)]
+  return decorations.length === 0 ? null : DecorationSet.create(state.doc, decorations)
 }
 
 function mappedDragState(tr: Transaction, current: ComposerPillDragState | null): ComposerPillDragState | null {
@@ -671,7 +694,7 @@ export const ComposerPillDragExtension = Extension.create({
           apply: mappedDragState,
         },
         props: {
-          decorations: dragDecorations,
+          decorations: pillDecorations,
         },
         view(view) {
           const controller = new ComposerPillDragController(view)
