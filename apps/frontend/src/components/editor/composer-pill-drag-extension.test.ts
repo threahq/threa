@@ -268,8 +268,21 @@ describe("composer pill drag gestures", () => {
 
     fireEvent.touchStart(source, { touches: [touch(7, 10, 10)] })
     vi.advanceTimersByTime(500)
-    fireEvent.touchEnd(document, { touches: [], changedTouches: [touch(7, 10, 10)] })
+    fireEvent.touchMove(document, { touches: [touch(7, 21, 10)] })
+    fireEvent.touchEnd(document, { touches: [], changedTouches: [touch(7, 21, 10)] })
 
+    const compatibilityMouseDown = new MouseEvent("mousedown", {
+      bubbles: true,
+      cancelable: true,
+      button: 0,
+      clientX: 10,
+      clientY: 10,
+    })
+    source.dispatchEvent(compatibilityMouseDown)
+    fireEvent.mouseUp(source, { button: 0, clientX: 10, clientY: 10 })
+    fireEvent.click(source)
+
+    expect(compatibilityMouseDown.defaultPrevented).toBe(true)
     expect(editor.state.selection).not.toBeInstanceOf(NodeSelection)
     expect(source).not.toHaveClass("ProseMirror-selectednode")
   })
