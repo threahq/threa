@@ -10,8 +10,14 @@ keypair persisted `0600` at `~/.pi/agent/threa-remote-bik.json`) and registers
 the public half on every hello/presence. Once the scratchpad owner invites this
 bot into an encrypted scratchpad (which wraps the stream key to the BIK), claims
 arrive sealed: the extension decrypts the trigger + history locally, runs the
-turn, and seals every reply and trace step back under the stream key — the
+turn, and seals every reply and trace step back under the stream key. The
 server only ever stores ciphertext.
+
+## Invocation edits and deletion
+
+The extension applies source-message edits to an active Pi turn as steering input. It rebuilds plaintext context and attachments from Threa; sealed turns decrypt updated attachment references locally. Completions carry the exact applied source revision, so stale output cannot replace a newer edit.
+
+Deleting the source or losing its claim aborts the active Pi turn and suppresses late trace and completion writes. The shared runtime client owns claim renewal and control synchronization. `/reload` saves active revisions and retry prompts, then re-registers each claim before resuming work.
 
 ## Trace detail
 
@@ -27,7 +33,7 @@ traces everywhere, use `traceMode: "commands"` with `sealedFullTrace: false`.
 The toggle can never enable full detail on a plaintext turn. Attachments (`THREA_ATTACH:`) work on
 sealed turns too: the file is encrypted locally under a fresh single-use key,
 only ciphertext is uploaded (placeholder name/mime on the server), and the key
-rides sealed inside the reply payload — inbound attachments are likewise
+rides sealed inside the reply payload. Inbound attachments are likewise
 fetched as ciphertext and decrypted locally. Deleting the BIK file orphans the
 owner's key wraps; the owner must re-invite the bot after it registers a fresh
 key.

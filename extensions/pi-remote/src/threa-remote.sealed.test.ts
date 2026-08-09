@@ -37,6 +37,7 @@ function invocation(overrides: Record<string, unknown> = {}): SealedInvocation {
     id: "binv_1",
     activeStreamId: "stream_a",
     sourceMessageId: "msg_1",
+    sourceRevision: 1,
     promptMarkdown: "hi",
     claimToken: "tok",
     claimExpiresAt: null,
@@ -122,7 +123,7 @@ describe("sealed attachments (outbound)", () => {
 
     try {
       await __testing.completeSealedWithMarkdown(
-        invocation() as never,
+        invocation({ sealing: sealingState }) as never,
         sealingState as never,
         `Done — data attached.\nTHREA_ATTACH: ${filePath}`,
         dir
@@ -138,6 +139,7 @@ describe("sealed attachments (outbound)", () => {
     expect(Array.from(uploads[0]!.bytes)).not.toEqual(Array.from(plaintext))
     // The completion binds the row and the sealed payload carries the ref.
     expect(completions).toHaveLength(1)
+    expect(completions[0]?.sourceRevision).toBe(1)
     const reply = (
       completions[0] as {
         reply: { messageId: string; ciphertext: string; envelope: StreamEnvelope; attachmentIds?: string[] }
@@ -176,7 +178,7 @@ describe("sealed attachments (outbound)", () => {
 
     try {
       await __testing.completeSealedWithMarkdown(
-        invocation() as never,
+        invocation({ sealing: sealingState }) as never,
         sealingState as never,
         "Answer.\nTHREA_ATTACH: ./missing.bin",
         tempDir()
