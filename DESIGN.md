@@ -534,7 +534,7 @@ The composer is **TipTap (ProseMirror)** wrapped by:
 - Text structure: `doc`, `paragraph`, `text`, `hardBreak`, `heading`, `blockquote`, `horizontalRule`, and `codeBlock`.
 - Lists and tables: `bulletList`, `orderedList`, `listItem`, `table`, `tableRow`, `tableHeader`, and `tableCell`.
 - Inline atoms: `mention` (`attrs.slug`), `channelLink` (`attrs.slug`), `slashCommand` (`attrs.name`), `emoji`, `attachmentReference`, `memoEmbed`, `inAppLink`, and `giphyEmbed`.
-- Pill atoms (every inline atom above except `emoji`) reorder by drag. Mouse activation starts after 6px. A touch tap selects the whole pill for native copy; a stationary hold leaves the OS selection menu available, while movement after the shared 500ms hold starts a drag. The source greys in place while a gold caret snaps between words; touch mirrors that slot in a contextual loupe above the thumb and pulses haptics as the target changes. Release commits one undoable move.
+- Pill atoms (every inline atom above except `emoji`) reorder by drag. Mouse activation starts after 6px. On touch, a tap selects the whole pill for native copy; moving that selected pill by more than 10px starts a drag, while an unselected pill leaves the same movement to scrolling. A stationary hold leaves the OS selection menu available. The source greys in place while a gold caret snaps between words; touch mirrors that slot in a contextual loupe above the thumb and pulses haptics as the target changes. Release commits one undoable move.
 - Block atoms: `quoteReply` and `sharedMessage`.
 
 The mobile collapsed bar and board draft affordances both use
