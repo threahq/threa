@@ -1109,3 +1109,12 @@ body > .rt-DialogOverlay,
 body > .rt-AlertDialogOverlay {
   z-index: 60;
 }
+
+/* Sonner renders in the app tree, so a Radix modal's `pointer-events: none` on
+   <body> reaches the toaster and makes every toast action dead while a dialog
+   or drawer is open — the "A new version is available" Reload button most
+   visibly. Toasts sit above every overlay (z-index 999999999); they stay
+   tappable there too. */
+[data-sonner-toaster] {
+  pointer-events: auto;
+}
