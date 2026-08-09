@@ -37,6 +37,7 @@ interface PendingDrag {
   startY: number
   holdElapsed: boolean
   touchDragEligible: boolean
+  movedBeyondTolerance: boolean
   active: boolean
 }
 
@@ -340,11 +341,17 @@ class ComposerPillDragController {
     this.doc.addEventListener("touchmove", this.onTouchMove, { capture: true, passive: false })
     this.doc.addEventListener("touchend", this.onTouchEnd, true)
     this.doc.addEventListener("touchcancel", this.onTouchCancel, true)
+    this.doc.addEventListener("selectstart", this.onSelectStart, true)
     this.longPressTimer = this.win.setTimeout(() => {
-      if (!this.pending || this.pending.kind !== "touch") return
-      this.pending.holdElapsed = true
+      const pending = this.pending
+      if (!pending || pending.kind !== "touch") return
+      pending.holdElapsed = true
       this.suppressMouseUntil = Date.now() + COMPATIBILITY_MOUSE_WINDOW_MS
-      this.longPressTimer = null
+      if (pending.touchDragEligible) {
+        this.clearPending()
+        return
+      }
+      this.activate()
     }, LONG_PRESS_THRESHOLD_MS)
   }
 
@@ -394,6 +401,13 @@ class ComposerPillDragController {
       if (tappedPillPos !== null) this.selectPill(tappedPillPos)
       return
     }
+    if (drag.kind === "touch" && !drag.movedBeyondTolerance) {
+      const sourcePos = ComposerPillDragPluginKey.getState(this.view.state)?.sourcePos ?? drag.sourcePos
+      this.clearPending(true)
+      this.clearDragState()
+      this.selectPill(sourcePos)
+      return
+    }
 
     this.updateDrop(x, y)
     const current = ComposerPillDragPluginKey.getState(this.view.state)
@@ -432,6 +446,7 @@ class ComposerPillDragController {
     this.doc.removeEventListener("touchmove", this.onTouchMove, true)
     this.doc.removeEventListener("touchend", this.onTouchEnd, true)
     this.doc.removeEventListener("touchcancel", this.onTouchCancel, true)
+    this.doc.removeEventListener("selectstart", this.onSelectStart, true)
     this.doc.removeEventListener("keydown", this.onKeyDown, true)
     this.win.removeEventListener("blur", this.onWindowBlur)
     this.removeTouchGuide()
@@ -527,6 +542,7 @@ class ComposerPillDragController {
       startY: event.clientY,
       holdElapsed: false,
       touchDragEligible: false,
+      movedBeyondTolerance: false,
       active: false,
     })
   }
@@ -565,6 +581,7 @@ class ComposerPillDragController {
       startY: touch.clientY,
       holdElapsed: false,
       touchDragEligible: isComposerPillSelected(this.view.state, pill.pos),
+      movedBeyondTolerance: false,
       active: false,
     })
   }
@@ -582,9 +599,11 @@ class ComposerPillDragController {
     }
     const touch = touchById(event.touches, drag.id)
     if (!touch) return
+    const movedBeyondTolerance = movedBeyondLongPressTolerance(drag, touch.clientX, touch.clientY)
+    if (movedBeyondTolerance) drag.movedBeyondTolerance = true
     if (!drag.active) {
-      if (!movedBeyondLongPressTolerance(drag, touch.clientX, touch.clientY)) return
-      if (!drag.holdElapsed && (!drag.touchDragEligible || !isComposerPillSelected(this.view.state, drag.sourcePos))) {
+      if (!movedBeyondTolerance) return
+      if (!drag.touchDragEligible || !isComposerPillSelected(this.view.state, drag.sourcePos)) {
         this.cancel()
         return
       }
@@ -593,7 +612,7 @@ class ComposerPillDragController {
     if (!this.pending?.active) return
     if (event.cancelable) event.preventDefault()
     event.stopPropagation()
-    this.updateDrop(touch.clientX, touch.clientY)
+    if (drag.movedBeyondTolerance) this.updateDrop(touch.clientX, touch.clientY)
   }
 
   private onTouchEnd = (event: TouchEvent) => {
@@ -606,6 +625,13 @@ class ComposerPillDragController {
   }
 
   private onTouchCancel = () => this.cancel(true)
+
+  private onSelectStart = (event: Event) => {
+    const drag = this.pending
+    if (!drag || drag.kind !== "touch") return
+    const nativeSelectionAllowed = !drag.active && drag.touchDragEligible
+    if (!nativeSelectionAllowed) event.preventDefault()
+  }
 
   private onKeyDown = (event: KeyboardEvent) => {
     if (event.key !== "Escape") return
@@ -625,17 +651,20 @@ class ComposerPillDragController {
   }
 
   private onContextMenu = (event: MouseEvent) => {
-    if (this.pending?.kind !== "touch") return
-    if (this.pending.active) {
+    const pending = this.pending
+    if (!pending || pending.kind !== "touch") return
+    if (pending.active) {
       event.preventDefault()
       return
     }
-    this.pending.holdElapsed = true
-    this.suppressMouseUntil = Date.now() + COMPATIBILITY_MOUSE_WINDOW_MS
-    if (this.longPressTimer !== null) {
-      this.win.clearTimeout(this.longPressTimer)
-      this.longPressTimer = null
+    if (pending.touchDragEligible) {
+      this.clearPending()
+      return
     }
+    event.preventDefault()
+    pending.holdElapsed = true
+    this.suppressMouseUntil = Date.now() + COMPATIBILITY_MOUSE_WINDOW_MS
+    this.activate()
   }
 
   private onNativeDragStart = (event: DragEvent) => {
