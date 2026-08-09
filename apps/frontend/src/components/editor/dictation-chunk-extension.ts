@@ -1,8 +1,8 @@
 import { Extension } from "@tiptap/core"
 import { Node as ProseMirrorNode } from "@tiptap/pm/model"
-import { Plugin, PluginKey, type EditorState } from "@tiptap/pm/state"
+import { Plugin, PluginKey, type EditorState, type Transaction } from "@tiptap/pm/state"
 import { Decoration, DecorationSet } from "@tiptap/pm/view"
-import type { JSONContent } from "@threa/types"
+import type { JSONContent, VoiceReplacementAckStatus, VoiceTranscriptReplacementSourceV4 } from "@threa/types"
 import { canonicalContentSlice } from "./multiline-blocks"
 
 export interface DictationChunkInfo {
@@ -14,7 +14,10 @@ export interface DictationChunkInfo {
 
 type Chunk = { chunkId: string; from: number; to: number; expectedContentJson: JSONContent; locked: boolean }
 type ChunkState = Map<string, Chunk>
-type ChunkMeta = { type: "set"; chunk: Chunk } | { type: "lock"; chunkId: string } | { type: "removeAll" }
+type ChunkMeta =
+  | { type: "set"; chunk: Chunk; removeChunkIds?: string[] }
+  | { type: "lock"; chunkId: string }
+  | { type: "removeAll" }
 
 const DictationChunkPluginKey = new PluginKey<ChunkState>("dictationChunk")
 
@@ -24,6 +27,50 @@ function sliceJson(doc: ProseMirrorNode, from: number, to: number): JSONContent 
 
 function equalJson(a: JSONContent, b: JSONContent): boolean {
   return JSON.stringify(a) === JSON.stringify(b)
+}
+
+function isCanonicalDoc(contentJson: unknown): contentJson is JSONContent {
+  return (
+    typeof contentJson === "object" &&
+    contentJson !== null &&
+    (contentJson as JSONContent).type === "doc" &&
+    Array.isArray((contentJson as JSONContent).content) &&
+    (contentJson as JSONContent).content!.length > 0
+  )
+}
+
+function replacementSpan(
+  tr: Transaction,
+  firstStep: number,
+  requestedFrom: number,
+  requestedTo: number
+): { from: number; to: number } | null {
+  let oldFrom = requestedFrom
+  let oldTo = requestedTo
+  for (let index = firstStep; index < tr.steps.length; index++) {
+    const map = tr.steps[index]!.getMap()
+    let newFrom: number | undefined
+    let newTo: number | undefined
+    map.forEach((stepOldFrom, stepOldTo, stepNewFrom, stepNewTo) => {
+      if (stepOldFrom <= oldFrom && stepOldTo >= oldTo && stepNewTo > stepNewFrom) {
+        newFrom = stepNewFrom
+        newTo = stepNewTo
+      }
+    })
+    if (newFrom !== undefined && newTo !== undefined) {
+      let from = newFrom
+      let to = newTo
+      for (let later = index + 1; later < tr.steps.length; later++) {
+        const laterMap = tr.steps[later]!.getMap()
+        from = laterMap.map(from, -1)
+        to = laterMap.map(to, 1)
+      }
+      return from < to ? { from, to } : null
+    }
+    oldFrom = map.map(oldFrom, -1)
+    oldTo = map.map(oldTo, 1)
+  }
+  return null
 }
 
 function withBoundarySpace(state: EditorState, from: number, contentJson: JSONContent): JSONContent {
@@ -41,8 +88,19 @@ function withBoundarySpace(state: EditorState, from: number, contentJson: JSONCo
 declare module "@tiptap/core" {
   interface Commands<ReturnType> {
     dictationChunk: {
-      insertDictationChunk: (args: { chunkId: string; contentJson: JSONContent }) => ReturnType
+      insertDictationChunk: (args: {
+        chunkId: string
+        contentJson: JSONContent
+        afterChunkId?: string
+        joinPrevious?: boolean
+      }) => ReturnType
       replaceDictationChunk: (args: { chunkId: string; contentJson: JSONContent }) => ReturnType
+      replaceDictationChunks: (args: {
+        sources: VoiceTranscriptReplacementSourceV4[]
+        resultChunkId: string
+        contentJson: JSONContent
+        onResult: (status: VoiceReplacementAckStatus) => void
+      }) => ReturnType
       lockDictationChunk: (args: { chunkId: string }) => ReturnType
       lockAllDictationChunks: () => ReturnType
     }
@@ -55,27 +113,33 @@ export const DictationChunkExtension = Extension.create({
   addCommands() {
     return {
       insertDictationChunk:
-        ({ chunkId, contentJson }) =>
+        ({ chunkId, contentJson, afterChunkId, joinPrevious }) =>
         ({ state, tr, dispatch }) => {
-          const existing = DictationChunkPluginKey.getState(state)?.get(chunkId)
-          if (existing?.locked) return false
-          const from = existing?.to ?? state.selection.from
-          const to = existing?.to ?? state.selection.to
-          const normalized = withBoundarySpace(state, from, contentJson)
+          const chunks = DictationChunkPluginKey.getState(state)
+          const existing = chunks?.get(chunkId)
+          const predecessor = afterChunkId ? chunks?.get(afterChunkId) : undefined
+          if (afterChunkId && !predecessor) return false
+          if (!isCanonicalDoc(contentJson)) return false
+          const from = existing?.to ?? predecessor?.to ?? state.selection.from
+          const to = existing?.to ?? predecessor?.to ?? state.selection.to
+          const normalized = joinPrevious ? contentJson : withBoundarySpace(state, from, contentJson)
           const slice = canonicalContentSlice(state.schema, normalized)
           if (!slice) return false
+          const firstStep = tr.steps.length
           tr.replaceRange(from, to, slice)
-          const insertedFrom = tr.mapping.map(from, -1)
-          const insertedTo = tr.mapping.map(to, 1)
-          const chunkFrom = existing?.from ?? insertedFrom
+          const inserted = replacementSpan(tr, firstStep, from, to)
+          if (!inserted) return false
+          const chunkFrom = existing?.from ?? inserted.from
+          const chunkTo = inserted.to
+          if (chunkFrom >= chunkTo) return false
           tr.setMeta(DictationChunkPluginKey, {
             type: "set",
             chunk: {
               chunkId,
               from: chunkFrom,
-              to: insertedTo,
-              expectedContentJson: sliceJson(tr.doc, chunkFrom, insertedTo),
-              locked: false,
+              to: chunkTo,
+              expectedContentJson: sliceJson(tr.doc, chunkFrom, chunkTo),
+              locked: existing?.locked ?? false,
             },
           } satisfies ChunkMeta)
           dispatch?.(tr.scrollIntoView())
@@ -87,6 +151,7 @@ export const DictationChunkExtension = Extension.create({
         ({ state, tr, dispatch }) => {
           const chunk = DictationChunkPluginKey.getState(state)?.get(chunkId)
           if (!chunk || chunk.locked) return false
+          if (!isCanonicalDoc(contentJson)) return false
           const normalized = withBoundarySpace(state, chunk.from, contentJson)
           const slice = canonicalContentSlice(state.schema, normalized)
           if (!slice) return false
@@ -95,15 +160,85 @@ export const DictationChunkExtension = Extension.create({
             dispatch?.(tr)
             return false
           }
+          const firstStep = tr.steps.length
           tr.replaceRange(chunk.from, chunk.to, slice)
-          const from = tr.mapping.map(chunk.from, -1)
-          const to = tr.mapping.map(chunk.to, 1)
+          const inserted = replacementSpan(tr, firstStep, chunk.from, chunk.to)
+          if (!inserted) return false
+          const { from, to } = inserted
           tr.setMeta(DictationChunkPluginKey, {
             type: "set",
             chunk: { chunkId, from, to, expectedContentJson: sliceJson(tr.doc, from, to), locked: false },
           } satisfies ChunkMeta)
           dispatch?.(tr)
           return true
+        },
+
+      replaceDictationChunks:
+        ({ sources, resultChunkId, contentJson, onResult }) =>
+        ({ state, tr, dispatch }) => {
+          const finish = (status: VoiceReplacementAckStatus) => {
+            onResult(status)
+            return status === "applied"
+          }
+          if (
+            !isCanonicalDoc(contentJson) ||
+            typeof resultChunkId !== "string" ||
+            resultChunkId.length === 0 ||
+            !Array.isArray(sources) ||
+            sources.length < 1 ||
+            sources.length > 2 ||
+            sources.some(
+              (source) =>
+                !source ||
+                typeof source !== "object" ||
+                typeof source.chunkId !== "string" ||
+                source.chunkId.length === 0 ||
+                !Number.isSafeInteger(source.throughRevision) ||
+                source.throughRevision < 0
+            ) ||
+            new Set(sources.map((source) => source.chunkId)).size !== sources.length
+          )
+            return finish("invalid")
+          const chunks = DictationChunkPluginKey.getState(state)
+          if (chunks?.has(resultChunkId) && !sources.some((source) => source.chunkId === resultChunkId))
+            return finish("invalid")
+          const resolved = sources.map((source) => chunks?.get(source.chunkId))
+          if (resolved.some((chunk) => !chunk)) return finish("missing")
+          const concrete = resolved as Chunk[]
+          const locked = concrete.find((chunk) => chunk.locked)
+          if (locked) return finish("locked")
+          for (const chunk of concrete) {
+            if (!equalJson(sliceJson(state.doc, chunk.from, chunk.to), chunk.expectedContentJson)) {
+              tr.setMeta(DictationChunkPluginKey, { type: "lock", chunkId: chunk.chunkId } satisfies ChunkMeta)
+              dispatch?.(tr)
+              return finish("locked")
+            }
+          }
+          if (concrete.some((chunk, index) => index > 0 && concrete[index - 1].to !== chunk.from))
+            return finish("non_contiguous")
+          const first = concrete[0]
+          const last = concrete.at(-1)!
+          const normalized = withBoundarySpace(state, first.from, contentJson)
+          const slice = canonicalContentSlice(state.schema, normalized)
+          if (!slice) return finish("invalid")
+          const firstStep = tr.steps.length
+          tr.replaceRange(first.from, last.to, slice)
+          const inserted = replacementSpan(tr, firstStep, first.from, last.to)
+          if (!inserted) return finish("invalid")
+          const { from, to } = inserted
+          tr.setMeta(DictationChunkPluginKey, {
+            type: "set",
+            removeChunkIds: sources.map((source) => source.chunkId),
+            chunk: {
+              chunkId: resultChunkId,
+              from,
+              to,
+              expectedContentJson: sliceJson(tr.doc, from, to),
+              locked: false,
+            },
+          } satisfies ChunkMeta)
+          dispatch?.(tr)
+          return finish("applied")
         },
 
       lockDictationChunk:
@@ -135,7 +270,7 @@ export const DictationChunkExtension = Extension.create({
             if (meta?.type === "removeAll") return new Map()
             const next = new Map<string, Chunk>()
             for (const [id, chunk] of previous) {
-              if (meta?.type === "set" && meta.chunk.chunkId === id) continue
+              if (meta?.type === "set" && (meta.chunk.chunkId === id || meta.removeChunkIds?.includes(id))) continue
               const from = tr.mapping.map(chunk.from, 1)
               const to = tr.mapping.map(chunk.to, -1)
               let locked = chunk.locked || (meta?.type === "lock" && meta.chunkId === id)

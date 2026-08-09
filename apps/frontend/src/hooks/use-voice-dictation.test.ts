@@ -12,18 +12,22 @@ import {
 } from "./use-voice-dictation"
 
 class FakeSocket {
-  handlers = new Map<string, (payload: unknown) => void>()
+  handlers = new Map<string, (...args: unknown[]) => void>()
+  startPayloads: unknown[] = []
   stopCallbacks: Array<() => void> = []
   stopPayloads: unknown[] = []
   disconnected = false
   private timeoutMs: number | null = null
   constructor(private readonly ack: VoiceStartAck) {}
-  on(event: string, callback: (payload: unknown) => void) {
+  on(event: string, callback: (...args: unknown[]) => void) {
     this.handlers.set(event, callback)
     return this
   }
   emit(event: string, ...args: unknown[]) {
-    if (event === "voice:start") (args[1] as (ack: VoiceStartAck) => void)(this.ack)
+    if (event === "voice:start") {
+      this.startPayloads.push(args[0])
+      ;(args[1] as (ack: VoiceStartAck) => void)(this.ack)
+    }
     if (event === "voice:stop") {
       this.stopPayloads.push(args[0])
       const callback = args.at(-1)
@@ -42,8 +46,8 @@ class FakeSocket {
     this.disconnected = true
     return this
   }
-  fire(event: string, payload: unknown) {
-    this.handlers.get(event)?.(payload)
+  fire(event: string, ...args: unknown[]) {
+    this.handlers.get(event)?.(...args)
   }
 }
 
@@ -73,6 +77,15 @@ class FakeWorklet {
 const stream = {
   getAudioTracks: () => [{ label: "Test mic", onmute: null, onunmute: null }],
   getTracks: () => [{ stop: () => {} }],
+}
+
+const paragraph = (text: string): JSONContent => ({
+  type: "doc",
+  content: [{ type: "paragraph", content: [{ type: "text", text }] }],
+})
+
+function contentText(contentJson: JSONContent): string {
+  return `${contentJson.text ?? ""}${(contentJson.content ?? []).map(contentText).join("")}`
 }
 
 beforeEach(() => {
@@ -278,7 +291,7 @@ describe("useVoiceDictation lifecycle", () => {
     ["transport disconnect", "disconnect", undefined],
     ["upstream error", "voice:transcription:error", { code: "UPSTREAM_CLOSED" }],
   ])("commits the exact visible interim once before teardown on %s", async (_label, event, payload) => {
-    const inserted = vi.fn()
+    const inserted = vi.fn(() => true)
     const harness = hookHarness([{ ok: true, protocolVersion: 3 }], { onPolishedChunkInserted: inserted })
     act(() => harness.result.current.start())
     await waitFor(() => expect(harness.result.current.state).toBe("recording"))
@@ -313,7 +326,10 @@ describe("useVoiceDictation lifecycle", () => {
 
   it("flushes visible interim before a terminal provider outcome locks tracking", async () => {
     const order: string[] = []
-    const inserted = vi.fn(() => order.push("insert"))
+    const inserted = vi.fn(() => {
+      order.push("insert")
+      return true
+    })
     const lockAll = vi.fn(() => order.push("lock"))
     const harness = hookHarness([{ ok: true, protocolVersion: 3 }], {
       onPolishedChunkInserted: inserted,
@@ -351,7 +367,7 @@ describe("useVoiceDictation lifecycle", () => {
   })
 
   it("preserves visible interim as-is when the page is backgrounded", async () => {
-    const inserted = vi.fn()
+    const inserted = vi.fn(() => true)
     const harness = hookHarness([{ ok: true, protocolVersion: 3 }], { onPolishedChunkInserted: inserted })
     act(() => harness.result.current.start())
     await waitFor(() => expect(harness.result.current.state).toBe("recording"))
@@ -386,7 +402,7 @@ describe("useVoiceDictation lifecycle", () => {
   })
 
   it("commits visible interim when scope navigation unmounts the active take", async () => {
-    const inserted = vi.fn()
+    const inserted = vi.fn(() => true)
     const harness = hookHarness([{ ok: true, protocolVersion: 3 }], { onPolishedChunkInserted: inserted })
     act(() => harness.result.current.start())
     await waitFor(() => expect(harness.result.current.state).toBe("recording"))
@@ -431,6 +447,72 @@ describe("useVoiceDictation lifecycle", () => {
     expect(harness.sockets[0].stopPayloads).toEqual([{ mode: "abort" }])
   })
 
+  it("commits only the v4 recovery chunk immediately and locks accepted chunks after terminal grace", async () => {
+    const inserted = vi.fn(() => true)
+    const lockChunk = vi.fn()
+    const lockAll = vi.fn()
+    const harness = hookHarness([{ ok: true, protocolVersion: 4 }], {
+      onPolishedChunkInserted: inserted,
+      onChunksReplace: () => "applied",
+      onLockChunk: lockChunk,
+      onLockAllChunks: lockAll,
+    })
+    act(() => harness.result.current.start())
+    await waitFor(() => expect(harness.result.current.state).toBe("recording"))
+    vi.useFakeTimers()
+    try {
+      act(() => {
+        harness.sockets[0].fire("voice:transcript:delta", {
+          protocolVersion: 4,
+          voiceSessionId: "voicesess_1",
+          revision: 1,
+          text: "accepted raw",
+          isFinal: true,
+          chunkId: "accepted",
+          contentJson: paragraph("accepted raw"),
+        })
+        harness.sockets[0].fire("voice:transcript:polished", {
+          protocolVersion: 4,
+          operationId: "accepted-operation",
+          voiceSessionId: "voicesess_1",
+          authoritative: false,
+          resultChunkId: "accepted",
+          throughRevision: 1,
+          sources: [{ chunkId: "accepted", throughRevision: 1 }],
+          raw: "accepted raw",
+          polished: "Accepted polished.",
+          rawContentJson: paragraph("accepted raw"),
+          polishedContentJson: paragraph("Accepted polished."),
+        })
+        harness.sockets[0].fire("voice:transcript:delta", {
+          protocolVersion: 4,
+          voiceSessionId: "voicesess_1",
+          revision: 1,
+          text: "visible v4 tail",
+          isFinal: false,
+        })
+        harness.sockets[0].fire("disconnect", undefined)
+        harness.sockets[0].fire("disconnect", undefined)
+      })
+
+      expect(inserted).toHaveBeenCalledTimes(2)
+      expect(inserted).toHaveBeenLastCalledWith({
+        chunkId: "local_recovery_1",
+        contentJson: paragraph("visible v4 tail"),
+      })
+      expect(lockChunk).toHaveBeenCalledWith({ chunkId: "local_recovery_1" })
+      expect(lockAll).toHaveBeenCalledOnce()
+      expect(harness.result.current.chunks.size).toBe(1)
+      expect(harness.result.current.error).toBe("Dictation connection lost")
+
+      act(() => vi.advanceTimersByTime(8_001))
+      expect(lockAll).toHaveBeenCalledTimes(2)
+      expect(harness.result.current.chunks.size).toBe(0)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it("canonically inserts send-as-is interim recovery synchronously before the composer snapshot", async () => {
     const order: string[] = []
     const inserted = vi.fn(({ contentJson }: { contentJson: JSONContent }) => {
@@ -439,6 +521,7 @@ describe("useVoiceDictation lifecycle", () => {
         type: "doc",
         content: [{ type: "paragraph", content: [{ type: "text", marks: [{ type: "bold" }], text: "recovered" }] }],
       })
+      return true
     })
     const harness = hookHarness([{ ok: true, protocolVersion: 3 }], { onPolishedChunkInserted: inserted })
     act(() => harness.result.current.start())
@@ -461,10 +544,433 @@ describe("useVoiceDictation lifecycle", () => {
     expect(harness.committed).not.toHaveBeenCalled()
   })
 
+  it("preserves failed tracked final and interim insertions once and ACKs unavailable v4 sources missing", async () => {
+    const inserted = vi.fn(() => false)
+    const harness = hookHarness([{ ok: true, protocolVersion: 4 }], { onPolishedChunkInserted: inserted })
+    act(() => harness.result.current.start())
+    await waitFor(() => expect(harness.result.current.state).toBe("recording"))
+    const contentJson: JSONContent = {
+      type: "doc",
+      content: [{ type: "paragraph", content: [{ type: "text", text: "final" }] }],
+    }
+    act(() =>
+      harness.sockets[0].fire("voice:transcript:delta", {
+        protocolVersion: 4,
+        voiceSessionId: "voicesess_1",
+        revision: 1,
+        text: "final",
+        isFinal: true,
+        chunkId: "a",
+        contentJson,
+      })
+    )
+    const acknowledgements: unknown[] = []
+    act(() =>
+      harness.sockets[0].fire(
+        "voice:transcript:polished",
+        {
+          protocolVersion: 4,
+          operationId: "missing-operation",
+          voiceSessionId: "voicesess_1",
+          authoritative: true,
+          resultChunkId: "a",
+          throughRevision: 1,
+          sources: [{ chunkId: "a", throughRevision: 1 }],
+          raw: "final",
+          polished: "Final.",
+          rawContentJson: contentJson,
+          polishedContentJson: contentJson,
+        },
+        (ack: unknown) => acknowledgements.push(ack)
+      )
+    )
+    act(() =>
+      harness.sockets[0].fire("voice:transcript:delta", {
+        protocolVersion: 4,
+        voiceSessionId: "voicesess_1",
+        revision: 2,
+        text: "interim",
+        isFinal: false,
+        chunkId: "b",
+        contentJson,
+      })
+    )
+    act(() => harness.result.current.prepareSendAsIs())
+
+    expect(harness.committed.mock.calls.map(([text]) => text)).toEqual(["final", "interim"])
+    expect(acknowledgements).toEqual([{ operationId: "missing-operation", status: "missing" }])
+  })
+
+  it("preserves hard-join semantics when a tracked continuation falls back to committed text", async () => {
+    const inserted = vi.fn().mockReturnValueOnce(true).mockReturnValueOnce(false)
+    const harness = hookHarness([{ ok: true, protocolVersion: 4 }], { onPolishedChunkInserted: inserted })
+    act(() => harness.result.current.start())
+    await waitFor(() => expect(harness.result.current.state).toBe("recording"))
+    act(() => {
+      harness.sockets[0].fire("voice:transcript:delta", {
+        protocolVersion: 4,
+        voiceSessionId: "voicesess_1",
+        revision: 1,
+        text: "hel",
+        isFinal: true,
+        chunkId: "a",
+        contentJson: paragraph("hel"),
+      })
+      harness.sockets[0].fire("voice:transcript:delta", {
+        protocolVersion: 4,
+        voiceSessionId: "voicesess_1",
+        revision: 2,
+        text: "lo",
+        isFinal: true,
+        chunkId: "b",
+        afterChunkId: "a",
+        joinPrevious: true,
+        contentJson: paragraph("lo"),
+      })
+    })
+    const acknowledgements: unknown[] = []
+    act(() =>
+      harness.sockets[0].fire(
+        "voice:transcript:polished",
+        {
+          protocolVersion: 4,
+          operationId: "missing-hard-split",
+          voiceSessionId: "voicesess_1",
+          authoritative: true,
+          resultChunkId: "b",
+          throughRevision: 2,
+          sources: [{ chunkId: "b", throughRevision: 2 }],
+          raw: "lo",
+          polished: "lo",
+          rawContentJson: paragraph("lo"),
+          polishedContentJson: paragraph("lo"),
+        },
+        (ack: unknown) => acknowledgements.push(ack)
+      )
+    )
+
+    expect(harness.committed.mock.calls).toEqual([["lo", { joinPrevious: true }]])
+    expect(acknowledgements).toEqual([{ operationId: "missing-hard-split", status: "missing" }])
+  })
+
+  it("ACKs a changed source revision stale without invoking the editor", async () => {
+    const replaced = vi.fn(() => "applied" as const)
+    const harness = hookHarness([{ ok: true, protocolVersion: 4 }], {
+      onPolishedChunkInserted: () => true,
+      onChunksReplace: replaced,
+    })
+    act(() => harness.result.current.start())
+    await waitFor(() => expect(harness.result.current.state).toBe("recording"))
+    act(() => {
+      for (const [revision, text] of [
+        [1, "first"],
+        [2, "newer"],
+      ] as const)
+        harness.sockets[0].fire("voice:transcript:delta", {
+          protocolVersion: 4,
+          voiceSessionId: "voicesess_1",
+          revision,
+          text,
+          isFinal: true,
+          chunkId: "a",
+          contentJson: paragraph(text),
+        })
+    })
+    const acknowledgements: unknown[] = []
+    act(() =>
+      harness.sockets[0].fire(
+        "voice:transcript:polished",
+        {
+          protocolVersion: 4,
+          operationId: "stale-operation",
+          voiceSessionId: "voicesess_1",
+          authoritative: false,
+          resultChunkId: "a",
+          throughRevision: 1,
+          sources: [{ chunkId: "a", throughRevision: 1 }],
+          raw: "first",
+          polished: "First.",
+          rawContentJson: paragraph("first"),
+          polishedContentJson: paragraph("First."),
+        },
+        (ack: unknown) => acknowledgements.push(ack)
+      )
+    )
+
+    expect({ acknowledgements, editorCalls: replaced.mock.calls }).toEqual({
+      acknowledgements: [{ operationId: "stale-operation", status: "stale" }],
+      editorCalls: [],
+    })
+  })
+
+  it("reconciles only an edited source after a locked ACK and keeps independent chunks toggleable", async () => {
+    const replaced = vi.fn(({ resultChunkId }: { resultChunkId: string }) =>
+      resultChunkId === "ab" ? ("locked" as const) : ("applied" as const)
+    )
+    const swapped = vi.fn((_args: { chunkId: string; contentJson: JSONContent }) => true)
+    const harness = hookHarness([{ ok: true, protocolVersion: 4 }], {
+      onPolishedChunkInserted: () => true,
+      onChunksReplace: replaced,
+      onGetChunkContent: (chunkId) => (chunkId === "a" ? null : paragraph(`editor ${chunkId}`)),
+      onChunkSwap: swapped,
+    })
+    act(() => harness.result.current.start())
+    await waitFor(() => expect(harness.result.current.state).toBe("recording"))
+    act(() => {
+      for (const [index, chunkId] of ["a", "b", "c"].entries())
+        harness.sockets[0].fire("voice:transcript:delta", {
+          protocolVersion: 4,
+          voiceSessionId: "voicesess_1",
+          revision: index + 1,
+          text: chunkId,
+          isFinal: true,
+          chunkId,
+          ...(index ? { afterChunkId: ["a", "b"][index - 1] } : {}),
+          contentJson: paragraph(chunkId),
+        })
+    })
+    const acknowledgements: unknown[] = []
+    const apply = (
+      operationId: string,
+      resultChunkId: string,
+      sources: Array<{ chunkId: string; throughRevision: number }>
+    ) =>
+      harness.sockets[0].fire(
+        "voice:transcript:polished",
+        {
+          protocolVersion: 4,
+          operationId,
+          voiceSessionId: "voicesess_1",
+          authoritative: false,
+          resultChunkId,
+          throughRevision: Math.max(...sources.map((source) => source.throughRevision)),
+          sources,
+          raw: sources.map((source) => source.chunkId).join(" "),
+          polished: sources.map((source) => source.chunkId.toUpperCase()).join(" "),
+          rawContentJson: paragraph(sources.map((source) => source.chunkId).join(" ")),
+          polishedContentJson: paragraph(sources.map((source) => source.chunkId.toUpperCase()).join(" ")),
+        },
+        (ack: unknown) => acknowledgements.push(ack)
+      )
+    act(() => {
+      apply("accept-a", "a", [{ chunkId: "a", throughRevision: 1 }])
+      apply("accept-b", "b", [{ chunkId: "b", throughRevision: 2 }])
+      apply("accept-c", "c", [{ chunkId: "c", throughRevision: 3 }])
+      apply("lock-ab", "ab", [
+        { chunkId: "a", throughRevision: 1 },
+        { chunkId: "b", throughRevision: 2 },
+      ])
+    })
+
+    expect(acknowledgements).toEqual([
+      { operationId: "accept-a", status: "applied" },
+      { operationId: "accept-b", status: "applied" },
+      { operationId: "accept-c", status: "applied" },
+      { operationId: "lock-ab", status: "locked" },
+    ])
+    expect([...harness.result.current.chunks].map(([chunkId, record]) => ({ chunkId, locked: record.locked }))).toEqual(
+      [
+        { chunkId: "a", locked: true },
+        { chunkId: "b", locked: false },
+        { chunkId: "c", locked: false },
+      ]
+    )
+    act(() => harness.result.current.setShowOriginal(true))
+    expect(swapped.mock.calls.map(([args]) => args.chunkId)).toEqual(["b", "c"])
+  })
+
+  it("appends alias-chain deltas once and keeps canonical raw and polished whitespace in sync", async () => {
+    const inserted = vi.fn((_args: { chunkId: string; afterChunkId?: string; contentJson: JSONContent }) => true)
+    const swapped = vi.fn((_args: { chunkId: string; contentJson: JSONContent }) => true)
+    const replaced = vi.fn(() => "applied" as const)
+    const harness = hookHarness([{ ok: true, protocolVersion: 4 }], {
+      onPolishedChunkInserted: inserted,
+      onChunksReplace: replaced,
+      onChunkSwap: swapped,
+    })
+    act(() => harness.result.current.start())
+    await waitFor(() => expect(harness.result.current.state).toBe("recording"))
+    act(() =>
+      harness.sockets[0].fire("voice:transcript:delta", {
+        protocolVersion: 4,
+        voiceSessionId: "voicesess_1",
+        revision: 1,
+        text: "base",
+        isFinal: true,
+        chunkId: "a",
+        contentJson: paragraph("base"),
+      })
+    )
+    const deliverOperation = (args: {
+      operationId: string
+      sourceId: string
+      throughRevision: number
+      resultChunkId: string
+      raw: string
+      polished: string
+      rawContentJson: JSONContent
+      polishedContentJson: JSONContent
+    }) => {
+      const { sourceId, ...operation } = args
+      harness.sockets[0].fire("voice:transcript:polished", {
+        protocolVersion: 4,
+        voiceSessionId: "voicesess_1",
+        authoritative: false,
+        sources: [{ chunkId: sourceId, throughRevision: operation.throughRevision }],
+        ...operation,
+      })
+    }
+    act(() =>
+      deliverOperation({
+        operationId: "a-to-r",
+        sourceId: "a",
+        throughRevision: 1,
+        resultChunkId: "r",
+        raw: "base ",
+        polished: "Polished ",
+        rawContentJson: paragraph("base "),
+        polishedContentJson: paragraph("Polished "),
+      })
+    )
+    const tailDelta = {
+      protocolVersion: 4,
+      voiceSessionId: "voicesess_1",
+      revision: 2,
+      text: "tail",
+      isFinal: true,
+      chunkId: "a",
+      contentJson: paragraph("tail"),
+    } as const
+    act(() => {
+      harness.sockets[0].fire("voice:transcript:delta", tailDelta)
+      harness.sockets[0].fire("voice:transcript:delta", tailDelta)
+    })
+    const firstRecord = harness.result.current.chunks.get("r")!
+    expect({
+      raw: firstRecord.raw,
+      rawJson: contentText(firstRecord.rawContentJson!),
+      polished: firstRecord.polished,
+      polishedJson: contentText(firstRecord.polishedContentJson!),
+    }).toEqual({ raw: "base tail", rawJson: "base tail", polished: "Polished tail", polishedJson: "Polished tail" })
+
+    act(() =>
+      deliverOperation({
+        operationId: "r-to-s",
+        sourceId: "r",
+        throughRevision: 2,
+        resultChunkId: "s",
+        raw: "base tail",
+        polished: "Polished tail",
+        rawContentJson: paragraph("base tail"),
+        polishedContentJson: paragraph("Polished tail"),
+      })
+    )
+    act(() => {
+      harness.sockets[0].fire("voice:transcript:delta", {
+        ...tailDelta,
+        revision: 3,
+        text: "again",
+        contentJson: paragraph("again"),
+      })
+      harness.sockets[0].fire("voice:transcript:delta", {
+        ...tailDelta,
+        revision: 4,
+        text: "next",
+        chunkId: "b",
+        afterChunkId: "a",
+        contentJson: paragraph("next"),
+      })
+    })
+
+    const finalRecord = harness.result.current.chunks.get("s")!
+    expect({
+      raw: finalRecord.raw,
+      rawJson: contentText(finalRecord.rawContentJson!),
+      polished: finalRecord.polished,
+      polishedJson: contentText(finalRecord.polishedContentJson!),
+      insertions: inserted.mock.calls.map(([args]) => ({ chunkId: args.chunkId, afterChunkId: args.afterChunkId })),
+    }).toEqual({
+      raw: "base tail again",
+      rawJson: "base tail again",
+      polished: "Polished tail again",
+      polishedJson: "Polished tail again",
+      insertions: [
+        { chunkId: "a", afterChunkId: undefined },
+        { chunkId: "r", afterChunkId: undefined },
+        { chunkId: "s", afterChunkId: undefined },
+        { chunkId: "b", afterChunkId: "s" },
+      ],
+    })
+    act(() => harness.result.current.setShowOriginal(true))
+    expect(contentText(swapped.mock.calls.at(-1)![0].contentJson)).toBe("base tail again")
+    act(() => harness.result.current.setShowOriginal(false))
+    expect(contentText(swapped.mock.calls.at(-1)![0].contentJson)).toBe("Polished tail again")
+  })
+
+  it("negotiates v4, applies sealed per-source operations, and ACKs duplicate delivery exactly once", async () => {
+    const inserted = vi.fn((_args: { chunkId: string }) => true)
+    const replaced = vi.fn(() => "applied" as const)
+    const acknowledgements: unknown[] = []
+    const harness = hookHarness([{ ok: true, protocolVersion: 4 }], {
+      onPolishedChunkInserted: inserted,
+      onChunksReplace: replaced,
+    })
+    act(() => harness.result.current.start())
+    await waitFor(() => expect(harness.result.current.state).toBe("recording"))
+    expect(harness.sockets[0].startPayloads[0]).toMatchObject({ maxProtocolVersion: 4 })
+    const contentJson = { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "raw" }] }] }
+    act(() => {
+      harness.sockets[0].fire("voice:transcript:delta", {
+        protocolVersion: 4,
+        voiceSessionId: "voicesess_1",
+        revision: 1,
+        text: "raw",
+        isFinal: true,
+        chunkId: "a",
+        contentJson,
+      })
+      harness.sockets[0].fire("voice:transcript:delta", {
+        protocolVersion: 4,
+        voiceSessionId: "voicesess_1",
+        revision: 2,
+        text: "newer other chunk",
+        isFinal: true,
+        chunkId: "b",
+        afterChunkId: "a",
+        contentJson,
+      })
+    })
+    const operation = {
+      protocolVersion: 4,
+      operationId: "operation_1",
+      voiceSessionId: "voicesess_1",
+      authoritative: true,
+      resultChunkId: "a",
+      throughRevision: 1,
+      sources: [{ chunkId: "a", throughRevision: 1 }],
+      raw: "raw",
+      polished: "polished",
+      rawContentJson: contentJson,
+      polishedContentJson: contentJson,
+    } as const
+    act(() => {
+      harness.sockets[0].fire("voice:transcript:polished", operation, (ack: unknown) => acknowledgements.push(ack))
+      harness.sockets[0].fire("voice:transcript:polished", operation, (ack: unknown) => acknowledgements.push(ack))
+    })
+
+    expect(inserted.mock.calls.map(([args]) => args.chunkId)).toEqual(["a", "b"])
+    expect(replaced).toHaveBeenCalledTimes(1)
+    expect(acknowledgements).toEqual([
+      { operationId: "operation_1", status: "applied" },
+      { operationId: "operation_1", status: "applied" },
+    ])
+  })
+
   it("normalizes v2 Markdown and preserves exact v3 raw and polished JSON payloads", async () => {
     let current: JSONContent | null = null
     const inserted = vi.fn(({ contentJson }: { contentJson: JSONContent }) => {
       current = contentJson
+      return true
     })
     const swapped = vi.fn(({ contentJson }: { contentJson: JSONContent }) => {
       current = contentJson
@@ -525,6 +1031,7 @@ describe("useVoiceDictation lifecycle", () => {
     const harness = hookHarness([{ ok: true, protocolVersion: 2 }], {
       onPolishedChunkInserted: ({ contentJson }) => {
         chunkContent = contentJson
+        return true
       },
       onGetChunkContent: () => chunkContent,
       onChunkSwap: ({ contentJson }) => {

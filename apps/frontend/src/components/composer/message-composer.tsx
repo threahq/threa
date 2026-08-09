@@ -40,7 +40,12 @@ import { COLLAPSED_COMPOSER_ROW, COLLAPSED_COMPOSER_SHADOW } from "@/components/
 import { isEmptyContent } from "@/lib/prosemirror-utils"
 import { collapsedComposerPreview } from "@/lib/drafts/collapsed-composer-preview"
 import type { PendingAttachment, UploadResult } from "@/hooks/use-attachments"
-import { DEFAULT_USER_PREFERENCES, type MessageSendMode, type JSONContent } from "@threa/types"
+import {
+  DEFAULT_USER_PREFERENCES,
+  type MessageSendMode,
+  type JSONContent,
+  type VoiceTranscriptReplacementV4,
+} from "@threa/types"
 import type { MentionStreamContext } from "@/hooks/use-mentionables"
 import type { Editor } from "@tiptap/react"
 import { consumeComposerCommandRequest, subscribeComposerCommandRequest } from "@/stores/composer-command-request-store"
@@ -752,17 +757,30 @@ export function MessageComposer({
 
   // Always available on workspace surfaces so dictation can be resumed after the
   // composer already has text — appended at the caret like committed speech.
-  const insertTranscribedText = useCallback((text: string) => richEditorRef.current?.insertTranscribedText(text), [])
+  const insertTranscribedText = useCallback(
+    (text: string, options?: { joinPrevious?: boolean }) => richEditorRef.current?.insertTranscribedText(text, options),
+    []
+  )
   const setDictationInterim = useCallback((text: string) => richEditorRef.current?.setDictationInterim(text), [])
   // Polished-chunk wiring: the editor tracks each polished chunk by id so a
   // session-wide toggle can swap them in-place between polished and raw.
   const insertPolishedDictationChunk = useCallback(
-    (args: { chunkId: string; contentJson: JSONContent }) => richEditorRef.current?.insertDictationChunk(args),
+    (args: { chunkId: string; contentJson: JSONContent; afterChunkId?: string; joinPrevious?: boolean }) =>
+      richEditorRef.current?.insertDictationChunk(args) ?? false,
     []
   )
   const swapDictationChunk = useCallback(
     (args: { chunkId: string; contentJson: JSONContent }) =>
       richEditorRef.current?.replaceDictationChunk?.(args) ?? false,
+    []
+  )
+  const replaceDictationChunks = useCallback(
+    (args: { sources: VoiceTranscriptReplacementV4["sources"]; resultChunkId: string; contentJson: JSONContent }) =>
+      richEditorRef.current?.replaceDictationChunks?.(args) ?? "missing",
+    []
+  )
+  const lockDictationChunk = useCallback(
+    (args: { chunkId: string }) => richEditorRef.current?.lockDictationChunk(args),
     []
   )
   const lockAllDictationChunks = useCallback(() => richEditorRef.current?.lockAllDictationChunks(), [])
@@ -782,8 +800,8 @@ export function MessageComposer({
     const { doc, selection } = editor.state
     return getDictationMarkdownContext(doc, selection, VOICE_DRAFT_CONTEXT_MAX_CHARS)
   }, [])
-  // Keyed by scopeId so navigating to a different stream remounts the button, tearing down any
-  // in-flight dictation session (the unmount cleanup aborts the take) instead of carrying it over.
+  // Keyed by scopeId so navigation ends the old take after its layout cleanup
+  // has preserved any visible interim in the composer.
   const micButton = workspaceId ? (
     <MicButton
       key={`mic-${scopeId ?? ""}`}
@@ -794,6 +812,8 @@ export function MessageComposer({
       onActiveChange={setVoiceActive}
       onInsertPolishedChunk={insertPolishedDictationChunk}
       onChunkSwap={swapDictationChunk}
+      onChunksReplace={replaceDictationChunks}
+      onLockChunk={lockDictationChunk}
       onLockAllChunks={lockAllDictationChunks}
       onGetChunkContent={getDictationChunkContent}
       onGetDraftContext={getDictationDraftContext}
@@ -810,6 +830,8 @@ export function MessageComposer({
       onActiveChange={setVoiceActive}
       onInsertPolishedChunk={insertPolishedDictationChunk}
       onChunkSwap={swapDictationChunk}
+      onChunksReplace={replaceDictationChunks}
+      onLockChunk={lockDictationChunk}
       onLockAllChunks={lockAllDictationChunks}
       onGetChunkContent={getDictationChunkContent}
       onGetDraftContext={getDictationDraftContext}

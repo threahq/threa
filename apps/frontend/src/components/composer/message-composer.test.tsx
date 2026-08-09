@@ -17,6 +17,7 @@ import { queueComposerCommandRequest } from "@/stores/composer-command-request-s
 let isMobileMockValue = false
 const mockRichEditorFocus = vi.fn()
 const mockInsertFiles = vi.fn(() => true)
+const mockInsertTranscribedText = vi.fn()
 const mockInsertDictationChunk = vi.fn()
 
 type MockEditorInstance = {
@@ -35,6 +36,7 @@ const MockRichEditor = forwardRef<
     insertEmoji: () => void
     openSnippetEditor: () => void
     insertFiles: (files: File[]) => boolean
+    insertTranscribedText: (text: string, options?: { joinPrevious?: boolean }) => void
     insertDictationChunk: (args: { chunkId: string; contentJson: JSONContent }) => void
     getEditor: () => MockEditorInstance | null
   },
@@ -75,6 +77,7 @@ const MockRichEditor = forwardRef<
       insertEmoji: () => undefined,
       openSnippetEditor: () => undefined,
       insertFiles: mockInsertFiles,
+      insertTranscribedText: mockInsertTranscribedText,
       insertDictationChunk: mockInsertDictationChunk,
       getEditor: () => editorInstance,
     }),
@@ -150,6 +153,7 @@ describe("MessageComposer", () => {
     vi.restoreAllMocks()
     mockRichEditorFocus.mockClear()
     mockInsertFiles.mockClear()
+    mockInsertTranscribedText.mockClear()
     mockInsertDictationChunk.mockClear()
     isMobileMockValue = false
     vi.useRealTimers()
@@ -209,6 +213,26 @@ describe("MessageComposer", () => {
       chunkId: "local_recovery_1",
       contentJson: recovered,
     })
+  })
+
+  it("forwards hard-join recovery through the plain committed-text editor seam", async () => {
+    const MockMicButton = forwardRef(function MockMicButton(
+      props: { onInsertText: (text: string, options?: { joinPrevious?: boolean }) => void },
+      ref: ForwardedRef<{ abort: () => void; prepareSendAsIs: () => void }>
+    ) {
+      useImperativeHandle(ref, () => ({ abort: vi.fn(), prepareSendAsIs: vi.fn() }))
+      useEffect(() => {
+        props.onInsertText("lo", { joinPrevious: true })
+      }, [props])
+      return null
+    })
+    spyOnExport(micButtonModule, "MicButton").mockReturnValue(
+      MockMicButton as unknown as typeof micButtonModule.MicButton
+    )
+
+    render(<MessageComposer {...defaultProps} workspaceId="ws_1" />)
+
+    await waitFor(() => expect(mockInsertTranscribedText).toHaveBeenCalledWith("lo", { joinPrevious: true }))
   })
 
   it("aborts active dictation when a nonempty draft is cleared", async () => {
