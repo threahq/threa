@@ -305,7 +305,7 @@ describe("BotInvocationOutboxHandler canonical reconciliation", () => {
     const reconcile = spyOn(BotRuntimeService.prototype, "reconcileInvocationSource").mockResolvedValue([])
     const handler = new BotInvocationOutboxHandler(pool)
 
-    await (handler as unknown as { processMessageCreated(payload: unknown): Promise<void> }).processMessageCreated(
+    await (handler as unknown as { processMessageMutation(payload: unknown): Promise<void> }).processMessageMutation(
       createdPayload
     )
 
@@ -317,7 +317,7 @@ describe("BotInvocationOutboxHandler canonical reconciliation", () => {
     const handler = new BotInvocationOutboxHandler(pool)
 
     await expect(
-      (handler as unknown as { processMessageCreated(payload: unknown): Promise<void> }).processMessageCreated(
+      (handler as unknown as { processMessageMutation(payload: unknown): Promise<void> }).processMessageMutation(
         createdPayload
       )
     ).resolves.toBeUndefined()
@@ -331,7 +331,7 @@ describe("BotInvocationOutboxHandler canonical reconciliation", () => {
     const createMessage = spyOn(EventService.prototype, "createMessage").mockResolvedValue(undefined as never)
     const handler = new BotInvocationOutboxHandler(pool)
 
-    await (handler as unknown as { processMessageCreated(payload: unknown): Promise<void> }).processMessageCreated(
+    await (handler as unknown as { processMessageMutation(payload: unknown): Promise<void> }).processMessageMutation(
       createdPayload
     )
 

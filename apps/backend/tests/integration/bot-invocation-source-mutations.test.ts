@@ -8,6 +8,7 @@ import { BotRepository } from "../../src/features/public-api/bot-repository"
 import { messageId, streamId, userId, workspaceId } from "../../src/lib/id"
 
 describe("bot invocation canonical source mutations", () => {
+  let sourceSequence = 0n
   let pool: Pool
   let cleanup: () => Promise<void>
   const workspace = workspaceId()
@@ -80,7 +81,7 @@ describe("bot invocation canonical source mutations", () => {
     return MessageRepository.insert(pool, {
       id: messageId(),
       streamId: stream,
-      sequence: BigInt(Date.now()),
+      sequence: ++sourceSequence,
       authorId: author,
       authorType: "user",
       contentJson: testContentJson(markdown),
@@ -92,9 +93,12 @@ describe("bot invocation canonical source mutations", () => {
     sourceMessageId: string,
     revision: number,
     id = `binv_${crypto.randomUUID().replaceAll("-", "")}`,
-    trigger: "active-scratchpad" | "mention" = "active-scratchpad",
+    trigger: "active-scratchpad" | "mention" | "session-control" = "active-scratchpad",
     actorId = bot
   ) {
+    let requiredCapability: "mentionable" | "session-control" | "active-scratchpad" = "active-scratchpad"
+    if (trigger === "mention") requiredCapability = "mentionable"
+    if (trigger === "session-control") requiredCapability = "session-control"
     return BotInvocationRepository.insertIdempotent(pool, {
       id,
       workspaceId: workspace,
@@ -105,7 +109,7 @@ describe("bot invocation canonical source mutations", () => {
       actorType: "bot",
       actorId,
       trigger,
-      requiredCapability: trigger === "mention" ? "mentionable" : "active-scratchpad",
+      requiredCapability,
       promptMarkdown: "cached",
       sourceMessageRevision: revision,
       authorUserId: author,
@@ -115,6 +119,45 @@ describe("bot invocation canonical source mutations", () => {
       metadata: {},
     })
   }
+
+  test("embedded steer edit reconciles only its companion and deletion cancels both", async () => {
+    const message = await source("before")
+    const companion = await invocation(message.id, message.revision)
+    const control = await invocation(message.id, 0, undefined, "session-control")
+    const service = new BotRuntimeService({ pool })
+
+    await MessageRepository.updateContent(pool, message.id, testContentJson("after"), "after")
+    await service.reconcileInvocationSource({ workspaceId: workspace, sourceMessageId: message.id })
+
+    const afterEdit = await pool.query<{
+      id: string
+      trigger: string
+      status: string
+      source_message_revision: number
+    }>(
+      `SELECT id, trigger, status, source_message_revision FROM bot_invocations
+       WHERE workspace_id = $1 AND source_message_id = $2 ORDER BY trigger, source_message_revision`,
+      [workspace, message.id]
+    )
+    expect(afterEdit.rows).toEqual([
+      {
+        id: companion.invocation.id,
+        trigger: "active-scratchpad",
+        status: "pending",
+        source_message_revision: 2,
+      },
+      { id: control.invocation.id, trigger: "session-control", status: "pending", source_message_revision: 0 },
+    ])
+
+    await MessageRepository.softDelete(pool, message.id)
+    await service.reconcileInvocationSource({ workspaceId: workspace, sourceMessageId: message.id })
+    const afterDelete = await pool.query<{ trigger: string; status: string }>(
+      `SELECT trigger, status FROM bot_invocations
+       WHERE workspace_id = $1 AND source_message_id = $2 AND status <> 'cancelled'`,
+      [workspace, message.id]
+    )
+    expect(afterDelete.rows).toEqual([])
+  })
 
   test("repository edits and deletion advance the canonical revision once", async () => {
     const created = await source()

@@ -1001,6 +1001,7 @@ export const BotInvocationRepository = {
         WHERE i.workspace_id = ${params.workspaceId}
           AND i.source_message_id = ${params.sourceMessageId}
           AND i.status IN ('pending', 'claimed')
+          AND i.trigger <> 'session-control'
           AND i.source_message_revision < ${params.sourceMessageRevision}
           AND NOT EXISTS (
             SELECT 1

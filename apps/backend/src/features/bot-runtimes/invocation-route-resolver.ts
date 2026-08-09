@@ -125,36 +125,32 @@ export async function resolveCanonicalInvocationRoutes(
     const config = resolveRuntimeKindConfig(instances.get(bot.id)?.runtimeKind ?? null)
     if (config.sessionLinking === "required") missingLinkNotice = config.missingSessionLinkNotice(bot.name)
   }
-  if (missingLinkNotice)
-    return [
-      ...routes,
-      {
-        actorId: bot.id,
-        trigger: "active-scratchpad",
-        requiredCapability: "active-scratchpad",
-        rootStreamId: root.id,
-        activeStreamId: stream.id,
-        responseStreamId: stream.id,
-        authorUserId: source.authorId,
-        mentionedActorSlugs: slugs,
-        targetInstanceId: null,
-        targetRuntimeSessionId: null,
-        promptMarkdown: buildCanonicalInvocationPrompt(source),
-        missingLinkNotice,
-      },
-    ]
-  routes.push({
+  const activeScratchpadRoute = {
     actorId: bot.id,
-    trigger: "active-scratchpad",
-    requiredCapability: "active-scratchpad",
+    trigger: "active-scratchpad" as const,
+    requiredCapability: "active-scratchpad" as const,
     rootStreamId: root.id,
     activeStreamId: stream.id,
     responseStreamId: stream.id,
     authorUserId: source.authorId,
     mentionedActorSlugs: slugs,
+    promptMarkdown: buildCanonicalInvocationPrompt(source),
+  }
+  if (missingLinkNotice) {
+    return [
+      ...routes,
+      {
+        ...activeScratchpadRoute,
+        targetInstanceId: null,
+        targetRuntimeSessionId: null,
+        missingLinkNotice,
+      },
+    ]
+  }
+  routes.push({
+    ...activeScratchpadRoute,
     targetInstanceId: link?.instanceId ?? null,
     targetRuntimeSessionId: link?.runtimeSessionId ?? null,
-    promptMarkdown: buildCanonicalInvocationPrompt(source),
     missingLinkNotice: null,
   })
   return routes

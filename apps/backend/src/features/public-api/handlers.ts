@@ -1348,6 +1348,7 @@ export function createPublicApiHandlers({
         sealedAck = await buildSessionControlSealedAck(pool, invocation, data.instanceId)
       }
 
+      let claimValidForSession = true
       if (!isSessionControl && bot && !bot.archivedAt) {
         await withTransaction(pool, async (client) => {
           const currentClaim = await botRuntimeService.findActiveClaimForUpdate(client, {
@@ -1357,8 +1358,10 @@ export function createPublicApiHandlers({
             instanceId: data.instanceId,
             claimToken: invocation.claimToken!,
           })
-          if (!currentClaim || currentClaim.claimedSourceMessageRevision !== invocation.claimedSourceMessageRevision)
+          if (!currentClaim || currentClaim.claimedSourceMessageRevision !== invocation.claimedSourceMessageRevision) {
+            claimValidForSession = false
             return
+          }
           const latestSequence = await eventService.getLatestSequence(invocation.responseStreamId)
           const session = await AgentSessionRepository.insertRunningOrSkip(client, {
             id: invocation.id,
@@ -1391,6 +1394,10 @@ export function createPublicApiHandlers({
             event: streamEvent,
           })
         })
+      }
+      if (!claimValidForSession) {
+        res.locals.auditSkip = true
+        return res.json({ data: null })
       }
       const context = await buildClaimContext(pool, invocation, verdict)
       res.json({

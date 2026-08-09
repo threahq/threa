@@ -927,7 +927,9 @@ describe("AgentMessageMutationHandler", () => {
         createdAt: new Date(),
       } as any,
     ])
-    spyOn(AgentSessionRepository, "findByTriggerMessage").mockResolvedValue({ id: "binv_1" } as any)
+    spyOn(AgentSessionRepository, "findByTriggerMessage")
+      .mockResolvedValueOnce({ id: "binv_1", createdAt: new Date() } as any)
+      .mockResolvedValue(null)
     const revision = spyOn(MessageVersionRepository, "getCurrentRevision")
     const update = spyOn(AgentSessionRepository, "updateStatus")
     const { handler, jobQueue } = createHandler(true)
@@ -957,7 +959,9 @@ describe("AgentMessageMutationHandler", () => {
       } as any,
     ])
     spyOn(AgentSessionRepository, "findByTriggerMessage").mockResolvedValue(null)
-    spyOn(AgentSessionRepository, "findLatestByStream").mockResolvedValue({ id: "binv_1" } as any)
+    spyOn(AgentSessionRepository, "findLatestByStream")
+      .mockResolvedValueOnce({ id: "binv_1", createdAt: new Date() } as any)
+      .mockResolvedValue(null)
     const update = spyOn(AgentSessionRepository, "updateStatus")
     const { handler, jobQueue } = createHandler(true)
 

@@ -70,7 +70,7 @@ export class BotInvocationOutboxHandler implements OutboxHandler {
       const seen: bigint[] = []
       for (const event of events) {
         if (event.eventType === "message:created" || event.eventType === "message:edited") {
-          await this.processMessageCreated(event.payload)
+          await this.processMessageMutation(event.payload)
         } else if (event.eventType === "message:deleted") {
           await this.processMessageDeleted(event.payload)
         } else if (event.eventType === "agent_session:started") {
@@ -132,7 +132,7 @@ export class BotInvocationOutboxHandler implements OutboxHandler {
     await this.reconcileMessage(value.workspaceId, value.messageId)
   }
 
-  private async processMessageCreated(payload: unknown): Promise<void> {
+  private async processMessageMutation(payload: unknown): Promise<void> {
     const message = parseMessagePayload(payload)
     if (!message?.event.actorId) return
     await this.reconcileMessage(message.workspaceId, message.event.payload.messageId)
