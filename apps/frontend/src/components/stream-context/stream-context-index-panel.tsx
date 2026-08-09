@@ -439,7 +439,7 @@ export function StreamContextIndexPanel(props: StreamContextPanelProps) {
 
 /**
  * The stream's member roster as the app already holds it. A cache-only observer
- * (see `CLAUDE.md`): the stream page's own bootstrap owns this key, and a side
+ * (see `AGENTS.md`): the stream page's own bootstrap owns this key, and a side
  * panel must not open a second subscription just to populate a menu. Prefers the
  * root's roster — a thread inherits its members (INV-62) — and falls back to the
  * stream's own for a thread opened before its root was fetched.

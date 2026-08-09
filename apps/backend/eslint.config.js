@@ -10,7 +10,7 @@ import threaPlugin, {
 /**
  * ESLint configuration for Threa backend.
  *
- * Enforces CLAUDE invariants with clean syntactic signals:
+ * Enforces AGENTS.md invariants with clean syntactic signals:
  * - Runtime: do not import dotenv (Bun loads .env automatically)
  * - INV-28: raw provider SDK imports stay inside the AI wrapper
  * - INV-47: no nested ternaries

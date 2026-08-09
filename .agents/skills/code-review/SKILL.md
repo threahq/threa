@@ -101,7 +101,7 @@ Note ALL active IDs — new review supersedes each one.
    } > <review-dir>/history.txt
    ```
 
-In both modes: read CLAUDE.md files (root + directories touched by the diff). The reviewer owning Spec/Design reads `<review-dir>/history.txt` instead of receiving a pasted wall.
+In both modes: read agent-instruction files (root AGENTS.md + AGENTS.md/CLAUDE.md in directories touched by the diff). The reviewer owning Spec/Design reads `<review-dir>/history.txt` instead of receiving a pasted wall.
 
 ## Step 3: Triage Scope, Select Runtime Profile, Then Spawn
 
@@ -134,7 +134,7 @@ Record the active profile, reviewer count, and lens allocation.
 
 Each reviewer gets the distilled intent/plan, the absolute `<review-dir>/review.diff` and `<review-dir>/history.txt` paths, and the PR number in PR mode. Pass paths, not pasted diffs.
 
-**CLAUDE.md handling:** Do not paste full CLAUDE.md into every reviewer. The reviewer owning Spec/Design receives root plus touched-directory instructions. Other reviewers receive only Quick Lookup and: *"Read root CLAUDE.md only to confirm a specific invariant before flagging it."*
+**AGENTS.md handling:** Do not paste full AGENTS.md into every reviewer. The reviewer owning Spec/Design receives root plus touched-directory instructions. Other reviewers receive only Quick Lookup and: *"Read root AGENTS.md only to confirm a specific invariant before flagging it."*
 
 **Shared instructions** (include in every reviewer prompt):
 
@@ -142,7 +142,7 @@ Do NOT build/typecheck or rerun broad green gates. Read the invocation-private `
 
 Self-score each issue 0-100 before including it. **Only output issues scoring ≥80.**
 
-Rubric: 0=false positive, 25=maybe/stylistic, 50=real but nitpick, 75=likely real+important, 100=definite+high-impact. CLAUDE.md issues: verify cited instruction actually exists and says what you claim (≤25 if misquoted).
+Rubric: 0=false positive, 25=maybe/stylistic, 50=real but nitpick, 75=likely real+important, 100=definite+high-impact. AGENTS.md issues: verify cited instruction actually exists and says what you claim (≤25 if misquoted).
 
 ```
 ISSUES:
@@ -151,12 +151,12 @@ ISSUES:
 
 Categories: `claude-md`, `bug`, `plan`, `missing-change`, `abstraction`, `security`, `performance`, `reactivity`, `historical`, `data-flow`, `round-trip`, `state-lifecycle`, `ux-consistency`, `ux-discoverability`, `ux-affordance`, `ux-feedback`, `accessibility`, `mobile-layout`, `mobile-touch`, `mobile-responsive`, `mobile-regression`. No issues → `ISSUES: none`
 
-Do NOT flag: pre-existing issues — UNLESS the diff converts a latent one into a user-visible or data-integrity bug (an issue the change *amplifies* is in scope); unchanged lines (except missing corresponding changes), CI-catchable (types/lint/build), general quality without a CLAUDE.md/plan mandate, silenced issues, intentional changes matching PR/chat purpose, theoretical risks — BUT for sync / optimistic-concurrency / event-echo code, an "our own emitted event is delivered back before our ack/commit lands" interleaving is NOT theoretical; if you dismiss a race as rare you must state the timing budget that makes it rare; pedantic nitpicks. Quality over quantity — returning few or no issues is correct when the change is sound.
+Do NOT flag: pre-existing issues — UNLESS the diff converts a latent one into a user-visible or data-integrity bug (an issue the change *amplifies* is in scope); unchanged lines (except missing corresponding changes), CI-catchable (types/lint/build), general quality without an AGENTS.md/plan mandate, silenced issues, intentional changes matching PR/chat purpose, theoretical risks — BUT for sync / optimistic-concurrency / event-echo code, an "our own emitted event is delivered back before our ack/commit lands" interleaving is NOT theoretical; if you dismiss a race as rare you must state the timing budget that makes it rare; pedantic nitpicks. Quality over quantity — returning few or no issues is correct when the change is sound.
 
 ---
 
-**Agent 1: Spec & Design** (gets full CLAUDE.md) — four jobs:
-1. **CLAUDE.md audit:** Check each change for violations of instructions/invariants. Cite the specific INV-ID, quote the exact rule text, and include the relevant Invariant Playbook section title. Only CLEAR violations introduced by this change. Skip: pre-existing, linter-catchable, stylistic.
+**Agent 1: Spec & Design** (gets full AGENTS.md) — four jobs:
+1. **AGENTS.md audit:** Check each change for violations of instructions/invariants. Cite the specific INV-ID, quote the exact rule text, and include the relevant Invariants section title. Only CLEAR violations introduced by this change. Skip: pre-existing, linter-catchable, stylistic.
 2. **Plan/intent adherence:** Compare the diff against the plan / the user's stated intent. Missing corresponding changes? (API→frontend, type→usages, schema→migration, backend pref key→frontend wiring). Skip: supporting infrastructure, implementation choices.
 3. **Design quality:** Leaky abstractions, config sprawl, partial abstractions, parallel implementations, N+1/unbounded queries, missing memoization / re-render storms, outbox/transaction/reactivity issues. Concrete issues with a named consequence only.
 4. **Historical context:** Read the invocation-private `history.txt` path supplied in the prompt (recent commits/PRs per touched file). Only flag changes that clearly violate patterns visible from the history. Do NOT make additional history calls — all of it is pre-provided.
@@ -216,14 +216,14 @@ Report body (identical for the chat printout and the PR comment; the PR comment 
 
 Found N issues:
 
-1. `file.ts:10-20` — Description (CLAUDE.md [INV-XX, <section>]: "<quoted>" | bug: <reason> | ux-consistency: <reason> | mobile-touch: <reason> | etc.)
+1. `file.ts:10-20` — Description (AGENTS.md [INV-XX, <section>]: "<quoted>" | bug: <reason> | ux-consistency: <reason> | mobile-touch: <reason> | etc.)
    https://github.com/OWNER/REPO/blob/SHA/path/file.ts#L9-L21
 
 ---
 <details><summary>📐 Plan Adherence [CLEAN | N issues]</summary>[details]</details>
 <details><summary>🔍 Bugs [CLEAN | N issues]</summary>[details]</details>
 <details><summary>🔁 Data Flow [CLEAN | N issues]</summary>[details]</details>
-<details><summary>📋 CLAUDE.md Compliance [CLEAN | N violations]</summary>[details]</details>
+<details><summary>📋 AGENTS.md Compliance [CLEAN | N violations]</summary>[details]</details>
 <details><summary>🏗️ Design [CLEAN | N concerns]</summary>[details]</details>
 <details><summary>🔒 Security [CLEAN | N issues]</summary>[details]</details>
 <details><summary>🎛️ UX [CLEAN | N issues]</summary>[details]</details>
@@ -241,7 +241,7 @@ Found N issues:
 **Confidence: 7/7** — Excellent
 **Review models:** Orchestrator: <runtime model> | Reviewers: <model/effort> x<N> (<lenses that ran>)
 
-No issues found. Checked for <the lenses that actually ran — e.g. bugs, data-flow lifecycle, CLAUDE.md compliance, plan adherence, design quality, and security on a backend diff; add UX and mobile when those agents ran>.
+No issues found. Checked for <the lenses that actually ran — e.g. bugs, data-flow lifecycle, AGENTS.md compliance, plan adherence, design quality, and security on a backend diff; add UX and mobile when those agents ran>.
 
 🤖 Generated with unified-review automation
 <sub>If this review was useful, react with 👍. Otherwise, react with 👎.</sub>
@@ -265,7 +265,7 @@ Summary:
 - 📐 Plan: <status>
 - 🔍 Bugs: <status>
 - 🔁 Data flow: <status>
-- 📋 CLAUDE.md: <status>
+- 📋 AGENTS.md: <status>
 - 🏗️ Design: <status>
 - 🔒 Security: <status>
 - 🎛️ UX: <status>

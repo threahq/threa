@@ -4,7 +4,7 @@ import { dotenvRestrictedImportPattern, testRestrictedProperties } from "../../e
 /**
  * ESLint configuration for the control plane.
  *
- * Enforces CLAUDE invariants with clean syntactic signals:
+ * Enforces AGENTS.md invariants with clean syntactic signals:
  * - Runtime: do not import dotenv (Bun loads .env automatically)
  * - INV-47: no nested ternaries
  * - INV-51: lib/ is infrastructure — must not import from features/

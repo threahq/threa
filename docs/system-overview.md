@@ -79,7 +79,7 @@ WebSocket connections bypass the router entirely. The frontend fetches `/api/wor
 
 **Key patterns:**
 
-- Cache-only observer pattern for TanStack Query (see `CLAUDE.md` Frontend Patterns)
+- Cache-only observer pattern for TanStack Query (see `AGENTS.md` Frontend Patterns)
 - Subscribe-then-bootstrap for real-time data; re-bootstraps on socket reconnect (INV-53)
 - No configurable API base URL — relies on the workspace router handling `/api/*` in production, Vite proxy in dev
 
