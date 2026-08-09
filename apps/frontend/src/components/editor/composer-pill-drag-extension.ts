@@ -189,6 +189,11 @@ function mappedDragState(tr: Transaction, current: ComposerPillDragState | null)
   return isComposerPillNode(tr.doc.nodeAt(sourcePos)) ? { sourcePos, dropPos } : null
 }
 
+function isComposerPillSelected(state: EditorState, pos: number): boolean {
+  const { selection } = state
+  return selection instanceof NodeSelection && selection.from === pos && isComposerPillNode(selection.node)
+}
+
 function pillAtPosition(doc: ProseMirrorNode, pos: number): { node: ProseMirrorNode; pos: number } | null {
   for (const candidate of [pos, pos - 1]) {
     if (candidate < 0) continue
@@ -550,7 +555,6 @@ class ComposerPillDragController {
     const pill = pillFromDom(this.view, event.target)
     const touch = event.touches[0]
     if (!pill || !touch) return
-    const selection = this.view.state.selection
     this.begin({
       kind: "touch",
       id: touch.identifier,
@@ -558,7 +562,7 @@ class ComposerPillDragController {
       startX: touch.clientX,
       startY: touch.clientY,
       holdElapsed: false,
-      touchDragEligible: selection instanceof NodeSelection && selection.from === pill.pos,
+      touchDragEligible: isComposerPillSelected(this.view.state, pill.pos),
       active: false,
     })
   }
@@ -578,7 +582,7 @@ class ComposerPillDragController {
     if (!touch) return
     if (!drag.active) {
       if (!movedBeyondLongPressTolerance(drag, touch.clientX, touch.clientY)) return
-      if (!drag.touchDragEligible) {
+      if (!drag.touchDragEligible || !isComposerPillSelected(this.view.state, drag.sourcePos)) {
         this.cancel()
         return
       }
