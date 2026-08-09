@@ -62,8 +62,6 @@ import { setLastWorkspaceId } from "@/lib/last-workspace"
 import { isServerStreamId } from "@/lib/stream-ids"
 import { useAuth } from "@/auth"
 import { useWorkspaceStreams } from "@/stores/workspace-store"
-import { setWorkspaceReadMode } from "@/stores/workspace-table-registry"
-import { useFeatureFlag } from "@/hooks/use-feature-flags"
 import { SyncEngine, SyncEngineContext, isSyncEngineCurrent } from "@/sync/sync-engine"
 import { draftsApi, messagesApi, syncApi } from "@/api"
 import { QuickSwitcher, type QuickSwitcherMode } from "@/components/quick-switcher"
@@ -343,21 +341,6 @@ function MessageQueueHandler() {
   return null
 }
 
-/**
- * Pushes the `sharedWorkspaceReads` flag into the workspace-table registry. The
- * flag flips sharing only — the hook shape is identical in both arms — so it can
- * arrive late or change mid-session without changing a single hook count (D5).
- */
-function WorkspaceReadModeSync({ workspaceId }: { workspaceId: string }) {
-  const shared = useFeatureFlag(workspaceId, "sharedWorkspaceReads") === "on"
-
-  useEffect(() => {
-    setWorkspaceReadMode(shared ? "shared" : "off")
-  }, [shared])
-
-  return null
-}
-
 function StreamNameDecryptor({ workspaceId }: { workspaceId: string }) {
   useDecryptStreamNames(workspaceId)
   return null
@@ -497,7 +480,6 @@ export function WorkspaceLayout() {
             <AppUpdateChecker />
             <FreshnessWatchers />
             <MessageQueueHandler />
-            <WorkspaceReadModeSync workspaceId={workspaceId} />
             <StreamNameDecryptor workspaceId={workspaceId} />
             <CoordinatedLoadingProvider workspaceId={workspaceId} streamIds={coordinatedStreamIds}>
               <ChannelLinkProvider workspaceId={workspaceId} streams={streams}>

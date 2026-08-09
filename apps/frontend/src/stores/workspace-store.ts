@@ -1,7 +1,6 @@
-import { useCallback, useMemo, useRef, useSyncExternalStore } from "react"
+import { useCallback, useMemo, useSyncExternalStore } from "react"
 import { useBatchedValue } from "./apply-window"
 import {
-  allocateWorkspaceTableToken,
   getWorkspaceTableSnapshot,
   subscribeWorkspaceTable,
   type WorkspaceTableKey,
@@ -350,25 +349,17 @@ export function upsertWorkspaceUserInCache(workspaceId: string, user: CachedWork
 // on the returned reference) for the whole pre-resolution window.
 const EMPTY_ROWS: never[] = []
 
-function useWorkspaceTableToken(): number {
-  const token = useRef<number | null>(null)
-  if (token.current === null) token.current = allocateWorkspaceTableToken()
-  return token.current
-}
-
 function useWorkspaceTable<K extends WorkspaceTableKey>(
   workspaceId: string | undefined,
   tableKey: K
 ): WorkspaceTableRowTypes[K][] | undefined {
-  const token = useWorkspaceTableToken()
   const subscribe = useCallback(
-    (listener: () => void) =>
-      workspaceId ? subscribeWorkspaceTable(workspaceId, tableKey, token, listener) : () => {},
-    [workspaceId, tableKey, token]
+    (listener: () => void) => (workspaceId ? subscribeWorkspaceTable(workspaceId, tableKey, listener) : () => {}),
+    [workspaceId, tableKey]
   )
   const getSnapshot = useCallback(
-    () => (workspaceId ? getWorkspaceTableSnapshot(workspaceId, tableKey, token) : undefined),
-    [workspaceId, tableKey, token]
+    () => (workspaceId ? getWorkspaceTableSnapshot(workspaceId, tableKey) : undefined),
+    [workspaceId, tableKey]
   )
   const live = useSyncExternalStore(subscribe, getSnapshot, getSnapshot)
   useWorkspaceCacheSignal(workspaceId, live === undefined)

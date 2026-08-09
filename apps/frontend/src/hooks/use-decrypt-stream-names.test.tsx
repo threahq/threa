@@ -3,6 +3,7 @@ import { render, screen, act, waitFor } from "@testing-library/react"
 import { StreamTypes, type StreamType } from "@threa/types"
 import { db, type CachedStream } from "@/db"
 import { resetWorkspaceStoreCache, seedWorkspaceCache } from "@/stores/workspace-store"
+import { resetWorkspaceTableRegistry } from "@/stores/workspace-table-registry"
 import { clearStreamNameCache } from "@/lib/crypto/stream-name-cache"
 import { useDecryptStreamNames } from "@/hooks/use-decrypt-stream-names"
 import { useSealedNamePendingResolver, useStreamNameDecrypting } from "@/hooks/use-decrypted-stream-name"
@@ -113,6 +114,7 @@ async function seedSealedStream() {
 
 beforeEach(async () => {
   resetWorkspaceStoreCache()
+  resetWorkspaceTableRegistry()
   clearStreamNameCache()
   await db.streams.clear()
   vi.spyOn(workspaces, "useWorkspaceUserId").mockReturnValue("user_1")

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest"
-import { act, renderHook, waitFor } from "@testing-library/react"
+import { renderHook, waitFor } from "@testing-library/react"
 import Dexie, { liveQuery } from "dexie"
 import { db, sequenceToNum, type CachedEvent, type CachedStream } from "@/db"
 import { computeTimelineHoles } from "@/sync/contiguity"
@@ -17,10 +17,8 @@ import {
   useStreamFromStore,
 } from "./stream-store"
 import {
-  allocateWorkspaceTableToken,
   getWorkspaceTableSnapshot,
   resetWorkspaceTableRegistry,
-  setWorkspaceReadMode,
   subscribeWorkspaceTable,
 } from "./workspace-table-registry"
 import { makeCachedStream } from "@/test/workspace-rows"
@@ -452,9 +450,8 @@ describe("useStreamFromStore", () => {
 
   /** Bring up the shared registry entry the fast path reads, and wait for its first emission. */
   async function primeRegistry(workspaceId: string): Promise<() => void> {
-    const token = allocateWorkspaceTableToken()
-    const unsubscribe = subscribeWorkspaceTable(workspaceId, "streams", token, () => {})
-    await waitFor(() => expect(getWorkspaceTableSnapshot(workspaceId, "streams", token)).toBeDefined())
+    const unsubscribe = subscribeWorkspaceTable(workspaceId, "streams", () => {})
+    await waitFor(() => expect(getWorkspaceTableSnapshot(workspaceId, "streams")).toBeDefined())
     return unsubscribe
   }
 
@@ -479,7 +476,6 @@ describe("useStreamFromStore", () => {
   beforeEach(async () => {
     resetWorkspaceTableRegistry()
     await db.streams.clear()
-    setWorkspaceReadMode("shared")
   })
 
   afterEach(() => {
@@ -579,38 +575,6 @@ describe("useStreamFromStore", () => {
       expect(typeof value).toBe("object")
       expect((value as CachedStream).id).toBe("stream_a")
     }
-  })
-
-  it("an on→off flip holds the resolved row and opens no whole-table read per reader", async () => {
-    await db.streams.put(makeStream("stream_a", REGISTRY_WORKSPACE, { displayName: "Held Channel" }))
-    releaseRegistry = await primeRegistry(REGISTRY_WORKSPACE)
-
-    const observed: (CachedStream | undefined)[] = []
-    const readers = [0, 1, 2].map(() =>
-      renderHook(() => {
-        const row = useStreamFromStore("stream_a")
-        observed.push(row)
-        return row
-      })
-    )
-    for (const reader of readers) await waitFor(() => expect(reader.result.current?.id).toBe("stream_a"))
-    const held = readers.map((reader) => reader.result.current)
-
-    const where = vi.spyOn(db.streams, "where")
-    await act(async () => {
-      setWorkspaceReadMode("off")
-    })
-
-    readers.forEach((reader, index) => expect(reader.result.current).toBe(held[index]))
-    for (const reader of readers) {
-      await waitFor(() => expect(reader.result.current?.displayName).toBe("Held Channel"))
-    }
-    expect(observed).not.toContain(undefined)
-    // The flip must not migrate the readers' row registrations into private
-    // entries: that opens one whole-table streams query PER READER — the cost the
-    // kill switch exists to remove. The one expected call is the table
-    // subscriber's own re-key.
-    expect(where.mock.calls.length).toBe(1)
   })
 })
 

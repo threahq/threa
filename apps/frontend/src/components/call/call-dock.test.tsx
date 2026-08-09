@@ -4,6 +4,7 @@ import { render, screen, userEvent } from "@/test"
 import * as authModule from "@/auth"
 import * as useMobileModule from "@/hooks/use-mobile"
 import { seedWorkspaceCache, resetWorkspaceStoreCache } from "@/stores/workspace-store"
+import { resetWorkspaceTableRegistry } from "@/stores/workspace-table-registry"
 
 type CachedWorkspaceUser = Parameters<typeof seedWorkspaceCache>[1]["users"][number]
 import {
@@ -143,6 +144,7 @@ function enterConnectedCall(roster: CallRosterParticipant[]) {
 beforeEach(() => {
   clearCallState()
   resetWorkspaceStoreCache()
+  resetWorkspaceTableRegistry()
   localStorage.clear()
   __resetCallPrefsForTests()
   // Default resolves to the floating square now; pin the sidebar dock so the dock-
