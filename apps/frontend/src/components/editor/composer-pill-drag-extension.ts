@@ -380,7 +380,6 @@ class ComposerPillDragController {
     if (!drag?.active) {
       const touchedPill = drag?.kind === "touch"
       const tappedPillPos = touchedPill && !drag.holdElapsed ? drag.sourcePos : null
-      if (touchedPill) this.suppressMouseUntil = Date.now() + COMPATIBILITY_MOUSE_WINDOW_MS
       this.cancel()
       if (tappedPillPos !== null) this.selectPill(tappedPillPos)
       return
@@ -394,7 +393,6 @@ class ComposerPillDragController {
         : createComposerPillMoveTransaction(this.view.state, current.sourcePos, current.dropPos)
 
     const touchDrop = drag.kind === "touch"
-    this.suppressMouseUntil = Date.now() + COMPATIBILITY_MOUSE_WINDOW_MS
     this.clearPending()
     if (tr) {
       this.view.dispatch(tr.setMeta(ComposerPillDragPluginKey, null).setMeta("uiEvent", "drop"))
@@ -411,6 +409,9 @@ class ComposerPillDragController {
   }
 
   private clearPending() {
+    if (this.pending?.kind === "touch" || this.pending?.active) {
+      this.suppressMouseUntil = Date.now() + COMPATIBILITY_MOUSE_WINDOW_MS
+    }
     if (this.longPressTimer !== null) {
       this.win.clearTimeout(this.longPressTimer)
       this.longPressTimer = null
@@ -555,12 +556,7 @@ class ComposerPillDragController {
     this.finish(touch.clientX, touch.clientY)
   }
 
-  private onTouchCancel = () => {
-    if (this.pending?.kind === "touch") {
-      this.suppressMouseUntil = Date.now() + COMPATIBILITY_MOUSE_WINDOW_MS
-    }
-    this.cancel()
-  }
+  private onTouchCancel = () => this.cancel()
 
   private onKeyDown = (event: KeyboardEvent) => {
     if (event.key !== "Escape") return
