@@ -147,7 +147,7 @@ export function rowMatchesRef(row: IdentityRow, ref: string): boolean {
 }
 
 function mintedRuntimeSessionId(worktree: string, identities: MintedIdentity[]): string | undefined {
-  const records = identityRecordsFor(worktree, identities)
+  const records = identityRecordsFor(worktree, identities, undefined, "claude-code-channel")
   return records.length === 1 ? records[0]!.runtimeSessionId : undefined
 }
 

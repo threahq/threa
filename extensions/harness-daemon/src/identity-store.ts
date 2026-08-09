@@ -85,20 +85,33 @@ function parseRecord(text: string): MintedIdentity | undefined {
 }
 
 /**
- * The profile a worktree is cleaned up under.
+ * Whether a stored record's kind satisfies a caller asking for `kind`.
+ *
+ * `unknown` is a record written before kinds existed, and every such record was
+ * a Claude mint — the same convention `attestedRuntimes` applies to link
+ * records. Identity is namespaced per (directory, kind): a Pi and a Claude
+ * sharing one cwd are two identities, not a conflict.
+ */
+export function matchesRuntimeKind(recordKind: string, kind: string): boolean {
+  return recordKind === kind || (kind === "claude-code-channel" && recordKind === "unknown")
+}
+
+/**
+ * The profile a worktree is cleaned up under, for one runtime kind.
  *
  * NO record means the pre-profile fleet: the built-in default applies and
  * nothing about today's behaviour changes. Anything else that leaves the answer
- * in doubt — two records naming one directory, or a snapshot that will not
- * re-read — resolves to {@link UNKNOWN_PROFILE}, never to the default. Failing
- * open here escalates "I do not know" into commit, push and reclaim.
+ * in doubt — two same-kind records naming one directory, or a snapshot that
+ * will not re-read — resolves to {@link UNKNOWN_PROFILE}, never to the default.
+ * Failing open here escalates "I do not know" into commit, push and reclaim.
  */
 export function profileForWorktree(
   worktree: string,
+  runtimeKind: string,
   records: MintedIdentity[] = readMintedIdentities(),
   canonical: (path: string) => string = canonicalOrRaw
 ): Profile {
-  const found = identityRecordsFor(worktree, records, canonical)
+  const found = identityRecordsFor(worktree, records, canonical, runtimeKind)
   if (found.length === 0) return DEFAULT_PROFILE
   if (found.length > 1 || found[0]!.profileUnreadable) return UNKNOWN_PROFILE
   return found[0]!.profile ?? DEFAULT_PROFILE
@@ -119,20 +132,16 @@ export function recordProfileSnapshot(params: {
   instanceId?: string
 }): void {
   const worktree = canonicalOrRaw(params.worktree)
-  const existing = identityRecordsFor(worktree)
-  // Never a SECOND record for one directory. `profileForWorktree` cannot honour
-  // an ambiguous answer, so a respawn that simply appended would turn a
-  // `preserve: "none"` directory into one the reaper treats as unknown — and
-  // before that fallback was made safe, into one it committed, pushed and
-  // reclaimed. Supersede by worktree, exactly as `recordHarnessLink` does.
-  const foreign = existing.filter((record) => record.runtimeKind !== params.runtimeKind)
-  if (foreign.length > 0) {
-    console.warn(
-      `harnessd: not recording a ${params.runtimeKind} profile for ${worktree}: ${foreign.map((record) => `${record.runtimeSessionId} (${record.runtimeKind})`).join(", ")} already claims it`
-    )
-    return
+  // Never a SECOND record for one (directory, kind). `profileForWorktree`
+  // cannot honour an ambiguous answer, so a respawn that simply appended would
+  // turn a `preserve: "none"` directory into one the reaper treats as unknown —
+  // and before that fallback was made safe, into one it committed, pushed and
+  // reclaimed. Supersede within this kind, exactly as `recordHarnessLink`
+  // supersedes by worktree; another kind's record is a coexisting session's
+  // identity, never this one's to clear.
+  for (const record of identityRecordsFor(worktree, undefined, undefined, params.runtimeKind)) {
+    clearMintedIdentity(record.runtimeSessionId)
   }
-  for (const record of existing) clearMintedIdentity(record.runtimeSessionId)
   const written = writeMintedIdentity({
     runtimeSessionId: params.runtimeSessionId,
     instanceId: params.instanceId ?? params.runtimeSessionId,
@@ -186,14 +195,24 @@ export function readMintedIdentity(runtimeSessionId: string): MintedIdentity | u
  * Both sides are canonicalized, and the canonicalizer is a parameter: the mint
  * injects its own, and a record written by another writer may name the path it
  * was given rather than the resolved one.
+ *
+ * `runtimeKind` scopes the answer to one runtime's namespace (per
+ * {@link matchesRuntimeKind}); omitted, every kind's records are returned —
+ * which is what a caller deciding whether to destroy the DIRECTORY needs, and
+ * what a caller resolving one runtime's identity must not use.
  */
 export function identityRecordsFor(
   worktree: string,
   records: MintedIdentity[] = readMintedIdentities(),
-  canonical: (path: string) => string = canonicalOrRaw
+  canonical: (path: string) => string = canonicalOrRaw,
+  runtimeKind?: string
 ): MintedIdentity[] {
   const target = canonical(worktree)
-  return records.filter((record) => canonical(record.worktree) === target)
+  return records.filter(
+    (record) =>
+      canonical(record.worktree) === target &&
+      (runtimeKind === undefined || matchesRuntimeKind(record.runtimeKind, runtimeKind))
+  )
 }
 
 /**

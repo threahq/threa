@@ -432,7 +432,15 @@ export function resolveManagedAgentPane(
       : { status: "missing" }
   }
   const canonicalWorktree = canonical(agent.worktree)
-  const inWorktree = panes.filter((pane) => canonical(pane.cwd) === canonicalWorktree)
+  // A pane whose launch parses as the OTHER runtime is a coexisting session's,
+  // never a candidate for this row: without the filter, a Pi and a Claude
+  // sharing one cwd make every legacy worktree-keyed row ambiguous — or worse,
+  // a lone other-kind pane reads as "found".
+  const otherRuntime = (pane: LocalTmuxPane) =>
+    agent.runtime === "pi"
+      ? Boolean(parseClaudeChannelLaunch(pane.startCommand))
+      : Boolean(parsePiLaunch(pane.startCommand))
+  const inWorktree = panes.filter((pane) => canonical(pane.cwd) === canonicalWorktree && !otherRuntime(pane))
   if (inWorktree.length === 1) return { status: "found", pane: inWorktree[0]! }
   if (inWorktree.length === 0) return { status: "missing" }
   const recorded = inWorktree.find(
@@ -520,12 +528,18 @@ export interface IdentityEvidence {
   canonical?: (path: string) => string
 }
 
+/**
+ * Scoped to the Claude namespace: this feeds {@link resolveRuntimeIdentity},
+ * which answers "what CLAUDE identity does this directory have" — a coexisting
+ * Pi's record must not make the answer ambiguous and push the resolver down to
+ * the hostname derivation this store exists to retire.
+ */
 function soleMintedIdentity(
   cwd: string,
   identities: MintedIdentity[],
   canonical: (path: string) => string
 ): MintedIdentity | undefined {
-  const records = identityRecordsFor(cwd, identities, canonical)
+  const records = identityRecordsFor(cwd, identities, canonical, "claude-code-channel")
   return records.length === 1 ? records[0] : undefined
 }
 
@@ -579,7 +593,8 @@ export function resolveRuntimeIdentity(
 }
 
 /**
- * Every distinct identity any store attests for `cwd`, when they disagree.
+ * Every distinct identity the stores attest for `cwd` within one runtime
+ * kind's namespace, when they disagree.
  *
  * The resolver ranks its rungs, which is right for a read: one answer, most
  * trustworthy source first. A destructive caller needs the opposite question —
@@ -588,17 +603,25 @@ export function resolveRuntimeIdentity(
  * compare while every reader canonicalizes, so `/repo/x` and `/repo/x/` leave
  * two live records; the mint refuses on that state, and so must anything that
  * kills a window or removes a directory.
+ *
+ * Per kind because identity is per (directory, kind): a Pi and a Claude
+ * sharing one cwd are two coexisting sessions, not disagreeing evidence.
+ * `attested` entries are Claude-only by construction, so they only count
+ * toward the Claude namespace.
  */
 export function conflictingAttestations(
   cwd: string,
   attested: AttestedRuntime[],
   identities: MintedIdentity[],
-  canonical: (path: string) => string = canonicalOrRaw
+  canonical: (path: string) => string = canonicalOrRaw,
+  runtimeKind = "claude-code-channel"
 ): string[] {
   const target = canonical(cwd)
   const ids = new Set<string>()
-  for (const entry of attested) if (entry.worktree === target) ids.add(entry.runtimeSessionId)
-  for (const record of identityRecordsFor(cwd, identities, canonical)) ids.add(record.runtimeSessionId)
+  if (runtimeKind === "claude-code-channel") {
+    for (const entry of attested) if (entry.worktree === target) ids.add(entry.runtimeSessionId)
+  }
+  for (const record of identityRecordsFor(cwd, identities, canonical, runtimeKind)) ids.add(record.runtimeSessionId)
   return ids.size > 1 ? [...ids] : []
 }
 

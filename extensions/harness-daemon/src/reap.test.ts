@@ -509,6 +509,95 @@ test("disagreeing records on an EMPTY worktree are drained, and the directory is
   expect(recorded.retired).toEqual([])
 })
 
+const PI_UUID = "095ed570-f6ce-4fd6-a33e-ac0d71c4625f"
+
+function piPane(overrides: Partial<LocalTmuxPane> = {}): LocalTmuxPane {
+  return pane({
+    paneId: "%9",
+    windowId: "@9",
+    panePid: 5151,
+    startCommand: `env THREA_RUNTIME_SESSION_ID=${PI_UUID} pi --session-id ${PI_UUID}`,
+    ...overrides,
+  })
+}
+
+function piRecord(): MintedIdentity {
+  return {
+    runtimeSessionId: PI_UUID,
+    instanceId: PI_UUID,
+    worktree: WORKTREE,
+    runtimeKind: "pi-local",
+    mintedAt: "2026-07-29T00:00:00.000Z",
+    source: "mint",
+  }
+}
+
+test("a coexisting Pi does not contest a Claude link's reap, but the directory is left untouched", async () => {
+  // Identity is per (directory, kind): the Pi's record and pane are a
+  // coexisting session, not disagreeing evidence — the Claude window still
+  // dies, the link is still cleared, and nothing mutates the shared directory.
+  const policies: WindDownPolicy[] = []
+  const { deps, recorded } = makeDeps({
+    identities: () => [piRecord()],
+    panes: () => [pane(), piPane()],
+    windDown: (cwd, _log, policy) => {
+      recorded.woundDown.push(cwd)
+      policies.push(policy)
+      return { pushed: false, removed: false, reason: "preserve 'none'" }
+    },
+  })
+
+  const [outcome] = await reapArchivedWorktrees(deps)
+
+  expect(outcome).toMatchObject({ status: "reaped, worktree left" })
+  expect(recorded.killed).toEqual(["@7"])
+  expect(recorded.forgotten).toEqual(["ccs-abc"])
+  expect(recorded.retired).toEqual([])
+  expect(policies).toEqual([{ preserve: "none", reclaim: false }])
+})
+
+test("an archived Claude link is cleared even while a live Pi keeps the directory", async () => {
+  const policies: WindDownPolicy[] = []
+  const { deps, recorded } = makeDeps({
+    identities: () => [piRecord()],
+    panes: () => [piPane()],
+    windDown: (cwd, _log, policy) => {
+      recorded.woundDown.push(cwd)
+      policies.push(policy)
+      return { pushed: false, removed: false, reason: "preserve 'none'" }
+    },
+  })
+
+  const [outcome] = await reapArchivedWorktrees(deps)
+
+  expect(outcome).toMatchObject({ status: "reaped, worktree left" })
+  expect(recorded.killed).toEqual([])
+  expect(recorded.forgotten).toEqual(["ccs-abc"])
+  expect(policies).toEqual([{ preserve: "none", reclaim: false }])
+})
+
+test("a Pi link's reap kills its own window and accounts the coexisting Claude's pid", async () => {
+  const policies: WindDownPolicy[] = []
+  const { deps, recorded } = makeDeps({
+    links: () => [link({ runtimeKind: "pi-local", runtimeSessionId: PI_UUID, instanceId: PI_UUID })],
+    identities: () => [piRecord()],
+    panes: () => [piPane(), pane()],
+    claudeProcessesIn: () => [4242],
+    windDown: (cwd, _log, policy) => {
+      recorded.woundDown.push(cwd)
+      policies.push(policy)
+      return { pushed: false, removed: false, reason: "preserve 'none'" }
+    },
+  })
+
+  const [outcome] = await reapArchivedWorktrees(deps)
+
+  expect(outcome).toMatchObject({ status: "reaped, worktree left" })
+  expect(recorded.killed).toEqual(["@9"])
+  expect(recorded.forgotten).toEqual([PI_UUID])
+  expect(policies).toEqual([{ preserve: "none", reclaim: false }])
+})
+
 test("a minted record naming the worktree a different session claims blocks the reap", async () => {
   // The promotion that made this necessary: the minted rung outranks an
   // ambiguous ledger, so a pane declaring nothing resolved to THIS record and
@@ -629,7 +718,7 @@ describe("profile teardown and wind-down policy", () => {
     const policies: WindDownPolicy[] = []
     const { deps } = makeDeps({
       identities: () => [],
-      profileFor: (worktree) => profileForWorktree(worktree, []),
+      profileFor: (worktree, runtimeKind) => profileForWorktree(worktree, runtimeKind, []),
       windDown: (_cwd, _log, policy) => {
         policies.push(policy)
         return { pushed: true, removed: true }
@@ -662,7 +751,7 @@ describe("profile teardown and wind-down policy", () => {
     const policies: WindDownPolicy[] = []
     const { deps, recorded } = makeDeps({
       identities: () => [record],
-      profileFor: (worktree) => profileForWorktree(worktree, [record], (path) => path),
+      profileFor: (worktree, runtimeKind) => profileForWorktree(worktree, runtimeKind, [record], (path) => path),
       windDown: (_cwd, _log, policy) => {
         policies.push(policy)
         return { pushed: false, removed: false, reason: "preserve 'commit'" }

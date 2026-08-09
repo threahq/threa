@@ -866,4 +866,26 @@ describe("adoptClaudeSession opposing evidence", () => {
     expect(outcome.detail).toContain("ccs-someone-else")
     expect(dependencies.launches).toEqual([])
   })
+
+  test("a coexisting Pi's record in the cwd is not opposing evidence", async () => {
+    // Identity is per (directory, runtime kind): the Pi's record binds the cwd
+    // for pi-local, which says nothing about which Claude session may adopt it.
+    const dependencies = deps({
+      panes: () => [pane()],
+      identities: () => [
+        {
+          runtimeSessionId: "pi-uuid",
+          instanceId: "pi-uuid",
+          worktree: CWD,
+          runtimeKind: "pi-local",
+          mintedAt: "2026-07-29T00:00:00.000Z",
+          source: "mint",
+        },
+      ],
+    })
+
+    const outcome = await adoptClaudeSessionUnlocked(options(), dependencies)
+
+    expect(outcome.status).toBe("adopted live")
+  })
 })

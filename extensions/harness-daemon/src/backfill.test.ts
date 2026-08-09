@@ -123,6 +123,23 @@ test("an inventory row corroborated by a link record is recorded", () => {
   ])
 })
 
+test("a coexisting Pi's record neither conflicts nor pre-empts the Claude backfill", () => {
+  const pi: MintedIdentity = {
+    runtimeSessionId: "095ed570-f6ce-4f6d-8096-745bb400e166",
+    instanceId: "095ed570-f6ce-4f6d-8096-745bb400e166",
+    worktree: WORKTREE,
+    runtimeKind: "pi-local",
+    mintedAt: "2026-07-29T00:00:00.000Z",
+    source: "mint",
+  }
+  const context = deps({ links: () => [link()], identities: () => [pi] })
+
+  const outcomes = backfillIdentities(context.deps, false)
+
+  expect(pairs(outcomes)).toEqual([{ subject: WORKTREE, disposition: "recorded" }])
+  expect(context.written.map((record) => record.runtimeKind)).toEqual(["claude-code-channel"])
+})
+
 test("an inventory row nothing else attests is refused as a single source", () => {
   const context = deps()
   const outcomes = backfillIdentities(context.deps, false)

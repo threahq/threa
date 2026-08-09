@@ -97,6 +97,18 @@ test("a minted record beats the ledger for the same directory", () => {
   })
 })
 
+test("a coexisting Pi's record does not make the Claude namespace ambiguous", () => {
+  // Kind-blind, the two records read as a conflicted directory and the
+  // resolver falls through — past the minted rung this store exists to serve.
+  const pi = identity({ runtimeSessionId: "pi-uuid", instanceId: "pi-uuid", runtimeKind: "pi-local" })
+
+  expect(resolve({ identities: [pi, identity()] })).toEqual({
+    instanceId: "cc-minted",
+    runtimeSessionId: "ccs-minted",
+    source: "minted",
+  })
+})
+
 test("the ledger beats a stale inventory row", () => {
   // Inventory rows are immutable per launch, so the row is stale by
   // construction the moment anything re-identifies the directory.

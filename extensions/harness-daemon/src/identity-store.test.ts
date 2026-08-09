@@ -97,13 +97,19 @@ test("an ambiguous or unreadable profile resolves to nothing-destructive, never 
   }
   const quiet: Profile = { name: "quiet", provision: "existing", preserve: "none", setup: [], teardown: [] }
 
-  expect(profileForWorktree("/repo/threa.x", [], (path) => path)).toEqual(DEFAULT_PROFILE)
+  expect(profileForWorktree("/repo/threa.x", "claude-code-channel", [], (path) => path)).toEqual(DEFAULT_PROFILE)
   expect(
-    profileForWorktree("/repo/threa.x", [{ ...base, runtimeSessionId: "ccs-a", profile: quiet }], (p) => p)
+    profileForWorktree(
+      "/repo/threa.x",
+      "claude-code-channel",
+      [{ ...base, runtimeSessionId: "ccs-a", profile: quiet }],
+      (p) => p
+    )
   ).toEqual(quiet)
   expect(
     profileForWorktree(
       "/repo/threa.x",
+      "claude-code-channel",
       [
         { ...base, runtimeSessionId: "ccs-a", profile: quiet },
         { ...base, runtimeSessionId: "ccs-b", profile: quiet },
@@ -112,11 +118,34 @@ test("an ambiguous or unreadable profile resolves to nothing-destructive, never 
     )
   ).toEqual(UNKNOWN_PROFILE)
   expect(
-    profileForWorktree("/repo/threa.x", [{ ...base, runtimeSessionId: "ccs-a", profileUnreadable: true }], (p) => p)
+    profileForWorktree(
+      "/repo/threa.x",
+      "claude-code-channel",
+      [{ ...base, runtimeSessionId: "ccs-a", profileUnreadable: true }],
+      (p) => p
+    )
   ).toEqual(UNKNOWN_PROFILE)
 })
 
-test("a respawn supersedes the directory's record instead of adding a second", () => {
+test("each runtime kind reads its own profile in a shared directory", () => {
+  const base = {
+    instanceId: "cc-a",
+    worktree: "/home/user",
+    mintedAt: "2026-07-29T00:00:00.000Z",
+    source: "mint" as const,
+  }
+  const quiet: Profile = { name: "quiet", provision: "existing", preserve: "none", setup: [], teardown: [] }
+  const records: MintedIdentity[] = [
+    { ...base, runtimeSessionId: "pi-a", runtimeKind: "pi-local", profile: quiet },
+    { ...base, runtimeSessionId: "ccs-a", runtimeKind: "claude-code-channel" },
+  ]
+
+  expect(profileForWorktree("/home/user", "pi-local", records, (p) => p)).toEqual(quiet)
+  expect(profileForWorktree("/home/user", "claude-code-channel", records, (p) => p)).toEqual(DEFAULT_PROFILE)
+})
+
+test("a respawn supersedes its own kind's record and leaves a coexisting kind's alone", () => {
+  writeMintedIdentity(record({ runtimeSessionId: "ccs-coexisting", worktree: "/repo/threa.y" }))
   recordProfileSnapshot({
     worktree: "/repo/threa.y",
     runtimeSessionId: "pi-one",
@@ -130,6 +159,10 @@ test("a respawn supersedes the directory's record instead of adding a second", (
     profile: { name: "q", provision: "existing", preserve: "none", setup: [], teardown: [] },
   })
 
-  expect(identityRecordsFor("/repo/threa.y").map((record) => record.runtimeSessionId)).toEqual(["pi-two"])
-  expect(profileForWorktree("/repo/threa.y").preserve).toBe("none")
+  expect(
+    identityRecordsFor("/repo/threa.y")
+      .map((record) => record.runtimeSessionId)
+      .sort()
+  ).toEqual(["ccs-coexisting", "pi-two"])
+  expect(profileForWorktree("/repo/threa.y", "pi-local").preserve).toBe("none")
 })

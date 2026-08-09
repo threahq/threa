@@ -167,7 +167,9 @@ function decide(
   claimed: Map<string, string>
 ): BackfillOutcome {
   const records = deps.identities()
-  const recorded = identityRecordsFor(worktree, records, deps.canonicalPath)
+  // The backfill records Claude identities, so only the Claude namespace can
+  // corroborate or contradict it; a coexisting Pi's record is neither.
+  const recorded = identityRecordsFor(worktree, records, deps.canonicalPath, "claude-code-channel")
   const attested = attestedRuntimes(deps.links(), deps.canonicalPath)
 
   if (!deps.pathExists(worktree)) {
