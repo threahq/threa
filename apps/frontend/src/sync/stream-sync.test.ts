@@ -1209,7 +1209,7 @@ describe("updateMessageEvent", () => {
       _cachedAt: Date.now(),
     })
 
-    await updateMessageEvent(false, streamId, messageId, (p) => ({ ...p, replyCount: 5 }))
+    await updateMessageEvent(streamId, messageId, (p) => ({ ...p, replyCount: 5 }))
 
     const event = await db.events.get("evt_1")
     expect((event?.payload as Record<string, unknown>).replyCount).toBe(5)
@@ -1226,7 +1226,7 @@ describe("updateMessageEvent", () => {
       _cachedAt: before - 10000,
     })
 
-    await updateMessageEvent(false, streamId, messageId, (p) => ({ ...p, replyCount: 1 }))
+    await updateMessageEvent(streamId, messageId, (p) => ({ ...p, replyCount: 1 }))
 
     const event = await db.events.get("evt_patched")
     expect(event?._patchedAt).toBeDefined()
@@ -1248,12 +1248,12 @@ describe("updateMessageEvent", () => {
     // concurrently. With the old read-then-update implementation the last
     // write would overwrite earlier ones and lose fields.
     await Promise.all([
-      updateMessageEvent(false, streamId, messageId, (p) => ({
+      updateMessageEvent(streamId, messageId, (p) => ({
         ...p,
         replyCount: 3,
         threadSummary: { lastReplyContentMarkdown: "hi", participantIds: ["u1"] },
       })),
-      updateMessageEvent(false, streamId, messageId, (p) => ({
+      updateMessageEvent(streamId, messageId, (p) => ({
         ...p,
         threadId: "thread_123",
       })),
@@ -1267,7 +1267,7 @@ describe("updateMessageEvent", () => {
   })
 })
 
-describe("updateMessageEvent — indexed payload.messageId lookup (indexedMessagePatch)", () => {
+describe("updateMessageEvent — indexed payload.messageId lookup", () => {
   function seedRow(overrides: {
     id: string
     streamId: string
@@ -1370,18 +1370,12 @@ describe("updateMessageEvent — indexed payload.messageId lookup (indexedMessag
     await seedLargeStream(streamId, 1000, messageId)
 
     const indexed = trackCursor()
-    await updateMessageEvent(true, streamId, messageId, (p) => ({ ...p, reactions: ["👍"] }))
+    await updateMessageEvent(streamId, messageId, (p) => ({ ...p, reactions: ["👍"] }))
     expect(indexed.indexes).toEqual(["payload.messageId"])
     expect({ filtered: indexed.filtered, visited: indexed.visited }).toEqual({ filtered: 0, visited: 1 })
-    vi.restoreAllMocks()
-
-    const scanned = trackCursor()
-    await updateMessageEvent(false, streamId, messageId, (p) => ({ ...p, reactions: ["👍", "🎉"] }))
-    expect(scanned.indexes).toEqual(["[streamId+eventType]"])
-    expect({ filtered: scanned.filtered, visited: scanned.visited }).toEqual({ filtered: 1000, visited: 1 })
 
     const patched = await db.events.get("evt_bulk_998")
-    expect((patched?.payload as Record<string, unknown>).reactions).toEqual(["👍", "🎉"])
+    expect((patched?.payload as Record<string, unknown>).reactions).toEqual(["👍"])
   }, 20000)
 
   it("a patch for a message in another stream is not applied", async () => {
@@ -1392,7 +1386,7 @@ describe("updateMessageEvent — indexed payload.messageId lookup (indexedMessag
     ])
 
     const counts = trackCursor()
-    await updateMessageEvent(true, "stream_here", messageId, (p) => ({ ...p, replyCount: 7 }))
+    await updateMessageEvent("stream_here", messageId, (p) => ({ ...p, replyCount: 7 }))
 
     const here = await db.events.get("evt_here")
     const there = await db.events.get("evt_there")
@@ -1419,7 +1413,7 @@ describe("updateMessageEvent — indexed payload.messageId lookup (indexedMessag
     ])
 
     const counts = trackCursor()
-    await updateMessageEvent(true, "stream_typed", messageId, (p) => ({ ...p, replyCount: 9 }))
+    await updateMessageEvent("stream_typed", messageId, (p) => ({ ...p, replyCount: 9 }))
 
     const created = await db.events.get("evt_created")
     const edited = await db.events.get("evt_edited")
@@ -1439,8 +1433,8 @@ describe("updateMessageEvent — indexed payload.messageId lookup (indexedMessag
     )
 
     await Promise.all([
-      updateMessageEvent(true, "stream_race", messageId, (p) => ({ ...p, replyCount: 3 })),
-      updateMessageEvent(true, "stream_race", messageId, (p) => ({ ...p, threadId: "thread_1" })),
+      updateMessageEvent("stream_race", messageId, (p) => ({ ...p, replyCount: 3 })),
+      updateMessageEvent("stream_race", messageId, (p) => ({ ...p, threadId: "thread_1" })),
     ])
 
     const event = await db.events.get("evt_race_indexed")
@@ -1464,7 +1458,7 @@ describe("updateMessageEvent — indexed payload.messageId lookup (indexedMessag
       }),
     ])
 
-    await updateMessageEvent(true, "stream_sparse", "msg_sparse", (p) => ({ ...p, replyCount: 1 }))
+    await updateMessageEvent("stream_sparse", "msg_sparse", (p) => ({ ...p, replyCount: 1 }))
 
     const untouched = await db.events.get("evt_no_message_id")
     const patched = await db.events.get("evt_with_message_id")
@@ -1486,7 +1480,7 @@ describe("updateMessageEvent — indexed payload.messageId lookup (indexedMessag
       seedRow({ id: "evt_new_stream", streamId: "stream_new", sequence: "1", payload: { messageId, tag: "new" } }),
     ])
 
-    await updateMessageEvent(true, "stream_new", messageId, (p) => ({ ...p, tag: "patched" }))
+    await updateMessageEvent("stream_new", messageId, (p) => ({ ...p, tag: "patched" }))
 
     const rows = await db.events.bulkGet(["evt_old_stream", "evt_new_stream"])
     expect(rows.map((row) => (row?.payload as Record<string, unknown>).tag)).toEqual(["old", "patched"])
@@ -1510,13 +1504,13 @@ describe("updateMessageEvent — indexed payload.messageId lookup (indexedMessag
       }),
     ])
 
-    await updateMessageEvent(true, streamId, "msg_edit", (p) => ({ ...p, contentMarkdown: "edited", editedAt: "t" }))
-    await updateMessageEvent(true, streamId, "msg_delete", (p) => ({ ...p, deletedAt: "t" }))
-    await updateMessageEvent(true, streamId, "msg_move", (p) => ({ ...p, movedToStreamId: "stream_other" }))
-    await updateMessageEvent(true, streamId, "msg_reaction", (p) => ({ ...p, reactions: ["👍"] }))
-    await updateMessageEvent(true, streamId, "msg_preview", (p) => ({ ...p, linkPreviews: [{ url: "u" }] }))
-    await updateEventByAnchor(true, streamId, "msg_heal", (p) => ({ ...p, threadId: "thread_healed" }))
-    await updateEventByAnchor(true, streamId, "evt_card", (p) => ({ ...p, threadId: "thread_card" }))
+    await updateMessageEvent(streamId, "msg_edit", (p) => ({ ...p, contentMarkdown: "edited", editedAt: "t" }))
+    await updateMessageEvent(streamId, "msg_delete", (p) => ({ ...p, deletedAt: "t" }))
+    await updateMessageEvent(streamId, "msg_move", (p) => ({ ...p, movedToStreamId: "stream_other" }))
+    await updateMessageEvent(streamId, "msg_reaction", (p) => ({ ...p, reactions: ["👍"] }))
+    await updateMessageEvent(streamId, "msg_preview", (p) => ({ ...p, linkPreviews: [{ url: "u" }] }))
+    await updateEventByAnchor(streamId, "msg_heal", (p) => ({ ...p, threadId: "thread_healed" }))
+    await updateEventByAnchor(streamId, "evt_card", (p) => ({ ...p, threadId: "thread_card" }))
 
     const rows = await db.events.bulkGet([
       "evt_edit",

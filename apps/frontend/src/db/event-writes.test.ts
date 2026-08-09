@@ -250,24 +250,22 @@ describe("isEventWriteChunkingEnabled", () => {
   })
 
   it("readEventWriteFlagsFresh ignores the cache and re-reads the row every call", async () => {
-    await putMetadata({ workspace: { eventWriteChunking: "on", indexedMessagePatch: "on" }, user: {} })
-    primeEventWriteFlags("ws_1", { workspace: { eventWriteChunking: "off", indexedMessagePatch: "off" }, user: {} })
+    await putMetadata({ workspace: { eventWriteChunking: "on" }, user: {} })
+    primeEventWriteFlags("ws_1", { workspace: { eventWriteChunking: "off" }, user: {} })
 
     const first = await readEventWriteFlagsFresh(db, "ws_1")
-    await putMetadata({ workspace: { eventWriteChunking: "off", indexedMessagePatch: "on" }, user: {} })
+    await putMetadata({ workspace: { eventWriteChunking: "off" }, user: {} })
     const second = await readEventWriteFlagsFresh(db, "ws_1")
 
     expect({ first, second }).toEqual({
       first: {
         chunking: true,
-        indexedMessagePatch: true,
         sharedStreamRegistration: false,
         singlePreviewWriter: false,
         coalescedLiveCommit: false,
       },
       second: {
         chunking: false,
-        indexedMessagePatch: true,
         sharedStreamRegistration: false,
         singlePreviewWriter: false,
         coalescedLiveCommit: false,

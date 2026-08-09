@@ -74,7 +74,6 @@ export function skipNoOpEventRewrites(
 // instance instead, primed from the network bootstrap and socket flag flips.
 type EventWriteFlags = {
   chunking: boolean
-  indexedMessagePatch: boolean
   sharedStreamRegistration: boolean
   singlePreviewWriter: boolean
   coalescedLiveCommit: boolean
@@ -103,7 +102,6 @@ function resolveEventWriteFlags(layers: FeatureFlagLayers | null | undefined): E
   const resolved = resolveFeatureFlags(coerceLayers(layers ?? null) ?? EMPTY_FLAG_LAYERS)
   return {
     chunking: resolved.eventWriteChunking === "on",
-    indexedMessagePatch: resolved.indexedMessagePatch === "on",
     sharedStreamRegistration: resolved.sharedStreamRegistration === "on",
     singlePreviewWriter: resolved.singlePreviewWriter === "on",
     coalescedLiveCommit: resolved.coalescedLiveCommit === "on",
@@ -167,11 +165,6 @@ export async function isEventWriteChunkingEnabled(database: ThreaDatabase, works
 export async function readEventWriteFlagsFresh(database: ThreaDatabase, workspaceId: string): Promise<EventWriteFlags> {
   const metadata = await database.workspaceMetadata.get(workspaceId)
   return resolveEventWriteFlags(metadata?.featureFlags)
-}
-
-/** The viewer's `indexedMessagePatch` value, resolved through the same primed cache. */
-export async function isIndexedMessagePatchEnabled(database: ThreaDatabase, workspaceId: string): Promise<boolean> {
-  return (await getEventWriteFlags(database, workspaceId)).indexedMessagePatch
 }
 
 /** The viewer's `singlePreviewWriter` value, resolved through the same primed cache. */

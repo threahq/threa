@@ -264,12 +264,7 @@ export function useQueueDraftMessage(workspaceId: string) {
       const anchorId = params.streamCreation?.parentAnchorId ?? params.streamCreation?.parentMessageId
       if (params.streamCreation?.type === StreamTypes.THREAD && params.streamCreation.parentStreamId && anchorId) {
         const draftPanelId = createDraftPanelId(params.streamCreation.parentStreamId, anchorId)
-        await optimisticReplyCountUpdate(
-          params.workspaceId,
-          params.streamCreation.parentStreamId,
-          anchorId,
-          draftPanelId
-        ).catch(() => {})
+        await optimisticReplyCountUpdate(params.streamCreation.parentStreamId, anchorId, draftPanelId).catch(() => {})
       }
 
       notifyQueue()

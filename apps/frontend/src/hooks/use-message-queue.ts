@@ -126,7 +126,7 @@ async function promoteDraft(
   // re-increment here.
   const anchorId = creation.parentAnchorId ?? creation.parentMessageId
   if (creation.type === StreamTypes.THREAD && creation.parentStreamId && anchorId) {
-    setParentThreadId(next.workspaceId, creation.parentStreamId, anchorId, realStreamId).catch(() => {})
+    setParentThreadId(creation.parentStreamId, anchorId, realStreamId).catch(() => {})
   }
 
   // Clean up draft data (no-ops gracefully for non-scratchpad drafts).
