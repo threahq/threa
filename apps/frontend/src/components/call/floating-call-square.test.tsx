@@ -3,6 +3,7 @@ import { act, fireEvent } from "@testing-library/react"
 import { render, screen, userEvent } from "@/test"
 import * as authModule from "@/auth"
 import { seedWorkspaceCache, resetWorkspaceStoreCache } from "@/stores/workspace-store"
+import { resetWorkspaceTableRegistry } from "@/stores/workspace-table-registry"
 import {
   clearCallState,
   setCallSession,
@@ -145,6 +146,7 @@ const TWO_PEERS: CallRosterParticipant[] = [
 beforeEach(() => {
   clearCallState()
   resetWorkspaceStoreCache()
+  resetWorkspaceTableRegistry()
   localStorage.clear()
   __resetCallPrefsForTests()
   seedUsers()

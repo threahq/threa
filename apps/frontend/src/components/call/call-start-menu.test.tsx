@@ -5,6 +5,7 @@ import * as authModule from "@/auth"
 import { clearCallState, setCallSession, setCallPhase } from "@/stores/call-store"
 import { upsertActiveCall, __resetActiveCallsStore } from "@/stores/active-calls-store"
 import { seedWorkspaceCache, resetWorkspaceStoreCache } from "@/stores/workspace-store"
+import { resetWorkspaceTableRegistry } from "@/stores/workspace-table-registry"
 import type { CallController } from "@/calls/call-manager"
 import { CallStartMenu } from "./call-start-menu"
 import { CallManagerProvider } from "./call-manager-context"
@@ -40,6 +41,7 @@ beforeEach(() => {
   clearCallState()
   __resetActiveCallsStore()
   resetWorkspaceStoreCache()
+  resetWorkspaceTableRegistry()
   // The menu reads viewer identity to tell "join" from "take over".
   vi.spyOn(authModule, "useUser").mockReturnValue({ id: "workos_self" } as ReturnType<typeof authModule.useUser>)
 })
