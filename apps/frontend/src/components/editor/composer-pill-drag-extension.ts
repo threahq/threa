@@ -276,6 +276,7 @@ class ComposerPillDragController {
   private pending: PendingDrag | null = null
   private longPressTimer: number | null = null
   private suppressMouseUntil = 0
+  private suppressClickUntil = 0
   private readonly awaitingTouchCompletions = new Set<number>()
   private touchGuide: ComposerPillTouchGuide | null = null
 
@@ -412,9 +413,8 @@ class ComposerPillDragController {
 
   private clearPending(touchFinished = false) {
     const touchId = this.pending?.kind === "touch" ? this.pending.id : null
-    if (touchId !== null || this.pending?.active) {
-      this.suppressMouseUntil = Date.now() + COMPATIBILITY_MOUSE_WINDOW_MS
-    }
+    if (touchId !== null) this.suppressMouseUntil = Date.now() + COMPATIBILITY_MOUSE_WINDOW_MS
+    if (this.pending?.active) this.suppressClickUntil = Date.now() + COMPATIBILITY_MOUSE_WINDOW_MS
     if (this.longPressTimer !== null) {
       this.win.clearTimeout(this.longPressTimer)
       this.longPressTimer = null
@@ -508,6 +508,7 @@ class ComposerPillDragController {
       event.stopImmediatePropagation()
       return
     }
+    this.suppressClickUntil = 0
     if (!this.view.editable || event.button !== 0) return
     const pill = pillFromDom(this.view, event.target)
     if (!pill) return
@@ -609,8 +610,10 @@ class ComposerPillDragController {
   private onWindowBlur = () => this.cancel()
 
   private onClick = (event: MouseEvent) => {
-    if (Date.now() > this.suppressMouseUntil) return
+    const now = Date.now()
+    if (now > this.suppressMouseUntil && now > this.suppressClickUntil) return
     this.suppressMouseUntil = 0
+    this.suppressClickUntil = 0
     event.preventDefault()
     event.stopImmediatePropagation()
   }
