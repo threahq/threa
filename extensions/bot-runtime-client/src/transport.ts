@@ -642,8 +642,13 @@ function parseControlState(
     }
   }
   const reason = parseCancellationReason(value.reason)
-  if (value.status === "cancelled" && sourceRevision >= minimumSourceRevision && reason) {
-    return { invocationId: expectedInvocationId, status: "cancelled", sourceRevision, reason }
+  if (
+    value.status === "cancelled" &&
+    value.claimExpiresAt === null &&
+    sourceRevision >= minimumSourceRevision &&
+    reason
+  ) {
+    return { invocationId: expectedInvocationId, status: "cancelled", claimExpiresAt: null, sourceRevision, reason }
   }
   return
 }

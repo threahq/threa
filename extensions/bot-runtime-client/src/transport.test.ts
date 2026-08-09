@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, mock, spyOn } from "bun:test"
 import * as socketIoClient from "socket.io-client"
 import { BotRuntimeTransport } from "./transport"
+import { testTransportOptions } from "./transport-test-helpers"
 import type { BotRuntimeHello } from "./types"
 import { buildBotSocketUrl, parseWsHint } from "./ws-hint"
 
@@ -27,12 +28,7 @@ it("keeps status fields optional for legacy Pi hello payloads", () => {
 })
 
 function makeTransport(): BotRuntimeTransport {
-  return new BotRuntimeTransport({
-    baseUrl: "https://app.example.test",
-    workspaceId: "ws_1",
-    apiKey: "threa_bk_test",
-    hello: HELLO,
-  })
+  return new BotRuntimeTransport(testTransportOptions(HELLO))
 }
 
 interface CapturedRequest {
@@ -241,14 +237,7 @@ describe("socket self-heal (the wedge that burns the edge quota)", () => {
   }
 
   function makeSelfHealTransport(staleSocketRedialMs: number, reconnectionDelayMaxMs?: number): BotRuntimeTransport {
-    return new BotRuntimeTransport({
-      baseUrl: "https://app.example.test",
-      workspaceId: "ws_1",
-      apiKey: "threa_bk_test",
-      hello: HELLO,
-      staleSocketRedialMs,
-      reconnectionDelayMaxMs,
-    })
+    return new BotRuntimeTransport(testTransportOptions(HELLO, { staleSocketRedialMs, reconnectionDelayMaxMs }))
   }
 
   it("refreshes the initial and reconnect hello payloads immediately before emission", async () => {
@@ -265,19 +254,20 @@ describe("socket self-heal (the wedge that burns the edge quota)", () => {
       stubHintFetch()
       let commands = ["stop"]
       let busy = true
-      const transport = new BotRuntimeTransport({
-        baseUrl: "https://app.example.test",
-        workspaceId: "ws_1",
-        apiKey: "threa_bk_test",
-        hello: { ...HELLO, capabilities: {} },
-        beforeHello: (hello) => {
-          Object.assign(hello, {
-            status: busy ? "busy" : "available",
-            acceptingInvocations: !busy,
-            capabilities: { sessionControlCommands: commands },
-          })
-        },
-      })
+      const transport = new BotRuntimeTransport(
+        testTransportOptions(
+          { ...HELLO, capabilities: {} },
+          {
+            beforeHello: (hello) => {
+              Object.assign(hello, {
+                status: busy ? "busy" : "available",
+                acceptingInvocations: !busy,
+                capabilities: { sessionControlCommands: commands },
+              })
+            },
+          }
+        )
+      )
       await transport.connect()
       fake.handlers.connect!()
       commands = ["stop", "reconnect"]
@@ -390,14 +380,12 @@ describe("socket self-heal (the wedge that burns the edge quota)", () => {
     try {
       stubHintFetch()
       const disconnected = mock(() => {})
-      const transport = new BotRuntimeTransport({
-        baseUrl: "https://app.example.test",
-        workspaceId: "ws_1",
-        apiKey: "threa_bk_test",
-        hello: HELLO,
-        staleSocketRedialMs: 3 * 60 * 1000,
-        callbacks: { onDisconnected: disconnected },
-      })
+      const transport = new BotRuntimeTransport(
+        testTransportOptions(HELLO, {
+          staleSocketRedialMs: 3 * 60 * 1000,
+          callbacks: { onDisconnected: disconnected },
+        })
+      )
       await transport.connect()
       fake.handlers.connect!()
       expect(transport.socketConnected).toBe(true)
@@ -424,16 +412,14 @@ describe("socket self-heal (the wedge that burns the edge quota)", () => {
       stubHintFetch()
       const archived: unknown[] = []
       const restored: unknown[] = []
-      const transport = new BotRuntimeTransport({
-        baseUrl: "https://app.example.test",
-        workspaceId: "ws_1",
-        apiKey: "threa_bk_test",
-        hello: HELLO,
-        callbacks: {
-          onSessionArchived: (payload) => void archived.push(payload),
-          onSessionRestored: (payload) => void restored.push(payload),
-        },
-      })
+      const transport = new BotRuntimeTransport(
+        testTransportOptions(HELLO, {
+          callbacks: {
+            onSessionArchived: (payload) => void archived.push(payload),
+            onSessionRestored: (payload) => void restored.push(payload),
+          },
+        })
+      )
       await transport.connect()
 
       fake.handlers["bot:session_archived"]!({ runtimeSessionId: "rts_1" })

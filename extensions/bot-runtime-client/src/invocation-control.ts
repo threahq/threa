@@ -36,7 +36,10 @@ export interface InvocationCancellation {
 }
 
 export interface InvocationControlCallbacks {
-  onInputUpdated(update: InvocationInputUpdate): Promise<InputUpdateDisposition> | InputUpdateDisposition
+  onInputUpdated(
+    update: InvocationInputUpdate,
+    signal: AbortSignal
+  ): Promise<InputUpdateDisposition> | InputUpdateDisposition
   onCancelled(cancellation: InvocationCancellation): Promise<void> | void
   /** The authoritative claim no longer exists, without a typed backend cancellation. */
   onClaimLost?(): Promise<void> | void
@@ -71,6 +74,7 @@ export type InvocationControlState =
   | {
       invocationId: string
       status: "cancelled"
+      claimExpiresAt: null
       sourceRevision: number
       reason: BotInvocationCancellationReason
     }
@@ -298,6 +302,7 @@ export class InvocationControlManager {
       const authorityBehind = await this.runSync(observation, request)
       if (!this.isCurrent(observation)) break
       if (authorityBehind) {
+        // Equal high-water marks mean authority repeated the same behind revision; defer to the scheduled retry.
         if (observation.immediateFollowupRevision !== observation.highWaterRevision) {
           observation.immediateFollowupRevision = observation.highWaterRevision
           observation.dirty = true
@@ -397,7 +402,8 @@ export class InvocationControlManager {
       }
       let disposition: InputUpdateDisposition = "restart-required"
       try {
-        disposition = (await current.callbacks?.onInputUpdated(update)) ?? "restart-required"
+        disposition =
+          (await current.callbacks?.onInputUpdated(update, current.abortController.signal)) ?? "restart-required"
       } catch {
         disposition = "restart-required"
       }

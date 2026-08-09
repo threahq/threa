@@ -263,6 +263,7 @@ describe("InvocationControlManager", () => {
           : control({
               invocationId: "binv_1",
               status: "cancelled",
+              claimExpiresAt: null,
               sourceRevision: 3,
               reason: "input_restart",
             })
@@ -390,7 +391,13 @@ describe("InvocationControlManager", () => {
       async () =>
         ++calls === 1
           ? active(3, "three")
-          : control({ invocationId: "binv_1", status: "cancelled", sourceRevision: 2, reason: "source_deleted" }),
+          : control({
+              invocationId: "binv_1",
+              status: "cancelled",
+              claimExpiresAt: null,
+              sourceRevision: 2,
+              reason: "source_deleted",
+            }),
       { retryDelayMs: 1_000 }
     )
     const handle = manager.observe(
@@ -485,6 +492,125 @@ describe("InvocationControlManager", () => {
     manager.hint({ invocationId: "binv_1", sourceRevision: 2, reason: "source_deleted" }, true)
     expect(handle.sealing).toBeUndefined()
     await waitFor(() => cancelled.mock.calls.length === 1)
+  })
+
+  it("aborts a blocked update synchronously before its queued cancellation callback", async () => {
+    const gate = deferred<void>()
+    const cancelled = mock(() => {})
+    let updateSignal: AbortSignal | undefined
+    const { manager, requests } = setup(async () => active(3, "three"))
+    const handle = manager.observe(
+      params(async (_update, signal) => {
+        updateSignal = signal
+        await gate.promise
+        return "applied" as const
+      }, cancelled)
+    )
+    await waitFor(() => updateSignal !== undefined)
+
+    manager.hint({ invocationId: "binv_1", sourceRevision: 3, reason: "source_deleted" }, true)
+
+    expect({ aborted: updateSignal!.aborted, cancellations: cancelled.mock.calls.length }).toEqual({
+      aborted: true,
+      cancellations: 0,
+    })
+    gate.resolve()
+    await waitFor(() => cancelled.mock.calls.length === 1)
+    expect({ revision: handle.currentRevision, requests: requests.length }).toEqual({ revision: 2, requests: 1 })
+  })
+
+  it("aborts a blocked update synchronously on claim loss", async () => {
+    const gate = deferred<void>()
+    const lost = mock(() => {})
+    let updateSignal: AbortSignal | undefined
+    let calls = 0
+    const { manager } = setup(async () => (++calls === 1 ? active(3, "three") : { kind: "not_found" }))
+    const handle = manager.observe(
+      params(
+        async (_update, signal) => {
+          updateSignal = signal
+          await gate.promise
+          return "applied" as const
+        },
+        () => {},
+        lost
+      )
+    )
+    await waitFor(() => updateSignal !== undefined)
+
+    void handle.sync()
+    await waitFor(() => updateSignal!.aborted)
+    expect(lost).toHaveBeenCalledTimes(0)
+
+    gate.resolve()
+    await waitFor(() => lost.mock.calls.length === 1)
+    expect(handle.currentRevision).toBe(2)
+  })
+
+  it("aborts blocked updates on unregister and manager stop", async () => {
+    const unregisterGate = deferred<void>()
+    let unregisterSignal: AbortSignal | undefined
+    const unregister = setup(async () => active(3, "three"))
+    const unregisterHandle = unregister.manager.observe(
+      params(async (_update, signal) => {
+        unregisterSignal = signal
+        await unregisterGate.promise
+        return "applied" as const
+      })
+    )
+    await waitFor(() => unregisterSignal !== undefined)
+    unregisterHandle.unregister()
+
+    const stopGate = deferred<void>()
+    let stopSignal: AbortSignal | undefined
+    const stop = setup(async () => active(3, "three"))
+    stop.manager.observe(
+      params(async (_update, signal) => {
+        stopSignal = signal
+        await stopGate.promise
+        return "applied" as const
+      })
+    )
+    await waitFor(() => stopSignal !== undefined)
+    stop.manager.stop()
+
+    expect({ unregister: unregisterSignal!.aborted, stop: stopSignal!.aborted }).toEqual({
+      unregister: true,
+      stop: true,
+    })
+    unregisterGate.resolve()
+    stopGate.resolve()
+    await flushMicrotasks()
+    expect(unregisterHandle.currentRevision).toBe(2)
+  })
+
+  it("isolates update abort signals when an invocation ID is reused", async () => {
+    const oldGate = deferred<void>()
+    let oldSignal: AbortSignal | undefined
+    let newSignal: AbortSignal | undefined
+    const { manager } = setup(async () => active(3, "three"))
+    manager.observe(
+      params(async (_update, signal) => {
+        oldSignal = signal
+        await oldGate.promise
+        return "applied" as const
+      })
+    )
+    await waitFor(() => oldSignal !== undefined)
+
+    const replacement = manager.observe(
+      params((_update, signal) => {
+        newSignal = signal
+        return "applied"
+      })
+    )
+    expect(oldSignal!.aborted).toBe(true)
+    oldGate.resolve()
+    await waitFor(() => replacement.currentRevision === 3)
+
+    expect([oldSignal!.aborted, newSignal!.aborted]).toEqual([true, false])
+    replacement.unregister()
+    expect(newSignal!.aborted).toBe(true)
   })
 
   it("dispose invalidates claim loss blocked on the adapter queue", async () => {

@@ -15,6 +15,7 @@ import {
 } from "./crypto"
 import type { InvocationControlScheduler, ObserveClaimParams } from "./invocation-control"
 import { BotRuntimeTransport } from "./transport"
+import { testTransportOptions } from "./transport-test-helpers"
 import type { BotRuntimeTransportOptions } from "./types"
 
 const HELLO = {
@@ -53,17 +54,15 @@ function stubFetch(responder: (request: RequestRecord) => Response | Promise<Res
 }
 
 function makeTransport(overrides: Partial<BotRuntimeTransportOptions> = {}) {
-  return new BotRuntimeTransport({
-    baseUrl: "https://app.example.test",
-    workspaceId: "ws_1",
-    apiKey: "threa_bk_test",
-    hello: HELLO,
-    controlRetryDelayMs: 5,
-    controlMinRenewDelayMs: 2,
-    wsAckTimeoutMs: 10,
-    fetchTimeoutMs: 20,
-    ...overrides,
-  })
+  return new BotRuntimeTransport(
+    testTransportOptions(HELLO, {
+      controlRetryDelayMs: 5,
+      controlMinRenewDelayMs: 2,
+      wsAckTimeoutMs: 10,
+      fetchTimeoutMs: 20,
+      ...overrides,
+    })
+  )
 }
 
 function observation(
@@ -233,6 +232,7 @@ describe("BotRuntimeTransport observed claims", () => {
         data: {
           invocationId: "binv_1",
           status: "cancelled",
+          claimExpiresAt: null,
           sourceRevision: 3,
           reason: "adapter_restart_required",
         },
@@ -302,6 +302,7 @@ describe("BotRuntimeTransport observed claims", () => {
         data: {
           invocationId: "binv_1",
           status: "cancelled",
+          claimExpiresAt: null,
           sourceRevision: 4,
           reason: "adapter_restart_required",
         },
@@ -436,7 +437,15 @@ describe("BotRuntimeTransport observed claims", () => {
           sourceRevision: -1,
         },
       },
-      { data: { invocationId: "binv_1", status: "cancelled", sourceRevision: 1, reason: "source_deleted" } },
+      {
+        data: {
+          invocationId: "binv_1",
+          status: "cancelled",
+          claimExpiresAt: null,
+          sourceRevision: 1,
+          reason: "source_deleted",
+        },
+      },
       active("binv_1", 3, { delivery: "plaintext", sourceRevision: 3, promptMarkdown: "valid" }),
     ]
     const requests = stubFetch(() => json(responses.shift()))
