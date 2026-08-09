@@ -35,6 +35,7 @@ interface PendingDrag {
   startX: number
   startY: number
   holdElapsed: boolean
+  touchDragEligible: boolean
   active: boolean
 }
 
@@ -331,6 +332,7 @@ class ComposerPillDragController {
     this.longPressTimer = this.win.setTimeout(() => {
       if (!this.pending || this.pending.kind !== "touch") return
       this.pending.holdElapsed = true
+      this.pending.touchDragEligible = false
       this.longPressTimer = null
     }, LONG_PRESS_THRESHOLD_MS)
   }
@@ -339,6 +341,10 @@ class ComposerPillDragController {
     const drag = this.pending
     if (!drag || drag.active || !isComposerPillNode(this.view.state.doc.nodeAt(drag.sourcePos))) return
     drag.active = true
+    if (drag.kind === "touch" && this.longPressTimer !== null) {
+      this.win.clearTimeout(this.longPressTimer)
+      this.longPressTimer = null
+    }
     this.win.getSelection()?.removeAllRanges()
     const dropPos = composerPillDropPoint(
       this.view.state.doc,
@@ -461,6 +467,7 @@ class ComposerPillDragController {
       startX: event.clientX,
       startY: event.clientY,
       holdElapsed: false,
+      touchDragEligible: false,
       active: false,
     })
   }
@@ -491,6 +498,7 @@ class ComposerPillDragController {
     const pill = pillFromDom(this.view, event.target)
     const touch = event.touches[0]
     if (!pill || !touch) return
+    const selection = this.view.state.selection
     this.begin({
       kind: "touch",
       id: touch.identifier,
@@ -498,6 +506,7 @@ class ComposerPillDragController {
       startX: touch.clientX,
       startY: touch.clientY,
       holdElapsed: false,
+      touchDragEligible: selection instanceof NodeSelection && selection.from === pill.pos,
       active: false,
     })
   }
@@ -517,7 +526,7 @@ class ComposerPillDragController {
     if (!touch) return
     if (!drag.active) {
       if (!movedBeyondLongPressTolerance(drag, touch.clientX, touch.clientY)) return
-      if (!drag.holdElapsed) {
+      if (!drag.touchDragEligible) {
         this.cancel()
         return
       }
@@ -562,6 +571,7 @@ class ComposerPillDragController {
       return
     }
     this.pending.holdElapsed = true
+    this.pending.touchDragEligible = false
     if (this.longPressTimer !== null) {
       this.win.clearTimeout(this.longPressTimer)
       this.longPressTimer = null
