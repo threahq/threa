@@ -30,30 +30,31 @@ export interface PrepareHarnessReconnectOptions {
   fs?: HarnessReconnectFs
 }
 
+export type PrepareHarnessClearOptions = Omit<PrepareHarnessReconnectOptions, "force">
+
 export function harnessReconnectAvailable(
   options: Pick<PrepareHarnessReconnectOptions, "entrypoint" | "exists"> = {}
 ): boolean {
   return (options.exists ?? existsSync)(options.entrypoint ?? harnessDaemonEntrypoint())
 }
 
-export function prepareHarnessReconnect(
-  runtimeSessionId: string,
-  rootStreamId: string,
-  options: PrepareHarnessReconnectOptions = {}
-): () => void {
-  if (!runtimeSessionId.trim()) throw new Error("Runtime session id is missing.")
-  if (!rootStreamId.trim()) throw new Error("Root stream id is missing.")
+function requireHarnessEntrypoint(options: PrepareHarnessClearOptions): string {
   const entrypoint = options.entrypoint ?? harnessDaemonEntrypoint()
   if (!harnessReconnectAvailable(options)) throw new Error(`Harness daemon entrypoint not found: ${entrypoint}`)
+  return entrypoint
+}
 
+function prepareDetachedHarnessCommand(
+  command: "reconnect" | "clear",
+  args: string[],
+  options: PrepareHarnessClearOptions
+): () => void {
   let started = false
   return () => {
-    if (started) throw new Error("Harness reconnect was already started.")
+    if (started) throw new Error(`Harness ${command} was already started.`)
     started = true
-    const args = [entrypoint, "reconnect", runtimeSessionId, "--root-stream-id", rootStreamId]
-    if (options.force) args.push("--force")
     const bunExecutable = (options.bunExecutable ?? process.env.THREA_HARNESSD_BUN_BIN?.trim()) || "bun"
-    const logPath = options.logPath ?? join(homedir(), ".threa", "harnessd", "reconnect.log")
+    const logPath = options.logPath ?? join(homedir(), ".threa", "harnessd", `${command}.log`)
     const fs = options.fs ?? {
       mkdir: mkdirSync,
       open: openSync,
@@ -75,7 +76,7 @@ export function prepareHarnessReconnect(
       child.on("error", (error) => {
         const code = typeof error.code === "string" && /^E[A-Z0-9_]{1,31}$/.test(error.code) ? ` (${error.code})` : ""
         try {
-          fs.appendFile(logPath, `Harness reconnect launch failed${code}\n`, { mode: 0o600 })
+          fs.appendFile(logPath, `Harness ${command} launch failed${code}\n`, { mode: 0o600 })
         } catch {}
       })
       child.unref()
@@ -83,4 +84,23 @@ export function prepareHarnessReconnect(
       fs.close(logFd)
     }
   }
+}
+
+export function prepareHarnessReconnect(
+  runtimeSessionId: string,
+  rootStreamId: string,
+  options: PrepareHarnessReconnectOptions = {}
+): () => void {
+  if (!runtimeSessionId.trim()) throw new Error("Runtime session id is missing.")
+  if (!rootStreamId.trim()) throw new Error("Root stream id is missing.")
+  const entrypoint = requireHarnessEntrypoint(options)
+  const args = [entrypoint, "reconnect", runtimeSessionId, "--root-stream-id", rootStreamId]
+  if (options.force) args.push("--force")
+  return prepareDetachedHarnessCommand("reconnect", args, options)
+}
+
+export function prepareHarnessClear(runtimeSessionId: string, options: PrepareHarnessClearOptions = {}): () => void {
+  if (!runtimeSessionId.trim()) throw new Error("Runtime session id is missing.")
+  const entrypoint = requireHarnessEntrypoint(options)
+  return prepareDetachedHarnessCommand("clear", [entrypoint, "clear", runtimeSessionId], options)
 }

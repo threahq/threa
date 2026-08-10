@@ -27,6 +27,7 @@ import {
   harnessReconnectAvailable,
   parseSealedAckContext,
   parseSealedTurnContext,
+  prepareHarnessClear,
   prepareHarnessReconnect,
   runHarnessKick,
   parseAllowedTmuxKey,
@@ -126,6 +127,7 @@ const SESSION_CONTROL_COMMANDS = [
   "kick",
   "carry-on",
   "reconnect",
+  "clear",
   "key",
 ] as const
 type PiSessionControlCommandName = (typeof SESSION_CONTROL_COMMANDS)[number]
@@ -812,11 +814,11 @@ function buildRuntimeCapabilities(
     supportsMentionInvocations: true,
     supportsSessionControlCommands: true,
     sessionControlCommands: SESSION_CONTROL_COMMANDS.filter((command) => {
-      // `kick` and `reconnect` both act through the harnessd entrypoint, which
-      // finds this session by its tmux pane and presses Enter into it. Neither
-      // can run without a pane and an installed daemon — everything else here
-      // actuates in-process through the extension API and needs no tmux at all.
-      if (command === "kick" || command === "reconnect") {
+      // `kick`, `reconnect`, and `clear` all act through the harnessd
+      // entrypoint, which finds this session by its tmux pane. None can run
+      // without a pane and an installed daemon — everything else here actuates
+      // in-process through the extension API and needs no tmux at all.
+      if (command === "kick" || command === "reconnect" || command === "clear") {
         return Boolean(ctx && currentReconnectLink(ctx, reconnectAvailable))
       }
       if (command === "key") return Boolean(ctx && currentSessionControlLink(ctx))
@@ -3333,6 +3335,102 @@ async function runReconnectCommand(
   }
 }
 
+interface ClearCommandDeps {
+  available: () => boolean
+  prepare: typeof prepareHarnessClear
+  complete: typeof completeInvocationWithMarkdown
+  heartbeat?: typeof heartbeat
+}
+
+async function runClearCommand(
+  invocation: ClaimedInvocation,
+  args: string,
+  ctx: ExtensionContext,
+  deps: ClearCommandDeps = {
+    available: harnessReconnectAvailable,
+    prepare: prepareHarnessClear,
+    complete: completeInvocationWithMarkdown,
+    heartbeat,
+  }
+): Promise<void> {
+  const sendHeartbeat = deps.heartbeat ?? heartbeat
+  if (args !== "" && args !== "--force") {
+    await deps.complete(invocation, "Usage: `/clear [--force]`.", ctx)
+    return
+  }
+  if (pending) {
+    await deps.complete(invocation, "A Threa invocation is still running; use `/stop` before clearing.", ctx)
+    return
+  }
+  if (args !== "--force" && !ctx.isIdle()) {
+    await deps.complete(invocation, "Pi is busy; retry when idle or use `/clear --force`.", ctx)
+    return
+  }
+  const link = currentReconnectLink(ctx, deps.available)
+  const lifecycleGeneration = sessionLifecycleGeneration
+  const runtimeSessionId = getRuntimeSessionId(ctx)
+  const instanceId = getSessionInstanceId(ctx)
+  const invocationFacts = {
+    rootStreamId: invocation.rootStreamId,
+    claimedInstanceId: invocation.claimedInstanceId,
+  }
+  if (
+    !link ||
+    invocationFacts.rootStreamId !== link.rootStreamId ||
+    invocationFacts.claimedInstanceId !== instanceId ||
+    sessionTearingDown
+  ) {
+    throw new Error("Harness clear is unavailable for this session.")
+  }
+  const linkFacts = {
+    instanceId: link.instanceId,
+    runtimeSessionId: link.runtimeSessionId,
+    rootStreamId: link.rootStreamId,
+  }
+  const start = deps.prepare(runtimeSessionId)
+  // The latch means "harness restart imminent — stay busy, accept no claims",
+  // which is exactly a clear's state too.
+  reconnectPending = true
+  await sendHeartbeat("busy", "Clear handoff…", ctx).catch(() => undefined)
+  try {
+    const acknowledged = await deps.complete(
+      invocation,
+      "Clear accepted; killing this session and starting a fresh conversation on the same scratchpad.",
+      ctx
+    )
+    const currentLink = currentReconnectLink(ctx, deps.available)
+    const lifecycleChanged =
+      sessionTearingDown ||
+      sessionLifecycleGeneration !== lifecycleGeneration ||
+      !currentLink ||
+      currentLink.instanceId !== linkFacts.instanceId ||
+      currentLink.runtimeSessionId !== linkFacts.runtimeSessionId ||
+      currentLink.rootStreamId !== linkFacts.rootStreamId ||
+      getRuntimeSessionId(ctx) !== runtimeSessionId ||
+      getSessionInstanceId(ctx) !== instanceId ||
+      invocation.rootStreamId !== invocationFacts.rootStreamId ||
+      invocation.claimedInstanceId !== invocationFacts.claimedInstanceId
+    if (!acknowledged || lifecycleChanged) {
+      reconnectPending = false
+      const enabled = isEnabled(ctx)
+      await sendHeartbeat(
+        enabled ? (ctx.isIdle() && !pending ? "available" : "busy") : "offline",
+        undefined,
+        ctx
+      ).catch(() => undefined)
+      return
+    }
+    start()
+  } catch (error) {
+    reconnectPending = false
+    const enabled = isEnabled(ctx)
+    await sendHeartbeat(enabled ? (ctx.isIdle() && !pending ? "available" : "busy") : "offline", undefined, ctx).catch(
+      () => undefined
+    )
+    throw error
+  }
+}
+
 async function runStopCommand(invocation: ClaimedInvocation, ctx: ExtensionContext): Promise<void> {
   const hadPendingRemoteInvocation = pending !== undefined
   const wasBusy = !ctx.isIdle()
@@ -3463,6 +3561,9 @@ async function handleSessionControlInvocation(
         return
       case "reconnect":
         await runReconnectCommand(invocation, command.args, ctx)
+        return
+      case "clear":
+        await runClearCommand(invocation, command.args, ctx)
         return
       case "key":
         await runKeyCommand(invocation, command.args, ctx)
@@ -4378,6 +4479,7 @@ export const __testing = {
   claimNextInvocation,
   claimIfIdle,
   runReconnectCommand,
+  runClearCommand,
   runReloadCommand,
   scheduleRecoveredCompletion,
   runKeyCommand,

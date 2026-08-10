@@ -38,7 +38,8 @@ export function resolveRuntimeInvocationRouting(
     commandName === "stop" ||
     commandName === "kick" ||
     commandName === "carry-on" ||
-    ((commandName === "reconnect" || commandName === "key") && runtimeKind === BotRuntimeKinds.PI_LOCAL)
+    ((commandName === "reconnect" || commandName === "clear" || commandName === "key") &&
+      runtimeKind === BotRuntimeKinds.PI_LOCAL)
   ) {
     // Pi advertises `active-scratchpad` while busy. The Claude Code channel
     // instead advertises only `session-control` while busy, so its interrupts

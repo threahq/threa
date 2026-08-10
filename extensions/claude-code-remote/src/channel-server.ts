@@ -3,6 +3,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js"
 import {
   harnessReconnectAvailable,
+  prepareHarnessClear,
   prepareHarnessReconnect,
   runHarnessKick,
   killOwnWindow,
@@ -44,7 +45,8 @@ export const CHANNEL_SOURCE = "threa-channel"
 // case); Threa's canonical `thinking` maps to Claude Code's `/effort`;
 // `carry-on` queues text for the quota carry-on resume (see carry-on.ts);
 // `kick` asks harnessd to press Enter in this session's pane; `status` reads
-// connection/activity state and captures the visible pane without sending keys.
+// connection/activity state and captures the visible pane without sending keys;
+// `clear` asks harnessd to restart this session with a fresh conversation.
 const SESSION_CONTROL_COMMANDS = [
   "stop",
   "steer",
@@ -57,6 +59,7 @@ const SESSION_CONTROL_COMMANDS = [
   "reload",
   "carry-on",
   "reconnect",
+  "clear",
   "key",
 ] as const
 // Model options for the composer's arg picker: built-in /model aliases plus
@@ -242,6 +245,42 @@ export async function runClaudeCommand(
         onHandoffReset: restartDelegationsAfterReset,
       }
     }
+    case "clear": {
+      if (args !== "" && args !== "--force") {
+        return { ok: false, message: "Usage: `/clear [--force]`." }
+      }
+      if (args !== "--force" && reconnectBusy?.()) {
+        return { ok: false, message: "Claude is busy; retry when idle or use `/clear --force`." }
+      }
+      const target = reconnectTarget?.()
+      const root = target?.rootStreamId ?? rootStreamId?.()
+      if (!runtimeSessionId || !root) throw new Error("Harness clear is unavailable for this session.")
+      const force = args === "--force"
+      const start = prepareHarnessClear(runtimeSessionId)
+      return {
+        ok: true,
+        message: "Clear accepted — killing this session and starting a fresh conversation on the same scratchpad.",
+        afterAck: async () => {
+          if (!force && reconnectBusy?.()) {
+            throw new Error("Claude became busy after clear acknowledgement; retry when idle or use `/clear --force`.")
+          }
+          await stopDelegationsForReconnect?.(force)
+          const current = reconnectTarget?.()
+          if (
+            reconnectReady?.() === false ||
+            (current &&
+              (current.stopped ||
+                current.linkState !== "linked" ||
+                current.rootStreamId !== root ||
+                current.linkGeneration !== target?.linkGeneration))
+          ) {
+            throw new Error("Remote session changed while delegation intake was quiescing; clear was not started.")
+          }
+          start()
+        },
+        onHandoffReset: restartDelegationsAfterReset,
+      }
+    }
     case "carry-on": {
       if (!carryOn) return { ok: false, message: "Quota carry-on is unavailable for this session." }
       return carryOn.enqueue(args)
@@ -333,7 +372,8 @@ export function createClaudeSessionControl(
     get commands() {
       return runtimeSessionId
         ? SESSION_CONTROL_COMMANDS.filter((command) => {
-            if (command === "reconnect") return Boolean(rootStreamId?.() && harnessReconnectAvailable())
+            if (command === "reconnect" || command === "clear")
+              return Boolean(rootStreamId?.() && harnessReconnectAvailable())
             // `kick` runs through the same harnessd entrypoint as `reconnect`,
             // so an uninstalled daemon makes it unrunnable too. tmux is already
             // covered by the tmuxAvailable() gate above.
@@ -342,7 +382,7 @@ export function createClaudeSessionControl(
             return true
           })
         : SESSION_CONTROL_COMMANDS.filter(
-            (command) => command !== "kick" && command !== "reconnect" && command !== "key"
+            (command) => command !== "kick" && command !== "reconnect" && command !== "clear" && command !== "key"
           )
     },
     modelSuggestions: MODEL_SUGGESTIONS,

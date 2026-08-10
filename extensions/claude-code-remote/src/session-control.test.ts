@@ -67,6 +67,18 @@ describe("createClaudeSessionControl", () => {
     })
   })
 
+  it("advertises clear only with exact runtime, root, and harness entrypoint", () => {
+    withTmuxEnv({ TMUX: "/tmp/tmux-1/default,1,0", TMUX_PANE: "%1" }, () => {
+      expect(createClaudeSessionControl(undefined, "runtime", undefined, () => "root")!.commands).toContain("clear")
+      expect(createClaudeSessionControl(undefined, "runtime", undefined, () => undefined)!.commands).not.toContain(
+        "clear"
+      )
+      expect(createClaudeSessionControl()!.commands).not.toContain("clear")
+      process.env.THREA_HARNESSD_ENTRYPOINT = "/definitely/missing/harnessd.ts"
+      expect(createClaudeSessionControl(undefined, "runtime", undefined, () => "root")!.commands).not.toContain("clear")
+    })
+  })
+
   it("advertises kick only when the harness entrypoint exists", () => {
     // kick shells out to the same harnessd entrypoint reconnect uses, so an
     // uninstalled daemon makes it a dead button rather than a working command.
@@ -235,6 +247,134 @@ describe("runClaudeCommand validation (paths that never touch tmux)", () => {
     await expect(outcome.afterAck?.()).rejects.toBe(releaseError)
     outcome.onHandoffReset?.()
     expect(resets).toBe(1)
+  })
+
+  it("accepts only empty or exact --force clear args", async () => {
+    for (const args of ["--FORCE", "force", "--force=true", "--force --force", "extra"]) {
+      expect(await runClaudeCommand("clear", args, undefined, "runtime", undefined, () => "root")).toEqual({
+        ok: false,
+        message: "Usage: `/clear [--force]`.",
+      })
+    }
+    for (const args of ["", "--force"]) {
+      const outcome = await runClaudeCommand("clear", args, undefined, "runtime", undefined, () => "root")
+      expect(outcome.ok).toBe(true)
+      expect(outcome.message).toBe(
+        "Clear accepted — killing this session and starting a fresh conversation on the same scratchpad."
+      )
+      expect(typeof outcome.afterAck).toBe("function")
+    }
+  })
+
+  it("refuses non-force clear during in-flight or quota-held work", async () => {
+    const busy = await runClaudeCommand(
+      "clear",
+      "",
+      undefined,
+      "runtime",
+      undefined,
+      () => "root",
+      () => true
+    )
+    expect(busy).toEqual({ ok: false, message: "Claude is busy; retry when idle or use `/clear --force`." })
+    expect(
+      (
+        await runClaudeCommand(
+          "clear",
+          "--force",
+          undefined,
+          "runtime",
+          undefined,
+          () => "root",
+          () => true
+        )
+      ).ok
+    ).toBe(true)
+  })
+
+  it("refuses non-force clear when work begins after the outcome but before afterAck", async () => {
+    let busy = false
+    const outcome = await runClaudeCommand(
+      "clear",
+      "",
+      undefined,
+      "runtime",
+      undefined,
+      () => "root",
+      () => busy
+    )
+
+    expect(outcome.ok).toBe(true)
+    busy = true
+    await expect(outcome.afterAck?.()).rejects.toThrow(
+      "Claude became busy after clear acknowledgement; retry when idle or use `/clear --force`."
+    )
+  })
+
+  for (const lifecycle of ["shutdown", "archive→same-root restore"] as const) {
+    it(`does not launch clear when ${lifecycle} wins during deferred delegation quiesce`, async () => {
+      let releaseQuiesce!: () => void
+      const quiesce = new Promise<void>((resolve) => (releaseQuiesce = resolve))
+      let target: {
+        stopped: boolean
+        linkGeneration: number
+        linkState: "unlinked" | "linked" | "detached"
+        rootStreamId: string | undefined
+      } = { stopped: false, linkGeneration: 1, linkState: "linked", rootStreamId: "root" }
+      const outcome = await runClaudeCommand(
+        "clear",
+        "--force",
+        undefined,
+        "runtime",
+        undefined,
+        () => "root",
+        undefined,
+        () => quiesce,
+        undefined,
+        () => target
+      )
+
+      const postAck = outcome.afterAck?.()
+      target =
+        lifecycle === "shutdown"
+          ? { stopped: true, linkGeneration: 1, linkState: "unlinked", rootStreamId: undefined }
+          : { stopped: false, linkGeneration: 3, linkState: "linked", rootStreamId: "root" }
+      releaseQuiesce()
+
+      await expect(postAck).rejects.toThrow(
+        "Remote session changed while delegation intake was quiescing; clear was not started."
+      )
+    })
+  }
+
+  it("does not launch clear when delegation quiesce fails and exposes intake restoration", async () => {
+    const releaseError = new Error("delegation release failed: 500")
+    let resets = 0
+    const outcome = await runClaudeCommand(
+      "clear",
+      "--force",
+      undefined,
+      "runtime",
+      undefined,
+      () => "root",
+      undefined,
+      async () => {
+        throw releaseError
+      },
+      () => {
+        resets += 1
+      }
+    )
+
+    await expect(outcome.afterAck?.()).rejects.toBe(releaseError)
+    outcome.onHandoffReset?.()
+    expect(resets).toBe(1)
+  })
+
+  it("fails loudly when /clear has no harness-managed runtime identity", async () => {
+    expect(runClaudeCommand("clear", "", undefined, undefined, undefined, () => "root")).rejects.toThrow(
+      "Harness clear is unavailable for this session."
+    )
   })
 
   it("sends one exact allowed key using Claude's parent PID", async () => {

@@ -28,7 +28,9 @@ export {
 export { harnessDaemonEntrypoint, runHarnessKick, type HarnessKickResult } from "./harness-kick"
 export {
   harnessReconnectAvailable,
+  prepareHarnessClear,
   prepareHarnessReconnect,
+  type PrepareHarnessClearOptions,
   type PrepareHarnessReconnectOptions,
 } from "./harness-reconnect"
 export {
