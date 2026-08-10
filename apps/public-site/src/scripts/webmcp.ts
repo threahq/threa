@@ -41,26 +41,30 @@ function load(path: string): Promise<string> {
 }
 
 /* llms-full.txt is the docs pages concatenated, separated by `---` lines and
-   headed by a `*Source: …*` line, which is the unit worth returning. */
+   headed by a `*Source: …*` line, which is the unit worth returning.
+
+   Literal substring, not tokens: splitting a query on whitespace and ranking by
+   how many pieces appear is a relevance judgment made by a heuristic that only
+   holds for space-delimited languages (INV-54), and a static page has no model
+   to make it properly. A miss returns the page list so the caller can pick one
+   itself rather than being told nothing. */
 async function searchDocs(args: Record<string, unknown>): Promise<ToolResult> {
   const query = String(args.query ?? "").trim()
   if (!query) return text("Provide a query.")
 
-  const terms = query.toLowerCase().split(/\s+/)
+  const needle = query.toLowerCase()
   const sections = (await load("/llms-full.txt")).split(/\n---\n/)
-  const scored = sections
-    .map((section) => {
-      const haystack = section.toLowerCase()
-      return { section, score: terms.filter((t) => haystack.includes(t)).length }
-    })
-    .filter((s) => s.score > 0)
-    .sort((a, b) => b.score - a.score)
-    .slice(0, 3)
+  const hits = sections.filter((section) => section.toLowerCase().includes(needle)).slice(0, 3)
 
-  if (scored.length === 0) {
-    return text(`Nothing in the Threa docs matched "${query}". The full docs are at https://threa.io/llms-full.txt.`)
+  if (hits.length === 0) {
+    const pages = sections.map((s) => s.match(/^\*Source: (\S+)\*/m)?.[1]).filter(Boolean)
+    return text(
+      `No section of the Threa docs contains "${query}" literally.\n\nPages available:\n${pages
+        .map((p) => `- ${p}`)
+        .join("\n")}\n\nAll of them in one fetch: https://threa.io/llms-full.txt`
+    )
   }
-  return text(scored.map((s) => s.section.trim()).join("\n\n---\n\n"))
+  return text(hits.map((section) => section.trim()).join("\n\n---\n\n"))
 }
 
 interface OpenApiOperation {
@@ -94,11 +98,14 @@ const TOOLS: ToolDefinition[] = [
   {
     name: "search_threa_docs",
     description:
-      "Search the Threa developer documentation — authentication, API reference, versioning, message markdown, operations, the CLI and MCP server, and worked recipes. Returns the matching sections verbatim.",
+      "Find a literal string in the Threa developer documentation — authentication, API reference, versioning, message markdown, operations, the CLI and MCP server, and worked recipes. Returns each page containing the string verbatim, or the page list when nothing contains it. Case-insensitive substring, not a ranked search: pass a phrase that would appear in the docs, such as an endpoint path or a scope name.",
     inputSchema: {
       type: "object",
       properties: {
-        query: { type: "string", description: "What to look for, e.g. 'api key scopes' or 'search memos'." },
+        query: {
+          type: "string",
+          description: "The exact string to look for, e.g. 'memos:read' or '/messages/find-by-metadata'.",
+        },
       },
       required: ["query"],
     },

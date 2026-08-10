@@ -319,7 +319,8 @@ function createPageConverter(): TurndownService {
   const td = createConverter()
   td.addRule("decorative", {
     filter: (node) =>
-      (node as DomNode).getAttribute?.("data-decorative") !== null || /^(svg|footer|form)$/i.test(node.nodeName),
+      (node as DomNode).getAttribute?.("data-decorative") !== null ||
+      /^(svg|header|nav|footer|form)$/i.test(node.nodeName),
     replacement: () => "",
   })
   // A <br> inside a display heading would split the ATX line in two.
