@@ -1,7 +1,7 @@
 import type { Pool } from "pg"
 import type { Server } from "socket.io"
 import { HttpError } from "@threa/backend-common"
-import { BotRuntimeKinds } from "@threa/types"
+import { BotInvocationTriggers, BotRuntimeKinds } from "@threa/types"
 import {
   assertManifestAllows,
   type BotRuntimeInstance,
@@ -174,6 +174,16 @@ export function createBotRuntimeWriteOps(deps: BotRuntimeWriteOpsDeps): BotRunti
       claimToken: params.claimToken,
     })
     if (!claim) throw new HttpError("Invocation claim not found", { status: 404, code: "NOT_FOUND" })
+    // Session-control claims create no agent_sessions row (the claim handler
+    // skips the insert), so appendStep below could only throw "row not found" —
+    // an error-level stack per step, acked to the runtime as INTERNAL_ERROR.
+    // Reject with a terminal code the runtime can treat as definitive instead.
+    if (claim.trigger === BotInvocationTriggers.SESSION_CONTROL) {
+      throw new HttpError("Session-control invocations record no trace steps", {
+        status: 409,
+        code: "SESSION_CONTROL_TRACE_UNSUPPORTED",
+      })
+    }
     const accessible = await botChannelService.isStreamAccessibleForBot(
       params.workspaceId,
       params.botId,
