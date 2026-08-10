@@ -3248,28 +3248,47 @@ interface ReconnectCommandDeps {
   heartbeat?: typeof heartbeat
 }
 
-async function runReconnectCommand(
+interface ClearCommandDeps {
+  available: () => boolean
+  prepare: typeof prepareHarnessClear
+  complete: typeof completeInvocationWithMarkdown
+  heartbeat?: typeof heartbeat
+}
+
+interface HarnessHandoffSpec {
+  usage: string
+  pendingMessage: string
+  busyMessage: string
+  unavailableMessage: string
+  ackMessage: string
+  heartbeatText: string
+  prepare: (facts: { runtimeSessionId: string; rootStreamId: string; force: boolean }) => () => void
+}
+
+interface HarnessHandoffDeps {
+  available: () => boolean
+  complete: typeof completeInvocationWithMarkdown
+  heartbeat?: typeof heartbeat
+}
+
+async function runHarnessHandoffCommand(
   invocation: ClaimedInvocation,
   args: string,
   ctx: ExtensionContext,
-  deps: ReconnectCommandDeps = {
-    available: harnessReconnectAvailable,
-    prepare: prepareHarnessReconnect,
-    complete: completeInvocationWithMarkdown,
-    heartbeat,
-  }
+  deps: HarnessHandoffDeps,
+  spec: HarnessHandoffSpec
 ): Promise<void> {
   const sendHeartbeat = deps.heartbeat ?? heartbeat
   if (args !== "" && args !== "--force") {
-    await deps.complete(invocation, "Usage: `/reconnect [--force]`.", ctx)
+    await deps.complete(invocation, spec.usage, ctx)
     return
   }
   if (pending) {
-    await deps.complete(invocation, "A Threa invocation is still running; use `/stop` before reconnecting.", ctx)
+    await deps.complete(invocation, spec.pendingMessage, ctx)
     return
   }
   if (args !== "--force" && !ctx.isIdle()) {
-    await deps.complete(invocation, "Pi is busy; retry when idle or use `/reconnect --force`.", ctx)
+    await deps.complete(invocation, spec.busyMessage, ctx)
     return
   }
   const link = currentReconnectLink(ctx, deps.available)
@@ -3286,22 +3305,24 @@ async function runReconnectCommand(
     invocationFacts.claimedInstanceId !== instanceId ||
     sessionTearingDown
   ) {
-    throw new Error("Harness reconnect is unavailable for this session.")
+    throw new Error(spec.unavailableMessage)
   }
   const linkFacts = {
     instanceId: link.instanceId,
     runtimeSessionId: link.runtimeSessionId,
     rootStreamId: link.rootStreamId,
   }
-  const start = deps.prepare(runtimeSessionId, linkFacts.rootStreamId, { force: args === "--force" })
+  const start = spec.prepare({
+    runtimeSessionId,
+    rootStreamId: linkFacts.rootStreamId,
+    force: args === "--force",
+  })
+  // The latch means "harness restart imminent — stay busy, accept no claims",
+  // which is exactly what both handoffs are about to cause.
   reconnectPending = true
-  await sendHeartbeat("busy", "Reconnect handoff…", ctx).catch(() => undefined)
+  await sendHeartbeat("busy", spec.heartbeatText, ctx).catch(() => undefined)
   try {
-    const acknowledged = await deps.complete(
-      invocation,
-      "Reconnect request accepted; attempting to resume the linked Pi session.",
-      ctx
-    )
+    const acknowledged = await deps.complete(invocation, spec.ackMessage, ctx)
     const currentLink = currentReconnectLink(ctx, deps.available)
     const lifecycleChanged =
       sessionTearingDown ||
@@ -3335,11 +3356,26 @@ async function runReconnectCommand(
   }
 }
 
-interface ClearCommandDeps {
-  available: () => boolean
-  prepare: typeof prepareHarnessClear
-  complete: typeof completeInvocationWithMarkdown
-  heartbeat?: typeof heartbeat
+async function runReconnectCommand(
+  invocation: ClaimedInvocation,
+  args: string,
+  ctx: ExtensionContext,
+  deps: ReconnectCommandDeps = {
+    available: harnessReconnectAvailable,
+    prepare: prepareHarnessReconnect,
+    complete: completeInvocationWithMarkdown,
+    heartbeat,
+  }
+): Promise<void> {
+  await runHarnessHandoffCommand(invocation, args, ctx, deps, {
+    usage: "Usage: `/reconnect [--force]`.",
+    pendingMessage: "A Threa invocation is still running; use `/stop` before reconnecting.",
+    busyMessage: "Pi is busy; retry when idle or use `/reconnect --force`.",
+    unavailableMessage: "Harness reconnect is unavailable for this session.",
+    ackMessage: "Reconnect request accepted; attempting to resume the linked Pi session.",
+    heartbeatText: "Reconnect handoff…",
+    prepare: ({ runtimeSessionId, rootStreamId, force }) => deps.prepare(runtimeSessionId, rootStreamId, { force }),
+  })
 }
 
 async function runClearCommand(
@@ -3353,82 +3389,15 @@ async function runClearCommand(
     heartbeat,
   }
 ): Promise<void> {
-  const sendHeartbeat = deps.heartbeat ?? heartbeat
-  if (args !== "" && args !== "--force") {
-    await deps.complete(invocation, "Usage: `/clear [--force]`.", ctx)
-    return
-  }
-  if (pending) {
-    await deps.complete(invocation, "A Threa invocation is still running; use `/stop` before clearing.", ctx)
-    return
-  }
-  if (args !== "--force" && !ctx.isIdle()) {
-    await deps.complete(invocation, "Pi is busy; retry when idle or use `/clear --force`.", ctx)
-    return
-  }
-  const link = currentReconnectLink(ctx, deps.available)
-  const lifecycleGeneration = sessionLifecycleGeneration
-  const runtimeSessionId = getRuntimeSessionId(ctx)
-  const instanceId = getSessionInstanceId(ctx)
-  const invocationFacts = {
-    rootStreamId: invocation.rootStreamId,
-    claimedInstanceId: invocation.claimedInstanceId,
-  }
-  if (
-    !link ||
-    invocationFacts.rootStreamId !== link.rootStreamId ||
-    invocationFacts.claimedInstanceId !== instanceId ||
-    sessionTearingDown
-  ) {
-    throw new Error("Harness clear is unavailable for this session.")
-  }
-  const linkFacts = {
-    instanceId: link.instanceId,
-    runtimeSessionId: link.runtimeSessionId,
-    rootStreamId: link.rootStreamId,
-  }
-  const start = deps.prepare(runtimeSessionId)
-  // The latch means "harness restart imminent — stay busy, accept no claims",
-  // which is exactly a clear's state too.
-  reconnectPending = true
-  await sendHeartbeat("busy", "Clear handoff…", ctx).catch(() => undefined)
-  try {
-    const acknowledged = await deps.complete(
-      invocation,
-      "Clear accepted; killing this session and starting a fresh conversation on the same scratchpad.",
-      ctx
-    )
-    const currentLink = currentReconnectLink(ctx, deps.available)
-    const lifecycleChanged =
-      sessionTearingDown ||
-      sessionLifecycleGeneration !== lifecycleGeneration ||
-      !currentLink ||
-      currentLink.instanceId !== linkFacts.instanceId ||
-      currentLink.runtimeSessionId !== linkFacts.runtimeSessionId ||
-      currentLink.rootStreamId !== linkFacts.rootStreamId ||
-      getRuntimeSessionId(ctx) !== runtimeSessionId ||
-      getSessionInstanceId(ctx) !== instanceId ||
-      invocation.rootStreamId !== invocationFacts.rootStreamId ||
-      invocation.claimedInstanceId !== invocationFacts.claimedInstanceId
-    if (!acknowledged || lifecycleChanged) {
-      reconnectPending = false
-      const enabled = isEnabled(ctx)
-      await sendHeartbeat(
-        enabled ? (ctx.isIdle() && !pending ? "available" : "busy") : "offline",
-        undefined,
-        ctx
-      ).catch(() => undefined)
-      return
-    }
-    start()
-  } catch (error) {
-    reconnectPending = false
-    const enabled = isEnabled(ctx)
-    await sendHeartbeat(enabled ? (ctx.isIdle() && !pending ? "available" : "busy") : "offline", undefined, ctx).catch(
-      () => undefined
-    )
-    throw error
-  }
+  await runHarnessHandoffCommand(invocation, args, ctx, deps, {
+    usage: "Usage: `/clear [--force]`.",
+    pendingMessage: "A Threa invocation is still running; use `/stop` before clearing.",
+    busyMessage: "Pi is busy; retry when idle or use `/clear --force`.",
+    unavailableMessage: "Harness clear is unavailable for this session.",
+    ackMessage: "Clear accepted; killing this session and starting a fresh conversation on the same scratchpad.",
+    heartbeatText: "Clear handoff…",
+    prepare: ({ runtimeSessionId }) => deps.prepare(runtimeSessionId),
+  })
 }
 
 async function runStopCommand(invocation: ClaimedInvocation, ctx: ExtensionContext): Promise<void> {

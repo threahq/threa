@@ -195,6 +195,41 @@ export async function runClaudeCommand(
   afterAck?: () => void | Promise<void>
   onHandoffReset?: () => void
 }> {
+  const harnessHandoffResult = (spec: {
+    commandLabel: string
+    ackMessage: string
+    root: string
+    target: ReconnectTarget | undefined
+    force: boolean
+    start: () => void
+  }) => ({
+    ok: true,
+    message: spec.ackMessage,
+    afterAck: async () => {
+      if (!spec.force && reconnectBusy?.()) {
+        throw new Error(
+          `Claude became busy after ${spec.commandLabel} acknowledgement; retry when idle or use \`/${spec.commandLabel} --force\`.`
+        )
+      }
+      await stopDelegationsForReconnect?.(spec.force)
+      const current = reconnectTarget?.()
+      if (
+        reconnectReady?.() === false ||
+        (current &&
+          (current.stopped ||
+            current.linkState !== "linked" ||
+            current.rootStreamId !== spec.root ||
+            current.linkGeneration !== spec.target?.linkGeneration))
+      ) {
+        throw new Error(
+          `Remote session changed while delegation intake was quiescing; ${spec.commandLabel} was not started.`
+        )
+      }
+      spec.start()
+    },
+    onHandoffReset: restartDelegationsAfterReset,
+  })
+
   switch (name) {
     case "key": {
       const key = parseAllowedTmuxKey(args)
@@ -219,31 +254,14 @@ export async function runClaudeCommand(
       if (!runtimeSessionId || !root) throw new Error("Harness reconnect is unavailable for this session.")
       const force = args === "--force"
       const startReconnect = prepareHarnessReconnect(runtimeSessionId, root, { force })
-      return {
-        ok: true,
-        message: "Reconnect request accepted; attempting to resume the linked Claude session.",
-        afterAck: async () => {
-          if (!force && reconnectBusy?.()) {
-            throw new Error(
-              "Claude became busy after reconnect acknowledgement; retry when idle or use `/reconnect --force`."
-            )
-          }
-          await stopDelegationsForReconnect?.(force)
-          const current = reconnectTarget?.()
-          if (
-            reconnectReady?.() === false ||
-            (current &&
-              (current.stopped ||
-                current.linkState !== "linked" ||
-                current.rootStreamId !== root ||
-                current.linkGeneration !== target?.linkGeneration))
-          ) {
-            throw new Error("Remote session changed while delegation intake was quiescing; reconnect was not started.")
-          }
-          startReconnect()
-        },
-        onHandoffReset: restartDelegationsAfterReset,
-      }
+      return harnessHandoffResult({
+        commandLabel: "reconnect",
+        ackMessage: "Reconnect request accepted; attempting to resume the linked Claude session.",
+        root,
+        target,
+        force,
+        start: startReconnect,
+      })
     }
     case "clear": {
       if (args !== "" && args !== "--force") {
@@ -257,29 +275,14 @@ export async function runClaudeCommand(
       if (!runtimeSessionId || !root) throw new Error("Harness clear is unavailable for this session.")
       const force = args === "--force"
       const start = prepareHarnessClear(runtimeSessionId)
-      return {
-        ok: true,
-        message: "Clear accepted — killing this session and starting a fresh conversation on the same scratchpad.",
-        afterAck: async () => {
-          if (!force && reconnectBusy?.()) {
-            throw new Error("Claude became busy after clear acknowledgement; retry when idle or use `/clear --force`.")
-          }
-          await stopDelegationsForReconnect?.(force)
-          const current = reconnectTarget?.()
-          if (
-            reconnectReady?.() === false ||
-            (current &&
-              (current.stopped ||
-                current.linkState !== "linked" ||
-                current.rootStreamId !== root ||
-                current.linkGeneration !== target?.linkGeneration))
-          ) {
-            throw new Error("Remote session changed while delegation intake was quiescing; clear was not started.")
-          }
-          start()
-        },
-        onHandoffReset: restartDelegationsAfterReset,
-      }
+      return harnessHandoffResult({
+        commandLabel: "clear",
+        ackMessage: "Clear accepted — killing this session and starting a fresh conversation on the same scratchpad.",
+        root,
+        target,
+        force,
+        start,
+      })
     }
     case "carry-on": {
       if (!carryOn) return { ok: false, message: "Quota carry-on is unavailable for this session." }
