@@ -453,10 +453,12 @@ export const markdownComponents: Components = {
   // `w-max` sizes to content, not to the message column: at column width the
   // auto layout crushes each column to its minimum, and `break-all` on inline
   // code makes that minimum one character. Cells cap at 70vw so a prose-heavy
-  // column can't run away instead.
+  // column can't run away instead — `anywhere` rather than `break-word` because
+  // only `anywhere` lowers min-content, so a cell holding one unbreakable token
+  // can be sized down to that cap at all.
   table: ({ children }) => (
     <div className="my-2">
-      <Table className="w-max min-w-full table-auto [&_code]:break-words [&_code]:[word-break:normal]">
+      <Table className="w-max min-w-full table-auto [&_code]:[overflow-wrap:anywhere] [&_code]:[word-break:normal]">
         {children}
       </Table>
     </div>
