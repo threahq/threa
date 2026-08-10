@@ -57,24 +57,34 @@ export class DelegationClient {
   }
 
   private async request<T>(url: string, init?: RequestInit & { claimToken?: string }): Promise<T> {
-    const { claimToken, ...request } = init ?? {}
+    // One abort window over headers AND body, matching ThreaClient.request: a
+    // stalled body after headers must reject at FETCH_TIMEOUT_MS, not hang the
+    // channel forever.
     const controller = new AbortController()
     const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS)
-    let response: Response
     try {
-      response = await fetch(url, {
-        ...request,
-        signal: controller.signal,
-        headers: {
-          Authorization: `Bearer ${this.opts.apiKey}`,
-          "Content-Type": "application/json",
-          ...(claimToken ? { [CALLBACK_TOKEN_HEADER]: claimToken } : {}),
-          ...request.headers,
-        },
-      })
+      return await this.requestWithin<T>(url, init, controller.signal)
     } finally {
       clearTimeout(timeout)
     }
+  }
+
+  private async requestWithin<T>(
+    url: string,
+    init: (RequestInit & { claimToken?: string }) | undefined,
+    signal: AbortSignal
+  ): Promise<T> {
+    const { claimToken, ...request } = init ?? {}
+    const response = await fetch(url, {
+      ...request,
+      signal,
+      headers: {
+        Authorization: `Bearer ${this.opts.apiKey}`,
+        "Content-Type": "application/json",
+        ...(claimToken ? { [CALLBACK_TOKEN_HEADER]: claimToken } : {}),
+        ...request.headers,
+      },
+    })
     if (!response.ok) {
       let code: string | undefined
       if (response.headers.get("content-type")?.includes("application/json")) {
