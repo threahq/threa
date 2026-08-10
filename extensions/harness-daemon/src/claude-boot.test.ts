@@ -33,6 +33,25 @@ describe("classifyClaudePane", () => {
     expect(classifyClaudePane("some output\n❯ \n")).toBe("idle")
     expect(classifyClaudePane("✻ Brewing…\n❯ queued message\nesc to interrupt")).toBe("working")
   })
+
+  test("transcript content never reads as a prompt (this repo's own fixtures on screen)", () => {
+    // A managed agent reading claude-boot.test.ts renders the fixture strings
+    // as tool output above the composer; the bare composer proves no modal is
+    // up, and line prefixes keep the anchored patterns from matching prose.
+    const readOutput = [
+      '  ⎿  8    "❯ 1. Resume from summary (recommended)",',
+      '  ⎿  9    "Switch model?",',
+      '  ⎿ 10    // dialogs end with an "Enter to confirm" hint',
+      "❯ ",
+    ].join("\n")
+    expect(classifyClaudePane(readOutput)).toBe("idle")
+    const busyWithDocText = [
+      '  ⎿ // update notices end with the "Enter to continue" hint',
+      "✻ Brewing…",
+      "❯ queued message",
+    ].join("\n")
+    expect(classifyClaudePane(busyWithDocText)).toBe("working")
+  })
 })
 
 describe("acceptClaudeBootPrompts", () => {

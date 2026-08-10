@@ -479,15 +479,18 @@ export function defaultReviveDeps(): ReviveDeps {
       // window (same refusal the steer/kill paths make).
       const resolved = resolveManagedAgentPane(agent)
       if (resolved.status !== "found") return undefined
-      const state = classifyClaudePane(capturePane(resolved.pane.paneId))
+      const text = capturePane(resolved.pane.paneId)
+      const state = classifyClaudePane(text)
       if (state === "idle" || state === "working") return undefined
-      if (state === "menu") {
-        return { status: "blocked", detail: blockedPromptSummary(capturePane(resolved.pane.paneId)) }
-      }
-      if (dryRun) return { status: "blocked", detail: `${state} visible; a non-dry run auto-answers it` }
+      if (dryRun) return { status: "blocked", detail: `${state}: ${blockedPromptSummary(text)}` }
+      // The walker owns menu handling too — its 3-sighting streak filters
+      // mid-render flashes a single classification would misreport as blocked.
       const boot = await acceptClaudeBootPrompts(resolved.pane.paneId, undefined, { waitMs: 15_000 })
-      if (boot.state === "blocked") return { status: "blocked", detail: blockedPromptSummary(boot.lastCapture) }
-      return { status: "already running", detail: `answered blocking ${state}` }
+      if (boot.state === "idle") return { status: "already running", detail: `cleared blocking ${state}` }
+      // blocked or timeout: either way the pane did not reach an idle
+      // composer, and claiming "answered" here is the false-online report this
+      // path exists to kill.
+      return { status: "blocked", detail: blockedPromptSummary(boot.lastCapture) }
     },
     claudeProcessesIn: liveClaudePidsIn,
     pathExists: existsSync,
