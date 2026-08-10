@@ -111,6 +111,8 @@ const MAX_RETRY_ATTEMPTS = 3
 const PI_TOOL_TRACE_FORMAT = "pi_tool_trace"
 const SESSION_CONTROL_CAPABILITY = "session-control"
 const RELOAD_HANDOFF_COMMAND = "threa-remote-reload"
+/** How long a queued reload handoff may sit undispatched before the latch is released. */
+let reloadWatchdogMs = 15_000
 const SESSION_CONTROL_COMMANDS = [
   "compact",
   "model",
@@ -2984,6 +2986,25 @@ async function runReloadCommand(pi: ExtensionAPI, invocation: ClaimedInvocation,
       return
     }
     pi.sendUserMessage(`/${RELOAD_HANDOFF_COMMAND}`, { deliverAs: "followUp" })
+    // The handoff is not guaranteed to dispatch: on an idle session Pi has
+    // been observed injecting the text as a MODEL prompt instead of running
+    // the registered command (2026-08-10 — the model narrated "Reloading…
+    // now.", ctx.reload never ran, and reloadPending latched heartbeats busy
+    // and the claim loop off until a manual respawn). Calling ctx.reload()
+    // directly from this non-command context is worse — it killed the whole
+    // Pi process live. So the latch gets a watchdog: if no reload arrived,
+    // release it, restore presence, and say so where the operator can see it.
+    const generation = sessionLifecycleGeneration
+    setTimeout(() => {
+      if (!reloadPending || sessionLifecycleGeneration !== generation) return
+      reloadPending = false
+      ctx.ui.notify(
+        "Threa reload handoff was not dispatched; run /reload in the Pi pane to reload manually.",
+        "warning"
+      )
+      const busy = pending !== undefined || !ctx.isIdle()
+      void heartbeat(busy ? "busy" : "available", busy ? "Busy in Pi…" : undefined, ctx).catch(() => undefined)
+    }, reloadWatchdogMs)
   } catch (error) {
     reloadPending = false
     throw error
@@ -4255,6 +4276,9 @@ export const __testing = {
   downloadSealedContextAttachments,
   setConfigForTesting: (value: unknown) => {
     config = value as Config | undefined
+  },
+  setReloadWatchdogMsForTesting: (value: number) => {
+    reloadWatchdogMs = value
   },
   setSupervisedRevivalBlockedForTesting: (value: boolean) => {
     supervisedRevivalBlocked = value

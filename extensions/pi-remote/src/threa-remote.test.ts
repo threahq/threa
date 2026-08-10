@@ -1042,14 +1042,17 @@ describe("Pi reload session control", () => {
         headers: { "content-type": "application/json" },
       })
     }) as typeof fetch)
+    const notices: string[] = []
     const eventContext = {
       isIdle: () => true,
       cwd: "/tmp",
       sessionManager: { getSessionId: () => "runtime_reload_control" },
       modelRegistry: { getAvailable: () => [] },
+      ui: { notify: (text: string) => void notices.push(text), setStatus: () => {} },
     }
 
     try {
+      __testing.setReloadWatchdogMsForTesting(120)
       await __testing.runReloadCommand(
         pi as never,
         {
@@ -1076,6 +1079,27 @@ describe("Pi reload session control", () => {
       })
       expect(reloads).toBe(1)
       expect(__testing.reloadPending()).toBe(false)
+
+      // A handoff Pi never dispatches (observed live 2026-08-10: the text was
+      // injected as a MODEL prompt instead) must not latch claims off forever —
+      // the watchdog releases the latch and says so.
+      await __testing.runReloadCommand(
+        pi as never,
+        {
+          id: "binv_reload_undispatched",
+          activeStreamId: "stream_1",
+          sourceMessageId: "msg_2",
+          promptMarkdown: "/reload",
+          claimToken: "claim_reload_undispatched",
+          claimedInstanceId: "pi-test",
+          claimExpiresAt: null,
+        } as never,
+        eventContext as never
+      )
+      expect(__testing.reloadPending()).toBe(true)
+      await Bun.sleep(220)
+      expect(__testing.reloadPending()).toBe(false)
+      expect(notices.some((text) => text.includes("was not dispatched"))).toBe(true)
     } finally {
       fetchSpy.mockRestore()
     }
@@ -2119,7 +2143,13 @@ describe("reload claim continuity", () => {
         notify: () => {},
         theme: { fg: (_tone: string, text: string) => text },
       },
+      reload: async () => {
+        reloadRuns++
+        await handlers.get("session_shutdown")!({ reason: "reload" }, ctx)
+        await handlers.get("session_start")!({ reason: "reload" }, ctx)
+      },
     }
+    let reloadRuns = 0
     let offer = false
     let claimedAfterReload = 0
     const fetchSpy = spyOn(globalThis, "fetch").mockImplementation((async (input: string | URL | Request) => {
@@ -2174,17 +2204,16 @@ describe("reload claim continuity", () => {
         } as never,
         ctx as never
       )
-      await commands.get("threa-remote-reload")!.handler("", {
-        ...ctx,
-        reload: async () => {
-          await handlers.get("session_shutdown")!({ reason: "reload" }, ctx)
-          await handlers.get("session_start")!({ reason: "reload" }, ctx)
-        },
-      })
+      expect(__testing.reloadPending()).toBe(true)
+      // Pi delivers the handoff followUp; its handler runs ctx.reload.
+      await commands.get("threa-remote-reload")!.handler("", ctx)
 
       offer = true
-      await Bun.sleep(60)
+      // Quiet-poll backoff accumulated across the suite stretches the cadence,
+      // so wait on the claim rather than a fixed tick.
+      for (let i = 0; i < 100 && claimedAfterReload === 0; i++) await Bun.sleep(50)
 
+      expect(reloadRuns).toBe(1)
       expect(claimedAfterReload).toBe(1)
       expect(deliveries.some((delivery) => delivery.text.includes("Hiya"))).toBe(true)
     } finally {
