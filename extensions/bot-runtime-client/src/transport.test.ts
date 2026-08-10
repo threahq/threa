@@ -472,6 +472,45 @@ describe("socket self-heal (the wedge that burns the edge quota)", () => {
       ioSpy.mockRestore()
     }
   })
+
+  it("bounds a hint response whose body stalls after headers, and stays re-dialable", async () => {
+    // Clearing the abort timer once headers arrived left `res.json()` unbounded:
+    // one stalled body hung connect() forever with `connecting` latched true, so
+    // no later call could ever dial — presence froze while the pane said linked.
+    let calls = 0
+    global.fetch = mock(async (_input: string | URL | Request, init?: RequestInit) => {
+      calls++
+      if (calls === 1) {
+        const signal = init?.signal as AbortSignal | undefined
+        const stalled = new ReadableStream({
+          start(controller) {
+            signal?.addEventListener("abort", () => controller.error(new DOMException("aborted", "AbortError")))
+          },
+        })
+        return new Response(stalled, { status: 200, headers: { "content-type": "application/json" } })
+      }
+      return new Response(JSON.stringify({ wsUrl: "https://ws.example.test" }), { status: 200 })
+    }) as unknown as typeof fetch
+    const fake = makeFakeSocket()
+    const ioSpy = spyOn(socketIoClient, "io").mockReturnValue(fake as unknown as ReturnType<typeof socketIoClient.io>)
+    try {
+      const transport = new BotRuntimeTransport({
+        baseUrl: "https://app.example.test",
+        workspaceId: "ws_1",
+        apiKey: "threa_bk_test",
+        hello: HELLO,
+        fetchTimeoutMs: 25,
+      })
+
+      await transport.connect()
+      expect(ioSpy).toHaveBeenCalledTimes(0)
+
+      await transport.connect()
+      expect(ioSpy).toHaveBeenCalledTimes(1)
+    } finally {
+      ioSpy.mockRestore()
+    }
+  })
 })
 
 describe("the routed writes never reject (best-effort contract)", () => {
