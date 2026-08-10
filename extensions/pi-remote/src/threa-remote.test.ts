@@ -1964,13 +1964,14 @@ describe("reload claim continuity", () => {
         },
       },
     })
+    const statuses: Array<string | undefined> = []
     const ctx = {
       sessionManager: { getSessionId: () => runtimeSessionId, getBranch: () => [] },
       isIdle: () => true,
       cwd: "/tmp",
       modelRegistry: { getAvailable: () => [] },
       ui: {
-        setStatus: () => {},
+        setStatus: (_key: string, text?: string) => void statuses.push(text),
         notify: () => {},
         theme: { fg: (_tone: string, text: string) => text },
       },
@@ -1992,6 +1993,8 @@ describe("reload claim continuity", () => {
       await Bun.sleep(30)
 
       expect(requests.some((url) => url.endsWith("/bot-invocations/claim"))).toBe(true)
+      // The footer must not advertise "reloading…" forever while the dial hangs.
+      expect(statuses).toContain("Threa remote: linked")
       await Promise.race([started, Promise.resolve()])
     } finally {
       fetchSpy.mockRestore()

@@ -4521,6 +4521,11 @@ export default function (pi: ExtensionAPI): void {
     // 2026-08-10 — session_start hung inside connect() and the runtime froze at
     // one startup heartbeat, footer still "linked".
     startPolling(pi, ctx)
+    // The shutdown hook wrote "reloading…", and nothing else rewrites the
+    // footer until the next invocation runs — so without this a healthy,
+    // polling runtime advertises a reload that finished long ago. "linked"
+    // means the session link, not the socket, so it goes before the dial.
+    setRemoteStatus(ctx, pending ? `Threa remote: running ${pending.id}` : "Threa remote: linked")
     await ensureTransport(pi, ctx)?.connect()
     if (event.reason === "reload") ctx.ui.notify("Threa remote reconnected after reload.", "info")
   })
