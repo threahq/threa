@@ -1042,18 +1042,17 @@ describe("Pi reload session control", () => {
         headers: { "content-type": "application/json" },
       })
     }) as typeof fetch)
-    let reloads = 0
+    const notices: string[] = []
     const eventContext = {
       isIdle: () => true,
       cwd: "/tmp",
       sessionManager: { getSessionId: () => "runtime_reload_control" },
       modelRegistry: { getAvailable: () => [] },
-      reload: async () => {
-        reloads++
-      },
+      ui: { notify: (text: string) => void notices.push(text), setStatus: () => {} },
     }
 
     try {
+      __testing.setReloadWatchdogMsForTesting(120)
       await __testing.runReloadCommand(
         pi as never,
         {
@@ -1069,26 +1068,38 @@ describe("Pi reload session control", () => {
       )
 
       expect(writes.some((url) => url.endsWith("/bot-invocations/binv_reload_control/complete"))).toBe(true)
-      // Directly scheduled, never a `sendUserMessage("/threa-remote-reload")`
-      // handoff: an idle Pi injects that text as a MODEL prompt instead of
-      // dispatching the command, so the reload silently never ran while
-      // reloadPending latched the claim loop off (2026-08-10).
-      expect(followUps).toEqual([])
+      expect(followUps).toEqual([{ text: "/threa-remote-reload", options: { deliverAs: "followUp" } }])
       expect(__testing.reloadPending()).toBe(true)
 
-      await Bun.sleep(350)
+      let reloads = 0
+      await commands.get("threa-remote-reload")!.handler("", {
+        reload: async () => {
+          reloads++
+        },
+      })
       expect(reloads).toBe(1)
       expect(__testing.reloadPending()).toBe(false)
 
-      // The registered command stays as the manual escape hatch.
-      let manualReloads = 0
-      await commands.get("threa-remote-reload")!.handler("", {
-        reload: async () => {
-          manualReloads++
-        },
-      })
-      expect(manualReloads).toBe(1)
+      // A handoff Pi never dispatches (observed live 2026-08-10: the text was
+      // injected as a MODEL prompt instead) must not latch claims off forever —
+      // the watchdog releases the latch and says so.
+      await __testing.runReloadCommand(
+        pi as never,
+        {
+          id: "binv_reload_undispatched",
+          activeStreamId: "stream_1",
+          sourceMessageId: "msg_2",
+          promptMarkdown: "/reload",
+          claimToken: "claim_reload_undispatched",
+          claimedInstanceId: "pi-test",
+          claimExpiresAt: null,
+        } as never,
+        eventContext as never
+      )
+      expect(__testing.reloadPending()).toBe(true)
+      await Bun.sleep(220)
       expect(__testing.reloadPending()).toBe(false)
+      expect(notices.some((text) => text.includes("was not dispatched"))).toBe(true)
     } finally {
       fetchSpy.mockRestore()
     }
@@ -2194,9 +2205,8 @@ describe("reload claim continuity", () => {
         ctx as never
       )
       expect(__testing.reloadPending()).toBe(true)
-      // The reload is scheduled internally off the invocation's ctx; wait out
-      // the handoff delay so shutdown → start has run before offering work.
-      await Bun.sleep(350)
+      // Pi delivers the handoff followUp; its handler runs ctx.reload.
+      await commands.get("threa-remote-reload")!.handler("", ctx)
 
       offer = true
       // Quiet-poll backoff accumulated across the suite stretches the cadence,
