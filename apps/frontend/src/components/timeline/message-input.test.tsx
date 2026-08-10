@@ -666,7 +666,9 @@ describe("MessageInput", () => {
 
       const strip = screen.getByTestId("conversation-reply-strip")
       expect(strip).toHaveTextContent("Replying in Pizza plans")
-      expect(mockComposerFocus).toHaveBeenCalledTimes(1)
+      // Focus lands a tick after arm() resolves; asserting synchronously flaked
+      // under CI load (0 calls observed on 2026-08-10).
+      await waitFor(() => expect(mockComposerFocus).toHaveBeenCalledTimes(1))
     })
 
     it("files the send into the armed conversation and clears the strip on success", async () => {
