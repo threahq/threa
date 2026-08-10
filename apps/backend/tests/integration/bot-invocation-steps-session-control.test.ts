@@ -31,6 +31,10 @@ describe("recordSteps on a session-control claim", () => {
 
   afterAll(async () => {
     await pool.query("DELETE FROM bot_invocations WHERE workspace_id = $1", [ws])
+    await pool.query(
+      "DELETE FROM agent_session_steps WHERE session_id IN (SELECT id FROM agent_sessions WHERE stream_id = $1)",
+      [stream]
+    )
     await pool.query("DELETE FROM agent_sessions WHERE stream_id = $1", [stream])
     await pool.end()
   })
