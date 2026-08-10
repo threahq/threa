@@ -124,6 +124,58 @@ test("parking a Pi session with no sessions directory is a no-op", () => {
   expect(parkPiSessionFiles("11111111-2222-3333-4444-555555555555", { sessionsDir: join(root, "absent") })).toEqual([])
 })
 
+function errnoError(code: string): Error {
+  return Object.assign(new Error(`${code}: operation failed`), { code })
+}
+
+test("a stray file in the sessions dir is skipped, not treated as a project", () => {
+  const sessionsDir = join(root, "pi-stray")
+  mkdirSync(sessionsDir, { recursive: true })
+  writeFileSync(join(sessionsDir, "notes.txt"), "hi\n")
+
+  expect(parkPiSessionFiles("11111111-2222-3333-4444-555555555555", { sessionsDir })).toEqual([])
+})
+
+test("a park that cannot read or rename fails loudly instead of acking a fresh start", () => {
+  // `pi --session-id <id>` resumes whatever transcript is still on disk, so a
+  // swallowed failure hands the user back the conversation they just cleared.
+  const sessionsDir = join(root, "pi-unreadable")
+  const projectDir = join(sessionsDir, "a-project")
+  mkdirSync(projectDir, { recursive: true })
+  const target = join(projectDir, "2026-01-01T00-00-00-000Z_11111111-2222-3333-4444-555555555555.jsonl")
+  writeFileSync(target, "{}\n")
+
+  expect(() =>
+    parkPiSessionFiles("11111111-2222-3333-4444-555555555555", {
+      sessionsDir,
+      readdir: (path) => {
+        if (path === sessionsDir) return readdirSync(path)
+        throw errnoError("EACCES")
+      },
+    })
+  ).toThrow(projectDir)
+
+  expect(() =>
+    parkPiSessionFiles("11111111-2222-3333-4444-555555555555", {
+      sessionsDir,
+      readdir: () => {
+        throw errnoError("EIO")
+      },
+    })
+  ).toThrow(sessionsDir)
+
+  expect(() =>
+    parkPiSessionFiles("11111111-2222-3333-4444-555555555555", {
+      sessionsDir,
+      rename: () => {
+        throw errnoError("EPERM")
+      },
+    })
+  ).toThrow(target)
+
+  expect(existsSync(target)).toBe(true)
+})
+
 test("a cleared Claude resume passes no --resume id even when a transcript is resumable", () => {
   // Without this the clear relaunches straight back into the conversation the
   // user asked to leave behind.

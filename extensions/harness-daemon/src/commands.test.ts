@@ -212,6 +212,7 @@ const livePane: LocalTmuxPane = {
 function clearHarness(agent: ManagedAgent, overrides: Partial<ClearDeps> = {}) {
   const calls: string[] = []
   const killed: string[] = []
+  const persisted: ManagedAgent[] = []
   const revived: Array<{ agent: ManagedAgent; options: ResumeOptions }> = []
   const deps: ClearDeps = {
     findAgent: () => agent,
@@ -226,6 +227,10 @@ function clearHarness(agent: ManagedAgent, overrides: Partial<ClearDeps> = {}) {
       calls.push("lock")
       return () => void calls.push("release")
     },
+    persist: (persistedAgent) => {
+      calls.push("persist")
+      persisted.push(persistedAgent)
+    },
     revive: async (revivedAgent, options) => {
       calls.push("revive")
       revived.push({ agent: revivedAgent, options })
@@ -233,7 +238,7 @@ function clearHarness(agent: ManagedAgent, overrides: Partial<ClearDeps> = {}) {
     },
     ...overrides,
   }
-  return { calls, killed, revived, deps }
+  return { calls, killed, persisted, revived, deps }
 }
 
 /** Resolves as `first` once, then `rest` — a kill that worked makes the pane disappear. */
@@ -247,43 +252,53 @@ describe("clearAgent", () => {
     // The lock is the whole reason this is safe to run while the watcher sweeps:
     // released between kill and relaunch, the watcher revives the OLD
     // conversation into the worktree the clear just emptied.
-    const { calls, killed, revived, deps } = clearHarness(online, {
+    const { calls, killed, persisted, revived, deps } = clearHarness(online, {
       resolvePane: paneSequence({ status: "found", pane: livePane }, { status: "missing" }),
     })
 
     await clearAgent("fix-sidebar", deps)
 
-    expect(calls).toEqual(["lock", "kill", "revive", "release"])
+    // The marker lands BEFORE the kill: a relaunch that fails after it leaves the
+    // next sweep completing the clear instead of resuming the old conversation.
+    expect(calls).toEqual(["lock", "persist", "kill", "revive", "release"])
     expect(killed).toEqual(["@7"])
-    expect(revived).toEqual([{ agent: online, options: { fresh: true } }])
+    const stamped = persisted[0]
+    const stamp = stamped?.clearPendingAt ?? ""
+    expect(stamped).toEqual({ ...online, clearPendingAt: stamp, updatedAt: stamp })
+    expect(stamp).toMatch(/^\d{4}-\d{2}-\d{2}T/)
+    expect(revived).toEqual([{ agent: stamped!, options: { fresh: true } }])
   })
 
   test("refuses an unverified pane without killing or relaunching", async () => {
-    const { calls, deps } = clearHarness(online, {
+    const { calls, persisted, deps } = clearHarness(online, {
       resolvePane: () => ({ status: "unverified", pane: livePane, reason: "only a recycled tmux id (%9)" }),
     })
 
     await expect(clearAgent("fix-sidebar", deps)).rejects.toThrow("only a recycled tmux id")
-    expect(calls).toEqual(["lock", "release"])
+    // A refused clear changes no state: a pending marker here would make the next
+    // sweep wipe a conversation nobody asked to drop.
+    expect({ calls, persisted }).toEqual({ calls: ["lock", "release"], persisted: [] })
   })
 
   test("refuses an ambiguous pane without killing or relaunching", async () => {
-    const { calls, deps } = clearHarness(online, {
+    const { calls, persisted, deps } = clearHarness(online, {
       resolvePane: () => ({ status: "ambiguous", reason: "two panes claim ccs-sidebar" }),
     })
 
     await expect(clearAgent("fix-sidebar", deps)).rejects.toThrow("two panes claim ccs-sidebar")
-    expect(calls).toEqual(["lock", "release"])
+    expect({ calls, persisted }).toEqual({ calls: ["lock", "release"], persisted: [] })
   })
 
   test("clearing an agent with no live pane skips the kill and revives fresh", async () => {
-    const { calls, killed, revived, deps } = clearHarness(online)
+    const { calls, killed, persisted, revived, deps } = clearHarness(online)
 
     await clearAgent("fix-sidebar", deps)
 
-    expect(calls).toEqual(["lock", "revive", "release"])
+    // Marked even with nothing to kill: this revive can fail too.
+    expect(calls).toEqual(["lock", "persist", "revive", "release"])
     expect(killed).toEqual([])
-    expect(revived[0]?.options).toEqual({ fresh: true })
+    expect(revived).toEqual([{ agent: persisted[0]!, options: { fresh: true } }])
+    expect(persisted[0]?.clearPendingAt).toMatch(/^\d{4}-\d{2}-\d{2}T/)
   })
 
   test("a runtime that will not drain relaunches nothing", async () => {
@@ -307,7 +322,10 @@ describe("clearAgent", () => {
 
     await clearAgent("fix-sidebar", deps)
 
-    expect(revived).toEqual([{ agent: { ...stopped, status: "starting" }, options: { fresh: true } }])
+    const stamp = revived[0]?.agent.clearPendingAt ?? ""
+    expect(revived).toEqual([
+      { agent: { ...stopped, status: "starting", clearPendingAt: stamp, updatedAt: stamp }, options: { fresh: true } },
+    ])
   })
 
   test("a revive outcome other than started is printed and fails the command", async () => {
@@ -318,7 +336,9 @@ describe("clearAgent", () => {
     })
 
     try {
-      await expect(clearAgent("fix-sidebar", deps)).rejects.toThrow("clear did not start fix-sidebar: skipped archived")
+      await expect(clearAgent("fix-sidebar", deps)).rejects.toThrow(
+        "clear did not start fix-sidebar: skipped archived; the fresh start is still pending and the next revival ('threa-harnessd up' or the watcher) completes it"
+      )
     } finally {
       log.mockRestore()
     }

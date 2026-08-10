@@ -199,11 +199,17 @@ export function parkPiSessionFiles(runtimeSessionId: string, deps: PiSessionPark
   const sessionsDir = deps.sessionsDir ?? join(homedir(), ".pi", "agent", "sessions")
   const readdir = deps.readdir ?? ((path: string) => readdirSync(path))
   const rename = deps.rename ?? renameSync
+  // Every failure below is loud (INV-11): `pi --session-id <id>` resumes whatever
+  // transcript is still on disk, so a park that silently gave up would ack a
+  // fresh start and hand back the old conversation.
+  const reason = (error: unknown) => (error instanceof Error ? error.message : String(error))
   let projects: string[]
   try {
     projects = readdir(sessionsDir)
-  } catch {
-    return []
+  } catch (error) {
+    // No sessions dir at all: nothing on disk to resume, so fresh is guaranteed.
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return []
+    die(`could not read Pi sessions dir ${sessionsDir}: ${reason(error)}`)
   }
   const suffix = `_${runtimeSessionId}.jsonl`
   const stamp = new Date().toISOString().replace(/[:.]/g, "-")
@@ -213,13 +219,20 @@ export function parkPiSessionFiles(runtimeSessionId: string, deps: PiSessionPark
     let entries: string[]
     try {
       entries = readdir(projectDir)
-    } catch {
-      continue
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code
+      // A stray file or a directory that vanished holds no transcripts.
+      if (code === "ENOENT" || code === "ENOTDIR") continue
+      die(`could not read Pi session dir ${projectDir}: ${reason(error)}`)
     }
     for (const entry of entries) {
       if (!entry.endsWith(suffix)) continue
       const path = join(projectDir, entry)
-      rename(path, `${path}.cleared-${stamp}`)
+      try {
+        rename(path, `${path}.cleared-${stamp}`)
+      } catch (error) {
+        die(`could not park Pi session file ${path}: ${reason(error)}`)
+      }
       console.log(`harnessd: parked Pi session file ${path}`)
       parked.push(path)
     }

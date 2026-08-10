@@ -30,6 +30,13 @@ export interface ManagedAgent {
    * is gone AND its scratchpad is archived. History, never deleted.
    */
   tombstonedAt?: string
+  /**
+   * ISO instant an operator explicitly requested a fresh restart that has not
+   * happened yet. Set only by the `clear` command; the next successful revival
+   * honors it (fresh start) and clears it. Never set by any automatic path —
+   * revival acting on it is completing a recorded user request, not auto-clearing.
+   */
+  clearPendingAt?: string
 }
 
 export interface SpawnOptions {

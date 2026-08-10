@@ -28,7 +28,7 @@ import {
   piLaunchCommand,
   piResumeCommand,
 } from "./spawners"
-import type { ManagedAgent, ResumeOptions } from "./types"
+import type { ManagedAgent, ResumeOptions, SpawnResult } from "./types"
 import {
   inaccessibleBackoffMs,
   runWatchLoop,
@@ -990,6 +990,59 @@ test("a persist failure after launch kills the window instead of leaving it untr
     detail: "inventory write failed after launch; window killed: SQLITE_BUSY",
   })
   expect(killed).toEqual(["@7"])
+})
+
+function launchedWindow(managed: ManagedAgent): SpawnResult {
+  return {
+    worktree: managed.worktree!,
+    branch: managed.branch ?? managed.name,
+    tmuxSession: "threa-agents",
+    tmuxWindow: "repair",
+    tmuxWindowId: "@7",
+    tmuxPaneId: "%8",
+    scratchpadUrl: managed.scratchpadUrl,
+    instanceId: managed.instanceId,
+    runtimeSessionId: managed.runtimeSessionId,
+    output: "ok",
+  }
+}
+
+test("a revival owing a fresh start starts fresh and clears the marker only once it is online", async () => {
+  // A clear kills the pane and can then fail to relaunch. Without the recorded
+  // intent the next sweep revives with history and silently restores the
+  // conversation the operator asked to leave behind.
+  const options: ResumeOptions[] = []
+  const persisted: ManagedAgent[] = []
+  const deps = reviveDeps({
+    resumeRuntime: async (managed, resumeOptions) => {
+      options.push(resumeOptions)
+      return launchedWindow(managed)
+    },
+    persist: (managed) => void persisted.push(managed),
+  })
+
+  const outcome = await runRevive(linkedAgent({ clearPendingAt: "2026-08-10T12:00:00.000Z" }), {}, deps)
+
+  expect(outcome?.status).toBe("started")
+  expect(options).toEqual([{ fresh: true }])
+  expect(persisted.map((managed) => [managed.status, managed.clearPendingAt])).toEqual([["online", undefined]])
+})
+
+test("a failed launch keeps the pending fresh start for the next revival", async () => {
+  const persisted: ManagedAgent[] = []
+  const deps = reviveDeps({
+    resumeRuntime: async () => {
+      throw new Error("tmux window creation failed")
+    },
+    persist: (managed) => void persisted.push(managed),
+  })
+
+  const outcome = await runRevive(linkedAgent({ clearPendingAt: "2026-08-10T12:00:00.000Z" }), {}, deps)
+
+  expect(outcome?.status).toBe("failed")
+  expect(persisted.map((managed) => [managed.status, managed.clearPendingAt])).toEqual([
+    ["error", "2026-08-10T12:00:00.000Z"],
+  ])
 })
 
 test("process lock steals from a dead holder, times out on a live one, and releases only its own", async () => {

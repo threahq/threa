@@ -155,6 +155,18 @@ test("opening an inventory created before tombstoned_at adds the column in place
   ])
 })
 
+test("a pending fresh start round-trips, and dropping it writes NULL rather than keeping the old value", () => {
+  // The marker is what makes a failed clear complete on the next revival instead
+  // of resurrecting the conversation; a value that cannot be unset would make
+  // every later revival start fresh.
+  upsertAgent(agent({ clearPendingAt: "2026-08-10T12:00:00.000Z" }))
+  expect(readInventory()).toEqual([agent({ clearPendingAt: "2026-08-10T12:00:00.000Z" })])
+
+  upsertAgent(agent())
+  expect(readInventory()).toEqual([agent()])
+  expect(readInventoryReadonly()).toEqual([agent()])
+})
+
 test("the readonly reader projects NULL for a column the file predates", () => {
   const path = join(root, "old.sqlite")
   const db = new Database(path)

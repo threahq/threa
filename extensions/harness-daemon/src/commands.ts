@@ -526,6 +526,9 @@ export async function reviveAgent(
   target?: BotSessionRestoredPayload
 ): Promise<ReviveOutcome | undefined> {
   let agent = storedAgent
+  // A `clear` whose relaunch failed left the kill done and the fresh start owed:
+  // reviving without it silently restores the conversation the operator dropped.
+  const fresh = Boolean(options.fresh || agent.clearPendingAt)
   if (agent.runtime === "pi" && !agent.scratchpadUrl && agent.runtimeSessionId) {
     const link = deps.piLink(agent.runtimeSessionId)
     if (link) {
@@ -724,7 +727,7 @@ export async function reviveAgent(
   const resumableAgent = { ...agent, instanceId, runtimeSessionId }
   let result: SpawnResult
   try {
-    result = await deps.resumeRuntime(resumableAgent, options)
+    result = await deps.resumeRuntime(resumableAgent, { ...options, fresh })
   } catch (error) {
     deps.persist({ ...resumableAgent, status: "error", updatedAt: now(), lastOutput: String(error).slice(-4000) })
     return { status: "failed", detail: `launch failed: ${error instanceof Error ? error.message : String(error)}` }
@@ -759,6 +762,9 @@ export async function reviveAgent(
       status: "online",
       updatedAt: now(),
       lastOutput: result.output.slice(-4000),
+      // The only path that clears it: every other persist here leaves the row
+      // still owing a fresh start.
+      clearPendingAt: undefined,
     })
   } catch (error) {
     // Inventory lost the new window identity, so a later pass would search the
@@ -843,6 +849,7 @@ export interface ClearDeps {
   sleep: (ms: number) => Promise<void>
   /** Same lock as resumeActive: held across kill→drain→relaunch so the watcher cannot resume the old conversation in between. */
   lock: () => Promise<() => void>
+  persist: (agent: ManagedAgent) => void
   revive: (agent: ManagedAgent, options: ResumeOptions) => Promise<ReviveOutcome | undefined>
 }
 
@@ -857,6 +864,7 @@ export function defaultClearDeps(): ClearDeps {
     claudePidsIn: liveClaudePidsIn,
     sleep: Bun.sleep,
     lock: () => acquireProcessLock(resumeActiveLockPath()),
+    persist: upsertAgent,
     revive: (agent, options) => reviveAgent(agent, options, defaultReviveDeps()),
   }
 }
@@ -881,23 +889,38 @@ async function drainClearedRuntime(agent: ManagedAgent, deps: ClearDeps): Promis
 
 /** Kill the agent's window and relaunch it on the same scratchpad with no conversation history. Never automatic. */
 export async function clearAgent(ref: string, deps: ClearDeps = defaultClearDeps()): Promise<void> {
-  const agent = deps.findAgent(ref)
+  const found = deps.findAgent(ref)
   const release = await deps.lock()
   try {
-    const resolved = deps.resolvePane(agent)
+    const resolved = deps.resolvePane(found)
     // Same refusal `resolveAgentTarget` makes, minus its "missing" case: clearing
     // an agent that is already down is a fresh revive, not an error.
-    if (resolved.status === "ambiguous") die(`${agent.name}: ${resolved.reason}`)
-    if (resolved.status === "unverified") die(`${agent.name}: ${resolved.reason}; restart the managed session`)
+    if (resolved.status === "ambiguous") die(`${found.name}: ${resolved.reason}`)
+    if (resolved.status === "unverified") die(`${found.name}: ${resolved.reason}; restart the managed session`)
+    // Recorded BEFORE the kill, and only past the refusals: once the pane dies the
+    // relaunch can still fail, and a watcher sweep would then revive the very
+    // conversation the operator asked to leave behind. The marker survives that
+    // gap so the next revival completes the clear instead of undoing it.
+    // Clear on a stopped agent is an explicit restart request; reviveAgent refuses "stopped".
+    const stamp = now()
+    const agent: ManagedAgent = {
+      ...found,
+      status: found.status === "stopped" ? "starting" : found.status,
+      clearPendingAt: stamp,
+      updatedAt: stamp,
+    }
+    deps.persist(agent)
     if (resolved.status === "found") {
       deps.killWindow(resolved.pane.windowId)
       await drainClearedRuntime(agent, deps)
     }
-    // Clear on a stopped agent is an explicit restart request; reviveAgent refuses "stopped".
-    const clearable = agent.status === "stopped" ? { ...agent, status: "starting" as const } : agent
-    const outcome = (await deps.revive(clearable, { fresh: true })) ?? die("revive returned no outcome")
+    const outcome = (await deps.revive(agent, { fresh: true })) ?? die("revive returned no outcome")
     console.log(`${outcome.status}\t${agent.name}${outcome.detail ? `\t${outcome.detail}` : ""}`)
-    if (outcome.status !== "started") die(`clear did not start ${agent.name}: ${outcome.status}`)
+    if (outcome.status !== "started") {
+      die(
+        `clear did not start ${agent.name}: ${outcome.status}; the fresh start is still pending and the next revival ('threa-harnessd up' or the watcher) completes it`
+      )
+    }
   } finally {
     release()
   }
