@@ -1723,6 +1723,7 @@ describe("claim drain serialization", () => {
               activeStreamId: "stream_1",
               sourceMessageId: "msg_stop",
               promptMarkdown: "/stop",
+              trigger: "session-control",
               requiredCapability: "session-control",
               claimToken: "claim_stop",
               claimExpiresAt: null,
@@ -1752,6 +1753,10 @@ describe("claim drain serialization", () => {
       await __testing.claimIfIdle(pi, ctx)
 
       expect(presence.at(-1)).toMatchObject({ status: "available", acceptingInvocations: true })
+      // Session-control claims have no agent session server-side; a step write
+      // can only bounce (SESSION_CONTROL_TRACE_UNSUPPORTED), so none may leave.
+      const stepWrites = fetchSpy.mock.calls.map((call) => String(call[0])).filter((url) => url.includes("/steps"))
+      expect(stepWrites).toEqual([])
     } finally {
       fetchSpy.mockRestore()
     }

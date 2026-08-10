@@ -952,6 +952,11 @@ async function recordInvocationTraceStep(
   statusText?: string
 ): Promise<void> {
   if (!config) return
+  // Session-control claims have no agent session server-side, so the server
+  // can never persist their steps — it rejects each one (an INTERNAL_ERROR ack
+  // before SESSION_CONTROL_TRACE_UNSUPPORTED existed). Presence heartbeats
+  // carry the "Running /x…" status instead.
+  if (invocation.trigger === "session-control") return
   const trimmed = truncateForTrace(
     content,
     invocation.sealing ? SEALED_TRACE_CONTENT_MAX_CHARS : TRACE_CONTENT_MAX_CHARS
