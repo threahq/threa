@@ -27,6 +27,7 @@ import {
   harnessReconnectAvailable,
   parseSealedAckContext,
   parseSealedTurnContext,
+  prepareHarnessClear,
   prepareHarnessReconnect,
   runHarnessKick,
   parseAllowedTmuxKey,
@@ -126,6 +127,7 @@ const SESSION_CONTROL_COMMANDS = [
   "kick",
   "carry-on",
   "reconnect",
+  "clear",
   "key",
 ] as const
 type PiSessionControlCommandName = (typeof SESSION_CONTROL_COMMANDS)[number]
@@ -812,11 +814,11 @@ function buildRuntimeCapabilities(
     supportsMentionInvocations: true,
     supportsSessionControlCommands: true,
     sessionControlCommands: SESSION_CONTROL_COMMANDS.filter((command) => {
-      // `kick` and `reconnect` both act through the harnessd entrypoint, which
-      // finds this session by its tmux pane and presses Enter into it. Neither
-      // can run without a pane and an installed daemon — everything else here
-      // actuates in-process through the extension API and needs no tmux at all.
-      if (command === "kick" || command === "reconnect") {
+      // `kick`, `reconnect`, and `clear` all act through the harnessd
+      // entrypoint, which finds this session by its tmux pane. None can run
+      // without a pane and an installed daemon — everything else here actuates
+      // in-process through the extension API and needs no tmux at all.
+      if (command === "kick" || command === "reconnect" || command === "clear") {
         return Boolean(ctx && currentReconnectLink(ctx, reconnectAvailable))
       }
       if (command === "key") return Boolean(ctx && currentSessionControlLink(ctx))
@@ -3246,28 +3248,47 @@ interface ReconnectCommandDeps {
   heartbeat?: typeof heartbeat
 }
 
-async function runReconnectCommand(
+interface ClearCommandDeps {
+  available: () => boolean
+  prepare: typeof prepareHarnessClear
+  complete: typeof completeInvocationWithMarkdown
+  heartbeat?: typeof heartbeat
+}
+
+interface HarnessHandoffSpec {
+  usage: string
+  pendingMessage: string
+  busyMessage: string
+  unavailableMessage: string
+  ackMessage: string
+  heartbeatText: string
+  prepare: (facts: { runtimeSessionId: string; rootStreamId: string; force: boolean }) => () => void
+}
+
+interface HarnessHandoffDeps {
+  available: () => boolean
+  complete: typeof completeInvocationWithMarkdown
+  heartbeat?: typeof heartbeat
+}
+
+async function runHarnessHandoffCommand(
   invocation: ClaimedInvocation,
   args: string,
   ctx: ExtensionContext,
-  deps: ReconnectCommandDeps = {
-    available: harnessReconnectAvailable,
-    prepare: prepareHarnessReconnect,
-    complete: completeInvocationWithMarkdown,
-    heartbeat,
-  }
+  deps: HarnessHandoffDeps,
+  spec: HarnessHandoffSpec
 ): Promise<void> {
   const sendHeartbeat = deps.heartbeat ?? heartbeat
   if (args !== "" && args !== "--force") {
-    await deps.complete(invocation, "Usage: `/reconnect [--force]`.", ctx)
+    await deps.complete(invocation, spec.usage, ctx)
     return
   }
   if (pending) {
-    await deps.complete(invocation, "A Threa invocation is still running; use `/stop` before reconnecting.", ctx)
+    await deps.complete(invocation, spec.pendingMessage, ctx)
     return
   }
   if (args !== "--force" && !ctx.isIdle()) {
-    await deps.complete(invocation, "Pi is busy; retry when idle or use `/reconnect --force`.", ctx)
+    await deps.complete(invocation, spec.busyMessage, ctx)
     return
   }
   const link = currentReconnectLink(ctx, deps.available)
@@ -3284,22 +3305,24 @@ async function runReconnectCommand(
     invocationFacts.claimedInstanceId !== instanceId ||
     sessionTearingDown
   ) {
-    throw new Error("Harness reconnect is unavailable for this session.")
+    throw new Error(spec.unavailableMessage)
   }
   const linkFacts = {
     instanceId: link.instanceId,
     runtimeSessionId: link.runtimeSessionId,
     rootStreamId: link.rootStreamId,
   }
-  const start = deps.prepare(runtimeSessionId, linkFacts.rootStreamId, { force: args === "--force" })
+  const start = spec.prepare({
+    runtimeSessionId,
+    rootStreamId: linkFacts.rootStreamId,
+    force: args === "--force",
+  })
+  // The latch means "harness restart imminent — stay busy, accept no claims",
+  // which is exactly what both handoffs are about to cause.
   reconnectPending = true
-  await sendHeartbeat("busy", "Reconnect handoff…", ctx).catch(() => undefined)
+  await sendHeartbeat("busy", spec.heartbeatText, ctx).catch(() => undefined)
   try {
-    const acknowledged = await deps.complete(
-      invocation,
-      "Reconnect request accepted; attempting to resume the linked Pi session.",
-      ctx
-    )
+    const acknowledged = await deps.complete(invocation, spec.ackMessage, ctx)
     const currentLink = currentReconnectLink(ctx, deps.available)
     const lifecycleChanged =
       sessionTearingDown ||
@@ -3331,6 +3354,50 @@ async function runReconnectCommand(
     )
     throw error
   }
+}
+
+async function runReconnectCommand(
+  invocation: ClaimedInvocation,
+  args: string,
+  ctx: ExtensionContext,
+  deps: ReconnectCommandDeps = {
+    available: harnessReconnectAvailable,
+    prepare: prepareHarnessReconnect,
+    complete: completeInvocationWithMarkdown,
+    heartbeat,
+  }
+): Promise<void> {
+  await runHarnessHandoffCommand(invocation, args, ctx, deps, {
+    usage: "Usage: `/reconnect [--force]`.",
+    pendingMessage: "A Threa invocation is still running; use `/stop` before reconnecting.",
+    busyMessage: "Pi is busy; retry when idle or use `/reconnect --force`.",
+    unavailableMessage: "Harness reconnect is unavailable for this session.",
+    ackMessage: "Reconnect request accepted; attempting to resume the linked Pi session.",
+    heartbeatText: "Reconnect handoff…",
+    prepare: ({ runtimeSessionId, rootStreamId, force }) => deps.prepare(runtimeSessionId, rootStreamId, { force }),
+  })
+}
+
+async function runClearCommand(
+  invocation: ClaimedInvocation,
+  args: string,
+  ctx: ExtensionContext,
+  deps: ClearCommandDeps = {
+    available: harnessReconnectAvailable,
+    prepare: prepareHarnessClear,
+    complete: completeInvocationWithMarkdown,
+    heartbeat,
+  }
+): Promise<void> {
+  await runHarnessHandoffCommand(invocation, args, ctx, deps, {
+    usage: "Usage: `/clear [--force]`.",
+    pendingMessage: "A Threa invocation is still running; use `/stop` before clearing.",
+    busyMessage: "Pi is busy; retry when idle or use `/clear --force`.",
+    unavailableMessage: "Harness clear is unavailable for this session.",
+    ackMessage: "Clear accepted; killing this session and starting a fresh conversation on the same scratchpad.",
+    heartbeatText: "Clear handoff…",
+    prepare: ({ runtimeSessionId }) => deps.prepare(runtimeSessionId),
+  })
 }
 
 async function runStopCommand(invocation: ClaimedInvocation, ctx: ExtensionContext): Promise<void> {
@@ -3463,6 +3530,9 @@ async function handleSessionControlInvocation(
         return
       case "reconnect":
         await runReconnectCommand(invocation, command.args, ctx)
+        return
+      case "clear":
+        await runClearCommand(invocation, command.args, ctx)
         return
       case "key":
         await runKeyCommand(invocation, command.args, ctx)
@@ -4378,6 +4448,7 @@ export const __testing = {
   claimNextInvocation,
   claimIfIdle,
   runReconnectCommand,
+  runClearCommand,
   runReloadCommand,
   scheduleRecoveredCompletion,
   runKeyCommand,

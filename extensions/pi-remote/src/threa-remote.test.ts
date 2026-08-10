@@ -1536,6 +1536,234 @@ describe("Pi reconnect session control", () => {
   })
 })
 
+describe("Pi clear session control", () => {
+  const invocation = {
+    id: "binv_clear",
+    claimToken: "claim",
+    claimedInstanceId: "pi-instance",
+    rootStreamId: "stream-root-exact",
+  } as never
+  const context = (idle: boolean) =>
+    ({
+      sessionManager: { getSessionId: () => "runtime-exact" },
+      modelRegistry: { getAvailable: () => [] },
+      isIdle: () => idle,
+    }) as never
+  const linkedConfig = (link: Record<string, unknown>) => ({
+    baseUrl: "https://app.threa.io",
+    workspaceId: "ws_123",
+    apiKey: "threa_bk_test",
+    linkedSessions: { "runtime-exact": link },
+  })
+  const validLink = {
+    enabled: true,
+    instanceId: "pi-instance",
+    runtimeSessionId: "runtime-exact",
+    rootStreamId: "stream-root-exact",
+    activeStreamId: "stream-root-exact",
+    streamUrlPath: "/streams/stream-root-exact",
+  }
+
+  beforeEach(() => {
+    process.env.TMUX_PANE = "%9"
+    __testing.setConfigForTesting(linkedConfig(validLink) as never)
+  })
+
+  afterEach(() => {
+    delete process.env.TMUX_PANE
+    __testing.clearPendingForTesting()
+    __testing.setConfigForTesting(undefined)
+  })
+
+  test("routes by runtime session alone, starts only after the ack, and stays nonaccepting", async () => {
+    for (const force of [false, true]) {
+      const prepared: unknown[][] = []
+      const order: string[] = []
+      await __testing.runClearCommand(invocation, force ? "--force" : "", context(true), {
+        available: () => true,
+        prepare: (...args: unknown[]) => {
+          prepared.push(args)
+          return () => order.push("start")
+        },
+        complete: async () => {
+          order.push("complete")
+          return true
+        },
+        heartbeat: async () => undefined,
+      } as never)
+      expect({ prepared, order, guarded: __testing.reconnectPending() }).toEqual({
+        prepared: [["runtime-exact"]],
+        order: ["complete", "start"],
+        guarded: true,
+      })
+      expect(await __testing.claimNextInvocation(context(true))).toBeNull()
+      __testing.clearPendingForTesting()
+    }
+  })
+
+  test("advertises clear only for the exact current harness link", () => {
+    const ctx = context(true)
+    const advertised = (available: boolean) =>
+      (__testing.buildRuntimeCapabilities(ctx, () => available).sessionControlCommands as string[]).includes("clear")
+
+    expect(advertised(true)).toBe(true)
+    expect(advertised(false)).toBe(false)
+
+    __testing.setConfigForTesting(linkedConfig({ ...validLink, runtimeSessionId: "runtime-other" }) as never)
+    expect(advertised(true)).toBe(false)
+
+    __testing.setConfigForTesting(linkedConfig(validLink) as never)
+    delete process.env.TMUX_PANE
+    expect(advertised(true)).toBe(false)
+  })
+
+  test("a claim from link A cannot prepare or ack after relinking to B", async () => {
+    let prepared = 0
+    let acknowledged = 0
+    for (const staleInvocation of [
+      { ...invocation, rootStreamId: "stream-root-a" },
+      { ...invocation, claimedInstanceId: "pi-instance-a" },
+    ]) {
+      await expect(
+        __testing.runClearCommand(staleInvocation as never, "", context(true), {
+          available: () => true,
+          prepare: () => {
+            prepared++
+            return () => undefined
+          },
+          complete: async () => {
+            acknowledged++
+            return true
+          },
+        } as never)
+      ).rejects.toThrow("Harness clear is unavailable")
+    }
+    expect({ prepared, acknowledged }).toEqual({ prepared: 0, acknowledged: 0 })
+  })
+
+  test("accepts only empty args or exact --force", async () => {
+    const messages: string[] = []
+    let prepared = 0
+    for (const args of ["--force ", " --force", "--force=yes", "extra"]) {
+      await __testing.runClearCommand(invocation, args, context(true), {
+        available: () => true,
+        prepare: () => {
+          prepared++
+          return () => undefined
+        },
+        complete: async (_invocation: unknown, message: string) => {
+          messages.push(message)
+          return true
+        },
+      } as never)
+    }
+    expect({ messages, prepared }).toEqual({
+      messages: Array(4).fill("Usage: `/clear [--force]`."),
+      prepared: 0,
+    })
+  })
+
+  test("preparation failure and failed ack never start clear", async () => {
+    expect(
+      __testing.runClearCommand(invocation, "", context(true), {
+        available: () => true,
+        prepare: () => {
+          throw new Error("preflight failed")
+        },
+        complete: async () => true,
+      } as never)
+    ).rejects.toThrow("preflight failed")
+
+    let started = false
+    await __testing.runClearCommand(invocation, "", context(true), {
+      available: () => true,
+      prepare: () => () => {
+        started = true
+      },
+      complete: async () => false,
+      heartbeat: async () => undefined,
+    } as never)
+    expect(started).toBe(false)
+    expect(__testing.reconnectPending()).toBe(false)
+  })
+
+  test("revalidates pinned link facts after ack and restores actual presence", async () => {
+    for (const mutate of [
+      (link: Record<string, unknown>) => (link.enabled = false),
+      (link: Record<string, unknown>) => (link.rootStreamId = "stream-other"),
+      (link: Record<string, unknown>) => (link.runtimeSessionId = "runtime-other"),
+      (link: Record<string, unknown>) => (link.instanceId = "pi-other"),
+    ]) {
+      const link = { ...validLink }
+      __testing.setConfigForTesting(linkedConfig(link) as never)
+      let started = false
+      const presence: string[] = []
+      await __testing.runClearCommand(invocation, "", context(true), {
+        available: () => true,
+        prepare: () => () => {
+          started = true
+        },
+        complete: async () => {
+          mutate(link)
+          return true
+        },
+        heartbeat: async (status: string) => {
+          presence.push(status)
+        },
+      } as never)
+      expect({ started, presence: presence.at(-1) }).toEqual({
+        started: false,
+        presence: link.enabled ? "available" : "offline",
+      })
+      __testing.clearPendingForTesting()
+    }
+  })
+
+  test("synchronous start failure restores the handoff state", async () => {
+    await expect(
+      __testing.runClearCommand(invocation, "", context(true), {
+        available: () => true,
+        prepare: () => () => {
+          throw new Error("start failed")
+        },
+        complete: async () => true,
+        heartbeat: async () => undefined,
+      } as never)
+    ).rejects.toThrow("start failed")
+    expect(__testing.reconnectPending()).toBe(false)
+  })
+
+  test("force bypasses only local busy state and never an owned Threa invocation", async () => {
+    const messages: string[] = []
+    let prepared = 0
+    const deps = {
+      available: () => true,
+      prepare: () => {
+        prepared++
+        return () => {}
+      },
+      complete: async (_invocation: unknown, message: string) => {
+        messages.push(message)
+        return true
+      },
+      heartbeat: async () => undefined,
+    } as never
+    await __testing.runClearCommand(invocation, "", context(false), deps)
+    await __testing.runClearCommand(invocation, "--force", context(false), deps)
+    __testing.clearPendingForTesting()
+    __testing.beginPendingInvocation({ id: "binv_owned", claimToken: "owned" } as never)
+    await __testing.runClearCommand(invocation, "--force", context(false), deps)
+    expect({ messages, prepared }).toEqual({
+      messages: [
+        "Pi is busy; retry when idle or use `/clear --force`.",
+        "Clear accepted; killing this session and starting a fresh conversation on the same scratchpad.",
+        "A Threa invocation is still running; use `/stop` before clearing.",
+      ],
+      prepared: 1,
+    })
+  })
+})
+
 describe("claim drain serialization", () => {
   afterEach(() => {
     __testing.clearPendingForTesting()

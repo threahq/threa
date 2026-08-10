@@ -20,6 +20,7 @@ export const SESSION_CONTROL_COMMAND_NAMES = [
   "run",
   "carry-on",
   "reconnect",
+  "clear",
   "key",
 ] as const
 export type SessionControlCommandName = (typeof SESSION_CONTROL_COMMAND_NAMES)[number]
@@ -142,6 +143,13 @@ export function listSessionControlCommandInfos(): CommandInfo[] {
       kind: CommandKinds.BOT_RUNTIME,
       scope: CommandScopes.STREAM,
       args: [{ name: "--force", required: false, description: "Reconnect despite local runtime activity" }],
+    },
+    {
+      name: "clear",
+      description: "Restart the linked session with a fresh conversation on this scratchpad",
+      kind: CommandKinds.BOT_RUNTIME,
+      scope: CommandScopes.STREAM,
+      args: [{ name: "--force", required: false, description: "Clear despite local runtime activity" }],
     },
     {
       name: "key",

@@ -3,6 +3,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js"
 import {
   harnessReconnectAvailable,
+  prepareHarnessClear,
   prepareHarnessReconnect,
   runHarnessKick,
   killOwnWindow,
@@ -44,7 +45,8 @@ export const CHANNEL_SOURCE = "threa-channel"
 // case); Threa's canonical `thinking` maps to Claude Code's `/effort`;
 // `carry-on` queues text for the quota carry-on resume (see carry-on.ts);
 // `kick` asks harnessd to press Enter in this session's pane; `status` reads
-// connection/activity state and captures the visible pane without sending keys.
+// connection/activity state and captures the visible pane without sending keys;
+// `clear` asks harnessd to restart this session with a fresh conversation.
 const SESSION_CONTROL_COMMANDS = [
   "stop",
   "steer",
@@ -57,6 +59,7 @@ const SESSION_CONTROL_COMMANDS = [
   "reload",
   "carry-on",
   "reconnect",
+  "clear",
   "key",
 ] as const
 // Model options for the composer's arg picker: built-in /model aliases plus
@@ -192,6 +195,41 @@ export async function runClaudeCommand(
   afterAck?: () => void | Promise<void>
   onHandoffReset?: () => void
 }> {
+  const harnessHandoffResult = (spec: {
+    commandLabel: string
+    ackMessage: string
+    root: string
+    target: ReconnectTarget | undefined
+    force: boolean
+    start: () => void
+  }) => ({
+    ok: true,
+    message: spec.ackMessage,
+    afterAck: async () => {
+      if (!spec.force && reconnectBusy?.()) {
+        throw new Error(
+          `Claude became busy after ${spec.commandLabel} acknowledgement; retry when idle or use \`/${spec.commandLabel} --force\`.`
+        )
+      }
+      await stopDelegationsForReconnect?.(spec.force)
+      const current = reconnectTarget?.()
+      if (
+        reconnectReady?.() === false ||
+        (current &&
+          (current.stopped ||
+            current.linkState !== "linked" ||
+            current.rootStreamId !== spec.root ||
+            current.linkGeneration !== spec.target?.linkGeneration))
+      ) {
+        throw new Error(
+          `Remote session changed while delegation intake was quiescing; ${spec.commandLabel} was not started.`
+        )
+      }
+      spec.start()
+    },
+    onHandoffReset: restartDelegationsAfterReset,
+  })
+
   switch (name) {
     case "key": {
       const key = parseAllowedTmuxKey(args)
@@ -216,31 +254,35 @@ export async function runClaudeCommand(
       if (!runtimeSessionId || !root) throw new Error("Harness reconnect is unavailable for this session.")
       const force = args === "--force"
       const startReconnect = prepareHarnessReconnect(runtimeSessionId, root, { force })
-      return {
-        ok: true,
-        message: "Reconnect request accepted; attempting to resume the linked Claude session.",
-        afterAck: async () => {
-          if (!force && reconnectBusy?.()) {
-            throw new Error(
-              "Claude became busy after reconnect acknowledgement; retry when idle or use `/reconnect --force`."
-            )
-          }
-          await stopDelegationsForReconnect?.(force)
-          const current = reconnectTarget?.()
-          if (
-            reconnectReady?.() === false ||
-            (current &&
-              (current.stopped ||
-                current.linkState !== "linked" ||
-                current.rootStreamId !== root ||
-                current.linkGeneration !== target?.linkGeneration))
-          ) {
-            throw new Error("Remote session changed while delegation intake was quiescing; reconnect was not started.")
-          }
-          startReconnect()
-        },
-        onHandoffReset: restartDelegationsAfterReset,
+      return harnessHandoffResult({
+        commandLabel: "reconnect",
+        ackMessage: "Reconnect request accepted; attempting to resume the linked Claude session.",
+        root,
+        target,
+        force,
+        start: startReconnect,
+      })
+    }
+    case "clear": {
+      if (args !== "" && args !== "--force") {
+        return { ok: false, message: "Usage: `/clear [--force]`." }
       }
+      if (args !== "--force" && reconnectBusy?.()) {
+        return { ok: false, message: "Claude is busy; retry when idle or use `/clear --force`." }
+      }
+      const target = reconnectTarget?.()
+      const root = target?.rootStreamId ?? rootStreamId?.()
+      if (!runtimeSessionId || !root) throw new Error("Harness clear is unavailable for this session.")
+      const force = args === "--force"
+      const start = prepareHarnessClear(runtimeSessionId)
+      return harnessHandoffResult({
+        commandLabel: "clear",
+        ackMessage: "Clear accepted — killing this session and starting a fresh conversation on the same scratchpad.",
+        root,
+        target,
+        force,
+        start,
+      })
     }
     case "carry-on": {
       if (!carryOn) return { ok: false, message: "Quota carry-on is unavailable for this session." }
@@ -333,7 +375,8 @@ export function createClaudeSessionControl(
     get commands() {
       return runtimeSessionId
         ? SESSION_CONTROL_COMMANDS.filter((command) => {
-            if (command === "reconnect") return Boolean(rootStreamId?.() && harnessReconnectAvailable())
+            if (command === "reconnect" || command === "clear")
+              return Boolean(rootStreamId?.() && harnessReconnectAvailable())
             // `kick` runs through the same harnessd entrypoint as `reconnect`,
             // so an uninstalled daemon makes it unrunnable too. tmux is already
             // covered by the tmuxAvailable() gate above.
@@ -342,7 +385,7 @@ export function createClaudeSessionControl(
             return true
           })
         : SESSION_CONTROL_COMMANDS.filter(
-            (command) => command !== "kick" && command !== "reconnect" && command !== "key"
+            (command) => command !== "kick" && command !== "reconnect" && command !== "clear" && command !== "key"
           )
     },
     modelSuggestions: MODEL_SUGGESTIONS,

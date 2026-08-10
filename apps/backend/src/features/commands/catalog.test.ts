@@ -12,5 +12,12 @@ describe("session-control command catalog", () => {
       scope: "stream",
       args: [{ name: "--force", required: false, description: "Reconnect despite local runtime activity" }],
     })
+    expect(commands.find((command) => command.name === "clear")).toEqual({
+      name: "clear",
+      description: "Restart the linked session with a fresh conversation on this scratchpad",
+      kind: "bot-runtime",
+      scope: "stream",
+      args: [{ name: "--force", required: false, description: "Clear despite local runtime activity" }],
+    })
   })
 })
