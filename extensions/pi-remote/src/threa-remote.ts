@@ -1915,6 +1915,11 @@ function stopPolling(): void {
   if (timer) clearTimeout(timer)
   timer = undefined
   rearmPoll = undefined
+  // Release the worker latch: a poll still awaiting something from BEFORE this
+  // stop (a reload tears polling down mid-flight) must not make every tick of
+  // the NEXT loop skip as "in flight" until that orphan settles. Its own
+  // finally guards on run id, so this reset cannot be double-cleared.
+  pollInFlightRunId = undefined
 }
 
 /**
@@ -3438,11 +3443,20 @@ async function handleSessionControlInvocation(
     }
   } catch (error) {
     await failInvocation(invocation, error)
-    lastBusyHeartbeatAt = 0
-    const busy = reconnectPending || pending !== undefined || !ctx.isIdle()
-    await heartbeat(busy ? "busy" : "available", busy ? "Busy in Pi…" : undefined, ctx).catch(() => undefined)
   } finally {
     clearInterval(renewTimer)
+    // Every success path returns straight out of the switch with the entry
+    // "Running /X…" busy presence still standing, so a no-turn command
+    // (/stop with nothing to stop, /kick, /key) left the agent advertised
+    // busy and not-accepting until some later turn happened to heartbeat.
+    // A pending reload/reconnect handoff keeps busy on purpose: the restart
+    // is imminent, and "available" would invite claims this process is about
+    // to abandon.
+    if (!reloadPending && !reconnectPending) {
+      lastBusyHeartbeatAt = 0
+      const busy = pending !== undefined || !ctx.isIdle()
+      await heartbeat(busy ? "busy" : "available", busy ? "Busy in Pi…" : undefined, ctx).catch(() => undefined)
+    }
   }
 }
 

@@ -1654,6 +1654,81 @@ describe("claim drain serialization", () => {
     }
   })
 
+  test("a no-turn control command restores available presence instead of staying busy", async () => {
+    // The dispatch heartbeats "busy, Running /X…" on entry and every success
+    // path returned with that presence still standing — a /stop with nothing
+    // to stop left the agent advertised busy and not-accepting until some
+    // later turn happened to heartbeat (observed 2026-08-10).
+    __testing.setConfigForTesting({
+      baseUrl: "https://app.threa.io",
+      workspaceId: "ws_123",
+      apiKey: "threa_bk_test",
+      linkedSessions: {
+        runtime: {
+          enabled: true,
+          instanceId: "pi-instance",
+          runtimeSessionId: "runtime",
+          rootStreamId: "stream_1",
+          activeStreamId: "stream_1",
+        },
+      },
+    })
+    const presence: Array<Record<string, unknown>> = []
+    let claimServed = false
+    const fetchSpy = spyOn(globalThis, "fetch").mockImplementation((async (
+      input: string | URL | Request,
+      init?: RequestInit
+    ) => {
+      const url = String(input)
+      if (url.endsWith("/bot-invocations/claim")) {
+        if (claimServed) {
+          return new Response(JSON.stringify({ data: null }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          })
+        }
+        claimServed = true
+        return new Response(
+          JSON.stringify({
+            data: {
+              id: "binv_stop",
+              activeStreamId: "stream_1",
+              sourceMessageId: "msg_stop",
+              promptMarkdown: "/stop",
+              requiredCapability: "session-control",
+              claimToken: "claim_stop",
+              claimExpiresAt: null,
+            },
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        )
+      }
+      if (url.endsWith("/bot-runtime/presence") && typeof init?.body === "string") {
+        presence.push(JSON.parse(init.body) as Record<string, unknown>)
+      }
+      return new Response(JSON.stringify({ data: {} }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      })
+    }) as typeof fetch)
+    const ctx = {
+      sessionManager: { getSessionId: () => "runtime", getBranch: () => [] },
+      isIdle: () => true,
+      cwd: "/tmp",
+      modelRegistry: { getAvailable: () => [] },
+      ui: { notify: () => {}, setStatus: () => {}, theme: { fg: (_tone: string, text: string) => text } },
+    } as never
+    const pi = { sendUserMessage: () => {} } as never
+
+    try {
+      await __testing.claimIfIdle(pi, ctx)
+
+      expect(presence.at(-1)).toMatchObject({ status: "available", acceptingInvocations: true })
+    } finally {
+      fetchSpy.mockRestore()
+    }
+  })
+
   test("runtime reset drains an in-flight claim before teardown completes", async () => {
     __testing.setConfigForTesting({
       baseUrl: "https://app.threa.io",
@@ -1996,6 +2071,122 @@ describe("reload claim continuity", () => {
       // The footer must not advertise "reloading…" forever while the dial hangs.
       expect(statuses).toContain("Threa remote: linked")
       await Promise.race([started, Promise.resolve()])
+    } finally {
+      fetchSpy.mockRestore()
+    }
+  })
+
+  test("a Threa-triggered /reload leaves the claim loop able to claim the next message", async () => {
+    // The 2026-08-10 second wedge: a /reload arriving AS a Threa invocation
+    // (complete → handoff followUp → ctx.reload) left the reloaded session
+    // unable to claim the message that arrived mid-reload, while a pane-native
+    // reload recovered fine. This drives the full command → handoff → shutdown
+    // → start sequence and requires the next claim to happen.
+    const handlers = new Map<string, (event: unknown, ctx: any) => Promise<void>>()
+    const commands = new Map<string, { handler: (args: string, ctx: any) => Promise<void> }>()
+    const deliveries: Array<{ text: string; options?: unknown }> = []
+    const pi = {
+      registerCommand: (name: string, options: { handler: (args: string, ctx: any) => Promise<void> }) =>
+        commands.set(name, options),
+      on: (event: string, handler: (event: unknown, ctx: any) => Promise<void>) => handlers.set(event, handler),
+      sendUserMessage: (text: string, options?: unknown) => deliveries.push({ text, options }),
+    }
+    threaRemote(pi as never)
+
+    const runtimeSessionId = "runtime_threa_reload"
+    __testing.setConfigForTesting({
+      baseUrl: "https://example.test",
+      workspaceId: "ws_123",
+      apiKey: "threa_bk_test",
+      pollMs: 10,
+      linkedSessions: {
+        [runtimeSessionId]: {
+          enabled: true,
+          instanceId: "pi-threa-reload",
+          runtimeSessionId,
+          rootStreamId: "stream_1",
+          activeStreamId: "stream_1",
+        },
+      },
+    })
+    const ctx = {
+      sessionManager: { getSessionId: () => runtimeSessionId, getBranch: () => [] },
+      isIdle: () => true,
+      cwd: "/tmp",
+      modelRegistry: { getAvailable: () => [] },
+      ui: {
+        setStatus: () => {},
+        notify: () => {},
+        theme: { fg: (_tone: string, text: string) => text },
+      },
+    }
+    let offer = false
+    let claimedAfterReload = 0
+    const fetchSpy = spyOn(globalThis, "fetch").mockImplementation((async (input: string | URL | Request) => {
+      const url = String(input)
+      if (url.endsWith("/bot-invocations/claim")) {
+        if (!offer) {
+          return new Response(JSON.stringify({ data: null }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          })
+        }
+        offer = false
+        claimedAfterReload++
+        return new Response(
+          JSON.stringify({
+            data: {
+              id: "binv_after_reload",
+              activeStreamId: "stream_1",
+              sourceMessageId: "msg_after",
+              promptMarkdown: "Hiya",
+              claimToken: "claim_after",
+              claimExpiresAt: null,
+            },
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        )
+      }
+      if (url.includes("/streams/stream_1/messages?")) {
+        return new Response(JSON.stringify({ data: [] }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        })
+      }
+      return new Response(JSON.stringify({ data: {} }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      })
+    }) as typeof fetch)
+
+    try {
+      await handlers.get("session_start")!({ reason: "startup" }, ctx)
+      await __testing.runReloadCommand(
+        pi as never,
+        {
+          id: "binv_reload",
+          activeStreamId: "stream_1",
+          sourceMessageId: "msg_reload",
+          promptMarkdown: "/reload",
+          claimToken: "claim_reload",
+          claimedInstanceId: "pi-threa-reload",
+          claimExpiresAt: null,
+        } as never,
+        ctx as never
+      )
+      await commands.get("threa-remote-reload")!.handler("", {
+        ...ctx,
+        reload: async () => {
+          await handlers.get("session_shutdown")!({ reason: "reload" }, ctx)
+          await handlers.get("session_start")!({ reason: "reload" }, ctx)
+        },
+      })
+
+      offer = true
+      await Bun.sleep(60)
+
+      expect(claimedAfterReload).toBe(1)
+      expect(deliveries.some((delivery) => delivery.text.includes("Hiya"))).toBe(true)
     } finally {
       fetchSpy.mockRestore()
     }
