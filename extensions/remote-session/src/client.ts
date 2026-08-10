@@ -102,25 +102,34 @@ export class ThreaClient {
   }
 
   private async request<T>(path: string, init?: RequestInit): Promise<T> {
+    // One abort window over headers AND body. Clearing the timer once headers
+    // arrived left every `response.text()`/`response.json()` below unbounded —
+    // a stalled body hung the channel's request forever, the MCP server went
+    // unresponsive, and Claude Code SIGINT-restarted it, failing the in-flight
+    // invocation as "channel shut down" (observed live 2026-08-10; same
+    // pathogen as pi-remote's #1841).
     const controller = new AbortController()
     const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS)
-    // A FormData body must keep its multipart boundary header, which fetch sets
-    // only when Content-Type is left unset — so never force JSON on uploads.
-    const isFormData = typeof FormData !== "undefined" && init?.body instanceof FormData
-    let response: Response
     try {
-      response = await fetch(`${this.base}${path}`, {
-        ...init,
-        signal: controller.signal,
-        headers: {
-          Authorization: `Bearer ${this.opts.apiKey}`,
-          ...(isFormData ? {} : { "Content-Type": "application/json" }),
-          ...init?.headers,
-        },
-      })
+      return await this.requestWithin<T>(path, init, controller.signal)
     } finally {
       clearTimeout(timeout)
     }
+  }
+
+  private async requestWithin<T>(path: string, init: RequestInit | undefined, signal: AbortSignal): Promise<T> {
+    // A FormData body must keep its multipart boundary header, which fetch sets
+    // only when Content-Type is left unset — so never force JSON on uploads.
+    const isFormData = typeof FormData !== "undefined" && init?.body instanceof FormData
+    const response = await fetch(`${this.base}${path}`, {
+      ...init,
+      signal,
+      headers: {
+        Authorization: `Bearer ${this.opts.apiKey}`,
+        ...(isFormData ? {} : { "Content-Type": "application/json" }),
+        ...init?.headers,
+      },
+    })
     if (!response.ok) {
       // Read the structured `code` so callers can branch on the specific error
       // (e.g. an E2E-plaintext rejection vs a capability/validation 400) instead
