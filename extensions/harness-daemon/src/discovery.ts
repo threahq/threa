@@ -671,7 +671,11 @@ export function defaultAgentIdentityResolver(
   attested: AttestedRuntime[] = attestedRuntimes(readHarnessLinks(), canonicalOrRaw)
 ): AgentIdentityResolver {
   return (agent) => {
-    if (!agent.worktree) return agent.runtimeSessionId
+    // The rungs below answer "what CLAUDE identity does this directory have" —
+    // a Pi row resolved through them inherits a coexisting Claude's minted id,
+    // collides with the real Claude row in `latestAgentsByIdentity`, and drops
+    // out of every revival sweep silently. A Pi's recorded id IS its identity.
+    if (agent.runtime !== "claude" || !agent.worktree) return agent.runtimeSessionId
     const resolved = runtimeIdentityFor({ cwd: agent.worktree, agent, identities, attested, canonical: canonicalOrRaw })
     return resolved.source === "derived" ? agent.runtimeSessionId : resolved.runtimeSessionId
   }
