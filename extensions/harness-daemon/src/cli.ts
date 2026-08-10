@@ -25,6 +25,8 @@ Usage:
       [--dry-run] [--force] [--no-yolo | --yolo]
   threa-harnessd stop <agent-id-or-name>
   threa-harnessd kick <agent-id-or-name-or-runtime-session-id>
+  threa-harnessd clear <agent-id-or-name-or-runtime-session-id>
+      (kill the pane and start a FRESH conversation on the same scratchpad; opt-in only, never automatic)
   threa-harnessd interrupt <agent-id-or-name>
   threa-harnessd steer <agent-id-or-name> [follow-up text]
   threa-harnessd keys <agent-id-or-name> <tmux send-keys tokens...>

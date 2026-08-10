@@ -15,6 +15,7 @@ import {
   attachAgent,
   backfillIdentitiesCommand,
   bootResume,
+  clearAgent,
   doctor,
   inferAndRun,
   installBootResumeAgent,
@@ -63,6 +64,7 @@ async function main(): Promise<void> {
   }
   if (command === "stop") return stopAgent(args[0] ?? die("stop requires an agent id or name"))
   if (command === "kick") return kickAgent(args[0] ?? die("kick requires an agent id, name, or runtime session id"))
+  if (command === "clear") return clearAgent(args[0] ?? die("clear requires an agent id, name, or runtime session id"))
   if (command === "interrupt") return interruptAgent(args[0] ?? die("interrupt requires an agent id or name"))
   if (command === "steer")
     return steerAgent(args[0] ?? die("steer requires an agent id or name"), args.slice(1).join(" "))

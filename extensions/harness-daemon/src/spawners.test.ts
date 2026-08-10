@@ -1,8 +1,14 @@
 import { afterEach, beforeEach, expect, test } from "bun:test"
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { mcpConfigDir, mcpConfigPath, writeChannelMcpConfig } from "./spawners"
+import {
+  claudeResumeSessionId,
+  mcpConfigDir,
+  mcpConfigPath,
+  parkPiSessionFiles,
+  writeChannelMcpConfig,
+} from "./spawners"
 import { profileForWorktree, recordProfileSnapshot } from "./identity-store"
 import { windDownPolicyFor, type Profile } from "./profiles"
 
@@ -92,4 +98,38 @@ test("a Pi spawn records the profile its directory was provisioned under", () =>
     preserve: "none",
     reclaim: false,
   })
+})
+
+test("parking a Pi session renames only that session's transcripts", () => {
+  // The Threa link in threa-remote.json is keyed by the session id, so the id
+  // has to survive: renaming the transcript makes `pi --session-id` recreate an
+  // empty one under the same id instead of resuming the old conversation.
+  const sessionsDir = join(root, "pi-sessions")
+  const projectDir = join(sessionsDir, "a-project")
+  mkdirSync(projectDir, { recursive: true })
+  const target = join(projectDir, "2026-01-01T00-00-00-000Z_11111111-2222-3333-4444-555555555555.jsonl")
+  const unrelated = join(projectDir, "2026-01-01T00-00-00-000Z_99999999-8888-7777-6666-555555555555.jsonl")
+  writeFileSync(target, "{}\n")
+  writeFileSync(unrelated, "{}\n")
+
+  const parked = parkPiSessionFiles("11111111-2222-3333-4444-555555555555", { sessionsDir })
+
+  expect(parked).toEqual([target])
+  expect(existsSync(target)).toBe(false)
+  expect(existsSync(unrelated)).toBe(true)
+  expect(readdirSync(projectDir).filter((entry) => entry.includes(".cleared-"))).toHaveLength(1)
+})
+
+test("parking a Pi session with no sessions directory is a no-op", () => {
+  expect(parkPiSessionFiles("11111111-2222-3333-4444-555555555555", { sessionsDir: join(root, "absent") })).toEqual([])
+})
+
+test("a cleared Claude resume passes no --resume id even when a transcript is resumable", () => {
+  // Without this the clear relaunches straight back into the conversation the
+  // user asked to leave behind.
+  expect(claudeResumeSessionId(true, { sessionId: "e2b1f0c4-0000-4000-8000-000000000000" })).toBeUndefined()
+  expect(claudeResumeSessionId(undefined, { sessionId: "e2b1f0c4-0000-4000-8000-000000000000" })).toBe(
+    "e2b1f0c4-0000-4000-8000-000000000000"
+  )
+  expect(claudeResumeSessionId(false, undefined)).toBeUndefined()
 })

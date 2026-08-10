@@ -60,6 +60,11 @@ export interface ResumeOptions {
    * always probes live, because live state is what decides revival.
    */
   respectProbeBackoff?: boolean
+  /**
+   * Start a fresh conversation instead of resuming history. Set ONLY by the
+   * `clear` command — a user's explicit request. No revival path may set it.
+   */
+  fresh?: boolean
 }
 
 export interface SpawnResult {
