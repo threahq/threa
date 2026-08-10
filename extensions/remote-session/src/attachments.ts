@@ -106,10 +106,14 @@ export function buildReplyAttachmentSection(uploaded: AttachmentSummary[], faile
 
 // --- IO orchestration -----------------------------------------------------
 
-async function fetchAttachmentBytes(url: string): Promise<Uint8Array> {
+const DOWNLOAD_TIMEOUT_MS = 60_000
+
+export async function fetchAttachmentBytes(url: string, timeoutMs = DOWNLOAD_TIMEOUT_MS): Promise<Uint8Array> {
   // The url is a short-lived pre-signed storage URL, so it carries its own auth
-  // — a plain fetch, not the bearer-authenticated client request.
-  const response = await fetch(url)
+  // — a plain fetch, not the bearer-authenticated client request. The timeout
+  // signal spans headers AND arrayBuffer(): a stalled download body must reject,
+  // not hang the channel (same pathogen as the client request bound).
+  const response = await fetch(url, { signal: AbortSignal.timeout(timeoutMs) })
   if (!response.ok) throw new Error(`download failed with ${response.status}`)
   return new Uint8Array(await response.arrayBuffer())
 }

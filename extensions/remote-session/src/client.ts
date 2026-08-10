@@ -92,6 +92,7 @@ export interface ThreaClientOptions {
   baseUrl: string
   workspaceId: string
   apiKey: string
+  fetchTimeoutMs?: number
 }
 
 export class ThreaClient {
@@ -109,7 +110,7 @@ export class ThreaClient {
     // invocation as "channel shut down" (observed live 2026-08-10; same
     // pathogen as pi-remote's #1841).
     const controller = new AbortController()
-    const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS)
+    const timeout = setTimeout(() => controller.abort(), this.opts.fetchTimeoutMs ?? FETCH_TIMEOUT_MS)
     try {
       return await this.requestWithin<T>(path, init, controller.signal)
     } finally {
