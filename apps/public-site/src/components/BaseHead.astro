@@ -92,6 +92,9 @@ const jsonLd = [
      API contract, discoverable from every page (robots.txt names them too). -->
 <link rel="alternate" type="text/plain" href="/llms.txt" title="llms.txt: markdown index of the developer docs" />
 <link rel="alternate" type="application/json" href="/openapi.json" title="OpenAPI 3.0 contract for the Threa API" />
+<script>
+  import "../scripts/webmcp.ts"
+</script>
 
 <script is:inline type="application/ld+json" set:html={JSON.stringify(jsonLd)} />
 <!-- Self-hosted type (Switzer body, Cabinet Grotesk display, Commit Mono);

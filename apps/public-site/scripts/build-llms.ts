@@ -1,10 +1,14 @@
 /*
- * Post-build step: derive agent-readable markdown from the built docs HTML.
+ * Post-build step: derive agent-readable markdown from the built HTML.
  *
  * Runs after `astro build` (see the package build script) and writes into dist:
  *   - /developers/<page>.md — a markdown mirror of each docs page
+ *   - /index.md, /about.md  — mirrors of the marketing pages
  *   - /llms.txt             — index per the llms.txt convention (llmstxt.org)
  *   - /llms-full.txt        — every docs page concatenated into one fetch
+ *
+ * The mirrors are what functions/_middleware.ts serves to a request carrying
+ * `Accept: text/markdown`, so every page route has one.
  *
  * The markdown is converted from the same HTML the site ships, so it cannot
  * drift from the pages. Code samples are taken from each block's raw
@@ -107,6 +111,27 @@ const PAGES: Page[] = [
   },
 ]
 
+/* Marketing pages. Not part of llms.txt's "Docs" section — they exist as
+   mirrors so `Accept: text/markdown` works on every page route. */
+const SITE_PAGES: Page[] = [
+  {
+    route: "/",
+    html: "index.html",
+    md: "index.md",
+    title: "Threa",
+    blurb: "The product: chat with a memory underneath, the board, and bring-your-own-agent.",
+  },
+  {
+    route: "/about",
+    html: "about/index.html",
+    md: "about.md",
+    title: "About Threa",
+    blurb: "What the product is, who builds it, and why.",
+  },
+]
+
+const ALL_PAGES = [...PAGES, ...SITE_PAGES]
+
 // ---------------------------------------------------------------------------
 // HTML -> markdown
 // ---------------------------------------------------------------------------
@@ -146,9 +171,12 @@ function createConverter(): TurndownService {
   td.remove("style")
   td.remove("button")
 
-  // Decorative page eyebrow ("Developers", "Reference", …) — noise in markdown.
+  // Decorative page eyebrow ("Developers", "Reference", …) and its marketing
+  // equivalent above each section heading — noise in markdown.
   td.addRule("eyebrow", {
-    filter: (node) => node.nodeName === "P" && hasClass(node, "eyebrow"),
+    filter: (node) =>
+      (node.nodeName === "P" && hasClass(node, "eyebrow")) ||
+      (node.nodeName === "DIV" && hasClass(node, "section-meta")),
     replacement: () => "",
   })
 
@@ -275,14 +303,42 @@ function renderProps(propsEl: DomNode, depth: number): string {
    them stays in markdown; every other root-relative link becomes absolute. */
 function rewriteLinks(markdown: string): string {
   return markdown.replace(/\]\((\/[^)#\s]*)(#[^)\s]*)?\)/g, (_m, path: string, hash = "") => {
-    const page = PAGES.find((p) => p.route === path)
+    const page = ALL_PAGES.find((p) => p.route === path)
     if (page) return `](${SITE}/${page.md}${hash})`
     return `](${SITE}${path}${hash})`
   })
 }
 
-function pageToMarkdown(page: Page): string {
-  const html = readFileSync(dist(page.html), "utf8")
+/* Marketing pages carry chrome and product mockups — fabricated conversations
+   staged to show the UI. Read as markdown those would look like real Threa
+   content, so the mockup roots are marked data-decorative in the .astro source
+   and dropped here, along with the nav and footer that repeat on every page. */
+function createPageConverter(): TurndownService {
+  const td = createConverter()
+  td.addRule("decorative", {
+    filter: (node) =>
+      (node as DomNode).getAttribute?.("data-decorative") !== null || /^(svg|footer|form)$/i.test(node.nodeName),
+    replacement: () => "",
+  })
+  // A <br> inside a display heading would split the ATX line in two.
+  td.addRule("heading-break", {
+    filter: (node) => node.nodeName === "BR",
+    replacement: (_content, node) => {
+      for (let p = (node as DomNode).parentNode; p; p = p.parentNode) {
+        if (/^H[1-6]$/.test(p.nodeName)) return " "
+      }
+      return "  \n"
+    },
+  })
+  return td
+}
+
+function extract(page: Page, html: string): { body: string; converter: TurndownService } {
+  if (SITE_PAGES.includes(page)) {
+    const body = html.match(/<body[^>]*>([\s\S]*)<\/body>/)?.[1]
+    if (!body) throw new Error(`No <body> in ${page.html}`)
+    return { body, converter: createPageConverter() }
+  }
   // The wrapper comes from DocsLayout.astro's <article class="docs-article">
   // (plus variant classes like is-wide); this extraction is what breaks if
   // that layout renames or re-nests it.
@@ -290,8 +346,14 @@ function pageToMarkdown(page: Page): string {
   if (!article) {
     throw new Error(`No <article class="docs-article…"> in ${page.html} — did DocsLayout.astro change its wrapper?`)
   }
+  return { body: article, converter: createConverter() }
+}
 
-  let md = createConverter().turndown(article)
+function pageToMarkdown(page: Page): string {
+  const html = readFileSync(dist(page.html), "utf8")
+  const { body, converter } = extract(page, html)
+
+  let md = converter.turndown(body)
   md = md.replace(/\{\{(baseUrl|workspaceId|apiKey)\}\}/g, (_m, name: string) => TOKEN_DEFAULTS[name])
   // Inside code samples the spec's single-brace path param should be a runnable
   // placeholder too; headings and prose keep the {workspaceId} template form.
@@ -304,12 +366,10 @@ function pageToMarkdown(page: Page): string {
   md = rewriteLinks(md)
   md = md.replace(/\n{3,}/g, "\n\n").trim()
 
-  const header = [
-    "---",
-    `source: ${SITE}${page.route}`,
-    `notes: Markdown mirror generated from the page above. YOUR_WORKSPACE_ID is the ws_… id in the app URL after /w/; YOUR_API_KEY is a key from Settings > API keys.`,
-    "---",
-  ].join("\n")
+  const notes = SITE_PAGES.includes(page)
+    ? "Markdown mirror generated from the page above; product mockups are omitted. Developer docs start at https://threa.io/llms.txt."
+    : "Markdown mirror generated from the page above. YOUR_WORKSPACE_ID is the ws_… id in the app URL after /w/; YOUR_API_KEY is a key from Settings > API keys."
+  const header = ["---", `source: ${SITE}${page.route}`, `notes: ${notes}`, "---"].join("\n")
   return `${header}\n\n${md}\n`
 }
 
@@ -317,20 +377,27 @@ function pageToMarkdown(page: Page): string {
 // Outputs
 // ---------------------------------------------------------------------------
 
-const missing = PAGES.filter((p) => !existsSync(dist(p.html)))
+const missing = ALL_PAGES.filter((p) => !existsSync(dist(p.html)))
 if (missing.length) {
   throw new Error(`Built pages missing from dist (run astro build first): ${missing.map((p) => p.html).join(", ")}`)
 }
 
-// The inverse direction: a docs page added to src/pages/developers/ without a
-// PAGES entry would silently ship with no markdown mirror or llms.txt listing.
+// The inverse direction: a page added to src/pages/ without a PAGES or
+// SITE_PAGES entry would silently ship with no markdown mirror, so
+// `Accept: text/markdown` on its route would fall back to HTML.
 const builtPages = readdirSync(dist("developers"), { withFileTypes: true })
   .filter((e) => e.isDirectory())
   .map((e) => `developers/${e.name}/index.html`)
   .concat("developers/index.html")
-const unlisted = builtPages.filter((html) => !PAGES.some((p) => p.html === html))
+  .concat(
+    readdirSync(dist("."), { withFileTypes: true })
+      .filter((e) => (e.isDirectory() ? e.name !== "developers" : e.name.endsWith(".html")))
+      .map((e) => (e.isDirectory() ? `${e.name}/index.html` : e.name))
+      .filter((html) => existsSync(dist(html)))
+  )
+const unlisted = builtPages.filter((html) => !ALL_PAGES.some((p) => p.html === html))
 if (unlisted.length) {
-  throw new Error(`Docs pages built without a PAGES entry in scripts/build-llms.ts: ${unlisted.join(", ")}`)
+  throw new Error(`Pages built without a PAGES/SITE_PAGES entry in scripts/build-llms.ts: ${unlisted.join(", ")}`)
 }
 
 const mirrors = PAGES.map((page) => {
@@ -338,6 +405,8 @@ const mirrors = PAGES.map((page) => {
   writeFileSync(dist(page.md), md)
   return { page, md }
 })
+
+for (const page of SITE_PAGES) writeFileSync(dist(page.md), pageToMarkdown(page))
 
 const llmsTxt = `# Threa
 
@@ -359,9 +428,11 @@ an agent can do over the API today:
   invocations, stream steps, post results. No inbound ports or webhooks needed,
   so it works from a laptop, CI, or anywhere with outbound HTTPS.
 
-There is no MCP server yet — agents integrate over the REST API and the pull-based
-bot-runtime protocol. All docs below are markdown; the HTML pages under
-${SITE}/developers mirror them one-to-one.
+The \`threa\` CLI serves the same operations over MCP with \`threa mcp serve\` (stdio,
+run locally — there is no hosted MCP endpoint), so an MCP client calls them as
+tools. All docs below are markdown; the HTML pages under ${SITE}/developers
+mirror them one-to-one, and every page route also answers
+\`Accept: text/markdown\` with its mirror.
 
 ## Docs
 
@@ -371,10 +442,13 @@ ${PAGES.map((p) => `- [${p.title}](${SITE}/${p.md}): ${p.blurb}`).join("\n")}
 
 - [OpenAPI 3.0 spec](${SITE}/openapi.json): the canonical contract — every endpoint, schema, scope, and error. This is the current version; each dated version has its own spec at ${SITE}/openapi/<version>.json.
 - [Full docs in one file](${SITE}/llms-full.txt): all pages above concatenated
+- [API catalog](${SITE}/.well-known/api-catalog): RFC 9727 linkset naming the spec, the docs, and this index
+- [Agent skills index](${SITE}/.well-known/agent-skills/index.json): installable skills for working against a Threa workspace
+- [auth.md](${SITE}/auth.md): how an agent obtains and uses a key
 
 ## Optional
 
-- [About Threa](${SITE}/about): what the product is and how memos work
+${SITE_PAGES.map((p) => `- [${p.title}](${SITE}/${p.md}): ${p.blurb}`).join("\n")}
 - [Source code](https://github.com/threahq/threa): the whole product, developed in the open
 `
 

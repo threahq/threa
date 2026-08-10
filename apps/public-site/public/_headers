@@ -1,0 +1,9 @@
+# RFC 8288 Link relations to the machine-readable entry points, so an agent
+# that only sends a HEAD finds them without parsing HTML. Same targets the
+# <link rel="alternate"> tags in BaseHead.astro and robots.txt name in prose.
+/*
+  Link: </.well-known/api-catalog>; rel="api-catalog"; type="application/linkset+json", </openapi.json>; rel="service-desc"; type="application/json", </developers>; rel="service-doc"; type="text/html", </llms.txt>; rel="describedby"; type="text/plain"
+
+# Extensionless by RFC 9727, so Pages has nothing to guess the type from.
+/.well-known/api-catalog
+  Content-Type: application/linkset+json

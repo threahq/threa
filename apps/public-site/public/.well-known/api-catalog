@@ -1,0 +1,33 @@
+{
+  "linkset": [
+    {
+      "anchor": "https://app.threa.io/api/v1",
+      "service-desc": [
+        {
+          "href": "https://threa.io/openapi.json",
+          "type": "application/json",
+          "title": "Threa public API — OpenAPI 3.0 contract"
+        }
+      ],
+      "service-doc": [
+        {
+          "href": "https://threa.io/developers",
+          "type": "text/html",
+          "title": "Threa developer documentation"
+        },
+        {
+          "href": "https://threa.io/llms.txt",
+          "type": "text/plain",
+          "title": "Threa developer documentation (markdown index)"
+        }
+      ],
+      "service-meta": [
+        {
+          "href": "https://threa.io/auth.md",
+          "type": "text/markdown",
+          "title": "How an agent obtains and uses a Threa API key"
+        }
+      ]
+    }
+  ]
+}
