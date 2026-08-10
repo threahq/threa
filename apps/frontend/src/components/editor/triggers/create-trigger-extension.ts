@@ -82,7 +82,7 @@ export function createTriggerExtension<TItem, TAttrs extends object>(config: Tri
     name,
     group: "inline",
     inline: true,
-    selectable: false,
+    selectable: true,
     atom: true,
     marks: "_", // Allow all marks (bold, italic, code, strike) on this node
 

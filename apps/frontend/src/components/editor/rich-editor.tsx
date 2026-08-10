@@ -6,6 +6,7 @@ import type { PluginKey } from "@tiptap/pm/state"
 import { useParams } from "react-router-dom"
 import { createEditorExtensions } from "./editor-extensions"
 import { applyExternalEditorContent } from "./apply-external-content"
+import { ComposerPillCopyButton } from "./composer-pill-copy-button"
 import { getDictationChunkPositions } from "./dictation-chunk-extension"
 import { EditorBehaviors, isSuggestionActive } from "./editor-behaviors"
 import { EditorToolbar } from "./editor-toolbar"
@@ -1241,6 +1242,7 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
       />
       {belowToolbarContent}
       <EditorContent editor={editor} />
+      <ComposerPillCopyButton editor={editor} />
       {enableMentions ? renderMentionList() : null}
       {enableChannels ? renderChannelList() : null}
       {enableCommands ? renderCommandList() : null}

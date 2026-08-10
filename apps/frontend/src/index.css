@@ -640,8 +640,10 @@ html[data-input="mouse"] .message-hover-wash:hover {
   background-color: hsl(var(--primary) / 0.08);
 }
 
-/* Composer atoms drag without a floating clone: source stays put and this
-   zero-size widget previews the eventual insertion point (INV-21). */
+/* Selection and copy on a pill are app-owned (NodeSelection plus the touch copy
+   chip). Blink resolves a native long press inside a contenteditable against its
+   own heuristics, not `user-select: all`, so inviting one costs the exact
+   selection the app already holds and hands the gesture to the OS mid-drag. */
 .ProseMirror
   :is(
     [data-type="mention"],
@@ -651,9 +653,20 @@ html[data-input="mouse"] .message-hover-wash:hover {
     [data-type="memo-embed"],
     [data-type="in-app-link"],
     [data-type="giphy-embed"]
-  ) {
-  -webkit-touch-callout: none;
+  ),
+.ProseMirror
+  :is(
+    [data-type="mention"],
+    [data-type="channelLink"],
+    [data-type="slashCommand"],
+    [data-type="attachment-reference"],
+    [data-type="memo-embed"],
+    [data-type="in-app-link"],
+    [data-type="giphy-embed"]
+  )
+  * {
   -webkit-user-drag: none;
+  -webkit-touch-callout: none;
   user-select: none;
 }
 
@@ -685,7 +698,41 @@ html[data-input="mouse"]
 
 .ProseMirror.composer-pill-drag-active,
 .ProseMirror.composer-pill-drag-active * {
+  -webkit-touch-callout: none;
   cursor: grabbing !important;
+  user-select: none;
+}
+
+.ProseMirror
+  :is(
+    [data-type="mention"],
+    [data-type="channelLink"],
+    [data-type="slashCommand"],
+    [data-type="attachment-reference"],
+    [data-type="memo-embed"],
+    [data-type="in-app-link"],
+    [data-type="giphy-embed"]
+  ).ProseMirror-selectednode {
+  border-radius: 0.375rem;
+  outline: 2px solid hsl(var(--primary));
+  outline-offset: 1px;
+  /* Inset wash tints the pill's own type color rather than replacing it, so a
+     selected mention still reads as a mention; the halo carries the emphasis. */
+  box-shadow:
+    inset 0 0 0 100vmax hsl(var(--primary) / 0.16),
+    0 0 0 4px hsl(var(--primary) / 0.22);
+}
+
+/* One selection, one colour. The engine paints the text but skips the pills
+   (they are `user-select: none`), so the pill decoration reproduces the same
+   wash at the same strength and the range reads as continuous. */
+.ProseMirror ::selection {
+  background-color: hsl(var(--primary) / 0.32);
+}
+
+.ProseMirror .composer-pill-in-selection {
+  border-radius: 0.375rem;
+  box-shadow: inset 0 0 0 100vmax hsl(var(--primary) / 0.32);
 }
 
 .ProseMirror .composer-pill-dragging {
