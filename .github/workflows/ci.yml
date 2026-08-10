@@ -275,6 +275,12 @@ jobs:
         if: github.event_name == 'push' || steps.filter.outputs.site == 'true'
         run: bun run --cwd apps/public-site build
 
+      # After the build: the markdown-negotiation test resolves each page route
+      # against the mirrors that build just wrote.
+      - name: Test public site
+        if: github.event_name == 'push' || steps.filter.outputs.site == 'true'
+        run: bun run --cwd apps/public-site test
+
   workos-permissions:
     name: WorkOS Permissions
     runs-on: ubuntu-latest
