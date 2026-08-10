@@ -3,7 +3,7 @@ import { afterEach, beforeEach, expect, test } from "bun:test"
 import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import type { AgentIdentityResolver } from "./discovery"
+import { defaultAgentIdentityResolver, type AgentIdentityResolver } from "./discovery"
 import { findAgentOrUndefined, readInventory, readInventoryReadonly, upsertAgent } from "./inventory"
 import { latestAgentsByIdentity } from "./resume"
 import type { ManagedAgent } from "./types"
@@ -209,4 +209,33 @@ test("a targeted restore considers a tombstoned row; an untargeted sweep does no
 
   expect(latestAgentsByIdentity([dead], resolverFor({}))).toEqual([])
   expect(latestAgentsByIdentity([dead], resolverFor({}), true)).toEqual([dead])
+})
+
+test("a Pi row is never resolved through the Claude identity stack", () => {
+  // The live regression (2026-08-10): a Pi and a Claude sharing one cwd, with
+  // a Claude record minted for it — the Pi row resolved to the CLAUDE minted
+  // id, collided with the real Claude row in latestAgentsByIdentity, and
+  // silently dropped out of every `up` sweep.
+  const resolver = defaultAgentIdentityResolver(
+    [
+      {
+        runtimeSessionId: "ccs-claude",
+        instanceId: "cc-claude",
+        worktree: "/home/user",
+        runtimeKind: "claude-code-channel",
+        mintedAt: "2026-08-10T00:00:00.000Z",
+        source: "mint",
+      },
+    ],
+    []
+  )
+  const pi = agent({ id: "pi-1", runtime: "pi", worktree: "/home/user", runtimeSessionId: "pi-uuid" })
+  const claude = agent({ id: "claude-1", worktree: "/home/user", runtimeSessionId: "ccs-claude" })
+
+  expect(resolver(pi)).toBe("pi-uuid")
+  expect(
+    latestAgentsByIdentity([pi, claude], resolver)
+      .map((row) => row.id)
+      .sort()
+  ).toEqual(["claude-1", "pi-1"])
 })
