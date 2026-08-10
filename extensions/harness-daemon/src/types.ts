@@ -30,6 +30,13 @@ export interface ManagedAgent {
    * is gone AND its scratchpad is archived. History, never deleted.
    */
   tombstonedAt?: string
+  /**
+   * ISO instant an operator explicitly requested a fresh restart that has not
+   * happened yet. Set only by the `clear` command; the next successful revival
+   * honors it (fresh start) and clears it. Never set by any automatic path —
+   * revival acting on it is completing a recorded user request, not auto-clearing.
+   */
+  clearPendingAt?: string
 }
 
 export interface SpawnOptions {
@@ -60,6 +67,11 @@ export interface ResumeOptions {
    * always probes live, because live state is what decides revival.
    */
   respectProbeBackoff?: boolean
+  /**
+   * Start a fresh conversation instead of resuming history. Set ONLY by the
+   * `clear` command — a user's explicit request. No revival path may set it.
+   */
+  fresh?: boolean
 }
 
 export interface SpawnResult {

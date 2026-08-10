@@ -29,6 +29,7 @@ interface ManagedAgentRow {
   probe_failures: number | null
   probe_backoff_until: string | null
   tombstoned_at: string | null
+  clear_pending_at: string | null
 }
 
 export function inventoryPath(): string {
@@ -60,7 +61,8 @@ function openInventory(): Database {
       last_output TEXT,
       probe_failures INTEGER,
       probe_backoff_until TEXT,
-      tombstoned_at TEXT
+      tombstoned_at TEXT,
+      clear_pending_at TEXT
     )
   `)
   // CREATE TABLE IF NOT EXISTS won't extend an existing inventory, so add new columns in place.
@@ -73,6 +75,7 @@ function openInventory(): Database {
     ["probe_failures", "INTEGER"],
     ["probe_backoff_until", "TEXT"],
     ["tombstoned_at", "TEXT"],
+    ["clear_pending_at", "TEXT"],
   ]
   for (const [column, type] of added) {
     if (!columns.some((existing) => existing.name === column)) {
@@ -104,6 +107,7 @@ function rowToAgent(row: ManagedAgentRow): ManagedAgent {
     probeFailures: row.probe_failures ?? undefined,
     probeBackoffUntil: row.probe_backoff_until ?? undefined,
     tombstonedAt: row.tombstoned_at ?? undefined,
+    clearPendingAt: row.clear_pending_at ?? undefined,
   }
 }
 
@@ -142,6 +146,7 @@ export function readInventoryReadonly(): ManagedAgent[] {
       "probe_failures",
       "probe_backoff_until",
       "tombstoned_at",
+      "clear_pending_at",
     ]
     const projection = optional.map((name) => (columns.has(name) ? name : `NULL AS ${name}`))
     const rows = db
@@ -163,8 +168,9 @@ export function upsertAgent(agent: ManagedAgent): void {
       INSERT INTO managed_agents (
         id, name, runtime, status, worktree, branch, tmux_session, tmux_window,
         tmux_window_id, tmux_pane_id, scratchpad_url, instance_id, runtime_session_id, command_json,
-        created_at, updated_at, last_output, probe_failures, probe_backoff_until, tombstoned_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        created_at, updated_at, last_output, probe_failures, probe_backoff_until, tombstoned_at,
+        clear_pending_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         name = excluded.name,
         runtime = excluded.runtime,
@@ -183,7 +189,8 @@ export function upsertAgent(agent: ManagedAgent): void {
         last_output = excluded.last_output,
         probe_failures = excluded.probe_failures,
         probe_backoff_until = excluded.probe_backoff_until,
-        tombstoned_at = excluded.tombstoned_at
+        tombstoned_at = excluded.tombstoned_at,
+        clear_pending_at = excluded.clear_pending_at
     `
     ).run(
       agent.id,
@@ -205,7 +212,8 @@ export function upsertAgent(agent: ManagedAgent): void {
       agent.lastOutput ?? null,
       agent.probeFailures ?? null,
       agent.probeBackoffUntil ?? null,
-      agent.tombstonedAt ?? null
+      agent.tombstonedAt ?? null,
+      agent.clearPendingAt ?? null
     )
   } finally {
     db.close()

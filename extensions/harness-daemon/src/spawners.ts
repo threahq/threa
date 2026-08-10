@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto"
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync } from "node:fs"
 import { homedir, hostname } from "node:os"
 import { basename, dirname, join } from "node:path"
 import { acceptClaudeBootPrompts, warnIfBlocked } from "./claude-boot"
@@ -182,6 +182,64 @@ export function readPiRemoteSession(runtimeSessionId: string): PiRemoteSession |
   }
 }
 
+export interface PiSessionParkDeps {
+  sessionsDir?: string
+  readdir?: (path: string) => string[]
+  rename?: (from: string, to: string) => void
+}
+
+/**
+ * Rename a Pi session's transcripts out of the way so `pi --session-id <id>`
+ * recreates an empty one under the same id — which keeps the Threa link in
+ * `~/.pi/agent/threa-remote.json`, keyed by that id, pointing at the same
+ * scratchpad. Session ids are UUIDs, so the per-project directory need not be
+ * derived. Only `clear` calls this.
+ */
+export function parkPiSessionFiles(runtimeSessionId: string, deps: PiSessionParkDeps = {}): string[] {
+  const sessionsDir = deps.sessionsDir ?? join(homedir(), ".pi", "agent", "sessions")
+  const readdir = deps.readdir ?? ((path: string) => readdirSync(path))
+  const rename = deps.rename ?? renameSync
+  // Every failure below is loud (INV-11): `pi --session-id <id>` resumes whatever
+  // transcript is still on disk, so a park that silently gave up would ack a
+  // fresh start and hand back the old conversation.
+  const reason = (error: unknown) => (error instanceof Error ? error.message : String(error))
+  let projects: string[]
+  try {
+    projects = readdir(sessionsDir)
+  } catch (error) {
+    // No sessions dir at all: nothing on disk to resume, so fresh is guaranteed.
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return []
+    die(`could not read Pi sessions dir ${sessionsDir}: ${reason(error)}`)
+  }
+  const suffix = `_${runtimeSessionId}.jsonl`
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-")
+  const parked: string[] = []
+  for (const project of projects) {
+    const projectDir = join(sessionsDir, project)
+    let entries: string[]
+    try {
+      entries = readdir(projectDir)
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code
+      // A stray file or a directory that vanished holds no transcripts.
+      if (code === "ENOENT" || code === "ENOTDIR") continue
+      die(`could not read Pi session dir ${projectDir}: ${reason(error)}`)
+    }
+    for (const entry of entries) {
+      if (!entry.endsWith(suffix)) continue
+      const path = join(projectDir, entry)
+      try {
+        rename(path, `${path}.cleared-${stamp}`)
+      } catch (error) {
+        die(`could not park Pi session file ${path}: ${reason(error)}`)
+      }
+      console.log(`harnessd: parked Pi session file ${path}`)
+      parked.push(path)
+    }
+  }
+  return parked
+}
+
 export class RuntimeSpawnError extends Error {
   constructor(
     cause: unknown,
@@ -265,6 +323,7 @@ export class PiRuntimeSpawner extends RuntimeSpawner {
 
     const session = options.tmux ?? agent.tmuxSession ?? tmuxSession({ runtime: "pi", name: agent.name })
     ensureTmuxSession(session, true)
+    if (options.fresh) parkPiSessionFiles(agent.runtimeSessionId)
     const window = pickTmuxWindow(session, agent.name)
     const { windowId, paneId } = createWindow(
       session,
@@ -308,6 +367,14 @@ export function prepareClaudeChannel(): string {
     run(["bun", "install"], { cwd: sdkDir })
   }
   return channelEntry
+}
+
+/** A cleared session must not carry `--resume`, however resumable the transcript on disk still is. */
+export function claudeResumeSessionId(
+  fresh: boolean | undefined,
+  transcript: { sessionId: string } | undefined
+): string | undefined {
+  return fresh ? undefined : transcript?.sessionId
 }
 
 export class ClaudeRuntimeSpawner extends RuntimeSpawner {
@@ -410,12 +477,16 @@ export class ClaudeRuntimeSpawner extends RuntimeSpawner {
     // --resume a revival silently starts an empty session in the old worktree,
     // still attached to the same scratchpad, and the history is only reachable
     // by hand. A transcript a live process still holds is skipped, never shared.
-    const transcript = resumableClaudeTranscript(agent.worktree, defaultClaudeDiskDeps())
-    console.log(
-      transcript
-        ? `harnessd: resuming Claude conversation ${transcript.sessionId} for ${agent.name}`
-        : `harnessd: no resumable Claude transcript in ${agent.worktree}; starting a fresh conversation`
-    )
+    const transcript = options.fresh ? undefined : resumableClaudeTranscript(agent.worktree, defaultClaudeDiskDeps())
+    if (options.fresh) {
+      console.log(`harnessd: clearing ${agent.name} — starting a fresh conversation`)
+    } else {
+      console.log(
+        transcript
+          ? `harnessd: resuming Claude conversation ${transcript.sessionId} for ${agent.name}`
+          : `harnessd: no resumable Claude transcript in ${agent.worktree}; starting a fresh conversation`
+      )
+    }
     const window = pickTmuxWindow(session, agent.name)
     const { windowId, paneId } = createWindow(
       session,
@@ -428,7 +499,7 @@ export class ClaudeRuntimeSpawner extends RuntimeSpawner {
           channel,
           mcpConfig,
           noYolo,
-          resumeSessionId: transcript?.sessionId,
+          resumeSessionId: claudeResumeSessionId(options.fresh, transcript),
         }),
         identity,
         config,
