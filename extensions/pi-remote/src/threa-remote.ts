@@ -111,6 +111,8 @@ const MAX_RETRY_ATTEMPTS = 3
 const PI_TOOL_TRACE_FORMAT = "pi_tool_trace"
 const SESSION_CONTROL_CAPABILITY = "session-control"
 const RELOAD_HANDOFF_COMMAND = "threa-remote-reload"
+/** Long enough to escape the claim-loop stack; the reload needs no turn boundary. */
+const RELOAD_HANDOFF_DELAY_MS = 250
 const SESSION_CONTROL_COMMANDS = [
   "compact",
   "model",
@@ -2983,7 +2985,23 @@ async function runReloadCommand(pi: ExtensionAPI, invocation: ClaimedInvocation,
       await heartbeat(busy ? "busy" : "available", busy ? "Busy in Pi…" : undefined, ctx).catch(() => undefined)
       return
     }
-    pi.sendUserMessage(`/${RELOAD_HANDOFF_COMMAND}`, { deliverAs: "followUp" })
+    // Direct scheduled reload, NOT a `sendUserMessage("/threa-remote-reload")`
+    // handoff: on an idle session Pi injects that text as a MODEL prompt
+    // instead of dispatching the registered command (observed live 2026-08-10 —
+    // the model narrated "Reloading…now.", ctx.reload never ran, and
+    // reloadPending latched the claim loop off). The timeout escapes the
+    // claim-loop stack the way the followUp used to; the finally releases the
+    // latch even when the reload throws, so a refused reload cannot wedge
+    // claims.
+    setTimeout(() => {
+      void (async () => {
+        try {
+          await ctx.reload()
+        } finally {
+          reloadPending = false
+        }
+      })()
+    }, RELOAD_HANDOFF_DELAY_MS)
   } catch (error) {
     reloadPending = false
     throw error
