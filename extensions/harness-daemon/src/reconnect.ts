@@ -2,7 +2,7 @@ import { statSync } from "node:fs"
 import { hostname } from "node:os"
 import { basename, resolve } from "node:path"
 import { readHarnessLinks, type HarnessLink } from "@threa/bot-runtime-client"
-import { acceptClaudeBootPrompts, defaultClaudeBootDeps, type ClaudeBootDeps } from "./claude-boot"
+import { acceptClaudeBootPrompts, defaultClaudeBootDeps, warnIfBlocked, type ClaudeBootDeps } from "./claude-boot"
 import {
   defaultClaudeRegistryDeps,
   resolveClaudeNativeSession,
@@ -368,7 +368,7 @@ export async function reconnectClaude(
     // this loop's 20x250ms budget, so it happens before the native-session
     // check rather than after it.
     if (!booted) {
-      await acceptClaudeBootPrompts(target.pane.paneId, boot)
+      warnIfBlocked(await acceptClaudeBootPrompts(target.pane.paneId, boot))
       booted = true
     }
     try {

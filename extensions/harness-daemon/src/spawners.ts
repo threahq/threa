@@ -2,7 +2,7 @@ import { createHash, randomUUID } from "node:crypto"
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { homedir, hostname } from "node:os"
 import { basename, dirname, join } from "node:path"
-import { acceptClaudeBootPrompts } from "./claude-boot"
+import { acceptClaudeBootPrompts, warnIfBlocked } from "./claude-boot"
 import { defaultClaudeDiskDeps, resumableClaudeTranscript } from "./claude-registry"
 import { die } from "./errors"
 import { commandExists, commandPath, run, shellQuote } from "./shell"
@@ -370,7 +370,7 @@ export class ClaudeRuntimeSpawner extends RuntimeSpawner {
       Object.assign(partial, { tmuxWindow: window, tmuxWindowId: windowId, tmuxPaneId: paneId })
       console.log(`harnessd: launched Claude Code in tmux ${session}:${window} (${windowId})`)
 
-      if (!options.noAutoAccept) await acceptClaudeBootPrompts(paneId)
+      if (!options.noAutoAccept) warnIfBlocked(await acceptClaudeBootPrompts(paneId))
 
       const outputText = capturePane(paneId)
       return {
@@ -439,7 +439,7 @@ export class ClaudeRuntimeSpawner extends RuntimeSpawner {
     )
     console.log(`harnessd: resumed Claude Code in tmux ${session}:${window} (${windowId})`)
     try {
-      await acceptClaudeBootPrompts(paneId)
+      warnIfBlocked(await acceptClaudeBootPrompts(paneId))
       // Claude's own /remote-control (claude.ai/code, the mobile app) is not
       // how a session reaches Threa — the channel MCP server is, and it is
       // already wired above. Sending it opened a MODAL dialog every revival

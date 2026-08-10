@@ -550,6 +550,7 @@ function reviveDeps(overrides: Partial<ReviveDeps> = {}): ReviveDeps {
     claudeConfig: { workspaceId: "ws_1", apiKey: "key" },
     piConfig: { workspaceId: "ws_1", apiKey: "key" },
     paneStatus: () => "missing",
+    unblockAlivePane: async () => undefined,
     claudeProcessesIn: () => [],
     pathExists: () => true,
     scratchpadStatus: async () => "active",
@@ -754,6 +755,20 @@ test("up skips an already-running agent before touching the network", async () =
   })
   expect(await runRevive(linkedAgent(), {}, deps)).toEqual({ status: "already running" })
   expect(calls).toEqual([])
+})
+
+test("up surfaces a blocked alive pane instead of counting it as running", async () => {
+  // Alive-but-parked at an interactive prompt (resume-from-summary, unknown
+  // menu): every process check passes while no turn can run. The probe's
+  // outcome must win over the blanket "already running".
+  const deps = reviveDeps({
+    paneStatus: () => "found",
+    unblockAlivePane: async () => ({ status: "blocked", detail: "\u276f 1. Resume from summary (recommended)" }),
+  })
+  expect(await runRevive(linkedAgent(), {}, deps)).toEqual({
+    status: "blocked",
+    detail: "\u276f 1. Resume from summary (recommended)",
+  })
 })
 
 test("up refuses to launch into a worktree a live Claude already occupies", async () => {
