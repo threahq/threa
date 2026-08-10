@@ -1,7 +1,7 @@
 # yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
 #
 # CodeRabbit configuration for Threa.
-# Architecture, invariants, and the full app inventory live in CLAUDE.md and
+# Architecture, invariants, and the full app inventory live in AGENTS.md and
 # docs/system-overview.md (registered as code guidelines below). Treat those as
 # the source of truth — do not duplicate a frozen description of them here.
 
@@ -49,13 +49,13 @@ reviews:
   path_instructions:
     - path: "**"
       instructions: |
-        Architecture, invariants, and the full app inventory live in CLAUDE.md and
+        Architecture, invariants, and the full app inventory live in AGENTS.md and
         docs/system-overview.md. Treat those as the source of truth.
 
         What NOT to flag:
         - Pre-existing issues not introduced by this PR
         - Issues that TypeScript compilation or ESLint would catch (types, imports, lint)
-        - Stylistic preferences without a concrete rule violation in CLAUDE.md
+        - Stylistic preferences without a concrete rule violation in AGENTS.md
         - Theoretical risks or hypothetical edge cases without evidence of exploitability
         - General best-practice suggestions that don't map to a specific project rule
 

@@ -107,7 +107,7 @@ Architecture and conventions are documented in [`docs/`](docs/). Start with
 [`docs/system-overview.md`](docs/system-overview.md),
 [`docs/architecture.md`](docs/architecture.md), and
 [`docs/core-concepts.md`](docs/core-concepts.md). Code constraints live in
-[`CLAUDE.md`](CLAUDE.md).
+[`AGENTS.md`](AGENTS.md).
 
 ## License
 

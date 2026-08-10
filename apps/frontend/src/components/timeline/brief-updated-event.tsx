@@ -12,7 +12,7 @@ interface BriefUpdatedEventProps {
 /**
  * Timeline row for `brief_updated` (roadmap 4.2): the visible trace of the
  * stream's durable brief changing — by a persona via `update_stream_brief` or a
- * member via the settings editor. Brief changes are never silent (INV-62
+ * member via the settings editor. Brief changes are never silent (INV-69
  * spirit): the row names who changed it, whether it was created or updated
  * (version 1 = created), and, for a persona write, the reason. It deep-links
  * into the Brief section (bottom of the Companion tab) so a reader can review or

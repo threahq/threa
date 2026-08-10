@@ -73,7 +73,7 @@ in `conversation-panel.tsx`.
    `event-item.tsx`/`event-list.tsx`. Zero board wiring.
 3. _Memory capture is invisible on the surface built to close the loop._ GAM
    captures a memo from a conversation's source stream; timeline shows the
-   "captured" row (INV-62 "visible in situ"), the board card for that same
+   "captured" row (INV-69 "visible in situ"), the board card for that same
    conversation shows nothing — even though the doc's own "Decisions/Knowledge"
    lens is _defined_ as "conversations with a captured memo"
    (`board-view-design.md:168-169`).
@@ -211,7 +211,7 @@ no membership write, no bump:
 - **Memory captures** — `{ rendersAsOwnRow:true, conversationRef:"source-conversation",
 bumps:false }`. `payload.conversationId` (`api.ts:1161`) names the source
   conversation; the card renders the existing `MemoCapturedEvent`. Satisfies
-  INV-62 on the surface people actually look at.
+  INV-69 on the surface people actually look at.
 - **Reminders** — `{ rendersAsOwnRow:true, conversationRef:"source-conversation",
 bumps:false }`. `sourceConversationId` (`api.ts:1178`) resolves it; reuse
   `FollowUpScheduledEvent` + the already-`export`ed `collectCancelledFollowUpIds`
@@ -356,7 +356,7 @@ one-root membership strip; delivery-groups workspace promotion for agent events;
   the row model lives strictly _below_ the card boundary and changes only card
   _content_ — which the model already treats as live. `bumps:false` on every
   agent/memo/follow-up type means `last_activity_at` can't move, so the frozen
-  grouping key can't be perturbed. The type field that enforces INV-62 also
+  grouping key can't be perturbed. The type field that enforces INV-69 also
   protects the stable view.
 
 **The one thing most likely to go wrong:** the _continuation reset on an

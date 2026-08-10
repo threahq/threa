@@ -220,7 +220,7 @@ Every hook is inside an existing transaction, alongside the event it derives fro
 | `editMessage`                                      | delete-by-message, re-project (same shape as the `attachment_references` refresh)                                                                                                     |
 | `deleteMessage`                                    | delete rows for the message                                                                                                                                                           |
 | `moveMessagesToThread`                             | `UPDATE stream_id` for the moved messages' rows — the thread now owns those landmarks                                                                                                 |
-| memo capture (`MemoService.processBatch` save txn) | one row per memo, `occurred_at` = latest source message's `created_at`, `source_message_id` = first source id (mirrors `memos:captured`, INV-62)                                      |
+| memo capture (`MemoService.processBatch` save txn) | one row per memo, `occurred_at` = latest source message's `created_at`, `source_message_id` = first source id (mirrors `memos:captured`, INV-69)                                      |
 | delegation create                                  | one row, `occurred_at` = task `created_at`, jump target = its created event                                                                                                           |
 | thread create                                      | one row on the _parent_, `occurred_at` = anchor message's `created_at`                                                                                                                |
 

@@ -219,7 +219,7 @@ async function main(): Promise<void> {
     for (const v of violations) console.error(v)
     console.error(
       "\nINV-1 (no foreign keys), INV-3 (no DB enums), and INV-17 (append-only migrations)\n" +
-        "are enforced here. See CLAUDE.md → Data Model and Persistence Safety."
+        "are enforced here. See AGENTS.md → Invariants → Data & Persistence."
     )
     process.exit(1)
   }

@@ -86,7 +86,7 @@ Also **[S]**: extend cooperative cancellation (`toolSignalProvider`) beyond the 
 
 ### 4.3 Memory: complementary systems to GAM
 
-GAM is episodic→semantic extraction: passive, conversation-sourced, workspace-shared (access-scoped). Three complementary stores are missing, and the Collaborative Memory paper's private/shared split maps cleanly onto them. All three should reuse the existing access substrate (`computeAgentAccessSpec`, INV-62) and the memory-capture-visible rule (INV-62 capture events) — agent memory writes are never silent.
+GAM is episodic→semantic extraction: passive, conversation-sourced, workspace-shared (access-scoped). Three complementary stores are missing, and the Collaborative Memory paper's private/shared split maps cleanly onto them. All three should reuse the existing access substrate (`computeAgentAccessSpec`, INV-62) and the memory-capture-visible rule (INV-69 capture events) — agent memory writes are never silent.
 
 **(a) Agent-authored memos [M].** Two write paths into the existing `memos` table: explicit ("Ariadne, remember this") and reflective (at session completion, if the turn's research produced durable knowledge — the turn-digest step already condenses tool work; today that value evaporates when the digest ages out). Mark provenance (a new `authored_by_kind: 'agent'` column plus `source_session_id` — the existing `memo_type` is `message|conversation` with a CHECK tying it to source columns, so authorship needs its own field), same embedding/dedup pipeline, same `memos:captured` timeline event. Guard against self-reinforcement: agent memos rank below conversation-sourced memos in the structural boost, and the reflective path uses the classifier's confidence floor.
 

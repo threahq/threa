@@ -756,7 +756,7 @@ export class MemoService implements MemoServiceLike {
 
       await this.indexCapturedMemos(client, workspaceId, streamId, createdMemos)
 
-      // Memory capture is visible in situ (INV-62): append one broadcast
+      // Memory capture is visible in situ (INV-69): append one broadcast
       // timeline event per conversation that yielded memos, in the same
       // transaction as the memo rows, so memory creation is never silent.
       // Per-stream debouncing means these land just after the conversations
@@ -904,7 +904,7 @@ export class MemoService implements MemoServiceLike {
    * embedding + dedup + capture-event machinery (INV-35, no parallel write path):
    * embed the abstract, then in one transaction take the per-stream lock, drop a
    * near-duplicate, insert the memo with `authored_by_kind: 'agent'` + session
-   * provenance, and append the `memos:captured` broadcast event (INV-62 — agent
+   * provenance, and append the `memos:captured` broadcast event (INV-69 — agent
    * writes are visible in situ too). The embed runs before the transaction so no
    * connection is held across the AI call (INV-41).
    */
@@ -1046,7 +1046,7 @@ export class MemoService implements MemoServiceLike {
         ...(resolvedScopeUserId ? { scopeUserId: resolvedScopeUserId } : {}),
       })
 
-      // Visible in situ (INV-62): one broadcast timeline event on the stream the
+      // Visible in situ (INV-69): one broadcast timeline event on the stream the
       // agent saved from, same transaction as the memo row. Carries the source
       // message's own conversation so the board card and the conversation panel
       // can place the row (both match on `conversationId`). Skipped for a private
@@ -1251,7 +1251,7 @@ export class MemoService implements MemoServiceLike {
       }
 
       if (capturedMemos.length > 0) {
-        // Visible in situ (INV-62): one broadcast timeline event on the session's
+        // Visible in situ (INV-69): one broadcast timeline event on the session's
         // stream, carrying the anchor message's conversation so the row can be
         // placed on the board card and in the conversation panel.
         const anchorConversation = await ConversationRepository.findPrimaryByMessageId(

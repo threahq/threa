@@ -1,6 +1,6 @@
 # Frontend Agent Notes
 
-Scoped guidance for `apps/frontend`. The repo-root `CLAUDE.md` invariants still
+Scoped guidance for `apps/frontend`. The repo-root `AGENTS.md` invariants still
 apply; this file adds frontend conventions that are easy to reinvent badly.
 
 ## Resolving a stream's display name

@@ -20,7 +20,7 @@ Do not edit the installed copy first. Update the repo copy, verify it, then copy
 ## Required context
 
 1. Read repo guidance before changing code:
-   - `CLAUDE.md`
+   - `AGENTS.md`
    - `~/.claude/CLAUDE.md` if present
 2. Read current Pi extension docs/API because Pi changes independently of Threa:
    - `/Users/kristofferremback/.bun/install/global/node_modules/@earendil-works/pi-coding-agent/docs/extensions.md`

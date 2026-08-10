@@ -705,7 +705,7 @@ Lucide icons used in canonical roles. New surfaces should reuse these; introduci
 
 ## 16. Invariants that shape the UI
 
-Cross-reference; full text in `CLAUDE.md`.
+Cross-reference; full text in `AGENTS.md`.
 
 - **INV-14** — Shadcn primitives only for foundation components.
 - **INV-15** — Components are UI-focused; business logic and persistence live elsewhere.

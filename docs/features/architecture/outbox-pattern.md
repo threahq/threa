@@ -33,7 +33,7 @@ no phantom event escapes. The price is that delivery is now asynchronous and has
 tolerate retries and out-of-order commits, which is what the dispatcher and cursor logic
 below are for.
 
-This is also why [INV-4](../../../CLAUDE.md) says real-time delivery never goes through an
+This is also why [INV-4](../../../AGENTS.md) says real-time delivery never goes through an
 ad-hoc publish call — everything routes through the outbox.
 
 ## How it works

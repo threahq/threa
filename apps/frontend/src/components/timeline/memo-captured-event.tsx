@@ -11,7 +11,7 @@ interface MemoCapturedEventProps {
 
 /**
  * Timeline row for `memos:captured` — the visible trace of GAM extracting
- * knowledge from this stream (INV-62). The event is appended when the memo
+ * knowledge from this stream (INV-69). The event is appended when the memo
  * batch commits, which per-stream debouncing places just after the source
  * conversation, so the row reads as a small "Threa kept this" gift moment
  * rather than an out-of-place system log line. Each title opens the memo in an

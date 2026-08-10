@@ -35,7 +35,7 @@ The stream brief is the durable working document for this stream — standing co
 /**
  * Maintain the stream's durable brief (roadmap 4.2). Full-replacement write
  * through the 4.1 `StreamBriefService`, attributed to the running persona and
- * appended as a visible `brief_updated` timeline row (INV-62 spirit — brief
+ * appended as a visible `brief_updated` timeline row (INV-69 spirit — brief
  * changes are never silent).
  *
  * Optimistic concurrency: the tool writes against the version the turn read at

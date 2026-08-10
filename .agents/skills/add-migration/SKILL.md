@@ -80,7 +80,7 @@ bun run db:status
 
 **DON'T:**
 
-- Modify existing migration files (see `CLAUDE.md` -> Invariant Playbook -> Data Model and Persistence Safety, INV-17)
+- Modify existing migration files (see `AGENTS.md` -> Invariants -> Data & Persistence, INV-17)
 - Combine unrelated schema changes
 - Add data migrations without transactions
 - Forget to handle down migrations if needed
@@ -145,7 +145,7 @@ sleep 1 && date +%Y%m%d%H%M%S
 4. Try running the migration again
 
 **Need to undo a migration:**
-Since migrations are immutable once committed (INV-17; `CLAUDE.md` -> Invariant Playbook -> Data Model and Persistence Safety), create a new migration that reverts the changes:
+Since migrations are immutable once committed (INV-17; `AGENTS.md` -> Invariants -> Data & Persistence), create a new migration that reverts the changes:
 
 ```bash
 date +%Y%m%d%H%M%S  # Get new timestamp

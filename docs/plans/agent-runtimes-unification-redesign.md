@@ -888,7 +888,7 @@ timestamps)`, carries the non-null `e2e_streams` rows over, and **drops**
      `apps/frontend/src/lib/step-config.ts:169`) showing the findings prose plus
      the deterministic tool list (`components/trace/trace-step.tsx:625`). This is
      the same "memory capture is visible where it happened" stance as
-     `memos:captured` (INV-62): the turn that produced the digest shows it._
+     `memos:captured` (INV-69): the turn that produced the digest shows it._
    - _**Correct: no edit surface — correction is conversational, and the digest
      self-heals.** We deliberately do **not** build a digest-edit write path.
      (1) A digest is best-effort and short-lived: only the last
