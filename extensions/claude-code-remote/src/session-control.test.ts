@@ -307,8 +307,31 @@ describe("runClaudeCommand validation (paths that never touch tmux)", () => {
     )
   })
 
+  it("normalizes key-arg casing and whitespace before sending", async () => {
+    const sends: unknown[][] = []
+    const outcome = await runClaudeCommand(
+      "key",
+      "Enter",
+      undefined,
+      "runtime",
+      undefined,
+      () => "root",
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      ((...args: unknown[]) => sends.push(args)) as any,
+      { rootStreamId: "root" }
+    )
+    expect({ outcome, sends }).toEqual({
+      outcome: { ok: true, message: "Sent `enter` to the linked Claude session." },
+      sends: [["enter", process.ppid]],
+    })
+  })
+
   it("rejects malformed key args without sending", async () => {
-    for (const args of ["Enter", " enter", "enter ", "enter down", "-t", "%2", "unknown"]) {
+    for (const args of ["enter down", "-t", "%2", "unknown"]) {
       let sent = false
       expect(
         await runClaudeCommand(

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test"
-import { captureTmuxPaneSnapshot, tmuxAvailable, type LocalCommandRunner } from "./tmux-control"
+import { captureTmuxPaneSnapshot, submitModelChange, tmuxAvailable, type LocalCommandRunner } from "./tmux-control"
 
 describe("tmuxAvailable", () => {
   const saved = {
@@ -87,5 +87,46 @@ describe("tmuxAvailable", () => {
     expect(() => captureTmuxPaneSnapshot(() => ({ exitCode: 1, stdout: "", stderr: "can't find pane: %5" }))).toThrow(
       "can't find pane: %5"
     )
+  })
+
+  // Captured 2026-08-10 (v2.1.226): /model in a session with history confirms
+  // behind this dialog; without the answering Enter the pane sat blocked while
+  // the channel reported the model as set.
+  const SWITCH_DIALOG = [
+    "Switch model?",
+    "Your next response will be slower and use more tokens",
+    "❯ 1. Yes, switch to Opus 5",
+    "  2. No, go back",
+  ].join("\n")
+
+  it("submits /model and answers the switch-confirmation dialog", async () => {
+    process.env.TMUX = "/tmp/tmux-501/default,1234,0"
+    process.env.TMUX_PANE = "%5"
+    const calls: string[][] = []
+    const run: LocalCommandRunner = (command) => {
+      calls.push(command)
+      return { exitCode: 0, stdout: command[1] === "capture-pane" ? SWITCH_DIALOG : "", stderr: "" }
+    }
+    expect(await submitModelChange("opus", { settleMs: 0, pollMs: 0, run })).toEqual({ ok: true, confirmed: true })
+    expect(calls).toEqual([
+      ["tmux", "send-keys", "-t", "%5", "C-u"],
+      ["tmux", "send-keys", "-t", "%5", "-l", "/model opus"],
+      ["tmux", "send-keys", "-t", "%5", "Enter"],
+      ["tmux", "capture-pane", "-p", "-t", "%5"],
+      ["tmux", "send-keys", "-t", "%5", "Enter"],
+    ])
+  })
+
+  it("presses nothing extra when the switch applies without a dialog", async () => {
+    process.env.TMUX = "/tmp/tmux-501/default,1234,0"
+    process.env.TMUX_PANE = "%5"
+    const calls: string[][] = []
+    const run: LocalCommandRunner = (command) => {
+      calls.push(command)
+      return { exitCode: 0, stdout: command[1] === "capture-pane" ? "❯ " : "", stderr: "" }
+    }
+    expect(await submitModelChange("sonnet", { settleMs: 0, pollMs: 0, run })).toEqual({ ok: true, confirmed: false })
+    expect(calls.filter((command) => command.includes("Enter"))).toEqual([["tmux", "send-keys", "-t", "%5", "Enter"]])
+    expect(calls.filter((command) => command[1] === "capture-pane")).toHaveLength(8)
   })
 })

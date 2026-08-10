@@ -113,12 +113,11 @@ export function tmuxAvailable(): boolean {
   return Boolean(process.env.TMUX && paneTarget())
 }
 
-function sendKeys(args: string[]): boolean {
+function sendKeys(args: string[], run: LocalCommandRunner = runLocalCommand): boolean {
   const target = paneTarget()
   if (!target) return false
   try {
-    const result = Bun.spawnSync(["tmux", "send-keys", "-t", target, ...args], { stdout: "pipe", stderr: "pipe" })
-    return result.exitCode === 0
+    return run(["tmux", "send-keys", "-t", target, ...args]).exitCode === 0
   } catch {
     return false
   }
@@ -140,16 +139,52 @@ export function interrupt(): boolean {
  * `-l` sends the text verbatim so `/`, spaces, and punctuation aren't parsed as
  * tmux key names. A short settle between the text and Enter lets the slash-command
  * autocomplete resolve, so `/model sonnet` submits instead of the menu eating the
- * Enter. Commands with an argument set directly in current Claude Code (v2.1.199
- * dropped the old mid-session "Switch model?" confirm dialog), so one submit is
- * the whole actuation.
+ * Enter.
  */
-export async function submitLine(text: string, opts: { settleMs?: number } = {}): Promise<boolean> {
+export async function submitLine(
+  text: string,
+  opts: { settleMs?: number; run?: LocalCommandRunner } = {}
+): Promise<boolean> {
   const settleMs = opts.settleMs ?? 150
-  if (!sendKeys(["C-u"])) return false
-  if (!sendKeys(["-l", text])) return false
+  const run = opts.run ?? runLocalCommand
+  if (!sendKeys(["C-u"], run)) return false
+  if (!sendKeys(["-l", text], run)) return false
   if (settleMs > 0) await Bun.sleep(settleMs)
-  return sendKeys(["Enter"])
+  return sendKeys(["Enter"], run)
+}
+
+// `/model <name>` sets directly only in a fresh session; any session with
+// history (i.e. every linked session in practice, v2.1.226) confirms behind a
+// "Switch model?" cache-invalidation dialog with no Enter-hint line — invisible
+// to the boot-dialog family, so it read as blocked until someone pressed Enter.
+const MODEL_SWITCH_DIALOG_RE = /Switch model\?/
+const MODEL_CONFIRM_POLLS = 8
+const MODEL_CONFIRM_POLL_MS = 250
+
+/**
+ * Submit `/model <alias>` and, when the switch-confirmation dialog appears,
+ * answer it — we initiated the switch, so the highlighted "Yes, switch" is the
+ * caller's intent. No dialog within the poll window means the switch applied
+ * directly; nothing is pressed blind.
+ */
+export async function submitModelChange(
+  alias: string,
+  opts: { settleMs?: number; pollMs?: number; run?: LocalCommandRunner } = {}
+): Promise<{ ok: boolean; confirmed: boolean }> {
+  const run = opts.run ?? runLocalCommand
+  if (!(await submitLine(`/model ${alias}`, opts))) return { ok: false, confirmed: false }
+  const target = paneTarget()
+  if (!target) return { ok: false, confirmed: false }
+  const pollMs = opts.pollMs ?? MODEL_CONFIRM_POLL_MS
+  for (let i = 0; i < MODEL_CONFIRM_POLLS; i++) {
+    if (pollMs > 0) await Bun.sleep(pollMs)
+    const captured = run(["tmux", "capture-pane", "-p", "-t", target])
+    if (captured.exitCode !== 0) break
+    if (MODEL_SWITCH_DIALOG_RE.test(captured.stdout)) {
+      return { ok: sendKeys(["Enter"], run), confirmed: true }
+    }
+  }
+  return { ok: true, confirmed: false }
 }
 
 /**
