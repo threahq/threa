@@ -267,6 +267,7 @@ export async function runClaudeCommand(
       const alias = args.trim()
       if (!alias) return { ok: false, message: "Usage: `/model <name>` (e.g. fable, opus, sonnet, haiku, default)." }
       const result = await submitModelChange(alias)
+      if (result.unknownAlias) return { ok: false, message: `Claude Code does not recognize model \`${alias}\`.` }
       if (!result.ok) return { ok: false, message: "Could not send /model (no tmux control)." }
       return {
         ok: true,

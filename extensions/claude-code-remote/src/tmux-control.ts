@@ -157,9 +157,20 @@ export async function submitLine(
 // history (i.e. every linked session in practice, v2.1.226) confirms behind a
 // "Switch model?" cache-invalidation dialog with no Enter-hint line — invisible
 // to the boot-dialog family, so it read as blocked until someone pressed Enter.
-const MODEL_SWITCH_DIALOG_RE = /Switch model\?/
+// Anchored to the dialog's highlighted-option line, not its title: this repo's
+// docs and tests contain the literal "Switch model?", and transcript text on
+// screen must never trigger the answering Enter. An unknown alias errors
+// inline ("Model 'x' not found", verified v2.1.226) — surfaced instead of
+// acked as set.
+const MODEL_SWITCH_DIALOG_RE = /^\s*❯\s*1\.\s*Yes, switch/m
 const MODEL_CONFIRM_POLLS = 8
 const MODEL_CONFIRM_POLL_MS = 250
+
+export interface ModelChangeResult {
+  ok: boolean
+  confirmed: boolean
+  unknownAlias?: boolean
+}
 
 /**
  * Submit `/model <alias>` and, when the switch-confirmation dialog appears,
@@ -170,16 +181,20 @@ const MODEL_CONFIRM_POLL_MS = 250
 export async function submitModelChange(
   alias: string,
   opts: { settleMs?: number; pollMs?: number; run?: LocalCommandRunner } = {}
-): Promise<{ ok: boolean; confirmed: boolean }> {
+): Promise<ModelChangeResult> {
   const run = opts.run ?? runLocalCommand
   if (!(await submitLine(`/model ${alias}`, opts))) return { ok: false, confirmed: false }
   const target = paneTarget()
   if (!target) return { ok: false, confirmed: false }
   const pollMs = opts.pollMs ?? MODEL_CONFIRM_POLL_MS
+  // Alias-specific so an older attempt's error line in the transcript cannot
+  // fail a later, valid switch.
+  const notFound = new RegExp(`Model '${alias.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}' not found`)
   for (let i = 0; i < MODEL_CONFIRM_POLLS; i++) {
     if (pollMs > 0) await Bun.sleep(pollMs)
     const captured = run(["tmux", "capture-pane", "-p", "-t", target])
     if (captured.exitCode !== 0) break
+    if (notFound.test(captured.stdout)) return { ok: false, confirmed: false, unknownAlias: true }
     if (MODEL_SWITCH_DIALOG_RE.test(captured.stdout)) {
       return { ok: sendKeys(["Enter"], run), confirmed: true }
     }

@@ -117,6 +117,34 @@ describe("tmuxAvailable", () => {
     ])
   })
 
+  it("reports an unknown alias instead of acking it as set", async () => {
+    process.env.TMUX = "/tmp/tmux-501/default,1234,0"
+    process.env.TMUX_PANE = "%5"
+    const run: LocalCommandRunner = (command) => ({
+      exitCode: 0,
+      stdout: command[1] === "capture-pane" ? "❯ /model bogus\n  ⎿  Model 'bogus' not found\n❯ " : "",
+      stderr: "",
+    })
+    expect(await submitModelChange("bogus", { settleMs: 0, pollMs: 0, run })).toEqual({
+      ok: false,
+      confirmed: false,
+      unknownAlias: true,
+    })
+  })
+
+  it("ignores dialog text quoted in the transcript (only the option line is chrome)", async () => {
+    process.env.TMUX = "/tmp/tmux-501/default,1234,0"
+    process.env.TMUX_PANE = "%5"
+    const transcript = ['  ⎿  4    "Switch model?",', "  ⎿  5    // cache warning copy", "❯ "].join("\n")
+    const enters: string[][] = []
+    const run: LocalCommandRunner = (command) => {
+      if (command[1] === "send-keys" && command.includes("Enter")) enters.push(command)
+      return { exitCode: 0, stdout: command[1] === "capture-pane" ? transcript : "", stderr: "" }
+    }
+    expect(await submitModelChange("opus", { settleMs: 0, pollMs: 0, run })).toEqual({ ok: true, confirmed: false })
+    expect(enters).toHaveLength(1)
+  })
+
   it("presses nothing extra when the switch applies without a dialog", async () => {
     process.env.TMUX = "/tmp/tmux-501/default,1234,0"
     process.env.TMUX_PANE = "%5"
