@@ -35,6 +35,7 @@ export interface DelegationClientOptions {
   baseUrl: string
   workspaceId: string
   apiKey: string
+  fetchTimeoutMs?: number
 }
 
 /**
@@ -61,7 +62,7 @@ export class DelegationClient {
     // stalled body after headers must reject at FETCH_TIMEOUT_MS, not hang the
     // channel forever.
     const controller = new AbortController()
-    const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS)
+    const timeout = setTimeout(() => controller.abort(), this.opts.fetchTimeoutMs ?? FETCH_TIMEOUT_MS)
     try {
       return await this.requestWithin<T>(url, init, controller.signal)
     } finally {

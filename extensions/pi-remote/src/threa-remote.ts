@@ -82,6 +82,7 @@ const NO_RESPONSE_MARKER = "THREA_NO_RESPONSE"
 /** Server cap on `attachmentIds` per sealed message (`sealedAttachmentIdsSchema` caps at 16). */
 const MAX_SEALED_ATTACHMENTS_PER_MESSAGE = 16
 const FETCH_TIMEOUT_MS = 30_000
+const ATTACHMENT_DOWNLOAD_TIMEOUT_MS = 60_000
 const MAX_FAILURE_POLL_MS = 60_000
 const BUSY_HEARTBEAT_MS = 15_000
 const CLAIM_TTL_SECONDS = 120
@@ -2309,7 +2310,9 @@ async function downloadAttachment(
   const body = await request<{ data: { url: string } }>(
     `/api/v1/workspaces/${config.workspaceId}/attachments/${attachment.id}/url`
   )
-  const response = await fetch(body.data.url)
+  // Timeout spans headers AND arrayBuffer() — a stalled download body must
+  // reject, not hang the claim turn (same pathogen as the request() bound).
+  const response = await fetch(body.data.url, { signal: AbortSignal.timeout(ATTACHMENT_DOWNLOAD_TIMEOUT_MS) })
   if (!response.ok) throw new Error(`download failed with ${response.status}`)
   const bytes = new Uint8Array(await response.arrayBuffer())
   const dir = join(cwd, ".threa-attachments", invocation.id)
@@ -2334,7 +2337,7 @@ async function downloadSealedAttachment(
   const body = await request<{ data: { url: string } }>(
     `/api/v1/workspaces/${config.workspaceId}/attachments/${ref.attachmentId}/url`
   )
-  const response = await fetch(body.data.url)
+  const response = await fetch(body.data.url, { signal: AbortSignal.timeout(ATTACHMENT_DOWNLOAD_TIMEOUT_MS) })
   if (!response.ok) throw new Error(`download failed with ${response.status}`)
   const ciphertext = new Uint8Array(await response.arrayBuffer())
   const bytes = await decryptAttachmentBytes({ ciphertext, key: ref.key, iv: ref.iv })

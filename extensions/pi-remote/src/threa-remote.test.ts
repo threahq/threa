@@ -6,6 +6,10 @@ import { join } from "node:path"
 import threaRemote, { __testing } from "./threa-remote"
 
 process.env.THREA_HARNESS_LINKS_DIR = mkdtempSync(join(tmpdir(), "harness-links-test-"))
+// A harness-supervised shell exports this, and verifySupervisedRevival then
+// blocks every fake session as "points at a different scratchpad" — the suite
+// must behave the same inside a supervised pane as in CI.
+delete process.env.THREA_EXPECTED_ROOT_STREAM_ID
 
 let testStorageDirectory: string
 

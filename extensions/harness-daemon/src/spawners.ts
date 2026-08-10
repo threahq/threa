@@ -491,6 +491,7 @@ export class ClaudeRuntimeSpawner extends RuntimeSpawner {
 
     const response = await fetch(`${baseUrl}/api/v1/workspaces/${workspaceId}/bot-runtime/sessions`, {
       method: "POST",
+      signal: AbortSignal.timeout(10_000),
       headers: { "content-type": "application/json", authorization: `Bearer ${apiKey}` },
       body: JSON.stringify({
         runtimeKind: "claude-code-channel",
