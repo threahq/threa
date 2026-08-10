@@ -6,6 +6,11 @@ import { capturePane, sendKeys } from "./tmux"
 // dialog that line carries the highlighted option, e.g. "❯ 1. Use this MCP
 // server").
 const BOOT_DIALOG_RE = /Enter to confirm|Enter to continue/
+// `/model <name>` in a session with history confirms behind a "Switch model?"
+// cache-invalidation dialog with no Enter-hint line. It only ever appears
+// because a model change was explicitly requested, and the highlighted option
+// is "Yes, switch" — safe to answer.
+const MODEL_SWITCH_DIALOG_RE = /Switch model\?/
 const IDLE_PROMPT_RE = /^❯\s*$/m
 // Claude Code's resume interstitial on old/large sessions ("This session is
 // 2h 48m old and 274.9k tokens…"). It has NO Enter-hint line, so the boot
@@ -23,6 +28,7 @@ export type ClaudePaneState = "idle" | "safe-dialog" | "resume-prompt" | "menu" 
 export function classifyClaudePane(text: string): ClaudePaneState {
   if (RESUME_PROMPT_RE.test(text)) return "resume-prompt"
   if (BOOT_DIALOG_RE.test(text)) return "safe-dialog"
+  if (MODEL_SWITCH_DIALOG_RE.test(text)) return "safe-dialog"
   if (MENU_PROMPT_RE.test(text)) return "menu"
   if (IDLE_PROMPT_RE.test(text)) return "idle"
   return "working"
