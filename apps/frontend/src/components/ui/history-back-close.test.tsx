@@ -5,6 +5,8 @@ import { createMemoryRouter, Link, RouterProvider } from "react-router-dom"
 import * as mobileModule from "@/hooks/use-mobile"
 import { __resetOverlayHistoryForTests, attachOverlayHistoryRouter, OverlayHistoryLayout } from "./history-back-close"
 import { Drawer, DrawerContent, DrawerTitle } from "./drawer"
+import { Dialog, DialogContent, DialogTitle } from "./dialog"
+import { MediaGalleryProvider, useMediaGallery } from "@/contexts/media-gallery-context"
 
 afterEach(() => {
   vi.restoreAllMocks()
@@ -249,6 +251,117 @@ describe("HistoryBackClose via Drawer (mobile)", () => {
 
     // History is balanced: the next back leaves the page
     await waitFor(() => expect(router.state.location.key).toBe(initialKey))
+    await act(async () => {
+      await router.navigate(-1)
+    })
+    await waitFor(() => expect(router.state.location.pathname).toBe("/other"))
+  })
+})
+
+/** A dialog-based overlay (the media gallery's shape: controlled, full-screen). */
+function DialogHarness() {
+  const [open, setOpen] = useState(false)
+  return (
+    <div>
+      <span>{open ? "dialog-open" : "dialog-closed"}</span>
+      <button onClick={() => setOpen(true)}>open-dialog</button>
+      <button onClick={() => setOpen(false)}>close-dialog</button>
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent>
+          <DialogTitle>Preview</DialogTitle>
+        </DialogContent>
+      </Dialog>
+    </div>
+  )
+}
+
+describe("HistoryBackClose via Dialog (mobile)", () => {
+  beforeEach(() => {
+    vi.spyOn(mobileModule, "useIsMobile").mockReturnValue(true)
+  })
+
+  it("back gesture closes the dialog and stays on the page", async () => {
+    const router = makeRouter(<DialogHarness />)
+    render(<RouterProvider router={router} />)
+
+    await openDrawer(router, "open-dialog")
+
+    await act(async () => {
+      await router.navigate(-1)
+    })
+
+    await waitFor(() => expect(screen.getByText("dialog-closed")).toBeInTheDocument())
+    expect(router.state.location.pathname).toBe(STREAM_PATH)
+  })
+
+  it("closing via UI pops the sentinel entry so back leaves the page", async () => {
+    const router = makeRouter(<DialogHarness />)
+    render(<RouterProvider router={router} />)
+    const initialKey = router.state.location.key
+
+    await openDrawer(router, "open-dialog")
+    fireEvent.click(screen.getByText("close-dialog"))
+
+    await waitFor(() => expect(router.state.location.key).toBe(initialKey))
+
+    await act(async () => {
+      await router.navigate(-1)
+    })
+    await waitFor(() => expect(router.state.location.pathname).toBe("/other"))
+  })
+})
+
+/**
+ * The media gallery already deepens history itself (`?media=`) and pops that
+ * entry on close, so it now pushes TWO entries per open (its own plus the
+ * sentinel). One back press must still land on the bare stream.
+ */
+function GalleryHarness() {
+  const { mediaAttachmentId, openMedia, closeMedia } = useMediaGallery()
+  const open = mediaAttachmentId !== null
+  return (
+    <div>
+      <span>{open ? "gallery-open" : "gallery-closed"}</span>
+      <button onClick={() => openMedia("attach_1")}>open-gallery</button>
+      <Dialog open={open} onOpenChange={(next) => !next && closeMedia()}>
+        <DialogContent>
+          <DialogTitle>Media</DialogTitle>
+        </DialogContent>
+      </Dialog>
+    </div>
+  )
+}
+
+describe("HistoryBackClose with the URL-driven media gallery (mobile)", () => {
+  beforeEach(() => {
+    vi.spyOn(mobileModule, "useIsMobile").mockReturnValue(true)
+  })
+
+  it("one back press closes the gallery, clears ?media= and stays on the page", async () => {
+    const router = makeRouter(
+      <MediaGalleryProvider>
+        <GalleryHarness />
+      </MediaGalleryProvider>
+    )
+    render(<RouterProvider router={router} />)
+    const initialKey = router.state.location.key
+
+    fireEvent.click(screen.getByText("open-gallery"))
+    await waitFor(() => expect(screen.getByText("gallery-open")).toBeInTheDocument())
+    // Both the ?media= entry and the sentinel have landed
+    await waitFor(() => expect(router.state.location.search).toBe("?media=attach_1"))
+    await act(async () => {})
+
+    await act(async () => {
+      await router.navigate(-1)
+    })
+
+    await waitFor(() => expect(screen.getByText("gallery-closed")).toBeInTheDocument())
+    await waitFor(() => expect(router.state.location.key).toBe(initialKey))
+    expect(router.state.location.pathname).toBe(STREAM_PATH)
+    expect(router.state.location.search).toBe("")
+
+    // History is balanced: the next back leaves the page
     await act(async () => {
       await router.navigate(-1)
     })

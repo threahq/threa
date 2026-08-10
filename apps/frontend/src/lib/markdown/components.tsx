@@ -449,24 +449,30 @@ export const markdownComponents: Components = {
     return null
   },
 
-  // Tables - use Shadcn UI Table. Let content set the width so long paths,
-  // URLs, and paragraphs flow naturally and the wrapper scrolls horizontally
-  // on narrow viewports instead of crushing cells into tight wrapping.
+  // Tables — Shadcn UI Table; its own wrapper is the horizontal scroller.
+  // `w-max` sizes to content, not to the message column: at column width the
+  // auto layout crushes each column to its minimum, and `break-all` on inline
+  // code makes that minimum one character. Cells cap at 70vw so a prose-heavy
+  // column can't run away instead — `anywhere` rather than `break-word` because
+  // only `anywhere` lowers min-content, so a cell holding one unbreakable token
+  // can be sized down to that cap at all.
   table: ({ children }) => (
-    <div className="my-2 overflow-x-auto">
-      <Table className="w-auto table-auto">{children}</Table>
+    <div className="my-2">
+      <Table className="w-max min-w-full table-auto [&_code]:[overflow-wrap:anywhere] [&_code]:[word-break:normal]">
+        {children}
+      </Table>
     </div>
   ),
   thead: ({ children }) => <TableHeader>{children}</TableHeader>,
   tbody: ({ children }) => <TableBody>{children}</TableBody>,
   tr: ({ children }) => <TableRow>{children}</TableRow>,
   th: ({ children }) => (
-    <TableHead>
+    <TableHead className="h-auto max-w-[70vw] px-3 py-2 align-top">
       <ProcessedChildren>{children}</ProcessedChildren>
     </TableHead>
   ),
   td: ({ children }) => (
-    <TableCell>
+    <TableCell className="max-w-[70vw] px-3 py-2 align-top">
       <ProcessedChildren>{children}</ProcessedChildren>
     </TableCell>
   ),

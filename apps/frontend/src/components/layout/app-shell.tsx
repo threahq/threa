@@ -285,8 +285,11 @@ export function AppShell({ sidebar, children }: AppShellProps) {
       <div ref={pullRef} className="relative flex flex-1 flex-col overflow-hidden">
         {/* Workspace-wide loading indicator — hairline along the bottom of the
              sidebar/page header row (h-12). Spans the full viewport so it links
-             the two headers visually now that the top bar is gone. */}
-        <div className="pointer-events-none absolute left-0 right-0 top-12 z-[55]">
+             the two headers visually now that the top bar is gone. Above the
+             sidebar column (z-40), below the z-50 overlay layer: no ancestor
+             here opens a stacking context, so anything higher paints the
+             hairline over dialogs, drawers and menus portalled to the body. */}
+        <div className="pointer-events-none absolute left-0 right-0 top-12 z-[45]">
           <TopbarLoadingIndicator visible={showLoadingIndicator} />
         </div>
 

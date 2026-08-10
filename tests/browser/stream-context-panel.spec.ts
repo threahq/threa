@@ -103,14 +103,12 @@ test("windows its rows and jumps to a date from a day marker", async ({ page }) 
 
   // ── Windowing: the scroller reserves the full list height, but only a slice
   // of the rows is mounted. Without virtua every row would be in the DOM.
-  const metrics = await scroller.evaluate((el) => ({
-    scrollHeight: el.scrollHeight,
-    clientHeight: el.clientHeight,
-    mountedRows: el.querySelectorAll('a[href*="example.com"]').length,
-  }))
-  expect(metrics.scrollHeight).toBeGreaterThan(metrics.clientHeight * 2)
-  expect(metrics.mountedRows).toBeGreaterThan(0)
-  expect(metrics.mountedRows).toBeLessThan(MESSAGE_COUNT / 2)
+  // Poll the reserved height: virtua grows it as rows are measured, so the
+  // first painted row is not the frame where the estimate has settled.
+  await expect.poll(() => scroller.evaluate((el) => el.scrollHeight / el.clientHeight)).toBeGreaterThan(2)
+  const mountedRows = await scroller.evaluate((el) => el.querySelectorAll('a[href*="example.com"]').length)
+  expect(mountedRows).toBeGreaterThan(0)
+  expect(mountedRows).toBeLessThan(MESSAGE_COUNT / 2)
 
   // ── Date jump: scroll away, then jump back via a day marker. Every seeded
   // message lands today, so "Today" is the day to return to — what is being
