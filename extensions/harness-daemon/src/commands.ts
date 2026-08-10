@@ -9,6 +9,7 @@ import { existsSync } from "node:fs"
 import { basename, join } from "node:path"
 import { backfillIdentities, defaultBackfillDeps, summarizeBackfill, type BackfillOutcome } from "./backfill"
 import { installBootResume } from "./boot"
+import { acceptClaudeBootPrompts, blockedPromptSummary, classifyClaudePane } from "./claude-boot"
 import { liveClaudePidsIn } from "./claude-registry"
 import { defaultRepo, inferBranch, normalizeName, now } from "./cli"
 import {
@@ -58,7 +59,7 @@ import {
   type RuntimePreflightResult,
   type ScratchpadStatus,
 } from "./resume"
-import { attachedTmuxSession, ensureTmuxSession, sendKeys } from "./tmux"
+import { attachedTmuxSession, capturePane, ensureTmuxSession, sendKeys } from "./tmux"
 import type { ManagedAgent, ResumeOptions, SpawnOptions, SpawnResult, ThreaChannelConfig } from "./types"
 import { defaultReapDeps, reapArchivedWorktrees } from "./reap"
 import { defaultTombstoneDeps, summarizeTombstones, tombstoneAbandonedRows, type TombstoneOutcome } from "./tombstone"
@@ -418,6 +419,7 @@ export type ReviveStatus =
   | "started"
   | "would start"
   | "already running"
+  | "blocked"
   | "failed"
   | "skipped stopped"
   | "skipped missing link"
@@ -439,6 +441,14 @@ export interface ReviveDeps {
   claudeConfig: ThreaChannelConfig
   piConfig: PiRemoteConfig
   paneStatus: (agent: ManagedAgent) => ManagedAgentPane["status"]
+  /**
+   * Probe a live Claude pane for a blocking interstitial (resume prompt,
+   * unrecognized menu) and auto-answer the known-safe ones. Returns an outcome
+   * when the pane needed attention, undefined when it is genuinely healthy —
+   * a pane sitting at "resume from summary?" is alive but cannot run a turn,
+   * which read as "already running" until 2026-08-10.
+   */
+  unblockAlivePane: (agent: ManagedAgent, dryRun: boolean) => Promise<ReviveOutcome | undefined>
   /** Live Claude pids already in this worktree, corroborated against the process table. */
   claudeProcessesIn: (worktree: string) => number[]
   pathExists: (path: string) => boolean
@@ -464,6 +474,24 @@ export function defaultReviveDeps(): ReviveDeps {
     claudeConfig: readThreaChannelConfig(),
     piConfig: readPiRemoteConfig(),
     paneStatus: (agent) => resolveManagedAgentPane(agent).status,
+    unblockAlivePane: async (agent, dryRun) => {
+      // Only a "found" pane: typing into an unverified match risks a stranger's
+      // window (same refusal the steer/kill paths make).
+      const resolved = resolveManagedAgentPane(agent)
+      if (resolved.status !== "found") return undefined
+      const text = capturePane(resolved.pane.paneId)
+      const state = classifyClaudePane(text)
+      if (state === "idle" || state === "working") return undefined
+      if (dryRun) return { status: "blocked", detail: `${state}: ${blockedPromptSummary(text)}` }
+      // The walker owns menu handling too — its 3-sighting streak filters
+      // mid-render flashes a single classification would misreport as blocked.
+      const boot = await acceptClaudeBootPrompts(resolved.pane.paneId, undefined, { waitMs: 15_000 })
+      if (boot.state === "idle") return { status: "already running", detail: `cleared blocking ${state}` }
+      // blocked or timeout: either way the pane did not reach an idle
+      // composer, and claiming "answered" here is the false-online report this
+      // path exists to kill.
+      return { status: "blocked", detail: blockedPromptSummary(boot.lastCapture) }
+    },
     claudeProcessesIn: liveClaudePidsIn,
     pathExists: existsSync,
     scratchpadStatus: fetchScratchpadStatus,
@@ -525,7 +553,13 @@ export async function reviveAgent(
   }
   // Ambiguity counts as alive: the next move is spawning a replacement, and a
   // duplicate agent is worse than a missed revival.
-  if (paneStatus !== "missing") return { status: "already running" }
+  if (paneStatus !== "missing") {
+    if (agent.runtime === "claude") {
+      const outcome = await deps.unblockAlivePane(agent, Boolean(options.dryRun))
+      if (outcome) return outcome
+    }
+    return { status: "already running" }
+  }
   if (agent.status === "stopped") return { status: "skipped stopped" }
   if (!agent.scratchpadUrl) return { status: "skipped missing link", detail: "no scratchpad URL recorded" }
   if (!scratchpad) return { status: "skipped missing link", detail: `invalid scratchpad URL: ${agent.scratchpadUrl}` }
@@ -946,6 +980,25 @@ export function doctor(): void {
     console.log(
       `${count === 0 ? "ok" : "drift"}\t${name}\t${count} carry an identity today's derivation cannot reproduce`
     )
+  }
+  // Live-pane interstitial scan: a Claude pane parked at an interactive prompt
+  // (resume-from-summary, unknown menu) is alive to every process check but
+  // cannot run a turn — the 2026-08-10 "online but dead" incident. `up`
+  // auto-answers the safe ones; doctor only reports.
+  for (const agent of panes ? readInventory() : []) {
+    if (agent.runtime !== "claude" || agent.status === "stopped" || agent.tombstonedAt) continue
+    let verdict: string
+    try {
+      const resolved = resolveManagedAgentPane(agent, panes)
+      if (resolved.status !== "found") continue
+      const capture = capturePane(resolved.pane.paneId)
+      const state = classifyClaudePane(capture)
+      if (state === "idle" || state === "working") continue
+      verdict = `${state}: ${blockedPromptSummary(capture)} — 'threa-harnessd up' auto-answers safe prompts`
+    } catch (error) {
+      verdict = `could not inspect pane: ${error instanceof Error ? error.message : String(error)}`
+    }
+    console.log(`blocked\tpane ${agent.name}\t${verdict}`)
   }
   const profiles = inspectProfiles()
   if (profiles.status === "invalid") {

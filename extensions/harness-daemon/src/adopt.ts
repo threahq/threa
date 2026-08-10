@@ -3,7 +3,7 @@ import { readHarnessLinks, type HarnessLink } from "@threa/bot-runtime-client"
 import { existsSync, statSync } from "node:fs"
 import { hostname } from "node:os"
 import { basename, join } from "node:path"
-import { acceptClaudeBootPrompts } from "./claude-boot"
+import { acceptClaudeBootPrompts, warnIfBlocked } from "./claude-boot"
 import {
   defaultClaudeDiskDeps,
   findLiveClaudeSessions,
@@ -713,7 +713,7 @@ async function launchTakeover(params: {
   )
   console.log(`harnessd: took over Claude Code in tmux ${session}:${window} (${windowId})`)
   try {
-    await acceptClaudeBootPrompts(paneId)
+    warnIfBlocked(await acceptClaudeBootPrompts(paneId))
     return {
       tmuxSession: session,
       tmuxWindow: window,
