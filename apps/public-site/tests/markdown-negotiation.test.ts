@@ -1,10 +1,10 @@
 /* Lives outside functions/ on purpose: every file under functions/ is a Pages
    route, so a test file there would deploy as one. */
 import { describe, expect, test } from "bun:test"
-import { existsSync } from "node:fs"
+import { existsSync, readFileSync } from "node:fs"
 import { fileURLToPath } from "node:url"
 
-import { mirrorCandidates, wantsMarkdown } from "../functions/_middleware"
+import { MIRROR_PREFIX, mirrorCandidates, wantsMarkdown } from "../functions/_middleware"
 
 describe("wantsMarkdown", () => {
   test("browsers keep getting HTML", () => {
@@ -18,6 +18,8 @@ describe("wantsMarkdown", () => {
     expect(wantsMarkdown("Text/Markdown; q=0.9")).toBe(true)
     expect(wantsMarkdown("text/markdown, text/plain, */*")).toBe(true)
     expect(wantsMarkdown("text/html, text/markdown;q=0")).toBe(false)
+    expect(wantsMarkdown("text/html, text/markdown;q=0.0")).toBe(false)
+    expect(wantsMarkdown("text/markdown;q=0.001")).toBe(true)
   })
 })
 
@@ -43,6 +45,10 @@ test("every page route resolves to a built mirror", () => {
   }
 
   for (const route of ["/", "/about", "/developers", "/developers/authentication", "/developers/reference"]) {
-    expect(mirrorCandidates(route).find((candidate) => existsSync(dist(candidate)))).toBeString()
+    const mirror = mirrorCandidates(route).find((candidate) => existsSync(dist(candidate)))
+    expect(mirror).toBeString()
+    // The prefix is the middleware's only test for "this is a mirror, not the
+    // HTML page Pages serves for a missing asset".
+    expect(readFileSync(dist(mirror!), "utf8").startsWith(MIRROR_PREFIX)).toBe(true)
   }
 })

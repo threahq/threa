@@ -17,13 +17,22 @@ interface PagesContext {
 
 const MARKDOWN_TYPE = "text/markdown; charset=utf-8"
 
-/* Accepted only when text/markdown is listed without q=0. A browser sends
+/* Every mirror opens with this front matter (scripts/build-llms.ts writes it,
+   and fails its build if one doesn't). It is what tells a real mirror apart
+   from Pages' answer to a missing asset, which is a 200 HTML page — status
+   alone would relabel that page as markdown, and the asset server's own
+   content-type would put the whole feature at the mercy of how Pages happens
+   to type a .md file. */
+export const MIRROR_PREFIX = "---\nsource: "
+
+/* Accepted only when text/markdown is listed at a non-zero q. A browser sends
    text/html,…,*\/*, so the wildcard alone must not trigger markdown. */
 export function wantsMarkdown(accept: string): boolean {
   return accept.split(",").some((entry) => {
     const [type, ...params] = entry.trim().toLowerCase().split(";")
     if (type !== "text/markdown") return false
-    return !params.some((p) => p.replace(/\s/g, "") === "q=0")
+    const q = params.map((p) => p.replace(/\s/g, "")).find((p) => p.startsWith("q="))
+    return q === undefined || Number.parseFloat(q.slice(2)) > 0
   })
 }
 
@@ -54,22 +63,24 @@ export async function onRequest(context: PagesContext): Promise<Response> {
   const url = new URL(request.url)
   for (const candidate of mirrorCandidates(url.pathname)) {
     const mirror = await next(new Request(new URL(candidate, url).href, { method: "GET" }))
-    // A route with no mirror (a versioned API reference, say) must fall back to
-    // HTML. Pages answers a missing asset with a 200 HTML page, so status alone
-    // would relabel that page as markdown; the served type is what settles it.
-    if (!mirror.ok || !(mirror.headers.get("content-type") ?? "").startsWith("text/markdown")) continue
-
+    if (!mirror.ok) continue
     const markdown = await mirror.text()
-    return new Response(request.method === "HEAD" ? null : markdown, {
-      status: 200,
-      headers: {
-        "Content-Type": MARKDOWN_TYPE,
-        // Estimate, the conventional ~4 chars/token; no tokenizer at the edge.
-        "x-markdown-tokens": String(Math.ceil(markdown.length / 4)),
-        "Cache-Control": "public, max-age=0, must-revalidate",
-        Vary: "Accept",
-      },
-    })
+    // A route with no mirror (a versioned API reference, say) falls back to HTML.
+    if (!markdown.startsWith(MIRROR_PREFIX)) continue
+
+    // Start from the asset's own headers so the Link relations _headers applied
+    // to it survive: an agent that negotiates markdown is exactly the caller
+    // those relations exist for, and a fresh Headers would drop them.
+    const headers = new Headers(mirror.headers)
+    headers.set("Content-Type", MARKDOWN_TYPE)
+    // Estimate, the conventional ~4 chars/token; no tokenizer at the edge.
+    headers.set("x-markdown-tokens", String(Math.ceil(markdown.length / 4)))
+    headers.set("Vary", "Accept")
+    // Both described the .md asset as its own response, not this one.
+    headers.delete("Content-Length")
+    headers.delete("ETag")
+
+    return new Response(request.method === "HEAD" ? null : markdown, { status: 200, headers })
   }
 
   return varyOnAccept(await next())

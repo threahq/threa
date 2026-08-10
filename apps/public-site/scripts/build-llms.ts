@@ -21,6 +21,8 @@ import { readFileSync, writeFileSync, existsSync, readdirSync } from "node:fs"
 import { fileURLToPath } from "node:url"
 import TurndownService from "turndown"
 
+import { MIRROR_PREFIX } from "../functions/_middleware"
+
 const SITE = "https://threa.io"
 const dist = (p: string) => fileURLToPath(new URL(`../dist/${p}`, import.meta.url))
 
@@ -370,7 +372,14 @@ function pageToMarkdown(page: Page): string {
     ? "Markdown mirror generated from the page above; product mockups are omitted. Developer docs start at https://threa.io/llms.txt."
     : "Markdown mirror generated from the page above. YOUR_WORKSPACE_ID is the ws_… id in the app URL after /w/; YOUR_API_KEY is a key from Settings > API keys."
   const header = ["---", `source: ${SITE}${page.route}`, `notes: ${notes}`, "---"].join("\n")
-  return `${header}\n\n${md}\n`
+  const mirror = `${header}\n\n${md}\n`
+  // The middleware tells a mirror from Pages' 200-HTML answer to a missing
+  // asset by this prefix alone, so a change to the front matter that broke it
+  // would silently turn negotiation off for every route.
+  if (!mirror.startsWith(MIRROR_PREFIX)) {
+    throw new Error(`${page.md} does not start with the mirror front matter the middleware matches on`)
+  }
+  return mirror
 }
 
 // ---------------------------------------------------------------------------
@@ -395,6 +404,23 @@ const builtPages = readdirSync(dist("developers"), { withFileTypes: true })
       .map((e) => (e.isDirectory() ? `${e.name}/index.html` : e.name))
       .filter((html) => existsSync(dist(html)))
   )
+// A route outside _routes.json never reaches functions/_middleware.ts, so its
+// mirror would ship with nothing able to negotiate for it — the one failure
+// that leaves every other guard here green.
+const routes = JSON.parse(readFileSync(dist("_routes.json"), "utf8")) as { include: string[]; exclude: string[] }
+const matches = (patterns: string[], route: string) =>
+  patterns.some((pattern) =>
+    new RegExp(`^${pattern.replace(/[.+?^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*")}$`).test(route)
+  )
+const unroutable = ALL_PAGES.filter((p) => !matches(routes.include, p.route) || matches(routes.exclude, p.route))
+if (unroutable.length) {
+  throw new Error(
+    `Page routes outside public/_routes.json, so markdown negotiation can't run for them: ${unroutable
+      .map((p) => p.route)
+      .join(", ")}`
+  )
+}
+
 const unlisted = builtPages.filter((html) => !ALL_PAGES.some((p) => p.html === html))
 if (unlisted.length) {
   throw new Error(`Pages built without a PAGES/SITE_PAGES entry in scripts/build-llms.ts: ${unlisted.join(", ")}`)
