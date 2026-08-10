@@ -30,7 +30,7 @@ import { z } from "zod"
 import { CarryOnController } from "./carry-on"
 import { THINKING_LEVELS, modelSuggestions } from "./model-catalog"
 import { formatClaudeStatusReport } from "./status"
-import { interrupt, steerText, submitLine, tmuxAvailable } from "./tmux-control"
+import { interrupt, steerText, submitLine, submitModelChange, tmuxAvailable } from "./tmux-control"
 import { TranscriptTracer } from "./transcript-trace"
 
 const RUNTIME_KIND = "claude-code-channel"
@@ -266,10 +266,15 @@ export async function runClaudeCommand(
     case "model": {
       const alias = args.trim()
       if (!alias) return { ok: false, message: "Usage: `/model <name>` (e.g. fable, opus, sonnet, haiku, default)." }
-      // `/model <name>` sets directly in current Claude Code (v2.1.199 dropped
-      // the old "Switch model?" confirm dialog), so one submit is the whole action.
-      const ok = await submitLine(`/model ${alias}`)
-      return { ok, message: ok ? `Set Claude Code model to \`${alias}\`.` : "Could not send /model (no tmux control)." }
+      const result = await submitModelChange(alias)
+      if (result.unknownAlias) return { ok: false, message: `Claude Code does not recognize model \`${alias}\`.` }
+      if (!result.ok) return { ok: false, message: "Could not send /model (no tmux control)." }
+      return {
+        ok: true,
+        message: result.confirmed
+          ? `Set Claude Code model to \`${alias}\` and confirmed the switch dialog.`
+          : `Set Claude Code model to \`${alias}\`.`,
+      }
     }
     case "thinking": {
       // Threa's canonical `/thinking <level>` actuated as Claude Code's `/effort`.

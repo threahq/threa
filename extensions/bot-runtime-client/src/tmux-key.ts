@@ -30,7 +30,8 @@ export class TmuxKeyError extends Error {
 type Spawn = (command: string, args: string[], options: { encoding: "utf8" }) => SpawnSyncReturns<string>
 
 export function parseAllowedTmuxKey(args: string): AllowedTmuxKey | undefined {
-  return Object.hasOwn(TMUX_KEY_TOKENS, args) ? (args as AllowedTmuxKey) : undefined
+  const name = args.trim().toLowerCase()
+  return Object.hasOwn(TMUX_KEY_TOKENS, name) ? (name as AllowedTmuxKey) : undefined
 }
 
 function resolveInspectedPane(output: string, target: string, expectedPid: number): string {

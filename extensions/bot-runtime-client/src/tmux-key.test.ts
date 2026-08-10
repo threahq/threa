@@ -30,8 +30,14 @@ describe("allowlisted tmux keys", () => {
       expect(parseAllowedTmuxKey(name)).toBe(name as keyof typeof TMUX_KEY_TOKENS)
   })
 
-  it("rejects aliases, casing, whitespace, multiple args, unknown names, and tmux-like tokens", () => {
-    for (const value of ["esc", "Escape", " enter", "enter ", "enter down", "space", "C-c", "-t", "%2", ""]) {
+  it("accepts any casing and surrounding whitespace of an allowed name", () => {
+    for (const value of ["Enter", " enter ", "ESCAPE", "Ctrl-C"]) {
+      expect(parseAllowedTmuxKey(value)).toBe(value.trim().toLowerCase() as keyof typeof TMUX_KEY_TOKENS)
+    }
+  })
+
+  it("rejects aliases, multiple args, unknown names, and tmux-like tokens", () => {
+    for (const value of ["esc", "enter down", "space", "C-c", "-t", "%2", ""]) {
       expect(parseAllowedTmuxKey(value)).toBeUndefined()
     }
   })

@@ -1305,7 +1305,7 @@ describe("Pi reconnect session control", () => {
   test("rejects malformed key args without sending", async () => {
     const messages: string[] = []
     let sends = 0
-    for (const args of ["Enter", " enter", "enter ", "enter down", "-t", "%2", "unknown"]) {
+    for (const args of ["enter down", "-t", "%2", "unknown"]) {
       await __testing.runKeyCommand(invocation, args, context(true), {
         send: () => {
           sends++
@@ -1316,7 +1316,7 @@ describe("Pi reconnect session control", () => {
         },
       } as never)
     }
-    expect({ sends, messages }).toEqual({ sends: 0, messages: Array(7).fill("Usage: `/key <name>`.") })
+    expect({ sends, messages }).toEqual({ sends: 0, messages: Array(4).fill("Usage: `/key <name>`.") })
   })
 
   test("a claim from link A cannot prepare or ack after relinking to B", async () => {
