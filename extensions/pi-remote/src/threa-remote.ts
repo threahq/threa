@@ -684,16 +684,6 @@ function summarizeError(error: unknown): string {
   return [message, causeCode ? `(${causeCode})` : ""].filter(Boolean).join(" ").replace(/\s+/g, " ").slice(0, 180)
 }
 
-async function fetchWithTimeout(url: string, init?: RequestInit): Promise<Response> {
-  const controller = new AbortController()
-  const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS)
-  try {
-    return await fetch(url, { ...init, signal: controller.signal })
-  } finally {
-    clearTimeout(timeout)
-  }
-}
-
 class ThreaApiError extends Error {
   constructor(
     readonly status: number,
@@ -706,14 +696,31 @@ class ThreaApiError extends Error {
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   if (!config) throw new Error("Threa remote config not loaded")
   const isFormData = typeof FormData !== "undefined" && init?.body instanceof FormData
-  const response = await fetchWithTimeout(`${config.baseUrl.replace(/\/$/, "")}${path}`, {
-    ...init,
-    headers: {
-      Authorization: `Bearer ${config.apiKey}`,
-      ...(!isFormData && { "Content-Type": "application/json" }),
-      ...init?.headers,
-    },
-  })
+  // One abort window over headers AND body. Clearing the timer once headers
+  // arrived left the `response.json()` below unbounded — a response whose body
+  // then stalls hangs its caller forever, and a hung await inside the poll loop
+  // parks the loop with no timer armed: presence freezes while the pane still
+  // says "linked". That is the recurring split-brain, so the window closes only
+  // after the body is consumed.
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS)
+  try {
+    const response = await fetch(`${config.baseUrl.replace(/\/$/, "")}${path}`, {
+      ...init,
+      signal: controller.signal,
+      headers: {
+        Authorization: `Bearer ${config.apiKey}`,
+        ...(!isFormData && { "Content-Type": "application/json" }),
+        ...init?.headers,
+      },
+    })
+    return await readRequestBody<T>(response)
+  } finally {
+    clearTimeout(timeout)
+  }
+}
+
+async function readRequestBody<T>(response: Response): Promise<T> {
   if (!response.ok) {
     // Surface the server's JSON error (Zod `fieldErrors`, `code`, ...) when the
     // API itself rejects the request, so a 400 is debuggable instead of a bare
@@ -2232,8 +2239,10 @@ async function enableRemote(pi: ExtensionAPI, ctx: ExtensionContext): Promise<vo
   }
   lastBusyHeartbeatAt = 0
   await heartbeat("available", undefined, ctx)
-  await ensureTransport(pi, ctx)?.connect()
+  // Backstop before dial, matching session_start: a stalled connect() must not
+  // keep the poll loop from ever starting.
   startPolling(pi, ctx)
+  await ensureTransport(pi, ctx)?.connect()
   ctx.ui.notify("Threa remote enabled for this Pi session", "info")
 }
 
@@ -3829,21 +3838,32 @@ function startPolling(pi: ExtensionAPI, ctx: ExtensionContext): void {
   if (!isEnabled(ctx)) return
   stopPolling()
   const runId = ++pollingRunId
+  const arm = (delayMs: number) => {
+    if (runId !== pollingRunId) return
+    if (timer) clearTimeout(timer)
+    timer = setTimeout(() => void poll(), delayMs)
+  }
   const poll = async () => {
     if (runId !== pollingRunId) return
-    if (pollInFlightRunId !== undefined) {
-      timer = setTimeout(() => void poll(), basePollMs())
-      return
-    }
+    // Re-armed BEFORE any await: scheduling must not depend on the poll body
+    // settling. When it does, one stalled response parks the loop with no timer
+    // armed — presence frozen, claims dead, pane still "linked" (2026-08-10).
+    // A completed poll's finally overrides this tick with its computed delay.
+    arm(basePollMs())
+    if (pollInFlightRunId !== undefined) return
     pollInFlightRunId = runId
     let delayMs = basePollMs()
     try {
       // Self-heal the /bot socket: if the hint resolve failed on enable /
       // session_start (transient blip), retry it here. connect() is guarded, so
       // while Socket.IO is mid-reconnect (socket present, not yet connected)
-      // this is a no-op rather than a second dial.
+      // this is a no-op rather than a second dial. Deliberately NOT awaited:
+      // the claim below is the backstop, and a dial that stalls must not hold
+      // this worker (an in-flight worker skips every later tick).
       if (isEnabled(ctx) && !transport?.socketConnected) {
-        await ensureTransport(pi, ctx)?.connect()
+        void ensureTransport(pi, ctx)
+          ?.connect()
+          .catch((error) => emitPollDebug(ctx, `poll socket self-heal failed: ${summarizeError(error)}`))
       }
       await probeArchiveState(ctx)
       const contactedServer = await claimIfIdle(pi, ctx)
@@ -3854,14 +3874,10 @@ function startPolling(pi: ExtensionAPI, ctx: ExtensionContext): void {
       delayMs = failurePollMs()
     } finally {
       if (pollInFlightRunId === runId) pollInFlightRunId = undefined
-      if (runId === pollingRunId) timer = setTimeout(() => void poll(), delayMs)
+      arm(delayMs)
     }
   }
-  rearmPoll = (delayMs: number) => {
-    if (runId !== pollingRunId) return
-    if (timer) clearTimeout(timer)
-    timer = setTimeout(() => void poll(), delayMs)
-  }
+  rearmPoll = arm
   void poll()
 }
 
@@ -4463,8 +4479,9 @@ export default function (pi: ExtensionAPI): void {
         setRemoteStatus(ctx, "Threa remote: revival blocked")
         return
       }
-      await ensureTransport(pi, ctx)?.connect()
+      // Backstop before dial, matching session_start.
       startPolling(pi, ctx)
+      await ensureTransport(pi, ctx)?.connect()
     },
   })
 
@@ -4498,8 +4515,18 @@ export default function (pi: ExtensionAPI): void {
     await heartbeat(pending ? "busy" : "available", pending ? "Working on Threa invocation…" : undefined, ctx).catch(
       (error) => emitPollDebug(ctx, `session startup heartbeat failed; continuing: ${summarizeError(error)}`)
     )
-    await ensureTransport(pi, ctx)?.connect()
+    // Polling FIRST: it is the backstop, and its first tick self-heals the
+    // socket, so a dial that stalls or throws must not be able to take it down
+    // with it. Sequencing the dial ahead of the loop did exactly that on
+    // 2026-08-10 — session_start hung inside connect() and the runtime froze at
+    // one startup heartbeat, footer still "linked".
     startPolling(pi, ctx)
+    // The shutdown hook wrote "reloading…", and nothing else rewrites the
+    // footer until the next invocation runs — so without this a healthy,
+    // polling runtime advertises a reload that finished long ago. "linked"
+    // means the session link, not the socket, so it goes before the dial.
+    setRemoteStatus(ctx, pending ? `Threa remote: running ${pending.id}` : "Threa remote: linked")
+    await ensureTransport(pi, ctx)?.connect()
     if (event.reason === "reload") ctx.ui.notify("Threa remote reconnected after reload.", "info")
   })
 

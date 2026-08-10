@@ -408,10 +408,24 @@ export class BotRuntimeTransport {
 
   /** The wsUrl hint is served by the edge workspace-router at `/api/workspaces/:id/config` (NOT /api/v1). */
   async resolveWsHint(): Promise<WsHint | undefined> {
-    const res = await this.httpRequest(`/api/workspaces/${this.workspaceId}/config`, { method: "GET" })
-    if (!res.ok) return undefined
-    const body = (await res.json()) as { wsUrl?: string }
-    return parseWsHint({ url: body.wsUrl })
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), this.fetchTimeoutMs)
+    try {
+      // Headers AND body under one abort window. `httpRequest` clears its timer
+      // once headers arrive, so a response whose body then stalls left
+      // `res.json()` awaiting forever — with `connecting` latched true, no later
+      // call could ever redial, and the runtime sat "linked" but unreachable.
+      const res = await fetch(`${this.base}/api/workspaces/${this.workspaceId}/config`, {
+        method: "GET",
+        signal: controller.signal,
+        headers: { Authorization: `Bearer ${this.apiKey}`, "Content-Type": "application/json" },
+      })
+      if (!res.ok) return undefined
+      const body = (await res.json()) as { wsUrl?: string }
+      return parseWsHint({ url: body.wsUrl })
+    } finally {
+      clearTimeout(timeout)
+    }
   }
 
   private async httpRecordStepsFallback(

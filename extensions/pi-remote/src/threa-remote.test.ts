@@ -1935,6 +1935,72 @@ describe("reload claim continuity", () => {
     }
   })
 
+  test("polling starts even while the ws-hint dial hangs", async () => {
+    // The 2026-08-10 wedge: session_start awaited connect() BEFORE startPolling,
+    // so a ws-hint fetch that never settled froze the runtime at one startup
+    // heartbeat — no polls, no claims, pane still "linked". The backstop must
+    // start before the dial it backs up.
+    const handlers = new Map<string, (event: unknown, ctx: any) => Promise<void>>()
+    const pi = {
+      registerCommand: () => {},
+      on: (event: string, handler: (event: unknown, ctx: any) => Promise<void>) => handlers.set(event, handler),
+      sendUserMessage: () => {},
+    }
+    threaRemote(pi as never)
+
+    const runtimeSessionId = "runtime_hung_dial"
+    __testing.setConfigForTesting({
+      baseUrl: "https://example.test",
+      workspaceId: "ws_123",
+      apiKey: "threa_bk_test",
+      pollMs: 10,
+      linkedSessions: {
+        [runtimeSessionId]: {
+          enabled: true,
+          instanceId: "pi-hung-dial",
+          runtimeSessionId,
+          rootStreamId: "stream_1",
+          activeStreamId: "stream_1",
+        },
+      },
+    })
+    const statuses: Array<string | undefined> = []
+    const ctx = {
+      sessionManager: { getSessionId: () => runtimeSessionId, getBranch: () => [] },
+      isIdle: () => true,
+      cwd: "/tmp",
+      modelRegistry: { getAvailable: () => [] },
+      ui: {
+        setStatus: (_key: string, text?: string) => void statuses.push(text),
+        notify: () => {},
+        theme: { fg: (_tone: string, text: string) => text },
+      },
+    }
+    const requests: string[] = []
+    const fetchSpy = spyOn(globalThis, "fetch").mockImplementation((async (input: string | URL | Request) => {
+      const url = String(input)
+      requests.push(url)
+      if (url.includes("/api/workspaces/ws_123/config")) return new Promise<Response>(() => {})
+      const data = url.endsWith("/bot-invocations/claim") ? null : {}
+      return new Response(JSON.stringify({ data }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      })
+    }) as typeof fetch)
+
+    try {
+      const started = handlers.get("session_start")!({ reason: "reload" }, ctx)
+      await Bun.sleep(30)
+
+      expect(requests.some((url) => url.endsWith("/bot-invocations/claim"))).toBe(true)
+      // The footer must not advertise "reloading…" forever while the dial hangs.
+      expect(statuses).toContain("Threa remote: linked")
+      await Promise.race([started, Promise.resolve()])
+    } finally {
+      fetchSpy.mockRestore()
+    }
+  })
+
   test("restores, renews, and completes the in-flight claim after the extension cache is cleared", async () => {
     const handlers = new Map<string, (event: unknown, ctx: any) => Promise<void>>()
     const pi = {
