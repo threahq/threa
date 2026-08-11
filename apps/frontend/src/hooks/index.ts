@@ -76,6 +76,7 @@ export {
 
 export {
   useScopeDraftPreview,
+  useThreadDraft,
   useBoardSubtopicDraftIndex,
   useBoardDraftPayloadScopes,
   useBoardScopeDraftIndex,

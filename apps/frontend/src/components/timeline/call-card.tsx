@@ -3,7 +3,7 @@ import { Link2, LogIn, MessageSquareReply, Phone, PhoneForwarded, Video } from "
 import { toast } from "sonner"
 import type { CallEndedEventPayload, CallStartedEventPayload, StreamEvent, ThreadSummary } from "@threa/types"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
-import { useActors } from "@/hooks"
+import { useActors, useThreadDraft } from "@/hooks"
 import { useActiveCall } from "@/stores/active-calls-store"
 import { useCallLaunch } from "@/components/call/call-launch-context"
 import { useCallPhase, useCallStreamId } from "@/components/call/call-store-hooks"
@@ -120,7 +120,12 @@ export function CallCard({ event, workspaceId, streamId, endedPatch, isThreadPar
   const inCallStreamId = useCallStreamId()
   // Shared thread affordance keyed on the card's event id: `replyUrl` opens the
   // real thread when one exists, else the draft panel to start the call chat.
-  const { threadHref, replyUrl } = useThreadAnchor(streamId, event.id, { threadId: payload?.threadId })
+  const { threadHref, replyUrl, effectiveThreadId } = useThreadAnchor(streamId, event.id, {
+    threadId: payload?.threadId,
+  })
+  // The viewer's unsent reply on this card's thread — shown on the slot before
+  // the thread stream exists too (keyed on the anchor until promotion).
+  const threadDraft = useThreadDraft(workspaceId, event.id, effectiveThreadId)
   // Known before the click, so the affordance says what will actually happen
   // instead of a Join that 409s and then asks.
   const onAnotherDevice = useCallOnAnotherDevice(workspaceId, payload?.callId)
@@ -275,6 +280,8 @@ export function CallCard({ event, workspaceId, streamId, endedPatch, isThreadPar
           threadHref={threadHref}
           summary={payload.threadSummary}
           workspaceId={workspaceId}
+          draft={threadDraft}
+          draftHref={replyUrl}
         />
       )}
       <TimelineCardQuickActions actions={actions} />

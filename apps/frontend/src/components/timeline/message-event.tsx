@@ -36,6 +36,7 @@ import {
   reactionShortcodes,
   focusAtEnd,
   findVisibleZoneEditor,
+  useThreadDraft,
   type MessageAgentActivity,
 } from "@/hooks"
 import { Quote, MessageSquareReply, Check, Layers } from "lucide-react"
@@ -997,10 +998,14 @@ function SentMessageEvent({
   // Shared thread affordance wiring, keyed on this message's canonical id.
   // `activity.threadStreamId` lets us link to the real thread immediately when
   // an agent response is in flight, before the slower stream:created event.
-  const { threadHref, replyUrl } = useThreadAnchor(streamId, payload.messageId, {
+  const { threadHref, replyUrl, effectiveThreadId } = useThreadAnchor(streamId, payload.messageId, {
     threadId,
     activityThreadStreamId: activity?.threadStreamId,
   })
+  // The viewer's unsent reply in this thread — indicated on the slot whether or
+  // not the thread stream exists yet (the draft is keyed on the anchor until
+  // promotion re-scopes it onto the thread).
+  const threadDraft = useThreadDraft(workspaceId, payload.messageId, effectiveThreadId)
 
   // Thread card shown below the message body when a thread exists with replies.
   // Users without a thread start one via the hover toolbar or context menu —
@@ -1017,6 +1022,8 @@ function SentMessageEvent({
       threadHref={threadHref}
       summary={payload.threadSummary}
       workspaceId={workspaceId}
+      draft={threadDraft}
+      draftHref={replyUrl}
     />
   ) : null
 

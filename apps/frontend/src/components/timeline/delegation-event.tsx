@@ -25,7 +25,7 @@ import {
 } from "@threa/types"
 import { delegationsApi } from "@/api"
 import { usePanel } from "@/contexts"
-import { useActors } from "@/hooks"
+import { useActors, useThreadDraft } from "@/hooks"
 import { agentOutcomeKeys } from "@/hooks/use-agent-outcomes"
 import { delegationKeys } from "@/hooks/use-stream-delegations"
 import {
@@ -140,7 +140,12 @@ export function DelegationEvent({ event, workspaceId, streamId, statusPatch, isT
   // Shared thread affordance, keyed on the card's canonical id (its event id) —
   // the anchor delegation completion threads on. `replyUrl` points at the real
   // thread when one exists, else the draft panel for starting one.
-  const { threadHref, replyUrl } = useThreadAnchor(streamId, event.id, { threadId: payload?.threadId })
+  const { threadHref, replyUrl, effectiveThreadId } = useThreadAnchor(streamId, event.id, {
+    threadId: payload?.threadId,
+  })
+  // The viewer's unsent reply on this card's thread — shown on the slot before
+  // the thread stream exists too (keyed on the anchor until promotion).
+  const threadDraft = useThreadDraft(workspaceId, event.id, effectiveThreadId)
   const [optimisticallyCancelled, setOptimisticallyCancelled] = useState(false)
   const [optimisticallyDone, setOptimisticallyDone] = useState(false)
   const [optimisticallyRequeued, setOptimisticallyRequeued] = useState(false)
@@ -442,6 +447,8 @@ export function DelegationEvent({ event, workspaceId, streamId, statusPatch, isT
           threadHref={threadHref}
           summary={payload.threadSummary}
           workspaceId={workspaceId}
+          draft={threadDraft}
+          draftHref={replyUrl}
         />
       )}
       <TimelineCardQuickActions actions={actions} />
