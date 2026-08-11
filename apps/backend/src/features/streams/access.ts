@@ -42,6 +42,28 @@ export async function resolveEffectiveAccessStream<T extends AccessResolvable>(
   return root ?? stream
 }
 
+export interface EffectiveAccessStreamFact<T extends AccessResolvable> {
+  target: T
+  root: Stream
+}
+
+export async function resolveEffectiveAccessStreams<T extends AccessResolvable & { workspaceId: string }>(
+  db: Querier,
+  workspaceId: string,
+  streams: readonly T[]
+): Promise<EffectiveAccessStreamFact<T>[]> {
+  if (streams.length === 0) return []
+  const rootIds = [...new Set(streams.map((stream) => stream.rootStreamId ?? stream.id))]
+  const roots = await StreamRepository.findByIdsInWorkspace(db, workspaceId, rootIds)
+  const rootsById = new Map(roots.map((root) => [root.id, root]))
+
+  return streams.flatMap((target) => {
+    if (target.workspaceId !== workspaceId) return []
+    const root = rootsById.get(target.rootStreamId ?? target.id)
+    return root ? [{ target, root }] : []
+  })
+}
+
 /**
  * Canonical "does this user have access to this stream?" check.
  *
