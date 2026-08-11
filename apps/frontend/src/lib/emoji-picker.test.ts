@@ -1,9 +1,13 @@
 import { describe, it, expect } from "vitest"
 import type { EmojiEntry } from "@threa/types"
 import {
+  EMOJI_LIST_MAX_HEIGHT,
+  EMOJI_LIST_MIN_HEIGHT,
   buildQuickEmojis,
   buildShortcodeIndex,
   filterBySearch,
+  fitEmojiListHeight,
+  recentSectionFits,
   stripShortcodeColons,
   indexToCoord,
   moveSelection,
@@ -326,5 +330,47 @@ describe("moveSelection", () => {
     it("at recent row 0, does not move", () => {
       expect(moveSelection(3, "ArrowUp", g)).toBe(3)
     })
+  })
+})
+
+describe("fitEmojiListHeight", () => {
+  it("uses the full list height before the popup is positioned", () => {
+    expect(fitEmojiListHeight(null, 0)).toBe(EMOJI_LIST_MAX_HEIGHT)
+  })
+
+  it("keeps the full list height when the space is roomier than the popup", () => {
+    expect(fitEmojiListHeight(800, 120)).toBe(EMOJI_LIST_MAX_HEIGHT)
+  })
+
+  it("shrinks the list so chrome plus list fit the available space", () => {
+    expect(fitEmojiListHeight(300, 120)).toBe(180)
+  })
+
+  it("grows chrome at the list's expense, never the popup's", () => {
+    const roomy = fitEmojiListHeight(300, 120)
+    const withMoreChrome = fitEmojiListHeight(300, 200)
+    expect(withMoreChrome).toBeLessThan(roomy)
+    expect(withMoreChrome + 200).toBeLessThanOrEqual(300)
+  })
+
+  it("stops shrinking at two rows rather than collapsing the grid", () => {
+    expect(fitEmojiListHeight(120, 200)).toBe(EMOJI_LIST_MIN_HEIGHT)
+    expect(fitEmojiListHeight(0, 0)).toBe(EMOJI_LIST_MIN_HEIGHT)
+  })
+})
+
+describe("recentSectionFits", () => {
+  it("keeps the section while the grid still gets its two rows", () => {
+    expect(recentSectionFits(300, 98, 30)).toBe(true)
+    expect(recentSectionFits(196, 98, 30)).toBe(true)
+  })
+
+  it("drops the section rather than let it squeeze the grid below two rows", () => {
+    expect(recentSectionFits(195, 98, 30)).toBe(false)
+    expect(recentSectionFits(120, 98, 30)).toBe(false)
+  })
+
+  it("keeps the section before the popup is positioned", () => {
+    expect(recentSectionFits(null, 98, 30)).toBe(true)
   })
 })
