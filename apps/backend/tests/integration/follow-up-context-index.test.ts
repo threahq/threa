@@ -68,6 +68,8 @@ describe("follow-up context index against the real schema", () => {
     const scheduled = await followUpService.schedule({
       workspaceId: wsId,
       streamId: channelId,
+      requestedStreamId: channelId,
+      initiatingUserId: ownerId,
       personaId: "persona_system_ariadne",
       sessionId: "session_1",
       sourceConversationId: null,

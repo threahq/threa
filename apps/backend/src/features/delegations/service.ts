@@ -11,7 +11,7 @@ import {
   type DelegationReopenReason,
   type DelegationStatusChangedEventPayload,
 } from "@threa/types"
-import { StreamEventRepository, StreamRepository } from "../streams"
+import { assertStreamWritable, StreamEventRepository, StreamRepository, type StreamWritePrincipal } from "../streams"
 import { StreamContextRepository, contextSnippet } from "../stream-context"
 import { hashCallbackToken } from "../agents"
 import { DELEGATION_CLAIM_TTL_SECONDS } from "./config"
@@ -73,7 +73,28 @@ export class DelegationService {
 
   /** Create an open delegation and its visible card row atomically. */
   async create(params: CreateDelegationParams): Promise<DelegatedTask> {
+    return this.createWithAuthority(params)
+  }
+
+  async createGenerated(
+    principal: StreamWritePrincipal,
+    params: CreateDelegationParams & { requestedStreamId: string }
+  ): Promise<DelegatedTask> {
+    return this.createWithAuthority(params, principal)
+  }
+
+  private async createWithAuthority(
+    params: CreateDelegationParams & { requestedStreamId?: string },
+    principal?: StreamWritePrincipal
+  ): Promise<DelegatedTask> {
     return withTransaction(this.pool, async (client) => {
+      if (principal) {
+        await assertStreamWritable(client, {
+          workspaceId: params.workspaceId,
+          streamId: params.requestedStreamId ?? params.streamId,
+          principal,
+        })
+      }
       const inserted = await DelegatedTaskRepository.insert(client, {
         id: delegationId(),
         workspaceId: params.workspaceId,

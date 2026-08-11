@@ -8,6 +8,8 @@ import { StreamEventRepository, StreamRepository } from "../streams"
 import { StreamContextRepository } from "../stream-context"
 import { hashCallbackToken } from "../agents"
 import * as dbModule from "../../db"
+import * as streamsModule from "../streams"
+import { HttpError } from "../../lib/errors"
 
 const NOW = new Date("2026-07-09T12:00:00.000Z")
 
@@ -60,6 +62,37 @@ function makeService() {
 
 describe("DelegationService.create", () => {
   afterEach(() => mock.restore())
+
+  for (const reason of ["archived", "system_stream", "not_member"] as const) {
+    it(`denies generated ${reason} before delegation/event writes`, async () => {
+      spyOn(dbModule, "withTransaction").mockImplementation(async (_pool: any, fn: any) => fn({} as PoolClient))
+      spyOn(streamsModule, "assertStreamWritable").mockRejectedValue(
+        new HttpError("Stream is read-only", { status: 403, code: "STREAM_READ_ONLY", details: { reason } })
+      )
+      const insert = spyOn(DelegatedTaskRepository, "insert").mockResolvedValue(fakeDelegation())
+      const insertEvent = spyOn(StreamEventRepository, "insert").mockResolvedValue({} as never)
+
+      await expect(
+        makeService().createGenerated(
+          { kind: "user", userId: "usr_1" },
+          {
+            workspaceId: "ws_1",
+            streamId: "stream_1",
+            requestedStreamId: "stream_1",
+            sessionId: "session_1",
+            sourceConversationId: null,
+            createdByKind: AuthorTypes.PERSONA,
+            createdById: "persona_1",
+            title: "blocked",
+            brief: "blocked",
+            contextRefs: [],
+          }
+        )
+      ).rejects.toMatchObject({ code: "STREAM_READ_ONLY", details: { reason } })
+      expect(insert).not.toHaveBeenCalled()
+      expect(insertEvent).not.toHaveBeenCalled()
+    })
+  }
 
   it("inserts the row and appends the delegation:created card row (+ outbox) in the same tx", async () => {
     stubTransaction()

@@ -1,5 +1,5 @@
 import { randomUUID } from "crypto"
-import type { Pool } from "pg"
+import type { Pool, PoolClient } from "pg"
 import type { Server } from "socket.io"
 import { AgentStepTypes, type AgentStepType, type AuthorType } from "@threa/types"
 import {
@@ -96,7 +96,7 @@ interface BotOpenStep {
 }
 
 interface BotInvocationTraceSinkDeps {
-  pool: Pool
+  pool: Pool | PoolClient
   io: Server
   workspaceId: string
   /** The invocation id — bot invocations reuse it as the agent session id. */

@@ -4,6 +4,8 @@ import type { CommandRegistry, CommandContext } from "./registry"
 import { withTransaction } from "../../db"
 import { logger } from "../../lib/logger"
 import { insertCommandCompletedEvent, insertCommandFailedEvent } from "./events"
+import { assertStreamWritable, StreamEventRepository } from "../streams"
+import { commandRequiresWritableAuthority } from "./availability"
 
 export interface CommandCompletedPayload {
   commandId: string
@@ -39,6 +41,36 @@ export function createCommandWorker(deps: CommandWorkerDeps): JobHandler<Command
         error: `Unknown command: ${commandName}`,
       })
       return
+    }
+
+    if (commandRequiresWritableAuthority(commandName)) {
+      const denied = await withTransaction(pool, async (client) => {
+        try {
+          await assertStreamWritable(client, {
+            workspaceId,
+            streamId,
+            principal: { kind: "user", userId },
+          })
+          return false
+        } catch (error) {
+          const denial = error as { code?: string; details?: { reason?: string } }
+          if (denial.code !== "STREAM_READ_ONLY" && denial.code !== "STREAM_NOT_FOUND") throw error
+          const alreadyTerminal = await StreamEventRepository.findCommandTerminal(client, streamId, commandId)
+          if (!alreadyTerminal) {
+            const reason =
+              denial.code === "STREAM_NOT_FOUND" ? "not_a_member" : (denial.details?.reason ?? "not_a_member")
+            await insertCommandFailedEvent(client, {
+              commandId,
+              workspaceId,
+              streamId,
+              userId,
+              error: `STREAM_READ_ONLY:${reason}`,
+            })
+          }
+          return true
+        }
+      })
+      if (denied) return
     }
 
     const ctx: CommandContext = {

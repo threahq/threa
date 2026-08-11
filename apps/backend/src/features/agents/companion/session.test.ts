@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, mock, spyOn } from "bun:test"
 import { APICallError } from "ai"
+import { HttpError } from "@threa/backend-common"
 import * as dbModule from "../../../db"
 import { OutboxRepository } from "../../../lib/outbox"
 import { StreamEventRepository } from "../../streams"
@@ -263,6 +264,24 @@ describe("withCompanionSession", () => {
     )
     expect(insertOutboxSpy).toHaveBeenCalledWith(expect.anything(), "agent_session:interrupted", expect.anything())
   })
+
+  it.each(["STREAM_READ_ONLY", "STREAM_NOT_FOUND"])(
+    "terminalizes authority denial %s without queue retry",
+    async (code) => {
+      const denial = new HttpError("denied", { status: code === "STREAM_NOT_FOUND" ? 404 : 403, code })
+      const { result, insertEventSpy, insertOutboxSpy } = await runFailingSession(
+        { attempt: 0, maxAttempts: 5 },
+        denial
+      )
+
+      expect(result).toEqual({ status: "failed", sessionId: "session_1", willRetry: false, retryable: false })
+      expect(insertEventSpy.mock.calls.filter(([, event]) => event.eventType === "agent_session:failed")).toHaveLength(
+        1
+      )
+      expect(insertEventSpy.mock.calls.some(([, event]) => event.eventType === "agent_session:interrupted")).toBe(false)
+      expect(insertOutboxSpy).toHaveBeenCalledWith(expect.anything(), "agent_session:failed", expect.anything())
+    }
+  )
 
   it("emits terminal agent_session:failed on the last attempt", async () => {
     const { result, insertEventSpy, insertOutboxSpy } = await runFailingSession({ attempt: 4, maxAttempts: 5 })

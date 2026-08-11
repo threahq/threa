@@ -8,6 +8,7 @@ import type {
 } from "./service"
 import { memoId } from "../../lib/id"
 import { logger } from "../../lib/logger"
+import type { StreamWritePrincipal } from "../streams"
 
 export class StubMemoService implements MemoServiceLike {
   async processBatch(workspaceId: string, streamId: string): Promise<ProcessResult> {
@@ -19,6 +20,10 @@ export class StubMemoService implements MemoServiceLike {
     logger.debug({ workspaceId: params.workspaceId, streamId: params.streamId }, "Stub memo service - save_memo no-op")
     if (params.sourceMessageIds.length === 0) return { ok: false, reason: "no_source_messages" }
     return { ok: true, memoId: memoId(), title: params.title, deduped: false }
+  }
+
+  async saveMemoGenerated(_principal: StreamWritePrincipal, params: SaveMemoParams): Promise<SaveMemoResult> {
+    return this.saveMemo(params)
   }
 
   async captureSessionReflection(params: CaptureSessionReflectionParams): Promise<CaptureSessionReflectionResult> {

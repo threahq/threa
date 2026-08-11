@@ -13,7 +13,12 @@ import { HttpError, isUniqueViolation } from "../../lib/errors"
 // the same — see service.ts there for the TDZ explanation).
 import "../workspaces"
 import { OutboxRepository } from "../../lib/outbox"
-import { assertStreamWritable, resolveLockedStreamAuthorities, StreamRepository } from "../streams"
+import {
+  assertStreamWritable,
+  createStreamReadOnlyError,
+  resolveLockedStreamAuthorities,
+  StreamRepository,
+} from "../streams"
 import { MessageRepository } from "../messaging"
 import { EventService } from "../messaging"
 import { scheduledMessageId, scheduledMessageQueueId } from "../../lib/id"
@@ -481,6 +486,27 @@ export class ScheduledMessagesService {
         return { fired: false, reschedule: true }
       }
 
+      try {
+        await assertStreamWritable(client, {
+          workspaceId: row.workspaceId,
+          streamId: row.streamId,
+          principal: { kind: "user", userId: row.userId },
+        })
+      } catch (error) {
+        const denial = error as { code?: string; details?: { reason?: string } }
+        if (denial.code !== "STREAM_READ_ONLY" && denial.code !== "STREAM_NOT_FOUND") throw error
+        const reason = denial.code === "STREAM_NOT_FOUND" ? "not_a_member" : denial.details?.reason
+        if (!reason) throw createStreamReadOnlyError("not_a_member")
+        await ScheduledMessagesRepository.markFailed(client, {
+          workspaceId: row.workspaceId,
+          id: row.id,
+          reason: `STREAM_READ_ONLY:${reason}`,
+        })
+        const view = await this.refetchView(client, row)
+        if (view) await this.publishUpsert(client, view, row.userId)
+        return { fired: false, reschedule: false }
+      }
+
       const claimed = await ScheduledMessagesRepository.tryStartSend(client, {
         workspaceId: params.workspaceId,
         id: params.scheduledMessageId,
@@ -530,29 +556,33 @@ export class ScheduledMessagesService {
       throw new Error(`finalizeSendInTx called with status=${row.status}`)
     }
 
-    const message = await this.eventService.createMessage({
-      workspaceId: row.workspaceId,
-      streamId: row.streamId,
-      authorId: row.userId,
-      authorType: AuthorTypes.USER,
-      contentJson: row.contentJson,
-      contentMarkdown: row.contentMarkdown,
-      attachmentIds: row.attachmentIds.length > 0 ? row.attachmentIds : undefined,
-      metadata: row.metadata ?? undefined,
-      // Forward the armed "Reply in conversation" directive so the delivered
-      // message files into its conversation synchronously, exactly as a live
-      // send would. Null → let the async extractor infer (INV-62). The assigner
-      // re-validates access/root at fire time (cross-stream within one root is
-      // allowed); a since-deleted or cross-root conversation throws, and fire()'s
-      // catch marks the row `failed` and upserts it so the user sees it, rather
-      // than silently dropping into the wrong place.
-      conversation: row.conversationDirective ?? undefined,
-      // Use the scheduled message id as the idempotency key. If the same
-      // scheduled row gets re-fired after an interrupted finalize (process
-      // restart between createMessage and markSent), the second attempt
-      // returns the existing message instead of duplicating.
-      clientMessageId: `scheduled:${row.id}`,
-    })
+    const { message } = await this.eventService.createMessageForPrincipalInTransaction(
+      client,
+      { kind: "user", userId: row.userId },
+      {
+        workspaceId: row.workspaceId,
+        streamId: row.streamId,
+        authorId: row.userId,
+        authorType: AuthorTypes.USER,
+        contentJson: row.contentJson,
+        contentMarkdown: row.contentMarkdown,
+        attachmentIds: row.attachmentIds.length > 0 ? row.attachmentIds : undefined,
+        metadata: row.metadata ?? undefined,
+        // Forward the armed "Reply in conversation" directive so the delivered
+        // message files into its conversation synchronously, exactly as a live
+        // send would. Null → let the async extractor infer (INV-62). The assigner
+        // re-validates access/root at fire time (cross-stream within one root is
+        // allowed); a since-deleted or cross-root conversation throws, and fire()'s
+        // catch marks the row `failed` and upserts it so the user sees it, rather
+        // than silently dropping into the wrong place.
+        conversation: row.conversationDirective ?? undefined,
+        // Use the scheduled message id as the idempotency key. If the same
+        // scheduled row gets re-fired after an interrupted finalize (process
+        // restart between createMessage and markSent), the second attempt
+        // returns the existing message instead of duplicating.
+        clientMessageId: `scheduled:${row.id}`,
+      }
+    )
 
     const sent = await ScheduledMessagesRepository.markSent(client, {
       workspaceId: row.workspaceId,

@@ -416,7 +416,7 @@ export async function startServer(): Promise<ServerInstance> {
 
   const agentSessionMetrics = new AgentSessionMetricsCollector(pool)
 
-  const createMessage = async (params: {
+  const buildMessageParams = async (params: {
     workspaceId: string
     streamId: string
     authorId: string
@@ -465,7 +465,7 @@ export async function startServer(): Promise<ServerInstance> {
     // paste resends and recipients without source-stream access can't resolve
     // the download URL for an Ariadne resurfacing.
     const attachmentIds = collectAttachmentReferenceIds(contentJson)
-    return eventService.createMessage({
+    return {
       workspaceId: params.workspaceId,
       streamId: params.streamId,
       authorId: params.authorId,
@@ -478,9 +478,18 @@ export async function startServer(): Promise<ServerInstance> {
       clientMessageId: params.clientMessageId,
       accessibleStreamIds: params.accessibleStreamIds,
       conversation: params.conversation,
-    })
+    }
   }
+  const createMessage = async (params: Parameters<typeof buildMessageParams>[0] & { initiatingUserId: string }) =>
+    eventService.createGeneratedMessage(
+      { kind: "user", userId: params.initiatingUserId },
+      await buildMessageParams(params)
+    )
+  const createInternalMessage = async (params: Parameters<typeof buildMessageParams>[0]) =>
+    eventService.createMessage(await buildMessageParams(params))
+
   const editMessage = async (params: {
+    initiatingUserId: string
     workspaceId: string
     streamId: string
     messageId: string
@@ -509,58 +518,85 @@ export async function startServer(): Promise<ServerInstance> {
     // sync with the new content (INV-7). Without this, an agent edit that
     // adds or removes an `attachment:` link leaves stale rows behind.
     const attachmentIds = collectAttachmentReferenceIds(contentJson)
-    return eventService.editMessageInternal({
-      workspaceId: params.workspaceId,
-      streamId: params.streamId,
-      messageId: params.messageId,
-      contentJson,
-      contentMarkdown,
-      actorId: params.actorId,
-      actorType: "persona",
-      attachmentIds: attachmentIds.length > 0 ? attachmentIds : undefined,
-      accessibleStreamIds: params.accessibleStreamIds,
+    return eventService.editGeneratedMessage(
+      { kind: "user", userId: params.initiatingUserId },
+      {
+        workspaceId: params.workspaceId,
+        streamId: params.streamId,
+        messageId: params.messageId,
+        contentJson,
+        contentMarkdown,
+        actorId: params.actorId,
+        actorType: "persona",
+        attachmentIds: attachmentIds.length > 0 ? attachmentIds : undefined,
+        accessibleStreamIds: params.accessibleStreamIds,
+      }
+    )
+  }
+  const deleteMessage = (params: {
+    initiatingUserId: string
+    workspaceId: string
+    streamId: string
+    messageId: string
+    actorId: string
+  }) =>
+    eventService.deleteGeneratedMessage(
+      { kind: "user", userId: params.initiatingUserId },
+      {
+        workspaceId: params.workspaceId,
+        streamId: params.streamId,
+        messageId: params.messageId,
+        actorId: params.actorId,
+        actorType: "persona",
+      }
+    )
+  const addReaction = (params: {
+    initiatingUserId: string
+    workspaceId: string
+    streamId: string
+    messageId: string
+    emoji: string
+    actorId: string
+  }) =>
+    eventService.addReactionForPrincipal(
+      { kind: "user", userId: params.initiatingUserId },
+      {
+        workspaceId: params.workspaceId,
+        streamId: params.streamId,
+        messageId: params.messageId,
+        emoji: params.emoji,
+        userId: params.actorId,
+        actorType: "persona",
+      }
+    )
+  const removeReaction = (params: {
+    initiatingUserId: string
+    workspaceId: string
+    streamId: string
+    messageId: string
+    emoji: string
+    actorId: string
+  }) =>
+    eventService.removeReactionForPrincipal(
+      { kind: "user", userId: params.initiatingUserId },
+      {
+        workspaceId: params.workspaceId,
+        streamId: params.streamId,
+        messageId: params.messageId,
+        emoji: params.emoji,
+        userId: params.actorId,
+        actorType: "persona",
+      }
+    )
+  const createThread = (
+    params: Parameters<typeof streamService.createThreadInternal>[0] & { initiatingUserId: string }
+  ) => {
+    const { initiatingUserId, ...threadParams } = params
+    return streamService.createThread({
+      ...threadParams,
+      principal: { kind: "user", userId: initiatingUserId },
     })
   }
-  const deleteMessage = (params: { workspaceId: string; streamId: string; messageId: string; actorId: string }) =>
-    eventService.deleteMessageInternal({
-      workspaceId: params.workspaceId,
-      streamId: params.streamId,
-      messageId: params.messageId,
-      actorId: params.actorId,
-      actorType: "persona",
-    })
-  const addReaction = (params: {
-    workspaceId: string
-    streamId: string
-    messageId: string
-    emoji: string
-    actorId: string
-  }) =>
-    eventService.addReactionInternal({
-      workspaceId: params.workspaceId,
-      streamId: params.streamId,
-      messageId: params.messageId,
-      emoji: params.emoji,
-      userId: params.actorId,
-      actorType: "persona",
-    })
-  const removeReaction = (params: {
-    workspaceId: string
-    streamId: string
-    messageId: string
-    emoji: string
-    actorId: string
-  }) =>
-    eventService.removeReactionInternal({
-      workspaceId: params.workspaceId,
-      streamId: params.streamId,
-      messageId: params.messageId,
-      emoji: params.emoji,
-      userId: params.actorId,
-      actorType: "persona",
-    })
-  const createThread = (params: Parameters<typeof streamService.createThreadInternal>[0]) =>
-    streamService.createThreadInternal(params)
 
   const activityService = new ActivityService({ pool })
   const syncService = new SyncService({ pool })
@@ -635,7 +671,7 @@ export async function startServer(): Promise<ServerInstance> {
       },
     },
   })
-  const systemMessageService = new SystemMessageService({ pool, createMessage })
+  const systemMessageService = new SystemMessageService({ pool, createMessage: createInternalMessage })
 
   const commandRegistry = new CommandRegistry()
   commandRegistry.register(new InviteCommand({ pool, streamService }))
@@ -943,6 +979,7 @@ export async function startServer(): Promise<ServerInstance> {
     removeReaction,
     createThread,
     scheduleFollowUp: async ({
+      initiatingUserId,
       workspaceId,
       streamId,
       personaId,
@@ -954,6 +991,8 @@ export async function startServer(): Promise<ServerInstance> {
       const result = await agentFollowUpService.schedule({
         workspaceId,
         streamId,
+        requestedStreamId: streamId,
+        initiatingUserId,
         personaId,
         sessionId,
         sourceConversationId,
@@ -978,8 +1017,16 @@ export async function startServer(): Promise<ServerInstance> {
       const cancelled = await agentFollowUpService.cancel({ workspaceId, streamId, id: followUpId })
       return cancelled ? { ok: true, followUpId: cancelled.id } : { ok: false }
     },
-    updateFollowUp: async ({ workspaceId, streamId, followUpId, note, scheduledFor }) => {
-      const result = await agentFollowUpService.update({ workspaceId, streamId, id: followUpId, note, scheduledFor })
+    updateFollowUp: async ({ initiatingUserId, workspaceId, streamId, followUpId, note, scheduledFor }) => {
+      const result = await agentFollowUpService.update({
+        workspaceId,
+        streamId,
+        requestedStreamId: streamId,
+        initiatingUserId,
+        id: followUpId,
+        note,
+        scheduledFor,
+      })
       return result.ok
         ? {
             ok: true,
@@ -990,8 +1037,17 @@ export async function startServer(): Promise<ServerInstance> {
         : { ok: false, reason: result.reason }
     },
     loadFollowUp: ({ workspaceId, followUpId }) => agentFollowUpService.getById({ workspaceId, followUpId }),
-    updateBrief: async ({ workspaceId, streamId, personaId, content, reason, expectedVersion }) => {
-      const result = await streamBriefService.updateInternal({
+    updateBrief: async ({
+      initiatingUserId,
+      workspaceId,
+      streamId,
+      requestedStreamId,
+      personaId,
+      content,
+      reason,
+      expectedVersion,
+    }) => {
+      const result = await streamBriefService.updateGenerated({
         workspaceId,
         streamId,
         content,
@@ -999,6 +1055,8 @@ export async function startServer(): Promise<ServerInstance> {
         updatedByKind: AuthorTypes.PERSONA,
         updatedById: personaId,
         reason,
+        principal: { kind: "user", userId: initiatingUserId },
+        requestedStreamId,
       })
       return result.outcome === "updated"
         ? { ok: true, version: result.brief.version }
@@ -1010,6 +1068,7 @@ export async function startServer(): Promise<ServerInstance> {
           }
     },
     delegateTask: async ({
+      initiatingUserId,
       workspaceId,
       streamId,
       personaId,
@@ -1028,20 +1087,25 @@ export async function startServer(): Promise<ServerInstance> {
         accessibleStreamIds,
         refs: contextRefs,
       })
-      const delegation = await delegationService.create({
-        workspaceId,
-        streamId,
-        sessionId,
-        sourceConversationId,
-        createdByKind: AuthorTypes.PERSONA,
-        createdById: personaId,
-        title,
-        brief,
-        contextRefs: accepted,
-      })
+      const delegation = await delegationService.createGenerated(
+        { kind: "user", userId: initiatingUserId },
+        {
+          workspaceId,
+          streamId,
+          sessionId,
+          sourceConversationId,
+          createdByKind: AuthorTypes.PERSONA,
+          createdById: personaId,
+          title,
+          brief,
+          contextRefs: accepted,
+          requestedStreamId: streamId,
+        }
+      )
       return { ok: true, delegationId: delegation.id, droppedRefs: dropped }
     },
     saveMemo: async ({
+      initiatingUserId,
       workspaceId,
       streamId,
       sessionId,
@@ -1055,20 +1119,23 @@ export async function startServer(): Promise<ServerInstance> {
       invokingUserId,
       scope,
     }) => {
-      const result = await memoService.saveMemo({
-        workspaceId,
-        streamId,
-        sessionId,
-        sourceStreamIds,
-        title,
-        abstract,
-        keyPoints,
-        tags,
-        knowledgeType,
-        sourceMessageIds,
-        invokingUserId,
-        scope,
-      })
+      const result = await memoService.saveMemoGenerated(
+        { kind: "user", userId: initiatingUserId },
+        {
+          workspaceId,
+          streamId,
+          sessionId,
+          sourceStreamIds,
+          title,
+          abstract,
+          keyPoints,
+          tags,
+          knowledgeType,
+          sourceMessageIds,
+          invokingUserId,
+          scope,
+        }
+      )
       return result.ok
         ? { ok: true, memoId: result.memoId, title: result.title, deduped: result.deduped }
         : { ok: false }

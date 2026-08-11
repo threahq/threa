@@ -9,10 +9,11 @@ import {
   type DynamicNamingEvaluationInput,
 } from "../../src/features/dynamic-naming"
 import { MessageRepository } from "../../src/features/messaging"
-import { StreamRepository } from "../../src/features/streams"
+import { StreamMemberRepository, StreamRepository } from "../../src/features/streams"
+import { WorkspaceRepository } from "../../src/features/workspaces"
 import { MessageFormatter } from "../../src/lib/ai/message-formatter"
 import { conversationId, messageId, streamId, userId, workspaceId } from "../../src/lib/id"
-import { setupTestDatabase, testMessageContent } from "./setup"
+import { addTestMember, setupTestDatabase, testMessageContent } from "./setup"
 
 interface Fixture {
   workspaceId: string
@@ -38,10 +39,18 @@ describe("dynamic conversation naming", () => {
     streamType?: "channel" | "scratchpad"
   }): Promise<Fixture> {
     const ws = workspaceId()
-    const user = userId()
+    const workosUserId = userId()
     const stream = streamId()
     const conversation = conversationId()
+    let user = ""
     await withTransaction(pool, async (client) => {
+      await WorkspaceRepository.insert(client, {
+        id: ws,
+        name: "Conversation Naming Workspace",
+        slug: `conversation-naming-${ws}`,
+        createdBy: workosUserId,
+      })
+      user = (await addTestMember(client, ws, workosUserId)).id
       await StreamRepository.insert(client, {
         id: stream,
         workspaceId: ws,
@@ -51,6 +60,7 @@ describe("dynamic conversation naming", () => {
         companionMode: "off",
         createdBy: user,
       })
+      await StreamMemberRepository.insert(client, stream, user)
       await ConversationRepository.insert(client, {
         id: conversation,
         streamId: stream,
@@ -94,7 +104,12 @@ describe("dynamic conversation naming", () => {
     })
     expect(
       await naming.evaluate(
-        { workspaceId: item.workspaceId, targetKind: "conversation", targetId: item.conversationId },
+        {
+          workspaceId: item.workspaceId,
+          targetKind: "conversation",
+          targetId: item.conversationId,
+          initiatingUserId: item.userId,
+        },
         "job_refine"
       )
     ).toMatchObject({ status: "evaluated", action: "rename" })
@@ -114,7 +129,12 @@ describe("dynamic conversation naming", () => {
       return { action: "rename", title: "Deployment rollback" }
     })
     await naming.evaluate(
-      { workspaceId: item.workspaceId, targetKind: "conversation", targetId: item.conversationId },
+      {
+        workspaceId: item.workspaceId,
+        targetKind: "conversation",
+        targetId: item.conversationId,
+        initiatingUserId: item.userId,
+      },
       "job_opening"
     )
     expect(checkpoint).toBe(1)
@@ -129,7 +149,12 @@ describe("dynamic conversation naming", () => {
     })
     expect(
       await naming.evaluate(
-        { workspaceId: item.workspaceId, targetKind: "conversation", targetId: item.conversationId },
+        {
+          workspaceId: item.workspaceId,
+          targetKind: "conversation",
+          targetId: item.conversationId,
+          initiatingUserId: item.userId,
+        },
         "job_scratchpad"
       )
     ).toEqual({ status: "protected" })
@@ -154,6 +179,7 @@ describe("dynamic conversation naming", () => {
       workspaceId: item.workspaceId,
       targetKind: "conversation" as const,
       targetId: item.conversationId,
+      initiatingUserId: item.userId,
     }
     await expect(naming.recordStructuralEvent(ref, "9050")).rejects.toThrow("queue unavailable")
     await expect(naming.recordStructuralEvent(ref, "9050")).resolves.toBe(true)
@@ -167,7 +193,12 @@ describe("dynamic conversation naming", () => {
       checkpoints.push({ checkpoint: input.checkpoint, forced: input.forced })
       return { action: "keep" }
     })
-    const ref = { workspaceId: item.workspaceId, targetKind: "conversation" as const, targetId: item.conversationId }
+    const ref = {
+      workspaceId: item.workspaceId,
+      targetKind: "conversation" as const,
+      targetId: item.conversationId,
+      initiatingUserId: item.userId,
+    }
     await naming.evaluate(ref, "job_cp3")
     await withTransaction(pool, async (client) => {
       for (let sequence = 4; sequence <= 6; sequence += 1) {
@@ -196,7 +227,12 @@ describe("dynamic conversation naming", () => {
 
   test("membership structure changing during AI invalidates the old decision", async () => {
     const item = await fixture({ count: 3, title: "Deployment issue" })
-    const ref = { workspaceId: item.workspaceId, targetKind: "conversation" as const, targetId: item.conversationId }
+    const ref = {
+      workspaceId: item.workspaceId,
+      targetKind: "conversation" as const,
+      targetId: item.conversationId,
+      initiatingUserId: item.userId,
+    }
     let calls = 0
     let naming: DynamicNamingService
     naming = service(async () => {
@@ -225,7 +261,12 @@ describe("dynamic conversation naming", () => {
     })
     expect(
       await naming.evaluate(
-        { workspaceId: item.workspaceId, targetKind: "conversation", targetId: item.conversationId },
+        {
+          workspaceId: item.workspaceId,
+          targetKind: "conversation",
+          targetId: item.conversationId,
+          initiatingUserId: item.userId,
+        },
         "job_manual"
       )
     ).toEqual({ status: "stale" })

@@ -1,6 +1,7 @@
 import type { Pool } from "pg"
 import { TitleSources } from "@threa/types"
 import { withTransaction } from "../../db"
+import { assertStreamWritable } from "../streams"
 import { dynamicNamingClaimsTotal, dynamicNamingDecisionsTotal } from "../../lib/observability/metrics"
 import {
   DYNAMIC_NAMING_CLAIM_LEASE_SECONDS,
@@ -22,6 +23,7 @@ interface TargetRef {
   workspaceId: string
   targetKind: DynamicNamingTargetKind
   targetId: string
+  initiatingUserId?: string
 }
 
 export type DynamicNamingEvaluationResult =
@@ -50,8 +52,15 @@ export class DynamicNamingService {
 
   async recordStructuralEvent(ref: TargetRef, eventId: string): Promise<boolean> {
     const adapter = this.adapters.get(ref.targetKind)
-    if (!adapter) return false
+    if (!adapter || !ref.initiatingUserId) return false
     const target = await withTransaction(this.pool, async (client) => {
+      const authorityStreamId = await adapter.resolveAuthorityStreamId(client, ref)
+      if (!authorityStreamId) return null
+      await assertStreamWritable(client, {
+        workspaceId: ref.workspaceId,
+        streamId: authorityStreamId,
+        principal: { kind: "user", userId: ref.initiatingUserId! },
+      })
       const snapshot = await adapter.lockAndValidate(client, ref)
       if (!snapshot) return null
       const ensured = await DynamicNamingStateRepository.ensure(client, {
@@ -65,6 +74,10 @@ export class DynamicNamingService {
       // must still schedule while the structural frontier remains dirty; only a
       // duplicate already evaluated is a true no-op.
       return state.structureVersion > state.lastEvaluatedStructureVersion ? snapshot : null
+    }).catch((error: unknown) => {
+      const denial = error as { code?: string }
+      if (denial.code === "STREAM_READ_ONLY" || denial.code === "STREAM_NOT_FOUND") return null
+      throw error
     })
     if (!target) return false
     await this.scheduler.schedule(ref, this.quietDeadline(target) ?? this.now())
@@ -74,8 +87,19 @@ export class DynamicNamingService {
   async evaluate(ref: TargetRef, ownerId: string): Promise<DynamicNamingEvaluationResult> {
     const adapter = this.adapters.get(ref.targetKind)
     if (!adapter) return { status: "protected" }
+    if (!ref.initiatingUserId) {
+      await DynamicNamingStateRepository.releaseOwnedClaim(this.pool, ownerId)
+      return { status: "protected" }
+    }
 
     const prepared = await withTransaction(this.pool, async (client) => {
+      const authorityStreamId = await adapter.resolveAuthorityStreamId(client, ref)
+      if (!authorityStreamId) return { status: "protected" as const }
+      await assertStreamWritable(client, {
+        workspaceId: ref.workspaceId,
+        streamId: authorityStreamId,
+        principal: { kind: "user", userId: ref.initiatingUserId! },
+      })
       const target = await adapter.lockAndValidate(client, ref)
       if (!target) return { status: "protected" as const }
       const quietDeadline = this.quietDeadline(target)
@@ -111,6 +135,12 @@ export class DynamicNamingService {
         }
       }
       return { status: "claimed" as const, target, claim, eligibility }
+    }).catch((error: unknown) => {
+      const denial = error as { code?: string }
+      if (denial.code === "STREAM_READ_ONLY" || denial.code === "STREAM_NOT_FOUND") {
+        return { status: "protected" as const }
+      }
+      throw error
     })
 
     if (prepared.status === "protected") {
@@ -129,6 +159,25 @@ export class DynamicNamingService {
       checkpoint: String(prepared.eligibility.checkpoint),
     })
 
+    const preProviderAuthorized = await withTransaction(this.pool, async (client) => {
+      const authorityStreamId = await adapter.resolveAuthorityStreamId(client, ref)
+      if (!authorityStreamId) return false
+      await assertStreamWritable(client, {
+        workspaceId: ref.workspaceId,
+        streamId: authorityStreamId,
+        principal: { kind: "user", userId: ref.initiatingUserId! },
+      })
+      return true
+    }).catch((error: unknown) => {
+      const denial = error as { code?: string }
+      if (denial.code === "STREAM_READ_ONLY" || denial.code === "STREAM_NOT_FOUND") return false
+      throw error
+    })
+    if (!preProviderAuthorized) {
+      await this.release(ref, prepared.claim.claimToken!, prepared.claim.version)
+      return { status: "protected" }
+    }
+
     const context = await adapter.loadContext(prepared.target)
     if (!context) {
       await this.release(ref, prepared.claim.claimToken!, prepared.claim.version)
@@ -144,6 +193,25 @@ export class DynamicNamingService {
     if (!renewed) {
       await this.scheduler.schedule(ref, this.now())
       return { status: "stale" }
+    }
+
+    const providerAuthorized = await withTransaction(this.pool, async (client) => {
+      const authorityStreamId = await adapter.resolveAuthorityStreamId(client, ref)
+      if (!authorityStreamId) return false
+      await assertStreamWritable(client, {
+        workspaceId: ref.workspaceId,
+        streamId: authorityStreamId,
+        principal: { kind: "user", userId: ref.initiatingUserId! },
+      })
+      return true
+    }).catch((error: unknown) => {
+      const denial = error as { code?: string }
+      if (denial.code === "STREAM_READ_ONLY" || denial.code === "STREAM_NOT_FOUND") return false
+      throw error
+    })
+    if (!providerAuthorized) {
+      await this.release(ref, renewed.claimToken!, renewed.version)
+      return { status: "protected" }
     }
 
     let decision
@@ -174,6 +242,13 @@ export class DynamicNamingService {
     }
 
     const applied = await withTransaction(this.pool, async (client) => {
+      const authorityStreamId = await adapter.resolveAuthorityStreamId(client, ref)
+      if (!authorityStreamId) return null
+      await assertStreamWritable(client, {
+        workspaceId: ref.workspaceId,
+        streamId: authorityStreamId,
+        principal: { kind: "user", userId: ref.initiatingUserId! },
+      })
       const target = await adapter.lockAndValidate(client, {
         ...ref,
         expectedTitleRevision: prepared.target.titleRevision,
@@ -202,6 +277,11 @@ export class DynamicNamingService {
         if (revision === null) throw new Error("Dynamic naming title CAS failed after state claim was consumed")
       }
       return { state: result.state, target, revision }
+    }).catch(async (error: unknown) => {
+      const denial = error as { code?: string }
+      if (denial.code !== "STREAM_READ_ONLY" && denial.code !== "STREAM_NOT_FOUND") throw error
+      await this.release(ref, renewed.claimToken!, renewed.version)
+      return null
     })
 
     if (!applied) {

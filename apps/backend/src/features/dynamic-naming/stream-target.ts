@@ -31,6 +31,10 @@ export class DynamicNamingStreamTarget implements DynamicNamingTargetAdapter {
     private readonly messageFormatter: MessageFormatter
   ) {}
 
+  async resolveAuthorityStreamId(_client: PoolClient, params: DynamicNamingTargetLockParams): Promise<string | null> {
+    return params.targetKind === "stream" ? params.targetId : null
+  }
+
   async lockAndValidate(
     client: PoolClient,
     params: DynamicNamingTargetLockParams

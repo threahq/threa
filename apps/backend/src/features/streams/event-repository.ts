@@ -350,6 +350,18 @@ export const StreamEventRepository = {
     return result.rows[0] ? mapRowToEvent(result.rows[0]) : null
   },
 
+  async findCommandTerminal(db: Querier, streamId: string, commandId: string): Promise<StreamEvent | null> {
+    const result = await db.query<StreamEventRow>(sql`
+      SELECT id, stream_id, sequence, broadcast_sequence, event_type, payload, actor_id, actor_type, created_at
+      FROM stream_events
+      WHERE stream_id = ${streamId}
+        AND event_type IN ('command_completed', 'command_failed')
+        AND payload->>'commandId' = ${commandId}
+      LIMIT 1
+    `)
+    return result.rows[0] ? mapRowToEvent(result.rows[0]) : null
+  },
+
   /**
    * The first message row (`message_created` / `companion_response`) created
    * at or after `date`, by creation time — the anchor for a jump-to-date.

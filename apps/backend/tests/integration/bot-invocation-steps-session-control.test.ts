@@ -6,7 +6,7 @@ import { setupTestDatabase } from "./setup"
 import { createBotRuntimeWriteOps } from "../../src/features/public-api"
 import { BotInvocationRepository } from "../../src/features/bot-runtimes"
 import type { BotRuntimeService } from "../../src/features/bot-runtimes"
-import type { BotChannelService } from "../../src/features/api-keys"
+import { BotChannelAccessRepository, type BotChannelService } from "../../src/features/api-keys"
 import { AgentSessionRepository } from "../../src/features/agents"
 import { streamId, workspaceId, userId } from "../../src/lib/id"
 
@@ -27,6 +27,30 @@ describe("recordSteps on a session-control claim", () => {
 
   beforeAll(async () => {
     pool = await setupTestDatabase()
+    // The happy-path case runs the production authority gate, which locks the
+    // stream and requires a real grant for the bot principal — so the rows it
+    // reads have to exist, not just the invocation.
+    await pool.query("INSERT INTO workspaces (id, name, slug, created_by) VALUES ($1, 'Steps guard', $2, $3)", [
+      ws,
+      `steps-guard-${ws.slice(-8)}`,
+      author,
+    ])
+    await pool.query(
+      "INSERT INTO streams (id, workspace_id, type, visibility, created_by) VALUES ($1,$2,'channel','private',$3)",
+      [stream, ws, author]
+    )
+    await pool.query("INSERT INTO bots (id, workspace_id, api_key_id, name) VALUES ($1,$2,$3,'Steps guard bot')", [
+      botId,
+      ws,
+      `key_${botId}`,
+    ])
+    await BotChannelAccessRepository.grantAccess(pool, {
+      id: `bca_${botId}`,
+      workspaceId: ws,
+      botId,
+      streamId: stream,
+      grantedBy: author,
+    })
   })
 
   afterAll(async () => {
@@ -36,17 +60,26 @@ describe("recordSteps on a session-control claim", () => {
       [stream]
     )
     await pool.query("DELETE FROM agent_sessions WHERE stream_id = $1", [stream])
+    await pool.query("DELETE FROM bot_channel_access WHERE workspace_id = $1", [ws])
+    await pool.query("DELETE FROM bots WHERE workspace_id = $1", [ws])
+    await pool.query("DELETE FROM streams WHERE workspace_id = $1", [ws])
+    await pool.query("DELETE FROM workspaces WHERE id = $1", [ws])
     await pool.end()
   })
 
   function ops() {
-    // Only `findActiveClaim` runs before the guard under test; the rest of the
-    // dependency surface is unreachable in these cases (the happy path's
-    // presence touch swallows its own errors by contract).
     return createBotRuntimeWriteOps({
       pool,
       io: { to: () => ({ emit: () => {} }) } as unknown as Server,
       botRuntimeService: {
+        findInvocationForCallback: (
+          db: Parameters<typeof BotInvocationRepository.findForCallback>[0],
+          params: Parameters<typeof BotInvocationRepository.findForCallback>[1]
+        ) => BotInvocationRepository.findForCallback(db, params),
+        findActiveClaimForUpdate: (
+          db: Parameters<typeof BotInvocationRepository.findActiveClaimForUpdate>[0],
+          params: Parameters<typeof BotInvocationRepository.findActiveClaimForUpdate>[1]
+        ) => BotInvocationRepository.findActiveClaimForUpdate(db, params),
         findActiveClaim: (params: Parameters<typeof BotInvocationRepository.findActiveClaim>[1]) =>
           BotInvocationRepository.findActiveClaim(pool, params),
         findPresenceByInstance: async () => null,

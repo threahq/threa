@@ -5,6 +5,7 @@ import * as db from "../../db"
 import * as agents from "../agents"
 import { AgentSessionRepository, ConversationSummaryRepository, hashCallbackToken } from "../agents"
 import { StreamRepository, StreamEventRepository, StreamPoliciesRepository } from "../streams"
+import * as streamsModule from "../streams"
 import { OutboxRepository } from "../../lib/outbox"
 import { E2eStreamActorsRepository, E2eStreamsRepository, StreamE2eKeyWrapsRepository } from "../e2e-streams"
 import type { E2eStream, E2eStreamActor, StreamE2eKeyWrap } from "../e2e-streams"
@@ -74,10 +75,12 @@ const FAKE_PREFERENCES = { getPreferences: async () => ({}) } as unknown as User
 
 /** Stub everything up to the session insert; returns the sentinel tx withTransaction runs on plus the claim-lifecycle spies. */
 function arrangeClaim(invocation: EnclaveInvocation = INVOCATION) {
-  const claimNext = spyOn(EnclaveInvocationsRepository, "claimNext")
+  const findNextClaimable = spyOn(EnclaveInvocationsRepository, "findNextClaimable")
     .mockResolvedValueOnce(invocation)
     .mockResolvedValue(null)
+  const claimNext = spyOn(EnclaveInvocationsRepository, "claimNext").mockResolvedValue(invocation)
   const completeClaimed = spyOn(EnclaveInvocationsRepository, "completeClaimed").mockResolvedValue(undefined)
+  spyOn(EnclaveInvocationsRepository, "failClaimed").mockResolvedValue(undefined)
   const attachSession = spyOn(EnclaveInvocationsRepository, "attachSession").mockResolvedValue(undefined)
   spyOn(EnclaveInvocationsRepository, "parkExhausted").mockResolvedValue([])
   spyOn(E2eStreamsRepository, "getByStreamId").mockResolvedValue(E2E)
@@ -91,13 +94,14 @@ function arrangeClaim(invocation: EnclaveInvocation = INVOCATION) {
   spyOn(ConversationSummaryRepository, "findByStreamAndPersona").mockResolvedValue(null)
   spyOn(StreamRepository, "findById").mockResolvedValue({ id: "stream_1", workspaceId: "ws_1" } as never)
   spyOn(StreamPoliciesRepository, "getToolPolicy").mockResolvedValue(null)
+  spyOn(streamsModule, "assertStreamWritable").mockResolvedValue({} as never)
   spyOn(UserRepository, "findByIds").mockResolvedValue([{ name: "Kris" }] as never)
   spyOn(agents, "buildEnclaveSystemPrompt").mockResolvedValue({ stable: "You are Ariadne.", volatile: "" })
 
   const tx = { __tx: true } as never
   spyOn(db, "withTransaction").mockImplementation((async (_pool: unknown, fn: (client: never) => unknown) =>
     fn(tx)) as never)
-  return { tx, claimNext, completeClaimed, attachSession }
+  return { tx, findNextClaimable, claimNext, completeClaimed, attachSession }
 }
 
 function service() {
@@ -394,7 +398,10 @@ describe("EnclaveClaimService.claimTurn", () => {
 
   it("returns null without claiming when the queue is empty", async () => {
     spyOn(EnclaveInvocationsRepository, "parkExhausted").mockResolvedValue([])
-    spyOn(EnclaveInvocationsRepository, "claimNext").mockResolvedValue(null)
+    spyOn(EnclaveInvocationsRepository, "findNextClaimable").mockResolvedValue(null)
+    const tx = { __tx: true } as never
+    spyOn(db, "withTransaction").mockImplementation((async (_pool: unknown, fn: (client: never) => unknown) =>
+      fn(tx)) as never)
     const insertSession = spyOn(AgentSessionRepository, "insertRunningOrSkip")
 
     expect(await service().claimTurn("eik_live")).toBeNull()
@@ -415,7 +422,7 @@ describe("EnclaveClaimService.claimTurn", () => {
   })
 
   it("completes the claim as a no-op and keeps claiming when the one-running guard skips the session", async () => {
-    const { completeClaimed, claimNext } = arrangeClaim()
+    const { completeClaimed, findNextClaimable } = arrangeClaim()
     spyOn(AgentSessionRepository, "insertRunningOrSkip").mockResolvedValue(null)
     const insertEvent = spyOn(StreamEventRepository, "insert")
 
@@ -424,7 +431,7 @@ describe("EnclaveClaimService.claimTurn", () => {
     expect(insertEvent).not.toHaveBeenCalled()
     expect(completeClaimed).toHaveBeenCalledWith(pool, "einv_1")
     // The loop went back for the next item (and found the queue empty).
-    expect(claimNext).toHaveBeenCalledTimes(2)
+    expect(findNextClaimable).toHaveBeenCalledTimes(2)
   })
 
   it("completes the claim as a no-op when the trigger already has a live (fresh-heartbeat) or completed session", async () => {
@@ -442,7 +449,7 @@ describe("EnclaveClaimService.claimTurn", () => {
   })
 
   it("defers — leaving the claim to its TTL — when the trigger's RUNNING session looks runnerless (stale heartbeat)", async () => {
-    const { completeClaimed, claimNext } = arrangeClaim()
+    const { completeClaimed, findNextClaimable } = arrangeClaim()
     // A lost claim response: the session row exists but nothing heartbeats it.
     // Completing the invocation would silently drop the turn; orphan cleanup is
     // about to fail the session, after which a later claim re-assigns it.
@@ -456,7 +463,7 @@ describe("EnclaveClaimService.claimTurn", () => {
     expect(await service().claimTurn("eik_live")).toBeNull()
     expect(insertSession).not.toHaveBeenCalled()
     expect(completeClaimed).not.toHaveBeenCalled()
-    expect(claimNext).toHaveBeenCalledTimes(1) // defer ends the poll, no spin
+    expect(findNextClaimable).toHaveBeenCalledTimes(1) // defer ends the poll, no spin
   })
 
   it("re-assigns a fresh session when the trigger's prior session FAILED", async () => {
@@ -534,7 +541,7 @@ describe("EnclaveClaimService re-wrap nudge sweep", () => {
   /** Stub the claim poll so it does nothing but run the nudge sweep, with one unservable stream. */
   function arrangeNudge(createdAt: Date) {
     spyOn(EnclaveInvocationsRepository, "parkExhausted").mockResolvedValue([])
-    spyOn(EnclaveInvocationsRepository, "claimNext").mockResolvedValue(null)
+    spyOn(EnclaveInvocationsRepository, "findNextClaimable").mockResolvedValue(null)
     spyOn(EnclaveInvocationsRepository, "findUnservablePending").mockResolvedValue([
       { id: "einv_stuck", workspaceId: "ws_1", rootStreamId: "stream_root", ownerUserId: "usr_owner", createdAt },
     ])
@@ -588,8 +595,11 @@ describe("EnclaveClaimService re-wrap nudge sweep", () => {
 
   it("never lets a nudge failure break the claim poll", async () => {
     spyOn(EnclaveInvocationsRepository, "parkExhausted").mockResolvedValue([])
-    spyOn(EnclaveInvocationsRepository, "claimNext").mockResolvedValue(null)
+    spyOn(EnclaveInvocationsRepository, "findNextClaimable").mockResolvedValue(null)
     spyOn(EnclaveInvocationsRepository, "findUnservablePending").mockRejectedValue(new Error("db down"))
+    const tx = { __tx: true } as never
+    spyOn(db, "withTransaction").mockImplementation((async (_pool: unknown, fn: (client: never) => unknown) =>
+      fn(tx)) as never)
 
     const result = await service().claimTurn("eik_fresh")
 

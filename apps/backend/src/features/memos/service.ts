@@ -1,6 +1,13 @@
 import type { Pool, PoolClient } from "pg"
 import { withTransaction, withClient, type Querier } from "../../db"
-import { StreamStateRepository, StreamEventRepository, StreamRepository, type Stream } from "../streams"
+import {
+  assertStreamWritable,
+  StreamStateRepository,
+  StreamEventRepository,
+  StreamRepository,
+  type Stream,
+  type StreamWritePrincipal,
+} from "../streams"
 import { ConversationRepository } from "../conversations"
 import { MessageRepository, type Message } from "../messaging"
 import { enrichMessagesWithLinkPreviews } from "../link-previews"
@@ -230,6 +237,7 @@ export interface CaptureSessionReflectionResult {
 export interface MemoServiceLike {
   processBatch(workspaceId: string, streamId: string): Promise<ProcessResult>
   saveMemo(params: SaveMemoParams): Promise<SaveMemoResult>
+  saveMemoGenerated(principal: StreamWritePrincipal, params: SaveMemoParams): Promise<SaveMemoResult>
   captureSessionReflection(params: CaptureSessionReflectionParams): Promise<CaptureSessionReflectionResult>
 }
 
@@ -909,6 +917,17 @@ export class MemoService implements MemoServiceLike {
    * connection is held across the AI call (INV-41).
    */
   async saveMemo(params: SaveMemoParams): Promise<SaveMemoResult> {
+    return this.saveMemoWithAuthority(params)
+  }
+
+  async saveMemoGenerated(principal: StreamWritePrincipal, params: SaveMemoParams): Promise<SaveMemoResult> {
+    return this.saveMemoWithAuthority(params, principal)
+  }
+
+  private async saveMemoWithAuthority(
+    params: SaveMemoParams,
+    principal?: StreamWritePrincipal
+  ): Promise<SaveMemoResult> {
     const {
       workspaceId,
       streamId,
@@ -944,6 +963,10 @@ export class MemoService implements MemoServiceLike {
     const newMemoId = memoId()
 
     return withTransaction(this.pool, async (client) => {
+      if (principal) {
+        await assertStreamWritable(client, { workspaceId, streamId, principal })
+      }
+
       // Resolve the cited source messages scoped to the turn's own stream family
       // (INV-8/INV-62): `sourceMessageIds` is LLM-supplied, so an id outside this
       // family — another workspace, an inaccessible stream, or a broader stream

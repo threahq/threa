@@ -6,6 +6,7 @@ import { OutboxRepository } from "../../lib/outbox"
 import { StreamEventRepository } from "./event-repository"
 import { StreamBriefRepository, type StreamBrief } from "./brief-repository"
 import { StreamBriefService, STREAM_BRIEF_MAX_CHARS, resolveBriefStreamId } from "./brief-service"
+import * as writeAuthority from "./write-authority"
 
 function fakeBrief(overrides: Partial<StreamBrief> = {}): StreamBrief {
   return {
@@ -43,6 +44,32 @@ function stubEventAppend() {
 
 describe("StreamBriefService.update", () => {
   afterEach(() => mock.restore())
+
+  for (const reason of ["archived", "system_stream", "not_member"] as const) {
+    it(`denies generated ${reason} before brief/event writes`, async () => {
+      stubTransaction()
+      spyOn(writeAuthority, "assertStreamWritable").mockRejectedValue(
+        new HttpError("Stream is read-only", { status: 403, code: "STREAM_READ_ONLY", details: { reason } })
+      )
+      const insertFirst = spyOn(StreamBriefRepository, "insertFirstVersion").mockResolvedValue(fakeBrief())
+      const insertEvent = spyOn(StreamEventRepository, "insert").mockResolvedValue({ id: "evt_1" } as never)
+
+      await expect(
+        makeService().updateGenerated({
+          workspaceId: "ws_1",
+          streamId: "stream_1",
+          requestedStreamId: "thread_1",
+          principal: { kind: "user", userId: "usr_1" },
+          content: "blocked",
+          expectedVersion: 0,
+          updatedByKind: "persona",
+          updatedById: "persona_1",
+        })
+      ).rejects.toMatchObject({ code: "STREAM_READ_ONLY", details: { reason } })
+      expect(insertFirst).not.toHaveBeenCalled()
+      expect(insertEvent).not.toHaveBeenCalled()
+    })
+  }
 
   it("creates the brief at version 1 when expectedVersion is 0, with a revision row in the same transaction", async () => {
     stubTransaction()

@@ -3,8 +3,10 @@ import type { Request, Response } from "express"
 import { THREA_CALLBACK_TOKEN_HEADER } from "@threa/types"
 import { createPublicApiHandlers, type PublicApiDeps } from "./handlers"
 import { BotRepository } from "./bot-repository"
-import { StreamRepository } from "../streams"
+import { StreamEventRepository, StreamRepository } from "../streams"
+import * as streamsModule from "../streams"
 import { AgentSessionRepository, hashCallbackToken, type AgentSession, type AgentSessionStep } from "../agents"
+import { MessageRepository } from "../messaging"
 import * as dbModule from "../../db"
 
 // Phase 2 sealed bot `/steps` + `/steps/started`: the external sibling of the
@@ -85,6 +87,11 @@ function createEmitSpy() {
 }
 
 function arrange(sessionOverride?: Partial<AgentSession>, deps?: { eventService?: PublicApiDeps["eventService"] }) {
+  spyOn(streamsModule, "assertStreamWritable").mockResolvedValue({} as never)
+  const resolveAuthority = spyOn(streamsModule, "resolveLockedStreamAuthorities").mockResolvedValue([
+    { state: { readOnly: false, readOnlyReason: null } },
+  ] as never)
+  const findExistingMessage = spyOn(MessageRepository, "findByClientMessageId").mockResolvedValue(null)
   spyOn(AgentSessionRepository, "findById").mockResolvedValue({ ...session, ...sessionOverride } as never)
   spyOn(StreamRepository, "findById").mockResolvedValue({
     id: "stream_thread",
@@ -96,21 +103,29 @@ function arrange(sessionOverride?: Partial<AgentSession>, deps?: { eventService?
   spyOn(AgentSessionRepository, "updateCurrentStepType").mockResolvedValue(undefined as never)
   const heartbeat = spyOn(AgentSessionRepository, "updateHeartbeat").mockResolvedValue(undefined as never)
 
+  const activeClaim = { id: "binv_1", responseStreamId: session.streamId, status: "claimed" }
   const { io, emitted } = createEmitSpy()
   const handlers = createPublicApiHandlers({
-    eventService: deps?.eventService ?? ({} as PublicApiDeps["eventService"]),
+    eventService:
+      deps?.eventService ??
+      ({
+        createGeneratedMessage: mock(async () => ({ id: "msg_sealed" })),
+      } as unknown as PublicApiDeps["eventService"]),
     streamService: {} as PublicApiDeps["streamService"],
     searchService: {} as PublicApiDeps["searchService"],
     memoExplorerService: {} as PublicApiDeps["memoExplorerService"],
     attachmentService: {} as PublicApiDeps["attachmentService"],
     botChannelService: {} as PublicApiDeps["botChannelService"],
-    botRuntimeService: {} as PublicApiDeps["botRuntimeService"],
+    botRuntimeService: {
+      findInvocationForCallback: mock(async () => activeClaim),
+      findActiveClaimForUpdateByToken: mock(async () => activeClaim),
+    } as unknown as PublicApiDeps["botRuntimeService"],
     labelService: {} as PublicApiDeps["labelService"],
     labelAssignmentService: {} as PublicApiDeps["labelAssignmentService"],
     pool: {} as PublicApiDeps["pool"],
     io,
   })
-  return { handlers, emitted, heartbeat }
+  return { handlers, emitted, heartbeat, resolveAuthority, findExistingMessage }
 }
 
 function req(
@@ -286,11 +301,19 @@ describe("sendBotInvocationSealedMessage", () => {
   const sealedBody = { messageId: "msg_interim", ciphertext: "c2VhbGVk", envelope: REPLY_ENVELOPE }
 
   function arrangeWithEventService() {
-    const createMessage = mock(async (params: Record<string, unknown>) => ({ id: params.id }) as never)
-    const { handlers } = arrange(undefined, {
-      eventService: { createMessage } as unknown as PublicApiDeps["eventService"],
+    const createMessage = mock(
+      async (_tx: unknown, _principal: unknown, params: Record<string, unknown>) =>
+        ({
+          message: { id: params.id },
+          created: true,
+        }) as never
+    )
+    const arranged = arrange(undefined, {
+      eventService: {
+        createMessageForPrincipalInTransaction: createMessage,
+      } as unknown as PublicApiDeps["eventService"],
     })
-    return { handlers, createMessage }
+    return { ...arranged, createMessage }
   }
 
   it("persists one sealed interim message scoped to the claim's stream", async () => {
@@ -299,7 +322,7 @@ describe("sendBotInvocationSealedMessage", () => {
 
     await handlers.sendBotInvocationSealedMessage(req(sealedBody), res)
 
-    const params = createMessage.mock.calls[0]?.[0] as unknown as Record<string, unknown>
+    const params = createMessage.mock.calls[0]?.[2] as unknown as Record<string, unknown>
     expect(params).toMatchObject({
       id: "msg_interim",
       workspaceId: "ws_1",
@@ -316,13 +339,35 @@ describe("sendBotInvocationSealedMessage", () => {
     expect((payloads[0] as { data: { messageId: string } }).data.messageId).toBe("msg_interim")
   })
 
+  it("returns its committed interim message after archive without requiring fresh writability", async () => {
+    const { handlers, createMessage, resolveAuthority, findExistingMessage } = arrangeWithEventService()
+    resolveAuthority.mockResolvedValue([{ state: { readOnly: true, readOnlyReason: "archived" } }] as never)
+    findExistingMessage.mockResolvedValue({
+      id: "msg_interim",
+      streamId: "stream_thread",
+      authorId: "bot_1",
+      authorType: "bot",
+    } as never)
+    spyOn(StreamEventRepository, "findByMessageId").mockResolvedValue({
+      actorId: "bot_1",
+      actorType: "bot",
+      payload: { messageId: "msg_interim", sessionId: "binv_1" },
+    } as never)
+    const { res, payloads } = createResponse()
+
+    await handlers.sendBotInvocationSealedMessage(req(sealedBody), res)
+
+    expect(createMessage).not.toHaveBeenCalled()
+    expect((payloads[0] as { data: { messageId: string } }).data.messageId).toBe("msg_interim")
+  })
+
   it("binds the interim's E2E attachment rows via attachmentIds", async () => {
     const { handlers, createMessage } = arrangeWithEventService()
     const { res } = createResponse()
 
     await handlers.sendBotInvocationSealedMessage(req({ ...sealedBody, attachmentIds: ["att_1"] }), res)
 
-    const params = createMessage.mock.calls[0]?.[0] as unknown as Record<string, unknown>
+    const params = createMessage.mock.calls[0]?.[2] as unknown as Record<string, unknown>
     expect(params.attachmentIds).toEqual(["att_1"])
   })
 

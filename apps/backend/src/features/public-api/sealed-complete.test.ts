@@ -4,7 +4,9 @@ import { THREA_CALLBACK_TOKEN_HEADER } from "@threa/types"
 import { createPublicApiHandlers, type PublicApiDeps } from "./handlers"
 import { BotRepository } from "./bot-repository"
 import { StreamRepository, StreamEventRepository } from "../streams"
+import * as streamsModule from "../streams"
 import { AgentSessionRepository, hashCallbackToken, type AgentSession } from "../agents"
+import { MessageRepository } from "../messaging"
 import { OutboxRepository } from "../../lib/outbox"
 import * as dbModule from "../../db"
 
@@ -78,8 +80,14 @@ function arrange(
   const claimCompleted = opts.claimCompleted ?? true
   const sessionFinalized = opts.sessionFinalized ?? true
 
-  spyOn(AgentSessionRepository, "findById").mockResolvedValue({ ...session, ...opts.sessionOverride } as never)
+  const findSession = spyOn(AgentSessionRepository, "findById").mockResolvedValue({
+    ...session,
+    ...opts.sessionOverride,
+  } as never)
   spyOn(StreamRepository, "findById").mockResolvedValue({ id: "stream_thread", workspaceId: "ws_1" } as never)
+  spyOn(streamsModule, "resolveLockedStreamAuthorities").mockResolvedValue([
+    { state: { readOnly: false, readOnlyReason: null } },
+  ] as never)
   spyOn(BotRepository, "findById").mockResolvedValue({ id: "bot_1", name: "Pi", archivedAt: null } as never)
   spyOn(dbModule, "withTransaction").mockImplementation(((_pool: unknown, fn: (c: unknown) => unknown) =>
     fn({})) as never)
@@ -92,7 +100,7 @@ function arrange(
   const insertEvent = spyOn(StreamEventRepository, "insert").mockResolvedValue({ id: "evt_1" } as never)
   const insertOutbox = spyOn(OutboxRepository, "insert").mockResolvedValue(undefined as never)
 
-  const createMessageInTransaction = mock(async (_client: unknown, params: { id: string }) => ({
+  const createMessageInTransaction = mock(async (_client: unknown, _principal: unknown, params: { id: string }) => ({
     message: { id: params.id, streamId: session.streamId },
   }))
   const getLatestSequence = mock(async () => 5n)
@@ -100,21 +108,40 @@ function arrange(
     claimCompleted ? { id: "binv_1" } : null
   )
 
+  const activeClaim = { id: "binv_1", responseStreamId: session.streamId, status: "claimed" }
+  const botRuntimeService = {
+    findInvocationForCallback: mock(async () => activeClaim),
+    findActiveClaimForUpdateByToken: mock(async () => activeClaim),
+    findCompletedInvocationForReplay: mock(async () => null),
+    completeInvocationInTransaction,
+  }
   const { io, emitted } = createEmitSpy()
   const handlers = createPublicApiHandlers({
-    eventService: { createMessageInTransaction, getLatestSequence } as unknown as PublicApiDeps["eventService"],
+    eventService: {
+      createMessageForPrincipalInTransaction: createMessageInTransaction,
+      getLatestSequence,
+    } as unknown as PublicApiDeps["eventService"],
     streamService: {} as PublicApiDeps["streamService"],
     searchService: {} as PublicApiDeps["searchService"],
     memoExplorerService: {} as PublicApiDeps["memoExplorerService"],
     attachmentService: {} as PublicApiDeps["attachmentService"],
     botChannelService: {} as PublicApiDeps["botChannelService"],
-    botRuntimeService: { completeInvocationInTransaction } as unknown as PublicApiDeps["botRuntimeService"],
+    botRuntimeService: botRuntimeService as unknown as PublicApiDeps["botRuntimeService"],
     labelService: {} as PublicApiDeps["labelService"],
     labelAssignmentService: {} as PublicApiDeps["labelAssignmentService"],
     pool: {} as PublicApiDeps["pool"],
     io,
   })
-  return { handlers, emitted, createMessageInTransaction, completeInvocationInTransaction, insertEvent, insertOutbox }
+  return {
+    handlers,
+    emitted,
+    createMessageInTransaction,
+    completeInvocationInTransaction,
+    insertEvent,
+    insertOutbox,
+    botRuntimeService,
+    findSession,
+  }
 }
 
 function req(
@@ -149,7 +176,7 @@ describe("completeBotInvocationSealed", () => {
       res
     )
 
-    const createParams = createMessageInTransaction.mock.calls[0]?.[1] as unknown as Record<string, unknown>
+    const createParams = createMessageInTransaction.mock.calls[0]?.[2] as unknown as Record<string, unknown>
     expect(createParams).toMatchObject({
       id: "msg_reply",
       streamId: "stream_thread",
@@ -189,8 +216,42 @@ describe("completeBotInvocationSealed", () => {
       res
     )
 
-    const createParams = createMessageInTransaction.mock.calls[0]?.[1] as unknown as Record<string, unknown>
+    const createParams = createMessageInTransaction.mock.calls[0]?.[2] as unknown as Record<string, unknown>
     expect(createParams.attachmentIds).toEqual(["att_1", "att_2"])
+  })
+
+  it("returns the committed winner when archive lands after its stale claimed snapshot", async () => {
+    const { handlers, createMessageInTransaction, botRuntimeService, findSession } = arrange()
+    const completedSession = {
+      ...session,
+      status: "completed",
+      responseMessageId: "msg_reply",
+      completedAt: new Date("2026-06-12T09:00:05.000Z"),
+    } as AgentSession
+    findSession.mockResolvedValueOnce(session as never).mockResolvedValue(completedSession as never)
+    spyOn(streamsModule, "resolveLockedStreamAuthorities").mockResolvedValue([
+      { state: { readOnly: true, readOnlyReason: "archived" } },
+    ] as never)
+    botRuntimeService.findCompletedInvocationForReplay.mockResolvedValue({
+      id: "binv_1",
+      responseStreamId: "stream_thread",
+    } as never)
+    spyOn(MessageRepository, "findById").mockResolvedValue({
+      id: "msg_reply",
+      streamId: "stream_thread",
+      authorId: "bot_1",
+      authorType: "bot",
+    } as never)
+    const { res, payloads } = createResponse()
+
+    await handlers.completeBotInvocationSealed(
+      req({ reply: { messageId: "msg_reply", ciphertext: "c2VhbGVk", envelope: REPLY_ENVELOPE } }),
+      res
+    )
+
+    expect(botRuntimeService.findActiveClaimForUpdateByToken).not.toHaveBeenCalled()
+    expect(createMessageInTransaction).not.toHaveBeenCalled()
+    expect((payloads[0] as { data: { messageId: string } }).data.messageId).toBe("msg_reply")
   })
 
   it("completes with no reply (noResponse) without creating a message", async () => {

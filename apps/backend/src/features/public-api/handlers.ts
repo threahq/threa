@@ -1,6 +1,6 @@
 import { z } from "zod"
 import type { Request, Response } from "express"
-import type { Pool } from "pg"
+import type { Pool, PoolClient } from "pg"
 import type { Server } from "socket.io"
 import type { SearchFilters, SearchService } from "../search"
 import { setAuditSubjects } from "../access-log"
@@ -18,6 +18,9 @@ import {
   StreamEventRepository,
   StreamMemberRepository,
   getEffectiveDisplayName,
+  assertStreamWritable,
+  assertViewerStreamWritable,
+  resolveLockedStreamAuthorities,
   type Stream,
   type DisplayNameContext,
   type StreamService,
@@ -31,7 +34,7 @@ import {
   resolveSealingContext,
 } from "../e2e-streams"
 import { UserE2eKeysRepository } from "../user-e2e-keys"
-import { PersonaRepository } from "../agents"
+import { failSessionWithLifecycleInTransaction, PersonaRepository } from "../agents"
 import { type Memo, type MemoExplorerService, type MemoExplorerDetail, type MemoExplorerResult } from "../memos"
 import {
   AttachmentExtractionRepository,
@@ -78,6 +81,7 @@ import {
   parseRuntimeCommandInvocationMetadata,
 } from "../commands"
 import { HttpError } from "@threa/backend-common"
+import { invocationClaimNotFound } from "./errors"
 import { validateRequest } from "../../lib/validation"
 import { normalizeMessage, toEmoji } from "../emoji"
 import { collectAttachmentReferenceIds, parseMarkdown } from "@threa/prosemirror"
@@ -814,6 +818,105 @@ export function createPublicApiHandlers({
     })
   }
 
+  async function terminalizeBotDenial(params: {
+    error: unknown
+    session: { id: string; streamId: string; personaId: string }
+    stream: Stream
+    botId: string
+    callbackToken: string
+    instanceId?: string
+  }): Promise<void> {
+    const denial = params.error as { code?: string; details?: { reason?: string } }
+    if (denial.code !== "STREAM_READ_ONLY" && denial.code !== "STREAM_NOT_FOUND") throw params.error
+    const reason = denial.code === "STREAM_NOT_FOUND" ? "not_a_member" : (denial.details?.reason ?? "not_a_member")
+    const terminalError = `STREAM_READ_ONLY:${reason}`
+    const won = await withTransaction(pool, async (client) => {
+      const claim = params.instanceId
+        ? await botRuntimeService.findActiveClaimForUpdate(client, {
+            workspaceId: params.stream.workspaceId,
+            botId: params.botId,
+            invocationId: params.session.id,
+            instanceId: params.instanceId,
+            claimToken: params.callbackToken,
+          })
+        : await botRuntimeService.findActiveClaimForUpdateByToken(client, {
+            workspaceId: params.stream.workspaceId,
+            botId: params.botId,
+            invocationId: params.session.id,
+            claimToken: params.callbackToken,
+          })
+      if (!claim) return false
+      const failed = await botRuntimeService.failInvocationInTransaction(client, {
+        workspaceId: params.stream.workspaceId,
+        botId: params.botId,
+        invocationId: params.session.id,
+        instanceId: params.instanceId,
+        claimToken: params.callbackToken,
+        errorMessage: terminalError,
+      })
+      if (!failed) return false
+      return failSessionWithLifecycleInTransaction(client, params.session, params.stream, terminalError)
+    })
+    if (won) {
+      io.to(`ws:${params.stream.workspaceId}:agent_session:${params.session.id}`).emit("agent_session:failed", {
+        sessionId: params.session.id,
+      })
+    }
+  }
+
+  async function loadCompletedInvocationReplay(
+    client: PoolClient,
+    invocation: BotInvocation,
+    botId: string,
+    callbackToken: string
+  ): Promise<{ invocationId: string; sessionId: string; message: Message | null } | null> {
+    const session = await AgentSessionRepository.findById(client, invocation.id)
+    if (
+      !session ||
+      session.status !== AgentSessionStatuses.COMPLETED ||
+      session.personaId !== botId ||
+      session.streamId !== invocation.responseStreamId
+    ) {
+      return null
+    }
+    if (session.callbackTokenHash) verifyCallbackToken(session, callbackToken)
+    const message = session.responseMessageId
+      ? await MessageRepository.findById(client, session.responseMessageId)
+      : null
+    if (session.responseMessageId && !message) return null
+    if (
+      message &&
+      (message.streamId !== invocation.responseStreamId ||
+        message.authorType !== AuthorTypes.BOT ||
+        message.authorId !== botId)
+    ) {
+      return null
+    }
+    return { invocationId: invocation.id, sessionId: session.id, message }
+  }
+
+  async function resolveCompletedInvocationReplay(
+    client: PoolClient,
+    params: {
+      workspaceId: string
+      botId: string
+      invocationId: string
+      claimToken: string
+      instanceId?: string
+    }
+  ): Promise<{ invocationId: string; sessionId: string; message: Message | null } | null> {
+    const snapshot = await botRuntimeService.findInvocationForCallback(client, params)
+    if (!snapshot || snapshot.status !== "completed") return null
+    await resolveLockedStreamAuthorities(client, {
+      workspaceId: params.workspaceId,
+      streamIds: [snapshot.responseStreamId],
+      principal: { kind: "bot", botId: params.botId },
+    })
+    const invocation = await botRuntimeService.findCompletedInvocationForReplay(client, params)
+    if (!invocation || invocation.responseStreamId !== snapshot.responseStreamId) return null
+    return loadCompletedInvocationReplay(client, invocation, params.botId, params.claimToken)
+  }
+
   /** Resolve mutation actor independently; message snapshot is only a placement hint. */
   async function resolveMessageMutation(messageId: string, req: Request) {
     const message = await eventService.getMessageById(messageId)
@@ -1434,25 +1537,56 @@ export function createPublicApiHandlers({
      */
     async startBotInvocationSealedStep(req: Request, res: Response) {
       const data = validateRequest(startSealedInvocationStepSchema, req.body)
-      const { session, stream, bot } = await authorizeSealedInvocationCallback(req)
+      const { session, stream, bot, callbackToken } = await authorizeSealedInvocationCallback(req)
       assertReplyKeyGeneration(session, data.envelope)
 
       // Insert the in-flight row (no completed_at) + current_step_type in one
       // transaction (INV-6) so a reader never sees the step without its type;
       // step_number is computed atomically in the INSERT (INV-20).
-      const persisted = await withTransaction(pool, async (tx) => {
-        const created = await AgentSessionRepository.appendStep(tx, {
-          id: data.stepId,
-          sessionId: session.id,
-          stepType: data.stepType,
-          messageId: data.messageId,
-          contentCiphertext: data.ciphertext,
-          contentEnvelope: data.envelope,
-          startedAt: new Date(),
+      let persisted: AgentSessionStep
+      try {
+        persisted = await withTransaction(pool, async (tx) => {
+          const callbackParams = {
+            workspaceId: stream.workspaceId,
+            botId: bot.id,
+            invocationId: session.id,
+            claimToken: callbackToken,
+          }
+          const snapshot = await botRuntimeService.findInvocationForCallback(tx, callbackParams)
+          if (!snapshot || snapshot.status !== "claimed" || snapshot.responseStreamId !== session.streamId) {
+            throw invocationClaimNotFound()
+          }
+          await assertStreamWritable(tx, {
+            workspaceId: stream.workspaceId,
+            streamId: snapshot.responseStreamId,
+            principal: { kind: "bot", botId: bot.id },
+          })
+          const claim = await botRuntimeService.findActiveClaimForUpdateByToken(tx, callbackParams)
+          if (!claim || claim.responseStreamId !== snapshot.responseStreamId) {
+            throw invocationClaimNotFound()
+          }
+          const created = await AgentSessionRepository.appendStep(tx, {
+            id: data.stepId,
+            sessionId: session.id,
+            stepType: data.stepType,
+            messageId: data.messageId,
+            contentCiphertext: data.ciphertext,
+            contentEnvelope: data.envelope,
+            startedAt: new Date(),
+          })
+          await AgentSessionRepository.updateCurrentStepType(tx, session.id, data.stepType)
+          return created
         })
-        await AgentSessionRepository.updateCurrentStepType(tx, session.id, data.stepType)
-        return created
-      })
+      } catch (error) {
+        await terminalizeBotDenial({
+          error,
+          session,
+          stream,
+          botId: bot.id,
+          callbackToken,
+        })
+        throw error
+      }
 
       io.to(`ws:${stream.workspaceId}:agent_session:${session.id}`).emit("agent_session:step:started", {
         sessionId: session.id,
@@ -1500,27 +1634,79 @@ export function createPublicApiHandlers({
      */
     async sendBotInvocationSealedMessage(req: Request, res: Response) {
       const data = validateRequest(sendSealedInvocationMessageSchema, req.body)
-      const { session, stream, bot } = await authorizeSealedInvocationCallback(req)
+      const { session, stream, bot, callbackToken } = await authorizeSealedInvocationCallback(req)
       assertReplyKeyGeneration(session, data.envelope)
 
-      const message = await eventService.createMessage({
-        id: data.messageId,
-        workspaceId: stream.workspaceId,
-        streamId: session.streamId,
-        sessionId: session.id,
-        authorId: bot.id,
-        authorType: AuthorTypes.BOT,
-        contentJson: E2E_PLACEHOLDER_CONTENT_JSON,
-        contentMarkdown: E2E_PLACEHOLDER_CONTENT_MARKDOWN,
-        ciphertext: Buffer.from(data.ciphertext, "base64"),
-        envelope: data.envelope,
-        e2eVersion: 2,
-        // Restrict the bot's reach to this scratchpad, mirroring the sealed
-        // completion reply; the client-minted id dedupes a redelivered post.
-        accessibleStreamIds: [session.streamId],
-        clientMessageId: data.messageId,
-        ...(data.attachmentIds && data.attachmentIds.length > 0 && { attachmentIds: data.attachmentIds }),
-      })
+      let message: Message
+      try {
+        message = await withTransaction(pool, async (tx) => {
+          const callbackParams = {
+            workspaceId: stream.workspaceId,
+            botId: bot.id,
+            invocationId: session.id,
+            claimToken: callbackToken,
+          }
+          const snapshot = await botRuntimeService.findInvocationForCallback(tx, callbackParams)
+          if (!snapshot || snapshot.responseStreamId !== session.streamId) {
+            throw invocationClaimNotFound()
+          }
+          const [authority] = await resolveLockedStreamAuthorities(tx, {
+            workspaceId: stream.workspaceId,
+            streamIds: [snapshot.responseStreamId],
+            principal: { kind: "bot", botId: bot.id },
+          })
+          const existing = await MessageRepository.findByClientMessageId(tx, snapshot.responseStreamId, data.messageId)
+          if (existing) {
+            const createdEvent = await StreamEventRepository.findByMessageId(tx, snapshot.responseStreamId, existing.id)
+            if (
+              existing.id !== data.messageId ||
+              existing.authorId !== bot.id ||
+              existing.authorType !== AuthorTypes.BOT ||
+              createdEvent?.actorId !== bot.id ||
+              createdEvent.actorType !== AuthorTypes.BOT ||
+              (createdEvent.payload as { sessionId?: string }).sessionId !== session.id
+            ) {
+              throw invocationClaimNotFound()
+            }
+            return existing
+          }
+          if (snapshot.status !== "claimed") {
+            throw invocationClaimNotFound()
+          }
+          assertViewerStreamWritable(authority.state)
+          const claim = await botRuntimeService.findActiveClaimForUpdateByToken(tx, callbackParams)
+          if (!claim || claim.responseStreamId !== snapshot.responseStreamId) {
+            throw invocationClaimNotFound()
+          }
+          return (
+            await eventService.createMessageForPrincipalInTransaction(
+              tx,
+              { kind: "bot", botId: bot.id },
+              {
+                id: data.messageId,
+                workspaceId: stream.workspaceId,
+                streamId: session.streamId,
+                sessionId: session.id,
+                authorId: bot.id,
+                authorType: AuthorTypes.BOT,
+                contentJson: E2E_PLACEHOLDER_CONTENT_JSON,
+                contentMarkdown: E2E_PLACEHOLDER_CONTENT_MARKDOWN,
+                ciphertext: Buffer.from(data.ciphertext, "base64"),
+                envelope: data.envelope,
+                e2eVersion: 2,
+                // Restrict the bot's reach to this scratchpad, mirroring the sealed
+                // completion reply; the client-minted id dedupes a redelivered post.
+                accessibleStreamIds: [session.streamId],
+                clientMessageId: data.messageId,
+                ...(data.attachmentIds && data.attachmentIds.length > 0 && { attachmentIds: data.attachmentIds }),
+              }
+            )
+          ).message
+        })
+      } catch (error) {
+        await terminalizeBotDenial({ error, session, stream, botId: bot.id, callbackToken })
+        throw error
+      }
 
       res.json({ data: { messageId: message.id } })
     },
@@ -1549,81 +1735,179 @@ export function createPublicApiHandlers({
      */
     async completeBotInvocationSealed(req: Request, res: Response) {
       const data = validateRequest(completeSealedInvocationSchema, req.body)
-      const { session, stream, bot, callbackToken } = await authorizeSealedInvocationCallback(req)
+      let callbackContext: Awaited<ReturnType<typeof authorizeSealedInvocationCallback>>
+      try {
+        callbackContext = await authorizeSealedInvocationCallback(req)
+      } catch (error) {
+        if (!req.botApiKey) throw error
+        const callbackToken = req.header(THREA_CALLBACK_TOKEN_HEADER) ?? ""
+        const replay = await withTransaction(pool, (client) =>
+          resolveCompletedInvocationReplay(client, {
+            workspaceId: req.workspaceId!,
+            botId: req.botApiKey!.botId,
+            invocationId: req.params.invocationId,
+            claimToken: callbackToken,
+          })
+        )
+        if (!replay || (data.reply ? replay.message?.id !== data.reply.messageId : replay.message !== null)) {
+          throw error
+        }
+        res.json({
+          data: {
+            invocationId: replay.invocationId,
+            sessionId: replay.sessionId,
+            messageId: replay.message?.id ?? null,
+          },
+        })
+        return
+      }
+      const { session, stream, bot, callbackToken } = callbackContext
       if (data.reply) assertReplyKeyGeneration(session, data.reply.envelope)
 
-      const { message, sessionFinalized } = await withTransaction(pool, async (client) => {
-        const reply = data.reply
-        const message = reply
-          ? (
-              await eventService.createMessageInTransaction(client, {
-                id: reply.messageId,
-                workspaceId: stream.workspaceId,
-                streamId: session.streamId,
-                sessionId: session.id,
-                authorId: bot.id,
-                authorType: AuthorTypes.BOT,
-                contentJson: E2E_PLACEHOLDER_CONTENT_JSON,
-                contentMarkdown: E2E_PLACEHOLDER_CONTENT_MARKDOWN,
-                ciphertext: Buffer.from(reply.ciphertext, "base64"),
-                envelope: reply.envelope,
-                e2eVersion: 2,
-                // Restrict the bot's reach to this scratchpad and dedupe a redelivered
-                // completion (one reply per invocation), mirroring the enclave reply.
-                accessibleStreamIds: [session.streamId],
-                clientMessageId: `bot-invocation:${session.id}`,
-                ...(reply.attachmentIds && reply.attachmentIds.length > 0 && { attachmentIds: reply.attachmentIds }),
-              })
-            ).message
-          : null
+      let completion:
+        | { kind: "completed"; message: Message | null; sessionFinalized: boolean }
+        | { kind: "replay"; replay: { invocationId: string; sessionId: string; message: Message | null } }
+      try {
+        completion = await withTransaction(pool, async (client) => {
+          const callbackParams = {
+            workspaceId: req.workspaceId!,
+            botId: bot.id,
+            invocationId: session.id,
+            claimToken: callbackToken,
+          }
+          const snapshot = await botRuntimeService.findInvocationForCallback(client, callbackParams)
+          if (!snapshot) throw invocationClaimNotFound()
+          if (snapshot.status === "completed") {
+            const replay = await resolveCompletedInvocationReplay(client, callbackParams)
+            if (!replay || (data.reply ? replay.message?.id !== data.reply.messageId : replay.message !== null)) {
+              throw invocationClaimNotFound()
+            }
+            return { kind: "replay", replay }
+          }
 
-        // Flip the claim atomically (INV-20): the `status = 'claimed'` predicate
-        // makes a raced/redelivered completion no-op (→ 404), and rolling back
-        // here drops the message insert above with it.
-        const completed = await botRuntimeService.completeInvocationInTransaction(client, {
-          workspaceId: req.workspaceId!,
-          botId: bot.id,
-          invocationId: session.id,
-          claimToken: callbackToken,
+          let authorityLocked = false
+          if (data.reply) {
+            const [authority] = await resolveLockedStreamAuthorities(client, {
+              workspaceId: stream.workspaceId,
+              streamIds: [session.streamId],
+              principal: { kind: "bot", botId: bot.id },
+            })
+            const completedInvocation = await botRuntimeService.findCompletedInvocationForReplay(client, callbackParams)
+            if (completedInvocation) {
+              const replay = await loadCompletedInvocationReplay(client, completedInvocation, bot.id, callbackToken)
+              if (!replay || replay.message?.id !== data.reply.messageId) {
+                throw invocationClaimNotFound()
+              }
+              return { kind: "replay" as const, replay }
+            }
+            assertViewerStreamWritable(authority.state)
+            authorityLocked = true
+          }
+
+          const claim = await botRuntimeService.findActiveClaimForUpdateByToken(client, callbackParams)
+          if (!claim) {
+            const replay = authorityLocked
+              ? await botRuntimeService
+                  .findCompletedInvocationForReplay(client, callbackParams)
+                  .then((invocation) =>
+                    invocation ? loadCompletedInvocationReplay(client, invocation, bot.id, callbackToken) : null
+                  )
+              : await resolveCompletedInvocationReplay(client, callbackParams)
+            if (!replay || (data.reply ? replay.message?.id !== data.reply.messageId : replay.message !== null)) {
+              throw invocationClaimNotFound()
+            }
+            return { kind: "replay", replay }
+          }
+          if (claim.responseStreamId !== session.streamId) {
+            throw invocationClaimNotFound()
+          }
+
+          const reply = data.reply
+          const message = reply
+            ? (
+                await eventService.createMessageForPrincipalInTransaction(
+                  client,
+                  { kind: "bot", botId: bot.id },
+                  {
+                    id: reply.messageId,
+                    workspaceId: stream.workspaceId,
+                    streamId: session.streamId,
+                    sessionId: session.id,
+                    authorId: bot.id,
+                    authorType: AuthorTypes.BOT,
+                    contentJson: E2E_PLACEHOLDER_CONTENT_JSON,
+                    contentMarkdown: E2E_PLACEHOLDER_CONTENT_MARKDOWN,
+                    ciphertext: Buffer.from(reply.ciphertext, "base64"),
+                    envelope: reply.envelope,
+                    e2eVersion: 2,
+                    // Restrict the bot's reach to this scratchpad and dedupe a redelivered
+                    // completion (one reply per invocation), mirroring the enclave reply.
+                    accessibleStreamIds: [session.streamId],
+                    clientMessageId: `bot-invocation:${session.id}`,
+                    ...(reply.attachmentIds &&
+                      reply.attachmentIds.length > 0 && {
+                        attachmentIds: reply.attachmentIds,
+                      }),
+                  }
+                )
+              ).message
+            : null
+
+          const completed = await botRuntimeService.completeInvocationInTransaction(client, callbackParams)
+          if (!completed) throw invocationClaimNotFound()
+
+          // Finalize the session lifecycle in the same transaction (INV-7), gated on
+          // winning the RUNNING→COMPLETED transition so a raced redelivery can't
+          // double-emit. Plaintext-free: counts + timing only.
+          const latestSequence = await eventService.getLatestSequence(session.streamId)
+          const finalized = await AgentSessionRepository.completeSession(client, session.id, {
+            lastSeenSequence: latestSequence ?? 0n,
+            responseMessageId: message?.id ?? null,
+            sentMessageIds: message ? [message.id] : [],
+          })
+          if (!finalized) return { kind: "completed", message, sessionFinalized: false }
+
+          const completedAt = finalized.completedAt ?? new Date()
+          const steps = await AgentSessionRepository.findStepsBySession(client, session.id)
+          const streamEvent = await StreamEventRepository.insert(client, {
+            id: eventId(),
+            streamId: session.streamId,
+            eventType: "agent_session:completed",
+            payload: {
+              sessionId: session.id,
+              stepCount: steps.length,
+              messageCount: message ? 1 : 0,
+              duration: completedAt.getTime() - finalized.createdAt.getTime(),
+              completedAt: completedAt.toISOString(),
+            },
+            actorId: bot.id,
+            actorType: AuthorTypes.BOT,
+          })
+          await OutboxRepository.insert(client, "agent_session:completed", {
+            workspaceId: stream.workspaceId,
+            streamId: session.streamId,
+            rootStreamId: stream.rootStreamId ?? stream.id,
+            event: streamEvent,
+          })
+          return { kind: "completed", message, sessionFinalized: true }
         })
-        if (!completed) throw new HttpError("Invocation claim not found", { status: 404, code: "NOT_FOUND" })
+      } catch (error) {
+        await terminalizeBotDenial({ error, session, stream, botId: bot.id, callbackToken })
+        throw error
+      }
 
-        // Finalize the session lifecycle in the same transaction (INV-7), gated on
-        // winning the RUNNING→COMPLETED transition so a raced redelivery can't
-        // double-emit. Plaintext-free: counts + timing only.
-        const latestSequence = await eventService.getLatestSequence(session.streamId)
-        const finalized = await AgentSessionRepository.completeSession(client, session.id, {
-          lastSeenSequence: latestSequence ?? 0n,
-          responseMessageId: message?.id ?? null,
-          sentMessageIds: message ? [message.id] : [],
-        })
-        if (!finalized) return { message, sessionFinalized: false }
-
-        const completedAt = finalized.completedAt ?? new Date()
-        const steps = await AgentSessionRepository.findStepsBySession(client, session.id)
-        const streamEvent = await StreamEventRepository.insert(client, {
-          id: eventId(),
-          streamId: session.streamId,
-          eventType: "agent_session:completed",
-          payload: {
-            sessionId: session.id,
-            stepCount: steps.length,
-            messageCount: message ? 1 : 0,
-            duration: completedAt.getTime() - finalized.createdAt.getTime(),
-            completedAt: completedAt.toISOString(),
+      if (completion.kind === "replay") {
+        res.json({
+          data: {
+            invocationId: completion.replay.invocationId,
+            sessionId: completion.replay.sessionId,
+            messageId: completion.replay.message?.id ?? null,
           },
-          actorId: bot.id,
-          actorType: AuthorTypes.BOT,
         })
-        await OutboxRepository.insert(client, "agent_session:completed", {
-          workspaceId: stream.workspaceId,
-          streamId: session.streamId,
-          rootStreamId: stream.rootStreamId ?? stream.id,
-          event: streamEvent,
-        })
-        return { message, sessionFinalized: true }
-      })
+        return
+      }
 
+      const { message, sessionFinalized } = completion
       // Live-update an open trace dialog (session room) the way the enclave/in-process
       // completes do — the outbox broadcast does not reach the session room, so the
       // dialog wouldn't otherwise transition until a refetch.
@@ -1647,9 +1931,11 @@ export function createPublicApiHandlers({
           instanceId: data.instanceId,
         }),
       ])
-      if (!bot || bot.archivedAt) throw new HttpError("Bot not found or archived", { status: 404, code: "NOT_FOUND" })
       const contentMarkdown =
         data.noResponse === true || !data.finalMessageMarkdown ? null : normalizeMessage(data.finalMessageMarkdown)
+      if (!bot || (bot.archivedAt && (contentMarkdown || data.sealedReply))) {
+        throw new HttpError("Bot not found or archived", { status: 404, code: "NOT_FOUND" })
+      }
       // Reject-undeclared (INV-11): a runtime that declared a manifest may only
       // emit what it declared. Unenforced for legacy (null-manifest) runtimes.
       const manifest = runtimePresence?.manifest ?? null
@@ -1657,157 +1943,234 @@ export function createPublicApiHandlers({
       if (data.sources && data.sources.length > 0) assertManifestAllows(manifest, "sources")
       const contentJson = contentMarkdown ? parseMarkdown(contentMarkdown, undefined, toEmoji) : null
       const attachmentIds = contentJson ? collectAttachmentReferenceIds(contentJson) : []
-      const { completed, message, sessionFinalized, synthesizedSteps } = await withTransaction(pool, async (client) => {
-        const claim = await botRuntimeService.findActiveClaimForUpdate(client, {
-          workspaceId: req.workspaceId!,
-          botId: req.botApiKey!.botId,
-          invocationId: req.params.invocationId,
-          instanceId: data.instanceId,
-          claimToken: data.claimToken,
-        })
-        if (!claim) throw new HttpError("Invocation claim not found", { status: 404, code: "NOT_FOUND" })
-        await assertStreamAccessible(req, claim.responseStreamId)
-        // E2EE-2: a plaintext completion MESSAGE into an E2E stream would break
-        // the sealed timeline (sealed replies go to /sealed-complete instead),
-        // so reject it loudly — but only when there is content to persist. A
-        // `noResponse` completion writes no message row and must work on E2E
-        // streams: session-control invocations (e.g. /model, /steer acks) are
-        // dispatched there with plaintext claims, and blocking their close
-        // would strand every one of them in a TTL-recycle loop.
-        if (contentMarkdown) await assertNotE2eStream(req.workspaceId!, claim.responseStreamId)
-        let message: Message | null = null
-        if (data.sealedReply) {
-          // Sealed session-control ack: the stream MUST be E2E and the seal MUST
-          // bind the current generation, or the row is permanently undecryptable.
-          const e2e = await E2eStreamsRepository.getByStreamId(client, req.workspaceId!, claim.responseStreamId)
-          if (!e2e) {
-            throw new HttpError("A sealed reply requires an E2E stream", {
-              status: 400,
-              code: "SEALED_REPLY_REQUIRES_E2E_STREAM",
-            })
-          }
-          if (data.sealedReply.envelope.keyGeneration !== e2e.currentKeyGeneration) {
-            throw new HttpError(
-              `Sealed reply uses key generation ${data.sealedReply.envelope.keyGeneration}; the stream is at ${e2e.currentKeyGeneration}`,
-              { status: 400, code: "E2E_WRONG_KEY_GENERATION" }
-            )
-          }
-          message = (
-            await eventService.createMessageInTransaction(client, {
-              id: data.sealedReply.messageId,
-              workspaceId: req.workspaceId!,
-              streamId: claim.responseStreamId,
-              authorId: bot.id,
-              authorType: AuthorTypes.BOT,
-              contentJson: E2E_PLACEHOLDER_CONTENT_JSON,
-              contentMarkdown: E2E_PLACEHOLDER_CONTENT_MARKDOWN,
-              ciphertext: Buffer.from(data.sealedReply.ciphertext, "base64"),
-              envelope: data.sealedReply.envelope,
-              e2eVersion: 2,
-              accessibleStreamIds: [claim.responseStreamId],
-              clientMessageId: `bot-invocation:${claim.id}`,
-            })
-          ).message
-        } else if (contentMarkdown) {
-          message = (
-            await eventService.createMessageInTransaction(client, {
-              workspaceId: req.workspaceId!,
-              streamId: claim.responseStreamId,
-              authorId: bot.id,
-              authorType: AuthorTypes.BOT,
-              contentJson: contentJson!,
-              contentMarkdown,
-              attachmentIds: attachmentIds.length > 0 ? attachmentIds : undefined,
-              clientMessageId: `bot-invocation:${claim.id}`,
-              sources: data.sources,
-              metadata: data.metadata,
-            })
-          ).message
-        }
-        const completed = await botRuntimeService.completeInvocationInTransaction(client, {
-          workspaceId: req.workspaceId!,
-          botId: req.botApiKey!.botId,
-          invocationId: req.params.invocationId,
-          instanceId: data.instanceId,
-          claimToken: data.claimToken,
-        })
-        if (!completed) throw new HttpError("Invocation claim not found", { status: 404, code: "NOT_FOUND" })
-        const runtimeCommand = parseRuntimeCommandInvocationMetadata(completed.metadata)
-        if (runtimeCommand) {
-          await insertCommandCompletedEvent(client, {
+      let denialSession: Awaited<ReturnType<typeof AgentSessionRepository.findById>> = null
+      const { completed, message, sessionFinalized, synthesizedSteps, replay } = await withTransaction(
+        pool,
+        async (client) => {
+          const callbackParams = {
             workspaceId: req.workspaceId!,
-            streamId: completed.responseStreamId,
-            userId: completed.authorUserId,
-            commandId: runtimeCommand.id,
-            result: {
-              invocationId: completed.id,
-              ...(message && { messageId: message.id }),
-            },
-          })
-        }
-        const session = await AgentSessionRepository.findById(client, completed.id)
-        // RUNNING is the happy path; FAILED is recoverable here. Reaching this
-        // point means the claim was still valid (findActiveClaimForUpdate above
-        // succeeded), so the only way the session is FAILED is an orphan
-        // false-positive from cleanup's stale-heartbeat scan — the turn really
-        // did finish and send its reply, so finalize it COMPLETED rather than
-        // leaving the trace stuck red.
-        if (session?.status === AgentSessionStatuses.RUNNING || session?.status === AgentSessionStatuses.FAILED) {
-          const latestSequence = await eventService.getLatestSequence(completed.responseStreamId)
-          const finalizedSession = await AgentSessionRepository.completeSession(client, completed.id, {
-            lastSeenSequence: latestSequence ?? 0n,
-            responseMessageId: message?.id ?? null,
-            sentMessageIds: message ? [message.id] : [],
-            recoverFromFailed: true,
-          })
-          if (finalizedSession) {
-            let steps = await AgentSessionRepository.findStepsBySession(client, completed.id)
-            // Synthesized-trace floor (N-6): a reply-only harness never POSTed
-            // /steps, so reconstruct the minimal context_received → message_sent
-            // trace in the same transaction — the completed event's stepCount
-            // and the rows land together (INV-7).
-            let synthesizedSteps: AgentSessionStep[] = []
-            if (steps.length === 0 && message) {
-              const author = await UserRepository.findById(client, req.workspaceId!, completed.authorUserId)
-              synthesizedSteps = await synthesizeReplyOnlyBotTrace(client, {
-                sessionId: completed.id,
-                trigger: {
-                  messageId: completed.sourceMessageId,
-                  authorName: author?.name ?? "Unknown",
-                  authorType: AuthorTypes.USER,
-                  createdAt: completed.createdAt.toISOString(),
-                  content: completed.promptMarkdown,
-                },
-                reply: { messageId: message.id, content: contentMarkdown! },
-              })
-              steps = synthesizedSteps
-            }
-            const completedAt = finalizedSession.completedAt ?? new Date()
-            const streamEvent = await StreamEventRepository.insert(client, {
-              id: eventId(),
-              streamId: completed.responseStreamId,
-              eventType: "agent_session:completed",
-              payload: {
-                sessionId: completed.id,
-                stepCount: steps.length,
-                messageCount: message ? 1 : 0,
-                duration: completedAt.getTime() - finalizedSession.createdAt.getTime(),
-                completedAt: completedAt.toISOString(),
-              },
-              actorId: bot.id,
-              actorType: AuthorTypes.BOT,
+            botId: req.botApiKey!.botId,
+            invocationId: req.params.invocationId,
+            instanceId: data.instanceId,
+            claimToken: data.claimToken,
+          }
+          const snapshot = await botRuntimeService.findInvocationForCallback(client, callbackParams)
+          if (!snapshot) throw invocationClaimNotFound()
+          if (snapshot.status === "completed") {
+            const replay = await resolveCompletedInvocationReplay(client, callbackParams)
+            if (!replay) throw invocationClaimNotFound()
+            return { completed: null, message: null, sessionFinalized: false, synthesizedSteps: [], replay }
+          }
+          denialSession = await AgentSessionRepository.findById(client, snapshot.id)
+
+          let authorityLocked = false
+          if (data.sealedReply || contentMarkdown) {
+            const [authority] = await resolveLockedStreamAuthorities(client, {
+              workspaceId: req.workspaceId!,
+              streamIds: [snapshot.responseStreamId],
+              principal: { kind: "bot", botId: bot.id },
             })
-            await OutboxRepository.insert(client, "agent_session:completed", {
+            const completedInvocation = await botRuntimeService.findCompletedInvocationForReplay(client, callbackParams)
+            if (completedInvocation) {
+              const replay = await loadCompletedInvocationReplay(client, completedInvocation, bot.id, data.claimToken)
+              if (!replay) throw invocationClaimNotFound()
+              return { completed: null, message: null, sessionFinalized: false, synthesizedSteps: [], replay }
+            }
+            assertViewerStreamWritable(authority.state)
+            authorityLocked = true
+          }
+
+          const claim = await botRuntimeService.findActiveClaimForUpdate(client, callbackParams)
+          if (!claim) {
+            const replay = authorityLocked
+              ? await botRuntimeService
+                  .findCompletedInvocationForReplay(client, callbackParams)
+                  .then((invocation) =>
+                    invocation ? loadCompletedInvocationReplay(client, invocation, bot.id, data.claimToken) : null
+                  )
+              : await resolveCompletedInvocationReplay(client, callbackParams)
+            if (!replay) throw invocationClaimNotFound()
+            return { completed: null, message: null, sessionFinalized: false, synthesizedSteps: [], replay }
+          }
+          if (claim.responseStreamId !== snapshot.responseStreamId) {
+            throw invocationClaimNotFound()
+          }
+          // E2EE-2: a plaintext completion MESSAGE into an E2E stream would break
+          // the sealed timeline (sealed replies go to /sealed-complete instead),
+          // so reject it loudly — but only when there is content to persist. A
+          // `noResponse` completion writes no message row and must work on E2E
+          // streams: session-control invocations (e.g. /model, /steer acks) are
+          // dispatched there with plaintext claims, and blocking their close
+          // would strand every one of them in a TTL-recycle loop.
+          if (contentMarkdown) await assertNotE2eStream(req.workspaceId!, claim.responseStreamId)
+          let message: Message | null = null
+          if (data.sealedReply) {
+            // Sealed session-control ack: the stream MUST be E2E and the seal MUST
+            // bind the current generation, or the row is permanently undecryptable.
+            const e2e = await E2eStreamsRepository.getByStreamId(client, req.workspaceId!, claim.responseStreamId)
+            if (!e2e) {
+              throw new HttpError("A sealed reply requires an E2E stream", {
+                status: 400,
+                code: "SEALED_REPLY_REQUIRES_E2E_STREAM",
+              })
+            }
+            if (data.sealedReply.envelope.keyGeneration !== e2e.currentKeyGeneration) {
+              throw new HttpError(
+                `Sealed reply uses key generation ${data.sealedReply.envelope.keyGeneration}; the stream is at ${e2e.currentKeyGeneration}`,
+                { status: 400, code: "E2E_WRONG_KEY_GENERATION" }
+              )
+            }
+            message = (
+              await eventService.createMessageForPrincipalInTransaction(
+                client,
+                { kind: "bot", botId: bot.id },
+                {
+                  id: data.sealedReply.messageId,
+                  workspaceId: req.workspaceId!,
+                  streamId: claim.responseStreamId,
+                  authorId: bot.id,
+                  authorType: AuthorTypes.BOT,
+                  contentJson: E2E_PLACEHOLDER_CONTENT_JSON,
+                  contentMarkdown: E2E_PLACEHOLDER_CONTENT_MARKDOWN,
+                  ciphertext: Buffer.from(data.sealedReply.ciphertext, "base64"),
+                  envelope: data.sealedReply.envelope,
+                  e2eVersion: 2,
+                  accessibleStreamIds: [claim.responseStreamId],
+                  clientMessageId: `bot-invocation:${claim.id}`,
+                }
+              )
+            ).message
+          } else if (contentMarkdown) {
+            message = (
+              await eventService.createMessageForPrincipalInTransaction(
+                client,
+                { kind: "bot", botId: bot.id },
+                {
+                  workspaceId: req.workspaceId!,
+                  streamId: claim.responseStreamId,
+                  authorId: bot.id,
+                  authorType: AuthorTypes.BOT,
+                  contentJson: contentJson!,
+                  contentMarkdown,
+                  attachmentIds: attachmentIds.length > 0 ? attachmentIds : undefined,
+                  clientMessageId: `bot-invocation:${claim.id}`,
+                  sources: data.sources,
+                  metadata: data.metadata,
+                }
+              )
+            ).message
+          }
+          const completed = await botRuntimeService.completeInvocationInTransaction(client, {
+            workspaceId: req.workspaceId!,
+            botId: req.botApiKey!.botId,
+            invocationId: req.params.invocationId,
+            instanceId: data.instanceId,
+            claimToken: data.claimToken,
+          })
+          if (!completed) throw invocationClaimNotFound()
+          const runtimeCommand = parseRuntimeCommandInvocationMetadata(completed.metadata)
+          if (runtimeCommand) {
+            await insertCommandCompletedEvent(client, {
               workspaceId: req.workspaceId!,
               streamId: completed.responseStreamId,
-              rootStreamId: completed.rootStreamId,
-              event: streamEvent,
+              userId: completed.authorUserId,
+              commandId: runtimeCommand.id,
+              result: {
+                invocationId: completed.id,
+                ...(message && { messageId: message.id }),
+              },
             })
-            return { completed, message, sessionFinalized: true, synthesizedSteps }
+          }
+          const session = denialSession ?? (await AgentSessionRepository.findById(client, completed.id))
+          // RUNNING is the happy path; FAILED is recoverable here. Reaching this
+          // point means the claim was still valid (findActiveClaimForUpdate above
+          // succeeded), so the only way the session is FAILED is an orphan
+          // false-positive from cleanup's stale-heartbeat scan — the turn really
+          // did finish and send its reply, so finalize it COMPLETED rather than
+          // leaving the trace stuck red.
+          if (session?.status === AgentSessionStatuses.RUNNING || session?.status === AgentSessionStatuses.FAILED) {
+            const latestSequence = await eventService.getLatestSequence(completed.responseStreamId)
+            const finalizedSession = await AgentSessionRepository.completeSession(client, completed.id, {
+              lastSeenSequence: latestSequence ?? 0n,
+              responseMessageId: message?.id ?? null,
+              sentMessageIds: message ? [message.id] : [],
+              recoverFromFailed: true,
+            })
+            if (finalizedSession) {
+              let steps = await AgentSessionRepository.findStepsBySession(client, completed.id)
+              // Synthesized-trace floor (N-6): a reply-only harness never POSTed
+              // /steps, so reconstruct the minimal context_received → message_sent
+              // trace in the same transaction — the completed event's stepCount
+              // and the rows land together (INV-7).
+              let synthesizedSteps: AgentSessionStep[] = []
+              if (steps.length === 0 && message) {
+                const author = await UserRepository.findById(client, req.workspaceId!, completed.authorUserId)
+                synthesizedSteps = await synthesizeReplyOnlyBotTrace(client, {
+                  sessionId: completed.id,
+                  trigger: {
+                    messageId: completed.sourceMessageId,
+                    authorName: author?.name ?? "Unknown",
+                    authorType: AuthorTypes.USER,
+                    createdAt: completed.createdAt.toISOString(),
+                    content: completed.promptMarkdown,
+                  },
+                  reply: { messageId: message.id, content: contentMarkdown! },
+                })
+                steps = synthesizedSteps
+              }
+              const completedAt = finalizedSession.completedAt ?? new Date()
+              const streamEvent = await StreamEventRepository.insert(client, {
+                id: eventId(),
+                streamId: completed.responseStreamId,
+                eventType: "agent_session:completed",
+                payload: {
+                  sessionId: completed.id,
+                  stepCount: steps.length,
+                  messageCount: message ? 1 : 0,
+                  duration: completedAt.getTime() - finalizedSession.createdAt.getTime(),
+                  completedAt: completedAt.toISOString(),
+                },
+                actorId: bot.id,
+                actorType: AuthorTypes.BOT,
+              })
+              await OutboxRepository.insert(client, "agent_session:completed", {
+                workspaceId: req.workspaceId!,
+                streamId: completed.responseStreamId,
+                rootStreamId: completed.rootStreamId,
+                event: streamEvent,
+              })
+              return { completed, message, sessionFinalized: true, synthesizedSteps, replay: null }
+            }
+          }
+          return { completed, message, sessionFinalized: false, synthesizedSteps: [], replay: null }
+        }
+      ).catch(async (error) => {
+        const denial = error as { code?: string }
+        if (denialSession && (denial.code === "STREAM_READ_ONLY" || denial.code === "STREAM_NOT_FOUND")) {
+          const responseStream = await StreamRepository.findById(pool, denialSession.streamId)
+          if (responseStream) {
+            await terminalizeBotDenial({
+              error,
+              session: denialSession,
+              stream: responseStream,
+              botId: bot.id,
+              callbackToken: data.claimToken,
+              instanceId: data.instanceId,
+            })
           }
         }
-        return { completed, message, sessionFinalized: false, synthesizedSteps: [] }
+        throw error
       })
+      if (replay) {
+        res.json({
+          data: {
+            invocationId: replay.invocationId,
+            message: replay.message ? serializeMessage(replay.message, { authorDisplayName: bot.name }) : null,
+          },
+          slots: await resolveSlots(req, replay.message ? [replay.message.contentJson] : []),
+        })
+        return
+      }
       // Best-effort live frames for an open trace dialog, emitted after the
       // transaction releases its connection (INV-41) — the durable record is
       // the rows + outbox event committed above. Synthesized steps first, then
@@ -1848,7 +2211,7 @@ export function createPublicApiHandlers({
           claimToken: data.claimToken,
           errorMessage: data.errorMessage,
         })
-        if (!failed) throw new HttpError("Invocation claim not found", { status: 404, code: "NOT_FOUND" })
+        if (!failed) throw invocationClaimNotFound()
 
         const runtimeCommand = parseRuntimeCommandInvocationMetadata(failed.metadata)
         if (runtimeCommand) {

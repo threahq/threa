@@ -26,7 +26,7 @@ import {
   type StreamActiveActor,
 } from "./repository"
 import type { LabelAssignmentService } from "../labels"
-import type { Stream, StreamService } from "../streams"
+import { assertStreamWritable, type Stream, type StreamService } from "../streams"
 import { E2eStreamActorsRepository } from "../e2e-streams"
 
 interface BotRuntimeServiceDeps {
@@ -631,6 +631,11 @@ export class BotRuntimeService {
       metadata?: Record<string, unknown>
     }
   ): Promise<{ invocation: BotInvocation; wasNewlyInserted: boolean }> {
+    await assertStreamWritable(db, {
+      workspaceId: params.workspaceId,
+      streamId: params.responseStreamId,
+      principal: { kind: "bot", botId: params.actorId },
+    })
     const { invocation, wasNewlyInserted } = await BotInvocationRepository.insertIdempotent(db, {
       id: botInvocationId(),
       workspaceId: params.workspaceId,
@@ -649,6 +654,13 @@ export class BotRuntimeService {
       targetRuntimeSessionId: params.targetRuntimeSessionId ?? null,
       metadata: params.metadata ?? {},
     })
+    if (
+      invocation.workspaceId !== params.workspaceId ||
+      invocation.actorType !== "bot" ||
+      invocation.actorId !== params.actorId
+    ) {
+      throw new Error("Idempotent bot invocation identity mismatch")
+    }
     if (wasNewlyInserted) {
       await OutboxRepository.insert(db, "bot_invocation:available", {
         workspaceId: invocation.workspaceId,
@@ -745,32 +757,70 @@ export class BotRuntimeService {
     /** Only claim invocations answering into this stream (see `claimOne`). */
     responseStreamId?: string
   }): Promise<BotInvocation | null> {
-    return withTransaction(this.pool, async (db) => {
-      // Reap invocations this bot has re-claimed to exhaustion before handing
-      // out fresh work, so a wedged runtime can't keep one pinned in an
-      // infinite re-claim loop. Parking is bot-wide (not instance-scoped):
-      // whichever instance polls next clears the backlog for the bot.
-      const parked = await BotInvocationRepository.parkExhausted(db, {
+    // Parking is independent lifecycle cleanup. Commit it before taking any
+    // stream authority locks so exhausted-row cleanup can never invert the
+    // stream-first order used by invocation creation and callback acceptance.
+    const parked = await withTransaction(this.pool, (db) =>
+      BotInvocationRepository.parkExhausted(db, {
         workspaceId: params.workspaceId,
         botId: params.botId,
         maxAttempts: BOT_CLAIM_MAX_ATTEMPTS,
       })
-      for (const invocation of parked) {
-        logger.warn(
-          {
-            invocationId: invocation.id,
-            workspaceId: invocation.workspaceId,
-            botId: invocation.actorId,
-            attempts: invocation.attempts,
-          },
-          "Parked bot invocation after exhausting claim attempts"
-        )
-      }
-      const claimed = await BotInvocationRepository.claimOne(db, {
+    )
+    for (const invocation of parked) {
+      logger.warn(
+        {
+          invocationId: invocation.id,
+          workspaceId: invocation.workspaceId,
+          botId: invocation.actorId,
+          attempts: invocation.attempts,
+        },
+        "Parked bot invocation after exhausting claim attempts"
+      )
+    }
+
+    return withTransaction(this.pool, async (db) => {
+      // Snapshot only: authority must lock the effective stream/root and grant
+      // before claimOne takes the invocation row lock. claimOne is then scoped
+      // to the same response stream; if this exact candidate lost a race it may
+      // claim the next FIFO row for that already-authorized stream, or no-op.
+      const candidate = await BotInvocationRepository.findNextClaimable(db, {
         ...params,
         maxAttempts: BOT_CLAIM_MAX_ATTEMPTS,
       })
+      if (!candidate) return null
+
+      let authorityDenial: { details?: { reason?: string } } | null = null
+      try {
+        await assertStreamWritable(db, {
+          workspaceId: candidate.workspaceId,
+          streamId: candidate.responseStreamId,
+          principal: { kind: "bot", botId: candidate.actorId },
+        })
+      } catch (error) {
+        const denial = error as { code?: string; details?: { reason?: string } }
+        if (denial.code !== "STREAM_READ_ONLY" && denial.code !== "STREAM_NOT_FOUND") throw error
+        authorityDenial = denial
+      }
+
+      const claimed = await BotInvocationRepository.claimOne(db, {
+        ...params,
+        responseStreamId: candidate.responseStreamId,
+        maxAttempts: BOT_CLAIM_MAX_ATTEMPTS,
+      })
       if (!claimed) return null
+      if (authorityDenial) {
+        await BotInvocationRepository.failClaim(db, {
+          workspaceId: claimed.workspaceId,
+          botId: claimed.actorId,
+          invocationId: claimed.id,
+          instanceId: params.instanceId,
+          claimToken: params.claimToken,
+          errorMessage: `STREAM_READ_ONLY:${authorityDenial.details?.reason ?? "not_a_member"}`,
+        })
+        return null
+      }
+
       // Siblings on the same bot need to stop racing this invocation. The
       // narrow payload deliberately omits the winning instance — see
       // `BotInvocationClaimedOutboxPayload`.
@@ -793,6 +843,19 @@ export class BotRuntimeService {
     return BotInvocationRepository.findActiveClaim(this.pool, params)
   }
 
+  async findInvocationForCallback(
+    db: Querier,
+    params: {
+      workspaceId: string
+      botId: string
+      invocationId: string
+      instanceId?: string
+      claimToken: string
+    }
+  ): Promise<BotInvocation | null> {
+    return BotInvocationRepository.findForCallback(db, params)
+  }
+
   async findActiveClaimForUpdate(
     db: Querier,
     params: {
@@ -804,6 +867,26 @@ export class BotRuntimeService {
     }
   ): Promise<BotInvocation | null> {
     return BotInvocationRepository.findActiveClaimForUpdate(db, params)
+  }
+
+  async findActiveClaimForUpdateByToken(
+    db: Querier,
+    params: { workspaceId: string; botId: string; invocationId: string; claimToken: string }
+  ): Promise<BotInvocation | null> {
+    return BotInvocationRepository.findActiveClaimForUpdate(db, params)
+  }
+
+  async findCompletedInvocationForReplay(
+    db: Querier,
+    params: {
+      workspaceId: string
+      botId: string
+      invocationId: string
+      claimToken: string
+      instanceId?: string
+    }
+  ): Promise<BotInvocation | null> {
+    return BotInvocationRepository.findCompletedForReplay(db, params)
   }
 
   async renewInvocationClaim(params: {
@@ -859,7 +942,7 @@ export class BotRuntimeService {
       workspaceId: string
       botId: string
       invocationId: string
-      instanceId: string
+      instanceId?: string
       claimToken: string
       errorMessage: string
     }

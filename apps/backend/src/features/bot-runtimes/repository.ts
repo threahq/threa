@@ -831,6 +831,42 @@ export const BotInvocationRepository = {
     return { invocation: mapInvocation(row), wasNewlyInserted: row.was_newly_inserted }
   },
 
+  async findNextClaimable(
+    db: Querier,
+    params: {
+      workspaceId: string
+      botId: string
+      instanceId: string
+      runtimeSessionId?: string
+      runtimeKind: BotRuntimeKind
+      supportedCapabilities: BotInvocationCapability[]
+      maxAttempts: number
+      responseStreamId?: string
+    }
+  ): Promise<BotInvocation | null> {
+    const result = await db.query<BotInvocationRow>(composeSql`SELECT i.* FROM bot_invocations i
+      WHERE i.workspace_id = ${params.workspaceId}
+        AND i.actor_type = 'bot'
+        AND i.actor_id = ${params.botId}
+        AND i.required_capability = ANY(${params.supportedCapabilities})
+        AND EXISTS (
+          SELECT 1 FROM bot_runtime_instances r
+          WHERE r.workspace_id = ${params.workspaceId}
+            AND r.bot_id = ${params.botId}
+            AND r.instance_id = ${params.instanceId}
+            AND r.runtime_kind = ${params.runtimeKind}
+        )
+        AND (i.target_instance_id IS NULL OR i.target_instance_id = ${params.instanceId})
+        AND (i.target_runtime_session_id IS NULL OR i.target_runtime_session_id = ${params.runtimeSessionId ?? null})
+        AND (i.status = 'pending' OR (i.status = 'claimed' AND i.claim_expires_at < NOW()))
+        AND (${params.responseStreamId ?? null}::text IS NULL OR i.response_stream_id = ${params.responseStreamId ?? null})
+        AND i.attempts < ${params.maxAttempts}
+        AND ${sealedStreamClaimGateSql(params.instanceId)}
+      ORDER BY i.created_at ASC, CASE WHEN i.trigger = 'session-control' THEN 1 ELSE 0 END ASC, i.id ASC
+      LIMIT 1`)
+    return result.rows[0] ? mapInvocation(result.rows[0]) : null
+  },
+
   async claimOne(
     db: Querier,
     params: {
@@ -901,12 +937,49 @@ export const BotInvocationRepository = {
     return result.rows[0] ? mapInvocation(result.rows[0]) : null
   },
 
-  async findActiveClaimForUpdate(
+  async findForCallback(
     db: Querier,
-    params: { workspaceId: string; botId: string; invocationId: string; instanceId: string; claimToken: string }
+    params: { workspaceId: string; botId: string; invocationId: string; instanceId?: string; claimToken: string }
   ): Promise<BotInvocation | null> {
     const result = await db.query<BotInvocationRow>(sql`SELECT * FROM bot_invocations
-      WHERE id = ${params.invocationId} AND workspace_id = ${params.workspaceId} AND actor_type = 'bot' AND actor_id = ${params.botId} AND status = 'claimed' AND claimed_by_instance_id = ${params.instanceId} AND claim_token = ${params.claimToken} AND claim_expires_at > NOW()
+      WHERE id = ${params.invocationId}
+        AND workspace_id = ${params.workspaceId}
+        AND actor_type = 'bot'
+        AND actor_id = ${params.botId}
+        AND claim_token = ${params.claimToken}
+        AND (${params.instanceId ?? null}::text IS NULL OR claimed_by_instance_id = ${params.instanceId ?? null})
+        AND (status = 'completed' OR (status = 'claimed' AND claim_expires_at > NOW()))`)
+    return result.rows[0] ? mapInvocation(result.rows[0]) : null
+  },
+
+  async findActiveClaimForUpdate(
+    db: Querier,
+    params: { workspaceId: string; botId: string; invocationId: string; instanceId?: string; claimToken: string }
+  ): Promise<BotInvocation | null> {
+    const result = await db.query<BotInvocationRow>(sql`SELECT * FROM bot_invocations
+      WHERE id = ${params.invocationId} AND workspace_id = ${params.workspaceId} AND actor_type = 'bot' AND actor_id = ${params.botId} AND status = 'claimed' AND (${params.instanceId ?? null}::text IS NULL OR claimed_by_instance_id = ${params.instanceId ?? null}) AND claim_token = ${params.claimToken} AND claim_expires_at > NOW()
+      FOR UPDATE`)
+    return result.rows[0] ? mapInvocation(result.rows[0]) : null
+  },
+
+  async findCompletedForReplay(
+    db: Querier,
+    params: {
+      workspaceId: string
+      botId: string
+      invocationId: string
+      claimToken: string
+      instanceId?: string
+    }
+  ): Promise<BotInvocation | null> {
+    const result = await db.query<BotInvocationRow>(sql`SELECT * FROM bot_invocations
+      WHERE id = ${params.invocationId}
+        AND workspace_id = ${params.workspaceId}
+        AND actor_type = 'bot'
+        AND actor_id = ${params.botId}
+        AND status = 'completed'
+        AND claim_token = ${params.claimToken}
+        AND (${params.instanceId ?? null}::text IS NULL OR claimed_by_instance_id = ${params.instanceId ?? null})
       FOR UPDATE`)
     return result.rows[0] ? mapInvocation(result.rows[0]) : null
   },
@@ -951,14 +1024,14 @@ export const BotInvocationRepository = {
       workspaceId: string
       botId: string
       invocationId: string
-      instanceId: string
+      instanceId?: string
       claimToken: string
       errorMessage: string
     }
   ): Promise<BotInvocation | null> {
     const result =
       await db.query<BotInvocationRow>(sql`UPDATE bot_invocations SET status = 'failed', error_message = ${params.errorMessage}, updated_at = NOW()
-      WHERE id = ${params.invocationId} AND workspace_id = ${params.workspaceId} AND actor_type = 'bot' AND actor_id = ${params.botId} AND status = 'claimed' AND claimed_by_instance_id = ${params.instanceId} AND claim_token = ${params.claimToken} AND claim_expires_at > NOW()
+      WHERE id = ${params.invocationId} AND workspace_id = ${params.workspaceId} AND actor_type = 'bot' AND actor_id = ${params.botId} AND status = 'claimed' AND (${params.instanceId ?? null}::text IS NULL OR claimed_by_instance_id = ${params.instanceId ?? null}) AND claim_token = ${params.claimToken} AND claim_expires_at > NOW()
       RETURNING *`)
     return result.rows[0] ? mapInvocation(result.rows[0]) : null
   },
