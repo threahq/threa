@@ -338,6 +338,53 @@ describe("useDraftMessage", () => {
 
       expect(putSpy).not.toHaveBeenCalled()
     })
+
+    it("adds several files picked at once to ONE detached row", async () => {
+      // Uploads finishing together queue one call each, all before the first
+      // one's create resolves. Honoring their null identity forked a detached
+      // row per file (ten one-attachment drafts in a DM, all surviving the send).
+      await upsertLoadedDraft(workspaceId, draftKey, { contentJson: makeDoc("typed"), attachments: [] })
+      const pointerId = (await db.composerLoaded.get(draftKey))?.draftId
+      const contentDraftIdRef = { current: null as string | null }
+      const { result } = renderHook(() => useDraftMessage(workspaceId, draftKey, undefined, contentDraftIdRef))
+
+      await act(async () => {
+        await Promise.all([
+          result.current.addAttachment({ id: "attach_a", filename: "a.png", mimeType: "image/png", sizeBytes: 1 }),
+          result.current.addAttachment({ id: "attach_b", filename: "b.png", mimeType: "image/png", sizeBytes: 2 }),
+        ])
+      })
+
+      const rows = await db.drafts.where("[workspaceId+scope]").equals([workspaceId, draftKey]).toArray()
+      const detached = rows.filter((row) => row.id !== pointerId)
+      expect(detached).toHaveLength(1)
+      expect(detached[0].attachments.map((a) => a.id)).toEqual(["attach_a", "attach_b"])
+      // The pointer draft is untouched: this composer never hydrated it.
+      expect(rows.find((row) => row.id === pointerId)?.attachments).toEqual([])
+    })
+
+    it("does not mint another detached row for a file a sibling draft already holds", async () => {
+      // The per-row duplicate check looks at a row that does not exist yet, so
+      // only a scope-wide look can stop the persistence effect's re-run (it
+      // fires per upload tick) from minting a fresh copy every time.
+      await upsertLoadedDraft(workspaceId, draftKey, { contentJson: makeDoc("typed"), attachments: [] })
+      const attachment = { id: "attach_a", filename: "a.png", mimeType: "image/png", sizeBytes: 1 }
+      const contentDraftIdRef = { current: null as string | null }
+      const { result } = renderHook(() => useDraftMessage(workspaceId, draftKey, undefined, contentDraftIdRef))
+
+      await act(async () => {
+        await result.current.addAttachment(attachment)
+      })
+      // The composer loses its identity again (a remount, a pointer flicker) and
+      // the effect re-fires with the same uploaded file.
+      contentDraftIdRef.current = null
+      await act(async () => {
+        await result.current.addAttachment(attachment)
+      })
+
+      const rows = await db.drafts.where("[workspaceId+scope]").equals([workspaceId, draftKey]).toArray()
+      expect(rows).toHaveLength(2)
+    })
   })
 
   describe("removeAttachment", () => {
@@ -776,6 +823,41 @@ describe("useDraftMessage", () => {
         expect(sealSpy).toHaveBeenCalledWith(
           expect.objectContaining({ contentJson: makeDoc("hi"), attachmentIds: ["att_9"] })
         )
+      })
+
+      it("does not mint a detached row for a file a sealed sibling already holds", async () => {
+        // The sealed branch of the scope-wide guard: a sibling's attachments live
+        // only in the decrypt cache (E2EE-4), so the guard has to read them there.
+        await putSealedLoaded("draft_ptr")
+        await db.drafts.put({
+          id: "draft_sib",
+          workspaceId,
+          scope: draftKey,
+          contentJson: EMPTY_DOC,
+          attachments: [],
+          ciphertext: "ct_sib",
+          envelope: { v: 2 },
+          e2eVersion: 2,
+          clientUpdatedAt: Date.now(),
+        })
+        await seedDraftCacheFromIdb(workspaceId)
+        seedDecryption("draft_sib", {
+          contentMarkdown: "",
+          contentJson: EMPTY_DOC,
+          attachmentRefs: [ref("att_z", "z.png", 7)],
+          sources: [],
+        })
+        const sealSpy = sealMock([ref("att_z", "z.png", 7)])
+        const contentDraftIdRef = { current: null as string | null }
+
+        const { result } = renderHook(() => useDraftMessage(workspaceId, draftKey, e2eStreamId, contentDraftIdRef))
+
+        await act(async () => {
+          await result.current.addAttachment({ id: "att_z", filename: "z.png", mimeType: "image/png", sizeBytes: 7 })
+        })
+
+        expect(sealSpy).not.toHaveBeenCalled()
+        expect(await db.drafts.where("scope").equals(draftKey).count()).toBe(2)
       })
 
       it("a content-only save preserves the draft's already-sealed attachments", async () => {

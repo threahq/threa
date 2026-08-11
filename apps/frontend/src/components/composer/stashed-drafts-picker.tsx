@@ -15,7 +15,7 @@ import { Button } from "@/components/ui/button"
 import { Popover, PopoverAnchor, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { DeleteDraftConfirmDialog } from "@/components/drafts/delete-draft-confirm-dialog"
-import { draftInlineText, draftPreviewStatusLabel } from "@/lib/drafts/decryption"
+import { draftEmptyBodyLabel, draftInlineText, draftPreviewStatusLabel } from "@/lib/drafts/decryption"
 import { formatRelativeTime } from "@/lib/dates"
 import { cn } from "@/lib/utils"
 import { useInputMode } from "@/hooks/use-input-mode"
@@ -106,14 +106,6 @@ function isPreviewSettled(draft: CachedDraft, previewById?: Map<string, DraftPre
   return previewById?.get(draft.id)?.status === "ready"
 }
 
-function attachmentOrEmptyLabel(draft: CachedDraft): string {
-  const attachmentCount = draft.attachments?.length ?? 0
-  if (attachmentCount > 0) {
-    return `${attachmentCount} attachment${attachmentCount === 1 ? "" : "s"}`
-  }
-  return "Empty draft"
-}
-
 /**
  * The row label: the host-supplied decrypted preview when present (E2E + plaintext
  * alike), otherwise derived from `contentJson` for plaintext-only callers/tests.
@@ -122,9 +114,11 @@ function attachmentOrEmptyLabel(draft: CachedDraft): string {
  */
 function rowPreview(draft: CachedDraft, previewById?: Map<string, DraftPreview>): string {
   const preview = previewById?.get(draft.id)
-  if (!preview) return draftInlineText(draft.contentJson) || attachmentOrEmptyLabel(draft)
+  if (!preview) return draftInlineText(draft.contentJson) || draftEmptyBodyLabel(draft.attachments?.length ?? 0)
   if (preview.status !== "ready") return draftPreviewStatusLabel(preview.status)
-  return preview.text || attachmentOrEmptyLabel(draft)
+  // The preview's count, not the row's: a sealed row holds `attachments: []` at
+  // rest, so reading it here labelled an attachment-only E2E draft "Empty draft".
+  return preview.text || draftEmptyBodyLabel(preview.attachmentCount)
 }
 
 export function StashedDraftsPicker({

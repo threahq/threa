@@ -54,6 +54,22 @@ async function getLoadedDraftId(scope: string): Promise<string | null> {
   return row?.draftId ?? null
 }
 
+/**
+ * Whether ANY draft filed under `scope` already carries `attachmentId` — the
+ * loaded one or a detached sibling. A sealed row keeps no plaintext attachment
+ * linkage at rest (E2EE-4), so its set is read from the in-memory decrypt cache,
+ * the same authority the seal path re-reads — which makes this BEST-EFFORT for
+ * E2E: a sibling evicted from that cache (or gone with a reload/lock) reads as
+ * carrying nothing, and there is no durable copy to fall back on by design. It
+ * backstops the identity rule in `addAttachment`, never replaces it.
+ */
+async function scopeHasAttachment(workspaceId: string, scope: string, attachmentId: string): Promise<boolean> {
+  const rows = await db.drafts.where("[workspaceId+scope]").equals([workspaceId, scope]).toArray()
+  return rows.some((row) =>
+    (row.ciphertext ? cachedDraftAttachments(row.id) : (row.attachments ?? [])).some((a) => a.id === attachmentId)
+  )
+}
+
 export interface DraftFields {
   contentJson: JSONContent
   attachments: DraftAttachment[]
@@ -1057,8 +1073,15 @@ export function useDraftMessage(
     async (attachment: DraftAttachment) => {
       // The row this attachment operation belongs to, captured ONCE at CALL
       // time: the ref can move on (a repoint) across the awaits below.
-      const targetId = contentDraftId.current
+      const armedId = contentDraftId.current
       await chainWrite(async () => {
+        // A null capture is re-read HERE, after the predecessor write settled —
+        // `saveDraft`'s rule (its `expectedDraftId ?? ref` read) for the same
+        // reason. Selecting several files queues one call per upload; they all
+        // arm before the first one's create resolves, and honoring that null
+        // forked a detached row per call — ten one-attachment drafts in a DM,
+        // every one of them surviving the send.
+        const targetId = armedId ?? contentDraftId.current
         // Same assignment-time recheck `saveDraft` uses: the ref may have been
         // repointed during the awaits below, and writing the captured target back
         // would drag the composer's identity onto the superseded row.
@@ -1072,6 +1095,13 @@ export function useDraftMessage(
         let effectiveTarget = targetId
         let mintedDetachedId = false
         if (strictIdentity && targetId === null && (await getLoadedDraftId(draftKey)) !== null) {
+          // A detached row claims no pointer, so nothing ever reconciles it with
+          // its siblings — and the per-row duplicate check below looks at a row
+          // that does not exist yet, so it always passes. Only a scope-wide look
+          // can tell that this file is already persisted here; without it any
+          // repeat call (the persistence effect re-runs per upload tick) mints
+          // another copy of the same attachment.
+          if (await scopeHasAttachment(workspaceId, draftKey, attachment.id)) return
           effectiveTarget = generateLocalDraftId()
           mintedDetachedId = true
         }
@@ -1142,8 +1172,12 @@ export function useDraftMessage(
       // time: the ref can move on (a repoint) across the awaits below, and
       // reading it later would source the content from one draft and address
       // the write to another.
-      const targetId = contentDraftId.current
+      const armedId = contentDraftId.current
       await chainWrite(async () => {
+        // Null re-read in-chain, as in `addAttachment`: a removal queued behind
+        // the add that created the row must see that create's identity, or it
+        // addresses no row and silently leaves the file attached.
+        const targetId = armedId ?? contentDraftId.current
         // Assignment-time recheck, as in `addAttachment`/`saveDraft`.
         const advanceIdentity = (next: string | null) => {
           if (contentDraftId.current === targetId) contentDraftId.current = next

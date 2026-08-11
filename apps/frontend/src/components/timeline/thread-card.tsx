@@ -6,13 +6,24 @@ import { RelativeTime } from "@/components/relative-time"
 import { useActors } from "@/hooks"
 import { useWorkspaceEmoji } from "@/hooks/use-workspace-emoji"
 import { truncateContent } from "@/components/layout/sidebar/utils"
+import { draftEmptyBodyLabel } from "@/lib/drafts/decryption"
 import { cn } from "@/lib/utils"
 
 export interface ThreadCardDraft {
   /** One-line plain text of the viewer's unsent reply. "" when there is nothing
-   *  renderable (attachment-only, or a sealed body this device can't read) —
-   *  the label still shows, the snippet row is dropped. */
+   *  renderable (attachment-only, or a sealed body this device can't read). */
   preview: string
+  /** Files on the draft. With no body text they name the row ("1 attachment"),
+   *  so an attachment-only reply reads the same here as in every other draft
+   *  list; only a row with neither drops the snippet entirely. */
+  attachmentCount: number
+}
+
+/** What the draft-only card shows under its header: the body text, else the file
+ *  count, else nothing (a sealed body this device can't read). */
+function draftSnippet(draft: ThreadCardDraft): string {
+  if (draft.preview) return draft.preview
+  return draft.attachmentCount > 0 ? draftEmptyBodyLabel(draft.attachmentCount) : ""
 }
 
 interface ThreadCardProps {
@@ -70,6 +81,7 @@ export function ThreadCard({
   if (replyCount === 0 && !draft) return null
 
   const isDraftOnly = replyCount === 0
+  const draftSnippetText = draft ? draftSnippet(draft) : ""
   const replyLabel = replyCount === 1 ? "1 reply" : `${replyCount} replies`
   const participants = summary?.participants ?? []
 
@@ -132,7 +144,7 @@ export function ThreadCard({
         <ChevronRight className="ml-auto h-3.5 w-3.5 text-muted-foreground/50 transition-transform group-hover/thread:translate-x-0.5 group-hover/thread:text-muted-foreground" />
       </div>
       {isDraftOnly
-        ? draft?.preview && <p className="truncate text-xs italic text-muted-foreground">{draft.preview}</p>
+        ? draftSnippetText && <p className="truncate text-xs italic text-muted-foreground">{draftSnippetText}</p>
         : summary && (
             <p className="truncate text-xs text-muted-foreground">
               <span className="font-medium text-foreground/80">

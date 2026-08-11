@@ -253,13 +253,21 @@ describe("StashedDraftsPicker", () => {
   describe("preview rendering", () => {
     const sealed = makeDraft("draft_e", "placeholder")
     const open = () => userEvent.click(screen.getByRole("button", { name: /drafts/i }))
-    const preview = (status: DraftPreview["status"], text = ""): Map<string, DraftPreview> =>
-      new Map([["draft_e", { text, markdown: text, status }]])
+    const preview = (status: DraftPreview["status"], text = "", attachmentCount = 0): Map<string, DraftPreview> =>
+      new Map([["draft_e", { text, markdown: text, attachmentCount, status }]])
 
     it("renders the host-supplied decrypted body when ready", async () => {
       renderPicker({ drafts: [sealed], previewById: preview("ready", "decrypted body") })
       await open()
       expect(screen.getByText("decrypted body")).toBeInTheDocument()
+    })
+
+    it("names the files of a decrypted attachment-only draft, not 'Empty draft'", async () => {
+      // A sealed row's `attachments` is [] at rest (E2EE-4) — the count has to
+      // come from the same decrypt the body did.
+      renderPicker({ drafts: [sealed], previewById: preview("ready", "", 2) })
+      await open()
+      expect(screen.getByText("2 attachments")).toBeInTheDocument()
     })
 
     it("shows 'Decrypting…' while the body is in flight", async () => {

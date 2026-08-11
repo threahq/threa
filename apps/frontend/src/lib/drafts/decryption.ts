@@ -150,6 +150,13 @@ export interface DraftPreview {
    * state that decides its preview.
    */
   markdown: string
+  /**
+   * How many attachments the draft carries. Rides with the preview because a
+   * sealed row's `attachments` is `[]` at rest (E2EE-4) — its real set is only
+   * readable through the same decrypt this preview came from, so a list surface
+   * reading the row directly would call an attachment-only E2E draft empty.
+   */
+  attachmentCount: number
   status: DraftPreviewStatus
 }
 
@@ -171,12 +178,24 @@ export function draftDecryptionToPreview(decryption: DraftDecryption): DraftPrev
     return {
       text: draftInlineText(decryption.contentJson),
       markdown: draftMarkdown(decryption.contentJson),
+      attachmentCount: decryption.attachments.length,
       status: "ready",
     }
   }
-  if (decryption.status === "failed") return { text: "", markdown: "", status: "failed" }
-  if (decryption.status === "locked") return { text: "", markdown: "", status: "locked" }
-  return { text: "", markdown: "", status: "decrypting" } // pending / none
+  if (decryption.status === "failed") return { text: "", markdown: "", attachmentCount: 0, status: "failed" }
+  if (decryption.status === "locked") return { text: "", markdown: "", attachmentCount: 0, status: "locked" }
+  return { text: "", markdown: "", attachmentCount: 0, status: "decrypting" } // pending / none
+}
+
+/**
+ * Label for a draft row whose body renders no text. An attachment-only draft is
+ * real, unsent payload — naming its files is the only truthful thing to show, so
+ * every draft-listing surface (composer stash pile, drafts explorer) reads it
+ * from here rather than each deciding what "no text" means.
+ */
+export function draftEmptyBodyLabel(attachmentCount: number): string {
+  if (attachmentCount > 0) return `${attachmentCount} attachment${attachmentCount === 1 ? "" : "s"}`
+  return "Empty draft"
 }
 
 /** User-facing label for a non-ready preview status. */

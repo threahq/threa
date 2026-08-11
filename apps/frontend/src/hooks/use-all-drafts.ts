@@ -141,7 +141,22 @@ function draftPreviewLabel(draft: CachedDraft, previewMap: Map<string, DraftPrev
   const preview = previewMap.get(draft.id)
   if (!preview) return "Encrypted draft"
   if (preview.status !== "ready") return draftPreviewStatusLabel(preview.status)
-  return truncatePreview(preview.text) || "Encrypted draft"
+  const text = truncatePreview(preview.text)
+  if (text) return text
+  // Decrypted, and the body really is empty. With files on it the row reads as
+  // its files (the caller's fallback), exactly like a plaintext one — returning
+  // "Encrypted draft" here is what kept the attachment label off a sealed row.
+  return preview.attachmentCount > 0 ? "" : "Encrypted draft"
+}
+
+/**
+ * How many attachments a row carries. A sealed row's `attachments` is `[]` at
+ * rest (E2EE-4), so its count comes from the decrypted preview — reading the row
+ * would report every encrypted attachment-only draft as having none.
+ */
+function draftAttachmentCount(draft: CachedDraft, previewMap: Map<string, DraftPreview>): number {
+  if (draft.ciphertext == null) return draft.attachments?.length ?? 0
+  return previewMap.get(draft.id)?.attachmentCount ?? 0
 }
 
 /**
@@ -510,7 +525,7 @@ export function useAllDrafts(workspaceId: string) {
           displayName,
           preview: draftPreviewLabel(loadedDraft, previewMap),
           ...draftCopySource(loadedDraft, previewMap),
-          attachmentCount: loadedDraft?.attachments?.length ?? 0,
+          attachmentCount: draftAttachmentCount(loadedDraft, previewMap),
           updatedAt: loadedDraft?.clientUpdatedAt ?? scratchpad.createdAt,
           href: `/w/${workspaceId}/s/${scratchpad.id}`,
           groupLabel: displayName,
@@ -574,7 +589,7 @@ export function useAllDrafts(workspaceId: string) {
         displayName: resolved.displayName,
         preview: draftPreviewLabel(draft, previewMap),
         ...draftCopySource(draft, previewMap),
-        attachmentCount: draft.attachments?.length ?? 0,
+        attachmentCount: draftAttachmentCount(draft, previewMap),
         updatedAt: draft.clientUpdatedAt,
         href,
         groupLabel: resolved.groupLabel,
