@@ -116,7 +116,9 @@ function rowPreview(draft: CachedDraft, previewById?: Map<string, DraftPreview>)
   const preview = previewById?.get(draft.id)
   if (!preview) return draftInlineText(draft.contentJson) || draftEmptyBodyLabel(draft.attachments?.length ?? 0)
   if (preview.status !== "ready") return draftPreviewStatusLabel(preview.status)
-  return preview.text || draftEmptyBodyLabel(draft.attachments?.length ?? 0)
+  // The preview's count, not the row's: a sealed row holds `attachments: []` at
+  // rest, so reading it here labelled an attachment-only E2E draft "Empty draft".
+  return preview.text || draftEmptyBodyLabel(preview.attachmentCount)
 }
 
 export function StashedDraftsPicker({

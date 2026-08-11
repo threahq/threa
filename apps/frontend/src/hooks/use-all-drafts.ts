@@ -145,6 +145,16 @@ function draftPreviewLabel(draft: CachedDraft, previewMap: Map<string, DraftPrev
 }
 
 /**
+ * How many attachments a row carries. A sealed row's `attachments` is `[]` at
+ * rest (E2EE-4), so its count comes from the decrypted preview — reading the row
+ * would report every encrypted attachment-only draft as having none.
+ */
+function draftAttachmentCount(draft: CachedDraft, previewMap: Map<string, DraftPreview>): number {
+  if (draft.ciphertext == null) return draft.attachments?.length ?? 0
+  return previewMap.get(draft.id)?.attachmentCount ?? 0
+}
+
+/**
  * The copy source for a draft row: the full markdown plus how readable it is.
  * Reads the same decrypted-preview entry the row's label does, so a sealed row
  * can never show "Decrypting…" while a copy action hands out that label (or an
@@ -510,7 +520,7 @@ export function useAllDrafts(workspaceId: string) {
           displayName,
           preview: draftPreviewLabel(loadedDraft, previewMap),
           ...draftCopySource(loadedDraft, previewMap),
-          attachmentCount: loadedDraft?.attachments?.length ?? 0,
+          attachmentCount: draftAttachmentCount(loadedDraft, previewMap),
           updatedAt: loadedDraft?.clientUpdatedAt ?? scratchpad.createdAt,
           href: `/w/${workspaceId}/s/${scratchpad.id}`,
           groupLabel: displayName,
@@ -574,7 +584,7 @@ export function useAllDrafts(workspaceId: string) {
         displayName: resolved.displayName,
         preview: draftPreviewLabel(draft, previewMap),
         ...draftCopySource(draft, previewMap),
-        attachmentCount: draft.attachments?.length ?? 0,
+        attachmentCount: draftAttachmentCount(draft, previewMap),
         updatedAt: draft.clientUpdatedAt,
         href,
         groupLabel: resolved.groupLabel,

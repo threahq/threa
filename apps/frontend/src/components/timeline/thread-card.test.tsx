@@ -82,7 +82,7 @@ describe("ThreadCard", () => {
         href="/panel/draft:stream_1:msg_1"
         workspaceId="ws_1"
         summary={undefined}
-        draft={{ preview: "half-written reply" }}
+        draft={{ preview: "half-written reply", attachmentCount: 0 }}
       />
     )
     expect(screen.getByRole("link")).toHaveAttribute("href", "/panel/draft:stream_1:msg_1")
@@ -92,18 +92,32 @@ describe("ThreadCard", () => {
     expect(screen.queryByText(/^\d+ repl(y|ies)$/)).toBeNull()
   })
 
-  it("renders the draft-only label with no snippet row when the preview is empty (sealed/attachment-only body)", () => {
+  it("renders the draft-only label with no snippet row when there is no body and no file (sealed body)", () => {
     renderCard(
       <ThreadCard
         replyCount={0}
         href="/panel/draft:stream_1:msg_1"
         workspaceId="ws_1"
         summary={undefined}
-        draft={{ preview: "" }}
+        draft={{ preview: "", attachmentCount: 0 }}
       />
     )
     expect(screen.getByText("Draft")).toBeInTheDocument()
     expect(screen.getByRole("link").querySelector("p")).toBeNull()
+  })
+
+  it("names the files of an attachment-only draft reply instead of dropping the snippet", () => {
+    renderCard(
+      <ThreadCard
+        replyCount={0}
+        href="/panel/draft:stream_1:msg_1"
+        workspaceId="ws_1"
+        summary={undefined}
+        draft={{ preview: "", attachmentCount: 2 }}
+      />
+    )
+    // Same wording as the drafts explorer and the composer stash pile.
+    expect(screen.getByText("2 attachments")).toBeInTheDocument()
   })
 
   it("appends the draft token beside the reply count and keeps the latest-reply row", () => {
@@ -113,7 +127,7 @@ describe("ThreadCard", () => {
         href="/panel/thread_1"
         workspaceId="ws_1"
         summary={baseSummary}
-        draft={{ preview: "unsent addition" }}
+        draft={{ preview: "unsent addition", attachmentCount: 0 }}
       />
     )
     expect(screen.getByText("2 replies")).toBeInTheDocument()

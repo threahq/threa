@@ -58,7 +58,10 @@ async function getLoadedDraftId(scope: string): Promise<string | null> {
  * Whether ANY draft filed under `scope` already carries `attachmentId` — the
  * loaded one or a detached sibling. A sealed row keeps no plaintext attachment
  * linkage at rest (E2EE-4), so its set is read from the in-memory decrypt cache,
- * the same authority the seal path re-reads.
+ * the same authority the seal path re-reads — which makes this BEST-EFFORT for
+ * E2E: a sibling evicted from that cache (or gone with a reload/lock) reads as
+ * carrying nothing, and there is no durable copy to fall back on by design. It
+ * backstops the identity rule in `addAttachment`, never replaces it.
  */
 async function scopeHasAttachment(workspaceId: string, scope: string, attachmentId: string): Promise<boolean> {
   const rows = await db.drafts.where("[workspaceId+scope]").equals([workspaceId, scope]).toArray()

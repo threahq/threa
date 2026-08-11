@@ -825,6 +825,41 @@ describe("useDraftMessage", () => {
         )
       })
 
+      it("does not mint a detached row for a file a sealed sibling already holds", async () => {
+        // The sealed branch of the scope-wide guard: a sibling's attachments live
+        // only in the decrypt cache (E2EE-4), so the guard has to read them there.
+        await putSealedLoaded("draft_ptr")
+        await db.drafts.put({
+          id: "draft_sib",
+          workspaceId,
+          scope: draftKey,
+          contentJson: EMPTY_DOC,
+          attachments: [],
+          ciphertext: "ct_sib",
+          envelope: { v: 2 },
+          e2eVersion: 2,
+          clientUpdatedAt: Date.now(),
+        })
+        await seedDraftCacheFromIdb(workspaceId)
+        seedDecryption("draft_sib", {
+          contentMarkdown: "",
+          contentJson: EMPTY_DOC,
+          attachmentRefs: [ref("att_z", "z.png", 7)],
+          sources: [],
+        })
+        const sealSpy = sealMock([ref("att_z", "z.png", 7)])
+        const contentDraftIdRef = { current: null as string | null }
+
+        const { result } = renderHook(() => useDraftMessage(workspaceId, draftKey, e2eStreamId, contentDraftIdRef))
+
+        await act(async () => {
+          await result.current.addAttachment({ id: "att_z", filename: "z.png", mimeType: "image/png", sizeBytes: 7 })
+        })
+
+        expect(sealSpy).not.toHaveBeenCalled()
+        expect(await db.drafts.where("scope").equals(draftKey).count()).toBe(2)
+      })
+
       it("a content-only save preserves the draft's already-sealed attachments", async () => {
         await putSealedLoaded("draft_sealed")
         seedDecryption("draft_sealed", {
