@@ -6,7 +6,9 @@ import { MemoryRouter } from "react-router-dom"
 import type { JSONContent, ThreadSummary } from "@threa/types"
 // eslint-disable-next-line no-restricted-imports -- test seeds/inspects IDB directly to drive the real draft registry
 import { db } from "@/db"
-import { resolveLoadedDraft, upsertLoadedDraft } from "@/hooks/use-draft-message"
+import { renderHook } from "@testing-library/react"
+import { resolveLoadedDraft, rescopeScopeDrafts, upsertLoadedDraft } from "@/hooks/use-draft-message"
+import { useBoardDraftsReady } from "@/hooks/use-scope-draft-preview"
 import { resetDraftStoreCache } from "@/stores/draft-store"
 import { resetDraftResolutionGuard } from "@/sync/draft-resolution-guard"
 import { useThreadDraft, __clearBoardDraftsRegistry } from "@/hooks/use-scope-draft-preview"
@@ -134,5 +136,28 @@ describe("thread draft send transition", () => {
     expect(screen.getByText("1 reply")).toBeInTheDocument()
     expect(host.firstChild).not.toBe(slotBeforeSend)
     expect(host.querySelector(".animate-thread-grow")).not.toBeNull()
+  })
+
+  it("resolves the sent draft by identity when the promotion rescope wins the race", async () => {
+    await upsertLoadedDraft(workspaceId, scope, { contentJson: doc("typed but unsent"), attachments: [] })
+    const draftId = (await db.composerLoaded.get(scope))?.draftId
+    expect(draftId).toBeTruthy()
+
+    // Promotion wins the race: promoteDraft's rescope moves the row AND its
+    // loaded pointer onto the real thread's scope before the send's resolve
+    // reads them. A pointer-only resolve at the old scope would then no-op,
+    // leaving the sent draft alive — rendered as a false "Draft" chip.
+    await rescopeScopeDrafts(workspaceId, scope, `stream:${threadId}`)
+    expect((await db.drafts.get(draftId!))?.scope).toBe(`stream:${threadId}`)
+
+    await resolveLoadedDraft(workspaceId, scope, draftId)
+
+    expect(await db.drafts.get(draftId!)).toBeUndefined()
+    expect(await db.composerLoaded.get(`stream:${threadId}`)).toBeUndefined()
+
+    const ready = renderHook(() => useBoardDraftsReady(workspaceId))
+    const { result } = renderHook(() => useThreadDraft(workspaceId, anchorId, threadId))
+    await waitFor(() => expect(ready.result.current).toBe(true))
+    expect(result.current).toBeNull()
   })
 })

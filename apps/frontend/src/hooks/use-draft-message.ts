@@ -369,17 +369,38 @@ async function removeLoadedDraftLocally(
    * destroy whatever the pointer now holds (and mirror the delete everywhere).
    * The pointer-addressed callers ("whatever is loaded") pass nothing.
    */
-  expectedDraftId?: string | null
+  expectedDraftId?: string | null,
+  /**
+   * The row the caller holds, used when the scope's pointer is GONE — a
+   * promotion rescope (`rescopeScopeDrafts`) racing a resolve-on-send moves the
+   * row and its pointer to the real stream's scope before this reads them, and
+   * a pointer-only teardown then no-ops, leaving the just-sent draft alive
+   * under the new scope (rendered as a false "Draft" chip by the thread card,
+   * and rehydrated into the thread's composer). With the fallback the teardown
+   * follows the row by identity: the delete and mirror proceed, and every
+   * pointer in the workspace naming the row is cleared wherever the rescope
+   * parked it.
+   */
+  fallbackDraftId?: string | null
 ): Promise<void> {
   let removedId: string | null = null
+  const clearedScopes: string[] = []
   await db.transaction("rw", db.drafts, db.composerLoaded, db.pendingOperations, async () => {
-    const loadedId = (await db.composerLoaded.get(scope))?.draftId ?? null
+    let loadedId = (await db.composerLoaded.get(scope))?.draftId ?? null
     if (expectedDraftId && loadedId !== expectedDraftId) return
+    if (!loadedId && fallbackDraftId && (await db.drafts.get(fallbackDraftId))) loadedId = fallbackDraftId
     let version: number | undefined
     if (loadedId) {
       const row = await db.drafts.get(loadedId)
       version = row?.baseVersion
       await db.drafts.delete(loadedId)
+      const holders = await db.composerLoaded.where("workspaceId").equals(workspaceId).toArray()
+      for (const holder of holders) {
+        if (holder.draftId === loadedId && holder.scope !== scope) {
+          await db.composerLoaded.delete(holder.scope)
+          clearedScopes.push(holder.scope)
+        }
+      }
     }
     await db.composerLoaded.delete(scope)
     if (loadedId) await mirror(loadedId, version)
@@ -387,6 +408,10 @@ async function removeLoadedDraftLocally(
   })
   if (removedId) deleteDraftFromCache(workspaceId, removedId)
   setComposerLoadedInCache(workspaceId, scope, null)
+  for (const clearedScope of clearedScopes) {
+    clearStagedDraft(workspaceId, clearedScope)
+    setComposerLoadedInCache(workspaceId, clearedScope, null)
+  }
 }
 
 /**
@@ -472,7 +497,13 @@ async function removeDraftRowById(
  * CAS clear-on-send so a copy that drifted on another device survives as a stash
  * entry instead of being collaterally deleted (plan §resolve-on-send).
  */
-export async function resolveLoadedDraft(workspaceId: string, scope: string): Promise<void> {
+export async function resolveLoadedDraft(
+  workspaceId: string,
+  scope: string,
+  /** The row whose content was sent — lets the teardown follow it if a
+   *  promotion rescope moved it (and its pointer) off `scope` mid-send. */
+  sentDraftId?: string | null
+): Promise<void> {
   // Drop the staging buffer first (synchronous) so the just-sent content can't be
   // recovered by a reload, nor re-staged by a debounced flush racing the teardown
   // — the same resurrection class the resolution guard below closes.
@@ -484,14 +515,20 @@ export async function resolveLoadedDraft(workspaceId: string, scope: string): Pr
   // that would route a racing save into the create path — so the save sees the
   // advanced seq and drops its create.
   recordScopeResolved(scope)
-  await removeLoadedDraftLocally(workspaceId, scope, async (loadedId, baseVersion) => {
-    // Remember this draft's (id, version) so an inbound echo of our own push, or a
-    // reconnect bootstrap that re-seeds the still-present server row before the
-    // resolve op drains, is dropped rather than resurrected as a stash entry. A
-    // strictly newer version from another device is NOT suppressed (no-loss).
-    markDraftResolved(loadedId, baseVersion ?? 0)
-    await syncDraftResolution(workspaceId, loadedId, baseVersion)
-  })
+  await removeLoadedDraftLocally(
+    workspaceId,
+    scope,
+    async (loadedId, baseVersion) => {
+      // Remember this draft's (id, version) so an inbound echo of our own push, or a
+      // reconnect bootstrap that re-seeds the still-present server row before the
+      // resolve op drains, is dropped rather than resurrected as a stash entry. A
+      // strictly newer version from another device is NOT suppressed (no-loss).
+      markDraftResolved(loadedId, baseVersion ?? 0)
+      await syncDraftResolution(workspaceId, loadedId, baseVersion)
+    },
+    undefined,
+    sentDraftId
+  )
 }
 
 /**
@@ -672,8 +709,10 @@ export async function restoreStashedDraftToComposer(
  * real stream and keep roaming instead of being discarded. The loaded pointer
  * follows its draft (via `migrateLocalDraftScope`). No-op when the scope is empty.
  *
- * The just-sent loaded draft is already resolved by the send path before promotion
- * runs, so in practice this carries the surviving stash entries.
+ * In practice this carries the surviving stash entries: the send path resolves
+ * the loaded draft concurrently, and its teardown is identity-addressed
+ * (`resolveLoadedDraft`'s `sentDraftId`), so a rescope that wins the race and
+ * moves the sent row here is still found and resolved under the new scope.
  */
 export async function rescopeScopeDrafts(workspaceId: string, fromScope: string, toScope: string): Promise<void> {
   const rows = await db.drafts.where("[workspaceId+scope]").equals([workspaceId, fromScope]).toArray()
@@ -1222,7 +1261,7 @@ export function useDraftMessage(
       debounceRef.current = null
     }
 
-    await resolveLoadedDraft(workspaceId, draftKey)
+    await resolveLoadedDraft(workspaceId, draftKey, contentDraftId.current)
     contentDraftId.current = null
     syncEngine?.kickOperationQueue()
   }, [draftKey, workspaceId, syncEngine, contentDraftId])
