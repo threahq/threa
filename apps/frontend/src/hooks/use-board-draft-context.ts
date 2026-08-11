@@ -117,6 +117,31 @@ async function loadBoardDraftContext(workspaceId: string, keys: ScopeKeys): Prom
 }
 
 /**
+ * The last resolved value per slot (`workspace|kind`), one entry each. A remount
+ * re-runs the query from `undefined`, and falling back to the empty default
+ * would report `loaded: false` again — a consumer holding its UI on that flag
+ * blinks on every warm navigation, though the value it is about to re-resolve to
+ * is the one already held here. The signature is checked too, so a changed set
+ * of scopes falls back to the empty default rather than answering for other ids.
+ */
+const lastResolved = new Map<string, { signature: string; value: unknown }>()
+
+function rememberResolved<T>(slot: string, signature: string, value: T): T {
+  lastResolved.set(slot, { signature, value })
+  return value
+}
+
+function recallResolved<T>(slot: string, signature: string, empty: T): T {
+  const held = lastResolved.get(slot)
+  return held?.signature === signature ? (held.value as T) : empty
+}
+
+/** Drop retained context values (account switch, tests). */
+export function resetDraftContextCache(): void {
+  lastResolved.clear()
+}
+
+/**
  * The cached conversations a set of `board:*` draft scopes references, resolved
  * once for every consumer (the drafts explorer's location labels, the composer
  * pile's landing sites) so the two can't drift (INV-35). Keyed on the ids the
@@ -125,7 +150,12 @@ async function loadBoardDraftContext(workspaceId: string, keys: ScopeKeys): Prom
  */
 export function useBoardDraftContext(workspaceId: string, scopesSignature: string): BoardDraftContext {
   const keys = useMemo(() => scopeKeys(scopesSignature), [scopesSignature])
-  return useLiveQuery(() => loadBoardDraftContext(workspaceId, keys), [workspaceId, keys], EMPTY_CONTEXT)
+  const slot = `${workspaceId}|board`
+  const live = useLiveQuery(
+    async () => rememberResolved(slot, scopesSignature, await loadBoardDraftContext(workspaceId, keys)),
+    [workspaceId, keys]
+  )
+  return live ?? recallResolved(slot, scopesSignature, EMPTY_CONTEXT)
 }
 
 /**
@@ -138,9 +168,15 @@ export interface ThreadAnchorContext {
   streamByAnchorId: Map<string, { streamId: string; anchorId: string }>
   /** Anchor id → the conversation that contains it, where one is cached. */
   conversationIdByAnchorId: Map<string, string>
+  /** False until the first read resolves — see {@link BoardDraftContext.loaded}. */
+  loaded: boolean
 }
 
-const EMPTY_ANCHOR_CONTEXT: ThreadAnchorContext = { streamByAnchorId: new Map(), conversationIdByAnchorId: new Map() }
+const EMPTY_ANCHOR_CONTEXT: ThreadAnchorContext = {
+  streamByAnchorId: new Map(),
+  conversationIdByAnchorId: new Map(),
+  loaded: false,
+}
 
 // Both reads are keyed lookups over the ids actually referenced: the sparse
 // `payload.messageId` index (v47) for message anchors, the primary key for card
@@ -148,7 +184,7 @@ const EMPTY_ANCHOR_CONTEXT: ThreadAnchorContext = { streamByAnchorId: new Map(),
 // or the whole workspace, so an always-mounted composer's subscription re-fires
 // only on writes touching an id it asked for.
 async function loadThreadAnchorContext(workspaceId: string, anchorIdKey: string): Promise<ThreadAnchorContext> {
-  if (!anchorIdKey) return EMPTY_ANCHOR_CONTEXT
+  if (!anchorIdKey) return { ...EMPTY_ANCHOR_CONTEXT, loaded: true }
   const anchorIds = anchorIdKey.split("|")
 
   const streamByAnchorId = new Map<string, { streamId: string; anchorId: string }>()
@@ -172,7 +208,7 @@ async function loadThreadAnchorContext(workspaceId: string, anchorIdKey: string)
     if (row?.workspaceId === workspaceId) conversationIdByAnchorId.set(row.messageId, row.conversationId)
   }
 
-  return { streamByAnchorId, conversationIdByAnchorId }
+  return { streamByAnchorId, conversationIdByAnchorId, loaded: true }
 }
 
 /**
@@ -182,9 +218,11 @@ async function loadThreadAnchorContext(workspaceId: string, anchorIdKey: string)
  * re-fire it and an anchor nobody references is never read.
  */
 export function useThreadAnchorContext(workspaceId: string, anchorIdsSignature: string): ThreadAnchorContext {
-  return useLiveQuery(
-    () => loadThreadAnchorContext(workspaceId, anchorIdsSignature),
-    [workspaceId, anchorIdsSignature],
-    EMPTY_ANCHOR_CONTEXT
+  const slot = `${workspaceId}|thread`
+  const live = useLiveQuery(
+    async () =>
+      rememberResolved(slot, anchorIdsSignature, await loadThreadAnchorContext(workspaceId, anchorIdsSignature)),
+    [workspaceId, anchorIdsSignature]
   )
+  return live ?? recallResolved(slot, anchorIdsSignature, EMPTY_ANCHOR_CONTEXT)
 }

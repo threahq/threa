@@ -347,7 +347,13 @@ describe("useAllDrafts loading gate", () => {
     // workspace/board caches land, "no archived host" and "host unknown" look
     // identical, so a cold load painted every row and then retracted it.
     await seedStream({ id: "stream_arch_gate", archivedAt: "2026-01-01T00:00:00Z" })
-    await db.drafts.add(syncedDraft({ id: "draft_gate", scope: "stream:stream_arch_gate" }))
+    await seedMessageEvent("msg_gate", "stream_live_gate", 5)
+    await db.drafts.bulkAdd([
+      syncedDraft({ id: "draft_gate", scope: "stream:stream_arch_gate" }),
+      // A thread scope too: its host resolves through a second async read, so a
+      // gate that forgot it would report ready before that read landed.
+      syncedDraft({ id: "draft_gate_thread", scope: "thread:msg_gate", clientUpdatedAt: 900 }),
+    ])
 
     const { wrapper } = createWrapper()
     const { result } = renderHook(() => ({ summary: useDraftSummary(workspaceId), all: useAllDrafts(workspaceId) }), {
@@ -359,7 +365,12 @@ describe("useAllDrafts loading gate", () => {
     expect(result.current.summary.isLoading).toBe(result.current.all.isLoading)
 
     await act(async () => {
-      await applyWorkspaceBootstrap(workspaceId, makeReloadBootstrap([makeArchivedRoot("stream_arch_gate")], []), 1)
+      const liveHost: Stream = { ...makeArchivedRoot("stream_live_gate"), archivedAt: null }
+      await applyWorkspaceBootstrap(
+        workspaceId,
+        makeReloadBootstrap([makeArchivedRoot("stream_arch_gate")], [liveHost]),
+        1
+      )
       await seedDraftCacheFromIdb(workspaceId)
     })
 
@@ -367,9 +378,9 @@ describe("useAllDrafts loading gate", () => {
     // leave the page on "Loading..." forever.
     await waitFor(() => expect(result.current.all.isLoading).toBe(false))
     expect(result.current.summary.isLoading).toBe(false)
-    // And the row the filter hides was never exposed as a settled one.
-    expect(result.current.all.drafts).toHaveLength(0)
-    expect(result.current.summary.draftCount).toBe(0)
+    // The archived-host row is gone; the thread row on a live host stays.
+    expect(result.current.all.drafts.map((d) => d.id)).toEqual(["draft_gate_thread"])
+    expect(result.current.summary.draftCount).toBe(1)
   })
 })
 

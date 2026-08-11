@@ -217,16 +217,18 @@ export function isStreamArchived(
  * conversations that resolve a board scope's host. Until then "no archived host"
  * and "host unknown" are the same value, so neither the list nor the badge may
  * present a filtered result yet. Shared so the two become authoritative at the
- * same moment (they didn't: the list held while the badge published an
- * unfiltered count).
+ * same moment — a count published while the list still holds contradicts it.
  *
  * Both inputs are live subscriptions the calling hook holds, so this flips with
  * a re-render. A gate on the seeded-cache flags would not: nothing here wakes on
  * them, so whichever render observed them false could be the last one.
  */
-function draftFilterReady(streamsLoaded: boolean, boardScopesSignature: string, boardContextLoaded: boolean): boolean {
+function draftFilterReady(
+  streamsLoaded: boolean,
+  hostReads: readonly { referenced: boolean; loaded: boolean }[]
+): boolean {
   if (!streamsLoaded) return false
-  return boardScopesSignature === "" || boardContextLoaded
+  return hostReads.every((read) => !read.referenced || read.loaded)
 }
 
 interface ResolvedDraftLocation {
@@ -301,10 +303,9 @@ function streamDraftType(stream: CachedStream | undefined): DraftType {
 /**
  * The stream a `board:*` draft hangs off — a sub-topic's own stream, else the
  * conversation's anchor stream. The archived filter's input, shared by the
- * explorer and the sidebar badge so the two can't disagree about whether a board
- * draft is hidden (they did: the badge counted board drafts on archived
- * scratchpads the explorer refused to list). `null` when the conversation isn't
- * cached — unknown host, and no row is ever hidden on missing data.
+ * explorer and the sidebar badge so the two agree on whether a board draft is
+ * hidden. `null` when the conversation isn't cached — unknown host, and no row
+ * is ever hidden on missing data.
  */
 function boardDraftHostStreamId(
   parsed: ParsedBoardDraftKey,
@@ -396,26 +397,6 @@ export function streamIdsWithLoadedDraft(drafts: UnifiedDraft[]): Set<string> {
     ids.add(draft.streamId)
   }
   return ids
-}
-
-/**
- * Map of a thread draft's parent message id → its host stream, built from cached
- * `message_created` events. Shared by the explorer ({@link useAllDrafts}), the
- * sidebar badge ({@link useDraftSummary}) and the composer pile's home-stream
- * resolution (`useStashedDrafts`) so all three resolve a
- * `thread:{parentMessageId}` draft's host stream — and therefore its archival —
- * the same way. It reads through the shared, ref-counted
- * {@link useThreadAnchorContext}: one subscription for every consumer, keyed on
- * the anchor ids the drafts actually reference, so with no thread draft it reads
- * nothing at all and with one it does keyed lookups rather than a pass over every
- * synced stream's events. A parent not yet in cache resolves to no entry (the
- * draft counts, degrading to visible rather than being hidden on missing data).
- */
-export function useDraftThreadStreamMap(
-  workspaceId: string,
-  allDrafts: CachedDraft[]
-): Map<string, { streamId: string; anchorId: string }> {
-  return useThreadAnchorContext(workspaceId, useThreadAnchorSignature(allDrafts)).streamByAnchorId
 }
 
 /** The anchor ids a set of drafts' `thread:` scopes reference — the shared
@@ -510,7 +491,11 @@ export function useAllDrafts(workspaceId: string) {
 
   // Parent-message → host-stream map for thread drafts (shared with the sidebar
   // badge so both resolve thread-draft location/archival identically).
-  const messageToStreamMap = useDraftThreadStreamMap(workspaceId, allDrafts)
+  const threadScopesSignature = useThreadAnchorSignature(allDrafts)
+  const { streamByAnchorId: messageToStreamMap, loaded: threadContextLoaded } = useThreadAnchorContext(
+    workspaceId,
+    threadScopesSignature
+  )
 
   const draftsById = useMemo(() => {
     const map = new Map<string, CachedDraft>()
@@ -693,7 +678,10 @@ export function useAllDrafts(workspaceId: string) {
 
   // Rows built before the filter can decide are provisional — rendering them
   // paints a list the next frame retracts (INV-21), which is the cold-load flash.
-  const isLoading = !draftFilterReady(streamsLoaded, boardScopesSignature, boardContextLoaded)
+  const isLoading = !draftFilterReady(streamsLoaded, [
+    { referenced: boardScopesSignature !== "", loaded: boardContextLoaded },
+    { referenced: threadScopesSignature !== "", loaded: threadContextLoaded },
+  ])
 
   return {
     drafts,
@@ -729,15 +717,14 @@ export interface DraftSummary {
  * a keystroke's debounced draft save doesn't rebuild the full {@link useAllDrafts}
  * explorer model (which it does on every change) just to read two values off it.
  * Shares {@link draftHasPayload}, {@link isStreamArchived}, and
- * {@link useDraftThreadStreamMap} with the explorer, so archived channel/DM AND
+ * the shared thread-anchor context with the explorer, so archived channel/DM AND
  * thread-reply drafts (including nested threads under an archived root) are hidden
  * from the badge and the list alike. The shared thread map reads nothing until a
  * thread draft exists, so the always-mounted sidebar stays cheap otherwise.
- * Board drafts resolve their host conversation here too — the badge counting a
- * board reply the explorer refuses to list is what left the sidebar advertising
- * drafts the user could not find (every one of them on an archived scratchpad).
- * That read is keyed on the `board:*` scopes the drafts actually reference, so a
- * user with none pays nothing.
+ * Board drafts resolve their host conversation here too, so the badge cannot
+ * advertise a draft the explorer refuses to list. That read is keyed on the
+ * `board:*` scopes the drafts actually reference, so a user with none pays
+ * nothing.
  */
 export function useDraftSummary(workspaceId: string): DraftSummary {
   const draftScratchpads = useDraftScratchpadsFromStore(workspaceId)
@@ -775,9 +762,13 @@ export function useDraftSummary(workspaceId: string): DraftSummary {
 
   // Parent-message → host-stream map for thread drafts, so the badge hides a
   // thread reply under an archived root in step with the explorer. Gated on a
-  // thread draft existing (see `useDraftThreadStreamMap`), so the always-mounted
+  // thread draft existing (the signature is empty without one), so the always-mounted
   // sidebar reads no events until the user actually has one.
-  const messageToStreamMap = useDraftThreadStreamMap(workspaceId, allDrafts)
+  const threadScopesSignature = useThreadAnchorSignature(allDrafts)
+  const { streamByAnchorId: messageToStreamMap, loaded: threadContextLoaded } = useThreadAnchorContext(
+    workspaceId,
+    threadScopesSignature
+  )
 
   // Board scopes only — the same shared, id-keyed read the explorer makes, so
   // both sides decide a board draft's archived host from one map.
@@ -787,9 +778,11 @@ export function useDraftSummary(workspaceId: string): DraftSummary {
   )
   const { boardPostMap, loaded: boardContextLoaded } = useBoardDraftContext(workspaceId, boardScopesSignature)
   // Same gate the list uses: a count published before the filter can decide is
-  // the badge's version of the flash, and it disagrees with a list that is still
-  // holding — the disagreement this whole change is about.
-  const isLoading = !draftFilterReady(streamsLoaded, boardScopesSignature, boardContextLoaded)
+  // unfiltered, and contradicts a list that is still holding.
+  const isLoading = !draftFilterReady(streamsLoaded, [
+    { referenced: boardScopesSignature !== "", loaded: boardContextLoaded },
+    { referenced: threadScopesSignature !== "", loaded: threadContextLoaded },
+  ])
 
   return useMemo(() => {
     let draftCount = 0
