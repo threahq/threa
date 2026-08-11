@@ -447,8 +447,15 @@ export function StreamPanel({ workspaceId, onClose }: StreamPanelProps) {
       // AFTER the queue write, never before: the anchor's thread slot indicates
       // this draft, and `queueDraftMessage` is what bumps the anchor's
       // replyCount — resolving first leaves a frame with neither, collapsing the
-      // slot and replaying its grow-in on the way back.
-      composer.resolveDraft()
+      // slot and replaying its grow-in on the way back. Failure is handled
+      // apart from the queue's: the reply IS queued at this point, so the
+      // composer must stay cleared and no retry prompt is warranted — the only
+      // symptom is a stale draft row.
+      try {
+        await composer.resolveDraft()
+      } catch (err) {
+        console.error("Failed to resolve draft after queueing thread reply", err)
+      }
     } catch {
       // Restore content so the user can retry
       composer.setContent(contentJson)

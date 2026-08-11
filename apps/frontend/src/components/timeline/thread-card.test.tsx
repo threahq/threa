@@ -93,7 +93,7 @@ describe("ThreadCard", () => {
   })
 
   it("renders the draft-only label with no snippet row when the preview is empty (sealed/attachment-only body)", () => {
-    const { container } = renderCard(
+    renderCard(
       <ThreadCard
         replyCount={0}
         href="/panel/draft:stream_1:msg_1"
@@ -103,7 +103,7 @@ describe("ThreadCard", () => {
       />
     )
     expect(screen.getByText("Draft")).toBeInTheDocument()
-    expect(container.querySelectorAll("p").length).toBe(0)
+    expect(screen.getByRole("link").querySelector("p")).toBeNull()
   })
 
   it("appends the draft token beside the reply count and keeps the latest-reply row", () => {

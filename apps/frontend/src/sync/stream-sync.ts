@@ -983,6 +983,21 @@ export async function updateEventByAnchor(
     })
 }
 
+/** Server caps thread participants at 3, ordered by first reply. */
+const THREAD_SUMMARY_PARTICIPANT_LIMIT = 3
+
+function mergeThreadSummary(existing: ThreadSummary | undefined, next: ThreadSummary): ThreadSummary {
+  if (!existing) return next
+  const actor = next.latestReply
+  const participants = existing.participants.some((p) => p.id === actor.actorId)
+    ? existing.participants
+    : [...existing.participants, { id: actor.actorId, type: actor.actorType }].slice(
+        0,
+        THREAD_SUMMARY_PARTICIPANT_LIMIT
+      )
+  return { lastReplyAt: next.lastReplyAt, participants, latestReply: actor }
+}
+
 /**
  * Optimistically update an anchor item's replyCount and threadId in IDB.
  *
@@ -991,16 +1006,24 @@ export async function updateEventByAnchor(
  * thread:updated may miss this event because the panel navigated away
  * from the parent stream (handlers were cleaned up on unmount). Keyed by the
  * anchor's canonical id so event-anchored (card) threads bump too.
+ *
+ * `summary` exists because count-only is a visible height snap: the thread card
+ * renders a preview row only when it has a `threadSummary`, so a send collapses
+ * the card to a single summary-less row until `thread:updated` heals it ~400ms
+ * later and the row grows back. Passing the sender's own reply as the summary
+ * makes the heal a visually identical no-op.
  */
 export async function optimisticReplyCountUpdate(
   parentStreamId: string,
   anchorId: string,
-  threadId: string
+  threadId: string,
+  summary?: ThreadSummary
 ): Promise<void> {
   await updateEventByAnchor(parentStreamId, anchorId, (p) => ({
     ...p,
     threadId,
     replyCount: ((p.replyCount as number) ?? 0) + 1,
+    ...(summary ? { threadSummary: mergeThreadSummary(p.threadSummary as ThreadSummary | undefined, summary) } : {}),
   }))
 }
 
