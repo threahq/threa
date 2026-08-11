@@ -5,11 +5,12 @@ import { parseBoardDraftKey, type ParsedBoardDraftKey } from "@/lib/board/draft-
 import { type CompanionMode } from "@threa/types"
 import {
   deleteDraftScratchpadFromCache,
+  hasSeededDraftCache,
   useComposerLoadedFromStore,
   useDraftsFromStore,
   useDraftScratchpadsFromStore,
 } from "@/stores/draft-store"
-import { useWorkspaceStreams } from "@/stores/workspace-store"
+import { hasSeededWorkspaceCache, useWorkspaceStreams } from "@/stores/workspace-store"
 import { deleteDraftById } from "@/sync/draft-sync"
 import { useOptionalSyncEngine } from "@/sync/sync-engine"
 import { isDraftId } from "./use-draft-scratchpads"
@@ -293,6 +294,22 @@ function streamDraftType(stream: CachedStream | undefined): DraftType {
  * branch whose parent isn't resolvable, a fork message in no cached
  * conversation) — those rows navigate plainly for manual pickup.
  */
+/**
+ * The stream a `board:*` draft hangs off — a sub-topic's own stream, else the
+ * conversation's anchor stream. The archived filter's input, shared by the
+ * explorer and the sidebar badge so the two can't disagree about whether a board
+ * draft is hidden (they did: the badge counted board drafts on archived
+ * scratchpads the explorer refused to list). `null` when the conversation isn't
+ * cached — unknown host, and no row is ever hidden on missing data.
+ */
+function boardDraftHostStreamId(
+  parsed: ParsedBoardDraftKey,
+  boardPostMap: Map<string, CachedBoardPost>
+): string | null {
+  if (parsed.kind === "subtopic") return parsed.streamId
+  return boardPostMap.get(parsed.conversationId)?.conversation.streamId ?? null
+}
+
 function resolveBoardDraftLocation(
   parsed: ParsedBoardDraftKey,
   workspaceId: string,
@@ -323,7 +340,7 @@ function resolveBoardDraftLocation(
   }
 
   const post = boardPostMap.get(parsed.conversationId)
-  const anchorStreamId = post?.conversation.streamId ?? null
+  const anchorStreamId = boardDraftHostStreamId(parsed, boardPostMap)
   const stream = anchorStreamId ? streamMap.get(anchorStreamId) : undefined
   let target = stream ? streamLabel(stream, "sidebar") : null
   if (post) target = effectiveConversationTitle(post.conversation, streamMap.get(post.conversation.streamId))
@@ -463,7 +480,15 @@ export function useAllDrafts(workspaceId: string) {
     boardPostMap,
     hostPostByMessageId: subtopicHostByMessageId,
     parentPostByBranchConversationId,
+    loaded: boardContextLoaded,
   } = useBoardDraftContext(workspaceId, scopesSignature)
+
+  // "" when no draft is board-scoped — the board read resolves to nothing, so
+  // waiting on it would hold the list forever for the common case.
+  const boardScopesSignature = useMemo(
+    () => draftScopesSignature(allDrafts.map((draft) => draft.scope).filter((scope) => parseBoardDraftKey(scope))),
+    [allDrafts]
+  )
 
   // Parent-message → host-stream map for thread drafts (shared with the sidebar
   // badge so both resolve thread-draft location/archival identically).
@@ -648,9 +673,21 @@ export function useAllDrafts(workspaceId: string) {
     [workspaceId, syncEngine]
   )
 
+  // The archived filter decides what NOT to show, and it reads two async caches
+  // (workspace streams, board conversations). Until both have landed, "no
+  // archived host" is indistinguishable from "host unknown", so every row
+  // qualifies — which is why a cold load painted a full list and then retracted
+  // it. Consumers render nothing until this clears rather than showing rows the
+  // very next frame removes (INV-21).
+  const isLoading =
+    !hasSeededDraftCache(workspaceId) ||
+    !hasSeededWorkspaceCache(workspaceId) ||
+    (boardScopesSignature !== "" && !boardContextLoaded)
+
   return {
     drafts,
     draftCount: drafts.length,
+    isLoading,
     deleteDraft,
   }
 }
@@ -679,9 +716,11 @@ export interface DraftSummary {
  * thread-reply drafts (including nested threads under an archived root) are hidden
  * from the badge and the list alike. The shared thread map reads nothing until a
  * thread draft exists, so the always-mounted sidebar stays cheap otherwise.
- * Board drafts still resolve their host stream only in the explorer (that needs
- * the conversation lookups), so the badge can over-count a board reply under an
- * archived root — rare, and the explorer still hides it.
+ * Board drafts resolve their host conversation here too — the badge counting a
+ * board reply the explorer refuses to list is what left the sidebar advertising
+ * drafts the user could not find (every one of them on an archived scratchpad).
+ * That read is keyed on the `board:*` scopes the drafts actually reference, so a
+ * user with none pays nothing.
  */
 export function useDraftSummary(workspaceId: string): DraftSummary {
   const draftScratchpads = useDraftScratchpadsFromStore(workspaceId)
@@ -722,6 +761,14 @@ export function useDraftSummary(workspaceId: string): DraftSummary {
   // sidebar reads no events until the user actually has one.
   const messageToStreamMap = useDraftThreadStreamMap(workspaceId, allDrafts)
 
+  // Board scopes only — the same shared, id-keyed read the explorer makes, so
+  // both sides decide a board draft's archived host from one map.
+  const boardScopesSignature = useMemo(
+    () => draftScopesSignature(allDrafts.map((draft) => draft.scope).filter((scope) => parseBoardDraftKey(scope))),
+    [allDrafts]
+  )
+  const { boardPostMap } = useBoardDraftContext(workspaceId, boardScopesSignature)
+
   return useMemo(() => {
     let draftCount = 0
     const loadedDraftStreamIds = new Set<string>()
@@ -736,10 +783,14 @@ export function useDraftSummary(workspaceId: string): DraftSummary {
     for (const draft of allDrafts) {
       const parsed = parseDraftMessageKey(draft.scope)
       if (!parsed) {
-        // Board-composer drafts count toward the badge like any other (the
-        // explorer lists them), but carry no per-stream sidebar hint — the
-        // draft belongs to a conversation composer, not the stream's own.
-        if (parseBoardDraftKey(draft.scope) && draftHasPayload(draft)) draftCount++
+        // Board-composer drafts count like any other — hidden on an archived
+        // host exactly as the explorer hides them — but carry no per-stream
+        // sidebar hint: the draft belongs to a conversation composer, not the
+        // stream's own.
+        const board = parseBoardDraftKey(draft.scope)
+        if (!board || !draftHasPayload(draft)) continue
+        if (isStreamArchived(boardDraftHostStreamId(board, boardPostMap), streamMap, archivedStreamIds)) continue
+        draftCount++
         continue
       }
       // Scratchpad-scoped rows are counted above; skip them and their siblings.
@@ -747,9 +798,7 @@ export function useDraftSummary(workspaceId: string): DraftSummary {
       if (!draftHasPayload(draft)) continue
       // Hide archived drafts: a channel/DM directly (`parsed.id` is the stream),
       // a thread reply via its parent message's host stream (nested threads
-      // caught by the root check inside `isStreamArchived`). Board drafts still
-      // aren't resolved here, so one under an archived root stays counted — the
-      // explorer still hides it.
+      // caught by the root check inside `isStreamArchived`).
       const hostStreamId = parsed.type === "thread" ? (messageToStreamMap.get(parsed.id)?.streamId ?? null) : parsed.id
       if (isStreamArchived(hostStreamId, streamMap, archivedStreamIds)) continue
       draftCount++
@@ -762,5 +811,14 @@ export function useDraftSummary(workspaceId: string): DraftSummary {
     }
 
     return { draftCount, loadedDraftStreamIdSignature: [...loadedDraftStreamIds].sort().join(",") }
-  }, [draftScratchpads, allDrafts, loadedByScope, draftsById, streamMap, archivedStreamIds, messageToStreamMap])
+  }, [
+    draftScratchpads,
+    allDrafts,
+    loadedByScope,
+    draftsById,
+    streamMap,
+    archivedStreamIds,
+    messageToStreamMap,
+    boardPostMap,
+  ])
 }

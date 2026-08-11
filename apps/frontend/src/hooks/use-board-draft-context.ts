@@ -11,12 +11,20 @@ export interface BoardDraftContext {
   hostPostByMessageId: Map<string, CachedBoardPost>
   /** Branch conversation id → the conversation whose message the branch forks off. */
   parentPostByBranchConversationId: Map<string, CachedBoardPost>
+  /**
+   * False until the first read resolves. A consumer that HIDES rows on what the
+   * maps say (the explorer's archived filter) must hold while this is false —
+   * an unresolved conversation is indistinguishable from one with no archived
+   * host, so acting on the empty default renders the row and then retracts it.
+   */
+  loaded: boolean
 }
 
 const EMPTY_CONTEXT: BoardDraftContext = {
   boardPostMap: new Map(),
   hostPostByMessageId: new Map(),
   parentPostByBranchConversationId: new Map(),
+  loaded: false,
 }
 
 /** Stable signature over a set of draft scopes — the gate every query below keys on. */
@@ -55,7 +63,7 @@ function scopeKeys(scopesSignature: string): ScopeKeys {
 // explorer deep-links to, since that surface hosts the draft's composer.
 async function loadBoardDraftContext(workspaceId: string, keys: ScopeKeys): Promise<BoardDraftContext> {
   const { conversationIdKey, branchConversationIdKey, subtopicMessageIdKey } = keys
-  if (!conversationIdKey && !subtopicMessageIdKey) return EMPTY_CONTEXT
+  if (!conversationIdKey && !subtopicMessageIdKey) return { ...EMPTY_CONTEXT, loaded: true }
 
   const convIds = conversationIdKey ? conversationIdKey.split(",") : []
   const branchIds = new Set(branchConversationIdKey ? branchConversationIdKey.split(",") : [])
@@ -105,7 +113,7 @@ async function loadBoardDraftContext(workspaceId: string, keys: ScopeKeys): Prom
 
   const boardPostMap = new Map<string, CachedBoardPost>()
   for (const post of [...referenced, ...hostRows]) boardPostMap.set(post.id, post)
-  return { boardPostMap, hostPostByMessageId, parentPostByBranchConversationId }
+  return { boardPostMap, hostPostByMessageId, parentPostByBranchConversationId, loaded: true }
 }
 
 /**

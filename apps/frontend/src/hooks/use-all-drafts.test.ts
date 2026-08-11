@@ -5,7 +5,7 @@ import { createElement, type ReactNode } from "react"
 import { DEFAULT_SIDEBAR_CONFIG, type JSONContent, type Stream, type WorkspaceBootstrap } from "@threa/types"
 import { db, type CachedDraft } from "@/db"
 import { applyWorkspaceBootstrap } from "@/sync/workspace-sync"
-import { resetDraftStoreCache } from "@/stores/draft-store"
+import { resetDraftStoreCache, seedDraftCacheFromIdb } from "@/stores/draft-store"
 import { seedDecryption, clearDecryptCache } from "@/lib/crypto/decrypt-cache"
 import * as syncEngineModule from "@/sync/sync-engine"
 import * as currentUserHook from "./use-current-workspace-user-id"
@@ -303,6 +303,31 @@ describe("useAllDrafts board-composer drafts", () => {
     )
   })
 
+  it("badge hides a board draft on an archived host, in step with the list", async () => {
+    // The sidebar counted board drafts without resolving their conversation, so
+    // an archived scratchpad's reply draft showed in the badge and nowhere else —
+    // "2 drafts" over an empty explorer, with no way to reach them.
+    await seedStream({ id: "stream_arch_board", type: "scratchpad", archivedAt: "2026-01-01T00:00:00Z" })
+    await seedStream({ id: "stream_live_board", type: "scratchpad" })
+    await seedConversation("conv_arch", "stream_arch_board", "Archived pad")
+    await seedConversation("conv_live", "stream_live_board", "Live pad")
+    await db.drafts.bulkAdd([
+      syncedDraft({ id: "draft_arch", scope: "board:reply:conv_arch" }),
+      syncedDraft({ id: "draft_live", scope: "board:reply:conv_live" }),
+    ])
+
+    const { wrapper } = createWrapper()
+    const { result } = renderHook(() => ({ summary: useDraftSummary(workspaceId), all: useAllDrafts(workspaceId) }), {
+      wrapper,
+    })
+
+    await waitFor(() => {
+      expect(result.current.all.drafts.map((d) => d.id)).toEqual(["draft_live"])
+      expect(result.current.summary.draftCount).toBe(1)
+      expect(result.current.summary.draftCount).toBe(result.current.all.drafts.length)
+    })
+  })
+
   it("counts board drafts in the sidebar summary without flagging a stream hint", async () => {
     await db.drafts.add(syncedDraft({ id: "draft_b5", scope: "board:reply:conv_1" }))
     await db.drafts.add(syncedDraft({ id: "draft_s9", scope: "stream:stream_1" }))
@@ -313,6 +338,30 @@ describe("useAllDrafts board-composer drafts", () => {
 
     await waitFor(() => expect(result.current.draftCount).toBe(2))
     expect(result.current.loadedDraftStreamIdSignature).toBe("stream_1")
+  })
+})
+
+describe("useAllDrafts loading gate", () => {
+  it("reports isLoading until the caches the archived filter reads have landed", async () => {
+    // The filter can only HIDE once it knows each draft's host: before the
+    // workspace/board caches land, "no archived host" and "host unknown" look
+    // identical, so a cold load painted every row and then retracted it.
+    await seedStream({ id: "stream_arch_gate", archivedAt: "2026-01-01T00:00:00Z" })
+    await db.drafts.add(syncedDraft({ id: "draft_gate", scope: "stream:stream_arch_gate" }))
+
+    const { wrapper } = createWrapper()
+    const { result } = renderHook(() => useAllDrafts(workspaceId), { wrapper })
+
+    expect(result.current.isLoading).toBe(true)
+
+    await act(async () => {
+      await applyWorkspaceBootstrap(workspaceId, makeReloadBootstrap([makeArchivedRoot("stream_arch_gate")], []), 1)
+      await seedDraftCacheFromIdb(workspaceId)
+    })
+
+    await waitFor(() => expect(result.current.isLoading).toBe(false))
+    // And the row the filter hides was never exposed as a settled one.
+    expect(result.current.drafts).toHaveLength(0)
   })
 })
 
