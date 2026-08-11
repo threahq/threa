@@ -1,7 +1,10 @@
 import { Link } from "react-router-dom"
-import { Bell } from "lucide-react"
+import { AtSign, Bell } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { buildConversationPanelPath } from "@/lib/stream-links"
+import { resolveEmojiShortcodes } from "@/lib/markdown"
+import { isActivityUnread } from "@/hooks/use-activity-sections"
+import { URGENCY_COLORS } from "@/components/layout/sidebar/config"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { PersonaAvatar } from "@/components/persona-avatar"
 import { ActivityContent } from "./activity-content"
@@ -17,6 +20,19 @@ export interface ActivityItemAvatar {
   avatarUrl?: string
 }
 
+/**
+ * Which strand of the sidebar's urgency vocabulary (`URGENCY_COLORS`) a row
+ * belongs to. Same four meanings the stream list uses — red is a mention, gold
+ * is a persona, green is a bot, blue is everything else — so gold keeps meaning
+ * "an agent did this" here instead of "unread".
+ */
+export function activityUrgency(activity: Activity): keyof typeof URGENCY_COLORS {
+  if (activity.activityType === "mention") return "mentions"
+  if (activity.actorType === "persona") return "ai"
+  if (activity.actorType === "bot") return "bot"
+  return "activity"
+}
+
 interface ActivityItemProps {
   activity: Activity
   actorName: string
@@ -25,6 +41,12 @@ interface ActivityItemProps {
   workspaceId: string
   toEmoji?: (shortcode: string) => string | null
   onMarkAsRead: (activityId: string) => void
+  /**
+   * Row is held in the Unread section but has since been read — this visit's
+   * "you just opened this". Keeps a faded rail and a hollow dot so the row
+   * still reads as part of the unread batch without competing with what's left.
+   */
+  wasReadThisVisit?: boolean
 }
 
 export function ActivityItem({
@@ -35,12 +57,13 @@ export function ActivityItem({
   workspaceId,
   toEmoji,
   onMarkAsRead,
+  wasReadThisVisit = false,
 }: ActivityItemProps) {
   // Self rows are inserted already read by the backend, so the unread dot is
   // never shown for them regardless of the `readAt` value. Give them a muted
   // background so they're visually distinct from things others did.
   const isSelf = activity.isSelf
-  const isUnread = !isSelf && !activity.readAt
+  const isUnread = isActivityUnread(activity)
   const contentPreview = (activity.context.contentPreview as string) ?? ""
   const actorType = activity.actorType
   const isPersona = actorType === "persona"
@@ -48,6 +71,11 @@ export function ActivityItem({
   const isSystem = actorType === "system"
   const isReminder = activity.activityType === "saved_reminder"
   const href = resolveActivityHref(workspaceId, activity)
+  const urgency = activityUrgency(activity)
+  // The reaction's own glyph, resolved: the wire carries either a raw character
+  // or a `:shortcode:` (both shapes are emitted — see the activity service).
+  const reactionEmoji =
+    activity.activityType === "reaction" && activity.emoji ? resolveEmojiShortcodes(activity.emoji, toEmoji) : null
 
   return (
     <Link
@@ -56,24 +84,41 @@ export function ActivityItem({
         if (isUnread) onMarkAsRead(activity.id)
       }}
       className={cn(
-        "group flex items-start gap-3 rounded-lg px-3 py-2.5 transition-colors sm:px-4 sm:py-3",
-        isUnread && "bg-primary/5 hover:bg-primary/10",
+        "group flex items-stretch rounded-lg transition-colors",
+        isUnread && "bg-muted/40 hover:bg-muted/70",
         !isUnread && !isSelf && "hover:bg-muted/50",
         isSelf && "opacity-75 hover:bg-muted/40 hover:opacity-100"
       )}
     >
-      {renderAvatar({ isReminder, isPersona, isSystem, isBot, actorAvatar, actorName })}
-      <ActivityContent
-        actorName={actorName}
-        streamName={streamName}
-        activityType={activity.activityType}
-        contentPreview={contentPreview}
-        emoji={activity.emoji}
-        toEmoji={toEmoji}
-        createdAt={activity.createdAt}
-        isUnread={isUnread}
-        isSelf={isSelf}
+      {/* Urgency strip, the sidebar's signal for the same thing (`UrgencyStrip`
+          in `sidebar/stream-item.tsx`). The slot is always 4px wide and only the
+          colour changes, so reading a row can't shift it (INV-21). */}
+      <span
+        aria-hidden
+        className="w-1 shrink-0 rounded-l-lg transition-colors"
+        style={{
+          backgroundColor: isUnread || wasReadThisVisit ? URGENCY_COLORS[urgency] : URGENCY_COLORS.quiet,
+          opacity: !isUnread && wasReadThisVisit ? 0.3 : 1,
+        }}
       />
+      <div className="flex min-w-0 flex-1 items-start gap-3 px-3 py-2.5 sm:px-4 sm:py-3">
+        <div className="relative shrink-0">
+          {renderAvatar({ isReminder, isPersona, isSystem, isBot, actorAvatar, actorName })}
+          {renderTypeGlyph(activity.activityType, reactionEmoji)}
+        </div>
+        <ActivityContent
+          actorName={actorName}
+          streamName={streamName}
+          activityType={activity.activityType}
+          contentPreview={contentPreview}
+          toEmoji={toEmoji}
+          createdAt={activity.createdAt}
+          urgencyColor={URGENCY_COLORS[urgency]}
+          isUnread={isUnread}
+          wasReadThisVisit={wasReadThisVisit}
+          isSelf={isSelf}
+        />
+      </div>
     </Link>
   )
 }
@@ -91,6 +136,30 @@ function resolveActivityHref(workspaceId: string, activity: Activity): string {
   }
   if (activity.streamId) return `/w/${workspaceId}/s/${activity.streamId}?m=${activity.messageId}`
   return `/w/${workspaceId}/saved`
+}
+
+/**
+ * Corner badge on the avatar. A reaction shows the emoji it actually was — the
+ * one thing the caption can't say — and a mention shows an @. Every other type
+ * is already unambiguous in the verb line, so it gets nothing.
+ */
+function renderTypeGlyph(activityType: string, reactionEmoji: string | null) {
+  const badge =
+    "absolute -bottom-1 -right-1 flex h-4 w-4 items-center justify-center rounded-full ring-2 ring-background"
+  if (activityType === "reaction") {
+    if (!reactionEmoji) return null
+    // Not `aria-hidden`: which emoji it was is the row's payload, and the verb
+    // line ("reacted to a message in …") can't carry it.
+    return <span className={cn(badge, "bg-background text-[10px] leading-none")}>{reactionEmoji}</span>
+  }
+  if (activityType === "mention") {
+    return (
+      <span aria-hidden className={cn(badge, "text-white")} style={{ backgroundColor: URGENCY_COLORS.mentions }}>
+        <AtSign className="h-2.5 w-2.5" strokeWidth={3} />
+      </span>
+    )
+  }
+  return null
 }
 
 function renderAvatar(params: {
