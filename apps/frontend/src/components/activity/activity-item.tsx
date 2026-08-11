@@ -148,11 +148,9 @@ function renderTypeGlyph(activityType: string, reactionEmoji: string | null) {
     "absolute -bottom-1 -right-1 flex h-4 w-4 items-center justify-center rounded-full ring-2 ring-background"
   if (activityType === "reaction") {
     if (!reactionEmoji) return null
-    return (
-      <span aria-hidden className={cn(badge, "bg-background text-[10px] leading-none")}>
-        {reactionEmoji}
-      </span>
-    )
+    // Not `aria-hidden`: which emoji it was is the row's payload, and the verb
+    // line ("reacted to a message in …") can't carry it.
+    return <span className={cn(badge, "bg-background text-[10px] leading-none")}>{reactionEmoji}</span>
   }
   if (activityType === "mention") {
     return (

@@ -115,11 +115,18 @@ export function ActivityContent({
               stays in the Unread section, so it must still read as part of that
               batch. Self rows are always read, so they get no marker. */}
           {!isSelf && (
-            <span
-              aria-hidden
-              className="h-2 w-2 rounded-full"
-              style={dotStyle(urgencyColor, isUnread, wasReadThisVisit)}
-            />
+            <>
+              {/* The dot and the row's strip are both colour, so the state they
+                  carry has to be said out loud too — a read row keeps its slot
+                  in the Unread section, which is otherwise indistinguishable
+                  from a still-unread one without sight. */}
+              {(isUnread || wasReadThisVisit) && <span className="sr-only">{isUnread ? "Unread" : "Read"}</span>}
+              <span
+                aria-hidden
+                className="h-2 w-2 rounded-full"
+                style={dotStyle(urgencyColor, isUnread, wasReadThisVisit)}
+              />
+            </>
           )}
         </div>
       </div>

@@ -124,6 +124,23 @@ describe("ActivityPage sections", () => {
     const row = within(screen.getByRole("region", { name: "Unread" })).getByRole("link")
     expect(row.textContent).toContain("❤️")
     expect(row.textContent).not.toContain(":heart:")
+    // Which emoji it was is the row's payload — it must reach assistive tech,
+    // not sit behind aria-hidden like the decorative strip and dot do.
+    expect(screen.getByText("❤️").closest("[aria-hidden]")).toBeNull()
+  })
+
+  it("says unread vs read out loud, since the strip and dot are colour only", () => {
+    mockFeed([activity("a"), activity("b")])
+    const client = new QueryClient()
+    const { rerender } = render(page(client))
+    expect(sectionRows("Unread")[0]).toContain("Unread")
+
+    mockFeed([activity("a", { readAt: "2026-08-11T10:30:00.000Z" }), activity("b")])
+    rerender(page(client))
+
+    const rows = sectionRows("Unread")
+    expect(rows[0]).toContain("Read")
+    expect(rows[1]).toContain("Unread")
   })
 
   it("renders one flat list when nothing is unread", () => {
