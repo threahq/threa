@@ -29,10 +29,11 @@ function draft(overrides: Partial<UnifiedDraft> & { id: string; displayName: str
 
 const deleteDraft = vi.fn(async (_id: string) => {})
 
-function mockDrafts(drafts: UnifiedDraft[]) {
+function mockDrafts(drafts: UnifiedDraft[], isLoading = false) {
   vi.spyOn(hooksModule, "useAllDrafts").mockReturnValue({
     drafts,
     draftCount: drafts.length,
+    isLoading,
     deleteDraft,
   } as unknown as ReturnType<typeof hooksModule.useAllDrafts>)
 }
@@ -357,6 +358,18 @@ describe("put-away annotation", () => {
     expect(screen.getByText("Stashed")).toBeInTheDocument()
     const roamedRow = screen.getByText("roamed body").closest("a, button, li")
     expect(roamedRow?.textContent).not.toContain("Stashed")
+  })
+
+  it("paints no rows while the archived filter's caches are still landing", () => {
+    // Rows built before the filter can decide are provisional — showing them and
+    // retracting them a frame later is the cold-load flash (INV-21).
+    mockDrafts([draft({ id: "a", displayName: "Alpha" }), draft({ id: "b", displayName: "Bravo" })], true)
+    renderPage()
+
+    expect(screen.queryByText("Alpha")).toBeNull()
+    expect(screen.queryByText("Bravo")).toBeNull()
+    expect(screen.queryByText("No drafts")).toBeNull()
+    expect(screen.queryByRole("button", { name: "Select drafts" })).toBeNull()
   })
 
   it("names the files of an attachment-only row instead of calling it empty", () => {

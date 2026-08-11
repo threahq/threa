@@ -46,7 +46,7 @@ function stashedRowDescription(draft: UnifiedDraft): string | null {
 export function DraftsPage() {
   const { workspaceId } = useParams<{ workspaceId: string }>()
   const navigate = useNavigate()
-  const { drafts, deleteDraft } = useAllDrafts(workspaceId ?? "")
+  const { drafts, isLoading, deleteDraft } = useAllDrafts(workspaceId ?? "")
   const [selectedIndex, setSelectedIndex] = useState(0)
   const [draftToDelete, setDraftToDelete] = useState<UnifiedDraft | null>(null)
   // Long-press target: one drawer for the whole list, holding the row that was
@@ -285,7 +285,7 @@ export function DraftsPage() {
                 <FileEdit className="h-5 w-5 text-muted-foreground" />
                 <h1 className="font-semibold">Drafts</h1>
               </div>
-              {drafts.length > 0 && (
+              {!isLoading && drafts.length > 0 && (
                 <Button
                   variant="ghost"
                   size="sm"
@@ -335,6 +335,7 @@ export function DraftsPage() {
         >
           <ItemList
             items={items}
+            isLoading={isLoading}
             selectedIndex={selectedIndex}
             onSelectIndex={setSelectedIndex}
             onSelectItem={handleSelectItem}

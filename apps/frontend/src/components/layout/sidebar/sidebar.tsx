@@ -116,7 +116,7 @@ export function Sidebar({ workspaceId }: SidebarProps) {
   const { createScratchpad } = useDraftScratchpads(workspaceId)
   const { getUnreadCount } = useUnreadCounts(workspaceId)
   const { getMentionCount, getActivityCount, unreadActivityCount } = useActivityCounts(workspaceId)
-  const { draftCount, loadedDraftStreamIdSignature } = useDraftSummary(workspaceId)
+  const { draftCount, isLoading: draftsLoading, loadedDraftStreamIdSignature } = useDraftSummary(workspaceId)
   const { openCreateChannel } = useCreateChannel()
   const { user } = useAuth()
   const assignLabel = useAssignLabel(workspaceId)
@@ -393,7 +393,9 @@ export function Sidebar({ workspaceId }: SidebarProps) {
       workspaceId={workspaceId}
       quickLinks={sidebarConfig.quickLinks}
       isDraftsPage={isDraftsPage}
-      draftCount={draftCount}
+      // No badge until the archived filter can decide — a count published early
+      // is unfiltered, and it contradicts a Drafts page that is still holding.
+      draftCount={draftsLoading ? 0 : draftCount}
       isSavedPage={isSavedPage}
       savedCount={savedCount}
       isScheduledPage={isScheduledPage}
