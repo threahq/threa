@@ -7,6 +7,7 @@ import {
   buildShortcodeIndex,
   filterBySearch,
   fitEmojiListHeight,
+  recentSectionFits,
   stripShortcodeColons,
   indexToCoord,
   moveSelection,
@@ -355,5 +356,21 @@ describe("fitEmojiListHeight", () => {
   it("stops shrinking at two rows rather than collapsing the grid", () => {
     expect(fitEmojiListHeight(120, 200)).toBe(EMOJI_LIST_MIN_HEIGHT)
     expect(fitEmojiListHeight(0, 0)).toBe(EMOJI_LIST_MIN_HEIGHT)
+  })
+})
+
+describe("recentSectionFits", () => {
+  it("keeps the section while the grid still gets its two rows", () => {
+    expect(recentSectionFits(300, 98, 30)).toBe(true)
+    expect(recentSectionFits(196, 98, 30)).toBe(true)
+  })
+
+  it("drops the section rather than let it squeeze the grid below two rows", () => {
+    expect(recentSectionFits(195, 98, 30)).toBe(false)
+    expect(recentSectionFits(120, 98, 30)).toBe(false)
+  })
+
+  it("keeps the section before the popup is positioned", () => {
+    expect(recentSectionFits(null, 98, 30)).toBe(true)
   })
 })

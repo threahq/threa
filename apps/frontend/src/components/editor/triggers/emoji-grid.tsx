@@ -1,10 +1,9 @@
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, memo } from "react"
+import { forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState, memo } from "react"
 import { useFloating, offset, flip, shift, size, autoUpdate } from "@floating-ui/react"
 import { Virtuoso, type VirtuosoHandle } from "react-virtuoso"
 import { cn } from "@/lib/utils"
 import {
   DESKTOP_GRID_COLUMNS as GRID_COLUMNS,
-  EMOJI_LIST_MIN_HEIGHT,
   EMOJI_ROW_HEIGHT as ROW_HEIGHT,
   chunkByColumns,
   indexToCoord,
@@ -17,6 +16,7 @@ import type { EmojiEntry } from "@threa/types"
 import type { SuggestionListRef } from "./suggestion-list"
 
 const VirtuosoPadding = () => <div className="h-2" />
+const EMPTY_RECENT: EmojiEntry[] = []
 
 export interface EmojiGridProps {
   /** Recently used emojis (weight > 0), already filtered by the current query. Capped upstream. */
@@ -71,15 +71,22 @@ function EmojiGridInner(
   const virtuosoRef = useRef<VirtuosoHandle>(null)
   const rangeRef = useRef<{ startIndex: number; endIndex: number } | null>(null)
 
+  const [availableHeight, setAvailableHeight] = useState<number | null>(null)
+  const { recentRef, footerRef, listHeight, showRecent } = useEmojiListFit(availableHeight, recent.length > 0)
+
+  // Selection indices span what is on screen: a hidden recents section must not
+  // hold indices, or arrow keys land on emoji nobody can see.
+  const visibleRecent = showRecent ? recent : EMPTY_RECENT
+
   const geometry: GridGeometry = useMemo(
-    () => ({ recentCount: recent.length, allCount: all.length, columns: GRID_COLUMNS }),
-    [recent.length, all.length]
+    () => ({ recentCount: visibleRecent.length, allCount: all.length, columns: GRID_COLUMNS }),
+    [visibleRecent.length, all.length]
   )
 
   const total = totalCount(geometry)
 
   const allRows = useMemo(() => chunkByColumns(all, GRID_COLUMNS), [all])
-  const recentRows = useMemo(() => chunkByColumns(recent, GRID_COLUMNS), [recent])
+  const recentRows = useMemo(() => chunkByColumns(visibleRecent, GRID_COLUMNS), [visibleRecent])
 
   useEffect(() => {
     setSelectedIndex(0)
@@ -106,12 +113,9 @@ function EmojiGridInner(
     else scrollAllRowIfNeeded(coord.row)
   }
 
-  const [availableHeight, setAvailableHeight] = useState<number | null>(null)
-  const { containerRef, listRef, listHeight } = useEmojiListFit(availableHeight)
-
   const visibleRowCount = Math.max(1, Math.floor(listHeight / ROW_HEIGHT))
 
-  const { refs, floatingStyles } = useFloating({
+  const { refs, floatingStyles, isPositioned } = useFloating({
     placement: "bottom-start",
     middleware: [
       offset(4),
@@ -119,26 +123,24 @@ function EmojiGridInner(
       shift({ padding: 8 }),
       size({
         padding: 8,
-        apply({ availableHeight: available }) {
-          // An anchor scrolled past the viewport edge reports negative space,
-          // which is an invalid max-height — the clamp would drop silently.
-          const next = Math.max(EMOJI_LIST_MIN_HEIGHT, Math.round(available))
+        apply({ availableHeight: available, elements }) {
+          // Negative space (anchor past the viewport edge) is an invalid
+          // max-height and would drop the clamp silently.
+          const next = Math.max(0, Math.round(available))
+          // Written here as well as through state so the clamp lands in the same
+          // positioning pass flip() reads, not a render later.
+          elements.floating.style.maxHeight = `${next}px`
           setAvailableHeight((prev) => (prev === next ? prev : next))
         },
       }),
     ],
-    whileElementsMounted: autoUpdate,
+    // The mobile keyboard closing moves the composer after the resize event
+    // (see components/ui/popover.tsx) — per-frame tracking is what catches it.
+    whileElementsMounted: (reference, floating, update) =>
+      autoUpdate(reference, floating, update, { animationFrame: true }),
   })
 
-  const setFloatingElement = useCallback(
-    (element: HTMLDivElement | null) => {
-      containerRef.current = element
-      refs.setFloating(element)
-    },
-    [containerRef, refs]
-  )
-
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (clientRect) {
       refs.setReference({
         getBoundingClientRect: () => clientRect() ?? new DOMRect(),
@@ -207,7 +209,8 @@ function EmojiGridInner(
         case "Enter": {
           event.preventDefault()
           const coord = indexToCoord(selectedIndex, geometry)
-          const item = coord.section === "recent" ? recent[selectedIndex] : all[selectedIndex - geometry.recentCount]
+          const item =
+            coord.section === "recent" ? visibleRecent[selectedIndex] : all[selectedIndex - geometry.recentCount]
           if (item) command(item)
           return true
         }
@@ -223,19 +226,26 @@ function EmojiGridInner(
 
   const selectedCoord = indexToCoord(selectedIndex, geometry)
   const selectedEmoji =
-    selectedCoord.section === "recent" ? recent[selectedIndex] : all[selectedIndex - geometry.recentCount]
+    selectedCoord.section === "recent" ? visibleRecent[selectedIndex] : all[selectedIndex - geometry.recentCount]
 
   return (
     <div
-      ref={setFloatingElement}
-      style={{ ...floatingStyles, maxHeight: availableHeight ?? undefined }}
+      ref={refs.setFloating}
+      style={{
+        ...floatingStyles,
+        maxHeight: availableHeight ?? undefined,
+        // computePosition resolves a frame after mount; without this the first
+        // paint is the unclamped popup this component exists to prevent. Opacity
+        // rather than visibility so the popup stays in the accessibility tree.
+        opacity: isPositioned ? undefined : 0,
+      }}
       className="z-50 flex flex-col overflow-hidden rounded-md border bg-popover text-popover-foreground shadow-md pointer-events-auto w-[280px]"
       role="listbox"
       aria-label="Emoji picker"
       data-emoji-grid
     >
-      {recent.length > 0 && (
-        <div className="shrink-0 px-2 pt-2 pb-1">
+      {showRecent && (
+        <div ref={recentRef} className="shrink-0 px-2 pt-2 pb-1">
           <p className="text-[10px] font-medium text-muted-foreground/70 uppercase tracking-wider px-0.5 mb-1">
             Recently used
           </p>
@@ -257,8 +267,8 @@ function EmojiGridInner(
           </div>
         </div>
       )}
-      {recent.length > 0 && all.length > 0 && <div className="shrink-0 border-t" />}
-      <div ref={listRef} className="shrink-0" style={{ height: all.length > 0 ? listHeight : 0 }}>
+      {showRecent && all.length > 0 && <div className="shrink-0 border-t" />}
+      <div className="shrink-0" style={{ height: all.length > 0 ? listHeight : 0 }}>
         {all.length > 0 && (
           <Virtuoso
             ref={virtuosoRef}
@@ -294,7 +304,7 @@ function EmojiGridInner(
         )}
       </div>
       {selectedEmoji && (
-        <div className="shrink-0 border-t px-2 py-1.5 text-xs text-muted-foreground truncate">
+        <div ref={footerRef} className="shrink-0 border-t px-2 py-1.5 text-xs text-muted-foreground truncate">
           <span className="mr-1.5">{selectedEmoji.emoji}</span>
           <span className="font-mono">:{selectedEmoji.shortcode}:</span>
         </div>

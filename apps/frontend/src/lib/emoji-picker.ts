@@ -34,6 +34,24 @@ export function fitEmojiListHeight(availableHeight: number | null, chromeHeight:
   return Math.max(EMOJI_LIST_MIN_HEIGHT, Math.min(EMOJI_LIST_MAX_HEIGHT, availableHeight - chromeHeight))
 }
 
+/**
+ * Floor for a popover clamped to its collision-available height. A popover that
+ * shrinks to whatever space it has always "fits", so the host stops flipping it
+ * to the roomier side — a trigger near the viewport top would collapse the
+ * picker to a sliver instead of opening downwards.
+ */
+export const EMOJI_POPOVER_MIN_HEIGHT = 180
+
+/**
+ * Whether the recently-used block still leaves the grid its two rows. When it
+ * doesn't, dropping the block beats clipping emoji rows — a clipped row can hide
+ * the keyboard selection with nothing on screen to reveal it.
+ */
+export function recentSectionFits(availableHeight: number | null, recentHeight: number, footerHeight: number): boolean {
+  if (availableHeight === null) return true
+  return availableHeight - recentHeight - footerHeight >= EMOJI_LIST_MIN_HEIGHT
+}
+
 export function chunkByColumns<T>(items: T[], columns: number): T[][] {
   const result: T[][] = []
   for (let i = 0; i < items.length; i += columns) {

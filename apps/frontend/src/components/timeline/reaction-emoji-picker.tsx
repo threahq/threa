@@ -9,6 +9,10 @@ import { useInputMode } from "@/hooks/use-input-mode"
 import { cn } from "@/lib/utils"
 import {
   DESKTOP_GRID_COLUMNS,
+  EMOJI_LIST_MAX_HEIGHT,
+  EMOJI_LIST_MIN_HEIGHT,
+  EMOJI_POPOVER_MIN_HEIGHT,
+  EMOJI_ROW_HEIGHT,
   MAX_RECENTLY_USED_ROWS,
   chunkByColumns,
   filterBySearch,
@@ -25,8 +29,6 @@ const MOBILE_EMOJI_SIZE = 44
 const MOBILE_ROW_HEIGHT = 46
 const MobileVirtuosoPadding = () => <div className="h-1" />
 const DesktopVirtuosoPadding = () => <div className="h-2" />
-const DESKTOP_ROW_HEIGHT = 34
-const CONTAINER_HEIGHT = 256
 const MAX_MOBILE_COLUMNS = 8
 
 interface ReactionEmojiPickerProps {
@@ -118,7 +120,7 @@ function EmojiGridContent({
   isMobile: boolean
 }) {
   const [columns, setColumns] = useState(isMobile ? MAX_MOBILE_COLUMNS : DESKTOP_GRID_COLUMNS)
-  const rowHeight = isMobile ? MOBILE_ROW_HEIGHT : DESKTOP_ROW_HEIGHT
+  const rowHeight = isMobile ? MOBILE_ROW_HEIGHT : EMOJI_ROW_HEIGHT
   const virtuosoRef = useRef<VirtuosoHandle>(null)
   const rangeRef = useRef<{ startIndex: number; endIndex: number } | null>(null)
   const mobileContainerRef = useRef<HTMLDivElement>(null)
@@ -190,7 +192,7 @@ function EmojiGridContent({
     [geometry, scrollAllRow, scrollAllRowIfNeeded]
   )
 
-  const visibleRowCount = Math.floor(CONTAINER_HEIGHT / rowHeight)
+  const visibleRowCount = Math.floor(EMOJI_LIST_MAX_HEIGHT / rowHeight)
 
   const handleKeyDown = useCallback(
     (event: React.KeyboardEvent) => {
@@ -292,7 +294,7 @@ function EmojiGridContent({
   const renderRecentSection = (mobile: boolean) => {
     if (recent.length === 0) return null
     return (
-      <div className={mobile ? "px-4 pb-2" : "px-2 pb-1"}>
+      <div className={mobile ? "px-4 pb-2" : "shrink-0 px-2 pb-1"}>
         <p
           className={cn(
             "text-[10px] font-medium uppercase tracking-wider mb-1",
@@ -426,7 +428,7 @@ function EmojiGridContent({
 
   return (
     <>
-      <div className="px-2 pt-2 pb-1">
+      <div className="shrink-0 px-2 pt-2 pb-1">
         <input
           ref={searchInputRef}
           type="text"
@@ -442,7 +444,7 @@ function EmojiGridContent({
       </div>
 
       {activeEmojis.length > 0 && !search && (
-        <div className="px-2 pb-1">
+        <div className="shrink-0 px-2 pb-1">
           <p className="text-[10px] font-medium text-muted-foreground/70 uppercase tracking-wider px-0.5 mb-1">
             Reactions
           </p>
@@ -464,56 +466,61 @@ function EmojiGridContent({
 
       {renderRecentSection(false)}
 
-      {recent.length > 0 && all.length > 0 && <div className="border-t" />}
+      {recent.length > 0 && all.length > 0 && <div className="shrink-0 border-t" />}
 
       {total === 0 && (
         <div
           className="flex items-center justify-center text-sm text-muted-foreground p-2"
-          style={{ height: CONTAINER_HEIGHT }}
+          style={{ height: EMOJI_LIST_MAX_HEIGHT }}
         >
           No emojis found
         </div>
       )}
       {total > 0 && all.length > 0 && (
-        <Virtuoso
-          ref={virtuosoRef}
-          totalCount={allRows.length}
-          fixedItemHeight={DESKTOP_ROW_HEIGHT}
-          increaseViewportBy={DESKTOP_ROW_HEIGHT * 3}
-          rangeChanged={(range) => {
-            rangeRef.current = range
-          }}
-          style={{ height: CONTAINER_HEIGHT }}
-          components={{ Header: DesktopVirtuosoPadding, Footer: DesktopVirtuosoPadding }}
-          role="listbox"
-          aria-label="Emoji picker"
-          itemContent={(index) => {
-            const rowItems = allRows[index]
-            const rowStartIndex = geometry.recentCount + index * columns
-            return (
-              <div className="flex gap-0.5 px-2 pb-0.5">
-                {rowItems.map((item, colIndex) => {
-                  const itemIndex = rowStartIndex + colIndex
-                  return (
-                    <EmojiButton
-                      key={item.shortcode}
-                      item={item}
-                      isSelected={itemIndex === selectedIndex}
-                      isActive={activeShortcodes.has(item.shortcode)}
-                      isMobile={false}
-                      onClick={() => onSelect(item)}
-                      onMouseEnter={() => setSelectedIndex(itemIndex)}
-                    />
-                  )
-                })}
-              </div>
-            )
-          }}
-        />
+        // Basis is the full grid, and the popover's available-height cap makes
+        // this the only shrinkable child — so a short window shortens the grid
+        // instead of pushing the popover off screen.
+        <div style={{ flex: "0 1 auto", flexBasis: EMOJI_LIST_MAX_HEIGHT, minHeight: EMOJI_LIST_MIN_HEIGHT }}>
+          <Virtuoso
+            ref={virtuosoRef}
+            totalCount={allRows.length}
+            fixedItemHeight={EMOJI_ROW_HEIGHT}
+            increaseViewportBy={EMOJI_ROW_HEIGHT * 3}
+            rangeChanged={(range) => {
+              rangeRef.current = range
+            }}
+            style={{ height: "100%" }}
+            components={{ Header: DesktopVirtuosoPadding, Footer: DesktopVirtuosoPadding }}
+            role="listbox"
+            aria-label="Emoji picker"
+            itemContent={(index) => {
+              const rowItems = allRows[index]
+              const rowStartIndex = geometry.recentCount + index * columns
+              return (
+                <div className="flex gap-0.5 px-2 pb-0.5">
+                  {rowItems.map((item, colIndex) => {
+                    const itemIndex = rowStartIndex + colIndex
+                    return (
+                      <EmojiButton
+                        key={item.shortcode}
+                        item={item}
+                        isSelected={itemIndex === selectedIndex}
+                        isActive={activeShortcodes.has(item.shortcode)}
+                        isMobile={false}
+                        onClick={() => onSelect(item)}
+                        onMouseEnter={() => setSelectedIndex(itemIndex)}
+                      />
+                    )
+                  })}
+                </div>
+              )
+            }}
+          />
+        </div>
       )}
 
       {selectedEmoji && (
-        <div className="border-t px-2 py-1.5 text-xs text-muted-foreground truncate">
+        <div className="shrink-0 border-t px-2 py-1.5 text-xs text-muted-foreground truncate">
           <span className="mr-1.5">{selectedEmoji.emoji}</span>
           <span className="font-mono">:{selectedEmoji.shortcode}:</span>
         </div>
@@ -631,7 +638,8 @@ export function ReactionEmojiPicker({
       <PopoverContent
         align="end"
         side="top"
-        className="w-[280px] p-0"
+        className="flex w-[280px] flex-col overflow-hidden p-0"
+        style={{ maxHeight: `max(var(--radix-popover-content-available-height), ${EMOJI_POPOVER_MIN_HEIGHT}px)` }}
         onCloseAutoFocus={(e) => e.preventDefault()}
         onOpenAutoFocus={(e) => {
           e.preventDefault()
