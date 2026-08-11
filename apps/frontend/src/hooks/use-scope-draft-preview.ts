@@ -59,6 +59,9 @@ function bestRow(rows: CachedDraft[], loadedDraftId: string | null): CachedDraft
   return advertisable.reduce((a, b) => (b.clientUpdatedAt > a.clientUpdatedAt ? b : a))
 }
 
+const THREAD_DRAFT_SCOPE_PREFIX = "thread:"
+const STREAM_DRAFT_SCOPE_PREFIX = "stream:"
+
 interface BoardDraftsSnapshot {
   previewByScope: Map<string, ScopeDraftPreview>
   subtopicByMessageId: Map<string, SubtopicDraftEntry>
@@ -73,6 +76,13 @@ interface BoardDraftsSnapshot {
    * unreachable from the very view named after drafts.
    */
   payloadScopes: Set<string>
+  /** `thread:{anchorId}` drafts keyed by anchor — the reply a timeline item
+   *  carries before its thread stream exists. */
+  threadDraftByAnchorId: Map<string, ScopeDraftPreview>
+  /** `stream:{streamId}` drafts keyed by stream — where a thread reply's scope
+   *  lands after promotion (and, harmlessly, every channel/scratchpad draft;
+   *  lookups are by thread stream id). */
+  threadDraftByStreamId: Map<string, ScopeDraftPreview>
 }
 
 const EMPTY_SNAPSHOT: BoardDraftsSnapshot = {
@@ -80,6 +90,8 @@ const EMPTY_SNAPSHOT: BoardDraftsSnapshot = {
   subtopicByMessageId: new Map(),
   checkedOutScopes: new Set(),
   payloadScopes: new Set(),
+  threadDraftByAnchorId: new Map(),
+  threadDraftByStreamId: new Map(),
 }
 
 interface BoardDraftsEntry {
@@ -103,11 +115,21 @@ function buildSnapshot(rows: CachedDraft[], loadedByScope: Map<string, string | 
   const subtopicByMessageId = new Map<string, SubtopicDraftEntry>()
   const checkedOutScopes = new Set<string>()
   const payloadScopes = new Set<string>()
+  const threadDraftByAnchorId = new Map<string, ScopeDraftPreview>()
+  const threadDraftByStreamId = new Map<string, ScopeDraftPreview>()
   for (const [scope, scopeRows] of byScope) {
     const loadedDraftId = loadedByScope.get(scope) ?? null
+    const best = bestRow(scopeRows, loadedDraftId)
+    if (!scope.startsWith(BOARD_DRAFT_SCOPE_PREFIX)) {
+      if (best && scope.startsWith(THREAD_DRAFT_SCOPE_PREFIX)) {
+        threadDraftByAnchorId.set(scope.slice(THREAD_DRAFT_SCOPE_PREFIX.length), toPreview(best, loadedDraftId))
+      } else if (best && scope.startsWith(STREAM_DRAFT_SCOPE_PREFIX)) {
+        threadDraftByStreamId.set(scope.slice(STREAM_DRAFT_SCOPE_PREFIX.length), toPreview(best, loadedDraftId))
+      }
+      continue
+    }
     if (loadedDraftId !== null && scopeRows.some((row) => row.id === loadedDraftId)) checkedOutScopes.add(scope)
     if (scopeRows.some(hasPayload)) payloadScopes.add(scope)
-    const best = bestRow(scopeRows, loadedDraftId)
     if (best) previewByScope.set(scope, toPreview(best, loadedDraftId))
     const parsed = parseBoardDraftKey(scope)
     if (parsed?.kind === "subtopic") {
@@ -130,12 +152,23 @@ function buildSnapshot(rows: CachedDraft[], loadedByScope: Map<string, string | 
       }
     }
   }
-  return { previewByScope, subtopicByMessageId, checkedOutScopes, payloadScopes }
+  return {
+    previewByScope,
+    subtopicByMessageId,
+    checkedOutScopes,
+    payloadScopes,
+    threadDraftByAnchorId,
+    threadDraftByStreamId,
+  }
 }
 
-// INV-9 exception: one shared board-drafts liveQuery per workspace, ref-counted
+// INV-9 exception: one shared drafts liveQuery per workspace, ref-counted
 // across every resting affordance that advertises a draft (card reply buttons,
-// branch-tail pills, sub-topic indicators). Per-affordance queries can never
+// branch-tail pills, sub-topic indicators, in-stream thread cards). Drafts per
+// user are few, so the query covers the whole workspace rather than one range
+// per scope family — a thread draft is looked up under two keys at once
+// (`thread:{anchor}` and `stream:{threadId}`), which only one snapshot can
+// answer without a gap at promotion. Per-affordance queries can never
 // have data at first paint — Dexie's first emission is always post-mount — so
 // the pills popped in a frame after the board revealed, shifting layout. The
 // registry resolves ONCE per workspace, the board's reveal gate waits on it
@@ -161,10 +194,7 @@ function subscribeBoardDrafts(workspaceId: string, listener: () => void): () => 
       // than bulkGet on the scopes with rows, so a pointer-only change (a stash
       // detaching the loaded pointer) re-fires the query too.
       const [rows, pointers] = await Promise.all([
-        db.drafts
-          .where("[workspaceId+scope]")
-          .between([workspaceId, BOARD_DRAFT_SCOPE_PREFIX], [workspaceId, BOARD_DRAFT_SCOPE_PREFIX + "\uffff"])
-          .toArray(),
+        db.drafts.where("workspaceId").equals(workspaceId).toArray(),
         db.composerLoaded.where("workspaceId").equals(workspaceId).toArray(),
       ])
       return { rows, pointers }
@@ -203,8 +233,9 @@ function useBoardDraftsSubscription(workspaceId: string) {
  * so an affordance mounting after the board's reveal has its pill in its very
  * first frame. Null when the scope holds nothing worth showing.
  *
- * Board scopes only (`board:*`) — the registry's query is bounded to that
- * prefix, so any other scope would silently read null (INV-11: fail loudly).
+ * Board scopes only (`board:*`) — `previewByScope` is built from that prefix
+ * alone, so any other scope would silently read null (INV-11: fail loudly).
+ * A thread reply draft reads through {@link useThreadDraft} instead.
  */
 export function useScopeDraftPreview(workspaceId: string, scope: string): ScopeDraftPreview | null {
   if (!scope.startsWith(BOARD_DRAFT_SCOPE_PREFIX)) {
@@ -215,6 +246,34 @@ export function useScopeDraftPreview(workspaceId: string, scope: string): ScopeD
     () => boardDraftsRegistry.get(workspaceId)?.snapshot.previewByScope.get(scope) ?? null,
     [workspaceId, scope]
   )
+  return useSyncExternalStore(subscribe, getSnapshot)
+}
+
+/**
+ * The viewer's unsent reply draft for a timeline anchor — what the in-stream
+ * thread card indicates. A thread reply draft lives under `thread:{anchorId}`
+ * until the thread stream exists and under `stream:{threadId}` after promotion
+ * re-scopes it; both keys are read off the SAME snapshot, so the atomic rescope
+ * can never show a frame where neither holds the row. The stream key wins — it
+ * is the post-promotion truth, and a stale anchor-keyed sibling (a stash
+ * composed before promotion) must not outrank it.
+ *
+ * Advertise semantics are the board's ({@link useScopeDraftPreview}): payload
+ * rows only, stashed rows hidden unless checked out into this device's composer.
+ * Null when there is nothing to indicate.
+ */
+export function useThreadDraft(
+  workspaceId: string,
+  anchorId: string,
+  threadId?: string | null
+): ScopeDraftPreview | null {
+  const subscribe = useBoardDraftsSubscription(workspaceId)
+  const getSnapshot = useCallback(() => {
+    const snapshot = boardDraftsRegistry.get(workspaceId)?.snapshot
+    if (!snapshot) return null
+    const byStream = threadId ? snapshot.threadDraftByStreamId.get(threadId) : undefined
+    return byStream ?? snapshot.threadDraftByAnchorId.get(anchorId) ?? null
+  }, [workspaceId, anchorId, threadId])
   return useSyncExternalStore(subscribe, getSnapshot)
 }
 

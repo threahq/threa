@@ -1,5 +1,5 @@
 import { Link } from "react-router-dom"
-import { ChevronRight } from "lucide-react"
+import { ChevronRight, Pencil } from "lucide-react"
 import type { ThreadSummary } from "@threa/types"
 import { ActorAvatar } from "@/components/actor-avatar"
 import { RelativeTime } from "@/components/relative-time"
@@ -8,11 +8,25 @@ import { useWorkspaceEmoji } from "@/hooks/use-workspace-emoji"
 import { truncateContent } from "@/components/layout/sidebar/utils"
 import { cn } from "@/lib/utils"
 
+export interface ThreadCardDraft {
+  /** One-line plain text of the viewer's unsent reply. "" when there is nothing
+   *  renderable (attachment-only, or a sealed body this device can't read) —
+   *  the label still shows, the snippet row is dropped. */
+  preview: string
+}
+
 interface ThreadCardProps {
   replyCount: number
   href: string
   workspaceId: string
   summary?: ThreadSummary
+  /**
+   * The viewer's unsent reply draft in this thread. With replies it appends a
+   * muted "Draft" token after the timestamp; at `replyCount === 0` it is the
+   * whole card (the thread stream does not exist yet, so there is nothing else
+   * to show) and `href` points at the draft reply panel.
+   */
+  draft?: ThreadCardDraft | null
   /**
    * Render a pulsing gold dot next to the reply count when a session is
    * actively producing content in this thread. Lets the card stay mounted
@@ -37,13 +51,15 @@ interface ThreadCardProps {
  *
  * Preview text routes through `truncateContent()` (→ `stripMarkdownToInline`)
  * so raw markdown from `contentMarkdown` never ships as literal syntax to
- * users (INV-60).
+ * users (INV-60). The draft snippet needs no stripping — it is projected from
+ * the composer's `contentJson`, never markdown.
  */
 export function ThreadCard({
   replyCount,
   href,
   workspaceId,
   summary,
+  draft,
   isActive,
   ownsLeftLine = true,
   className,
@@ -51,8 +67,9 @@ export function ThreadCard({
   const { getActorName } = useActors(workspaceId)
   const { toEmoji } = useWorkspaceEmoji(workspaceId)
 
-  if (replyCount === 0) return null
+  if (replyCount === 0 && !draft) return null
 
+  const isDraftOnly = replyCount === 0
   const replyLabel = replyCount === 1 ? "1 reply" : `${replyCount} replies`
   const participants = summary?.participants ?? []
 
@@ -71,7 +88,13 @@ export function ThreadCard({
       )}
     >
       <div className="flex items-center gap-2 text-xs">
-        {participants.length > 0 && (
+        {isDraftOnly && (
+          <span className="flex items-center gap-1.5">
+            <Pencil aria-hidden className="h-3.5 w-3.5 text-primary" />
+            <span className="font-medium text-primary group-hover/thread:underline">Draft</span>
+          </span>
+        )}
+        {!isDraftOnly && participants.length > 0 && (
           <div className="flex gap-0.5">
             {participants.map((participant) => (
               <ActorAvatar
@@ -84,7 +107,7 @@ export function ThreadCard({
             ))}
           </div>
         )}
-        <span className="font-medium text-primary group-hover/thread:underline">{replyLabel}</span>
+        {!isDraftOnly && <span className="font-medium text-primary group-hover/thread:underline">{replyLabel}</span>}
         {isActive && (
           <span className="relative flex h-1.5 w-1.5" aria-label="Session active">
             <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-primary/60 opacity-75" />
@@ -97,17 +120,28 @@ export function ThreadCard({
             <RelativeTime date={summary.lastReplyAt} terse className="text-muted-foreground" />
           </>
         )}
+        {draft && !isDraftOnly && (
+          <>
+            <span className="text-muted-foreground/40">·</span>
+            <span className="flex items-center gap-1 italic text-muted-foreground" aria-label="Unsent draft">
+              <Pencil aria-hidden className="h-3 w-3" />
+              Draft
+            </span>
+          </>
+        )}
         <ChevronRight className="ml-auto h-3.5 w-3.5 text-muted-foreground/50 transition-transform group-hover/thread:translate-x-0.5 group-hover/thread:text-muted-foreground" />
       </div>
-      {summary && (
-        <p className="truncate text-xs text-muted-foreground">
-          <span className="font-medium text-foreground/80">
-            {getActorName(summary.latestReply.actorId, summary.latestReply.actorType)}
-          </span>
-          <span className="text-muted-foreground/60">: </span>
-          {truncateContent(summary.latestReply.contentMarkdown, 120, toEmoji)}
-        </p>
-      )}
+      {isDraftOnly
+        ? draft?.preview && <p className="truncate text-xs italic text-muted-foreground">{draft.preview}</p>
+        : summary && (
+            <p className="truncate text-xs text-muted-foreground">
+              <span className="font-medium text-foreground/80">
+                {getActorName(summary.latestReply.actorId, summary.latestReply.actorType)}
+              </span>
+              <span className="text-muted-foreground/60">: </span>
+              {truncateContent(summary.latestReply.contentMarkdown, 120, toEmoji)}
+            </p>
+          )}
     </Link>
   )
 }

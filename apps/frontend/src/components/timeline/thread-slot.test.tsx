@@ -106,6 +106,74 @@ describe("ThreadSlot", () => {
     expect(lines.length).toBe(1)
   })
 
+  it("is visible for a draft with no thread yet, rendering the draft card at the draft panel url", () => {
+    renderSlot(
+      <ThreadSlot
+        activity={undefined}
+        replyCount={0}
+        threadHref={null}
+        summary={undefined}
+        workspaceId="ws_1"
+        draft={{ draftId: "draft_1", preview: "typed but unsent", attachmentCount: 0, isCheckedOut: true }}
+        draftHref="/panel/draft:stream_1:msg_1"
+      />
+    )
+    expect(screen.getByRole("link")).toHaveAttribute("href", "/panel/draft:stream_1:msg_1")
+    expect(screen.getByText("Draft")).toBeInTheDocument()
+    expect(screen.getByText("typed but unsent")).toBeInTheDocument()
+  })
+
+  it("stays null for a draft with nowhere to point (no thread and no draft url)", () => {
+    const { container } = renderSlot(
+      <ThreadSlot
+        activity={undefined}
+        replyCount={0}
+        threadHref={null}
+        summary={undefined}
+        workspaceId="ws_1"
+        draft={{ draftId: "draft_1", preview: "typed but unsent", attachmentCount: 0, isCheckedOut: true }}
+        draftHref={null}
+      />
+    )
+    expect(container.firstChild).toBeNull()
+  })
+
+  it("keeps the same slot element (and no replayed grow-in) when the draft card becomes the reply card", () => {
+    const { container, rerender } = renderSlot(
+      <ThreadSlot
+        activity={undefined}
+        replyCount={0}
+        threadHref={null}
+        summary={undefined}
+        workspaceId="ws_1"
+        draft={{ draftId: "draft_1", preview: "typed but unsent", attachmentCount: 0, isCheckedOut: true }}
+        draftHref="/panel/draft:stream_1:msg_1"
+      />
+    )
+    const slotBeforeSend = container.firstChild
+    expect(slotBeforeSend).not.toBeNull()
+
+    // The send: the optimistic reply lands and the draft row is gone. Both sides
+    // of the swap live in the same grid cell, so the slot is never unmounted.
+    rerender(
+      <MemoryRouter>
+        <ThreadSlot
+          activity={undefined}
+          replyCount={1}
+          threadHref="/panel/thread_1"
+          summary={summary}
+          workspaceId="ws_1"
+          draft={null}
+          draftHref="/panel/draft:stream_1:msg_1"
+        />
+      </MemoryRouter>
+    )
+    expect(container.firstChild).toBe(slotBeforeSend)
+    expect(screen.getByText("1 reply")).toBeInTheDocument()
+    expect(screen.queryByText("Draft")).toBeNull()
+    expect(container.querySelector(".animate-thread-grow")).toBeNull()
+  })
+
   it("applies the grow-in animation only on the first visible→true transition", () => {
     // On initial mount with visible=true (replies already exist when we first
     // see the component, e.g. a Virtuoso scroll-in), the useEffect's wasRef

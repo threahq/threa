@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest"
 import { renderHook, act } from "@testing-library/react"
 import { useQueueDraftMessage } from "./use-queue-draft-message"
 import { StreamTypes, type JSONContent } from "@threa/types"
+import { createDraftPanelId } from "@/contexts/panel-context"
 import * as dbModule from "@/db"
 import * as contextsModule from "@/contexts"
 import * as authModule from "@/auth"
@@ -160,6 +161,52 @@ describe("useQueueDraftMessage", () => {
       envelope: undefined,
       e2eVersion: undefined,
     })
+  })
+
+  it("bumps the anchor with an optimistic thread summary so the card keeps its preview row", async () => {
+    const replySpy = vi.spyOn(streamSyncModule, "optimisticReplyCountUpdate")
+
+    const { result } = setup()
+    let clientId = ""
+    await act(async () => {
+      const queued = await result.current.queueDraftMessage(
+        { contentJson: CONTENT },
+        { workspaceId: WORKSPACE_ID, streamId: PANEL_ID, streamCreation: threadCreation, draftId: PANEL_ID }
+      )
+      clientId = queued.clientId
+    })
+
+    expect(replySpy).toHaveBeenCalledWith(
+      threadCreation.parentStreamId,
+      threadCreation.parentMessageId,
+      createDraftPanelId(threadCreation.parentStreamId, threadCreation.parentMessageId),
+      {
+        lastReplyAt: expect.any(String),
+        participants: [{ id: USER_ID, type: "user" }],
+        latestReply: { messageId: clientId, actorId: USER_ID, actorType: "user", contentMarkdown: "hi" },
+      }
+    )
+  })
+
+  it("leaves the optimistic summary's preview text empty for a sealed reply", async () => {
+    mockUnlockedSession()
+    const replySpy = vi.spyOn(streamSyncModule, "optimisticReplyCountUpdate")
+
+    const { result } = setup()
+    await act(async () => {
+      await result.current.queueDraftMessage(
+        { contentJson: CONTENT },
+        {
+          workspaceId: WORKSPACE_ID,
+          streamId: PANEL_ID,
+          streamCreation: threadCreation,
+          draftId: PANEL_ID,
+          e2e: { rootStreamId: ROOT_STREAM_ID, hasActors: false },
+        }
+      )
+    })
+
+    expect(replySpy.mock.calls[0][3]?.latestReply.contentMarkdown).toBe("")
   })
 
   it("refuses to queue an encrypted draft when the session is locked", async () => {

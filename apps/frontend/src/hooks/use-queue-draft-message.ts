@@ -264,7 +264,19 @@ export function useQueueDraftMessage(workspaceId: string) {
       const anchorId = params.streamCreation?.parentAnchorId ?? params.streamCreation?.parentMessageId
       if (params.streamCreation?.type === StreamTypes.THREAD && params.streamCreation.parentStreamId && anchorId) {
         const draftPanelId = createDraftPanelId(params.streamCreation.parentStreamId, anchorId)
-        await optimisticReplyCountUpdate(params.streamCreation.parentStreamId, anchorId, draftPanelId).catch(() => {})
+        await optimisticReplyCountUpdate(params.streamCreation.parentStreamId, anchorId, draftPanelId, {
+          lastReplyAt: now,
+          participants: [{ id: currentUserId, type: "user" }],
+          latestReply: {
+            messageId: clientId,
+            actorId: currentUserId,
+            actorType: "user",
+            // A sealed reply's server summary carries the empty placeholder
+            // markdown (the card has no decrypt path), so anything else here
+            // would render and then blank out on heal.
+            contentMarkdown: e2eFields ? "" : contentMarkdown,
+          },
+        }).catch(() => {})
       }
 
       notifyQueue()

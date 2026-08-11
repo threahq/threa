@@ -413,7 +413,6 @@ export function StreamPanel({ workspaceId, onClose }: StreamPanelProps) {
     try {
       // Clear input optimistically inside try so we can restore on failure
       composer.setContent(EMPTY_DOC)
-      composer.resolveDraft()
       composer.clearAttachments()
 
       // Seal the reply under the encrypted root when the parent is E2E — the
@@ -444,6 +443,19 @@ export function StreamPanel({ workspaceId, onClose }: StreamPanelProps) {
           e2e,
         }
       )
+
+      // AFTER the queue write, never before: the anchor's thread slot indicates
+      // this draft, and `queueDraftMessage` is what bumps the anchor's
+      // replyCount — resolving first leaves a frame with neither, collapsing the
+      // slot and replaying its grow-in on the way back. Failure is handled
+      // apart from the queue's: the reply IS queued at this point, so the
+      // composer must stay cleared and no retry prompt is warranted — the only
+      // symptom is a stale draft row.
+      try {
+        await composer.resolveDraft()
+      } catch (err) {
+        console.error("Failed to resolve draft after queueing thread reply", err)
+      }
     } catch {
       // Restore content so the user can retry
       composer.setContent(contentJson)

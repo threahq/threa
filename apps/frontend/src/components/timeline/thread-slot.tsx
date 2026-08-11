@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react"
 import { Link } from "react-router-dom"
 import type { ThreadSummary } from "@threa/types"
-import { getStepLabel, type MessageAgentActivity } from "@/hooks"
+import { getStepLabel, type MessageAgentActivity, type ScopeDraftPreview } from "@/hooks"
 import { useTrace } from "@/contexts"
 import { cn } from "@/lib/utils"
 import { ThreadCard } from "./thread-card"
@@ -12,6 +12,11 @@ interface ThreadSlotProps {
   threadHref: string | null
   summary?: ThreadSummary
   workspaceId: string
+  /** The viewer's unsent reply draft for this anchor (`useThreadDraft`). */
+  draft?: ScopeDraftPreview | null
+  /** Panel url for the not-yet-created thread (`useThreadAnchor().replyUrl`) —
+   *  where a draft-only card points until a real thread exists. */
+  draftHref?: string | null
 }
 
 /**
@@ -28,14 +33,31 @@ interface ThreadSlotProps {
  *      `grid-template-rows` transition — the line is absolute-positioned to
  *      the slot container, so it follows the container's growing height
  *
- * When nothing is thread-related (no activity, no replies), the slot returns
- * null. Otherwise the line is always present; the body swaps between a
+ * When nothing is thread-related (no activity, no replies, no draft), the slot
+ * returns null. Otherwise the line is always present; the body swaps between a
  * "thinking" line (italic text + persona) and the full ThreadCard body.
+ *
+ * A viewer's unsent draft reply keeps the slot visible before the thread stream
+ * exists, and the card it renders occupies the SAME grid cell as the reply card
+ * — so sending the draft is a content swap inside a mounted slot: the gold line
+ * persists and `visible` never flips, which is what stops the grow-in animation
+ * from replaying on the send.
  */
-export function ThreadSlot({ activity, replyCount, threadHref, summary, workspaceId }: ThreadSlotProps) {
+export function ThreadSlot({
+  activity,
+  replyCount,
+  threadHref,
+  summary,
+  workspaceId,
+  draft,
+  draftHref,
+}: ThreadSlotProps) {
   const hasActivity = !!activity
   const hasThread = replyCount > 0 && !!threadHref
-  const visible = hasActivity || hasThread
+  const cardHref = threadHref ?? draftHref ?? null
+  const hasDraft = !!draft && !!cardHref
+  const showCard = hasThread || hasDraft
+  const visible = hasActivity || showCard
 
   // Only play the grow-in animation for genuine post-mount transitions —
   // e.g. Ariadne starts thinking mid-session, or a reply lands while the
@@ -101,17 +123,18 @@ export function ThreadSlot({ activity, replyCount, threadHref, summary, workspac
       <div
         className="grid transition-[grid-template-rows] duration-[450ms] ease-out"
         style={{
-          gridTemplateRows: hasThread ? "0fr 1fr" : "1fr 0fr",
+          gridTemplateRows: showCard ? "0fr 1fr" : "1fr 0fr",
         }}
       >
-        <div className="overflow-hidden">{activity && !hasThread ? <ThinkingRow activity={activity} /> : null}</div>
+        <div className="overflow-hidden">{activity && !showCard ? <ThinkingRow activity={activity} /> : null}</div>
         <div className="overflow-hidden">
-          {hasThread && threadHref ? (
+          {showCard && cardHref ? (
             <ThreadCard
-              replyCount={replyCount}
-              href={threadHref}
+              replyCount={hasThread ? replyCount : 0}
+              href={cardHref}
               workspaceId={workspaceId}
               summary={summary}
+              draft={draft}
               isActive={hasActivity}
               ownsLeftLine={false}
             />

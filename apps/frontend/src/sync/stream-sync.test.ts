@@ -7,6 +7,7 @@ import {
   detectSequenceGap,
   getLatestPersistedSequence,
   getPersistedTail,
+  optimisticReplyCountUpdate,
   preserveBakedInAppData,
   registerStreamSocketHandlers,
   toCachedStreamBootstrap,
@@ -31,6 +32,7 @@ import type {
   StreamBootstrap,
   StreamEvent,
   StreamMember,
+  ThreadSummary,
   WorkspaceBootstrap,
 } from "@threa/types"
 
@@ -1530,6 +1532,117 @@ describe("updateMessageEvent — indexed payload.messageId lookup", () => {
       { messageId: "msg_heal", threadId: "thread_healed" },
       { memoId: "memo_1", threadId: "thread_card" },
     ])
+  })
+})
+
+describe("optimisticReplyCountUpdate", () => {
+  const streamId = "stream_optimistic"
+
+  function seedAnchor(id: string, payload: Record<string, unknown>) {
+    return db.events.put({
+      ...makeEvent({ id, streamId, sequence: "1", payload }),
+      workspaceId: "ws_1",
+      _sequenceNum: 1,
+      _cachedAt: Date.now(),
+    } as CachedEvent)
+  }
+
+  const summary: ThreadSummary = {
+    lastReplyAt: "2026-08-11T10:00:00.000Z",
+    participants: [{ id: "user_me", type: "user" }],
+    latestReply: { messageId: "msg_mine", actorId: "user_me", actorType: "user", contentMarkdown: "my reply" },
+  }
+
+  beforeEach(async () => {
+    await db.events.clear()
+  })
+
+  it("writes the summary alongside the count so the card keeps its preview row", async () => {
+    await seedAnchor("evt_first", { messageId: "msg_anchor", replyCount: 0 })
+
+    await optimisticReplyCountUpdate(streamId, "msg_anchor", "draft_panel", summary)
+
+    const row = await db.events.get("evt_first")
+    expect(row?.payload).toEqual({
+      messageId: "msg_anchor",
+      threadId: "draft_panel",
+      replyCount: 1,
+      threadSummary: summary,
+    })
+  })
+
+  it("appends the sender to an existing summary's participants and replaces latestReply", async () => {
+    const existing: ThreadSummary = {
+      lastReplyAt: "2026-08-11T09:00:00.000Z",
+      participants: [{ id: "user_other", type: "user" }],
+      latestReply: {
+        messageId: "msg_theirs",
+        actorId: "user_other",
+        actorType: "user",
+        contentMarkdown: "their reply",
+      },
+    }
+    await seedAnchor("evt_merge", { messageId: "msg_anchor", replyCount: 1, threadSummary: existing })
+
+    await optimisticReplyCountUpdate(streamId, "msg_anchor", "draft_panel", summary)
+
+    const row = await db.events.get("evt_merge")
+    expect(row?.payload).toEqual({
+      messageId: "msg_anchor",
+      threadId: "draft_panel",
+      replyCount: 2,
+      threadSummary: {
+        lastReplyAt: summary.lastReplyAt,
+        participants: [{ id: "user_other", type: "user" }, ...summary.participants],
+        latestReply: summary.latestReply,
+      },
+    })
+  })
+
+  it("keeps an already-present sender once, and never grows participants past the server's cap of 3", async () => {
+    const alreadyIn: ThreadSummary["participants"] = [
+      { id: "user_a", type: "user" },
+      { id: "user_me", type: "user" },
+    ]
+    const full: ThreadSummary["participants"] = [
+      { id: "user_a", type: "user" },
+      { id: "persona_b", type: "persona" },
+      { id: "bot_c", type: "bot" },
+    ]
+    const latestReply = { messageId: "msg_a", actorId: "user_a", actorType: "user" as const, contentMarkdown: "a" }
+    await seedAnchor("evt_dedupe", {
+      messageId: "msg_dedupe",
+      replyCount: 4,
+      threadSummary: { lastReplyAt: "2026-08-11T09:00:00.000Z", participants: alreadyIn, latestReply },
+    })
+    await seedAnchor("evt_capped", {
+      messageId: "msg_capped",
+      replyCount: 9,
+      threadSummary: { lastReplyAt: "2026-08-11T09:00:00.000Z", participants: full, latestReply },
+    })
+
+    await optimisticReplyCountUpdate(streamId, "msg_dedupe", "draft_panel", summary)
+    await optimisticReplyCountUpdate(streamId, "msg_capped", "draft_panel", summary)
+
+    const rows = await db.events.bulkGet(["evt_dedupe", "evt_capped"])
+    expect(rows.map((row) => (row?.payload as { threadSummary: ThreadSummary }).threadSummary.participants)).toEqual([
+      alreadyIn,
+      full,
+    ])
+  })
+
+  it("leaves the payload's summary untouched when no summary is passed", async () => {
+    await seedAnchor("evt_nosummary", { messageId: "msg_anchor", replyCount: 2, contentMarkdown: "parent" })
+
+    await optimisticReplyCountUpdate(streamId, "msg_anchor", "draft_panel")
+
+    const row = await db.events.get("evt_nosummary")
+    expect(row?.payload).toEqual({
+      messageId: "msg_anchor",
+      contentMarkdown: "parent",
+      threadId: "draft_panel",
+      replyCount: 3,
+    })
   })
 })
 

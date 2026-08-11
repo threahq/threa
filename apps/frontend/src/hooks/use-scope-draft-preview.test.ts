@@ -4,6 +4,7 @@ import type { JSONContent } from "@threa/types"
 import { db } from "@/db"
 import {
   useScopeDraftPreview,
+  useThreadDraft,
   useBoardDraftPayloadScopes,
   useBoardScopeDraftIndex,
   useBoardSubtopicDraftIndex,
@@ -88,6 +89,112 @@ describe("useScopeDraftPreview", () => {
 
   it("throws on a non-board scope — the shared snapshot only covers board:* rows", () => {
     expect(() => renderHook(() => useScopeDraftPreview(workspaceId, "stream:stream_1"))).toThrow(/board draft scopes/)
+  })
+})
+
+describe("useThreadDraft", () => {
+  const anchorId = "msg_anchor"
+  const threadScope = `thread:${anchorId}`
+
+  it("advertises the anchor-keyed draft before the thread stream exists", async () => {
+    await seed("draft_thread", threadScope, "reply in progress", 1000)
+    await db.composerLoaded.put({ scope: threadScope, workspaceId, draftId: "draft_thread" })
+
+    const { result } = renderHook(() => useThreadDraft(workspaceId, anchorId))
+    await waitFor(() =>
+      expect(result.current).toEqual({
+        draftId: "draft_thread",
+        preview: "reply in progress",
+        attachmentCount: 0,
+        isCheckedOut: true,
+      })
+    )
+  })
+
+  it("never reads null across the promotion rescope, then serves the row from the stream key", async () => {
+    await seed("draft_thread", threadScope, "reply in progress", 1000)
+    const threadId = "stream_thread"
+
+    const seen: (ReturnType<typeof useThreadDraft> | null)[] = []
+    const { result } = renderHook(() => {
+      const draft = useThreadDraft(workspaceId, anchorId, threadId)
+      seen.push(draft)
+      return draft
+    })
+    await waitFor(() => expect(result.current?.draftId).toBe("draft_thread"))
+
+    // The promotion rescope, exactly as `rescopeScopeDrafts` does it: one
+    // transaction, so no emission can observe the row under neither key.
+    seen.length = 0
+    await db.transaction("rw", db.drafts, async () => {
+      const row = await db.drafts.get("draft_thread")
+      await db.drafts.put({ ...row!, scope: `stream:${threadId}`, clientUpdatedAt: 2000 })
+    })
+    await waitFor(async () => expect((await db.drafts.get("draft_thread"))?.scope).toBe(`stream:${threadId}`))
+    await waitFor(() => expect(seen.length).toBeGreaterThan(0))
+    expect(seen.filter((entry) => entry === null)).toEqual([])
+    expect(result.current?.draftId).toBe("draft_thread")
+
+    // Proof the read now comes through the stream key: without the thread id
+    // there is no anchor-keyed row left to find.
+    const anchorOnly = renderHook(() => useThreadDraft(workspaceId, anchorId))
+    expect(anchorOnly.result.current).toBeNull()
+  })
+
+  it("prefers the promoted stream scope over a stale anchor-keyed sibling", async () => {
+    const threadId = "stream_thread"
+    await seed("draft_stale_anchor", threadScope, "composed before promotion", 3000)
+    await seed("draft_promoted", `stream:${threadId}`, "the live reply", 1000)
+
+    const { result } = renderHook(() => useThreadDraft(workspaceId, anchorId, threadId))
+    await waitFor(() => expect(result.current).toMatchObject({ draftId: "draft_promoted", preview: "the live reply" }))
+  })
+
+  it("hides a stashed thread draft, and shows it again once it is checked out", async () => {
+    await db.drafts.add({
+      id: "draft_stashed",
+      workspaceId,
+      scope: threadScope,
+      contentJson: doc("put away"),
+      attachments: [],
+      clientUpdatedAt: 2000,
+      stashedAt: 1500,
+    })
+    // Control on the same snapshot: a live thread draft on another anchor still
+    // advertises, so the null below is the stash flag's doing.
+    await seed("draft_live", "thread:msg_other", "live", 1000)
+
+    const { result } = renderHook(() => useThreadDraft(workspaceId, anchorId))
+    const control = renderHook(() => useThreadDraft(workspaceId, "msg_other"))
+    await waitFor(() => expect(control.result.current?.draftId).toBe("draft_live"))
+    expect(result.current).toBeNull()
+
+    await db.composerLoaded.put({ scope: threadScope, workspaceId, draftId: "draft_stashed" })
+    await waitFor(() => expect(result.current).toMatchObject({ draftId: "draft_stashed", isCheckedOut: true }))
+  })
+
+  it("stays null for a row with no payload, and drops the indicator when the draft is deleted", async () => {
+    await seed("draft_empty", threadScope, "", 1000)
+    await db.composerLoaded.put({ scope: threadScope, workspaceId, draftId: "draft_empty" })
+
+    const { result } = renderHook(() => useThreadDraft(workspaceId, anchorId))
+    const ready = renderHook(() => useBoardDraftsReady(workspaceId))
+    await waitFor(() => expect(ready.result.current).toBe(true))
+    expect(result.current).toBeNull()
+
+    await db.drafts.put({
+      id: "draft_empty",
+      workspaceId,
+      scope: threadScope,
+      contentJson: doc("now it has a body"),
+      attachments: [],
+      clientUpdatedAt: 2000,
+    })
+    await waitFor(() => expect(result.current?.preview).toBe("now it has a body"))
+
+    // `draft:deleted` (or a resolve-on-send) removes the row — indicator gone.
+    await db.drafts.delete("draft_empty")
+    await waitFor(() => expect(result.current).toBeNull())
   })
 })
 
