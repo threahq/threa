@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, mock, spyOn } from "bun:test"
+import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from "bun:test"
 import type { Request, Response } from "express"
 import type { Pool, PoolClient } from "pg"
 import { CommandKinds } from "@threa/types"
@@ -33,6 +33,10 @@ function makeResponse() {
 }
 
 describe("command dispatch idempotency", () => {
+  beforeEach(() => {
+    spyOn(streamsModule, "resolveLockedStreamAuthorities").mockResolvedValue([])
+  })
+
   afterEach(() => {
     mock.restore()
   })
@@ -66,7 +70,7 @@ describe("command dispatch idempotency", () => {
     const handlers = createCommandHandlers({
       pool: makePool(),
       commandAvailabilityService: {
-        resolveCommand,
+        resolveCommandForDispatch: resolveCommand,
         listStreamCommands: mock(async () => []),
         listWorkspaceCommands: mock(() => []),
       } as never,
@@ -95,7 +99,9 @@ describe("command dispatch idempotency", () => {
   })
 
   it("refuses replay after stream access is revoked", async () => {
-    spyOn(streamsModule, "checkStreamAccess").mockResolvedValue(null)
+    spyOn(streamsModule, "resolveLockedStreamAuthorities").mockRejectedValue(
+      Object.assign(new Error("Stream not found"), { status: 404, code: "STREAM_NOT_FOUND" })
+    )
     const findReplay = spyOn(CommandDispatchRepository, "findByClientId")
     const handlers = createCommandHandlers({
       pool: makePool(),
@@ -109,14 +115,60 @@ describe("command dispatch idempotency", () => {
     } as Request
     const res = makeResponse()
 
-    await handlers.dispatch(req, res)
-
-    expect({ status: res.statusCode, body: res.body, replayReads: findReplay.mock.calls.length }).toEqual({
-      status: 404,
-      body: { success: false, error: "Stream not found" },
-      replayReads: 0,
-    })
+    await expect(handlers.dispatch(req, res)).rejects.toMatchObject({ status: 404, code: "STREAM_NOT_FOUND" })
+    expect(findReplay).not.toHaveBeenCalled()
   })
+
+  for (const executionKind of [CommandKinds.SERVER, CommandKinds.BOT_RUNTIME] as const) {
+    it(`replays a committed work command under final locked read-only state for ${executionKind}`, async () => {
+      const workEvent = {
+        ...event,
+        payload: { ...event.payload, name: "steer", executionKind },
+      }
+      spyOn(streamsModule, "resolveLockedStreamAuthorities").mockResolvedValue([
+        { state: { readOnly: true, readOnlyReason: "archived" } } as never,
+      ])
+      spyOn(CommandDispatchRepository, "findByClientId")
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce({ commandId: "cmd_existing", eventId: event.id })
+      spyOn(StreamEventRepository, "findById").mockResolvedValue(workEvent)
+      const insert = spyOn(StreamEventRepository, "insert")
+      const createInvocation = mock(async () => undefined)
+      const resolveInTransaction = mock(async () => null)
+      const handlers = createCommandHandlers({
+        pool: makePool(),
+        commandAvailabilityService: {
+          resolveCommandForDispatch: mock(async () => ({ executionKind, info: {} })),
+          resolveCommandInTransaction: resolveInTransaction,
+          listStreamCommands: mock(async () => []),
+          listWorkspaceCommands: mock(() => []),
+        } as never,
+        botRuntimeService: { createInvocationInTransaction: createInvocation } as never,
+      })
+      const req = {
+        user: { id: "usr_1" },
+        workspaceId: "ws_1",
+        body: { streamId: "stream_1", command: "/steer continue", clientCommandId: "temp_cmd_1" },
+      } as Request
+      const res = makeResponse()
+
+      await handlers.dispatch(req, res)
+
+      expect({
+        status: res.statusCode,
+        commandId: (res.body as { commandId: string }).commandId,
+        inserts: insert.mock.calls.length,
+        invocations: createInvocation.mock.calls.length,
+        transactionAvailabilityCalls: resolveInTransaction.mock.calls.length,
+      }).toEqual({
+        status: 202,
+        commandId: "cmd_existing",
+        inserts: 0,
+        invocations: 0,
+        transactionAvailabilityCalls: 0,
+      })
+    })
+  }
 
   it("replays the winner when a concurrent request wins the idempotency claim", async () => {
     spyOn(streamsModule, "checkStreamAccess").mockResolvedValue({ id: "stream_1" } as never)
@@ -128,7 +180,8 @@ describe("command dispatch idempotency", () => {
     const handlers = createCommandHandlers({
       pool: makePool(),
       commandAvailabilityService: {
-        resolveCommand: mock(async () => ({ executionKind: CommandKinds.SERVER, info: {} })),
+        resolveCommandForDispatch: mock(async () => ({ executionKind: CommandKinds.SERVER, info: {} })),
+        resolveCommandInTransaction: mock(async () => ({ executionKind: CommandKinds.SERVER, info: {} })),
         listStreamCommands: mock(async () => []),
         listWorkspaceCommands: mock(() => []),
       } as never,
@@ -157,7 +210,8 @@ describe("command dispatch idempotency", () => {
     const handlers = createCommandHandlers({
       pool: makePool(),
       commandAvailabilityService: {
-        resolveCommand: mock(async () => ({ executionKind: CommandKinds.SERVER, info: {} })),
+        resolveCommandForDispatch: mock(async () => ({ executionKind: CommandKinds.SERVER, info: {} })),
+        resolveCommandInTransaction: mock(async () => ({ executionKind: CommandKinds.SERVER, info: {} })),
         listStreamCommands: mock(async () => []),
         listWorkspaceCommands: mock(() => []),
       } as never,

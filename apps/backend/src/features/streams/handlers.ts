@@ -722,6 +722,7 @@ export function createStreamHandlers({
 
       const schema = updateSchemaForType(stream.type)
       if (!schema) {
+        await streamService.assertWritable(streamId, workspaceId, { kind: "user", userId })
         throw new HttpError("Cannot update this stream type", { status: 403, code: "STREAM_IMMUTABLE" })
       }
 
@@ -746,16 +747,23 @@ export function createStreamHandlers({
         sealedName = null
       }
 
-      const updated = await streamService.updateStream(streamId, {
-        displayName,
-        slug,
-        description,
-        descriptionJson,
-        actorId: userId,
-        visibility,
-        memoryMode,
-        sealedName,
-      })
+      const updated = await streamService.updateStream(
+        streamId,
+        {
+          displayName,
+          slug,
+          description,
+          descriptionJson,
+          actorId: userId,
+          visibility,
+          memoryMode,
+          sealedName,
+        },
+        {
+          workspaceId,
+          principal: { kind: "user", userId },
+        }
+      )
       res.json({ stream: updated })
     },
 
@@ -769,7 +777,12 @@ export function createStreamHandlers({
         body.sealedNameCiphertext && body.sealedNameEnvelope
           ? { ciphertext: body.sealedNameCiphertext, envelope: body.sealedNameEnvelope }
           : undefined
-      const result = await streamService.regenerateDisplayName(workspaceId, streamId, sealedName)
+      const result = await streamService.regenerateDisplayName(
+        workspaceId,
+        streamId,
+        { kind: "user", userId },
+        sealedName
+      )
       res.json(result)
     },
 
@@ -870,11 +883,6 @@ export function createStreamHandlers({
 
       await streamService.validateStreamAccess(streamId, workspaceId, userId)
 
-      const isMember = await streamService.isMember(streamId, userId)
-      if (!isMember) {
-        return res.status(403).json({ error: "Not a member of this stream" })
-      }
-
       const updated = await streamService.updateCompanionMode(
         streamId,
         workspaceId,
@@ -893,23 +901,12 @@ export function createStreamHandlers({
 
       const { allowedCategories } = validateRequest(updateToolPolicySchema, req.body)
 
-      // Scoped to scratchpads, owner-only: the tool policy is a personal
-      // guardrail on a solo surface, not a shared channel admin setting.
-      const stream = await streamService.validateStreamAccess(streamId, workspaceId, userId)
-      if (stream.type !== StreamTypes.SCRATCHPAD) {
-        throw new HttpError("Tool policy can only be set on a scratchpad", {
-          status: 400,
-          code: "INVALID_STREAM_TYPE",
-        })
-      }
-      if (stream.createdBy !== userId) {
-        throw new HttpError("Only the scratchpad owner can change its tool policy", {
-          status: 403,
-          code: "FORBIDDEN",
-        })
-      }
+      await streamService.validateStreamAccess(streamId, workspaceId, userId)
 
-      const allowedToolCategories = await streamService.setStreamToolPolicy(workspaceId, streamId, allowedCategories)
+      const allowedToolCategories = await streamService.setStreamToolPolicy(workspaceId, streamId, allowedCategories, {
+        kind: "user",
+        userId,
+      })
       res.json({ data: { allowedToolCategories } })
     },
 

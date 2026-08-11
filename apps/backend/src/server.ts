@@ -559,7 +559,8 @@ export async function startServer(): Promise<ServerInstance> {
       userId: params.actorId,
       actorType: "persona",
     })
-  const createThread = (params: Parameters<typeof streamService.createThread>[0]) => streamService.createThread(params)
+  const createThread = (params: Parameters<typeof streamService.createThreadInternal>[0]) =>
+    streamService.createThreadInternal(params)
 
   const activityService = new ActivityService({ pool })
   const syncService = new SyncService({ pool })
@@ -990,7 +991,7 @@ export async function startServer(): Promise<ServerInstance> {
     },
     loadFollowUp: ({ workspaceId, followUpId }) => agentFollowUpService.getById({ workspaceId, followUpId }),
     updateBrief: async ({ workspaceId, streamId, personaId, content, reason, expectedVersion }) => {
-      const result = await streamBriefService.update({
+      const result = await streamBriefService.updateInternal({
         workspaceId,
         streamId,
         content,

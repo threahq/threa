@@ -12,7 +12,12 @@ import { describe, test, expect, beforeAll, afterAll } from "bun:test"
 import { Pool } from "pg"
 import { withTestTransaction, addTestMember } from "./setup"
 import { WorkspaceRepository } from "../../src/features/workspaces"
-import { StreamService, StreamEventRepository, StreamRepository } from "../../src/features/streams"
+import {
+  StreamService,
+  StreamEventRepository,
+  StreamMemberRepository,
+  StreamRepository,
+} from "../../src/features/streams"
 import { EventService } from "../../src/features/messaging"
 import { setupTestDatabase, testMessageContent } from "./setup"
 import { userId, workspaceId, messageId, eventId, streamId } from "../../src/lib/id"
@@ -71,6 +76,7 @@ describe("Thread Graph", () => {
         parentStreamId: channel.id,
         parentAnchorId: parentMessage.id,
         createdBy: ownerId,
+        principal: { kind: "user", userId: ownerId },
       })
 
       expect(thread.type).toBe(StreamTypes.THREAD)
@@ -115,6 +121,7 @@ describe("Thread Graph", () => {
         parentStreamId: channel.id,
         parentAnchorId: msg1.id,
         createdBy: ownerId,
+        principal: { kind: "user", userId: ownerId },
       })
 
       const msg2 = await eventService.createMessage({
@@ -130,6 +137,7 @@ describe("Thread Graph", () => {
         parentStreamId: thread1.id,
         parentAnchorId: msg2.id,
         createdBy: ownerId,
+        principal: { kind: "user", userId: ownerId },
       })
 
       // thread1's root is channel
@@ -179,6 +187,7 @@ describe("Thread Graph", () => {
           parentStreamId: parentStream.id,
           parentAnchorId: msg.id,
           createdBy: ownerId,
+          principal: { kind: "user", userId: ownerId },
         })
         threads.push(thread)
         parentStream = thread
@@ -233,6 +242,7 @@ describe("Thread Graph", () => {
         parentStreamId: scratchpad.id,
         parentAnchorId: parentMessage.id,
         createdBy: ownerId,
+        principal: { kind: "user", userId: ownerId },
       })
 
       expect(thread.parentStreamId).toBe(scratchpad.id)
@@ -275,6 +285,7 @@ describe("Thread Graph", () => {
         parentStreamId: channel.id,
         parentAnchorId: parentMessage.id,
         createdBy: ownerId,
+        principal: { kind: "user", userId: ownerId },
       })
 
       // Creator should be a member
@@ -304,6 +315,7 @@ describe("Thread Graph", () => {
           parentStreamId: "stream_nonexistent",
           parentAnchorId: "msg_nonexistent",
           createdBy: ownerId,
+          principal: { kind: "user", userId: ownerId },
         })
       ).rejects.toThrow("Stream not found")
     })
@@ -346,6 +358,7 @@ describe("Thread Graph", () => {
         parentStreamId: channel.id,
         parentAnchorId: parentMessage.id,
         createdBy: ownerId,
+        principal: { kind: "user", userId: ownerId },
       })
 
       // Create thread second time with same parent message
@@ -354,6 +367,7 @@ describe("Thread Graph", () => {
         parentStreamId: channel.id,
         parentAnchorId: parentMessage.id,
         createdBy: ownerId,
+        principal: { kind: "user", userId: ownerId },
       })
 
       // Should return the same thread
@@ -399,14 +413,18 @@ describe("Thread Graph", () => {
         parentStreamId: channel.id,
         parentAnchorId: parentMessage.id,
         createdBy: ownerId,
+        principal: { kind: "user", userId: ownerId },
       })
 
-      // Second user tries to create thread for same message
+      // The second caller must participate at the effective root before this
+      // user operation can resolve the existing thread.
+      await StreamMemberRepository.insert(pool, channel.id, user2Id)
       const thread2 = await streamService.createThread({
         workspaceId: wsId,
         parentStreamId: channel.id,
         parentAnchorId: parentMessage.id,
         createdBy: user2Id,
+        principal: { kind: "user", userId: user2Id },
       })
 
       // Should return same thread
@@ -463,6 +481,7 @@ describe("Thread Graph", () => {
         parentStreamId: channel.id,
         parentAnchorId: parentMessage.id,
         createdBy: ownerId,
+        principal: { kind: "user", userId: ownerId },
       })
 
       // Send a message in the thread
@@ -528,6 +547,7 @@ describe("Thread Graph", () => {
         parentStreamId: channel.id,
         parentAnchorId: channelMessage.id,
         createdBy: ownerId,
+        principal: { kind: "user", userId: ownerId },
       })
 
       // Create message in thread1
@@ -549,6 +569,7 @@ describe("Thread Graph", () => {
         parentStreamId: thread1.id,
         parentAnchorId: thread1Message.id,
         createdBy: ownerId,
+        principal: { kind: "user", userId: ownerId },
       })
 
       // Create message in nested thread
@@ -616,6 +637,7 @@ describe("Thread Graph", () => {
         parentStreamId: channelId,
         parentAnchorId: event.id,
         createdBy: ownerId,
+        principal: { kind: "user", userId: ownerId },
       })
 
       expect(thread.parentAnchorId).toBe(event.id)
@@ -642,6 +664,7 @@ describe("Thread Graph", () => {
           parentStreamId: channelId,
           parentAnchorId: event.id,
           createdBy: ownerId,
+          principal: { kind: "user", userId: ownerId },
         })
       ).rejects.toMatchObject({ code: "ANCHOR_NOT_THREADABLE" })
     })
@@ -669,6 +692,7 @@ describe("Thread Graph", () => {
           parentStreamId: channelId,
           parentAnchorId: event.id,
           createdBy: ownerId,
+          principal: { kind: "user", userId: ownerId },
         })
       ).rejects.toMatchObject({ code: "ANCHOR_NOT_FOUND" })
     })
@@ -688,6 +712,7 @@ describe("Thread Graph", () => {
         parentStreamId: channelId,
         parentAnchorId: parentMessage.id,
         createdBy: ownerId,
+        principal: { kind: "user", userId: ownerId },
       })
 
       const persisted = await StreamRepository.findById(pool, thread.id)
@@ -710,12 +735,15 @@ describe("Thread Graph", () => {
         parentStreamId: channelId,
         parentAnchorId: event.id,
         createdBy: ownerId,
+        principal: { kind: "user", userId: ownerId },
       })
+      await StreamMemberRepository.insert(pool, channelId, actorId)
       const second = await streamService.createThread({
         workspaceId: wsId,
         parentStreamId: channelId,
         parentAnchorId: event.id,
         createdBy: actorId,
+        principal: { kind: "user", userId: actorId },
       })
 
       expect(second.id).toBe(first.id)
@@ -773,6 +801,7 @@ describe("Thread Graph", () => {
         parentStreamId: channelId,
         parentAnchorId: parent.id,
         createdBy: ownerId,
+        principal: { kind: "user", userId: ownerId },
       })
 
       const reply = await eventService.createMessage({
@@ -824,6 +853,7 @@ describe("Thread Graph", () => {
         parentStreamId: channelId,
         parentAnchorId: cardEvent.id,
         createdBy: ownerId,
+        principal: { kind: "user", userId: ownerId },
       })
 
       await eventService.createMessage({
@@ -864,6 +894,7 @@ describe("Thread Graph", () => {
         parentStreamId: channelId,
         parentAnchorId: parent.id,
         createdBy: ownerId,
+        principal: { kind: "user", userId: ownerId },
       })
       await eventService.createMessage({
         workspaceId: wsId,
@@ -886,6 +917,7 @@ describe("Thread Graph", () => {
         parentStreamId: channelId,
         parentAnchorId: cardEvent.id,
         createdBy: ownerId,
+        principal: { kind: "user", userId: ownerId },
       })
       await eventService.createMessage({
         workspaceId: wsId,

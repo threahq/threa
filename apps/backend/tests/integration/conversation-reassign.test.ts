@@ -11,7 +11,7 @@ import { describe, test, expect, beforeAll, afterAll, afterEach } from "bun:test
 import { Pool } from "pg"
 import { withTransaction, addTestMember, setupIsolatedTestDatabase, testMessageContent } from "./setup"
 import { WorkspaceRepository } from "../../src/features/workspaces"
-import { StreamRepository } from "../../src/features/streams"
+import { StreamMemberRepository, StreamRepository } from "../../src/features/streams"
 import { MessageRepository } from "../../src/features/messaging"
 import { ConversationRepository, ConversationService } from "../../src/features/conversations"
 import { userId, workspaceId, streamId, messageId, conversationId } from "../../src/lib/id"
@@ -49,6 +49,7 @@ describe("ConversationService.reassignMessage", () => {
         companionMode: "off",
         createdBy: testUserId,
       })
+      await StreamMemberRepository.insert(client, testStreamId, testUserId)
     })
 
     service = new ConversationService(pool)
@@ -67,6 +68,55 @@ describe("ConversationService.reassignMessage", () => {
       await client.query(`DELETE FROM streams WHERE id != '${testStreamId}'`)
     })
   })
+
+  async function waitForBlockedStreamLock(): Promise<void> {
+    const deadline = Date.now() + 5_000
+    while (Date.now() < deadline) {
+      const result = await pool.query<{ blocked: boolean }>(`
+        SELECT EXISTS (
+          SELECT 1 FROM pg_stat_activity
+          WHERE datname = current_database()
+            AND pid <> pg_backend_pid()
+            AND wait_event_type = 'Lock'
+            AND query ILIKE '%streams%'
+        ) AS blocked
+      `)
+      if (result.rows[0]?.blocked) return
+      await Bun.sleep(10)
+    }
+    throw new Error("Timed out waiting for production stream lock contention")
+  }
+
+  async function raceMessagePlacement(params: { messageId: string; invoke: () => Promise<unknown> }): Promise<unknown> {
+    const archivedThreadId = streamId()
+    await withTransaction(pool, async (client) => {
+      await StreamRepository.insert(client, {
+        id: archivedThreadId,
+        workspaceId: testWorkspaceId,
+        type: "thread",
+        visibility: "private",
+        companionMode: "off",
+        createdBy: testUserId,
+        parentStreamId: testStreamId,
+        rootStreamId: testStreamId,
+      })
+      await client.query("UPDATE streams SET archived_at = NOW() WHERE id = $1", [archivedThreadId])
+    })
+
+    const blocker = await pool.connect()
+    try {
+      await blocker.query("BEGIN")
+      await blocker.query("SELECT id FROM streams WHERE id = $1 FOR UPDATE", [testStreamId])
+      const operation = params.invoke()
+      await waitForBlockedStreamLock()
+      await pool.query("UPDATE messages SET stream_id = $1 WHERE id = $2", [archivedThreadId, params.messageId])
+      await blocker.query("COMMIT")
+      return await operation
+    } finally {
+      await blocker.query("ROLLBACK").catch(() => {})
+      blocker.release()
+    }
+  }
 
   /** Insert two conversations (A owning msg1+msg2, B owning msg0) in the shared test stream. */
   async function seedTwoConversations() {
@@ -323,6 +373,7 @@ describe("ConversationService.reassignMessage", () => {
         companionMode: "off",
         createdBy: testUserId,
       })
+      await StreamMemberRepository.insert(client, otherStreamId, testUserId)
       await MessageRepository.insert(client, {
         id: foreignMsgId,
         streamId: otherStreamId,
@@ -408,6 +459,63 @@ describe("ConversationService.reassignMessage", () => {
     expect(updatedSub?.payload.parentStreamId).toBe(testStreamId)
     expect(updatedA?.payload.parentStreamId).toBeUndefined()
   })
+
+  test("reassign retries stale placement and denies the archived current stream without mutation", async () => {
+    const { convAId, convBId, msg2Id, msg0Id, msg1Id } = await seedTwoConversations()
+    await expect(
+      raceMessagePlacement({
+        messageId: msg2Id,
+        invoke: () =>
+          service.reassignMessage({
+            workspaceId: testWorkspaceId,
+            conversationId: convBId,
+            messageId: msg2Id,
+            userId: testUserId,
+          }),
+      })
+    ).rejects.toMatchObject({
+      status: 403,
+      code: "STREAM_READ_ONLY",
+      details: { reason: "archived" },
+    })
+    const rows = await pool.query("SELECT id, message_ids FROM conversations WHERE id = ANY($1) ORDER BY id", [
+      [convAId, convBId],
+    ])
+    const effects = await pool.query(
+      "SELECT (SELECT COUNT(*)::int FROM conversation_feedback) AS feedback, (SELECT COUNT(*)::int FROM outbox WHERE event_type LIKE 'conversation:%') AS outbox"
+    )
+    expect({ conversations: rows.rows, effects: effects.rows }).toEqual({
+      conversations: expect.arrayContaining([
+        expect.objectContaining({ id: convAId, message_ids: [msg1Id, msg2Id] }),
+        expect.objectContaining({ id: convBId, message_ids: [msg0Id] }),
+      ]),
+      effects: [{ feedback: 0, outbox: 0 }],
+    })
+  }, 15_000)
+
+  test("settle retries stale placement and denies the archived current stream without feedback or outbox", async () => {
+    const { convAId, msg2Id } = await seedTwoConversations()
+    await expect(
+      raceMessagePlacement({
+        messageId: msg2Id,
+        invoke: () =>
+          service.settleMessage({
+            workspaceId: testWorkspaceId,
+            conversationId: convAId,
+            messageId: msg2Id,
+            userId: testUserId,
+          }),
+      })
+    ).rejects.toMatchObject({
+      status: 403,
+      code: "STREAM_READ_ONLY",
+      details: { reason: "archived" },
+    })
+    const effects = await pool.query(
+      "SELECT (SELECT COUNT(*)::int FROM conversation_feedback) AS feedback, (SELECT COUNT(*)::int FROM outbox WHERE event_type LIKE 'conversation:%') AS outbox"
+    )
+    expect(effects.rows).toEqual([{ feedback: 0, outbox: 0 }])
+  }, 15_000)
 
   test("rejects a conversation from a different workspace", async () => {
     const { convBId, msg2Id } = await seedTwoConversations()

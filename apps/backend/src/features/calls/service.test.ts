@@ -116,6 +116,9 @@ describe("CallService.startCall — product glare", () => {
 
   it("the winner creates the call and is admitted with a leased endpoint (created=true)", async () => {
     stubTransaction()
+    spyOn(streamsModule, "assertStreamWritable").mockResolvedValue({
+      target: { id: "stream_1", type: "channel" },
+    } as never)
     spyOn(streamsModule, "checkStreamAccess").mockResolvedValue({ id: "stream_1", type: "channel" } as never)
     spyOn(CallRepository, "insertIfNoActiveCall").mockResolvedValue(fakeCall())
     spyOn(CallRepository, "findByIdForUpdate").mockResolvedValue(fakeCall())
@@ -141,6 +144,9 @@ describe("CallService.startCall — product glare", () => {
 
   it("the loser re-reads the winning call and is still admitted (created=false)", async () => {
     stubTransaction()
+    spyOn(streamsModule, "assertStreamWritable").mockResolvedValue({
+      target: { id: "stream_1", type: "channel" },
+    } as never)
     spyOn(streamsModule, "checkStreamAccess").mockResolvedValue({ id: "stream_1", type: "channel" } as never)
     spyOn(CallRepository, "insertIfNoActiveCall").mockResolvedValue(null)
     const findOpen = spyOn(CallRepository, "findOpenByStream").mockResolvedValue(fakeCall({ id: "call_winner" }))
@@ -171,6 +177,9 @@ describe("CallService.startCall — product glare", () => {
 
   it("start into an empty_grace call revives it (no wedge, same locked join path)", async () => {
     stubTransaction()
+    spyOn(streamsModule, "assertStreamWritable").mockResolvedValue({
+      target: { id: "stream_1", type: "channel" },
+    } as never)
     spyOn(streamsModule, "checkStreamAccess").mockResolvedValue({ id: "stream_1", type: "channel" } as never)
     spyOn(CallRepository, "insertIfNoActiveCall").mockResolvedValue(null)
     spyOn(CallRepository, "findOpenByStream").mockResolvedValue(fakeCall({ status: "empty_grace" }))
@@ -194,6 +203,9 @@ describe("CallService.startCall — product glare", () => {
 
   it("start as join past the cap rejects with CALL_FULL", async () => {
     stubTransaction()
+    spyOn(streamsModule, "assertStreamWritable").mockResolvedValue({
+      target: { id: "stream_1", type: "channel" },
+    } as never)
     spyOn(streamsModule, "checkStreamAccess").mockResolvedValue({ id: "stream_1", type: "channel" } as never)
     spyOn(CallRepository, "insertIfNoActiveCall").mockResolvedValue(null)
     spyOn(CallRepository, "findOpenByStream").mockResolvedValue(fakeCall())
@@ -211,6 +223,7 @@ describe("CallService.startCall — DM ring", () => {
 
   it("rings the DM peer with a fresh ringing invitation", async () => {
     stubTransaction()
+    spyOn(streamsModule, "assertStreamWritable").mockResolvedValue({ target: { id: "stream_dm", type: "dm" } } as never)
     spyOn(streamsModule, "checkStreamAccess").mockResolvedValue({ id: "stream_dm", type: "dm" } as never)
     spyOn(CallRepository, "insertIfNoActiveCall").mockResolvedValue(fakeCall({ streamId: "stream_dm" }))
     spyOn(CallRepository, "findByIdForUpdate").mockResolvedValue(fakeCall({ streamId: "stream_dm" }))
@@ -249,6 +262,7 @@ describe("CallService.startCall — DM ring", () => {
 
   it("does not ring when joining an already-active DM call (created=false)", async () => {
     stubTransaction()
+    spyOn(streamsModule, "assertStreamWritable").mockResolvedValue({ target: { id: "stream_dm", type: "dm" } } as never)
     spyOn(streamsModule, "checkStreamAccess").mockResolvedValue({ id: "stream_dm", type: "dm" } as never)
     spyOn(CallRepository, "insertIfNoActiveCall").mockResolvedValue(null)
     spyOn(CallRepository, "findOpenByStream").mockResolvedValue(fakeCall({ streamId: "stream_dm" }))
@@ -271,11 +285,13 @@ describe("CallService.startCall — DM ring", () => {
 
   it("rejects a start the user cannot access", async () => {
     stubTransaction()
-    spyOn(streamsModule, "checkStreamAccess").mockResolvedValue(null)
+    spyOn(streamsModule, "assertStreamWritable").mockRejectedValue(
+      Object.assign(new Error("Stream not found"), { status: 404, code: "STREAM_NOT_FOUND" })
+    )
 
     await expect(
       makeService().startCall({ workspaceId: "ws_1", streamId: "stream_x", userId: "usr_a", mode: "video" })
-    ).rejects.toMatchObject({ code: "CALL_STREAM_ACCESS_DENIED", status: 403 })
+    ).rejects.toMatchObject({ code: "STREAM_NOT_FOUND", status: 404 })
   })
 })
 
@@ -284,6 +300,9 @@ describe("CallService.joinCall — revive, capacity, membership", () => {
 
   it("revives an empty_grace call and accepts a ringing invitation on join", async () => {
     stubTransaction()
+    spyOn(streamsModule, "assertStreamWritable").mockResolvedValue({
+      target: { id: "stream_1", type: "channel" },
+    } as never)
     spyOn(accessModule, "checkCallAccess").mockResolvedValue({ call: fakeCall({ status: "empty_grace" }) })
     spyOn(CallRepository, "findByIdForUpdate").mockResolvedValue(fakeCall({ status: "empty_grace" }))
     const revive = spyOn(CallRepository, "reviveFromGrace").mockResolvedValue(fakeCall({ status: "active" }))
@@ -313,6 +332,9 @@ describe("CallService.joinCall — revive, capacity, membership", () => {
 
   it("rejects join #51 with CALL_FULL", async () => {
     stubTransaction()
+    spyOn(streamsModule, "assertStreamWritable").mockResolvedValue({
+      target: { id: "stream_1", type: "channel" },
+    } as never)
     spyOn(accessModule, "checkCallAccess").mockResolvedValue({ call: fakeCall() })
     spyOn(CallRepository, "findByIdForUpdate").mockResolvedValue(fakeCall())
     spyOn(CallParticipantRepository, "countJoined").mockResolvedValue(CALL_PRODUCT_CAP)
@@ -324,6 +346,9 @@ describe("CallService.joinCall — revive, capacity, membership", () => {
 
   it("rejects a removed participant's self-rejoin", async () => {
     stubTransaction()
+    spyOn(streamsModule, "assertStreamWritable").mockResolvedValue({
+      target: { id: "stream_1", type: "channel" },
+    } as never)
     spyOn(accessModule, "checkCallAccess").mockResolvedValue({ call: fakeCall() })
     spyOn(CallRepository, "findByIdForUpdate").mockResolvedValue(fakeCall())
     spyOn(CallParticipantRepository, "countJoined").mockResolvedValue(1)
@@ -336,6 +361,9 @@ describe("CallService.joinCall — revive, capacity, membership", () => {
 
   it("lets a left participant rejoin", async () => {
     stubTransaction()
+    spyOn(streamsModule, "assertStreamWritable").mockResolvedValue({
+      target: { id: "stream_1", type: "channel" },
+    } as never)
     spyOn(accessModule, "checkCallAccess").mockResolvedValue({ call: fakeCall() })
     spyOn(CallRepository, "findByIdForUpdate").mockResolvedValue(fakeCall())
     spyOn(CallParticipantRepository, "countJoined").mockResolvedValue(1)
@@ -351,6 +379,9 @@ describe("CallService.joinCall — revive, capacity, membership", () => {
 
   it("rejects joining an ended call", async () => {
     stubTransaction()
+    spyOn(streamsModule, "assertStreamWritable").mockResolvedValue({
+      target: { id: "stream_1", type: "channel" },
+    } as never)
     spyOn(accessModule, "checkCallAccess").mockResolvedValue({ call: fakeCall({ status: "ended" }) })
     spyOn(CallRepository, "findByIdForUpdate").mockResolvedValue(fakeCall({ status: "ended" }))
 
@@ -361,6 +392,9 @@ describe("CallService.joinCall — revive, capacity, membership", () => {
 
   it("rejects a join with no call access", async () => {
     stubTransaction()
+    spyOn(streamsModule, "assertStreamWritable").mockResolvedValue({
+      target: { id: "stream_1", type: "channel" },
+    } as never)
     spyOn(accessModule, "checkCallAccess").mockResolvedValue(null)
 
     await expect(
@@ -374,6 +408,9 @@ describe("CallService.joinCall — second endpoint / takeover", () => {
 
   it("rejects a second live endpoint without takeover", async () => {
     stubTransaction()
+    spyOn(streamsModule, "assertStreamWritable").mockResolvedValue({
+      target: { id: "stream_1", type: "channel" },
+    } as never)
     spyOn(accessModule, "checkCallAccess").mockResolvedValue({ call: fakeCall() })
     spyOn(CallRepository, "findByIdForUpdate").mockResolvedValue(fakeCall())
     spyOn(CallParticipantRepository, "countJoined").mockResolvedValue(1)
@@ -389,6 +426,9 @@ describe("CallService.joinCall — second endpoint / takeover", () => {
 
   it("takeover closes the old endpoint and mints epoch max+1", async () => {
     stubTransaction()
+    spyOn(streamsModule, "assertStreamWritable").mockResolvedValue({
+      target: { id: "stream_1", type: "channel" },
+    } as never)
     spyOn(accessModule, "checkCallAccess").mockResolvedValue({ call: fakeCall() })
     spyOn(CallRepository, "findByIdForUpdate").mockResolvedValue(fakeCall())
     spyOn(CallParticipantRepository, "countJoined").mockResolvedValue(1)
@@ -420,6 +460,9 @@ describe("CallService.joinCall — second endpoint / takeover", () => {
   it("closes the superseded endpoint's CF session after a takeover commit (S3)", async () => {
     stubTransaction()
     const order: string[] = []
+    spyOn(streamsModule, "assertStreamWritable").mockResolvedValue({
+      target: { id: "stream_1", type: "channel" },
+    } as never)
     spyOn(accessModule, "checkCallAccess").mockResolvedValue({ call: fakeCall() })
     spyOn(CallRepository, "findByIdForUpdate").mockResolvedValue(fakeCall())
     spyOn(CallParticipantRepository, "countJoined").mockResolvedValue(1)
@@ -452,6 +495,9 @@ describe("CallService.joinCall — second endpoint / takeover", () => {
 
   it("reports the displaced endpoint on a takeover and nothing on a rebind", async () => {
     stubTransaction()
+    spyOn(streamsModule, "assertStreamWritable").mockResolvedValue({
+      target: { id: "stream_1", type: "channel" },
+    } as never)
     spyOn(accessModule, "checkCallAccess").mockResolvedValue({ call: fakeCall() })
     spyOn(CallRepository, "findByIdForUpdate").mockResolvedValue(fakeCall())
     spyOn(CallParticipantRepository, "countJoined").mockResolvedValue(1)
@@ -497,6 +543,9 @@ describe("CallService.startCall — takeover", () => {
 
   it("forwards takeover into the locked join so a second device can displace the first", async () => {
     stubTransaction()
+    spyOn(streamsModule, "assertStreamWritable").mockResolvedValue({
+      target: { id: "stream_1", type: "channel" },
+    } as never)
     spyOn(streamsModule, "checkStreamAccess").mockResolvedValue({ id: "stream_1", type: "channel" } as never)
     spyOn(CallRepository, "insertIfNoActiveCall").mockResolvedValue(null)
     spyOn(CallRepository, "findOpenByStream").mockResolvedValue(fakeCall())
@@ -534,6 +583,9 @@ describe("CallService.startCall — takeover", () => {
 
   it("still rejects a second device when takeover is not asked for", async () => {
     stubTransaction()
+    spyOn(streamsModule, "assertStreamWritable").mockResolvedValue({
+      target: { id: "stream_1", type: "channel" },
+    } as never)
     spyOn(streamsModule, "checkStreamAccess").mockResolvedValue({ id: "stream_1", type: "channel" } as never)
     spyOn(CallRepository, "insertIfNoActiveCall").mockResolvedValue(null)
     spyOn(CallRepository, "findOpenByStream").mockResolvedValue(fakeCall())
@@ -1218,6 +1270,9 @@ describe("CallService — call_started / call_ended timeline (1.4)", () => {
 
   it("appends a call_started row + stream:call_started outbox + participants_changed when a call is created", async () => {
     stubTransaction()
+    spyOn(streamsModule, "assertStreamWritable").mockResolvedValue({
+      target: { id: "stream_1", type: "channel", visibility: "public" },
+    } as never)
     spyOn(streamsModule, "checkStreamAccess").mockResolvedValue({
       id: "stream_1",
       type: "channel",
@@ -1261,6 +1316,9 @@ describe("CallService — call_started / call_ended timeline (1.4)", () => {
 
   it("appends NO call_started row when joining an existing call (created=false)", async () => {
     stubTransaction()
+    spyOn(streamsModule, "assertStreamWritable").mockResolvedValue({
+      target: { id: "stream_1", type: "channel" },
+    } as never)
     spyOn(streamsModule, "checkStreamAccess").mockResolvedValue({
       id: "stream_1",
       type: "channel",
@@ -1737,6 +1795,9 @@ describe("CallService.joinCall — incarnation rebind", () => {
 
   it("re-binds a reconnecting endpoint to the same epoch on a reload (new incarnation)", async () => {
     stubTransaction()
+    spyOn(streamsModule, "assertStreamWritable").mockResolvedValue({
+      target: { id: "stream_1", type: "channel" },
+    } as never)
     spyOn(accessModule, "checkCallAccess").mockResolvedValue({ call: fakeCall() })
     spyOn(CallRepository, "findByIdForUpdate").mockResolvedValue(fakeCall())
     spyOn(CallParticipantRepository, "countJoined").mockResolvedValue(0)
@@ -1777,6 +1838,9 @@ describe("CallService.joinCall — incarnation rebind", () => {
 
   it("closes the OLD incarnation's CF session after a reload rebind commit (S3)", async () => {
     stubTransaction()
+    spyOn(streamsModule, "assertStreamWritable").mockResolvedValue({
+      target: { id: "stream_1", type: "channel" },
+    } as never)
     spyOn(accessModule, "checkCallAccess").mockResolvedValue({ call: fakeCall() })
     spyOn(CallRepository, "findByIdForUpdate").mockResolvedValue(fakeCall())
     spyOn(CallParticipantRepository, "countJoined").mockResolvedValue(0)
@@ -1818,6 +1882,9 @@ describe("CallService.joinCall — incarnation rebind", () => {
 
   it("does NOT close the CF session on a same-incarnation transient reconnect (S3)", async () => {
     stubTransaction()
+    spyOn(streamsModule, "assertStreamWritable").mockResolvedValue({
+      target: { id: "stream_1", type: "channel" },
+    } as never)
     spyOn(accessModule, "checkCallAccess").mockResolvedValue({ call: fakeCall() })
     spyOn(CallRepository, "findByIdForUpdate").mockResolvedValue(fakeCall())
     spyOn(CallParticipantRepository, "countJoined").mockResolvedValue(0)
@@ -2013,6 +2080,9 @@ describe("CallService.startCall — expectedCallId ring-acceptance guard (S11)",
 
   it("409 CALL_ENDED when the call it would re-enter differs from expectedCallId", async () => {
     stubTransaction()
+    spyOn(streamsModule, "assertStreamWritable").mockResolvedValue({
+      target: { id: "stream_1", type: "channel" },
+    } as never)
     spyOn(streamsModule, "checkStreamAccess").mockResolvedValue({ id: "stream_1", type: "channel" } as never)
     spyOn(CallRepository, "insertIfNoActiveCall").mockResolvedValue(null)
     spyOn(CallRepository, "findOpenByStream").mockResolvedValue(fakeCall({ id: "call_current" }))
@@ -2033,6 +2103,9 @@ describe("CallService.startCall — expectedCallId ring-acceptance guard (S11)",
 
   it("409 CALL_ENDED when a fresh call is created but a specific prior call was expected", async () => {
     stubTransaction()
+    spyOn(streamsModule, "assertStreamWritable").mockResolvedValue({
+      target: { id: "stream_1", type: "channel" },
+    } as never)
     spyOn(streamsModule, "checkStreamAccess").mockResolvedValue({ id: "stream_1", type: "channel" } as never)
     spyOn(CallRepository, "insertIfNoActiveCall").mockResolvedValue(fakeCall({ id: "call_new" }))
     const admit = spyOn(CallParticipantRepository, "admit").mockResolvedValue(fakeParticipant())
@@ -2051,6 +2124,9 @@ describe("CallService.startCall — expectedCallId ring-acceptance guard (S11)",
 
   it("proceeds when expectedCallId matches the call being re-entered", async () => {
     stubTransaction()
+    spyOn(streamsModule, "assertStreamWritable").mockResolvedValue({
+      target: { id: "stream_1", type: "channel" },
+    } as never)
     spyOn(streamsModule, "checkStreamAccess").mockResolvedValue({ id: "stream_1", type: "channel" } as never)
     spyOn(CallRepository, "insertIfNoActiveCall").mockResolvedValue(null)
     spyOn(CallRepository, "findOpenByStream").mockResolvedValue(fakeCall({ id: "call_expected" }))

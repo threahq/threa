@@ -6,12 +6,18 @@ import { BotInvocationCapabilities, BotInvocationTriggers, BotRuntimeKinds, Comm
 import type { BotRuntimeKind, CommandDispatchedPayload } from "@threa/types"
 import { withClient, withTransaction, type Querier } from "../../db"
 import { commandId as generateCommandId, eventId as generateEventId } from "../../lib/id"
+import { HttpError } from "../../lib/errors"
 import { parseCommand } from "./registry"
-import type { CommandAvailabilityService } from "./availability"
+import { commandRequiresWritableAuthority, type CommandAvailabilityService } from "./availability"
 import type { BotRuntimeService } from "../bot-runtimes"
 import { buildRuntimeCommandInvocationMetadata, insertCommandDispatchedEvent } from "./events"
 import { CommandDispatchRepository } from "./repository"
-import { checkStreamAccess, StreamEventRepository, type StreamEvent } from "../streams"
+import {
+  assertViewerStreamWritable,
+  resolveLockedStreamAuthorities,
+  StreamEventRepository,
+  type StreamEvent,
+} from "../streams"
 
 const dispatchCommandSchema = z.object({
   command: z.string().min(1, "command is required"),
@@ -148,28 +154,24 @@ export function createCommandHandlers({ pool, commandAvailabilityService, botRun
       }
 
       if (clientCommandId) {
-        const replayCheck = await withClient(pool, async (client) => {
-          const accessible = (await checkStreamAccess(client, streamId, workspaceId, userId)) != null
-          return {
-            accessible,
-            replay: accessible
-              ? await findCommandDispatchReplay(client, { workspaceId, userId, streamId, clientCommandId })
-              : null,
-          }
+        const replay = await withTransaction(pool, async (client) => {
+          await resolveLockedStreamAuthorities(client, {
+            workspaceId,
+            streamIds: [streamId],
+            principal: { kind: "user", userId },
+          })
+          return findCommandDispatchReplay(client, { workspaceId, userId, streamId, clientCommandId })
         })
-        if (!replayCheck.accessible) {
-          return res.status(404).json({ success: false, error: "Stream not found" })
-        }
-        if (replayCheck.replay) {
+        if (replay) {
           return res.status(202).json({
             success: true,
-            ...replayCheck.replay,
-            event: serializeBigInt(replayCheck.replay.event),
+            ...replay,
+            event: serializeBigInt(replay.event),
           })
         }
       }
 
-      const resolved = await commandAvailabilityService.resolveCommand({
+      const resolved = await commandAvailabilityService.resolveCommandForDispatch({
         workspaceId,
         userId,
         streamId,
@@ -197,6 +199,17 @@ export function createCommandHandlers({ pool, commandAvailabilityService, botRun
 
       if (resolved.executionKind === CommandKinds.SERVER) {
         const dispatch = await withTransaction(pool, async (client) => {
+          const [authority] = await resolveLockedStreamAuthorities(client, {
+            workspaceId,
+            streamIds: [streamId],
+            principal: { kind: "user", userId },
+          })
+          const committedReplay = clientCommandId
+            ? await findCommandDispatchReplay(client, { workspaceId, userId, streamId, clientCommandId })
+            : null
+          if (committedReplay) return committedReplay
+          if (commandRequiresWritableAuthority(parsed.name)) assertViewerStreamWritable(authority.state)
+
           const replay = await claimOrReplayCommandDispatch(client, {
             workspaceId,
             userId,
@@ -206,6 +219,20 @@ export function createCommandHandlers({ pool, commandAvailabilityService, botRun
             eventId: evtId,
           })
           if (replay) return replay
+
+          const current = await commandAvailabilityService.resolveCommandInTransaction(
+            client,
+            {
+              workspaceId,
+              userId,
+              streamId,
+              name: parsed.name,
+            },
+            { includeReadOnlyWorkCommands: true }
+          )
+          if (!current || current.executionKind !== CommandKinds.SERVER) {
+            throw new HttpError("Command is no longer available", { status: 404, code: "COMMAND_NOT_AVAILABLE" })
+          }
 
           const event = await insertCommandDispatchedEvent(client, {
             workspaceId,
@@ -230,6 +257,17 @@ export function createCommandHandlers({ pool, commandAvailabilityService, botRun
       }
 
       const dispatch = await withTransaction(pool, async (client) => {
+        const [authority] = await resolveLockedStreamAuthorities(client, {
+          workspaceId,
+          streamIds: [streamId],
+          principal: { kind: "user", userId },
+        })
+        const committedReplay = clientCommandId
+          ? await findCommandDispatchReplay(client, { workspaceId, userId, streamId, clientCommandId })
+          : null
+        if (committedReplay) return committedReplay
+        if (commandRequiresWritableAuthority(parsed.name)) assertViewerStreamWritable(authority.state)
+
         const replay = await claimOrReplayCommandDispatch(client, {
           workspaceId,
           userId,
@@ -239,6 +277,20 @@ export function createCommandHandlers({ pool, commandAvailabilityService, botRun
           eventId: evtId,
         })
         if (replay) return replay
+
+        const current = await commandAvailabilityService.resolveCommandInTransaction(
+          client,
+          {
+            workspaceId,
+            userId,
+            streamId,
+            name: parsed.name,
+          },
+          { includeReadOnlyWorkCommands: true }
+        )
+        if (!current || current.executionKind !== CommandKinds.BOT_RUNTIME) {
+          throw new HttpError("Command is no longer available", { status: 404, code: "COMMAND_NOT_AVAILABLE" })
+        }
 
         const event = await insertCommandDispatchedEvent(client, {
           workspaceId,
@@ -258,20 +310,20 @@ export function createCommandHandlers({ pool, commandAvailabilityService, botRun
           name: parsed.name,
           args: parsed.args,
         })
-        const routing = resolveRuntimeInvocationRouting(parsed.name, resolved.runtime.runtimeKind)
+        const routing = resolveRuntimeInvocationRouting(parsed.name, current.runtime.runtimeKind)
         await botRuntimeService.createInvocationInTransaction(client, {
           workspaceId,
-          rootStreamId: resolved.runtime.rootStreamId,
-          activeStreamId: resolved.runtime.activeStreamId,
+          rootStreamId: current.runtime.rootStreamId,
+          activeStreamId: current.runtime.activeStreamId,
           sourceMessageId: cmdId,
-          responseStreamId: resolved.runtime.responseStreamId,
-          actorId: resolved.runtime.botId,
+          responseStreamId: current.runtime.responseStreamId,
+          actorId: current.runtime.botId,
           trigger: routing.trigger,
           requiredCapability: routing.requiredCapability,
           promptMarkdown: `/${parsed.name}${parsed.args ? ` ${parsed.args}` : ""}`,
           authorUserId: userId,
-          targetInstanceId: resolved.runtime.targetInstanceId,
-          targetRuntimeSessionId: resolved.runtime.targetRuntimeSessionId,
+          targetInstanceId: current.runtime.targetInstanceId,
+          targetRuntimeSessionId: current.runtime.targetRuntimeSessionId,
           metadata,
         })
 

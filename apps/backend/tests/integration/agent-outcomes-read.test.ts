@@ -124,9 +124,8 @@ describe("agent outcomes read path", () => {
       authorType: "user",
       ...testMessageContent("anchor"),
     })
-    const thread = await streamService.create({
+    const thread = await streamService.createThreadInternal({
       workspaceId: wsId,
-      type: StreamTypes.THREAD,
       parentStreamId: channelId,
       parentAnchorId: anchor.id,
       createdBy: outsiderId,

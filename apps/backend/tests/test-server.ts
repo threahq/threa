@@ -13,6 +13,7 @@
 import { createServer } from "http"
 import { Pool } from "pg"
 import { S3Client, HeadBucketCommand, CreateBucketCommand } from "@aws-sdk/client-s3"
+import { getTestDatabaseTarget, quoteDatabaseIdentifier } from "./test-database"
 
 export interface TestServer {
   url: string
@@ -24,15 +25,14 @@ export interface TestServer {
  * Creates the test database if it doesn't exist.
  */
 async function ensureTestDatabaseExists(): Promise<void> {
-  const adminPool = new Pool({
-    connectionString: "postgresql://threa:threa@localhost:5454/postgres",
-  })
+  const { adminUrl, databaseName } = getTestDatabaseTarget()
+  const adminPool = new Pool({ connectionString: adminUrl })
 
   try {
-    const result = await adminPool.query("SELECT 1 FROM pg_database WHERE datname = 'threa_test'")
+    const result = await adminPool.query("SELECT 1 FROM pg_database WHERE datname = $1", [databaseName])
 
     if (result.rows.length === 0) {
-      await adminPool.query("CREATE DATABASE threa_test")
+      await adminPool.query(`CREATE DATABASE ${quoteDatabaseIdentifier(databaseName)}`)
     }
   } finally {
     await adminPool.end()
@@ -44,7 +44,7 @@ async function ensureTestDatabaseExists(): Promise<void> {
  */
 async function ensureMinioBucketExists(): Promise<void> {
   const bucket = process.env.S3_BUCKET || "threa-test-uploads"
-  const endpoint = process.env.S3_ENDPOINT || "http://localhost:9099"
+  const endpoint = process.env.S3_ENDPOINT || "http://localhost:9002"
 
   const client = new S3Client({
     region: "us-east-1",
@@ -75,9 +75,7 @@ async function ensureMinioBucketExists(): Promise<void> {
  * Cleans up stale jobs from previous test runs to prevent test pollution.
  */
 async function cleanupStaleData(): Promise<void> {
-  const testPool = new Pool({
-    connectionString: process.env.TEST_DATABASE_URL || "postgresql://threa:threa@localhost:5454/threa_test",
-  })
+  const testPool = new Pool({ connectionString: getTestDatabaseTarget().connectionUrl })
 
   try {
     // TRUNCATE all mutable tables to prevent test pollution between runs.
@@ -153,7 +151,7 @@ export async function startTestServer(): Promise<TestServer> {
 
   // Configure environment for test server
   process.env.FAST_SHUTDOWN = "true" // Fast shutdown for tests
-  process.env.DATABASE_URL = process.env.TEST_DATABASE_URL || "postgresql://threa:threa@localhost:5454/threa_test"
+  process.env.DATABASE_URL = getTestDatabaseTarget().connectionUrl
   process.env.PORT = String(port)
   process.env.USE_STUB_AUTH = "true"
   process.env.SESSION_COOKIE_NAME = process.env.SESSION_COOKIE_NAME || "wos_session_test"
@@ -183,7 +181,7 @@ export async function startTestServer(): Promise<TestServer> {
 
   // S3/MinIO for e2e
   // - CI (`.github/workflows/ci.yml`) exports MinIO on :9000 — must not override.
-  // - Local dev: Bun loads `.env` with real AWS; force our compose MinIO (:9099) or HeadBucket 403s.
+  // - Local tests: Bun loads `.env` with real AWS; force docker-compose.test.yml MinIO (:9002).
   if (process.env.CI) {
     process.env.S3_BUCKET = process.env.S3_BUCKET || "threa-test-uploads"
     process.env.S3_REGION = process.env.S3_REGION || "us-east-1"
@@ -195,7 +193,7 @@ export async function startTestServer(): Promise<TestServer> {
     process.env.S3_REGION = "us-east-1"
     process.env.S3_ACCESS_KEY_ID = "minioadmin"
     process.env.S3_SECRET_ACCESS_KEY = "minioadmin"
-    process.env.S3_ENDPOINT = "http://localhost:9099"
+    process.env.S3_ENDPOINT = "http://localhost:9002"
   }
 
   // Ensure MinIO bucket exists

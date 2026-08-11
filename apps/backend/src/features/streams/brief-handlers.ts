@@ -5,8 +5,7 @@ import { AuthorTypes } from "@threa/types"
 import { HttpError, StreamNotFoundError } from "../../lib/errors"
 import { validateRequest } from "../../lib/validation"
 import { checkStreamAccess } from "./access"
-import { StreamMemberRepository } from "./member-repository"
-import { resolveBriefStreamId, STREAM_BRIEF_MAX_CHARS, type StreamBriefService } from "./brief-service"
+import { resolveBriefStreamId, type StreamBriefService } from "./brief-service"
 
 interface Dependencies {
   pool: Pool
@@ -14,7 +13,7 @@ interface Dependencies {
 }
 
 const putBriefSchema = z.object({
-  content: z.string().max(STREAM_BRIEF_MAX_CHARS),
+  content: z.string(),
   /**
    * The version the client read; 0 when no brief existed yet. Bounded to pg
    * INT4 — an unbounded value would surface as a 500 (Postgres 22003) instead
@@ -54,27 +53,7 @@ export function createStreamBriefHandlers({ pool, streamBriefService }: Dependen
       const stream = await checkStreamAccess(pool, streamId, workspaceId, userId)
       if (!stream) throw new StreamNotFoundError()
 
-      // A sealed stream's brief would be server-stored plaintext that the
-      // enclave prompt never injects — a silent no-op attached to an E2E
-      // surface. Reject until the sealed wire supports briefs (roadmap §4.1
-      // deviation), consistent with E2E parity being deferred across the
-      // roadmap.
-      if (stream.e2eEnabled) {
-        throw new HttpError("Briefs are not supported on encrypted streams", {
-          status: 400,
-          code: "BRIEF_E2E_UNSUPPORTED",
-        })
-      }
-
       const briefStreamId = resolveBriefStreamId(stream)
-      const isMember = await StreamMemberRepository.isMember(pool, briefStreamId, userId)
-      if (!isMember) {
-        throw new HttpError("Only stream members can edit the brief", {
-          status: 403,
-          code: "BRIEF_MEMBERSHIP_REQUIRED",
-        })
-      }
-
       const result = await streamBriefService.update({
         workspaceId,
         streamId: briefStreamId,
@@ -82,6 +61,8 @@ export function createStreamBriefHandlers({ pool, streamBriefService }: Dependen
         expectedVersion: version,
         updatedByKind: AuthorTypes.USER,
         updatedById: userId,
+        principal: { kind: "user", userId },
+        requestedStreamId: streamId,
       })
 
       if (result.outcome === "version_conflict") {

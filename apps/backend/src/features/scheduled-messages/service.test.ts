@@ -4,6 +4,7 @@ import { CompanionModes, ScheduledMessageStatuses, StreamTypes, Visibilities } f
 import { ScheduledMessagesService } from "./service"
 import { ScheduledMessagesRepository, type ScheduledMessage } from "./repository"
 import { StreamRepository, StreamMemberRepository } from "../streams"
+import * as streamsModule from "../streams"
 import type { EventService } from "../messaging"
 import { OutboxRepository } from "../../lib/outbox"
 import { QueueRepository } from "../../lib/queue"
@@ -94,6 +95,9 @@ const fakeEventService = (override: Partial<EventService> = {}): EventService =>
 
 function setupService(eventService: EventService = fakeEventService()) {
   spyOn(dbModule, "withTransaction").mockImplementation(async (_pool: any, fn: any) => fn({} as PoolClient))
+  spyOn(streamsModule, "assertStreamWritable").mockResolvedValue({ target: fakeStream() } as never)
+  spyOn(streamsModule, "resolveLockedStreamAuthorities").mockResolvedValue([])
+  spyOn(StreamRepository, "findById").mockResolvedValue(fakeStream())
   return new ScheduledMessagesService({ pool: {} as any, eventService })
 }
 
@@ -103,6 +107,7 @@ describe("ScheduledMessagesService.schedule", () => {
   it("rejects when the stream isn't in the caller's workspace (workspace-scope guard)", async () => {
     const service = setupService()
     spyOn(StreamRepository, "findById").mockResolvedValue(fakeStream({ workspaceId: "ws_other" }))
+    spyOn(streamsModule, "assertStreamWritable").mockRejectedValue(new Error("Stream not found"))
 
     await expect(
       service.schedule({
@@ -124,6 +129,9 @@ describe("ScheduledMessagesService.schedule", () => {
   it("refuses to schedule into an E2E stream (server can't seal at fire time) — E2EE-3", async () => {
     const service = setupService()
     spyOn(StreamRepository, "findById").mockResolvedValue(fakeStream({ e2eEnabled: true }))
+    spyOn(streamsModule, "assertStreamWritable").mockResolvedValue({
+      target: fakeStream({ e2eEnabled: true }),
+    } as never)
     const insertSpy = spyOn(ScheduledMessagesRepository, "insert")
 
     await expect(
@@ -148,6 +156,7 @@ describe("ScheduledMessagesService.schedule", () => {
     const service = setupService()
     spyOn(StreamRepository, "findById").mockResolvedValue(fakeStream({ visibility: Visibilities.PRIVATE }))
     spyOn(StreamMemberRepository, "isMember").mockResolvedValue(false)
+    spyOn(streamsModule, "assertStreamWritable").mockRejectedValue(new Error("not a member"))
 
     await expect(
       service.schedule({
