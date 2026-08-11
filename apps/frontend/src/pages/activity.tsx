@@ -10,8 +10,10 @@ import { useWorkspaceEmoji } from "@/hooks/use-workspace-emoji"
 import { useWorkspaceStreams } from "@/stores/workspace-store"
 import { useActivityCounts } from "@/hooks/use-activity-counts"
 import { getStreamName, streamFallbackLabel } from "@/lib/streams"
+import { useActivitySections, isActivityUnread } from "@/hooks/use-activity-sections"
 import { ActivityItem } from "@/components/activity/activity-item"
 import { ActivityEmpty } from "@/components/activity/activity-empty"
+import { ActivitySection } from "@/components/activity/activity-section"
 import { ActivitySkeleton } from "@/components/activity/activity-skeleton"
 import { PageHeaderTabs } from "@/components/layout"
 import { commitCounterMutation } from "@/sync/catch-up-batch"
@@ -67,6 +69,12 @@ function ActivityPageInner({ workspaceId, filter }: InnerProps) {
   const streamById = useMemo(() => {
     return new Map(idbStreams.map((s) => [s.id, s]))
   }, [idbStreams])
+
+  // Stacked Unread / Earlier sections, on the "all" tab only: "unread" is
+  // server-filtered (a locked section there would fight the query, which drops
+  // a row the moment it's read) and "me" is all-self, so never unread.
+  const sections = useActivitySections(workspaceId, activities)
+  const showSections = filter === "all" && sections.unread.length > 0
 
   // Fix A4 backstop (docs/sparse-read-overlay-design.md): when the unread feed
   // resolves, reconcile the held activity set to exactly the rows the server
@@ -128,27 +136,41 @@ function ActivityPageInner({ workspaceId, filter }: InnerProps) {
     return streamFallbackLabel("thread", "activity")
   }
 
+  function renderRow(activity: Activity, inUnreadSection: boolean) {
+    return (
+      <ActivityItem
+        key={activity.id}
+        activity={activity}
+        actorName={getActorName(activity.actorId, activity.actorType as AuthorType)}
+        actorAvatar={getActorAvatar(activity.actorId, activity.actorType as AuthorType)}
+        streamName={resolveActivityStreamName(activity)}
+        workspaceId={workspaceId}
+        toEmoji={toEmoji}
+        onMarkAsRead={(id) => markRead.mutate(id)}
+        wasReadThisVisit={inUnreadSection && !isActivityUnread(activity)}
+      />
+    )
+  }
+
   let content = <ActivitySkeleton />
   if (!isLoading) {
     if (!activities?.length) {
       content = <ActivityEmpty isFiltered={filter !== "all"} />
-    } else {
+    } else if (showSections) {
       content = (
-        <div className="flex flex-col gap-0.5">
-          {activities.map((activity) => (
-            <ActivityItem
-              key={activity.id}
-              activity={activity}
-              actorName={getActorName(activity.actorId, activity.actorType as AuthorType)}
-              actorAvatar={getActorAvatar(activity.actorId, activity.actorType as AuthorType)}
-              streamName={resolveActivityStreamName(activity)}
-              workspaceId={workspaceId}
-              toEmoji={toEmoji}
-              onMarkAsRead={(id) => markRead.mutate(id)}
-            />
-          ))}
-        </div>
+        <>
+          <ActivitySection label="Unread" count={sections.stillUnreadCount}>
+            {sections.unread.map((activity) => renderRow(activity, true))}
+          </ActivitySection>
+          {sections.read.length > 0 && (
+            <ActivitySection label="Earlier">
+              {sections.read.map((activity) => renderRow(activity, false))}
+            </ActivitySection>
+          )}
+        </>
       )
+    } else {
+      content = <div className="flex flex-col gap-0.5">{activities.map((activity) => renderRow(activity, false))}</div>
     }
   }
 
@@ -182,7 +204,7 @@ function ActivityPageInner({ workspaceId, filter }: InnerProps) {
       />
 
       <ScrollArea className="flex-1 [&>div>div]:!block [&>div>div]:!w-full">
-        <main className="py-2">{content}</main>
+        <main className="mx-auto w-full min-w-0 max-w-[800px] px-1 py-2 sm:px-4">{content}</main>
       </ScrollArea>
     </div>
   )

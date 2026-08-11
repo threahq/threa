@@ -1,7 +1,8 @@
 import { Link } from "react-router-dom"
-import { Bell } from "lucide-react"
+import { AtSign, Bell, PhoneMissed, SmilePlus, UserPlus, type LucideIcon } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { buildConversationPanelPath } from "@/lib/stream-links"
+import { isActivityUnread } from "@/hooks/use-activity-sections"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { PersonaAvatar } from "@/components/persona-avatar"
 import { ActivityContent } from "./activity-content"
@@ -17,6 +18,19 @@ export interface ActivityItemAvatar {
   avatarUrl?: string
 }
 
+/**
+ * Corner badge naming what kind of activity a row is, so the type is readable
+ * without parsing the verb. `message` and `saved_reminder` are omitted on
+ * purpose: messages are the bulk of the feed (a badge on every row is noise)
+ * and reminders already render a Bell in place of the avatar.
+ */
+const ACTIVITY_GLYPH: Record<string, { icon: LucideIcon; className: string }> = {
+  mention: { icon: AtSign, className: "bg-primary text-primary-foreground" },
+  reaction: { icon: SmilePlus, className: "bg-amber-500 text-white" },
+  member_added: { icon: UserPlus, className: "bg-emerald-500 text-white" },
+  missed_call: { icon: PhoneMissed, className: "bg-rose-500 text-white" },
+}
+
 interface ActivityItemProps {
   activity: Activity
   actorName: string
@@ -25,6 +39,12 @@ interface ActivityItemProps {
   workspaceId: string
   toEmoji?: (shortcode: string) => string | null
   onMarkAsRead: (activityId: string) => void
+  /**
+   * Row is held in the Unread section but has since been read — this visit's
+   * "you just opened this". Keeps a faded rail and a hollow dot so the row
+   * still reads as part of the unread batch without competing with what's left.
+   */
+  wasReadThisVisit?: boolean
 }
 
 export function ActivityItem({
@@ -35,12 +55,13 @@ export function ActivityItem({
   workspaceId,
   toEmoji,
   onMarkAsRead,
+  wasReadThisVisit = false,
 }: ActivityItemProps) {
   // Self rows are inserted already read by the backend, so the unread dot is
   // never shown for them regardless of the `readAt` value. Give them a muted
   // background so they're visually distinct from things others did.
   const isSelf = activity.isSelf
-  const isUnread = !isSelf && !activity.readAt
+  const isUnread = isActivityUnread(activity)
   const contentPreview = (activity.context.contentPreview as string) ?? ""
   const actorType = activity.actorType
   const isPersona = actorType === "persona"
@@ -56,13 +77,20 @@ export function ActivityItem({
         if (isUnread) onMarkAsRead(activity.id)
       }}
       className={cn(
-        "group flex items-start gap-3 rounded-lg px-3 py-2.5 transition-colors sm:px-4 sm:py-3",
-        isUnread && "bg-primary/5 hover:bg-primary/10",
+        // The left rail is always 2px wide (transparent when there's nothing to
+        // say) so reading a row can never shift it sideways (INV-21).
+        "group flex items-start gap-3 rounded-lg border-l-2 px-3 py-2.5 transition-colors sm:px-4 sm:py-3",
+        isUnread && "border-primary bg-primary/[0.07] hover:bg-primary/[0.12]",
+        !isUnread && wasReadThisVisit && "border-primary/25",
+        !isUnread && !wasReadThisVisit && "border-transparent",
         !isUnread && !isSelf && "hover:bg-muted/50",
         isSelf && "opacity-75 hover:bg-muted/40 hover:opacity-100"
       )}
     >
-      {renderAvatar({ isReminder, isPersona, isSystem, isBot, actorAvatar, actorName })}
+      <div className="relative shrink-0">
+        {renderAvatar({ isReminder, isPersona, isSystem, isBot, actorAvatar, actorName })}
+        {renderTypeGlyph(activity.activityType)}
+      </div>
       <ActivityContent
         actorName={actorName}
         streamName={streamName}
@@ -72,6 +100,7 @@ export function ActivityItem({
         toEmoji={toEmoji}
         createdAt={activity.createdAt}
         isUnread={isUnread}
+        wasReadThisVisit={wasReadThisVisit}
         isSelf={isSelf}
       />
     </Link>
@@ -91,6 +120,23 @@ function resolveActivityHref(workspaceId: string, activity: Activity): string {
   }
   if (activity.streamId) return `/w/${workspaceId}/s/${activity.streamId}?m=${activity.messageId}`
   return `/w/${workspaceId}/saved`
+}
+
+function renderTypeGlyph(activityType: string) {
+  const glyph = ACTIVITY_GLYPH[activityType]
+  if (!glyph) return null
+  const Icon = glyph.icon
+  return (
+    <span
+      aria-hidden
+      className={cn(
+        "absolute -bottom-0.5 -right-0.5 flex h-3.5 w-3.5 items-center justify-center rounded-full ring-2 ring-background",
+        glyph.className
+      )}
+    >
+      <Icon className="h-2 w-2" strokeWidth={3} />
+    </span>
+  )
 }
 
 function renderAvatar(params: {

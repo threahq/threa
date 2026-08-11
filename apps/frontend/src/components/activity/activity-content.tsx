@@ -45,7 +45,7 @@ export function ActivityPreview({ contentPreview, toEmoji, emoji, isUnread }: Ac
   const previewText = stripMarkdownToInline(contentPreview, toEmoji)
   if (!previewText && !emoji) return null
   return (
-    <p className={cn("mt-1 text-sm leading-snug line-clamp-2", isUnread ? "text-foreground" : "text-foreground/80")}>
+    <p className={cn("mt-1 text-sm leading-snug line-clamp-3", isUnread ? "text-foreground" : "text-foreground/80")}>
       {emoji && <span className="mr-1 align-middle">{emoji}</span>}
       {previewText}
     </p>
@@ -63,6 +63,8 @@ interface ActivityContentProps {
   toEmoji?: (shortcode: string) => string | null
   createdAt: string
   isUnread: boolean
+  /** Held in the Unread section but already read — see `ActivityItem`. */
+  wasReadThisVisit?: boolean
   isSelf: boolean
 }
 
@@ -75,6 +77,7 @@ export function ActivityContent({
   toEmoji,
   createdAt,
   isUnread,
+  wasReadThisVisit = false,
   isSelf,
 }: ActivityContentProps) {
   const display = ACTIVITY_DISPLAY[activityType] ?? DEFAULT_DISPLAY
@@ -97,15 +100,31 @@ export function ActivityContent({
           {showActor && " "}
           {verb}
           {hasStream && " "}
-          {hasStream && <span className="font-medium text-foreground">{streamName}</span>}
+          {hasStream && (
+            <span className={cn("font-medium", isUnread ? "text-primary" : "text-foreground")}>{streamName}</span>
+          )}
         </div>
         <div className="flex shrink-0 items-center gap-1.5">
-          <RelativeTime date={createdAt} terse className="text-xs tabular-nums text-muted-foreground/70" />
+          <RelativeTime
+            date={createdAt}
+            terse
+            className={cn("text-xs tabular-nums", isUnread ? "text-foreground/70" : "text-muted-foreground/70")}
+          />
           {/* Unread marker, right-aligned with the time. Space is reserved when
               read (transparent) so toggling read/unread never shifts the row
-              (INV-21). Self rows are always read, so they get no marker. */}
+              (INV-21). A row read during this visit keeps a hollow ring — it
+              stays in the Unread section, so it must still read as part of that
+              batch. Self rows are always read, so they get no marker. */}
           {!isSelf && (
-            <span aria-hidden className={cn("h-1.5 w-1.5 rounded-full", isUnread ? "bg-blue-500" : "bg-transparent")} />
+            <span
+              aria-hidden
+              className={cn(
+                "h-2 w-2 rounded-full",
+                isUnread && "bg-primary",
+                !isUnread && wasReadThisVisit && "ring-1 ring-inset ring-primary/50",
+                !isUnread && !wasReadThisVisit && "bg-transparent"
+              )}
+            />
           )}
         </div>
       </div>
