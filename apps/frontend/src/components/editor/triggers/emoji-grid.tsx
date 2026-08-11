@@ -1,20 +1,21 @@
-import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState, memo } from "react"
-import { useFloating, offset, flip, shift, autoUpdate } from "@floating-ui/react"
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, memo } from "react"
+import { useFloating, offset, flip, shift, size, autoUpdate } from "@floating-ui/react"
 import { Virtuoso, type VirtuosoHandle } from "react-virtuoso"
 import { cn } from "@/lib/utils"
 import {
   DESKTOP_GRID_COLUMNS as GRID_COLUMNS,
+  EMOJI_LIST_MIN_HEIGHT,
+  EMOJI_ROW_HEIGHT as ROW_HEIGHT,
   chunkByColumns,
   indexToCoord,
   moveSelection,
   totalCount,
   type GridGeometry,
 } from "@/lib/emoji-picker"
+import { useEmojiListFit } from "@/hooks/use-emoji-list-fit"
 import type { EmojiEntry } from "@threa/types"
 import type { SuggestionListRef } from "./suggestion-list"
 
-const ROW_HEIGHT = 34 // w-8 (32px) + 2px vertical gap
-const CONTAINER_HEIGHT = 256 // max-h-64 = 256px
 const VirtuosoPadding = () => <div className="h-2" />
 
 export interface EmojiGridProps {
@@ -105,13 +106,37 @@ function EmojiGridInner(
     else scrollAllRowIfNeeded(coord.row)
   }
 
-  const visibleRowCount = Math.floor(CONTAINER_HEIGHT / ROW_HEIGHT)
+  const [availableHeight, setAvailableHeight] = useState<number | null>(null)
+  const { containerRef, listRef, listHeight } = useEmojiListFit(availableHeight)
+
+  const visibleRowCount = Math.max(1, Math.floor(listHeight / ROW_HEIGHT))
 
   const { refs, floatingStyles } = useFloating({
     placement: "bottom-start",
-    middleware: [offset(4), flip(), shift({ padding: 8 })],
+    middleware: [
+      offset(4),
+      flip(),
+      shift({ padding: 8 }),
+      size({
+        padding: 8,
+        apply({ availableHeight: available }) {
+          // An anchor scrolled past the viewport edge reports negative space,
+          // which is an invalid max-height — the clamp would drop silently.
+          const next = Math.max(EMOJI_LIST_MIN_HEIGHT, Math.round(available))
+          setAvailableHeight((prev) => (prev === next ? prev : next))
+        },
+      }),
+    ],
     whileElementsMounted: autoUpdate,
   })
+
+  const setFloatingElement = useCallback(
+    (element: HTMLDivElement | null) => {
+      containerRef.current = element
+      refs.setFloating(element)
+    },
+    [containerRef, refs]
+  )
 
   useEffect(() => {
     if (clientRect) {
@@ -202,15 +227,15 @@ function EmojiGridInner(
 
   return (
     <div
-      ref={refs.setFloating}
-      style={floatingStyles}
-      className="z-50 rounded-md border bg-popover text-popover-foreground shadow-md pointer-events-auto w-[280px]"
+      ref={setFloatingElement}
+      style={{ ...floatingStyles, maxHeight: availableHeight ?? undefined }}
+      className="z-50 flex flex-col overflow-hidden rounded-md border bg-popover text-popover-foreground shadow-md pointer-events-auto w-[280px]"
       role="listbox"
       aria-label="Emoji picker"
       data-emoji-grid
     >
       {recent.length > 0 && (
-        <div className="px-2 pt-2 pb-1">
+        <div className="shrink-0 px-2 pt-2 pb-1">
           <p className="text-[10px] font-medium text-muted-foreground/70 uppercase tracking-wider px-0.5 mb-1">
             Recently used
           </p>
@@ -232,42 +257,44 @@ function EmojiGridInner(
           </div>
         </div>
       )}
-      {recent.length > 0 && all.length > 0 && <div className="border-t" />}
-      {all.length > 0 && (
-        <Virtuoso
-          ref={virtuosoRef}
-          totalCount={allRows.length}
-          fixedItemHeight={ROW_HEIGHT}
-          increaseViewportBy={ROW_HEIGHT * 3}
-          rangeChanged={(range) => {
-            rangeRef.current = range
-          }}
-          style={{ height: CONTAINER_HEIGHT }}
-          components={{ Header: VirtuosoPadding, Footer: VirtuosoPadding }}
-          itemContent={(index) => {
-            const rowItems = allRows[index]
-            const rowStartIndex = geometry.recentCount + index * GRID_COLUMNS
-            return (
-              <div className="flex gap-0.5 px-2 pb-0.5">
-                {rowItems.map((item, colIndex) => {
-                  const itemIndex = rowStartIndex + colIndex
-                  return (
-                    <EmojiButton
-                      key={item.shortcode}
-                      item={item}
-                      isSelected={itemIndex === selectedIndex}
-                      onClick={() => command(item)}
-                      onMouseEnter={() => setSelectedIndex(itemIndex)}
-                    />
-                  )
-                })}
-              </div>
-            )
-          }}
-        />
-      )}
+      {recent.length > 0 && all.length > 0 && <div className="shrink-0 border-t" />}
+      <div ref={listRef} className="shrink-0" style={{ height: all.length > 0 ? listHeight : 0 }}>
+        {all.length > 0 && (
+          <Virtuoso
+            ref={virtuosoRef}
+            totalCount={allRows.length}
+            fixedItemHeight={ROW_HEIGHT}
+            increaseViewportBy={ROW_HEIGHT * 3}
+            rangeChanged={(range) => {
+              rangeRef.current = range
+            }}
+            style={{ height: "100%" }}
+            components={{ Header: VirtuosoPadding, Footer: VirtuosoPadding }}
+            itemContent={(index) => {
+              const rowItems = allRows[index]
+              const rowStartIndex = geometry.recentCount + index * GRID_COLUMNS
+              return (
+                <div className="flex gap-0.5 px-2 pb-0.5">
+                  {rowItems.map((item, colIndex) => {
+                    const itemIndex = rowStartIndex + colIndex
+                    return (
+                      <EmojiButton
+                        key={item.shortcode}
+                        item={item}
+                        isSelected={itemIndex === selectedIndex}
+                        onClick={() => command(item)}
+                        onMouseEnter={() => setSelectedIndex(itemIndex)}
+                      />
+                    )
+                  })}
+                </div>
+              )
+            }}
+          />
+        )}
+      </div>
       {selectedEmoji && (
-        <div className="border-t px-2 py-1.5 text-xs text-muted-foreground truncate">
+        <div className="shrink-0 border-t px-2 py-1.5 text-xs text-muted-foreground truncate">
           <span className="mr-1.5">{selectedEmoji.emoji}</span>
           <span className="font-mono">:{selectedEmoji.shortcode}:</span>
         </div>

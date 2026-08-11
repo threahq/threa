@@ -16,6 +16,24 @@ export const EMOJI_GROUP_ORDER = [
 export const DESKTOP_GRID_COLUMNS = 8
 export const MAX_RECENTLY_USED_ROWS = 2
 
+/** Desktop grid row: w-8 (32px) + 2px vertical gap. */
+export const EMOJI_ROW_HEIGHT = 34
+export const EMOJI_LIST_MAX_HEIGHT = 256
+export const EMOJI_LIST_MIN_HEIGHT = EMOJI_ROW_HEIGHT * 2
+
+/**
+ * Height for the virtualized emoji list so the popup fits the space it has.
+ * `chromeHeight` is everything else in the popup (recently-used rows, search,
+ * the preview footer); `availableHeight` is null until the popup is positioned.
+ *
+ * Below `EMOJI_LIST_MIN_HEIGHT` the grid stops being a grid, so the popup keeps
+ * two rows and clips its own chrome instead.
+ */
+export function fitEmojiListHeight(availableHeight: number | null, chromeHeight: number): number {
+  if (availableHeight === null) return EMOJI_LIST_MAX_HEIGHT
+  return Math.max(EMOJI_LIST_MIN_HEIGHT, Math.min(EMOJI_LIST_MAX_HEIGHT, availableHeight - chromeHeight))
+}
+
 export function chunkByColumns<T>(items: T[], columns: number): T[][] {
   const result: T[][] = []
   for (let i = 0; i < items.length; i += columns) {

@@ -245,6 +245,24 @@ test.describe("Emoji Shortcuts", () => {
     await expect(page.getByRole("main").getByText("nice :D")).toBeVisible({ timeout: 5000 })
   })
 
+  test("should keep the picker on screen when the composer leaves little room above it", async ({ page }) => {
+    // A phone with the keyboard open leaves ~300px between the stream header and
+    // the composer. The picker used to render at its full height regardless, so
+    // its top rows sat above the viewport and were unreachable.
+    const viewportHeight = 340
+    await setupWorkspaceWithEditor(page)
+    await page.setViewportSize({ width: 412, height: viewportHeight })
+
+    await page.keyboard.type(":")
+    const grid = page.locator("[data-emoji-grid]")
+    await expect(grid).toBeVisible({ timeout: 2000 })
+
+    const box = await grid.boundingBox()
+    expect(box).not.toBeNull()
+    expect(box!.y).toBeGreaterThanOrEqual(0)
+    expect(box!.y + box!.height).toBeLessThanOrEqual(viewportHeight)
+  })
+
   test("should send message with emoji", async ({ page }) => {
     const editor = await setupWorkspaceWithEditor(page)
 
