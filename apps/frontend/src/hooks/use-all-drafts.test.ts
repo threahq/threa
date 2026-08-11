@@ -350,18 +350,26 @@ describe("useAllDrafts loading gate", () => {
     await db.drafts.add(syncedDraft({ id: "draft_gate", scope: "stream:stream_arch_gate" }))
 
     const { wrapper } = createWrapper()
-    const { result } = renderHook(() => useAllDrafts(workspaceId), { wrapper })
+    const { result } = renderHook(() => ({ summary: useDraftSummary(workspaceId), all: useAllDrafts(workspaceId) }), {
+      wrapper,
+    })
 
-    expect(result.current.isLoading).toBe(true)
+    // Both surfaces read one gate, so they become authoritative together —
+    // publishing a count while the list still holds is the disagreement.
+    expect(result.current.summary.isLoading).toBe(result.current.all.isLoading)
 
     await act(async () => {
       await applyWorkspaceBootstrap(workspaceId, makeReloadBootstrap([makeArchivedRoot("stream_arch_gate")], []), 1)
       await seedDraftCacheFromIdb(workspaceId)
     })
 
-    await waitFor(() => expect(result.current.isLoading).toBe(false))
+    // Settles — a gate that reads unsubscribed module state can latch true and
+    // leave the page on "Loading..." forever.
+    await waitFor(() => expect(result.current.all.isLoading).toBe(false))
+    expect(result.current.summary.isLoading).toBe(false)
     // And the row the filter hides was never exposed as a settled one.
-    expect(result.current.drafts).toHaveLength(0)
+    expect(result.current.all.drafts).toHaveLength(0)
+    expect(result.current.summary.draftCount).toBe(0)
   })
 })
 

@@ -388,6 +388,19 @@ export function useWorkspaceFromStore(workspaceId: string | undefined): CachedWo
   return useSingletonStoreHook(workspaceId, "workspace", cached)
 }
 
+/**
+ * Whether this workspace's stream rows have RESOLVED, as opposed to the
+ * pre-resolution cache fallback — which is indistinguishable from "no streams".
+ * A consumer that HIDES something on `archivedAt` needs that difference, and it
+ * needs to be woken when it flips: this rides the same per-table subscription
+ * the row hooks use. `hasSeededWorkspaceCache` cannot serve that purpose — it
+ * reads nine cache maps that no subscription here wakes on, so a gate built on
+ * it can latch on whichever render happens to observe it false.
+ */
+export function useWorkspaceStreamsLoaded(workspaceId: string | undefined): boolean {
+  return useWorkspaceTable(workspaceId, "streams") !== undefined
+}
+
 export function useWorkspaceUsers(workspaceId: string | undefined): CachedWorkspaceUser[] {
   const cached = workspaceId ? (cache.users.get(workspaceId) ?? EMPTY_ROWS) : EMPTY_ROWS
   return useArrayStoreHook(workspaceId, "users", cached)

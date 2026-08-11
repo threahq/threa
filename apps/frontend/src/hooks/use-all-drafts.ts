@@ -5,12 +5,11 @@ import { parseBoardDraftKey, type ParsedBoardDraftKey } from "@/lib/board/draft-
 import { type CompanionMode } from "@threa/types"
 import {
   deleteDraftScratchpadFromCache,
-  hasSeededDraftCache,
   useComposerLoadedFromStore,
   useDraftsFromStore,
   useDraftScratchpadsFromStore,
 } from "@/stores/draft-store"
-import { hasSeededWorkspaceCache, useWorkspaceStreams } from "@/stores/workspace-store"
+import { useWorkspaceStreams, useWorkspaceStreamsLoaded } from "@/stores/workspace-store"
 import { deleteDraftById } from "@/sync/draft-sync"
 import { useOptionalSyncEngine } from "@/sync/sync-engine"
 import { isDraftId } from "./use-draft-scratchpads"
@@ -212,6 +211,24 @@ export function isStreamArchived(
   return stream.rootStreamId != null && archivedStreamIds.has(stream.rootStreamId)
 }
 
+/**
+ * Whether the reads the archived filter depends on have landed: the workspace
+ * streams that carry `archivedAt`, and — only when a board draft exists — the
+ * conversations that resolve a board scope's host. Until then "no archived host"
+ * and "host unknown" are the same value, so neither the list nor the badge may
+ * present a filtered result yet. Shared so the two become authoritative at the
+ * same moment (they didn't: the list held while the badge published an
+ * unfiltered count).
+ *
+ * Both inputs are live subscriptions the calling hook holds, so this flips with
+ * a re-render. A gate on the seeded-cache flags would not: nothing here wakes on
+ * them, so whichever render observed them false could be the last one.
+ */
+function draftFilterReady(streamsLoaded: boolean, boardScopesSignature: string, boardContextLoaded: boolean): boolean {
+  if (!streamsLoaded) return false
+  return boardScopesSignature === "" || boardContextLoaded
+}
+
 interface ResolvedDraftLocation {
   draftType: DraftType
   streamId: string | null
@@ -282,19 +299,6 @@ function streamDraftType(stream: CachedStream | undefined): DraftType {
 }
 
 /**
- * Location resolution for `board:*` draft scopes (the board's inline reply
- * composers). Every kind deep-links to the conversation panel that HOSTS the
- * draft's composer — a reply to its own conversation, a branch reply to the
- * branch's parent, a sub-topic to the conversation containing the fork message
- * — so the `?stash=` restore always lands where a consumer can auto-open the
- * form. A conversation not yet in the local cache (a roamed draft on a fresh
- * device) keeps a generic label but still links via the board route, whose
- * panel fetches the post by id, so cross-device pickup never dead-ends.
- * `supportsStashRestore` is false only where no consumer surface is known (a
- * branch whose parent isn't resolvable, a fork message in no cached
- * conversation) — those rows navigate plainly for manual pickup.
- */
-/**
  * The stream a `board:*` draft hangs off — a sub-topic's own stream, else the
  * conversation's anchor stream. The archived filter's input, shared by the
  * explorer and the sidebar badge so the two can't disagree about whether a board
@@ -310,6 +314,19 @@ function boardDraftHostStreamId(
   return boardPostMap.get(parsed.conversationId)?.conversation.streamId ?? null
 }
 
+/**
+ * Location resolution for `board:*` draft scopes (the board's inline reply
+ * composers). Every kind deep-links to the conversation panel that HOSTS the
+ * draft's composer — a reply to its own conversation, a branch reply to the
+ * branch's parent, a sub-topic to the conversation containing the fork message
+ * — so the `?stash=` restore always lands where a consumer can auto-open the
+ * form. A conversation not yet in the local cache (a roamed draft on a fresh
+ * device) keeps a generic label but still links via the board route, whose
+ * panel fetches the post by id, so cross-device pickup never dead-ends.
+ * `supportsStashRestore` is false only where no consumer surface is known (a
+ * branch whose parent isn't resolvable, a fork message in no cached
+ * conversation) — those rows navigate plainly for manual pickup.
+ */
 function resolveBoardDraftLocation(
   parsed: ParsedBoardDraftKey,
   workspaceId: string,
@@ -426,6 +443,7 @@ export function useAllDrafts(workspaceId: string) {
   const allDrafts = useDraftsFromStore(workspaceId)
   const composerLoaded = useComposerLoadedFromStore(workspaceId)
   const cachedStreams = useWorkspaceStreams(workspaceId)
+  const streamsLoaded = useWorkspaceStreamsLoaded(workspaceId)
   // Drains the offline queue so a delete enqueued below mirrors to the backend
   // promptly. Optional — outside a workspace there is no engine and the local
   // delete still stands; the op replays on the next (re)connect.
@@ -673,16 +691,9 @@ export function useAllDrafts(workspaceId: string) {
     [workspaceId, syncEngine]
   )
 
-  // The archived filter decides what NOT to show, and it reads two async caches
-  // (workspace streams, board conversations). Until both have landed, "no
-  // archived host" is indistinguishable from "host unknown", so every row
-  // qualifies — which is why a cold load painted a full list and then retracted
-  // it. Consumers render nothing until this clears rather than showing rows the
-  // very next frame removes (INV-21).
-  const isLoading =
-    !hasSeededDraftCache(workspaceId) ||
-    !hasSeededWorkspaceCache(workspaceId) ||
-    (boardScopesSignature !== "" && !boardContextLoaded)
+  // Rows built before the filter can decide are provisional — rendering them
+  // paints a list the next frame retracts (INV-21), which is the cold-load flash.
+  const isLoading = !draftFilterReady(streamsLoaded, boardScopesSignature, boardContextLoaded)
 
   return {
     drafts,
@@ -695,6 +706,12 @@ export function useAllDrafts(workspaceId: string) {
 export interface DraftSummary {
   /** Total unsent drafts for the workspace (matches the drafts-explorer row count). */
   draftCount: number
+  /**
+   * True until the archived filter's inputs have landed, exactly as in
+   * {@link useAllDrafts}. `draftCount` is unfiltered until it clears, so a
+   * consumer shows no badge rather than a number the next frame corrects.
+   */
+  isLoading: boolean
   /**
    * Comma-joined, sorted stream ids whose composer holds an unsent loaded
    * (non-stashed) draft. A string, not a Set, so a consumer can memoize on it
@@ -727,6 +744,7 @@ export function useDraftSummary(workspaceId: string): DraftSummary {
   const allDrafts = useDraftsFromStore(workspaceId)
   const composerLoaded = useComposerLoadedFromStore(workspaceId)
   const cachedStreams = useWorkspaceStreams(workspaceId)
+  const streamsLoaded = useWorkspaceStreamsLoaded(workspaceId)
 
   const loadedByScope = useMemo(() => {
     const map = new Map<string, string | null>()
@@ -767,7 +785,11 @@ export function useDraftSummary(workspaceId: string): DraftSummary {
     () => draftScopesSignature(allDrafts.map((draft) => draft.scope).filter((scope) => parseBoardDraftKey(scope))),
     [allDrafts]
   )
-  const { boardPostMap } = useBoardDraftContext(workspaceId, boardScopesSignature)
+  const { boardPostMap, loaded: boardContextLoaded } = useBoardDraftContext(workspaceId, boardScopesSignature)
+  // Same gate the list uses: a count published before the filter can decide is
+  // the badge's version of the flash, and it disagrees with a list that is still
+  // holding — the disagreement this whole change is about.
+  const isLoading = !draftFilterReady(streamsLoaded, boardScopesSignature, boardContextLoaded)
 
   return useMemo(() => {
     let draftCount = 0
@@ -810,8 +832,9 @@ export function useDraftSummary(workspaceId: string): DraftSummary {
       }
     }
 
-    return { draftCount, loadedDraftStreamIdSignature: [...loadedDraftStreamIds].sort().join(",") }
+    return { draftCount, isLoading, loadedDraftStreamIdSignature: [...loadedDraftStreamIds].sort().join(",") }
   }, [
+    isLoading,
     draftScratchpads,
     allDrafts,
     loadedByScope,
