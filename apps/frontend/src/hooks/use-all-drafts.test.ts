@@ -401,6 +401,43 @@ describe("useAllDrafts E2E drafts", () => {
     expect(row.isStashed).toBe(true)
   })
 
+  it("reports a decrypted attachment-only sealed draft as bodyless with its real file count", async () => {
+    // The row at rest carries neither the body nor the attachments (E2EE-4), so
+    // both come from the decrypt. An empty preview is what lets the explorer
+    // label the row by its files instead of "Encrypted draft".
+    vi.spyOn(currentUserHook, "useCurrentWorkspaceUserId").mockReturnValue("user_1")
+    vi.spyOn(e2eSessionStore, "useE2eSession").mockReturnValue(UNLOCKED_SESSION)
+    clearDecryptCache()
+
+    await db.drafts.add({
+      id: "draft_e2e_files",
+      workspaceId,
+      scope: "stream:stream_enc",
+      contentJson: EMPTY_DOC,
+      attachments: [],
+      ciphertext: "ct_sealed",
+      envelope: { v: 2 },
+      e2eVersion: 2,
+      baseVersion: 1,
+      clientUpdatedAt: 2000,
+    })
+    seedDecryption("draft_e2e_files", {
+      contentMarkdown: "",
+      contentJson: EMPTY_DOC,
+      attachmentRefs: [
+        { attachmentId: "att_1", key: "AAAA", iv: "BBBB", filename: "a.png", mimeType: "image/png", sizeBytes: 1 },
+        { attachmentId: "att_2", key: "AAAA", iv: "BBBB", filename: "b.png", mimeType: "image/png", sizeBytes: 2 },
+      ],
+    } as unknown as Parameters<typeof seedDecryption>[1])
+
+    const { wrapper } = createWrapper()
+    const { result } = renderHook(() => useAllDrafts(workspaceId), { wrapper })
+
+    await waitFor(() => expect(result.current.drafts.some((d) => d.id === "draft_e2e_files")).toBe(true))
+    const row = result.current.drafts.find((d) => d.id === "draft_e2e_files")!
+    expect({ preview: row.preview, attachmentCount: row.attachmentCount }).toEqual({ preview: "", attachmentCount: 2 })
+  })
+
   it("shows an 'Encrypted draft' placeholder (not a blank row) while the session is locked", async () => {
     vi.spyOn(currentUserHook, "useCurrentWorkspaceUserId").mockReturnValue("user_1")
     // Default locked session from beforeEach stands.

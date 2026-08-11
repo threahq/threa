@@ -141,7 +141,12 @@ function draftPreviewLabel(draft: CachedDraft, previewMap: Map<string, DraftPrev
   const preview = previewMap.get(draft.id)
   if (!preview) return "Encrypted draft"
   if (preview.status !== "ready") return draftPreviewStatusLabel(preview.status)
-  return truncatePreview(preview.text) || "Encrypted draft"
+  const text = truncatePreview(preview.text)
+  if (text) return text
+  // Decrypted, and the body really is empty. With files on it the row reads as
+  // its files (the caller's fallback), exactly like a plaintext one — returning
+  // "Encrypted draft" here is what kept the attachment label off a sealed row.
+  return preview.attachmentCount > 0 ? "" : "Encrypted draft"
 }
 
 /**
