@@ -36,6 +36,8 @@ interface TestContext {
   noScopeKey: string
   /** Key from a second bot (different bot identity) */
   secondBotWriteKey: string
+  /** Write key whose bot intentionally has no stream grant. */
+  ungrantedBotWriteKey: string
 }
 
 const baseUrl = () => process.env.TEST_BASE_URL || "http://localhost:3001"
@@ -117,6 +119,7 @@ async function setupTestWorkspace(): Promise<TestContext> {
   const messagesWriteKey = await createBotKey(client, workspace.id, bot1Id, "messages-write", ["messages:write"])
   const usersReadKey = await createBotKey(client, workspace.id, bot1Id, "users-read", ["users:read"])
   const noScopeKey = await createBotKey(client, workspace.id, bot1Id, "search-only", ["messages:search"])
+  await client.post(`/api/workspaces/${workspace.id}/bots/${bot1Id}/streams/${publicChannel.id}/grant`, {})
 
   // Create second bot for cross-bot ownership tests
   const bot2Res = await client.post(`/api/workspaces/${workspace.id}/bots`, {
@@ -129,6 +132,15 @@ async function setupTestWorkspace(): Promise<TestContext> {
     "messages:write",
     "messages:read",
   ])
+  await client.post(`/api/workspaces/${workspace.id}/bots/${bot2Id}/streams/${publicChannel.id}/grant`, {})
+
+  const ungrantedBotRes = await client.post(`/api/workspaces/${workspace.id}/bots`, {
+    type: "shared",
+    name: `Ungranted Bot ${testRunId}`,
+    slug: `ungranted-bot-${testRunId}`,
+  })
+  const ungrantedBotId = (ungrantedBotRes.data as { data: { id: string } }).data.id
+  const ungrantedBotWriteKey = await createBotKey(client, workspace.id, ungrantedBotId, "write", ["messages:write"])
 
   return {
     workspaceId: workspace.id,
@@ -146,6 +158,7 @@ async function setupTestWorkspace(): Promise<TestContext> {
     usersReadKey,
     noScopeKey,
     secondBotWriteKey,
+    ungrantedBotWriteKey,
   }
 }
 
@@ -273,6 +286,19 @@ describe("Public API v1 — CRUD Endpoints", () => {
   })
 
   describe("Send Message", () => {
+    test("denies a public-stream bot nonparticipant with structured read-only details", async () => {
+      const res = await apiPost(
+        `/api/v1/workspaces/${ctx.workspaceId}/streams/${ctx.publicChannelId}/messages`,
+        { content: "must not commit" },
+        ctx.ungrantedBotWriteKey
+      )
+      expect(res.status).toBe(403)
+      expect(await res.json()).toMatchObject({
+        code: "STREAM_READ_ONLY",
+        details: { reason: "not_a_member" },
+      })
+    })
+
     test("should create a bot message with bot name as display name", async () => {
       const res = await apiPost(
         `/api/v1/workspaces/${ctx.workspaceId}/streams/${ctx.publicChannelId}/messages`,
@@ -322,13 +348,13 @@ describe("Public API v1 — CRUD Endpoints", () => {
       expect(userMsg!.authorDisplayName).toBeString()
     })
 
-    test("should return 403 for inaccessible stream", async () => {
+    test("should hide an inaccessible private stream", async () => {
       const res = await apiPost(
         `/api/v1/workspaces/${ctx.workspaceId}/streams/${ctx.privateChannelId}/messages`,
         { content: "test" },
         ctx.messagesWriteKey
       )
-      expect(res.status).toBe(403)
+      expect(res.status).toBe(404)
     })
 
     test("should return 404 without messages:write scope", async () => {

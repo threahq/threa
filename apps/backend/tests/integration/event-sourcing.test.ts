@@ -223,7 +223,7 @@ describe("Event Sourcing", () => {
         ...testMessageContent("Original content"),
       })
 
-      const edited = await eventService.editMessage({
+      const edited = await eventService.editMessageInternal({
         workspaceId: testWorkspaceId,
         streamId: testStreamId,
         messageId: original.id,
@@ -261,7 +261,7 @@ describe("Event Sourcing", () => {
         ...testMessageContent("Original"),
       })
 
-      const edited = await eventService.editMessage({
+      const edited = await eventService.editMessageInternal({
         workspaceId: testWorkspaceId,
         streamId: testStreamId,
         messageId: original.id,
@@ -290,7 +290,7 @@ describe("Event Sourcing", () => {
       const baselineResult = await pool.query("SELECT COALESCE(MAX(id), 0) as max_id FROM outbox")
       const baselineId = BigInt(baselineResult.rows[0].max_id)
 
-      await eventService.editMessage({
+      await eventService.editMessageInternal({
         workspaceId: testWorkspaceId,
         streamId: testStreamId,
         messageId: original.id,
@@ -322,7 +322,7 @@ describe("Event Sourcing", () => {
         ...testMessageContent("To be deleted"),
       })
 
-      const deleted = await eventService.deleteMessage({
+      const deleted = await eventService.deleteMessageInternal({
         workspaceId: testWorkspaceId,
         streamId: testStreamId,
         messageId: message.id,
@@ -364,7 +364,7 @@ describe("Event Sourcing", () => {
         ...testMessageContent("Delete me"),
       })
 
-      await eventService.deleteMessage({
+      await eventService.deleteMessageInternal({
         workspaceId: testWorkspaceId,
         streamId: testStreamId,
         messageId: msg2.id,
@@ -393,7 +393,7 @@ describe("Event Sourcing", () => {
       const baselineResult = await pool.query("SELECT COALESCE(MAX(id), 0) as max_id FROM outbox")
       const baselineId = BigInt(baselineResult.rows[0].max_id)
 
-      await eventService.deleteMessage({
+      await eventService.deleteMessageInternal({
         workspaceId: testWorkspaceId,
         streamId: testStreamId,
         messageId: message.id,
@@ -425,7 +425,7 @@ describe("Event Sourcing", () => {
         ...testMessageContent("React to me"),
       })
 
-      const updated = await eventService.addReaction({
+      const updated = await eventService.addReactionInternal({
         workspaceId: testWorkspaceId,
         streamId: testStreamId,
         messageId: message.id,
@@ -464,7 +464,7 @@ describe("Event Sourcing", () => {
         ...testMessageContent("Popular message"),
       })
 
-      await eventService.addReaction({
+      await eventService.addReactionInternal({
         workspaceId: testWorkspaceId,
         streamId: testStreamId,
         messageId: message.id,
@@ -472,7 +472,7 @@ describe("Event Sourcing", () => {
         userId: user1,
       })
 
-      await eventService.addReaction({
+      await eventService.addReactionInternal({
         workspaceId: testWorkspaceId,
         streamId: testStreamId,
         messageId: message.id,
@@ -480,7 +480,7 @@ describe("Event Sourcing", () => {
         userId: user2,
       })
 
-      await eventService.addReaction({
+      await eventService.addReactionInternal({
         workspaceId: testWorkspaceId,
         streamId: testStreamId,
         messageId: message.id,
@@ -509,7 +509,7 @@ describe("Event Sourcing", () => {
         ...testMessageContent("React then unreact"),
       })
 
-      await eventService.addReaction({
+      await eventService.addReactionInternal({
         workspaceId: testWorkspaceId,
         streamId: testStreamId,
         messageId: message.id,
@@ -517,7 +517,7 @@ describe("Event Sourcing", () => {
         userId: testUserId,
       })
 
-      const afterRemove = await eventService.removeReaction({
+      const afterRemove = await eventService.removeReactionInternal({
         workspaceId: testWorkspaceId,
         streamId: testStreamId,
         messageId: message.id,
@@ -549,7 +549,7 @@ describe("Event Sourcing", () => {
         ...testMessageContent("Double react"),
       })
 
-      await eventService.addReaction({
+      await eventService.addReactionInternal({
         workspaceId: testWorkspaceId,
         streamId: testStreamId,
         messageId: message.id,
@@ -558,7 +558,7 @@ describe("Event Sourcing", () => {
       })
 
       // Add same reaction again - should not duplicate in projection
-      await eventService.addReaction({
+      await eventService.addReactionInternal({
         workspaceId: testWorkspaceId,
         streamId: testStreamId,
         messageId: message.id,
@@ -588,7 +588,7 @@ describe("Event Sourcing", () => {
       const baselineResult = await pool.query("SELECT COALESCE(MAX(id), 0) as max_id FROM outbox")
       const baselineId = BigInt(baselineResult.rows[0].max_id)
 
-      await eventService.addReaction({
+      await eventService.addReactionInternal({
         workspaceId: testWorkspaceId,
         streamId: testStreamId,
         messageId: message.id,
@@ -596,7 +596,7 @@ describe("Event Sourcing", () => {
         userId: testUserId,
       })
 
-      await eventService.removeReaction({
+      await eventService.removeReactionInternal({
         workspaceId: testWorkspaceId,
         streamId: testStreamId,
         messageId: message.id,
@@ -668,7 +668,7 @@ describe("Event Sourcing", () => {
         ...testMessageContent("Test"),
       })
 
-      await eventService.addReaction({
+      await eventService.addReactionInternal({
         workspaceId: testWorkspaceId,
         streamId: testStreamId,
         messageId: message.id,
@@ -676,7 +676,7 @@ describe("Event Sourcing", () => {
         userId: testUserId,
       })
 
-      await eventService.editMessage({
+      await eventService.editMessageInternal({
         workspaceId: testWorkspaceId,
         streamId: testStreamId,
         messageId: message.id,
@@ -753,14 +753,14 @@ describe("Event Sourcing", () => {
         authorType: "user",
         ...testMessageContent("first"),
       })
-      await eventService.editMessage({
+      await eventService.editMessageInternal({
         workspaceId: testWorkspaceId,
         streamId: testStreamId,
         messageId: msg1.id,
         actorId: testUserId,
         ...testMessageContent("first (edited)"),
       })
-      await eventService.addReaction({
+      await eventService.addReactionInternal({
         workspaceId: testWorkspaceId,
         streamId: testStreamId,
         messageId: msg1.id,
@@ -774,7 +774,7 @@ describe("Event Sourcing", () => {
         authorType: "user",
         ...testMessageContent("second"),
       })
-      await eventService.deleteMessage({
+      await eventService.deleteMessageInternal({
         workspaceId: testWorkspaceId,
         streamId: testStreamId,
         messageId: msg2.id,

@@ -981,7 +981,7 @@ export function createStreamHandlers({
         return res.status(403).json({ error: "Only the creator can archive this stream" })
       }
 
-      const archived = await streamService.archiveStream(streamId, userId)
+      const archived = await streamService.archiveStream(streamId, workspaceId, userId)
       res.json({ stream: archived })
     },
 
@@ -996,7 +996,7 @@ export function createStreamHandlers({
         return res.status(403).json({ error: "Only the creator can unarchive this stream" })
       }
 
-      const unarchived = await streamService.unarchiveStream(streamId, userId)
+      const unarchived = await streamService.unarchiveStream(streamId, workspaceId, userId)
       res.json({ stream: unarchived })
     },
 
@@ -1242,7 +1242,7 @@ export function createStreamHandlers({
       const { streamId, memberId } = req.params
 
       await streamService.validateStreamAccess(streamId, workspaceId, actor.id)
-      await streamService.removeMember(streamId, memberId)
+      await streamService.removeMember(streamId, memberId, req.workspaceId!, req.user!.id)
       res.status(204).send()
     },
 

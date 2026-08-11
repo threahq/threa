@@ -402,7 +402,8 @@ export class AgentMessageMutationHandler extends DebouncedOutboxHandler {
 
     for (const sentMessageId of messageIds) {
       try {
-        await this.eventService.deleteMessage({
+        // Unguarded on purpose: a session's own sent messages stay retractable on session delete even if the stream has since become read-only.
+        await this.eventService.deleteMessageInternal({
           workspaceId,
           streamId: session.streamId,
           messageId: sentMessageId,

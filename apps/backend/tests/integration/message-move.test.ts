@@ -146,7 +146,7 @@ describe("message move integration", () => {
       actorId: actor.id,
     })
 
-    const result = await eventService.moveMessagesToThread({
+    const result = await eventService.moveMessagesToThreadInternal({
       workspaceId: testWorkspaceId,
       sourceStreamId,
       targetMessageId: target.id,
@@ -378,7 +378,7 @@ describe("message move integration", () => {
       messageIds: [moved.id],
       actorId: actor.id,
     })
-    const result = await eventService.moveMessagesToThread({
+    const result = await eventService.moveMessagesToThreadInternal({
       workspaceId: testWorkspaceId,
       sourceStreamId,
       targetMessageId: target.id,

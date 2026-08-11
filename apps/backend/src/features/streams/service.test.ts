@@ -21,6 +21,21 @@ import * as db from "../../db"
 import { HttpError } from "../../lib/errors"
 
 const mockFindById = spyOn(StreamRepository, "findById")
+spyOn(StreamRepository, "findByIdsInWorkspace").mockImplementation(async (client, _workspaceId, ids) => {
+  const streams = await Promise.all(ids.map((id) => mockFindById(client, id)))
+  return streams.filter((stream): stream is NonNullable<typeof stream> => stream != null)
+})
+const mockFindByIdsForUpdateBlocking = spyOn(StreamRepository, "findByIdsForUpdateBlocking").mockImplementation(
+  async (client, _workspaceId, ids) => {
+    const streams = await Promise.all(ids.map((id) => mockFindById(client, id)))
+    return streams.filter((stream): stream is NonNullable<typeof stream> => stream != null)
+  }
+)
+const mockLockMemberships = spyOn(StreamMemberRepository, "lockMemberships").mockResolvedValue(new Set())
+spyOn(StreamMemberRepository, "lockMemberPairs").mockImplementation(
+  async (_client, pairs) => new Set(pairs.map(({ streamId, memberId }) => `${streamId}:${memberId}`))
+)
+const mockLockGrants = spyOn(BotChannelAccessRepository, "lockGrants").mockResolvedValue(new Set())
 const mockInsertOrFindByUniquenessKey = spyOn(StreamRepository, "insertOrFindByUniquenessKey")
 const mockInsertMember = spyOn(StreamMemberRepository, "insert")
 const mockInsertManyMembers = spyOn(StreamMemberRepository, "insertMany")
@@ -314,8 +329,10 @@ describe("StreamService.resolveWritableMessageStream", () => {
       id: "stream_1",
       workspaceId: "ws_1",
       type: "scratchpad",
+      visibility: "private",
       archivedAt: new Date(),
     } as never)
+    spyOn(service, "isMember").mockResolvedValue(true)
 
     const error = await service
       .resolveWritableMessageStream({
@@ -327,7 +344,8 @@ describe("StreamService.resolveWritableMessageStream", () => {
 
     expect(error).toBeInstanceOf(HttpError)
     expect((error as HttpError).status).toBe(403)
-    expect((error as HttpError).message).toBe("Cannot send messages to an archived stream")
+    expect((error as HttpError).code).toBe("STREAM_READ_ONLY")
+    expect((error as HttpError).details).toEqual({ reason: "archived" })
   })
 
   test("should throw 403 when member cannot write to stream", async () => {
@@ -335,6 +353,7 @@ describe("StreamService.resolveWritableMessageStream", () => {
       id: "stream_1",
       workspaceId: "ws_1",
       type: "scratchpad",
+      visibility: "public",
       archivedAt: null,
     } as never)
     spyOn(service, "isMember").mockResolvedValue(false)
@@ -349,7 +368,8 @@ describe("StreamService.resolveWritableMessageStream", () => {
 
     expect(error).toBeInstanceOf(HttpError)
     expect((error as HttpError).status).toBe(403)
-    expect((error as HttpError).message).toBe("Not a member of this stream")
+    expect((error as HttpError).code).toBe("STREAM_READ_ONLY")
+    expect((error as HttpError).details).toEqual({ reason: "not_a_member" })
   })
 
   test("should throw 403 when a thread's root stream is archived", async () => {
@@ -368,6 +388,7 @@ describe("StreamService.resolveWritableMessageStream", () => {
         id: "stream_root",
         workspaceId: "ws_1",
         type: "scratchpad",
+        visibility: "private",
         archivedAt: new Date(),
       } as never)
     const isMemberSpy = spyOn(service, "isMember").mockResolvedValue(true)
@@ -382,9 +403,9 @@ describe("StreamService.resolveWritableMessageStream", () => {
 
     expect(error).toBeInstanceOf(HttpError)
     expect((error as HttpError).status).toBe(403)
-    expect((error as HttpError).message).toBe("Cannot send messages to a thread under an archived stream")
-    // Membership is never checked once the root-archived seal is detected.
-    expect(isMemberSpy).not.toHaveBeenCalled()
+    expect((error as HttpError).code).toBe("STREAM_READ_ONLY")
+    expect((error as HttpError).details).toEqual({ reason: "archived" })
+    expect(isMemberSpy).toHaveBeenCalledWith("stream_root", "usr_1")
   })
 })
 
@@ -2292,7 +2313,7 @@ describe("StreamService.updateCompanionMode persona validation", () => {
 
 describe("StreamService.addBotToStream", () => {
   const mockGrantAccess = spyOn(BotChannelAccessRepository, "grantAccess")
-  const mockFindBotById = spyOn(BotRepository, "findById")
+  const mockFindBotById = spyOn(BotRepository, "findByIdForUpdate")
   let service: StreamService
 
   beforeEach(() => {
@@ -2362,6 +2383,12 @@ describe("StreamService.addBotToStream", () => {
 
   test("redirects a thread grant to its root channel", async () => {
     mockFindById
+      .mockResolvedValueOnce({
+        id: "stream_thread",
+        workspaceId: "ws_1",
+        type: "thread",
+        rootStreamId: "stream_root",
+      } as never)
       .mockResolvedValueOnce({
         id: "stream_thread",
         workspaceId: "ws_1",

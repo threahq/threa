@@ -67,6 +67,9 @@ test.describe("Bot Customization", () => {
     expect(channel).toBeTruthy()
     const streamId = channel!.id
 
+    const grantRes = await page.request.post(`/api/workspaces/${workspaceId}/bots/${botId}/streams/${streamId}/grant`)
+    expect(grantRes.ok()).toBe(true)
+
     // Send a message via the public API using the bot key
     const messageContent = `Bot message from E2E test ${testId}`
     const sendRes = await page.request.post(`/api/v1/workspaces/${workspaceId}/streams/${streamId}/messages`, {

@@ -596,10 +596,10 @@ describe("EventService.editMessage version capture", () => {
       callback({})) as any)
     findByIdForUpdateSpy = spyOn(MessageRepository, "findByIdForUpdate").mockResolvedValue(existingMessage as any)
     spyOn(MessageRepository, "findById").mockResolvedValue(existingMessage as any)
-    // editMessage refuses edits in E2E streams at the sink (INV-E1); default to
+    // editMessageInternal refuses edits in E2E streams at the sink (INV-E1); default to
     // non-E2E so the plaintext edit path runs.
     spyOn(E2eStreamsRepository, "isE2eStream").mockResolvedValue(false)
-    // editMessage looks up the stream post-edit to decide whether to publish a
+    // editMessageInternal looks up the stream post-edit to decide whether to publish a
     // thread-summary update to the parent (for reply edits). Default to a
     // non-thread stream so the emitThreadUpdate branch short-circuits
     // — tests that care about the thread path can override per case.
@@ -666,7 +666,7 @@ describe("EventService.editMessage version capture", () => {
 
     const service = new EventService({} as any)
     await expect(
-      service.editMessage({
+      service.editMessageInternal({
         workspaceId: "ws_1",
         messageId: "msg_1",
         streamId: "stream_1",
@@ -681,7 +681,7 @@ describe("EventService.editMessage version capture", () => {
   it("should snapshot pre-edit content as a version record", async () => {
     const service = new EventService({} as any)
 
-    await service.editMessage({
+    await service.editMessageInternal({
       workspaceId: "ws_1",
       messageId: "msg_1",
       streamId: "stream_1",
@@ -706,7 +706,7 @@ describe("EventService.editMessage version capture", () => {
 
     const service = new EventService({} as any)
 
-    await service.editMessage({
+    await service.editMessageInternal({
       workspaceId: "ws_1",
       messageId: "msg_nonexistent",
       streamId: "stream_1",
@@ -723,7 +723,7 @@ describe("EventService.editMessage version capture", () => {
     hasParticipatedSpy.mockResolvedValue(true)
     const service = new EventService({} as any)
 
-    await service.editMessage({
+    await service.editMessageInternal({
       workspaceId: "ws_1",
       messageId: "msg_1",
       streamId: "stream_1",
@@ -750,7 +750,7 @@ describe("EventService.editMessage version capture", () => {
     const service = new EventService({} as any)
 
     await expect(
-      service.editMessage({
+      service.editMessageInternal({
         workspaceId: "ws_1",
         messageId: "msg_1",
         streamId: "stream_1",
@@ -768,7 +768,7 @@ describe("EventService.editMessage version capture", () => {
     hasParticipatedSpy.mockResolvedValue(false)
     const service = new EventService({} as any)
 
-    await service.editMessage({
+    await service.editMessageInternal({
       workspaceId: "ws_1",
       messageId: "msg_1",
       streamId: "stream_1",
@@ -807,7 +807,7 @@ describe("EventService.editMessage attachment_references refresh", () => {
       callback({})) as any)
     spyOn(MessageRepository, "findByIdForUpdate").mockResolvedValue(existingMessage as any)
     spyOn(MessageRepository, "findById").mockResolvedValue(existingMessage as any)
-    // editMessage refuses edits in E2E streams at the sink (INV-E1).
+    // editMessageInternal refuses edits in E2E streams at the sink (INV-E1).
     spyOn(E2eStreamsRepository, "isE2eStream").mockResolvedValue(false)
     spyOn(StreamRepository, "findById").mockResolvedValue({
       id: "stream_target",
@@ -848,7 +848,7 @@ describe("EventService.editMessage attachment_references refresh", () => {
     // referenced attachment. Without the delete the row stays and recipients
     // can still resolve a download for content that no longer cites it.
     const service = new EventService({} as any)
-    await service.editMessage({
+    await service.editMessageInternal({
       workspaceId: "ws_1",
       messageId: "msg_edit",
       streamId: "stream_target",
@@ -882,7 +882,7 @@ describe("EventService.editMessage attachment_references refresh", () => {
     ] as any)
 
     const service = new EventService({} as any)
-    await service.editMessage({
+    await service.editMessageInternal({
       workspaceId: "ws_1",
       messageId: "msg_edit",
       streamId: "stream_target",
@@ -920,7 +920,7 @@ describe("EventService.editMessage attachment_references refresh", () => {
 
     const service = new EventService({} as any)
     await expect(
-      service.editMessage({
+      service.editMessageInternal({
         workspaceId: "ws_1",
         messageId: "msg_edit",
         streamId: "stream_target",
@@ -1022,7 +1022,7 @@ describe("EventService.createMessage metadata propagation", () => {
     const service = new EventService({} as any)
     const onCreated = mock(async () => undefined)
 
-    await service.createMessageReturningConversation(baseParams, onCreated)
+    await service.createMessageReturningConversationInternal(baseParams, onCreated)
 
     expect(onCreated).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ contentMarkdown: "hello" }))
   })
@@ -1038,7 +1038,7 @@ describe("EventService.createMessage metadata propagation", () => {
     spyOn(MessageRepository, "findByClientMessageId").mockResolvedValue(existing as any)
     const onCreated = mock(async () => undefined)
 
-    const result = await service.createMessageReturningConversation(
+    const result = await service.createMessageReturningConversationInternal(
       { ...baseParams, clientMessageId: "temp_1" },
       onCreated
     )
@@ -1232,13 +1232,13 @@ describe("EventService.createMessage conversation declaration (Mechanism C)", ()
   it("surfaces the assigner's conversation id from createMessageReturningConversation for an optimistic board card", async () => {
     const service = new EventService({} as any, conversationAssigner)
 
-    const declared = await service.createMessageReturningConversation({
+    const declared = await service.createMessageReturningConversationInternal({
       ...baseParams,
       conversation: { intent: ConversationIntents.NEW },
     })
     expect(declared.conversationId).toBe("conv_assigned")
 
-    const undeclared = await service.createMessageReturningConversation({ ...baseParams })
+    const undeclared = await service.createMessageReturningConversationInternal({ ...baseParams })
     expect(undeclared.conversationId).toBeUndefined()
   })
 })
@@ -1312,7 +1312,7 @@ describe("EventService INV-E1 sink guard", () => {
     const service = new EventService({} as any)
 
     await expect(
-      service.editMessage({
+      service.editMessageInternal({
         workspaceId: "ws_1",
         messageId: "msg_1",
         streamId: "stream_1",
@@ -1633,7 +1633,7 @@ describe("EventService sharedMessages wire enrichment", () => {
 
   it("carries the hydrated sharedMessages map on the message:edited outbox payload when an edit adds a pointer", async () => {
     const service = new EventService({} as any)
-    await service.editMessage({
+    await service.editMessageInternal({
       workspaceId: "ws_1",
       messageId: "msg_1",
       streamId: "stream_1",
@@ -1783,7 +1783,7 @@ describe("EventService.moveMessagesToThread destination slot carrier (B3)", () =
 
   it("attaches the dual destination slot map to the messages:moved outbox payload", async () => {
     const service = new EventService({} as any)
-    await service.moveMessagesToThread({
+    await service.moveMessagesToThreadInternal({
       workspaceId: "ws_1",
       sourceStreamId: "stream_src",
       targetMessageId: "msg_target",
@@ -1811,7 +1811,7 @@ describe("EventService.moveMessagesToThread destination slot carrier (B3)", () =
 
   it("re-homes the moved messages' context rows onto the destination thread", async () => {
     const service = new EventService({} as any)
-    await service.moveMessagesToThread({
+    await service.moveMessagesToThreadInternal({
       workspaceId: "ws_1",
       sourceStreamId: "stream_src",
       targetMessageId: "msg_target",
@@ -1831,7 +1831,7 @@ describe("EventService.moveMessagesToThread destination slot carrier (B3)", () =
 
   it("writes the thread landmark for a thread the move just created", async () => {
     const service = new EventService({} as any)
-    await service.moveMessagesToThread({
+    await service.moveMessagesToThreadInternal({
       workspaceId: "ws_1",
       sourceStreamId: "stream_src",
       targetMessageId: "msg_target",
@@ -1864,7 +1864,7 @@ describe("EventService.moveMessagesToThread destination slot carrier (B3)", () =
     ;(StreamRepository.insertThreadOrFind as any).mockResolvedValue({ stream: destinationThread, created: false })
 
     const service = new EventService({} as any)
-    await service.moveMessagesToThread({
+    await service.moveMessagesToThreadInternal({
       workspaceId: "ws_1",
       sourceStreamId: "stream_src",
       targetMessageId: "msg_target",
@@ -1882,7 +1882,7 @@ describe("EventService.moveMessagesToThread destination slot carrier (B3)", () =
     ])
 
     const service = new EventService({} as any)
-    await service.moveMessagesToThread({
+    await service.moveMessagesToThreadInternal({
       workspaceId: "ws_1",
       sourceStreamId: "stream_src",
       targetMessageId: "msg_target",
@@ -2033,7 +2033,7 @@ describe("EventService stream-context projection", () => {
     spyOn(AttachmentReferenceRepository, "deleteByMessageId").mockResolvedValue(0)
 
     const service = new EventService({} as any)
-    await service.editMessage({
+    await service.editMessageInternal({
       workspaceId: "ws_1",
       messageId: "msg_edit",
       streamId: "stream_1",
@@ -2083,7 +2083,7 @@ describe("EventService stream-context projection", () => {
     spyOn(MessageRepository, "softDelete").mockResolvedValue(null as any)
 
     const service = new EventService({} as any)
-    await service.deleteMessage({
+    await service.deleteMessageInternal({
       workspaceId: "ws_1",
       streamId: "stream_1",
       messageId: "msg_del",

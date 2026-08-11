@@ -28,7 +28,7 @@ function createHandler() {
   spyOn(MessageVersionRepository, "findLatestByMessageId").mockResolvedValue(null)
 
   const eventService = {
-    deleteMessage: mock(async () => null),
+    deleteMessageInternal: mock(async () => null),
   } as any
 
   const jobQueue = {
@@ -141,7 +141,7 @@ describe("AgentMessageMutationHandler", () => {
       SessionStatuses.SUPERSEDED,
       expect.objectContaining({ error: "Superseded by invoking message edit" })
     )
-    expect(eventService.deleteMessage).not.toHaveBeenCalled()
+    expect(eventService.deleteMessageInternal).not.toHaveBeenCalled()
     expect(jobQueue.send).toHaveBeenCalledWith(
       "persona.agent",
       {
@@ -229,7 +229,7 @@ describe("AgentMessageMutationHandler", () => {
         onlyIfStatusIn: [SessionStatuses.COMPLETED, SessionStatuses.FAILED],
       })
     )
-    expect(eventService.deleteMessage).not.toHaveBeenCalled()
+    expect(eventService.deleteMessageInternal).not.toHaveBeenCalled()
     expect(jobQueue.send).not.toHaveBeenCalled()
   })
 
@@ -287,7 +287,7 @@ describe("AgentMessageMutationHandler", () => {
 
     await waitForDebounce()
 
-    expect(eventService.deleteMessage).not.toHaveBeenCalled()
+    expect(eventService.deleteMessageInternal).not.toHaveBeenCalled()
     expect(jobQueue.send).toHaveBeenCalledWith(
       "persona.agent",
       expect.objectContaining({
@@ -357,7 +357,7 @@ describe("AgentMessageMutationHandler", () => {
     await waitForDebounce()
 
     expect(updateStatusSpy).not.toHaveBeenCalled()
-    expect(eventService.deleteMessage).not.toHaveBeenCalled()
+    expect(eventService.deleteMessageInternal).not.toHaveBeenCalled()
     expect(jobQueue.send).toHaveBeenCalledWith(
       "persona.agent",
       {
@@ -466,7 +466,7 @@ describe("AgentMessageMutationHandler", () => {
       SessionStatuses.SUPERSEDED,
       expect.objectContaining({ error: "Superseded by invoking message edit" })
     )
-    expect(eventService.deleteMessage).not.toHaveBeenCalled()
+    expect(eventService.deleteMessageInternal).not.toHaveBeenCalled()
     expect(jobQueue.send).toHaveBeenCalledWith(
       "persona.agent",
       {
@@ -544,7 +544,7 @@ describe("AgentMessageMutationHandler", () => {
 
     expect(getRevisionSpy).not.toHaveBeenCalled()
     expect(updateStatusSpy).not.toHaveBeenCalled()
-    expect(eventService.deleteMessage).not.toHaveBeenCalled()
+    expect(eventService.deleteMessageInternal).not.toHaveBeenCalled()
     expect(jobQueue.send).not.toHaveBeenCalled()
   })
 
@@ -603,7 +603,7 @@ describe("AgentMessageMutationHandler", () => {
     await waitForDebounce()
 
     expect(updateStatusSpy).not.toHaveBeenCalled()
-    expect(eventService.deleteMessage).not.toHaveBeenCalled()
+    expect(eventService.deleteMessageInternal).not.toHaveBeenCalled()
     expect(jobQueue.send).not.toHaveBeenCalled()
   })
 
@@ -696,7 +696,7 @@ describe("AgentMessageMutationHandler", () => {
       SessionStatuses.SUPERSEDED,
       expect.objectContaining({ error: "Superseded by referenced message edit" })
     )
-    expect(eventService.deleteMessage).not.toHaveBeenCalled()
+    expect(eventService.deleteMessageInternal).not.toHaveBeenCalled()
     expect(jobQueue.send).toHaveBeenCalledWith(
       "persona.agent",
       {
@@ -775,7 +775,7 @@ describe("AgentMessageMutationHandler", () => {
 
     expect(getRevisionSpy).not.toHaveBeenCalled()
     expect(updateStatusSpy).not.toHaveBeenCalled()
-    expect(eventService.deleteMessage).not.toHaveBeenCalled()
+    expect(eventService.deleteMessageInternal).not.toHaveBeenCalled()
     expect(jobQueue.send).not.toHaveBeenCalled()
   })
 
@@ -835,7 +835,7 @@ describe("AgentMessageMutationHandler", () => {
     await waitForDebounce()
 
     expect(updateStatusSpy).not.toHaveBeenCalled()
-    expect(eventService.deleteMessage).not.toHaveBeenCalled()
+    expect(eventService.deleteMessageInternal).not.toHaveBeenCalled()
     expect(jobQueue.send).not.toHaveBeenCalled()
   })
 
@@ -872,7 +872,7 @@ describe("AgentMessageMutationHandler", () => {
     expect(findByTriggerSpy).not.toHaveBeenCalled()
     expect(findLatestByStreamSpy).not.toHaveBeenCalled()
     expect(updateStatusSpy).not.toHaveBeenCalled()
-    expect(eventService.deleteMessage).not.toHaveBeenCalled()
+    expect(eventService.deleteMessageInternal).not.toHaveBeenCalled()
     expect(jobQueue.send).not.toHaveBeenCalled()
   })
 
@@ -908,7 +908,7 @@ describe("AgentMessageMutationHandler", () => {
     expect(findByTriggerSpy).not.toHaveBeenCalled()
     expect(findLatestByStreamSpy).not.toHaveBeenCalled()
     expect(updateStatusSpy).not.toHaveBeenCalled()
-    expect(eventService.deleteMessage).not.toHaveBeenCalled()
+    expect(eventService.deleteMessageInternal).not.toHaveBeenCalled()
     expect(jobQueue.send).not.toHaveBeenCalled()
   })
 
@@ -1064,13 +1064,13 @@ describe("AgentMessageMutationHandler", () => {
         rootStreamId: "stream_root_1",
       })
     )
-    expect(eventService.deleteMessage).toHaveBeenCalledTimes(2)
-    expect(eventService.deleteMessage).toHaveBeenCalledWith(
+    expect(eventService.deleteMessageInternal).toHaveBeenCalledTimes(2)
+    expect(eventService.deleteMessageInternal).toHaveBeenCalledWith(
       expect.objectContaining({
         messageId: "msg_agent_live_1",
       })
     )
-    expect(eventService.deleteMessage).toHaveBeenCalledWith(
+    expect(eventService.deleteMessageInternal).toHaveBeenCalledWith(
       expect.objectContaining({
         messageId: "msg_agent_2",
       })

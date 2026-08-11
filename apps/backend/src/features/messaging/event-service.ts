@@ -3,7 +3,14 @@ import { withTransaction, withClient, sql } from "../../db"
 import { StreamEventRepository, type StreamEvent, type MoveEventIdSequenceUpdate } from "../streams"
 import { StreamRepository, type Stream } from "../streams"
 import { StreamMemberRepository, SparseReadRepository, ReadStateRepository } from "../streams"
-import { checkStreamAccess, resolveEffectiveAccessStream } from "../streams"
+import {
+  assertStreamWritable,
+  assertStreamsWritable,
+  resolveLockedStreamAuthorities,
+  checkStreamAccess,
+  resolveEffectiveAccessStream,
+  type StreamWritePrincipal,
+} from "../streams"
 import { MessageRepository, type Message, type MoveMessageSequenceUpdate } from "./repository"
 import {
   collectSharedMessageIds,
@@ -542,7 +549,7 @@ export class EventService {
   }
 
   async createMessage(params: CreateMessageParams): Promise<Message> {
-    return (await this.createMessageReturningConversation(params)).message
+    return (await this.createMessageReturningConversationInternal(params)).message
   }
 
   /**
@@ -554,19 +561,60 @@ export class EventService {
    * conversation id (no temp-id swap), reconciled by the `conversation:*` echo.
    * `onCreated` joins the same transaction and runs only for the winning insert.
    */
-  async createMessageReturningConversation(
+  async createMessageReturningConversationInternal(
+    params: CreateMessageParams,
+    onCreated?: (client: PoolClient, message: Message) => Promise<void>
+  ): Promise<{ message: Message; conversationId?: string }> {
+    return this.createMessageReturningConversationWithAuthority({ kind: "internal" }, params, onCreated)
+  }
+
+  async assertStreamWritableForPrincipal(
+    principal: StreamWritePrincipal,
+    workspaceId: string,
+    streamId: string
+  ): Promise<void> {
+    await withTransaction(this.pool, (client) => assertStreamWritable(client, { workspaceId, streamId, principal }))
+  }
+
+  async createMessageForPrincipalReturningConversation(
+    principal: StreamWritePrincipal,
+    params: CreateMessageParams,
+    onCreated?: (client: PoolClient, message: Message) => Promise<void>
+  ): Promise<{ message: Message; conversationId?: string }> {
+    return this.createMessageReturningConversationWithAuthority({ kind: "principal", principal }, params, onCreated)
+  }
+
+  private async createMessageReturningConversationWithAuthority(
+    authority: { kind: "internal" } | { kind: "principal"; principal: StreamWritePrincipal },
     params: CreateMessageParams,
     onCreated?: (client: PoolClient, message: Message) => Promise<void>
   ): Promise<{ message: Message; conversationId?: string }> {
     try {
-      const result = await this._createMessageTxn(params, onCreated)
+      const result = await this._createMessageTxn(authority, params, onCreated)
       return { message: result.message, ...(result.conversationId && { conversationId: result.conversationId }) }
     } catch (error) {
       // Concurrent duplicate: the txn rolled back (no orphaned stream_events/outbox),
       // and we return the already-committed message from the winning transaction.
       // No conversation id — the winner already surfaced its own; the loser's
       // optimistic card would double the winner's, so leave it to the echo/refetch.
-      if (error instanceof DuplicateMessageError) return { message: error.existingMessage }
+      if (error instanceof DuplicateMessageError) {
+        if (authority.kind === "principal") {
+          await withTransaction(this.pool, async (client) => {
+            await resolveLockedStreamAuthorities(client, {
+              workspaceId: params.workspaceId,
+              streamIds: [error.existingMessage.streamId],
+              principal: authority.principal,
+            })
+            const principalId =
+              authority.principal.kind === "user" ? authority.principal.userId : authority.principal.botId
+            const principalType = authority.principal.kind === "user" ? AuthorTypes.USER : AuthorTypes.BOT
+            if (error.existingMessage.authorId !== principalId || error.existingMessage.authorType !== principalType) {
+              throw new HttpError("Cannot return another actor's message", { status: 403, code: "FORBIDDEN" })
+            }
+          })
+        }
+        return { message: error.existingMessage }
+      }
       throw error
     }
   }
@@ -1019,6 +1067,7 @@ export class EventService {
   }
 
   private async _createMessageTxn(
+    authority: { kind: "internal" } | { kind: "principal"; principal: StreamWritePrincipal },
     params: CreateMessageParams,
     onCreated?: (client: PoolClient, message: Message) => Promise<void>
   ): Promise<{ message: Message; conversationId?: string; created: boolean }> {
@@ -1026,184 +1075,272 @@ export class EventService {
     // `createMessageInTransaction` can persist whatever reaches it.
     const gatedParams = (await this.shouldCaptureComposeTrace(params)) ? params : { ...params, composeTrace: undefined }
     return withTransaction(this.pool, async (client) => {
+      if (gatedParams.clientMessageId) {
+        const existing = await MessageRepository.findByClientMessageId(
+          client,
+          gatedParams.streamId,
+          gatedParams.clientMessageId
+        )
+        if (existing) {
+          if (authority.kind === "principal") {
+            await resolveLockedStreamAuthorities(client, {
+              workspaceId: gatedParams.workspaceId,
+              streamIds: [existing.streamId],
+              principal: authority.principal,
+            })
+            const principalId =
+              authority.principal.kind === "user" ? authority.principal.userId : authority.principal.botId
+            const principalType = authority.principal.kind === "user" ? AuthorTypes.USER : AuthorTypes.BOT
+            if (existing.authorId !== principalId || existing.authorType !== principalType) {
+              throw new HttpError("Cannot return another actor's message", { status: 403, code: "FORBIDDEN" })
+            }
+          }
+          return { message: existing, created: false }
+        }
+      }
+      if (authority.kind === "principal") {
+        await assertStreamWritable(client, {
+          workspaceId: gatedParams.workspaceId,
+          streamId: gatedParams.streamId,
+          principal: authority.principal,
+        })
+      }
       const result = await this.createMessageInTransaction(client, gatedParams)
       if (result.created) await onCreated?.(client, result.message)
       return result
     })
   }
 
-  async editMessage(params: EditMessageParams): Promise<Message | null> {
-    return withTransaction(this.pool, async (client) => {
-      // INV-E1: no sealed-edit path exists yet, so editing in an E2E stream would
-      // overwrite the sealed projection with plaintext and broadcast it. Refuse
-      // until a ciphertext edit payload exists (the frontend also hides Edit here).
-      if (await E2eStreamsRepository.isE2eStream(client, params.workspaceId, params.streamId)) {
-        throw new HttpError("Cannot edit a message in an end-to-end-encrypted stream", {
-          status: 400,
-          code: "E2E_STREAM_EDIT_UNSUPPORTED",
-        })
-      }
+  private async withPlacementRecovery<T>(
+    messageId: string,
+    candidateStreamId: string,
+    operation: (client: PoolClient) => Promise<T>
+  ): Promise<T | { kind: "retry"; streamId: string }> {
+    try {
+      return await withTransaction(this.pool, operation)
+    } catch (error) {
+      const denial = error as { code?: string }
+      if (denial.code !== "STREAM_READ_ONLY" && denial.code !== "STREAM_NOT_FOUND") throw error
+      const current = await MessageRepository.findById(this.pool, messageId)
+      if (current && current.streamId !== candidateStreamId) return { kind: "retry", streamId: current.streamId }
+      throw error
+    }
+  }
 
-      // Returns null if the message was concurrently deleted — prevents phantom edits
-      const existing = await MessageRepository.findByIdForUpdate(client, params.messageId)
-      if (!existing || existing.deletedAt) return null
+  async editMessageInternal(params: EditMessageParams): Promise<Message | null> {
+    return this.editMessageWithAuthority({ kind: "internal" }, params)
+  }
 
-      // No-op: content hasn't meaningfully changed
-      if (params.contentMarkdown.trim() === existing.contentMarkdown.trim()) return existing
+  async editMessageForPrincipal(principal: StreamWritePrincipal, params: EditMessageParams): Promise<Message | null> {
+    return this.editMessageWithAuthority({ kind: "principal", principal }, params)
+  }
 
-      const actorType = await this.resolveActorType(client, params.streamId, params.actorId, params.actorType, existing)
-
-      // Resolve slug-only mention/channel ids before the edited body feeds the
-      // event payload, projection, and outbox (INV-64). When resolution changes
-      // an id, re-derive the markdown so the stored wire form matches the JSON.
-      const resolvedEdit = await resolveMentionContent(
-        client,
-        params.workspaceId,
-        params.contentJson,
-        // Personal personas resolve by slug only for their owner (see create).
-        actorType === "user" ? params.actorId : undefined
-      )
-      if (resolvedEdit.changed) {
-        params.contentJson = resolvedEdit.contentJson
-        params.contentMarkdown = deriveContentMarkdown(resolvedEdit.contentJson)
-      }
-
-      await MessageVersionRepository.insert(client, {
-        id: messageVersionId(),
-        messageId: params.messageId,
-        contentJson: existing.contentJson,
-        contentMarkdown: existing.contentMarkdown,
-        editedBy: params.actorId,
-      })
-
-      const editStream = await StreamRepository.findById(client, params.streamId)
-      const memoEmbeds = await resolveMemoEmbedSummaries(
-        client,
-        params.workspaceId,
-        params.contentJson,
-        editStream?.rootStreamId ?? params.streamId
-      )
-
-      const event = await StreamEventRepository.insert(client, {
-        id: eventId(),
-        streamId: params.streamId,
-        eventType: "message_edited",
-        payload: {
-          messageId: params.messageId,
-          contentJson: params.contentJson,
-          contentMarkdown: params.contentMarkdown,
-          memoEmbeds,
-        } satisfies MessageEditedPayload,
-        actorId: params.actorId,
-        actorType,
-      })
-
-      const message = await MessageRepository.updateContent(
-        client,
-        params.messageId,
-        params.contentJson,
-        params.contentMarkdown
-      )
-
-      if (message) {
-        // Re-validate share nodes: edits that add, remove, or swap share
-        // references rewrite the shared_messages row set so
-        // hydration/authorization reflects the new content. Without this, an
-        // author could edit in a sharedMessage pointing at an arbitrary id and
-        // leak its content past the create-time check.
-        await ShareService.validateAndRecordShares({
-          client,
-          workspaceId: params.workspaceId,
-          targetStreamId: params.streamId,
-          shareMessageId: params.messageId,
-          sharerId: params.actorId,
-          accessibleStreamIds: params.accessibleStreamIds,
-          contentJson: params.contentJson,
-          findStream: (db, id) => StreamRepository.findById(db, id),
-          resolveEffectiveStream: resolveEffectiveStreamAdapter,
-          isAncestor: (db, ancestorId, streamId) => StreamRepository.isAncestor(db, ancestorId, streamId),
-          countExposedMembers: (db, targetStreamId, sourceStreamId) =>
-            StreamMemberRepository.countMembersNotIn(db, targetStreamId, sourceStreamId),
-          canReadStream: async (db, workspaceId, streamId, userId) =>
-            (await checkStreamAccess(db, streamId, workspaceId, userId)) !== null,
-          confirmedPrivacyWarning: params.confirmedPrivacyWarning,
-        })
-
-        // Refresh `attachment_references` projection to match the new
-        // contentJson (INV-7). Without this, an edit that adds or removes an
-        // `attachment:` link leaves stale rows behind and download
-        // authorization stops matching the persisted body. Reference-only —
-        // fresh uploads aren't supported on edit (a zero-`messageId`
-        // attachment id will fail the access validation here loudly).
-        // Full delete-then-insert per edit; the projection is small and this
-        // lets the helper share its access-check semantics with the create
-        // path verbatim.
-        const validatedReferenceIds = await this._validateEditAttachmentReferences(client, params)
-        await AttachmentReferenceRepository.deleteByMessageId(client, params.workspaceId, params.messageId)
-        if (validatedReferenceIds.length > 0) {
-          await AttachmentReferenceRepository.insertMany(
-            client,
-            validatedReferenceIds.map((aid) => ({
-              id: attachmentReferenceId(),
-              workspaceId: params.workspaceId,
-              attachmentId: aid,
-              messageId: params.messageId,
-              streamId: params.streamId,
-            }))
-          )
+  private async editMessageWithAuthority(
+    authority: { kind: "internal" } | { kind: "principal"; principal: StreamWritePrincipal },
+    params: EditMessageParams
+  ): Promise<Message | null> {
+    let streamId =
+      authority.kind === "principal"
+        ? ((await MessageRepository.findById(this.pool, params.messageId))?.streamId ?? params.streamId)
+        : params.streamId
+    for (let attempt = 0; attempt < 3; attempt++) {
+      params = { ...params, streamId }
+      const result = await this.withPlacementRecovery(params.messageId, streamId, async (client) => {
+        if (authority.kind === "principal") {
+          await assertStreamWritable(client, {
+            workspaceId: params.workspaceId,
+            streamId,
+            principal: authority.principal,
+          })
+        }
+        // INV-E1: no sealed-edit path exists yet, so editing in an E2E stream would
+        // overwrite the sealed projection with plaintext and broadcast it. Refuse
+        // until a ciphertext edit payload exists (the frontend also hides Edit here).
+        if (await E2eStreamsRepository.isE2eStream(client, params.workspaceId, params.streamId)) {
+          throw new HttpError("Cannot edit a message in an end-to-end-encrypted stream", {
+            status: 400,
+            code: "E2E_STREAM_EDIT_UNSUPPORTED",
+          })
         }
 
-        const sharedMessageIds = new Set<string>()
-        collectSharedMessageIds(params.contentJson, sharedMessageIds)
-        const slotMaps =
-          sharedMessageIds.size > 0
-            ? toDualSlotMaps(
-                await hydrateSharedMessagesForRoom(client, params.workspaceId, params.streamId, sharedMessageIds)
-              )
-            : undefined
+        // Returns null if the message was concurrently deleted — prevents phantom edits
+        const existing = await MessageRepository.findByIdForUpdate(client, params.messageId)
+        if (!existing || existing.deletedAt) return { kind: "done" as const, value: null }
+        if (existing.streamId !== streamId) return { kind: "retry" as const, streamId: existing.streamId }
+        if (authority.kind === "principal") {
+          const ownerId = authority.principal.kind === "user" ? authority.principal.userId : authority.principal.botId
+          if (existing.authorId !== ownerId) {
+            throw new HttpError("Cannot modify another actor's message", { status: 403, code: "FORBIDDEN" })
+          }
+        }
 
-        await OutboxRepository.insert(client, "message:edited", {
-          workspaceId: params.workspaceId,
-          streamId: params.streamId,
-          event: serializeBigInt(event),
-          ...(slotMaps && { slots: slotMaps.slots, sharedMessages: slotMaps.sharedMessages }),
-        })
+        // No-op: content hasn't meaningfully changed
+        if (params.contentMarkdown.trim() === existing.contentMarkdown.trim())
+          return { kind: "done" as const, value: existing }
 
-        const stream = await StreamRepository.findById(client, params.streamId)
-
-        // Rebuild the "In this stream" projection from the edited body. The
-        // landmark keeps the message's ORIGINAL created_at — an edit must not
-        // move it in the feed.
-        const contextAttachments =
-          validatedReferenceIds.length > 0 ? await AttachmentRepository.findByIds(client, validatedReferenceIds) : []
-        await StreamContextRepository.replaceForMessage(
+        const actorType = await this.resolveActorType(
           client,
-          params.workspaceId,
-          params.messageId,
-          contextRowsForMessage({
-            workspaceId: params.workspaceId,
-            streamId: params.streamId,
-            rootStreamId: stream?.rootStreamId ?? params.streamId,
-            messageId: params.messageId,
-            authorId: existing.authorId,
-            occurredAt: existing.createdAt,
-            sequence: existing.sequence,
-            contentJson: params.contentJson,
-            contentMarkdown: params.contentMarkdown,
-            attachments: contextAttachments,
-          })
+          params.streamId,
+          params.actorId,
+          params.actorType,
+          existing
         )
 
-        if (stream?.parentStreamId && stream.parentAnchorId) {
-          // No count change on edit — refresh only the thread summary; omit
-          // replyCount so a stale unlocked read can't clobber a concurrent
-          // create/delete's authoritative count (INV-20).
-          await this.emitThreadUpdate(client, stream, { includeReplyCount: false })
+        // Resolve slug-only mention/channel ids before the edited body feeds the
+        // event payload, projection, and outbox (INV-64). When resolution changes
+        // an id, re-derive the markdown so the stored wire form matches the JSON.
+        const resolvedEdit = await resolveMentionContent(
+          client,
+          params.workspaceId,
+          params.contentJson,
+          // Personal personas resolve by slug only for their owner (see create).
+          actorType === "user" ? params.actorId : undefined
+        )
+        if (resolvedEdit.changed) {
+          params.contentJson = resolvedEdit.contentJson
+          params.contentMarkdown = deriveContentMarkdown(resolvedEdit.contentJson)
         }
-      }
 
-      return message
-    })
+        await MessageVersionRepository.insert(client, {
+          id: messageVersionId(),
+          messageId: params.messageId,
+          contentJson: existing.contentJson,
+          contentMarkdown: existing.contentMarkdown,
+          editedBy: params.actorId,
+        })
+
+        const editStream = await StreamRepository.findById(client, params.streamId)
+        const memoEmbeds = await resolveMemoEmbedSummaries(
+          client,
+          params.workspaceId,
+          params.contentJson,
+          editStream?.rootStreamId ?? params.streamId
+        )
+
+        const event = await StreamEventRepository.insert(client, {
+          id: eventId(),
+          streamId: params.streamId,
+          eventType: "message_edited",
+          payload: {
+            messageId: params.messageId,
+            contentJson: params.contentJson,
+            contentMarkdown: params.contentMarkdown,
+            memoEmbeds,
+          } satisfies MessageEditedPayload,
+          actorId: params.actorId,
+          actorType,
+        })
+
+        const message = await MessageRepository.updateContent(
+          client,
+          params.messageId,
+          params.contentJson,
+          params.contentMarkdown
+        )
+
+        if (message) {
+          // Re-validate share nodes: edits that add, remove, or swap share
+          // references rewrite the shared_messages row set so
+          // hydration/authorization reflects the new content. Without this, an
+          // author could edit in a sharedMessage pointing at an arbitrary id and
+          // leak its content past the create-time check.
+          await ShareService.validateAndRecordShares({
+            client,
+            workspaceId: params.workspaceId,
+            targetStreamId: params.streamId,
+            shareMessageId: params.messageId,
+            sharerId: params.actorId,
+            accessibleStreamIds: params.accessibleStreamIds,
+            contentJson: params.contentJson,
+            findStream: (db, id) => StreamRepository.findById(db, id),
+            resolveEffectiveStream: resolveEffectiveStreamAdapter,
+            isAncestor: (db, ancestorId, streamId) => StreamRepository.isAncestor(db, ancestorId, streamId),
+            countExposedMembers: (db, targetStreamId, sourceStreamId) =>
+              StreamMemberRepository.countMembersNotIn(db, targetStreamId, sourceStreamId),
+            canReadStream: async (db, workspaceId, streamId, userId) =>
+              (await checkStreamAccess(db, streamId, workspaceId, userId)) !== null,
+            confirmedPrivacyWarning: params.confirmedPrivacyWarning,
+          })
+
+          // Refresh `attachment_references` projection to match the new
+          // contentJson (INV-7). Without this, an edit that adds or removes an
+          // `attachment:` link leaves stale rows behind and download
+          // authorization stops matching the persisted body. Reference-only —
+          // fresh uploads aren't supported on edit (a zero-`messageId`
+          // attachment id will fail the access validation here loudly).
+          // Full delete-then-insert per edit; the projection is small and this
+          // lets the helper share its access-check semantics with the create
+          // path verbatim.
+          const validatedReferenceIds = await this._validateEditAttachmentReferences(client, params)
+          await AttachmentReferenceRepository.deleteByMessageId(client, params.workspaceId, params.messageId)
+          if (validatedReferenceIds.length > 0) {
+            await AttachmentReferenceRepository.insertMany(
+              client,
+              validatedReferenceIds.map((aid) => ({
+                id: attachmentReferenceId(),
+                workspaceId: params.workspaceId,
+                attachmentId: aid,
+                messageId: params.messageId,
+                streamId: params.streamId,
+              }))
+            )
+          }
+
+          const sharedMessageIds = new Set<string>()
+          collectSharedMessageIds(params.contentJson, sharedMessageIds)
+          const slotMaps =
+            sharedMessageIds.size > 0
+              ? toDualSlotMaps(
+                  await hydrateSharedMessagesForRoom(client, params.workspaceId, params.streamId, sharedMessageIds)
+                )
+              : undefined
+
+          await OutboxRepository.insert(client, "message:edited", {
+            workspaceId: params.workspaceId,
+            streamId: params.streamId,
+            event: serializeBigInt(event),
+            ...(slotMaps && { slots: slotMaps.slots, sharedMessages: slotMaps.sharedMessages }),
+          })
+
+          const stream = await StreamRepository.findById(client, params.streamId)
+
+          // Rebuild the "In this stream" projection from the edited body. The
+          // landmark keeps the message's ORIGINAL created_at — an edit must not
+          // move it in the feed.
+          const contextAttachments =
+            validatedReferenceIds.length > 0 ? await AttachmentRepository.findByIds(client, validatedReferenceIds) : []
+          await StreamContextRepository.replaceForMessage(
+            client,
+            params.workspaceId,
+            params.messageId,
+            contextRowsForMessage({
+              workspaceId: params.workspaceId,
+              streamId: params.streamId,
+              rootStreamId: stream?.rootStreamId ?? params.streamId,
+              messageId: params.messageId,
+              authorId: existing.authorId,
+              occurredAt: existing.createdAt,
+              sequence: existing.sequence,
+              contentJson: params.contentJson,
+              contentMarkdown: params.contentMarkdown,
+              attachments: contextAttachments,
+            })
+          )
+
+          if (stream?.parentStreamId && stream.parentAnchorId) {
+            // No count change on edit — refresh only the thread summary; omit
+            // replyCount so a stale unlocked read can't clobber a concurrent
+            // create/delete's authoritative count (INV-20).
+            await this.emitThreadUpdate(client, stream, { includeReplyCount: false })
+          }
+        }
+
+        return { kind: "done" as const, value: message }
+      })
+      if (result.kind === "done") return result.value
+      streamId = result.streamId
+    }
+    throw new Error(`Message ${params.messageId} placement changed too many times`)
   }
 
   /**
@@ -1282,31 +1419,71 @@ export class EventService {
     return validated
   }
 
-  async deleteMessage(params: DeleteMessageParams): Promise<Message | null> {
-    return withTransaction(this.pool, async (client) => {
-      const existing = await MessageRepository.findByIdForUpdate(client, params.messageId)
-      if (!existing || existing.deletedAt) return null
+  async deleteMessageInternal(params: DeleteMessageParams): Promise<Message | null> {
+    return this.deleteMessageWithAuthority({ kind: "internal" }, params)
+  }
 
-      const actorType = await this.resolveActorType(client, params.streamId, params.actorId, params.actorType, existing)
+  async deleteMessageForPrincipal(
+    principal: StreamWritePrincipal,
+    params: DeleteMessageParams
+  ): Promise<Message | null> {
+    return this.deleteMessageWithAuthority({ kind: "principal", principal }, params)
+  }
 
-      await StreamEventRepository.insert(client, {
-        id: eventId(),
-        streamId: params.streamId,
-        eventType: "message_deleted",
-        payload: {
-          messageId: params.messageId,
-        } satisfies MessageDeletedPayload,
-        actorId: params.actorId,
-        actorType,
-      })
+  private async deleteMessageWithAuthority(
+    authority: { kind: "internal" } | { kind: "principal"; principal: StreamWritePrincipal },
+    params: DeleteMessageParams
+  ): Promise<Message | null> {
+    let streamId =
+      authority.kind === "principal"
+        ? ((await MessageRepository.findById(this.pool, params.messageId))?.streamId ?? params.streamId)
+        : params.streamId
+    for (let attempt = 0; attempt < 3; attempt++) {
+      params = { ...params, streamId }
+      const result = await this.withPlacementRecovery(params.messageId, streamId, async (client) => {
+        if (authority.kind === "principal") {
+          await assertStreamWritable(client, {
+            workspaceId: params.workspaceId,
+            streamId,
+            principal: authority.principal,
+          })
+        }
+        const existing = await MessageRepository.findByIdForUpdate(client, params.messageId)
+        if (!existing || existing.deletedAt) return { kind: "done" as const, value: null }
+        if (existing.streamId !== streamId) return { kind: "retry" as const, streamId: existing.streamId }
+        if (authority.kind === "principal") {
+          const ownerId = authority.principal.kind === "user" ? authority.principal.userId : authority.principal.botId
+          if (existing.authorId !== ownerId) {
+            throw new HttpError("Cannot modify another actor's message", { status: 403, code: "FORBIDDEN" })
+          }
+        }
 
-      const message = await MessageRepository.softDelete(client, params.messageId)
+        const actorType = await this.resolveActorType(
+          client,
+          params.streamId,
+          params.actorId,
+          params.actorType,
+          existing
+        )
 
-      // A2 (sparse-read design): a deleted message's unread activity rows would
-      // otherwise survive forever unless the user opens that exact stream, keeping
-      // a phantom badge. Mark them read in the delete transaction; clients drop
-      // held rows for the id on the `message_deleted` stream event.
-      await client.query(sql`
+        await StreamEventRepository.insert(client, {
+          id: eventId(),
+          streamId: params.streamId,
+          eventType: "message_deleted",
+          payload: {
+            messageId: params.messageId,
+          } satisfies MessageDeletedPayload,
+          actorId: params.actorId,
+          actorType,
+        })
+
+        const message = await MessageRepository.softDelete(client, params.messageId)
+
+        // A2 (sparse-read design): a deleted message's unread activity rows would
+        // otherwise survive forever unless the user opens that exact stream, keeping
+        // a phantom badge. Mark them read in the delete transaction; clients drop
+        // held rows for the id on the `message_deleted` stream event.
+        await client.query(sql`
         UPDATE user_activity
         SET read_at = NOW()
         WHERE workspace_id = ${params.workspaceId}
@@ -1314,28 +1491,46 @@ export class EventService {
           AND read_at IS NULL
       `)
 
-      await StreamContextRepository.deleteByMessageId(client, params.workspaceId, params.messageId)
+        await StreamContextRepository.deleteByMessageId(client, params.workspaceId, params.messageId)
 
-      if (message) {
-        await OutboxRepository.insert(client, "message:deleted", {
-          workspaceId: params.workspaceId,
-          streamId: params.streamId,
-          messageId: params.messageId,
-          deletedAt: message.deletedAt!.toISOString(),
-        })
+        if (message) {
+          await OutboxRepository.insert(client, "message:deleted", {
+            workspaceId: params.workspaceId,
+            streamId: params.streamId,
+            messageId: params.messageId,
+            deletedAt: message.deletedAt!.toISOString(),
+          })
 
-        const stream = await StreamRepository.findById(client, params.streamId)
-        if (stream?.parentStreamId && stream.parentAnchorId) {
-          const updatedThread = await StreamRepository.bumpThreadReplyCount(client, stream.id, -1)
-          await this.emitThreadUpdate(client, updatedThread ?? stream)
+          const stream = await StreamRepository.findById(client, params.streamId)
+          if (stream?.parentStreamId && stream.parentAnchorId) {
+            const updatedThread = await StreamRepository.bumpThreadReplyCount(client, stream.id, -1)
+            await this.emitThreadUpdate(client, updatedThread ?? stream)
+          }
         }
-      }
 
-      return message
-    })
+        return { kind: "done" as const, value: message }
+      })
+      if (result.kind === "done") return result.value
+      streamId = result.streamId
+    }
+    throw new Error(`Message ${params.messageId} placement changed too many times`)
   }
 
-  async moveMessagesToThread(params: MoveMessagesToThreadParams): Promise<MoveMessagesToThreadResult> {
+  async moveMessagesToThreadInternal(params: MoveMessagesToThreadParams): Promise<MoveMessagesToThreadResult> {
+    return this.moveMessagesToThreadWithAuthority({ kind: "internal" }, params)
+  }
+
+  async moveMessagesToThreadForPrincipal(
+    principal: StreamWritePrincipal,
+    params: MoveMessagesToThreadParams
+  ): Promise<MoveMessagesToThreadResult> {
+    return this.moveMessagesToThreadWithAuthority({ kind: "principal", principal }, params)
+  }
+
+  private async moveMessagesToThreadWithAuthority(
+    authority: { kind: "internal" } | { kind: "principal"; principal: StreamWritePrincipal },
+    params: MoveMessagesToThreadParams
+  ): Promise<MoveMessagesToThreadResult> {
     const uniqueMessageIds = Array.from(new Set(params.messageIds))
     if (uniqueMessageIds.length === 0) {
       throw new HttpError("At least one message is required", { status: 400, code: "NO_MESSAGES_SELECTED" })
@@ -1363,6 +1558,19 @@ export class EventService {
         throw new HttpError("Move validation lease does not match this request", {
           status: 409,
           code: "MOVE_LEASE_MISMATCH",
+        })
+      }
+
+      if (authority.kind === "principal") {
+        const existingDestination = await StreamRepository.findByAnchor(
+          client,
+          params.sourceStreamId,
+          params.targetMessageId
+        )
+        await assertStreamsWritable(client, {
+          workspaceId: params.workspaceId,
+          streamIds: [params.sourceStreamId, ...(existingDestination ? [existingDestination.id] : [])],
+          principal: authority.principal,
         })
       }
 
@@ -1898,7 +2106,7 @@ export class EventService {
       }
 
       const existingThread = await StreamRepository.findByAnchor(client, params.sourceStreamId, params.targetMessageId)
-      // Mirror the moveMessagesToThread guard so validate doesn't hand out
+      // Mirror the message-move guard so validate doesn't hand out
       // leases the move endpoint will reject — keeps the two-step contract
       // honest about what's actually movable.
       if (existingThread?.archivedAt) {
@@ -1927,77 +2135,142 @@ export class EventService {
     })
   }
 
-  async addReaction(params: AddReactionParams): Promise<Message | null> {
-    const actorType = params.actorType ?? AuthorTypes.USER
-    return withTransaction(this.pool, async (client) => {
-      await StreamEventRepository.insert(client, {
-        id: eventId(),
-        streamId: params.streamId,
-        eventType: "reaction_added",
-        payload: {
-          messageId: params.messageId,
-          emoji: params.emoji,
-          userId: params.userId,
-        } satisfies ReactionPayload,
-        actorId: params.userId,
-        actorType,
-      })
-
-      const message = await MessageRepository.addReaction(client, params.messageId, params.emoji, params.userId)
-
-      if (message && actorType === AuthorTypes.USER) {
-        // Reacting is engagement: a provisional conversation placement the
-        // reader just acknowledged stops being provisional (same transaction,
-        // INV-4/7).
-        await settleMessagesOnEngagement(client, params.workspaceId, [params.messageId])
-      }
-
-      if (message) {
-        await OutboxRepository.insert(client, "reaction:added", {
-          workspaceId: params.workspaceId,
-          streamId: params.streamId,
-          messageId: params.messageId,
-          emoji: params.emoji,
-          userId: params.userId,
-          actorType,
-        })
-      }
-
-      return message
-    })
+  async addReactionInternal(params: AddReactionParams): Promise<Message | null> {
+    return this.addReactionWithAuthority({ kind: "internal" }, params)
   }
 
-  async removeReaction(params: RemoveReactionParams): Promise<Message | null> {
+  async addReactionForPrincipal(principal: StreamWritePrincipal, params: AddReactionParams): Promise<Message | null> {
+    return this.addReactionWithAuthority({ kind: "principal", principal }, params)
+  }
+
+  private async addReactionWithAuthority(
+    authority: { kind: "internal" } | { kind: "principal"; principal: StreamWritePrincipal },
+    params: AddReactionParams
+  ): Promise<Message | null> {
     const actorType = params.actorType ?? AuthorTypes.USER
-    return withTransaction(this.pool, async (client) => {
-      await StreamEventRepository.insert(client, {
-        id: eventId(),
-        streamId: params.streamId,
-        eventType: "reaction_removed",
-        payload: {
-          messageId: params.messageId,
-          emoji: params.emoji,
-          userId: params.userId,
-        } satisfies ReactionPayload,
-        actorId: params.userId,
-        actorType,
-      })
-
-      const message = await MessageRepository.removeReaction(client, params.messageId, params.emoji, params.userId)
-
-      if (message) {
-        await OutboxRepository.insert(client, "reaction:removed", {
-          workspaceId: params.workspaceId,
+    let streamId =
+      authority.kind === "principal"
+        ? ((await MessageRepository.findById(this.pool, params.messageId))?.streamId ?? params.streamId)
+        : params.streamId
+    for (let attempt = 0; attempt < 3; attempt++) {
+      params = { ...params, streamId }
+      const result = await this.withPlacementRecovery(params.messageId, streamId, async (client) => {
+        if (authority.kind === "principal") {
+          await assertStreamWritable(client, {
+            workspaceId: params.workspaceId,
+            streamId: params.streamId,
+            principal: authority.principal,
+          })
+        }
+        const existing = await MessageRepository.findByIdForUpdate(client, params.messageId)
+        if (!existing || existing.deletedAt) return { kind: "done" as const, value: null }
+        if (existing.streamId !== streamId) return { kind: "retry" as const, streamId: existing.streamId }
+        await StreamEventRepository.insert(client, {
+          id: eventId(),
           streamId: params.streamId,
-          messageId: params.messageId,
-          emoji: params.emoji,
-          userId: params.userId,
+          eventType: "reaction_added",
+          payload: {
+            messageId: params.messageId,
+            emoji: params.emoji,
+            userId: params.userId,
+          } satisfies ReactionPayload,
+          actorId: params.userId,
           actorType,
         })
-      }
 
-      return message
-    })
+        const message = await MessageRepository.addReaction(client, params.messageId, params.emoji, params.userId)
+
+        if (message && actorType === AuthorTypes.USER) {
+          // Reacting is engagement: a provisional conversation placement the
+          // reader just acknowledged stops being provisional (same transaction,
+          // INV-4/7).
+          await settleMessagesOnEngagement(client, params.workspaceId, [params.messageId])
+        }
+
+        if (message) {
+          await OutboxRepository.insert(client, "reaction:added", {
+            workspaceId: params.workspaceId,
+            streamId: params.streamId,
+            messageId: params.messageId,
+            emoji: params.emoji,
+            userId: params.userId,
+            actorType,
+          })
+        }
+
+        return { kind: "done" as const, value: message }
+      })
+      if (result.kind === "done") return result.value
+      streamId = result.streamId
+    }
+    throw new Error(`Message ${params.messageId} placement changed too many times`)
+  }
+
+  async removeReactionInternal(params: RemoveReactionParams): Promise<Message | null> {
+    return this.removeReactionWithAuthority({ kind: "internal" }, params)
+  }
+
+  async removeReactionForPrincipal(
+    principal: StreamWritePrincipal,
+    params: RemoveReactionParams
+  ): Promise<Message | null> {
+    return this.removeReactionWithAuthority({ kind: "principal", principal }, params)
+  }
+
+  private async removeReactionWithAuthority(
+    authority: { kind: "internal" } | { kind: "principal"; principal: StreamWritePrincipal },
+    params: RemoveReactionParams
+  ): Promise<Message | null> {
+    const actorType = params.actorType ?? AuthorTypes.USER
+    let streamId =
+      authority.kind === "principal"
+        ? ((await MessageRepository.findById(this.pool, params.messageId))?.streamId ?? params.streamId)
+        : params.streamId
+    for (let attempt = 0; attempt < 3; attempt++) {
+      params = { ...params, streamId }
+      const result = await this.withPlacementRecovery(params.messageId, streamId, async (client) => {
+        if (authority.kind === "principal") {
+          await assertStreamWritable(client, {
+            workspaceId: params.workspaceId,
+            streamId: params.streamId,
+            principal: authority.principal,
+          })
+        }
+        const existing = await MessageRepository.findByIdForUpdate(client, params.messageId)
+        if (!existing || existing.deletedAt) return { kind: "done" as const, value: null }
+        if (existing.streamId !== streamId) return { kind: "retry" as const, streamId: existing.streamId }
+        await StreamEventRepository.insert(client, {
+          id: eventId(),
+          streamId: params.streamId,
+          eventType: "reaction_removed",
+          payload: {
+            messageId: params.messageId,
+            emoji: params.emoji,
+            userId: params.userId,
+          } satisfies ReactionPayload,
+          actorId: params.userId,
+          actorType,
+        })
+
+        const message = await MessageRepository.removeReaction(client, params.messageId, params.emoji, params.userId)
+
+        if (message) {
+          await OutboxRepository.insert(client, "reaction:removed", {
+            workspaceId: params.workspaceId,
+            streamId: params.streamId,
+            messageId: params.messageId,
+            emoji: params.emoji,
+            userId: params.userId,
+            actorType,
+          })
+        }
+
+        return { kind: "done" as const, value: message }
+      })
+      if (result.kind === "done") return result.value
+      streamId = result.streamId
+    }
+    throw new Error(`Message ${params.messageId} placement changed too many times`)
   }
 
   async getMessages(

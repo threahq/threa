@@ -799,7 +799,7 @@ describe("Thread Graph", () => {
       expect(emitted.some((r) => r.event_type === "message:updated")).toBe(false)
 
       // Deleting the reply settles the count back to 0.
-      await eventService.deleteMessage({
+      await eventService.deleteMessageInternal({
         workspaceId: wsId,
         streamId: thread.id,
         messageId: reply.id,

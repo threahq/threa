@@ -134,7 +134,11 @@ describe("Workspace bootstrap excludes threads rooted in archived streams", () =
       content: "reply after archive",
     })
     expect(status).toBe(403)
-    expect((data as { error?: string }).error).toBe("Cannot send messages to a thread under an archived stream")
+    expect(data).toMatchObject({
+      error: "This stream is read-only",
+      code: "STREAM_READ_ONLY",
+      details: { reason: "archived" },
+    })
   })
 
   test("a socket joined only to a thread's room receives the root's stream:archived event", async () => {

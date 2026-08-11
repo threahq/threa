@@ -683,7 +683,7 @@ export class PersonaConfigService {
       // override is already committed, so a failed archive leaves an archivable
       // scratchpad, not corrupt state.
       try {
-        await this.streamService.archiveStream(txnResult.testStreamId, callerId)
+        await this.streamService.archiveStream(txnResult.testStreamId, workspaceId, callerId)
       } catch (error) {
         logger.warn(
           { error, workspaceId, agentId, testStreamId: txnResult.testStreamId },
@@ -825,7 +825,7 @@ export class PersonaConfigService {
     // prevents the orphan. Re-archiving an already-archived stream is a no-op, so a
     // delete that fails after a successful archive self-heals on the next discard.
     if (draft.testStreamId) {
-      await this.streamService.archiveStream(draft.testStreamId, callerId)
+      await this.streamService.archiveStream(draft.testStreamId, workspaceId, callerId)
     }
     await PersonaConfigDraftRepository.deleteByOwner(this.pool, workspaceId, agentId, callerId)
   }
@@ -1027,7 +1027,7 @@ export class PersonaConfigService {
       // and post-commit only (a 409 must never kill the chat; the row is already
       // committed so a failed archive just leaves an archivable scratchpad).
       try {
-        await this.streamService.archiveStream(txnResult.testStreamId, callerId)
+        await this.streamService.archiveStream(txnResult.testStreamId, workspaceId, callerId)
       } catch (error) {
         logger.warn(
           { error, workspaceId, personaId, testStreamId: txnResult.testStreamId },

@@ -28,7 +28,9 @@ function createResponse(): Response {
 function createHandlers(overrides: Partial<PublicApiDeps> = {}): ReturnType<typeof createPublicApiHandlers> {
   const eventService = {
     createMessage: mock(() => Promise.resolve({ id: "msg_new" })),
-    editMessage: mock(() => Promise.resolve({ id: "msg_new" })),
+    assertStreamWritableForPrincipal: mock(() => Promise.resolve()),
+    createMessageForPrincipalReturningConversation: mock(() => Promise.resolve({ message: { id: "msg_new" } })),
+    editMessageForPrincipal: mock(() => Promise.resolve({ id: "msg_new" })),
     getMessageById: mock(() =>
       Promise.resolve({ id: "msg_1", streamId: "stream_1", authorId: "usr_1", deletedAt: null })
     ),
@@ -38,7 +40,6 @@ function createHandlers(overrides: Partial<PublicApiDeps> = {}): ReturnType<type
   } as unknown as StreamService
 
   const deps: PublicApiDeps = {
-    eventService,
     streamService,
     searchService: {} as PublicApiDeps["searchService"],
     memoExplorerService: {} as PublicApiDeps["memoExplorerService"],
@@ -50,6 +51,7 @@ function createHandlers(overrides: Partial<PublicApiDeps> = {}): ReturnType<type
     pool: {} as PublicApiDeps["pool"],
     io: {} as PublicApiDeps["io"],
     ...overrides,
+    eventService: { ...eventService, ...(overrides.eventService as object | undefined) } as unknown as EventService,
   }
   return createPublicApiHandlers(deps)
 }
@@ -86,23 +88,63 @@ describe("public API E2E-stream plaintext gate", () => {
     expect(createMessage).not.toHaveBeenCalled()
   })
 
-  it("rejects a plaintext updateMessage into an E2E stream with 400", async () => {
-    spyOn(E2eStreamsRepository, "isE2eStream").mockResolvedValue(true)
-    const editMessage = mock(() => Promise.resolve({ id: "msg_1" }))
-    const handlers = createHandlers({
-      eventService: {
-        editMessage,
-        getMessageById: mock(() =>
-          Promise.resolve({ id: "msg_1", streamId: "stream_1", authorId: "usr_1", deletedAt: null })
-        ),
-      } as unknown as EventService,
-    })
+  it("lets guarded edit resolve authority before preserving the E2E edit code", async () => {
+    const editMessageForPrincipal = mock(() =>
+      Promise.reject(Object.assign(new Error("sealed"), { status: 400, code: "E2E_STREAM_EDIT_UNSUPPORTED" }))
+    )
+    const handlers = createHandlers({ eventService: { editMessageForPrincipal } as unknown as EventService })
 
     await expect(handlers.updateMessage(userRequest(), createResponse())).rejects.toMatchObject({
       status: 400,
-      code: "E2E_STREAM_PLAINTEXT_UNSUPPORTED",
+      code: "E2E_STREAM_EDIT_UNSUPPORTED",
     })
-    expect(editMessage).not.toHaveBeenCalled()
+    expect(editMessageForPrincipal).toHaveBeenCalled()
+  })
+
+  it("defers ownership until guarded authority: inaccessible other-owned and missing are both 404", async () => {
+    for (const snapshot of [
+      { id: "msg_private", streamId: "stream_private", authorId: "usr_other", deletedAt: null },
+      null,
+    ]) {
+      const editMessageForPrincipal = mock(() =>
+        Promise.reject(Object.assign(new Error("hidden"), { status: 404, code: "STREAM_NOT_FOUND" }))
+      )
+      const handlers = createHandlers({
+        eventService: {
+          getMessageById: mock(() => Promise.resolve(snapshot)),
+          editMessageForPrincipal,
+        } as unknown as EventService,
+      })
+      await expect(handlers.updateMessage(userRequest(), createResponse())).rejects.toMatchObject({ status: 404 })
+      expect(editMessageForPrincipal).toHaveBeenCalled()
+    }
+  })
+
+  it("preserves 403 for an accessible message owned by another actor", async () => {
+    const editMessageForPrincipal = mock(() =>
+      Promise.reject(Object.assign(new Error("owner"), { status: 403, code: "FORBIDDEN" }))
+    )
+    const handlers = createHandlers({
+      eventService: {
+        getMessageById: mock(() => Promise.resolve({ id: "msg_other", streamId: "stream_1", authorId: "usr_other" })),
+        editMessageForPrincipal,
+      } as unknown as EventService,
+    })
+    await expect(handlers.updateMessage(userRequest(), createResponse())).rejects.toMatchObject({
+      status: 403,
+      code: "FORBIDDEN",
+    })
+  })
+
+  it("returns a structured 404 for archived bot CRUD", async () => {
+    spyOn(BotRepository, "findById").mockResolvedValue({ id: "bot_1", archivedAt: new Date() } as never)
+    const handlers = createHandlers()
+    await expect(
+      handlers.deleteMessage(
+        userRequest({ userApiKey: undefined, user: undefined, botApiKey: { botId: "bot_1" } } as never),
+        createResponse()
+      )
+    ).rejects.toMatchObject({ status: 404, code: "NOT_FOUND" })
   })
 
   it("rejects a bot-invocation completion targeting an E2E stream with 400 (E2EE-2)", async () => {
@@ -272,7 +314,7 @@ describe("public API E2E-stream plaintext gate", () => {
 
   it("lets a plaintext sendMessage into a non-E2E stream through to createMessage", async () => {
     spyOn(E2eStreamsRepository, "isE2eStream").mockResolvedValue(false)
-    const createMessageReturningConversation = mock(() =>
+    const createMessageForPrincipalReturningConversation = mock(() =>
       Promise.resolve({
         message: {
           id: "msg_new",
@@ -292,13 +334,13 @@ describe("public API E2E-stream plaintext gate", () => {
     )
     const handlers = createHandlers({
       eventService: {
-        createMessageReturningConversation,
+        createMessageForPrincipalReturningConversation,
         getMessageById: mock(() => Promise.resolve(null)),
       } as unknown as EventService,
     })
 
     await handlers.sendMessage(userRequest(), createResponse())
-    expect(createMessageReturningConversation).toHaveBeenCalled()
+    expect(createMessageForPrincipalReturningConversation).toHaveBeenCalled()
   })
 })
 
@@ -320,7 +362,7 @@ describe("public API bot send trace stamping", () => {
   function sendHarness() {
     spyOn(E2eStreamsRepository, "isE2eStream").mockResolvedValue(false)
     spyOn(BotRepository, "findById").mockResolvedValue({ id: "bot_1", name: "Bot", archivedAt: null } as never)
-    const createMessageReturningConversation = mock(() =>
+    const createMessageForPrincipalReturningConversation = mock(() =>
       Promise.resolve({
         message: {
           id: "msg_new",
@@ -343,12 +385,12 @@ describe("public API bot send trace stamping", () => {
     } as unknown as PublicApiDeps["botChannelService"]
     const handlers = createHandlers({
       eventService: {
-        createMessageReturningConversation,
+        createMessageForPrincipalReturningConversation,
         getMessageById: mock(() => Promise.resolve(null)),
       } as unknown as EventService,
       botChannelService,
     })
-    return { handlers, createMessageReturningConversation }
+    return { handlers, createMessageForPrincipalReturningConversation }
   }
 
   it("stamps sessionId when a running session on the stream belongs to this bot", async () => {
@@ -356,11 +398,12 @@ describe("public API bot send trace stamping", () => {
       id: "session_1",
       personaId: "bot_1",
     } as never)
-    const { handlers, createMessageReturningConversation } = sendHarness()
+    const { handlers, createMessageForPrincipalReturningConversation } = sendHarness()
 
     await handlers.sendMessage(botRequest(), createResponse())
 
-    expect(createMessageReturningConversation).toHaveBeenCalledWith(
+    expect(createMessageForPrincipalReturningConversation).toHaveBeenCalledWith(
+      { kind: "bot", botId: "bot_1" },
       expect.objectContaining({ sessionId: "session_1", authorId: "bot_1" })
     )
   })
@@ -370,20 +413,26 @@ describe("public API bot send trace stamping", () => {
       id: "session_1",
       personaId: "bot_2",
     } as never)
-    const { handlers, createMessageReturningConversation } = sendHarness()
+    const { handlers, createMessageForPrincipalReturningConversation } = sendHarness()
 
     await handlers.sendMessage(botRequest(), createResponse())
 
-    expect(createMessageReturningConversation).toHaveBeenCalledWith(expect.objectContaining({ sessionId: undefined }))
+    expect(createMessageForPrincipalReturningConversation).toHaveBeenCalledWith(
+      { kind: "bot", botId: "bot_1" },
+      expect.objectContaining({ sessionId: undefined })
+    )
   })
 
   it("does not stamp when no session is running on the stream", async () => {
     spyOn(AgentSessionRepository, "findRunningByStream").mockResolvedValue(null)
-    const { handlers, createMessageReturningConversation } = sendHarness()
+    const { handlers, createMessageForPrincipalReturningConversation } = sendHarness()
 
     await handlers.sendMessage(botRequest(), createResponse())
 
-    expect(createMessageReturningConversation).toHaveBeenCalledWith(expect.objectContaining({ sessionId: undefined }))
+    expect(createMessageForPrincipalReturningConversation).toHaveBeenCalledWith(
+      { kind: "bot", botId: "bot_1" },
+      expect.objectContaining({ sessionId: undefined })
+    )
   })
 })
 

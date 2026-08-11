@@ -523,44 +523,15 @@ export function createBotHandlers({ botApiKeyService, avatarService, streamServi
       const workspaceId = req.workspaceId!
       const { botId: id, streamId } = req.params
 
-      await withTransaction(pool, async (client) => {
-        // Lock bot and stream rows to prevent race conditions
-        const { rows: botRows } = await client.query<{ archived_at: Date | null }>(sql`
-          SELECT archived_at FROM bots
-          WHERE id = ${id} AND workspace_id = ${workspaceId}
-          FOR UPDATE
-        `)
-        if (botRows.length === 0 || botRows[0].archived_at !== null) {
-          throw new HttpError("Bot not found or archived", { status: 404, code: "NOT_FOUND" })
-        }
-
-        const { rows: streamRows } = await client.query<{ archived_at: Date | null }>(sql`
-          SELECT archived_at FROM streams
-          WHERE id = ${streamId} AND workspace_id = ${workspaceId}
-          FOR UPDATE
-        `)
-        if (streamRows.length === 0 || streamRows[0].archived_at !== null) {
-          throw new HttpError("Stream not found", { status: 404, code: "NOT_FOUND" })
-        }
-
-        // Personal bot owners must be members of the target stream
-        if (req.bot!.type === BotTypes.PERSONAL) {
-          const ownerId = resolveWorkspaceUserActorId(req)
-          if (!ownerId) {
-            throw new HttpError("Not authenticated", { status: 401, code: "UNAUTHORIZED" })
-          }
-          const ownerIsMember = await streamService.isMemberOn(client, streamId, ownerId)
-          if (!ownerIsMember) {
-            throw new HttpError("Forbidden", { status: 403, code: "FORBIDDEN" })
-          }
-        }
-
-        const grantActorId = resolveGrantActorId(req)
-        if (!grantActorId) {
-          throw new HttpError("Not authenticated", { status: 401, code: "UNAUTHORIZED" })
-        }
-        await streamService.addBotToStreamOn(client, streamId, id, workspaceId, grantActorId)
-      })
+      const personalOwnerId = req.bot!.type === BotTypes.PERSONAL ? resolveWorkspaceUserActorId(req) : undefined
+      if (req.bot!.type === BotTypes.PERSONAL && !personalOwnerId) {
+        throw new HttpError("Not authenticated", { status: 401, code: "UNAUTHORIZED" })
+      }
+      const grantActorId = resolveGrantActorId(req)
+      if (!grantActorId) {
+        throw new HttpError("Not authenticated", { status: 401, code: "UNAUTHORIZED" })
+      }
+      await streamService.addBotToStream(streamId, id, workspaceId, grantActorId, personalOwnerId ?? undefined)
 
       res.status(204).send()
     },

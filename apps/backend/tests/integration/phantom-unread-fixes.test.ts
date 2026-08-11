@@ -76,7 +76,7 @@ describe("Phantom-unread drift fixes", () => {
       messageIds: [movedA, movedB],
       actorId: actor.id,
     })
-    await eventService.moveMessagesToThread({
+    await eventService.moveMessagesToThreadInternal({
       workspaceId: wid,
       sourceStreamId: source,
       targetMessageId: target,
@@ -129,7 +129,7 @@ describe("Phantom-unread drift fixes", () => {
       messageIds: [m2, m3],
       actorId: actor.id,
     })
-    await eventService.moveMessagesToThread({
+    await eventService.moveMessagesToThreadInternal({
       workspaceId: wid,
       sourceStreamId: source,
       targetMessageId: target,
@@ -178,7 +178,7 @@ describe("Phantom-unread drift fixes", () => {
       [activityId(), wid, recipient.id, source, msg, actor.id]
     )
 
-    await eventService.deleteMessage({
+    await eventService.deleteMessageInternal({
       workspaceId: wid,
       streamId: source,
       messageId: msg,

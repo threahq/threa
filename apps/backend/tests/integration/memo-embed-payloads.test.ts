@@ -187,7 +187,7 @@ describe("memo embed summaries on message payloads", () => {
       ...testMessageContent("nothing cited yet"),
     })
 
-    await eventService.editMessage({
+    await eventService.editMessageInternal({
       workspaceId: testWorkspaceId,
       messageId: message.id,
       streamId: channel,
@@ -210,7 +210,7 @@ describe("memo embed summaries on message payloads", () => {
       ...bodyCiting("cited", [sameStreamMemo]),
     })
 
-    await eventService.editMessage({
+    await eventService.editMessageInternal({
       workspaceId: testWorkspaceId,
       messageId: message.id,
       streamId: channel,
@@ -235,7 +235,7 @@ describe("memo embed summaries on message payloads", () => {
         authorType: "user",
         ...bodyCiting("first", [sameStreamMemo]),
       })
-      await eventService.editMessage({
+      await eventService.editMessageInternal({
         workspaceId: testWorkspaceId,
         messageId: message.id,
         streamId: channel,
@@ -263,7 +263,7 @@ describe("memo embed summaries on message payloads", () => {
         authorType: "user",
         ...bodyCiting("cited", [sameStreamMemo]),
       })
-      await eventService.editMessage({
+      await eventService.editMessageInternal({
         workspaceId: testWorkspaceId,
         messageId: message.id,
         streamId: channel,

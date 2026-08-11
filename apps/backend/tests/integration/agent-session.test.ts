@@ -381,7 +381,7 @@ describe("Message Repository - listSince", () => {
       ...testMessageContent("Third"),
     })
 
-    await eventService.deleteMessage({
+    await eventService.deleteMessageInternal({
       workspaceId: testWorkspaceId,
       streamId: testStreamId,
       messageId: msg2.id,

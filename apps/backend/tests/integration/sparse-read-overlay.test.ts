@@ -272,7 +272,7 @@ describe("Sparse read overlay", () => {
 
     // msg2 deleted: nobody can ever read it, so it must not hold the watermark
     // down. Reading msg1 + msg3 compacts the whole run.
-    await eventService.deleteMessage({ workspaceId: wid, streamId: sid, messageId: msg2, actorId: authorId })
+    await eventService.deleteMessageInternal({ workspaceId: wid, streamId: sid, messageId: msg2, actorId: authorId })
     const snapshot = await withTransaction(pool, (client) =>
       applySparseRead(client, { workspaceId: wid, streamId: sid, memberId: reader, messageIds: [msg1, msg3] })
     )
@@ -293,8 +293,8 @@ describe("Sparse read overlay", () => {
     // must lift the watermark over the dead tail to msg3, or the stream can
     // never fully read from the board (the compaction window is bounded by the
     // overlay's max sequence, which sits below the deleted run).
-    await eventService.deleteMessage({ workspaceId: wid, streamId: sid, messageId: msg2, actorId: authorId })
-    await eventService.deleteMessage({ workspaceId: wid, streamId: sid, messageId: msg3, actorId: authorId })
+    await eventService.deleteMessageInternal({ workspaceId: wid, streamId: sid, messageId: msg2, actorId: authorId })
+    await eventService.deleteMessageInternal({ workspaceId: wid, streamId: sid, messageId: msg3, actorId: authorId })
     const snapshot = await withTransaction(pool, (client) =>
       applySparseRead(client, { workspaceId: wid, streamId: sid, memberId: reader, messageIds: [msg1] })
     )
@@ -370,7 +370,7 @@ describe("Sparse read overlay", () => {
     )
     expect(await SparseReadRepository.countOverlay(pool, sid, reader)).toBe(1)
 
-    await streamService.removeMember(sid, reader)
+    await streamService.removeMember(sid, reader, wid, other)
 
     expect(await SparseReadRepository.countOverlay(pool, sid, reader)).toBe(0)
     // The other member's overlay state is untouched by reader's removal.
