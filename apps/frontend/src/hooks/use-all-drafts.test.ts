@@ -328,6 +328,27 @@ describe("useAllDrafts board-composer drafts", () => {
     })
   })
 
+  it("does not re-run the board read when an unrelated draft is written", async () => {
+    // The board query keys on the board scopes only. Keyed on every scope, an
+    // unrelated draft write re-fires it, `loaded` drops, and the whole page
+    // flips to its loading state on a warm interaction.
+    await seedConversation("conv_keyed", "stream_9", "GPU budget")
+    await db.drafts.add(syncedDraft({ id: "draft_board_keyed", scope: "board:reply:conv_keyed" }))
+
+    const { wrapper } = createWrapper()
+    const { result } = renderHook(() => useAllDrafts(workspaceId), { wrapper })
+    await waitFor(() => expect(result.current.drafts).toHaveLength(1))
+
+    const bulkGet = vi.spyOn(db.conversations, "bulkGet")
+    await act(async () => {
+      await db.drafts.add(syncedDraft({ id: "draft_unrelated", scope: "stream:stream_other" }))
+    })
+    await waitFor(() => expect(result.current.drafts).toHaveLength(2))
+
+    expect(bulkGet).not.toHaveBeenCalled()
+    expect(result.current.isLoading).toBe(false)
+  })
+
   it("counts board drafts in the sidebar summary without flagging a stream hint", async () => {
     await db.drafts.add(syncedDraft({ id: "draft_b5", scope: "board:reply:conv_1" }))
     await db.drafts.add(syncedDraft({ id: "draft_s9", scope: "stream:stream_1" }))

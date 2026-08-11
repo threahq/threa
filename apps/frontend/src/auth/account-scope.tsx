@@ -13,6 +13,7 @@ import { resetActorLookups } from "@/stores/actor-lookup"
 import { bumpAccountGeneration } from "@/db/event-writes"
 import { resetStreamStoreCache } from "@/stores/stream-store"
 import { resetDraftStoreCache } from "@/stores/draft-store"
+import { resetDraftContextCache } from "@/hooks/use-board-draft-context"
 import { resetShareHandoffStoreCache } from "@/stores/share-handoff-store"
 import { resetComposeOverlayStoreCache } from "@/stores/compose-overlay-store"
 import { resetBoardFlashStoreCache } from "@/stores/board-flash-store"
@@ -88,6 +89,7 @@ function flushModuleStoreCaches(): void {
   resetRowConfirmations()
   resetStreamStoreCache()
   resetDraftStoreCache()
+  resetDraftContextCache()
   resetShareHandoffStoreCache()
   resetSnippetRequestStoreCache()
   resetConversationReplyOpenStoreCache()

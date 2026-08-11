@@ -452,11 +452,15 @@ export function useAllDrafts(workspaceId: string) {
     return ids
   }, [composerLoaded])
 
-  // Stable signature over the set of draft scopes so the board-context queries
-  // below (gated on the board-scoped ids they reference) don't re-fire on every
-  // unrelated draft write — `useDraftsFromStore` hands back a fresh array
-  // reference each time.
-  const scopesSignature = useMemo(() => draftScopesSignature(allDrafts.map((draft) => draft.scope)), [allDrafts])
+  // The `board:*` scopes only: the board read re-fires when this changes, and
+  // keying it on every scope would re-fire it (and drop `loaded`) on an
+  // unrelated draft write — `useDraftsFromStore` hands back a fresh array each
+  // time. "" also means "no board draft", which is what lets the gate skip
+  // waiting on a read that resolves to nothing.
+  const boardScopesSignature = useMemo(
+    () => draftScopesSignature(allDrafts.map((draft) => draft.scope).filter((scope) => parseBoardDraftKey(scope))),
+    [allDrafts]
+  )
 
   // Build a map of stream ID -> stream for quick lookup
   const streamMap = useMemo(() => {
@@ -480,14 +484,7 @@ export function useAllDrafts(workspaceId: string) {
     hostPostByMessageId: subtopicHostByMessageId,
     parentPostByBranchConversationId,
     loaded: boardContextLoaded,
-  } = useBoardDraftContext(workspaceId, scopesSignature)
-
-  // "" when no draft is board-scoped — the board read resolves to nothing, so
-  // waiting on it would hold the list forever for the common case.
-  const boardScopesSignature = useMemo(
-    () => draftScopesSignature(allDrafts.map((draft) => draft.scope).filter((scope) => parseBoardDraftKey(scope))),
-    [allDrafts]
-  )
+  } = useBoardDraftContext(workspaceId, boardScopesSignature)
 
   // Parent-message → host-stream map for thread drafts (shared with the sidebar
   // badge so both resolve thread-draft location/archival identically).
@@ -770,8 +767,8 @@ export function useDraftSummary(workspaceId: string): DraftSummary {
     threadScopesSignature
   )
 
-  // Board scopes only — the same shared, id-keyed read the explorer makes, so
-  // both sides decide a board draft's archived host from one map.
+  // The same board-scoped read the explorer makes, so both sides decide a board
+  // draft's archived host from one map.
   const boardScopesSignature = useMemo(
     () => draftScopesSignature(allDrafts.map((draft) => draft.scope).filter((scope) => parseBoardDraftKey(scope))),
     [allDrafts]
