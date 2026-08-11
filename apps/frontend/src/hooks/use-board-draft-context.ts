@@ -151,6 +151,23 @@ export function resetDraftContextCache(): void {
 }
 
 /**
+ * `useLiveQuery` keeps serving the PREVIOUS deps' result while the query for the
+ * new ones is still in flight — its internal "has a result" latch is set once and
+ * never reset. A consumer reading `loaded` off that value would take a context
+ * resolved for the ids it just left as resolved for the ids it now asks about,
+ * and decide (say) that no host is archived. The stamp is what separates
+ * "resolved for these ids" from "resolved for the ones we left".
+ */
+function stamp<T>(key: string, value: T): { key: string; value: T } {
+  return { key, value }
+}
+
+function readStamped<T>(live: { key: string; value: T } | undefined, key: string, empty: T): T {
+  if (live?.key === key) return live.value
+  return recallResolved(key, empty)
+}
+
+/**
  * The cached conversations a set of `board:*` draft scopes references, resolved
  * once for every consumer (the drafts explorer's location labels, the composer
  * pile's landing sites) so the two can't drift (INV-35). Keyed on the ids the
@@ -161,10 +178,10 @@ export function useBoardDraftContext(workspaceId: string, scopesSignature: strin
   const keys = useMemo(() => scopeKeys(scopesSignature), [scopesSignature])
   const retentionKey = `${workspaceId}|board|${scopesSignature}`
   const live = useLiveQuery(
-    async () => rememberResolved(retentionKey, await loadBoardDraftContext(workspaceId, keys)),
+    async () => stamp(retentionKey, rememberResolved(retentionKey, await loadBoardDraftContext(workspaceId, keys))),
     [workspaceId, keys]
   )
-  return live ?? recallResolved(retentionKey, EMPTY_CONTEXT)
+  return readStamped(live, retentionKey, EMPTY_CONTEXT)
 }
 
 /**
@@ -229,8 +246,12 @@ async function loadThreadAnchorContext(workspaceId: string, anchorIdKey: string)
 export function useThreadAnchorContext(workspaceId: string, anchorIdsSignature: string): ThreadAnchorContext {
   const retentionKey = `${workspaceId}|thread|${anchorIdsSignature}`
   const live = useLiveQuery(
-    async () => rememberResolved(retentionKey, await loadThreadAnchorContext(workspaceId, anchorIdsSignature)),
+    async () =>
+      stamp(
+        retentionKey,
+        rememberResolved(retentionKey, await loadThreadAnchorContext(workspaceId, anchorIdsSignature))
+      ),
     [workspaceId, anchorIdsSignature]
   )
-  return live ?? recallResolved(retentionKey, EMPTY_ANCHOR_CONTEXT)
+  return readStamped(live, retentionKey, EMPTY_ANCHOR_CONTEXT)
 }

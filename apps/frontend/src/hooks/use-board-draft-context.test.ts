@@ -51,6 +51,25 @@ describe("useBoardDraftContext retention", () => {
     expect(explorerAgain.result.current.boardPostMap.has("conv_1")).toBe(true)
   })
 
+  it("does not report a signature as loaded while its read is still in flight", async () => {
+    // The live query keeps serving the previous signature's result until the new
+    // one settles, so an unstamped read would call a context resolved for the
+    // ids we just left "loaded" for the ids we are asking about now.
+    const { result, rerender } = renderHook(({ signature }) => useBoardDraftContext(workspaceId, signature), {
+      initialProps: { signature: "board:reply:conv_1" },
+    })
+    await waitFor(() => expect(result.current.loaded).toBe(true))
+
+    rerender({ signature: "board:reply:conv_2" })
+    expect({ loaded: result.current.loaded, holdsOldConversation: result.current.boardPostMap.has("conv_1") }).toEqual({
+      loaded: false,
+      holdsOldConversation: false,
+    })
+
+    await waitFor(() => expect(result.current.loaded).toBe(true))
+    expect(result.current.boardPostMap.has("conv_2")).toBe(true)
+  })
+
   it("resolves to a fresh read for a signature it has not held", async () => {
     const { result } = renderHook(() => useBoardDraftContext(workspaceId, "board:reply:conv_2"))
     expect(result.current.loaded).toBe(false)
