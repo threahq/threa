@@ -22,6 +22,7 @@ import type { DraftActionContext } from "@/components/drafts/draft-actions"
 import { ItemList, type QuickSwitcherItem } from "@/components/quick-switcher"
 import { SidebarToggle } from "@/components/layout"
 import { cn } from "@/lib/utils"
+import { draftEmptyBodyLabel } from "@/lib/drafts/decryption"
 import { useAllDrafts, type UnifiedDraft, type DraftType } from "@/hooks"
 
 const TYPE_ICONS: Record<DraftType, React.ComponentType<{ className?: string }>> = {
@@ -178,7 +179,7 @@ export function DraftsPage() {
         description = description ? `${description}${attachmentSuffix}` : attachmentSuffix
       }
 
-      const label = draft.isStashed ? draft.preview || "Empty draft" : draft.displayName
+      const label = draft.isStashed ? draft.preview || draftEmptyBodyLabel(draft.attachmentCount) : draft.displayName
       let icon: React.ComponentType<{ className?: string }>
       if (draft.isStashed) {
         icon = Bookmark

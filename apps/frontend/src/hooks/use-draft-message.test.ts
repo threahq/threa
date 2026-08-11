@@ -338,6 +338,53 @@ describe("useDraftMessage", () => {
 
       expect(putSpy).not.toHaveBeenCalled()
     })
+
+    it("adds several files picked at once to ONE detached row", async () => {
+      // Uploads finishing together queue one call each, all before the first
+      // one's create resolves. Honoring their null identity forked a detached
+      // row per file (ten one-attachment drafts in a DM, all surviving the send).
+      await upsertLoadedDraft(workspaceId, draftKey, { contentJson: makeDoc("typed"), attachments: [] })
+      const pointerId = (await db.composerLoaded.get(draftKey))?.draftId
+      const contentDraftIdRef = { current: null as string | null }
+      const { result } = renderHook(() => useDraftMessage(workspaceId, draftKey, undefined, contentDraftIdRef))
+
+      await act(async () => {
+        await Promise.all([
+          result.current.addAttachment({ id: "attach_a", filename: "a.png", mimeType: "image/png", sizeBytes: 1 }),
+          result.current.addAttachment({ id: "attach_b", filename: "b.png", mimeType: "image/png", sizeBytes: 2 }),
+        ])
+      })
+
+      const rows = await db.drafts.where("[workspaceId+scope]").equals([workspaceId, draftKey]).toArray()
+      const detached = rows.filter((row) => row.id !== pointerId)
+      expect(detached).toHaveLength(1)
+      expect(detached[0].attachments.map((a) => a.id)).toEqual(["attach_a", "attach_b"])
+      // The pointer draft is untouched: this composer never hydrated it.
+      expect(rows.find((row) => row.id === pointerId)?.attachments).toEqual([])
+    })
+
+    it("does not mint another detached row for a file a sibling draft already holds", async () => {
+      // The per-row duplicate check looks at a row that does not exist yet, so
+      // only a scope-wide look can stop the persistence effect's re-run (it
+      // fires per upload tick) from minting a fresh copy every time.
+      await upsertLoadedDraft(workspaceId, draftKey, { contentJson: makeDoc("typed"), attachments: [] })
+      const attachment = { id: "attach_a", filename: "a.png", mimeType: "image/png", sizeBytes: 1 }
+      const contentDraftIdRef = { current: null as string | null }
+      const { result } = renderHook(() => useDraftMessage(workspaceId, draftKey, undefined, contentDraftIdRef))
+
+      await act(async () => {
+        await result.current.addAttachment(attachment)
+      })
+      // The composer loses its identity again (a remount, a pointer flicker) and
+      // the effect re-fires with the same uploaded file.
+      contentDraftIdRef.current = null
+      await act(async () => {
+        await result.current.addAttachment(attachment)
+      })
+
+      const rows = await db.drafts.where("[workspaceId+scope]").equals([workspaceId, draftKey]).toArray()
+      expect(rows).toHaveLength(2)
+    })
   })
 
   describe("removeAttachment", () => {

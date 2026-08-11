@@ -179,6 +179,17 @@ export function draftDecryptionToPreview(decryption: DraftDecryption): DraftPrev
   return { text: "", markdown: "", status: "decrypting" } // pending / none
 }
 
+/**
+ * Label for a draft row whose body renders no text. An attachment-only draft is
+ * real, unsent payload — naming its files is the only truthful thing to show, so
+ * every draft-listing surface (composer stash pile, drafts explorer) reads it
+ * from here rather than each deciding what "no text" means.
+ */
+export function draftEmptyBodyLabel(attachmentCount: number): string {
+  if (attachmentCount > 0) return `${attachmentCount} attachment${attachmentCount === 1 ? "" : "s"}`
+  return "Empty draft"
+}
+
 /** User-facing label for a non-ready preview status. */
 export function draftPreviewStatusLabel(status: Exclude<DraftPreviewStatus, "ready">): string {
   if (status === "decrypting") return "Decrypting…"

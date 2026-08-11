@@ -359,6 +359,21 @@ describe("put-away annotation", () => {
     expect(roamedRow?.textContent).not.toContain("Stashed")
   })
 
+  it("names the files of an attachment-only row instead of calling it empty", () => {
+    // An attachment-only draft has no body text but is real, unsent payload —
+    // exactly what the composer's stash pile already says (`draftEmptyBodyLabel`).
+    mockDrafts([
+      draft({ id: "a", displayName: "Alpha", isStashed: true, preview: "", attachmentCount: 1 }),
+      draft({ id: "b", displayName: "Bravo", isStashed: true, preview: "", attachmentCount: 3 }),
+      draft({ id: "c", displayName: "Charlie", isStashed: true, preview: "", attachmentCount: 0 }),
+    ])
+    renderPage()
+
+    expect(screen.getByText("1 attachment")).toBeInTheDocument()
+    expect(screen.getByText("3 attachments")).toBeInTheDocument()
+    expect(screen.getByText("Empty draft")).toBeInTheDocument()
+  })
+
   it("keeps the active preview when a durable marker remains on a locally loaded row", () => {
     mockDrafts([
       draft({ id: "c", displayName: "Charlie", isStashed: false, putAway: true, preview: "active-looking body" }),
