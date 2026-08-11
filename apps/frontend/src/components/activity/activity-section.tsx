@@ -10,12 +10,12 @@ interface ActivitySectionProps {
 export function ActivitySection({ label, count, children }: ActivitySectionProps) {
   return (
     <section aria-label={label} className="mb-4 last:mb-0">
-      {/* Transparent 2px border mirrors the rows' unread rail so the label
-          lines up with their text instead of sitting 2px to its left. */}
-      <div className="sticky top-0 z-10 flex items-center gap-2 border-l-2 border-transparent bg-background/90 px-3 py-1.5 backdrop-blur-sm sm:px-4">
+      {/* Left padding clears the rows' 4px urgency strip so the label lines up
+          with their text rather than with the strip. */}
+      <div className="sticky top-0 z-10 flex items-center gap-2 bg-background/90 py-1.5 pl-4 pr-3 backdrop-blur-sm sm:pl-5 sm:pr-4">
         <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">{label}</span>
         {count !== undefined && count > 0 && (
-          <span className="rounded-full bg-primary/15 px-1.5 py-px text-[10px] font-semibold tabular-nums text-primary">
+          <span className="rounded-full bg-muted px-1.5 py-px text-[10px] font-semibold tabular-nums text-muted-foreground">
             {count}
           </span>
         )}

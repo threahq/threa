@@ -80,9 +80,9 @@ describe("ActivityPage sections", () => {
       getActorName: (id: string) => `actor ${id}`,
       getActorAvatar: () => ({ fallback: "A" }),
     } as unknown as ReturnType<typeof hooksModule.useActors>)
-    vi.spyOn(emojiModule, "useWorkspaceEmoji").mockReturnValue({ toEmoji: () => null } as unknown as ReturnType<
-      typeof emojiModule.useWorkspaceEmoji
-    >)
+    vi.spyOn(emojiModule, "useWorkspaceEmoji").mockReturnValue({
+      toEmoji: (shortcode: string) => (shortcode === "heart" ? "❤️" : null),
+    } as unknown as ReturnType<typeof emojiModule.useWorkspaceEmoji>)
     vi.spyOn(countsModule, "useActivityCounts").mockReturnValue({ unreadActivityCount: 0 } as unknown as ReturnType<
       typeof countsModule.useActivityCounts
     >)
@@ -115,6 +115,15 @@ describe("ActivityPage sections", () => {
     expect(rows[0]).toContain("preview a")
     expect(screen.queryByRole("region", { name: "Earlier" })).not.toBeInTheDocument()
     expect(within(screen.getByRole("region", { name: "Unread" })).getByText("1")).toBeInTheDocument()
+  })
+
+  it("shows a reaction's own emoji, resolving the shortcode the wire may carry", () => {
+    mockFeed([activity("r", { activityType: "reaction", emoji: ":heart:" })])
+    render(page(new QueryClient()))
+
+    const row = within(screen.getByRole("region", { name: "Unread" })).getByRole("link")
+    expect(row.textContent).toContain("❤️")
+    expect(row.textContent).not.toContain(":heart:")
   })
 
   it("renders one flat list when nothing is unread", () => {
