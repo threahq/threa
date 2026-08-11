@@ -117,23 +117,32 @@ async function loadBoardDraftContext(workspaceId: string, keys: ScopeKeys): Prom
 }
 
 /**
- * The last resolved value per slot (`workspace|kind`), one entry each. A remount
- * re-runs the query from `undefined`, and falling back to the empty default
- * would report `loaded: false` again — a consumer holding its UI on that flag
- * blinks on every warm navigation, though the value it is about to re-resolve to
- * is the one already held here. The signature is checked too, so a changed set
- * of scopes falls back to the empty default rather than answering for other ids.
+ * Resolved values held across remounts, keyed by `workspace|kind|signature`. A
+ * remount re-runs the query from `undefined`, and falling back to the empty
+ * default would report `loaded: false` again — a consumer holding its UI on that
+ * flag blinks on every warm navigation, though the value it is about to
+ * re-resolve to is the one held here. The signature is part of the key, not a
+ * check against a single slot: the sidebar, the explorer and every mounted
+ * composer read this with DIFFERENT signatures at the same time, and one shared
+ * slot would have them evict each other's entry on every write. Bounded, since
+ * a signature changes with the draft set: oldest key out past the cap.
  */
-const lastResolved = new Map<string, { signature: string; value: unknown }>()
+const RETAINED_CONTEXTS = 8
+const lastResolved = new Map<string, unknown>()
 
-function rememberResolved<T>(slot: string, signature: string, value: T): T {
-  lastResolved.set(slot, { signature, value })
+function rememberResolved<T>(key: string, value: T): T {
+  lastResolved.delete(key)
+  lastResolved.set(key, value)
+  if (lastResolved.size > RETAINED_CONTEXTS) {
+    const oldest = lastResolved.keys().next()
+    if (!oldest.done) lastResolved.delete(oldest.value)
+  }
   return value
 }
 
-function recallResolved<T>(slot: string, signature: string, empty: T): T {
-  const held = lastResolved.get(slot)
-  return held?.signature === signature ? (held.value as T) : empty
+function recallResolved<T>(key: string, empty: T): T {
+  const held = lastResolved.get(key)
+  return held === undefined ? empty : (held as T)
 }
 
 /** Drop retained context values (account switch, tests). */
@@ -150,12 +159,12 @@ export function resetDraftContextCache(): void {
  */
 export function useBoardDraftContext(workspaceId: string, scopesSignature: string): BoardDraftContext {
   const keys = useMemo(() => scopeKeys(scopesSignature), [scopesSignature])
-  const slot = `${workspaceId}|board`
+  const retentionKey = `${workspaceId}|board|${scopesSignature}`
   const live = useLiveQuery(
-    async () => rememberResolved(slot, scopesSignature, await loadBoardDraftContext(workspaceId, keys)),
+    async () => rememberResolved(retentionKey, await loadBoardDraftContext(workspaceId, keys)),
     [workspaceId, keys]
   )
-  return live ?? recallResolved(slot, scopesSignature, EMPTY_CONTEXT)
+  return live ?? recallResolved(retentionKey, EMPTY_CONTEXT)
 }
 
 /**
@@ -218,11 +227,10 @@ async function loadThreadAnchorContext(workspaceId: string, anchorIdKey: string)
  * re-fire it and an anchor nobody references is never read.
  */
 export function useThreadAnchorContext(workspaceId: string, anchorIdsSignature: string): ThreadAnchorContext {
-  const slot = `${workspaceId}|thread`
+  const retentionKey = `${workspaceId}|thread|${anchorIdsSignature}`
   const live = useLiveQuery(
-    async () =>
-      rememberResolved(slot, anchorIdsSignature, await loadThreadAnchorContext(workspaceId, anchorIdsSignature)),
+    async () => rememberResolved(retentionKey, await loadThreadAnchorContext(workspaceId, anchorIdsSignature)),
     [workspaceId, anchorIdsSignature]
   )
-  return live ?? recallResolved(slot, anchorIdsSignature, EMPTY_ANCHOR_CONTEXT)
+  return live ?? recallResolved(retentionKey, EMPTY_ANCHOR_CONTEXT)
 }

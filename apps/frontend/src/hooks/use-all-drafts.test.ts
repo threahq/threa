@@ -6,6 +6,7 @@ import { DEFAULT_SIDEBAR_CONFIG, type JSONContent, type Stream, type WorkspaceBo
 import { db, type CachedDraft } from "@/db"
 import { applyWorkspaceBootstrap } from "@/sync/workspace-sync"
 import { resetDraftStoreCache, seedDraftCacheFromIdb } from "@/stores/draft-store"
+import { resetDraftContextCache } from "./use-board-draft-context"
 import { seedDecryption, clearDecryptCache } from "@/lib/crypto/decrypt-cache"
 import * as syncEngineModule from "@/sync/sync-engine"
 import * as currentUserHook from "./use-current-workspace-user-id"
@@ -172,6 +173,9 @@ function makeReloadBootstrap(archivedStreams: Stream[], streams: Stream[] = []):
 beforeEach(async () => {
   vi.restoreAllMocks()
   resetDraftStoreCache()
+  // The board/thread reads retain their last resolved value across mounts, so a
+  // later test would otherwise read the previous one's conversations.
+  resetDraftContextCache()
   await db.drafts.clear()
   await db.composerLoaded.clear()
   await db.pendingOperations.clear()
