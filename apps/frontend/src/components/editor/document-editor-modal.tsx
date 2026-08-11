@@ -25,6 +25,7 @@ import {
 import { Button } from "@/components/ui/button"
 import { Separator } from "@/components/ui/separator"
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from "@/components/ui/tooltip"
+import { ComposerPillDndProvider } from "./composer-pill-dnd"
 import { createEditorExtensions } from "./editor-extensions"
 import { EditorBehaviors, handleLinkToolbarAction, isSuggestionActive } from "./editor-behaviors"
 import {
@@ -406,10 +407,12 @@ export function DocumentEditorModal({
           className="flex-1 overflow-hidden cursor-text"
           onClick={() => editor?.commands.focus("end")}
         >
-          <EditorContent editor={editor} className="h-full" />
-          {renderMentionList()}
-          {renderChannelList()}
-          {renderEmojiGrid()}
+          <ComposerPillDndProvider editor={editor}>
+            <EditorContent editor={editor} className="h-full" />
+            {renderMentionList()}
+            {renderChannelList()}
+            {renderEmojiGrid()}
+          </ComposerPillDndProvider>
         </div>
 
         <ResponsiveDialogFooter className="px-4 py-3 border-t flex-row items-center">

@@ -1,15 +1,17 @@
 import { afterEach, describe, expect, it, vi } from "vitest"
-import { fireEvent } from "@testing-library/react"
+import { cleanup, fireEvent, render } from "@testing-library/react"
 import { Editor } from "@tiptap/core"
 import { NodeSelection } from "@tiptap/pm/state"
 import type { JSONContent } from "@threa/types"
 import { serializeClipboardSlice } from "./clipboard-copy"
+import { ComposerPillDndProvider } from "./composer-pill-dnd"
 import { createEditorExtensions } from "./editor-extensions"
 import {
   COMPOSER_PILL_NODE_NAMES,
   ComposerPillDragPluginKey,
   composerPillDropPoint,
   createComposerPillMoveTransaction,
+  dropPositionAt,
   isComposerPillNode,
 } from "./composer-pill-drag-extension"
 
@@ -17,7 +19,16 @@ const openEditors: Editor[] = []
 let originalVibrateDescriptor: PropertyDescriptor | undefined
 let vibrateMocked = false
 
+/**
+ * The gesture layer lives in React now, so an editor only drags once its
+ * dnd-kit provider is mounted around it.
+ */
+function mountPillDnd(editor: Editor) {
+  render(<ComposerPillDndProvider editor={editor} />)
+}
+
 afterEach(() => {
+  cleanup()
   while (openEditors.length > 0) {
     const editor = openEditors.pop()!
     const element = editor.view.dom.parentElement
@@ -52,6 +63,7 @@ function createPillEditor(content: JSONContent[] = [pill("mention"), pill("chann
     content: { type: "doc", content: [{ type: "paragraph", content }] },
   })
   openEditors.push(editor)
+  mountPillDnd(editor)
   return editor
 }
 
@@ -223,6 +235,62 @@ describe("composer pill drag gestures", () => {
     expect(editor.state.selection).not.toBeInstanceOf(NodeSelection)
     expect(editor.state.selection.empty).toBe(true)
     expect(editor.view.dom.querySelector(".composer-pill-drop-cursor")).toBeNull()
+  })
+
+  it("drops the pill where the pointer was released, not where the last move landed", () => {
+    const editor = createPillEditor()
+    const source = editor.view.dom.querySelector<HTMLElement>('[data-type="mention"]')!
+    const midPos = nodePos(editor, "slashCommand")
+    const endPos = midPos + 1
+    vi.spyOn(editor.view, "posAtCoords").mockImplementation(({ left }) => ({
+      pos: left >= 30 ? endPos : midPos,
+      inside: -1,
+    }))
+
+    fireEvent.mouseDown(source, { button: 0, clientX: 10, clientY: 10 })
+    fireEvent.mouseMove(document, { buttons: 1, clientX: 18, clientY: 10 })
+    expect(ComposerPillDragPluginKey.getState(editor.state)?.dropPos).toBe(midPos)
+
+    fireEvent.mouseUp(source, { button: 0, clientX: 40, clientY: 10 })
+    expect(childTypes(editor)).toEqual(["channelLink", "slashCommand", "mention"])
+  })
+
+  it("suppresses the ending touch's compatibility mouse even after a stray mouse press", () => {
+    vi.useFakeTimers()
+    const editor = createPillEditor()
+    const source = editor.view.dom.querySelector<HTMLElement>('[data-type="mention"]')!
+
+    fireEvent.touchStart(source, { touches: [touch(7, 10, 10)] })
+    vi.advanceTimersByTime(500)
+    expect(editor.view.dom.querySelector(".composer-pill-dragging")).not.toBeNull()
+
+    vi.advanceTimersByTime(401)
+    const strayMouseDown = new MouseEvent("mousedown", {
+      bubbles: true,
+      cancelable: true,
+      button: 0,
+      clientX: 10,
+      clientY: 10,
+    })
+    source.dispatchEvent(strayMouseDown)
+    expect(strayMouseDown.defaultPrevented).toBe(false)
+
+    fireEvent.keyDown(document, { key: "Escape" })
+    expect(editor.view.dom.querySelector(".composer-pill-dragging")).toBeNull()
+
+    vi.advanceTimersByTime(401)
+    fireEvent.touchEnd(document, { touches: [], changedTouches: [touch(7, 10, 10)] })
+    const compatibilityMouseDown = new MouseEvent("mousedown", {
+      bubbles: true,
+      cancelable: true,
+      button: 0,
+      clientX: 10,
+      clientY: 10,
+    })
+    editor.view.dom.querySelector<HTMLElement>('[data-type="mention"]')!.dispatchEvent(compatibilityMouseDown)
+
+    expect(compatibilityMouseDown.defaultPrevented).toBe(true)
+    expect(childTypes(editor)).toEqual(["mention", "channelLink", "slashCommand"])
   })
 
   it("allows another mouse press after a drag while suppressing its trailing click", () => {
@@ -596,5 +664,109 @@ describe("composer pill drag gestures", () => {
     expect(childTypes(editor)).toEqual(["mention", "channelLink", "slashCommand"])
     expect(editor.view.dom.querySelector(".composer-pill-dragging")).toBeNull()
     expect(document.querySelector(".composer-pill-touch-guide")).toBeNull()
+  })
+})
+
+describe("composer pill drop points", () => {
+  it("snaps a raw pointer position to the nearest token boundary", () => {
+    const editor = createPillEditor([pill("mention"), { type: "text", text: "hello world" }])
+    const source = editor.state.doc.nodeAt(nodePos(editor, "mention"))!
+    vi.spyOn(editor.view, "posAtCoords").mockReturnValue({ pos: 5, inside: -1 })
+
+    expect(dropPositionAt(editor.view, 40, 10, source)).toBe(7)
+  })
+
+  it("splits a hovered pill at its midpoint instead of asking for a text position", () => {
+    const editor = createPillEditor()
+    const source = editor.state.doc.nodeAt(nodePos(editor, "mention"))!
+    const hovered = editor.view.dom.querySelector<HTMLElement>('[data-type="channelLink"]')!
+    const hoveredPos = nodePos(editor, "channelLink")
+    vi.spyOn(hovered, "getBoundingClientRect").mockReturnValue({ left: 100, width: 20 } as DOMRect)
+    vi.spyOn(document, "elementFromPoint").mockReturnValue(hovered)
+    const posAtCoords = vi.spyOn(editor.view, "posAtCoords")
+
+    expect(dropPositionAt(editor.view, 104, 10, source)).toBe(hoveredPos)
+    expect(dropPositionAt(editor.view, 116, 10, source)).toBe(hoveredPos + 1)
+    expect(posAtCoords).not.toHaveBeenCalled()
+  })
+
+  it("offers no drop position for a pointer outside the editor", () => {
+    const editor = createPillEditor()
+    const source = editor.state.doc.nodeAt(nodePos(editor, "mention"))!
+    vi.spyOn(document, "elementFromPoint").mockReturnValue(document.body)
+
+    expect(dropPositionAt(editor.view, 900, 900, source)).toBeNull()
+  })
+})
+
+describe("composer pill drag sensor", () => {
+  function isDragging(editor: Editor): boolean {
+    return editor.view.dom.querySelector(".composer-pill-dragging") !== null
+  }
+
+  it("holds a mouse press until it travels the activation threshold", () => {
+    const editor = createPillEditor()
+    const source = editor.view.dom.querySelector<HTMLElement>('[data-type="mention"]')!
+
+    fireEvent.mouseDown(source, { button: 0, clientX: 10, clientY: 10 })
+    fireEvent.mouseMove(document, { buttons: 1, clientX: 15, clientY: 10 })
+    expect(isDragging(editor)).toBe(false)
+
+    fireEvent.mouseMove(document, { buttons: 1, clientX: 16, clientY: 10 })
+    expect(isDragging(editor)).toBe(true)
+  })
+
+  it("activates an unselected pill only on the long-press threshold", () => {
+    vi.useFakeTimers()
+    const editor = createPillEditor()
+    const source = editor.view.dom.querySelector<HTMLElement>('[data-type="mention"]')!
+
+    fireEvent.touchStart(source, { touches: [touch(1, 10, 10)] })
+    vi.advanceTimersByTime(499)
+    expect(isDragging(editor)).toBe(false)
+
+    vi.advanceTimersByTime(1)
+    expect(isDragging(editor)).toBe(true)
+  })
+
+  it("activates a selected pill on movement and leaves an unselected one alone", () => {
+    const selected = createPillEditor()
+    const selectedSource = selected.view.dom.querySelector<HTMLElement>('[data-type="mention"]')!
+    tapPill(selectedSource)
+    fireEvent.touchStart(selectedSource, { touches: [touch(1, 10, 10)] })
+    fireEvent.touchMove(document, { touches: [touch(1, 21, 10)] })
+    expect(isDragging(selected)).toBe(true)
+
+    const unselected = createPillEditor()
+    const unselectedSource = unselected.view.dom.querySelector<HTMLElement>('[data-type="mention"]')!
+    fireEvent.touchStart(unselectedSource, { touches: [touch(2, 10, 10)] })
+    fireEvent.touchMove(document, { touches: [touch(2, 21, 10)] })
+    expect(isDragging(unselected)).toBe(false)
+  })
+
+  it("cancels an in-flight drag on Escape, on window blur, and on a second finger", () => {
+    vi.useFakeTimers()
+    const editor = createPillEditor()
+    const source = () => editor.view.dom.querySelector<HTMLElement>('[data-type="mention"]')!
+
+    fireEvent.mouseDown(source(), { button: 0, clientX: 10, clientY: 10 })
+    fireEvent.mouseMove(document, { buttons: 1, clientX: 18, clientY: 10 })
+    expect(isDragging(editor)).toBe(true)
+    fireEvent.keyDown(document, { key: "Escape" })
+    expect(isDragging(editor)).toBe(false)
+
+    fireEvent.mouseDown(source(), { button: 0, clientX: 10, clientY: 10 })
+    fireEvent.mouseMove(document, { buttons: 1, clientX: 18, clientY: 10 })
+    expect(isDragging(editor)).toBe(true)
+    fireEvent.blur(window)
+    expect(isDragging(editor)).toBe(false)
+
+    fireEvent.mouseUp(document, { button: 0, clientX: 18, clientY: 10 })
+    fireEvent.touchStart(source(), { touches: [touch(9, 10, 10)] })
+    vi.advanceTimersByTime(500)
+    expect(isDragging(editor)).toBe(true)
+    fireEvent.touchStart(document.body, { touches: [touch(9, 10, 10), touch(10, 50, 50)] })
+    expect(isDragging(editor)).toBe(false)
+    expect(childTypes(editor)).toEqual(["mention", "channelLink", "slashCommand"])
   })
 })
