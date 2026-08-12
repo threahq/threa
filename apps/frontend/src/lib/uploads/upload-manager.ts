@@ -583,8 +583,8 @@ let resumeEpoch = 0
 
 /**
  * Resume this workspace's persisted upload jobs after a reload/app reopen:
- * pending rows restart their transfer immediately, failed rows surface as
- * failed (the timeline chip offers retry). Idempotent per workspace per
+ * pending and retryably-failed rows restart their transfer immediately;
+ * terminally-failed rows surface as failed. Idempotent per workspace per
  * session; jobs already live in memory are skipped.
  */
 export async function resumeWorkspaceUploads(workspaceId: string): Promise<void> {
@@ -612,7 +612,12 @@ export async function resumeWorkspaceUploads(workspaceId: string): Promise<void>
     const jobId = newJobId()
     jobIdByAttachmentId.set(row.attachmentId, jobId)
     blobs.set(jobId, row.blob)
-    const failed = row.status === "failed"
+    // A retryable failure (network-class) restarts alongside the pending rows:
+    // reopening the app IS the connectivity-restored moment for a transfer that
+    // died with the page, and the `online` auto-heal never fires for it — the
+    // browser wasn't open to see the transition. Only terminal rejections
+    // surface as dead.
+    const failed = row.status === "failed" && row.retryable === false
     state.jobs.set(jobId, {
       jobId,
       workspaceId,
@@ -623,8 +628,8 @@ export async function resumeWorkspaceUploads(workspaceId: string): Promise<void>
       e2e: row.e2e,
       status: failed ? "error" : "uploading",
       progress: 0,
-      error: row.error,
-      retryable: failed ? (row.retryable ?? true) : undefined,
+      error: failed ? row.error : undefined,
+      retryable: failed ? false : undefined,
       // E2E rows hold ciphertext — nothing previewable locally.
       previewUrl: row.e2e ? undefined : createPreviewUrl(row.blob, row),
       // Resumed jobs start unheld; a draft restore may claim them.

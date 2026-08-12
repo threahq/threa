@@ -141,16 +141,20 @@ describe("tray pill drag", () => {
     expect(screen.queryByLabelText("2 references in this message")).toBeNull()
   })
 
-  it("renders one scrolling row on mobile and the wrapping tray on desktop", () => {
+  it("wraps the tray on both breakpoints, with the tighter height cap and the rollup line on mobile", () => {
     const desktop = render(<PendingAttachments attachments={[attachment()]} onRemove={vi.fn()} workspaceId="ws_1" />)
-    expect(desktop.container.querySelector("div")).toHaveClass("flex-wrap")
+    expect(desktop.container.querySelector("div")).toHaveClass("flex-wrap", "max-h-[120px]")
+    expect(screen.queryByRole("button", { name: "Show all attachments" })).toBeNull()
     desktop.unmount()
 
     vi.spyOn(useMobileModule, "useIsMobile").mockReturnValue(true)
     const mobile = render(<PendingAttachments attachments={[attachment()]} onRemove={vi.fn()} workspaceId="ws_1" />)
-    const row = mobile.container.querySelector("div")!
-    expect(row).toHaveClass("overflow-x-auto")
-    expect(row).not.toHaveClass("flex-wrap")
+    // A single horizontal row hid everything past the fold and fought the
+    // page's own scroll axis — the tray wraps and scrolls vertically now.
+    expect(mobile.container.querySelector(".overflow-x-auto")).toBeNull()
+    const tray = screen.getByText("screenshot.png").closest(".flex-wrap")
+    expect(tray).toHaveClass("max-h-[96px]", "overflow-y-auto")
+    expect(screen.getByRole("button", { name: "Show all attachments" })).toHaveTextContent("1 file")
   })
 })
 

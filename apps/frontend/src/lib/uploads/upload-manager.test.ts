@@ -285,44 +285,48 @@ describe("upload-manager", () => {
     expect(xhr).toHaveBeenCalledTimes(2)
   })
 
-  it("resumes persisted jobs after a reload: pending rows restart, failed rows surface as failed", async () => {
+  it("resumes persisted jobs after a reload: pending and retryably-failed rows restart, terminal ones stay dead", async () => {
     const xhr = vi.spyOn(xhrTransport, "xhrUpload").mockResolvedValue({ status: 201, body: {} })
+    const row = (
+      attachmentId: string,
+      filename: string,
+      extra: { status: "pending" | "failed"; error?: string; retryable?: boolean }
+    ) => ({
+      attachmentId,
+      workspaceId: WS,
+      filename,
+      mimeType: "text/plain",
+      sizeBytes: 4,
+      e2e: false,
+      blob: new Blob(["data"], { type: "text/plain" }),
+      createdAt: Date.now(),
+      ...extra,
+    })
     await db.uploadJobs.bulkPut([
-      {
-        attachmentId: "attach_resume",
-        workspaceId: WS,
-        filename: "resume.txt",
-        mimeType: "text/plain",
-        sizeBytes: 11,
-        e2e: false,
-        blob: new Blob(["hello world"], { type: "text/plain" }),
-        status: "pending",
-        createdAt: Date.now(),
-      },
-      {
-        attachmentId: "attach_dead",
-        workspaceId: WS,
-        filename: "dead.txt",
-        mimeType: "text/plain",
-        sizeBytes: 4,
-        e2e: false,
-        blob: new Blob(["dead"], { type: "text/plain" }),
-        status: "failed",
-        error: "Network error during upload",
-        createdAt: Date.now(),
-      },
+      row("attach_resume", "resume.txt", { status: "pending" }),
+      // Network-class failure from a previous session (an app kill mid-stream):
+      // reopening IS the back-online moment, so it restarts like a pending row.
+      // A legacy row without the flag gets the same benefit of the doubt.
+      row("attach_heal", "heal.txt", { status: "failed", error: "Network error during upload", retryable: true }),
+      row("attach_legacy", "legacy.txt", { status: "failed", error: "Network error during upload" }),
+      row("attach_dead", "dead.txt", { status: "failed", error: "size mismatch", retryable: false }),
     ])
 
     await resumeWorkspaceUploads(WS)
 
     await vi.waitFor(() => {
-      expect(xhr).toHaveBeenCalledTimes(1)
-      expect(xhr).toHaveBeenCalledWith(
-        expect.objectContaining({ url: expect.stringContaining("/attachments/attach_resume/content") })
+      const urls = xhr.mock.calls.map((call) => call[0].url)
+      expect(urls).toHaveLength(3)
+      expect(urls).toEqual(
+        expect.arrayContaining([
+          expect.stringContaining("/attachments/attach_resume/content"),
+          expect.stringContaining("/attachments/attach_heal/content"),
+          expect.stringContaining("/attachments/attach_legacy/content"),
+        ])
       )
     })
     const dead = getUploadJobByAttachmentId("attach_dead")
-    expect(dead).toMatchObject({ status: "error", error: "Network error during upload" })
+    expect(dead).toMatchObject({ status: "error", error: "size mismatch", retryable: false })
     await vi.waitFor(async () => expect(await db.uploadJobs.get("attach_resume")).toBeUndefined())
   })
 

@@ -47,8 +47,10 @@ export interface PendingAttachment {
   previewUrl?: string
   /**
    * A failed upload whose bytes can be re-streamed against its reservation
-   * (`retryUpload`). False for reservation failures — nothing durable exists
-   * to retry against, so remove-and-repick is the only recovery.
+   * (`retryUpload`) with a chance of succeeding. False for reservation
+   * failures (nothing durable to retry against) and for terminal rejections
+   * (4xx, swept reservation — the same bytes fail the same way every time);
+   * remove-and-repick is the only recovery for those.
    */
   canRetry?: boolean
 }
@@ -127,7 +129,9 @@ function jobToPending(job: UploadJob): PendingAttachment {
     error: job.error,
     progress: job.status === "uploaded" ? undefined : job.progress,
     previewUrl: job.previewUrl,
-    canRetry: job.status === "error" && !!job.attachmentId,
+    // A terminal rejection (4xx, swept reservation) fails identically on every
+    // retry — only network-class failures earn the affordance.
+    canRetry: job.status === "error" && !!job.attachmentId && job.retryable !== false,
   }
 }
 

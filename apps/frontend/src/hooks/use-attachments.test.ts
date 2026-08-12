@@ -153,6 +153,24 @@ describe("useAttachments", () => {
       expect(result.current.uploadedIds).toEqual([])
     })
 
+    it("offers no retry on a terminal rejection — the same bytes fail the same way every time", async () => {
+      mockReserve()
+      vi.spyOn(xhrTransport, "xhrUpload").mockResolvedValue({ status: 422, body: { error: "size mismatch" } })
+      vi.spyOn(attachmentsApi, "reportUploadFailure").mockResolvedValue(undefined)
+
+      const { result } = renderHook(() => useAttachments(workspaceId))
+      act(() => {
+        result.current.handleFileSelect(createChangeEvent([createFile("test.txt", "text/plain")]))
+      })
+
+      await waitFor(() => expect(result.current.pendingAttachments[0]?.status).toBe("error"))
+      expect(result.current.pendingAttachments[0]).toMatchObject({
+        id: "attach_123",
+        error: "size mismatch",
+        canRetry: false,
+      })
+    })
+
     it("removing a failed upload deletes its leaked reservation", async () => {
       mockReserve()
       vi.spyOn(xhrTransport, "xhrUpload").mockResolvedValue({ status: 422, body: { error: "nope" } })

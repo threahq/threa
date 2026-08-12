@@ -1,8 +1,9 @@
-import { describe, it, expect, vi } from "vitest"
-import { render, screen, fireEvent } from "@testing-library/react"
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest"
+import { render, screen, fireEvent, within } from "@testing-library/react"
 import { PendingAttachments } from "./pending-attachments"
 import type { PendingAttachment } from "@/hooks/use-attachments"
 import * as uploadManager from "@/lib/uploads/upload-manager"
+import * as useMobileModule from "@/hooks/use-mobile"
 
 function attachment(overrides: Partial<PendingAttachment> = {}): PendingAttachment {
   return {
@@ -198,5 +199,106 @@ describe("PendingAttachments", () => {
     const bar = screen.getByRole("progressbar", { name: "Uploading screenshot.png" })
     expect(bar).toHaveAttribute("aria-valuenow", "42")
     expect(screen.queryByText(/\d+%/)).not.toBeInTheDocument()
+  })
+})
+
+describe("mobile rollup and drawer", () => {
+  beforeEach(() => {
+    vi.spyOn(useMobileModule, "useIsMobile").mockReturnValue(true)
+  })
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  const files = [
+    attachment({ id: "attach_ok", filename: "ok.png", previewUrl: "blob:ok" }),
+    attachment({ id: "attach_up", filename: "up.png", status: "uploading", progress: 0.4, previewUrl: "blob:up" }),
+    attachment({
+      id: "attach_net",
+      filename: "net.txt",
+      mimeType: "text/plain",
+      status: "error",
+      error: "Network error during upload",
+      canRetry: true,
+      previewUrl: undefined,
+    }),
+    attachment({
+      id: "attach_dead",
+      filename: "dead.txt",
+      mimeType: "text/plain",
+      status: "error",
+      error: "size mismatch",
+      canRetry: false,
+      previewUrl: undefined,
+    }),
+  ]
+
+  it("summarizes the tray in one line and bulk-retries only the retryable failures", () => {
+    const retrySpy = vi.spyOn(uploadManager, "retryUpload").mockResolvedValue(undefined)
+    render(<PendingAttachments attachments={files} onRemove={vi.fn()} workspaceId="ws_1" />)
+
+    const summary = screen.getByRole("button", { name: "Show all attachments" })
+    expect(summary).toHaveTextContent(/4 files/)
+    expect(summary).toHaveTextContent(/1 uploading/)
+    expect(summary).toHaveTextContent(/2 failed/)
+
+    fireEvent.click(screen.getByRole("button", { name: "Retry all" }))
+    expect(retrySpy.mock.calls.map((call) => call[0])).toEqual(["attach_net"])
+  })
+
+  it("shows only the rollup line while the composer rests, with the drawer still reachable", () => {
+    render(<PendingAttachments attachments={files} onRemove={vi.fn()} workspaceId="ws_1" resting />)
+
+    expect(screen.queryByText("ok.png")).not.toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: "Hide attachment chips" })).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole("button", { name: "Show all attachments" }))
+    expect(within(screen.getByRole("dialog")).getByText("ok.png")).toBeInTheDocument()
+  })
+
+  it("folds the chips away behind the rollup line and restores them", () => {
+    render(<PendingAttachments attachments={files} onRemove={vi.fn()} workspaceId="ws_1" />)
+    expect(screen.getByText("ok.png")).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole("button", { name: "Hide attachment chips" }))
+    expect(screen.queryByText("ok.png")).not.toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Show all attachments" })).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole("button", { name: "Show attachment chips" }))
+    expect(screen.getByText("ok.png")).toBeInTheDocument()
+  })
+
+  it("opens the drawer with full filenames, live status, and per-row recovery", () => {
+    const retrySpy = vi.spyOn(uploadManager, "retryUpload").mockResolvedValue(undefined)
+    const onRemove = vi.fn()
+    render(<PendingAttachments attachments={files} onRemove={onRemove} workspaceId="ws_1" />)
+
+    fireEvent.click(screen.getByRole("button", { name: "Show all attachments" }))
+    const dialog = screen.getByRole("dialog")
+    expect(within(dialog).getByText("Uploading — 40%")).toBeInTheDocument()
+    expect(within(dialog).getByText("Network error during upload")).toBeInTheDocument()
+    expect(within(dialog).getByText("size mismatch")).toBeInTheDocument()
+
+    // A terminal failure gets remove-only recovery; the network-class one retries.
+    expect(within(dialog).queryByRole("button", { name: "Retry upload of dead.txt" })).not.toBeInTheDocument()
+    fireEvent.click(within(dialog).getByRole("button", { name: "Retry upload of net.txt" }))
+    expect(retrySpy).toHaveBeenCalledWith("attach_net")
+
+    fireEvent.click(within(dialog).getByRole("button", { name: "Remove failed" }))
+    expect(onRemove.mock.calls.map((call) => call[0])).toEqual(["attach_net", "attach_dead"])
+  })
+
+  it("cancels an in-flight upload from its drawer row instead of removing it", () => {
+    const onRemove = vi.fn()
+    const onCancelUpload = vi.fn()
+    render(
+      <PendingAttachments attachments={files} onRemove={onRemove} onCancelUpload={onCancelUpload} workspaceId="ws_1" />
+    )
+
+    fireEvent.click(screen.getByRole("button", { name: "Show all attachments" }))
+    fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Cancel upload of up.png" }))
+    expect(onCancelUpload).toHaveBeenCalledWith("attach_up")
+    expect(onRemove).not.toHaveBeenCalled()
   })
 })
