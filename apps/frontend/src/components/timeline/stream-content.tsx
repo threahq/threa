@@ -490,6 +490,19 @@ export function resolveUnreadMarkerOpen(args: {
  * fallen out of the window is stale enough that the tail is the better
  * landing.
  */
+/**
+ * The floating chrome (date pill, jump-to-latest, unread banner) hides when
+ * the visible strip between the scroller top and the floating composer drops
+ * under this height. With the keyboard up and a tall reply drafted the strip
+ * is barely two message rows, and center-anchored pills covered most of what
+ * remained. Chrome returns as soon as the strip regrows.
+ */
+export const CHROME_MIN_STRIP_PX = 160
+
+export function isChromeStripCollapsed(scrollerClientHeightPx: number, composerHeightPx: number): boolean {
+  return scrollerClientHeightPx - composerHeightPx < CHROME_MIN_STRIP_PX
+}
+
 export function resolveAnchorRestore(args: {
   alreadyDecided: boolean
   isLoading: boolean
@@ -1600,8 +1613,39 @@ export function StreamContent({
   // carry `data-message-id`/`.message-content`, so an unscoped detector would
   // fire a second "Quote" button and route the quote to the wrong composer.
   const quoteScopeRef = useRef<HTMLDivElement>(null)
+  // Space-aware chrome: hide the floating pills (date header, jump-to-latest,
+  // unread banner) while the strip above the composer is too short for them to
+  // overlay without covering what little content remains — the mobile keyboard
+  // plus a tall draft leaves ~2 rows visible. Recomputed on scroller resizes
+  // (keyboard open/close) and on composer height changes (via
+  // handleComposerHeightChange below, since the floating composer doesn't
+  // resize the scroller).
+  const [chromeCollapsed, setChromeCollapsed] = useState(false)
+  const recomputeChromeCollapsedRef = useRef<() => void>(() => {})
+  useEffect(() => {
+    const el = useVirtualized ? virtualScrollerEl : plainScrollRef.current
+    if (!el) return
+    const recompute = () => {
+      const raw = Number.parseFloat(getComputedStyle(el).getPropertyValue("--composer-height"))
+      setChromeCollapsed(isChromeStripCollapsed(el.clientHeight, Number.isFinite(raw) ? raw : 0))
+    }
+    recomputeChromeCollapsedRef.current = recompute
+    recompute()
+    const ro = new ResizeObserver(recompute)
+    ro.observe(el)
+    return () => {
+      recomputeChromeCollapsedRef.current = () => {}
+      ro.disconnect()
+    }
+    // isLoading: the plain (thread) scroller mounts behind the loading
+    // skeleton, and only a state dep re-runs this effect once it exists.
+  }, [useVirtualized, virtualScrollerEl, plainScrollRef, isLoading, streamId])
+
   const handleComposerHeightChange = useCallback(
     (_px: number, opts: { initial: boolean }) => {
+      // Composer growth doesn't resize the scroller (the composer floats), so
+      // the space-aware chrome re-checks here rather than via ResizeObserver.
+      recomputeChromeCollapsedRef.current()
       if (skipInitialScroll || isJumpMode) return
       const rePin = () => {
         const draftScroller = draftScrollRef.current
@@ -2757,6 +2801,7 @@ export function StreamContent({
                           batchPointerHandlers={batchPointerHandlers}
                           conversationOverlay={activeConversationOverlay}
                           onJumpToDate={handleJumpToDate}
+                          chromeCollapsed={chromeCollapsed}
                         />
                         {/* Overlay loading indicators — absolutely positioned so they
                     don't cause layout shift when prepending older messages. */}
@@ -2840,8 +2885,9 @@ export function StreamContent({
                     )}
                   </div>
                   {/* Jump to latest button — shown when scrolled far from bottom or in jump mode.
-              Positioned above the floating composer pill. */}
-                  {(isJumpMode || isScrolledFarFromBottom) && (
+              Positioned above the floating composer pill. Hidden while the
+              strip above the composer is too short to overlay (chromeCollapsed). */}
+                  {(isJumpMode || isScrolledFarFromBottom) && !chromeCollapsed && (
                     <div
                       className="pointer-events-none absolute left-1/2 -translate-x-1/2 z-10"
                       style={{ bottom: "calc(var(--composer-height, 0px) + 0.5rem)" }}
@@ -2862,7 +2908,7 @@ export function StreamContent({
               Hidden while search is open: jumping the timeline would yank it out
               from under the active search-result navigation, and the Escape
               mark-read shortcut is gated on `!isSearchOpen` too. */}
-                  {unreadBannerVisible && (
+                  {unreadBannerVisible && !chromeCollapsed && (
                     <div
                       // Sits clearly below the floating date pill (top-2, ~30px tall)
                       // so the top-center affordances never overlap.
@@ -3024,6 +3070,7 @@ function TimelineMessageList({
   batchPointerHandlers,
   conversationOverlay,
   onJumpToDate,
+  chromeCollapsed,
 }: {
   visibleItems: TimelineItem[]
   cancelledFollowUpIds: Set<string>
@@ -3086,6 +3133,8 @@ function TimelineMessageList({
   conversationOverlay?: ConversationOverlayContext
   /** Jump to the first message on or after a date (floating date header). */
   onJumpToDate: (date: Date) => void
+  /** True while the strip above the composer is too short for floating chrome. */
+  chromeCollapsed: boolean
 }) {
   const { phase } = useCoordinatedLoading()
   const socket = useSocket()
@@ -3466,7 +3515,7 @@ function TimelineMessageList({
       </div>
       <StreamDateHeader
         dayStartMs={topDayMs}
-        visible={datePillVisible}
+        visible={datePillVisible && !chromeCollapsed}
         onJumpToDate={onJumpToDate}
         scrollerRef={scrollerRef}
       />
