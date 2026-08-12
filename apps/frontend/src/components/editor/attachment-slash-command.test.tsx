@@ -52,7 +52,9 @@ interface Harness {
   setTray: (attachments: PendingAttachment[]) => void
 }
 
-function mountEditor(options: { trayAttachments?: PendingAttachment[]; autoFocus?: boolean } = {}): Harness {
+function mountEditor(
+  options: { trayAttachments?: PendingAttachment[]; autoFocus?: boolean; noUploadPath?: boolean } = {}
+): Harness {
   const ref = createRef<RichEditorHandle>()
   const onRequestFileUpload = vi.fn()
   const uploads: File[] = []
@@ -87,7 +89,7 @@ function mountEditor(options: { trayAttachments?: PendingAttachment[]; autoFocus
         ariaLabel="Message input"
         autoFocus={options.autoFocus ?? true}
         trayAttachments={tray}
-        onRequestFileUpload={onRequestFileUpload}
+        onRequestFileUpload={options.noUploadPath ? undefined : onRequestFileUpload}
       />
     )
   }
@@ -265,6 +267,25 @@ describe("/attachment slash command", () => {
     pressKey(editor, "Enter")
     await waitFor(() => expect(attachmentNodes(getContent())).toHaveLength(1))
     expect(attachmentNodes(getContent())[0]?.attrs?.id).toBe("att_notes")
+  })
+
+  it("hides the command when no tray attachment is placeable and there is no upload path", async () => {
+    const stuck: PendingAttachment[] = [
+      { id: "temp_pending", filename: "pending.txt", mimeType: "text/plain", sizeBytes: 1, status: "uploading" },
+      { id: "att_broken", filename: "broken.txt", mimeType: "text/plain", sizeBytes: 2, status: "error" },
+    ]
+
+    // Control: one placeable attachment and no upload path still surfaces the
+    // command — so the negative case below is about placeability, and proves
+    // the option had time to appear rather than being asserted away too early.
+    const control = mountEditor({ trayAttachments: [TRAY[0]!], noUploadPath: true })
+    typeText(control.editor, "/attach")
+    expect(await screen.findByRole("option", { name: /\/attachment/ })).toBeTruthy()
+    cleanup()
+
+    const { editor } = mountEditor({ trayAttachments: stuck, noUploadPath: true })
+    typeText(editor, "/attach")
+    await expect(screen.findByRole("option", { name: /\/attachment/ }, { timeout: 400 })).rejects.toThrow()
   })
 
   it("resets the highlight when the typed filter changes, so typing lands on the best match", async () => {

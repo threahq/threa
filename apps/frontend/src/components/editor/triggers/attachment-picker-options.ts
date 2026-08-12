@@ -20,18 +20,25 @@ export function attachmentPickerOptionKey(option: AttachmentPickerOption): strin
 }
 
 /**
- * Tray rows for the picker: only attachments that can actually be referenced
- * (uploaded, real id), each carrying the ordinal a tray drag would stamp.
+ * Can this attachment be referenced yet? Settled bytes and a real id — the same
+ * bar the tray drag sets, so the picker never offers what a drag would refuse,
+ * and `/attachment` never opens on an empty list.
+ */
+export function isPlaceableAttachment(attachment: PendingAttachment): boolean {
+  return attachment.status === "uploaded" && !attachment.id.startsWith("temp_")
+}
+
+/**
+ * Tray rows for the picker: only attachments that can actually be referenced,
+ * each carrying the ordinal a tray drag would stamp.
  */
 export function buildAttachmentPickerOptions(attachments: readonly PendingAttachment[]): AttachmentPickerOption[] {
   const imageIndexes = buildImageIndexByAttachment(attachments)
-  return attachments
-    .filter((attachment) => attachment.status === "uploaded" && !attachment.id.startsWith("temp_"))
-    .map((attachment) => ({
-      kind: "attachment" as const,
-      attachment,
-      imageIndex: imageIndexes.get(attachment) ?? null,
-    }))
+  return attachments.filter(isPlaceableAttachment).map((attachment) => ({
+    kind: "attachment" as const,
+    attachment,
+    imageIndex: imageIndexes.get(attachment) ?? null,
+  }))
 }
 
 /**

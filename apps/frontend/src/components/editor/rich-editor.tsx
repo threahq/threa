@@ -29,6 +29,7 @@ import {
   useCommandArgPicker,
   useAttachmentPicker,
   findPickableArg,
+  isPlaceableAttachment,
 } from "./triggers"
 import type { CommandItem } from "./triggers/types"
 import { parseMemoUrl } from "@/lib/memo-url"
@@ -356,10 +357,13 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
   // Snippet creation needs an upload handler to attach through, same as the
   // paste path; gate the `/snippet` command on it too.
   const snippetEnabled = !!onFileUpload && enableCommands
-  // `/attachment` is worth showing when there's something to place: a tray file,
-  // or an upload path to produce one.
+  // `/attachment` is worth showing when there's something to place: a tray file
+  // the picker would actually offer, or an upload path to produce one. Counting
+  // raw tray length instead would open an empty picker on a tray holding only
+  // uploading or failed entries.
   const canUploadFromPicker = !!onFileUpload && !!onRequestFileUpload
-  const attachmentCommandEnabled = enableCommands && (canUploadFromPicker || (trayAttachments?.length ?? 0) > 0)
+  const hasPlaceableAttachment = (trayAttachments ?? []).some(isPlaceableAttachment)
+  const attachmentCommandEnabled = enableCommands && (canUploadFromPicker || hasPlaceableAttachment)
 
   // Open the snippet editor with an empty draft, anchored at the caret so the
   // chip lands where it would for a paste. Shared by the `/snippet` command and
