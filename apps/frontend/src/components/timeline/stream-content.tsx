@@ -478,19 +478,6 @@ export function resolveUnreadMarkerOpen(args: {
 }
 
 /**
- * Decide whether to restore a persisted detached-reading anchor on stream
- * open (see `timeline-anchor-storage`). Same once-per-stream contract as
- * `resolveUnreadMarkerOpen`: "wait" leaves the decision open while inputs
- * resolve; every other verdict consumes it.
- *
- * A restore yields to deep links, jump mode, and any user gesture — those own
- * the position. It only engages when the anchored row is in the loaded
- * window: anchors are written while detached near the tail (reading context
- * while replying), which the initial window covers; an anchor that has since
- * fallen out of the window is stale enough that the tail is the better
- * landing.
- */
-/**
  * The floating chrome (date pill, jump-to-latest, unread banner) hides when
  * the visible strip between the scroller top and the floating composer drops
  * under this height. With the keyboard up and a tall reply drafted the strip
@@ -503,6 +490,19 @@ export function isChromeStripCollapsed(scrollerClientHeightPx: number, composerH
   return scrollerClientHeightPx - composerHeightPx < CHROME_MIN_STRIP_PX
 }
 
+/**
+ * Decide whether to restore a persisted detached-reading anchor on stream
+ * open (see `timeline-anchor-storage`). Same once-per-stream contract as
+ * `resolveUnreadMarkerOpen`: "wait" leaves the decision open while inputs
+ * resolve; every other verdict consumes it.
+ *
+ * A restore yields to deep links, jump mode, and any user gesture — those own
+ * the position. It only engages when the anchored row is in the loaded
+ * window: anchors are written while detached near the tail (reading context
+ * while replying), which the initial window covers; an anchor that has since
+ * fallen out of the window is stale enough that the tail is the better
+ * landing.
+ */
 export function resolveAnchorRestore(args: {
   alreadyDecided: boolean
   isLoading: boolean
@@ -2822,9 +2822,11 @@ export function StreamContent({
                             isFetchingNewer ? "opacity-100" : "opacity-0"
                           )}
                           style={{
-                            // Sit above the Jump to latest button (when visible) which itself sits above the floating composer.
+                            // Sit above the Jump to latest button (when visible) which itself sits
+                            // above the floating composer. chromeCollapsed unmounts that button, so
+                            // the clearance drops with it.
                             bottom:
-                              isJumpMode || isScrolledFarFromBottom
+                              (isJumpMode || isScrolledFarFromBottom) && !chromeCollapsed
                                 ? "calc(var(--composer-height, 0px) + 3.5rem)"
                                 : "calc(var(--composer-height, 0px) + 0.5rem)",
                           }}
