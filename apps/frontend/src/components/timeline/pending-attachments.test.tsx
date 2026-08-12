@@ -243,7 +243,9 @@ describe("mobile rollup and drawer", () => {
     expect(summary).toHaveTextContent(/1 uploading/)
     expect(summary).toHaveTextContent(/2 failed/)
 
-    fireEvent.click(screen.getByRole("button", { name: "Retry all" }))
+    // The button carries the retryable count, not "all" — the failed tally
+    // includes terminal failures a retry can never fix.
+    fireEvent.click(screen.getByRole("button", { name: "Retry 1" }))
     expect(retrySpy.mock.calls.map((call) => call[0])).toEqual(["attach_net"])
   })
 
@@ -255,6 +257,20 @@ describe("mobile rollup and drawer", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Show all attachments" }))
     expect(within(screen.getByRole("dialog")).getByText("ok.png")).toBeInTheDocument()
+  })
+
+  it("resting folds context-ref pills too, matching the link-preview rule", () => {
+    render(
+      <PendingAttachments
+        attachments={[]}
+        onRemove={vi.fn()}
+        workspaceId="ws_1"
+        resting
+        beforePills={<span>context-ref-pill</span>}
+      />
+    )
+
+    expect(screen.queryByText("context-ref-pill")).not.toBeInTheDocument()
   })
 
   it("folds the chips away behind the rollup line and restores them", () => {

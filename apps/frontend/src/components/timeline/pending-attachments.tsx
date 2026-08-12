@@ -305,12 +305,14 @@ function E2eChip({
 function AttachmentListDrawer({
   open,
   onOpenChange,
+  onAnimationEnd,
   attachments,
   onRemove,
   onCancelUpload,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
+  onAnimationEnd: (open: boolean) => void
   attachments: PendingAttachment[]
   onRemove: (id: string) => void
   onCancelUpload: (id: string) => void
@@ -318,7 +320,7 @@ function AttachmentListDrawer({
   const failed = attachments.filter((a) => a.status === "error")
   const retryable = failed.filter((a) => a.canRetry === true)
   return (
-    <Drawer open={open} onOpenChange={onOpenChange}>
+    <Drawer open={open} onOpenChange={onOpenChange} onAnimationEnd={onAnimationEnd}>
       <DrawerContent className="max-h-[85dvh]">
         <DrawerTitle className="px-4 pt-1 text-sm font-medium">Attachments</DrawerTitle>
         <p className="px-4 pb-2 text-xs text-muted-foreground">
@@ -396,7 +398,7 @@ function AttachmentListDrawer({
                   for (const a of retryable) void retryUpload(a.id)
                 }}
               >
-                Retry all
+                Retry {retryable.length}
               </Button>
             )}
           </div>
@@ -471,6 +473,21 @@ export function PendingAttachments({
   // with its chips showing.
   const [collapsed, setCollapsed] = useState(false)
   const [drawerOpen, setDrawerOpen] = useState(false)
+  // True from close until vaul's exit animation lands, so removing the last
+  // attachment from the open sheet slides it out instead of snapping the whole
+  // subtree out of the DOM.
+  const [drawerExiting, setDrawerExiting] = useState(false)
+  const handleDrawerOpenChange = useCallback((open: boolean) => {
+    setDrawerOpen(open)
+    if (!open) setDrawerExiting(true)
+  }, [])
+  const handleDrawerAnimationEnd = useCallback((open: boolean) => {
+    if (!open) setDrawerExiting(false)
+  }, [])
+  const attachmentCount = attachments.length
+  useEffect(() => {
+    if (attachmentCount === 0 && drawerOpen) handleDrawerOpenChange(false)
+  }, [attachmentCount, drawerOpen, handleDrawerOpenChange])
   // Open lightbox tracked by the stable attachment key, not the id (which flips
   // temp→server on upload completion), so an open preview survives its upload.
   const [openKey, setOpenKey] = useState<string | null>(null)
@@ -507,7 +524,8 @@ export function PendingAttachments({
     [attachments, srcByKey]
   )
 
-  if (attachments.length === 0 && !beforePills) return null
+  // The drawer must survive its exit animation even when the list empties.
+  if (attachments.length === 0 && !beforePills && !drawerOpen && !drawerExiting) return null
 
   const galleryIndex = openKey ? galleryItems.findIndex((g) => g.attachmentId === pendingGalleryId(openKey)) : -1
 
@@ -515,12 +533,21 @@ export function PendingAttachments({
   const uploadingCount = attachments.filter((a) => a.status === "uploading").length
   const retryableIds = attachments.filter((a) => a.status === "error" && a.canRetry === true).map((a) => a.id)
   const CollapseChevron = collapsed ? ChevronDown : ChevronUp
-  const foldChips = isMobile && attachments.length > 0 && (resting || collapsed)
+  // Resting folds everything (context-ref pills included — same rule as the
+  // composer's link previews); the manual fold only exists while the rollup
+  // renders, so it scopes to having attachments.
+  const foldChips = isMobile && (resting || (collapsed && attachments.length > 0))
 
   return (
     <>
       {isMobile && attachments.length > 0 && (
-        <div className="mb-1.5 flex h-6 items-center gap-3 text-xs text-muted-foreground">
+        // preventDefault keeps editor focus (and the keyboard) through taps on
+        // this line's buttons — same guard as the composer's action bar. Safe
+        // as a blanket here: every child is our own button, nothing portaled.
+        <div
+          className="mb-1.5 flex h-6 items-center gap-3 text-xs text-muted-foreground"
+          onMouseDown={(event) => event.preventDefault()}
+        >
           <button
             type="button"
             className="flex min-w-0 items-center gap-1"
@@ -542,7 +569,7 @@ export function PendingAttachments({
                 for (const id of retryableIds) void retryUpload(id)
               }}
             >
-              Retry all
+              Retry {retryableIds.length}
             </button>
           )}
           {!resting && (
@@ -557,7 +584,7 @@ export function PendingAttachments({
           )}
         </div>
       )}
-      {!foldChips && (
+      {!foldChips && (attachments.length > 0 || beforePills) && (
         <div
           className={cn(
             "flex flex-wrap items-center mb-3 overflow-y-auto",
@@ -593,10 +620,11 @@ export function PendingAttachments({
           })}
         </div>
       )}
-      {isMobile && attachments.length > 0 && (
+      {isMobile && (attachments.length > 0 || drawerOpen || drawerExiting) && (
         <AttachmentListDrawer
           open={drawerOpen}
-          onOpenChange={setDrawerOpen}
+          onOpenChange={handleDrawerOpenChange}
+          onAnimationEnd={handleDrawerAnimationEnd}
           attachments={attachments}
           onRemove={onRemove}
           onCancelUpload={onCancelUpload ?? onRemove}
