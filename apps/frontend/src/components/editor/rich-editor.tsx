@@ -27,6 +27,7 @@ import {
   useEmojiSuggestion,
   useMemoSuggestion,
   useCommandArgPicker,
+  useAttachmentPicker,
   findPickableArg,
 } from "./triggers"
 import type { CommandItem } from "./triggers/types"
@@ -60,7 +61,7 @@ import type { GiphyGif } from "@threa/types"
 import { cn } from "@/lib/utils"
 import { usePreferences } from "@/contexts"
 import { getEffectiveEditorBindings } from "@/lib/keyboard-shortcuts"
-import type { UploadResult } from "@/hooks/use-attachments"
+import type { PendingAttachment, UploadResult } from "@/hooks/use-attachments"
 import type { AttachmentReferenceAttrs } from "./attachment-reference-extension"
 import type {
   MessageSendMode,
@@ -80,6 +81,8 @@ export interface RichEditorHandle {
   openSnippetEditor(): void
   /** Upload files and insert their reference chips at the current selection. */
   insertFiles(files: File[]): boolean
+  /** Drop the `/attachment` upload anchor so an abandoned pick can't hijack the next one. */
+  cancelPendingInlineUpload(): void
   /** Delete every inline reference to one attachment (the delete cascade). */
   removeAttachmentReferences(attachmentId: string): void
   /** Append a committed dictation span at the caret. */
@@ -122,6 +125,8 @@ export interface RichEditorHandle {
   /** Access the TipTap editor instance for external toolbar rendering */
   getEditor(): import("@tiptap/react").Editor | null
 }
+
+const NO_TRAY_ATTACHMENTS: readonly PendingAttachment[] = []
 
 function isValidGapCursorPosition($pos: ResolvedPos): boolean {
   const gapCursor = GapCursor as typeof GapCursor & {
@@ -194,6 +199,17 @@ interface RichEditorProps {
   enableEmoji?: boolean
   /** Whether `/memo` inline search and pasted memo links embed memo cards. */
   enableMemoEmbed?: boolean
+  /**
+   * The composer's current attachment tray. `/attachment` lists these, so a file
+   * already attached can be placed at the caret without a pointer.
+   */
+  trayAttachments?: readonly PendingAttachment[]
+  /**
+   * Open the composer's file picker for the `/attachment` command's "Upload a
+   * file…" entry. The chosen files upload and insert through the same path a
+   * paste or drop uses; the host clicks its existing hidden file input.
+   */
+  onRequestFileUpload?: () => void
 }
 
 function isEditorCompletelyEmpty(editor: import("@tiptap/react").Editor | null | undefined): boolean {
@@ -280,6 +296,8 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
     enableCommands = true,
     enableEmoji = true,
     enableMemoEmbed = true,
+    trayAttachments,
+    onRequestFileUpload,
   },
   ref
 ) {
@@ -331,10 +349,17 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
   // per-session counter live in refs so they don't re-render the editor.
   const [snippetDraft, setSnippetDraft] = useState<{ text: string; filename: string } | null>(null)
   const snippetInsertPosRef = useRef<number | null>(null)
+  // Where an `/attachment` → "Upload a file…" pick must land: captured when the
+  // host's file input is opened, consumed by the insert once files come back.
+  const pendingUploadInsertPosRef = useRef<number | null>(null)
   const snippetCountRef = useRef(0)
   // Snippet creation needs an upload handler to attach through, same as the
   // paste path; gate the `/snippet` command on it too.
   const snippetEnabled = !!onFileUpload && enableCommands
+  // `/attachment` is worth showing when there's something to place: a tray file,
+  // or an upload path to produce one.
+  const canUploadFromPicker = !!onFileUpload && !!onRequestFileUpload
+  const attachmentCommandEnabled = enableCommands && (canUploadFromPicker || (trayAttachments?.length ?? 0) > 0)
 
   // Open the snippet editor with an empty draft, anchored at the caret so the
   // chip lands where it would for a paste. Shared by the `/snippet` command and
@@ -346,6 +371,9 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
     snippetCountRef.current += 1
     setSnippetDraft({ text: "", filename: defaultSnippetFilename(snippetCountRef.current) })
   }, [])
+
+  const openAttachmentPickerRef = useRef<() => void>(() => {})
+  const openAttachmentPicker = useCallback(() => openAttachmentPickerRef.current(), [])
 
   // Stable bridge to the command-argument picker: held in a ref because the
   // picker (which owns `openArgPicker`) is set up after the editor exists,
@@ -366,8 +394,10 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
     includeMemoSearch: enableMemoEmbed,
     includeGiphy: giphyEnabled,
     includeSnippet: snippetEnabled,
+    includeAttachment: attachmentCommandEnabled,
     onOpenGiphy: () => setGiphyOpen(true),
     onOpenSnippet: openSnippetEditor,
+    onOpenAttachment: openAttachmentPicker,
     onCommandPicked: notifyCommandPicked,
     commandStreamId,
   })
@@ -460,6 +490,26 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
     const arg = findPickableArg(item)
     if (arg) openArgPicker(arg)
   }
+
+  // The `/attachment` picker: same programmatic shape, plus a hand-off to the
+  // host's file input for its "Upload a file…" entry.
+  const onRequestFileUploadRef = useRef(onRequestFileUpload)
+  onRequestFileUploadRef.current = onRequestFileUpload
+  const requestAttachmentUpload = useCallback((anchorPos: number) => {
+    pendingUploadInsertPosRef.current = anchorPos
+    onRequestFileUploadRef.current?.()
+  }, [])
+  const {
+    openAttachmentPicker: openPicker,
+    renderAttachmentPicker,
+    handleAttachmentPickerKeyDown,
+  } = useAttachmentPicker(editorRef, {
+    attachments: trayAttachments ?? NO_TRAY_ATTACHMENTS,
+    onRequestUpload: canUploadFromPicker ? requestAttachmentUpload : undefined,
+  })
+  openAttachmentPickerRef.current = openPicker
+  const attachmentPickerKeyDownRef = useRef(handleAttachmentPickerKeyDown)
+  attachmentPickerKeyDownRef.current = handleAttachmentPickerKeyDown
 
   // Track mentionables state to detect when data loads or currentUser becomes known
   const lastParsedState = useRef({ count: mentionables.length, hasCurrentUser: false })
@@ -589,9 +639,27 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
   )
 
   const insertFiles = useCallback(
-    (files: File[]): boolean => handleFilesInsert(files, editorRef.current),
+    (files: File[]): boolean => {
+      const editorInstance = editorRef.current
+      // A pick started from `/attachment` lands where the command was typed; the
+      // native file dialog left the caret wherever focus went.
+      const anchorPos = pendingUploadInsertPosRef.current
+      pendingUploadInsertPosRef.current = null
+      if (anchorPos !== null && editorInstance && !editorInstance.isDestroyed) {
+        editorInstance
+          .chain()
+          .focus()
+          .setTextSelection(Math.min(anchorPos, editorInstance.state.doc.content.size))
+          .run()
+      }
+      return handleFilesInsert(files, editorInstance)
+    },
     [handleFilesInsert]
   )
+
+  const cancelPendingInlineUpload = useCallback(() => {
+    pendingUploadInsertPosRef.current = null
+  }, [])
 
   const removeAttachmentReferences = useCallback((attachmentId: string) => {
     const editorInstance = editorRef.current
@@ -849,6 +917,11 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
         // open — same role TipTap's suggestion plugin plays for the @/slash
         // popups, but routed here since editorProps runs before the keymaps.
         if (argPickerKeyDownRef.current(event)) {
+          return true
+        }
+
+        // The `/attachment` picker owns its keys for the same reason.
+        if (attachmentPickerKeyDownRef.current(event)) {
           return true
         }
 
@@ -1208,6 +1281,7 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
       insertEmoji: handleEmojiClick,
       openSnippetEditor,
       insertFiles,
+      cancelPendingInlineUpload,
       removeAttachmentReferences,
       insertTranscribedText,
       setDictationInterim,
@@ -1227,6 +1301,7 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
       handleEmojiClick,
       openSnippetEditor,
       insertFiles,
+      cancelPendingInlineUpload,
       removeAttachmentReferences,
       insertTranscribedText,
       setDictationInterim,
@@ -1259,6 +1334,7 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
         {enableChannels ? renderChannelList() : null}
         {enableCommands ? renderCommandList() : null}
         {enableCommands ? renderArgPicker() : null}
+        {enableCommands ? renderAttachmentPicker() : null}
         {enableEmoji ? renderEmojiGrid() : null}
         {enableMemoEmbed ? renderMemoList() : null}
         {giphyEnabled && workspaceId ? (

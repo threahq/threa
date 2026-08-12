@@ -29,6 +29,14 @@ export const GIPHY_SLASH_ACTION = "giphy"
  */
 export const SNIPPET_SLASH_ACTION = "snippet"
 
+/**
+ * Client-action id for the synthetic "attachment" slash entry. Inserts no chip —
+ * selecting it removes the typed `/attachment` and the React layer (see
+ * `useCommandSuggestion`) opens the attachment picker, which inserts a reference
+ * to a tray file (or a freshly uploaded one) at the caret. Frontend-only.
+ */
+export const ATTACHMENT_SLASH_ACTION = "attachment"
+
 export interface CommandNodeAttrs {
   name: string
   /**
@@ -77,9 +85,14 @@ export const CommandExtension = createTriggerExtension<CommandItem, CommandNodeA
       editor.chain().focus().deleteRange(range).insertContent("/memo ").run()
       return true
     }
-    // The "giphy" and "snippet" entries insert no chip — drop the typed slash
-    // here; the React command wrapper opens the picker/editor once handled.
-    if (item.clientActionId === GIPHY_SLASH_ACTION || item.clientActionId === SNIPPET_SLASH_ACTION) {
+    // The "giphy", "snippet" and "attachment" entries insert no chip — drop the
+    // typed slash here; the React command wrapper opens the picker/editor once
+    // handled.
+    if (
+      item.clientActionId === GIPHY_SLASH_ACTION ||
+      item.clientActionId === SNIPPET_SLASH_ACTION ||
+      item.clientActionId === ATTACHMENT_SLASH_ACTION
+    ) {
       editor.chain().focus().deleteRange(range).run()
       return true
     }
