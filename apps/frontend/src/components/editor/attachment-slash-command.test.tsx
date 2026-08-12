@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest"
-import { createRef } from "react"
-import { render, cleanup, fireEvent, screen, waitFor } from "@testing-library/react"
+import { createRef, useState } from "react"
+import { act, render, cleanup, fireEvent, screen, waitFor } from "@testing-library/react"
 import { MemoryRouter, Route, Routes } from "react-router-dom"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import type { Editor } from "@tiptap/react"
@@ -48,6 +48,8 @@ interface Harness {
   getContent: () => JSONContent
   onRequestFileUpload: ReturnType<typeof vi.fn>
   uploads: File[]
+  /** Push a new tray array into the mounted editor, as an upload tick would. */
+  setTray: (attachments: PendingAttachment[]) => void
 }
 
 function mountEditor(options: { trayAttachments?: PendingAttachment[]; autoFocus?: boolean } = {}): Harness {
@@ -55,8 +57,11 @@ function mountEditor(options: { trayAttachments?: PendingAttachment[]; autoFocus
   const onRequestFileUpload = vi.fn()
   const uploads: File[] = []
   let content: JSONContent = { type: "doc", content: [{ type: "paragraph" }] }
+  let pushTray: ((attachments: PendingAttachment[]) => void) | null = null
 
   function Host() {
+    const [tray, setTrayState] = useState<PendingAttachment[]>(options.trayAttachments ?? TRAY)
+    pushTray = setTrayState
     return (
       <RichEditor
         ref={ref}
@@ -81,7 +86,7 @@ function mountEditor(options: { trayAttachments?: PendingAttachment[]; autoFocus
         }}
         ariaLabel="Message input"
         autoFocus={options.autoFocus ?? true}
-        trayAttachments={options.trayAttachments ?? TRAY}
+        trayAttachments={tray}
         onRequestFileUpload={onRequestFileUpload}
       />
     )
@@ -99,7 +104,14 @@ function mountEditor(options: { trayAttachments?: PendingAttachment[]; autoFocus
 
   const handle = ref.current!
   const editor = handle.getEditor()!
-  return { handle, editor, getContent: () => editor.getJSON(), onRequestFileUpload, uploads }
+  return {
+    handle,
+    editor,
+    getContent: () => editor.getJSON(),
+    onRequestFileUpload,
+    uploads,
+    setTray: (attachments) => act(() => pushTray?.(attachments)),
+  }
 }
 
 function typeText(editor: Editor, text: string) {
@@ -230,6 +242,47 @@ describe("/attachment slash command", () => {
     fireEvent.click(await screen.findByRole("option", { name: /notes\.txt/ }))
 
     await waitFor(() => expect(countAttachmentReferences(getContent()).get("att_notes")).toBe(1))
+  })
+
+  it("keeps the highlighted row through an upload tick that leaves the selectable set unchanged", async () => {
+    const uploading: PendingAttachment = {
+      id: "temp_big",
+      filename: "big.zip",
+      mimeType: "application/zip",
+      sizeBytes: 999,
+      status: "uploading",
+      progress: 0.1,
+    }
+    const harness = mountEditor({ trayAttachments: [...TRAY, uploading] })
+    const { editor, getContent, setTray } = harness
+    await openPicker(editor)
+    pressKey(editor, "ArrowDown")
+    await waitFor(() => expect(screen.getByRole("option", { selected: true }).textContent).toContain("notes.txt"))
+
+    setTray([...TRAY, { ...uploading, progress: 0.6 }])
+
+    expect(screen.getByRole("option", { selected: true }).textContent).toContain("notes.txt")
+    pressKey(editor, "Enter")
+    await waitFor(() => expect(attachmentNodes(getContent())).toHaveLength(1))
+    expect(attachmentNodes(getContent())[0]?.attrs?.id).toBe("att_notes")
+  })
+
+  it("resets the highlight when the typed filter changes, so typing lands on the best match", async () => {
+    const { editor } = mountEditor()
+    await openPicker(editor)
+    pressKey(editor, "ArrowDown")
+    pressKey(editor, "ArrowDown")
+    await waitFor(() => expect(screen.getByRole("option", { selected: true }).textContent).toContain("sunset.png"))
+
+    // Every tray filename contains an "n", so nothing is filtered out: the
+    // highlight moves because the list re-ranked, not because its row vanished.
+    typeText(editor, "n")
+
+    await waitFor(() => {
+      const labels = screen.getAllByRole("option").map((option) => option.textContent ?? "")
+      expect(labels.some((label) => label.includes("sunset.png"))).toBe(true)
+      expect(screen.getByRole("option", { selected: true }).textContent).toBe(labels[0])
+    })
   })
 
   it("uploads and inserts in one flow when 'Upload a file…' is chosen", async () => {

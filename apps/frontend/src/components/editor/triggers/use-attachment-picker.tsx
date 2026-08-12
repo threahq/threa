@@ -184,6 +184,7 @@ export function useAttachmentPicker(
         items={items}
         clientRect={() => posClientRect(editorRef.current, state.anchorPos)}
         command={select}
+        query={state.query}
       />,
       document.body
     )

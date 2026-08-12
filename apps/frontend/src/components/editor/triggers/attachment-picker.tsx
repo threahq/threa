@@ -13,6 +13,8 @@ interface AttachmentPickerProps {
   clientRect: (() => DOMRect | null) | null
   command: (item: AttachmentPickerOption) => void
   placement?: Placement
+  /** The typed filter. Changing it re-ranks the list, so the highlight resets. */
+  query: string
 }
 
 function AttachmentOptionContent({ item }: { item: AttachmentPickerOption }) {
@@ -38,7 +40,7 @@ function AttachmentOptionContent({ item }: { item: AttachmentPickerOption }) {
  * Built on the same `SuggestionList` as the @mention / /command popovers.
  */
 export const AttachmentPicker = forwardRef<AttachmentPickerRef, AttachmentPickerProps>(function AttachmentPicker(
-  { items, clientRect, command, placement },
+  { items, clientRect, command, placement, query },
   ref
 ) {
   return (
@@ -52,6 +54,7 @@ export const AttachmentPicker = forwardRef<AttachmentPickerRef, AttachmentPicker
       width="w-[300px]"
       renderItem={(item) => <AttachmentOptionContent item={item} />}
       placement={placement}
+      highlightResetKey={query}
     />
   )
 })
