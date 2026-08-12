@@ -60,6 +60,8 @@ function TrayPillDraggable({
 }) {
   const draggable = host !== null && attachment.status === "uploaded"
   const begin = (event: MouseEvent | TouchEvent, target: EventTarget) => {
+    // Every press on a chip owns the click it produces, draggable or not.
+    host?.clearActivationClickSuppression()
     if (!draggable) return
     // The × and the chip body are the same pointer target; let the button win.
     if (target instanceof Element && target.closest("button")) return

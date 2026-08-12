@@ -153,6 +153,67 @@ describe("tray pill drag", () => {
   })
 })
 
+describe("drag preview", () => {
+  it("shows a preview naming the dragged attachment while a tray drag is in flight", () => {
+    const editor = createEditor()
+    vi.spyOn(editor.view, "posAtCoords").mockReturnValue({ pos: 1, inside: -1 })
+    renderTray(editor, [attachment()])
+
+    const chip = screen.getByText("screenshot.png")
+    expect(screen.queryByTestId("composer-pill-drag-preview")).toBeNull()
+
+    fireEvent.mouseDown(chip, { button: 0, clientX: 10, clientY: 10 })
+    fireEvent.mouseMove(document, { buttons: 1, clientX: 30, clientY: 10 })
+    const preview = screen.getByTestId("composer-pill-drag-preview")
+    expect(preview).toHaveTextContent("screenshot.png")
+    expect(preview).toHaveTextContent("2.0 KB")
+
+    fireEvent.mouseUp(document, { button: 0, clientX: 30, clientY: 10 })
+    expect(screen.queryByTestId("composer-pill-drag-preview")).toBeNull()
+  })
+
+  it("shows no preview for an in-document pill drag — it is dimmed in place instead", () => {
+    const editor = createEditor([
+      { type: "text", text: "hello world" },
+      { type: "mention", attrs: { id: "usr_1", slug: "alice", mentionType: "user" } },
+    ])
+    vi.spyOn(editor.view, "posAtCoords").mockReturnValue({ pos: 1, inside: -1 })
+    renderTray(editor, [attachment()])
+
+    const pill = editor.view.dom.querySelector<HTMLElement>('[data-type="mention"]')!
+    fireEvent.mouseDown(pill, { button: 0, clientX: 10, clientY: 10 })
+    fireEvent.mouseMove(document, { buttons: 1, clientX: 30, clientY: 10 })
+
+    expect(editor.view.dom.querySelector(".composer-pill-dragging")).not.toBeNull()
+    expect(screen.queryByTestId("composer-pill-drag-preview")).toBeNull()
+    fireEvent.mouseUp(document, { button: 0, clientX: 30, clientY: 10 })
+  })
+})
+
+describe("chip click after a drag", () => {
+  it("still reaches the chip's activate handler", () => {
+    const editor = createEditor()
+    vi.spyOn(editor.view, "posAtCoords").mockReturnValue({ pos: 1, inside: -1 })
+    const notes = attachment({
+      id: "att_2",
+      filename: "notes.txt",
+      mimeType: "text/plain",
+      previewUrl: "blob:preview-2",
+    })
+    renderTray(editor, [attachment(), notes])
+
+    dragChipIntoEditor(screen.getByText("screenshot.png"))
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument()
+
+    const other = screen.getByRole("button", { name: "Preview notes.txt" })
+    fireEvent.mouseDown(other, { button: 0, clientX: 5, clientY: 5 })
+    fireEvent.mouseUp(other, { button: 0, clientX: 5, clientY: 5 })
+    fireEvent.click(other)
+
+    expect(screen.getByRole("dialog")).toBeInTheDocument()
+  })
+})
+
 describe("referenced chip leading slot", () => {
   it("keeps the error glyph on a referenced attachment that failed to upload", () => {
     const failed = attachment({
@@ -209,6 +270,30 @@ describe("referenced chip leading slot", () => {
 
     expect(container.querySelector('img[src="blob:preview-1"]')).toBeTruthy()
     expect(container.querySelector(".lucide-anchor")).toBeNull()
+  })
+
+  it("exposes the ×N count with an accessible name, and never at one reference", () => {
+    const doc = attachment({ id: "att_2", filename: "notes.txt", mimeType: "text/plain", previewUrl: undefined })
+    const once = render(
+      <PendingAttachments
+        attachments={[doc]}
+        onRemove={vi.fn()}
+        workspaceId="ws_1"
+        referenceCounts={new Map([["att_2", 1]])}
+      />
+    )
+    expect(screen.queryByText("×1")).toBeNull()
+    once.unmount()
+
+    render(
+      <PendingAttachments
+        attachments={[doc]}
+        onRemove={vi.fn()}
+        workspaceId="ws_1"
+        referenceCounts={new Map([["att_2", 2]])}
+      />
+    )
+    expect(screen.getByRole("img", { name: "2 references in this message" })).toHaveTextContent("×2")
   })
 
   it("shows the anchor on a referenced chip with no thumbnail of its own", () => {

@@ -120,6 +120,15 @@ export class ComposerPillDragHost {
   }
 
   /**
+   * A fresh pointer-down means the click it produces belongs to that press, not
+   * to the drag that ended before it — otherwise the window swallows a chip tap
+   * for as long as it runs.
+   */
+  clearActivationClickSuppression() {
+    this.suppressClickUntil = 0
+  }
+
+  /**
    * Entry point for a drag that starts outside the editor. Same activator, same
    * sensor: only the source differs, so the tray never grows a parallel path.
    */
@@ -225,7 +234,7 @@ export class ComposerPillDragHost {
       event.stopImmediatePropagation()
       return
     }
-    this.suppressClickUntil = 0
+    this.clearActivationClickSuppression()
     const view = this.view
     if (!view?.editable || event.button !== 0) return
     const pill = pillFromDom(view, event.target)

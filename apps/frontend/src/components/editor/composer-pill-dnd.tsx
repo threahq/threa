@@ -1,6 +1,8 @@
 import { createContext, useContext, useEffect, useMemo, useRef, type ReactNode } from "react"
 import {
   DndContext,
+  DragOverlay,
+  useDndContext,
   useDraggable,
   useDroppable,
   useSensor,
@@ -8,6 +10,7 @@ import {
   type Announcements,
   type CollisionDetection,
 } from "@dnd-kit/core"
+import { FileIcon, ImageIcon } from "lucide-react"
 import type { Transaction } from "@tiptap/pm/state"
 import type { EditorView } from "@tiptap/pm/view"
 import type { Editor } from "@tiptap/react"
@@ -19,7 +22,10 @@ import {
   createComposerPillMoveTransaction,
   dropPositionAt,
   setComposerPillDragState,
+  type ComposerPillDragSource,
 } from "./composer-pill-drag-extension"
+import { AttachmentPill } from "@/components/composer/attachment-pill"
+import { formatFileSize } from "@/lib/file-size"
 import {
   ComposerPillDragHost,
   type ComposerPillDragLifecycle,
@@ -206,6 +212,45 @@ function ComposerPillDragBridge({ editor, host }: { editor: Editor | null; host:
   return null
 }
 
+/**
+ * The ghost that follows the pointer during a drag out of the tray. Only a tray
+ * source gets one: an in-document pill is already visible, dimmed in place, and
+ * a second copy of it would be new behaviour.
+ *
+ * dnd-kit anchors the overlay on the draggable node, which here is the editor
+ * itself — the tray chip is not the draggable. So the ghost is offset from the
+ * editor's corner to the pointer's start, and dnd-kit's own transform carries it
+ * from there.
+ */
+function ComposerPillDragPreview({ host }: { host: ComposerPillDragHost }) {
+  const { active } = useDndContext()
+  const source = (active?.data.current as { source?: ComposerPillDragSource | null } | undefined)?.source ?? null
+  const tray = source?.kind === "tray" ? source : null
+  const offset = useMemo(() => {
+    const rect = tray ? host.getView()?.dom.getBoundingClientRect() : null
+    if (!rect) return null
+    return { x: host.gestureStartX - rect.left, y: host.gestureStartY - rect.top }
+  }, [host, tray])
+  if (!tray || !offset) return null
+
+  const { attrs } = tray
+  return (
+    <span
+      data-testid="composer-pill-drag-preview"
+      className="inline-flex"
+      style={{ transform: `translate3d(${offset.x}px, calc(${offset.y}px - 50%), 0)` }}
+    >
+      <AttachmentPill
+        icon={attrs.mimeType.startsWith("image/") ? ImageIcon : FileIcon}
+        label={attrs.filename}
+        secondary={attrs.sizeBytes == null ? undefined : formatFileSize(attrs.sizeBytes)}
+        labelMaxWidth="max-w-[120px]"
+        className="shadow-lg"
+      />
+    </span>
+  )
+}
+
 function ComposerPillDndOwner({ editor, children }: { editor?: Editor | null; children?: ReactNode }) {
   const hostRef = useRef<ComposerPillDragHost | null>(null)
   hostRef.current ??= new ComposerPillDragHost()
@@ -224,6 +269,9 @@ function ComposerPillDndOwner({ editor, children }: { editor?: Editor | null; ch
       <ComposerPillDragHostContext.Provider value={host}>
         {editor !== undefined && <ComposerPillDragBridge editor={editor} host={host} />}
         {children}
+        <DragOverlay dropAnimation={null} style={{ pointerEvents: "none" }}>
+          <ComposerPillDragPreview host={host} />
+        </DragOverlay>
       </ComposerPillDragHostContext.Provider>
     </DndContext>
   )

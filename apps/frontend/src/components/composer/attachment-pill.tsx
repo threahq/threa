@@ -178,8 +178,10 @@ export function AttachmentPill({
     <>
       <PillLeading icon={icon} thumbnailSrc={thumbnailSrc} spin={spin} anchored={anchored} />
       <span className={cn("truncate", labelMaxWidth)}>{label}</span>
+      {/* role=img so the count's `aria-label` names the element: a bare span has
+          no role, and an accessible name on one is not reliably exposed. */}
       {referenceCount > 1 && (
-        <span className={SECONDARY_TONE[status]} aria-label={`${referenceCount} references in this message`}>
+        <span role="img" className={SECONDARY_TONE[status]} aria-label={`${referenceCount} references in this message`}>
           {`\u00d7${referenceCount}`}
         </span>
       )}
