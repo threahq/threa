@@ -1,6 +1,7 @@
 import type { DraggableSyntheticListeners } from "@dnd-kit/core"
 import { NodeSelection } from "@tiptap/pm/state"
 import type { EditorView } from "@tiptap/pm/view"
+import type { Editor } from "@tiptap/react"
 import {
   COMPOSER_PILL_TOUCH_DRAG_MODE,
   isComposerPillNode,
@@ -58,6 +59,7 @@ function touchById(list: TouchList, id: number): Touch | null {
  */
 export class ComposerPillDragHost {
   private view: EditorView | null = null
+  private editorSlotOwner: Editor | null = null
   private listeners: DraggableSyntheticListeners
   private suppressMouseUntil = 0
   private suppressClickUntil = 0
@@ -77,6 +79,24 @@ export class ComposerPillDragHost {
   cancelActiveGesture: (() => void) | null = null
   lifecycle: ComposerPillDragLifecycle | null = null
 
+  /**
+   * A host drives exactly one editor. The slot is keyed by the editor rather than
+   * by the mount that binds it, so the composer's own provider still recognises
+   * its binding when it remounts, while a *different* editor inside this host's
+   * tree (a dialog's composer) is refused and opens its own context instead of
+   * stealing the binding and tearing it down on unmount. An editor that is not
+   * built yet reserves nothing and only asks whether the slot is free.
+   */
+  claimEditorSlot(editor: Editor | null): boolean {
+    if (this.editorSlotOwner !== null && this.editorSlotOwner !== editor) return false
+    if (editor) this.editorSlotOwner = editor
+    return true
+  }
+
+  releaseEditorSlot(editor: Editor) {
+    if (this.editorSlotOwner === editor) this.editorSlotOwner = null
+  }
+
   attach(view: EditorView) {
     this.view = view
     view.dom.dataset.composerPillDragMode = COMPOSER_PILL_TOUCH_DRAG_MODE
@@ -86,11 +106,10 @@ export class ComposerPillDragHost {
     view.dom.addEventListener("dragstart", this.onNativeDragStart, true)
   }
 
-  detach() {
-    const view = this.view
+  detach(view: EditorView) {
+    if (this.view !== view) return
     this.cancelActiveGesture?.()
     this.clearAwaitedTouchCompletions()
-    if (!view) return
     view.dom.removeEventListener("mousedown", this.onMouseDown, true)
     view.dom.removeEventListener("touchstart", this.onTouchStart, true)
     view.dom.removeEventListener("click", this.onClick, true)

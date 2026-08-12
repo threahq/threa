@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest"
 import { cleanup, fireEvent, render, screen } from "@testing-library/react"
 import { Editor } from "@tiptap/core"
 import type { JSONContent } from "@threa/types"
-import { ComposerPillDndProvider } from "@/components/editor/composer-pill-dnd"
+import { ComposerPillDndHost, ComposerPillDndProvider } from "@/components/editor/composer-pill-dnd"
 import { countAttachmentReferences } from "@/components/editor/attachment-reference-counts"
 import { createEditorExtensions } from "@/components/editor/editor-extensions"
 import type { PendingAttachment } from "@/hooks/use-attachments"
@@ -465,6 +465,60 @@ describe("referenced chip highlight", () => {
     const touchEditor = trayWithReferences()
     fireEvent.mouseEnter(screen.getByRole("button", { name: "Preview notes.txt" }).parentElement!)
     expect(highlighted(touchEditor)).toEqual([])
+  })
+})
+
+describe("a second editor inside the composer's drag host", () => {
+  function composerTree(first: Editor, second: Editor | null) {
+    return (
+      <ComposerPillDndHost>
+        <PendingAttachments attachments={[attachment()]} onRemove={vi.fn()} workspaceId="ws_1" />
+        <ComposerPillDndProvider editor={first} />
+        {second && <ComposerPillDndProvider editor={second} />}
+      </ComposerPillDndHost>
+    )
+  }
+
+  function renderComposerWith(first: Editor, second: Editor | null) {
+    return render(composerTree(first, second))
+  }
+
+  it("leaves the tray drag working after the nested editor unmounts", () => {
+    const first = createEditor()
+    const second = createEditor()
+    vi.spyOn(first.view, "posAtCoords").mockReturnValue({ pos: 1, inside: -1 })
+    vi.spyOn(second.view, "posAtCoords").mockReturnValue({ pos: 1, inside: -1 })
+
+    const { rerender } = renderComposerWith(first, second)
+    rerender(composerTree(first, null))
+
+    dragChipIntoEditor(screen.getByText("screenshot.png"))
+
+    expect(childTypes(first)).toEqual(["attachmentReference", "text"])
+  })
+
+  it("keeps the nested editor's own drag off the composer's document", () => {
+    const first = createEditor()
+    const second = createEditor([
+      { type: "text", text: "hello world" },
+      { type: "mention", attrs: { id: "usr_1", slug: "alice", mentionType: "user" } },
+    ])
+    vi.spyOn(first.view, "posAtCoords").mockReturnValue({ pos: 1, inside: -1 })
+    vi.spyOn(second.view, "posAtCoords").mockReturnValue({ pos: 1, inside: -1 })
+    renderComposerWith(first, second)
+
+    const pill = second.view.dom.querySelector<HTMLElement>('[data-type="mention"]')!
+    fireEvent.mouseDown(pill, { button: 0, clientX: 10, clientY: 10 })
+    fireEvent.mouseMove(document, { buttons: 1, clientX: 30, clientY: 10 })
+    fireEvent.mouseUp(document, { button: 0, clientX: 30, clientY: 10 })
+
+    expect(childTypes(second)).toEqual(["mention", "text"])
+    expect(childTypes(first)).toEqual(["text"])
+
+    // The tray still belongs to the composer's editor, not the newcomer's.
+    dragChipIntoEditor(screen.getByText("screenshot.png"))
+    expect(childTypes(first)).toEqual(["attachmentReference", "text"])
+    expect(childTypes(second)).toEqual(["mention", "text"])
   })
 })
 

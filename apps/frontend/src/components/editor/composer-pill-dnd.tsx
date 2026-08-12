@@ -107,12 +107,15 @@ function ComposerPillDragBridge({ editor, host }: { editor: Editor | null; host:
 
   useEffect(() => {
     if (!editor) return
-    const dom = editor.view.dom
+    if (!host.claimEditorSlot(editor)) return
+    const view = editor.view
+    const dom = view.dom
     setDraggableNode(dom)
     setDroppableNode(dom)
-    host.attach(editor.view)
+    host.attach(view)
     return () => {
-      host.detach()
+      host.detach(view)
+      host.releaseEditorSlot(editor)
       setDraggableNode(null)
       setDroppableNode(null)
     }
@@ -294,16 +297,29 @@ export function ComposerPillDndHost({ children }: { children?: ReactNode }) {
  * own an editor instance (`RichEditor`, the document editor modal) each wrap it
  * in this provider rather than relying on a context further up the tree.
  *
- * Under a `ComposerPillDndHost` it binds the editor to that host instead. The
- * branch is decided by whether a host exists, which never changes for a given
- * mount — so the children keep one React position either way.
+ * Under a `ComposerPillDndHost` whose editor slot is still free it binds the
+ * editor to that host instead. A host already driving an editor is not borrowed:
+ * a second editor rendered inside the composer's tree (the scheduled-message
+ * edit dialog, portaled but still a React descendant) opens its own context, so
+ * it neither steals the composer's view nor takes dnd-kit's ids twice. The
+ * branch is read once per mount and never flips, so the children keep one React
+ * position either way.
  */
 export function ComposerPillDndProvider({ editor, children }: { editor: Editor | null; children?: ReactNode }) {
   const ancestorHost = useComposerPillDragHost()
-  if (ancestorHost) {
+  const boundHostRef = useRef<ComposerPillDragHost | null | undefined>(undefined)
+  // Claimed during render, not in the effect: two providers can render in one
+  // commit, and the loser has to know before it picks a branch. The claim is
+  // keyed by the editor, so re-rendering or remounting this same provider
+  // re-takes its own claim rather than losing it.
+  if (boundHostRef.current === undefined) {
+    boundHostRef.current = ancestorHost?.claimEditorSlot(editor) ? ancestorHost : null
+  }
+  const boundHost = boundHostRef.current
+  if (boundHost) {
     return (
       <>
-        <ComposerPillDragBridge editor={editor} host={ancestorHost} />
+        <ComposerPillDragBridge editor={editor} host={boundHost} />
         {children}
       </>
     )
