@@ -469,7 +469,7 @@ describe("referenced chip highlight", () => {
 })
 
 describe("a second editor inside the composer's drag host", () => {
-  function composerTree(first: Editor, second: Editor | null) {
+  function composerTree(first: Editor | null, second: Editor | null) {
     return (
       <ComposerPillDndHost>
         <PendingAttachments attachments={[attachment()]} onRemove={vi.fn()} workspaceId="ws_1" />
@@ -495,6 +495,21 @@ describe("a second editor inside the composer's drag host", () => {
     dragChipIntoEditor(screen.getByText("screenshot.png"))
 
     expect(childTypes(first)).toEqual(["attachmentReference", "text"])
+  })
+
+  it("gives the composer the host when its editor is built after the nested one", () => {
+    const second = createEditor()
+    vi.spyOn(second.view, "posAtCoords").mockReturnValue({ pos: 1, inside: -1 })
+
+    const { rerender } = render(composerTree(null, second))
+    const first = createEditor()
+    vi.spyOn(first.view, "posAtCoords").mockReturnValue({ pos: 1, inside: -1 })
+    rerender(composerTree(first, second))
+
+    dragChipIntoEditor(screen.getByText("screenshot.png"))
+
+    expect(childTypes(first)).toEqual(["attachmentReference", "text"])
+    expect(childTypes(second)).toEqual(["text"])
   })
 
   it("keeps the nested editor's own drag off the composer's document", () => {

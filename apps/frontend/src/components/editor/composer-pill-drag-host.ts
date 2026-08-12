@@ -1,7 +1,6 @@
 import type { DraggableSyntheticListeners } from "@dnd-kit/core"
 import { NodeSelection } from "@tiptap/pm/state"
 import type { EditorView } from "@tiptap/pm/view"
-import type { Editor } from "@tiptap/react"
 import {
   COMPOSER_PILL_TOUCH_DRAG_MODE,
   isComposerPillNode,
@@ -59,7 +58,7 @@ function touchById(list: TouchList, id: number): Touch | null {
  */
 export class ComposerPillDragHost {
   private view: EditorView | null = null
-  private editorSlotOwner: Editor | null = null
+  private editorSlotOwner: string | null = null
   private listeners: DraggableSyntheticListeners
   private suppressMouseUntil = 0
   private suppressClickUntil = 0
@@ -80,21 +79,22 @@ export class ComposerPillDragHost {
   lifecycle: ComposerPillDragLifecycle | null = null
 
   /**
-   * A host drives exactly one editor. The slot is keyed by the editor rather than
-   * by the mount that binds it, so the composer's own provider still recognises
-   * its binding when it remounts, while a *different* editor inside this host's
+   * A host drives exactly one editor. The slot is keyed by the provider that
+   * binds it, not by the editor, so the provider holds it from its first render
+   * — before its editor exists — and a *different* editor inside this host's
    * tree (a dialog's composer) is refused and opens its own context instead of
-   * stealing the binding and tearing it down on unmount. An editor that is not
-   * built yet reserves nothing and only asks whether the slot is free.
+   * taking a binding the composer is still building towards. The key is a
+   * `useId()`, stable across a re-render, a StrictMode double-invoke and a
+   * remount at the same position, so re-claiming is idempotent.
    */
-  claimEditorSlot(editor: Editor | null): boolean {
-    if (this.editorSlotOwner !== null && this.editorSlotOwner !== editor) return false
-    if (editor) this.editorSlotOwner = editor
+  claimEditorSlot(ownerId: string): boolean {
+    if (this.editorSlotOwner !== null && this.editorSlotOwner !== ownerId) return false
+    this.editorSlotOwner = ownerId
     return true
   }
 
-  releaseEditorSlot(editor: Editor) {
-    if (this.editorSlotOwner === editor) this.editorSlotOwner = null
+  releaseEditorSlot(ownerId: string) {
+    if (this.editorSlotOwner === ownerId) this.editorSlotOwner = null
   }
 
   attach(view: EditorView) {

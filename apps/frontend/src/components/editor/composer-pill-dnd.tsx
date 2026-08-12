@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useMemo, useRef, type ReactNode } from "react"
+import { createContext, useContext, useEffect, useId, useMemo, useRef, type ReactNode } from "react"
 import {
   DndContext,
   DragOverlay,
@@ -96,7 +96,15 @@ export function createComposerPillCollisionDetection(host: ComposerPillDragHost)
   }
 }
 
-function ComposerPillDragBridge({ editor, host }: { editor: Editor | null; host: ComposerPillDragHost }) {
+function ComposerPillDragBridge({
+  editor,
+  host,
+  ownerId,
+}: {
+  editor: Editor | null
+  host: ComposerPillDragHost
+  ownerId: string
+}) {
   const { setNodeRef: setDraggableNode, listeners } = useDraggable({ id: DRAGGABLE_ID, data: host.dragData })
   const { setNodeRef: setDroppableNode } = useDroppable({ id: DROPPABLE_ID })
   const guideRef = useRef<ComposerPillTouchGuide | null>(null)
@@ -107,7 +115,7 @@ function ComposerPillDragBridge({ editor, host }: { editor: Editor | null; host:
 
   useEffect(() => {
     if (!editor) return
-    if (!host.claimEditorSlot(editor)) return
+    if (!host.claimEditorSlot(ownerId)) return
     const view = editor.view
     const dom = view.dom
     setDraggableNode(dom)
@@ -115,11 +123,15 @@ function ComposerPillDragBridge({ editor, host }: { editor: Editor | null; host:
     host.attach(view)
     return () => {
       host.detach(view)
-      host.releaseEditorSlot(editor)
       setDraggableNode(null)
       setDroppableNode(null)
     }
-  }, [editor, host, setDraggableNode, setDroppableNode])
+  }, [editor, host, ownerId, setDraggableNode, setDroppableNode])
+
+  // The slot is held for as long as this provider is mounted, not for as long as
+  // it has an editor: rebuilding the editor must not open a window where another
+  // one can take the host.
+  useEffect(() => () => host.releaseEditorSlot(ownerId), [host, ownerId])
 
   useEffect(() => {
     const releaseGuide = () => {
@@ -258,6 +270,7 @@ function ComposerPillDndOwner({ editor, children }: { editor?: Editor | null; ch
   const hostRef = useRef<ComposerPillDragHost | null>(null)
   hostRef.current ??= new ComposerPillDragHost()
   const host = hostRef.current
+  const ownerId = useId()
 
   const sensors = useSensors(
     useSensor(
@@ -270,7 +283,7 @@ function ComposerPillDndOwner({ editor, children }: { editor?: Editor | null; ch
   return (
     <DndContext autoScroll sensors={sensors} collisionDetection={collisionDetection} accessibility={{ announcements }}>
       <ComposerPillDragHostContext.Provider value={host}>
-        {editor !== undefined && <ComposerPillDragBridge editor={editor} host={host} />}
+        {editor !== undefined && <ComposerPillDragBridge editor={editor} host={host} ownerId={ownerId} />}
         {children}
         <DragOverlay dropAnimation={null} style={{ pointerEvents: "none" }}>
           <ComposerPillDragPreview host={host} />
@@ -307,19 +320,21 @@ export function ComposerPillDndHost({ children }: { children?: ReactNode }) {
  */
 export function ComposerPillDndProvider({ editor, children }: { editor: Editor | null; children?: ReactNode }) {
   const ancestorHost = useComposerPillDragHost()
+  const ownerId = useId()
   const boundHostRef = useRef<ComposerPillDragHost | null | undefined>(undefined)
   // Claimed during render, not in the effect: two providers can render in one
   // commit, and the loser has to know before it picks a branch. The claim is
-  // keyed by the editor, so re-rendering or remounting this same provider
-  // re-takes its own claim rather than losing it.
+  // keyed by this provider, so it holds from the first render — an editor that
+  // does not exist yet must not cost the composer its own host — and re-taking
+  // it on a re-render, a StrictMode double-invoke or a remount is a no-op.
   if (boundHostRef.current === undefined) {
-    boundHostRef.current = ancestorHost?.claimEditorSlot(editor) ? ancestorHost : null
+    boundHostRef.current = ancestorHost?.claimEditorSlot(ownerId) ? ancestorHost : null
   }
   const boundHost = boundHostRef.current
   if (boundHost) {
     return (
       <>
-        <ComposerPillDragBridge editor={editor} host={boundHost} />
+        <ComposerPillDragBridge editor={editor} host={boundHost} ownerId={ownerId} />
         {children}
       </>
     )
