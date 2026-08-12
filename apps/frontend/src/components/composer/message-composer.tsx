@@ -572,15 +572,50 @@ export function MessageComposer({
   // Plain-text first line for the mobile collapsed preview bar
   const previewText = useMemo(() => collapsedComposerPreview(content), [content])
 
+  // Set for the one pick started from `/attachment` → "Upload a file…", so the
+  // result inserts inline at the caret instead of only joining the tray.
+  const inlineUploadRequestRef = useRef(false)
+
+  // An armed inline request that never produced a pick (dialog dismissed) must
+  // not survive into the next, unrelated one.
+  const disarmInlineUpload = useCallback(() => {
+    inlineUploadRequestRef.current = false
+    richEditorRef.current?.cancelPendingInlineUpload()
+  }, [])
+
+  // The OS dialog's dismissal fires `cancel` on the input (no `change`), which
+  // React has no prop for — bind it on the ref so an abandoned pick disarms.
+  const bindFileInput = useCallback(
+    (node: HTMLInputElement | null) => {
+      fileInputRef.current = node
+      if (!node) return
+      node.addEventListener("cancel", disarmInlineUpload)
+      return () => {
+        node.removeEventListener("cancel", disarmInlineUpload)
+        if (fileInputRef.current === node) fileInputRef.current = null
+      }
+    },
+    [disarmInlineUpload, fileInputRef]
+  )
+
   const handleAttachClick = useCallback(() => {
+    disarmInlineUpload()
+    fileInputRef.current?.click()
+  }, [disarmInlineUpload, fileInputRef])
+
+  const handleRequestInlineUpload = useCallback(() => {
+    inlineUploadRequestRef.current = true
     fileInputRef.current?.click()
   }, [fileInputRef])
 
   const handleFileInputChange = useCallback(
     (event: ChangeEvent<HTMLInputElement>) => {
+      const forceInline = inlineUploadRequestRef.current
+      inlineUploadRequestRef.current = false
       handleMobileInlineAttachmentPicker({
         event,
         isMobile,
+        forceInline,
         inlineEnabled:
           preferencesCtx?.preferences?.mobileInlineAttachments ?? DEFAULT_USER_PREFERENCES.mobileInlineAttachments,
         insertFiles: (files) => richEditorRef.current?.insertFiles(files) ?? false,
@@ -752,6 +787,8 @@ export function MessageComposer({
       streamContext={streamContext}
       memoAnchorStreamId={memoAnchorStreamId}
       commandStreamId={commandStreamId}
+      trayAttachments={pendingAttachments}
+      onRequestFileUpload={handleRequestInlineUpload}
     />
   )
 
@@ -908,7 +945,7 @@ export function MessageComposer({
               {screenReaderInstructions}
             </p>
             <input
-              ref={fileInputRef}
+              ref={bindFileInput}
               type="file"
               multiple
               className="hidden"
@@ -949,6 +986,8 @@ export function MessageComposer({
                 streamContext={streamContext}
                 memoAnchorStreamId={memoAnchorStreamId}
                 commandStreamId={commandStreamId}
+                trayAttachments={pendingAttachments}
+                onRequestFileUpload={handleRequestInlineUpload}
                 belowToolbarContent={
                   pendingAttachments.length > 0 || (contextRefs && contextRefs.length > 0) ? (
                     <div className="pt-1 pb-2 border-b border-border/50 [&>div]:mb-0">{attachmentTray}</div>
@@ -1171,7 +1210,7 @@ export function MessageComposer({
             )}
 
             <input
-              ref={fileInputRef}
+              ref={bindFileInput}
               type="file"
               multiple
               className="hidden"

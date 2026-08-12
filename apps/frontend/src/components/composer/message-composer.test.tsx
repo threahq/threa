@@ -19,7 +19,10 @@ let isMobileMockValue = false
 const mockRichEditorFocus = vi.fn()
 const mockInsertFiles = vi.fn(() => true)
 const mockInsertTranscribedText = vi.fn()
+// The `/attachment` picker's "Upload a file…" entry, as the editor hands it up.
+let capturedRequestFileUpload: (() => void) | undefined
 const mockInsertDictationChunk = vi.fn()
+const mockCancelPendingInlineUpload = vi.fn()
 
 type MockEditorInstance = {
   id: string
@@ -37,6 +40,7 @@ const MockRichEditor = forwardRef<
     insertEmoji: () => void
     openSnippetEditor: () => void
     insertFiles: (files: File[]) => boolean
+    cancelPendingInlineUpload: () => void
     insertTranscribedText: (text: string, options?: { joinPrevious?: boolean }) => void
     insertDictationChunk: (args: { chunkId: string; contentJson: JSONContent }) => void
     getEditor: () => MockEditorInstance | null
@@ -49,8 +53,13 @@ const MockRichEditor = forwardRef<
     disabled: boolean
     ariaLabel?: string
     ariaDescribedBy?: string
+    onRequestFileUpload?: () => void
   }
->(function MockRichEditor({ value, onChange, onSubmit, placeholder, disabled, ariaLabel, ariaDescribedBy }, ref) {
+>(function MockRichEditor(
+  { value, onChange, onSubmit, placeholder, disabled, ariaLabel, ariaDescribedBy, onRequestFileUpload },
+  ref
+) {
+  capturedRequestFileUpload = onRequestFileUpload
   const valueRef = { current: value }
   valueRef.current = value
   const [editorInstance, setEditorInstance] = useState<MockEditorInstance | null>(null)
@@ -78,6 +87,7 @@ const MockRichEditor = forwardRef<
       insertEmoji: () => undefined,
       openSnippetEditor: () => undefined,
       insertFiles: mockInsertFiles,
+      cancelPendingInlineUpload: mockCancelPendingInlineUpload,
       insertTranscribedText: mockInsertTranscribedText,
       insertDictationChunk: mockInsertDictationChunk,
       getEditor: () => editorInstance,
@@ -154,6 +164,8 @@ describe("MessageComposer", () => {
     vi.restoreAllMocks()
     mockRichEditorFocus.mockClear()
     mockInsertFiles.mockClear()
+    mockCancelPendingInlineUpload.mockClear()
+    capturedRequestFileUpload = undefined
     mockInsertTranscribedText.mockClear()
     mockInsertDictationChunk.mockClear()
     isMobileMockValue = false
@@ -474,6 +486,59 @@ describe("MessageComposer", () => {
 
       expect(mockInsertFiles).toHaveBeenCalledWith([file])
       expect(onFileSelect).not.toHaveBeenCalled()
+    })
+
+    it("inserts inline on desktop when the pick came from /attachment", async () => {
+      isMobileMockValue = false
+      const onFileSelect = vi.fn()
+      const { container } = render(<MessageComposer {...defaultProps} onFileSelect={onFileSelect} />)
+      const file = new File(["notes"], "notes.txt", { type: "text/plain" })
+
+      act(() => capturedRequestFileUpload?.())
+      await userEvent.upload(container.querySelector('input[type="file"]') as HTMLInputElement, file)
+
+      expect({ inlineInsertCalls: mockInsertFiles.mock.calls, fallbackCalls: onFileSelect.mock.calls }).toEqual({
+        inlineInsertCalls: [[[file]]],
+        fallbackCalls: [],
+      })
+    })
+
+    it("disarms a cancelled /attachment pick so the next paperclip pick is not hijacked", async () => {
+      isMobileMockValue = false
+      const onFileSelect = vi.fn()
+      const { container } = render(<MessageComposer {...defaultProps} onFileSelect={onFileSelect} />)
+      const file = new File(["q3"], "q3.pdf", { type: "application/pdf" })
+
+      // Armed by `/attachment` → "Upload a file…", then the OS dialog is dismissed.
+      act(() => capturedRequestFileUpload?.())
+      const input = container.querySelector('input[type="file"]') as HTMLInputElement
+      fireEvent(input, new Event("cancel"))
+      expect(mockCancelPendingInlineUpload).toHaveBeenCalled()
+
+      await userEvent.upload(input, file)
+
+      expect({
+        selectedFiles: Array.from(onFileSelect.mock.calls[0]?.[0].target.files ?? []),
+        inlineInsertCalls: mockInsertFiles.mock.calls,
+      }).toEqual({ selectedFiles: [file], inlineInsertCalls: [] })
+    })
+
+    it("disarms a stale /attachment request when the paperclip starts a new pick", async () => {
+      isMobileMockValue = false
+      const onFileSelect = vi.fn()
+      const { container } = render(<MessageComposer {...defaultProps} onFileSelect={onFileSelect} />)
+      const file = new File(["q3"], "q3.pdf", { type: "application/pdf" })
+
+      act(() => capturedRequestFileUpload?.())
+      await userEvent.click(screen.getByLabelText("Attach files"))
+      expect(mockCancelPendingInlineUpload).toHaveBeenCalled()
+
+      await userEvent.upload(container.querySelector('input[type="file"]') as HTMLInputElement, file)
+
+      expect({
+        selectedFiles: Array.from(onFileSelect.mock.calls[0]?.[0].target.files ?? []),
+        inlineInsertCalls: mockInsertFiles.mock.calls,
+      }).toEqual({ selectedFiles: [file], inlineInsertCalls: [] })
     })
 
     it("keeps the attachment-row flow when inline insertion is disabled", async () => {

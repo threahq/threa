@@ -22,6 +22,17 @@ export interface SuggestionListProps<T> {
   placement?: Placement
   /** Content shown when items is empty. When omitted, the list returns null for zero results. */
   emptyState?: ReactNode
+  /**
+   * Opt in to a highlight that survives an items recompute. The highlight then
+   * follows the row's key and resets only when this value changes, so a list
+   * whose data ticks underneath it (an upload's progress) keeps the row the user
+   * arrowed to. Pass the query for a list that re-ranks as you type — typing
+   * must still land on the best match, not strand the highlight on a row that
+   * has since fallen down the ranking.
+   *
+   * Omitted, every items change resets to the first row.
+   */
+  highlightResetKey?: string
 }
 
 /**
@@ -39,15 +50,39 @@ function SuggestionListInner<T>(
     renderItem,
     placement = "bottom-start",
     emptyState,
+    highlightResetKey,
   }: SuggestionListProps<T>,
   ref: React.ForwardedRef<SuggestionListRef>
 ) {
-  const [selectedIndex, setSelectedIndex] = useState(0)
+  const [selectedKey, setSelectedKey] = useState<string | null>(null)
   const itemRefs = useRef<(HTMLButtonElement | null)[]>([])
 
+  const keys = items.map(getKey)
+  // The highlight follows the row's key, not its position, so a recompute that
+  // only changes array identity can't move it. A key no longer in the list
+  // resolves to the first row.
+  const selectedIndex = Math.max(0, selectedKey === null ? -1 : keys.indexOf(selectedKey))
+  const keysRef = useRef<string[]>(keys)
+  keysRef.current = keys
+  const keySignature = keys.join("\u0000")
+
+  const followsKey = highlightResetKey !== undefined
+
   useEffect(() => {
-    setSelectedIndex(0)
-  }, [items])
+    if (followsKey) return
+    setSelectedKey(null)
+  }, [items, followsKey])
+
+  useEffect(() => {
+    if (!followsKey) return
+    setSelectedKey(null)
+  }, [highlightResetKey, followsKey])
+
+  // Drop a highlight whose row is gone, so the state matches what is painted.
+  useEffect(() => {
+    if (!followsKey) return
+    setSelectedKey((prev) => (prev !== null && keysRef.current.includes(prev) ? prev : null))
+  }, [keySignature, followsKey])
 
   useEffect(() => {
     const selectedRef = itemRefs.current[selectedIndex]
@@ -75,11 +110,11 @@ function SuggestionListInner<T>(
       switch (event.key) {
         case "ArrowUp":
           event.preventDefault()
-          setSelectedIndex((prev) => (prev - 1 + items.length) % items.length)
+          setSelectedKey(keys[(selectedIndex - 1 + items.length) % items.length])
           return true
         case "ArrowDown":
           event.preventDefault()
-          setSelectedIndex((prev) => (prev + 1) % items.length)
+          setSelectedKey(keys[(selectedIndex + 1) % items.length])
           return true
         case "Tab":
         case "Enter":
@@ -131,7 +166,7 @@ function SuggestionListInner<T>(
                   index === selectedIndex && "bg-muted"
                 )}
                 onClick={() => command(item)}
-                onMouseEnter={() => setSelectedIndex(index)}
+                onMouseEnter={() => setSelectedKey(getKey(item))}
               >
                 {renderItem(item)}
               </button>

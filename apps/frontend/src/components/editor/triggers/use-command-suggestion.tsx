@@ -4,7 +4,12 @@ import type { Editor } from "@tiptap/react"
 import { DISCUSS_WITH_ARIADNE_COMMAND } from "@threa/types"
 import type { CommandItem } from "./types"
 import { CommandList } from "./command-list"
-import { MEMO_SEARCH_SLASH_ACTION, GIPHY_SLASH_ACTION, SNIPPET_SLASH_ACTION } from "./command-extension"
+import {
+  MEMO_SEARCH_SLASH_ACTION,
+  GIPHY_SLASH_ACTION,
+  SNIPPET_SLASH_ACTION,
+  ATTACHMENT_SLASH_ACTION,
+} from "./command-extension"
 import { rankMatches } from "@/lib/match-score"
 import { useStreamCommands } from "@/hooks/use-stream-commands"
 import { useSuggestion } from "./use-suggestion"
@@ -74,6 +79,19 @@ const SNIPPET_SLASH_ITEM: CommandItem = {
 }
 
 /**
+ * Discovery shortcut for placing an attachment at the caret. Inserts no chip —
+ * selecting it removes the typed `/attachment` and the React layer (see
+ * `renderList`) opens the attachment picker. Inline placement: a reference
+ * belongs mid-sentence, the same way `/memo` does.
+ */
+const ATTACHMENT_SLASH_ITEM: CommandItem = {
+  name: "attachment",
+  description: "Place an attached file at the cursor",
+  clientActionId: ATTACHMENT_SLASH_ACTION,
+  placement: "inline",
+}
+
+/**
  * Client-action commands (e.g. `/discuss-with-ariadne`) still insert a chip
  * into the composer via the normal suggestion flow; routing to the client
  * handler happens at composer-send time (`message-input.tsx`) so the user
@@ -84,16 +102,20 @@ export function useCommandSuggestion({
   includeMemoSearch = false,
   includeGiphy = false,
   includeSnippet = false,
+  includeAttachment = false,
   onOpenGiphy,
   onOpenSnippet,
+  onOpenAttachment,
   onCommandPicked,
   commandStreamId,
 }: {
   includeMemoSearch?: boolean
   includeGiphy?: boolean
   includeSnippet?: boolean
+  includeAttachment?: boolean
   onOpenGiphy?: () => void
   onOpenSnippet?: () => void
+  onOpenAttachment?: () => void
   /**
    * Fired after a command is inserted into the composer (post chip insertion).
    * The host uses it to open the argument option picker for commands that
@@ -117,6 +139,8 @@ export function useCommandSuggestion({
   onOpenGiphyRef.current = onOpenGiphy
   const onOpenSnippetRef = useRef(onOpenSnippet)
   onOpenSnippetRef.current = onOpenSnippet
+  const onOpenAttachmentRef = useRef(onOpenAttachment)
+  onOpenAttachmentRef.current = onOpenAttachment
   const onCommandPickedRef = useRef(onCommandPicked)
   onCommandPickedRef.current = onCommandPicked
   const effectiveCommands = useStreamCommands(workspaceId, streamId)
@@ -141,9 +165,10 @@ export function useCommandSuggestion({
       ...(includeMemoSearch ? [MEMO_SLASH_ITEM] : []),
       ...(includeGiphy ? [GIPHY_SLASH_ITEM] : []),
       ...(includeSnippet ? [SNIPPET_SLASH_ITEM] : []),
+      ...(includeAttachment ? [ATTACHMENT_SLASH_ITEM] : []),
       ...serverCommands,
     ]
-  }, [effectiveCommands, streamId, includeMemoSearch, includeGiphy, includeSnippet])
+  }, [effectiveCommands, streamId, includeMemoSearch, includeGiphy, includeSnippet, includeAttachment])
 
   const renderList = useCallback(
     (props: {
@@ -160,6 +185,7 @@ export function useCommandSuggestion({
         props.command(item)
         if (item.clientActionId === GIPHY_SLASH_ACTION) onOpenGiphyRef.current?.()
         if (item.clientActionId === SNIPPET_SLASH_ACTION) onOpenSnippetRef.current?.()
+        if (item.clientActionId === ATTACHMENT_SLASH_ACTION) onOpenAttachmentRef.current?.()
         onCommandPickedRef.current?.(item)
       }
       return <CommandList ref={props.ref} items={props.items} clientRect={props.clientRect} command={command} />

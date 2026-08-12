@@ -24,6 +24,27 @@ describe("handleMobileInlineAttachmentPicker", () => {
     }).toEqual({ insertedFiles: [file], fallbackCalls: [], inputValue: "" })
   })
 
+  it("inserts inline on desktop when the pick came from /attachment", () => {
+    const file = new File(["notes"], "notes.txt", { type: "text/plain" })
+    const event = pickerEvent([file])
+    const insertFiles = vi.fn((_files: File[]) => true)
+    const fallback = vi.fn()
+
+    handleMobileInlineAttachmentPicker({
+      event,
+      isMobile: false,
+      inlineEnabled: false,
+      forceInline: true,
+      insertFiles,
+      fallback,
+    })
+
+    expect({ insertedFiles: insertFiles.mock.calls[0]?.[0], fallbackCalls: fallback.mock.calls }).toEqual({
+      insertedFiles: [file],
+      fallbackCalls: [],
+    })
+  })
+
   it.each([
     ["desktop", false, true, true],
     ["disabled", true, false, true],
