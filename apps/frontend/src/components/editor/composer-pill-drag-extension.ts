@@ -3,8 +3,6 @@ import { Fragment, Slice, type Node as ProseMirrorNode } from "@tiptap/pm/model"
 import { NodeSelection, Plugin, PluginKey, Selection, type EditorState, type Transaction } from "@tiptap/pm/state"
 import { dropPoint } from "@tiptap/pm/transform"
 import { Decoration, DecorationSet, type EditorView } from "@tiptap/pm/view"
-import { LONG_PRESS_MOVE_TOLERANCE_PX, LONG_PRESS_THRESHOLD_MS } from "@/hooks/use-long-press"
-import { ComposerPillTouchGuide } from "./composer-pill-touch-guide"
 
 export const COMPOSER_PILL_NODE_NAMES = [
   "mention",
@@ -17,28 +15,13 @@ export const COMPOSER_PILL_NODE_NAMES = [
 ] as const
 
 const COMPOSER_PILL_NODE_NAME_SET = new Set<string>(COMPOSER_PILL_NODE_NAMES)
-const MOUSE_DRAG_THRESHOLD_PX = 6
-const COMPATIBILITY_MOUSE_WINDOW_MS = 400
-const TOUCH_ACTIVATION_HAPTIC_MS = 10
-const TOUCH_TARGET_HAPTIC_MS = 10
-const TOUCH_DROP_HAPTIC_PATTERN_MS = [10, 20, 10]
-const TOUCH_DRAG_MODE = "hold-or-selected"
 
-interface ComposerPillDragState {
+export const MOUSE_DRAG_THRESHOLD_PX = 6
+export const COMPOSER_PILL_TOUCH_DRAG_MODE = "hold-or-selected"
+
+export interface ComposerPillDragState {
   sourcePos: number
   dropPos: number | null
-}
-
-interface PendingDrag {
-  kind: "mouse" | "touch"
-  id: number
-  sourcePos: number
-  startX: number
-  startY: number
-  holdElapsed: boolean
-  touchDragEligible: boolean
-  movedBeyondTolerance: boolean
-  active: boolean
 }
 
 export const ComposerPillDragPluginKey = new PluginKey<ComposerPillDragState | null>("composerPillDrag")
@@ -214,7 +197,7 @@ function mappedDragState(tr: Transaction, current: ComposerPillDragState | null)
   return isComposerPillNode(tr.doc.nodeAt(sourcePos)) ? { sourcePos, dropPos } : null
 }
 
-function isComposerPillSelected(state: EditorState, pos: number): boolean {
+export function isComposerPillSelected(state: EditorState, pos: number): boolean {
   const { selection } = state
   return selection instanceof NodeSelection && selection.from === pos && isComposerPillNode(selection.node)
 }
@@ -234,7 +217,7 @@ function eventElement(target: EventTarget | null): Element | null {
   return target instanceof Node ? target.parentElement : null
 }
 
-function pillFromDom(view: EditorView, target: EventTarget | null): { element: Element; pos: number } | null {
+export function pillFromDom(view: EditorView, target: EventTarget | null): { element: Element; pos: number } | null {
   let element = eventElement(target)
   while (element && element !== view.dom) {
     if (element.hasAttribute("data-type")) {
@@ -250,12 +233,8 @@ function pillFromDom(view: EditorView, target: EventTarget | null): { element: E
   return null
 }
 
-function dropPositionAt(view: EditorView, x: number, y: number): number | null {
-  const sourceState = ComposerPillDragPluginKey.getState(view.state)
-  if (!sourceState) return null
-  const sourceNode = view.state.doc.nodeAt(sourceState.sourcePos)
-  if (!isComposerPillNode(sourceNode)) return null
-
+/** Resolve viewport coordinates to the pill drop position the plugin should paint. */
+export function dropPositionAt(view: EditorView, x: number, y: number, sourceNode: ProseMirrorNode): number | null {
   const hit = view.dom.ownerDocument.elementFromPoint(x, y)
   if (hit && hit !== view.dom && !view.dom.contains(hit)) return null
 
@@ -273,413 +252,12 @@ function dropPositionAt(view: EditorView, x: number, y: number): number | null {
   return rawPos === null ? null : composerPillDropPoint(view.state.doc, rawPos, sourceNode)
 }
 
-function distanceFromStart(drag: PendingDrag, x: number, y: number): number {
-  return Math.hypot(x - drag.startX, y - drag.startY)
-}
-
-function movedBeyondLongPressTolerance(drag: PendingDrag, x: number, y: number): boolean {
-  return (
-    Math.abs(x - drag.startX) > LONG_PRESS_MOVE_TOLERANCE_PX || Math.abs(y - drag.startY) > LONG_PRESS_MOVE_TOLERANCE_PX
-  )
-}
-
-function touchById(list: TouchList, id: number): Touch | null {
-  for (let index = 0; index < list.length; index++) {
-    const touch = list[index]
-    if (touch?.identifier === id) return touch
-  }
-  return null
-}
-
-function vibrate(win: Window, pattern: number | number[]) {
-  try {
-    win.navigator.vibrate?.(pattern)
-  } catch {
-    // Vibration is optional feedback.
-  }
-}
-
-class ComposerPillDragController {
-  private view: EditorView
-  private readonly doc: Document
-  private readonly win: Window
-  private pending: PendingDrag | null = null
-  private longPressTimer: number | null = null
-  private suppressMouseUntil = 0
-  private suppressClickUntil = 0
-  private readonly awaitingTouchCompletions = new Set<number>()
-  private touchGuide: ComposerPillTouchGuide | null = null
-
-  constructor(view: EditorView) {
-    this.view = view
-    this.doc = view.dom.ownerDocument
-    view.dom.dataset.composerPillDragMode = TOUCH_DRAG_MODE
-    this.win = this.doc.defaultView ?? window
-    view.dom.addEventListener("mousedown", this.onMouseDown, true)
-    view.dom.addEventListener("touchstart", this.onTouchStart, { capture: true, passive: true })
-    view.dom.addEventListener("click", this.onClick, true)
-    view.dom.addEventListener("contextmenu", this.onContextMenu, true)
-    view.dom.addEventListener("dragstart", this.onNativeDragStart, true)
-  }
-
-  update(view: EditorView, previousState?: EditorState) {
-    this.view = view
-    const dragState = ComposerPillDragPluginKey.getState(view.state)
-    const active = dragState !== null && dragState !== undefined
-    view.dom.classList.toggle("composer-pill-drag-active", active)
-    if (this.pending?.active && !active) {
-      this.clearPending()
-      return
-    }
-    if (previousState?.doc !== view.state.doc && this.pending?.kind === "touch" && this.pending.active && dragState) {
-      this.touchGuide?.refresh(view.state.doc, dragState.dropPos)
-    }
-  }
-
-  destroy() {
-    this.view.dom.removeEventListener("mousedown", this.onMouseDown, true)
-    this.view.dom.removeEventListener("touchstart", this.onTouchStart, true)
-    this.view.dom.removeEventListener("click", this.onClick, true)
-    this.view.dom.removeEventListener("contextmenu", this.onContextMenu, true)
-    this.view.dom.removeEventListener("dragstart", this.onNativeDragStart, true)
-    this.clearPending(true)
-    this.clearAwaitedTouchCompletions()
-    this.view.dom.classList.remove("composer-pill-drag-active")
-    delete this.view.dom.dataset.composerPillDragMode
-  }
-
-  private begin(drag: PendingDrag) {
-    this.cancel()
-    this.pending = drag
-    this.doc.addEventListener("keydown", this.onKeyDown, true)
-    this.win.addEventListener("blur", this.onWindowBlur)
-
-    if (drag.kind === "mouse") {
-      this.doc.addEventListener("mousemove", this.onMouseMove, true)
-      this.doc.addEventListener("mouseup", this.onMouseUp, true)
-      return
-    }
-
-    this.doc.addEventListener("touchstart", this.onAdditionalTouchStart, true)
-    this.doc.addEventListener("touchmove", this.onTouchMove, { capture: true, passive: false })
-    this.doc.addEventListener("touchend", this.onTouchEnd, true)
-    this.doc.addEventListener("touchcancel", this.onTouchCancel, true)
-    this.doc.addEventListener("selectstart", this.onSelectStart, true)
-    this.longPressTimer = this.win.setTimeout(() => {
-      const pending = this.pending
-      if (!pending || pending.kind !== "touch") return
-      pending.holdElapsed = true
-      this.suppressMouseUntil = Date.now() + COMPATIBILITY_MOUSE_WINDOW_MS
-      this.activate()
-    }, LONG_PRESS_THRESHOLD_MS)
-  }
-
-  private activate() {
-    const drag = this.pending
-    if (!drag || drag.active || !isComposerPillNode(this.view.state.doc.nodeAt(drag.sourcePos))) return
-    drag.active = true
-    if (drag.kind === "touch" && this.longPressTimer !== null) {
-      this.win.clearTimeout(this.longPressTimer)
-      this.longPressTimer = null
-    }
-    this.win.getSelection()?.removeAllRanges()
-    const dropPos = composerPillDropPoint(
-      this.view.state.doc,
-      drag.sourcePos,
-      this.view.state.doc.nodeAt(drag.sourcePos)!
-    )
-    this.setDragState({ sourcePos: drag.sourcePos, dropPos })
-    if (drag.kind === "touch") {
-      this.updateTouchGuide(drag.startX, drag.startY, dropPos)
-      vibrate(this.win, TOUCH_ACTIVATION_HAPTIC_MS)
-    }
-  }
-
-  private updateDrop(x: number, y: number) {
-    const drag = this.pending
-    if (!drag?.active) return
-    const current = ComposerPillDragPluginKey.getState(this.view.state)
-    if (!current) {
-      this.clearPending()
-      return
-    }
-    const dropPos = dropPositionAt(this.view, x, y)
-    if (drag.kind === "touch") {
-      this.updateTouchGuide(x, y, dropPos)
-      if (dropPos !== null && dropPos !== current.dropPos) vibrate(this.win, TOUCH_TARGET_HAPTIC_MS)
-    }
-    this.setDragState({ ...current, dropPos })
-  }
-
-  private finish(x: number, y: number) {
-    const drag = this.pending
-    if (!drag?.active) {
-      const touchedPill = drag?.kind === "touch"
-      const tappedPillPos = touchedPill && !drag.holdElapsed ? drag.sourcePos : null
-      this.cancel(touchedPill)
-      if (tappedPillPos !== null) this.selectPill(tappedPillPos)
-      return
-    }
-    if (drag.kind === "touch" && !drag.movedBeyondTolerance) {
-      const sourcePos = ComposerPillDragPluginKey.getState(this.view.state)?.sourcePos ?? drag.sourcePos
-      this.clearPending(true)
-      this.clearDragState()
-      this.selectPill(sourcePos)
-      return
-    }
-
-    this.updateDrop(x, y)
-    const current = ComposerPillDragPluginKey.getState(this.view.state)
-    const tr =
-      current?.dropPos === null || current?.dropPos === undefined
-        ? null
-        : createComposerPillMoveTransaction(this.view.state, current.sourcePos, current.dropPos)
-
-    const touchDrop = drag.kind === "touch"
-    this.clearPending(touchDrop)
-    if (tr) {
-      this.view.dispatch(tr.setMeta(ComposerPillDragPluginKey, null).setMeta("uiEvent", "drop"))
-      if (touchDrop) vibrate(this.win, TOUCH_DROP_HAPTIC_PATTERN_MS)
-    } else {
-      this.clearDragState()
-    }
-  }
-
-  private cancel = (touchFinished = false) => {
-    const wasActive = this.pending?.active === true
-    this.clearPending(touchFinished)
-    if (wasActive) this.clearDragState()
-  }
-
-  private clearPending(touchFinished = false) {
-    const touchId = this.pending?.kind === "touch" ? this.pending.id : null
-    if (touchId !== null) this.suppressMouseUntil = Date.now() + COMPATIBILITY_MOUSE_WINDOW_MS
-    if (this.pending?.active) this.suppressClickUntil = Date.now() + COMPATIBILITY_MOUSE_WINDOW_MS
-    if (this.longPressTimer !== null) {
-      this.win.clearTimeout(this.longPressTimer)
-      this.longPressTimer = null
-    }
-    this.doc.removeEventListener("mousemove", this.onMouseMove, true)
-    this.doc.removeEventListener("mouseup", this.onMouseUp, true)
-    this.doc.removeEventListener("touchstart", this.onAdditionalTouchStart, true)
-    this.doc.removeEventListener("touchmove", this.onTouchMove, true)
-    this.doc.removeEventListener("touchend", this.onTouchEnd, true)
-    this.doc.removeEventListener("touchcancel", this.onTouchCancel, true)
-    this.doc.removeEventListener("selectstart", this.onSelectStart, true)
-    this.doc.removeEventListener("keydown", this.onKeyDown, true)
-    this.win.removeEventListener("blur", this.onWindowBlur)
-    this.removeTouchGuide()
-    this.pending = null
-    if (touchId !== null) {
-      if (touchFinished) this.stopAwaitingTouchCompletion(touchId)
-      else this.awaitTouchCompletion(touchId)
-    }
-  }
-
-  private awaitTouchCompletion(id: number) {
-    if (this.awaitingTouchCompletions.has(id)) return
-    if (this.awaitingTouchCompletions.size === 0) {
-      this.doc.addEventListener("touchend", this.onAwaitedTouchCompletion, true)
-      this.doc.addEventListener("touchcancel", this.onAwaitedTouchCompletion, true)
-    }
-    this.awaitingTouchCompletions.add(id)
-  }
-
-  private stopAwaitingTouchCompletion(id: number) {
-    this.awaitingTouchCompletions.delete(id)
-    if (this.awaitingTouchCompletions.size === 0) this.removeAwaitedTouchCompletionListeners()
-  }
-
-  private clearAwaitedTouchCompletions() {
-    this.awaitingTouchCompletions.clear()
-    this.removeAwaitedTouchCompletionListeners()
-  }
-
-  private removeAwaitedTouchCompletionListeners() {
-    this.doc.removeEventListener("touchend", this.onAwaitedTouchCompletion, true)
-    this.doc.removeEventListener("touchcancel", this.onAwaitedTouchCompletion, true)
-  }
-
-  private onAwaitedTouchCompletion = (event: TouchEvent) => {
-    let completed = false
-    for (const id of this.awaitingTouchCompletions) {
-      if (!touchById(event.changedTouches, id) && touchById(event.touches, id)) continue
-      this.awaitingTouchCompletions.delete(id)
-      completed = true
-    }
-    if (completed) this.suppressMouseUntil = Date.now() + COMPATIBILITY_MOUSE_WINDOW_MS
-    if (this.awaitingTouchCompletions.size === 0) this.removeAwaitedTouchCompletionListeners()
-  }
-
-  private updateTouchGuide(x: number, y: number, dropPos: number | null) {
-    if (this.pending?.kind !== "touch" || !this.pending.active) return
-    this.touchGuide ??= new ComposerPillTouchGuide(this.doc, this.win)
-    this.touchGuide.update(this.view.state.doc, dropPos, x, y)
-  }
-
-  private removeTouchGuide() {
-    this.touchGuide?.destroy()
-    this.touchGuide = null
-  }
-
-  private setDragState(next: ComposerPillDragState) {
-    const current = ComposerPillDragPluginKey.getState(this.view.state)
-    if (current?.sourcePos === next.sourcePos && current.dropPos === next.dropPos) return
-    this.view.dispatch(this.view.state.tr.setMeta(ComposerPillDragPluginKey, next).setMeta("addToHistory", false))
-  }
-
-  private clearDragState() {
-    const dragState = ComposerPillDragPluginKey.getState(this.view.state)
-    if (dragState === null || dragState === undefined) return
-    this.view.dispatch(this.view.state.tr.setMeta(ComposerPillDragPluginKey, null).setMeta("addToHistory", false))
-  }
-
-  private selectPill(pos: number) {
-    const node = this.view.state.doc.nodeAt(pos)
-    if (!isComposerPillNode(node) || !NodeSelection.isSelectable(node)) return
-    this.view.focus()
-    this.view.dispatch(
-      this.view.state.tr.setSelection(NodeSelection.create(this.view.state.doc, pos)).setMeta("pointer", true)
-    )
-  }
-
-  private onMouseDown = (event: MouseEvent) => {
-    if (Date.now() <= this.suppressMouseUntil) {
-      event.preventDefault()
-      event.stopImmediatePropagation()
-      return
-    }
-    this.suppressClickUntil = 0
-    if (!this.view.editable || event.button !== 0) return
-    const pill = pillFromDom(this.view, event.target)
-    if (!pill) return
-    this.begin({
-      kind: "mouse",
-      id: 0,
-      sourcePos: pill.pos,
-      startX: event.clientX,
-      startY: event.clientY,
-      holdElapsed: false,
-      touchDragEligible: false,
-      movedBeyondTolerance: false,
-      active: false,
-    })
-  }
-
-  private onMouseMove = (event: MouseEvent) => {
-    const drag = this.pending
-    if (!drag || drag.kind !== "mouse") return
-    if (!drag.active && distanceFromStart(drag, event.clientX, event.clientY) < MOUSE_DRAG_THRESHOLD_PX) return
-    if (!drag.active) this.activate()
-    if (!this.pending?.active) return
-    event.preventDefault()
-    event.stopPropagation()
-    this.updateDrop(event.clientX, event.clientY)
-  }
-
-  private onMouseUp = (event: MouseEvent) => {
-    const drag = this.pending
-    if (!drag || drag.kind !== "mouse") return
-    if (drag.active) event.preventDefault()
-    this.finish(event.clientX, event.clientY)
-  }
-
-  private onTouchStart = (event: TouchEvent) => {
-    if (!this.view.editable || event.touches.length !== 1) {
-      this.cancel()
-      return
-    }
-    const pill = pillFromDom(this.view, event.target)
-    const touch = event.touches[0]
-    if (!pill || !touch) return
-    this.begin({
-      kind: "touch",
-      id: touch.identifier,
-      sourcePos: pill.pos,
-      startX: touch.clientX,
-      startY: touch.clientY,
-      holdElapsed: false,
-      touchDragEligible: isComposerPillSelected(this.view.state, pill.pos),
-      movedBeyondTolerance: false,
-      active: false,
-    })
-  }
-
-  private onAdditionalTouchStart = (event: TouchEvent) => {
-    if (this.pending?.kind === "touch" && event.touches.length > 1) this.cancel()
-  }
-
-  private onTouchMove = (event: TouchEvent) => {
-    const drag = this.pending
-    if (!drag || drag.kind !== "touch") return
-    if (event.touches.length > 1) {
-      this.cancel()
-      return
-    }
-    const touch = touchById(event.touches, drag.id)
-    if (!touch) return
-    const movedBeyondTolerance = movedBeyondLongPressTolerance(drag, touch.clientX, touch.clientY)
-    if (movedBeyondTolerance) drag.movedBeyondTolerance = true
-    if (!drag.active) {
-      if (!movedBeyondTolerance) return
-      if (!drag.touchDragEligible || !isComposerPillSelected(this.view.state, drag.sourcePos)) {
-        this.cancel()
-        return
-      }
-      this.activate()
-    }
-    if (!this.pending?.active) return
-    if (event.cancelable) event.preventDefault()
-    event.stopPropagation()
-    if (drag.movedBeyondTolerance) this.updateDrop(touch.clientX, touch.clientY)
-  }
-
-  private onTouchEnd = (event: TouchEvent) => {
-    const drag = this.pending
-    if (!drag || drag.kind !== "touch") return
-    const touch = touchById(event.changedTouches, drag.id)
-    if (!touch) return
-    if (drag.active && event.cancelable) event.preventDefault()
-    this.finish(touch.clientX, touch.clientY)
-  }
-
-  private onTouchCancel = () => this.cancel(true)
-
-  private onSelectStart = (event: Event) => {
-    if (this.pending?.kind !== "touch") return
-    event.preventDefault()
-  }
-
-  private onKeyDown = (event: KeyboardEvent) => {
-    if (event.key !== "Escape") return
-    event.preventDefault()
-    this.cancel()
-  }
-
-  private onWindowBlur = () => this.cancel()
-
-  private onClick = (event: MouseEvent) => {
-    const now = Date.now()
-    if (now > this.suppressMouseUntil && now > this.suppressClickUntil) return
-    this.suppressMouseUntil = 0
-    this.suppressClickUntil = 0
-    event.preventDefault()
-    event.stopImmediatePropagation()
-  }
-
-  private onContextMenu = (event: MouseEvent) => {
-    const pending = this.pending
-    if (!pending || pending.kind !== "touch") return
-    event.preventDefault()
-    if (pending.active) return
-    pending.holdElapsed = true
-    this.suppressMouseUntil = Date.now() + COMPATIBILITY_MOUSE_WINDOW_MS
-    this.activate()
-  }
-
-  private onNativeDragStart = (event: DragEvent) => {
-    if (pillFromDom(this.view, event.target)) event.preventDefault()
-  }
+/** The one write path into the plugin's drag state; drags never enter history. */
+export function setComposerPillDragState(view: EditorView, next: ComposerPillDragState | null) {
+  const current = ComposerPillDragPluginKey.getState(view.state) ?? null
+  if (current === next) return
+  if (current && next && current.sourcePos === next.sourcePos && current.dropPos === next.dropPos) return
+  view.dispatch(view.state.tr.setMeta(ComposerPillDragPluginKey, next).setMeta("addToHistory", false))
 }
 
 export const ComposerPillDragExtension = Extension.create({
@@ -697,10 +275,15 @@ export const ComposerPillDragExtension = Extension.create({
           decorations: pillDecorations,
         },
         view(view) {
-          const controller = new ComposerPillDragController(view)
+          const reflectActive = (target: EditorView) => {
+            target.dom.classList.toggle(
+              "composer-pill-drag-active",
+              ComposerPillDragPluginKey.getState(target.state) != null
+            )
+          }
           return {
-            update: (updatedView, previousState) => controller.update(updatedView, previousState),
-            destroy: () => controller.destroy(),
+            update: reflectActive,
+            destroy: () => view.dom.classList.remove("composer-pill-drag-active"),
           }
         },
       }),

@@ -4,6 +4,7 @@ import { GapCursor } from "@tiptap/pm/gapcursor"
 import type { ResolvedPos } from "@tiptap/pm/model"
 import type { PluginKey } from "@tiptap/pm/state"
 import { useParams } from "react-router-dom"
+import { ComposerPillDndProvider } from "./composer-pill-dnd"
 import { createEditorExtensions } from "./editor-extensions"
 import { applyExternalEditorContent } from "./apply-external-content"
 import { ComposerPillCopyButton } from "./composer-pill-copy-button"
@@ -1231,46 +1232,48 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
 
   return (
     <div ref={containerRef} className={cn("relative flex-1", disabled && "cursor-not-allowed opacity-50", className)}>
-      <EditorToolbar
-        editor={editor}
-        isVisible={staticToolbarOpen || toolbarVisible}
-        inline={staticToolbarOpen}
-        linkPopoverOpen={linkPopoverOpen}
-        onLinkPopoverOpenChange={setLinkPopoverOpen}
-        onDropdownOpenChange={setDropdownOpen}
-        trailingContent={staticToolbarOpen ? toolbarTrailingContent : undefined}
-      />
-      {belowToolbarContent}
-      <EditorContent editor={editor} />
-      <ComposerPillCopyButton editor={editor} />
-      {enableMentions ? renderMentionList() : null}
-      {enableChannels ? renderChannelList() : null}
-      {enableCommands ? renderCommandList() : null}
-      {enableCommands ? renderArgPicker() : null}
-      {enableEmoji ? renderEmojiGrid() : null}
-      {enableMemoEmbed ? renderMemoList() : null}
-      {giphyEnabled && workspaceId ? (
-        <GiphyPickerDialog
-          open={giphyOpen}
-          onOpenChange={setGiphyOpen}
-          workspaceId={workspaceId}
-          onSelect={handleGifSelect}
+      <ComposerPillDndProvider editor={editor}>
+        <EditorToolbar
+          editor={editor}
+          isVisible={staticToolbarOpen || toolbarVisible}
+          inline={staticToolbarOpen}
+          linkPopoverOpen={linkPopoverOpen}
+          onLinkPopoverOpenChange={setLinkPopoverOpen}
+          onDropdownOpenChange={setDropdownOpen}
+          trailingContent={staticToolbarOpen ? toolbarTrailingContent : undefined}
         />
-      ) : null}
-      {onFileUpload ? (
-        <SnippetEditorDialog
-          open={snippetDraft !== null}
-          onOpenChange={(open) => {
-            if (!open) {
-              setSnippetDraft(null)
-              snippetInsertPosRef.current = null
-            }
-          }}
-          initialText={snippetDraft?.text ?? ""}
-          defaultFilename={snippetDraft?.filename ?? SNIPPET_FALLBACK_FILENAME}
-          onSave={handleSnippetSave}
-        />
-      ) : null}
+        {belowToolbarContent}
+        <EditorContent editor={editor} />
+        <ComposerPillCopyButton editor={editor} />
+        {enableMentions ? renderMentionList() : null}
+        {enableChannels ? renderChannelList() : null}
+        {enableCommands ? renderCommandList() : null}
+        {enableCommands ? renderArgPicker() : null}
+        {enableEmoji ? renderEmojiGrid() : null}
+        {enableMemoEmbed ? renderMemoList() : null}
+        {giphyEnabled && workspaceId ? (
+          <GiphyPickerDialog
+            open={giphyOpen}
+            onOpenChange={setGiphyOpen}
+            workspaceId={workspaceId}
+            onSelect={handleGifSelect}
+          />
+        ) : null}
+        {onFileUpload ? (
+          <SnippetEditorDialog
+            open={snippetDraft !== null}
+            onOpenChange={(open) => {
+              if (!open) {
+                setSnippetDraft(null)
+                snippetInsertPosRef.current = null
+              }
+            }}
+            initialText={snippetDraft?.text ?? ""}
+            defaultFilename={snippetDraft?.filename ?? SNIPPET_FALLBACK_FILENAME}
+            onSave={handleSnippetSave}
+          />
+        ) : null}
+      </ComposerPillDndProvider>
     </div>
   )
 })
