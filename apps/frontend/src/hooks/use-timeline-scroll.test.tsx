@@ -341,6 +341,34 @@ describe("useTimelineScroll — scroll position", () => {
     expect(harness.current.isFollowingTailRef.current).toBe(false)
   })
 
+  it("disarms follow on an upward touch drag inside the at-bottom band even while content heights are shifting", () => {
+    // The mobile "won't let me correct it" bug: while typing, every keystroke
+    // grows the composer footer spacer, so scroll frames are height-UNSTABLE
+    // and the scrollTop-delta scroll-up detection (`scrolledUp`) never fires.
+    // Inside the at-bottom band that meant the upward drag was read as "still
+    // at the bottom" and follow re-armed — the next re-pin won over the
+    // user's finger. The gesture's own direction (touch finger delta) must
+    // disarm follow regardless of height stability.
+    const userInteractedAtRef = { current: 0 }
+    const harness = renderScrollHook(opts({ itemCount: 50, getFirstKey: () => "e10", userInteractedAtRef }))
+    let height = 5000
+    const el = makeScrollerDiv({ scrollHeight: 5000, clientHeight: 800, scrollTop: 4200 })
+    Object.defineProperty(el, "scrollHeight", { configurable: true, get: () => height })
+    act(() => harness.current.registerScroller(el))
+    act(() => harness.current.handleScroll())
+    expect(harness.current.isFollowingTailRef.current).toBe(true)
+    // Finger lands and drags DOWN (content down = viewport scrolls up) — the
+    // touch listeners stamp the gesture and record its direction.
+    el.dispatchEvent(Object.assign(new Event("touchstart"), { touches: [{ clientY: 300 }] }))
+    el.dispatchEvent(Object.assign(new Event("touchmove"), { touches: [{ clientY: 380 }] }))
+    // The composer grew in the same beat: scrollTop drops a little while
+    // scrollHeight rises, landing still inside the 32px at-bottom band.
+    height = 5010
+    el.scrollTop = 4190
+    act(() => harness.current.handleScroll())
+    expect(harness.current.isFollowingTailRef.current).toBe(false)
+  })
+
   it("does not detach from sub-threshold jitter inside the band without a gesture", () => {
     // The same small scrollTop move with NO gesture (reflow jitter, momentum
     // settle) must keep follow armed — only a deliberate gesture detaches.
@@ -412,6 +440,50 @@ describe("useTimelineScroll — observer attaches when the scroller mounts late"
       expect(el.scrollTop).toBe(1000)
       act(() => observers[0].cb([], observers[0] as unknown as ResizeObserver))
       expect(el.scrollTop).toBe(5000)
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it("leaves a detached reader's scrollTop alone when the viewport resizes (keyboard open/close)", () => {
+    // The scroller resizes at its BOTTOM edge (keyboard, composer chrome), so
+    // an untouched scrollTop keeps what the user positioned at the top of the
+    // viewport in place. The old delta-shift anchored the bottom edge instead,
+    // pushing the message a replier had parked at the top out of the viewport
+    // on every composer open.
+    const observers: MockResizeObserver[] = []
+    class MockResizeObserver {
+      targets: Element[] = []
+      constructor(public cb: ResizeObserverCallback) {
+        observers.push(this)
+      }
+      observe(t: Element) {
+        this.targets.push(t)
+      }
+      unobserve() {}
+      disconnect() {}
+    }
+    vi.stubGlobal("ResizeObserver", MockResizeObserver)
+    try {
+      const harness = renderScrollHook(opts({ itemCount: 50, getFirstKey: () => "e10" }))
+      const content = document.createElement("div")
+      harness.current.contentRef.current = content
+      const el = makeScrollerDiv({ scrollHeight: 5000, clientHeight: 800, scrollTop: 2000 })
+      act(() => harness.current.registerScroller(el))
+      act(() => harness.current.disableAutoScroll())
+      // Keyboard opens: the scroller shrinks 800 → 500 and the observer fires
+      // with a viewport entry.
+      Object.defineProperty(el, "clientHeight", { configurable: true, get: () => 500 })
+      act(() =>
+        observers[0].cb([{ target: el } as unknown as ResizeObserverEntry], observers[0] as unknown as ResizeObserver)
+      )
+      expect(el.scrollTop).toBe(2000)
+      // And closes again: still hands-off.
+      Object.defineProperty(el, "clientHeight", { configurable: true, get: () => 800 })
+      act(() =>
+        observers[0].cb([{ target: el } as unknown as ResizeObserverEntry], observers[0] as unknown as ResizeObserver)
+      )
+      expect(el.scrollTop).toBe(2000)
     } finally {
       vi.unstubAllGlobals()
     }
@@ -612,6 +684,68 @@ describe("useTimelineScroll — dead-band dock (downward release short of the bo
       gestureScrollTo(harness, el, userInteractedAtRef, 4140)
       expect(harness.current.isFollowingTailRef.current).toBe(false)
       // Scroll events go quiet — the settle window elapses.
+      act(() => vi.advanceTimersByTime(200))
+      expect(el.scrollTop).toBe(5000)
+      expect(harness.current.isFollowingTailRef.current).toBe(true)
+    } finally {
+      vi.unstubAllGlobals()
+      vi.useRealTimers()
+    }
+  })
+
+  it("does not dock an upward touch drag whose scrollTop deltas are masked by reflow (stale 'down' direction)", () => {
+    // The video'd mobile yank: an upward touch drag through height-unstable
+    // frames (virtua measuring, composer growing) never recorded via the
+    // scrollTop-delta path, so the direction ref kept a stale "down" from an
+    // earlier gesture — and 200ms after the finger lifted, the dock "completed"
+    // a downward gesture the user never made, force-scrolling to the bottom
+    // and re-arming follow. Direction read off the touch events themselves
+    // must keep the release parked.
+    vi.stubGlobal("ResizeObserver", MockResizeObserver)
+    vi.useFakeTimers()
+    try {
+      const { harness, el, userInteractedAtRef } = mountAtBottom()
+      // An earlier downward wheel recorded "down".
+      el.dispatchEvent(Object.assign(new Event("wheel"), { deltaY: 120 }))
+      // New touch gesture: finger drags the content down (viewport scrolls up)
+      // while every frame is height-unstable.
+      let height = 5000
+      Object.defineProperty(el, "scrollHeight", { configurable: true, get: () => height })
+      el.dispatchEvent(Object.assign(new Event("touchstart"), { touches: [{ clientY: 200 }] }))
+      el.dispatchEvent(Object.assign(new Event("touchmove"), { touches: [{ clientY: 320 }] }))
+      height = 5060
+      gestureScrollTo(harness, el, userInteractedAtRef, 4140)
+      el.dispatchEvent(Object.assign(new Event("touchend"), { touches: [] }))
+      act(() => vi.advanceTimersByTime(200))
+      expect(el.scrollTop).toBe(4140)
+      expect(harness.current.isFollowingTailRef.current).toBe(false)
+    } finally {
+      vi.unstubAllGlobals()
+      vi.useRealTimers()
+    }
+  })
+
+  it("caps the dock band when the composer dwarfs the viewport (mobile keyboard open)", () => {
+    // On mobile the composer can be a third of the viewport, so treating the
+    // full composer height as "undershot the bottom" docked deliberate
+    // reading positions. The band is capped at a quarter of the viewport:
+    // releases beyond it stay put, releases inside it still dock.
+    vi.stubGlobal("ResizeObserver", MockResizeObserver)
+    vi.useFakeTimers()
+    try {
+      const { harness, el, userInteractedAtRef } = mountAtBottom()
+      // Keyboard-open mobile: composer 380px over an 800px scroller → the
+      // uncapped band would be 380+32; the cap brings it to 200+32.
+      el.style.setProperty("--composer-height", "380px")
+      gestureScrollTo(harness, el, userInteractedAtRef, 3600)
+      // Downward release 300px short of max: inside the uncapped band, outside
+      // the capped one — a chosen position, stays.
+      gestureScrollTo(harness, el, userInteractedAtRef, 3900)
+      act(() => vi.advanceTimersByTime(200))
+      expect(el.scrollTop).toBe(3900)
+      expect(harness.current.isFollowingTailRef.current).toBe(false)
+      // Downward release 100px short: inside the capped band → docks.
+      gestureScrollTo(harness, el, userInteractedAtRef, 4100)
       act(() => vi.advanceTimersByTime(200))
       expect(el.scrollTop).toBe(5000)
       expect(harness.current.isFollowingTailRef.current).toBe(true)
