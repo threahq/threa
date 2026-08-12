@@ -713,12 +713,44 @@ describe("useTimelineScroll — dead-band dock (downward release short of the bo
       Object.defineProperty(el, "scrollHeight", { configurable: true, get: () => height })
       el.dispatchEvent(Object.assign(new Event("touchstart"), { touches: [{ clientY: 200 }] }))
       el.dispatchEvent(Object.assign(new Event("touchmove"), { touches: [{ clientY: 320 }] }))
-      height = 5060
+      // Release INSIDE the dock band (5010 - 4140 - 800 = 70 ≤ 70 + 32), so
+      // only the corrected direction — not the band check — prevents the dock.
+      height = 5010
       gestureScrollTo(harness, el, userInteractedAtRef, 4140)
       el.dispatchEvent(Object.assign(new Event("touchend"), { touches: [] }))
       act(() => vi.advanceTimersByTime(200))
       expect(el.scrollTop).toBe(4140)
       expect(harness.current.isFollowingTailRef.current).toBe(false)
+    } finally {
+      vi.unstubAllGlobals()
+      vi.useRealTimers()
+    }
+  })
+
+  it("does not let a finger-lift reversal flip a downward drag's direction (still docks)", () => {
+    // The last touchmove before lift-off commonly reverses 2–3px as the finger
+    // peels off the glass. Recording it verbatim flipped a long downward drag
+    // to "up" at the last instant, so the dock the drag was heading into never
+    // fired. Direction recording has hysteresis: sub-threshold moves don't flip.
+    vi.stubGlobal("ResizeObserver", MockResizeObserver)
+    vi.useFakeTimers()
+    try {
+      const { harness, el, userInteractedAtRef } = mountAtBottom()
+      let height = 5000
+      Object.defineProperty(el, "scrollHeight", { configurable: true, get: () => height })
+      // Finger sweeps up the glass (viewport scrolls DOWN, toward the tail)…
+      el.dispatchEvent(Object.assign(new Event("touchstart"), { touches: [{ clientY: 500 }] }))
+      el.dispatchEvent(Object.assign(new Event("touchmove"), { touches: [{ clientY: 380 }] }))
+      // …then reverses 3px on lift-off. Sub-threshold: direction stays "down".
+      el.dispatchEvent(Object.assign(new Event("touchmove"), { touches: [{ clientY: 383 }] }))
+      // Height-unstable release inside the band, so the scroll-based recording
+      // cannot correct a flipped direction — only the hysteresis protects it.
+      height = 5010
+      gestureScrollTo(harness, el, userInteractedAtRef, 4140)
+      el.dispatchEvent(Object.assign(new Event("touchend"), { touches: [] }))
+      act(() => vi.advanceTimersByTime(200))
+      expect(el.scrollTop).toBe(5010)
+      expect(harness.current.isFollowingTailRef.current).toBe(true)
     } finally {
       vi.unstubAllGlobals()
       vi.useRealTimers()

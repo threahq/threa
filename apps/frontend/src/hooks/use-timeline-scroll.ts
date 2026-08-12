@@ -16,6 +16,15 @@ const DEAD_BAND_DOCK_SETTLE_MS = 200
 /** Consecutive frames of unchanged scrollHeight that mark the cold-load settle
  *  as converged, so the content can be revealed without a visible bounce. */
 const SETTLE_STABLE_FRAMES = 3
+/** Finger travel (px) from the last recorded anchor before a touchmove records
+ *  a gesture direction. The final touchmove before lift-off commonly reverses
+ *  2–3px as the finger peels off the glass; recording that flipped a long
+ *  downward drag to "up", suppressing the dead-band dock and detaching follow.
+ *  Sub-threshold moves keep the anchor, so a slow consistent drag accumulates
+ *  past it while jitter oscillates around it and never flips. */
+const TOUCH_DIRECTION_HYSTERESIS_PX = 8
+/** Cap on the dead-band dock's trigger band, as a fraction of the viewport. */
+const DOCK_BAND_MAX_VIEWPORT_FRACTION = 0.25
 
 /**
  * Height (px) of the floating composer, published as `--composer-height` on the
@@ -40,7 +49,7 @@ function readComposerHeight(el: HTMLElement): number {
  * there.
  */
 function dockBandPx(el: HTMLElement): number {
-  return Math.min(readComposerHeight(el), el.clientHeight / 4)
+  return Math.min(readComposerHeight(el), el.clientHeight * DOCK_BAND_MAX_VIEWPORT_FRACTION)
 }
 
 interface UseTimelineScrollOptions {
@@ -659,10 +668,17 @@ export function useTimelineScroll({
       mark()
       const y = e.touches?.[0]?.clientY
       if (y === undefined) return
-      if (lastTouchY !== null && Math.abs(y - lastTouchY) > 1) {
-        lastGestureScrollDirRef.current = y > lastTouchY ? "up" : "down"
+      if (lastTouchY === null) {
+        lastTouchY = y
+        return
       }
-      lastTouchY = y
+      // Hysteresis: only a move past the threshold records a direction and
+      // advances the anchor, so the tiny reversal of a finger peeling off the
+      // glass can't flip a long drag's direction at the last instant.
+      if (Math.abs(y - lastTouchY) > TOUCH_DIRECTION_HYSTERESIS_PX) {
+        lastGestureScrollDirRef.current = y > lastTouchY ? "up" : "down"
+        lastTouchY = y
+      }
     }
     el.addEventListener("wheel", onWheel, { passive: true })
     el.addEventListener("touchstart", onTouchStart, { passive: true })
