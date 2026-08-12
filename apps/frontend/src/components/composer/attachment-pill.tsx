@@ -53,8 +53,8 @@ export interface AttachmentPillProps {
   labelMaxWidth?: string
   /**
    * How many times this attachment is referenced in the message being composed.
-   * Above zero the pill reads as drawn-from: dimmed, anchor glyph in the leading
-   * slot, and a `×N` count from two references up.
+   * Above zero the pill reads as drawn-from: anchor glyph in the leading slot,
+   * and a `×N` count from two references up.
    */
   referenceCount?: number
   className?: string
@@ -165,7 +165,7 @@ export function AttachmentPill({
   // keeps identical metrics moving from composer to timeline.
   // relative + overflow-hidden anchor and clip the progress fill bar.
   const baseStyles = "relative inline-flex h-8 items-center gap-2 overflow-hidden rounded-md px-3 text-xs select-none"
-  const statusStyles = cn(STATUS_STYLES[status], referenceCount > 0 && "opacity-60")
+  const statusStyles = STATUS_STYLES[status]
 
   const showProgress = typeof progress === "number" && progress >= 0 && progress < 1
   const spin = spinning ?? status === "pending"

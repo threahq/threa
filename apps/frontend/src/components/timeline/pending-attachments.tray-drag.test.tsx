@@ -7,6 +7,7 @@ import { countAttachmentReferences } from "@/components/editor/attachment-refere
 import { createEditorExtensions } from "@/components/editor/editor-extensions"
 import type { PendingAttachment } from "@/hooks/use-attachments"
 import * as useMobileModule from "@/hooks/use-mobile"
+import * as inputModeModule from "@/hooks/use-input-mode"
 import { extractUploadedAttachments, materializePendingAttachmentReferences } from "./message-input"
 import { PendingAttachments } from "./pending-attachments"
 
@@ -387,6 +388,83 @@ describe("attachment delete cascade", () => {
     // the server id and still finds the reference it created under a temp one.
     expect(editor.commands.removeAttachmentReferences("att_1")).toBe(true)
     expect(countAttachmentReferences(editor.getJSON() as JSONContent).size).toBe(0)
+  })
+})
+
+describe("referenced chip highlight", () => {
+  const highlighted = (editor: Editor) =>
+    [...editor.view.dom.querySelectorAll(".composer-pill-highlighted")].map((element) =>
+      element.getAttribute("data-id")
+    )
+
+  /** Two references to att_1 and one to att_2, dropped in from the tray. */
+  function trayWithReferences() {
+    const editor = createEditor()
+    vi.spyOn(editor.view, "posAtCoords").mockReturnValue({ pos: 1, inside: -1 })
+    const notes = attachment({ id: "att_2", filename: "notes.txt", mimeType: "text/plain" })
+    renderTray(editor, [attachment(), notes])
+    dragChipIntoEditor(screen.getByText("screenshot.png"))
+    dragChipIntoEditor(screen.getByText("screenshot.png"))
+    dragChipIntoEditor(screen.getByText("notes.txt"))
+    return editor
+  }
+
+  it("never dims a referenced chip", () => {
+    render(
+      <PendingAttachments
+        attachments={[attachment()]}
+        onRemove={vi.fn()}
+        workspaceId="ws_1"
+        referenceCounts={new Map([["att_1", 2]])}
+      />
+    )
+
+    const chip = screen.getByRole("button", { name: "Preview screenshot.png" })
+    expect(chip).not.toHaveClass("opacity-60")
+    // The referenced state still reads: anchor is absent only because the image
+    // thumbnail outranks it, so the count carries it here.
+    expect(screen.getByRole("img", { name: "2 references in this message" })).toHaveTextContent("×2")
+  })
+
+  it("highlights only the dragged attachment's references, and clears them on drop", () => {
+    const editor = trayWithReferences()
+    expect(highlighted(editor)).toEqual([])
+
+    const chip = screen.getByText("screenshot.png")
+    fireEvent.mouseDown(chip, { button: 0, clientX: 10, clientY: 10 })
+    fireEvent.mouseMove(document, { buttons: 1, clientX: 30, clientY: 10 })
+    expect(highlighted(editor)).toEqual(["att_1", "att_1"])
+
+    fireEvent.mouseUp(document, { button: 0, clientX: 30, clientY: 10 })
+    expect(highlighted(editor)).toEqual([])
+  })
+
+  it("clears the highlight when the drag is cancelled with Escape", () => {
+    const editor = trayWithReferences()
+
+    fireEvent.mouseDown(screen.getByText("notes.txt"), { button: 0, clientX: 10, clientY: 10 })
+    fireEvent.mouseMove(document, { buttons: 1, clientX: 30, clientY: 10 })
+    expect(highlighted(editor)).toEqual(["att_2"])
+
+    fireEvent.keyDown(document, { key: "Escape" })
+    expect(highlighted(editor)).toEqual([])
+  })
+
+  it("highlights on hover with a mouse and not on touch", () => {
+    vi.spyOn(inputModeModule, "useInputMode").mockReturnValue("mouse")
+    const editor = trayWithReferences()
+
+    const chip = screen.getByRole("button", { name: "Preview notes.txt" }).parentElement!
+    fireEvent.mouseEnter(chip)
+    expect(highlighted(editor)).toEqual(["att_2"])
+    fireEvent.mouseLeave(chip)
+    expect(highlighted(editor)).toEqual([])
+
+    cleanup()
+    vi.spyOn(inputModeModule, "useInputMode").mockReturnValue("touch")
+    const touchEditor = trayWithReferences()
+    fireEvent.mouseEnter(screen.getByRole("button", { name: "Preview notes.txt" }).parentElement!)
+    expect(highlighted(touchEditor)).toEqual([])
   })
 })
 

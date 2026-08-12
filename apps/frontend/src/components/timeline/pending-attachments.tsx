@@ -4,6 +4,7 @@ import { AttachmentPill, type AttachmentPillStatus } from "@/components/composer
 import { useComposerPillDragHost } from "@/components/editor/composer-pill-dnd"
 import type { ComposerPillDragHost } from "@/components/editor/composer-pill-drag-host"
 import { useIsMobile } from "@/hooks/use-mobile"
+import { useInputMode } from "@/hooks/use-input-mode"
 import { MediaGallery, type GalleryItem } from "@/components/image-gallery"
 import { pendingGalleryId } from "@/components/gallery/pending-gallery-id"
 import { buildPendingGalleryItem, uploadGalleryType, type UploadGalleryType } from "@/components/gallery/upload-preview"
@@ -58,6 +59,7 @@ function TrayPillDraggable({
   row: boolean
   children: ReactNode
 }) {
+  const inputMode = useInputMode()
   const draggable = host !== null && attachment.status === "uploaded"
   const begin = (event: MouseEvent | TouchEvent, target: EventTarget) => {
     // Every press on a chip owns the click it produces, draggable or not.
@@ -82,12 +84,22 @@ function TrayPillDraggable({
       event
     )
   }
+  // Hover is a mouse affordance: on touch the press that precedes a drag would
+  // fire it, and there is no leave to clear it.
+  const hoverHighlights = draggable && inputMode === "mouse"
+  useEffect(() => {
+    if (!hoverHighlights) return
+    return () => host?.highlightAttachment(null)
+  }, [host, hoverHighlights])
+
   return (
     <span
       className={cn("inline-flex shrink-0", draggable && "cursor-grab")}
       style={draggable ? { touchAction: row ? "pan-x" : "pan-y" } : undefined}
       onMouseDown={(event) => begin(event.nativeEvent, event.target)}
       onTouchStart={(event) => begin(event.nativeEvent, event.target)}
+      onMouseEnter={hoverHighlights ? () => host?.highlightAttachment(attachment.id) : undefined}
+      onMouseLeave={hoverHighlights ? () => host?.highlightAttachment(null) : undefined}
     >
       {children}
     </span>

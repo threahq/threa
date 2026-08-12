@@ -6,6 +6,7 @@ import {
   isComposerPillNode,
   isComposerPillSelected,
   pillFromDom,
+  setComposerPillHighlight,
   type ComposerPillDragSource,
 } from "./composer-pill-drag-extension"
 
@@ -154,6 +155,16 @@ export class ComposerPillDragHost {
     this.gestureStartX = event.clientX
     this.gestureStartY = event.clientY
     this.forward("onMouseDown", event)
+  }
+
+  /**
+   * Point the editor at the attachment whose references should light up. The
+   * drag half is derived from the drag state, so this carries only hover.
+   */
+  highlightAttachment(attachmentId: string | null) {
+    const view = this.view
+    if (!view) return
+    setComposerPillHighlight(view, attachmentId)
   }
 
   selectPill(pos: number) {

@@ -233,6 +233,38 @@ function dragDecorations(state: EditorState): Decoration[] {
   return decorations
 }
 
+/**
+ * The attachment whose inline references should read as "already in the
+ * message". Asked for on demand — while its tray chip is dragged, or hovered
+ * with a mouse — rather than painted on permanently. A live drag outranks a
+ * stale hover left behind on another chip.
+ */
+export const ComposerPillHighlightPluginKey = new PluginKey<string | null>("composerPillHighlight")
+
+function highlightedAttachmentId(state: EditorState): string | null {
+  const drag = ComposerPillDragPluginKey.getState(state)
+  if (drag?.source.kind === "tray") return drag.source.attachmentId
+  return ComposerPillHighlightPluginKey.getState(state) ?? null
+}
+
+function highlightDecorations(state: EditorState): DecorationSet | null {
+  const attachmentId = highlightedAttachmentId(state)
+  if (!attachmentId) return null
+
+  const decorations: Decoration[] = []
+  state.doc.descendants((node, pos) => {
+    if (node.type.name !== "attachmentReference" || node.attrs.id !== attachmentId) return
+    decorations.push(Decoration.node(pos, pos + node.nodeSize, { class: "composer-pill-highlighted" }))
+  })
+  return decorations.length === 0 ? null : DecorationSet.create(state.doc, decorations)
+}
+
+/** The one write path for the hover half of the highlight; never enters history. */
+export function setComposerPillHighlight(view: EditorView, attachmentId: string | null) {
+  if ((ComposerPillHighlightPluginKey.getState(view.state) ?? null) === attachmentId) return
+  view.dispatch(view.state.tr.setMeta(ComposerPillHighlightPluginKey, attachmentId).setMeta("addToHistory", false))
+}
+
 function pillDecorations(state: EditorState): DecorationSet | null {
   const decorations = [...dragDecorations(state), ...selectedPillDecorations(state)]
   return decorations.length === 0 ? null : DecorationSet.create(state.doc, decorations)
@@ -340,6 +372,19 @@ export const ComposerPillDragExtension = Extension.create({
             update: reflectActive,
             destroy: () => view.dom.classList.remove("composer-pill-drag-active"),
           }
+        },
+      }),
+      new Plugin<string | null>({
+        key: ComposerPillHighlightPluginKey,
+        state: {
+          init: () => null,
+          apply: (tr, current) => {
+            const meta = tr.getMeta(ComposerPillHighlightPluginKey) as string | null | undefined
+            return meta === undefined ? current : meta
+          },
+        },
+        props: {
+          decorations: highlightDecorations,
         },
       }),
     ]

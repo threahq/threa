@@ -735,6 +735,15 @@ html[data-input="mouse"]
   box-shadow: inset 0 0 0 100vmax hsl(var(--primary) / 0.32);
 }
 
+/* "This one is already in your message, here." Ring + wash only, no metrics —
+   the highlight lands mid-sentence and must not reflow the line (INV-21). */
+.ProseMirror .composer-pill-highlighted {
+  border-radius: 0.375rem;
+  box-shadow:
+    inset 0 0 0 100vmax hsl(var(--primary) / 0.18),
+    0 0 0 2px hsl(var(--primary) / 0.55);
+}
+
 .ProseMirror .composer-pill-dragging {
   border-radius: 0.375rem;
   opacity: 0.42;
