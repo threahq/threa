@@ -12,6 +12,7 @@ import * as useMobileModule from "@/hooks/use-mobile"
 import * as contextsModule from "@/contexts"
 import * as editorModule from "@/components/editor"
 import * as micButtonModule from "./mic-button"
+import * as pendingAttachmentsModule from "@/components/timeline/pending-attachments"
 import { queueComposerCommandRequest } from "@/stores/composer-command-request-store"
 
 let isMobileMockValue = false
@@ -675,6 +676,51 @@ describe("MessageComposer", () => {
       expect(screen.getByTestId("mobile-editor-toolbar")).toHaveAttribute("data-has-special-input-controls", "yes")
       expect(screen.getByRole("button", { name: "Indent" })).toBeInTheDocument()
       expect(screen.getByRole("button", { name: "Dedent" })).toBeInTheDocument()
+    })
+
+    it("keeps the attachment tray mounted across a mobile chrome toggle, so a chip tap still activates", () => {
+      isMobileMockValue = true
+      let trayMounts = 0
+      const activate = vi.fn()
+      const MockTray = () => {
+        useEffect(() => {
+          trayMounts += 1
+        }, [])
+        return (
+          <button type="button" data-testid="tray-chip" onClick={activate}>
+            screenshot.png
+          </button>
+        )
+      }
+      spyOnExport(pendingAttachmentsModule, "PendingAttachments").mockReturnValue(
+        MockTray as unknown as typeof pendingAttachmentsModule.PendingAttachments
+      )
+      const attachments: PendingAttachment[] = [
+        { id: "att_1", filename: "screenshot.png", mimeType: "image/png", sizeBytes: 2048, status: "uploaded" },
+      ]
+
+      const onMobileChromeOpenChange = vi.fn()
+      render(
+        <MessageComposer
+          {...defaultProps}
+          pendingAttachments={attachments}
+          onMobileChromeOpenChange={onMobileChromeOpenChange}
+        />
+      )
+      expect(trayMounts).toBe(1)
+      expect(onMobileChromeOpenChange).toHaveBeenLastCalledWith(false)
+
+      // Tapping a chip focuses it, which opens the mobile chrome. The tray must
+      // keep its one React position through that: a remount tears the chip down
+      // before its click lands (and drops the tray's own preview state).
+      const chip = screen.getByTestId("tray-chip")
+      fireEvent.focus(chip)
+      fireEvent.click(chip)
+
+      expect(onMobileChromeOpenChange).toHaveBeenLastCalledWith(true)
+      expect(trayMounts).toBe(1)
+      expect(activate).toHaveBeenCalledTimes(1)
+      expect(screen.getByTestId("tray-chip")).toBe(chip)
     })
   })
 

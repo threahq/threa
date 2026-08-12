@@ -9,6 +9,7 @@ import { RichEditor, EditorActionBar, EditorToolbar } from "@/components/editor"
 import type { RichEditorHandle } from "@/components/editor"
 import { handleMobileInlineAttachmentPicker } from "@/components/editor/mobile-inline-attachment-picker"
 import { PendingAttachments } from "@/components/timeline/pending-attachments"
+import { countAttachmentReferences } from "@/components/editor/attachment-reference-counts"
 import { DateTimeField } from "@/components/forms/date-time-field"
 import { parseLocalDateTime, toDateInputValue, toTimeInputValue } from "@/lib/dates"
 import { useIsMobile } from "@/hooks/use-mobile"
@@ -324,6 +325,15 @@ export function ScheduledEditDialog({ workspaceId, scheduled, onClose }: Schedul
   const saveLabel = isPast ? "Send" : "Save"
   const title = isPast ? "Send scheduled message" : "Edit scheduled message"
 
+  const attachmentReferenceCounts = useMemo(() => countAttachmentReferences(contentJson), [contentJson])
+  const handleRemoveAttachment = useCallback(
+    (id: string) => {
+      editorRef.current?.removeAttachmentReferences(id)
+      attachmentsHook.removeAttachment(id)
+    },
+    [attachmentsHook]
+  )
+
   const editorElement = (
     <RichEditor
       ref={setRichEditorHandle}
@@ -348,8 +358,9 @@ export function ScheduledEditDialog({ workspaceId, scheduled, onClose }: Schedul
           <div className="border-b border-border/50 p-3 [&>div]:mb-0">
             <PendingAttachments
               attachments={attachmentsHook.pendingAttachments}
-              onRemove={attachmentsHook.removeAttachment}
+              onRemove={handleRemoveAttachment}
               workspaceId={workspaceId}
+              referenceCounts={attachmentReferenceCounts}
             />
           </div>
         ) : null

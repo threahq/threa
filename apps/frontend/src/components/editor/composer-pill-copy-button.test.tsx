@@ -152,7 +152,10 @@ describe("composer pill copy control", () => {
 
     act(() => {
       editor.view.dispatch(
-        editor.state.tr.setMeta(ComposerPillDragPluginKey, { sourcePos: nodePos(editor, "mention"), dropPos: null })
+        editor.state.tr.setMeta(ComposerPillDragPluginKey, {
+          source: { kind: "doc", pos: nodePos(editor, "mention") },
+          dropPos: null,
+        })
       )
     })
     expect(copyControl()).toBeNull()

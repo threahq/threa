@@ -489,7 +489,7 @@ describe("composer pill drag gestures", () => {
     vi.advanceTimersByTime(500)
     editor.view.dispatch(editor.state.tr.insertText("x ", 1))
     const mappedSourcePos = nodePos(editor, "mention")
-    expect(ComposerPillDragPluginKey.getState(editor.state)?.sourcePos).toBe(mappedSourcePos)
+    expect(ComposerPillDragPluginKey.getState(editor.state)?.source).toEqual({ kind: "doc", pos: mappedSourcePos })
 
     fireEvent.touchEnd(document, { touches: [], changedTouches: [touch(7, 10, 10)] })
     expect(editor.state.selection).toBeInstanceOf(NodeSelection)

@@ -3,8 +3,10 @@ import { LONG_PRESS_MOVE_TOLERANCE_PX, LONG_PRESS_THRESHOLD_MS } from "@/hooks/u
 import {
   ComposerPillDragPluginKey,
   MOUSE_DRAG_THRESHOLD_PX,
+  composerPillDragNode,
   isComposerPillNode,
   isComposerPillSelected,
+  type ComposerPillDragSource,
 } from "./composer-pill-drag-extension"
 import type { ComposerPillDragHost, ComposerPillGesture, ComposerPillGestureKind } from "./composer-pill-drag-host"
 
@@ -41,7 +43,7 @@ export class ComposerPillSensor implements SensorInstance {
   private readonly win: Window
   private readonly kind: ComposerPillGestureKind
   private readonly touchId: number
-  private readonly sourcePos: number
+  private readonly source: ComposerPillDragSource
   private readonly startX: number
   private readonly startY: number
   private readonly touchDragEligible: boolean
@@ -59,14 +61,14 @@ export class ComposerPillSensor implements SensorInstance {
     this.win = this.doc.defaultView ?? window
     this.kind = this.host.gestureKind
     this.touchId = this.host.gestureTouchId
-    this.sourcePos = this.host.source?.pos ?? -1
+    this.source = this.host.source ?? { kind: "doc", pos: -1 }
     this.startX = this.host.gestureStartX
     this.startY = this.host.gestureStartY
     this.touchDragEligible = this.host.gestureTouchEligible
     this.gesture = {
       kind: this.kind,
       touchId: this.touchId,
-      sourcePos: this.sourcePos,
+      source: this.source,
       startX: this.startX,
       startY: this.startY,
     }
@@ -120,7 +122,7 @@ export class ComposerPillSensor implements SensorInstance {
   private start() {
     if (this.activated) return
     const view = this.host.getView()
-    if (!view || !isComposerPillNode(view.state.doc.nodeAt(this.sourcePos))) return
+    if (!view || !isComposerPillNode(composerPillDragNode(view.state, this.source))) return
     this.activated = true
     this.host.dragActive = true
     if (this.longPressTimer !== null) {
@@ -147,8 +149,9 @@ export class ComposerPillSensor implements SensorInstance {
 
   private finish(x: number, y: number) {
     const view = this.host.getView()
+    const docSourcePos = this.source.kind === "doc" ? this.source.pos : null
     if (!this.activated) {
-      const tappedPillPos = this.kind === "touch" && !this.holdElapsed ? this.sourcePos : null
+      const tappedPillPos = this.kind === "touch" && !this.holdElapsed ? docSourcePos : null
       this.finishGesture(this.kind === "touch")
       this.props.onEnd()
       if (tappedPillPos !== null) this.host.selectPill(tappedPillPos)
@@ -156,12 +159,12 @@ export class ComposerPillSensor implements SensorInstance {
     }
 
     if (this.kind === "touch" && !this.movedBeyondTolerance) {
-      const state = view ? ComposerPillDragPluginKey.getState(view.state) : null
-      const sourcePos = state?.sourcePos ?? this.sourcePos
+      const live = view ? ComposerPillDragPluginKey.getState(view.state)?.source : null
+      const sourcePos = live?.kind === "doc" ? live.pos : docSourcePos
       this.finishGesture(true)
       this.host.lifecycle?.cancel()
       this.props.onCancel()
-      this.host.selectPill(sourcePos)
+      if (sourcePos !== null) this.host.selectPill(sourcePos)
       return
     }
 
@@ -205,7 +208,12 @@ export class ComposerPillSensor implements SensorInstance {
     if (!this.activated) {
       if (!beyondTolerance) return
       const view = this.host.getView()
-      if (!this.touchDragEligible || !view || !isComposerPillSelected(view.state, this.sourcePos)) {
+      if (
+        !this.touchDragEligible ||
+        !view ||
+        this.source.kind !== "doc" ||
+        !isComposerPillSelected(view.state, this.source.pos)
+      ) {
         this.cancel()
         return
       }
