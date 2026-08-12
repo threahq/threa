@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useRef, type ReactNode } from "react"
 import {
   DndContext,
-  DragOverlay,
   useDraggable,
   useDroppable,
   useSensor,
@@ -211,7 +210,6 @@ export function ComposerPillDndProvider({ editor, children }: { editor: Editor |
     <DndContext autoScroll sensors={sensors} collisionDetection={collisionDetection} accessibility={{ announcements }}>
       <ComposerPillDragBridge editor={editor} host={host} />
       {children}
-      <DragOverlay dropAnimation={null} style={{ pointerEvents: "none" }} />
     </DndContext>
   )
 }
