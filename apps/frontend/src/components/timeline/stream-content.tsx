@@ -2405,16 +2405,24 @@ export function StreamContent({
   }
   useLayoutEffect(() => {
     if (!useVirtualized) return
+    // Consumed decisions bail before touching storage or scanning the window:
+    // `visibleItems` re-runs this effect on every timeline tick for the life
+    // of the stream, and the localStorage read + linear index scan below are
+    // not free at that cadence.
+    if (anchorRestoreRef.current.decided) return
     const anchor = loadTimelineAnchor(streamId)
+    const settled = !isLoading && !virtualIsInitialSettling
     const decision = resolveAnchorRestore({
-      alreadyDecided: anchorRestoreRef.current.decided,
+      alreadyDecided: false,
       isLoading,
       isSettling: virtualIsInitialSettling,
       isJumpMode,
       hasDeepLink: skipInitialScroll,
       userInteractedAt: userInteractedAtRef.current,
       hasAnchor: anchor !== null,
-      anchorInWindow: anchor !== null && findTimelineTargetIndex(visibleItems, anchor.targetId) >= 0,
+      // The scan only matters once the wait gates have cleared; skip it while
+      // the window is still loading or masked.
+      anchorInWindow: anchor !== null && settled && findTimelineTargetIndex(visibleItems, anchor.targetId) >= 0,
     })
     if (decision === "wait") return
     anchorRestoreRef.current.decided = true
@@ -2468,12 +2476,19 @@ export function StreamContent({
       if (timer) window.clearTimeout(timer)
       snapshot()
     }
+    // visibilitychange too: mobile OSes routinely discard a backgrounded PWA
+    // without ever firing pagehide, and hidden is the documented last event.
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "hidden") onPageHide()
+    }
     el.addEventListener("scroll", onScroll, { passive: true })
     window.addEventListener("pagehide", onPageHide)
+    document.addEventListener("visibilitychange", onVisibilityChange)
     return () => {
       if (timer) window.clearTimeout(timer)
       el.removeEventListener("scroll", onScroll)
       window.removeEventListener("pagehide", onPageHide)
+      document.removeEventListener("visibilitychange", onVisibilityChange)
     }
   }, [useVirtualized, virtualScrollerEl, streamId, isFollowingTailRef])
 

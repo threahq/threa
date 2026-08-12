@@ -55,7 +55,13 @@ export function saveTimelineAnchor(streamId: string, anchor: TimelineAnchor): vo
   map[streamId] = { ...anchor, at: Date.now() }
   const ids = Object.keys(map)
   if (ids.length > MAX_ENTRIES) {
-    ids.sort((a, b) => (map[a]?.at ?? 0) - (map[b]?.at ?? 0))
+    // Corrupt entries (readAll doesn't validate fields) sort as 0 — oldest —
+    // so eviction removes them first instead of comparing NaN.
+    const atOf = (id: string) => {
+      const at = map[id]?.at
+      return typeof at === "number" && Number.isFinite(at) ? at : 0
+    }
+    ids.sort((a, b) => atOf(a) - atOf(b))
     for (const id of ids.slice(0, ids.length - MAX_ENTRIES)) delete map[id]
   }
   writeAll(map)
