@@ -310,26 +310,34 @@ export function MessageComposer({
   // the 75dvh expanded preset, whose classes would otherwise outrank it.
   const [mobileDragHeight, setMobileDragHeightState] = useState<number | null>(() => loadMobileComposerDragHeight())
   const mobileDragHeightRef = useRef(mobileDragHeight)
-  const resizeDragRef = useRef<{ pointerId: number; startY: number; startHeight: number } | null>(null)
+  const resizeDragRef = useRef<{ pointerId: number; startY: number; startHeight: number; minPx: number } | null>(null)
   const handleResizePointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
     const root = mobileRootRef.current
     if (!root) return
     // Keep focus in the editor (and the keyboard up) through the drag.
     e.preventDefault()
     e.currentTarget.setPointerCapture?.(e.pointerId)
+    const rootHeight = root.getBoundingClientRect().height
+    // The max-height caps the whole root — attachment tray and link previews
+    // included — while the floor is defined against the editor card alone, so
+    // the extras' height rides on top of the floor. Without this a tray plus
+    // a preview at the 140px floor crushed the editor card toward zero.
+    const cardHeight = root.querySelector<HTMLElement>("[data-composer-card]")?.getBoundingClientRect().height
     resizeDragRef.current = {
       pointerId: e.pointerId,
       startY: e.clientY,
-      startHeight: root.getBoundingClientRect().height,
+      startHeight: rootHeight,
+      minPx: MOBILE_COMPOSER_DRAG_MIN_PX + Math.max(0, rootHeight - (cardHeight ?? rootHeight)),
     }
   }, [])
   const handleResizePointerMove = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
     const drag = resizeDragRef.current
     if (!drag || e.pointerId !== drag.pointerId) return
     const viewportH = window.visualViewport?.height ?? window.innerHeight
-    const next = Math.round(
-      Math.min(Math.max(drag.startHeight + (drag.startY - e.clientY), MOBILE_COMPOSER_DRAG_MIN_PX), viewportH * 0.75)
-    )
+    // The ceiling never dips below the floor (keyboard up on a short landscape
+    // viewport can put 75% of it under the minimum).
+    const maxPx = Math.max(viewportH * 0.75, drag.minPx)
+    const next = Math.round(Math.min(Math.max(drag.startHeight + (drag.startY - e.clientY), drag.minPx), maxPx))
     setMobileExpanded(false)
     mobileDragHeightRef.current = next
     setMobileDragHeightState(next)
@@ -1281,7 +1289,8 @@ export function MessageComposer({
                   isMobile && !mobileChromeOpen ? "px-3 py-2" : "p-3 gap-2",
                   // When mobile-expanded or drag-sized, let the editor grow and
                   // override its internal max-height — the shell's cap governs.
-                  (mobileExpanded || (isMobile && mobileDragHeight !== null)) && "[&_.tiptap]:max-h-none"
+                  (mobileExpanded || (isMobile && mobileChromeOpen && mobileDragHeight !== null)) &&
+                    "[&_.tiptap]:max-h-none"
                 )}
                 onClick={(e) => {
                   if ((e.target as HTMLElement).closest("button,a,input,textarea,[contenteditable],[role='button']"))
@@ -1308,6 +1317,7 @@ export function MessageComposer({
                     onPointerMove={handleResizePointerMove}
                     onPointerUp={handleResizePointerEnd}
                     onPointerCancel={handleResizePointerEnd}
+                    onLostPointerCapture={handleResizePointerEnd}
                     className="-mx-3 -mt-3 flex h-5 shrink-0 touch-none cursor-ns-resize items-center justify-center"
                   >
                     <div className="h-1 w-9 rounded-full bg-muted-foreground/25" />
@@ -1347,7 +1357,7 @@ export function MessageComposer({
                 <div
                   className={cn(
                     isMobile && !mobileChromeOpen ? "h-0 overflow-hidden" : "flex-1 min-h-0",
-                    (mobileExpanded || (isMobile && mobileDragHeight !== null)) && "overflow-y-auto"
+                    (mobileExpanded || (isMobile && mobileChromeOpen && mobileDragHeight !== null)) && "overflow-y-auto"
                   )}
                 >
                   <div className="h-full">{sharedEditor}</div>

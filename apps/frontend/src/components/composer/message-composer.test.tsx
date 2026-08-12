@@ -882,6 +882,22 @@ describe("MessageComposer", () => {
       expect((container.firstElementChild as HTMLElement).style.maxHeight).toBe("140px")
     })
 
+    it("keeps the floor when 75% of a short viewport would dip below it", () => {
+      // Keyboard up on a short landscape viewport: the 75%-of-viewport ceiling
+      // would land under the 140px floor, inverting the clamp — the floor wins.
+      const originalInnerHeight = window.innerHeight
+      Object.defineProperty(window, "innerHeight", { configurable: true, value: 100 })
+      try {
+        const { container } = render(<MessageComposer {...defaultProps} workspaceId="ws_1" initialMobileChromeOpen />)
+        const handle = screen.getByTestId("composer-resize-handle")
+        fireEvent.pointerDown(handle, { pointerId: 1, clientY: 600 })
+        fireEvent.pointerMove(handle, { pointerId: 1, clientY: 100 })
+        expect((container.firstElementChild as HTMLElement).style.maxHeight).toBe("140px")
+      } finally {
+        Object.defineProperty(window, "innerHeight", { configurable: true, value: originalInnerHeight })
+      }
+    })
+
     it("applies the persisted drag height on mount", () => {
       localStorage.setItem("threa:composer-drag-height", "300")
       const { container } = render(<MessageComposer {...defaultProps} workspaceId="ws_1" initialMobileChromeOpen />)
