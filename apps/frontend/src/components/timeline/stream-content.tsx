@@ -136,6 +136,7 @@ import { localStartOfDayMs } from "@/lib/dates"
 import { getPerfCapture } from "@/lib/perf/capture"
 import { addStartBatchSelectListener, type BatchSelectIntent } from "@/lib/batch-selection-events"
 import { addMarkReadUpToHereListener, addMarkUnreadListener } from "@/lib/mark-read-events"
+import { clearTimelineAnchor, loadTimelineAnchor, saveTimelineAnchor } from "@/lib/timeline-anchor-storage"
 import { ReadFrontierContext, type ReadFrontier } from "./read-frontier-context"
 import { useReadMessageIds } from "@/hooks/use-unread-counts"
 
@@ -474,6 +475,38 @@ export function resolveUnreadMarkerOpen(args: {
   if (args.isLoading || args.isSettling || !args.readStateResolved) return "wait"
   if (!args.dividerEventId) return "skip"
   return "scroll"
+}
+
+/**
+ * Decide whether to restore a persisted detached-reading anchor on stream
+ * open (see `timeline-anchor-storage`). Same once-per-stream contract as
+ * `resolveUnreadMarkerOpen`: "wait" leaves the decision open while inputs
+ * resolve; every other verdict consumes it.
+ *
+ * A restore yields to deep links, jump mode, and any user gesture — those own
+ * the position. It only engages when the anchored row is in the loaded
+ * window: anchors are written while detached near the tail (reading context
+ * while replying), which the initial window covers; an anchor that has since
+ * fallen out of the window is stale enough that the tail is the better
+ * landing.
+ */
+export function resolveAnchorRestore(args: {
+  alreadyDecided: boolean
+  isLoading: boolean
+  isSettling: boolean
+  isJumpMode: boolean
+  hasDeepLink: boolean
+  userInteractedAt: number
+  hasAnchor: boolean
+  anchorInWindow: boolean
+}): "wait" | "skip" | "restore" {
+  if (args.alreadyDecided) return "skip"
+  if (args.hasDeepLink || args.isJumpMode) return "skip"
+  if (args.userInteractedAt > 0) return "skip"
+  if (!args.hasAnchor) return "skip"
+  if (args.isLoading || args.isSettling) return "wait"
+  if (!args.anchorInWindow) return "skip"
+  return "restore"
 }
 
 /**
@@ -1633,8 +1666,12 @@ export function StreamContent({
   // exactly the "I scroll up to read context, then get yanked back to the
   // linked message" deep-link bug.
   const scrollToMessage = useCallback(
-    (targetId: string, opts?: { align?: "center" | "start" }) => {
+    (targetId: string, opts?: { align?: "center" | "start"; topOffsetPx?: number }) => {
       const align = opts?.align ?? "center"
+      // For "start": px between the viewport top and the target's top. The
+      // unread-marker default leaves a small context gap; an anchor restore
+      // passes the exact (possibly negative) offset the reader detached at.
+      const topOffsetPx = opts?.topOffsetPx ?? UNREAD_MARKER_TOP_GAP_PX
       if (findTimelineTargetIndex(visibleItems, targetId) < 0) {
         deepLinkDebug("scrollToMessage bail: target not a timeline item yet", targetId)
         return false
@@ -1715,10 +1752,10 @@ export function StreamContent({
           const sr = scroller.getBoundingClientRect()
           const er = el.getBoundingClientRect()
           const scCenter = (sr.top + sr.bottom) / 2
-          // "start" pins the target's top near the viewport top (the unread
-          // marker open: a long first-unread message must read from its start).
-          // "center" is the deep-link behavior, unchanged.
-          const desiredTop = sr.top + UNREAD_MARKER_TOP_GAP_PX
+          // "start" pins the target's top at topOffsetPx below the viewport
+          // top (the unread marker open, an anchor restore). "center" is the
+          // deep-link behavior, unchanged.
+          const desiredTop = sr.top + topOffsetPx
           const delta = align === "start" ? er.top - desiredTop : (er.top + er.bottom) / 2 - scCenter
           if (Math.abs(delta) > 2) {
             scroller.scrollTop += delta
@@ -1739,7 +1776,7 @@ export function StreamContent({
             try {
               listRef.current?.scrollToIndex(
                 liveIdx,
-                align === "start" ? { align: "start", offset: -UNREAD_MARKER_TOP_GAP_PX } : { align: "center" }
+                align === "start" ? { align: "start", offset: -topOffsetPx } : { align: "center" }
               )
             } catch {
               // virtua can still throw internally on a freshly mounted,
@@ -2354,6 +2391,92 @@ export function StreamContent({
   if (unreadMarkerOpenRef.current.streamId !== streamId) {
     unreadMarkerOpenRef.current = { streamId, decided: false }
   }
+
+  // Restore a persisted detached-reading anchor (see timeline-anchor-storage):
+  // a reader who detached from the tail and reloaded lands back on the row
+  // they were reading, at the offset they left it. One decision per stream
+  // open, resolved by resolveAnchorRestore. A successful restore also consumes
+  // the unread-marker-open decision below — the reader's own last position is
+  // the more specific landing — which works because this layout effect is
+  // declared first and both run in the same commit.
+  const anchorRestoreRef = useRef<{ streamId: string; decided: boolean }>({ streamId, decided: false })
+  if (anchorRestoreRef.current.streamId !== streamId) {
+    anchorRestoreRef.current = { streamId, decided: false }
+  }
+  useLayoutEffect(() => {
+    if (!useVirtualized) return
+    const anchor = loadTimelineAnchor(streamId)
+    const decision = resolveAnchorRestore({
+      alreadyDecided: anchorRestoreRef.current.decided,
+      isLoading,
+      isSettling: virtualIsInitialSettling,
+      isJumpMode,
+      hasDeepLink: skipInitialScroll,
+      userInteractedAt: userInteractedAtRef.current,
+      hasAnchor: anchor !== null,
+      anchorInWindow: anchor !== null && findTimelineTargetIndex(visibleItems, anchor.targetId) >= 0,
+    })
+    if (decision === "wait") return
+    anchorRestoreRef.current.decided = true
+    if (decision !== "restore" || !anchor) return
+    if (scrollToMessage(anchor.targetId, { align: "start", topOffsetPx: anchor.offsetPx })) {
+      unreadMarkerOpenRef.current.decided = true
+    }
+  }, [
+    useVirtualized,
+    streamId,
+    isLoading,
+    virtualIsInitialSettling,
+    isJumpMode,
+    skipInitialScroll,
+    visibleItems,
+    scrollToMessage,
+  ])
+
+  // Persist the detached reading position for the restore above. While
+  // following, the stream's entry is cleared (the tail is the default
+  // landing); while detached, each settled scroll — and the page being hidden,
+  // which is the last chance before a reload — snapshots the topmost visible
+  // row and its offset from the viewport top.
+  useEffect(() => {
+    if (!useVirtualized) return
+    const el = virtualScrollerEl
+    if (!el) return
+    let timer = 0
+    const snapshot = () => {
+      timer = 0
+      if (isFollowingTailRef.current) {
+        clearTimelineAnchor(streamId)
+        return
+      }
+      const sr = el.getBoundingClientRect()
+      let best: { id: string; top: number } | null = null
+      for (const row of el.querySelectorAll<HTMLElement>("[data-message-id], [data-event-id]")) {
+        const rr = row.getBoundingClientRect()
+        if (rr.bottom <= sr.top + 1 || rr.top >= sr.bottom) continue
+        const id = row.dataset.messageId ?? row.dataset.eventId
+        if (!id) continue
+        if (!best || rr.top < best.top) best = { id, top: rr.top }
+      }
+      if (best) saveTimelineAnchor(streamId, { targetId: best.id, offsetPx: Math.round(best.top - sr.top) })
+    }
+    const onScroll = () => {
+      if (timer) window.clearTimeout(timer)
+      timer = window.setTimeout(snapshot, 250)
+    }
+    const onPageHide = () => {
+      if (timer) window.clearTimeout(timer)
+      snapshot()
+    }
+    el.addEventListener("scroll", onScroll, { passive: true })
+    window.addEventListener("pagehide", onPageHide)
+    return () => {
+      if (timer) window.clearTimeout(timer)
+      el.removeEventListener("scroll", onScroll)
+      window.removeEventListener("pagehide", onPageHide)
+    }
+  }, [useVirtualized, virtualScrollerEl, streamId, isFollowingTailRef])
+
   useLayoutEffect(() => {
     const decision = resolveUnreadMarkerOpen({
       unreadOpenPosition,

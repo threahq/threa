@@ -11,6 +11,7 @@ import {
   resolveDateJumpAnchor,
   remapSuppressedWatermark,
   resolveUnreadMarkerOpen,
+  resolveAnchorRestore,
   buildAgentActivitySummary,
 } from "./stream-content"
 import { localStartOfDayMs } from "@/lib/dates"
@@ -568,6 +569,48 @@ describe("resolveUnreadMarkerOpen", () => {
 
   it("consumes the decision as skip (not wait) for a deep-link even while still loading — a deep-linked stream never marker-scrolls", () => {
     expect(resolveUnreadMarkerOpen({ ...base, hasDeepLink: true, isLoading: true })).toBe("skip")
+  })
+})
+
+describe("resolveAnchorRestore", () => {
+  const base = {
+    alreadyDecided: false,
+    isLoading: false,
+    isSettling: false,
+    isJumpMode: false,
+    hasDeepLink: false,
+    userInteractedAt: 0,
+    hasAnchor: true,
+    anchorInWindow: true,
+  }
+
+  it("restores once loading and the cold-load settle have resolved with the anchor in the window", () => {
+    expect(resolveAnchorRestore(base)).toBe("restore")
+  })
+
+  it("waits (without consuming the decision) while the window loads or the settle masks", () => {
+    expect(resolveAnchorRestore({ ...base, isLoading: true })).toBe("wait")
+    expect(resolveAnchorRestore({ ...base, isSettling: true })).toBe("wait")
+  })
+
+  it("skips with no persisted anchor — the tail open is untouched", () => {
+    expect(resolveAnchorRestore({ ...base, hasAnchor: false })).toBe("skip")
+    // Consumed as skip even mid-load: nothing later can produce an anchor.
+    expect(resolveAnchorRestore({ ...base, hasAnchor: false, isLoading: true })).toBe("skip")
+  })
+
+  it("skips when the anchored row is not in the loaded window (stale anchor)", () => {
+    expect(resolveAnchorRestore({ ...base, anchorInWindow: false })).toBe("skip")
+  })
+
+  it("yields to deep links, jump mode, and user gestures — they own the position", () => {
+    expect(resolveAnchorRestore({ ...base, hasDeepLink: true })).toBe("skip")
+    expect(resolveAnchorRestore({ ...base, isJumpMode: true })).toBe("skip")
+    expect(resolveAnchorRestore({ ...base, userInteractedAt: 42 })).toBe("skip")
+  })
+
+  it("decides at most once per stream open", () => {
+    expect(resolveAnchorRestore({ ...base, alreadyDecided: true })).toBe("skip")
   })
 })
 
