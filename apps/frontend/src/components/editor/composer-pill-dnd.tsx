@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, type ReactNode } from "react"
+import { createContext, useContext, useEffect, useMemo, useRef, type ReactNode } from "react"
 import {
   DndContext,
   useDraggable,
@@ -8,14 +8,16 @@ import {
   type Announcements,
   type CollisionDetection,
 } from "@dnd-kit/core"
+import type { Transaction } from "@tiptap/pm/state"
 import type { EditorView } from "@tiptap/pm/view"
 import type { Editor } from "@tiptap/react"
 import {
   ComposerPillDragPluginKey,
+  composerPillDragNode,
   composerPillDropPoint,
+  createComposerPillInsertTransaction,
   createComposerPillMoveTransaction,
   dropPositionAt,
-  isComposerPillNode,
   setComposerPillDragState,
 } from "./composer-pill-drag-extension"
 import {
@@ -58,9 +60,19 @@ function resolveDropPos(host: ComposerPillDragHost, x: number, y: number): numbe
   if (!view) return null
   const drag = ComposerPillDragPluginKey.getState(view.state)
   if (!drag) return null
-  const sourceNode = view.state.doc.nodeAt(drag.sourcePos)
-  if (!isComposerPillNode(sourceNode)) return null
+  const sourceNode = composerPillDragNode(view.state, drag.source)
+  if (!sourceNode) return null
   return dropPositionAt(view, x, y, sourceNode)
+}
+
+/**
+ * The editor's drag host, so surfaces rendered inside the provider (the
+ * attachment tray) can start a drag against the same sensor.
+ */
+const ComposerPillDragHostContext = createContext<ComposerPillDragHost | null>(null)
+
+export function useComposerPillDragHost(): ComposerPillDragHost | null {
+  return useContext(ComposerPillDragHostContext)
 }
 
 /**
@@ -116,17 +128,20 @@ function ComposerPillDragBridge({ editor, host }: { editor: Editor | null; host:
         guideRef.current?.update(view.state.doc, dropPos, x, y)
         if (dropPos !== null && dropPos !== current.dropPos) vibrate(windowFor(view), TOUCH_TARGET_HAPTIC_MS)
       }
-      setComposerPillDragState(view, { sourcePos: current.sourcePos, dropPos })
+      setComposerPillDragState(view, { source: current.source, dropPos })
     }
 
     const lifecycle: ComposerPillDragLifecycle = {
       start: (gesture) => {
         const view = host.getView()
         if (!view) return
-        const node = view.state.doc.nodeAt(gesture.sourcePos)
-        if (!isComposerPillNode(node)) return
-        const dropPos = composerPillDropPoint(view.state.doc, gesture.sourcePos, node)
-        setComposerPillDragState(view, { sourcePos: gesture.sourcePos, dropPos })
+        const node = composerPillDragNode(view.state, gesture.source)
+        if (!node) return
+        // A tray source has no position to sit at, so it starts without a drop
+        // point and takes one from the first move.
+        const dropPos =
+          gesture.source.kind === "doc" ? composerPillDropPoint(view.state.doc, gesture.source.pos, node) : null
+        setComposerPillDragState(view, { source: gesture.source, dropPos })
         if (gesture.kind !== "touch") return
         guideRef.current = new ComposerPillTouchGuide(view.dom.ownerDocument, windowFor(view))
         guideRef.current.update(view.state.doc, dropPos, gesture.startX, gesture.startY)
@@ -141,10 +156,14 @@ function ComposerPillDragBridge({ editor, host }: { editor: Editor | null; host:
         releaseGuide()
         if (!view) return
         const drag = ComposerPillDragPluginKey.getState(view.state)
-        const tr =
-          drag && drag.dropPos !== null
-            ? createComposerPillMoveTransaction(view.state, drag.sourcePos, drag.dropPos)
-            : null
+        let tr: Transaction | null = null
+        if (drag && drag.dropPos !== null) {
+          const node = composerPillDragNode(view.state, drag.source)
+          tr =
+            drag.source.kind === "doc"
+              ? createComposerPillMoveTransaction(view.state, drag.source.pos, drag.dropPos)
+              : node && createComposerPillInsertTransaction(view.state, node, drag.dropPos)
+        }
         if (!tr) {
           setComposerPillDragState(view, null)
           return
@@ -187,13 +206,7 @@ function ComposerPillDragBridge({ editor, host }: { editor: Editor | null; host:
   return null
 }
 
-/**
- * Provides in-composer pill dragging to one editor. Every editor built from
- * `createEditorExtensions()` carries the ProseMirror half, so the surfaces that
- * own an editor instance (`RichEditor`, the document editor modal) each wrap it
- * in this provider rather than relying on a context further up the tree.
- */
-export function ComposerPillDndProvider({ editor, children }: { editor: Editor | null; children?: ReactNode }) {
+function ComposerPillDndOwner({ editor, children }: { editor?: Editor | null; children?: ReactNode }) {
   const hostRef = useRef<ComposerPillDragHost | null>(null)
   hostRef.current ??= new ComposerPillDragHost()
   const host = hostRef.current
@@ -208,8 +221,44 @@ export function ComposerPillDndProvider({ editor, children }: { editor: Editor |
 
   return (
     <DndContext autoScroll sensors={sensors} collisionDetection={collisionDetection} accessibility={{ announcements }}>
-      <ComposerPillDragBridge editor={editor} host={host} />
-      {children}
+      <ComposerPillDragHostContext.Provider value={host}>
+        {editor !== undefined && <ComposerPillDragBridge editor={editor} host={host} />}
+        {children}
+      </ComposerPillDragHostContext.Provider>
     </DndContext>
   )
+}
+
+/**
+ * Owns the drag context for a surface whose editor is mounted deeper in the
+ * tree, so the drag sources that sit *outside* the editor (the composer's
+ * attachment tray) keep their own position in the DOM instead of being routed
+ * through an editor slot. The descendant `ComposerPillDndProvider` attaches the
+ * editor to this host rather than opening a second context.
+ */
+export function ComposerPillDndHost({ children }: { children?: ReactNode }) {
+  return <ComposerPillDndOwner>{children}</ComposerPillDndOwner>
+}
+
+/**
+ * Provides in-composer pill dragging to one editor. Every editor built from
+ * `createEditorExtensions()` carries the ProseMirror half, so the surfaces that
+ * own an editor instance (`RichEditor`, the document editor modal) each wrap it
+ * in this provider rather than relying on a context further up the tree.
+ *
+ * Under a `ComposerPillDndHost` it binds the editor to that host instead. The
+ * branch is decided by whether a host exists, which never changes for a given
+ * mount — so the children keep one React position either way.
+ */
+export function ComposerPillDndProvider({ editor, children }: { editor: Editor | null; children?: ReactNode }) {
+  const ancestorHost = useComposerPillDragHost()
+  if (ancestorHost) {
+    return (
+      <>
+        <ComposerPillDragBridge editor={editor} host={ancestorHost} />
+        {children}
+      </>
+    )
+  }
+  return <ComposerPillDndOwner editor={editor}>{children}</ComposerPillDndOwner>
 }

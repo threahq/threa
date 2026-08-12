@@ -1,6 +1,6 @@
 import { useState, type ComponentType, type KeyboardEvent, type ReactNode } from "react"
 import { Link } from "react-router-dom"
-import { X } from "lucide-react"
+import { Anchor, X } from "lucide-react"
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from "@/components/ui/tooltip"
 import { cn } from "@/lib/utils"
 
@@ -51,6 +51,12 @@ export interface AttachmentPillProps {
    */
   progress?: number
   labelMaxWidth?: string
+  /**
+   * How many times this attachment is referenced in the message being composed.
+   * Above zero the pill reads as drawn-from: dimmed, anchor glyph in the leading
+   * slot, and a `×N` count from two references up.
+   */
+  referenceCount?: number
   className?: string
 }
 
@@ -79,15 +85,17 @@ function PillLeading({
   icon: Icon,
   thumbnailSrc,
   spin,
+  anchored,
 }: {
   icon: ComponentType<{ className?: string }>
   thumbnailSrc?: string
   spin: boolean
+  anchored: boolean
 }) {
   const [failed, setFailed] = useState(false)
-  return (
-    <span className="flex h-5 w-5 shrink-0 items-center justify-center">
-      {thumbnailSrc && !failed ? (
+  if (thumbnailSrc && !failed) {
+    return (
+      <span className="flex h-5 w-5 shrink-0 items-center justify-center">
         <img
           src={thumbnailSrc}
           alt=""
@@ -95,9 +103,12 @@ function PillLeading({
           onError={() => setFailed(true)}
           className="h-5 w-5 rounded object-cover"
         />
-      ) : (
-        <Icon className={cn("h-3.5 w-3.5", spin && "animate-spin")} />
-      )}
+      </span>
+    )
+  }
+  return (
+    <span className="flex h-5 w-5 shrink-0 items-center justify-center">
+      {anchored ? <Anchor className="h-3.5 w-3.5" /> : <Icon className={cn("h-3.5 w-3.5", spin && "animate-spin")} />}
     </span>
   )
 }
@@ -146,6 +157,7 @@ export function AttachmentPill({
   activateLabel,
   progress,
   labelMaxWidth = "max-w-[160px]",
+  referenceCount = 0,
   className,
 }: AttachmentPillProps) {
   // Matches `<Button variant="outline" size="sm" className="h-8 gap-2 text-xs">`,
@@ -153,14 +165,24 @@ export function AttachmentPill({
   // keeps identical metrics moving from composer to timeline.
   // relative + overflow-hidden anchor and clip the progress fill bar.
   const baseStyles = "relative inline-flex h-8 items-center gap-2 overflow-hidden rounded-md px-3 text-xs select-none"
-  const statusStyles = STATUS_STYLES[status]
+  const statusStyles = cn(STATUS_STYLES[status], referenceCount > 0 && "opacity-60")
 
   const showProgress = typeof progress === "number" && progress >= 0 && progress < 1
+  const spin = spinning ?? status === "pending"
+  // The anchor is a resolved chip's glyph only: a failed upload keeps its error
+  // glyph and an in-flight one its spinner, both of which say more than "this is
+  // referenced". A thumbnail outranks it too — it identifies which image.
+  const anchored = referenceCount > 0 && !spin && status !== "error"
 
   const inner = (
     <>
-      <PillLeading icon={icon} thumbnailSrc={thumbnailSrc} spin={spinning ?? status === "pending"} />
+      <PillLeading icon={icon} thumbnailSrc={thumbnailSrc} spin={spin} anchored={anchored} />
       <span className={cn("truncate", labelMaxWidth)}>{label}</span>
+      {referenceCount > 1 && (
+        <span className={SECONDARY_TONE[status]} aria-label={`${referenceCount} references in this message`}>
+          {`\u00d7${referenceCount}`}
+        </span>
+      )}
       {secondary != null && <span className={SECONDARY_TONE[status]}>{secondary}</span>}
       {onRemove && (
         <button

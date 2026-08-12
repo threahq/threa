@@ -3,6 +3,7 @@ import { Fragment, Slice, type Node as ProseMirrorNode } from "@tiptap/pm/model"
 import { NodeSelection, Plugin, PluginKey, Selection, type EditorState, type Transaction } from "@tiptap/pm/state"
 import { dropPoint } from "@tiptap/pm/transform"
 import { Decoration, DecorationSet, type EditorView } from "@tiptap/pm/view"
+import type { AttachmentReferenceAttrs } from "./attachment-reference-extension"
 
 export const COMPOSER_PILL_NODE_NAMES = [
   "mention",
@@ -19,9 +20,27 @@ const COMPOSER_PILL_NODE_NAME_SET = new Set<string>(COMPOSER_PILL_NODE_NAMES)
 export const MOUSE_DRAG_THRESHOLD_PX = 6
 export const COMPOSER_PILL_TOUCH_DRAG_MODE = "hold-or-selected"
 
+/**
+ * What is being dragged. A `doc` source is a pill already in the document and
+ * moves; a `tray` source is an attachment chip and always inserts a new node,
+ * so it has no position to leave behind.
+ */
+export type ComposerPillDragSource =
+  | { kind: "doc"; pos: number }
+  | { kind: "tray"; attachmentId: string; attrs: AttachmentReferenceAttrs }
+
 export interface ComposerPillDragState {
-  sourcePos: number
+  source: ComposerPillDragSource
   dropPos: number | null
+}
+
+/** The node a drag carries: the live one for a doc source, a fresh one for a tray source. */
+export function composerPillDragNode(state: EditorState, source: ComposerPillDragSource): ProseMirrorNode | null {
+  if (source.kind === "doc") {
+    const node = state.doc.nodeAt(source.pos)
+    return isComposerPillNode(node) ? node : null
+  }
+  return state.schema.nodes.attachmentReference?.create(source.attrs) ?? null
 }
 
 export const ComposerPillDragPluginKey = new PluginKey<ComposerPillDragState | null>("composerPillDrag")
@@ -129,6 +148,34 @@ export function createComposerPillMoveTransaction(
 }
 
 /**
+ * Sibling of {@link createComposerPillMoveTransaction} for a source that has no
+ * position in the document: the tray is an inventory, so a drag out of it copies
+ * the chip in and never empties it.
+ */
+export function createComposerPillInsertTransaction(
+  state: EditorState,
+  node: ProseMirrorNode,
+  requestedDropPos: number
+): Transaction | null {
+  if (!isComposerPillNode(node)) return null
+
+  const dropPos = composerPillDropPoint(state.doc, requestedDropPos, node)
+  if (dropPos === null) return null
+
+  const $insert = state.doc.resolve(dropPos)
+  if (
+    !$insert.parent.inlineContent ||
+    !$insert.parent.canReplaceWith($insert.index(), $insert.index(), node.type, node.marks)
+  ) {
+    return null
+  }
+
+  const tr = state.tr.insert(dropPos, node)
+  tr.setSelection(Selection.near(tr.doc.resolve(dropPos + node.nodeSize), 1))
+  return tr
+}
+
+/**
  * Pills are `user-select: none`, so no engine paints the selection highlight
  * over one even when it sits squarely inside the range — the surrounding text
  * highlights and the pill looks untouched. The range is real (copy carries the
@@ -149,20 +196,25 @@ function selectedPillDecorations(state: EditorState): Decoration[] {
 function dragDecorations(state: EditorState): Decoration[] {
   const drag = ComposerPillDragPluginKey.getState(state)
   if (!drag) return []
-  const source = state.doc.nodeAt(drag.sourcePos)
-  if (!isComposerPillNode(source)) return []
 
-  const decorations: Decoration[] = [
-    Decoration.node(drag.sourcePos, drag.sourcePos + source.nodeSize, {
-      class: "composer-pill-dragging",
-      "data-composer-pill-dragging": "true",
-    }),
-  ]
+  // Only a doc source has something in the document to grey out.
+  const decorations: Decoration[] = []
+  if (drag.source.kind === "doc") {
+    const sourceNode = state.doc.nodeAt(drag.source.pos)
+    if (!isComposerPillNode(sourceNode)) return []
+    decorations.push(
+      Decoration.node(drag.source.pos, drag.source.pos + sourceNode.nodeSize, {
+        class: "composer-pill-dragging",
+        "data-composer-pill-dragging": "true",
+      })
+    )
+  }
 
   if (drag.dropPos !== null) {
+    const dropPos = drag.dropPos
     decorations.push(
       Decoration.widget(
-        drag.dropPos,
+        dropPos,
         () => {
           const cursor = document.createElement("span")
           cursor.className = "composer-pill-drop-cursor"
@@ -171,7 +223,7 @@ function dragDecorations(state: EditorState): Decoration[] {
         },
         {
           key: "composer-pill-drop-cursor",
-          side: drag.dropPos <= drag.sourcePos ? -1 : 1,
+          side: drag.source.kind === "doc" && dropPos <= drag.source.pos ? -1 : 1,
           ignoreSelection: true,
         }
       )
@@ -191,10 +243,13 @@ function mappedDragState(tr: Transaction, current: ComposerPillDragState | null)
   if (meta !== undefined) return meta
   if (!current || !tr.docChanged) return current
 
-  const sourcePos = tr.mapping.map(current.sourcePos, 1)
-  const dropAssociation = current.dropPos !== null && current.dropPos <= current.sourcePos ? -1 : 1
+  const anchorPos = current.source.kind === "doc" ? current.source.pos : null
+  const dropAssociation = anchorPos !== null && current.dropPos !== null && current.dropPos <= anchorPos ? -1 : 1
   const dropPos = current.dropPos === null ? null : tr.mapping.map(current.dropPos, dropAssociation)
-  return isComposerPillNode(tr.doc.nodeAt(sourcePos)) ? { sourcePos, dropPos } : null
+  if (anchorPos === null) return { source: current.source, dropPos }
+
+  const sourcePos = tr.mapping.map(anchorPos, 1)
+  return isComposerPillNode(tr.doc.nodeAt(sourcePos)) ? { source: { kind: "doc", pos: sourcePos }, dropPos } : null
 }
 
 export function isComposerPillSelected(state: EditorState, pos: number): boolean {
@@ -256,7 +311,7 @@ export function dropPositionAt(view: EditorView, x: number, y: number, sourceNod
 export function setComposerPillDragState(view: EditorView, next: ComposerPillDragState | null) {
   const current = ComposerPillDragPluginKey.getState(view.state) ?? null
   if (current === next) return
-  if (current && next && current.sourcePos === next.sourcePos && current.dropPos === next.dropPos) return
+  if (current && next && current.source === next.source && current.dropPos === next.dropPos) return
   view.dispatch(view.state.tr.setMeta(ComposerPillDragPluginKey, next).setMeta("addToHistory", false))
 }
 

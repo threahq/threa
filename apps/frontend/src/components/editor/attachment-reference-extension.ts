@@ -36,6 +36,11 @@ declare module "@tiptap/core" {
        * Update an attachment reference by its temp ID
        */
       updateAttachmentReference: (tempId: string, updates: Partial<AttachmentReferenceAttrs>) => ReturnType
+      /**
+       * Delete every reference to one attachment. The tray is the inventory, so
+       * dropping a file from it drops the references drawn from it.
+       */
+      removeAttachmentReferences: (attachmentId: string) => ReturnType
     }
   }
 }
@@ -187,6 +192,25 @@ export const AttachmentReferenceExtension = Node.create({
             return true
           }
           return false
+        },
+
+      removeAttachmentReferences:
+        (attachmentId) =>
+        ({ tr, state, dispatch }) => {
+          const ranges: Array<{ from: number; to: number }> = []
+          state.doc.descendants((node, pos) => {
+            if (node.type.name === "attachmentReference" && node.attrs.id === attachmentId) {
+              ranges.push({ from: pos, to: pos + node.nodeSize })
+            }
+            return true
+          })
+          if (ranges.length === 0) return false
+          if (!dispatch) return true
+
+          // Back to front: an earlier deletion would shift every later range.
+          for (const range of ranges.reverse()) tr.delete(range.from, range.to)
+          dispatch(tr)
+          return true
         },
     }
   },

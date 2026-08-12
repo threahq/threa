@@ -27,6 +27,8 @@ import { Button } from "@/components/ui/button"
 import { Separator } from "@/components/ui/separator"
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from "@/components/ui/tooltip"
 import { PendingAttachments } from "@/components/timeline/pending-attachments"
+import { countAttachmentReferences } from "@/components/editor/attachment-reference-counts"
+import { ComposerPillDndHost } from "@/components/editor/composer-pill-dnd"
 import { MicButton, type MicButtonHandle } from "./mic-button"
 import { FabDrawerCloseContext } from "./fab-drawer-close-context"
 import { StashedDraftsComposerBridgeContext, type StashedDraftsComposerBridge } from "./stashed-drafts-open-context"
@@ -699,6 +701,33 @@ export function MessageComposer({
     [onStashDraft, stashBinding, composerEmpty]
   )
 
+  // Chip state is a view of the document: how many references each attachment
+  // has, and — on delete — the references that go with it (INV-15: the cascade
+  // is a command the composer issues, never persistence reaching into a doc).
+  const attachmentReferenceCounts = useMemo(() => countAttachmentReferences(content), [content])
+  const handleRemoveAttachment = useCallback(
+    (id: string) => {
+      richEditorRef.current?.removeAttachmentReferences(id)
+      onRemoveAttachment(id)
+    },
+    [onRemoveAttachment]
+  )
+
+  const attachmentTray = (
+    <PendingAttachments
+      attachments={pendingAttachments}
+      onRemove={handleRemoveAttachment}
+      onCancelUpload={onCancelAttachmentUpload}
+      workspaceId={workspaceId}
+      referenceCounts={attachmentReferenceCounts}
+      beforePills={
+        contextRefs && contextRefs.length > 0 && streamId && workspaceId ? (
+          <ContextRefStrip workspaceId={workspaceId} streamId={streamId} draftRefs={contextRefs} />
+        ) : null
+      }
+    />
+  )
+
   const sharedEditor = (
     <RichEditor
       ref={setRichEditorHandle}
@@ -922,19 +951,7 @@ export function MessageComposer({
                 commandStreamId={commandStreamId}
                 belowToolbarContent={
                   pendingAttachments.length > 0 || (contextRefs && contextRefs.length > 0) ? (
-                    <div className="pt-1 pb-2 border-b border-border/50 [&>div]:mb-0">
-                      <PendingAttachments
-                        attachments={pendingAttachments}
-                        onRemove={onRemoveAttachment}
-                        onCancelUpload={onCancelAttachmentUpload}
-                        workspaceId={workspaceId}
-                        beforePills={
-                          contextRefs && contextRefs.length > 0 && streamId && workspaceId ? (
-                            <ContextRefStrip workspaceId={workspaceId} streamId={streamId} draftRefs={contextRefs} />
-                          ) : null
-                        }
-                      />
-                    </div>
+                    <div className="pt-1 pb-2 border-b border-border/50 [&>div]:mb-0">{attachmentTray}</div>
                   ) : undefined
                 }
               />
@@ -1139,109 +1156,103 @@ export function MessageComposer({
           <p id={instructionsId} className="sr-only">
             {screenReaderInstructions}
           </p>
-          <PendingAttachments
-            attachments={pendingAttachments}
-            onRemove={onRemoveAttachment}
-            onCancelUpload={onCancelAttachmentUpload}
-            workspaceId={workspaceId}
-            beforePills={
-              contextRefs && contextRefs.length > 0 && streamId && workspaceId ? (
-                <ContextRefStrip workspaceId={workspaceId} streamId={streamId} draftRefs={contextRefs} />
-              ) : null
-            }
-          />
+          {/* One drag context around the tray and the editor: the tray keeps its
+            own position above the card and its chips still drag into the text.
+            Wrapping it renders no DOM node, so the layout is unchanged. */}
+          <ComposerPillDndHost>
+            {attachmentTray}
 
-          {/* Live in-app link previews for the draft. Above the card (like
+            {/* Live in-app link previews for the draft. Above the card (like
             attachments) so they read as attached to this message and stay clear
             of the keyboard on mobile. Hidden in the mobile resting state to keep
             the single-line bar minimal. */}
-          {workspaceId && (!isMobile || mobileChromeOpen) && (
-            <ComposerLinkPreviews content={content} workspaceId={workspaceId} className="mb-2" />
-          )}
+            {workspaceId && (!isMobile || mobileChromeOpen) && (
+              <ComposerLinkPreviews content={content} workspaceId={workspaceId} className="mb-2" />
+            )}
 
-          <input
-            ref={fileInputRef}
-            type="file"
-            multiple
-            className="hidden"
-            onChange={handleFileInputChange}
-            disabled={controlsDisabled}
-          />
+            <input
+              ref={fileInputRef}
+              type="file"
+              multiple
+              className="hidden"
+              onChange={handleFileInputChange}
+              disabled={controlsDisabled}
+            />
 
-          <div className="input-glow-wrapper flex-1 flex flex-col min-h-0">
-            <div
-              data-composer-card
-              className={cn(
-                "rounded-[16px] border border-input flex flex-col flex-1 min-h-0",
-                // Floating-composer shadow on the inline (non-expanded) card; the
-                // expanded fullscreen sheet stays flat.
-                !mobileExpanded && COLLAPSED_COMPOSER_SHADOW,
-                // Glass (translucent + backdrop-blur) lets the timeline show through
-                // the floating composer, but backdrop-filter re-rasterizes the blurred
-                // backdrop on every repaint — cheap on desktop, a frame-killer on
-                // mobile over a long, image-heavy timeline while typing. Opaque on
-                // mobile; keep the glass on desktop where the GPU absorbs it.
-                !mobileExpanded && !isMobile ? "bg-card/75 backdrop-blur-md" : "bg-card",
-                // Compact padding when mobile-unfocused (single line), normal otherwise
-                isMobile && !mobileChromeOpen ? "px-3 py-2" : "p-3 gap-2",
-                // When mobile-expanded, let the editor grow and override its internal max-height
-                mobileExpanded && "[&_.tiptap]:max-h-none"
-              )}
-              onClick={(e) => {
-                if ((e.target as HTMLElement).closest("button,a,input,textarea,[contenteditable],[role='button']"))
-                  return
-                // On mobile unfocused, focus the (still zero-height) editor now —
-                // raising the keyboard — and expand the chrome together with the
-                // keyboard's viewport resize, so the open is a single snap.
-                if (isMobile && !mobileChromeOpen) {
-                  openMobileChromeWithKeyboard()
+            <div className="input-glow-wrapper flex-1 flex flex-col min-h-0">
+              <div
+                data-composer-card
+                className={cn(
+                  "rounded-[16px] border border-input flex flex-col flex-1 min-h-0",
+                  // Floating-composer shadow on the inline (non-expanded) card; the
+                  // expanded fullscreen sheet stays flat.
+                  !mobileExpanded && COLLAPSED_COMPOSER_SHADOW,
+                  // Glass (translucent + backdrop-blur) lets the timeline show through
+                  // the floating composer, but backdrop-filter re-rasterizes the blurred
+                  // backdrop on every repaint — cheap on desktop, a frame-killer on
+                  // mobile over a long, image-heavy timeline while typing. Opaque on
+                  // mobile; keep the glass on desktop where the GPU absorbs it.
+                  !mobileExpanded && !isMobile ? "bg-card/75 backdrop-blur-md" : "bg-card",
+                  // Compact padding when mobile-unfocused (single line), normal otherwise
+                  isMobile && !mobileChromeOpen ? "px-3 py-2" : "p-3 gap-2",
+                  // When mobile-expanded, let the editor grow and override its internal max-height
+                  mobileExpanded && "[&_.tiptap]:max-h-none"
+                )}
+                onClick={(e) => {
+                  if ((e.target as HTMLElement).closest("button,a,input,textarea,[contenteditable],[role='button']"))
+                    return
+                  // On mobile unfocused, focus the (still zero-height) editor now —
+                  // raising the keyboard — and expand the chrome together with the
+                  // keyboard's viewport resize, so the open is a single snap.
+                  if (isMobile && !mobileChromeOpen) {
+                    openMobileChromeWithKeyboard()
+                    richEditorRef.current?.focus()
+                    return
+                  }
                   richEditorRef.current?.focus()
-                  return
-                }
-                richEditorRef.current?.focus()
-              }}
-            >
-              {isMobile && !mobileChromeOpen && (
-                <div
-                  className={cn(
-                    COLLAPSED_COMPOSER_ROW,
-                    "text-sm select-none pointer-events-none",
-                    mirrored && "flex-row-reverse"
-                  )}
-                >
-                  <span className="flex-1 min-w-0 truncate text-muted-foreground">{previewText || placeholder}</span>
-                  <div className="pointer-events-auto">{sendButton}</div>
-                </div>
-              )}
+                }}
+              >
+                {isMobile && !mobileChromeOpen && (
+                  <div
+                    className={cn(
+                      COLLAPSED_COMPOSER_ROW,
+                      "text-sm select-none pointer-events-none",
+                      mirrored && "flex-row-reverse"
+                    )}
+                  >
+                    <span className="flex-1 min-w-0 truncate text-muted-foreground">{previewText || placeholder}</span>
+                    <div className="pointer-events-auto">{sendButton}</div>
+                  </div>
+                )}
 
-              {/* Mobile-only table hint — the floating selection toolbar is
+                {/* Mobile-only table hint — the floating selection toolbar is
                suppressed on mobile (it conflicts with the OS selection popup),
                so without this banner there's no visible cue that the row /
                column / delete controls live behind the Aa button. */}
-              {isMobile && mobileChromeOpen && isInTable && !formatOpen && (
-                <button
-                  type="button"
-                  onClick={() => setFormatOpen(true)}
-                  onMouseDown={(e) => e.preventDefault()}
-                  className="flex items-center gap-2 self-start rounded-md bg-muted/60 px-2 py-1 text-xs text-muted-foreground hover:bg-muted"
-                >
-                  Editing table — tap{" "}
-                  <span className="rounded bg-background px-1 py-0.5 text-[11px] font-bold leading-none">Aa</span> to
-                  add or delete rows and columns
-                </button>
-              )}
-
-              {/* Editor — always mounted to preserve state; hidden in preview mode */}
-              <div
-                className={cn(
-                  isMobile && !mobileChromeOpen ? "h-0 overflow-hidden" : "flex-1 min-h-0",
-                  mobileExpanded && "overflow-y-auto"
+                {isMobile && mobileChromeOpen && isInTable && !formatOpen && (
+                  <button
+                    type="button"
+                    onClick={() => setFormatOpen(true)}
+                    onMouseDown={(e) => e.preventDefault()}
+                    className="flex items-center gap-2 self-start rounded-md bg-muted/60 px-2 py-1 text-xs text-muted-foreground hover:bg-muted"
+                  >
+                    Editing table — tap{" "}
+                    <span className="rounded bg-background px-1 py-0.5 text-[11px] font-bold leading-none">Aa</span> to
+                    add or delete rows and columns
+                  </button>
                 )}
-              >
-                <div className="h-full">{sharedEditor}</div>
-              </div>
 
-              {/* Bottom action bar — visible on desktop always, on mobile when focused or dictating.
+                {/* Editor — always mounted to preserve state; hidden in preview mode */}
+                <div
+                  className={cn(
+                    isMobile && !mobileChromeOpen ? "h-0 overflow-hidden" : "flex-1 min-h-0",
+                    mobileExpanded && "overflow-y-auto"
+                  )}
+                >
+                  <div className="h-full">{sharedEditor}</div>
+                </div>
+
+                {/* Bottom action bar — visible on desktop always, on mobile when focused or dictating.
                onMouseDown preventDefault keeps editor focus on mobile so the virtual keyboard
                stays open when tapping any button in this bar.
 
@@ -1254,80 +1265,81 @@ export function MessageComposer({
                DOM-subtree guard below limits the suppression to elements actually
                living under this wrapper — buttons in our own action bar — and
                leaves portaled content untouched. */}
-              {(!isMobile || mobileChromeOpen) && (
-                <div
-                  ref={actionBarWrapperRef}
-                  onMouseDown={(e) => {
-                    if (!actionBarWrapperRef.current?.contains(e.target as Node)) return
-                    e.preventDefault()
-                  }}
-                >
-                  {isMobile ? (
-                    <EditorActionBar
-                      editorHandle={richEditorRef.current}
-                      disabled={controlsDisabled}
-                      formatOpen={formatOpen}
-                      onFormatOpenChange={setFormatOpen}
-                      mobileExpanded={mobileExpanded}
-                      onMobileExpandedChange={setMobileExpanded}
-                      showAttach
-                      onAttachClick={handleAttachClick}
-                      side={actionSide}
-                      trailingContent={
-                        micButton || stashedDraftsTrigger || scheduledMessagesTrigger ? (
-                          // Mirrored too, so Send stays the outermost control
-                          // rather than sitting behind the triggers.
-                          <div className={cn("flex items-center gap-1", mirrored && "flex-row-reverse")}>
-                            {micButton}
-                            {stashedDraftsTrigger}
-                            {scheduledMessagesTrigger}
-                            {sendButton}
-                          </div>
-                        ) : (
-                          sendButton
-                        )
-                      }
-                    />
-                  ) : (
-                    <ComposerActionBar
-                      side={actionSide}
-                      disabled={controlsDisabled}
-                      formatOpen={formatOpen}
-                      onToggleFormat={() => setFormatOpen((v) => !v)}
-                      onInsertEmoji={insertEmoji}
-                      onInsertMention={insertMention}
-                      onInsertCommand={insertSlash}
-                      onAttachClick={handleAttachClick}
-                      onExpandClick={onExpandClick}
-                      micButton={micButton}
-                      stashedDraftsTrigger={stashedDraftsTrigger}
-                      scheduledMessagesTrigger={scheduledMessagesTrigger}
-                      sendButton={sendButton}
-                    />
-                  )}
-                </div>
-              )}
+                {(!isMobile || mobileChromeOpen) && (
+                  <div
+                    ref={actionBarWrapperRef}
+                    onMouseDown={(e) => {
+                      if (!actionBarWrapperRef.current?.contains(e.target as Node)) return
+                      e.preventDefault()
+                    }}
+                  >
+                    {isMobile ? (
+                      <EditorActionBar
+                        editorHandle={richEditorRef.current}
+                        disabled={controlsDisabled}
+                        formatOpen={formatOpen}
+                        onFormatOpenChange={setFormatOpen}
+                        mobileExpanded={mobileExpanded}
+                        onMobileExpandedChange={setMobileExpanded}
+                        showAttach
+                        onAttachClick={handleAttachClick}
+                        side={actionSide}
+                        trailingContent={
+                          micButton || stashedDraftsTrigger || scheduledMessagesTrigger ? (
+                            // Mirrored too, so Send stays the outermost control
+                            // rather than sitting behind the triggers.
+                            <div className={cn("flex items-center gap-1", mirrored && "flex-row-reverse")}>
+                              {micButton}
+                              {stashedDraftsTrigger}
+                              {scheduledMessagesTrigger}
+                              {sendButton}
+                            </div>
+                          ) : (
+                            sendButton
+                          )
+                        }
+                      />
+                    ) : (
+                      <ComposerActionBar
+                        side={actionSide}
+                        disabled={controlsDisabled}
+                        formatOpen={formatOpen}
+                        onToggleFormat={() => setFormatOpen((v) => !v)}
+                        onInsertEmoji={insertEmoji}
+                        onInsertMention={insertMention}
+                        onInsertCommand={insertSlash}
+                        onAttachClick={handleAttachClick}
+                        onExpandClick={onExpandClick}
+                        micButton={micButton}
+                        stashedDraftsTrigger={stashedDraftsTrigger}
+                        scheduledMessagesTrigger={scheduledMessagesTrigger}
+                        sendButton={sendButton}
+                      />
+                    )}
+                  </div>
+                )}
 
-              {/* Mobile formatting toolbar — rendered below action bar, above keyboard */}
-              {isMobile && formatOpen && (
-                <EditorToolbar
-                  editor={mobileToolbarEditor}
-                  isVisible
-                  inline
-                  inlinePosition="below"
-                  linkPopoverOpen={mobileLinkPopoverOpen}
-                  onLinkPopoverOpenChange={setMobileLinkPopoverOpen}
-                  showSpecialInputControls
-                />
-              )}
+                {/* Mobile formatting toolbar — rendered below action bar, above keyboard */}
+                {isMobile && formatOpen && (
+                  <EditorToolbar
+                    editor={mobileToolbarEditor}
+                    isVisible
+                    inline
+                    inlinePosition="below"
+                    linkPopoverOpen={mobileLinkPopoverOpen}
+                    onLinkPopoverOpenChange={setMobileLinkPopoverOpen}
+                    showSpecialInputControls
+                  />
+                )}
+              </div>
             </div>
-          </div>
 
-          <div className={cn("flex px-1 pt-1", mirrored ? "justify-start" : "justify-end")}>
-            <span className="text-[10px] text-muted-foreground opacity-60 hidden sm:block select-none pointer-events-none">
-              {sendHint}
-            </span>
-          </div>
+            <div className={cn("flex px-1 pt-1", mirrored ? "justify-start" : "justify-end")}>
+              <span className="text-[10px] text-muted-foreground opacity-60 hidden sm:block select-none pointer-events-none">
+                {sendHint}
+              </span>
+            </div>
+          </ComposerPillDndHost>
         </div>
       </StashedDraftsComposerBridgeContext.Provider>
     </TooltipProvider>

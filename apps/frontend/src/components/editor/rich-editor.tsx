@@ -80,6 +80,8 @@ export interface RichEditorHandle {
   openSnippetEditor(): void
   /** Upload files and insert their reference chips at the current selection. */
   insertFiles(files: File[]): boolean
+  /** Delete every inline reference to one attachment (the delete cascade). */
+  removeAttachmentReferences(attachmentId: string): void
   /** Append a committed dictation span at the caret. */
   insertTranscribedText(text: string, options?: { joinPrevious?: boolean }): void
   /** Show the live (uncommitted) dictation hypothesis as a caret ghost; empty string clears it. */
@@ -590,6 +592,12 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
     (files: File[]): boolean => handleFilesInsert(files, editorRef.current),
     [handleFilesInsert]
   )
+
+  const removeAttachmentReferences = useCallback((attachmentId: string) => {
+    const editorInstance = editorRef.current
+    if (!editorInstance || editorInstance.isDestroyed) return
+    editorInstance.commands.removeAttachmentReferences(attachmentId)
+  }, [])
 
   // Save the snippet editor's contents as a text attachment, inserting the chip
   // back at the caret position the paste happened at. Reuses the same
@@ -1200,6 +1208,7 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
       insertEmoji: handleEmojiClick,
       openSnippetEditor,
       insertFiles,
+      removeAttachmentReferences,
       insertTranscribedText,
       setDictationInterim,
       insertDictationChunk,
@@ -1218,6 +1227,7 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
       handleEmojiClick,
       openSnippetEditor,
       insertFiles,
+      removeAttachmentReferences,
       insertTranscribedText,
       setDictationInterim,
       insertDictationChunk,

@@ -37,6 +37,7 @@ import { STREAM_ICONS } from "@/lib/streams"
 import { useScheduleMessage } from "@/hooks"
 import { EMPTY_DOC } from "@/lib/prosemirror-utils"
 import { parseMarkdown } from "@threa/prosemirror"
+import { buildImageIndexByAttachment, isMaterializableAttachment } from "./attachment-image-index"
 import { useEditLastMessage } from "./edit-last-message-context"
 import { useQuoteReply, appendQuoteReplyNode, type QuoteReplyData } from "./quote-reply-context"
 import { useConversationReply, type ConversationReplyData } from "./conversation-reply-context"
@@ -119,8 +120,7 @@ export function materializePendingAttachmentReferences(
   const uploadedQueues = new Map<string, PendingAttachment[]>()
   const materializableAttachments: PendingAttachment[] = []
   const materializableAttachmentById = new Map<string, PendingAttachment>()
-  const imageIndexByAttachment = new Map<PendingAttachment, number>()
-  let pickedImageIndex = 1
+  const imageIndexByAttachment = buildImageIndexByAttachment(pendingAttachments)
   for (const attachment of pendingAttachments) {
     // Reserved-but-still-uploading attachments materialize like uploaded ones
     // (send-while-uploading): their id is real and the message binds it while
@@ -130,12 +130,9 @@ export function materializePendingAttachmentReferences(
     // content_markdown (the serializer skips uploading nodes). Live upload
     // state rides the message's attachment summaries instead. Errors and
     // still-reserving (temp-id) files stay out of the message.
-    if (attachment.status === "error" || attachment.id.startsWith("temp_")) continue
+    if (!isMaterializableAttachment(attachment)) continue
     materializableAttachments.push(attachment)
     materializableAttachmentById.set(attachment.id, attachment)
-    if (attachment.mimeType.startsWith("image/")) {
-      imageIndexByAttachment.set(attachment, pickedImageIndex++)
-    }
     const key = attachmentMatchKey(attachment)
     const queue = uploadedQueues.get(key)
     if (queue) {

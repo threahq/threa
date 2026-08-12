@@ -6,18 +6,10 @@ import {
   isComposerPillNode,
   isComposerPillSelected,
   pillFromDom,
+  type ComposerPillDragSource,
 } from "./composer-pill-drag-extension"
 
 const COMPATIBILITY_MOUSE_WINDOW_MS = 400
-
-/**
- * What is being dragged. `kind` is the discriminant a second drag source (the
- * attachment tray) hangs off without reshaping the doc case.
- */
-export interface ComposerPillDragSource {
-  kind: "doc"
-  pos: number
-}
 
 export type ComposerPillGestureKind = "mouse" | "touch"
 
@@ -30,7 +22,7 @@ export type ComposerPillGestureKind = "mouse" | "touch"
 export interface ComposerPillGesture {
   kind: ComposerPillGestureKind
   touchId: number
-  sourcePos: number
+  source: ComposerPillDragSource
   startX: number
   startY: number
 }
@@ -116,6 +108,43 @@ export class ComposerPillDragHost {
 
   get source(): ComposerPillDragSource | null {
     return this.dragData.source
+  }
+
+  /**
+   * True while the click that ends a just-activated drag is still travelling.
+   * The tray chip is also a button (it opens the lightbox), so it asks before
+   * acting on a click it may have produced by being dragged.
+   */
+  get activationClickSuppressed(): boolean {
+    return Date.now() <= this.suppressClickUntil
+  }
+
+  /**
+   * Entry point for a drag that starts outside the editor. Same activator, same
+   * sensor: only the source differs, so the tray never grows a parallel path.
+   */
+  startTrayGesture(source: Extract<ComposerPillDragSource, { kind: "tray" }>, event: MouseEvent | TouchEvent) {
+    if (!this.view?.editable) return
+    if ("touches" in event) {
+      const touch = event.touches[0]
+      if (event.touches.length !== 1 || !touch) return
+      this.dragData.source = source
+      this.gestureKind = "touch"
+      this.gestureTouchId = touch.identifier
+      this.gestureTouchEligible = false
+      this.gestureStartX = touch.clientX
+      this.gestureStartY = touch.clientY
+      this.forward("onTouchStart", event)
+      return
+    }
+    if (event.button !== 0 || Date.now() <= this.suppressMouseUntil) return
+    this.dragData.source = source
+    this.gestureKind = "mouse"
+    this.gestureTouchId = 0
+    this.gestureTouchEligible = false
+    this.gestureStartX = event.clientX
+    this.gestureStartY = event.clientY
+    this.forward("onMouseDown", event)
   }
 
   selectPill(pos: number) {

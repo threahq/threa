@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react"
 import { Loader2, FileText, Image as ImageIcon, File as FileIcon, Film, Globe, AlertCircle } from "lucide-react"
 import { AttachmentPill, type AttachmentPillStatus } from "@/components/composer/attachment-pill"
+import { useComposerPillDragHost } from "@/components/editor/composer-pill-dnd"
+import type { ComposerPillDragHost } from "@/components/editor/composer-pill-drag-host"
+import { useIsMobile } from "@/hooks/use-mobile"
 import { MediaGallery, type GalleryItem } from "@/components/image-gallery"
 import { pendingGalleryId } from "@/components/gallery/pending-gallery-id"
 import { buildPendingGalleryItem, uploadGalleryType, type UploadGalleryType } from "@/components/gallery/upload-preview"
@@ -10,6 +13,8 @@ import { attachmentContentUrl } from "@/api"
 import type { PendingAttachment } from "@/hooks/use-attachments"
 import { retryUpload } from "@/lib/uploads/upload-manager"
 import { formatFileSize } from "@/lib/file-size"
+import { buildImageIndexByAttachment } from "./attachment-image-index"
+import { cn } from "@/lib/utils"
 
 // Leading-slot icon for a previewable type, matching the gallery's own glyphs
 // (Globe for html, FileText for docs, Film for video). Non-previewable files
@@ -29,6 +34,62 @@ function iconForType(type: UploadGalleryType | null): typeof FileIcon {
     default:
       return FileIcon
   }
+}
+
+/**
+ * Wraps a chip as a drag source for the editor's own sensor. A tray drag always
+ * inserts a reference, so the chip stays put and the same file can be dropped
+ * into the message any number of times.
+ *
+ * `touch-action` gives the browser the tray's own scroll axis and leaves the
+ * perpendicular one — the drag, towards the text — to the sensor.
+ */
+function TrayPillDraggable({
+  host,
+  attachment,
+  imageIndex,
+  row,
+  children,
+}: {
+  host: ComposerPillDragHost | null
+  attachment: PendingAttachment
+  /** "Image #N" ordinal for an image attachment, from the send-time rule. */
+  imageIndex: number | null
+  row: boolean
+  children: ReactNode
+}) {
+  const draggable = host !== null && attachment.status === "uploaded"
+  const begin = (event: MouseEvent | TouchEvent, target: EventTarget) => {
+    if (!draggable) return
+    // The × and the chip body are the same pointer target; let the button win.
+    if (target instanceof Element && target.closest("button")) return
+    host.startTrayGesture(
+      {
+        kind: "tray",
+        attachmentId: attachment.id,
+        attrs: {
+          id: attachment.id,
+          filename: attachment.filename,
+          mimeType: attachment.mimeType,
+          sizeBytes: attachment.sizeBytes,
+          status: "uploaded",
+          imageIndex,
+          error: null,
+        },
+      },
+      event
+    )
+  }
+  return (
+    <span
+      className={cn("inline-flex shrink-0", draggable && "cursor-grab")}
+      style={draggable ? { touchAction: row ? "pan-x" : "pan-y" } : undefined}
+      onMouseDown={(event) => begin(event.nativeEvent, event.target)}
+      onTouchStart={(event) => begin(event.nativeEvent, event.target)}
+    >
+      {children}
+    </span>
+  )
 }
 
 const STATUS_MAP: Record<PendingAttachment["status"], AttachmentPillStatus> = {
@@ -80,6 +141,13 @@ interface ChipViewProps {
   onCancelUpload: (id: string) => void
   onOpen: (key: string) => void
   onResolveSrc: (key: string, src: string | null) => void
+  /** Inline references to this attachment in the message being composed. */
+  referenceCount: number
+  /** Single-row tray (mobile): a tighter label keeps more chips reachable. */
+  row: boolean
+  /** "Image #N" ordinal for an image attachment, from the send-time rule. */
+  imageIndex: number | null
+  dragHost: ComposerPillDragHost | null
 }
 
 function ChipView({
@@ -92,6 +160,10 @@ function ChipView({
   onCancelUpload,
   onOpen,
   onResolveSrc,
+  referenceCount,
+  row,
+  imageIndex,
+  dragHost,
 }: ChipViewProps) {
   const key = attachmentKey(attachment)
 
@@ -130,38 +202,44 @@ function ChipView({
   else if (isError) Icon = AlertCircle
 
   const canPreview = !!fullSrc && !isError
+  // A drag out of the tray ends in a click on the chip; it must not also open
+  // the lightbox or retry the upload.
+  const guard = (run: () => void) => () => {
+    if (dragHost?.activationClickSuppressed) return
+    run()
+  }
   let onActivate: (() => void) | undefined
-  if (canRetry) onActivate = () => retryUpload(attachment.id)
-  else if (canPreview) onActivate = () => onOpen(key)
+  if (canRetry) onActivate = guard(() => retryUpload(attachment.id))
+  else if (canPreview) onActivate = guard(() => onOpen(key))
 
   return (
-    <AttachmentPill
-      icon={Icon}
-      thumbnailSrc={thumbnailSrc}
-      spinning={isUploading || decrypting}
-      label={attachment.filename}
-      secondary={secondary}
-      status={status}
-      tooltip={tooltip}
-      onRemove={removeHandler}
-      removeLabel={removeLabel}
-      progress={isUploading ? attachment.progress : undefined}
-      onActivate={onActivate}
-      activateLabel={canRetry ? `Retry upload of ${attachment.filename}` : `Preview ${attachment.filename}`}
-      labelMaxWidth="max-w-[120px]"
-    />
+    <TrayPillDraggable host={dragHost} attachment={attachment} imageIndex={imageIndex} row={row}>
+      <AttachmentPill
+        icon={Icon}
+        thumbnailSrc={thumbnailSrc}
+        spinning={isUploading || decrypting}
+        label={attachment.filename}
+        secondary={secondary}
+        status={status}
+        tooltip={tooltip}
+        onRemove={removeHandler}
+        removeLabel={removeLabel}
+        progress={isUploading ? attachment.progress : undefined}
+        onActivate={onActivate}
+        activateLabel={canRetry ? `Retry upload of ${attachment.filename}` : `Preview ${attachment.filename}`}
+        labelMaxWidth={row ? "max-w-[80px]" : "max-w-[120px]"}
+        referenceCount={referenceCount}
+      />
+    </TrayPillDraggable>
   )
 }
 
 /** Chip whose preview needs no decrypt: local object URL, non-E2E image thumbnail, or icon. */
-function StaticChip(props: {
-  attachment: PendingAttachment
-  workspaceId: string | undefined
-  onRemove: (id: string) => void
-  onCancelUpload: (id: string) => void
-  onOpen: (key: string) => void
-  onResolveSrc: (key: string, src: string | null) => void
-}) {
+function StaticChip(
+  props: Omit<ChipViewProps, "galleryType" | "thumbnailSrc" | "fullSrc"> & {
+    workspaceId: string | undefined
+  }
+) {
   const type = uploadGalleryType(props.attachment)
   const src = staticSrc(props.attachment, type, props.workspaceId)
   return <ChipView {...props} galleryType={type} thumbnailSrc={src?.thumb} fullSrc={src?.full ?? null} />
@@ -171,14 +249,9 @@ function StaticChip(props: {
 function E2eChip({
   attachmentRef,
   ...props
-}: {
-  attachment: PendingAttachment
+}: Omit<ChipViewProps, "galleryType" | "thumbnailSrc" | "fullSrc" | "decrypting"> & {
   attachmentRef: AttachmentRef
   workspaceId: string
-  onRemove: (id: string) => void
-  onCancelUpload: (id: string) => void
-  onOpen: (key: string) => void
-  onResolveSrc: (key: string, src: string | null) => void
 }) {
   const type = uploadGalleryType(props.attachment)
   const decrypted = useDecryptedAttachment(props.workspaceId, attachmentRef)
@@ -214,6 +287,12 @@ interface PendingAttachmentsProps {
    * still work without it.
    */
   workspaceId?: string
+  /**
+   * References per attachment id in the message being composed, derived from the
+   * document by the composer. A referenced chip renders drawn-from, with a count
+   * from two references up.
+   */
+  referenceCounts?: ReadonlyMap<string, number>
 }
 
 /**
@@ -231,7 +310,10 @@ export function PendingAttachments({
   onCancelUpload,
   beforePills,
   workspaceId,
+  referenceCounts,
 }: PendingAttachmentsProps) {
+  const isMobile = useIsMobile()
+  const dragHost = useComposerPillDragHost()
   // Open lightbox tracked by the stable attachment key, not the id (which flips
   // temp→server on upload completion), so an open preview survives its upload.
   const [openKey, setOpenKey] = useState<string | null>(null)
@@ -248,6 +330,10 @@ export function PendingAttachments({
       return next
     })
   }, [])
+
+  // A tray-dragged image reference carries the same ordinal send would give it,
+  // so two references to one image never read as different files.
+  const imageIndexes = useMemo(() => buildImageIndexByAttachment(attachments), [attachments])
 
   const galleryItems = useMemo<GalleryItem[]>(
     () =>
@@ -270,7 +356,12 @@ export function PendingAttachments({
 
   return (
     <>
-      <div className="flex flex-wrap items-center gap-2 mb-3 max-h-[120px] overflow-y-auto">
+      <div
+        className={cn(
+          "flex items-center gap-2 mb-3",
+          isMobile ? "overflow-x-auto" : "flex-wrap max-h-[120px] overflow-y-auto"
+        )}
+      >
         {beforePills}
         {attachments.map((attachment) => {
           const key = attachmentKey(attachment)
@@ -284,6 +375,10 @@ export function PendingAttachments({
             onCancelUpload: onCancelUpload ?? onRemove,
             onOpen: setOpenKey,
             onResolveSrc,
+            referenceCount: referenceCounts?.get(attachment.id) ?? 0,
+            row: isMobile,
+            imageIndex: imageIndexes.get(attachment) ?? null,
+            dragHost,
           }
           return ref && workspaceId ? (
             <E2eChip key={key} attachmentRef={ref} workspaceId={workspaceId} {...shared} />

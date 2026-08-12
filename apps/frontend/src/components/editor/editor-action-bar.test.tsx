@@ -13,6 +13,7 @@ function renderBar(props: Partial<React.ComponentProps<typeof EditorActionBar>> 
     insertEmoji: vi.fn(),
     openSnippetEditor: vi.fn(),
     insertFiles: vi.fn(() => true),
+    removeAttachmentReferences: vi.fn(),
     insertTranscribedText: vi.fn(),
     setDictationInterim: vi.fn(),
     insertDictationChunk: vi.fn(),
