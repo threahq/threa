@@ -2470,8 +2470,13 @@ export function StreamContent({
       alreadyDecided: false,
       // The nav type is per-navigation, so at decision time it still describes
       // how THIS stream was entered even though the decision can resolve a few
-      // renders after the switch (waiting out load/settle).
-      isPushNavigation: navigationType === "PUSH",
+      // renders after the switch (waiting out load/settle). One PUSH is not a
+      // stream choice: ExactRestore's second `?panel=` hop (routes/index.tsx)
+      // pushes so the Android back gesture can close the restored panel — its
+      // `panelPopsToClose` state marks the cold relaunch, which restore is for.
+      isPushNavigation:
+        navigationType === "PUSH" &&
+        (location.state as { panelPopsToClose?: boolean } | null)?.panelPopsToClose !== true,
       isLoading,
       isSettling: virtualIsInitialSettling,
       isJumpMode,
@@ -2492,6 +2497,7 @@ export function StreamContent({
     useVirtualized,
     streamId,
     navigationType,
+    location.state,
     isLoading,
     virtualIsInitialSettling,
     isJumpMode,
