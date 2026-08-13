@@ -188,9 +188,13 @@ function ComposerPillDragBridge({
         }
         if (!tr) {
           setComposerPillDragState(view, null)
+          host.keepEditorFocused()
           return
         }
         view.dispatch(tr.setMeta(ComposerPillDragPluginKey, null).setMeta("uiEvent", "drop"))
+        // The drop must leave the editor focused: a post-gesture blur on
+        // mobile collapses the composer chrome over the just-edited draft.
+        host.keepEditorFocused()
         if (gesture.kind === "touch") vibrate(windowFor(view), TOUCH_DROP_HAPTIC_PATTERN_MS)
       },
       cancel: () => {

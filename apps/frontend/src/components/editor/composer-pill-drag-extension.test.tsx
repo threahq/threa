@@ -260,6 +260,25 @@ describe("composer pill drag gestures", () => {
     expect(editor.view.dom).toHaveAttribute("data-composer-pill-drag-mode", "hold-or-selected")
   })
 
+  it("re-asserts editor focus after a pill tap when a stray blur lands, so the mobile chrome cannot collapse", () => {
+    vi.useFakeTimers()
+    const editor = createPillEditor()
+    const source = editor.view.dom.querySelector<HTMLElement>('[data-type="mention"]')!
+
+    tapPill(source)
+    expect(editor.state.selection).toBeInstanceOf(NodeSelection)
+
+    // Chrome on Android can move focus off the editor after the tap on the
+    // non-editable atom; the host's next-tick guard must pull it back before
+    // the composer's own next-tick collapse check runs.
+    ;(document.activeElement as HTMLElement | null)?.blur()
+    expect(editor.view.dom.contains(document.activeElement)).toBe(false)
+    vi.advanceTimersByTime(1)
+
+    expect(document.activeElement === editor.view.dom || editor.view.dom.contains(document.activeElement)).toBe(true)
+    vi.useRealTimers()
+  })
+
   it("shows only source state and an insertion cursor while a mouse drag is in flight", () => {
     const editor = createPillEditor()
     const source = editor.view.dom.querySelector<HTMLElement>('[data-type="mention"]')!

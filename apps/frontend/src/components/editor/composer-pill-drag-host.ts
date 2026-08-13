@@ -193,6 +193,28 @@ export class ComposerPillDragHost {
     if (!isComposerPillNode(node) || !NodeSelection.isSelectable(node)) return
     view.focus()
     view.dispatch(view.state.tr.setSelection(NodeSelection.create(view.state.doc, pos)).setMeta("pointer", true))
+    this.keepEditorFocused()
+  }
+
+  /**
+   * Chrome on Android can move focus off the editor after a touch interaction
+   * with a non-editable pill atom — even with the compatibility mouse events
+   * suppressed — and on mobile a blurred editor collapses the composer chrome
+   * mid-edit. Assert focus now and once more on the next tick: the chrome
+   * collapse is itself a next-tick check that cancels when focus is back
+   * inside the composer, and a refocus scheduled at gesture end runs before
+   * it (the gesture ends before the stray blur is delivered).
+   */
+  keepEditorFocused() {
+    const view = this.view
+    if (!view) return
+    if (!view.hasFocus()) view.focus()
+    const dom = view.dom
+    const doc = dom.ownerDocument
+    setTimeout(() => {
+      if (this.view !== view) return
+      if (!dom.contains(doc.activeElement)) view.focus()
+    }, 0)
   }
 
   suppressCompatibilityMouse() {
