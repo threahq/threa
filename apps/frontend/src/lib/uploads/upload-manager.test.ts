@@ -305,6 +305,45 @@ describe("upload-manager", () => {
     for (const job of jobs) await waitForJobStatus(job.jobId, "uploaded")
   })
 
+  it("a release unwinding across a reset cannot grant a post-reset batch a fourth stream", async () => {
+    let nextId = 0
+    vi.spyOn(attachmentsApi, "reserve").mockImplementation(async (_ws, input) => ({
+      attachment: { id: `attach_g${++nextId}`, filename: input.filename } as never,
+      upload: { method: "POST" as const, url: "/x", field: "file" as const },
+    }))
+    const settlers: Array<() => void> = []
+    const xhr = vi.spyOn(xhrTransport, "xhrUpload").mockImplementation(
+      // Deliberately ignores the abort signal: the old transfer's finally must
+      // still be pending when the post-reset batch fills the gate.
+      () =>
+        new Promise((resolve) => {
+          settlers.push(() => resolve({ status: 201, body: {} }))
+        })
+    )
+
+    const stale = startUpload(WS, makeFile())
+    await waitForReservation(stale.jobId)
+    await vi.waitFor(() => expect(xhr).toHaveBeenCalledTimes(1))
+
+    resetUploadManager()
+    await db.uploadJobs.clear()
+
+    const jobs = Array.from({ length: 4 }, () => startUpload(WS, makeFile()))
+    for (const job of jobs) await waitForReservation(job.jobId)
+    await vi.waitFor(() => expect(xhr).toHaveBeenCalledTimes(4)) // 1 stale + 3 new; 4th queued
+
+    // The pre-reset transfer settles now — its release belongs to the old
+    // generation and must not open the fourth slot.
+    settlers.shift()!()
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(xhr).toHaveBeenCalledTimes(4)
+
+    // A genuine release from the new generation still advances the queue.
+    settlers.shift()!()
+    await vi.waitFor(() => expect(xhr).toHaveBeenCalledTimes(5))
+    while (settlers.length > 0) settlers.shift()!()
+  })
+
   it("a duplicate-completion loser (404 but settled server-side) resolves as success", async () => {
     mockReserve("attach_dup")
     // Another tab/device won the duplicate completion: this tab's POST 404s
@@ -399,15 +438,10 @@ describe("upload-manager", () => {
     await resumeWorkspaceUploads(WS)
 
     await vi.waitFor(() => {
-      const urls = xhr.mock.calls.map((call) => call[0].url)
-      expect(urls).toHaveLength(3)
-      expect(urls).toEqual(
-        expect.arrayContaining([
-          expect.stringContaining("/attachments/attach_resume/content"),
-          expect.stringContaining("/attachments/attach_heal/content"),
-          expect.stringContaining("/attachments/attach_legacy/content"),
-        ])
-      )
+      // One exact set: proves the three restartable rows streamed AND that
+      // attach_dead did not (INV-23/24).
+      const requested = xhr.mock.calls.map((call) => call[0].url.split("/attachments/")[1]).sort()
+      expect(requested).toEqual(["attach_heal/content", "attach_legacy/content", "attach_resume/content"])
     })
     const dead = getUploadJobByAttachmentId("attach_dead")
     expect(dead).toMatchObject({ status: "error", error: "size mismatch", retryable: false })

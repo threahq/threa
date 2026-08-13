@@ -59,17 +59,24 @@ const RATE_LIMIT_RETRY_DELAYS_MS = [5_000, 15_000, 30_000, 60_000, 60_000]
 const MAX_CONCURRENT_TRANSFERS = 3
 let activeTransfers = 0
 const transferQueue: Array<() => void> = []
+/**
+ * Bumped by resetUploadManager. A slot release carries the generation it was
+ * acquired under; a release from before a reset is ignored — the reset already
+ * zeroed the gate, and letting the stale decrement through would grant a
+ * fourth stream to a batch started after the reset.
+ */
+let transferGateGeneration = 0
 
-function acquireTransferSlot(signal: AbortSignal): Promise<void> {
+function acquireTransferSlot(signal: AbortSignal): Promise<number> {
   if (activeTransfers < MAX_CONCURRENT_TRANSFERS) {
     activeTransfers++
-    return Promise.resolve()
+    return Promise.resolve(transferGateGeneration)
   }
   return new Promise((resolve, reject) => {
     const grant = () => {
       signal.removeEventListener("abort", onAbort)
       activeTransfers++
-      resolve()
+      resolve(transferGateGeneration)
     }
     const onAbort = () => {
       const index = transferQueue.indexOf(grant)
@@ -81,9 +88,8 @@ function acquireTransferSlot(signal: AbortSignal): Promise<void> {
   })
 }
 
-function releaseTransferSlot(): void {
-  // Floored at zero: resetUploadManager zeroes the gate while aborted
-  // transfers may still be unwinding toward their own release.
+function releaseTransferSlot(generation: number): void {
+  if (generation !== transferGateGeneration) return
   activeTransfers = Math.max(0, activeTransfers - 1)
   transferQueue.shift()?.()
 }
@@ -464,8 +470,9 @@ async function uploadBytes(jobId: string, signal: AbortSignal): Promise<void> {
   const job = state.jobs.get(jobId)
   if (!job?.attachmentId) return
   const { workspaceId, attachmentId } = job
+  let slotGeneration: number
   try {
-    await acquireTransferSlot(signal)
+    slotGeneration = await acquireTransferSlot(signal)
   } catch (err) {
     if (isAbortError(err)) return
     throw err
@@ -473,7 +480,7 @@ async function uploadBytes(jobId: string, signal: AbortSignal): Promise<void> {
   try {
     await withUploadLock(attachmentId, () => uploadBytesLocked(jobId, workspaceId, attachmentId, signal))
   } finally {
-    releaseTransferSlot()
+    releaseTransferSlot(slotGeneration)
   }
 }
 
@@ -738,7 +745,9 @@ export function resetUploadManager(): void {
   for (const controller of controllers.values()) controller.abort()
   controllers.clear()
   // Nothing holds a transfer slot after a teardown; queued acquires were
-  // rejected by their aborted signals above.
+  // rejected by their aborted signals above, and the generation bump makes
+  // any still-unwinding transfer's eventual release a no-op.
+  transferGateGeneration++
   transferQueue.length = 0
   activeTransfers = 0
   for (const job of state.jobs.values()) revokePreviewUrl(job.previewUrl)
