@@ -29,6 +29,7 @@ import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from "@/comp
 import { PendingAttachments } from "@/components/timeline/pending-attachments"
 import { countAttachmentReferences } from "@/components/editor/attachment-reference-counts"
 import { ComposerPillDndHost } from "@/components/editor/composer-pill-dnd"
+import { COMPOSER_PILL_GESTURE_EVENT } from "@/components/editor/composer-pill-drag-host"
 import { MicButton, type MicButtonHandle } from "./mic-button"
 import { FabDrawerCloseContext } from "./fab-drawer-close-context"
 import { StashedDraftsComposerBridgeContext, type StashedDraftsComposerBridge } from "./stashed-drafts-open-context"
@@ -92,6 +93,13 @@ const MOD_KEY_NAME = navigator.platform?.toLowerCase().includes("mac") ? "Comman
  * well inside this on both Chrome and Firefox Android.
  */
 const KEYBOARD_RESIZE_WAIT_MS = 300
+
+// How long after pill-gesture activity a blur is treated as Chrome Android
+// unfocusing the editor over a non-editable pill atom (reclaim focus) rather
+// than the user tapping away (collapse). The stray blur lands within the
+// touch's click cascade (~300ms); a deliberate tap-away this soon after a
+// pill gesture is the one interaction this trades off.
+const COMPOSER_PILL_GESTURE_BLUR_GRACE_MS = 600
 
 export interface ComposerControlHandle {
   focus(): void
@@ -368,6 +376,7 @@ export function MessageComposer({
   // a touchscreen laptop still gets it.
   const disableSelectionToolbar = useInputMode() === "touch"
   const blurTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const pillGestureAtRef = useRef(0)
   const instructionsId = useId()
 
   // Mobile chrome (action bar + full editor) stays open while focused OR while
@@ -513,6 +522,19 @@ export function MessageComposer({
     }
   }, [isMobile, mobileChromeOpen, expanded, cancelPendingChromeOpen])
 
+  // The DnD host mounts inside this component, so the gesture activity the
+  // blur grace needs arrives as a bubbling DOM event, not through context.
+  useEffect(() => {
+    if (!isMobile) return
+    const root = mobileRootRef.current
+    if (!root) return
+    const stamp = () => {
+      pillGestureAtRef.current = performance.now()
+    }
+    root.addEventListener(COMPOSER_PILL_GESTURE_EVENT, stamp)
+    return () => root.removeEventListener(COMPOSER_PILL_GESTURE_EVENT, stamp)
+  }, [isMobile])
+
   // Track focus state for mobile progressive disclosure.
   // Uses a small delay on blur to avoid flicker when focus moves between editor and action bar buttons.
   const handleFocusCapture = useCallback(
@@ -550,6 +572,14 @@ export function MessageComposer({
         // A within-composer refocus that landed a tick later (mobile toolbar taps
         // where relatedTarget is null) cancels the collapse.
         if (root.contains(document.activeElement)) return
+        // A blur inside the pill-gesture grace is Chrome Android dropping focus
+        // over a non-editable pill atom, on its own schedule — it can outlive
+        // the drag host's next-tick refocus, so it must be caught here, on the
+        // blur itself. Reclaim focus instead of collapsing mid-edit.
+        if (performance.now() - pillGestureAtRef.current < COMPOSER_PILL_GESTURE_BLUR_GRACE_MS) {
+          richEditorRef.current?.focus()
+          if (root.contains(document.activeElement)) return
+        }
         cancelPendingChromeOpen()
         setMobileFocused(false)
         setMobileExpanded(false)

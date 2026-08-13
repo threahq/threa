@@ -14,6 +14,7 @@ import * as editorModule from "@/components/editor"
 import * as micButtonModule from "./mic-button"
 import * as pendingAttachmentsModule from "@/components/timeline/pending-attachments"
 import { queueComposerCommandRequest } from "@/stores/composer-command-request-store"
+import { COMPOSER_PILL_GESTURE_EVENT } from "@/components/editor/composer-pill-drag-host"
 
 let isMobileMockValue = false
 const mockRichEditorFocus = vi.fn()
@@ -605,6 +606,29 @@ describe("MessageComposer", () => {
       )
 
       expect(screen.getByText("/steer focus on tests")).toBeInTheDocument()
+    })
+
+    it("holds the mobile chrome open when a blur trails a pill gesture, reclaiming editor focus", () => {
+      isMobileMockValue = true
+      vi.useFakeTimers()
+
+      render(<MessageComposer {...defaultProps} />)
+      fireEvent.click(screen.getByTestId("rich-editor-wrapper"))
+      expect(screen.getByRole("button", { name: "Formatting" })).toBeInTheDocument()
+
+      const editor = screen.getByTestId("rich-editor")
+      // The stray Android blur arrives after a pill gesture; the composer must
+      // reclaim focus instead of collapsing. The mock forwards focus() to the
+      // real element so the reclaim is observable to the activeElement guard.
+      mockRichEditorFocus.mockImplementationOnce(() => editor.focus())
+      fireEvent(editor, new CustomEvent(COMPOSER_PILL_GESTURE_EVENT, { bubbles: true }))
+      fireEvent.blur(editor)
+      act(() => {
+        vi.advanceTimersByTime(200)
+      })
+
+      expect(mockRichEditorFocus).toHaveBeenCalled()
+      expect(screen.getByRole("button", { name: "Formatting" })).toBeInTheDocument()
     })
 
     it("reports chrome closure after focus leaves", () => {

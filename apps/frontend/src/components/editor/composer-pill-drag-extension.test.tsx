@@ -5,6 +5,7 @@ import { NodeSelection } from "@tiptap/pm/state"
 import type { JSONContent } from "@threa/types"
 import { serializeClipboardSlice } from "./clipboard-copy"
 import { ComposerPillDndProvider } from "./composer-pill-dnd"
+import { COMPOSER_PILL_GESTURE_EVENT } from "./composer-pill-drag-host"
 import { createEditorExtensions } from "./editor-extensions"
 import {
   COMPOSER_PILL_NODE_NAMES,
@@ -315,6 +316,18 @@ describe("composer pill drag gestures", () => {
     const editor = createPillEditor()
 
     expect(editor.view.dom).toHaveAttribute("data-composer-pill-drag-mode", "hold-or-selected")
+  })
+
+  it("announces pill gestures as a bubbling event, so the composer can hold its chrome through a late blur", () => {
+    const editor = createPillEditor()
+    const source = editor.view.dom.querySelector<HTMLElement>('[data-type="mention"]')!
+    const seen = vi.fn()
+    document.addEventListener(COMPOSER_PILL_GESTURE_EVENT, seen)
+
+    tapPill(source)
+
+    document.removeEventListener(COMPOSER_PILL_GESTURE_EVENT, seen)
+    expect(seen).toHaveBeenCalled()
   })
 
   it("re-asserts editor focus after a pill tap when a stray blur lands, so the mobile chrome cannot collapse", () => {

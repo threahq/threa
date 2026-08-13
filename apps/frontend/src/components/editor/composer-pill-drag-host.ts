@@ -12,6 +12,9 @@ import {
 
 const COMPATIBILITY_MOUSE_WINDOW_MS = 400
 
+/** Bubbling DOM event announcing live pill-gesture activity; see {@link ComposerPillDragHost.markGesture}. */
+export const COMPOSER_PILL_GESTURE_EVENT = "composer-pill-gesture"
+
 export type ComposerPillGestureKind = "mouse" | "touch"
 
 /**
@@ -197,17 +200,28 @@ export class ComposerPillDragHost {
   }
 
   /**
+   * Announces pill-gesture activity as a bubbling DOM event. The composer
+   * (an ancestor, so context can't carry this — the DnD host mounts inside
+   * it) stamps the time and holds its blur-collapse for a short grace: the
+   * stray Android blur can land whole tasks after {@link keepEditorFocused}'s
+   * next-tick recheck, so only a guard that runs on the blur itself is safe.
+   */
+  markGesture() {
+    this.view?.dom.dispatchEvent(new CustomEvent(COMPOSER_PILL_GESTURE_EVENT, { bubbles: true }))
+  }
+
+  /**
    * Chrome on Android can move focus off the editor after a touch interaction
    * with a non-editable pill atom — even with the compatibility mouse events
    * suppressed — and on mobile a blurred editor collapses the composer chrome
-   * mid-edit. Assert focus now and once more on the next tick: the chrome
-   * collapse is itself a next-tick check that cancels when focus is back
-   * inside the composer, and a refocus scheduled at gesture end runs before
-   * it (the gesture ends before the stray blur is delivered).
+   * mid-edit. Assert focus now and once more on the next tick; blurs that
+   * outlive even the recheck are caught by the composer's gesture-grace via
+   * {@link markGesture}.
    */
   keepEditorFocused() {
     const view = this.view
     if (!view) return
+    this.markGesture()
     if (!view.hasFocus()) view.focus()
     const dom = view.dom
     const doc = dom.ownerDocument
