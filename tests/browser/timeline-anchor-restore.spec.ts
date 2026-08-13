@@ -148,13 +148,17 @@ test.describe("Timeline anchor restore", () => {
     await page.reload()
     await expect(page.getByRole("main").locator(".message-item").first()).toBeVisible({ timeout: 20000 })
 
-    // The restore lands the same row back at the top of the viewport.
+    // The restore lands the same row back at the top of the viewport. ±1 row:
+    // the offset round-trip is pixel-faithful, but "topmost visible" is a
+    // boundary call — a row cut exactly at the viewport top can classify as
+    // its neighbour across a 1px rounding difference without any real drift
+    // (observed with byte-identical scrollTop/scrollHeight either side).
     await expect
-      .poll(() => topVisibleMessageNum(page), {
+      .poll(async () => Math.abs(((await topVisibleMessageNum(page)) ?? -999) - anchorNum!), {
         timeout: 20000,
         message: "reload should land on the anchored row, not the tail",
       })
-      .toBe(anchorNum)
+      .toBeLessThanOrEqual(1)
     expect(await distanceFromBottom(page), "should stay detached from the tail after the restore").toBeGreaterThan(400)
 
     // And it holds: no post-reveal bounce back to the tail (the #1873 tail
@@ -179,7 +183,10 @@ test.describe("Timeline anchor restore", () => {
           tick()
         })
     )
-    expect(await topVisibleMessageNum(page), `metrics during hold: ${JSON.stringify(samples)}`).toBe(anchorNum)
+    expect(
+      Math.abs(((await topVisibleMessageNum(page)) ?? -999) - anchorNum!),
+      `metrics during hold: ${JSON.stringify(samples)}`
+    ).toBeLessThanOrEqual(1)
     const rowBoxB = await messageLocator(page, prefix, anchorNum!).boundingBox()
     expect(rowBoxB).not.toBeNull()
     expect(Math.abs(rowBoxB!.y - rowBoxA!.y), `metrics during hold: ${JSON.stringify(samples)}`).toBeLessThanOrEqual(3)
