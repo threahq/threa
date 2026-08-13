@@ -1,6 +1,14 @@
 import { Extension } from "@tiptap/core"
-import { Fragment, Slice, type Node as ProseMirrorNode } from "@tiptap/pm/model"
-import { NodeSelection, Plugin, PluginKey, Selection, type EditorState, type Transaction } from "@tiptap/pm/state"
+import { Fragment, Slice, type Node as ProseMirrorNode, type ResolvedPos } from "@tiptap/pm/model"
+import {
+  NodeSelection,
+  Plugin,
+  PluginKey,
+  Selection,
+  TextSelection,
+  type EditorState,
+  type Transaction,
+} from "@tiptap/pm/state"
 import { dropPoint } from "@tiptap/pm/transform"
 import { Decoration, DecorationSet, type EditorView } from "@tiptap/pm/view"
 import type { AttachmentReferenceAttrs } from "./attachment-reference-extension"
@@ -121,6 +129,25 @@ export function composerPillDropPoint(doc: ProseMirrorNode, rawPos: number, node
   return snappedPoint
 }
 
+/**
+ * A pill landing flush against another pill takes a separating space on that
+ * side: without one there is no usable caret slot between them — un-tappable
+ * on touch, and the pair reads as one blob. Text neighbors stay untouched;
+ * the drop point already snaps to token boundaries.
+ */
+function paddedPillInsert(
+  $insert: ResolvedPos,
+  node: ProseMirrorNode,
+  state: EditorState
+): { fragment: Fragment; caretOffset: number } {
+  const parts: ProseMirrorNode[] = []
+  if (isComposerPillNode($insert.nodeBefore)) parts.push(state.schema.text(" "))
+  const caretOffset = (parts[0]?.nodeSize ?? 0) + node.nodeSize
+  parts.push(node)
+  if (isComposerPillNode($insert.nodeAfter)) parts.push(state.schema.text(" "))
+  return { fragment: Fragment.from(parts), caretOffset }
+}
+
 export function createComposerPillMoveTransaction(
   state: EditorState,
   sourcePos: number,
@@ -142,8 +169,9 @@ export function createComposerPillMoveTransaction(
     return null
   }
 
-  tr.insert(insertPos, node)
-  tr.setSelection(Selection.near(tr.doc.resolve(insertPos + node.nodeSize), 1))
+  const { fragment, caretOffset } = paddedPillInsert($insert, node, state)
+  tr.insert(insertPos, fragment)
+  tr.setSelection(Selection.near(tr.doc.resolve(insertPos + caretOffset), 1))
   return tr
 }
 
@@ -170,8 +198,9 @@ export function createComposerPillInsertTransaction(
     return null
   }
 
-  const tr = state.tr.insert(dropPos, node)
-  tr.setSelection(Selection.near(tr.doc.resolve(dropPos + node.nodeSize), 1))
+  const { fragment, caretOffset } = paddedPillInsert($insert, node, state)
+  const tr = state.tr.insert(dropPos, fragment)
+  tr.setSelection(Selection.near(tr.doc.resolve(dropPos + caretOffset), 1))
   return tr
 }
 
@@ -360,6 +389,19 @@ export const ComposerPillDragExtension = Extension.create({
         },
         props: {
           decorations: pillDecorations,
+          // Typing over a node-selected pill must not silently destroy it: a
+          // tap selects the pill (that's the touch drag-eligibility gesture),
+          // so the very next keystroke — a space, a letter — would replace the
+          // node under ProseMirror's default. Step the caret past the pill and
+          // let the text land after it; Backspace/Delete still delete.
+          handleTextInput(view, _from, _to, text) {
+            const { selection } = view.state
+            if (!(selection instanceof NodeSelection) || !isComposerPillNode(selection.node)) return false
+            const tr = view.state.tr.insertText(text, selection.to, selection.to)
+            tr.setSelection(TextSelection.create(tr.doc, selection.to + text.length))
+            view.dispatch(tr)
+            return true
+          },
         },
         view(view) {
           const reflectActive = (target: EditorView) => {
