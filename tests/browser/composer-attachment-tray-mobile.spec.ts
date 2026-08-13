@@ -88,4 +88,34 @@ test("dragging the composer down never slices the attachment chips", async ({ pa
   const dragged = await measure()
   expect(dragged.chipBottom, "chip ends inside its row").toBeLessThanOrEqual(dragged.rowBottom)
   expect(dragged.rowHeight).toBe(resting.chipHeight)
+
+  // A cap chosen while nothing was attached outlives that state. With the tray
+  // holding its height, the card would take the whole deficit — down to 38px,
+  // its action bar spilling below the viewport. The cap floors at
+  // MOBILE_COMPOSER_DRAG_MIN_PX + the tray's measured height instead.
+  await page.evaluate(() => localStorage.setItem("threa:composer-drag-height", "180"))
+  await page.reload()
+  await card.click()
+  await expect(page.getByTestId("composer-resize-handle")).toBeVisible({ timeout: 10_000 })
+  await page.locator('[data-message-composer-root] input[type="file"][multiple]').setInputFiles(
+    [1, 2, 3, 4, 5, 6].map((n) => ({
+      name: `another-really-long-attachment-name-${n}.mp4`,
+      mimeType: "video/mp4",
+      buffer: Buffer.alloc(1024, n),
+    }))
+  )
+  await expect
+    .poll(
+      () =>
+        page
+          .locator("[data-message-composer-root] [data-composer-card]")
+          .evaluate((el) => Math.round(el.getBoundingClientRect().height)),
+      { timeout: 20_000 }
+    )
+    .toBeGreaterThanOrEqual(140)
+
+  const send = await page
+    .locator('[data-message-composer-root] button[aria-label^="Send"]')
+    .evaluate((el) => ({ bottom: el.getBoundingClientRect().bottom, viewport: window.innerHeight }))
+  expect(send.bottom, "send button stays inside the viewport").toBeLessThanOrEqual(send.viewport)
 })
