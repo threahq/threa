@@ -283,16 +283,6 @@ export function AppShell({ sidebar, children }: AppShellProps) {
       {/* Pull-to-refresh container — pulling anywhere (sidebar or main content)
            translates the entire area uniformly */}
       <div ref={pullRef} className="relative flex flex-1 flex-col overflow-hidden">
-        {/* Workspace-wide loading indicator — hairline along the bottom of the
-             sidebar/page header row (h-12). Spans the full viewport so it links
-             the two headers visually now that the top bar is gone. Above the
-             sidebar column (z-40), below the z-50 overlay layer: no ancestor
-             here opens a stacking context, so anything higher paints the
-             hairline over dialogs, drawers and menus portalled to the body. */}
-        <div className="pointer-events-none absolute left-0 right-0 top-12 z-[45]">
-          <TopbarLoadingIndicator visible={showLoadingIndicator} />
-        </div>
-
         <div
           className="absolute inset-x-0 top-0 z-10 flex items-center justify-center gap-2 pointer-events-none"
           style={{ height: `${pullDistance}px` }}
@@ -324,6 +314,17 @@ export function AppShell({ sidebar, children }: AppShellProps) {
               transition: pulling ? "none" : "height 0.3s ease-out",
             }}
           />
+
+          {/* Workspace-wide loading indicator — hairline along the bottom of the
+               sidebar/page header row (h-12). Lives inside the pull-translated
+               area (a transform, so its own stacking context) to be orderable
+               against the sidebar column (z-40) and mobile overlay layer
+               (backdrop z-30): on desktop it spans both headers above the
+               sidebar column, on mobile the sidebar is a drawer over the page,
+               so the hairline belongs under it and its backdrop. */}
+          <div className={cn("pointer-events-none absolute left-0 right-0 top-12", isMobile ? "z-[25]" : "z-[45]")}>
+            <TopbarLoadingIndicator visible={showLoadingIndicator} />
+          </div>
 
           {/* Mobile backdrop - always in DOM so swipe gestures can control opacity imperatively */}
           {isMobile && (
