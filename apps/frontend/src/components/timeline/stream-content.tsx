@@ -2383,6 +2383,10 @@ export function StreamContent({
     const lastLoadedEventId = lastLoadedEventIdRef.current
     if (lastLoadedEventId) markAsReadRef.current(streamId, lastLoadedEventId)
     dismissUnreadDivider()
+    // An explicit go-to-bottom supersedes a landing refine loop still in its
+    // watch window — the loop only aborts on scroller gestures, and without
+    // this its next tick re-centers the marker target, reverting the jump.
+    scrollAbortRef.current?.()
     scrollToBottom({ force: true })
   }, [streamId, dismissUnreadDivider, scrollToBottom])
 
@@ -2482,6 +2486,10 @@ export function StreamContent({
     searchNavPhaseRef.current = "idle"
     searchNavVersionRef.current++
     setIsSearchNavigating(false)
+    // A landing refine loop still watching (its 1200ms window) would re-center
+    // its target on the next tick and revert this jump — a button click is not
+    // a scroller gesture, so the loop's own abort listeners never fire.
+    scrollAbortRef.current?.()
     if (isJumpMode) {
       exitJumpMode()
       // The event window is about to be replaced wholesale (jump window →
