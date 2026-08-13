@@ -146,7 +146,6 @@ function ComposerPillDragBridge({
       const current = view ? ComposerPillDragPluginKey.getState(view.state) : null
       if (!view || !current) return
       const dropPos = resolveDropPos(host, x, y)
-      host.markGesture()
       if (gesture.kind === "touch") {
         guideRef.current?.update(view.state.doc, dropPos, x, y)
         if (dropPos !== null && dropPos !== current.dropPos) vibrate(windowFor(view), TOUCH_TARGET_HAPTIC_MS)
@@ -165,10 +164,6 @@ function ComposerPillDragBridge({
         const dropPos =
           gesture.source.kind === "doc" ? composerPillDropPoint(view.state.doc, gesture.source.pos, node) : null
         setComposerPillDragState(view, { source: gesture.source, dropPos })
-        // Stamp at start and on every move (below), not just at the end: a
-        // stray blur can land mid-drag, and the composer's grace window is
-        // shorter than a leisurely gesture.
-        host.markGesture()
         if (gesture.kind !== "touch") return
         guideRef.current = new ComposerPillTouchGuide(view.dom.ownerDocument, windowFor(view))
         guideRef.current.update(view.state.doc, dropPos, gesture.startX, gesture.startY)
@@ -193,22 +188,15 @@ function ComposerPillDragBridge({
         }
         if (!tr) {
           setComposerPillDragState(view, null)
-          host.keepEditorFocused()
           return
         }
         view.dispatch(tr.setMeta(ComposerPillDragPluginKey, null).setMeta("uiEvent", "drop"))
-        // The drop must leave the editor focused: a post-gesture blur on
-        // mobile collapses the composer chrome over the just-edited draft.
-        host.keepEditorFocused()
         if (gesture.kind === "touch") vibrate(windowFor(view), TOUCH_DROP_HAPTIC_PATTERN_MS)
       },
       cancel: () => {
         const view = host.getView()
         releaseGuide()
         if (view) setComposerPillDragState(view, null)
-        // A cancelled hold reaches the editor through the same pill-atom touch
-        // as a completed drop — its stray blur collapses the chrome all the same.
-        host.keepEditorFocused()
       },
     }
 
