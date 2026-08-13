@@ -30,6 +30,8 @@ import { PendingAttachments } from "@/components/timeline/pending-attachments"
 import { countAttachmentReferences } from "@/components/editor/attachment-reference-counts"
 import { ComposerPillDndHost } from "@/components/editor/composer-pill-dnd"
 import { COMPOSER_PILL_GESTURE_EVENT } from "@/components/editor/composer-pill-drag-host"
+import { DebugFocusOverlay } from "./debug-focus-overlay"
+import { debugFocusLog } from "@/lib/debug-focus"
 import { MicButton, type MicButtonHandle } from "./mic-button"
 import { FabDrawerCloseContext } from "./fab-drawer-close-context"
 import { StashedDraftsComposerBridgeContext, type StashedDraftsComposerBridge } from "./stashed-drafts-open-context"
@@ -530,6 +532,7 @@ export function MessageComposer({
     if (!root) return
     const stamp = () => {
       pillGestureAtRef.current = performance.now()
+      debugFocusLog("pill-gesture")
     }
     root.addEventListener(COMPOSER_PILL_GESTURE_EVENT, stamp)
     return () => root.removeEventListener(COMPOSER_PILL_GESTURE_EVENT, stamp)
@@ -571,15 +574,23 @@ export function MessageComposer({
         blurTimeoutRef.current = null
         // A within-composer refocus that landed a tick later (mobile toolbar taps
         // where relatedTarget is null) cancels the collapse.
-        if (root.contains(document.activeElement)) return
+        if (root.contains(document.activeElement)) {
+          debugFocusLog("collapse skip: focus inside")
+          return
+        }
         // A blur inside the pill-gesture grace is Chrome Android dropping focus
         // over a non-editable pill atom, on its own schedule — it can outlive
         // the drag host's next-tick refocus, so it must be caught here, on the
         // blur itself. Reclaim focus instead of collapsing mid-edit.
         if (performance.now() - pillGestureAtRef.current < COMPOSER_PILL_GESTURE_BLUR_GRACE_MS) {
           richEditorRef.current?.focus()
-          if (root.contains(document.activeElement)) return
+          if (root.contains(document.activeElement)) {
+            debugFocusLog("collapse skip: grace reclaimed")
+            return
+          }
+          debugFocusLog("collapse: grace reclaim FAILED")
         }
+        debugFocusLog("collapse RUN")
         cancelPendingChromeOpen()
         setMobileFocused(false)
         setMobileExpanded(false)
@@ -1279,6 +1290,7 @@ export function MessageComposer({
           <p id={instructionsId} className="sr-only">
             {screenReaderInstructions}
           </p>
+          <DebugFocusOverlay />
           {/* One drag context around the tray and the editor: the tray keeps its
             own position above the card and its chips still drag into the text.
             Wrapping it renders no DOM node, so the layout is unchanged. */}

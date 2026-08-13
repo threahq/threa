@@ -318,6 +318,17 @@ describe("composer pill drag gestures", () => {
     expect(editor.view.dom).toHaveAttribute("data-composer-pill-drag-mode", "hold-or-selected")
   })
 
+  it("cancels a pill tap's touchend default so native tap processing cannot move focus off the editor", () => {
+    const editor = createPillEditor()
+    const source = editor.view.dom.querySelector<HTMLElement>('[data-type="mention"]')!
+
+    fireEvent.touchStart(source, { touches: [touch(1, 10, 10)] })
+    const notPrevented = fireEvent.touchEnd(document, { touches: [], changedTouches: [touch(1, 10, 10)] })
+
+    expect(notPrevented).toBe(false)
+    expect(editor.state.selection).toBeInstanceOf(NodeSelection)
+  })
+
   it("announces pill gestures as a bubbling event, so the composer can hold its chrome through a late blur", () => {
     const editor = createPillEditor()
     const source = editor.view.dom.querySelector<HTMLElement>('[data-type="mention"]')!

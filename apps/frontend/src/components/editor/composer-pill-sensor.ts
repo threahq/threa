@@ -228,7 +228,12 @@ export class ComposerPillSensor implements SensorInstance {
   private onTouchEnd = (event: TouchEvent) => {
     const touch = touchById(event.changedTouches, this.touchId)
     if (!touch) return
-    if (this.activated && event.cancelable) event.preventDefault()
+    // Cancel the plain tap's default too, not only an activated drag's: Chrome
+    // on Android processes an unprevented touchend on a non-editable pill atom
+    // into a focus move off the editor — keyboard drops, composer chrome
+    // collapses — before any of our refocus guards can matter. selectPill owns
+    // the tap's semantics, so the native tap processing has nothing to add.
+    if (event.cancelable) event.preventDefault()
     this.finish(touch.clientX, touch.clientY)
   }
 
