@@ -1543,6 +1543,13 @@ export function StreamContent({
     userInteractedAtRef.current = 0
   }
 
+  // True until the landing decision (INV-70) for this stream open is
+  // consumed. The scroll hook defers a converged settle's mask reveal while
+  // this is up — otherwise the settle (pure DOM-height convergence, ~a few
+  // frames) races the decision's async inputs (read-state hydration) and
+  // reveals the tail before a positional landing can take the mask over.
+  const landingPendingRef = useRef(true)
+
   const {
     listRef,
     scrollerRef: virtualScrollerRef,
@@ -1559,6 +1566,7 @@ export function StreamContent({
     resetShiftBaseline,
     holdSettleForRestore,
     revealSettle,
+    releaseDeferredReveal,
   } = useTimelineScroll({
     itemCount: useVirtualized ? visibleItems.length : 0,
     getFirstKey: () => (useVirtualized && visibleItems.length > 0 ? getTimelineItemKey(visibleItems[0]) : null),
@@ -1566,6 +1574,7 @@ export function StreamContent({
     skipInitialScroll,
     isJumpMode,
     userInteractedAtRef,
+    landingPendingRef,
   })
 
   // Scroll container element, owned by useTimelineScroll. Attached to the
@@ -2509,6 +2518,7 @@ export function StreamContent({
   const landingRef = useRef<{ streamId: string; decided: boolean }>({ streamId, decided: false })
   if (landingRef.current.streamId !== streamId) {
     landingRef.current = { streamId, decided: false }
+    landingPendingRef.current = true
     detachedHoldRef.current = null
   }
 
@@ -2565,10 +2575,15 @@ export function StreamContent({
     })
     if (landing === "wait") return
     landingRef.current.decided = true
+    landingPendingRef.current = false
     // "tail" is the cold-load settle's own landing (it is already pinning
     // there behind the mask); deep-link and user-owned positions belong to
-    // their machinery. Nothing to execute for any of them.
-    if (landing.kind === "deep-link" || landing.kind === "owned" || landing.kind === "tail") return
+    // their machinery. Release a reveal the settle may have parked while the
+    // decision was pending — nothing else to execute for any of them.
+    if (landing.kind === "deep-link" || landing.kind === "owned" || landing.kind === "tail") {
+      releaseDeferredReveal()
+      return
+    }
     // The plain thread scroller renders every row and has no settle mask —
     // a marker landing scrolls directly (restore never resolves for threads:
     // anchors are only ever captured on the virtualized path).
@@ -2578,13 +2593,14 @@ export function StreamContent({
       }
       return
     }
-    // Positional landing: take over the cold-load settle. Cancel its
-    // pin-to-bottom loop but keep the skeleton mask up, position behind it,
-    // and reveal once the target has held its spot — the first painted frame
-    // is already at the landing, never a tail flash followed by a jump.
+    // Positional landing: ENGAGE FIRST, then take over the cold-load settle.
+    // Cancelling the settle before a scrollToMessage that bails synchronously
+    // would strand the mask over an unconverged position with nothing left to
+    // reveal at the right place — on a bail the settle (running or parked)
+    // keeps owning the tail reveal instead. No rAF can interleave these
+    // synchronous statements, so an engaged loop can never be pinned over.
     // Reveal is guarded by decision identity: a stream switch before the
     // refine loop ends must not strip the NEXT stream's settle mask.
-    holdSettleForRestore()
     const decidedFor = landingRef.current
     const revealIfCurrent = () => {
       if (landingRef.current !== decidedFor) return
@@ -2594,20 +2610,22 @@ export function StreamContent({
       // after the loop has released the scroller.
       requestAnimationFrame(applyDetachedHold)
     }
-    // Seed the detached-viewport guard immediately: content resizes between
-    // engage and the refine loop's first settle must re-target the landing,
-    // not slide the viewport.
     const target =
       landing.kind === "restore"
         ? { id: landing.targetId, offsetPx: landing.offsetPx }
         : { id: landing.dividerEventId, offsetPx: UNREAD_MARKER_TOP_GAP_PX }
-    detachedHoldRef.current = { ...target, takenAt: performance.now() }
     const engaged =
       landing.kind === "restore"
         ? scrollToMessage(target.id, { align: "start", topOffsetPx: target.offsetPx, onFirstSettle: revealIfCurrent })
         : scrollToMessage(target.id, { align: "start", onFirstSettle: revealIfCurrent })
-    if (!engaged) {
-      revealIfCurrent()
+    if (engaged) {
+      holdSettleForRestore()
+      // Seed the detached-viewport guard: content resizes between engage and
+      // the refine loop's first settle must re-target the landing, not slide
+      // the viewport.
+      detachedHoldRef.current = { ...target, takenAt: performance.now() }
+    } else {
+      releaseDeferredReveal()
       if (landing.kind === "marker") scrollToFirstUnread()
     }
   }, [
@@ -2626,6 +2644,7 @@ export function StreamContent({
     scrollToFirstUnread,
     holdSettleForRestore,
     revealSettle,
+    releaseDeferredReveal,
     applyDetachedHold,
   ])
 

@@ -155,4 +155,50 @@ test.describe("Unread marker open", () => {
     await expect(divider).toBeVisible()
     await otherContext.close()
   })
+
+  test("a stale saved anchor falls through to the marker — same atomic decision, no race", async ({
+    page,
+    browser,
+  }) => {
+    // INV-70's fallthrough: a persisted reading anchor whose row is no longer
+    // in the loaded window must not consume the landing — the resolver falls
+    // through to the marker in the SAME decision. A bogus anchor id makes the
+    // staleness deterministic.
+    const { prefix, workspaceId, streamId, otherContext } = await setUpUnreadChannel(browser, page)
+    await page.setViewportSize({ width: 1024, height: 500 })
+
+    await page.evaluate(
+      ({ sid }) => {
+        localStorage.setItem(
+          "threa:timeline-anchors",
+          JSON.stringify({ [sid]: { targetId: "msg_00000000000000000000000000", offsetPx: 0, at: Date.now() } })
+        )
+      },
+      { sid: streamId }
+    )
+
+    await page.goto(`/w/${workspaceId}/s/${streamId}`)
+
+    const firstUnread = page
+      .getByRole("main")
+      .locator(".message-item")
+      .filter({ hasText: `${prefix}-unread msg-001` })
+      .first()
+    await expect(firstUnread).toBeVisible({ timeout: 20000 })
+
+    const scroller = page.locator("[data-suppress-pull-refresh]")
+    const scrollerBox = await scroller.boundingBox()
+    expect(scrollerBox).not.toBeNull()
+    await expect
+      .poll(
+        async () => {
+          const box = await firstUnread.boundingBox()
+          return box ? Math.round(box.y - scrollerBox!.y) : -9999
+        },
+        { timeout: 10000, message: "stale anchor should fall through to the marker landing" }
+      )
+      .toBeLessThan(200)
+
+    await otherContext.close()
+  })
 })

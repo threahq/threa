@@ -16,6 +16,10 @@ const DEAD_BAND_DOCK_SETTLE_MS = 200
 /** Consecutive frames of unchanged scrollHeight that mark the cold-load settle
  *  as converged, so the content can be revealed without a visible bounce. */
 const SETTLE_STABLE_FRAMES = 3
+/** How long a converged-but-deferred settle reveal may wait on the landing
+ *  decision before dropping the mask anyway — a resolver stuck at "wait"
+ *  (read state that never hydrates) must not skeleton the stream forever. */
+const SETTLE_DEFER_FAILSAFE_MS = 1500
 /** Finger travel (px) from the last recorded anchor before a touchmove records
  *  a gesture direction. The final touchmove before lift-off commonly reverses
  *  2–3px as the finger peels off the glass; recording that flipped a long
@@ -64,6 +68,16 @@ interface UseTimelineScrollOptions {
    * jump-to-message navigation, where the caller drives the scroll imperatively.
    */
   skipInitialScroll?: boolean
+  /**
+   * While true, a converged cold-load settle parks its reveal instead of
+   * dropping the mask: the atomic landing decision (INV-70) may still be
+   * waiting on async inputs (read-state hydration), and revealing the tail
+   * first would put the landing jump in full view. The landing effect flips
+   * the ref false when it decides and calls `releaseDeferredReveal` (tail) or
+   * `revealSettle` (positional). A user gesture or the failsafe cap reveals
+   * regardless.
+   */
+  landingPendingRef?: React.RefObject<boolean>
   /**
    * True while reading a deep-linked / searched history window. Reaching the
    * live tail in this mode must NOT re-arm auto-follow — the user is anchored
@@ -136,6 +150,9 @@ interface UseTimelineScrollReturn {
   holdSettleForRestore: () => void
   /** Drop the cold-load settle mask. Idempotent; pairs with holdSettleForRestore. */
   revealSettle: () => void
+  /** Reveal a settle that converged while the landing decision was pending
+   *  (see `landingPendingRef`). No-op when nothing is parked. */
+  releaseDeferredReveal: () => void
 }
 
 /**
@@ -171,6 +188,7 @@ export function useTimelineScroll({
   skipInitialScroll = false,
   isJumpMode = false,
   userInteractedAtRef,
+  landingPendingRef,
 }: UseTimelineScrollOptions): UseTimelineScrollReturn {
   const listRef = useRef<VirtualizerHandle>(null)
   const scrollerRef = useRef<HTMLDivElement>(null)
@@ -231,7 +249,13 @@ export function useTimelineScroll({
   const prevScrollTopRef = useRef(0)
   const prevScrollHeightRef = useRef(0)
   const initialSettleRafRef = useRef(0)
-  const initialSettleCleanupRef = useRef<((reveal?: boolean) => void) | null>(null)
+  const initialSettleCleanupRef = useRef<((reveal?: boolean, forceReveal?: boolean) => void) | null>(null)
+  // A settle that converged while the landing decision was still pending
+  // parked its reveal here (mask stays up). Cleared by releaseDeferredReveal /
+  // revealSettle / the failsafe / a user gesture / a stream switch.
+  const deferredRevealRef = useRef(false)
+  const deferFailsafeTimerRef = useRef(0)
+  const deferGestureCleanupRef = useRef<(() => void) | null>(null)
 
   // Direction of the last GESTURE-DRIVEN scroll movement (null until one
   // happens). Two writers, both immune to programmatic positioning (divider/
@@ -270,6 +294,12 @@ export function useTimelineScroll({
     didInitialScrollRef.current = false
     lastGestureScrollDirRef.current = null
     isFollowingTailRef.current = !skipInitialScroll
+    deferredRevealRef.current = false
+    if (deferFailsafeTimerRef.current) {
+      window.clearTimeout(deferFailsafeTimerRef.current)
+      deferFailsafeTimerRef.current = 0
+    }
+    deferGestureCleanupRef.current?.()
     // Re-mask for the new stream's cold-load settle (a no-op when it converges
     // instantly, e.g. revisiting an already-measured stream).
     setIsInitialSettling(!skipInitialScroll)
@@ -352,9 +382,28 @@ export function useTimelineScroll({
     initialSettleCleanupRef.current?.(false)
   }, [])
 
-  const revealSettle = useCallback(() => {
-    setIsInitialSettling(false)
+  const clearDeferredReveal = useCallback(() => {
+    deferredRevealRef.current = false
+    if (deferFailsafeTimerRef.current) {
+      window.clearTimeout(deferFailsafeTimerRef.current)
+      deferFailsafeTimerRef.current = 0
+    }
+    deferGestureCleanupRef.current?.()
   }, [])
+
+  const revealSettle = useCallback(() => {
+    clearDeferredReveal()
+    setIsInitialSettling(false)
+  }, [clearDeferredReveal])
+
+  /** Reveal a converged-but-parked settle (the landing decided "tail" — the
+   *  settle's own bottom position IS the landing). No-op when the settle is
+   *  still converging: its own convergence reveals, now that the landing
+   *  decision has been consumed. */
+  const releaseDeferredReveal = useCallback(() => {
+    if (!deferredRevealRef.current) return
+    revealSettle()
+  }, [revealSettle])
 
   // Hidden cold-load settle: pin to the bottom every frame while virtua measures
   // real item heights, and reveal (drop the skeleton mask) once scrollHeight has
@@ -382,15 +431,52 @@ export function useTimelineScroll({
       let revealed = false
       let lastHeight = -1
       let stableFrames = 0
-      const reveal = () => {
-        if (!revealed) {
-          revealed = true
-          setIsInitialSettling(false)
+      const reveal = (force = false) => {
+        if (revealed) return
+        revealed = true
+        if (!force && landingPendingRef?.current) {
+          // The landing decision (INV-70) hasn't been made yet — dropping the
+          // mask now would paint the tail and let a positional landing jump in
+          // full view (the read-state hydration race). Park the reveal: the
+          // landing effect releases it, a user gesture force-reveals, and the
+          // failsafe drops the mask if the decision never resolves.
+          deferredRevealRef.current = true
+          if (deferFailsafeTimerRef.current) window.clearTimeout(deferFailsafeTimerRef.current)
+          deferFailsafeTimerRef.current = window.setTimeout(() => {
+            deferredRevealRef.current = false
+            deferGestureCleanupRef.current?.()
+            setIsInitialSettling(false)
+          }, SETTLE_DEFER_FAILSAFE_MS)
+          // The settle's own gesture listeners die with cleanup() below, so
+          // arm fresh ones for the deferred window: a user scrolling under a
+          // parked mask must not stay masked.
+          const onDeferGesture = () => {
+            deferGestureCleanupRef.current?.()
+            deferredRevealRef.current = false
+            if (deferFailsafeTimerRef.current) {
+              window.clearTimeout(deferFailsafeTimerRef.current)
+              deferFailsafeTimerRef.current = 0
+            }
+            setIsInitialSettling(false)
+          }
+          el.addEventListener("wheel", onDeferGesture, { passive: true })
+          el.addEventListener("touchmove", onDeferGesture, { passive: true })
+          el.addEventListener("pointerdown", onDeferGesture, { passive: true })
+          el.addEventListener("keydown", onDeferGesture)
+          deferGestureCleanupRef.current = () => {
+            el.removeEventListener("wheel", onDeferGesture)
+            el.removeEventListener("touchmove", onDeferGesture)
+            el.removeEventListener("pointerdown", onDeferGesture)
+            el.removeEventListener("keydown", onDeferGesture)
+            deferGestureCleanupRef.current = null
+          }
+          return
         }
+        setIsInitialSettling(false)
       }
-      const cleanup = (shouldReveal = true) => {
+      const cleanup = (shouldReveal = true, forceReveal = false) => {
         aborted = true
-        if (shouldReveal) reveal()
+        if (shouldReveal) reveal(forceReveal)
         if (initialSettleRafRef.current) cancelAnimationFrame(initialSettleRafRef.current)
         initialSettleRafRef.current = 0
         el.removeEventListener("wheel", onGesture)
@@ -399,7 +485,7 @@ export function useTimelineScroll({
         el.removeEventListener("keydown", onGesture)
         initialSettleCleanupRef.current = null
       }
-      const onGesture = () => cleanup()
+      const onGesture = () => cleanup(true, true)
       initialSettleCleanupRef.current = cleanup
       el.addEventListener("wheel", onGesture, { passive: true })
       el.addEventListener("touchmove", onGesture, { passive: true })
@@ -818,5 +904,6 @@ export function useTimelineScroll({
     resetShiftBaseline,
     holdSettleForRestore,
     revealSettle,
+    releaseDeferredReveal,
   }
 }

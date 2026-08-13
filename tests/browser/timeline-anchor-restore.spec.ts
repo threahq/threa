@@ -120,7 +120,9 @@ test.describe("Timeline anchor restore", () => {
     // Detach a bounded distance up — far enough that the tail is clearly out
     // of the viewport, near enough that the anchored row is comfortably
     // inside the reloaded 50-event bootstrap window (an anchor outside the
-    // fresh window is a stale anchor and deliberately lands at the tail).
+    // fresh window is stale and falls through to the next landing in the
+    // atomic resolver — the unread marker if one is latched, else the tail;
+    // unread-marker-open.spec.ts covers the marker fallthrough).
     // Wheel from near the top edge: the floating jump-to-latest button covers
     // the scroller's center once detached.
     const scroller = page.locator("[data-suppress-pull-refresh]")
