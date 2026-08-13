@@ -40,6 +40,11 @@ import type { DraftContextRef } from "@/lib/context-bag/types"
 import { cn } from "@/lib/utils"
 import { COLLAPSED_COMPOSER_ROW, COLLAPSED_COMPOSER_SHADOW } from "@/components/composer/collapsed-composer-bar"
 import { isEmptyContent } from "@/lib/prosemirror-utils"
+import {
+  loadMobileComposerDragHeight,
+  persistMobileComposerDragHeight,
+  MOBILE_COMPOSER_DRAG_MIN_PX,
+} from "@/lib/composer-height-storage"
 import { collapsedComposerPreview } from "@/lib/drafts/collapsed-composer-preview"
 import type { PendingAttachment, UploadResult } from "@/hooks/use-attachments"
 import {
@@ -298,6 +303,50 @@ export function MessageComposer({
   const [formatOpen, setFormatOpen] = useState(false)
   const [isInTable, setIsInTable] = useState(false)
   const [mobileExpanded, setMobileExpanded] = useState(false)
+  // User-chosen composer height from the drag handle (mobile, chrome open).
+  // Applied as a max-height so the composer stays content-driven below it:
+  // dragging down shrinks an overgrown draft to free the timeline, dragging
+  // up raises the growth cap. Persisted per device on release; a drag exits
+  // the 75dvh expanded preset, whose classes would otherwise outrank it.
+  const [mobileDragHeight, setMobileDragHeightState] = useState<number | null>(() => loadMobileComposerDragHeight())
+  const mobileDragHeightRef = useRef(mobileDragHeight)
+  const resizeDragRef = useRef<{ pointerId: number; startY: number; startHeight: number; minPx: number } | null>(null)
+  const handleResizePointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    const root = mobileRootRef.current
+    if (!root) return
+    // Keep focus in the editor (and the keyboard up) through the drag.
+    e.preventDefault()
+    e.currentTarget.setPointerCapture?.(e.pointerId)
+    const rootHeight = root.getBoundingClientRect().height
+    // The max-height caps the whole root — attachment tray and link previews
+    // included — while the floor is defined against the editor card alone, so
+    // the extras' height rides on top of the floor. Without this a tray plus
+    // a preview at the 140px floor crushed the editor card toward zero.
+    const cardHeight = root.querySelector<HTMLElement>("[data-composer-card]")?.getBoundingClientRect().height
+    resizeDragRef.current = {
+      pointerId: e.pointerId,
+      startY: e.clientY,
+      startHeight: rootHeight,
+      minPx: MOBILE_COMPOSER_DRAG_MIN_PX + Math.max(0, rootHeight - (cardHeight ?? rootHeight)),
+    }
+  }, [])
+  const handleResizePointerMove = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    const drag = resizeDragRef.current
+    if (!drag || e.pointerId !== drag.pointerId) return
+    const viewportH = window.visualViewport?.height ?? window.innerHeight
+    // The ceiling never dips below the floor (keyboard up on a short landscape
+    // viewport can put 75% of it under the minimum).
+    const maxPx = Math.max(viewportH * 0.75, drag.minPx)
+    const next = Math.round(Math.min(Math.max(drag.startHeight + (drag.startY - e.clientY), drag.minPx), maxPx))
+    setMobileExpanded(false)
+    mobileDragHeightRef.current = next
+    setMobileDragHeightState(next)
+  }, [])
+  const handleResizePointerEnd = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    if (resizeDragRef.current?.pointerId !== e.pointerId) return
+    resizeDragRef.current = null
+    if (mobileDragHeightRef.current !== null) persistMobileComposerDragHeight(mobileDragHeightRef.current)
+  }, [])
   // Expanded-mode FAB actions are always visible on desktop. Touch has no hover,
   // so a tap on the "+" toggles them instead.
   const [fabActionsOpen, setFabActionsOpen] = useState(false)
@@ -1188,6 +1237,10 @@ export function MessageComposer({
             mobileExpanded ? "max-h-[75dvh] min-h-[75dvh]" : "max-h-[380px] min-h-0",
             className
           )}
+          // The drag-handle height override. A max-height (not height) so the
+          // composer stays content-driven below it; inline so it outranks the
+          // 380px default class above.
+          style={isMobile && !mobileExpanded && mobileDragHeight !== null ? { maxHeight: mobileDragHeight } : undefined}
           onFocusCapture={isMobile ? handleFocusCapture : undefined}
           onBlurCapture={isMobile ? handleBlurCapture : undefined}
           onKeyDownCapture={handleStashKeyDown}
@@ -1234,8 +1287,10 @@ export function MessageComposer({
                   !mobileExpanded && !isMobile ? "bg-card/75 backdrop-blur-md" : "bg-card",
                   // Compact padding when mobile-unfocused (single line), normal otherwise
                   isMobile && !mobileChromeOpen ? "px-3 py-2" : "p-3 gap-2",
-                  // When mobile-expanded, let the editor grow and override its internal max-height
-                  mobileExpanded && "[&_.tiptap]:max-h-none"
+                  // When mobile-expanded or drag-sized, let the editor grow and
+                  // override its internal max-height — the shell's cap governs.
+                  (mobileExpanded || (isMobile && mobileChromeOpen && mobileDragHeight !== null)) &&
+                    "[&_.tiptap]:max-h-none"
                 )}
                 onClick={(e) => {
                   if ((e.target as HTMLElement).closest("button,a,input,textarea,[contenteditable],[role='button']"))
@@ -1251,6 +1306,23 @@ export function MessageComposer({
                   richEditorRef.current?.focus()
                 }}
               >
+                {/* Drag handle: resize the open composer by its top edge. A
+                    pointer control only (no keyboard path) — the expand toggle
+                    in the action bar remains the accessible size control. */}
+                {isMobile && mobileChromeOpen && (
+                  <div
+                    data-testid="composer-resize-handle"
+                    aria-hidden
+                    onPointerDown={handleResizePointerDown}
+                    onPointerMove={handleResizePointerMove}
+                    onPointerUp={handleResizePointerEnd}
+                    onPointerCancel={handleResizePointerEnd}
+                    onLostPointerCapture={handleResizePointerEnd}
+                    className="-mx-3 -mt-3 flex h-5 shrink-0 touch-none cursor-ns-resize items-center justify-center"
+                  >
+                    <div className="h-1 w-9 rounded-full bg-muted-foreground/25" />
+                  </div>
+                )}
                 {isMobile && !mobileChromeOpen && (
                   <div
                     className={cn(
@@ -1285,7 +1357,7 @@ export function MessageComposer({
                 <div
                   className={cn(
                     isMobile && !mobileChromeOpen ? "h-0 overflow-hidden" : "flex-1 min-h-0",
-                    mobileExpanded && "overflow-y-auto"
+                    (mobileExpanded || (isMobile && mobileChromeOpen && mobileDragHeight !== null)) && "overflow-y-auto"
                   )}
                 >
                   <div className="h-full">{sharedEditor}</div>

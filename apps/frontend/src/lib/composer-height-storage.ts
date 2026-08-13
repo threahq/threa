@@ -134,6 +134,46 @@ export function unpublishComposerHeightFromRoot(el: HTMLElement): void {
   document.documentElement.style.setProperty(CSS_VAR, `${survivor}px`)
 }
 
+// --- Mobile drag-resize preference -----------------------------------------
+
+const STORAGE_KEY_DRAG_HEIGHT = "threa:composer-drag-height"
+
+/** Smallest draggable mobile composer: one editor line + the action bar. */
+export const MOBILE_COMPOSER_DRAG_MIN_PX = 140
+// Sanity ceiling for persisted values only — the live drag clamps to 75% of
+// the visual viewport, which no phone exceeds.
+const MAX_DRAG_HEIGHT_PX = 1200
+
+/**
+ * The user-chosen mobile composer height from the drag handle (a max-height:
+ * the composer stays content-driven below it). Persisted per device so the
+ * preference survives reloads; null when the user has never dragged.
+ */
+export function loadMobileComposerDragHeight(): number | null {
+  if (typeof localStorage === "undefined") return null
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY_DRAG_HEIGHT)
+    if (!raw) return null
+    const parsed = Number.parseInt(raw, 10)
+    if (!Number.isFinite(parsed)) return null
+    if (parsed < MOBILE_COMPOSER_DRAG_MIN_PX || parsed > MAX_DRAG_HEIGHT_PX) return null
+    return parsed
+  } catch {
+    return null
+  }
+}
+
+export function persistMobileComposerDragHeight(heightPx: number): void {
+  if (typeof localStorage === "undefined") return
+  const rounded = Math.round(heightPx)
+  if (rounded < MOBILE_COMPOSER_DRAG_MIN_PX || rounded > MAX_DRAG_HEIGHT_PX) return
+  try {
+    localStorage.setItem(STORAGE_KEY_DRAG_HEIGHT, String(rounded))
+  } catch {
+    // Storage quota / private-mode failures shouldn't crash the render path.
+  }
+}
+
 /**
  * Persists a freshly-measured composer height for the next page load, keyed by
  * the current viewport so mobile and desktop never seed each other's fallback.

@@ -1,6 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { MOBILE_BREAKPOINT } from "@/hooks/use-mobile"
-import { applyPersistedComposerHeight, persistComposerHeight } from "./composer-height-storage"
+import {
+  applyPersistedComposerHeight,
+  persistComposerHeight,
+  loadMobileComposerDragHeight,
+  persistMobileComposerDragHeight,
+  MOBILE_COMPOSER_DRAG_MIN_PX,
+} from "./composer-height-storage"
 
 const DESKTOP_KEY = "threa:composer-height:desktop"
 const MOBILE_KEY = "threa:composer-height:mobile"
@@ -122,5 +128,34 @@ describe("persistComposerHeight", () => {
     persistComposerHeight(12)
     persistComposerHeight(999)
     expect(localStorage.getItem(DESKTOP_KEY)).toBeNull()
+  })
+})
+
+describe("mobile composer drag height", () => {
+  const DRAG_KEY = "threa:composer-drag-height"
+
+  beforeEach(() => {
+    localStorage.clear()
+  })
+
+  it("round-trips the dragged height", () => {
+    persistMobileComposerDragHeight(287.4)
+    expect(localStorage.getItem(DRAG_KEY)).toBe("287")
+    expect(loadMobileComposerDragHeight()).toBe(287)
+  })
+
+  it("returns null when never dragged", () => {
+    expect(loadMobileComposerDragHeight()).toBeNull()
+  })
+
+  it("drops values outside the sanity window on both write and read", () => {
+    persistMobileComposerDragHeight(MOBILE_COMPOSER_DRAG_MIN_PX - 1)
+    expect(localStorage.getItem(DRAG_KEY)).toBeNull()
+    persistMobileComposerDragHeight(5000)
+    expect(localStorage.getItem(DRAG_KEY)).toBeNull()
+    localStorage.setItem(DRAG_KEY, "12")
+    expect(loadMobileComposerDragHeight()).toBeNull()
+    localStorage.setItem(DRAG_KEY, "junk")
+    expect(loadMobileComposerDragHeight()).toBeNull()
   })
 })

@@ -841,4 +841,72 @@ describe("MessageComposer", () => {
       expect(screen.queryByText("stashed body")).not.toBeInTheDocument()
     })
   })
+
+  describe("mobile drag-resize", () => {
+    beforeEach(() => {
+      isMobileMockValue = true
+      localStorage.clear()
+      // The open chrome mounts the real MicButton, whose dictation session
+      // drives editor methods the mock editor doesn't implement.
+      const MockMicButton = forwardRef(function MockMicButton(
+        _props: unknown,
+        ref: ForwardedRef<{ abort: () => void; prepareSendAsIs: () => void }>
+      ) {
+        useImperativeHandle(ref, () => ({ abort: vi.fn(), prepareSendAsIs: vi.fn() }))
+        return null
+      })
+      spyOnExport(micButtonModule, "MicButton").mockReturnValue(
+        MockMicButton as unknown as typeof micButtonModule.MicButton
+      )
+    })
+
+    it("drags the open composer's max-height and persists it on release", () => {
+      const { container } = render(<MessageComposer {...defaultProps} workspaceId="ws_1" initialMobileChromeOpen />)
+      const handle = screen.getByTestId("composer-resize-handle")
+      const root = container.firstElementChild as HTMLElement
+      expect(root.style.maxHeight).toBe("")
+      // jsdom measures the shell at 0px, so the drag grows from the 140px floor:
+      // a 260px upward pull lands at max(0 + 260, 140) = 260.
+      fireEvent.pointerDown(handle, { pointerId: 1, clientY: 600 })
+      fireEvent.pointerMove(handle, { pointerId: 1, clientY: 340 })
+      expect(root.style.maxHeight).toBe("260px")
+      fireEvent.pointerUp(handle, { pointerId: 1, clientY: 340 })
+      expect(localStorage.getItem("threa:composer-drag-height")).toBe("260")
+    })
+
+    it("clamps a downward drag to the minimum height", () => {
+      const { container } = render(<MessageComposer {...defaultProps} workspaceId="ws_1" initialMobileChromeOpen />)
+      const handle = screen.getByTestId("composer-resize-handle")
+      fireEvent.pointerDown(handle, { pointerId: 1, clientY: 300 })
+      fireEvent.pointerMove(handle, { pointerId: 1, clientY: 700 })
+      expect((container.firstElementChild as HTMLElement).style.maxHeight).toBe("140px")
+    })
+
+    it("keeps the floor when 75% of a short viewport would dip below it", () => {
+      // Keyboard up on a short landscape viewport: the 75%-of-viewport ceiling
+      // would land under the 140px floor, inverting the clamp — the floor wins.
+      const originalInnerHeight = window.innerHeight
+      Object.defineProperty(window, "innerHeight", { configurable: true, value: 100 })
+      try {
+        const { container } = render(<MessageComposer {...defaultProps} workspaceId="ws_1" initialMobileChromeOpen />)
+        const handle = screen.getByTestId("composer-resize-handle")
+        fireEvent.pointerDown(handle, { pointerId: 1, clientY: 600 })
+        fireEvent.pointerMove(handle, { pointerId: 1, clientY: 100 })
+        expect((container.firstElementChild as HTMLElement).style.maxHeight).toBe("140px")
+      } finally {
+        Object.defineProperty(window, "innerHeight", { configurable: true, value: originalInnerHeight })
+      }
+    })
+
+    it("applies the persisted drag height on mount", () => {
+      localStorage.setItem("threa:composer-drag-height", "300")
+      const { container } = render(<MessageComposer {...defaultProps} workspaceId="ws_1" initialMobileChromeOpen />)
+      expect((container.firstElementChild as HTMLElement).style.maxHeight).toBe("300px")
+    })
+
+    it("shows the handle only while the mobile chrome is open", () => {
+      render(<MessageComposer {...defaultProps} workspaceId="ws_1" />)
+      expect(screen.queryByTestId("composer-resize-handle")).not.toBeInTheDocument()
+    })
+  })
 })
