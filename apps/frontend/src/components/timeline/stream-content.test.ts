@@ -10,8 +10,7 @@ import {
   shouldShowOlderSkeletons,
   resolveDateJumpAnchor,
   remapSuppressedWatermark,
-  resolveUnreadMarkerOpen,
-  resolveAnchorRestore,
+  resolveStreamLanding,
   isChromeStripCollapsed,
   buildAgentActivitySummary,
 } from "./stream-content"
@@ -514,67 +513,6 @@ describe("remapSuppressedWatermark", () => {
   })
 })
 
-describe("resolveUnreadMarkerOpen", () => {
-  const base = {
-    unreadOpenPosition: "marker" as const,
-    alreadyDecided: false,
-    isLoading: false,
-    hasItems: true,
-    readStateResolved: true,
-    isJumpMode: false,
-    hasDeepLink: false,
-    userInteractedAt: 0,
-    dividerEventId: "event_5" as string | undefined,
-  }
-
-  it("scrolls to the marker once the window is loaded with rows and the read state has resolved — it does NOT wait out the cold-load settle (it takes the settle over behind the mask)", () => {
-    expect(resolveUnreadMarkerOpen(base)).toBe("scroll")
-  })
-
-  it("waits (without consuming the decision) while the window is loading or unpopulated, or the read position is unresolved", () => {
-    expect(resolveUnreadMarkerOpen({ ...base, isLoading: true })).toBe("wait")
-    // Cold-boot grace window: loading reads done while the window is still
-    // empty — consuming here is the restore's #1873 bug, same class.
-    expect(resolveUnreadMarkerOpen({ ...base, hasItems: false })).toBe("wait")
-    expect(resolveUnreadMarkerOpen({ ...base, readStateResolved: false })).toBe("wait")
-  })
-
-  it("waits rather than skips on an unresolved read position even with a divider latched", () => {
-    // An unresolvable frontier is not "never read": consuming the once-per-stream
-    // decision here is the recurring bug — the stream opens at the tail forever.
-    expect(resolveUnreadMarkerOpen({ ...base, readStateResolved: false, dividerEventId: "event_5" })).toBe("wait")
-  })
-
-  it("skips in latest mode — the default open-at-bottom behaviour is untouched", () => {
-    expect(resolveUnreadMarkerOpen({ ...base, unreadOpenPosition: "latest" })).toBe("skip")
-  })
-
-  it("waits while the preference itself has not hydrated (null), so a marker user's cold boot still lands right", () => {
-    expect(resolveUnreadMarkerOpen({ ...base, unreadOpenPosition: null })).toBe("wait")
-  })
-
-  it("skips when there is nothing unread (no divider latched)", () => {
-    expect(resolveUnreadMarkerOpen({ ...base, dividerEventId: undefined })).toBe("skip")
-  })
-
-  it("skips when a deep-link or jump owns the scroll position", () => {
-    expect(resolveUnreadMarkerOpen({ ...base, hasDeepLink: true })).toBe("skip")
-    expect(resolveUnreadMarkerOpen({ ...base, isJumpMode: true })).toBe("skip")
-  })
-
-  it("skips once the user has scrolled — a late-resolving divider must not yank a position they chose", () => {
-    expect(resolveUnreadMarkerOpen({ ...base, userInteractedAt: 123.4 })).toBe("skip")
-  })
-
-  it("decides at most once per stream open — a live message latching a new divider later must not re-scroll", () => {
-    expect(resolveUnreadMarkerOpen({ ...base, alreadyDecided: true })).toBe("skip")
-  })
-
-  it("consumes the decision as skip (not wait) for a deep-link even while still loading — a deep-linked stream never marker-scrolls", () => {
-    expect(resolveUnreadMarkerOpen({ ...base, hasDeepLink: true, isLoading: true })).toBe("skip")
-  })
-})
-
 describe("isChromeStripCollapsed", () => {
   it("collapses when the strip above the composer drops under the minimum", () => {
     // Mobile keyboard open + tall draft: 360px scroller minus a 230px composer
@@ -592,59 +530,87 @@ describe("isChromeStripCollapsed", () => {
   })
 })
 
-describe("resolveAnchorRestore", () => {
+describe("resolveStreamLanding", () => {
+  const anchor = { targetId: "msg_9", offsetPx: -12 }
   const base = {
-    alreadyDecided: false,
-    isPushNavigation: false,
-    isLoading: false,
-    isJumpMode: false,
     hasDeepLink: false,
+    isJumpMode: false,
     userInteractedAt: 0,
-    hasAnchor: true,
+    isLoading: false,
     hasItems: true,
+    isPushNavigation: false,
+    anchor,
     anchorInWindow: true,
+    unreadOpenPosition: "marker" as const,
+    readStateResolved: true,
+    dividerEventId: "event_5" as string | undefined,
   }
 
-  it("restores as soon as the window is loaded with the anchor in it — it does NOT wait out the cold-load settle, so it can take the settle over behind the mask", () => {
-    expect(resolveAnchorRestore(base)).toBe("restore")
+  it("restore outranks marker: a continuation open with a live anchor lands on the anchor even with unreads waiting", () => {
+    expect(resolveStreamLanding(base)).toEqual({ kind: "restore", targetId: "msg_9", offsetPx: -12 })
   })
 
-  it("skips on PUSH navigation — choosing a stream is a fresh open that lands at the tail and auto-reads", () => {
-    expect(resolveAnchorRestore({ ...base, isPushNavigation: true })).toBe("skip")
-    // Consumed immediately, never held through load: the nav type won't change.
-    expect(resolveAnchorRestore({ ...base, isPushNavigation: true, isLoading: true })).toBe("skip")
+  it("PUSH navigation skips restore and falls to the marker — choosing a stream is a fresh open", () => {
+    expect(resolveStreamLanding({ ...base, isPushNavigation: true })).toEqual({
+      kind: "marker",
+      dividerEventId: "event_5",
+    })
   })
 
-  it("waits (without consuming the decision) while the window loads", () => {
-    expect(resolveAnchorRestore({ ...base, isLoading: true })).toBe("wait")
+  it("PUSH with 'latest' (or nothing unread) lands at the tail", () => {
+    expect(resolveStreamLanding({ ...base, isPushNavigation: true, unreadOpenPosition: "latest" })).toEqual({
+      kind: "tail",
+    })
+    expect(resolveStreamLanding({ ...base, isPushNavigation: true, dividerEventId: undefined })).toEqual({
+      kind: "tail",
+    })
   })
 
-  it("waits through the cold-boot grace window — isLoading false but no rows yet must not consume the decision as a stale-anchor skip", () => {
-    // The #1873 regression: on reload, computeTimelineLoadState reports
-    // isLoading false while IDB is still resolving (no-skeleton-flash grace
-    // window), so the decision ran against an empty window, read the anchor as
-    // stale, and consumed itself as "skip" — every reload landed at the tail.
-    expect(resolveAnchorRestore({ ...base, hasItems: false, anchorInWindow: false })).toBe("wait")
+  it("a stale anchor (row not in the window) falls through to the marker instead of racing it", () => {
+    expect(resolveStreamLanding({ ...base, anchorInWindow: false })).toEqual({
+      kind: "marker",
+      dividerEventId: "event_5",
+    })
+    expect(resolveStreamLanding({ ...base, anchorInWindow: false, unreadOpenPosition: "latest" })).toEqual({
+      kind: "tail",
+    })
   })
 
-  it("skips with no persisted anchor — the tail open is untouched", () => {
-    expect(resolveAnchorRestore({ ...base, hasAnchor: false })).toBe("skip")
-    // Consumed as skip even mid-load: nothing later can produce an anchor.
-    expect(resolveAnchorRestore({ ...base, hasAnchor: false, isLoading: true })).toBe("skip")
+  it("no anchor at all: marker if unreads, else tail", () => {
+    expect(resolveStreamLanding({ ...base, anchor: null })).toEqual({ kind: "marker", dividerEventId: "event_5" })
+    expect(resolveStreamLanding({ ...base, anchor: null, unreadOpenPosition: "latest" })).toEqual({ kind: "tail" })
   })
 
-  it("skips when the anchored row is not in the loaded window (stale anchor)", () => {
-    expect(resolveAnchorRestore({ ...base, anchorInWindow: false })).toBe("skip")
+  it("deep links and jump mode own the landing outright, even mid-load", () => {
+    expect(resolveStreamLanding({ ...base, hasDeepLink: true })).toEqual({ kind: "deep-link" })
+    expect(resolveStreamLanding({ ...base, isJumpMode: true })).toEqual({ kind: "deep-link" })
+    expect(resolveStreamLanding({ ...base, hasDeepLink: true, isLoading: true, hasItems: false })).toEqual({
+      kind: "deep-link",
+    })
   })
 
-  it("yields to deep links, jump mode, and user gestures — they own the position", () => {
-    expect(resolveAnchorRestore({ ...base, hasDeepLink: true })).toBe("skip")
-    expect(resolveAnchorRestore({ ...base, isJumpMode: true })).toBe("skip")
-    expect(resolveAnchorRestore({ ...base, userInteractedAt: 42 })).toBe("skip")
+  it("a user gesture owns the landing — nothing may move a position the user chose", () => {
+    expect(resolveStreamLanding({ ...base, userInteractedAt: 42 })).toEqual({ kind: "owned" })
   })
 
-  it("decides at most once per stream open", () => {
-    expect(resolveAnchorRestore({ ...base, alreadyDecided: true })).toBe("skip")
+  it("waits (without consuming the decision) while the window loads or is unpopulated — the cold-boot grace window must not consume a landing", () => {
+    expect(resolveStreamLanding({ ...base, isLoading: true })).toBe("wait")
+    // isLoading false + empty window = the IDB grace window (#1873's bug class).
+    expect(resolveStreamLanding({ ...base, hasItems: false, anchorInWindow: false })).toBe("wait")
+  })
+
+  it("waits on marker inputs only when the marker branch is reachable", () => {
+    // Pref unhydrated: a restore still resolves without it…
+    expect(resolveStreamLanding({ ...base, unreadOpenPosition: null })).toEqual({
+      kind: "restore",
+      targetId: "msg_9",
+      offsetPx: -12,
+    })
+    // …but with no restore in play the decision must wait for the pref.
+    expect(resolveStreamLanding({ ...base, anchor: null, unreadOpenPosition: null })).toBe("wait")
+    // Marker pref with an unresolved read frontier: consuming would open at
+    // the tail forever — wait.
+    expect(resolveStreamLanding({ ...base, anchor: null, readStateResolved: false })).toBe("wait")
   })
 })
 

@@ -447,52 +447,6 @@ export function resolveDateJumpAnchor(args: {
 }
 
 /**
- * Decide the initial scroll for a stream opened under the "marker"
- * unread-open-position preference (Discord-style: land on the first unread).
- *
- * Returns:
- *  - "wait"   — inputs still resolving (window loading or unpopulated, read
- *               position or the preference itself unhydrated); do NOT consume
- *               the once-per-stream decision yet. Deliberately does NOT wait
- *               out the cold-load settle: the marker scroll takes the settle
- *               over (hold the mask, position, reveal at the divider) exactly
- *               like the anchor restore — waiting for settle-end revealed the
- *               TAIL first and jumped to the divider a beat later on every
- *               open of an unread stream.
- *  - "skip"   — decision consumed, open at the bottom as usual ("latest" mode,
- *               nothing unread, a deep-link/jump owns the scroll, or the user
- *               already scrolled).
- *  - "scroll" — decision consumed, scroll to the unread divider.
- *
- * A deep-link or jump consumes the decision even mid-load: a stream entered
- * via `?m=` must never marker-scroll for that view, including after the param
- * auto-clears (the PR #1099 yank pattern). A user gesture consumes it too — a
- * late-resolving divider must not move a position the user chose.
- */
-export function resolveUnreadMarkerOpen(args: {
-  unreadOpenPosition: UnreadOpenPosition | null
-  alreadyDecided: boolean
-  isLoading: boolean
-  /** The event window has rows — `isLoading` alone misses the cold-boot grace
-   *  window where loading reads done while IDB is still resolving. */
-  hasItems: boolean
-  readStateResolved: boolean
-  isJumpMode: boolean
-  hasDeepLink: boolean
-  userInteractedAt: number
-  dividerEventId: string | undefined
-}): "wait" | "skip" | "scroll" {
-  if (args.alreadyDecided) return "skip"
-  if (args.hasDeepLink || args.isJumpMode) return "skip"
-  if (args.userInteractedAt > 0) return "skip"
-  if (args.unreadOpenPosition === null) return "wait"
-  if (args.unreadOpenPosition !== "marker") return "skip"
-  if (args.isLoading || !args.hasItems || !args.readStateResolved) return "wait"
-  if (!args.dividerEventId) return "skip"
-  return "scroll"
-}
-
-/**
  * The floating chrome (date pill, jump-to-latest, unread banner) hides when
  * the visible strip between the scroller top and the floating composer drops
  * under this height. With the keyboard up and a tall reply drafted the strip
@@ -506,56 +460,66 @@ export function isChromeStripCollapsed(scrollerClientHeightPx: number, composerH
 }
 
 /**
- * Decide whether to restore a persisted detached-reading anchor on stream
- * open (see `timeline-anchor-storage`). Same once-per-stream contract as
- * `resolveUnreadMarkerOpen`: "wait" leaves the decision open while inputs
- * resolve; every other verdict consumes it.
+ * Atomic stream landing (INV-70): the ONE decision about where the viewport
+ * starts when a stream opens. Exactly one verdict per stream open, priority:
  *
- * A restore yields to deep links, jump mode, and any user gesture — those own
- * the position. It also yields to PUSH navigation (sidebar click, channel
- * link): choosing a stream is a fresh open, which lands at the tail and
- * auto-reads like it always has — restoring there parked the reader at a
- * stale detached spot, and the read frontier (which never jumps a gap) then
- * silently stopped auto-read for any stream once left mid-scroll. Restore is
- * for continuations of a previous look at this stream: reload and cold
- * relaunch (POP, or the boot path's REPLACE redirects) and history
- * back/forward. It only engages when the anchored row is in the loaded
- * window: anchors are written while detached near the tail (reading context
- * while replying), which the initial window covers; an anchor that has since
- * fallen out of the window is stale enough that the tail is the better
- * landing.
+ *   deep-link › user-gesture › anchor restore › unread marker › tail
  *
- * Deliberately does NOT wait for the cold-load settle: the restore engages the
- * moment the window is loaded, while the settle mask is still up, and takes
- * the settle over (holdSettleForRestore → scroll → revealSettle). Waiting for
- * the settle to finish meant the mask dropped at the TAIL and the restore's
- * scroll landed a frame later — a visible tail-flash-then-jump on every
- * reload of a stream with a saved position.
+ * "wait" leaves the decision open while inputs hydrate (window loading or
+ * unpopulated — `isLoading` alone misses the cold-boot grace window where IDB
+ * is still resolving — or the preference/read-state a marker landing needs).
+ * Everything else consumes the once-per-stream decision. The single landing
+ * effect executes the verdict; positional landings (restore, marker) take the
+ * cold-load settle over — hold the mask, position behind it, reveal once the
+ * target holds — so the first painted frame is AT the landing, never a tail
+ * flash followed by a jump.
+ *
+ * Semantics folded in from the previously-separate deciders:
+ *  - Deep links / jump mode own the scroll outright, even mid-load (the
+ *    PR #1099 yank pattern), as does any user gesture.
+ *  - Restore yields to PUSH navigation: choosing a stream is a fresh open
+ *    that lands at the tail and auto-reads; restore is for continuations —
+ *    reload, cold relaunch (POP or the boot path's REPLACE redirects,
+ *    including ExactRestore's `panelPopsToClose` PUSH hop), back/forward.
+ *  - A stale anchor (row no longer in the initial window) falls through to
+ *    the marker/tail branches instead of silently racing them.
+ *  - "latest" preference (or nothing unread) falls to the tail, which the
+ *    cold-load settle is already pinning behind the mask — the executor does
+ *    nothing for it.
  */
-export function resolveAnchorRestore(args: {
-  alreadyDecided: boolean
-  isPushNavigation: boolean
-  isLoading: boolean
-  isJumpMode: boolean
+export type StreamLanding =
+  | { kind: "deep-link" }
+  | { kind: "owned" }
+  | { kind: "restore"; targetId: string; offsetPx: number }
+  | { kind: "marker"; dividerEventId: string }
+  | { kind: "tail" }
+
+export function resolveStreamLanding(args: {
   hasDeepLink: boolean
+  isJumpMode: boolean
   userInteractedAt: number
-  hasAnchor: boolean
-  /** The event window has rows. `isLoading` alone is NOT that: cold boot has a
-   *  grace window where IDB hasn't resolved yet but `isLoading` is already
-   *  false (computeTimelineLoadState's no-skeleton-flash path) — judging the
-   *  anchor against that empty window consumed every reload's restore as a
-   *  stale-anchor skip, landing the reader at the tail. */
+  isLoading: boolean
+  /** The event window has rows (cold-boot grace-window guard, see #1873). */
   hasItems: boolean
+  isPushNavigation: boolean
+  anchor: { targetId: string; offsetPx: number } | null
   anchorInWindow: boolean
-}): "wait" | "skip" | "restore" {
-  if (args.alreadyDecided) return "skip"
-  if (args.isPushNavigation) return "skip"
-  if (args.hasDeepLink || args.isJumpMode) return "skip"
-  if (args.userInteractedAt > 0) return "skip"
-  if (!args.hasAnchor) return "skip"
+  unreadOpenPosition: UnreadOpenPosition | null
+  readStateResolved: boolean
+  dividerEventId: string | undefined
+}): "wait" | StreamLanding {
+  if (args.hasDeepLink || args.isJumpMode) return { kind: "deep-link" }
+  if (args.userInteractedAt > 0) return { kind: "owned" }
   if (args.isLoading || !args.hasItems) return "wait"
-  if (!args.anchorInWindow) return "skip"
-  return "restore"
+  if (!args.isPushNavigation && args.anchor !== null && args.anchorInWindow) {
+    return { kind: "restore", targetId: args.anchor.targetId, offsetPx: args.anchor.offsetPx }
+  }
+  if (args.unreadOpenPosition === null) return "wait"
+  if (args.unreadOpenPosition === "marker") {
+    if (!args.readStateResolved) return "wait"
+    if (args.dividerEventId) return { kind: "marker", dividerEventId: args.dividerEventId }
+  }
+  return { kind: "tail" }
 }
 
 /** The topmost timeline row intersecting the scroller viewport, with its
@@ -2347,8 +2311,8 @@ export function StreamContent({
     isLoading,
     highlightMessageId,
     // The hook never drives the scroll itself. The "marker" open-position
-    // preference is handled by the resolveUnreadMarkerOpen effect below, which
-    // scrolls via the virtua-aware scrollToFirstUnread instead of the hook's
+    // preference is a landing variant of resolveStreamLanding (INV-70), whose
+    // executor scrolls via the virtua-aware paths instead of the hook's
     // querySelector path (off-screen rows aren't in the DOM when virtualized).
     scrollToUnread: false,
     // `frontierSequence` is `bigint | null` once resolved; it is `undefined`
@@ -2534,30 +2498,17 @@ export function StreamContent({
     }
   }, [dividerEventId, useVirtualized, visibleItems, listRef, disableAutoScroll, scrollContainerRef])
 
-  // "Open at the unread marker" (unreadOpenPosition: "marker"). One decision
-  // per stream open, made by resolveUnreadMarkerOpen once the window has
-  // loaded, the cold-load settle has revealed, and the read position is known.
-  // A layout effect so the scroll lands pre-paint in the reveal commit — the
-  // viewer's first painted frame is already at the marker, not a bottom flash.
-  // "latest" mode (the default) consumes the decision without scrolling, so
-  // existing behaviour is untouched.
+  // Atomic stream landing (INV-70): the ONE once-per-stream-open decision
+  // about where the viewport starts, resolved by resolveStreamLanding and
+  // executed by the single landing effect below. New landing behaviors add a
+  // StreamLanding variant to the resolver — never a second on-open scroll
+  // effect; that stacking is exactly how the restore/marker/settle landers
+  // used to fight each other.
   const preferencesCtx = usePreferencesOptional()
   const unreadOpenPosition = preferencesCtx?.preferences?.unreadOpenPosition ?? null
-  const unreadMarkerOpenRef = useRef<{ streamId: string; decided: boolean }>({ streamId, decided: false })
-  if (unreadMarkerOpenRef.current.streamId !== streamId) {
-    unreadMarkerOpenRef.current = { streamId, decided: false }
-  }
-
-  // Restore a persisted detached-reading anchor (see timeline-anchor-storage):
-  // a reader who detached from the tail and reloaded lands back on the row
-  // they were reading, at the offset they left it. One decision per stream
-  // open, resolved by resolveAnchorRestore. A successful restore also consumes
-  // the unread-marker-open decision below — the reader's own last position is
-  // the more specific landing — which works because this layout effect is
-  // declared first and both run in the same commit.
-  const anchorRestoreRef = useRef<{ streamId: string; decided: boolean }>({ streamId, decided: false })
-  if (anchorRestoreRef.current.streamId !== streamId) {
-    anchorRestoreRef.current = { streamId, decided: false }
+  const landingRef = useRef<{ streamId: string; decided: boolean }>({ streamId, decided: false })
+  if (landingRef.current.streamId !== streamId) {
+    landingRef.current = { streamId, decided: false }
     detachedHoldRef.current = null
   }
 
@@ -2578,15 +2529,21 @@ export function StreamContent({
     if (Math.abs(delta) > 1) el.scrollTop += delta
   }, [virtualScrollerEl, isFollowingTailRef, userInteractedAtRef])
   useLayoutEffect(() => {
-    if (!useVirtualized) return
     // Consumed decisions bail before touching storage or scanning the window:
     // `visibleItems` re-runs this effect on every timeline tick for the life
     // of the stream, and the localStorage read + linear index scan below are
     // not free at that cadence.
-    if (anchorRestoreRef.current.decided) return
-    const anchor = loadTimelineAnchor(streamId)
-    const decision = resolveAnchorRestore({
-      alreadyDecided: false,
+    if (landingRef.current.decided) return
+    const anchor = useVirtualized ? loadTimelineAnchor(streamId) : null
+    const landing = resolveStreamLanding({
+      // The per-stream deep-link latch, not the transient ?m= param — a
+      // stream entered via deep-link must never land elsewhere, even after
+      // ?m= clears.
+      hasDeepLink: skipInitialScroll,
+      isJumpMode,
+      userInteractedAt: userInteractedAtRef.current,
+      isLoading,
+      hasItems: visibleItems.length > 0,
       // The nav type is per-navigation, so at decision time it still describes
       // how THIS stream was entered even though the decision can resolve a few
       // renders after the switch (waiting out the load). One PUSH is not a
@@ -2596,54 +2553,62 @@ export function StreamContent({
       isPushNavigation:
         navigationType === "PUSH" &&
         (location.state as { panelPopsToClose?: boolean } | null)?.panelPopsToClose !== true,
-      isLoading,
-      isJumpMode,
-      hasDeepLink: skipInitialScroll,
-      userInteractedAt: userInteractedAtRef.current,
-      hasAnchor: anchor !== null,
-      hasItems: visibleItems.length > 0,
-      // The scan only matters once the wait gates have cleared; skip it while
-      // the window is still loading or unpopulated.
+      anchor,
       anchorInWindow:
         anchor !== null &&
         !isLoading &&
         visibleItems.length > 0 &&
         findTimelineTargetIndex(visibleItems, anchor.targetId) >= 0,
+      unreadOpenPosition,
+      readStateResolved: frontierSequence !== undefined,
+      dividerEventId,
     })
-    if (decision === "wait") return
-    anchorRestoreRef.current.decided = true
-    if (decision !== "restore" || !anchor) return
-    // Take over the cold-load settle: cancel its pin-to-bottom loop but keep
-    // the skeleton mask up, position on the anchor behind it, and reveal once
-    // the anchor has held its spot — so the first painted frame is already at
-    // the restored position instead of a tail flash followed by a jump.
-    // Reveal is guarded by decision identity: if the user switches streams
-    // before this restore's refine loop ends, its late notification must not
-    // strip the NEXT stream's settle mask mid-measurement.
+    if (landing === "wait") return
+    landingRef.current.decided = true
+    // "tail" is the cold-load settle's own landing (it is already pinning
+    // there behind the mask); deep-link and user-owned positions belong to
+    // their machinery. Nothing to execute for any of them.
+    if (landing.kind === "deep-link" || landing.kind === "owned" || landing.kind === "tail") return
+    // The plain thread scroller renders every row and has no settle mask —
+    // a marker landing scrolls directly (restore never resolves for threads:
+    // anchors are only ever captured on the virtualized path).
+    if (!useVirtualized) {
+      if (landing.kind === "marker" && !scrollToMessage(landing.dividerEventId, { align: "start" })) {
+        scrollToFirstUnread()
+      }
+      return
+    }
+    // Positional landing: take over the cold-load settle. Cancel its
+    // pin-to-bottom loop but keep the skeleton mask up, position behind it,
+    // and reveal once the target has held its spot — the first painted frame
+    // is already at the landing, never a tail flash followed by a jump.
+    // Reveal is guarded by decision identity: a stream switch before the
+    // refine loop ends must not strip the NEXT stream's settle mask.
     holdSettleForRestore()
-    const decidedFor = anchorRestoreRef.current
+    const decidedFor = landingRef.current
     const revealIfCurrent = () => {
-      if (anchorRestoreRef.current !== decidedFor) return
+      if (landingRef.current !== decidedFor) return
       revealSettle()
       // If the refine loop timed out without landing (contended device), the
-      // guard's target is still the anchor — pull once more the next frame,
+      // guard still targets the landing — pull once more the next frame,
       // after the loop has released the scroller.
       requestAnimationFrame(applyDetachedHold)
     }
     // Seed the detached-viewport guard immediately: content resizes between
-    // engage and the refine loop's first settle (virtua measuring the anchor
-    // region) must already re-target the anchor, not slide the viewport.
-    detachedHoldRef.current = { id: anchor.targetId, offsetPx: anchor.offsetPx, takenAt: performance.now() }
-    if (
-      scrollToMessage(anchor.targetId, {
-        align: "start",
-        topOffsetPx: anchor.offsetPx,
-        onFirstSettle: revealIfCurrent,
-      })
-    ) {
-      unreadMarkerOpenRef.current.decided = true
-    } else {
+    // engage and the refine loop's first settle must re-target the landing,
+    // not slide the viewport.
+    const target =
+      landing.kind === "restore"
+        ? { id: landing.targetId, offsetPx: landing.offsetPx }
+        : { id: landing.dividerEventId, offsetPx: UNREAD_MARKER_TOP_GAP_PX }
+    detachedHoldRef.current = { ...target, takenAt: performance.now() }
+    const engaged =
+      landing.kind === "restore"
+        ? scrollToMessage(target.id, { align: "start", topOffsetPx: target.offsetPx, onFirstSettle: revealIfCurrent })
+        : scrollToMessage(target.id, { align: "start", onFirstSettle: revealIfCurrent })
+    if (!engaged) {
       revealIfCurrent()
+      if (landing.kind === "marker") scrollToFirstUnread()
     }
   }, [
     useVirtualized,
@@ -2654,9 +2619,14 @@ export function StreamContent({
     isJumpMode,
     skipInitialScroll,
     visibleItems,
+    unreadOpenPosition,
+    frontierSequence,
+    dividerEventId,
     scrollToMessage,
+    scrollToFirstUnread,
     holdSettleForRestore,
     revealSettle,
+    applyDetachedHold,
   ])
 
   // Persist the detached reading position for the restore above. While
@@ -2751,76 +2721,6 @@ export function StreamContent({
     // virtualScrollerEl: the content node remounts with the keyed scroller —
     // re-observe the fresh element after a stream switch.
   }, [useVirtualized, virtualContentRef, virtualScrollerEl, applyDetachedHold])
-
-  useLayoutEffect(() => {
-    const decision = resolveUnreadMarkerOpen({
-      unreadOpenPosition,
-      alreadyDecided: unreadMarkerOpenRef.current.decided,
-      isLoading,
-      hasItems: visibleItems.length > 0,
-      readStateResolved: frontierSequence !== undefined,
-      isJumpMode,
-      // The per-stream deep-link latch, not the transient ?m= param — a stream
-      // entered via deep-link must never marker-scroll, even after ?m= clears.
-      hasDeepLink: skipInitialScroll,
-      userInteractedAt: userInteractedAtRef.current,
-      dividerEventId,
-    })
-    if (decision === "wait") return
-    unreadMarkerOpenRef.current.decided = true
-    if (decision !== "scroll") return
-    // Prefer scrollToMessage: its refine loop converges over rows virtua hasn't
-    // measured yet (a one-shot scrollToIndex on a fresh window lands pages off
-    // target), and it targets the divider row by event id so non-message rows
-    // (session cards, retitles) get the same treatment. Top-aligned so a first
-    // unread message taller than the viewport reads from its start. Falls back
-    // to the one-shot path only for the plain thread scroller, where all rows
-    // are real DOM already.
-    if (useVirtualized && dividerEventId) {
-      // Take over the cold-load settle exactly like the anchor restore:
-      // position on the divider behind the mask and reveal once it has held,
-      // so the first painted frame is at the marker — not a tail flash
-      // followed by a visible jump up (the "flicker on every unread stream"
-      // report; the old restore used to eat this decision on most opens,
-      // which is why the jump only became prominent once PUSH switches
-      // stopped restoring).
-      holdSettleForRestore()
-      const decidedFor = unreadMarkerOpenRef.current
-      const revealIfCurrent = () => {
-        if (unreadMarkerOpenRef.current !== decidedFor) return
-        revealSettle()
-        // Timed-out-without-landing fallback: the guard still targets the
-        // divider — pull once more after the loop releases the scroller.
-        requestAnimationFrame(applyDetachedHold)
-      }
-      detachedHoldRef.current = {
-        id: dividerEventId,
-        offsetPx: UNREAD_MARKER_TOP_GAP_PX,
-        takenAt: performance.now(),
-      }
-      if (!scrollToMessage(dividerEventId, { align: "start", onFirstSettle: revealIfCurrent })) {
-        revealIfCurrent()
-        scrollToFirstUnread()
-      }
-    } else if (!dividerEventId || !scrollToMessage(dividerEventId, { align: "start" })) {
-      scrollToFirstUnread()
-    }
-  }, [
-    unreadOpenPosition,
-    streamId,
-    isLoading,
-    useVirtualized,
-    visibleItems,
-    frontierSequence,
-    isJumpMode,
-    skipInitialScroll,
-    dividerEventId,
-    scrollToMessage,
-    scrollToFirstUnread,
-    holdSettleForRestore,
-    revealSettle,
-    applyDetachedHold,
-  ])
 
   const editLastMessageCtxWithScroll = useMemo(
     () => ({ ...editLastMessageCtx, scrollToMessage }),
