@@ -595,7 +595,6 @@ describe("resolveAnchorRestore", () => {
     alreadyDecided: false,
     isPushNavigation: false,
     isLoading: false,
-    isSettling: false,
     isJumpMode: false,
     hasDeepLink: false,
     userInteractedAt: 0,
@@ -603,7 +602,7 @@ describe("resolveAnchorRestore", () => {
     anchorInWindow: true,
   }
 
-  it("restores once loading and the cold-load settle have resolved with the anchor in the window", () => {
+  it("restores as soon as the window is loaded with the anchor in it — it does NOT wait out the cold-load settle, so it can take the settle over behind the mask", () => {
     expect(resolveAnchorRestore(base)).toBe("restore")
   })
 
@@ -613,9 +612,8 @@ describe("resolveAnchorRestore", () => {
     expect(resolveAnchorRestore({ ...base, isPushNavigation: true, isLoading: true })).toBe("skip")
   })
 
-  it("waits (without consuming the decision) while the window loads or the settle masks", () => {
+  it("waits (without consuming the decision) while the window loads", () => {
     expect(resolveAnchorRestore({ ...base, isLoading: true })).toBe("wait")
-    expect(resolveAnchorRestore({ ...base, isSettling: true })).toBe("wait")
   })
 
   it("skips with no persisted anchor — the tail open is untouched", () => {
