@@ -54,7 +54,10 @@ function iconForType(type: UploadGalleryType | null): typeof FileIcon {
 /**
  * Wraps a chip as a drag source for the editor's own sensor. A tray drag always
  * inserts a reference, so the chip stays put and the same file can be dropped
- * into the message any number of times.
+ * into the message any number of times. EVERY chip drags — uploading and failed
+ * included: a reference is a binding to the id, not to finished bytes (the same
+ * send-while-uploading model the message itself uses), and a chip whose gestures
+ * die with its upload state hands the flick to the page instead of the tray.
  *
  * `touch-action: pan-y` gives the browser the tray's own scroll axis (the tray
  * wraps and scrolls vertically on every breakpoint); the drag itself activates
@@ -73,7 +76,7 @@ function TrayPillDraggable({
   children: ReactNode
 }) {
   const inputMode = useInputMode()
-  const draggable = host !== null && attachment.status === "uploaded"
+  const draggable = host !== null
   const begin = (event: MouseEvent | TouchEvent, target: EventTarget) => {
     // Every press on a chip owns the click it produces, draggable or not.
     host?.clearActivationClickSuppression()
@@ -84,6 +87,10 @@ function TrayPillDraggable({
       {
         kind: "tray",
         attachmentId: attachment.id,
+        // Marker semantics: the doc pill is a reference, not a transfer gauge —
+        // live status stays on the chip row. A reference dragged in while the
+        // reservation is still in flight carries the temp id; the editor flips
+        // it to the real id when the tray learns it.
         attrs: {
           id: attachment.id,
           filename: attachment.filename,
@@ -108,7 +115,7 @@ function TrayPillDraggable({
   return (
     <span
       className={cn("inline-flex shrink-0", draggable && "cursor-grab")}
-      style={draggable ? { touchAction: "pan-y" } : undefined}
+      style={{ touchAction: "pan-y" }}
       onMouseDown={(event) => begin(event.nativeEvent, event.target)}
       onTouchStart={(event) => begin(event.nativeEvent, event.target)}
       onMouseEnter={hoverHighlights ? () => host?.highlightAttachment(attachment.id) : undefined}

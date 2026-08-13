@@ -88,6 +88,31 @@ describe("tray pill drag", () => {
     ])
   })
 
+  it("drags uploading and failed chips too — a reference binds the id, not finished bytes", () => {
+    const editor = createEditor()
+    vi.spyOn(editor.view, "posAtCoords").mockReturnValue({ pos: 1, inside: -1 })
+    renderTray(editor, [
+      attachment({ id: "att_up", filename: "up.png", status: "uploading", progress: 0.4, previewUrl: "blob:up" }),
+      attachment({
+        id: "att_dead",
+        filename: "dead.txt",
+        mimeType: "text/plain",
+        status: "error",
+        error: "Network error during upload",
+        previewUrl: undefined,
+      }),
+    ])
+
+    dragChipIntoEditor(screen.getByText("up.png"))
+    dragChipIntoEditor(screen.getByText("dead.txt"))
+
+    const ids = (editor.getJSON() as JSONContent).content?.[0]?.content
+      ?.filter((node) => node.type === "attachmentReference")
+      .map((node) => node.attrs?.id)
+    // Both drops land at the mocked pos 1, so the later drop sits first.
+    expect(ids).toEqual(["att_dead", "att_up"])
+  })
+
   it("never deletes from the document — a tray drag is an insert, not a move", () => {
     const editor = createEditor([
       { type: "text", text: "hello world" },
