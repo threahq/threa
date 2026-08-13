@@ -924,4 +924,45 @@ describe("useTimelineScroll — cold-load settle across a stream switch", () => 
       caf.mockRestore()
     }
   })
+
+  it("holdSettleForRestore stops the settle without revealing; revealSettle then drops the mask", () => {
+    // The anchor-restore handoff: the restore engages while the settle mask is
+    // still up, cancels the pin-to-bottom loop (which would fight the anchor
+    // scroll), keeps the mask, and reveals itself once positioned. A settle
+    // that kept ticking after the handoff would reveal at the TAIL — the
+    // tail-flash-then-jump bounce this exists to remove.
+    const rafCallbacks: FrameRequestCallback[] = []
+    const raf = vi.spyOn(window, "requestAnimationFrame").mockImplementation((cb) => {
+      rafCallbacks.push(cb)
+      return rafCallbacks.length
+    })
+    const caf = vi.spyOn(window, "cancelAnimationFrame").mockImplementation(() => {})
+    const runFrame = () => act(() => rafCallbacks.shift()?.(performance.now()))
+    try {
+      const harness = renderScrollHook(opts({ itemCount: 0, getFirstKey: () => null, resetKey: "stream_a" }))
+      const content = document.createElement("div")
+      harness.current.contentRef.current = content
+      const el = makeScrollerDiv({ scrollHeight: 1000, clientHeight: 800 })
+      act(() => harness.current.registerScroller(el))
+
+      harness.rerender(opts({ itemCount: 10, getFirstKey: () => "a1", resetKey: "stream_a" }))
+      expect(harness.current.isInitialSettling).toBe(true)
+
+      act(() => harness.current.holdSettleForRestore())
+
+      // Height is stable, so an un-cancelled settle would converge and reveal
+      // within SETTLE_STABLE_FRAMES ticks. The handed-off loop must not.
+      runFrame()
+      runFrame()
+      runFrame()
+      runFrame()
+      expect(harness.current.isInitialSettling).toBe(true)
+
+      act(() => harness.current.revealSettle())
+      expect(harness.current.isInitialSettling).toBe(false)
+    } finally {
+      raf.mockRestore()
+      caf.mockRestore()
+    }
+  })
 })

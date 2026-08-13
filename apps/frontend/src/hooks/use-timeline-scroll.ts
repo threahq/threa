@@ -124,6 +124,18 @@ interface UseTimelineScrollReturn {
    * mis-detected as a prepend.
    */
   resetShiftBaseline: () => void
+  /**
+   * Hand the cold-load settle over to an anchor restore: cancel the in-flight
+   * settle-to-bottom loop WITHOUT dropping the skeleton mask, so the caller can
+   * position the viewport off-screen and reveal at the restored spot via
+   * `revealSettle`. Without this the settle reveals at the tail first and the
+   * restore's scroll lands a frame later — a visible tail-flash-then-jump on
+   * every reload of a stream with a saved reading position. No-op when no
+   * settle is in flight.
+   */
+  holdSettleForRestore: () => void
+  /** Drop the cold-load settle mask. Idempotent; pairs with holdSettleForRestore. */
+  revealSettle: () => void
 }
 
 /**
@@ -334,6 +346,14 @@ export function useTimelineScroll({
   const resetShiftBaseline = useCallback(() => {
     prevFirstKeyRef.current = null
     prevCountRef.current = 0
+  }, [])
+
+  const holdSettleForRestore = useCallback(() => {
+    initialSettleCleanupRef.current?.(false)
+  }, [])
+
+  const revealSettle = useCallback(() => {
+    setIsInitialSettling(false)
   }, [])
 
   // Hidden cold-load settle: pin to the bottom every frame while virtua measures
@@ -796,5 +816,7 @@ export function useTimelineScroll({
     disableAutoScroll,
     handleScroll,
     resetShiftBaseline,
+    holdSettleForRestore,
+    revealSettle,
   }
 }

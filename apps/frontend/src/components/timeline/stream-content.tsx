@@ -240,6 +240,14 @@ export const DEEP_LINK_HOLD_MAX_MS = 600
 const UNREAD_MARKER_TOP_GAP_PX = 56
 
 /**
+ * Consecutive 60ms refine ticks the scrollToMessage target must hold its
+ * aligned position before `onFirstSettle` fires — long enough that virtua's
+ * measurement reflow has genuinely converged, short enough (~180ms) that the
+ * anchor restore's skeleton hold is imperceptible on top of the load itself.
+ */
+const SCROLL_SETTLE_STABLE_TICKS = 3
+
+/**
  * Whether the timeline should keep showing the skeleton while a deep-link
  * (?m=) target is fetched into the window. Holds only while there is real
  * cached content that would otherwise paint at the wrong anchor, and never
@@ -509,12 +517,18 @@ export function isChromeStripCollapsed(scrollerClientHeightPx: number, composerH
  * while replying), which the initial window covers; an anchor that has since
  * fallen out of the window is stale enough that the tail is the better
  * landing.
+ *
+ * Deliberately does NOT wait for the cold-load settle: the restore engages the
+ * moment the window is loaded, while the settle mask is still up, and takes
+ * the settle over (holdSettleForRestore → scroll → revealSettle). Waiting for
+ * the settle to finish meant the mask dropped at the TAIL and the restore's
+ * scroll landed a frame later — a visible tail-flash-then-jump on every
+ * reload of a stream with a saved position.
  */
 export function resolveAnchorRestore(args: {
   alreadyDecided: boolean
   isPushNavigation: boolean
   isLoading: boolean
-  isSettling: boolean
   isJumpMode: boolean
   hasDeepLink: boolean
   userInteractedAt: number
@@ -526,7 +540,7 @@ export function resolveAnchorRestore(args: {
   if (args.hasDeepLink || args.isJumpMode) return "skip"
   if (args.userInteractedAt > 0) return "skip"
   if (!args.hasAnchor) return "skip"
-  if (args.isLoading || args.isSettling) return "wait"
+  if (args.isLoading) return "wait"
   if (!args.anchorInWindow) return "skip"
   return "restore"
 }
@@ -1551,6 +1565,8 @@ export function StreamContent({
     isFollowingTailRef,
     handleScroll: handleVirtualScroll,
     resetShiftBaseline,
+    holdSettleForRestore,
+    revealSettle,
   } = useTimelineScroll({
     itemCount: useVirtualized ? visibleItems.length : 0,
     getFirstKey: () => (useVirtualized && visibleItems.length > 0 ? getTimelineItemKey(visibleItems[0]) : null),
@@ -1720,8 +1736,27 @@ export function StreamContent({
   // exactly the "I scroll up to read context, then get yanked back to the
   // linked message" deep-link bug.
   const scrollToMessage = useCallback(
-    (targetId: string, opts?: { align?: "center" | "start"; topOffsetPx?: number }) => {
+    (
+      targetId: string,
+      opts?: {
+        align?: "center" | "start"
+        topOffsetPx?: number
+        /** Fires exactly once, the first time the target has held its aligned
+         *  position for a few ticks — or the loop ends without ever landing
+         *  (user abort, timeout, superseded). The anchor restore holds the
+         *  cold-load skeleton up until this, so the first revealed frame is
+         *  already at the restored position instead of a tail flash. */
+        onFirstSettle?: () => void
+      }
+    ) => {
       const align = opts?.align ?? "center"
+      let settleNotified = false
+      let stableTicks = 0
+      const notifySettled = () => {
+        if (settleNotified) return
+        settleNotified = true
+        opts?.onFirstSettle?.()
+      }
       // For "start": px between the viewport top and the target's top. The
       // unread-marker default leaves a small context gap; an anchor restore
       // passes the exact (possibly negative) offset the reader detached at.
@@ -1761,6 +1796,7 @@ export function StreamContent({
       let aborted = false
       const abort = () => {
         aborted = true
+        notifySettled()
         if (scrollRetryTimerRef.current !== null) {
           window.clearTimeout(scrollRetryTimerRef.current)
           scrollRetryTimerRef.current = null
@@ -1813,8 +1849,14 @@ export function StreamContent({
           const delta = align === "start" ? er.top - desiredTop : (er.top + er.bottom) / 2 - scCenter
           if (Math.abs(delta) > 2) {
             scroller.scrollTop += delta
+            stableTicks = 0
+          } else if (++stableTicks >= SCROLL_SETTLE_STABLE_TICKS) {
+            // Landed and holding — the loop keeps watching for late reflows
+            // (link previews), but the position is presentable now.
+            notifySettled()
           }
         } else {
+          stableTicks = 0
           // Target is virtualized out — ask Virtuoso to render it (0-based
           // index). Re-resolve against the live timeline every tick: the
           // window can shift under this loop, and a stale/out-of-range index
@@ -2465,12 +2507,11 @@ export function StreamContent({
     // not free at that cadence.
     if (anchorRestoreRef.current.decided) return
     const anchor = loadTimelineAnchor(streamId)
-    const settled = !isLoading && !virtualIsInitialSettling
     const decision = resolveAnchorRestore({
       alreadyDecided: false,
       // The nav type is per-navigation, so at decision time it still describes
       // how THIS stream was entered even though the decision can resolve a few
-      // renders after the switch (waiting out load/settle). One PUSH is not a
+      // renders after the switch (waiting out the load). One PUSH is not a
       // stream choice: ExactRestore's second `?panel=` hop (routes/index.tsx)
       // pushes so the Android back gesture can close the restored panel — its
       // `panelPopsToClose` state marks the cold relaunch, which restore is for.
@@ -2478,20 +2519,39 @@ export function StreamContent({
         navigationType === "PUSH" &&
         (location.state as { panelPopsToClose?: boolean } | null)?.panelPopsToClose !== true,
       isLoading,
-      isSettling: virtualIsInitialSettling,
       isJumpMode,
       hasDeepLink: skipInitialScroll,
       userInteractedAt: userInteractedAtRef.current,
       hasAnchor: anchor !== null,
-      // The scan only matters once the wait gates have cleared; skip it while
-      // the window is still loading or masked.
-      anchorInWindow: anchor !== null && settled && findTimelineTargetIndex(visibleItems, anchor.targetId) >= 0,
+      // The scan only matters once the wait gate has cleared; skip it while
+      // the window is still loading.
+      anchorInWindow: anchor !== null && !isLoading && findTimelineTargetIndex(visibleItems, anchor.targetId) >= 0,
     })
     if (decision === "wait") return
     anchorRestoreRef.current.decided = true
     if (decision !== "restore" || !anchor) return
-    if (scrollToMessage(anchor.targetId, { align: "start", topOffsetPx: anchor.offsetPx })) {
+    // Take over the cold-load settle: cancel its pin-to-bottom loop but keep
+    // the skeleton mask up, position on the anchor behind it, and reveal once
+    // the anchor has held its spot — so the first painted frame is already at
+    // the restored position instead of a tail flash followed by a jump.
+    // Reveal is guarded by decision identity: if the user switches streams
+    // before this restore's refine loop ends, its late notification must not
+    // strip the NEXT stream's settle mask mid-measurement.
+    holdSettleForRestore()
+    const decidedFor = anchorRestoreRef.current
+    const revealIfCurrent = () => {
+      if (anchorRestoreRef.current === decidedFor) revealSettle()
+    }
+    if (
+      scrollToMessage(anchor.targetId, {
+        align: "start",
+        topOffsetPx: anchor.offsetPx,
+        onFirstSettle: revealIfCurrent,
+      })
+    ) {
       unreadMarkerOpenRef.current.decided = true
+    } else {
+      revealIfCurrent()
     }
   }, [
     useVirtualized,
@@ -2499,11 +2559,12 @@ export function StreamContent({
     navigationType,
     location.state,
     isLoading,
-    virtualIsInitialSettling,
     isJumpMode,
     skipInitialScroll,
     visibleItems,
     scrollToMessage,
+    holdSettleForRestore,
+    revealSettle,
   ])
 
   // Persist the detached reading position for the restore above. While
