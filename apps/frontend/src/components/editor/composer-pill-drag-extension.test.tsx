@@ -205,6 +205,63 @@ describe("composer pill moves", () => {
     expect(editor.getJSON().content?.[0]?.content).toEqual([{ type: "text", text: "hello " }, pill("mention")])
   })
 
+  it("takes the separator along when a padded pill moves away, never doubling a gap", () => {
+    const editor = createPillEditor([
+      pill("mention"),
+      { type: "text", text: " " },
+      pill("channelLink"),
+      { type: "text", text: " " },
+      pill("slashCommand"),
+    ])
+    const tr = createComposerPillMoveTransaction(editor.state, nodePos(editor, "channelLink"), 1)
+    editor.view.dispatch(tr!)
+
+    expect(editor.getJSON().content?.[0]?.content).toEqual([
+      pill("channelLink"),
+      { type: "text", text: " " },
+      pill("mention"),
+      { type: "text", text: " " },
+      pill("slashCommand"),
+    ])
+  })
+
+  it("deletes a padded pill's separator with it under Backspace", () => {
+    const editor = createPillEditor([pill("mention"), { type: "text", text: " " }, pill("channelLink")])
+    editor.commands.setNodeSelection(nodePos(editor, "channelLink"))
+
+    fireEvent.keyDown(editor.view.dom, { key: "Backspace" })
+
+    expect(editor.getJSON().content?.[0]?.content).toEqual([pill("mention")])
+  })
+
+  it("keeps a single separator when a pill between two padded neighbors is deleted", () => {
+    const editor = createPillEditor([
+      pill("mention"),
+      { type: "text", text: " " },
+      pill("channelLink"),
+      { type: "text", text: " " },
+      pill("slashCommand"),
+    ])
+    editor.commands.setNodeSelection(nodePos(editor, "channelLink"))
+
+    fireEvent.keyDown(editor.view.dom, { key: "Delete" })
+
+    expect(editor.getJSON().content?.[0]?.content).toEqual([
+      pill("mention"),
+      { type: "text", text: " " },
+      pill("slashCommand"),
+    ])
+  })
+
+  it("leaves user-typed spacing alone when a pill beside it is deleted", () => {
+    const editor = createPillEditor([pill("mention"), { type: "text", text: " hi " }, pill("channelLink")])
+    editor.commands.setNodeSelection(nodePos(editor, "channelLink"))
+
+    fireEvent.keyDown(editor.view.dom, { key: "Backspace" })
+
+    expect(editor.getJSON().content?.[0]?.content).toEqual([pill("mention"), { type: "text", text: " hi " }])
+  })
+
   it("keeps a pill node-selected under typing: the text lands after it instead of replacing it", () => {
     const editor = createPillEditor()
     const mentionPos = nodePos(editor, "mention")

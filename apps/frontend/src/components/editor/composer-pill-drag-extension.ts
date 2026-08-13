@@ -148,6 +148,29 @@ function paddedPillInsert(
   return { fragment: Fragment.from(parts), caretOffset }
 }
 
+/**
+ * The separator a pill earned via {@link paddedPillInsert} leaves with the
+ * pill: deleting or moving one away must not orphan its space into a double
+ * gap or a dangling edge. A separator is recognizable as a lone " " text node
+ * — the moment a user types beside one it merges into their text and becomes
+ * theirs, so merged spacing is never touched.
+ */
+function composerPillDeleteRange(
+  doc: ProseMirrorNode,
+  pos: number,
+  node: ProseMirrorNode
+): { from: number; to: number } {
+  const $pos = doc.resolve(pos)
+  const $end = doc.resolve(pos + node.nodeSize)
+  const isSeparator = (candidate: ProseMirrorNode | null) => candidate?.isText === true && candidate.text === " "
+  const spaceBefore = isSeparator($pos.nodeBefore)
+  const spaceAfter = isSeparator($end.nodeAfter)
+  if (spaceBefore && spaceAfter) return { from: pos, to: pos + node.nodeSize + 1 }
+  if (spaceBefore && $end.nodeAfter === null) return { from: pos - 1, to: pos + node.nodeSize }
+  if (spaceAfter && $pos.nodeBefore === null) return { from: pos, to: pos + node.nodeSize + 1 }
+  return { from: pos, to: pos + node.nodeSize }
+}
+
 export function createComposerPillMoveTransaction(
   state: EditorState,
   sourcePos: number,
@@ -159,8 +182,9 @@ export function createComposerPillMoveTransaction(
   const dropPos = composerPillDropPoint(state.doc, requestedDropPos, node)
   if (dropPos === null || dropPos === sourcePos || dropPos === sourcePos + node.nodeSize) return null
 
-  const insertPos = dropPos > sourcePos ? dropPos - node.nodeSize : dropPos
-  const tr = state.tr.delete(sourcePos, sourcePos + node.nodeSize)
+  const deletion = composerPillDeleteRange(state.doc, sourcePos, node)
+  const tr = state.tr.delete(deletion.from, deletion.to)
+  const insertPos = tr.mapping.map(dropPos)
   const $insert = tr.doc.resolve(insertPos)
   if (
     !$insert.parent.inlineContent ||
@@ -399,6 +423,16 @@ export const ComposerPillDragExtension = Extension.create({
             if (!(selection instanceof NodeSelection) || !isComposerPillNode(selection.node)) return false
             const tr = view.state.tr.insertText(text, selection.to, selection.to)
             tr.setSelection(TextSelection.create(tr.doc, selection.to + text.length))
+            view.dispatch(tr)
+            return true
+          },
+          handleKeyDown(view, event) {
+            if (event.key !== "Backspace" && event.key !== "Delete") return false
+            const { selection } = view.state
+            if (!(selection instanceof NodeSelection) || !isComposerPillNode(selection.node)) return false
+            const { from, to } = composerPillDeleteRange(view.state.doc, selection.from, selection.node)
+            const tr = view.state.tr.delete(from, to)
+            tr.setSelection(Selection.near(tr.doc.resolve(from), -1))
             view.dispatch(tr)
             return true
           },
