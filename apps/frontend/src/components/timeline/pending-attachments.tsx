@@ -459,9 +459,11 @@ interface PendingAttachmentsProps {
  * in-memory E2E decrypt). Non-previewable files keep a plain type-icon chip.
  * Renders nothing when both lists are empty.
  *
- * On mobile a one-line rollup sits above the chips — count, failure tally,
- * bulk retry — and opens {@link AttachmentListDrawer} for the full list; the
- * chips wrap to a capped couple of rows and can be folded away entirely.
+ * A one-line rollup sits above the chips on every breakpoint — count, failure
+ * tally, bulk retry, fold chevron. On mobile the chips wrap to a capped couple
+ * of rows and the rollup opens {@link AttachmentListDrawer} for the full list;
+ * desktop's taller wrapped tray is its own full list, so the summary there is
+ * plain text.
  */
 export function PendingAttachments({
   attachments,
@@ -543,11 +545,24 @@ export function PendingAttachments({
   // Resting folds everything (context-ref pills included — same rule as the
   // composer's link previews); the manual fold only exists while the rollup
   // renders, so it scopes to having attachments.
-  const foldChips = isMobile && (resting || (collapsed && attachments.length > 0))
+  const foldChips = (isMobile && resting) || (collapsed && attachments.length > 0)
+
+  const rollupSummary = (
+    <>
+      <span className="truncate">
+        {attachments.length} {attachments.length === 1 ? "file" : "files"}
+        {uploadingCount > 0 && ` · ${uploadingCount} uploading`}
+      </span>
+      {failedCount > 0 && <span className="font-medium text-destructive">· {failedCount} failed</span>}
+    </>
+  )
 
   return (
     <>
-      {isMobile && attachments.length > 0 && (
+      {attachments.length > 0 && (
+        // The rollup renders on every breakpoint — the counts, bulk retry and
+        // fold ARE the overview; only the drawer behind the mobile tap is a
+        // phone affordance (desktop's wrapped tray is its own full list).
         // preventDefault keeps editor focus (and the keyboard) through taps on
         // this line's buttons — same guard as the composer's action bar. Safe
         // as a blanket here: every child is our own button, nothing portaled.
@@ -555,19 +570,19 @@ export function PendingAttachments({
           className="mb-1.5 flex h-6 items-center gap-3 text-xs text-muted-foreground"
           onMouseDown={(event) => event.preventDefault()}
         >
-          <button
-            type="button"
-            className="flex min-w-0 items-center gap-1"
-            onClick={() => setDrawerOpen(true)}
-            aria-label="Show all attachments"
-          >
-            <span className="truncate">
-              {attachments.length} {attachments.length === 1 ? "file" : "files"}
-              {uploadingCount > 0 && ` · ${uploadingCount} uploading`}
-            </span>
-            {failedCount > 0 && <span className="font-medium text-destructive">· {failedCount} failed</span>}
-            <ChevronRight className="h-3.5 w-3.5 shrink-0" />
-          </button>
+          {isMobile ? (
+            <button
+              type="button"
+              className="flex min-w-0 items-center gap-1"
+              onClick={() => setDrawerOpen(true)}
+              aria-label="Show all attachments"
+            >
+              {rollupSummary}
+              <ChevronRight className="h-3.5 w-3.5 shrink-0" />
+            </button>
+          ) : (
+            <span className="flex min-w-0 items-center gap-1">{rollupSummary}</span>
+          )}
           {retryableIds.length > 0 && (
             <button
               type="button"

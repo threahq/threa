@@ -166,9 +166,12 @@ describe("tray pill drag", () => {
     expect(screen.queryByLabelText("2 references in this message")).toBeNull()
   })
 
-  it("wraps the tray on both breakpoints, with the tighter height cap and the rollup line on mobile", () => {
+  it("wraps the tray on both breakpoints, with the tighter height cap and the drawer tap on mobile", () => {
     const desktop = render(<PendingAttachments attachments={[attachment()]} onRemove={vi.fn()} workspaceId="ws_1" />)
-    expect(desktop.container.querySelector("div")).toHaveClass("flex-wrap", "max-h-[120px]")
+    expect(desktop.container.querySelector(".flex-wrap")).toHaveClass("max-h-[120px]")
+    // Desktop gets the same rollup summary, but as plain text — the wrapped
+    // tray is its own full list, so there is no drawer behind a tap.
+    expect(screen.getByText(/1 file/)).toBeInTheDocument()
     expect(screen.queryByRole("button", { name: "Show all attachments" })).toBeNull()
     desktop.unmount()
 
@@ -262,8 +265,7 @@ describe("referenced chip leading slot", () => {
       />
     )
 
-    const leading = container.querySelector("svg")!
-    expect(leading).toHaveClass("lucide-circle-alert")
+    expect(container.querySelector(".lucide-circle-alert")).toBeTruthy()
     expect(container.querySelector(".lucide-anchor")).toBeNull()
   })
 
@@ -284,7 +286,7 @@ describe("referenced chip leading slot", () => {
       />
     )
 
-    expect(container.querySelector("svg")).toHaveClass("lucide-loader-circle")
+    expect(container.querySelector(".lucide-loader-circle")).toBeTruthy()
     expect(container.querySelector(".lucide-anchor")).toBeNull()
   })
 

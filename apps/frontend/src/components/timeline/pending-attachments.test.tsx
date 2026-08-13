@@ -202,6 +202,49 @@ describe("PendingAttachments", () => {
   })
 })
 
+const files = [
+  attachment({ id: "attach_ok", filename: "ok.png", previewUrl: "blob:ok" }),
+  attachment({ id: "attach_up", filename: "up.png", status: "uploading", progress: 0.4, previewUrl: "blob:up" }),
+  attachment({
+    id: "attach_net",
+    filename: "net.txt",
+    mimeType: "text/plain",
+    status: "error",
+    error: "Network error during upload",
+    canRetry: true,
+    previewUrl: undefined,
+  }),
+  attachment({
+    id: "attach_dead",
+    filename: "dead.txt",
+    mimeType: "text/plain",
+    status: "error",
+    error: "size mismatch",
+    canRetry: false,
+    previewUrl: undefined,
+  }),
+]
+
+describe("desktop rollup", () => {
+  it("shows the same summary, bulk retry, and fold — without the drawer tap", () => {
+    const retrySpy = vi.spyOn(uploadManager, "retryUpload").mockResolvedValue(undefined)
+    render(<PendingAttachments attachments={files} onRemove={vi.fn()} workspaceId="ws_1" />)
+
+    expect(screen.getByText(/4 files/)).toBeInTheDocument()
+    expect(screen.getByText(/2 failed/)).toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: "Show all attachments" })).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole("button", { name: "Retry 1" }))
+    expect(retrySpy.mock.calls.map((call) => call[0])).toEqual(["attach_net"])
+
+    fireEvent.click(screen.getByRole("button", { name: "Hide attachment chips" }))
+    expect(screen.queryByText("ok.png")).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole("button", { name: "Show attachment chips" }))
+    expect(screen.getByText("ok.png")).toBeInTheDocument()
+    retrySpy.mockRestore()
+  })
+})
+
 describe("mobile rollup and drawer", () => {
   beforeEach(() => {
     vi.spyOn(useMobileModule, "useIsMobile").mockReturnValue(true)
@@ -210,29 +253,6 @@ describe("mobile rollup and drawer", () => {
   afterEach(() => {
     vi.restoreAllMocks()
   })
-
-  const files = [
-    attachment({ id: "attach_ok", filename: "ok.png", previewUrl: "blob:ok" }),
-    attachment({ id: "attach_up", filename: "up.png", status: "uploading", progress: 0.4, previewUrl: "blob:up" }),
-    attachment({
-      id: "attach_net",
-      filename: "net.txt",
-      mimeType: "text/plain",
-      status: "error",
-      error: "Network error during upload",
-      canRetry: true,
-      previewUrl: undefined,
-    }),
-    attachment({
-      id: "attach_dead",
-      filename: "dead.txt",
-      mimeType: "text/plain",
-      status: "error",
-      error: "size mismatch",
-      canRetry: false,
-      previewUrl: undefined,
-    }),
-  ]
 
   it("summarizes the tray in one line and bulk-retries only the retryable failures", () => {
     const retrySpy = vi.spyOn(uploadManager, "retryUpload").mockResolvedValue(undefined)
