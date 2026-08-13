@@ -16,6 +16,15 @@ const DEAD_BAND_DOCK_SETTLE_MS = 200
 /** Consecutive frames of unchanged scrollHeight that mark the cold-load settle
  *  as converged, so the content can be revealed without a visible bounce. */
 const SETTLE_STABLE_FRAMES = 3
+/** Finger travel (px) from the last recorded anchor before a touchmove records
+ *  a gesture direction. The final touchmove before lift-off commonly reverses
+ *  2–3px as the finger peels off the glass; recording that flipped a long
+ *  downward drag to "up", suppressing the dead-band dock and detaching follow.
+ *  Sub-threshold moves keep the anchor, so a slow consistent drag accumulates
+ *  past it while jitter oscillates around it and never flips. */
+const TOUCH_DIRECTION_HYSTERESIS_PX = 8
+/** Cap on the dead-band dock's trigger band, as a fraction of the viewport. */
+const DOCK_BAND_MAX_VIEWPORT_FRACTION = 0.25
 
 /**
  * Height (px) of the floating composer, published as `--composer-height` on the
@@ -28,6 +37,19 @@ function readComposerHeight(el: HTMLElement): number {
   const raw = getComputedStyle(el).getPropertyValue("--composer-height")
   const px = Number.parseFloat(raw)
   return Number.isFinite(px) ? px : 0
+}
+
+/**
+ * The dead-band dock's trigger band. The composer hides exactly
+ * `--composer-height` px of scroll range, but on mobile (keyboard open) the
+ * composer can dwarf the visible strip — treating ALL of it as "undershot the
+ * bottom" docked deliberate reading positions. A downward release more than a
+ * quarter of the viewport above the tail is a chosen position, not an
+ * undershoot; desktop composers are far under the cap, so nothing changes
+ * there.
+ */
+function dockBandPx(el: HTMLElement): number {
+  return Math.min(readComposerHeight(el), el.clientHeight * DOCK_BAND_MAX_VIEWPORT_FRACTION)
 }
 
 interface UseTimelineScrollOptions {
@@ -200,15 +222,26 @@ export function useTimelineScroll({
   const initialSettleCleanupRef = useRef<((reveal?: boolean) => void) | null>(null)
 
   // Direction of the last GESTURE-DRIVEN scroll movement (null until one
-  // happens). Only gesture-fresh, height-stable deltas record here: momentum
-  // events after a flick carry no fresh gesture stamp but only ever continue
-  // the drag's direction, so the drag-phase value stays correct through them —
-  // while programmatic positioning (divider/deep-link scrolls, our pins, the
-  // observer's viewport shifts) and browser clamps never register. The
-  // dead-band dock below consults this so it only ever completes a gesture
-  // that was heading TOWARD the bottom; an upward nudge (peeking at context
-  // while typing) is a position the user chose, and docking it would undo
-  // what they just revealed at the top of the viewport.
+  // happens). Two writers, both immune to programmatic positioning (divider/
+  // deep-link scrolls, our pins, browser clamps):
+  //  - The input events themselves (wheel deltaY sign, touch finger delta, in
+  //    the gesture-stamp effect below). Unambiguous regardless of content
+  //    reflow — on mobile the content height is rarely stable mid-drag (virtua
+  //    measuring rows, the composer growing per keystroke), so scrollTop-delta
+  //    recording alone skipped those frames and a stale "down" made the
+  //    dead-band dock complete an upward gesture the user never made. A fresh
+  //    touchstart clears it: a tap must not inherit the previous gesture's
+  //    direction.
+  //  - Gesture-fresh, height-stable scrollTop deltas in handleScroll — the
+  //    only signal a desktop scrollbar drag emits.
+  // Momentum events after a flick carry no fresh gesture stamp but only ever
+  // continue the drag's direction, so the drag-phase value stays correct
+  // through them. The dead-band dock consults this so it only ever completes a
+  // gesture that was heading TOWARD the bottom; an upward nudge (peeking at
+  // context while typing) is a position the user chose, and docking it would
+  // undo what they just revealed at the top of the viewport. handleScroll also
+  // reads it to disarm follow on an upward drag whose scrollTop movement is
+  // masked by reflow.
   const lastGestureScrollDirRef = useRef<"up" | "down" | null>(null)
 
   // Reset all scroll state synchronously when the stream changes, before the
@@ -416,6 +449,13 @@ export function useTimelineScroll({
       if (el.scrollTop > prevTop + 1) lastGestureScrollDirRef.current = "down"
       else if (el.scrollTop < prevTop - 1) lastGestureScrollDirRef.current = "up"
     }
+    // The gesture's own direction (wheel deltaY / touch finger delta, recorded
+    // by the gesture-stamp effect) says the user is heading up while we sit
+    // above the true bottom. This is the signal that stays reliable on mobile:
+    // mid-drag the content height is rarely stable (virtua measuring rows, the
+    // composer growing per keystroke), so `scrolledUp` misses the movement and
+    // the re-pin used to win over the user's finger.
+    const gestureIntentUp = lastGestureScrollDirRef.current === "up" && userGestured && distanceFromBottom > 1
     // The composer footer spacer is dead space at the very bottom. During the
     // initial cold-load settle we keep the generous composer-height band so a
     // slightly-undershoot landing doesn't disarm follow before convergence; once
@@ -433,7 +473,7 @@ export function useTimelineScroll({
     // no scroller gesture, so they never count as a user scroll-up and follow
     // stays armed through a keyboard open. Content growth never lowers scrollTop,
     // and our own pins sync prevTop, so neither reads as scrolledUp.
-    const userScrolledUp = scrolledUp && userGestured
+    const userScrolledUp = (scrolledUp && userGestured) || gestureIntentUp
     if (atBottom && !userScrolledUp) {
       // Reaching the tail re-arms follow — except in jump mode, where the user
       // is anchored on a deep-linked message and a transient atBottom from
@@ -486,8 +526,12 @@ export function useTimelineScroll({
   //    composer expands/collapses. While following → pin.
   //  - viewport (scrollerRef): shrinks/grows as the mobile keyboard opens/closes
   //    (AppShell is sized to --viewport-height; see useVisualViewport). While
-  //    following → pin; while reading → shift scrollTop by the height delta so
-  //    the row under the user's eyes stays put as the visible area changes.
+  //    following → pin; while reading → hands-off. The scroller resizes at its
+  //    BOTTOM edge, so an untouched scrollTop keeps whatever the user
+  //    positioned at the top of the viewport exactly where it is; shifting by
+  //    the height delta instead anchored the bottom edge, which pushed the
+  //    message a replier had parked at the top up out of the viewport on every
+  //    composer/keyboard open.
   //
   // Every geometry change a user could care about routes through here, so there
   // is no separate media-load listener, composer-resize handler, or per-frame
@@ -498,7 +542,6 @@ export function useTimelineScroll({
     const content = contentRef.current
     if (!scroller || !content) return
 
-    let prevClientHeight = scroller.clientHeight
     let pendingRecheck = 0
     const clearPendingRecheck = () => {
       if (pendingRecheck) {
@@ -521,7 +564,6 @@ export function useTimelineScroll({
         const elapsedSinceGesture = performance.now() - (userInteractedAtRef?.current ?? 0)
         const userScrolling = elapsedSinceGesture < USER_SCROLL_GRACE_MS
         if (!hasViewportEntry && userScrolling) {
-          prevClientHeight = el.clientHeight
           // The resize itself is real — a message, session card, or the composer
           // genuinely changed size — we're only holding off because a scroller
           // gesture landed a moment ago. If that's the only resize this content
@@ -540,20 +582,18 @@ export function useTimelineScroll({
         }
         clearPendingRecheck()
         pinToBottom()
-        prevClientHeight = el.clientHeight
         return
       }
-      // Only a viewport (scroller) resize should move a read position; content
-      // entries leave clientHeight unchanged, so their delta is 0 (no-op).
-      if (!hasViewportEntry) return
-      const clientHeight = el.clientHeight
-      const delta = prevClientHeight - clientHeight
-      prevClientHeight = clientHeight
-      if (delta !== 0) {
-        el.scrollTop += delta
-        prevScrollTopRef.current = el.scrollTop
-        prevScrollHeightRef.current = el.scrollHeight
-      }
+      // Detached (reading): hands-off, for BOTH entry kinds. Content resizes
+      // leave clientHeight unchanged anyway; a viewport resize (keyboard or
+      // composer chrome opening/closing) shrinks or grows the scroller at its
+      // BOTTOM edge, so an untouched scrollTop keeps whatever the user
+      // positioned at the top of the viewport exactly where it is. Shifting
+      // scrollTop by the height delta instead anchored the bottom edge — the
+      // message a replier had parked at the top was pushed out of the viewport
+      // on every composer open. When the viewport grows past the content end
+      // the browser clamps scrollTop on its own; handleScroll never reads that
+      // clamp as a user scroll (it lands exactly at the new bottom).
     })
 
     observer.observe(scroller)
@@ -584,10 +624,20 @@ export function useTimelineScroll({
     }
   }, [resetKey, pinToBottom, scrollerEl])
 
-  // Genuine-input stamp on the owned scroller. wheel/touch/pointer/keydown are
-  // real user gestures; `scroll` is deliberately NOT listened to (our own
-  // programmatic pins fire it). handleScroll and the observer above read this
-  // stamp to tell a deliberate scroll-up from content growth.
+  // Genuine-input stamp + gesture direction on the owned scroller.
+  // wheel/touch/pointer/keydown are real user gestures; `scroll` is
+  // deliberately NOT listened to (our own programmatic pins fire it).
+  // handleScroll and the observer above read the stamp to tell a deliberate
+  // scroll-up from content growth.
+  //
+  // Direction comes from the input events themselves — wheel deltaY sign,
+  // touch finger delta — because they stay unambiguous when content reflow
+  // makes scrollTop deltas unreadable (see lastGestureScrollDirRef). A finger
+  // moving DOWN drags the content down, which scrolls the viewport UP. A fresh
+  // touchstart clears the direction so a tap never inherits the previous
+  // gesture's; `touches` is read defensively because a browser tap may deliver
+  // no touch points by the time the handler runs (and unit tests dispatch bare
+  // Events).
   //
   // Gated on the mounted scroller element for the same reason as the observer:
   // the scroller renders behind the loading skeleton, so an effect reading
@@ -603,15 +653,42 @@ export function useTimelineScroll({
     const mark = () => {
       userInteractedAtRef.current = performance.now()
     }
-    el.addEventListener("wheel", mark, { passive: true })
-    el.addEventListener("touchstart", mark, { passive: true })
-    el.addEventListener("touchmove", mark, { passive: true })
+    let lastTouchY: number | null = null
+    const onWheel = (e: WheelEvent) => {
+      mark()
+      if (e.deltaY > 0) lastGestureScrollDirRef.current = "down"
+      else if (e.deltaY < 0) lastGestureScrollDirRef.current = "up"
+    }
+    const onTouchStart = (e: TouchEvent) => {
+      mark()
+      lastTouchY = e.touches?.[0]?.clientY ?? null
+      lastGestureScrollDirRef.current = null
+    }
+    const onTouchMove = (e: TouchEvent) => {
+      mark()
+      const y = e.touches?.[0]?.clientY
+      if (y === undefined) return
+      if (lastTouchY === null) {
+        lastTouchY = y
+        return
+      }
+      // Hysteresis: only a move past the threshold records a direction and
+      // advances the anchor, so the tiny reversal of a finger peeling off the
+      // glass can't flip a long drag's direction at the last instant.
+      if (Math.abs(y - lastTouchY) > TOUCH_DIRECTION_HYSTERESIS_PX) {
+        lastGestureScrollDirRef.current = y > lastTouchY ? "up" : "down"
+        lastTouchY = y
+      }
+    }
+    el.addEventListener("wheel", onWheel, { passive: true })
+    el.addEventListener("touchstart", onTouchStart, { passive: true })
+    el.addEventListener("touchmove", onTouchMove, { passive: true })
     el.addEventListener("pointerdown", mark, { passive: true })
     el.addEventListener("keydown", mark)
     return () => {
-      el.removeEventListener("wheel", mark)
-      el.removeEventListener("touchstart", mark)
-      el.removeEventListener("touchmove", mark)
+      el.removeEventListener("wheel", onWheel)
+      el.removeEventListener("touchstart", onTouchStart)
+      el.removeEventListener("touchmove", onTouchMove)
       el.removeEventListener("pointerdown", mark)
       el.removeEventListener("keydown", mark)
     }
@@ -655,7 +732,7 @@ export function useTimelineScroll({
       if (lastGestureScrollDirRef.current !== "down") return
       const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight
       if (distanceFromBottom <= 1) return
-      if (distanceFromBottom > readComposerHeight(el) + AT_BOTTOM_PX) return
+      if (distanceFromBottom > dockBandPx(el) + AT_BOTTOM_PX) return
       scrollToBottom({ force: true, behavior: "smooth" })
     }
     const schedule = () => {
