@@ -965,4 +965,48 @@ describe("useTimelineScroll — cold-load settle across a stream switch", () => 
       caf.mockRestore()
     }
   })
+
+  it("a converged settle parks its reveal while the landing decision is pending; releaseDeferredReveal drops the mask", () => {
+    // The read-state hydration race (INV-70): the settle converges off pure
+    // DOM height in a few frames, but a marker landing may still be waiting
+    // on async inputs. Revealing at convergence painted the tail and let the
+    // divider jump happen in full view — so a pending landing parks the
+    // reveal, and the landing decision releases it.
+    const rafCallbacks: FrameRequestCallback[] = []
+    const raf = vi.spyOn(window, "requestAnimationFrame").mockImplementation((cb) => {
+      rafCallbacks.push(cb)
+      return rafCallbacks.length
+    })
+    const caf = vi.spyOn(window, "cancelAnimationFrame").mockImplementation(() => {})
+    const runFrame = () => act(() => rafCallbacks.shift()?.(performance.now()))
+    try {
+      const landingPendingRef = { current: true }
+      const harness = renderScrollHook(
+        opts({ itemCount: 0, getFirstKey: () => null, resetKey: "stream_a", landingPendingRef })
+      )
+      const content = document.createElement("div")
+      harness.current.contentRef.current = content
+      const el = makeScrollerDiv({ scrollHeight: 1000, clientHeight: 800 })
+      act(() => harness.current.registerScroller(el))
+
+      harness.rerender(opts({ itemCount: 10, getFirstKey: () => "a1", resetKey: "stream_a", landingPendingRef }))
+      expect(harness.current.isInitialSettling).toBe(true)
+
+      // Stable height → the settle converges within SETTLE_STABLE_FRAMES
+      // ticks — but the landing is pending, so the mask must stay up.
+      runFrame()
+      runFrame()
+      runFrame()
+      runFrame()
+      expect(harness.current.isInitialSettling).toBe(true)
+
+      // The landing decides "tail": release the parked reveal.
+      landingPendingRef.current = false
+      act(() => harness.current.releaseDeferredReveal())
+      expect(harness.current.isInitialSettling).toBe(false)
+    } finally {
+      raf.mockRestore()
+      caf.mockRestore()
+    }
+  })
 })
