@@ -78,11 +78,14 @@ describe("ReadCommitQueue", () => {
     expect(queue.lastCommitted("stream_a")).toBeNull()
   })
 
-  it("dispose flushes pending marks and refuses further reports", () => {
+  it("dispose flushes pending marks (a microtask later — it can run in render) and refuses further reports", async () => {
     queue.report("stream_a", "event_1", false)
     queue.dispose()
-    expect(commit).toHaveBeenCalledExactlyOnceWith("stream_a", "event_1", { partial: false })
     expect(queue.isDisposed).toBe(true)
+    // The commit is deferred out of the caller's (possibly render-phase) stack.
+    expect(commit).not.toHaveBeenCalled()
+    await Promise.resolve()
+    expect(commit).toHaveBeenCalledExactlyOnceWith("stream_a", "event_1", { partial: false })
 
     queue.report("stream_a", "event_2", false)
     vi.advanceTimersByTime(READ_COMMIT_DEBOUNCE_MS * 2)

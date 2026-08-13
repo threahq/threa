@@ -112,15 +112,25 @@ export class ReadCommitQueue {
     return this.disposed
   }
 
-  /** Flush everything, then stop: a disposed queue accepts no more reports.
-   *  Called on workspace switch and layout unmount — the commitRef still
-   *  points at the outgoing workspace's commit, so the flush lands where the
-   *  marks belong. The owner recreates on next render if it finds a disposed
-   *  queue in its ref (StrictMode's mount→cleanup→remount cycle). */
+  /** Detach immediately, commit what was pending a microtask later. Called on
+   *  workspace switch — which happens during the owner's RENDER (the
+   *  SyncEngine-style recreate check), where running the commit's cache writes
+   *  would be a render-phase side effect — and on layout unmount. The captured
+   *  marks still send through this queue's own commitRef, so a switch flushes
+   *  into the outgoing workspace. The owner recreates on the next render if it
+   *  finds a disposed queue in its ref (StrictMode's mount→cleanup→remount
+   *  cycle). */
   dispose(): void {
-    this.flushAll()
+    if (this.disposed) return
     this.disposed = true
     window.removeEventListener("pagehide", this.onPageHide)
+    const marks = [...this.pending.entries()]
+    this.pending.clear()
+    for (const [, mark] of marks) clearTimeout(mark.timer)
+    if (marks.length === 0) return
+    queueMicrotask(() => {
+      for (const [streamId, mark] of marks) this.send(streamId, mark)
+    })
   }
 
   private send(streamId: string, mark: ReadCommitMark): void {

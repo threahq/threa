@@ -255,6 +255,30 @@ describe("useAutoMarkAsRead", () => {
     expect(mockMarkAsRead).toHaveBeenCalledTimes(2)
   })
 
+  it("re-fires the same mark when activity arrives with an unchanged frontier", () => {
+    // A reaction while viewing raises activityCount with no new timeline event
+    // — lastEventId stays put, so the re-fire rides on the count VALUE being an
+    // effect dep. The old code re-ran by accident (markAsRead identity churn);
+    // this pins the re-fire as deliberate (witness finding on #1882).
+    const { rerender } = renderHook((_props: { v: number }) => useAutoMarkAsRead("ws_123", "stream_123", "event_123"), {
+      initialProps: { v: 0 },
+    })
+
+    act(() => {
+      vi.advanceTimersByTime(500)
+    })
+    expect(mockMarkAsRead).toHaveBeenCalledTimes(1)
+
+    activityCount = 1
+    rerender({ v: 1 })
+    act(() => {
+      vi.advanceTimersByTime(500)
+    })
+
+    expect(mockMarkAsRead).toHaveBeenLastCalledWith("stream_123", "event_123", { partial: false })
+    expect(mockMarkAsRead).toHaveBeenCalledTimes(2)
+  })
+
   it("flushes a pending mark when the stream switches mid-debounce (glance triage)", () => {
     // The frontier counted the rows as seen; the debounce is network
     // coalescing, not a dwell requirement. Switching away inside the window

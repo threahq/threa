@@ -63,6 +63,15 @@ export function useAutoMarkAsRead(
   const { getActivityCount } = useActivityCounts(workspaceId)
   const canAutoRead = useAutoReadAttention()
   const queue = useReadCommitQueue()
+  // Effect DEPS, not just reads: both hooks subscribe this component to the
+  // unread store, so an `activity:created` landing while the frontier is
+  // unchanged re-runs the effect through these values and re-fires the mark
+  // that clears it. The old code got that re-fire by accident — `markAsRead`'s
+  // identity churned every render, re-running the effect — so stable deps
+  // alone would silently kill the activity-arrival re-mark (witness finding
+  // on #1882).
+  const unreadCount = getUnreadCount(streamId)
+  const activityCount = getActivityCount(streamId)
 
   const streamIdRef = useRef(streamId)
   streamIdRef.current = streamId
@@ -84,9 +93,6 @@ export function useAutoMarkAsRead(
       queue.cancel(streamId)
       return
     }
-
-    const unreadCount = getUnreadCount(streamId)
-    const activityCount = getActivityCount(streamId)
 
     // D5 heal: a fully-read (`!partial`) open still fires one commit even when
     // nothing is locally elevated. `lastEventId` is then the true tail, so the
@@ -118,7 +124,7 @@ export function useAutoMarkAsRead(
       // replaces the pending mark instead.
       if (streamIdRef.current !== streamId) queue.flush(streamId)
     }
-  }, [enabled, streamId, lastEventId, partial, queue, getUnreadCount, getActivityCount, canAutoRead])
+  }, [enabled, streamId, lastEventId, partial, queue, unreadCount, activityCount, canAutoRead])
 
   // Unmounting the stream page entirely (navigating to drafts/board) is the
   // other leave path — flush whatever stream was current.
