@@ -533,6 +533,12 @@ export function resolveAnchorRestore(args: {
   hasDeepLink: boolean
   userInteractedAt: number
   hasAnchor: boolean
+  /** The event window has rows. `isLoading` alone is NOT that: cold boot has a
+   *  grace window where IDB hasn't resolved yet but `isLoading` is already
+   *  false (computeTimelineLoadState's no-skeleton-flash path) — judging the
+   *  anchor against that empty window consumed every reload's restore as a
+   *  stale-anchor skip, landing the reader at the tail. */
+  hasItems: boolean
   anchorInWindow: boolean
 }): "wait" | "skip" | "restore" {
   if (args.alreadyDecided) return "skip"
@@ -540,9 +546,24 @@ export function resolveAnchorRestore(args: {
   if (args.hasDeepLink || args.isJumpMode) return "skip"
   if (args.userInteractedAt > 0) return "skip"
   if (!args.hasAnchor) return "skip"
-  if (args.isLoading) return "wait"
+  if (args.isLoading || !args.hasItems) return "wait"
   if (!args.anchorInWindow) return "skip"
   return "restore"
+}
+
+/** The topmost timeline row intersecting the scroller viewport, with its
+ *  offset from the viewport top (negative when partially scrolled off). */
+function snapshotTopVisibleRow(el: HTMLElement): { id: string; offsetPx: number } | null {
+  const sr = el.getBoundingClientRect()
+  let best: { id: string; top: number } | null = null
+  for (const row of el.querySelectorAll<HTMLElement>("[data-message-id], [data-event-id]")) {
+    const rr = row.getBoundingClientRect()
+    if (rr.bottom <= sr.top + 1 || rr.top >= sr.bottom) continue
+    const id = row.dataset.messageId ?? row.dataset.eventId
+    if (!id) continue
+    if (!best || rr.top < best.top) best = { id, top: rr.top }
+  }
+  return best ? { id: best.id, offsetPx: Math.round(best.top - sr.top) } : null
 }
 
 /**
@@ -1726,6 +1747,15 @@ export function StreamContent({
   // estimation which tends to overshoot with unmeasured items.
   const scrollRetryTimerRef = useRef<number | null>(null)
   const scrollAbortRef = useRef<(() => void) | null>(null)
+  // Rolling detached-viewport snapshot: the topmost visible row and its offset
+  // from the viewport top, valid while the reader is parked off the tail.
+  // Refreshed by the debounced scroll snapshot (the anchor-persist effect), by
+  // the older-fetch arm, and by every programmatic scroll's first settle — so
+  // it always describes the position the reader currently owns. The detached
+  // viewport guard below re-pins this row when content resizes out from under
+  // a parked reader (virtua size-estimate corrections, prepends, late media) —
+  // every one of those otherwise slides the viewport through the content.
+  const detachedHoldRef = useRef<{ id: string; offsetPx: number; takenAt: number } | null>(null)
   // Sticky "user grabbed the scroller" stamp for the *current* scroll intent.
   // Reset to 0 whenever a new intent is established (deep-link nav, search
   // jump, stream switch) and set by long-lived input listeners on the
@@ -1750,11 +1780,24 @@ export function StreamContent({
       }
     ) => {
       const align = opts?.align ?? "center"
+      const engagedAt = performance.now()
       let settleNotified = false
       let stableTicks = 0
+      let everLanded = false
       const notifySettled = () => {
         if (settleNotified) return
         settleNotified = true
+        // A genuine landing (or a user takeover) is the reader's new owned
+        // position: refresh the detached-viewport snapshot so the guard
+        // protects the landed spot instead of a stale pre-jump one. A timeout
+        // that never landed must NOT overwrite it — the caller-seeded target
+        // stays, and the guard keeps pulling toward it on later reflows.
+        const scrollerNow = scrollContainerRef.current
+        const userTookOver = userInteractedAtRef.current > engagedAt
+        if (scrollerNow && !isFollowingTailRef.current && (everLanded || userTookOver)) {
+          const snap = snapshotTopVisibleRow(scrollerNow)
+          detachedHoldRef.current = snap ? { ...snap, takenAt: performance.now() } : null
+        }
         opts?.onFirstSettle?.()
       }
       // For "start": px between the viewport top and the target's top. The
@@ -1850,10 +1893,13 @@ export function StreamContent({
           if (Math.abs(delta) > 2) {
             scroller.scrollTop += delta
             stableTicks = 0
-          } else if (++stableTicks >= SCROLL_SETTLE_STABLE_TICKS) {
-            // Landed and holding — the loop keeps watching for late reflows
-            // (link previews), but the position is presentable now.
-            notifySettled()
+          } else {
+            everLanded = true
+            if (++stableTicks >= SCROLL_SETTLE_STABLE_TICKS) {
+              // Landed and holding — the loop keeps watching for late reflows
+              // (link previews), but the position is presentable now.
+              notifySettled()
+            }
           }
         } else {
           stableTicks = 0
@@ -2498,7 +2544,25 @@ export function StreamContent({
   const anchorRestoreRef = useRef<{ streamId: string; decided: boolean }>({ streamId, decided: false })
   if (anchorRestoreRef.current.streamId !== streamId) {
     anchorRestoreRef.current = { streamId, decided: false }
+    detachedHoldRef.current = null
   }
+
+  // The detached viewport guard's re-pin (see the guard block below for the
+  // full contract). Declared here, above the restore effect, so the restore
+  // can schedule a final pull after its refine loop ends.
+  const applyDetachedHold = useCallback(() => {
+    const hold = detachedHoldRef.current
+    if (!hold) return
+    const el = virtualScrollerEl
+    if (!el || isFollowingTailRef.current) return
+    if (scrollAbortRef.current) return
+    if (userInteractedAtRef.current > hold.takenAt) return
+    const escaped = CSS.escape(hold.id)
+    const row = el.querySelector<HTMLElement>(`[data-message-id="${escaped}"], [data-event-id="${escaped}"]`)
+    if (!row) return
+    const delta = row.getBoundingClientRect().top - (el.getBoundingClientRect().top + hold.offsetPx)
+    if (Math.abs(delta) > 1) el.scrollTop += delta
+  }, [virtualScrollerEl, isFollowingTailRef, userInteractedAtRef])
   useLayoutEffect(() => {
     if (!useVirtualized) return
     // Consumed decisions bail before touching storage or scanning the window:
@@ -2523,9 +2587,14 @@ export function StreamContent({
       hasDeepLink: skipInitialScroll,
       userInteractedAt: userInteractedAtRef.current,
       hasAnchor: anchor !== null,
-      // The scan only matters once the wait gate has cleared; skip it while
-      // the window is still loading.
-      anchorInWindow: anchor !== null && !isLoading && findTimelineTargetIndex(visibleItems, anchor.targetId) >= 0,
+      hasItems: visibleItems.length > 0,
+      // The scan only matters once the wait gates have cleared; skip it while
+      // the window is still loading or unpopulated.
+      anchorInWindow:
+        anchor !== null &&
+        !isLoading &&
+        visibleItems.length > 0 &&
+        findTimelineTargetIndex(visibleItems, anchor.targetId) >= 0,
     })
     if (decision === "wait") return
     anchorRestoreRef.current.decided = true
@@ -2540,8 +2609,17 @@ export function StreamContent({
     holdSettleForRestore()
     const decidedFor = anchorRestoreRef.current
     const revealIfCurrent = () => {
-      if (anchorRestoreRef.current === decidedFor) revealSettle()
+      if (anchorRestoreRef.current !== decidedFor) return
+      revealSettle()
+      // If the refine loop timed out without landing (contended device), the
+      // guard's target is still the anchor — pull once more the next frame,
+      // after the loop has released the scroller.
+      requestAnimationFrame(applyDetachedHold)
     }
+    // Seed the detached-viewport guard immediately: content resizes between
+    // engage and the refine loop's first settle (virtua measuring the anchor
+    // region) must already re-target the anchor, not slide the viewport.
+    detachedHoldRef.current = { id: anchor.targetId, offsetPx: anchor.offsetPx, takenAt: performance.now() }
     if (
       scrollToMessage(anchor.targetId, {
         align: "start",
@@ -2581,18 +2659,14 @@ export function StreamContent({
       timer = 0
       if (isFollowingTailRef.current) {
         clearTimelineAnchor(streamId)
+        detachedHoldRef.current = null
         return
       }
-      const sr = el.getBoundingClientRect()
-      let best: { id: string; top: number } | null = null
-      for (const row of el.querySelectorAll<HTMLElement>("[data-message-id], [data-event-id]")) {
-        const rr = row.getBoundingClientRect()
-        if (rr.bottom <= sr.top + 1 || rr.top >= sr.bottom) continue
-        const id = row.dataset.messageId ?? row.dataset.eventId
-        if (!id) continue
-        if (!best || rr.top < best.top) best = { id, top: rr.top }
+      const best = snapshotTopVisibleRow(el)
+      if (best) {
+        saveTimelineAnchor(streamId, { targetId: best.id, offsetPx: best.offsetPx })
+        detachedHoldRef.current = { id: best.id, offsetPx: best.offsetPx, takenAt: performance.now() }
       }
-      if (best) saveTimelineAnchor(streamId, { targetId: best.id, offsetPx: Math.round(best.top - sr.top) })
     }
     const onScroll = () => {
       if (timer) window.clearTimeout(timer)
@@ -2617,6 +2691,45 @@ export function StreamContent({
       document.removeEventListener("visibilitychange", onVisibilityChange)
     }
   }, [useVirtualized, virtualScrollerEl, streamId, isFollowingTailRef])
+
+  // Detached viewport guard. While the reader is parked off the tail, content
+  // above them keeps resizing: virtua corrects size estimates as rows measure,
+  // older pages prepend (virtua's `shift` diffing mangles the skeleton→rows
+  // swap), late media and preview cards settle. Each of those slid the
+  // viewport through the content — the "screen creeps after landing" bounce.
+  // The guard re-pins the snapshot row to its exact offset:
+  //  - pre-paint in the older-prepend landing commit (the known big jump);
+  //  - on every content resize (ResizeObserver), catching estimate
+  //    corrections and anything else that reshapes the window.
+  // It yields to the user (any gesture newer than the snapshot) and to an
+  // active scrollToMessage refine loop (which re-anchors its own target and
+  // refreshes this snapshot when it settles). While following the tail the
+  // bottom pin owns the position and the guard is inert.
+  // Refresh the snapshot when an older fetch starts: the prepend can land up
+  // to a second later, and the arm-time position is fresher than the last
+  // debounced scroll snapshot.
+  useEffect(() => {
+    if (!isFetchingOlder || !useVirtualized) return
+    const el = virtualScrollerEl
+    if (!el || isFollowingTailRef.current) return
+    const snap = snapshotTopVisibleRow(el)
+    if (snap) detachedHoldRef.current = { ...snap, takenAt: performance.now() }
+  }, [isFetchingOlder, useVirtualized, virtualScrollerEl, isFollowingTailRef])
+
+  useLayoutEffect(() => {
+    if (olderPrependLanded) applyDetachedHold()
+  }, [olderPrependLanded, applyDetachedHold])
+
+  useEffect(() => {
+    if (!useVirtualized) return
+    const content = virtualContentRef.current
+    if (!content) return
+    const ro = new ResizeObserver(() => applyDetachedHold())
+    ro.observe(content)
+    return () => ro.disconnect()
+    // virtualScrollerEl: the content node remounts with the keyed scroller —
+    // re-observe the fresh element after a stream switch.
+  }, [useVirtualized, virtualContentRef, virtualScrollerEl, applyDetachedHold])
 
   useLayoutEffect(() => {
     const decision = resolveUnreadMarkerOpen({
@@ -3604,7 +3717,7 @@ function TimelineMessageList({
         scrollerRef={scrollerRef}
       />
       {isInitialSettling && (
-        <div aria-hidden className="pointer-events-none absolute inset-0 z-10 bg-background">
+        <div aria-hidden data-testid="settle-mask" className="pointer-events-none absolute inset-0 z-10 bg-background">
           {skeleton}
         </div>
       )}

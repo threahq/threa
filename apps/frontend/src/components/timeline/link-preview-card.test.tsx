@@ -39,6 +39,32 @@ describe("LinkPreviewCard", () => {
     expect(screen.getByText("x.com/someone/status/1234567890")).toBeInTheDocument()
   })
 
+  it("keeps the thumbnail box footprint when the image fails to load (INV-21)", () => {
+    // Unmounting the 72px box on img error shrank every stale-og-image card a
+    // beat after first paint — the whole-timeline bounce on reloading any
+    // card-heavy stream (staging's dead lucide-icons og images, CI's flaky
+    // github og fetches). The box must survive the error; only its content
+    // swaps to a quiet placeholder.
+    const preview = makeGitHubPreview({
+      url: "https://github.com/lucide-icons/lucide/issues",
+      title: "Issues · lucide-icons/lucide",
+      description: "Beautiful & consistent icon toolkit.",
+      imageUrl: "https://opengraph.githubassets.com/dead/lucide-icons/lucide",
+    })
+
+    const { container } = render(<LinkPreviewCard preview={preview} />)
+
+    const box = () => container.querySelector(".h-\\[4\\.5rem\\].w-28")
+    expect(box()).not.toBeNull()
+    const img = container.querySelector("img[src='https://opengraph.githubassets.com/dead/lucide-icons/lucide']")
+    expect(img).not.toBeNull()
+
+    fireEvent.error(img!)
+
+    expect(box()).not.toBeNull()
+    expect(box()!.querySelector("img")).toBeNull()
+  })
+
   it("renders GitHub file preview snippets from structured preview data", () => {
     const preview = makeGitHubPreview({
       url: "https://github.com/octocat/hello-world/blob/main/README.md#L1-L2",
