@@ -12,6 +12,7 @@ import {
   remapSuppressedWatermark,
   resolveUnreadMarkerOpen,
   resolveAnchorRestore,
+  isChromeStripCollapsed,
   buildAgentActivitySummary,
 } from "./stream-content"
 import { localStartOfDayMs } from "@/lib/dates"
@@ -569,6 +570,23 @@ describe("resolveUnreadMarkerOpen", () => {
 
   it("consumes the decision as skip (not wait) for a deep-link even while still loading — a deep-linked stream never marker-scrolls", () => {
     expect(resolveUnreadMarkerOpen({ ...base, hasDeepLink: true, isLoading: true })).toBe("skip")
+  })
+})
+
+describe("isChromeStripCollapsed", () => {
+  it("collapses when the strip above the composer drops under the minimum", () => {
+    // Mobile keyboard open + tall draft: 360px scroller minus a 230px composer
+    // leaves ~2 rows — pills would cover most of it.
+    expect(isChromeStripCollapsed(360, 230)).toBe(true)
+    // One-line composer with the keyboard open keeps the chrome.
+    expect(isChromeStripCollapsed(400, 90)).toBe(false)
+    // Desktop never collapses.
+    expect(isChromeStripCollapsed(900, 144)).toBe(false)
+  })
+
+  it("uses the strip (scroller minus composer), not the raw scroller height", () => {
+    expect(isChromeStripCollapsed(800, 700)).toBe(true)
+    expect(isChromeStripCollapsed(800, 0)).toBe(false)
   })
 })
 
