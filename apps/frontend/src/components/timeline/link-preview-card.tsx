@@ -584,7 +584,6 @@ function GenericPreviewContent({
 }) {
   const fallbackLabel = getGenericFallbackLabel(preview.url)
   const hasPrimaryMetadata = Boolean(preview.title || preview.description || preview.imageUrl)
-  const showImage = Boolean(preview.imageUrl) && !imageError
 
   // Text intentionally flows at natural height — `LinkPreviewBody` clips the
   // whole card to a shared ceiling and reveals a "Show more" toggle when
@@ -605,16 +604,25 @@ function GenericPreviewContent({
             </p>
           )}
         </div>
-        {showImage && (
-          // Fixed footprint so the lazy image swapping in doesn't reflow the card (INV-21).
+        {Boolean(preview.imageUrl) && (
+          // Fixed footprint so neither the lazy image swapping in NOR a dead
+          // image URL reflows the card (INV-21). Unmounting the box on error
+          // shrank every stale-og-image card ~28px one beat after first paint —
+          // a whole-timeline bounce on reload of any card-heavy stream.
           <div className="h-[4.5rem] w-28 shrink-0 overflow-hidden rounded-md border bg-muted/40 shadow-sm">
-            <img
-              src={preview.imageUrl!}
-              alt=""
-              className="h-full w-full object-cover"
-              loading="lazy"
-              onError={onImageError}
-            />
+            {imageError ? (
+              <div className="flex h-full w-full items-center justify-center text-muted-foreground/40">
+                <ImageIcon className="h-5 w-5" />
+              </div>
+            ) : (
+              <img
+                src={preview.imageUrl!}
+                alt=""
+                className="h-full w-full object-cover"
+                loading="lazy"
+                onError={onImageError}
+              />
+            )}
           </div>
         )}
       </div>
