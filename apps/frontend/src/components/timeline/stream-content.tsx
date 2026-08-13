@@ -1,6 +1,6 @@
 import { matchesDeepLinkTarget } from "@/lib/stream-links"
 import { useMemo, useEffect, useLayoutEffect, useCallback, useRef, useState } from "react"
-import { useLocation, useSearchParams } from "react-router-dom"
+import { useLocation, useNavigationType, useSearchParams } from "react-router-dom"
 import { Virtualizer, type VirtualizerHandle } from "virtua"
 import { MessageSquare, ArrowDown, ArrowUp, X, Move, Loader2, Check, Plus } from "lucide-react"
 import { cn } from "@/lib/utils"
@@ -497,7 +497,14 @@ export function isChromeStripCollapsed(scrollerClientHeightPx: number, composerH
  * resolve; every other verdict consumes it.
  *
  * A restore yields to deep links, jump mode, and any user gesture — those own
- * the position. It only engages when the anchored row is in the loaded
+ * the position. It also yields to PUSH navigation (sidebar click, channel
+ * link): choosing a stream is a fresh open, which lands at the tail and
+ * auto-reads like it always has — restoring there parked the reader at a
+ * stale detached spot, and the read frontier (which never jumps a gap) then
+ * silently stopped auto-read for any stream once left mid-scroll. Restore is
+ * for continuations of a previous look at this stream: reload and cold
+ * relaunch (POP, or the boot path's REPLACE redirects) and history
+ * back/forward. It only engages when the anchored row is in the loaded
  * window: anchors are written while detached near the tail (reading context
  * while replying), which the initial window covers; an anchor that has since
  * fallen out of the window is stale enough that the tail is the better
@@ -505,6 +512,7 @@ export function isChromeStripCollapsed(scrollerClientHeightPx: number, composerH
  */
 export function resolveAnchorRestore(args: {
   alreadyDecided: boolean
+  isPushNavigation: boolean
   isLoading: boolean
   isSettling: boolean
   isJumpMode: boolean
@@ -514,6 +522,7 @@ export function resolveAnchorRestore(args: {
   anchorInWindow: boolean
 }): "wait" | "skip" | "restore" {
   if (args.alreadyDecided) return "skip"
+  if (args.isPushNavigation) return "skip"
   if (args.hasDeepLink || args.isJumpMode) return "skip"
   if (args.userInteractedAt > 0) return "skip"
   if (!args.hasAnchor) return "skip"
@@ -617,6 +626,7 @@ export function StreamContent({
 }: StreamContentProps) {
   const [searchParams, setSearchParams] = useSearchParams()
   const location = useLocation()
+  const navigationType = useNavigationType()
   const socket = useSocket()
   const messageService = useMessageService()
   // Tracks the location key we've already handled for a highlight jump. Using
@@ -2458,6 +2468,15 @@ export function StreamContent({
     const settled = !isLoading && !virtualIsInitialSettling
     const decision = resolveAnchorRestore({
       alreadyDecided: false,
+      // The nav type is per-navigation, so at decision time it still describes
+      // how THIS stream was entered even though the decision can resolve a few
+      // renders after the switch (waiting out load/settle). One PUSH is not a
+      // stream choice: ExactRestore's second `?panel=` hop (routes/index.tsx)
+      // pushes so the Android back gesture can close the restored panel — its
+      // `panelPopsToClose` state marks the cold relaunch, which restore is for.
+      isPushNavigation:
+        navigationType === "PUSH" &&
+        (location.state as { panelPopsToClose?: boolean } | null)?.panelPopsToClose !== true,
       isLoading,
       isSettling: virtualIsInitialSettling,
       isJumpMode,
@@ -2477,6 +2496,8 @@ export function StreamContent({
   }, [
     useVirtualized,
     streamId,
+    navigationType,
+    location.state,
     isLoading,
     virtualIsInitialSettling,
     isJumpMode,

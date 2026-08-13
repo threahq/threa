@@ -593,6 +593,7 @@ describe("isChromeStripCollapsed", () => {
 describe("resolveAnchorRestore", () => {
   const base = {
     alreadyDecided: false,
+    isPushNavigation: false,
     isLoading: false,
     isSettling: false,
     isJumpMode: false,
@@ -604,6 +605,12 @@ describe("resolveAnchorRestore", () => {
 
   it("restores once loading and the cold-load settle have resolved with the anchor in the window", () => {
     expect(resolveAnchorRestore(base)).toBe("restore")
+  })
+
+  it("skips on PUSH navigation — choosing a stream is a fresh open that lands at the tail and auto-reads", () => {
+    expect(resolveAnchorRestore({ ...base, isPushNavigation: true })).toBe("skip")
+    // Consumed immediately, never held through load: the nav type won't change.
+    expect(resolveAnchorRestore({ ...base, isPushNavigation: true, isLoading: true })).toBe("skip")
   })
 
   it("waits (without consuming the decision) while the window loads or the settle masks", () => {
