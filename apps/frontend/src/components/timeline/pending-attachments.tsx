@@ -567,7 +567,7 @@ export function PendingAttachments({
         // this line's buttons — same guard as the composer's action bar. Safe
         // as a blanket here: every child is our own button, nothing portaled.
         <div
-          className="mb-1.5 flex h-6 items-center gap-3 text-xs text-muted-foreground"
+          className="mb-1.5 flex h-6 shrink-0 items-center gap-3 text-xs text-muted-foreground"
           onMouseDown={(event) => event.preventDefault()}
         >
           {isMobile ? (
@@ -608,8 +608,13 @@ export function PendingAttachments({
       )}
       {!foldChips && (attachments.length > 0 || beforePills) && (
         <div
+          data-testid="attachment-chip-row"
           className={cn(
-            "flex flex-wrap items-center mb-3 overflow-y-auto",
+            // shrink-0: the tray is a flex child of the composer shell, whose
+            // height is capped (drag handle / 380px). Shrinkable, it absorbed
+            // the whole deficit — chips sliced off at the bottom — while the
+            // editor card kept its size. The cap belongs to the card.
+            "flex shrink-0 flex-wrap items-center mb-3 overflow-y-auto",
             // Two chip rows plus a sliver of the third, so "there's more" is
             // visible without stealing the strip the composer already fights
             // the keyboard for. The full list lives in the drawer.

@@ -64,7 +64,7 @@ export function ComposerLinkPreviews({ content, workspaceId, className }: Compos
   const dismiss = (url: string) => setDismissed((prev) => new Set(prev).add(url))
 
   return (
-    <div className={cn("flex flex-wrap gap-2 max-h-[120px] overflow-y-auto", className)}>
+    <div className={cn("flex shrink-0 flex-wrap gap-2 max-h-[120px] overflow-y-auto", className)}>
       {visible.map((link) => (
         <ComposerLinkChip key={link.url} link={link} workspaceId={workspaceId} onDismiss={dismiss} />
       ))}
