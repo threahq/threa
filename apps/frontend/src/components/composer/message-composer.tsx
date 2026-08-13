@@ -360,6 +360,29 @@ export function MessageComposer({
   // isn't torn down mid-take.
   const [voiceActive, setVoiceActive] = useState(false)
   const isMobile = useIsMobile()
+  // Height of everything above the editor card (attachment tray, link previews)
+  // — the same "extras" the drag floor reserves, measured live because a
+  // persisted cap outlives the state it was chosen in: shrink the composer with
+  // nothing attached, attach a file later, and the cap no longer fits the tray
+  // plus a usable card. The extras hold their height (shrinking clips their own
+  // chips), so without this the card takes the whole deficit and its action bar
+  // spills below the viewport.
+  const [mobileExtrasHeight, setMobileExtrasHeight] = useState(0)
+  useLayoutEffect(() => {
+    const root = mobileRootRef.current
+    if (!isMobile || mobileDragHeight === null || !root) return
+    const card = root.querySelector<HTMLElement>("[data-composer-card]")
+    if (!card) return
+    const measure = () =>
+      setMobileExtrasHeight(
+        Math.max(0, Math.round(root.getBoundingClientRect().height - card.getBoundingClientRect().height))
+      )
+    measure()
+    const observer = new ResizeObserver(measure)
+    observer.observe(root)
+    observer.observe(card)
+    return () => observer.disconnect()
+  }, [isMobile, mobileDragHeight])
   const actionSide = useComposerActionSide()
   const preferencesCtx = usePreferencesOptional()
   const mirrored = actionSide === "left"
@@ -1241,7 +1264,11 @@ export function MessageComposer({
           // The drag-handle height override. A max-height (not height) so the
           // composer stays content-driven below it; inline so it outranks the
           // 380px default class above.
-          style={isMobile && !mobileExpanded && mobileDragHeight !== null ? { maxHeight: mobileDragHeight } : undefined}
+          style={
+            isMobile && !mobileExpanded && mobileDragHeight !== null
+              ? { maxHeight: Math.max(mobileDragHeight, MOBILE_COMPOSER_DRAG_MIN_PX + mobileExtrasHeight) }
+              : undefined
+          }
           onFocusCapture={isMobile ? handleFocusCapture : undefined}
           onBlurCapture={isMobile ? handleBlurCapture : undefined}
           onKeyDownCapture={handleStashKeyDown}
