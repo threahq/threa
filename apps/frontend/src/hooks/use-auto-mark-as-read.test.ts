@@ -1,6 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest"
-import { renderHook, act } from "@testing-library/react"
+import { renderHook as baseRenderHook, act } from "@testing-library/react"
+import { createElement, type ReactNode } from "react"
 import { useAutoMarkAsRead } from "./use-auto-mark-as-read"
+import { ReadCommitQueue, ReadCommitQueueContext } from "@/sync/read-commit-queue"
 import * as useUnreadCountsModule from "./use-unread-counts"
 import * as useActivityCountsModule from "./use-activity-counts"
 import * as useMobileModule from "./use-mobile"
@@ -9,6 +11,14 @@ import * as usePointerModule from "./use-pointer"
 const mockMarkAsRead = vi.fn()
 const mockGetUnreadCount = vi.fn()
 const mockGetActivityCount = vi.fn()
+
+// The hook reports into the workspace ReadCommitQueue; give every render a
+// real queue wired straight to the markAsRead mock so the tests exercise the
+// actual debounce/flush pipeline.
+let queue: ReadCommitQueue
+const wrapper = ({ children }: { children: ReactNode }) =>
+  createElement(ReadCommitQueueContext.Provider, { value: queue }, children)
+const renderHook: typeof baseRenderHook = (cb, opts) => baseRenderHook(cb, { wrapper, ...opts })
 
 let unreadCount = 1
 let activityCount = 0
@@ -47,6 +57,11 @@ describe("useAutoMarkAsRead", () => {
     mockGetUnreadCount.mockImplementation(() => unreadCount)
     mockGetActivityCount.mockImplementation(() => activityCount)
 
+    queue = new ReadCommitQueue({
+      workspaceId: "ws_123",
+      commitRef: { current: (streamId, lastEventId, opts) => mockMarkAsRead(streamId, lastEventId, opts) },
+    })
+
     vi.spyOn(useMobileModule, "useIsMobile").mockImplementation(() => isMobileViewport)
     vi.spyOn(usePointerModule, "useCoarsePointer").mockImplementation(() => isCoarsePointer)
 
@@ -68,6 +83,7 @@ describe("useAutoMarkAsRead", () => {
 
   afterEach(() => {
     vi.runOnlyPendingTimers()
+    queue.dispose()
     vi.useRealTimers()
     vi.restoreAllMocks()
 

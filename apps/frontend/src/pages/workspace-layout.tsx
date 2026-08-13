@@ -63,6 +63,8 @@ import { isServerStreamId } from "@/lib/stream-ids"
 import { useAuth } from "@/auth"
 import { useWorkspaceStreams } from "@/stores/workspace-store"
 import { SyncEngine, SyncEngineContext, isSyncEngineCurrent } from "@/sync/sync-engine"
+import { ReadCommitQueue, ReadCommitQueueContext } from "@/sync/read-commit-queue"
+import { useUnreadCounts } from "@/hooks/use-unread-counts"
 import { draftsApi, messagesApi, syncApi } from "@/api"
 import { QuickSwitcher, type QuickSwitcherMode } from "@/components/quick-switcher"
 import { ComposeOverlayMount } from "@/components/board/compose-overlay-mount"
@@ -333,7 +335,36 @@ function WorkspaceSyncHandler({
   // this deep link — resolve→flip in place, else bounce to the list.
   useResolveOrBounce(workspaceId, syncEngine)
 
-  return <SyncEngineContext.Provider value={syncEngine}>{children}</SyncEngineContext.Provider>
+  // The outbound read-commit pipeline, one owner per workspace (same ref-based
+  // lifecycle as the SyncEngine above). Disposing the outgoing queue flushes
+  // through ITS OWN commitRef — still the old workspace's markAsRead, updated
+  // only below once the current-workspace check has passed — so a pending mark
+  // never lands in the wrong workspace on a switch.
+  const { markAsRead } = useUnreadCounts(workspaceId)
+  const readCommitQueueRef = useRef<ReadCommitQueue | null>(null)
+  let readCommitQueue = readCommitQueueRef.current
+  if (!readCommitQueue || readCommitQueue.workspaceId !== workspaceId || readCommitQueue.isDisposed) {
+    readCommitQueue?.dispose()
+    readCommitQueue = new ReadCommitQueue({ workspaceId, commitRef: { current: markAsRead } })
+    readCommitQueueRef.current = readCommitQueue
+  }
+  readCommitQueue.commitRef.current = markAsRead
+  // Unlike the SyncEngine (whose destroy would break the socket-connect
+  // effect under StrictMode), the queue is safe to dispose on unmount — the
+  // recreate check above sees a disposed queue and builds a fresh one on the
+  // StrictMode remount. Without this, the pagehide listener held the queue
+  // alive after leaving the workspace layout.
+  useEffect(() => {
+    return () => {
+      readCommitQueueRef.current?.dispose()
+    }
+  }, [])
+
+  return (
+    <SyncEngineContext.Provider value={syncEngine}>
+      <ReadCommitQueueContext.Provider value={readCommitQueue}>{children}</ReadCommitQueueContext.Provider>
+    </SyncEngineContext.Provider>
+  )
 }
 
 function MessageQueueHandler() {
