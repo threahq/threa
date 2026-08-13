@@ -519,7 +519,7 @@ describe("resolveUnreadMarkerOpen", () => {
     unreadOpenPosition: "marker" as const,
     alreadyDecided: false,
     isLoading: false,
-    isSettling: false,
+    hasItems: true,
     readStateResolved: true,
     isJumpMode: false,
     hasDeepLink: false,
@@ -527,13 +527,15 @@ describe("resolveUnreadMarkerOpen", () => {
     dividerEventId: "event_5" as string | undefined,
   }
 
-  it("scrolls to the marker once loading, settle, and read state have all resolved", () => {
+  it("scrolls to the marker once the window is loaded with rows and the read state has resolved — it does NOT wait out the cold-load settle (it takes the settle over behind the mask)", () => {
     expect(resolveUnreadMarkerOpen(base)).toBe("scroll")
   })
 
-  it("waits (without consuming the decision) while the window is loading, the cold-load settle is masking, or the read position is unresolved", () => {
+  it("waits (without consuming the decision) while the window is loading or unpopulated, or the read position is unresolved", () => {
     expect(resolveUnreadMarkerOpen({ ...base, isLoading: true })).toBe("wait")
-    expect(resolveUnreadMarkerOpen({ ...base, isSettling: true })).toBe("wait")
+    // Cold-boot grace window: loading reads done while the window is still
+    // empty — consuming here is the restore's #1873 bug, same class.
+    expect(resolveUnreadMarkerOpen({ ...base, hasItems: false })).toBe("wait")
     expect(resolveUnreadMarkerOpen({ ...base, readStateResolved: false })).toBe("wait")
   })
 

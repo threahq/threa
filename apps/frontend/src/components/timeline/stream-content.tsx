@@ -451,9 +451,14 @@ export function resolveDateJumpAnchor(args: {
  * unread-open-position preference (Discord-style: land on the first unread).
  *
  * Returns:
- *  - "wait"   — inputs still resolving (window loading, cold-load settle
- *               masking, read position or the preference itself unhydrated);
- *               do NOT consume the once-per-stream decision yet.
+ *  - "wait"   — inputs still resolving (window loading or unpopulated, read
+ *               position or the preference itself unhydrated); do NOT consume
+ *               the once-per-stream decision yet. Deliberately does NOT wait
+ *               out the cold-load settle: the marker scroll takes the settle
+ *               over (hold the mask, position, reveal at the divider) exactly
+ *               like the anchor restore — waiting for settle-end revealed the
+ *               TAIL first and jumped to the divider a beat later on every
+ *               open of an unread stream.
  *  - "skip"   — decision consumed, open at the bottom as usual ("latest" mode,
  *               nothing unread, a deep-link/jump owns the scroll, or the user
  *               already scrolled).
@@ -468,7 +473,9 @@ export function resolveUnreadMarkerOpen(args: {
   unreadOpenPosition: UnreadOpenPosition | null
   alreadyDecided: boolean
   isLoading: boolean
-  isSettling: boolean
+  /** The event window has rows — `isLoading` alone misses the cold-boot grace
+   *  window where loading reads done while IDB is still resolving. */
+  hasItems: boolean
   readStateResolved: boolean
   isJumpMode: boolean
   hasDeepLink: boolean
@@ -480,7 +487,7 @@ export function resolveUnreadMarkerOpen(args: {
   if (args.userInteractedAt > 0) return "skip"
   if (args.unreadOpenPosition === null) return "wait"
   if (args.unreadOpenPosition !== "marker") return "skip"
-  if (args.isLoading || args.isSettling || !args.readStateResolved) return "wait"
+  if (args.isLoading || !args.hasItems || !args.readStateResolved) return "wait"
   if (!args.dividerEventId) return "skip"
   return "scroll"
 }
@@ -1705,7 +1712,14 @@ export function StreamContent({
         }
         // Main timeline: force on initial correction (cold-load anchor fix),
         // but respect the follow flag for runtime composer growth so a user
-        // scrolled up to read history isn't yanked back to the tail.
+        // scrolled up to read history isn't yanked back to the tail. The
+        // initial force also yields to a positioned reader: a scrollToMessage
+        // refine loop in flight (anchor restore, unread-marker open, deep
+        // link) or an already-landed detached position owns the viewport — a
+        // late-mounting composer must not stomp it back to the tail.
+        if (opts.initial && (scrollAbortRef.current || (!isFollowingTailRef.current && detachedHoldRef.current))) {
+          return
+        }
         if (useVirtualized) {
           virtualScrollToBottomRef.current({ force: opts.initial })
         } else {
@@ -2662,6 +2676,13 @@ export function StreamContent({
         detachedHoldRef.current = null
         return
       }
+      // A scrollToMessage refine loop mid-flight means the current position is
+      // transient, not a reading position. The debounce normally covers this
+      // (each tick resets it), but pagehide/visibilitychange snapshot
+      // SYNCHRONOUSLY — backgrounding the app mid-jump would persist an
+      // arbitrary in-between scroll as the saved anchor. Keep the previous
+      // anchor instead.
+      if (scrollAbortRef.current) return
       const best = snapshotTopVisibleRow(el)
       if (best) {
         saveTimelineAnchor(streamId, { targetId: best.id, offsetPx: best.offsetPx })
@@ -2736,7 +2757,7 @@ export function StreamContent({
       unreadOpenPosition,
       alreadyDecided: unreadMarkerOpenRef.current.decided,
       isLoading,
-      isSettling: useVirtualized && virtualIsInitialSettling,
+      hasItems: visibleItems.length > 0,
       readStateResolved: frontierSequence !== undefined,
       isJumpMode,
       // The per-stream deep-link latch, not the transient ?m= param — a stream
@@ -2755,7 +2776,33 @@ export function StreamContent({
     // unread message taller than the viewport reads from its start. Falls back
     // to the one-shot path only for the plain thread scroller, where all rows
     // are real DOM already.
-    if (!useVirtualized || !dividerEventId || !scrollToMessage(dividerEventId, { align: "start" })) {
+    if (useVirtualized && dividerEventId) {
+      // Take over the cold-load settle exactly like the anchor restore:
+      // position on the divider behind the mask and reveal once it has held,
+      // so the first painted frame is at the marker — not a tail flash
+      // followed by a visible jump up (the "flicker on every unread stream"
+      // report; the old restore used to eat this decision on most opens,
+      // which is why the jump only became prominent once PUSH switches
+      // stopped restoring).
+      holdSettleForRestore()
+      const decidedFor = unreadMarkerOpenRef.current
+      const revealIfCurrent = () => {
+        if (unreadMarkerOpenRef.current !== decidedFor) return
+        revealSettle()
+        // Timed-out-without-landing fallback: the guard still targets the
+        // divider — pull once more after the loop releases the scroller.
+        requestAnimationFrame(applyDetachedHold)
+      }
+      detachedHoldRef.current = {
+        id: dividerEventId,
+        offsetPx: UNREAD_MARKER_TOP_GAP_PX,
+        takenAt: performance.now(),
+      }
+      if (!scrollToMessage(dividerEventId, { align: "start", onFirstSettle: revealIfCurrent })) {
+        revealIfCurrent()
+        scrollToFirstUnread()
+      }
+    } else if (!dividerEventId || !scrollToMessage(dividerEventId, { align: "start" })) {
       scrollToFirstUnread()
     }
   }, [
@@ -2763,13 +2810,16 @@ export function StreamContent({
     streamId,
     isLoading,
     useVirtualized,
-    virtualIsInitialSettling,
+    visibleItems,
     frontierSequence,
     isJumpMode,
     skipInitialScroll,
     dividerEventId,
     scrollToMessage,
     scrollToFirstUnread,
+    holdSettleForRestore,
+    revealSettle,
+    applyDetachedHold,
   ])
 
   const editLastMessageCtxWithScroll = useMemo(
