@@ -59,6 +59,14 @@ export function useAutoMarkAsRead(
   const { getActivityCount } = useActivityCounts(workspaceId)
   const canAutoRead = useAutoReadAttention()
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // The mark the running debounce timer would send, so teardown can FLUSH it
+  // instead of dropping it. The debounce is network coalescing, not a dwell
+  // requirement: the frontier already said "seen", so a stream switch or
+  // unmount inside the window must still commit the mark — cancelling it was
+  // the glance-triage bug (open an unread stream, glance, move on within a
+  // second → the stream stayed unread on the server, invisibly, because the
+  // local viewing-pin had already zeroed the badge).
+  const pendingRef = useRef<{ streamId: string; lastEventId: string; partial: boolean } | null>(null)
   const lastMarkedRef = useRef<string | null>(null)
   // Track the partial-ness of the last mark so a partial→full transition at the
   // SAME event (viewer scrolled partway, then on to the tail) re-fires to clear
@@ -72,6 +80,20 @@ export function useAutoMarkAsRead(
   streamIdRef.current = streamId
   lastEventIdRef.current = lastEventId
   partialRef.current = partial
+  const markAsReadRef = useRef(markAsRead)
+  markAsReadRef.current = markAsRead
+
+  // Unmount flush: navigating off the stream page entirely (drafts, board)
+  // unmounts the consumer with the debounce still pending — commit it.
+  // Defined ABOVE the debounce effect: React runs unmount cleanups in
+  // definition order, and the debounce effect's own cleanup clears pendingRef.
+  useEffect(() => {
+    return () => {
+      const pending = pendingRef.current
+      pendingRef.current = null
+      if (pending) markAsReadRef.current(pending.streamId, pending.lastEventId, { partial: pending.partial })
+    }
+  }, [])
 
   // The consumer (StreamContent) is not keyed by streamId, so this hook persists
   // across stream switches. Clear the dedup refs per stream — otherwise a prior
@@ -109,20 +131,31 @@ export function useAutoMarkAsRead(
     }
 
     timerRef.current = setTimeout(() => {
-      // Read current values at execution time, not capture time, so a stream
-      // switch during the debounce window marks the stream actually in view.
+      // Read current values at execution time, not capture time, so re-arms
+      // within the same stream always send the newest frontier.
       const currentStreamId = streamIdRef.current
       const currentLastEventId = lastEventIdRef.current
+      pendingRef.current = null
       if (currentLastEventId) {
         markAsRead(currentStreamId, currentLastEventId, { partial: partialRef.current })
         lastMarkedRef.current = currentLastEventId
         lastMarkedPartialRef.current = partialRef.current
       }
     }, debounceMs)
+    pendingRef.current = { streamId, lastEventId, partial }
 
     return () => {
       if (timerRef.current) {
         clearTimeout(timerRef.current)
+      }
+      const pending = pendingRef.current
+      pendingRef.current = null
+      // A stream switch mid-debounce flushes the old stream's mark (the
+      // frontier had already counted it as seen); same-stream re-arms and the
+      // attention gate dropping (blur) keep the existing cancel semantics —
+      // the next arming run re-captures the freshest frontier.
+      if (pending && pending.streamId !== streamIdRef.current) {
+        markAsRead(pending.streamId, pending.lastEventId, { partial: pending.partial })
       }
     }
   }, [enabled, streamId, lastEventId, partial, debounceMs, markAsRead, getUnreadCount, getActivityCount, canAutoRead])

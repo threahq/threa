@@ -239,6 +239,61 @@ describe("useAutoMarkAsRead", () => {
     expect(mockMarkAsRead).toHaveBeenCalledTimes(2)
   })
 
+  it("flushes a pending mark when the stream switches mid-debounce (glance triage)", () => {
+    // The frontier counted the rows as seen; the debounce is network
+    // coalescing, not a dwell requirement. Switching away inside the window
+    // must commit the old stream's mark — dropping it left glanced streams
+    // unread on the server while the local viewing-pin showed them read.
+    const { rerender } = renderHook(({ streamId, lastEventId }) => useAutoMarkAsRead("ws_123", streamId, lastEventId), {
+      initialProps: { streamId: "stream_a", lastEventId: "event_a" },
+    })
+
+    act(() => {
+      vi.advanceTimersByTime(250)
+    })
+    expect(mockMarkAsRead).not.toHaveBeenCalled()
+
+    rerender({ streamId: "stream_b", lastEventId: "event_b" })
+    expect(mockMarkAsRead).toHaveBeenCalledWith("stream_a", "event_a", { partial: false })
+
+    // The new stream's own mark still debounces normally.
+    act(() => {
+      vi.advanceTimersByTime(500)
+    })
+    expect(mockMarkAsRead).toHaveBeenLastCalledWith("stream_b", "event_b", { partial: false })
+    expect(mockMarkAsRead).toHaveBeenCalledTimes(2)
+  })
+
+  it("flushes a pending mark on unmount (navigating off the stream page)", () => {
+    const { unmount } = renderHook(() => useAutoMarkAsRead("ws_123", "stream_a", "event_a"))
+
+    act(() => {
+      vi.advanceTimersByTime(250)
+    })
+    expect(mockMarkAsRead).not.toHaveBeenCalled()
+
+    unmount()
+    expect(mockMarkAsRead).toHaveBeenCalledWith("stream_a", "event_a", { partial: false })
+    expect(mockMarkAsRead).toHaveBeenCalledTimes(1)
+  })
+
+  it("does NOT flush when attention drops mid-debounce (blur still cancels)", () => {
+    renderHook(() => useAutoMarkAsRead("ws_123", "stream_a", "event_a"))
+
+    act(() => {
+      vi.advanceTimersByTime(250)
+      visibilityState = "hidden"
+      hasFocus = false
+      document.dispatchEvent(new Event("visibilitychange"))
+      window.dispatchEvent(new Event("blur"))
+    })
+
+    act(() => {
+      vi.advanceTimersByTime(1000)
+    })
+    expect(mockMarkAsRead).not.toHaveBeenCalled()
+  })
+
   it("clears the dedup on stream switch so the next stream's first mark always fires", () => {
     // The consumer isn't keyed by streamId, so the hook persists across switches.
     // The dedup refs must reset per stream — otherwise a prior stream's marked

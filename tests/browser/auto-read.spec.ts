@@ -396,6 +396,39 @@ test.describe("Timeline auto-read", () => {
     await otherContext.close()
   })
 
+  test("a quick triage visit — open, glance, leave — still marks what was on screen", async ({ page, browser }) => {
+    // The everyday miss: switch into a stream whose unreads are fully on
+    // screen, glance, move on within a second. The mark is debounced 500ms and
+    // used to be CANCELLED (not flushed) when the effect tore down on the
+    // navigation — the frontier said "seen", the network call never went out,
+    // and the stream stayed unread on the server.
+    const { prefix, workspaceId, streamId, otherContext } = await setUpUnreadChannel(browser, page, 3)
+    await page.setViewportSize({ width: 1024, height: 500 })
+
+    await page.goto(`/w/${workspaceId}/s/${streamId}`)
+    await expect(
+      page
+        .getByRole("main")
+        .locator(".message-item")
+        .filter({ hasText: `${prefix}-unread msg-003` })
+    ).toBeVisible({ timeout: 20000 })
+    // The glance: reveal happened (mask gone), the read-frontier scan has had
+    // a beat to run — but we leave before the 500ms debounce fires.
+    await expect(page.getByTestId("settle-mask")).toHaveCount(0, { timeout: 10000 })
+    await page.waitForTimeout(250)
+    await page.getByRole("link", { name: "Drafts" }).click()
+    await expect(page).toHaveURL(new RegExp(`/w/${workspaceId}/drafts`))
+
+    await expect
+      .poll(() => serverUnreadCount(page, workspaceId, streamId), {
+        timeout: 15000,
+        message: "leaving mid-debounce must flush the pending mark, not drop it",
+      })
+      .toBe(0)
+
+    await otherContext.close()
+  })
+
   test("a small unread run that fits the viewport marks read with no gesture at all", async ({ page, browser }) => {
     const { prefix, workspaceId, streamId, otherContext } = await setUpUnreadChannel(browser, page, 3)
     await page.setViewportSize({ width: 1024, height: 500 })
