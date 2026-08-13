@@ -95,6 +95,14 @@ interface UseTimelineScrollOptions {
    * is the secondary signal for touch/wheel that hasn't yet moved scrollTop.
    */
   userInteractedAtRef?: React.MutableRefObject<number>
+  /**
+   * Stamped (performance.now()) on every programmatic scroll write this hook
+   * makes — the tail pin, scrollToBottom, and the smooth-to-bottom animation's
+   * per-event frames. The read-frontier sweep (`useLastSeenEvent`) refuses to
+   * link scans across a stamp, so a programmatic jump stays a read gap while a
+   * user fling sweeps.
+   */
+  programmaticScrollAtRef?: React.MutableRefObject<number>
 }
 
 interface UseTimelineScrollReturn {
@@ -189,6 +197,7 @@ export function useTimelineScroll({
   isJumpMode = false,
   userInteractedAtRef,
   landingPendingRef,
+  programmaticScrollAtRef,
 }: UseTimelineScrollOptions): UseTimelineScrollReturn {
   const listRef = useRef<VirtualizerHandle>(null)
   const scrollerRef = useRef<HTMLDivElement>(null)
@@ -343,6 +352,11 @@ export function useTimelineScroll({
   // handleScroll sees no user movement and follow stays armed. That is what lets
   // the ResizeObserver, the keyboard backstop, and the cold-load settle all pin
   // freely without a programmatic time-window to tell them apart.
+  // Deliberately NOT stamped for the read-frontier sweep: the pin either
+  // holds an already-at-bottom position or reveals new content at the bottom
+  // edge of a watched tail — it never skips rows past the viewport, so it must
+  // not break a user fling's sweep chain (jump-to-latest stamps in
+  // scrollToBottom instead, where the actual jump decision lives).
   const pinToBottom = useCallback(() => {
     const el = scrollerRef.current
     if (!el) return
@@ -351,6 +365,13 @@ export function useTimelineScroll({
     prevScrollHeightRef.current = el.scrollHeight
   }, [])
 
+  // A smooth scrollToBottom animates over many frames the browser owns, so a
+  // single stamp at kickoff would expire mid-flight and the frontier sweep
+  // would link the animation's later frames as a user scroll. handleScroll
+  // re-stamps every frame while this is set; cleared on arrival, on a user
+  // gesture, or by the time cap (a smooth-to-bottom never runs longer).
+  const smoothToBottomStartedAtRef = useRef(0)
+
   const scrollToBottom = useCallback(
     (options?: { force?: boolean; behavior?: ScrollBehavior }) => {
       if (!options?.force && !isFollowingTailRef.current) return
@@ -358,15 +379,17 @@ export function useTimelineScroll({
       setIsScrolledFarFromBottom(false)
       const el = scrollerRef.current
       if (!el) return
+      if (programmaticScrollAtRef) programmaticScrollAtRef.current = performance.now()
       if (options?.behavior === "smooth") {
         // Animated: let the browser drive scrollTop over several frames.
         // handleScroll re-arms at the bottom and tracks prevScrollTop as it goes.
+        smoothToBottomStartedAtRef.current = performance.now()
         el.scrollTo({ top: el.scrollHeight, behavior: "smooth" })
       } else {
         pinToBottom()
       }
     },
-    [pinToBottom]
+    [pinToBottom, programmaticScrollAtRef]
   )
 
   const disableAutoScroll = useCallback(() => {
@@ -551,6 +574,18 @@ export function useTimelineScroll({
     // Secondary signal for a touch/wheel gesture that hasn't moved scrollTop yet.
     const now = performance.now()
     const userGestured = now - (userInteractedAtRef?.current ?? 0) < USER_SCROLL_GRACE_MS
+    // Keep the programmatic stamp fresh through a smooth-to-bottom animation:
+    // its frames are browser-driven scroll events indistinguishable from a
+    // fling, and the frontier sweep must not read the jumped range as read.
+    if (smoothToBottomStartedAtRef.current) {
+      const arrived = distanceFromBottom <= AT_BOTTOM_PX
+      if (userGestured || arrived || now - smoothToBottomStartedAtRef.current > 2000) {
+        smoothToBottomStartedAtRef.current = 0
+        if (arrived && programmaticScrollAtRef) programmaticScrollAtRef.current = now
+      } else if (programmaticScrollAtRef) {
+        programmaticScrollAtRef.current = now
+      }
+    }
     if (heightStable && userGestured) {
       if (el.scrollTop > prevTop + 1) lastGestureScrollDirRef.current = "down"
       else if (el.scrollTop < prevTop - 1) lastGestureScrollDirRef.current = "up"
@@ -597,7 +632,7 @@ export function useTimelineScroll({
     // While following we're effectively at the tail (the observer re-pins), so
     // never surface jump-to-latest; only when the user has actually scrolled up.
     setIsScrolledFarFromBottom(!isFollowingTailRef.current && distanceFromBottom > JUMP_TO_LATEST_PX)
-  }, [isJumpMode, userInteractedAtRef])
+  }, [isJumpMode, userInteractedAtRef, programmaticScrollAtRef])
 
   // Initial scroll-to-bottom once the first window is populated. Runs in a
   // layout effect (pre-paint) against the owned scroller so there is no visible

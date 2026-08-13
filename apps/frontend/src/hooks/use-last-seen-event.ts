@@ -36,13 +36,30 @@ export function pickVisibleRange(rows: VisibleRow[], viewportTop: number, viewpo
  * the bottom of the viewport when the viewport's top is at or above the first
  * unread row (`frontier + 1`) — i.e. there is no gap of unseen rows between the
  * read frontier and what's on screen. Landing at the live bottom leaves such a
- * gap, so the frontier (and the read pointer) stays put; flinging past a block
- * of rows without them entering the viewport likewise stops the advance.
+ * gap, so the frontier (and the read pointer) stays put. `topIdx` is the
+ * sweep-effective top: recompute substitutes the previous scan's top when two
+ * scans link into one continuous user scroll (see SWEEP_LINK_MS), so a fast
+ * fling — whose per-frame viewport jumps exceed the viewport height — still
+ * reads as the continuous sweep it visually was.
  */
 export function advanceFrontier(frontier: number, topIdx: number, botIdx: number): number {
   if (topIdx <= frontier + 1 && botIdx > frontier) return botIdx
   return frontier
 }
+
+/**
+ * Two viewport scans within this window, with no programmatic scroll write
+ * between them, belong to one continuous user scroll: everything between the
+ * first scan's top and the second scan's bottom was painted on the way through,
+ * so the pair advances the frontier as one swept range. Without this, a fast
+ * fling (or a busy main thread dropping rAF scans — mobile with heavy rows)
+ * moves the viewport more than its own height between scans, the contiguity
+ * check fails once, and the whole read-through silently marks nothing.
+ * Programmatic scrolls (jump-to-latest, deep links, landing positioning) stamp
+ * `programmaticScrollAtRef` on every write, which breaks the link — a jump
+ * stays a gap the viewer never read.
+ */
+export const SWEEP_LINK_MS = 1500
 
 interface UseLastSeenEventOptions {
   /** The owned scroll container (virtualized timeline or plain thread scroller). */
@@ -77,6 +94,12 @@ interface UseLastSeenEventOptions {
   lastReadEventId: string | null | undefined
   /** Off while loading/jumping/draft — no scroller to read, nothing to track. */
   enabled: boolean
+  /**
+   * Timestamp (performance.now()) of the owner's last programmatic scroll
+   * write. Scans on either side of a stamp never sweep-link (see
+   * SWEEP_LINK_MS): a jump must remain a gap, not a read-through.
+   */
+  programmaticScrollAtRef?: React.RefObject<number>
 }
 
 interface UseLastSeenEventResult {
@@ -112,6 +135,7 @@ export function useLastSeenEvent({
   streamId,
   lastReadEventId,
   enabled,
+  programmaticScrollAtRef,
 }: UseLastSeenEventOptions): UseLastSeenEventResult {
   const [lastSeenEventId, setLastSeenEventId] = useState<string | undefined>(undefined)
   const [atLastRow, setAtLastRow] = useState(false)
@@ -165,6 +189,11 @@ export function useLastSeenEvent({
   const prevLastReadIdRef = useRef(lastReadEventId)
   const prevStreamIdRef = useRef(streamId)
 
+  // The previous scan's viewport top, for sweep-linking (SWEEP_LINK_MS). Keyed
+  // by event id, not index: a prepend shifts every index but virtua holds the
+  // viewport on the same rows, and an id re-resolves to its post-shift index.
+  const prevScanRef = useRef<{ topId: string; at: number } | null>(null)
+
   const recompute = useCallback(() => {
     const el = scrollContainerRef.current
     if (!el) return
@@ -199,13 +228,28 @@ export function useLastSeenEvent({
     if (topIdx === undefined || botIdx === undefined) return
     const lastRenderedIdx = map.get(rows[rows.length - 1].id) ?? botIdx
 
+    // Sweep-link with the previous scan: within SWEEP_LINK_MS and with no
+    // programmatic scroll write since that scan, the movement between the two
+    // viewports is one continuous user scroll — everything from the previous
+    // scan's top downward was painted on the way through, so contiguity is
+    // judged from there. A programmatic stamp (jump, landing, refine loop)
+    // newer than the previous scan breaks the link so a jump stays a gap.
+    const now = performance.now()
+    const prevScan = prevScanRef.current
+    let effTopIdx = topIdx
+    if (prevScan && now - prevScan.at <= SWEEP_LINK_MS && (programmaticScrollAtRef?.current ?? 0) < prevScan.at) {
+      const prevTopIdx = map.get(prevScan.topId)
+      if (prevTopIdx !== undefined && prevTopIdx < effTopIdx) effTopIdx = prevTopIdx
+    }
+    prevScanRef.current = { topId: range.topId, at: now }
+
     // While pinned (the pointer was just moved back by mark-as-unread and the
     // now-unread row is still on screen) hold the frontier so advanceFrontier
     // doesn't immediately re-read it; a user scroll lifts the pin.
     if (!pinnedRef.current) {
       // External reads can only move the frontier forward.
       if (readIndexRef.current > frontierRef.current) frontierRef.current = readIndexRef.current
-      frontierRef.current = advanceFrontier(frontierRef.current, topIdx, botIdx)
+      frontierRef.current = advanceFrontier(frontierRef.current, effTopIdx, botIdx)
     }
 
     const frontier = frontierRef.current
@@ -230,7 +274,7 @@ export function useLastSeenEvent({
     } else {
       setLastSeenEventId((prev) => (prev === undefined ? prev : undefined))
     }
-  }, [scrollContainerRef])
+  }, [scrollContainerRef, programmaticScrollAtRef])
 
   // Reset on stream switch — the new stream's frontier seeds from its own read
   // pointer, never inheriting the previous stream's position.
@@ -238,6 +282,7 @@ export function useLastSeenEvent({
     frontierRef.current = readIndexRef.current
     prevReadSeqRef.current = readSeqRef.current
     pinnedRef.current = false
+    prevScanRef.current = null
     setLastSeenEventId(undefined)
     setAtLastRow(false)
     setUnreadAboveViewport(false)
@@ -253,6 +298,9 @@ export function useLastSeenEvent({
   useEffect(() => {
     if (!enabled) return
     const el = scrollContainerEl ?? scrollContainerRef.current
+    // A re-arm (enabled flip, scroller mount, jump-mode exit) starts a fresh
+    // sweep baseline — scans across a disabled window must never link.
+    prevScanRef.current = null
     let raf = 0
     const schedule = () => {
       if (raf) return
