@@ -599,6 +599,7 @@ describe("resolveAnchorRestore", () => {
     hasDeepLink: false,
     userInteractedAt: 0,
     hasAnchor: true,
+    hasItems: true,
     anchorInWindow: true,
   }
 
@@ -614,6 +615,14 @@ describe("resolveAnchorRestore", () => {
 
   it("waits (without consuming the decision) while the window loads", () => {
     expect(resolveAnchorRestore({ ...base, isLoading: true })).toBe("wait")
+  })
+
+  it("waits through the cold-boot grace window — isLoading false but no rows yet must not consume the decision as a stale-anchor skip", () => {
+    // The #1873 regression: on reload, computeTimelineLoadState reports
+    // isLoading false while IDB is still resolving (no-skeleton-flash grace
+    // window), so the decision ran against an empty window, read the anchor as
+    // stale, and consumed itself as "skip" — every reload landed at the tail.
+    expect(resolveAnchorRestore({ ...base, hasItems: false, anchorInWindow: false })).toBe("wait")
   })
 
   it("skips with no persisted anchor — the tail open is untouched", () => {

@@ -533,6 +533,12 @@ export function resolveAnchorRestore(args: {
   hasDeepLink: boolean
   userInteractedAt: number
   hasAnchor: boolean
+  /** The event window has rows. `isLoading` alone is NOT that: cold boot has a
+   *  grace window where IDB hasn't resolved yet but `isLoading` is already
+   *  false (computeTimelineLoadState's no-skeleton-flash path) — judging the
+   *  anchor against that empty window consumed every reload's restore as a
+   *  stale-anchor skip, landing the reader at the tail. */
+  hasItems: boolean
   anchorInWindow: boolean
 }): "wait" | "skip" | "restore" {
   if (args.alreadyDecided) return "skip"
@@ -540,9 +546,24 @@ export function resolveAnchorRestore(args: {
   if (args.hasDeepLink || args.isJumpMode) return "skip"
   if (args.userInteractedAt > 0) return "skip"
   if (!args.hasAnchor) return "skip"
-  if (args.isLoading) return "wait"
+  if (args.isLoading || !args.hasItems) return "wait"
   if (!args.anchorInWindow) return "skip"
   return "restore"
+}
+
+/** The topmost timeline row intersecting the scroller viewport, with its
+ *  offset from the viewport top (negative when partially scrolled off). */
+function snapshotTopVisibleRow(el: HTMLElement): { id: string; offsetPx: number } | null {
+  const sr = el.getBoundingClientRect()
+  let best: { id: string; top: number } | null = null
+  for (const row of el.querySelectorAll<HTMLElement>("[data-message-id], [data-event-id]")) {
+    const rr = row.getBoundingClientRect()
+    if (rr.bottom <= sr.top + 1 || rr.top >= sr.bottom) continue
+    const id = row.dataset.messageId ?? row.dataset.eventId
+    if (!id) continue
+    if (!best || rr.top < best.top) best = { id, top: rr.top }
+  }
+  return best ? { id: best.id, offsetPx: Math.round(best.top - sr.top) } : null
 }
 
 /**
@@ -2523,9 +2544,14 @@ export function StreamContent({
       hasDeepLink: skipInitialScroll,
       userInteractedAt: userInteractedAtRef.current,
       hasAnchor: anchor !== null,
-      // The scan only matters once the wait gate has cleared; skip it while
-      // the window is still loading.
-      anchorInWindow: anchor !== null && !isLoading && findTimelineTargetIndex(visibleItems, anchor.targetId) >= 0,
+      hasItems: visibleItems.length > 0,
+      // The scan only matters once the wait gates have cleared; skip it while
+      // the window is still loading or unpopulated.
+      anchorInWindow:
+        anchor !== null &&
+        !isLoading &&
+        visibleItems.length > 0 &&
+        findTimelineTargetIndex(visibleItems, anchor.targetId) >= 0,
     })
     if (decision === "wait") return
     anchorRestoreRef.current.decided = true
@@ -2583,16 +2609,8 @@ export function StreamContent({
         clearTimelineAnchor(streamId)
         return
       }
-      const sr = el.getBoundingClientRect()
-      let best: { id: string; top: number } | null = null
-      for (const row of el.querySelectorAll<HTMLElement>("[data-message-id], [data-event-id]")) {
-        const rr = row.getBoundingClientRect()
-        if (rr.bottom <= sr.top + 1 || rr.top >= sr.bottom) continue
-        const id = row.dataset.messageId ?? row.dataset.eventId
-        if (!id) continue
-        if (!best || rr.top < best.top) best = { id, top: rr.top }
-      }
-      if (best) saveTimelineAnchor(streamId, { targetId: best.id, offsetPx: Math.round(best.top - sr.top) })
+      const best = snapshotTopVisibleRow(el)
+      if (best) saveTimelineAnchor(streamId, { targetId: best.id, offsetPx: best.offsetPx })
     }
     const onScroll = () => {
       if (timer) window.clearTimeout(timer)
@@ -2617,6 +2635,45 @@ export function StreamContent({
       document.removeEventListener("visibilitychange", onVisibilityChange)
     }
   }, [useVirtualized, virtualScrollerEl, streamId, isFollowingTailRef])
+
+  // Viewport hold across an older-page prepend, for a detached reader. virtua's
+  // `shift` compensation diffs the items array by index and count, and the
+  // landing commit is a mixed swap — skeleton rows leave and the real older
+  // rows arrive in one render — so its scroll adjustment misattributes sizes
+  // and the viewport slides up through the content by roughly the prepended
+  // height (the "screen creeps up after landing" bounce; even a skeleton-less
+  // prepend drifts by the estimate error of unmeasured rows). Snapshot the
+  // topmost visible row when the fetch starts, then re-pin that row to its
+  // exact offset in a pre-paint layout effect in the landing commit. A user
+  // gesture after the snapshot means they own the position — leave it alone.
+  // While following the tail the prepend is above the viewport and the bottom
+  // pin already owns the position.
+  const prependHoldRef = useRef<{ id: string; offsetPx: number; takenAt: number } | null>(null)
+  useEffect(() => {
+    if (!isFetchingOlder || !useVirtualized) return
+    const el = virtualScrollerEl
+    if (!el || isFollowingTailRef.current) {
+      prependHoldRef.current = null
+      return
+    }
+    const snap = snapshotTopVisibleRow(el)
+    prependHoldRef.current = snap ? { ...snap, takenAt: performance.now() } : null
+  }, [isFetchingOlder, useVirtualized, virtualScrollerEl, isFollowingTailRef])
+
+  useLayoutEffect(() => {
+    if (!olderPrependLanded) return
+    const hold = prependHoldRef.current
+    prependHoldRef.current = null
+    if (!hold) return
+    const el = virtualScrollerEl
+    if (!el || isFollowingTailRef.current) return
+    if (userInteractedAtRef.current > hold.takenAt) return
+    const escaped = CSS.escape(hold.id)
+    const row = el.querySelector<HTMLElement>(`[data-message-id="${escaped}"], [data-event-id="${escaped}"]`)
+    if (!row) return
+    const delta = row.getBoundingClientRect().top - (el.getBoundingClientRect().top + hold.offsetPx)
+    if (Math.abs(delta) > 1) el.scrollTop += delta
+  }, [olderPrependLanded, virtualScrollerEl, isFollowingTailRef, userInteractedAtRef])
 
   useLayoutEffect(() => {
     const decision = resolveUnreadMarkerOpen({
