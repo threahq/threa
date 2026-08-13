@@ -1550,6 +1550,13 @@ export function StreamContent({
   // reveals the tail before a positional landing can take the mask over.
   const landingPendingRef = useRef(true)
 
+  // Stamped on every programmatic scroll write (landing positioning, refine
+  // loop, detached-hold re-pins, jump-to-latest, plus the scroll hook's own
+  // pins). The read-frontier sweep in useLastSeenEvent refuses to link scans
+  // across a stamp, so programmatic jumps stay read gaps while user flings
+  // sweep — see SWEEP_LINK_MS.
+  const programmaticScrollAtRef = useRef(0)
+
   const {
     listRef,
     scrollerRef: virtualScrollerRef,
@@ -1575,6 +1582,7 @@ export function StreamContent({
     isJumpMode,
     userInteractedAtRef,
     landingPendingRef,
+    programmaticScrollAtRef,
   })
 
   // Scroll container element, owned by useTimelineScroll. Attached to the
@@ -1878,6 +1886,7 @@ export function StreamContent({
           const desiredTop = sr.top + topOffsetPx
           const delta = align === "start" ? er.top - desiredTop : (er.top + er.bottom) / 2 - scCenter
           if (Math.abs(delta) > 2) {
+            programmaticScrollAtRef.current = performance.now()
             scroller.scrollTop += delta
             stableTicks = 0
           } else {
@@ -1903,6 +1912,7 @@ export function StreamContent({
           // and MAX_MS still bounds the loop if it never does.
           if (liveIdx >= 0) {
             try {
+              programmaticScrollAtRef.current = performance.now()
               listRef.current?.scrollToIndex(
                 liveIdx,
                 align === "start" ? { align: "start", offset: -topOffsetPx } : { align: "center" }
@@ -2284,6 +2294,7 @@ export function StreamContent({
     streamId,
     lastReadEventId: frontierLastReadEventId,
     enabled: autoMarkEnabled,
+    programmaticScrollAtRef,
   })
   useAutoMarkAsRead(workspaceId, streamId, lastSeenEventId, { enabled: autoMarkEnabled, partial: !atLastRow })
   const canAutoRead = useAutoReadAttention()
@@ -2495,12 +2506,14 @@ export function StreamContent({
       const idx = findEventItemIndex(visibleItems, dividerEventId)
       if (idx < 0) return
       try {
+        programmaticScrollAtRef.current = performance.now()
         listRef.current?.scrollToIndex(idx, { align: "start", offset: -UNREAD_MARKER_TOP_GAP_PX })
       } catch {
         // A not-yet-measured virtua list can throw; the row is already rendered
         // by the time this button is clickable, so this is best-effort.
       }
     } else {
+      programmaticScrollAtRef.current = performance.now()
       scrollContainerRef.current
         ?.querySelector<HTMLElement>(`[data-event-id="${CSS.escape(dividerEventId)}"]`)
         ?.scrollIntoView({ block: "start" })
@@ -2536,6 +2549,10 @@ export function StreamContent({
     const row = el.querySelector<HTMLElement>(`[data-message-id="${escaped}"], [data-event-id="${escaped}"]`)
     if (!row) return
     const delta = row.getBoundingClientRect().top - (el.getBoundingClientRect().top + hold.offsetPx)
+    // Position-preserving by definition (re-pins the same row at the same
+    // offset), so it does not stamp the programmatic-scroll ref — breaking a
+    // user fling's sweep chain over a layout compensation was exactly the
+    // false positive the stamp must avoid.
     if (Math.abs(delta) > 1) el.scrollTop += delta
   }, [virtualScrollerEl, isFollowingTailRef, userInteractedAtRef])
   useLayoutEffect(() => {
