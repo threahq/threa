@@ -3661,7 +3661,7 @@ function TimelineMessageList({
         scrollerRef={scrollerRef}
       />
       {isInitialSettling && (
-        <div aria-hidden className="pointer-events-none absolute inset-0 z-10 bg-background">
+        <div aria-hidden data-testid="settle-mask" className="pointer-events-none absolute inset-0 z-10 bg-background">
           {skeleton}
         </div>
       )}
