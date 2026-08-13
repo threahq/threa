@@ -26,7 +26,7 @@
  */
 
 import { attachmentsApi } from "@/api"
-import { API_BASE } from "@/api/client"
+import { API_BASE, ApiError } from "@/api/client"
 import { db, type CachedUploadJob } from "@/db"
 import { encryptAttachmentBytes, rememberAttachmentRef } from "@/lib/crypto/attachment-crypto"
 import { uploadGalleryType } from "@/components/gallery/upload-preview"
@@ -38,8 +38,61 @@ import { XhrNetworkError } from "./xhr-upload"
 const E2E_CIPHERTEXT_FILENAME = "encrypted"
 const E2E_CIPHERTEXT_MIME = "application/octet-stream"
 
-/** Backoff for transient (network / 5xx / 429) failures before going terminal. */
+/** Backoff for transient (network / 5xx) failures before going terminal. */
 const RETRY_DELAYS_MS = [2_000, 5_000, 15_000]
+
+/**
+ * Backoff for 429s, on the reservation and the byte stream alike. The server's
+ * upload window is per-minute and each file costs two requests (reserve +
+ * content), so a big batch legitimately overruns it — waiting out the window
+ * is normal pacing, not a failure, and it gets a schedule long enough to
+ * actually reach the next window instead of burning the network budget in 22s.
+ */
+const RATE_LIMIT_RETRY_DELAYS_MS = [5_000, 15_000, 30_000, 60_000, 60_000]
+
+/**
+ * At most this many byte streams in flight; the rest queue FIFO. Reservations
+ * stay unqueued — one cheap request each, and the id must land immediately for
+ * send-while-uploading. The cap keeps a batch from opening every transfer at
+ * once (the `Promise.all` burst that ate the whole rate window in one second).
+ */
+const MAX_CONCURRENT_TRANSFERS = 3
+let activeTransfers = 0
+const transferQueue: Array<() => void> = []
+/**
+ * Bumped by resetUploadManager. A slot release carries the generation it was
+ * acquired under; a release from before a reset is ignored — the reset already
+ * zeroed the gate, and letting the stale decrement through would grant a
+ * fourth stream to a batch started after the reset.
+ */
+let transferGateGeneration = 0
+
+function acquireTransferSlot(signal: AbortSignal): Promise<number> {
+  if (activeTransfers < MAX_CONCURRENT_TRANSFERS) {
+    activeTransfers++
+    return Promise.resolve(transferGateGeneration)
+  }
+  return new Promise((resolve, reject) => {
+    const grant = () => {
+      signal.removeEventListener("abort", onAbort)
+      activeTransfers++
+      resolve(transferGateGeneration)
+    }
+    const onAbort = () => {
+      const index = transferQueue.indexOf(grant)
+      if (index !== -1) transferQueue.splice(index, 1)
+      reject(new DOMException("Aborted", "AbortError"))
+    }
+    signal.addEventListener("abort", onAbort, { once: true })
+    transferQueue.push(grant)
+  })
+}
+
+function releaseTransferSlot(generation: number): void {
+  if (generation !== transferGateGeneration) return
+  activeTransfers = Math.max(0, activeTransfers - 1)
+  transferQueue.shift()?.()
+}
 
 export type UploadJobStatus = "reserving" | "uploading" | "uploaded" | "error"
 
@@ -330,16 +383,26 @@ async function runReserveAndUpload(jobId: string, file: File, signal: AbortSigna
     }
     if (signal.aborted) return
 
-    const reservation = await attachmentsApi.reserve(
-      job.workspaceId,
-      {
-        filename: job.e2e ? E2E_CIPHERTEXT_FILENAME : job.filename,
-        mimeType: job.e2e ? E2E_CIPHERTEXT_MIME : job.mimeType,
-        sizeBytes: uploadBlob.size,
-        ...(job.e2e && { e2e: true }),
-      },
-      { signal }
-    )
+    const reserveInput = {
+      filename: job.e2e ? E2E_CIPHERTEXT_FILENAME : job.filename,
+      mimeType: job.e2e ? E2E_CIPHERTEXT_MIME : job.mimeType,
+      sizeBytes: uploadBlob.size,
+      ...(job.e2e && { e2e: true }),
+    }
+    // A rate-limited reservation waits out the window in place (the job stays
+    // `reserving`); failing it terminally would strand the file with no id and
+    // therefore no retry affordance at all.
+    let reservation: Awaited<ReturnType<typeof attachmentsApi.reserve>>
+    for (let attempt = 0; ; attempt++) {
+      try {
+        reservation = await attachmentsApi.reserve(job.workspaceId, reserveInput, { signal })
+        break
+      } catch (err) {
+        const rateLimited = ApiError.isApiError(err) && err.status === 429
+        if (!rateLimited || attempt >= RATE_LIMIT_RETRY_DELAYS_MS.length) throw err
+        await sleep(RATE_LIMIT_RETRY_DELAYS_MS[attempt], signal)
+      }
+    }
     const attachmentId = reservation.attachment?.id
     if (!attachmentId) throw new Error("Invalid response: missing attachment data")
 
@@ -407,7 +470,18 @@ async function uploadBytes(jobId: string, signal: AbortSignal): Promise<void> {
   const job = state.jobs.get(jobId)
   if (!job?.attachmentId) return
   const { workspaceId, attachmentId } = job
-  await withUploadLock(attachmentId, () => uploadBytesLocked(jobId, workspaceId, attachmentId, signal))
+  let slotGeneration: number
+  try {
+    slotGeneration = await acquireTransferSlot(signal)
+  } catch (err) {
+    if (isAbortError(err)) return
+    throw err
+  }
+  try {
+    await withUploadLock(attachmentId, () => uploadBytesLocked(jobId, workspaceId, attachmentId, signal))
+  } finally {
+    releaseTransferSlot(slotGeneration)
+  }
 }
 
 /** Settle the job locally as successfully uploaded. */
@@ -435,7 +509,13 @@ async function uploadBytesLocked(
   // Network-class failures (connection drops, 5xx, 429 exhaustion) leave the
   // bytes retryable; a 4xx rejection or non-network throw is terminal.
   let terminalRetryable = true
-  for (let attempt = 0; attempt <= RETRY_DELAYS_MS.length; attempt++) {
+  // Separate budgets: a 429 is the server pacing us, not the link failing, so
+  // waiting out the rate window must not consume the (much shorter) network
+  // retry schedule.
+  let networkAttempt = 0
+  let rateLimitAttempt = 0
+  while (true) {
+    let retryDelay: number | null = null
     try {
       await waitForOnline(signal)
       const response = await xhrTransport.xhrUpload({
@@ -458,7 +538,14 @@ async function uploadBytesLocked(
       }
 
       const body = response.body as { error?: string; code?: string } | null
-      if (response.status >= 400 && response.status < 500 && response.status !== 429) {
+      if (response.status === 429) {
+        if (rateLimitAttempt >= RATE_LIMIT_RETRY_DELAYS_MS.length) {
+          terminalError = body?.error ?? "Rate limit exceeded"
+          break
+        }
+        retryDelay = RATE_LIMIT_RETRY_DELAYS_MS[rateLimitAttempt]
+        rateLimitAttempt += 1
+      } else if (response.status >= 400 && response.status < 500) {
         terminalRetryable = false
         // A duplicate completion race (another tab/device already settled this
         // upload) surfaces as 404/409 here — that's a success, not a failure.
@@ -478,8 +565,9 @@ async function uploadBytesLocked(
         }
         terminalError = body?.error ?? `Upload rejected (${response.status})`
         break
+      } else {
+        terminalError = body?.error ?? `Upload failed (${response.status})`
       }
-      terminalError = body?.error ?? `Upload failed (${response.status})`
     } catch (err) {
       if (isAbortError(err) || signal.aborted) return
       if (!(err instanceof XhrNetworkError)) {
@@ -490,12 +578,15 @@ async function uploadBytesLocked(
       terminalError = "Network error during upload"
     }
 
-    if (attempt < RETRY_DELAYS_MS.length) {
-      try {
-        await sleep(RETRY_DELAYS_MS[attempt], signal)
-      } catch {
-        return // aborted while waiting
-      }
+    if (retryDelay === null) {
+      if (networkAttempt >= RETRY_DELAYS_MS.length) break
+      retryDelay = RETRY_DELAYS_MS[networkAttempt]
+      networkAttempt += 1
+    }
+    try {
+      await sleep(retryDelay, signal)
+    } catch {
+      return // aborted while waiting
     }
   }
 
@@ -583,8 +674,8 @@ let resumeEpoch = 0
 
 /**
  * Resume this workspace's persisted upload jobs after a reload/app reopen:
- * pending rows restart their transfer immediately, failed rows surface as
- * failed (the timeline chip offers retry). Idempotent per workspace per
+ * pending and retryably-failed rows restart their transfer immediately;
+ * terminally-failed rows surface as failed. Idempotent per workspace per
  * session; jobs already live in memory are skipped.
  */
 export async function resumeWorkspaceUploads(workspaceId: string): Promise<void> {
@@ -612,7 +703,12 @@ export async function resumeWorkspaceUploads(workspaceId: string): Promise<void>
     const jobId = newJobId()
     jobIdByAttachmentId.set(row.attachmentId, jobId)
     blobs.set(jobId, row.blob)
-    const failed = row.status === "failed"
+    // A retryable failure (network-class) restarts alongside the pending rows:
+    // reopening the app IS the connectivity-restored moment for a transfer that
+    // died with the page, and the `online` auto-heal never fires for it — the
+    // browser wasn't open to see the transition. Only terminal rejections
+    // surface as dead.
+    const failed = row.status === "failed" && row.retryable === false
     state.jobs.set(jobId, {
       jobId,
       workspaceId,
@@ -623,8 +719,8 @@ export async function resumeWorkspaceUploads(workspaceId: string): Promise<void>
       e2e: row.e2e,
       status: failed ? "error" : "uploading",
       progress: 0,
-      error: row.error,
-      retryable: failed ? (row.retryable ?? true) : undefined,
+      error: failed ? row.error : undefined,
+      retryable: failed ? false : undefined,
       // E2E rows hold ciphertext — nothing previewable locally.
       previewUrl: row.e2e ? undefined : createPreviewUrl(row.blob, row),
       // Resumed jobs start unheld; a draft restore may claim them.
@@ -648,6 +744,12 @@ export function resetUploadManager(): void {
   resumeEpoch++
   for (const controller of controllers.values()) controller.abort()
   controllers.clear()
+  // Nothing holds a transfer slot after a teardown; queued acquires were
+  // rejected by their aborted signals above, and the generation bump makes
+  // any still-unwinding transfer's eventual release a no-op.
+  transferGateGeneration++
+  transferQueue.length = 0
+  activeTransfers = 0
   for (const job of state.jobs.values()) revokePreviewUrl(job.previewUrl)
   state.jobs.clear()
   blobs.clear()

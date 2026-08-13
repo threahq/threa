@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest"
 import { attachmentsApi } from "@/api"
+import { ApiError } from "@/api/client"
 import { db } from "@/db"
 import { getAttachmentRef, clearAttachmentRefCache } from "@/lib/crypto/attachment-crypto"
 import * as xhrTransport from "./xhr-upload"
@@ -221,6 +222,128 @@ describe("upload-manager", () => {
     await vi.waitFor(() => expect(findUploadJob(job.jobId)?.status).toBe("uploaded"))
   })
 
+  it("waits out a 429 on the byte stream and succeeds — pacing, not failure", async () => {
+    vi.useFakeTimers()
+    mockReserve("attach_paced")
+    const xhr = vi
+      .spyOn(xhrTransport, "xhrUpload")
+      .mockResolvedValueOnce({ status: 429, body: { error: "Rate limit exceeded" } })
+      .mockResolvedValueOnce({ status: 429, body: { error: "Rate limit exceeded" } })
+      .mockResolvedValueOnce({ status: 201, body: {} })
+
+    const job = startUpload(WS, makeFile())
+    await vi.waitFor(() => expect(xhr).toHaveBeenCalledTimes(1))
+
+    // The rate-limit schedule (5s, then 15s) — deliberately longer than the
+    // whole network backoff, which a 429 must not consume.
+    await vi.advanceTimersByTimeAsync(5_000)
+    await vi.waitFor(() => expect(xhr).toHaveBeenCalledTimes(2))
+    await vi.advanceTimersByTimeAsync(15_000)
+    await vi.waitFor(() => expect(findUploadJob(job.jobId)?.status).toBe("uploaded"))
+  })
+
+  it("429 exhaustion goes terminal but keeps the retry affordance — the bytes are fine", async () => {
+    vi.useFakeTimers()
+    mockReserve("attach_limited")
+    vi.spyOn(attachmentsApi, "reportUploadFailure").mockResolvedValue(undefined)
+    vi.spyOn(xhrTransport, "xhrUpload").mockResolvedValue({ status: 429, body: { error: "Rate limit exceeded" } })
+
+    const job = startUpload(WS, makeFile())
+    await vi.waitFor(() => expect(findUploadJob(job.jobId)?.status).toBe("uploading"))
+    await vi.advanceTimersByTimeAsync(200_000) // exhaust 5/15/30/60/60
+    await vi.waitFor(() => expect(findUploadJob(job.jobId)?.status).toBe("error"))
+
+    expect(findUploadJob(job.jobId)).toMatchObject({ error: "Rate limit exceeded", retryable: true })
+  })
+
+  it("a rate-limited reservation waits in place instead of stranding the file without an id", async () => {
+    vi.useFakeTimers()
+    const reserve = vi
+      .spyOn(attachmentsApi, "reserve")
+      .mockRejectedValueOnce(new ApiError(429, "rate_limited", "Rate limit exceeded"))
+      .mockImplementation(async (_ws, input) => ({
+        attachment: { id: "attach_waited", filename: input.filename } as never,
+        upload: { method: "POST" as const, url: "/x", field: "file" as const },
+      }))
+    vi.spyOn(xhrTransport, "xhrUpload").mockResolvedValue({ status: 201, body: {} })
+
+    const job = startUpload(WS, makeFile())
+    await vi.waitFor(() => expect(reserve).toHaveBeenCalledTimes(1))
+    expect(findUploadJob(job.jobId)?.status).toBe("reserving")
+
+    await vi.advanceTimersByTimeAsync(5_000)
+    await vi.waitFor(() => expect(findUploadJob(job.jobId)?.attachmentId).toBe("attach_waited"))
+    await vi.waitFor(() => expect(findUploadJob(job.jobId)?.status).toBe("uploaded"))
+  })
+
+  it("caps concurrent byte streams at three; the rest queue and start as slots free", async () => {
+    let nextId = 0
+    vi.spyOn(attachmentsApi, "reserve").mockImplementation(async (_ws, input) => ({
+      attachment: { id: `attach_q${++nextId}`, filename: input.filename } as never,
+      upload: { method: "POST" as const, url: "/x", field: "file" as const },
+    }))
+    const settlers: Array<() => void> = []
+    const xhr = vi.spyOn(xhrTransport, "xhrUpload").mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          settlers.push(() => resolve({ status: 201, body: {} }))
+        })
+    )
+
+    const jobs = Array.from({ length: 5 }, () => startUpload(WS, makeFile()))
+    for (const job of jobs) await waitForReservation(job.jobId)
+
+    // All five are reserved (send can bind every id), but only three stream.
+    await vi.waitFor(() => expect(xhr).toHaveBeenCalledTimes(3))
+    expect(settlers).toHaveLength(3)
+
+    settlers.shift()!()
+    await vi.waitFor(() => expect(xhr).toHaveBeenCalledTimes(4))
+    settlers.shift()!()
+    await vi.waitFor(() => expect(xhr).toHaveBeenCalledTimes(5))
+    while (settlers.length > 0) settlers.shift()!()
+    for (const job of jobs) await waitForJobStatus(job.jobId, "uploaded")
+  })
+
+  it("a release unwinding across a reset cannot grant a post-reset batch a fourth stream", async () => {
+    let nextId = 0
+    vi.spyOn(attachmentsApi, "reserve").mockImplementation(async (_ws, input) => ({
+      attachment: { id: `attach_g${++nextId}`, filename: input.filename } as never,
+      upload: { method: "POST" as const, url: "/x", field: "file" as const },
+    }))
+    const settlers: Array<() => void> = []
+    const xhr = vi.spyOn(xhrTransport, "xhrUpload").mockImplementation(
+      // Deliberately ignores the abort signal: the old transfer's finally must
+      // still be pending when the post-reset batch fills the gate.
+      () =>
+        new Promise((resolve) => {
+          settlers.push(() => resolve({ status: 201, body: {} }))
+        })
+    )
+
+    const stale = startUpload(WS, makeFile())
+    await waitForReservation(stale.jobId)
+    await vi.waitFor(() => expect(xhr).toHaveBeenCalledTimes(1))
+
+    resetUploadManager()
+    await db.uploadJobs.clear()
+
+    const jobs = Array.from({ length: 4 }, () => startUpload(WS, makeFile()))
+    for (const job of jobs) await waitForReservation(job.jobId)
+    await vi.waitFor(() => expect(xhr).toHaveBeenCalledTimes(4)) // 1 stale + 3 new; 4th queued
+
+    // The pre-reset transfer settles now — its release belongs to the old
+    // generation and must not open the fourth slot.
+    settlers.shift()!()
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(xhr).toHaveBeenCalledTimes(4)
+
+    // A genuine release from the new generation still advances the queue.
+    settlers.shift()!()
+    await vi.waitFor(() => expect(xhr).toHaveBeenCalledTimes(5))
+    while (settlers.length > 0) settlers.shift()!()
+  })
+
   it("a duplicate-completion loser (404 but settled server-side) resolves as success", async () => {
     mockReserve("attach_dup")
     // Another tab/device won the duplicate completion: this tab's POST 404s
@@ -285,44 +408,43 @@ describe("upload-manager", () => {
     expect(xhr).toHaveBeenCalledTimes(2)
   })
 
-  it("resumes persisted jobs after a reload: pending rows restart, failed rows surface as failed", async () => {
+  it("resumes persisted jobs after a reload: pending and retryably-failed rows restart, terminal ones stay dead", async () => {
     const xhr = vi.spyOn(xhrTransport, "xhrUpload").mockResolvedValue({ status: 201, body: {} })
+    const row = (
+      attachmentId: string,
+      filename: string,
+      extra: { status: "pending" | "failed"; error?: string; retryable?: boolean }
+    ) => ({
+      attachmentId,
+      workspaceId: WS,
+      filename,
+      mimeType: "text/plain",
+      sizeBytes: 4,
+      e2e: false,
+      blob: new Blob(["data"], { type: "text/plain" }),
+      createdAt: Date.now(),
+      ...extra,
+    })
     await db.uploadJobs.bulkPut([
-      {
-        attachmentId: "attach_resume",
-        workspaceId: WS,
-        filename: "resume.txt",
-        mimeType: "text/plain",
-        sizeBytes: 11,
-        e2e: false,
-        blob: new Blob(["hello world"], { type: "text/plain" }),
-        status: "pending",
-        createdAt: Date.now(),
-      },
-      {
-        attachmentId: "attach_dead",
-        workspaceId: WS,
-        filename: "dead.txt",
-        mimeType: "text/plain",
-        sizeBytes: 4,
-        e2e: false,
-        blob: new Blob(["dead"], { type: "text/plain" }),
-        status: "failed",
-        error: "Network error during upload",
-        createdAt: Date.now(),
-      },
+      row("attach_resume", "resume.txt", { status: "pending" }),
+      // Network-class failure from a previous session (an app kill mid-stream):
+      // reopening IS the back-online moment, so it restarts like a pending row.
+      // A legacy row without the flag gets the same benefit of the doubt.
+      row("attach_heal", "heal.txt", { status: "failed", error: "Network error during upload", retryable: true }),
+      row("attach_legacy", "legacy.txt", { status: "failed", error: "Network error during upload" }),
+      row("attach_dead", "dead.txt", { status: "failed", error: "size mismatch", retryable: false }),
     ])
 
     await resumeWorkspaceUploads(WS)
 
     await vi.waitFor(() => {
-      expect(xhr).toHaveBeenCalledTimes(1)
-      expect(xhr).toHaveBeenCalledWith(
-        expect.objectContaining({ url: expect.stringContaining("/attachments/attach_resume/content") })
-      )
+      // One exact set: proves the three restartable rows streamed AND that
+      // attach_dead did not (INV-23/24).
+      const requested = xhr.mock.calls.map((call) => call[0].url.split("/attachments/")[1]).sort()
+      expect(requested).toEqual(["attach_heal/content", "attach_legacy/content", "attach_resume/content"])
     })
     const dead = getUploadJobByAttachmentId("attach_dead")
-    expect(dead).toMatchObject({ status: "error", error: "Network error during upload" })
+    expect(dead).toMatchObject({ status: "error", error: "size mismatch", retryable: false })
     await vi.waitFor(async () => expect(await db.uploadJobs.get("attach_resume")).toBeUndefined())
   })
 

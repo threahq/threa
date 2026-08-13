@@ -47,8 +47,10 @@ export interface PendingAttachment {
   previewUrl?: string
   /**
    * A failed upload whose bytes can be re-streamed against its reservation
-   * (`retryUpload`). False for reservation failures — nothing durable exists
-   * to retry against, so remove-and-repick is the only recovery.
+   * (`retryUpload`) with a chance of succeeding. False for reservation
+   * failures (nothing durable to retry against) and for terminal rejections
+   * (4xx, swept reservation — the same bytes fail the same way every time);
+   * remove-and-repick is the only recovery for those.
    */
   canRetry?: boolean
 }
@@ -127,7 +129,9 @@ function jobToPending(job: UploadJob): PendingAttachment {
     error: job.error,
     progress: job.status === "uploaded" ? undefined : job.progress,
     previewUrl: job.previewUrl,
-    canRetry: job.status === "error" && !!job.attachmentId,
+    // A terminal rejection (4xx, swept reservation) fails identically on every
+    // retry — only network-class failures earn the affordance.
+    canRetry: job.status === "error" && !!job.attachmentId && job.retryable !== false,
   }
 }
 
@@ -301,11 +305,29 @@ export function useAttachments(workspaceId: string, options?: UploadOptions): Us
         const job = claimUpload(a.id)
         return job ? { kind: "job" as const, jobId: job.jobId } : { kind: "restored" as const, ...a }
       })
-      entriesRef.current = restored
-      setEntries(restored)
-      const restoredImageCount = attachments.filter((a) => a.mimeType.startsWith("image/")).length
-      setImageCount(restoredImageCount)
-      imageCountRef.current = restoredImageCount
+      // MERGE with what this composer already holds, never replace: the draft
+      // persists ids as their reservations arrive, and its own write-back
+      // re-read can restore mid-batch — evicting the jobs still waiting for
+      // their ids silently dropped every not-yet-reserved file of a multi-pick.
+      // Scope changes clear the entries before restoring, so kept entries are
+      // always this scope's own in-flight work.
+      const restoredIds = new Set(attachments.map((a) => a.id))
+      const restoredJobIds = new Set(restored.flatMap((e) => (e.kind === "job" ? [e.jobId] : [])))
+      const kept = entriesRef.current.filter((entry) => {
+        if (entry.kind === "restored") return !restoredIds.has(entry.id)
+        if (restoredJobIds.has(entry.jobId)) return false
+        const jobAttachmentId = findUploadJob(entry.jobId)?.attachmentId
+        return jobAttachmentId === null || jobAttachmentId === undefined || !restoredIds.has(jobAttachmentId)
+      })
+      const next = [...restored, ...kept]
+      entriesRef.current = next
+      setEntries(next)
+      const mergedImageCount = next.filter((entry) => {
+        const mimeType = entry.kind === "restored" ? entry.mimeType : findUploadJob(entry.jobId)?.mimeType
+        return mimeType?.startsWith("image/") === true
+      }).length
+      setImageCount(mergedImageCount)
+      imageCountRef.current = mergedImageCount
     },
     []
   )

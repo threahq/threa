@@ -1,6 +1,20 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react"
-import { Loader2, FileText, Image as ImageIcon, File as FileIcon, Film, Globe, AlertCircle } from "lucide-react"
+import {
+  Loader2,
+  FileText,
+  Image as ImageIcon,
+  File as FileIcon,
+  Film,
+  Globe,
+  AlertCircle,
+  ChevronDown,
+  ChevronRight,
+  ChevronUp,
+  X,
+} from "lucide-react"
 import { AttachmentPill, type AttachmentPillStatus } from "@/components/composer/attachment-pill"
+import { Button } from "@/components/ui/button"
+import { Drawer, DrawerContent, DrawerTitle } from "@/components/ui/drawer"
 import { useComposerPillDragHost } from "@/components/editor/composer-pill-dnd"
 import type { ComposerPillDragHost } from "@/components/editor/composer-pill-drag-host"
 import { useIsMobile } from "@/hooks/use-mobile"
@@ -40,27 +54,29 @@ function iconForType(type: UploadGalleryType | null): typeof FileIcon {
 /**
  * Wraps a chip as a drag source for the editor's own sensor. A tray drag always
  * inserts a reference, so the chip stays put and the same file can be dropped
- * into the message any number of times.
+ * into the message any number of times. EVERY chip drags — uploading and failed
+ * included: a reference is a binding to the id, not to finished bytes (the same
+ * send-while-uploading model the message itself uses), and a chip whose gestures
+ * die with its upload state hands the flick to the page instead of the tray.
  *
- * `touch-action` gives the browser the tray's own scroll axis and leaves the
- * perpendicular one — the drag, towards the text — to the sensor.
+ * `touch-action: pan-y` gives the browser the tray's own scroll axis (the tray
+ * wraps and scrolls vertically on every breakpoint); the drag itself activates
+ * on a long press, which involves no movement, so it needs no axis of its own.
  */
 function TrayPillDraggable({
   host,
   attachment,
   imageIndex,
-  row,
   children,
 }: {
   host: ComposerPillDragHost | null
   attachment: PendingAttachment
   /** "Image #N" ordinal for an image attachment, from the send-time rule. */
   imageIndex: number | null
-  row: boolean
   children: ReactNode
 }) {
   const inputMode = useInputMode()
-  const draggable = host !== null && attachment.status === "uploaded"
+  const draggable = host !== null
   const begin = (event: MouseEvent | TouchEvent, target: EventTarget) => {
     // Every press on a chip owns the click it produces, draggable or not.
     host?.clearActivationClickSuppression()
@@ -71,6 +87,10 @@ function TrayPillDraggable({
       {
         kind: "tray",
         attachmentId: attachment.id,
+        // Marker semantics: the doc pill is a reference, not a transfer gauge —
+        // live status stays on the chip row. A reference dragged in while the
+        // reservation is still in flight carries the temp id; the editor flips
+        // it to the real id when the tray learns it.
         attrs: {
           id: attachment.id,
           filename: attachment.filename,
@@ -95,7 +115,7 @@ function TrayPillDraggable({
   return (
     <span
       className={cn("inline-flex shrink-0", draggable && "cursor-grab")}
-      style={draggable ? { touchAction: row ? "pan-x" : "pan-y" } : undefined}
+      style={{ touchAction: "pan-y" }}
       onMouseDown={(event) => begin(event.nativeEvent, event.target)}
       onTouchStart={(event) => begin(event.nativeEvent, event.target)}
       onMouseEnter={hoverHighlights ? () => host?.highlightAttachment(attachment.id) : undefined}
@@ -157,8 +177,8 @@ interface ChipViewProps {
   onResolveSrc: (key: string, src: string | null) => void
   /** Inline references to this attachment in the message being composed. */
   referenceCount: number
-  /** Single-row tray (mobile): a tighter label keeps more chips reachable. */
-  row: boolean
+  /** Mobile tray: a tighter label fits more chips per wrapped row. */
+  compact: boolean
   /** "Image #N" ordinal for an image attachment, from the send-time rule. */
   imageIndex: number | null
   dragHost: ComposerPillDragHost | null
@@ -175,7 +195,7 @@ function ChipView({
   onOpen,
   onResolveSrc,
   referenceCount,
-  row,
+  compact,
   imageIndex,
   dragHost,
 }: ChipViewProps) {
@@ -198,7 +218,9 @@ function ChipView({
   // A retryable failure's bytes are still held locally — same in-place retry
   // the timeline chip offers, instead of forcing remove-and-repick.
   const canRetry = isError && attachment.canRetry === true
-  let secondary = formatFileSize(attachment.sizeBytes)
+  // Compact chips drop the size so two fit per wrapped mobile row; the error
+  // state keeps its word — it's the tap affordance, not decoration.
+  let secondary: string | undefined = compact ? undefined : formatFileSize(attachment.sizeBytes)
   if (isError) secondary = canRetry ? "Retry" : "Failed"
 
   const isGenericError =
@@ -227,7 +249,7 @@ function ChipView({
   else if (canPreview) onActivate = guard(() => onOpen(key))
 
   return (
-    <TrayPillDraggable host={dragHost} attachment={attachment} imageIndex={imageIndex} row={row}>
+    <TrayPillDraggable host={dragHost} attachment={attachment} imageIndex={imageIndex}>
       <AttachmentPill
         icon={Icon}
         thumbnailSrc={thumbnailSrc}
@@ -241,7 +263,7 @@ function ChipView({
         progress={isUploading ? attachment.progress : undefined}
         onActivate={onActivate}
         activateLabel={canRetry ? `Retry upload of ${attachment.filename}` : `Preview ${attachment.filename}`}
-        labelMaxWidth={row ? "max-w-[80px]" : "max-w-[120px]"}
+        labelMaxWidth={compact ? "max-w-[72px]" : "max-w-[120px]"}
         referenceCount={referenceCount}
       />
     </TrayPillDraggable>
@@ -281,6 +303,118 @@ function E2eChip({
   )
 }
 
+/**
+ * Bottom-sheet overview of the whole tray (mobile): full filenames, live
+ * status, per-row retry/remove, and bulk recovery — the chips themselves show
+ * a couple of wrapped rows at most, so this is where "what exactly is attached
+ * and what failed" gets answered at twenty attachments.
+ */
+function AttachmentListDrawer({
+  open,
+  onOpenChange,
+  onAnimationEnd,
+  attachments,
+  onRemove,
+  onCancelUpload,
+}: {
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  onAnimationEnd: (open: boolean) => void
+  attachments: PendingAttachment[]
+  onRemove: (id: string) => void
+  onCancelUpload: (id: string) => void
+}) {
+  const failed = attachments.filter((a) => a.status === "error")
+  const retryable = failed.filter((a) => a.canRetry === true)
+  return (
+    <Drawer open={open} onOpenChange={onOpenChange} onAnimationEnd={onAnimationEnd}>
+      <DrawerContent className="max-h-[85dvh]">
+        <DrawerTitle className="px-4 pt-1 text-sm font-medium">Attachments</DrawerTitle>
+        <p className="px-4 pb-2 text-xs text-muted-foreground">
+          {attachments.length} {attachments.length === 1 ? "file" : "files"}
+          {failed.length > 0 && <span className="font-medium text-destructive"> · {failed.length} failed</span>}
+        </p>
+        <ul className="min-h-0 flex-1 overflow-y-auto px-2">
+          {attachments.map((attachment) => {
+            const isUploading = attachment.status === "uploading"
+            const isError = attachment.status === "error"
+            let Icon = iconForType(uploadGalleryType(attachment))
+            if (isUploading) Icon = Loader2
+            else if (isError) Icon = AlertCircle
+            let statusText: ReactNode = formatFileSize(attachment.sizeBytes)
+            if (isUploading) statusText = `Uploading — ${Math.round((attachment.progress ?? 0) * 100)}%`
+            else if (isError) statusText = attachment.error || "Upload failed"
+            return (
+              <li
+                key={attachmentKey(attachment)}
+                className="flex items-center gap-3 border-b border-border/50 px-2 py-2.5 last:border-b-0"
+              >
+                <span
+                  className={cn(
+                    "flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-muted/60 text-muted-foreground",
+                    isError && "bg-destructive/10 text-destructive"
+                  )}
+                >
+                  <Icon className={cn("h-4 w-4", isUploading && "animate-spin")} />
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-sm">{attachment.filename}</span>
+                  <span className={cn("block truncate text-xs text-muted-foreground", isError && "text-destructive")}>
+                    {statusText}
+                  </span>
+                </span>
+                {isError && attachment.canRetry === true && (
+                  <button
+                    type="button"
+                    className="px-2 py-1.5 text-xs font-medium text-primary"
+                    onClick={() => void retryUpload(attachment.id)}
+                    aria-label={`Retry upload of ${attachment.filename}`}
+                  >
+                    Retry
+                  </button>
+                )}
+                <button
+                  type="button"
+                  className="rounded-full p-1.5 text-muted-foreground active:bg-muted"
+                  onClick={() => (isUploading ? onCancelUpload(attachment.id) : onRemove(attachment.id))}
+                  aria-label={isUploading ? `Cancel upload of ${attachment.filename}` : `Remove ${attachment.filename}`}
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </li>
+            )
+          })}
+        </ul>
+        {failed.length > 0 && (
+          <div className="flex gap-2 px-4 pt-2 pb-[max(12px,env(safe-area-inset-bottom))]">
+            <Button
+              variant="outline"
+              size="sm"
+              className="flex-1"
+              onClick={() => {
+                for (const a of failed) onRemove(a.id)
+              }}
+            >
+              Remove failed
+            </Button>
+            {retryable.length > 0 && (
+              <Button
+                size="sm"
+                className="flex-1"
+                onClick={() => {
+                  for (const a of retryable) void retryUpload(a.id)
+                }}
+              >
+                Retry {retryable.length}
+              </Button>
+            )}
+          </div>
+        )}
+      </DrawerContent>
+    </Drawer>
+  )
+}
+
 interface PendingAttachmentsProps {
   attachments: PendingAttachment[]
   onRemove: (id: string) => void
@@ -307,6 +441,13 @@ interface PendingAttachmentsProps {
    * from two references up.
    */
   referenceCounts?: ReadonlyMap<string, number>
+  /**
+   * The mobile composer is in its resting (single-line bar) state: fold the
+   * chips down to the rollup line so a parked draft doesn't occupy the reading
+   * strip. The drawer stays reachable through the rollup; the chips return
+   * when the composer opens. No effect on desktop.
+   */
+  resting?: boolean
 }
 
 /**
@@ -317,6 +458,12 @@ interface PendingAttachmentsProps {
  * the leading slot (from local bytes, the non-E2E server thumbnail, or an
  * in-memory E2E decrypt). Non-previewable files keep a plain type-icon chip.
  * Renders nothing when both lists are empty.
+ *
+ * A one-line rollup sits above the chips on every breakpoint — count, failure
+ * tally, bulk retry, fold chevron. On mobile the chips wrap to a capped couple
+ * of rows and the rollup opens {@link AttachmentListDrawer} for the full list;
+ * desktop's taller wrapped tray is its own full list, so the summary there is
+ * plain text.
  */
 export function PendingAttachments({
   attachments,
@@ -325,9 +472,31 @@ export function PendingAttachments({
   beforePills,
   workspaceId,
   referenceCounts,
+  resting = false,
 }: PendingAttachmentsProps) {
   const isMobile = useIsMobile()
   const dragHost = useComposerPillDragHost()
+  // Mobile space controls: the chips can be folded away to the one-line rollup
+  // (the composer already competes with the keyboard for the viewport), and the
+  // drawer holds the full list. Both are per-mount — a fresh composer starts
+  // with its chips showing.
+  const [collapsed, setCollapsed] = useState(false)
+  const [drawerOpen, setDrawerOpen] = useState(false)
+  // True from close until vaul's exit animation lands, so removing the last
+  // attachment from the open sheet slides it out instead of snapping the whole
+  // subtree out of the DOM.
+  const [drawerExiting, setDrawerExiting] = useState(false)
+  const handleDrawerOpenChange = useCallback((open: boolean) => {
+    setDrawerOpen(open)
+    if (!open) setDrawerExiting(true)
+  }, [])
+  const handleDrawerAnimationEnd = useCallback((open: boolean) => {
+    if (!open) setDrawerExiting(false)
+  }, [])
+  const attachmentCount = attachments.length
+  useEffect(() => {
+    if (attachmentCount === 0 && drawerOpen) handleDrawerOpenChange(false)
+  }, [attachmentCount, drawerOpen, handleDrawerOpenChange])
   // Open lightbox tracked by the stable attachment key, not the id (which flips
   // temp→server on upload completion), so an open preview survives its upload.
   const [openKey, setOpenKey] = useState<string | null>(null)
@@ -364,43 +533,125 @@ export function PendingAttachments({
     [attachments, srcByKey]
   )
 
-  if (attachments.length === 0 && !beforePills) return null
+  // The drawer must survive its exit animation even when the list empties.
+  if (attachments.length === 0 && !beforePills && !drawerOpen && !drawerExiting) return null
 
   const galleryIndex = openKey ? galleryItems.findIndex((g) => g.attachmentId === pendingGalleryId(openKey)) : -1
 
+  const failedCount = attachments.filter((a) => a.status === "error").length
+  const uploadingCount = attachments.filter((a) => a.status === "uploading").length
+  const retryableIds = attachments.filter((a) => a.status === "error" && a.canRetry === true).map((a) => a.id)
+  const CollapseChevron = collapsed ? ChevronDown : ChevronUp
+  // Resting folds everything (context-ref pills included — same rule as the
+  // composer's link previews); the manual fold only exists while the rollup
+  // renders, so it scopes to having attachments.
+  const foldChips = (isMobile && resting) || (collapsed && attachments.length > 0)
+
+  const rollupSummary = (
+    <>
+      <span className="truncate">
+        {attachments.length} {attachments.length === 1 ? "file" : "files"}
+        {uploadingCount > 0 && ` · ${uploadingCount} uploading`}
+      </span>
+      {failedCount > 0 && <span className="font-medium text-destructive">· {failedCount} failed</span>}
+    </>
+  )
+
   return (
     <>
-      <div
-        className={cn(
-          "flex items-center gap-2 mb-3",
-          isMobile ? "overflow-x-auto" : "flex-wrap max-h-[120px] overflow-y-auto"
-        )}
-      >
-        {beforePills}
-        {attachments.map((attachment) => {
-          const key = attachmentKey(attachment)
-          const ref =
-            workspaceId && !attachment.previewUrl && uploadGalleryType(attachment) != null
-              ? getAttachmentRef(attachment.id)
-              : undefined
-          const shared = {
-            attachment,
-            onRemove,
-            onCancelUpload: onCancelUpload ?? onRemove,
-            onOpen: setOpenKey,
-            onResolveSrc,
-            referenceCount: referenceCounts?.get(attachment.id) ?? 0,
-            row: isMobile,
-            imageIndex: imageIndexes.get(attachment) ?? null,
-            dragHost,
-          }
-          return ref && workspaceId ? (
-            <E2eChip key={key} attachmentRef={ref} workspaceId={workspaceId} {...shared} />
+      {attachments.length > 0 && (
+        // The rollup renders on every breakpoint — the counts, bulk retry and
+        // fold ARE the overview; only the drawer behind the mobile tap is a
+        // phone affordance (desktop's wrapped tray is its own full list).
+        // preventDefault keeps editor focus (and the keyboard) through taps on
+        // this line's buttons — same guard as the composer's action bar. Safe
+        // as a blanket here: every child is our own button, nothing portaled.
+        <div
+          className="mb-1.5 flex h-6 items-center gap-3 text-xs text-muted-foreground"
+          onMouseDown={(event) => event.preventDefault()}
+        >
+          {isMobile ? (
+            <button
+              type="button"
+              className="flex min-w-0 items-center gap-1"
+              onClick={() => setDrawerOpen(true)}
+              aria-label="Show all attachments"
+            >
+              {rollupSummary}
+              <ChevronRight className="h-3.5 w-3.5 shrink-0" />
+            </button>
           ) : (
-            <StaticChip key={key} workspaceId={workspaceId} {...shared} />
-          )
-        })}
-      </div>
+            <span className="flex min-w-0 items-center gap-1">{rollupSummary}</span>
+          )}
+          {retryableIds.length > 0 && (
+            <button
+              type="button"
+              className="shrink-0 font-medium text-primary"
+              onClick={() => {
+                for (const id of retryableIds) void retryUpload(id)
+              }}
+            >
+              Retry {retryableIds.length}
+            </button>
+          )}
+          {!resting && (
+            <button
+              type="button"
+              className="-m-1 ml-auto shrink-0 p-1"
+              onClick={() => setCollapsed((value) => !value)}
+              aria-label={collapsed ? "Show attachment chips" : "Hide attachment chips"}
+            >
+              <CollapseChevron className="h-4 w-4" />
+            </button>
+          )}
+        </div>
+      )}
+      {!foldChips && (attachments.length > 0 || beforePills) && (
+        <div
+          className={cn(
+            "flex flex-wrap items-center mb-3 overflow-y-auto",
+            // Two chip rows plus a sliver of the third, so "there's more" is
+            // visible without stealing the strip the composer already fights
+            // the keyboard for. The full list lives in the drawer.
+            isMobile ? "max-h-[96px] gap-1.5" : "max-h-[120px] gap-2"
+          )}
+        >
+          {beforePills}
+          {attachments.map((attachment) => {
+            const key = attachmentKey(attachment)
+            const ref =
+              workspaceId && !attachment.previewUrl && uploadGalleryType(attachment) != null
+                ? getAttachmentRef(attachment.id)
+                : undefined
+            const shared = {
+              attachment,
+              onRemove,
+              onCancelUpload: onCancelUpload ?? onRemove,
+              onOpen: setOpenKey,
+              onResolveSrc,
+              referenceCount: referenceCounts?.get(attachment.id) ?? 0,
+              compact: isMobile,
+              imageIndex: imageIndexes.get(attachment) ?? null,
+              dragHost,
+            }
+            return ref && workspaceId ? (
+              <E2eChip key={key} attachmentRef={ref} workspaceId={workspaceId} {...shared} />
+            ) : (
+              <StaticChip key={key} workspaceId={workspaceId} {...shared} />
+            )
+          })}
+        </div>
+      )}
+      {isMobile && (attachments.length > 0 || drawerOpen || drawerExiting) && (
+        <AttachmentListDrawer
+          open={drawerOpen}
+          onOpenChange={handleDrawerOpenChange}
+          onAnimationEnd={handleDrawerAnimationEnd}
+          attachments={attachments}
+          onRemove={onRemove}
+          onCancelUpload={onCancelUpload ?? onRemove}
+        />
+      )}
 
       {workspaceId && galleryItems.length > 0 && (
         <MediaGallery

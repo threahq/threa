@@ -797,13 +797,14 @@ export function MessageComposer({
     [onRemoveAttachment]
   )
 
-  const attachmentTray = (
+  const attachmentTray = (resting: boolean) => (
     <PendingAttachments
       attachments={pendingAttachments}
       onRemove={handleRemoveAttachment}
       onCancelUpload={onCancelAttachmentUpload}
       workspaceId={workspaceId}
       referenceCounts={attachmentReferenceCounts}
+      resting={resting}
       beforePills={
         contextRefs && contextRefs.length > 0 && streamId && workspaceId ? (
           <ContextRefStrip workspaceId={workspaceId} streamId={streamId} draftRefs={contextRefs} />
@@ -1039,7 +1040,7 @@ export function MessageComposer({
                 onRequestFileUpload={handleRequestInlineUpload}
                 belowToolbarContent={
                   pendingAttachments.length > 0 || (contextRefs && contextRefs.length > 0) ? (
-                    <div className="pt-1 pb-2 border-b border-border/50 [&>div]:mb-0">{attachmentTray}</div>
+                    <div className="pt-1 pb-2 border-b border-border/50 [&>div]:mb-0">{attachmentTray(false)}</div>
                   ) : undefined
                 }
               />
@@ -1252,7 +1253,7 @@ export function MessageComposer({
             own position above the card and its chips still drag into the text.
             Wrapping it renders no DOM node, so the layout is unchanged. */}
           <ComposerPillDndHost>
-            {attachmentTray}
+            {attachmentTray(isMobile && !mobileChromeOpen)}
 
             {/* Live in-app link previews for the draft. Above the card (like
             attachments) so they read as attached to this message and stay clear

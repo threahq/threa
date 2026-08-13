@@ -20,21 +20,14 @@ export function attachmentPickerOptionKey(option: AttachmentPickerOption): strin
 }
 
 /**
- * Can this attachment be referenced yet? Settled bytes and a real id — the same
- * bar the tray drag sets, so the picker never offers what a drag would refuse,
- * and `/attachment` never opens on an empty list.
- */
-export function isPlaceableAttachment(attachment: PendingAttachment): boolean {
-  return attachment.status === "uploaded" && !attachment.id.startsWith("temp_")
-}
-
-/**
- * Tray rows for the picker: only attachments that can actually be referenced,
- * each carrying the ordinal a tray drag would stamp.
+ * Tray rows for the picker: every tray attachment, each carrying the ordinal a
+ * tray drag would stamp. Uploading and failed files are offered too — same bar
+ * as the drag: a reference binds the id, not finished bytes, and a still-
+ * reserving temp id is flipped by the editor when the reservation lands.
  */
 export function buildAttachmentPickerOptions(attachments: readonly PendingAttachment[]): AttachmentPickerOption[] {
   const imageIndexes = buildImageIndexByAttachment(attachments)
-  return attachments.filter(isPlaceableAttachment).map((attachment) => ({
+  return attachments.map((attachment) => ({
     kind: "attachment" as const,
     attachment,
     imageIndex: imageIndexes.get(attachment) ?? null,

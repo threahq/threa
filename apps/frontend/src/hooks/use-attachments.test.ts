@@ -153,6 +153,24 @@ describe("useAttachments", () => {
       expect(result.current.uploadedIds).toEqual([])
     })
 
+    it("offers no retry on a terminal rejection — the same bytes fail the same way every time", async () => {
+      mockReserve()
+      vi.spyOn(xhrTransport, "xhrUpload").mockResolvedValue({ status: 422, body: { error: "size mismatch" } })
+      vi.spyOn(attachmentsApi, "reportUploadFailure").mockResolvedValue(undefined)
+
+      const { result } = renderHook(() => useAttachments(workspaceId))
+      act(() => {
+        result.current.handleFileSelect(createChangeEvent([createFile("test.txt", "text/plain")]))
+      })
+
+      await waitFor(() => expect(result.current.pendingAttachments[0]?.status).toBe("error"))
+      expect(result.current.pendingAttachments[0]).toMatchObject({
+        id: "attach_123",
+        error: "size mismatch",
+        canRetry: false,
+      })
+    })
+
     it("removing a failed upload deletes its leaked reservation", async () => {
       mockReserve()
       vi.spyOn(xhrTransport, "xhrUpload").mockResolvedValue({ status: 422, body: { error: "nope" } })
@@ -304,6 +322,38 @@ describe("useAttachments", () => {
         result.current.restore([{ id: "attach_123", filename: "test.txt", mimeType: "text/plain", sizeBytes: 12 }])
       })
       expect(result.current.pendingAttachments[0]).toMatchObject({ id: "attach_123", status: "uploading" })
+    })
+
+    it("merges with in-flight uploads instead of evicting them (mid-batch draft write-back)", async () => {
+      mockReserve()
+      vi.spyOn(xhrTransport, "xhrUpload").mockImplementation(() => new Promise(() => {}))
+
+      const { result } = renderHook(() => useAttachments(workspaceId))
+      act(() => {
+        result.current.handleFileSelect(
+          createChangeEvent([
+            createFile("image1.png", "image/png"),
+            createFile("image2.png", "image/png"),
+            createFile("doc.pdf", "application/pdf"),
+          ])
+        )
+      })
+      await waitFor(() => expect(result.current.pendingAttachments.some((a) => a.id === "attach_1")).toBe(true))
+
+      // The draft persists ids as reservations land, and its write-back re-read
+      // restores while the rest of the batch is still reserving/streaming — the
+      // composer must keep holding every picked file, not just the persisted one.
+      act(() => {
+        result.current.restore([{ id: "attach_1", filename: "image1.png", mimeType: "image/png", sizeBytes: 12 }])
+      })
+
+      expect(result.current.pendingAttachments).toHaveLength(3)
+      expect(result.current.pendingAttachments.map((a) => a.filename).sort()).toEqual([
+        "doc.pdf",
+        "image1.png",
+        "image2.png",
+      ])
+      expect(result.current.imageCount).toBe(2)
     })
 
     it("falls back to inert uploaded facts for ids with no live job (reload case)", () => {

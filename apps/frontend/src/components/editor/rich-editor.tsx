@@ -5,6 +5,9 @@ import type { ResolvedPos } from "@tiptap/pm/model"
 import type { PluginKey } from "@tiptap/pm/state"
 import { useParams } from "react-router-dom"
 import { ComposerPillDndProvider } from "./composer-pill-dnd"
+import { countAttachmentReferences } from "./attachment-reference-counts"
+import { buildImageIndexByAttachment } from "@/components/timeline/attachment-image-index"
+import { findUploadJob } from "@/lib/uploads/upload-manager"
 import { createEditorExtensions } from "./editor-extensions"
 import { applyExternalEditorContent } from "./apply-external-content"
 import { ComposerPillCopyButton } from "./composer-pill-copy-button"
@@ -29,7 +32,6 @@ import {
   useCommandArgPicker,
   useAttachmentPicker,
   findPickableArg,
-  isPlaceableAttachment,
 } from "./triggers"
 import type { CommandItem } from "./triggers/types"
 import { parseMemoUrl } from "@/lib/memo-url"
@@ -357,13 +359,11 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
   // Snippet creation needs an upload handler to attach through, same as the
   // paste path; gate the `/snippet` command on it too.
   const snippetEnabled = !!onFileUpload && enableCommands
-  // `/attachment` is worth showing when there's something to place: a tray file
-  // the picker would actually offer, or an upload path to produce one. Counting
-  // raw tray length instead would open an empty picker on a tray holding only
-  // uploading or failed entries.
+  // `/attachment` is worth showing when there's something to place — any tray
+  // file (uploading and failed included; a reference binds the id, not finished
+  // bytes) — or an upload path to produce one.
   const canUploadFromPicker = !!onFileUpload && !!onRequestFileUpload
-  const hasPlaceableAttachment = (trayAttachments ?? []).some(isPlaceableAttachment)
-  const attachmentCommandEnabled = enableCommands && (canUploadFromPicker || hasPlaceableAttachment)
+  const attachmentCommandEnabled = enableCommands && (canUploadFromPicker || (trayAttachments ?? []).length > 0)
 
   // Open the snippet editor with an empty draft, anchored at the caret so the
   // chip lands where it would for a paste. Shared by the `/snippet` command and
@@ -1034,6 +1034,32 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
       return () => cancelAnimationFrame(raf)
     }
   }, [editableValue, editor, externalSyncNonce])
+
+  // A reference placed (drag or picker) while its upload was still reserving
+  // carries the job's temp id. Flip it to the real id — and the image ordinal
+  // send will use — the moment the tray learns it, the same flip the paste
+  // upload path performs through its own callback. Without this the node keeps
+  // an id no send path can resolve. Ordered AFTER the external-value sync
+  // effect above: when a value change and a tray tick land in one commit, the
+  // sync must apply the incoming doc first — flipping first would hand the
+  // sync a doc that no longer matches `value`, and it would revert the flip.
+  useEffect(() => {
+    const editorInstance = editorRef.current
+    if (!editorInstance || editorInstance.isDestroyed || !trayAttachments?.length) return
+    const referenced = countAttachmentReferences(editorInstance.getJSON() as JSONContent)
+    const tempIds = [...referenced.keys()].filter((id) => id.startsWith("temp_"))
+    if (tempIds.length === 0) return
+    const imageIndexes = buildImageIndexByAttachment(trayAttachments)
+    for (const tempId of tempIds) {
+      const attachmentId = findUploadJob(tempId)?.attachmentId
+      if (!attachmentId) continue
+      const attachment = trayAttachments.find((a) => a.id === attachmentId)
+      editorInstance.commands.updateAttachmentReference(tempId, {
+        id: attachmentId,
+        imageIndex: attachment ? (imageIndexes.get(attachment) ?? null) : null,
+      })
+    }
+  }, [trayAttachments])
 
   // Re-parse content when mentionables load or currentUser becomes known (for correct mention type colors)
   useEffect(() => {

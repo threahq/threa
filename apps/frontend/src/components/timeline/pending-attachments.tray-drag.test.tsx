@@ -88,6 +88,31 @@ describe("tray pill drag", () => {
     ])
   })
 
+  it("drags uploading and failed chips too — a reference binds the id, not finished bytes", () => {
+    const editor = createEditor()
+    vi.spyOn(editor.view, "posAtCoords").mockReturnValue({ pos: 1, inside: -1 })
+    renderTray(editor, [
+      attachment({ id: "att_up", filename: "up.png", status: "uploading", progress: 0.4, previewUrl: "blob:up" }),
+      attachment({
+        id: "att_dead",
+        filename: "dead.txt",
+        mimeType: "text/plain",
+        status: "error",
+        error: "Network error during upload",
+        previewUrl: undefined,
+      }),
+    ])
+
+    dragChipIntoEditor(screen.getByText("up.png"))
+    dragChipIntoEditor(screen.getByText("dead.txt"))
+
+    const ids = (editor.getJSON() as JSONContent).content?.[0]?.content
+      ?.filter((node) => node.type === "attachmentReference")
+      .map((node) => node.attrs?.id)
+    // Both drops land at the mocked pos 1, so the later drop sits first.
+    expect(ids).toEqual(["att_dead", "att_up"])
+  })
+
   it("never deletes from the document — a tray drag is an insert, not a move", () => {
     const editor = createEditor([
       { type: "text", text: "hello world" },
@@ -141,16 +166,23 @@ describe("tray pill drag", () => {
     expect(screen.queryByLabelText("2 references in this message")).toBeNull()
   })
 
-  it("renders one scrolling row on mobile and the wrapping tray on desktop", () => {
+  it("wraps the tray on both breakpoints, with the tighter height cap and the drawer tap on mobile", () => {
     const desktop = render(<PendingAttachments attachments={[attachment()]} onRemove={vi.fn()} workspaceId="ws_1" />)
-    expect(desktop.container.querySelector("div")).toHaveClass("flex-wrap")
+    expect(desktop.container.querySelector(".flex-wrap")).toHaveClass("max-h-[120px]")
+    // Desktop gets the same rollup summary, but as plain text — the wrapped
+    // tray is its own full list, so there is no drawer behind a tap.
+    expect(screen.getByText(/1 file/)).toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: "Show all attachments" })).toBeNull()
     desktop.unmount()
 
     vi.spyOn(useMobileModule, "useIsMobile").mockReturnValue(true)
     const mobile = render(<PendingAttachments attachments={[attachment()]} onRemove={vi.fn()} workspaceId="ws_1" />)
-    const row = mobile.container.querySelector("div")!
-    expect(row).toHaveClass("overflow-x-auto")
-    expect(row).not.toHaveClass("flex-wrap")
+    // A single horizontal row hid everything past the fold and fought the
+    // page's own scroll axis — the tray wraps and scrolls vertically now.
+    expect(mobile.container.querySelector(".overflow-x-auto")).toBeNull()
+    const tray = screen.getByText("screenshot.png").closest(".flex-wrap")
+    expect(tray).toHaveClass("max-h-[96px]", "overflow-y-auto")
+    expect(screen.getByRole("button", { name: "Show all attachments" })).toHaveTextContent("1 file")
   })
 })
 
@@ -233,8 +265,7 @@ describe("referenced chip leading slot", () => {
       />
     )
 
-    const leading = container.querySelector("svg")!
-    expect(leading).toHaveClass("lucide-circle-alert")
+    expect(container.querySelector(".lucide-circle-alert")).toBeTruthy()
     expect(container.querySelector(".lucide-anchor")).toBeNull()
   })
 
@@ -255,7 +286,7 @@ describe("referenced chip leading slot", () => {
       />
     )
 
-    expect(container.querySelector("svg")).toHaveClass("lucide-loader-circle")
+    expect(container.querySelector(".lucide-loader-circle")).toBeTruthy()
     expect(container.querySelector(".lucide-anchor")).toBeNull()
   })
 

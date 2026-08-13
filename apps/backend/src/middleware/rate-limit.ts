@@ -52,7 +52,11 @@ export function createRateLimiters(config: RateLimiterConfig): RateLimiterSet {
     upload: createRateLimit({
       name: "upload",
       windowMs: 60_000,
-      max: 20,
+      // Every file costs two requests (reserve + content), so this is a
+      // 30-file-per-minute budget — the composer tray is designed around
+      // ~20-attachment batches, and the client paces itself (3 concurrent
+      // transfers, 429-aware backoff) rather than bursting.
+      max: 60,
       key: userScopeKey,
     }),
 

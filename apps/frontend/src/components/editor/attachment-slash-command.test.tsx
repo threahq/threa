@@ -13,6 +13,7 @@ import * as giphyModule from "@/hooks/use-giphy-enabled"
 import * as streamCommandsModule from "@/hooks/use-stream-commands"
 import * as contextsModule from "@/contexts"
 import type { PendingAttachment } from "@/hooks/use-attachments"
+import * as uploadManagerModule from "@/lib/uploads/upload-manager"
 import { attachmentReferenceAttrs, insertAttachmentReferenceAt } from "./triggers/use-attachment-picker"
 import { RichEditor, type RichEditorHandle } from "./rich-editor"
 import { countAttachmentReferences } from "./attachment-reference-counts"
@@ -269,23 +270,48 @@ describe("/attachment slash command", () => {
     expect(attachmentNodes(getContent())[0]?.attrs?.id).toBe("att_notes")
   })
 
-  it("hides the command when no tray attachment is placeable and there is no upload path", async () => {
-    const stuck: PendingAttachment[] = [
+  it("offers the command for uploading and failed tray files, hiding it only on an empty tray with no upload path", async () => {
+    const inFlight: PendingAttachment[] = [
       { id: "temp_pending", filename: "pending.txt", mimeType: "text/plain", sizeBytes: 1, status: "uploading" },
       { id: "att_broken", filename: "broken.txt", mimeType: "text/plain", sizeBytes: 2, status: "error" },
     ]
 
-    // Control: one placeable attachment and no upload path still surfaces the
-    // command — so the negative case below is about placeability, and proves
-    // the option had time to appear rather than being asserted away too early.
-    const control = mountEditor({ trayAttachments: [TRAY[0]!], noUploadPath: true })
-    typeText(control.editor, "/attach")
+    // A reference binds the id, not finished bytes — the same bar as the tray
+    // drag, so a tray of in-flight/failed files is still placeable.
+    const stuck = mountEditor({ trayAttachments: inFlight, noUploadPath: true })
+    typeText(stuck.editor, "/attach")
     expect(await screen.findByRole("option", { name: /\/attachment/ })).toBeTruthy()
     cleanup()
 
-    const { editor } = mountEditor({ trayAttachments: stuck, noUploadPath: true })
+    const { editor } = mountEditor({ trayAttachments: [], noUploadPath: true })
     typeText(editor, "/attach")
     await expect(screen.findByRole("option", { name: /\/attachment/ }, { timeout: 400 })).rejects.toThrow()
+  })
+
+  it("flips a temp-id reference to the real id (with its ordinal) when the reservation lands", async () => {
+    const reserving: PendingAttachment = {
+      id: "temp_res",
+      filename: "shot.png",
+      mimeType: "image/png",
+      sizeBytes: 50,
+      status: "uploading",
+    }
+    const { editor, getContent, setTray } = mountEditor({ trayAttachments: [reserving] })
+    await openPicker(editor)
+    fireEvent.click(await screen.findByRole("option", { name: /shot\.png/ }))
+    await waitFor(() => expect(attachmentNodes(getContent())[0]?.attrs?.id).toBe("temp_res"))
+
+    const findJob = spyOnExport(uploadManagerModule, "findUploadJob").mockReturnValue((() => ({
+      attachmentId: "att_res",
+    })) as unknown as typeof uploadManagerModule.findUploadJob)
+    setTray([{ ...reserving, id: "att_res" }])
+
+    await waitFor(() => {
+      const node = attachmentNodes(getContent())[0]
+      expect(node?.attrs?.id).toBe("att_res")
+      expect(node?.attrs?.imageIndex).toBe(1)
+    })
+    findJob.mockRestore()
   })
 
   it("resets the highlight when the typed filter changes, so typing lands on the best match", async () => {
