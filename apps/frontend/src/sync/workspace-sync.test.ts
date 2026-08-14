@@ -3822,6 +3822,86 @@ describe("unread counter events (absolute payloads, sync phase 2c)", () => {
     cleanup()
   })
 
+  it("does not hold an activity for the stream being viewed attentively (no lit-row flash)", async () => {
+    // The counter is already pinned while viewing, so holding the activity row
+    // lit the sidebar row — via activityCount — for the whole auto-read round
+    // trip, on a stream the user was looking at, and without it ever entering
+    // the Unread section. Same gate as the counter pin.
+    const focusSpy = vi.spyOn(document, "hasFocus").mockReturnValue(true)
+    const queryClient = new QueryClient()
+    await seedCounterFixture(queryClient)
+    const { emit, cleanup } = register(queryClient, "stream_1")
+
+    const before = queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap("ws_1"))
+    emit("activity:created", {
+      workspaceId: "ws_1",
+      targetUserId: "member_1",
+      activity: {
+        id: "act_viewed",
+        activityType: "message",
+        streamId: "stream_1",
+        messageId: "msg_viewed",
+        actorId: "member_2",
+        actorType: "user",
+        context: {},
+        createdAt: new Date().toISOString(),
+        isSelf: false,
+        emoji: null,
+      },
+    })
+
+    const after = queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap("ws_1"))
+    expect(after?.activityCounts.stream_1).toBe(before?.activityCounts.stream_1)
+    expect(after?.unreadActivityCount).toBe(before?.unreadActivityCount)
+
+    cleanup()
+    focusSpy.mockRestore()
+  })
+
+  it("holds an activity for the viewed stream when unfocused, and for other streams always", async () => {
+    // The mirror of the counter pin's guard: suppressing while unattentive
+    // would zero a count no auto-read confirm is coming for.
+    const focusSpy = vi.spyOn(document, "hasFocus").mockReturnValue(false)
+    const queryClient = new QueryClient()
+    await seedCounterFixture(queryClient)
+    const { emit, cleanup } = register(queryClient, "stream_1")
+
+    const base = {
+      workspaceId: "ws_1",
+      targetUserId: "member_1",
+      activity: {
+        id: "act_unfocused",
+        activityType: "message",
+        streamId: "stream_1",
+        messageId: "msg_unfocused",
+        actorId: "member_2",
+        actorType: "user",
+        context: {},
+        createdAt: new Date().toISOString(),
+        isSelf: false,
+        emoji: null,
+      },
+    }
+    const before = queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap("ws_1"))
+    emit("activity:created", base)
+    expect(queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap("ws_1"))?.activityCounts.stream_1).toBe(
+      (before?.activityCounts.stream_1 ?? 0) + 1
+    )
+
+    // A different stream is held even while focused on stream_1.
+    focusSpy.mockReturnValue(true)
+    emit("activity:created", {
+      ...base,
+      activity: { ...base.activity, id: "act_other", messageId: "msg_other", streamId: "stream_2" },
+    })
+    expect(queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap("ws_1"))?.activityCounts.stream_2).toBe(
+      (before?.activityCounts.stream_2 ?? 0) + 1
+    )
+
+    cleanup()
+    focusSpy.mockRestore()
+  })
+
   it("upserts activity:created rows by id (idempotent) and derives counts from the held set", async () => {
     const queryClient = new QueryClient()
     await seedCounterFixture(queryClient)

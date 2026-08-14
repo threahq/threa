@@ -1842,6 +1842,21 @@ export function registerWorkspaceSocketHandlers(
     if (payload.workspaceId !== workspaceId) return
 
     const a = payload.activity
+    // Viewing pins activity exactly as it pins the message counter above: a row
+    // for the stream the viewer is attentively looking at is about to be cleared
+    // by the auto-read confirm, so holding it lights the sidebar row and the
+    // activity badge for the whole debounce + round trip — on a stream the user
+    // is staring at. That flash reads as a bug precisely because the counter IS
+    // pinned: the row lit up while never entering the Unread section. Gated on
+    // the SAME `isAutoReadAttentiveNow()` signal for the same reason documented
+    // there — suppressing while unattentive would zero a count no confirm is
+    // coming for. A row suppressed but never read server-side (the viewer is
+    // parked above the fold, so the frontier never advances past it) comes back
+    // on the next bootstrap, which is the counter pin's recovery too.
+    if (a.streamId && refs.getCurrentStreamId() === a.streamId && isAutoReadAttentiveNow()) {
+      invalidateActivityFeed(true)
+      return
+    }
     // The held set is the source of truth (D3/D4): upsert the row by its stable
     // id so a replayed event (sync-log catch-up, INV-53) updates in place rather
     // than duplicating; the derived counts follow. Self rows are skipped inside
