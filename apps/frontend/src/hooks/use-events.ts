@@ -34,7 +34,7 @@ interface JumpState {
 }
 
 type SequencedEvent = Pick<StreamEvent, "sequence">
-type DisplayableEvent = SequencedEvent & { _status?: string | null }
+type DisplayableEvent = SequencedEvent & { id?: string; _status?: string | null }
 export interface BootstrapFloorState {
   streamId: string
   floor: bigint
@@ -336,6 +336,7 @@ export function useEvents(workspaceId: string, streamId: string, options?: { ena
 
   // Jump-to-message state: when set, replaces bootstrap as the anchor window
   const [jumpState, setJumpState] = useState<JumpState | null>(null)
+  const [liveTailBridge, setLiveTailBridge] = useState<{ streamId: string; events: StreamEvent[] } | null>(null)
   const lastSuppressedErrorKeyRef = useRef<string | null>(null)
 
   // Infinite query for older events (backward pagination).
@@ -466,7 +467,20 @@ export function useEvents(workspaceId: string, streamId: string, options?: { ena
   // race where bootstrap has finished but Dexie change events haven't yet
   // propagated to useLiveQuery (see getEffectiveEvents docstring).
   const effectiveEvents: DisplayableEvent[] = getEffectiveEvents(idbResolved, idbEvents ?? [], bootstrap?.events ?? [])
-  const hasAnyEvents = effectiveEvents.length > 0
+  const hasAnyEvents =
+    effectiveEvents.length > 0 || (liveTailBridge?.streamId === streamId && liveTailBridge.events.length > 0)
+
+  useEffect(() => {
+    if (!liveTailBridge) return
+    if (liveTailBridge.streamId !== streamId) {
+      setLiveTailBridge((current) => (current === liveTailBridge ? null : current))
+      return
+    }
+    const persistedIds = new Set(effectiveEvents.map((event) => event.id))
+    if (liveTailBridge.events.every((event) => persistedIds.has(event.id))) {
+      setLiveTailBridge((current) => (current === liveTailBridge ? null : current))
+    }
+  }, [effectiveEvents, liveTailBridge, streamId])
 
   const cachedWindowFloor = useMemo(() => getCachedWindowFloor(effectiveEvents, EVENT_PAGE_SIZE), [effectiveEvents])
   const displayFloor = useMemo(() => {
@@ -492,8 +506,10 @@ export function useEvents(workspaceId: string, streamId: string, options?: { ena
     // local cache, widen back out to the full cached timeline. The floor must
     // never hide the entire cached set — a non-empty IDB always renders
     // something (see getRenderableEvents).
-    return getRenderableEvents(effectiveEvents, displayFloor) as unknown as StreamEvent[]
-  }, [effectiveEvents, olderData, newerData, jumpState, displayFloor])
+    const liveEvents = getRenderableEvents(effectiveEvents, displayFloor) as unknown as StreamEvent[]
+    if (!liveTailBridge || liveTailBridge.streamId !== streamId) return liveEvents
+    return dedupeAndSort([liveTailBridge.events, liveEvents])
+  }, [effectiveEvents, olderData, newerData, jumpState, displayFloor, liveTailBridge, streamId])
 
   // Contiguity gate (INV-61): detect holes in the broadcast chain of the
   // rendered window. Each hole renders as an in-place loading placeholder
@@ -682,17 +698,17 @@ export function useEvents(workspaceId: string, streamId: string, options?: { ena
       await cacheToIndexedDB(workspaceId, streamId, result.events, result)
       if (generation !== jumpGenerationRef.current) return "superseded"
 
-      // If there are no newer events, the target is already at the bottom —
-      // skip jump mode and let the live tail render from IDB. A previous jump
-      // may still be active; its window renders instead of IDB, so exit it —
-      // otherwise the timeline stays frozen on the old window and this
-      // navigation silently does nothing.
+      const sorted = sortBySequence([...result.events])
+
+      // A tail target should stay in the normal live view, but do not rely on
+      // the IndexedDB live query noticing this write before rendering it. Some
+      // mobile engines miss that invalidation until a reload.
       if (!result.hasNewer) {
+        setLiveTailBridge({ streamId, events: sorted })
         exitJumpMode()
         return true
       }
 
-      const sorted = sortBySequence([...result.events])
       setJumpState({
         events: sorted,
         hasOlder: result.hasOlder,
@@ -726,15 +742,16 @@ export function useEvents(workspaceId: string, streamId: string, options?: { ena
       await cacheToIndexedDB(workspaceId, streamId, result.events, result)
       if (generation !== jumpGenerationRef.current) return "superseded"
 
-      // No newer events means the anchor sits at the live tail — skip jump mode
-      // and let IDB render the tail; the caller still scrolls to the anchor.
-      // Exit any active jump first: its window would render instead of IDB.
+      const sorted = sortBySequence([...result.events])
+
+      // Keep the fetched tail window renderable until the IndexedDB observer
+      // confirms its write, for the same reason as the message-id jump above.
       if (!result.hasNewer) {
+        setLiveTailBridge({ streamId, events: sorted })
         exitJumpMode()
         return result.anchorMessageId
       }
 
-      const sorted = sortBySequence([...result.events])
       setJumpState({
         events: sorted,
         hasOlder: result.hasOlder,
