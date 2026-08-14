@@ -991,6 +991,7 @@ describe("MessageComposer", () => {
     })
 
     it("rebases to a non-transposed rotated closed viewport after the keyboard closes", () => {
+      vi.useFakeTimers()
       const originalVisualViewport = Object.getOwnPropertyDescriptor(window, "visualViewport")
       const originalOrientation = Object.getOwnPropertyDescriptor(window, "orientation")
       const originalScreenOrientation = Object.getOwnPropertyDescriptor(window.screen, "orientation")
@@ -1027,6 +1028,7 @@ describe("MessageComposer", () => {
 
         visualViewport.height = 350
         act(() => visualViewport.dispatchEvent(new Event("resize")))
+        act(() => vi.advanceTimersByTime(350))
         expect(root.style.maxHeight).toBe("")
       } finally {
         if (originalVisualViewport) Object.defineProperty(window, "visualViewport", originalVisualViewport)
@@ -1156,6 +1158,50 @@ describe("MessageComposer", () => {
         expect(Number.parseInt(root.style.maxHeight, 10)).toBe(200)
         viewport.setViewport(800, 800, 0)
         act(() => viewport.visualViewport.dispatchEvent(new Event("resize")))
+        expect(root.style.maxHeight).toBe("")
+      } finally {
+        viewport.restore()
+      }
+    })
+
+    it("keeps the cap when a same-angle split grows while the keyboard remains open", () => {
+      vi.useFakeTimers()
+      const viewport = installOrientationViewport(390, 800, 0)
+      try {
+        const { container } = render(<MessageComposer {...defaultProps} workspaceId="ws_1" initialMobileChromeOpen />)
+        const root = container.firstElementChild as HTMLElement
+        act(() => screen.getByTestId("rich-editor").focus())
+
+        viewport.setViewport(390, 400, 0)
+        act(() => viewport.visualViewport.dispatchEvent(new Event("resize")))
+        viewport.setViewport(450, 500, 0)
+        act(() => viewport.visualViewport.dispatchEvent(new Event("resize")))
+        viewport.setViewport(500, 600, 0)
+        act(() => viewport.visualViewport.dispatchEvent(new Event("resize")))
+        act(() => vi.advanceTimersByTime(950))
+        expect(root.style.maxHeight).toBe("300px")
+      } finally {
+        viewport.restore()
+      }
+    })
+
+    it("recovers when a split resize and keyboard close both finish before orientation settle", () => {
+      vi.useFakeTimers()
+      const viewport = installOrientationViewport(390, 800, 0)
+      try {
+        const { container } = render(<MessageComposer {...defaultProps} workspaceId="ws_1" initialMobileChromeOpen />)
+        const root = container.firstElementChild as HTMLElement
+        act(() => screen.getByTestId("rich-editor").focus())
+
+        viewport.setViewport(390, 400, 0)
+        act(() => viewport.visualViewport.dispatchEvent(new Event("resize")))
+        expect(root.style.maxHeight).toBe("200px")
+
+        viewport.setViewport(500, 300, 0)
+        act(() => viewport.visualViewport.dispatchEvent(new Event("resize")))
+        viewport.setViewport(500, 600, 0)
+        act(() => viewport.visualViewport.dispatchEvent(new Event("resize")))
+        act(() => vi.advanceTimersByTime(950))
         expect(root.style.maxHeight).toBe("")
       } finally {
         viewport.restore()

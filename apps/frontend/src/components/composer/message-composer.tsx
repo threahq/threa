@@ -461,8 +461,13 @@ export function MessageComposer({
     const visualViewport = window.visualViewport
     let keyboardSettleId = 0
     let orientationSettleId = 0
-    let rotatedKeyboardVisibleHeight: number | null = null
+    let pendingViewportWidth: number | null = null
+    let pendingViewportHeight: number | null = null
+    let pendingHeightChanged = false
+    let keyboardVisibleFloor: number | null = null
     const applyKeyboardState = (open: boolean) => {
+      if (open && !mobileKeyboardOpenRef.current) keyboardVisibleFloor = visibleViewportHeight()
+      if (!open) keyboardVisibleFloor = null
       mobileKeyboardOpenRef.current = open
       setMobileKeyboardOpen((current) => (current === open ? current : open))
     }
@@ -471,7 +476,7 @@ export function MessageComposer({
       keyboardSettleId = window.setTimeout(() => {
         if (isEditableFocused()) return
         const height = visibleViewportHeight()
-        rotatedKeyboardVisibleHeight = null
+        keyboardVisibleFloor = null
         closedViewportHeightRef.current = closedViewportHeightEstimate()
         setMobileViewportHeight(height)
         applyKeyboardState(false)
@@ -482,41 +487,66 @@ export function MessageComposer({
       const focusedInside = !!root?.contains(document.activeElement)
       setMobileViewportHeight((current) => (current === height ? current : height))
       if (!focusedInside && mobileKeyboardOpenRef.current) {
-        rotatedKeyboardVisibleHeight = null
+        keyboardVisibleFloor = null
         settleClosedViewport()
         return
       }
       clearTimeout(keyboardSettleId)
-      if (
-        focusedInside &&
-        rotatedKeyboardVisibleHeight !== null &&
-        height >= rotatedKeyboardVisibleHeight + KEYBOARD_VIEWPORT_THRESHOLD_PX
-      ) {
-        rotatedKeyboardVisibleHeight = null
+      const threshold = mobileKeyboardOpenRef.current ? VIEWPORT_RECONCILE_TOLERANCE_PX : KEYBOARD_VIEWPORT_THRESHOLD_PX
+      const keyboardOpen = focusedInside && height < closedViewportHeightRef.current - threshold
+      if (!keyboardOpen) {
         closedViewportHeightRef.current = closedViewportHeightEstimate()
         applyKeyboardState(false)
         return
       }
-      const threshold = mobileKeyboardOpenRef.current ? VIEWPORT_RECONCILE_TOLERANCE_PX : KEYBOARD_VIEWPORT_THRESHOLD_PX
-      const keyboardOpen = focusedInside && height < closedViewportHeightRef.current - threshold
-      if (!keyboardOpen) {
-        rotatedKeyboardVisibleHeight = null
-        closedViewportHeightRef.current = closedViewportHeightEstimate()
+      keyboardVisibleFloor = Math.min(keyboardVisibleFloor ?? height, height)
+      const grewPastKeyboard = height >= keyboardVisibleFloor + KEYBOARD_VIEWPORT_THRESHOLD_PX
+      const primaryKeyboardOpen = !!visualViewport && height < window.innerHeight - KEYBOARD_VIEWPORT_THRESHOLD_PX
+      if (grewPastKeyboard && !primaryKeyboardOpen) {
+        keyboardSettleId = window.setTimeout(() => {
+          const settledHeight = visibleViewportHeight()
+          const stillFocused = !!root?.contains(document.activeElement)
+          const stillHasPrimaryGap =
+            !!visualViewport && settledHeight < window.innerHeight - KEYBOARD_VIEWPORT_THRESHOLD_PX
+          if (
+            stillFocused &&
+            keyboardVisibleFloor !== null &&
+            settledHeight >= keyboardVisibleFloor + KEYBOARD_VIEWPORT_THRESHOLD_PX &&
+            !stillHasPrimaryGap
+          ) {
+            closedViewportHeightRef.current = closedViewportHeightEstimate()
+            setMobileViewportHeight(settledHeight)
+            applyKeyboardState(false)
+          }
+        }, MOBILE_KEYBOARD_SETTLE_MS)
+        return
       }
-      applyKeyboardState(keyboardOpen)
+      applyKeyboardState(true)
     }
     const commitAtomicOrientation = (nextAngle: OrientationAngle, nextWidth: number) => {
       const committed = committedOrientationRef.current
       if (mobileKeyboardOpenRef.current && committed.width > 0 && nextWidth > 0) {
         closedViewportHeightRef.current = Math.round(closedViewportHeightRef.current * (committed.width / nextWidth))
-        rotatedKeyboardVisibleHeight = visibleViewportHeight()
+        keyboardVisibleFloor = visibleViewportHeight()
       } else if (!mobileKeyboardOpenRef.current) {
-        rotatedKeyboardVisibleHeight = null
+        keyboardVisibleFloor = null
         closedViewportHeightRef.current = Math.min(visibleViewportHeight(), window.innerHeight)
       }
       committedOrientationRef.current = { angle: nextAngle, width: nextWidth }
     }
     const scheduleOrientationSettle = () => {
+      const width = visibleViewportWidth()
+      const height = visibleViewportHeight()
+      if (pendingViewportWidth === null || pendingViewportHeight === null) {
+        pendingViewportWidth = width
+        pendingViewportHeight = height
+      } else if (width !== pendingViewportWidth) {
+        pendingViewportWidth = width
+        pendingViewportHeight = height
+        pendingHeightChanged = false
+      } else if (height !== pendingViewportHeight) {
+        pendingHeightChanged = true
+      }
       clearTimeout(orientationSettleId)
       orientationSettleId = window.setTimeout(() => {
         orientationSettleId = 0
@@ -525,22 +555,23 @@ export function MessageComposer({
         const nextWidth = visibleViewportWidth()
         const angleChanged = committed.angle !== nextAngle
         const widthChanged = committed.width > 0 && nextWidth > 0 && nextWidth !== committed.width
-        const substantialWidthChange =
-          widthChanged && Math.abs(nextWidth - committed.width) >= ORIENTATION_WIDTH_DELTA_PX
 
-        if (angleChanged && (substantialWidthChange || !widthChanged)) {
+        if (angleChanged) {
           commitAtomicOrientation(nextAngle, nextWidth)
           measureKeyboardState()
-        } else if (!angleChanged && widthChanged) {
-          // A same-angle width resize is a normal split resize. Do not infer a
-          // keyboard transition from height alone; Firefox can change height
-          // while a focused editor remains open.
-          if (!mobileKeyboardOpenRef.current) {
+        } else if (widthChanged) {
+          if (mobileKeyboardOpenRef.current) {
+            const height = visibleViewportHeight()
+            keyboardVisibleFloor = pendingHeightChanged ? Math.min(keyboardVisibleFloor ?? height, height) : height
+          } else {
             closedViewportHeightRef.current = closedViewportHeightEstimate()
           }
           committedOrientationRef.current = { angle: nextAngle, width: nextWidth }
           measureKeyboardState()
         }
+        pendingViewportWidth = null
+        pendingViewportHeight = null
+        pendingHeightChanged = false
       }, MOBILE_ORIENTATION_SETTLE_MS)
     }
     const measure = () => {
@@ -554,6 +585,9 @@ export function MessageComposer({
       if (angleChanged && substantialWidthChange) {
         clearTimeout(orientationSettleId)
         orientationSettleId = 0
+        pendingViewportWidth = null
+        pendingViewportHeight = null
+        pendingHeightChanged = false
         commitAtomicOrientation(nextAngle, nextWidth)
       } else if (angleChanged || widthChanged) {
         // Resize and orientationchange are not atomic in every browser. Keep
@@ -568,6 +602,9 @@ export function MessageComposer({
       } else {
         clearTimeout(orientationSettleId)
         orientationSettleId = 0
+        pendingViewportWidth = null
+        pendingViewportHeight = null
+        pendingHeightChanged = false
       }
       measureKeyboardState()
     }
