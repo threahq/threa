@@ -182,6 +182,35 @@ export function readPiRemoteSession(runtimeSessionId: string): PiRemoteSession |
   }
 }
 
+export interface PiRemoteLinkDeps {
+  attempts: number
+  bootWaitMs: number
+  responseWaitMs: number
+  retryBackoffMs: number
+  maxRetryBackoffMs: number
+  sleep: (ms: number) => Promise<void>
+  sendRemoteCommand: () => void
+  readSession: () => PiRemoteSession | undefined
+}
+
+export async function linkPiRemoteSession(deps: PiRemoteLinkDeps): Promise<PiRemoteSession | undefined> {
+  await deps.sleep(deps.bootWaitMs)
+  for (let attempt = 0; attempt < deps.attempts; attempt++) {
+    const existing = deps.readSession()
+    if (existing) return existing
+
+    deps.sendRemoteCommand()
+    await deps.sleep(deps.responseWaitMs)
+
+    const linked = deps.readSession()
+    if (linked) return linked
+    if (attempt + 1 < deps.attempts) {
+      await deps.sleep(Math.min(deps.retryBackoffMs * 2 ** attempt, deps.maxRetryBackoffMs))
+    }
+  }
+  return undefined
+}
+
 export interface PiSessionParkDeps {
   sessionsDir?: string
   readdir?: (path: string) => string[]
@@ -289,14 +318,25 @@ export class PiRuntimeSpawner extends RuntimeSpawner {
       Object.assign(partial, { tmuxWindow: window, tmuxWindowId: windowId, tmuxPaneId: paneId })
       console.log(`harnessd: launched Pi in tmux ${session}:${window} (${windowId})`)
 
-      if (!options.noRemote) {
-        await Bun.sleep(Number(process.env.THREA_HARNESSD_PI_BOOT_WAIT_MS ?? 8000))
-        sendKeys(paneId, ["/remote-control", "Enter"])
-        await Bun.sleep(Number(process.env.THREA_HARNESSD_PI_REMOTE_WAIT_MS ?? 6000))
+      const configuredAttempts = Math.trunc(Number(process.env.THREA_HARNESSD_PI_REMOTE_ATTEMPTS ?? 3))
+      const attempts = Number.isFinite(configuredAttempts) ? Math.max(1, Math.min(configuredAttempts, 10)) : 3
+      const link = options.noRemote
+        ? undefined
+        : await linkPiRemoteSession({
+            attempts,
+            bootWaitMs: Number(process.env.THREA_HARNESSD_PI_BOOT_WAIT_MS ?? 8000),
+            responseWaitMs: Number(process.env.THREA_HARNESSD_PI_REMOTE_WAIT_MS ?? 6000),
+            retryBackoffMs: Number(process.env.THREA_HARNESSD_PI_REMOTE_RETRY_BACKOFF_MS ?? 1000),
+            maxRetryBackoffMs: Number(process.env.THREA_HARNESSD_PI_REMOTE_MAX_BACKOFF_MS ?? 4000),
+            sleep: Bun.sleep,
+            sendRemoteCommand: () => sendKeys(paneId, ["/remote-control", "Enter"]),
+            readSession: () => readPiRemoteSession(runtimeSessionId),
+          })
+      if (!options.noRemote && !link) {
+        die(`Pi started but remains unlinked after ${attempts} Threa remote attempts`)
       }
 
       const outputText = capturePane(paneId)
-      const link = readPiRemoteSession(runtimeSessionId)
       return {
         worktree,
         branch,
@@ -304,7 +344,7 @@ export class PiRuntimeSpawner extends RuntimeSpawner {
         tmuxWindow: window,
         tmuxWindowId: windowId,
         tmuxPaneId: paneId,
-        scratchpadUrl: link?.scratchpadUrl ?? firstScratchpadUrl(outputText),
+        scratchpadUrl: link?.scratchpadUrl ?? (options.noRemote ? firstScratchpadUrl(outputText) : undefined),
         instanceId: link?.instanceId,
         runtimeSessionId,
         output: outputText,
