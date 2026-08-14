@@ -14,6 +14,11 @@ import {
 import { flushSync } from "react-dom"
 import { ArrowUp, X, Plus, AtSign, Slash, Paperclip } from "lucide-react"
 import { useIsMobile } from "@/hooks/use-mobile"
+import {
+  isEditableFocused,
+  KEYBOARD_VIEWPORT_THRESHOLD_PX,
+  VIEWPORT_RECONCILE_TOLERANCE_PX,
+} from "@/hooks/use-visual-viewport"
 import { useInputMode } from "@/hooks/use-input-mode"
 import { useComposerActionSide } from "@/hooks/use-composer-action-side"
 import { usePreferencesOptional } from "@/contexts"
@@ -56,6 +61,26 @@ import {
 import type { MentionStreamContext } from "@/hooks/use-mentionables"
 import type { Editor } from "@tiptap/react"
 import { consumeComposerCommandRequest, subscribeComposerCommandRequest } from "@/stores/composer-command-request-store"
+
+const MOBILE_COMPOSER_DEFAULT_MAX_PX = 380
+const MOBILE_COMPOSER_KEYBOARD_MAX_RATIO = 0.5
+const MOBILE_COMPOSER_DRAG_MAX_RATIO = 0.75
+const MOBILE_KEYBOARD_SETTLE_MS = 350
+
+function visibleViewportHeight(): number {
+  if (typeof window === "undefined") return MOBILE_COMPOSER_DEFAULT_MAX_PX * 2
+  return Math.round(window.visualViewport?.height ?? window.innerHeight)
+}
+
+function closedViewportHeightEstimate(): number {
+  if (typeof window === "undefined") return MOBILE_COMPOSER_DEFAULT_MAX_PX * 2
+  return Math.max(visibleViewportHeight(), window.innerHeight)
+}
+
+function screenHeight(): number {
+  if (typeof window === "undefined") return 0
+  return window.screen.availHeight || window.screen.height
+}
 
 function prependComposerCommand(content: JSONContent, command: string): JSONContent {
   const first = content.content?.[0]
@@ -300,6 +325,11 @@ export function MessageComposer({
   const mobileEditorScrollRef = useRef<HTMLDivElement>(null)
   const mobileEditorBottomOffsetRef = useRef(0)
   const resizeScrollBottomRef = useRef<number | null>(null)
+  const closedViewportHeightRef = useRef(closedViewportHeightEstimate())
+  const screenHeightRef = useRef(screenHeight())
+  const [mobileViewportHeight, setMobileViewportHeight] = useState(visibleViewportHeight)
+  const [mobileKeyboardOpen, setMobileKeyboardOpen] = useState(false)
+  const mobileKeyboardOpenRef = useRef(false)
   const expandedShellRef = useRef<HTMLDivElement>(null)
   const actionBarWrapperRef = useRef<HTMLDivElement>(null)
   const [mobileToolbarEditor, setMobileToolbarEditor] = useState<Editor | null>(null)
@@ -319,6 +349,7 @@ export function MessageComposer({
     startHeight: number
     minPx: number
     scrollBottomPx: number
+    startPreferredHeight: number
   } | null>(null)
   const handleResizePointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
     const root = mobileRootRef.current
@@ -344,16 +375,18 @@ export function MessageComposer({
       startHeight: rootHeight,
       minPx: MOBILE_COMPOSER_DRAG_MIN_PX + Math.max(0, rootHeight - (cardHeight ?? rootHeight)),
       scrollBottomPx,
+      startPreferredHeight: mobileDragHeightRef.current ?? rootHeight,
     }
   }, [])
   const handleResizePointerMove = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
     const drag = resizeDragRef.current
     if (!drag || e.pointerId !== drag.pointerId) return
-    const viewportH = window.visualViewport?.height ?? window.innerHeight
-    // The ceiling never dips below the floor (keyboard up on a short landscape
-    // viewport can put 75% of it under the minimum).
-    const maxPx = Math.max(viewportH * 0.75, drag.minPx)
-    const next = Math.round(Math.min(Math.max(drag.startHeight + (drag.startY - e.clientY), drag.minPx), maxPx))
+    const maxPx = Math.max(closedViewportHeightRef.current * MOBILE_COMPOSER_DRAG_MAX_RATIO, drag.minPx)
+    const delta = drag.startY - e.clientY
+    const growing = delta >= 0
+    const baseHeight = growing ? Math.max(drag.startHeight, drag.startPreferredHeight) : drag.startHeight
+    const preferenceCeiling = growing ? Math.max(maxPx, drag.startPreferredHeight) : maxPx
+    const next = Math.round(Math.min(Math.max(baseHeight + delta, drag.minPx), preferenceCeiling))
     setMobileExpanded(false)
     mobileDragHeightRef.current = next
     setMobileDragHeightState(next)
@@ -390,7 +423,7 @@ export function MessageComposer({
   const [mobileExtrasHeight, setMobileExtrasHeight] = useState(0)
   useLayoutEffect(() => {
     const root = mobileRootRef.current
-    if (!isMobile || mobileDragHeight === null || !root) return
+    if (!isMobile || !root) return
     const card = root.querySelector<HTMLElement>("[data-composer-card]")
     if (!card) return
     const measure = () =>
@@ -402,7 +435,73 @@ export function MessageComposer({
     observer.observe(root)
     observer.observe(card)
     return () => observer.disconnect()
-  }, [isMobile, mobileDragHeight])
+  }, [isMobile])
+
+  useLayoutEffect(() => {
+    if (!isMobile) return
+    const root = mobileRootRef.current
+    const visualViewport = window.visualViewport
+    let keyboardSettleId = 0
+    const applyKeyboardState = (open: boolean) => {
+      mobileKeyboardOpenRef.current = open
+      setMobileKeyboardOpen((current) => (current === open ? current : open))
+    }
+    const settleClosedViewport = () => {
+      clearTimeout(keyboardSettleId)
+      keyboardSettleId = window.setTimeout(() => {
+        if (isEditableFocused()) return
+        const height = visibleViewportHeight()
+        closedViewportHeightRef.current = closedViewportHeightEstimate()
+        setMobileViewportHeight(height)
+        applyKeyboardState(false)
+      }, MOBILE_KEYBOARD_SETTLE_MS)
+    }
+    const reconcileOrientationBaseline = () => {
+      const previousScreenHeight = screenHeightRef.current
+      const nextScreenHeight = screenHeight()
+      if (previousScreenHeight > 0 && nextScreenHeight > 0 && previousScreenHeight !== nextScreenHeight) {
+        closedViewportHeightRef.current = Math.round(
+          closedViewportHeightRef.current * (nextScreenHeight / previousScreenHeight)
+        )
+      }
+      screenHeightRef.current = nextScreenHeight
+    }
+    const measure = () => {
+      reconcileOrientationBaseline()
+      const height = visibleViewportHeight()
+      const focusedInside = !!root?.contains(document.activeElement)
+      setMobileViewportHeight((current) => (current === height ? current : height))
+      if (!focusedInside && mobileKeyboardOpenRef.current) {
+        settleClosedViewport()
+        return
+      }
+      clearTimeout(keyboardSettleId)
+      const threshold = mobileKeyboardOpenRef.current ? VIEWPORT_RECONCILE_TOLERANCE_PX : KEYBOARD_VIEWPORT_THRESHOLD_PX
+      const keyboardOpen = focusedInside && height < closedViewportHeightRef.current - threshold
+      if (!keyboardOpen) closedViewportHeightRef.current = closedViewportHeightEstimate()
+      applyKeyboardState(keyboardOpen)
+    }
+    const handleOrientationChange = () => {
+      reconcileOrientationBaseline()
+      if (!mobileKeyboardOpenRef.current) closedViewportHeightRef.current = closedViewportHeightEstimate()
+      measure()
+    }
+    measure()
+    visualViewport?.addEventListener("resize", measure)
+    window.addEventListener("resize", measure)
+    window.addEventListener("orientationchange", handleOrientationChange)
+    document.addEventListener("focusin", measure)
+    document.addEventListener("focusout", measure)
+    return () => {
+      clearTimeout(keyboardSettleId)
+      visualViewport?.removeEventListener("resize", measure)
+      window.removeEventListener("resize", measure)
+      window.removeEventListener("orientationchange", handleOrientationChange)
+      document.removeEventListener("focusin", measure)
+      document.removeEventListener("focusout", measure)
+    }
+  }, [isMobile])
+
   const actionSide = useComposerActionSide()
   const preferencesCtx = usePreferencesOptional()
   const mirrored = actionSide === "left"
@@ -1301,6 +1400,28 @@ export function MessageComposer({
     )
   }
 
+  const mobileComposerFloor = MOBILE_COMPOSER_DRAG_MIN_PX + mobileExtrasHeight
+  const mobileKeyboardCap = Math.max(
+    mobileComposerFloor,
+    Math.round(mobileViewportHeight * MOBILE_COMPOSER_KEYBOARD_MAX_RATIO)
+  )
+  const mobileInlineMax = Math.max(
+    mobileComposerFloor,
+    Math.min(mobileDragHeight ?? MOBILE_COMPOSER_DEFAULT_MAX_PX, mobileKeyboardCap)
+  )
+  const mobileRootStyle = (() => {
+    if (!isMobile || !mobileChromeOpen) return undefined
+    if (mobileKeyboardOpen) {
+      return mobileExpanded
+        ? { minHeight: mobileKeyboardCap, maxHeight: mobileKeyboardCap }
+        : { maxHeight: mobileInlineMax }
+    }
+    if (!mobileExpanded && mobileDragHeight !== null) {
+      return { maxHeight: Math.max(mobileDragHeight, mobileComposerFloor) }
+    }
+    return undefined
+  })()
+
   return (
     <TooltipProvider delayDuration={300}>
       <StashedDraftsComposerBridgeContext.Provider value={stashedDraftsBridge}>
@@ -1316,17 +1437,10 @@ export function MessageComposer({
             // docs/stream-timeline-perceived-performance.md). Snap instead, same
             // as the keyboard choreography.
             "flex flex-col",
-            mobileExpanded ? "max-h-[75dvh] min-h-[75dvh]" : "max-h-[380px] min-h-0",
+            mobileExpanded && !mobileKeyboardOpen ? "max-h-[75dvh] min-h-[75dvh]" : "max-h-[380px] min-h-0",
             className
           )}
-          // The drag-handle height override. A max-height (not height) so the
-          // composer stays content-driven below it; inline so it outranks the
-          // 380px default class above.
-          style={
-            isMobile && !mobileExpanded && mobileDragHeight !== null
-              ? { maxHeight: Math.max(mobileDragHeight, MOBILE_COMPOSER_DRAG_MIN_PX + mobileExtrasHeight) }
-              : undefined
-          }
+          style={mobileRootStyle}
           onFocusCapture={isMobile ? handleFocusCapture : undefined}
           onBlurCapture={isMobile ? handleBlurCapture : undefined}
           onKeyDownCapture={handleStashKeyDown}

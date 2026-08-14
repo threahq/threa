@@ -9,6 +9,26 @@ test("mobile composer resizes from its top edge without losing the editor bottom
   await loginAndCreateWorkspace(page, "composer-resize")
   await createChannel(page, `resize-${Date.now().toString(36)}`)
   await page.setViewportSize(PHONE)
+  await page.addInitScript(() => {
+    let height = window.innerHeight
+    const viewport = new EventTarget()
+    Object.defineProperties(viewport, {
+      height: { get: () => height },
+      width: { get: () => window.innerWidth },
+      offsetLeft: { value: 0 },
+      offsetTop: { value: 0 },
+      pageLeft: { value: 0 },
+      pageTop: { value: 0 },
+      scale: { value: 1 },
+    })
+    Object.defineProperty(window, "visualViewport", { configurable: true, value: viewport })
+    Object.defineProperty(window, "__setTestVisualViewportHeight", {
+      value: (next: number) => {
+        height = next
+        viewport.dispatchEvent(new Event("resize"))
+      },
+    })
+  })
   await page.reload()
 
   const card = page.locator("[data-message-composer-root] [data-composer-card]").first()
@@ -52,6 +72,15 @@ test("mobile composer resizes from its top edge without losing the editor bottom
   expect(before.handleWidth).toBeLessThanOrEqual(64)
   expect(before.editorInset).toBeLessThanOrEqual(16)
 
+  await page.evaluate(() =>
+    (
+      window as typeof window & { __setTestVisualViewportHeight: (height: number) => void }
+    ).__setTestVisualViewportHeight(500)
+  )
+  await expect.poll(async () => (await measure()).cardHeight).toBeLessThanOrEqual(250)
+  const constrained = await measure()
+  expect(constrained.scrollBottom).toBeLessThanOrEqual(before.scrollBottom + 1)
+
   const box = (await handle.boundingBox())!
   await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
   await page.mouse.down()
@@ -59,8 +88,8 @@ test("mobile composer resizes from its top edge without losing the editor bottom
   await page.mouse.up()
 
   const after = await measure()
-  expect(after.cardHeight).toBeLessThan(before.cardHeight)
-  expect(after.cardTop).toBeGreaterThan(before.cardTop)
-  expect(after.cardBottom).toBeCloseTo(before.cardBottom, 0)
-  expect(after.scrollBottom).toBeLessThanOrEqual(before.scrollBottom + 1)
+  expect(after.cardHeight).toBeLessThan(constrained.cardHeight)
+  expect(after.cardTop).toBeGreaterThan(constrained.cardTop)
+  expect(after.cardBottom).toBeCloseTo(constrained.cardBottom, 0)
+  expect(after.scrollBottom).toBeLessThanOrEqual(constrained.scrollBottom + 1)
 })

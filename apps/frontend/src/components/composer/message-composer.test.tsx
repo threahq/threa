@@ -153,6 +153,13 @@ const MockEditorActionBar = (props: Record<string, unknown>) => (
     >
       Aa
     </button>
+    <button
+      type="button"
+      aria-label="Expand composer"
+      onClick={() => (props.onMobileExpandedChange as (v: boolean) => void)?.(true)}
+    >
+      Expand
+    </button>
     {props.trailingContent as any}
   </div>
 )
@@ -916,10 +923,66 @@ describe("MessageComposer", () => {
       expect(scroller).not.toHaveClass("max-h-[200px]")
     })
 
-    it("applies the persisted drag height on mount", () => {
-      localStorage.setItem("threa:composer-drag-height", "300")
-      const { container } = render(<MessageComposer {...defaultProps} workspaceId="ws_1" initialMobileChromeOpen />)
-      expect((container.firstElementChild as HTMLElement).style.maxHeight).toBe("300px")
+    it("reclamps the persisted height when the visible viewport shrinks", () => {
+      const originalVisualViewport = Object.getOwnPropertyDescriptor(window, "visualViewport")
+      const visualViewport = new EventTarget() as EventTarget & { height: number }
+      visualViewport.height = 800
+      Object.defineProperty(window, "visualViewport", { configurable: true, value: visualViewport })
+      localStorage.setItem("threa:composer-drag-height", "700")
+      try {
+        const { container } = render(<MessageComposer {...defaultProps} workspaceId="ws_1" initialMobileChromeOpen />)
+        const root = container.firstElementChild as HTMLElement
+        expect(root.style.maxHeight).toBe("700px")
+        act(() => screen.getByTestId("rich-editor").focus())
+
+        visualViewport.height = 400
+        act(() => visualViewport.dispatchEvent(new Event("resize")))
+
+        expect(root.style.maxHeight).toBe("200px")
+
+        const handle = screen.getByTestId("composer-resize-handle")
+        fireEvent.pointerDown(handle, { pointerId: 1, clientY: 300 })
+        fireEvent.pointerMove(handle, { pointerId: 1, clientY: 280 })
+        fireEvent.pointerUp(handle, { pointerId: 1, clientY: 280 })
+        expect(root.style.maxHeight).toBe("200px")
+        expect(localStorage.getItem("threa:composer-drag-height")).toBe("700")
+
+        visualViewport.height = 800
+        act(() => visualViewport.dispatchEvent(new Event("resize")))
+        expect(root.style.maxHeight).toBe("700px")
+      } finally {
+        if (originalVisualViewport) Object.defineProperty(window, "visualViewport", originalVisualViewport)
+        else Reflect.deleteProperty(window, "visualViewport")
+      }
+    })
+
+    it("reclamps expanded mode when the visible viewport shrinks", () => {
+      const originalVisualViewport = Object.getOwnPropertyDescriptor(window, "visualViewport")
+      const visualViewport = new EventTarget() as EventTarget & { height: number }
+      visualViewport.height = 800
+      Object.defineProperty(window, "visualViewport", { configurable: true, value: visualViewport })
+      try {
+        const { container } = render(<MessageComposer {...defaultProps} workspaceId="ws_1" initialMobileChromeOpen />)
+        const root = container.firstElementChild as HTMLElement
+        act(() => screen.getByTestId("rich-editor").focus())
+        fireEvent.click(screen.getByRole("button", { name: "Expand composer" }))
+        expect(root).toHaveAttribute("data-composer-expanded", "true")
+
+        visualViewport.height = 400
+        act(() => visualViewport.dispatchEvent(new Event("resize")))
+
+        expect(root.style.minHeight).toBe("200px")
+        expect(root.style.maxHeight).toBe("200px")
+
+        visualViewport.height = 800
+        act(() => visualViewport.dispatchEvent(new Event("resize")))
+        expect(root.style.minHeight).toBe("")
+        expect(root.style.maxHeight).toBe("")
+        expect(root).toHaveClass("min-h-[75dvh]", "max-h-[75dvh]")
+      } finally {
+        if (originalVisualViewport) Object.defineProperty(window, "visualViewport", originalVisualViewport)
+        else Reflect.deleteProperty(window, "visualViewport")
+      }
     })
 
     it("overlays a compact handle on the card instead of reserving a full-width row", () => {
