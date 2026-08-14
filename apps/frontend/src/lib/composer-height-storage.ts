@@ -138,8 +138,8 @@ export function unpublishComposerHeightFromRoot(el: HTMLElement): void {
 
 const STORAGE_KEY_DRAG_HEIGHT = "threa:composer-drag-height"
 
-/** Smallest draggable mobile composer: one editor line + the action bar. */
-export const MOBILE_COMPOSER_DRAG_MIN_PX = 140
+/** Mobile card floor: border + padding + one editor line + gap + action bar. */
+export const MOBILE_COMPOSER_DRAG_MIN_PX = 104
 // Sanity ceiling for persisted values only — the live drag clamps to 75% of
 // the visual viewport, which no phone exceeds.
 const MAX_DRAG_HEIGHT_PX = 1200

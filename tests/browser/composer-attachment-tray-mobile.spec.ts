@@ -112,7 +112,7 @@ test("dragging the composer down never slices the attachment chips", async ({ pa
           .evaluate((el) => Math.round(el.getBoundingClientRect().height)),
       { timeout: 20_000 }
     )
-    .toBeGreaterThanOrEqual(140)
+    .toBeGreaterThanOrEqual(104)
 
   const send = await page
     .locator('[data-message-composer-root] button[aria-label^="Send"]')

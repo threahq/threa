@@ -865,8 +865,8 @@ describe("MessageComposer", () => {
       const handle = screen.getByTestId("composer-resize-handle")
       const root = container.firstElementChild as HTMLElement
       expect(root.style.maxHeight).toBe("")
-      // jsdom measures the shell at 0px, so the drag grows from the 140px floor:
-      // a 260px upward pull lands at max(0 + 260, 140) = 260.
+      // jsdom measures the shell at 0px, so the drag grows from the compact
+      // one-line floor: a 260px upward pull lands at 260px.
       fireEvent.pointerDown(handle, { pointerId: 1, clientY: 600 })
       fireEvent.pointerMove(handle, { pointerId: 1, clientY: 340 })
       expect(root.style.maxHeight).toBe("260px")
@@ -874,17 +874,15 @@ describe("MessageComposer", () => {
       expect(localStorage.getItem("threa:composer-drag-height")).toBe("260")
     })
 
-    it("clamps a downward drag to the minimum height", () => {
+    it("clamps a downward drag to the compact one-line composer", () => {
       const { container } = render(<MessageComposer {...defaultProps} workspaceId="ws_1" initialMobileChromeOpen />)
       const handle = screen.getByTestId("composer-resize-handle")
       fireEvent.pointerDown(handle, { pointerId: 1, clientY: 300 })
       fireEvent.pointerMove(handle, { pointerId: 1, clientY: 700 })
-      expect((container.firstElementChild as HTMLElement).style.maxHeight).toBe("140px")
+      expect((container.firstElementChild as HTMLElement).style.maxHeight).toBe("104px")
     })
 
     it("keeps the floor when 75% of a short viewport would dip below it", () => {
-      // Keyboard up on a short landscape viewport: the 75%-of-viewport ceiling
-      // would land under the 140px floor, inverting the clamp — the floor wins.
       const originalInnerHeight = window.innerHeight
       Object.defineProperty(window, "innerHeight", { configurable: true, value: 100 })
       try {
@@ -892,16 +890,44 @@ describe("MessageComposer", () => {
         const handle = screen.getByTestId("composer-resize-handle")
         fireEvent.pointerDown(handle, { pointerId: 1, clientY: 600 })
         fireEvent.pointerMove(handle, { pointerId: 1, clientY: 100 })
-        expect((container.firstElementChild as HTMLElement).style.maxHeight).toBe("140px")
+        expect((container.firstElementChild as HTMLElement).style.maxHeight).toBe("104px")
       } finally {
         Object.defineProperty(window, "innerHeight", { configurable: true, value: originalInnerHeight })
       }
+    })
+
+    it("keeps one scroll owner and anchors its visible content from the bottom while dragging", () => {
+      render(<MessageComposer {...defaultProps} workspaceId="ws_1" initialMobileChromeOpen />)
+      const handle = screen.getByTestId("composer-resize-handle")
+      const scroller = screen.getByTestId("composer-editor-scroll")
+      let clientHeight = 200
+      Object.defineProperties(scroller, {
+        clientHeight: { configurable: true, get: () => clientHeight },
+        scrollHeight: { configurable: true, get: () => 600 },
+      })
+      scroller.scrollTop = 360
+
+      fireEvent.pointerDown(handle, { pointerId: 1, clientY: 300 })
+      clientHeight = 100
+      fireEvent.pointerMove(handle, { pointerId: 1, clientY: 500 })
+
+      expect(scroller.scrollTop).toBe(460)
+      expect(scroller).toHaveClass("overflow-y-auto")
+      expect(scroller).not.toHaveClass("max-h-[200px]")
     })
 
     it("applies the persisted drag height on mount", () => {
       localStorage.setItem("threa:composer-drag-height", "300")
       const { container } = render(<MessageComposer {...defaultProps} workspaceId="ws_1" initialMobileChromeOpen />)
       expect((container.firstElementChild as HTMLElement).style.maxHeight).toBe("300px")
+    })
+
+    it("overlays a compact handle on the card instead of reserving a full-width row", () => {
+      render(<MessageComposer {...defaultProps} workspaceId="ws_1" initialMobileChromeOpen />)
+      const handle = screen.getByTestId("composer-resize-handle")
+      expect(handle.parentElement).toHaveAttribute("data-composer-card")
+      expect(handle).toHaveClass("absolute", "w-16")
+      expect(handle).not.toHaveClass("-mx-3", "h-5")
     })
 
     it("shows the handle only while the mobile chrome is open", () => {

@@ -297,6 +297,9 @@ export function MessageComposer({
     return subscribeComposerCommandRequest(streamId, consumeRequest)
   }, [content, onContentChange, streamId])
   const mobileRootRef = useRef<HTMLDivElement>(null)
+  const mobileEditorScrollRef = useRef<HTMLDivElement>(null)
+  const mobileEditorBottomOffsetRef = useRef(0)
+  const resizeScrollBottomRef = useRef<number | null>(null)
   const expandedShellRef = useRef<HTMLDivElement>(null)
   const actionBarWrapperRef = useRef<HTMLDivElement>(null)
   const [mobileToolbarEditor, setMobileToolbarEditor] = useState<Editor | null>(null)
@@ -310,7 +313,13 @@ export function MessageComposer({
   // the 75dvh expanded preset, whose classes would otherwise outrank it.
   const [mobileDragHeight, setMobileDragHeightState] = useState<number | null>(() => loadMobileComposerDragHeight())
   const mobileDragHeightRef = useRef(mobileDragHeight)
-  const resizeDragRef = useRef<{ pointerId: number; startY: number; startHeight: number; minPx: number } | null>(null)
+  const resizeDragRef = useRef<{
+    pointerId: number
+    startY: number
+    startHeight: number
+    minPx: number
+    scrollBottomPx: number
+  } | null>(null)
   const handleResizePointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
     const root = mobileRootRef.current
     if (!root) return
@@ -321,13 +330,20 @@ export function MessageComposer({
     // The max-height caps the whole root — attachment tray and link previews
     // included — while the floor is defined against the editor card alone, so
     // the extras' height rides on top of the floor. Without this a tray plus
-    // a preview at the 140px floor crushed the editor card toward zero.
+    // a preview at the card floor crushed the editor card toward zero.
     const cardHeight = root.querySelector<HTMLElement>("[data-composer-card]")?.getBoundingClientRect().height
+    const editorScroll = mobileEditorScrollRef.current
+    const scrollBottomPx = editorScroll
+      ? Math.max(0, editorScroll.scrollHeight - editorScroll.clientHeight - editorScroll.scrollTop)
+      : 0
+    mobileEditorBottomOffsetRef.current = scrollBottomPx
+    resizeScrollBottomRef.current = scrollBottomPx
     resizeDragRef.current = {
       pointerId: e.pointerId,
       startY: e.clientY,
       startHeight: rootHeight,
       minPx: MOBILE_COMPOSER_DRAG_MIN_PX + Math.max(0, rootHeight - (cardHeight ?? rootHeight)),
+      scrollBottomPx,
     }
   }, [])
   const handleResizePointerMove = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
@@ -346,6 +362,10 @@ export function MessageComposer({
     if (resizeDragRef.current?.pointerId !== e.pointerId) return
     resizeDragRef.current = null
     if (mobileDragHeightRef.current !== null) persistMobileComposerDragHeight(mobileDragHeightRef.current)
+    const settledAnchor = resizeScrollBottomRef.current
+    requestAnimationFrame(() => {
+      if (resizeScrollBottomRef.current === settledAnchor) resizeScrollBottomRef.current = null
+    })
   }, [])
   // Expanded-mode FAB actions are always visible on desktop. Touch has no hover,
   // so a tap on the "+" toggles them instead.
@@ -402,6 +422,44 @@ export function MessageComposer({
   useEffect(() => {
     if (isMobile) onMobileChromeOpenChange?.(mobileChromeOpen)
   }, [isMobile, mobileChromeOpen, onMobileChromeOpenChange])
+
+  useLayoutEffect(() => {
+    const drag = resizeDragRef.current
+    const editorScroll = mobileEditorScrollRef.current
+    if (!drag || !editorScroll) return
+    editorScroll.scrollTop = Math.max(0, editorScroll.scrollHeight - editorScroll.clientHeight - drag.scrollBottomPx)
+    mobileEditorBottomOffsetRef.current = drag.scrollBottomPx
+  }, [mobileDragHeight])
+
+  useLayoutEffect(() => {
+    const editorScroll = mobileEditorScrollRef.current
+    if (!isMobile || !mobileChromeOpen || !editorScroll) return
+    let previousHeight = editorScroll.clientHeight
+    let restoring = false
+    const readBottomOffset = () =>
+      Math.max(0, editorScroll.scrollHeight - editorScroll.clientHeight - editorScroll.scrollTop)
+    mobileEditorBottomOffsetRef.current = readBottomOffset()
+    const handleScroll = () => {
+      if (!restoring && resizeScrollBottomRef.current === null) {
+        mobileEditorBottomOffsetRef.current = readBottomOffset()
+      }
+    }
+    const observer = new ResizeObserver(() => {
+      const nextHeight = editorScroll.clientHeight
+      if (nextHeight === previousHeight) return
+      const bottomOffset = resizeScrollBottomRef.current ?? mobileEditorBottomOffsetRef.current
+      restoring = true
+      editorScroll.scrollTop = Math.max(0, editorScroll.scrollHeight - nextHeight - bottomOffset)
+      previousHeight = nextHeight
+      restoring = false
+    })
+    editorScroll.addEventListener("scroll", handleScroll, { passive: true })
+    observer.observe(editorScroll)
+    return () => {
+      observer.disconnect()
+      editorScroll.removeEventListener("scroll", handleScroll)
+    }
+  }, [isMobile, mobileChromeOpen])
 
   // Defer the mobile chrome expansion until the keyboard's viewport resize
   // lands. Expanding on focus alone ran ~100ms ahead of the keyboard, so the
@@ -1303,7 +1361,7 @@ export function MessageComposer({
               <div
                 data-composer-card
                 className={cn(
-                  "rounded-[16px] border border-input flex flex-col flex-1 min-h-0",
+                  "relative rounded-[16px] border border-input flex flex-col flex-1 min-h-0",
                   // Floating-composer shadow on the inline (non-expanded) card; the
                   // expanded fullscreen sheet stays flat.
                   !mobileExpanded && COLLAPSED_COMPOSER_SHADOW,
@@ -1315,10 +1373,9 @@ export function MessageComposer({
                   !mobileExpanded && !isMobile ? "bg-card/75 backdrop-blur-md" : "bg-card",
                   // Compact padding when mobile-unfocused (single line), normal otherwise
                   isMobile && !mobileChromeOpen ? "px-3 py-2" : "p-3 gap-2",
-                  // When mobile-expanded or drag-sized, let the editor grow and
-                  // override its internal max-height — the shell's cap governs.
-                  (mobileExpanded || (isMobile && mobileChromeOpen && mobileDragHeight !== null)) &&
-                    "[&_.tiptap]:max-h-none"
+                  // The outer editor viewport stays the sole scroll owner on
+                  // mobile, including before the first drag.
+                  isMobile && mobileChromeOpen && "[&_.tiptap]:max-h-none"
                 )}
                 onClick={(e) => {
                   if ((e.target as HTMLElement).closest("button,a,input,textarea,[contenteditable],[role='button']"))
@@ -1346,9 +1403,11 @@ export function MessageComposer({
                     onPointerUp={handleResizePointerEnd}
                     onPointerCancel={handleResizePointerEnd}
                     onLostPointerCapture={handleResizePointerEnd}
-                    className="-mx-3 -mt-3 flex h-5 shrink-0 touch-none cursor-ns-resize items-center justify-center"
+                    className="absolute -top-2 left-1/2 z-10 flex h-7 w-16 -translate-x-1/2 touch-none cursor-ns-resize items-center justify-center"
                   >
-                    <div className="h-1 w-9 rounded-full bg-muted-foreground/25" />
+                    <div className="rounded-full bg-card px-1.5 py-1">
+                      <div className="h-1 w-8 rounded-full bg-muted-foreground/30" />
+                    </div>
                   </div>
                 )}
                 {isMobile && !mobileChromeOpen && (
@@ -1383,9 +1442,12 @@ export function MessageComposer({
 
                 {/* Editor — always mounted to preserve state; hidden in preview mode */}
                 <div
+                  ref={mobileEditorScrollRef}
+                  data-testid="composer-editor-scroll"
                   className={cn(
                     isMobile && !mobileChromeOpen ? "h-0 overflow-hidden" : "flex-1 min-h-0",
-                    (mobileExpanded || (isMobile && mobileChromeOpen && mobileDragHeight !== null)) && "overflow-y-auto"
+                    isMobile && mobileChromeOpen && "overflow-y-auto",
+                    isMobile && mobileChromeOpen && !mobileExpanded && mobileDragHeight === null && "max-h-[200px]"
                   )}
                 >
                   <div className="h-full">{sharedEditor}</div>

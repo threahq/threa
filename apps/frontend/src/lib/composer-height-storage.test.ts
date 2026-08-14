@@ -144,6 +144,11 @@ describe("mobile composer drag height", () => {
     expect(loadMobileComposerDragHeight()).toBe(287)
   })
 
+  it("accepts the compact one-line floor", () => {
+    persistMobileComposerDragHeight(MOBILE_COMPOSER_DRAG_MIN_PX)
+    expect(loadMobileComposerDragHeight()).toBe(104)
+  })
+
   it("returns null when never dragged", () => {
     expect(loadMobileComposerDragHeight()).toBeNull()
   })
