@@ -20,6 +20,7 @@ import { useIsMobile } from "@/hooks/use-mobile"
 import { relocateLoadedDraft, stashLoadedDraft } from "@/hooks/use-draft-message"
 import { useOptionalSyncEngine } from "@/sync/sync-engine"
 import { useComposeTrace } from "@/lib/compose-trace"
+import { getDraftPromotionSource } from "@/lib/draft-promotions"
 import { usePreferences } from "@/contexts"
 import { useConnectionState } from "@/components/layout/connection-status"
 import {
@@ -384,16 +385,17 @@ function MessageInputComponent({
     ? boardPostLastActiveStreamId(conversationReplyPost)
     : null
 
-  // The draft scope this composer edits — the target when armed, the stream's own
-  // otherwise. `scopeId` MUST follow it: the composer's rehydrate keys on
-  // `scopeId` (`use-draft-composer.ts`), so a mismatched pair renders one draft
-  // while every save targets another.
+  // The persistence key follows the route, while editor identity spans the one
+  // draft→real promotion handoff so in-flight keystrokes are not rehydrated away.
   const draftKey = effectiveTarget ?? hostScope
+  const promotedFromDraftId = getDraftPromotionSource(streamId)
+  const composerScopeId =
+    effectiveTarget ?? getDraftMessageKey({ type: "stream", streamId: promotedFromDraftId ?? streamId })
   const syncEngine = useOptionalSyncEngine()
   const composer = useDraftComposer({
     workspaceId,
     draftKey,
-    scopeId: draftKey,
+    scopeId: composerScopeId,
     e2eStreamId: e2eRootStreamId,
   })
   const quoteReplyCtx = useQuoteReply()
@@ -861,11 +863,15 @@ function MessageInputComponent({
         if (result.navigateTo) {
           navigate(result.navigateTo, { replace: result.replace ?? false })
         }
-      } catch {
-        // This only happens for draft promotion failure (stream creation failed)
-        // Real stream message failures are handled in the timeline with retry
-        composer.setContent(contentJson)
-        setError("Failed to create stream. Please try again.")
+      } catch (error) {
+        // Route changes abort a stale promotion wait. The old scope still owns
+        // its durable draft; restoring here would inject it into the next stream.
+        if (!(error instanceof Error && error.name === "AbortError")) {
+          // This only happens for draft promotion failure (stream creation failed)
+          // Real stream message failures are handled in the timeline with retry
+          composer.setContent(contentJson)
+          setError("Failed to create stream. Please try again.")
+        }
       } finally {
         composer.setIsSending(false)
       }

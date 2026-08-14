@@ -199,6 +199,20 @@ describe("useDraftComposer", () => {
   })
 
   describe("scope change", () => {
+    it("keeps live content when the persistence key changes within one logical scope", () => {
+      mockDraftLoadedId = null
+      const { result, rerender } = renderHook(
+        ({ currentKey }) => useDraftComposer({ workspaceId, draftKey: currentKey, scopeId: "promotion:draft_1" }),
+        { initialProps: { currentKey: "stream:draft_1" } }
+      )
+
+      act(() => result.current.handleContentChange(makeDoc("follow-up typed during promotion")))
+      rerender({ currentKey: "stream:stream_1" })
+
+      expect(result.current.content).toEqual(makeDoc("follow-up typed during promotion"))
+      expect(mockClearAttachments).not.toHaveBeenCalled()
+    })
+
     it("keeps live content and attachments when the same draft identity changes filing scope", () => {
       const sourceKey = "board:reply:conv_1"
       const targetKey = "stream:stream_1"

@@ -22,6 +22,8 @@ export interface DraftPromotion {
 type Listener = (promotion: DraftPromotion) => void
 
 const listeners = new Set<Listener>()
+const promotionsByDraftId = new Map<string, DraftPromotion>()
+const promotionsByRealStreamId = new Map<string, DraftPromotion>()
 
 export function onDraftPromoted(listener: Listener): () => void {
   listeners.add(listener)
@@ -30,7 +32,53 @@ export function onDraftPromoted(listener: Listener): () => void {
   }
 }
 
+export function getPromotedStreamId(draftId: string): string | null {
+  return promotionsByDraftId.get(draftId)?.realStreamId ?? null
+}
+
+export function getDraftPromotionSource(realStreamId: string): string | null {
+  return promotionsByRealStreamId.get(realStreamId)?.draftId ?? null
+}
+
+export function waitForDraftPromotion(
+  workspaceId: string,
+  draftId: string,
+  options: { signal?: AbortSignal; timeoutMs?: number } = {}
+): Promise<string> {
+  const existing = promotionsByDraftId.get(draftId)
+  if (existing?.workspaceId === workspaceId) return Promise.resolve(existing.realStreamId)
+
+  return new Promise((resolve, reject) => {
+    let unsubscribe = () => {}
+    const timeout = setTimeout(() => {
+      cleanup()
+      reject(new Error("Timed out waiting for draft promotion"))
+    }, options.timeoutMs ?? 30_000)
+    const abort = () => {
+      cleanup()
+      const error = new Error("Draft promotion wait aborted")
+      error.name = "AbortError"
+      reject(error)
+    }
+    const cleanup = () => {
+      clearTimeout(timeout)
+      options.signal?.removeEventListener("abort", abort)
+      unsubscribe()
+    }
+
+    unsubscribe = onDraftPromoted((promotion) => {
+      if (promotion.workspaceId !== workspaceId || promotion.draftId !== draftId) return
+      cleanup()
+      resolve(promotion.realStreamId)
+    })
+    if (options.signal?.aborted) abort()
+    else options.signal?.addEventListener("abort", abort, { once: true })
+  })
+}
+
 export function emitDraftPromoted(promotion: DraftPromotion): void {
+  promotionsByDraftId.set(promotion.draftId, promotion)
+  promotionsByRealStreamId.set(promotion.realStreamId, promotion)
   for (const listener of listeners) {
     listener(promotion)
   }

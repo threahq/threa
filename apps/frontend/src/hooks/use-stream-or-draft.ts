@@ -19,7 +19,7 @@ import { getDraftMessageKey, purgeScopeDrafts, upsertLoadedDraft } from "./use-d
 import { type AttachmentSummary } from "./create-optimistic-bootstrap"
 import { resolveDmDisplayName } from "@/lib/streams"
 import { serializeToMarkdown } from "@threa/prosemirror"
-import { onDraftPromoted } from "@/lib/draft-promotions"
+import { getPromotedStreamId, onDraftPromoted, waitForDraftPromotion } from "@/lib/draft-promotions"
 import type {
   Stream,
   StreamMember,
@@ -183,7 +183,10 @@ function useDraftStream(workspaceId: string, streamId: string, enabled: boolean)
   const navigate = useNavigate()
   const { queueDraftMessage, currentUserId } = useQueueDraftMessage(workspaceId)
   const { getScratchpad, updateScratchpad, deleteScratchpad } = useDraftScratchpads(workspaceId)
+  const promotionWaitController = useMemo(() => new AbortController(), [workspaceId, streamId])
   const draft = enabled ? getScratchpad(streamId) : undefined
+
+  useEffect(() => () => promotionWaitController.abort(), [promotionWaitController])
 
   const stream: VirtualStream | undefined = draft
     ? {
@@ -227,26 +230,50 @@ function useDraftStream(workspaceId: string, streamId: string, enabled: boolean)
         throw new Error("Cannot send message: user identity not resolved yet")
       }
 
-      const draftData = await db.draftScratchpads.get(streamId)
-      const companionMode = draftData?.companionMode ?? "on"
+      // The optimistic first message renders before promotion replaces the route.
+      // A follow-up can therefore enter this stale draft callback; join the first
+      // promotion instead of materializing a second scratchpad.
+      const knownPromotedStreamId = getPromotedStreamId(streamId)
+      const promotionPending = knownPromotedStreamId
+        ? null
+        : await db.pendingMessages
+            .filter(
+              (message) =>
+                message.draftId === streamId &&
+                (message.streamCreation !== undefined || message.promotedStreamId !== undefined)
+            )
+            .first()
+      const promotedStreamId =
+        knownPromotedStreamId ??
+        promotionPending?.promotedStreamId ??
+        (promotionPending
+          ? await waitForDraftPromotion(workspaceId, streamId, { signal: promotionWaitController.signal })
+          : null)
 
-      await queueDraftMessage(input, {
-        workspaceId,
-        streamId,
-        streamCreation: {
-          type: StreamTypes.SCRATCHPAD,
-          displayName: draftData?.displayName ?? undefined,
-          companionMode,
-          companionPersonaId: draftData?.companionPersonaId,
-          allowedToolCategories: draftData?.allowedToolCategories,
-        },
-        draftId: streamId,
-      })
+      if (promotedStreamId) {
+        await queueDraftMessage(input, { workspaceId, streamId: promotedStreamId })
+      } else {
+        const draftData = await db.draftScratchpads.get(streamId)
+        const companionMode = draftData?.companionMode ?? "on"
+
+        await queueDraftMessage(input, {
+          workspaceId,
+          streamId,
+          streamCreation: {
+            type: StreamTypes.SCRATCHPAD,
+            displayName: draftData?.displayName ?? undefined,
+            companionMode,
+            companionPersonaId: draftData?.companionPersonaId,
+            allowedToolCategories: draftData?.allowedToolCategories,
+          },
+          draftId: streamId,
+        })
+      }
 
       // Navigation is handled by the promotion listener above
       return {}
     },
-    [streamId, workspaceId, currentUserId, queueDraftMessage]
+    [streamId, workspaceId, currentUserId, queueDraftMessage, promotionWaitController]
   )
 
   return {
