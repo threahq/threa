@@ -151,9 +151,12 @@ function paddedPillInsert(
 /**
  * The separator a pill earned via {@link paddedPillInsert} leaves with the
  * pill: deleting or moving one away must not orphan its space into a double
- * gap or a dangling edge. A separator is recognizable as a lone " " text node
- * — the moment a user types beside one it merges into their text and becomes
- * theirs, so merged spacing is never touched.
+ * gap or a dangling edge. A separator is any lone " " text node beside the
+ * pill — deliberately including one the user typed there themselves, which is
+ * indistinguishable and wants the same fate: a bare space left clinging to a
+ * paragraph edge after its pill leaves is never what was meant. Anything
+ * longer is the user's text (their space merges into it on the next
+ * keystroke) and is never touched.
  */
 function composerPillDeleteRange(
   doc: ProseMirrorNode,

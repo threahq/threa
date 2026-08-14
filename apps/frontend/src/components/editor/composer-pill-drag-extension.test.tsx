@@ -253,6 +253,30 @@ describe("composer pill moves", () => {
     ])
   })
 
+  it("takes a lone space typed after a start-edge pill with it, leaving no bare edge space", () => {
+    const editor = createPillEditor([pill("mention")])
+    const mentionPos = nodePos(editor, "mention")
+    editor.commands.setNodeSelection(mentionPos)
+    editor.view.someProp("handleTextInput", (handler) =>
+      handler(editor.view, mentionPos, mentionPos + 1, " ", () => editor.state.tr)
+    )
+    expect(editor.getJSON().content?.[0]?.content).toEqual([pill("mention"), { type: "text", text: " " }])
+
+    editor.commands.setNodeSelection(nodePos(editor, "mention"))
+    fireEvent.keyDown(editor.view.dom, { key: "Backspace" })
+
+    expect(editor.getJSON().content?.[0]?.content).toBeUndefined()
+  })
+
+  it("keeps typed text after a start-edge pill when the space is no longer alone", () => {
+    const editor = createPillEditor([pill("mention"), { type: "text", text: " hi" }])
+    editor.commands.setNodeSelection(nodePos(editor, "mention"))
+
+    fireEvent.keyDown(editor.view.dom, { key: "Backspace" })
+
+    expect(editor.getJSON().content?.[0]?.content).toEqual([{ type: "text", text: " hi" }])
+  })
+
   it("leaves user-typed spacing alone when a pill beside it is deleted", () => {
     const editor = createPillEditor([pill("mention"), { type: "text", text: " hi " }, pill("channelLink")])
     editor.commands.setNodeSelection(nodePos(editor, "channelLink"))
