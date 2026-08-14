@@ -3,12 +3,12 @@ import { useUnreadCounts } from "./use-unread-counts"
 import { useActivityCounts } from "./use-activity-counts"
 import { usePageActivity } from "./use-page-activity"
 import { computeAutoReadAttention } from "@/lib/auto-read-attention"
+import { useReadCommitQueue } from "@/sync/read-commit-queue"
 import { useIsMobile } from "./use-mobile"
 import { useCoarsePointer } from "./use-pointer"
 
 interface UseAutoMarkAsReadOptions {
   enabled?: boolean
-  debounceMs?: number
   /**
    * When true, `lastEventId` is the bottom of what the viewer has seen, not the
    * tail of the loaded window — unread messages remain below the fold. The read
@@ -37,12 +37,16 @@ export function useAutoReadAttention(): boolean {
 }
 
 /**
- * Hook that automatically marks a stream as read when viewing it.
- * Debounces the mark-as-read call to avoid excessive API calls when rapidly switching streams.
+ * The view-layer half of auto-read: decide WHETHER what the frontier counted
+ * as seen should be marked (attention, elevation, dedup against the last
+ * committed mark), and report it to the workspace's `ReadCommitQueue`. The
+ * queue owns all commit mechanics — debounce, coalescing, flush on
+ * leave/pagehide — so component lifecycle can never lose a mark the viewer
+ * earned (the #1881 glance-triage bug lived exactly in that gap).
  *
- * Checks unread counts, mention counts, AND activity counts — the mark-as-read API
- * clears all of these, so this must fire when any is elevated (e.g., activity arrives
- * via the outbox handler while viewing the stream).
+ * Checks unread counts, mention counts, AND activity counts — the mark-as-read
+ * API clears all of these, so this must fire when any is elevated (e.g.,
+ * activity arrives via the outbox handler while viewing the stream).
  *
  * `lastEventId` is the furthest event the viewer has actually scrolled into
  * view (see `useLastSeenEvent`), not the last loaded event — read state never
@@ -54,109 +58,79 @@ export function useAutoMarkAsRead(
   lastEventId: string | undefined,
   options: UseAutoMarkAsReadOptions = {}
 ) {
-  const { enabled = true, debounceMs = 500, partial = false } = options
-  const { markAsRead, getUnreadCount } = useUnreadCounts(workspaceId)
+  const { enabled = true, partial = false } = options
+  const { getUnreadCount } = useUnreadCounts(workspaceId)
   const { getActivityCount } = useActivityCounts(workspaceId)
   const canAutoRead = useAutoReadAttention()
-  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  // The mark the running debounce timer would send, so teardown can FLUSH it
-  // instead of dropping it. The debounce is network coalescing, not a dwell
-  // requirement: the frontier already said "seen", so a stream switch or
-  // unmount inside the window must still commit the mark — cancelling it was
-  // the glance-triage bug (open an unread stream, glance, move on within a
-  // second → the stream stayed unread on the server, invisibly, because the
-  // local viewing-pin had already zeroed the badge).
-  const pendingRef = useRef<{ streamId: string; lastEventId: string; partial: boolean } | null>(null)
-  const lastMarkedRef = useRef<string | null>(null)
-  // Track the partial-ness of the last mark so a partial→full transition at the
-  // SAME event (viewer scrolled partway, then on to the tail) re-fires to clear
-  // the badge optimistically instead of waiting on the server round-trip.
-  const lastMarkedPartialRef = useRef<boolean | null>(null)
+  const queue = useReadCommitQueue()
+  // Effect DEPS, not just reads: both hooks subscribe this component to the
+  // unread store, so an `activity:created` landing while the frontier is
+  // unchanged re-runs the effect through these values and re-fires the mark
+  // that clears it. The old code got that re-fire by accident — `markAsRead`'s
+  // identity churned every render, re-running the effect — so stable deps
+  // alone would silently kill the activity-arrival re-mark (witness finding
+  // on #1882).
+  const unreadCount = getUnreadCount(streamId)
+  const activityCount = getActivityCount(streamId)
 
-  // Use refs to avoid stale closure in setTimeout callback
   const streamIdRef = useRef(streamId)
-  const lastEventIdRef = useRef(lastEventId)
-  const partialRef = useRef(partial)
   streamIdRef.current = streamId
-  lastEventIdRef.current = lastEventId
-  partialRef.current = partial
-  const markAsReadRef = useRef(markAsRead)
-  markAsReadRef.current = markAsRead
 
-  // Unmount flush: navigating off the stream page entirely (drafts, board)
-  // unmounts the consumer with the debounce still pending — commit it.
-  // Defined ABOVE the debounce effect: React runs unmount cleanups in
-  // definition order, and the debounce effect's own cleanup clears pendingRef.
+  // A fresh open of a stream forgets its committed-mark dedup, so a fully-read
+  // open still heals server-side activity once per open (D5) — the consumer
+  // (StreamContent) is not keyed by streamId, so this hook persists across
+  // switches.
   useEffect(() => {
-    return () => {
-      const pending = pendingRef.current
-      pendingRef.current = null
-      if (pending) markAsReadRef.current(pending.streamId, pending.lastEventId, { partial: pending.partial })
+    queue.resetCommitted(streamId)
+  }, [queue, streamId])
+
+  useEffect(() => {
+    if (!enabled || !lastEventId || !canAutoRead) {
+      // The gate closed with a mark still debouncing: drop it, matching the
+      // pre-queue semantics — a blur cancels rather than commits, so content
+      // glimpsed right before switching windows stays unread (never
+      // over-mark). The next attentive pass re-reports the frontier.
+      queue.cancel(streamId)
+      return
     }
-  }, [])
 
-  // The consumer (StreamContent) is not keyed by streamId, so this hook persists
-  // across stream switches. Clear the dedup refs per stream — otherwise a prior
-  // stream's marked event/partial-ness could suppress the first auto-mark in the
-  // next stream.
-  useEffect(() => {
-    lastMarkedRef.current = null
-    lastMarkedPartialRef.current = null
-  }, [streamId])
-
-  useEffect(() => {
-    if (!enabled || !lastEventId || !canAutoRead) return
-
-    const unreadCount = getUnreadCount(streamId)
-    const activityCount = getActivityCount(streamId)
-
-    // D5 heal: a fully-read (`!partial`) open still fires `markAsRead` once even
-    // when nothing is locally elevated. `lastEventId` is then the true tail, so
-    // the resulting `stream:read` clears server-side activity that arrived with no
+    // D5 heal: a fully-read (`!partial`) open still fires one commit even when
+    // nothing is locally elevated. `lastEventId` is then the true tail, so the
+    // resulting `stream:read` clears server-side activity that arrived with no
     // new message to scroll past (e.g. a reaction while caught up) and couples
-    // other devices. The dedup ref below gates it to once per caught-up tail. A
-    // PARTIAL (mid-window frontier) open with nothing elevated still no-ops —
+    // other devices. The committed record gates it to once per caught-up tail.
+    // A PARTIAL (mid-window frontier) open with nothing elevated still no-ops —
     // its `lastEventId` isn't the tail, so emitting `stream:read` would be wrong.
     if (unreadCount === 0 && activityCount === 0 && partial) return
 
-    // Skip if already marked this event at the same partial-ness AND no pending
-    // activities to clear. Activities can arrive via activity:created while we're
-    // viewing the stream (the outbox handler is async), so we must re-fire to
-    // clear them even if lastEventId hasn't changed; likewise a partial→full
-    // transition at the same event must re-fire to clear the badge.
-    if (lastMarkedRef.current === lastEventId && lastMarkedPartialRef.current === partial && activityCount === 0) return
-
-    if (timerRef.current) {
-      clearTimeout(timerRef.current)
+    // Skip if this exact mark was already committed AND no pending activities
+    // to clear. Activities can arrive via activity:created while we're viewing
+    // the stream (the outbox handler is async), so we must re-fire to clear
+    // them even if lastEventId hasn't changed; likewise a partial→full
+    // transition at the same event must re-fire to clear the badge. Cancelled
+    // (never-sent) marks are not in the committed record, so a blur-parked
+    // mark re-reports after refocus.
+    const committed = queue.lastCommitted(streamId)
+    if (committed && committed.lastEventId === lastEventId && committed.partial === partial && activityCount === 0) {
+      return
     }
 
-    timerRef.current = setTimeout(() => {
-      // Read current values at execution time, not capture time, so re-arms
-      // within the same stream always send the newest frontier.
-      const currentStreamId = streamIdRef.current
-      const currentLastEventId = lastEventIdRef.current
-      pendingRef.current = null
-      if (currentLastEventId) {
-        markAsRead(currentStreamId, currentLastEventId, { partial: partialRef.current })
-        lastMarkedRef.current = currentLastEventId
-        lastMarkedPartialRef.current = partialRef.current
-      }
-    }, debounceMs)
-    pendingRef.current = { streamId, lastEventId, partial }
+    queue.report(streamId, lastEventId, partial)
 
     return () => {
-      if (timerRef.current) {
-        clearTimeout(timerRef.current)
-      }
-      const pending = pendingRef.current
-      pendingRef.current = null
-      // A stream switch mid-debounce flushes the old stream's mark (the
-      // frontier had already counted it as seen); same-stream re-arms and the
-      // attention gate dropping (blur) keep the existing cancel semantics —
-      // the next arming run re-captures the freshest frontier.
-      if (pending && pending.streamId !== streamIdRef.current) {
-        markAsRead(pending.streamId, pending.lastEventId, { partial: pending.partial })
-      }
+      // Leaving the stream flushes its pending mark — the frontier already
+      // counted the rows as seen; the debounce is network coalescing, not a
+      // dwell requirement. Same-stream re-runs fall through: the next report
+      // replaces the pending mark instead.
+      if (streamIdRef.current !== streamId) queue.flush(streamId)
     }
-  }, [enabled, streamId, lastEventId, partial, debounceMs, markAsRead, getUnreadCount, getActivityCount, canAutoRead])
+  }, [enabled, streamId, lastEventId, partial, queue, unreadCount, activityCount, canAutoRead])
+
+  // Unmounting the stream page entirely (navigating to drafts/board) is the
+  // other leave path — flush whatever stream was current.
+  useEffect(() => {
+    return () => {
+      queue.flush(streamIdRef.current)
+    }
+  }, [queue])
 }

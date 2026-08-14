@@ -1,6 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest"
-import { renderHook, act } from "@testing-library/react"
+import { renderHook as baseRenderHook, act } from "@testing-library/react"
+import { createElement, type ReactNode } from "react"
 import { useAutoMarkAsRead } from "./use-auto-mark-as-read"
+import { ReadCommitQueue, ReadCommitQueueContext } from "@/sync/read-commit-queue"
 import * as useUnreadCountsModule from "./use-unread-counts"
 import * as useActivityCountsModule from "./use-activity-counts"
 import * as useMobileModule from "./use-mobile"
@@ -9,6 +11,14 @@ import * as usePointerModule from "./use-pointer"
 const mockMarkAsRead = vi.fn()
 const mockGetUnreadCount = vi.fn()
 const mockGetActivityCount = vi.fn()
+
+// The hook reports into the workspace ReadCommitQueue; give every render a
+// real queue wired straight to the markAsRead mock so the tests exercise the
+// actual debounce/flush pipeline.
+let queue: ReadCommitQueue
+const wrapper = ({ children }: { children: ReactNode }) =>
+  createElement(ReadCommitQueueContext.Provider, { value: queue }, children)
+const renderHook: typeof baseRenderHook = (cb, opts) => baseRenderHook(cb, { wrapper, ...opts })
 
 let unreadCount = 1
 let activityCount = 0
@@ -47,6 +57,11 @@ describe("useAutoMarkAsRead", () => {
     mockGetUnreadCount.mockImplementation(() => unreadCount)
     mockGetActivityCount.mockImplementation(() => activityCount)
 
+    queue = new ReadCommitQueue({
+      workspaceId: "ws_123",
+      commitRef: { current: (streamId, lastEventId, opts) => mockMarkAsRead(streamId, lastEventId, opts) },
+    })
+
     vi.spyOn(useMobileModule, "useIsMobile").mockImplementation(() => isMobileViewport)
     vi.spyOn(usePointerModule, "useCoarsePointer").mockImplementation(() => isCoarsePointer)
 
@@ -68,6 +83,7 @@ describe("useAutoMarkAsRead", () => {
 
   afterEach(() => {
     vi.runOnlyPendingTimers()
+    queue.dispose()
     vi.useRealTimers()
     vi.restoreAllMocks()
 
@@ -235,6 +251,30 @@ describe("useAutoMarkAsRead", () => {
 
     // Same event, now full — must re-fire so the badge clears optimistically
     // rather than waiting on the server round-trip.
+    expect(mockMarkAsRead).toHaveBeenLastCalledWith("stream_123", "event_123", { partial: false })
+    expect(mockMarkAsRead).toHaveBeenCalledTimes(2)
+  })
+
+  it("re-fires the same mark when activity arrives with an unchanged frontier", () => {
+    // A reaction while viewing raises activityCount with no new timeline event
+    // — lastEventId stays put, so the re-fire rides on the count VALUE being an
+    // effect dep. The old code re-ran by accident (markAsRead identity churn);
+    // this pins the re-fire as deliberate (witness finding on #1882).
+    const { rerender } = renderHook((_props: { v: number }) => useAutoMarkAsRead("ws_123", "stream_123", "event_123"), {
+      initialProps: { v: 0 },
+    })
+
+    act(() => {
+      vi.advanceTimersByTime(500)
+    })
+    expect(mockMarkAsRead).toHaveBeenCalledTimes(1)
+
+    activityCount = 1
+    rerender({ v: 1 })
+    act(() => {
+      vi.advanceTimersByTime(500)
+    })
+
     expect(mockMarkAsRead).toHaveBeenLastCalledWith("stream_123", "event_123", { partial: false })
     expect(mockMarkAsRead).toHaveBeenCalledTimes(2)
   })

@@ -28,6 +28,7 @@ import {
   useEditLastMessageTrigger,
   useKeyboardShortcuts,
   useEffectiveArchived,
+  useFeatureFlag,
   streamKeys,
   workspaceKeys,
 } from "@/hooks"
@@ -2276,6 +2277,7 @@ export function StreamContent({
   // no settle phase (`isInitialSettling` would never clear there), so exempt it.
   const settledAtBottom = !useVirtualized || !virtualIsInitialSettling
   const autoMarkEnabled = !isDraft && !isLoading && !isJumpMode && settledAtBottom
+  const autoReadRevamp = useFeatureFlag(workspaceId, "autoReadRevamp") === "on"
   const { lastSeenEventId, atLastRow, unreadAboveViewport } = useLastSeenEvent({
     scrollContainerRef,
     // The virtualized scroller late-mounts via a ref callback, AFTER
@@ -2295,6 +2297,9 @@ export function StreamContent({
     lastReadEventId: frontierLastReadEventId,
     enabled: autoMarkEnabled,
     programmaticScrollAtRef,
+    // Kill-switch (autoReadRevamp "off" reverts to strict scan-overlap
+    // contiguity); the flush half of the switch lives on the ReadCommitQueue.
+    sweepLinkEnabled: autoReadRevamp,
   })
   useAutoMarkAsRead(workspaceId, streamId, lastSeenEventId, { enabled: autoMarkEnabled, partial: !atLastRow })
   const canAutoRead = useAutoReadAttention()
@@ -2383,6 +2388,10 @@ export function StreamContent({
     const lastLoadedEventId = lastLoadedEventIdRef.current
     if (lastLoadedEventId) markAsReadRef.current(streamId, lastLoadedEventId)
     dismissUnreadDivider()
+    // An explicit go-to-bottom supersedes a landing refine loop still in its
+    // watch window — the loop only aborts on scroller gestures, and without
+    // this its next tick re-centers the marker target, reverting the jump.
+    scrollAbortRef.current?.()
     scrollToBottom({ force: true })
   }, [streamId, dismissUnreadDivider, scrollToBottom])
 
@@ -2482,6 +2491,10 @@ export function StreamContent({
     searchNavPhaseRef.current = "idle"
     searchNavVersionRef.current++
     setIsSearchNavigating(false)
+    // A landing refine loop still watching (its 1200ms window) would re-center
+    // its target on the next tick and revert this jump — a button click is not
+    // a scroller gesture, so the loop's own abort listeners never fire.
+    scrollAbortRef.current?.()
     if (isJumpMode) {
       exitJumpMode()
       // The event window is about to be replaced wholesale (jump window →
