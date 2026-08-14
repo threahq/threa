@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
-import type { StreamEvent } from "@threa/types"
+import { READ_BLOCKING_EVENT_TYPES, type StreamEvent } from "@threa/types"
 
 export interface VisibleRow {
   id: string
@@ -42,10 +42,34 @@ export function pickVisibleRange(rows: VisibleRow[], viewportTop: number, viewpo
  * fling — whose per-frame viewport jumps exceed the viewport height — still
  * reads as the continuous sweep it visually was.
  */
-export function advanceFrontier(frontier: number, topIdx: number, botIdx: number): number {
-  if (topIdx <= frontier + 1 && botIdx > frontier) return botIdx
+export function advanceFrontier(frontier: number, topIdx: number, botIdx: number, gateIdx = frontier + 1): number {
+  if (topIdx <= gateIdx && botIdx > frontier) return botIdx
   return frontier
 }
+
+/**
+ * The lowest index the viewport's top may sit at and still continue the read
+ * run: the first UNREAD MESSAGE after the frontier. Events that carry nothing
+ * to read — agent-session cards, command chrome, membership notices — are
+ * bridged, because a viewer who never had them on screen has not skipped any
+ * content (`READ_BLOCKING_EVENT_TYPES`).
+ *
+ * Gating on raw adjacency (`frontier + 1`) wedged real streams: every bot reply
+ * is bracketed by `agent_session:started`/`:completed`, so a session card sits
+ * between the viewer's pointer and the first unread message, and any landing
+ * that starts inside a tall message — a deep link, or the unread marker — puts
+ * that card above the fold. The run could then never close, and the message
+ * stayed unread while being read, indefinitely.
+ *
+ * Skipping a real message still blocks: its own index becomes the gate.
+ */
+export function readGateIndex(events: StreamEvent[], frontier: number): number {
+  let idx = frontier + 1
+  while (idx < events.length && !READ_BLOCKING_TYPES.has(events[idx].eventType)) idx++
+  return idx
+}
+
+const READ_BLOCKING_TYPES: ReadonlySet<string> = new Set(READ_BLOCKING_EVENT_TYPES)
 
 /**
  * Two viewport scans within this window, with no programmatic scroll write
@@ -265,7 +289,12 @@ export function useLastSeenEvent({
     if (!pinnedRef.current) {
       // External reads can only move the frontier forward.
       if (readIndexRef.current > frontierRef.current) frontierRef.current = readIndexRef.current
-      frontierRef.current = advanceFrontier(frontierRef.current, effTopIdx, botIdx)
+      frontierRef.current = advanceFrontier(
+        frontierRef.current,
+        effTopIdx,
+        botIdx,
+        readGateIndex(eventsRef.current, frontierRef.current)
+      )
     }
 
     const frontier = frontierRef.current

@@ -94,6 +94,13 @@ describe("advanceFrontier", () => {
     expect(advanceFrontier(20, 10, 15)).toBe(20)
   })
 
+  it("advances past bridged chrome when the gate says the first unread message is further down", () => {
+    // Frontier at 1, a session card at 2 that never came on screen, the unread
+    // message at 3. Raw adjacency (gate = 2) blocks; the real gate is 3.
+    expect(advanceFrontier(1, 3, 3)).toBe(1)
+    expect(advanceFrontier(1, 3, 3, 3)).toBe(3)
+  })
+
   it("treats an exactly-contiguous top (frontier + 1) as no gap", () => {
     expect(advanceFrontier(9, 10, 14)).toBe(14)
   })
@@ -199,6 +206,85 @@ describe("useLastSeenEvent re-scan triggers", () => {
     // The re-scan reaches the last row — the message that was stuck unread.
     expect(result.current.lastSeenEventId).toBe("e2")
     expect(result.current.atLastRow).toBe(true)
+  })
+
+  it("marks a message read when only an agent-session card sits between it and the pointer, off-screen", () => {
+    // Kristoffer's prod streams, exactly: pointer on his own message, an
+    // `agent_session:started` card next, then the bot's reply — which is taller
+    // than a phone viewport. Landing inside that reply (deep link or unread
+    // marker) leaves the card above the fold, so raw adjacency could never close
+    // the run and the message stayed unread while being read.
+    const positions: Record<string, { top: number; bottom: number }> = {
+      e0: { top: -260, bottom: -210 }, // his message (the read pointer)
+      e1: { top: -180, bottom: -140 }, // the session card — above the fold
+      e2: { top: -40, bottom: 400 }, // the bot reply, taller than the viewport
+    }
+
+    const container = document.createElement("div")
+    container.getBoundingClientRect = () => rect(0, 100)
+    for (const id of Object.keys(positions)) {
+      const row = document.createElement("div")
+      row.setAttribute("data-event-id", id)
+      row.getBoundingClientRect = () => rect(positions[id].top, positions[id].bottom)
+      container.appendChild(row)
+    }
+
+    const events = [
+      { id: "e0", sequence: "0", eventType: "message_created" },
+      { id: "e1", sequence: "1", eventType: "agent_session:started" },
+      { id: "e2", sequence: "2", eventType: "message_created" },
+    ] as unknown as StreamEvent[]
+
+    const { result } = renderHook(() =>
+      useLastSeenEvent({
+        scrollContainerRef: { current: container },
+        events,
+        streamId: "stream_1",
+        lastReadEventId: "e0",
+        enabled: true,
+      })
+    )
+
+    expect(result.current.lastSeenEventId).toBe("e2")
+    expect(result.current.atLastRow).toBe(true)
+  })
+
+  it("still refuses to skip an unseen MESSAGE above the viewport", () => {
+    // The counterpart: same geometry, but the row between pointer and the
+    // visible message is a real message. Progressive read must still block —
+    // bridging is only ever for chrome.
+    const positions: Record<string, { top: number; bottom: number }> = {
+      e0: { top: -260, bottom: -210 },
+      e1: { top: -180, bottom: -140 }, // an unread message, never on screen
+      e2: { top: -40, bottom: 400 },
+    }
+
+    const container = document.createElement("div")
+    container.getBoundingClientRect = () => rect(0, 100)
+    for (const id of Object.keys(positions)) {
+      const row = document.createElement("div")
+      row.setAttribute("data-event-id", id)
+      row.getBoundingClientRect = () => rect(positions[id].top, positions[id].bottom)
+      container.appendChild(row)
+    }
+
+    const events = [
+      { id: "e0", sequence: "0", eventType: "message_created" },
+      { id: "e1", sequence: "1", eventType: "message_created" },
+      { id: "e2", sequence: "2", eventType: "message_created" },
+    ] as unknown as StreamEvent[]
+
+    const { result } = renderHook(() =>
+      useLastSeenEvent({
+        scrollContainerRef: { current: container },
+        events,
+        streamId: "stream_1",
+        lastReadEventId: "e0",
+        enabled: true,
+      })
+    )
+
+    expect(result.current.lastSeenEventId).toBeUndefined()
   })
 
   it("re-arms the scan when the virtualized scroller late-mounts after enabled (scrollContainerEl)", () => {

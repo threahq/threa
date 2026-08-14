@@ -91,6 +91,22 @@ export interface StreamRowSpec {
    * ("Agents on the board — traces visible, never bumping", board-view-design.md).
    */
   bumps: boolean
+  /**
+   * Whether the viewer must actually have this row on screen before their read
+   * frontier may advance past it — i.e. it carries a body someone wrote and to
+   * skip it is to skip content. True only for the message bodies; agent-session
+   * cards, command chrome, membership notices and patches are all false.
+   *
+   * Progressive read (`useLastSeenEvent`) gates on this rather than on raw event
+   * adjacency. Gating on adjacency wedged real streams: every bot reply is
+   * bracketed by `agent_session:*`, so a session card routinely sits between the
+   * viewer's pointer and the first unread message, and any landing that starts
+   * inside a tall message (deep link, unread marker) leaves that card above the
+   * fold — the run could then never close and the message stayed unread while
+   * being read. Skipping chrome is not skipping content; skipping a message is,
+   * and that still blocks. Derives {@link READ_BLOCKING_EVENT_TYPES}.
+   */
+  readBlocking: boolean
 }
 
 const MESSAGE: StreamRowSpec = {
@@ -102,6 +118,7 @@ const MESSAGE: StreamRowSpec = {
   conversationRef: "self-message",
   bumps: true,
   threadable: true,
+  readBlocking: true,
 }
 
 /** A live patch onto an existing row (edit / reaction / delete / cancel). */
@@ -114,6 +131,7 @@ const PATCH: StreamRowSpec = {
   conversationRef: "none",
   bumps: false,
   threadable: false,
+  readBlocking: false,
 }
 
 /** Channel chrome: a broadcast row in the timeline, never a board/topic row. */
@@ -126,6 +144,7 @@ const CHROME_BROADCAST: StreamRowSpec = {
   conversationRef: "none",
   bumps: false,
   threadable: false,
+  readBlocking: false,
 }
 
 const AGENT_SESSION: StreamRowSpec = {
@@ -137,6 +156,7 @@ const AGENT_SESSION: StreamRowSpec = {
   conversationRef: "trigger-message",
   bumps: false,
   threadable: false,
+  readBlocking: false,
 }
 
 const COMMAND: StreamRowSpec = {
@@ -150,6 +170,7 @@ const COMMAND: StreamRowSpec = {
   conversationRef: "source-conversation",
   bumps: false,
   threadable: false,
+  readBlocking: false,
 }
 
 export const STREAM_ROW_SPEC: Record<EventType, StreamRowSpec> = {
@@ -166,6 +187,8 @@ export const STREAM_ROW_SPEC: Record<EventType, StreamRowSpec> = {
     conversationRef: "none",
     bumps: false,
     threadable: false,
+    // A message body, legacy or not — skipping it is skipping something written.
+    readBlocking: true,
   },
   message_edited: PATCH,
   reaction_added: PATCH,
@@ -196,6 +219,7 @@ export const STREAM_ROW_SPEC: Record<EventType, StreamRowSpec> = {
     conversationRef: "none",
     bumps: false,
     threadable: false,
+    readBlocking: false,
   },
 
   command_dispatched: COMMAND,
@@ -218,6 +242,7 @@ export const STREAM_ROW_SPEC: Record<EventType, StreamRowSpec> = {
     conversationRef: "source-conversation",
     bumps: false,
     threadable: false,
+    readBlocking: false,
   },
   // Scheduled agent follow-up — payload carries `sourceConversationId`.
   "agent:follow_up_scheduled": {
@@ -229,6 +254,7 @@ export const STREAM_ROW_SPEC: Record<EventType, StreamRowSpec> = {
     conversationRef: "source-conversation",
     bumps: false,
     threadable: false,
+    readBlocking: false,
   },
   // A patch that flips the matching scheduled card to "Cancelled" — not its own row.
   "agent:follow_up_cancelled": PATCH,
@@ -246,6 +272,7 @@ export const STREAM_ROW_SPEC: Record<EventType, StreamRowSpec> = {
     // hand-off's result and follow-up land in one place (retires the synthetic
     // anchor-message hack).
     threadable: true,
+    readBlocking: false,
   },
   // A patch that advances the matching delegation card's status — not its own row.
   "delegation:status_changed": PATCH,
@@ -274,6 +301,7 @@ export const STREAM_ROW_SPEC: Record<EventType, StreamRowSpec> = {
     conversationRef: "none",
     bumps: false,
     threadable: true,
+    readBlocking: false,
   },
   // A patch carrying the end summary onto the matching `call_started` card — not
   // its own row (the delegation:status_changed analog).
@@ -300,3 +328,13 @@ export const BOARD_EVENT_ROW_TYPES: EventType[] = EVENT_TYPES.filter(
  * new card on is a one-line spec change, not a second parallel wiring.
  */
 export const THREAD_ANCHORABLE_EVENT_TYPES: EventType[] = EVENT_TYPES.filter((type) => STREAM_ROW_SPEC[type].threadable)
+
+/**
+ * Event types the read frontier may not advance past unseen — the message
+ * bodies. Everything else (agent-session cards, command chrome, membership
+ * notices, patches) is bridgeable: it carries nothing to read, so a viewer whose
+ * viewport starts below it has not skipped content. Derived from
+ * {@link STREAM_ROW_SPEC}'s `readBlocking` flag; `useLastSeenEvent` gates
+ * progressive read on this set.
+ */
+export const READ_BLOCKING_EVENT_TYPES: EventType[] = EVENT_TYPES.filter((type) => STREAM_ROW_SPEC[type].readBlocking)
