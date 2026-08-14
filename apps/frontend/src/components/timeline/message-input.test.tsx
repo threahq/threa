@@ -1242,5 +1242,19 @@ describe("MessageInput", () => {
 
       expect(screen.getByText("Failed to create stream. Please try again.")).toBeInTheDocument()
     })
+
+    it("does not restore an aborted stale send into the next stream", async () => {
+      mockComposerState.canSend = true
+      mockComposerState.content = makeDoc("Keep this in the old stream")
+      const aborted = new Error("Draft promotion wait aborted")
+      aborted.name = "AbortError"
+      mockSendMessage.mockRejectedValue(aborted)
+
+      render$(<MessageInput workspaceId={workspaceId} streamId={streamId} />)
+      await userEvent.click(screen.getByRole("button", { name: /send/i }))
+
+      expect(mockSetContent.mock.calls).toEqual([[EMPTY_DOC]])
+      expect(screen.queryByText("Failed to create stream. Please try again.")).not.toBeInTheDocument()
+    })
   })
 })

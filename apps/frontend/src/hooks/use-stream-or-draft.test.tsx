@@ -16,6 +16,7 @@ import * as e2eSession from "@/stores/e2e-session-store"
 import * as streamKeyCache from "@/lib/crypto/stream-key-cache"
 import * as messageEnvelope from "@/lib/crypto/message-envelope"
 import { clearStreamNameCache, getCachedStreamName, streamNameCacheKey } from "@/lib/crypto/stream-name-cache"
+import { emitDraftPromoted } from "@/lib/draft-promotions"
 
 function createWrapper(
   queryClient: QueryClient,
@@ -290,6 +291,90 @@ describe("useStreamOrDraft real stream send", () => {
     expect(queuedEvent?.payload).toMatchObject({
       conversationId: "conv_1",
       declaredConversationId: "conv_1",
+    })
+  })
+})
+
+describe("useStreamOrDraft scratchpad draft send", () => {
+  beforeEach(async () => {
+    await clearAllCachedData()
+    await db.pendingMessages.clear()
+    await db.events.clear()
+    await db.draftScratchpads.clear()
+  })
+
+  it("routes a follow-up queued during materialization into the promoted stream", async () => {
+    await db.workspaceUsers.put({
+      id: "member_promotion",
+      workspaceId: "ws_promotion",
+      workosUserId: "workos_1",
+      email: "kris@example.com",
+      role: "owner",
+      slug: "kris",
+      name: "Kris",
+      joinedAt: "2026-08-14T06:00:00Z",
+      _cachedAt: Date.now(),
+    } as never)
+    await db.draftScratchpads.put({
+      id: "draft_promotion",
+      workspaceId: "ws_promotion",
+      displayName: null,
+      companionMode: "on",
+      createdAt: Date.now(),
+    })
+
+    const queryClient = new QueryClient()
+    const { result } = renderHook(() => useStreamOrDraft("ws_promotion", "draft_promotion"), {
+      wrapper: createWrapper(queryClient),
+    })
+    await waitFor(() => {
+      expect(result.current.stream?.id).toBe("draft_promotion")
+      expect(result.current.currentUserId).toBe("member_promotion")
+    })
+
+    await act(async () => {
+      await result.current.sendMessage({
+        contentJson: {
+          type: "doc",
+          content: [{ type: "paragraph", content: [{ type: "text", text: "first" }] }],
+        },
+      })
+    })
+
+    let followUp!: Promise<{ navigateTo?: string; replace?: boolean }>
+    act(() => {
+      followUp = result.current.sendMessage({
+        contentJson: {
+          type: "doc",
+          content: [{ type: "paragraph", content: [{ type: "text", text: "follow-up" }] }],
+        },
+      })
+    })
+    await waitFor(async () => {
+      expect(
+        (await db.pendingMessages.toArray()).filter((message) => message.draftId === "draft_promotion")
+      ).toHaveLength(1)
+    })
+
+    emitDraftPromoted({
+      draftId: "draft_promotion",
+      realStreamId: "stream_promoted",
+      workspaceId: "ws_promotion",
+    })
+    await act(async () => {
+      await followUp
+    })
+
+    const messages = await db.pendingMessages.toArray()
+    const routingByContent = Object.fromEntries(
+      messages.map(({ content, streamId, streamCreation }) => [content, { streamId, streamCreation }])
+    )
+    expect(routingByContent).toEqual({
+      first: {
+        streamId: "draft_promotion",
+        streamCreation: expect.objectContaining({ type: "scratchpad" }),
+      },
+      "follow-up": { streamId: "stream_promoted", streamCreation: undefined },
     })
   })
 })
