@@ -47,6 +47,7 @@ export function usePullToRefresh({ enabled, onRefresh }: PullToRefreshOptions) {
     let startY = 0
     let scrollEl: HTMLElement | null = null
     let pulling = false
+    let suppressed = false
     let isRefreshing = false
     let dist = 0
     let crossedSoft = false
@@ -55,15 +56,18 @@ export function usePullToRefresh({ enabled, onRefresh }: PullToRefreshOptions) {
 
     function onTouchStart(e: TouchEvent) {
       if (isRefreshing) return
+      const target = e.target instanceof Element ? e.target : null
+      suppressed = !!target?.closest("[data-suppress-pull-refresh]")
+      if (suppressed) return
       startY = e.touches[0].clientY
-      scrollEl = findScrollParent(e.target as HTMLElement)
+      scrollEl = findScrollParent(target as HTMLElement | null)
       pulling = false
       crossedSoft = false
       crossedHard = false
     }
 
     function onTouchMove(e: TouchEvent) {
-      if (isRefreshing) return
+      if (isRefreshing || suppressed) return
       const dy = e.touches[0].clientY - startY
 
       if (dy <= 0) {
@@ -106,6 +110,10 @@ export function usePullToRefresh({ enabled, onRefresh }: PullToRefreshOptions) {
     }
 
     function onTouchEnd() {
+      if (suppressed) {
+        suppressed = false
+        return
+      }
       if (!pulling) return
       pulling = false
 

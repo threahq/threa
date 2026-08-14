@@ -989,6 +989,7 @@ describe("MessageComposer", () => {
       render(<MessageComposer {...defaultProps} workspaceId="ws_1" initialMobileChromeOpen />)
       const handle = screen.getByTestId("composer-resize-handle")
       expect(handle.parentElement).toHaveAttribute("data-composer-card")
+      expect(handle).toHaveAttribute("data-suppress-pull-refresh")
       expect(handle).toHaveClass("absolute", "w-16")
       expect(handle).not.toHaveClass("-mx-3", "h-5")
     })

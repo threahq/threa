@@ -1511,6 +1511,7 @@ export function MessageComposer({
                 {isMobile && mobileChromeOpen && (
                   <div
                     data-testid="composer-resize-handle"
+                    data-suppress-pull-refresh
                     aria-hidden
                     onPointerDown={handleResizePointerDown}
                     onPointerMove={handleResizePointerMove}
