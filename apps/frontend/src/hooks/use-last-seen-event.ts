@@ -124,12 +124,6 @@ interface UseLastSeenEventOptions {
    * SWEEP_LINK_MS): a jump must remain a gap, not a read-through.
    */
   programmaticScrollAtRef?: React.RefObject<number>
-  /**
-   * The `autoReadRevamp` kill-switch: false disables sweep-linking entirely,
-   * reverting to strict scan-overlap contiguity (pre-#1881 semantics).
-   * Defaults true.
-   */
-  sweepLinkEnabled?: boolean
 }
 
 interface UseLastSeenEventResult {
@@ -166,7 +160,6 @@ export function useLastSeenEvent({
   lastReadEventId,
   enabled,
   programmaticScrollAtRef,
-  sweepLinkEnabled = true,
 }: UseLastSeenEventOptions): UseLastSeenEventResult {
   const [lastSeenEventId, setLastSeenEventId] = useState<string | undefined>(undefined)
   const [atLastRow, setAtLastRow] = useState(false)
@@ -224,10 +217,6 @@ export function useLastSeenEvent({
   // by event id, not index: a prepend shifts every index but virtua holds the
   // viewport on the same rows, and an id re-resolves to its post-shift index.
   const prevScanRef = useRef<{ topId: string; at: number } | null>(null)
-  // Ref so a live flag flip applies on the next scan without re-creating the
-  // stable recompute closure (which would re-arm listeners mid-gesture).
-  const sweepLinkEnabledRef = useRef(sweepLinkEnabled)
-  sweepLinkEnabledRef.current = sweepLinkEnabled
 
   const recompute = useCallback(() => {
     const el = scrollContainerRef.current
@@ -272,12 +261,7 @@ export function useLastSeenEvent({
     const now = performance.now()
     const prevScan = prevScanRef.current
     let effTopIdx = topIdx
-    if (
-      sweepLinkEnabledRef.current &&
-      prevScan &&
-      now - prevScan.at <= SWEEP_LINK_MS &&
-      (programmaticScrollAtRef?.current ?? 0) < prevScan.at
-    ) {
+    if (prevScan && now - prevScan.at <= SWEEP_LINK_MS && (programmaticScrollAtRef?.current ?? 0) < prevScan.at) {
       const prevTopIdx = map.get(prevScan.topId)
       if (prevTopIdx !== undefined && prevTopIdx < effTopIdx) effTopIdx = prevTopIdx
     }

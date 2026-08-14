@@ -54,13 +54,6 @@ export function defineFlag<
  * the moment the rollout is done. A flag that survives long here is a smell.
  */
 export const FEATURE_FLAGS = {
-  // Kill-switch for the revamped auto-read semantics (#1881/#1882): "on" is
-  // the shipped behavior — sweep-linked frontier scans (a fling reads what it
-  // painted past) and flush-on-leave/pagehide for the pending mark. "off"
-  // reverts BOTH to the pre-#1881 semantics (strict scan-overlap contiguity;
-  // leaving a stream drops a still-debouncing mark) without touching the
-  // ReadCommitQueue plumbing. Delete after rollout confidence.
-  autoReadRevamp: defineFlag({ values: ["off", "on"], scopes: ["workspace", "user"], default: "on" }),
   calls: defineFlag({ values: ["off", "on"], scopes: ["workspace"], default: "on" }),
   composeTraces: defineFlag({ values: ["off", "capture"], scopes: ["workspace"], default: "off" }),
   // Availability only: "available" offers the Diagnostics settings toggle. The
