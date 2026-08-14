@@ -120,6 +120,36 @@ describe("resolveSections — Smart preset", () => {
     expect(recent?.items.map((i) => i.id)).toEqual(["u1", "u2", "r1", "r2", "r3"])
   })
 
+  it("moves reads capped out of Recent into Everything Else", () => {
+    const processedStreams = Array.from({ length: 6 }, (_, i) =>
+      makeItem({ id: `r${i + 1}`, section: "recent", activity: 100 - i })
+    )
+
+    expect(shape({ processedStreams })).toEqual([
+      { id: "important", items: [] },
+      { id: "recent", items: ["r1", "r2", "r3", "r4", "r5"] },
+      { id: "other", items: ["r6"] },
+    ])
+  })
+
+  it("keeps Everything Else as the remainder when it is ordered above Recent", () => {
+    const processedStreams = Array.from({ length: 6 }, (_, i) =>
+      makeItem({ id: `r${i + 1}`, section: "recent", activity: 100 - i })
+    )
+    const otherFirst = {
+      ...SMART_SIDEBAR_CONFIG,
+      sections: [
+        { id: "other", spec: { kind: "smart" as const, bucket: "other" as const } },
+        { id: "recent", spec: { kind: "smart" as const, bucket: "recent" as const } },
+      ],
+    }
+
+    expect(shape({ processedStreams }, otherFirst)).toEqual([
+      { id: "other", items: ["r6"] },
+      { id: "recent", items: ["r1", "r2", "r3", "r4", "r5"] },
+    ])
+  })
+
   it("Recent shows all unreads when there are 5 or more", () => {
     const processedStreams = Array.from({ length: 7 }, (_, i) =>
       makeItem({ id: `u${i}`, section: "recent", activity: 100 - i })

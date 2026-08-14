@@ -99,14 +99,19 @@ export function resolveSections(config: SidebarConfig, input: ResolveSectionsInp
   // so the label lens claims them out of the smart/type buckets — a labeled
   // stream lives under its label, not its automatic bucket, regardless of order.
   const labeledClaimed = new Set<string>()
+  const overflowBuckets = new Set<SectionKey>()
   for (const section of config.sections) {
     if (section.spec.kind === "custom") for (const id of section.spec.streamIds) customClaimed.add(id)
     if (section.spec.kind === "label") {
       const ids = input.streamIdsByLabel.get(section.spec.labelId)
       if (ids) for (const id of ids) labeledClaimed.add(id)
     }
+    if (section.spec.kind === "smart" && section.spec.bucket !== "other") {
+      overflowBuckets.add(section.spec.bucket)
+    }
   }
-  return config.sections.map((section) => {
+
+  const resolved = config.sections.map((section) => {
     const items = resolveItems(section.spec, input, claimed, customClaimed, labeledClaimed)
     // The Unread section never claims its streams: every other section already
     // excludes its members via `unreadStreamIds`, and claiming would also block a
@@ -114,6 +119,17 @@ export function resolveSections(config: SidebarConfig, input: ResolveSectionsInp
     if (section.spec.kind !== "unread") for (const item of items) claimed.add(item.id)
     return { section, items }
   })
+
+  const remainder = resolved.find(({ section }) => section.spec.kind === "smart" && section.spec.bucket === "other")
+  if (!remainder) return resolved
+
+  const overflow = [...input.processedStreams, ...input.virtualDmStreams].filter(
+    (stream) => !claimed.has(stream.id) && !input.unreadStreamIds.has(stream.id) && overflowBuckets.has(stream.section)
+  )
+  if (overflow.length === 0) return resolved
+
+  const items = sortStreams([...remainder.items, ...overflow], SMART_SECTIONS.other.sortType, input.getUnreadCount)
+  return resolved.map((entry) => (entry === remainder ? { ...entry, items } : entry))
 }
 
 function resolveItems(
