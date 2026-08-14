@@ -1,4 +1,5 @@
 import { createContext, useContext, useEffect, useId, useMemo, useRef, type ReactNode } from "react"
+import { createPortal } from "react-dom"
 import {
   DndContext,
   DragOverlay,
@@ -285,9 +286,17 @@ function ComposerPillDndOwner({ editor, children }: { editor?: Editor | null; ch
       <ComposerPillDragHostContext.Provider value={host}>
         {editor !== undefined && <ComposerPillDragBridge editor={editor} host={host} ownerId={ownerId} />}
         {children}
-        <DragOverlay dropAnimation={null} style={{ pointerEvents: "none" }}>
-          <ComposerPillDragPreview host={host} />
-        </DragOverlay>
+        {/* Portaled to <body>: DragOverlay renders in place with position:
+            fixed, and fixed resolves against the nearest transformed ancestor
+            — the composer sits under wrappers that carry transforms on mobile
+            (panel/sidebar slides), which displaced the ghost by the wrapper's
+            whole offset. On body, fixed always means the real viewport. */}
+        {createPortal(
+          <DragOverlay dropAnimation={null} style={{ pointerEvents: "none" }}>
+            <ComposerPillDragPreview host={host} />
+          </DragOverlay>,
+          document.body
+        )}
       </ComposerPillDragHostContext.Provider>
     </DndContext>
   )

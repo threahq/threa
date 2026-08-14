@@ -1,6 +1,14 @@
 import { Extension } from "@tiptap/core"
-import { Fragment, Slice, type Node as ProseMirrorNode } from "@tiptap/pm/model"
-import { NodeSelection, Plugin, PluginKey, Selection, type EditorState, type Transaction } from "@tiptap/pm/state"
+import { Fragment, Slice, type Node as ProseMirrorNode, type ResolvedPos } from "@tiptap/pm/model"
+import {
+  NodeSelection,
+  Plugin,
+  PluginKey,
+  Selection,
+  TextSelection,
+  type EditorState,
+  type Transaction,
+} from "@tiptap/pm/state"
 import { dropPoint } from "@tiptap/pm/transform"
 import { Decoration, DecorationSet, type EditorView } from "@tiptap/pm/view"
 import type { AttachmentReferenceAttrs } from "./attachment-reference-extension"
@@ -121,6 +129,51 @@ export function composerPillDropPoint(doc: ProseMirrorNode, rawPos: number, node
   return snappedPoint
 }
 
+/**
+ * A pill landing flush against another pill takes a separating space on that
+ * side: without one there is no usable caret slot between them — un-tappable
+ * on touch, and the pair reads as one blob. Text neighbors stay untouched;
+ * the drop point already snaps to token boundaries.
+ */
+function paddedPillInsert(
+  $insert: ResolvedPos,
+  node: ProseMirrorNode,
+  state: EditorState
+): { fragment: Fragment; caretOffset: number } {
+  const parts: ProseMirrorNode[] = []
+  if (isComposerPillNode($insert.nodeBefore)) parts.push(state.schema.text(" "))
+  const caretOffset = (parts[0]?.nodeSize ?? 0) + node.nodeSize
+  parts.push(node)
+  if (isComposerPillNode($insert.nodeAfter)) parts.push(state.schema.text(" "))
+  return { fragment: Fragment.from(parts), caretOffset }
+}
+
+/**
+ * The separator a pill earned via {@link paddedPillInsert} leaves with the
+ * pill: deleting or moving one away must not orphan its space into a double
+ * gap or a dangling edge. A separator is any lone " " text node beside the
+ * pill — deliberately including one the user typed there themselves, which is
+ * indistinguishable and wants the same fate: a bare space left clinging to a
+ * paragraph edge after its pill leaves is never what was meant. Anything
+ * longer is the user's text (their space merges into it on the next
+ * keystroke) and is never touched.
+ */
+function composerPillDeleteRange(
+  doc: ProseMirrorNode,
+  pos: number,
+  node: ProseMirrorNode
+): { from: number; to: number } {
+  const $pos = doc.resolve(pos)
+  const $end = doc.resolve(pos + node.nodeSize)
+  const isSeparator = (candidate: ProseMirrorNode | null) => candidate?.isText === true && candidate.text === " "
+  const spaceBefore = isSeparator($pos.nodeBefore)
+  const spaceAfter = isSeparator($end.nodeAfter)
+  if (spaceBefore && spaceAfter) return { from: pos, to: pos + node.nodeSize + 1 }
+  if (spaceBefore && $end.nodeAfter === null) return { from: pos - 1, to: pos + node.nodeSize }
+  if (spaceAfter && $pos.nodeBefore === null) return { from: pos, to: pos + node.nodeSize + 1 }
+  return { from: pos, to: pos + node.nodeSize }
+}
+
 export function createComposerPillMoveTransaction(
   state: EditorState,
   sourcePos: number,
@@ -132,8 +185,9 @@ export function createComposerPillMoveTransaction(
   const dropPos = composerPillDropPoint(state.doc, requestedDropPos, node)
   if (dropPos === null || dropPos === sourcePos || dropPos === sourcePos + node.nodeSize) return null
 
-  const insertPos = dropPos > sourcePos ? dropPos - node.nodeSize : dropPos
-  const tr = state.tr.delete(sourcePos, sourcePos + node.nodeSize)
+  const deletion = composerPillDeleteRange(state.doc, sourcePos, node)
+  const tr = state.tr.delete(deletion.from, deletion.to)
+  const insertPos = tr.mapping.map(dropPos)
   const $insert = tr.doc.resolve(insertPos)
   if (
     !$insert.parent.inlineContent ||
@@ -142,8 +196,9 @@ export function createComposerPillMoveTransaction(
     return null
   }
 
-  tr.insert(insertPos, node)
-  tr.setSelection(Selection.near(tr.doc.resolve(insertPos + node.nodeSize), 1))
+  const { fragment, caretOffset } = paddedPillInsert($insert, node, state)
+  tr.insert(insertPos, fragment)
+  tr.setSelection(Selection.near(tr.doc.resolve(insertPos + caretOffset), 1))
   return tr
 }
 
@@ -170,8 +225,9 @@ export function createComposerPillInsertTransaction(
     return null
   }
 
-  const tr = state.tr.insert(dropPos, node)
-  tr.setSelection(Selection.near(tr.doc.resolve(dropPos + node.nodeSize), 1))
+  const { fragment, caretOffset } = paddedPillInsert($insert, node, state)
+  const tr = state.tr.insert(dropPos, fragment)
+  tr.setSelection(Selection.near(tr.doc.resolve(dropPos + caretOffset), 1))
   return tr
 }
 
@@ -360,6 +416,29 @@ export const ComposerPillDragExtension = Extension.create({
         },
         props: {
           decorations: pillDecorations,
+          // Typing over a node-selected pill must not silently destroy it: a
+          // tap selects the pill (that's the touch drag-eligibility gesture),
+          // so the very next keystroke — a space, a letter — would replace the
+          // node under ProseMirror's default. Step the caret past the pill and
+          // let the text land after it; Backspace/Delete still delete.
+          handleTextInput(view, _from, _to, text) {
+            const { selection } = view.state
+            if (!(selection instanceof NodeSelection) || !isComposerPillNode(selection.node)) return false
+            const tr = view.state.tr.insertText(text, selection.to, selection.to)
+            tr.setSelection(TextSelection.create(tr.doc, selection.to + text.length))
+            view.dispatch(tr)
+            return true
+          },
+          handleKeyDown(view, event) {
+            if (event.key !== "Backspace" && event.key !== "Delete") return false
+            const { selection } = view.state
+            if (!(selection instanceof NodeSelection) || !isComposerPillNode(selection.node)) return false
+            const { from, to } = composerPillDeleteRange(view.state.doc, selection.from, selection.node)
+            const tr = view.state.tr.delete(from, to)
+            tr.setSelection(Selection.near(tr.doc.resolve(from), -1))
+            view.dispatch(tr)
+            return true
+          },
         },
         view(view) {
           const reflectActive = (target: EditorView) => {

@@ -146,7 +146,7 @@ describe("composer pill moves", () => {
     expect(tr).not.toBeNull()
 
     editor.view.dispatch(tr!)
-    expect(childTypes(editor)).toEqual(["channelLink", "slashCommand", "mention"])
+    expect(childTypes(editor)).toEqual(["channelLink", "slashCommand", "text", "mention"])
 
     editor.commands.undo()
     expect(childTypes(editor)).toEqual(["mention", "channelLink", "slashCommand"])
@@ -178,6 +178,132 @@ describe("composer pill moves", () => {
     const source = editor.state.doc.nodeAt(nodePos(editor, "mention"))!
 
     expect(composerPillDropPoint(editor.state.doc, 5, source)).toBe(7)
+  })
+
+  it("separates a pill dropped flush against another with a space, so a caret fits between", () => {
+    const editor = createPillEditor()
+    const sourcePos = nodePos(editor, "mention")
+    const tr = createComposerPillMoveTransaction(editor.state, sourcePos, nodePos(editor, "slashCommand") + 1)
+    editor.view.dispatch(tr!)
+
+    expect(editor.getJSON().content?.[0]?.content).toEqual([
+      pill("channelLink"),
+      pill("slashCommand"),
+      { type: "text", text: " " },
+      pill("mention"),
+    ])
+    // The caret lands after the moved pill, past the separator.
+    expect(editor.state.selection.from).toBe(editor.state.doc.content.size - 1)
+  })
+
+  it("keeps text neighbors unpadded — only pill-against-pill drops earn a separator", () => {
+    const editor = createPillEditor([pill("mention"), { type: "text", text: "hello " }])
+    const sourcePos = nodePos(editor, "mention")
+    const tr = createComposerPillMoveTransaction(editor.state, sourcePos, editor.state.doc.content.size - 1)
+    editor.view.dispatch(tr!)
+
+    expect(editor.getJSON().content?.[0]?.content).toEqual([{ type: "text", text: "hello " }, pill("mention")])
+  })
+
+  it("takes the separator along when a padded pill moves away, never doubling a gap", () => {
+    const editor = createPillEditor([
+      pill("mention"),
+      { type: "text", text: " " },
+      pill("channelLink"),
+      { type: "text", text: " " },
+      pill("slashCommand"),
+    ])
+    const tr = createComposerPillMoveTransaction(editor.state, nodePos(editor, "channelLink"), 1)
+    editor.view.dispatch(tr!)
+
+    expect(editor.getJSON().content?.[0]?.content).toEqual([
+      pill("channelLink"),
+      { type: "text", text: " " },
+      pill("mention"),
+      { type: "text", text: " " },
+      pill("slashCommand"),
+    ])
+  })
+
+  it("deletes a padded pill's separator with it under Backspace", () => {
+    const editor = createPillEditor([pill("mention"), { type: "text", text: " " }, pill("channelLink")])
+    editor.commands.setNodeSelection(nodePos(editor, "channelLink"))
+
+    fireEvent.keyDown(editor.view.dom, { key: "Backspace" })
+
+    expect(editor.getJSON().content?.[0]?.content).toEqual([pill("mention")])
+  })
+
+  it("keeps a single separator when a pill between two padded neighbors is deleted", () => {
+    const editor = createPillEditor([
+      pill("mention"),
+      { type: "text", text: " " },
+      pill("channelLink"),
+      { type: "text", text: " " },
+      pill("slashCommand"),
+    ])
+    editor.commands.setNodeSelection(nodePos(editor, "channelLink"))
+
+    fireEvent.keyDown(editor.view.dom, { key: "Delete" })
+
+    expect(editor.getJSON().content?.[0]?.content).toEqual([
+      pill("mention"),
+      { type: "text", text: " " },
+      pill("slashCommand"),
+    ])
+  })
+
+  it("takes a lone space typed after a start-edge pill with it, leaving no bare edge space", () => {
+    const editor = createPillEditor([pill("mention")])
+    const mentionPos = nodePos(editor, "mention")
+    editor.commands.setNodeSelection(mentionPos)
+    editor.view.someProp("handleTextInput", (handler) =>
+      handler(editor.view, mentionPos, mentionPos + 1, " ", () => editor.state.tr)
+    )
+    expect(editor.getJSON().content?.[0]?.content).toEqual([pill("mention"), { type: "text", text: " " }])
+
+    editor.commands.setNodeSelection(nodePos(editor, "mention"))
+    fireEvent.keyDown(editor.view.dom, { key: "Backspace" })
+
+    expect(editor.getJSON().content?.[0]?.content).toBeUndefined()
+  })
+
+  it("keeps typed text after a start-edge pill when the space is no longer alone", () => {
+    const editor = createPillEditor([pill("mention"), { type: "text", text: " hi" }])
+    editor.commands.setNodeSelection(nodePos(editor, "mention"))
+
+    fireEvent.keyDown(editor.view.dom, { key: "Backspace" })
+
+    expect(editor.getJSON().content?.[0]?.content).toEqual([{ type: "text", text: " hi" }])
+  })
+
+  it("leaves user-typed spacing alone when a pill beside it is deleted", () => {
+    const editor = createPillEditor([pill("mention"), { type: "text", text: " hi " }, pill("channelLink")])
+    editor.commands.setNodeSelection(nodePos(editor, "channelLink"))
+
+    fireEvent.keyDown(editor.view.dom, { key: "Backspace" })
+
+    expect(editor.getJSON().content?.[0]?.content).toEqual([pill("mention"), { type: "text", text: " hi " }])
+  })
+
+  it("keeps a pill node-selected under typing: the text lands after it instead of replacing it", () => {
+    const editor = createPillEditor()
+    const mentionPos = nodePos(editor, "mention")
+    editor.commands.setNodeSelection(mentionPos)
+
+    const handled = editor.view.someProp("handleTextInput", (handler) =>
+      handler(editor.view, mentionPos, mentionPos + 1, " ", () => editor.state.tr)
+    )
+
+    expect(handled).toBe(true)
+    expect(editor.getJSON().content?.[0]?.content).toEqual([
+      pill("mention"),
+      { type: "text", text: " " },
+      pill("channelLink"),
+      pill("slashCommand"),
+    ])
+    expect(editor.state.selection.empty).toBe(true)
+    expect(editor.state.selection.from).toBe(mentionPos + 2)
   })
 
   it("treats either edge of the source pill as a no-op", () => {
@@ -231,7 +357,7 @@ describe("composer pill drag gestures", () => {
 
     fireEvent.mouseUp(source, { button: 0, clientX: 18, clientY: 10 })
 
-    expect(childTypes(editor)).toEqual(["channelLink", "slashCommand", "mention"])
+    expect(childTypes(editor)).toEqual(["channelLink", "slashCommand", "text", "mention"])
     expect(editor.state.selection).not.toBeInstanceOf(NodeSelection)
     expect(editor.state.selection.empty).toBe(true)
     expect(editor.view.dom.querySelector(".composer-pill-drop-cursor")).toBeNull()
@@ -252,7 +378,7 @@ describe("composer pill drag gestures", () => {
     expect(ComposerPillDragPluginKey.getState(editor.state)?.dropPos).toBe(midPos)
 
     fireEvent.mouseUp(source, { button: 0, clientX: 40, clientY: 10 })
-    expect(childTypes(editor)).toEqual(["channelLink", "slashCommand", "mention"])
+    expect(childTypes(editor)).toEqual(["channelLink", "slashCommand", "text", "mention"])
   })
 
   it("suppresses the ending touch's compatibility mouse even after a stray mouse press", () => {
@@ -518,7 +644,7 @@ describe("composer pill drag gestures", () => {
     expect(editor.view.dom.querySelector(".composer-pill-dragging")).not.toBeNull()
 
     fireEvent.touchEnd(document, { touches: [], changedTouches: [touch(7, 21, 10)] })
-    expect(childTypes(editor)).toEqual(["channelLink", "slashCommand", "mention"])
+    expect(childTypes(editor)).toEqual(["channelLink", "slashCommand", "text", "mention"])
   })
 
   it("drags an already-selected pill before the hold timer fires", () => {
@@ -542,7 +668,7 @@ describe("composer pill drag gestures", () => {
     expect(contextMenu.defaultPrevented).toBe(true)
 
     fireEvent.touchEnd(document, { touches: [], changedTouches: [touch(7, 21, 10)] })
-    expect(childTypes(editor)).toEqual(["channelLink", "slashCommand", "mention"])
+    expect(childTypes(editor)).toEqual(["channelLink", "slashCommand", "text", "mention"])
     expect(document.querySelector(".composer-pill-touch-guide")).toBeNull()
     expect(vibrate.mock.calls.map(([pattern]) => pattern)).toEqual([10, 10, [10, 20, 10]])
   })

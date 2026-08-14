@@ -205,6 +205,31 @@ describe("drag preview", () => {
     expect(screen.queryByTestId("composer-pill-drag-preview")).toBeNull()
   })
 
+  it("mounts the preview under body, clear of any transformed composer ancestor", () => {
+    const editor = createEditor()
+    vi.spyOn(editor.view, "posAtCoords").mockReturnValue({ pos: 1, inside: -1 })
+    // A wrapper carrying a transform is what displaced the ghost: `position:
+    // fixed` resolves against it instead of the viewport unless the overlay
+    // escapes to body.
+    const { container } = render(
+      <div style={{ transform: "translateX(0)" }}>
+        <ComposerPillDndProvider editor={editor}>
+          <PendingAttachments attachments={[attachment()]} onRemove={vi.fn()} workspaceId="ws_1" />
+        </ComposerPillDndProvider>
+      </div>
+    )
+
+    const chip = screen.getByText("screenshot.png")
+    fireEvent.mouseDown(chip, { button: 0, clientX: 10, clientY: 10 })
+    fireEvent.mouseMove(document, { buttons: 1, clientX: 30, clientY: 10 })
+
+    const preview = screen.getByTestId("composer-pill-drag-preview")
+    expect(container.contains(preview)).toBe(false)
+    expect(preview.closest("[data-dnd-overlay], body > *")?.parentElement).toBe(document.body)
+
+    fireEvent.mouseUp(document, { button: 0, clientX: 30, clientY: 10 })
+  })
+
   it("shows no preview for an in-document pill drag — it is dimmed in place instead", () => {
     const editor = createEditor([
       { type: "text", text: "hello world" },
