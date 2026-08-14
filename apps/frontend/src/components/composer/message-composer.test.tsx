@@ -9,6 +9,7 @@ import type { CachedDraft } from "@/hooks"
 import type { PendingAttachment } from "@/hooks/use-attachments"
 import type { JSONContent } from "@threa/types"
 import * as useMobileModule from "@/hooks/use-mobile"
+import * as usePointerModule from "@/hooks/use-pointer"
 import * as contextsModule from "@/contexts"
 import * as editorModule from "@/components/editor"
 import * as micButtonModule from "./mic-button"
@@ -178,6 +179,7 @@ describe("MessageComposer", () => {
     isMobileMockValue = false
     vi.useRealTimers()
     vi.spyOn(useMobileModule, "useIsMobile").mockImplementation(() => isMobileMockValue)
+    vi.spyOn(usePointerModule, "useIsMobileOrCoarse").mockImplementation(() => isMobileMockValue)
     spyOnExport(editorModule, "RichEditor").mockReturnValue(MockRichEditor as unknown as typeof editorModule.RichEditor)
     spyOnExport(editorModule, "EditorToolbar").mockReturnValue(
       MockEditorToolbar as unknown as typeof editorModule.EditorToolbar
@@ -200,6 +202,49 @@ describe("MessageComposer", () => {
     onFileSelect: vi.fn(),
     onSubmit: vi.fn(),
     canSubmit: false,
+  }
+
+  const installOrientationViewport = (width: number, height: number, angle: number) => {
+    const originalVisualViewport = Object.getOwnPropertyDescriptor(window, "visualViewport")
+    const originalOrientation = Object.getOwnPropertyDescriptor(window, "orientation")
+    const originalScreenOrientation = Object.getOwnPropertyDescriptor(window.screen, "orientation")
+    const originalScreenWidth = Object.getOwnPropertyDescriptor(window.screen, "width")
+    const originalScreenHeight = Object.getOwnPropertyDescriptor(window.screen, "height")
+    const originalInnerWidth = Object.getOwnPropertyDescriptor(window, "innerWidth")
+    const originalInnerHeight = Object.getOwnPropertyDescriptor(window, "innerHeight")
+    const visualViewport = new EventTarget() as EventTarget & { height: number; width: number }
+    Object.defineProperty(window, "visualViewport", { configurable: true, value: visualViewport })
+    Object.defineProperty(window.screen, "orientation", { configurable: true, value: undefined })
+    Object.defineProperty(window.screen, "width", { configurable: true, value: 390 })
+    Object.defineProperty(window.screen, "height", { configurable: true, value: 800 })
+    const setViewport = (nextWidth: number, nextHeight: number, nextAngle: number, layoutHeight = nextHeight) => {
+      Object.defineProperty(window, "innerWidth", { configurable: true, value: nextWidth })
+      Object.defineProperty(window, "innerHeight", { configurable: true, value: layoutHeight })
+      Object.defineProperty(window, "orientation", { configurable: true, writable: true, value: nextAngle })
+      visualViewport.width = nextWidth
+      visualViewport.height = nextHeight
+    }
+    setViewport(width, height, angle)
+    return {
+      visualViewport,
+      setViewport,
+      restore: () => {
+        if (originalVisualViewport) Object.defineProperty(window, "visualViewport", originalVisualViewport)
+        else Reflect.deleteProperty(window, "visualViewport")
+        if (originalOrientation) Object.defineProperty(window, "orientation", originalOrientation)
+        else Reflect.deleteProperty(window, "orientation")
+        if (originalScreenOrientation) Object.defineProperty(window.screen, "orientation", originalScreenOrientation)
+        else Reflect.deleteProperty(window.screen, "orientation")
+        if (originalScreenWidth) Object.defineProperty(window.screen, "width", originalScreenWidth)
+        else Reflect.deleteProperty(window.screen, "width")
+        if (originalScreenHeight) Object.defineProperty(window.screen, "height", originalScreenHeight)
+        else Reflect.deleteProperty(window.screen, "height")
+        if (originalInnerWidth) Object.defineProperty(window, "innerWidth", originalInnerWidth)
+        else Reflect.deleteProperty(window, "innerWidth")
+        if (originalInnerHeight) Object.defineProperty(window, "innerHeight", originalInnerHeight)
+        else Reflect.deleteProperty(window, "innerHeight")
+      },
+    }
   }
 
   it("preserves active interim before the composer and editor refs unmount", () => {
@@ -921,6 +966,220 @@ describe("MessageComposer", () => {
       expect(scroller.scrollTop).toBe(460)
       expect(scroller).toHaveClass("overflow-y-auto")
       expect(scroller).not.toHaveClass("max-h-[200px]")
+    })
+
+    it("keeps mobile mode on a touch-primary landscape viewport", () => {
+      vi.spyOn(useMobileModule, "useIsMobile").mockReturnValue(false)
+      isMobileMockValue = true
+      const originalVisualViewport = Object.getOwnPropertyDescriptor(window, "visualViewport")
+      const visualViewport = new EventTarget() as EventTarget & { height: number; width: number }
+      visualViewport.height = 800
+      visualViewport.width = 800
+      Object.defineProperty(window, "visualViewport", { configurable: true, value: visualViewport })
+      try {
+        const { container } = render(<MessageComposer {...defaultProps} workspaceId="ws_1" initialMobileChromeOpen />)
+        const root = container.firstElementChild as HTMLElement
+        expect(screen.getByTestId("composer-resize-handle")).toBeInTheDocument()
+        act(() => screen.getByTestId("rich-editor").focus())
+        visualViewport.height = 400
+        act(() => visualViewport.dispatchEvent(new Event("resize")))
+        expect(root.style.maxHeight).toBe("200px")
+      } finally {
+        if (originalVisualViewport) Object.defineProperty(window, "visualViewport", originalVisualViewport)
+        else Reflect.deleteProperty(window, "visualViewport")
+      }
+    })
+
+    it("rebases to a non-transposed rotated closed viewport after the keyboard closes", () => {
+      const originalVisualViewport = Object.getOwnPropertyDescriptor(window, "visualViewport")
+      const originalOrientation = Object.getOwnPropertyDescriptor(window, "orientation")
+      const originalScreenOrientation = Object.getOwnPropertyDescriptor(window.screen, "orientation")
+      const originalScreenWidth = Object.getOwnPropertyDescriptor(window.screen, "width")
+      const originalScreenHeight = Object.getOwnPropertyDescriptor(window.screen, "height")
+      const visualViewport = new EventTarget() as EventTarget & { height: number; width: number }
+      visualViewport.height = 800
+      visualViewport.width = 390
+      Object.defineProperty(window, "visualViewport", { configurable: true, value: visualViewport })
+      Object.defineProperty(window, "orientation", { configurable: true, writable: true, value: 0 })
+      Object.defineProperty(window.screen, "orientation", { configurable: true, value: undefined })
+      Object.defineProperty(window.screen, "width", { configurable: true, value: 390 })
+      Object.defineProperty(window.screen, "height", { configurable: true, value: 800 })
+      try {
+        const { container } = render(<MessageComposer {...defaultProps} workspaceId="ws_1" initialMobileChromeOpen />)
+        const root = container.firstElementChild as HTMLElement
+        const editor = screen.getByTestId("rich-editor")
+        act(() => editor.focus())
+
+        visualViewport.height = 400
+        act(() => visualViewport.dispatchEvent(new Event("resize")))
+        expect(Number.parseInt(root.style.maxHeight, 10)).toBe(200)
+
+        visualViewport.width = 800
+        visualViewport.height = 200
+        ;(window as Window & { orientation: number }).orientation = 90
+        Object.defineProperty(window, "innerWidth", { configurable: true, value: 800 })
+        Object.defineProperty(window, "innerHeight", { configurable: true, value: 350 })
+        act(() => {
+          visualViewport.dispatchEvent(new Event("resize"))
+          window.dispatchEvent(new Event("orientationchange"))
+        })
+        expect(Number.parseInt(root.style.maxHeight, 10)).toBe(104)
+
+        visualViewport.height = 350
+        act(() => visualViewport.dispatchEvent(new Event("resize")))
+        expect(root.style.maxHeight).toBe("")
+      } finally {
+        if (originalVisualViewport) Object.defineProperty(window, "visualViewport", originalVisualViewport)
+        else Reflect.deleteProperty(window, "visualViewport")
+        if (originalOrientation) Object.defineProperty(window, "orientation", originalOrientation)
+        else Reflect.deleteProperty(window, "orientation")
+        if (originalScreenOrientation) Object.defineProperty(window.screen, "orientation", originalScreenOrientation)
+        else Reflect.deleteProperty(window.screen, "orientation")
+        if (originalScreenWidth) Object.defineProperty(window.screen, "width", originalScreenWidth)
+        if (originalScreenHeight) Object.defineProperty(window.screen, "height", originalScreenHeight)
+      }
+    })
+
+    it("does not cap a focused closed composer during rotation", () => {
+      const originalVisualViewport = Object.getOwnPropertyDescriptor(window, "visualViewport")
+      const originalOrientation = Object.getOwnPropertyDescriptor(window, "orientation")
+      const originalScreenOrientation = Object.getOwnPropertyDescriptor(window.screen, "orientation")
+      const originalScreenWidth = Object.getOwnPropertyDescriptor(window.screen, "width")
+      const originalScreenHeight = Object.getOwnPropertyDescriptor(window.screen, "height")
+      const originalInnerWidth = Object.getOwnPropertyDescriptor(window, "innerWidth")
+      const originalInnerHeight = Object.getOwnPropertyDescriptor(window, "innerHeight")
+      const visualViewport = new EventTarget() as EventTarget & { height: number; width: number }
+      visualViewport.height = 800
+      visualViewport.width = 390
+      Object.defineProperty(window, "visualViewport", { configurable: true, value: visualViewport })
+      Object.defineProperty(window, "orientation", { configurable: true, writable: true, value: 0 })
+      Object.defineProperty(window.screen, "orientation", { configurable: true, value: undefined })
+      Object.defineProperty(window.screen, "width", { configurable: true, value: 390 })
+      Object.defineProperty(window.screen, "height", { configurable: true, value: 800 })
+      Object.defineProperty(window, "innerWidth", { configurable: true, value: 390 })
+      Object.defineProperty(window, "innerHeight", { configurable: true, value: 800 })
+      try {
+        const { container } = render(<MessageComposer {...defaultProps} workspaceId="ws_1" initialMobileChromeOpen />)
+        const root = container.firstElementChild as HTMLElement
+        act(() => screen.getByTestId("rich-editor").focus())
+
+        Object.defineProperty(window, "innerWidth", { configurable: true, value: 800 })
+        Object.defineProperty(window, "innerHeight", { configurable: true, value: 390 })
+        visualViewport.width = 800
+        visualViewport.height = 390
+        ;(window as Window & { orientation: number }).orientation = 90
+        act(() => {
+          visualViewport.dispatchEvent(new Event("resize"))
+          window.dispatchEvent(new Event("orientationchange"))
+        })
+        expect(root.style.maxHeight).toBe("")
+      } finally {
+        if (originalVisualViewport) Object.defineProperty(window, "visualViewport", originalVisualViewport)
+        else Reflect.deleteProperty(window, "visualViewport")
+        if (originalOrientation) Object.defineProperty(window, "orientation", originalOrientation)
+        else Reflect.deleteProperty(window, "orientation")
+        if (originalScreenOrientation) Object.defineProperty(window.screen, "orientation", originalScreenOrientation)
+        else Reflect.deleteProperty(window.screen, "orientation")
+        if (originalScreenWidth) Object.defineProperty(window.screen, "width", originalScreenWidth)
+        if (originalScreenHeight) Object.defineProperty(window.screen, "height", originalScreenHeight)
+        if (originalInnerWidth) Object.defineProperty(window, "innerWidth", originalInnerWidth)
+        if (originalInnerHeight) Object.defineProperty(window, "innerHeight", originalInnerHeight)
+      }
+    })
+
+    it("reconciles resize-before-orientation and recovers the closed landscape viewport", () => {
+      const viewport = installOrientationViewport(390, 800, 0)
+      try {
+        const { container } = render(<MessageComposer {...defaultProps} workspaceId="ws_1" initialMobileChromeOpen />)
+        const root = container.firstElementChild as HTMLElement
+        const editor = screen.getByTestId("rich-editor")
+        act(() => editor.focus())
+
+        viewport.setViewport(390, 400, 0)
+        act(() => viewport.visualViewport.dispatchEvent(new Event("resize")))
+        expect(Number.parseInt(root.style.maxHeight, 10)).toBe(200)
+
+        viewport.setViewport(800, 390, 0)
+        act(() => viewport.visualViewport.dispatchEvent(new Event("resize")))
+        viewport.setViewport(800, 390, 90)
+        act(() => window.dispatchEvent(new Event("orientationchange")))
+        expect(root.style.maxHeight).toBe("")
+        expect(document.activeElement).toBe(editor)
+      } finally {
+        viewport.restore()
+      }
+    })
+
+    it("reconciles orientation-before-resize and recovers the closed portrait viewport", () => {
+      const viewport = installOrientationViewport(800, 390, 90)
+      try {
+        const { container } = render(<MessageComposer {...defaultProps} workspaceId="ws_1" initialMobileChromeOpen />)
+        const root = container.firstElementChild as HTMLElement
+        const editor = screen.getByTestId("rich-editor")
+        act(() => editor.focus())
+
+        viewport.setViewport(800, 200, 90)
+        act(() => viewport.visualViewport.dispatchEvent(new Event("resize")))
+        expect(root.style.maxHeight).toBe("104px")
+
+        viewport.setViewport(800, 400, 0)
+        act(() => window.dispatchEvent(new Event("orientationchange")))
+        expect(Number.parseInt(root.style.maxHeight, 10)).toBe(200)
+        viewport.setViewport(390, 400, 0)
+        act(() => viewport.visualViewport.dispatchEvent(new Event("resize")))
+        expect(Number.parseInt(root.style.maxHeight, 10)).toBe(200)
+
+        viewport.setViewport(390, 800, 0)
+        act(() => viewport.visualViewport.dispatchEvent(new Event("resize")))
+        expect(root.style.maxHeight).toBe("")
+        expect(document.activeElement).toBe(editor)
+      } finally {
+        viewport.restore()
+      }
+    })
+
+    it("rebases a substantial same-angle width resize without treating stable height as a keyboard", () => {
+      vi.useFakeTimers()
+      const viewport = installOrientationViewport(390, 800, 0)
+      try {
+        const { container } = render(<MessageComposer {...defaultProps} workspaceId="ws_1" initialMobileChromeOpen />)
+        const root = container.firstElementChild as HTMLElement
+        act(() => screen.getByTestId("rich-editor").focus())
+
+        viewport.setViewport(800, 800, 0)
+        act(() => viewport.visualViewport.dispatchEvent(new Event("resize")))
+        expect(root.style.maxHeight).toBe("")
+        act(() => vi.advanceTimersByTime(600))
+
+        viewport.setViewport(800, 400, 0)
+        act(() => viewport.visualViewport.dispatchEvent(new Event("resize")))
+        expect(Number.parseInt(root.style.maxHeight, 10)).toBe(200)
+        viewport.setViewport(800, 800, 0)
+        act(() => viewport.visualViewport.dispatchEvent(new Event("resize")))
+        expect(root.style.maxHeight).toBe("")
+      } finally {
+        viewport.restore()
+      }
+    })
+
+    it("commits a same-dimension 90-to-270 rotation at settle", () => {
+      vi.useFakeTimers()
+      const viewport = installOrientationViewport(800, 390, 90)
+      try {
+        const { container } = render(<MessageComposer {...defaultProps} workspaceId="ws_1" initialMobileChromeOpen />)
+        const root = container.firstElementChild as HTMLElement
+        act(() => screen.getByTestId("rich-editor").focus())
+
+        viewport.setViewport(800, 390, 270)
+        act(() => window.dispatchEvent(new Event("orientationchange")))
+        act(() => vi.advanceTimersByTime(600))
+
+        viewport.setViewport(800, 250, 270)
+        act(() => viewport.visualViewport.dispatchEvent(new Event("resize")))
+        expect(Number.parseInt(root.style.maxHeight, 10)).toBe(125)
+      } finally {
+        viewport.restore()
+      }
     })
 
     it("reclamps the persisted height when the visible viewport shrinks", () => {

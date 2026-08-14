@@ -45,6 +45,10 @@ test("mobile composer resizes from its top edge without losing the editor bottom
   const handle = page.getByTestId("composer-resize-handle")
   await expect(handle).toBeVisible({ timeout: 10_000 })
 
+  await page.setViewportSize({ width: 800, height: 390 })
+  await expect(handle).toBeVisible()
+  await page.setViewportSize(PHONE)
+
   await editor.click()
   for (let i = 1; i <= 24; i++) {
     await editor.pressSequentially(`line ${i}`)
