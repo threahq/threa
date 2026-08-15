@@ -491,14 +491,23 @@ test.describe("Timeline auto-read", () => {
       "Owner adds second user to the channel"
     )
 
-    // The wedge state is real server-side: an unread activity with zero unread
-    // messages — nothing for a scroll to ever mark.
+    // The wedge state is real server-side: an unread MEMBER_ADDED activity for
+    // THIS stream, with zero unread messages — nothing for a scroll to ever mark.
+    const unreadMemberAdded = async () => {
+      const res = await other.page.request.get(`/api/workspaces/${workspaceId}/activity?unreadOnly=true`)
+      await expectApiOk(res, "Activity feed")
+      const body = (await res.json()) as {
+        activities?: Array<{ activityType?: string; streamId?: string }>
+      }
+      return (body.activities ?? []).filter((a) => a.activityType === "member_added" && a.streamId === streamId)
+    }
     await expect
-      .poll(() => serverActivityCount(other.page, workspaceId, streamId), {
+      .poll(async () => (await unreadMemberAdded()).length, {
         timeout: 10000,
-        message: "the add should create an unread MEMBER_ADDED activity",
+        message: "the add should create an unread MEMBER_ADDED activity for the channel",
       })
-      .toBeGreaterThan(0)
+      .toBe(1)
+    expect(await serverActivityCount(other.page, workspaceId, streamId)).toBeGreaterThan(0)
     expect(await serverUnreadCount(other.page, workspaceId, streamId)).toBe(0)
 
     await other.page.goto(`/w/${workspaceId}/s/${streamId}`)
@@ -510,11 +519,12 @@ test.describe("Timeline auto-read", () => {
     ).toBeVisible({ timeout: 20000 })
 
     await expect
-      .poll(() => serverActivityCount(other.page, workspaceId, streamId), {
+      .poll(async () => (await unreadMemberAdded()).length, {
         timeout: 15000,
-        message: "visiting the stream should dismiss the added activity",
+        message: "visiting the stream should dismiss the MEMBER_ADDED activity",
       })
       .toBe(0)
+    expect(await serverActivityCount(other.page, workspaceId, streamId)).toBe(0)
     // The heal anchors at the watermark — read state must be undisturbed.
     expect(await serverUnreadCount(other.page, workspaceId, streamId)).toBe(0)
 

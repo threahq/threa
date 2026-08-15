@@ -407,8 +407,8 @@ describe("useAutoMarkAsRead", () => {
       vi.advanceTimersByTime(500)
     })
 
-    expect(mockMarkAsRead).toHaveBeenCalledWith("stream_123", "event_frontier", { partial: false })
-    expect(mockMarkAsRead).toHaveBeenCalledTimes(1)
+    // Exact call list: the frontier mark and NOTHING at the watermark.
+    expect(mockMarkAsRead.mock.calls).toEqual([["stream_123", "event_frontier", { partial: false }]])
   })
 
   it("clears the dedup on stream switch so the next stream's first mark always fires", () => {
