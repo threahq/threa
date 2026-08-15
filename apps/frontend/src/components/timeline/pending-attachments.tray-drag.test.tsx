@@ -177,6 +177,8 @@ describe("tray pill drag", () => {
 
     vi.spyOn(useMobileModule, "useIsMobile").mockReturnValue(true)
     const mobile = render(<PendingAttachments attachments={[attachment()]} onRemove={vi.fn()} workspaceId="ws_1" />)
+    expect(screen.queryByText("screenshot.png")).toBeNull()
+    fireEvent.click(screen.getByRole("button", { name: "Show attachment chips" }))
     // A single horizontal row hid everything past the fold and fought the
     // page's own scroll axis — the tray wraps and scrolls vertically now.
     expect(mobile.container.querySelector(".overflow-x-auto")).toBeNull()
