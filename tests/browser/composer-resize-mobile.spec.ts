@@ -37,6 +37,7 @@ test("mobile composer resizes from its top edge without losing the editor bottom
   await page.goto(setupPage.url())
 
   const card = page.locator("[data-message-composer-root] [data-composer-card]").first()
+  const composerShell = card.locator("xpath=../..")
   await expect(card).toBeVisible({ timeout: 30_000 })
   await card.click()
 
@@ -167,5 +168,9 @@ test("mobile composer resizes from its top edge without losing the editor bottom
   await expect(page.getByTestId("composer-format-toolbar")).toBeVisible()
   await expect.poll(async () => Math.round((await card.boundingBox())!.height)).toBeGreaterThan(compactHeight)
   expect(Math.round((await scroller.boundingBox())!.height)).toBeGreaterThanOrEqual(20)
+
+  await page.locator('[data-message-composer-root] button[aria-label^="Send"]').click()
+  await expect.poll(() => page.evaluate(() => localStorage.getItem("threa:composer-drag-height"))).toBeNull()
+  await expect.poll(() => composerShell.evaluate((element) => (element as HTMLElement).style.minHeight)).toBe("")
   await context.close()
 })
