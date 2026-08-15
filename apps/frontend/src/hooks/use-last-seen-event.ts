@@ -39,9 +39,9 @@ export function pickVisibleRange(rows: VisibleRow[], viewportTop: number, viewpo
  * pointer) stays put.
  *
  * `gateIdx` is {@link readGateIndex}: the first unread MESSAGE after the
- * frontier, so rows carrying nothing to read are bridged. It is required rather
- * than defaulted to `frontier + 1` — that default was the old rule, and it wedged
- * every stream whose bot replies are bracketed by agent-session events.
+ * frontier, so rows carrying nothing to read are bridged. Never give it a
+ * `frontier + 1` default: raw adjacency cannot advance past chrome the viewport
+ * never showed, which strands replies bracketed by agent-session events unread.
  *
  * `topIdx` is the sweep-effective top: recompute substitutes the previous scan's
  * top when two scans link into one continuous user scroll (see SWEEP_LINK_MS), so
