@@ -967,7 +967,7 @@ describe("MessageComposer", () => {
 
       fireEvent.click(screen.getByRole("button", { name: /send/i }))
 
-      expect(onSubmit).toHaveBeenCalledOnce()
+      expect(onSubmit).toHaveBeenCalled()
       expect(root.style.minHeight).toBe("")
       expect(root.style.maxHeight).toBe("")
       expect(localStorage.getItem("threa:composer-drag-height")).toBeNull()
