@@ -139,5 +139,21 @@ test("mobile composer resizes from its top edge without losing the editor bottom
   expect(after.cardTop).toBeGreaterThan(constrained.cardTop)
   expect(after.cardBottom).toBeCloseTo(constrained.cardBottom, 0)
   expect(await editor.textContent()).toBe(contentBeforeResize)
+
+  await page.getByRole("button", { name: "Expand editor" }).click()
+  await expect(page.getByRole("button", { name: "Minimize editor" })).toBeVisible()
+  const fullscreen = await page.evaluate(() => {
+    const zone = document.querySelector('[data-editor-zone="main"]')!.getBoundingClientRect()
+    const card = document.querySelector("[data-message-composer-root] [data-composer-card]")!.getBoundingClientRect()
+    return {
+      height: Math.round(card.height),
+      topGap: Math.round(card.top - zone.top),
+      bottomGap: Math.round(zone.bottom - card.bottom),
+    }
+  })
+  expect(Math.abs(fullscreen.topGap - fullscreen.bottomGap)).toBeLessThanOrEqual(1)
+
+  await page.getByRole("button", { name: "Minimize editor" }).click()
+  await expect.poll(async () => Math.round((await card.boundingBox())!.height)).toBeLessThan(fullscreen.height)
   await context.close()
 })
