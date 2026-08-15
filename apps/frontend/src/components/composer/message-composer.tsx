@@ -355,7 +355,9 @@ export function MessageComposer({
   const mobileKeyboardOpenRef = useRef(false)
   const expandedShellRef = useRef<HTMLDivElement>(null)
   const actionBarWrapperRef = useRef<HTMLDivElement>(null)
+  const mobileFormatToolbarRef = useRef<HTMLDivElement>(null)
   const [mobileToolbarEditor, setMobileToolbarEditor] = useState<Editor | null>(null)
+  const [mobileFormatToolbarHeight, setMobileFormatToolbarHeight] = useState(0)
   const [formatOpen, setFormatOpen] = useState(false)
   const [isInTable, setIsInTable] = useState(false)
   const [mobileExpanded, setMobileExpanded] = useState(false)
@@ -470,6 +472,20 @@ export function MessageComposer({
   // chips), so without this the card takes the whole deficit and its action bar
   // spills below the viewport.
   const [mobileExtrasHeight, setMobileExtrasHeight] = useState(0)
+  useLayoutEffect(() => {
+    if (!isMobile || !formatOpen) {
+      setMobileFormatToolbarHeight(0)
+      return
+    }
+    const toolbar = mobileFormatToolbarRef.current
+    if (!toolbar) return
+    const measure = () => setMobileFormatToolbarHeight(Math.round(toolbar.getBoundingClientRect().height))
+    measure()
+    const observer = new ResizeObserver(measure)
+    observer.observe(toolbar)
+    return () => observer.disconnect()
+  }, [formatOpen, isMobile])
+
   useLayoutEffect(() => {
     const root = mobileRootRef.current
     if (!isMobile || !root) return
@@ -1503,7 +1519,7 @@ export function MessageComposer({
     )
   }
 
-  const mobileComposerFloor = MOBILE_COMPOSER_DRAG_MIN_PX + mobileExtrasHeight
+  const mobileComposerFloor = MOBILE_COMPOSER_DRAG_MIN_PX + mobileExtrasHeight + mobileFormatToolbarHeight
   const mobileKeyboardCap = Math.max(
     mobileComposerFloor,
     Math.round(mobileViewportHeight * MOBILE_COMPOSER_KEYBOARD_MAX_RATIO)
@@ -1736,15 +1752,17 @@ export function MessageComposer({
 
                 {/* Mobile formatting toolbar — rendered below action bar, above keyboard */}
                 {isMobile && formatOpen && (
-                  <EditorToolbar
-                    editor={mobileToolbarEditor}
-                    isVisible
-                    inline
-                    inlinePosition="below"
-                    linkPopoverOpen={mobileLinkPopoverOpen}
-                    onLinkPopoverOpenChange={setMobileLinkPopoverOpen}
-                    showSpecialInputControls
-                  />
+                  <div ref={mobileFormatToolbarRef} data-testid="composer-format-toolbar">
+                    <EditorToolbar
+                      editor={mobileToolbarEditor}
+                      isVisible
+                      inline
+                      inlinePosition="below"
+                      linkPopoverOpen={mobileLinkPopoverOpen}
+                      onLinkPopoverOpenChange={setMobileLinkPopoverOpen}
+                      showSpecialInputControls
+                    />
+                  </div>
                 )}
               </div>
             </div>

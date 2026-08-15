@@ -155,5 +155,17 @@ test("mobile composer resizes from its top edge without losing the editor bottom
 
   await page.getByRole("button", { name: "Minimize editor" }).click()
   await expect.poll(async () => Math.round((await card.boundingBox())!.height)).toBeLessThan(fullscreen.height)
+
+  const minHandle = (await handle.boundingBox())!
+  await page.mouse.move(minHandle.x + minHandle.width / 2, minHandle.y + minHandle.height / 2)
+  await page.mouse.down()
+  await page.mouse.move(minHandle.x + minHandle.width / 2, minHandle.y + minHandle.height / 2 + 500)
+  await page.mouse.up()
+  const compactHeight = Math.round((await card.boundingBox())!.height)
+
+  await page.getByRole("button", { name: "Formatting" }).click()
+  await expect(page.getByTestId("composer-format-toolbar")).toBeVisible()
+  await expect.poll(async () => Math.round((await card.boundingBox())!.height)).toBeGreaterThan(compactHeight)
+  expect(Math.round((await scroller.boundingBox())!.height)).toBeGreaterThanOrEqual(20)
   await context.close()
 })

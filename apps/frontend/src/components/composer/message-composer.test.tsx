@@ -953,6 +953,27 @@ describe("MessageComposer", () => {
       expect((container.firstElementChild as HTMLElement).style.maxHeight).toBe("104px")
     })
 
+    it("grows the minimum height by the formatting toolbar so one editor line remains", () => {
+      localStorage.setItem("threa:composer-drag-height", "104")
+      const originalRect = HTMLElement.prototype.getBoundingClientRect
+      vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+        if (this.getAttribute("data-testid") === "composer-format-toolbar") {
+          return { ...originalRect.call(this), height: 40, bottom: 40 }
+        }
+        return originalRect.call(this)
+      })
+      const { container } = render(<MessageComposer {...defaultProps} workspaceId="ws_1" initialMobileChromeOpen />)
+      const root = container.firstElementChild as HTMLElement
+      expect(root.style.minHeight).toBe("104px")
+
+      fireEvent.click(screen.getByRole("button", { name: "Formatting" }))
+      expect(screen.getByTestId("composer-format-toolbar")).toBeInTheDocument()
+      expect(root.style.minHeight).toBe("144px")
+
+      fireEvent.click(screen.getByRole("button", { name: "Formatting" }))
+      expect(root.style.minHeight).toBe("104px")
+    })
+
     it("keeps the floor when 75% of a short viewport would dip below it", () => {
       const originalInnerHeight = window.innerHeight
       Object.defineProperty(window, "innerHeight", { configurable: true, value: 100 })
