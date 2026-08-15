@@ -3682,6 +3682,31 @@ describe("unread counter events (absolute payloads, sync phase 2c)", () => {
     cleanup()
   })
 
+  it("raises unread for the currently viewed stream without a direct membership", async () => {
+    const queryClient = new QueryClient()
+    await seedCounterFixture(queryClient)
+    queryClient.setQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap("ws_1"), (current) =>
+      current ? { ...current, streamMemberships: [] } : current
+    )
+    const { emit, cleanup } = register(queryClient, "stream_1")
+
+    emit("stream:activity", {
+      workspaceId: "ws_1",
+      streamId: "stream_1",
+      authorId: "member_2",
+      sequence: "9",
+      messageOrdinal: 6,
+      lastMessagePreview: preview,
+    })
+
+    expect(queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap("ws_1"))?.unreadCounts.stream_1).toBe(2)
+    await vi.waitFor(async () => {
+      expect((await db.unreadState.get("ws_1"))?.unreadCounts.stream_1).toBe(2)
+    })
+
+    cleanup()
+  })
+
   it("raises unread for the viewed stream while its window is unfocused", async () => {
     const focusSpy = vi.spyOn(document, "hasFocus").mockReturnValue(false)
     const queryClient = new QueryClient()

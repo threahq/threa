@@ -2357,14 +2357,20 @@ export class StreamService {
   }
 
   /**
-   * Per-stream unread count sourced from the viewer's read frontier. An absent
+   * Per-stream unread and total counts sourced from the viewer's read frontier. An absent
    * read-state row reads as "never read" (frontier before the first message —
    * everything unread), so access-without-membership viewers (INV-62) work with
    * no special case.
    */
-  async getEffectiveUnreadCount(streamId: string, userId: string): Promise<number> {
+  async getEffectiveUnreadSummary(
+    streamId: string,
+    userId: string
+  ): Promise<{ unreadCount: number; totalCount: number }> {
     const effective = await getEffectiveReadState(this.pool, userId, [streamId])
-    return this.getUnreadCount(streamId, userId, effective.get(streamId)?.lastReadEventId ?? null)
+    const counts = await this.getUnreadCounts([
+      { streamId, memberId: userId, lastReadEventId: effective.get(streamId)?.lastReadEventId ?? null },
+    ])
+    return counts.get(streamId) ?? { unreadCount: 0, totalCount: 0 }
   }
 
   /** The viewer's standalone read-state row on one stream (per-stream bootstrap frontier). */

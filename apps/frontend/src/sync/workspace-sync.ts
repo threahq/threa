@@ -1325,7 +1325,7 @@ export function registerWorkspaceSocketHandlers(
       const old = queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap(workspaceId))
       if (!old) return
       const isMember = old.streamMemberships.some((m: StreamMember) => m.streamId === payload.streamId)
-      if (!isMember) return
+      if (!isMember && !isViewingStream) return
       const currentUser = refs.getCurrentUser()
       const currentMember = currentUser && getWorkspaceUsers(old).find((u) => u.workosUserId === currentUser.id)
       const isOwnMessage = Boolean(currentMember && payload.authorId === currentMember.id)

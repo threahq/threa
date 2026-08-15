@@ -708,6 +708,10 @@ export async function applyStreamBootstrap(
         await db.unreadState.put({
           ...unreadState,
           unreadCounts: { ...unreadState.unreadCounts, [streamId]: bootstrap.unreadCount },
+          latestOrdinals:
+            bootstrap.messageCount !== undefined
+              ? { ...unreadState.latestOrdinals, [streamId]: bootstrap.messageCount }
+              : unreadState.latestOrdinals,
           _cachedAt: now,
         })
         appliedUnreadCount = true
@@ -719,7 +723,16 @@ export async function applyStreamBootstrap(
   }
   if (appliedUnreadCount && options?.queryClient) {
     options.queryClient.setQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap(workspaceId), (current) =>
-      current ? { ...current, unreadCounts: { ...current.unreadCounts, [streamId]: bootstrap.unreadCount } } : current
+      current
+        ? {
+            ...current,
+            unreadCounts: { ...current.unreadCounts, [streamId]: bootstrap.unreadCount },
+            messageCounts:
+              bootstrap.messageCount !== undefined
+                ? { ...current.messageCounts, [streamId]: bootstrap.messageCount }
+                : current.messageCounts,
+          }
+        : current
     )
   }
   seedStreamActiveCall(workspaceId, streamId, bootstrap)

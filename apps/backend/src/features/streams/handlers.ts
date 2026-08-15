@@ -1073,7 +1073,7 @@ export function createStreamHandlers({
       // Read frontier for EVERY viewer with access (non-member unlock): sourced
       // solely from stream_read_state; an access-without-membership viewer (INV-62)
       // with no row reads as never-read (everything unread).
-      const unreadCount = await streamService.getEffectiveUnreadCount(streamId, userId)
+      const { unreadCount, totalCount: messageCount } = await streamService.getEffectiveUnreadSummary(streamId, userId)
       // The viewer's frontier rides the per-stream response so non-member legs
       // resolve theirs on open (the workspace bootstrap stays member-keyed).
       // Sequence resolved off the watermark event, same as the workspace
@@ -1192,6 +1192,7 @@ export function createStreamHandlers({
         syncMode,
         threadStates,
         unreadCount,
+        messageCount,
         mentionCount: activityCounts?.mentionCount ?? 0,
         activityCount: activityCounts?.totalCount ?? 0,
         contextBag,

@@ -3,6 +3,7 @@ import {
   ReadCommitQueue,
   READ_COMMIT_DEBOUNCE_MS,
   READ_COMMIT_MAX_RETRIES,
+  READ_COMMIT_PARKED_RETRY_MS,
   READ_COMMIT_RETRY_MS,
 } from "./read-commit-queue"
 
@@ -117,6 +118,21 @@ describe("ReadCommitQueue", () => {
     expect(commit).toHaveBeenCalledTimes(2)
   })
 
+  it("keeps probing at a bounded interval after the fast retries are exhausted", async () => {
+    commit.mockRejectedValue(new Error("offline"))
+    queue.report("stream_a", "event_1", false)
+    await vi.advanceTimersByTimeAsync(
+      READ_COMMIT_DEBOUNCE_MS + READ_COMMIT_RETRY_MS * (2 ** READ_COMMIT_MAX_RETRIES - 1)
+    )
+    expect(commit).toHaveBeenCalledTimes(READ_COMMIT_MAX_RETRIES + 1)
+
+    commit.mockResolvedValue(undefined)
+    await vi.advanceTimersByTimeAsync(READ_COMMIT_PARKED_RETRY_MS)
+
+    expect(commit).toHaveBeenCalledTimes(READ_COMMIT_MAX_RETRIES + 2)
+    expect(queue.lastCommitted("stream_a")).toEqual({ lastEventId: "event_1", partial: false })
+  })
+
   it("wakes an exhausted failed mark when the app regains focus", async () => {
     commit.mockRejectedValue(new Error("offline"))
     queue.report("stream_a", "event_1", false)
@@ -161,6 +177,25 @@ describe("ReadCommitQueue", () => {
     queue.report("stream_a", "event_4", false)
     await vi.advanceTimersByTimeAsync(READ_COMMIT_DEBOUNCE_MS)
     expect(commit).toHaveBeenCalledTimes(2)
+  })
+
+  it("releases unread when its expected pointer was observed before a later cross-device read", async () => {
+    let resolveUnread!: (eventId: string | null) => void
+    const unread = queue.runExplicitUnread(
+      "stream_a",
+      "event_3",
+      () => new Promise<string | null>((resolve) => (resolveUnread = resolve))
+    )
+    await Promise.resolve()
+
+    queue.observeReadPointer("stream_a", "event_1")
+    queue.observeReadPointer("stream_a", "event_4")
+    resolveUnread("event_1")
+    await unread
+
+    queue.report("stream_a", "event_5", false)
+    await vi.advanceTimersByTimeAsync(READ_COMMIT_DEBOUNCE_MS)
+    expect(commit).toHaveBeenCalledExactlyOnceWith("stream_a", "event_5", { partial: false })
   })
 
   it("dispose flushes pending marks (a microtask later — it can run in render) and refuses further reports", async () => {

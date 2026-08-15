@@ -245,6 +245,8 @@ export interface StreamBootstrap {
     threadSummary: ThreadSummary | null
   }>
   unreadCount: number
+  /** Total message ordinal used with unreadCount to seed the per-stream counter model. */
+  messageCount?: number
   mentionCount: number
   activityCount: number
   /**

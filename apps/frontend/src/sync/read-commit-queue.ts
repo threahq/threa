@@ -8,6 +8,7 @@ export interface ReadCommitMark {
 export const READ_COMMIT_DEBOUNCE_MS = 500
 export const READ_COMMIT_RETRY_MS = 1_000
 export const READ_COMMIT_MAX_RETRIES = 3
+export const READ_COMMIT_PARKED_RETRY_MS = 30_000
 
 type CommitRead = (streamId: string, lastEventId: string, opts: { partial: boolean }) => Promise<void>
 
@@ -22,7 +23,7 @@ interface QueuedMark extends ReadCommitMark {
 
 interface ExplicitUnread {
   initialReadEventId: string | null | undefined
-  observedReadEventId: string | null | undefined
+  observedReadEventIds: Set<string | null | undefined>
   expectedReadEventId: string | null | undefined
   operationDone: boolean
 }
@@ -49,6 +50,9 @@ export class ReadCommitQueue {
   private readonly onWake = () => {
     if (document.visibilityState === "hidden") return
     for (const [streamId, mark] of this.failed) {
+      const scheduled = this.pending.get(streamId)
+      if (scheduled) clearTimeout(scheduled.timer)
+      this.pending.delete(streamId)
       this.failed.delete(streamId)
       this.dispatch(streamId, { ...mark, attempt: 0 })
     }
@@ -110,7 +114,7 @@ export class ReadCommitQueue {
     this.cancel(streamId)
     const state: ExplicitUnread = {
       initialReadEventId,
-      observedReadEventId: initialReadEventId,
+      observedReadEventIds: new Set([initialReadEventId]),
       expectedReadEventId: undefined,
       operationDone: false,
     }
@@ -129,7 +133,7 @@ export class ReadCommitQueue {
   observeReadPointer(streamId: string, readEventId: string | null | undefined): void {
     const state = this.explicitUnread.get(streamId)
     if (!state) return
-    state.observedReadEventId = readEventId
+    state.observedReadEventIds.add(readEventId)
     this.releaseExplicitUnreadIfReady(streamId, state)
   }
 
@@ -194,6 +198,7 @@ export class ReadCommitQueue {
           this.schedule(streamId, mark, mark.attempt + 1, READ_COMMIT_RETRY_MS * 2 ** mark.attempt)
         } else {
           this.failed.set(streamId, { lastEventId: mark.lastEventId, partial: mark.partial })
+          this.schedule(streamId, mark, READ_COMMIT_MAX_RETRIES, READ_COMMIT_PARKED_RETRY_MS)
         }
       }
     } finally {
@@ -210,8 +215,8 @@ export class ReadCommitQueue {
     if (!state.operationDone || this.explicitUnread.get(streamId) !== state) return
     const pointerMatches =
       state.expectedReadEventId !== undefined
-        ? state.observedReadEventId === state.expectedReadEventId
-        : state.observedReadEventId !== state.initialReadEventId
+        ? state.observedReadEventIds.has(state.expectedReadEventId)
+        : [...state.observedReadEventIds].some((eventId) => eventId !== state.initialReadEventId)
     if (!pointerMatches) return
     this.explicitUnread.delete(streamId)
     this.committed.delete(streamId)

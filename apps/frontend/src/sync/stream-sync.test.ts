@@ -21,6 +21,7 @@ import { workspaceKeys } from "@/hooks/use-workspaces"
 import { commandsApi } from "@/api"
 import { clearDecryptCache, getCachedDecryption } from "@/lib/crypto/decrypt-cache"
 import { NO_CAPTURE, PerfCapture, armPerfCapture } from "@/lib/perf/capture"
+import { applyStreamReadOrdinal } from "./unread-counters"
 import { sharedMessageSlotKey } from "@threa/types"
 import type {
   AttachmentSummary,
@@ -924,14 +925,21 @@ describe("applyStreamBootstrap — per-stream unread count", () => {
     queryClient.setQueryData(workspaceKeys.bootstrap("ws_1"), {
       unreadCounts: {},
     } as WorkspaceBootstrap)
-    const bootstrap = { ...makeBootstrap([], streamId), unreadCount: 4 }
+    const bootstrap = { ...makeBootstrap([], streamId), unreadCount: 4, messageCount: 6 }
 
     await applyStreamBootstrap("ws_1", streamId, bootstrap, { fetchStartedAt: Date.now(), queryClient })
 
-    expect((await db.unreadState.get("ws_1"))?.unreadCounts[streamId]).toBe(4)
-    expect(queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap("ws_1"))?.unreadCounts[streamId]).toBe(
-      4
-    )
+    const state = await db.unreadState.get("ws_1")
+    expect(state?.unreadCounts[streamId]).toBe(4)
+    expect(state?.latestOrdinals?.[streamId]).toBe(6)
+    expect(
+      applyStreamReadOrdinal({ ...state!, unreadActivities: state?.unreadActivities ?? [] }, streamId, 3).unreadCounts[
+        streamId
+      ]
+    ).toBe(3)
+    const cached = queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap("ws_1"))
+    expect(cached?.unreadCounts[streamId]).toBe(4)
+    expect(cached?.messageCounts?.[streamId]).toBe(6)
   })
 
   it("preserves a counter touched after the bootstrap request departed", async () => {
