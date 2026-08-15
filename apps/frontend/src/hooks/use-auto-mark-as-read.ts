@@ -17,6 +17,16 @@ interface UseAutoMarkAsReadOptions {
    * (Slack-style progressive read). Defaults false: mark fully read as before.
    */
   partial?: boolean
+  /**
+   * The viewer's persisted read pointer (server watermark). Fallback anchor for
+   * the activity heal: an activity whose stream has nothing unread AND nothing
+   * trailing the watermark (a `member_added` born-read at the tail pins exactly
+   * that) produces no frontier advance, so without this anchor the mark that
+   * dismisses it can never fire and the sidebar row stays lit through every
+   * visit. Committing the pointer itself is a monotonic no-op advance
+   * server-side; only the handler's activity clear has effect.
+   */
+  readPointerEventId?: string | null
 }
 
 /**
@@ -58,7 +68,7 @@ export function useAutoMarkAsRead(
   lastEventId: string | undefined,
   options: UseAutoMarkAsReadOptions = {}
 ) {
-  const { enabled = true, partial = false } = options
+  const { enabled = true, partial = false, readPointerEventId = null } = options
   const { getUnreadCount } = useUnreadCounts(workspaceId)
   const { getActivityCount } = useActivityCounts(workspaceId)
   const canAutoRead = useAutoReadAttention()
@@ -85,7 +95,21 @@ export function useAutoMarkAsRead(
   }, [queue, streamId])
 
   useEffect(() => {
-    if (!enabled || !lastEventId || !canAutoRead) {
+    // Activity heal at the watermark: an elevated activity count with NO
+    // frontier advance available — nothing unread, nothing trailing the read
+    // pointer (born-read `member_added` pins the pointer at the tail) — would
+    // otherwise be permanently undismissable, because the dismissal signal
+    // rides on the mark this hook fires. Anchor the mark at the pointer
+    // itself: the server advance is a monotonic no-op, the activity clear
+    // runs. Sent partial so no counter is optimistically zeroed off a
+    // possibly-stale local 0. Gated on `unreadCount === 0`: with real unread
+    // below, the normal frontier path owns the (partial) mark that clears
+    // activity, and healing early would race a mark-unread's restored badges.
+    const healEventId =
+      !lastEventId && activityCount > 0 && unreadCount === 0 && readPointerEventId ? readPointerEventId : undefined
+    const reportEventId = lastEventId ?? healEventId
+    const reportPartial = lastEventId ? partial : true
+    if (!enabled || !reportEventId || !canAutoRead) {
       // The gate closed with a mark still debouncing: drop it, matching the
       // pre-queue semantics — a blur cancels rather than commits, so content
       // glimpsed right before switching windows stays unread (never
@@ -101,7 +125,7 @@ export function useAutoMarkAsRead(
     // other devices. The committed record gates it to once per caught-up tail.
     // A PARTIAL (mid-window frontier) open with nothing elevated still no-ops —
     // its `lastEventId` isn't the tail, so emitting `stream:read` would be wrong.
-    if (unreadCount === 0 && activityCount === 0 && partial) return
+    if (unreadCount === 0 && activityCount === 0 && reportPartial) return
 
     // Skip if this exact mark was already committed AND no pending activities
     // to clear. Activities can arrive via activity:created while we're viewing
@@ -111,11 +135,16 @@ export function useAutoMarkAsRead(
     // (never-sent) marks are not in the committed record, so a blur-parked
     // mark re-reports after refocus.
     const committed = queue.lastCommitted(streamId)
-    if (committed && committed.lastEventId === lastEventId && committed.partial === partial && activityCount === 0) {
+    if (
+      committed &&
+      committed.lastEventId === reportEventId &&
+      committed.partial === reportPartial &&
+      activityCount === 0
+    ) {
       return
     }
 
-    queue.report(streamId, lastEventId, partial)
+    queue.report(streamId, reportEventId, reportPartial)
 
     return () => {
       // Leaving the stream flushes its pending mark — the frontier already
@@ -124,7 +153,7 @@ export function useAutoMarkAsRead(
       // replaces the pending mark instead.
       if (streamIdRef.current !== streamId) queue.flush(streamId)
     }
-  }, [enabled, streamId, lastEventId, partial, queue, unreadCount, activityCount, canAutoRead])
+  }, [enabled, streamId, lastEventId, partial, queue, unreadCount, activityCount, canAutoRead, readPointerEventId])
 
   // Unmounting the stream page entirely (navigating to drafts/board) is the
   // other leave path — flush whatever stream was current.

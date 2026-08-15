@@ -334,6 +334,83 @@ describe("useAutoMarkAsRead", () => {
     expect(mockMarkAsRead).not.toHaveBeenCalled()
   })
 
+  it("heals an undismissable activity at the watermark when no frontier advance exists (born-read member_added)", () => {
+    // Being added to a stream born-reads the member_added event — the watermark
+    // IS the tail, so the frontier never advances and lastEventId stays
+    // undefined. The MEMBER_ADDED activity row still lights the sidebar, and
+    // its only dismissal is the mark this hook fires. The heal anchors the
+    // mark at the watermark itself: monotonic no-op advance, activity clear
+    // runs. Partial, so nothing is optimistically zeroed.
+    unreadCount = 0
+    activityCount = 1
+
+    renderHook(() => useAutoMarkAsRead("ws_123", "stream_123", undefined, { readPointerEventId: "event_watermark" }))
+
+    act(() => {
+      vi.advanceTimersByTime(500)
+    })
+
+    expect(mockMarkAsRead).toHaveBeenCalledWith("stream_123", "event_watermark", { partial: true })
+  })
+
+  it("does NOT heal while real unread remains — the frontier path owns that mark", () => {
+    unreadCount = 2
+    activityCount = 1
+
+    renderHook(() => useAutoMarkAsRead("ws_123", "stream_123", undefined, { readPointerEventId: "event_watermark" }))
+
+    act(() => {
+      vi.advanceTimersByTime(500)
+    })
+
+    expect(mockMarkAsRead).not.toHaveBeenCalled()
+  })
+
+  it("does NOT heal with no elevated activity (a quiet fully-read open stays silent)", () => {
+    unreadCount = 0
+    activityCount = 0
+
+    renderHook(() => useAutoMarkAsRead("ws_123", "stream_123", undefined, { readPointerEventId: "event_watermark" }))
+
+    act(() => {
+      vi.advanceTimersByTime(500)
+    })
+
+    expect(mockMarkAsRead).not.toHaveBeenCalled()
+  })
+
+  it("heal respects the attention gate (unfocused desktop never heals)", () => {
+    unreadCount = 0
+    activityCount = 1
+    hasFocus = false
+
+    renderHook(() => useAutoMarkAsRead("ws_123", "stream_123", undefined, { readPointerEventId: "event_watermark" }))
+
+    act(() => {
+      vi.advanceTimersByTime(500)
+    })
+
+    expect(mockMarkAsRead).not.toHaveBeenCalled()
+  })
+
+  it("prefers the frontier mark over the heal when both are available", () => {
+    // A trailing chrome row let the frontier advance: the real lastEventId is
+    // the truthful (further) anchor, and the heal must not override it.
+    unreadCount = 0
+    activityCount = 1
+
+    renderHook(() =>
+      useAutoMarkAsRead("ws_123", "stream_123", "event_frontier", { readPointerEventId: "event_watermark" })
+    )
+
+    act(() => {
+      vi.advanceTimersByTime(500)
+    })
+
+    // Exact call list: the frontier mark and NOTHING at the watermark.
+    expect(mockMarkAsRead.mock.calls).toEqual([["stream_123", "event_frontier", { partial: false }]])
+  })
+
   it("clears the dedup on stream switch so the next stream's first mark always fires", () => {
     // The consumer isn't keyed by streamId, so the hook persists across switches.
     // The dedup refs must reset per stream — otherwise a prior stream's marked
