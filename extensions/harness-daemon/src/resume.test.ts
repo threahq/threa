@@ -442,9 +442,11 @@ test("reconstructs the current Claude channel launch with stable runtime identit
 
 test("Pi revival reuses an exact recorded session id bound to the expected root", () => {
   expect(piLaunchArgs("pi", "019f-session")).toEqual(["pi", "--session-id", "019f-session"])
-  const launch = piLaunchCommand("pi", "019f-session")
+  const launch = piLaunchCommand("pi", "019f-session", "pi-instance")
   expect(launch).toContain("'THREA_HARNESSD_ENTRYPOINT=")
   expect(launch).toContain(`'THREA_HARNESSD_BUN_BIN=${process.execPath}'`)
+  expect(launch).toContain("'THREA_INSTANCE_ID=pi-instance'")
+  expect(launch).toContain("'THREA_RUNTIME_SESSION_ID=019f-session'")
   const resume = piResumeCommand("pi", "019f-session", "stream_expected")
   expect(resume).toContain(`'THREA_HARNESSD_BUN_BIN=${process.execPath}'`)
   expect(resume).toContain("'THREA_EXPECTED_ROOT_STREAM_ID=stream_expected'")

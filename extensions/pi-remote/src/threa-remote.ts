@@ -553,6 +553,19 @@ function createInstanceId(): string {
   return trimmedHost.length > 0 ? `pi-${trimmedHost}-${suffix}` : `pi-${suffix}`
 }
 
+function instanceIdForRemoteCreate(runtimeSessionId: string): string {
+  if (process.env.THREA_RUNTIME_SESSION_ID !== runtimeSessionId) return createInstanceId()
+  const launchedInstanceId = process.env.THREA_INSTANCE_ID
+  if (
+    launchedInstanceId === undefined ||
+    !INSTANCE_ID_REGEX.test(launchedInstanceId) ||
+    launchedInstanceId.length > INSTANCE_ID_MAX_CHARS
+  ) {
+    throw new Error("THREA_INSTANCE_ID must be 1-64 letters, numbers, underscores, or hyphens")
+  }
+  return launchedInstanceId
+}
+
 function migrateInstanceId(stored: unknown): string {
   // `config.instanceId` is loaded via `JSON.parse` and `readConfig` only
   // type-checks the three required fields. A hand-edited config could put
@@ -1424,7 +1437,7 @@ async function createRemoteSession(ctx: ExtensionCommandContext, args: string): 
     throw new Error("Supervised revival cannot create or relink a Pi scratchpad")
   }
   const runtimeSessionId = getRuntimeSessionId(ctx)
-  const instanceId = createInstanceId()
+  const instanceId = instanceIdForRemoteCreate(runtimeSessionId)
   const displayName = args.trim() || defaultDisplayNameFor(ctx.cwd, config.defaultDisplayName)
   const e2e = config.e2e ? await resolveE2eCreateBlock() : undefined
 
@@ -4417,6 +4430,7 @@ export const __testing = {
   formatLocalTime,
   sanitizeInstanceIdSegment,
   createInstanceId,
+  instanceIdForRemoteCreate,
   migrateInstanceId,
   appendCapped,
   formatShellResult,
