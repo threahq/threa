@@ -12,6 +12,7 @@ import {
   remapSuppressedWatermark,
   resolveStreamLanding,
   isChromeStripCollapsed,
+  isTypingChromeHidden,
   buildAgentActivitySummary,
 } from "./stream-content"
 import { localStartOfDayMs } from "@/lib/dates"
@@ -527,6 +528,14 @@ describe("isChromeStripCollapsed", () => {
   it("uses the strip (scroller minus composer), not the raw scroller height", () => {
     expect(isChromeStripCollapsed(800, 700)).toBe(true)
     expect(isChromeStripCollapsed(800, 0)).toBe(false)
+  })
+})
+
+describe("isTypingChromeHidden", () => {
+  it("hides date and jump chrome throughout focused mobile typing", () => {
+    expect(isTypingChromeHidden(false, true)).toBe(true)
+    expect(isTypingChromeHidden(true, false)).toBe(true)
+    expect(isTypingChromeHidden(false, false)).toBe(false)
   })
 })
 

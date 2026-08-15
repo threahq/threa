@@ -3,6 +3,7 @@ import { MOBILE_BREAKPOINT } from "@/hooks/use-mobile"
 import {
   applyPersistedComposerHeight,
   persistComposerHeight,
+  clearMobileComposerDragHeight,
   loadMobileComposerDragHeight,
   persistMobileComposerDragHeight,
   MOBILE_COMPOSER_DRAG_MIN_PX,
@@ -147,6 +148,18 @@ describe("mobile composer drag height", () => {
   it("accepts the compact one-line floor", () => {
     persistMobileComposerDragHeight(MOBILE_COMPOSER_DRAG_MIN_PX)
     expect(loadMobileComposerDragHeight()).toBe(104)
+  })
+
+  it("clears the dragged height when minimizing to the natural default", () => {
+    persistMobileComposerDragHeight(287)
+    clearMobileComposerDragHeight()
+    expect(loadMobileComposerDragHeight()).toBeNull()
+  })
+
+  it("persists fullscreen heights allowed by a tall coarse-pointer viewport", () => {
+    vi.stubGlobal("visualViewport", { width: 1024, height: 1366 })
+    persistMobileComposerDragHeight(1300)
+    expect(loadMobileComposerDragHeight()).toBe(1300)
   })
 
   it("returns null when never dragged", () => {

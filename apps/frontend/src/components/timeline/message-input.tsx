@@ -74,6 +74,8 @@ interface MessageInputProps {
    * synchronously instead of debouncing.
    */
   onComposerHeightChange?: (px: number, opts: { initial: boolean }) => void
+  /** Notifies the timeline when focused mobile typing should suppress floating chrome. */
+  onMobileTypingChange?: (typing: boolean) => void
 }
 
 function attachmentMatchKey(attachment: Pick<PendingAttachment, "filename" | "mimeType">): string {
@@ -256,6 +258,7 @@ function MessageInputComponent({
   disabledReason,
   autoFocus,
   onComposerHeightChange,
+  onMobileTypingChange,
 }: MessageInputProps) {
   const editLastCtx = useEditLastMessage()
   const triggerEditLast = editLastCtx?.triggerEditLast
@@ -1000,6 +1003,7 @@ function MessageInputComponent({
     messageSendMode,
     onComposerFocus,
     onMobileChromeOpenChange: handleMobileChromeOpenChange,
+    onMobileTypingChange,
     scopeId: streamId,
     onEditLastMessage: triggerEditLast
       ? () => {

@@ -140,9 +140,20 @@ const STORAGE_KEY_DRAG_HEIGHT = "threa:composer-drag-height"
 
 /** Mobile card floor: border + padding + one editor line + gap + action bar. */
 export const MOBILE_COMPOSER_DRAG_MIN_PX = 104
-// Sanity ceiling for persisted values only — the live drag clamps to 75% of
-// the visual viewport, which no phone exceeds.
-const MAX_DRAG_HEIGHT_PX = 1200
+const MIN_DRAG_SANITY_CEILING_PX = 1200
+
+function mobileDragSanityCeiling(): number {
+  if (typeof window === "undefined") return MIN_DRAG_SANITY_CEILING_PX
+  return Math.max(
+    MIN_DRAG_SANITY_CEILING_PX,
+    window.innerWidth,
+    window.innerHeight,
+    window.screen?.width ?? 0,
+    window.screen?.height ?? 0,
+    window.visualViewport?.width ?? 0,
+    window.visualViewport?.height ?? 0
+  )
+}
 
 /**
  * The user-chosen mobile composer height from the drag handle (a max-height:
@@ -156,7 +167,7 @@ export function loadMobileComposerDragHeight(): number | null {
     if (!raw) return null
     const parsed = Number.parseInt(raw, 10)
     if (!Number.isFinite(parsed)) return null
-    if (parsed < MOBILE_COMPOSER_DRAG_MIN_PX || parsed > MAX_DRAG_HEIGHT_PX) return null
+    if (parsed < MOBILE_COMPOSER_DRAG_MIN_PX || parsed > mobileDragSanityCeiling()) return null
     return parsed
   } catch {
     return null
@@ -166,11 +177,20 @@ export function loadMobileComposerDragHeight(): number | null {
 export function persistMobileComposerDragHeight(heightPx: number): void {
   if (typeof localStorage === "undefined") return
   const rounded = Math.round(heightPx)
-  if (rounded < MOBILE_COMPOSER_DRAG_MIN_PX || rounded > MAX_DRAG_HEIGHT_PX) return
+  if (rounded < MOBILE_COMPOSER_DRAG_MIN_PX || rounded > mobileDragSanityCeiling()) return
   try {
     localStorage.setItem(STORAGE_KEY_DRAG_HEIGHT, String(rounded))
   } catch {
     // Storage quota / private-mode failures shouldn't crash the render path.
+  }
+}
+
+export function clearMobileComposerDragHeight(): void {
+  if (typeof localStorage === "undefined") return
+  try {
+    localStorage.removeItem(STORAGE_KEY_DRAG_HEIGHT)
+  } catch {
+    // Storage failures shouldn't prevent the composer from minimizing.
   }
 }
 

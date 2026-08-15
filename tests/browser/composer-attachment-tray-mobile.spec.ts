@@ -48,7 +48,9 @@ test("dragging the composer down never slices the attachment chips", async ({ pa
     mimeType: "video/mp4",
     buffer: Buffer.alloc(2048, 7),
   })
-  await expect(page.getByTestId("attachment-chip-row")).toBeVisible({ timeout: 20_000 })
+  await expect(page.getByRole("button", { name: "Show attachment chips" })).toBeVisible({ timeout: 20_000 })
+  await page.getByRole("button", { name: "Show attachment chips" }).click()
+  await expect(page.getByTestId("attachment-chip-row")).toBeVisible()
 
   await editor.click()
   await editor.pressSequentially(DRAFT.repeat(3), { delay: 1 })
@@ -104,6 +106,9 @@ test("dragging the composer down never slices the attachment chips", async ({ pa
       buffer: Buffer.alloc(1024, n),
     }))
   )
+  await expect(page.getByRole("button", { name: "Show attachment chips" })).toBeVisible({ timeout: 20_000 })
+  await page.getByRole("button", { name: "Show attachment chips" }).click()
+  await expect(page.getByTestId("attachment-chip-row")).toBeVisible()
   await expect
     .poll(
       () =>

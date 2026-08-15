@@ -131,11 +131,41 @@ test("mobile composer resizes from its top edge without losing the editor bottom
   await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2 + 120)
   await page.mouse.up()
 
+  await expect
+    .poll(async () => Math.abs((await measure()).scrollBottom - constrained.scrollBottom))
+    .toBeLessThanOrEqual(1)
   const after = await measure()
   expect(after.cardHeight).toBeLessThan(constrained.cardHeight)
   expect(after.cardTop).toBeGreaterThan(constrained.cardTop)
   expect(after.cardBottom).toBeCloseTo(constrained.cardBottom, 0)
-  expect(Math.abs(after.scrollBottom - constrained.scrollBottom)).toBeLessThanOrEqual(1)
   expect(await editor.textContent()).toBe(contentBeforeResize)
+
+  await page.getByRole("button", { name: "Expand editor" }).click()
+  await expect(page.getByRole("button", { name: "Minimize editor" })).toBeVisible()
+  const fullscreen = await page.evaluate(() => {
+    const zone = document.querySelector('[data-editor-zone="main"]')!.getBoundingClientRect()
+    const card = document.querySelector("[data-message-composer-root] [data-composer-card]")!.getBoundingClientRect()
+    return {
+      height: Math.round(card.height),
+      topGap: Math.round(card.top - zone.top),
+      bottomGap: Math.round(zone.bottom - card.bottom),
+    }
+  })
+  expect(Math.abs(fullscreen.topGap - fullscreen.bottomGap)).toBeLessThanOrEqual(1)
+
+  await page.getByRole("button", { name: "Minimize editor" }).click()
+  await expect.poll(async () => Math.round((await card.boundingBox())!.height)).toBeLessThan(fullscreen.height)
+
+  const minHandle = (await handle.boundingBox())!
+  await page.mouse.move(minHandle.x + minHandle.width / 2, minHandle.y + minHandle.height / 2)
+  await page.mouse.down()
+  await page.mouse.move(minHandle.x + minHandle.width / 2, minHandle.y + minHandle.height / 2 + 500)
+  await page.mouse.up()
+  const compactHeight = Math.round((await card.boundingBox())!.height)
+
+  await page.getByRole("button", { name: "Formatting" }).click()
+  await expect(page.getByTestId("composer-format-toolbar")).toBeVisible()
+  await expect.poll(async () => Math.round((await card.boundingBox())!.height)).toBeGreaterThan(compactHeight)
+  expect(Math.round((await scroller.boundingBox())!.height)).toBeGreaterThanOrEqual(20)
   await context.close()
 })
