@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from "react"
 
 /** Threshold in px — if viewport height is this much smaller than baseline, keyboard is open */
-const KEYBOARD_THRESHOLD = 100
+export const KEYBOARD_VIEWPORT_THRESHOLD_PX = 100
 
 /** How long to poll visualViewport after focus changes to catch keyboard animation (ms) */
 const POLL_DURATION = 600
@@ -43,7 +43,7 @@ const OPTIMISTIC_CLOSE_SUPPRESS_MS = 500
  * content "loading in again" after the keyboard closed. Genuine settles (URL
  * bar moved: tens of px) still apply.
  */
-const RECONCILE_TOLERANCE_PX = 8
+export const VIEWPORT_RECONCILE_TOLERANCE_PX = 8
 
 /** CSS custom property AppShell reads to size the app to the visible viewport */
 const VIEWPORT_HEIGHT_VAR = "--viewport-height"
@@ -109,7 +109,7 @@ export function useVisualViewport(enabled: boolean): boolean {
     if (isIOS()) {
       const measureOpen = () => {
         const vvHeight = vv ? vv.height : window.innerHeight
-        const open = isEditableFocused() && vvHeight < window.innerHeight - KEYBOARD_THRESHOLD
+        const open = isEditableFocused() && vvHeight < window.innerHeight - KEYBOARD_VIEWPORT_THRESHOLD_PX
         setIsKeyboardOpen((prev) => (prev !== open ? open : prev))
       }
       measureOpen()
@@ -169,7 +169,8 @@ export function useVisualViewport(enabled: boolean): boolean {
       // height bounces back. Clamp to `innerHeight` in that case so layout
       // stays put until the phantom resolves.
       const editableFocused = isEditableFocused()
-      const looksLikePhantomShrink = !!vv && !editableFocused && vvHeight < window.innerHeight - KEYBOARD_THRESHOLD
+      const looksLikePhantomShrink =
+        !!vv && !editableFocused && vvHeight < window.innerHeight - KEYBOARD_VIEWPORT_THRESHOLD_PX
       return looksLikePhantomShrink ? window.innerHeight : vvHeight
     }
 
@@ -188,11 +189,11 @@ export function useVisualViewport(enabled: boolean): boolean {
       const frozen = performance.now() < suppressWritesUntil
 
       // Primary: visual viewport smaller than layout viewport (Chrome, Safari)
-      let keyboardOpen = vv ? effectiveHeight < window.innerHeight - KEYBOARD_THRESHOLD : false
+      let keyboardOpen = vv ? effectiveHeight < window.innerHeight - KEYBOARD_VIEWPORT_THRESHOLD_PX : false
 
       // Fallback: viewport shrank from baseline (Firefox resizes both together)
       if (!keyboardOpen) {
-        keyboardOpen = effectiveHeight < baseHeight.current - KEYBOARD_THRESHOLD
+        keyboardOpen = effectiveHeight < baseHeight.current - KEYBOARD_VIEWPORT_THRESHOLD_PX
       }
 
       // During an optimistic close freeze the keyboard is closed as far as
@@ -319,7 +320,7 @@ export function useVisualViewport(enabled: boolean): boolean {
               // settled measurement is not worth a second resize → re-pin →
               // virtua re-measure cycle right after the optimistic snap (the
               // visible "content loads in again" double-snap on close).
-              if (Math.abs(settled - lastWrittenHeight) > RECONCILE_TOLERANCE_PX) applyHeight(settled)
+              if (Math.abs(settled - lastWrittenHeight) > VIEWPORT_RECONCILE_TOLERANCE_PX) applyHeight(settled)
             }, OPTIMISTIC_CLOSE_SUPPRESS_MS)
           }
         }, 0)
@@ -404,7 +405,7 @@ function isEditable(el: HTMLElement): boolean {
   return false
 }
 
-function isEditableFocused(): boolean {
+export function isEditableFocused(): boolean {
   const el = document.activeElement
   return el instanceof HTMLElement && isEditable(el)
 }

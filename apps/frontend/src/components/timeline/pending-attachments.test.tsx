@@ -3,7 +3,7 @@ import { render, screen, fireEvent, within } from "@testing-library/react"
 import { PendingAttachments } from "./pending-attachments"
 import type { PendingAttachment } from "@/hooks/use-attachments"
 import * as uploadManager from "@/lib/uploads/upload-manager"
-import * as useMobileModule from "@/hooks/use-mobile"
+import * as usePointerModule from "@/hooks/use-pointer"
 
 function attachment(overrides: Partial<PendingAttachment> = {}): PendingAttachment {
   return {
@@ -247,7 +247,7 @@ describe("desktop rollup", () => {
 
 describe("mobile rollup and drawer", () => {
   beforeEach(() => {
-    vi.spyOn(useMobileModule, "useIsMobile").mockReturnValue(true)
+    vi.spyOn(usePointerModule, "useIsMobileOrCoarse").mockReturnValue(true)
   })
 
   afterEach(() => {

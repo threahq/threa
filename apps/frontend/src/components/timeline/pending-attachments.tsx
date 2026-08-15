@@ -17,7 +17,7 @@ import { Button } from "@/components/ui/button"
 import { Drawer, DrawerContent, DrawerTitle } from "@/components/ui/drawer"
 import { useComposerPillDragHost } from "@/components/editor/composer-pill-dnd"
 import type { ComposerPillDragHost } from "@/components/editor/composer-pill-drag-host"
-import { useIsMobile } from "@/hooks/use-mobile"
+import { useIsMobileOrCoarse } from "@/hooks/use-pointer"
 import { useInputMode } from "@/hooks/use-input-mode"
 import { MediaGallery, type GalleryItem } from "@/components/image-gallery"
 import { pendingGalleryId } from "@/components/gallery/pending-gallery-id"
@@ -474,7 +474,7 @@ export function PendingAttachments({
   referenceCounts,
   resting = false,
 }: PendingAttachmentsProps) {
-  const isMobile = useIsMobile()
+  const isMobile = useIsMobileOrCoarse()
   const dragHost = useComposerPillDragHost()
   // Mobile space controls: the chips can be folded away to the one-line rollup
   // (the composer already competes with the keyboard for the viewport), and the

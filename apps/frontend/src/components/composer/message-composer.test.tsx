@@ -9,6 +9,7 @@ import type { CachedDraft } from "@/hooks"
 import type { PendingAttachment } from "@/hooks/use-attachments"
 import type { JSONContent } from "@threa/types"
 import * as useMobileModule from "@/hooks/use-mobile"
+import * as usePointerModule from "@/hooks/use-pointer"
 import * as contextsModule from "@/contexts"
 import * as editorModule from "@/components/editor"
 import * as micButtonModule from "./mic-button"
@@ -153,6 +154,13 @@ const MockEditorActionBar = (props: Record<string, unknown>) => (
     >
       Aa
     </button>
+    <button
+      type="button"
+      aria-label="Expand composer"
+      onClick={() => (props.onMobileExpandedChange as (v: boolean) => void)?.(true)}
+    >
+      Expand
+    </button>
     {props.trailingContent as any}
   </div>
 )
@@ -171,6 +179,7 @@ describe("MessageComposer", () => {
     isMobileMockValue = false
     vi.useRealTimers()
     vi.spyOn(useMobileModule, "useIsMobile").mockImplementation(() => isMobileMockValue)
+    vi.spyOn(usePointerModule, "useIsMobileOrCoarse").mockImplementation(() => isMobileMockValue)
     spyOnExport(editorModule, "RichEditor").mockReturnValue(MockRichEditor as unknown as typeof editorModule.RichEditor)
     spyOnExport(editorModule, "EditorToolbar").mockReturnValue(
       MockEditorToolbar as unknown as typeof editorModule.EditorToolbar
@@ -193,6 +202,49 @@ describe("MessageComposer", () => {
     onFileSelect: vi.fn(),
     onSubmit: vi.fn(),
     canSubmit: false,
+  }
+
+  const installOrientationViewport = (width: number, height: number, angle: number) => {
+    const originalVisualViewport = Object.getOwnPropertyDescriptor(window, "visualViewport")
+    const originalOrientation = Object.getOwnPropertyDescriptor(window, "orientation")
+    const originalScreenOrientation = Object.getOwnPropertyDescriptor(window.screen, "orientation")
+    const originalScreenWidth = Object.getOwnPropertyDescriptor(window.screen, "width")
+    const originalScreenHeight = Object.getOwnPropertyDescriptor(window.screen, "height")
+    const originalInnerWidth = Object.getOwnPropertyDescriptor(window, "innerWidth")
+    const originalInnerHeight = Object.getOwnPropertyDescriptor(window, "innerHeight")
+    const visualViewport = new EventTarget() as EventTarget & { height: number; width: number }
+    Object.defineProperty(window, "visualViewport", { configurable: true, value: visualViewport })
+    Object.defineProperty(window.screen, "orientation", { configurable: true, value: undefined })
+    Object.defineProperty(window.screen, "width", { configurable: true, value: 390 })
+    Object.defineProperty(window.screen, "height", { configurable: true, value: 800 })
+    const setViewport = (nextWidth: number, nextHeight: number, nextAngle: number, layoutHeight = nextHeight) => {
+      Object.defineProperty(window, "innerWidth", { configurable: true, value: nextWidth })
+      Object.defineProperty(window, "innerHeight", { configurable: true, value: layoutHeight })
+      Object.defineProperty(window, "orientation", { configurable: true, writable: true, value: nextAngle })
+      visualViewport.width = nextWidth
+      visualViewport.height = nextHeight
+    }
+    setViewport(width, height, angle)
+    return {
+      visualViewport,
+      setViewport,
+      restore: () => {
+        if (originalVisualViewport) Object.defineProperty(window, "visualViewport", originalVisualViewport)
+        else Reflect.deleteProperty(window, "visualViewport")
+        if (originalOrientation) Object.defineProperty(window, "orientation", originalOrientation)
+        else Reflect.deleteProperty(window, "orientation")
+        if (originalScreenOrientation) Object.defineProperty(window.screen, "orientation", originalScreenOrientation)
+        else Reflect.deleteProperty(window.screen, "orientation")
+        if (originalScreenWidth) Object.defineProperty(window.screen, "width", originalScreenWidth)
+        else Reflect.deleteProperty(window.screen, "width")
+        if (originalScreenHeight) Object.defineProperty(window.screen, "height", originalScreenHeight)
+        else Reflect.deleteProperty(window.screen, "height")
+        if (originalInnerWidth) Object.defineProperty(window, "innerWidth", originalInnerWidth)
+        else Reflect.deleteProperty(window, "innerWidth")
+        if (originalInnerHeight) Object.defineProperty(window, "innerHeight", originalInnerHeight)
+        else Reflect.deleteProperty(window, "innerHeight")
+      },
+    }
   }
 
   it("preserves active interim before the composer and editor refs unmount", () => {
@@ -865,8 +917,8 @@ describe("MessageComposer", () => {
       const handle = screen.getByTestId("composer-resize-handle")
       const root = container.firstElementChild as HTMLElement
       expect(root.style.maxHeight).toBe("")
-      // jsdom measures the shell at 0px, so the drag grows from the 140px floor:
-      // a 260px upward pull lands at max(0 + 260, 140) = 260.
+      // jsdom measures the shell at 0px, so the drag grows from the compact
+      // one-line floor: a 260px upward pull lands at 260px.
       fireEvent.pointerDown(handle, { pointerId: 1, clientY: 600 })
       fireEvent.pointerMove(handle, { pointerId: 1, clientY: 340 })
       expect(root.style.maxHeight).toBe("260px")
@@ -874,17 +926,15 @@ describe("MessageComposer", () => {
       expect(localStorage.getItem("threa:composer-drag-height")).toBe("260")
     })
 
-    it("clamps a downward drag to the minimum height", () => {
+    it("clamps a downward drag to the compact one-line composer", () => {
       const { container } = render(<MessageComposer {...defaultProps} workspaceId="ws_1" initialMobileChromeOpen />)
       const handle = screen.getByTestId("composer-resize-handle")
       fireEvent.pointerDown(handle, { pointerId: 1, clientY: 300 })
       fireEvent.pointerMove(handle, { pointerId: 1, clientY: 700 })
-      expect((container.firstElementChild as HTMLElement).style.maxHeight).toBe("140px")
+      expect((container.firstElementChild as HTMLElement).style.maxHeight).toBe("104px")
     })
 
     it("keeps the floor when 75% of a short viewport would dip below it", () => {
-      // Keyboard up on a short landscape viewport: the 75%-of-viewport ceiling
-      // would land under the 140px floor, inverting the clamp — the floor wins.
       const originalInnerHeight = window.innerHeight
       Object.defineProperty(window, "innerHeight", { configurable: true, value: 100 })
       try {
@@ -892,16 +942,223 @@ describe("MessageComposer", () => {
         const handle = screen.getByTestId("composer-resize-handle")
         fireEvent.pointerDown(handle, { pointerId: 1, clientY: 600 })
         fireEvent.pointerMove(handle, { pointerId: 1, clientY: 100 })
-        expect((container.firstElementChild as HTMLElement).style.maxHeight).toBe("140px")
+        expect((container.firstElementChild as HTMLElement).style.maxHeight).toBe("104px")
       } finally {
         Object.defineProperty(window, "innerHeight", { configurable: true, value: originalInnerHeight })
       }
     })
 
-    it("applies the persisted drag height on mount", () => {
-      localStorage.setItem("threa:composer-drag-height", "300")
-      const { container } = render(<MessageComposer {...defaultProps} workspaceId="ws_1" initialMobileChromeOpen />)
-      expect((container.firstElementChild as HTMLElement).style.maxHeight).toBe("300px")
+    it("keeps one scroll owner and anchors its visible content from the bottom while dragging", () => {
+      render(<MessageComposer {...defaultProps} workspaceId="ws_1" initialMobileChromeOpen />)
+      const handle = screen.getByTestId("composer-resize-handle")
+      const scroller = screen.getByTestId("composer-editor-scroll")
+      let clientHeight = 200
+      Object.defineProperties(scroller, {
+        clientHeight: { configurable: true, get: () => clientHeight },
+        scrollHeight: { configurable: true, get: () => 600 },
+      })
+      scroller.scrollTop = 360
+
+      fireEvent.pointerDown(handle, { pointerId: 1, clientY: 300 })
+      clientHeight = 100
+      fireEvent.pointerMove(handle, { pointerId: 1, clientY: 500 })
+
+      expect(scroller.scrollTop).toBe(460)
+      expect(scroller).toHaveClass("overflow-y-auto")
+      expect(scroller).not.toHaveClass("max-h-[200px]")
+    })
+
+    it("keeps mobile mode on a touch-primary landscape viewport", () => {
+      vi.spyOn(useMobileModule, "useIsMobile").mockReturnValue(false)
+      isMobileMockValue = true
+      const viewport = installOrientationViewport(800, 800, 90)
+      try {
+        const { container } = render(<MessageComposer {...defaultProps} workspaceId="ws_1" initialMobileChromeOpen />)
+        const root = container.firstElementChild as HTMLElement
+        expect(screen.getByTestId("composer-resize-handle")).toBeInTheDocument()
+        act(() => screen.getByTestId("rich-editor").focus())
+
+        viewport.setViewport(800, 400, 90, 800)
+        act(() => viewport.visualViewport.dispatchEvent(new Event("resize")))
+
+        expect(root.style.maxHeight).toBe("200px")
+      } finally {
+        viewport.restore()
+      }
+    })
+
+    it("settles resize-before-orientation against the rotated viewport", () => {
+      vi.useFakeTimers()
+      const viewport = installOrientationViewport(390, 800, 0)
+      try {
+        const { container } = render(<MessageComposer {...defaultProps} workspaceId="ws_1" initialMobileChromeOpen />)
+        const root = container.firstElementChild as HTMLElement
+        const editor = screen.getByTestId("rich-editor")
+        act(() => editor.focus())
+
+        viewport.setViewport(390, 400, 0)
+        act(() => viewport.visualViewport.dispatchEvent(new Event("resize")))
+        expect(root.style.maxHeight).toBe("200px")
+
+        viewport.setViewport(800, 200, 0, 390)
+        act(() => viewport.visualViewport.dispatchEvent(new Event("resize")))
+        viewport.setViewport(800, 200, 90, 390)
+        act(() => window.dispatchEvent(new Event("orientationchange")))
+        act(() => vi.advanceTimersByTime(600))
+        expect(root.style.maxHeight).toBe("104px")
+
+        viewport.setViewport(800, 390, 90)
+        act(() => viewport.visualViewport.dispatchEvent(new Event("resize")))
+        expect(root.style.maxHeight).toBe("")
+        expect(document.activeElement).toBe(editor)
+      } finally {
+        viewport.restore()
+      }
+    })
+
+    it("settles orientation-before-resize without losing the keyboard cap", () => {
+      vi.useFakeTimers()
+      const viewport = installOrientationViewport(800, 390, 90)
+      try {
+        const { container } = render(<MessageComposer {...defaultProps} workspaceId="ws_1" initialMobileChromeOpen />)
+        const root = container.firstElementChild as HTMLElement
+        const editor = screen.getByTestId("rich-editor")
+        act(() => editor.focus())
+
+        viewport.setViewport(800, 200, 90, 390)
+        act(() => viewport.visualViewport.dispatchEvent(new Event("resize")))
+        expect(root.style.maxHeight).toBe("104px")
+
+        viewport.setViewport(800, 200, 0, 800)
+        act(() => window.dispatchEvent(new Event("orientationchange")))
+        viewport.setViewport(390, 400, 0, 800)
+        act(() => viewport.visualViewport.dispatchEvent(new Event("resize")))
+        act(() => vi.advanceTimersByTime(600))
+        expect(root.style.maxHeight).toBe("200px")
+
+        viewport.setViewport(390, 800, 0)
+        act(() => viewport.visualViewport.dispatchEvent(new Event("resize")))
+        expect(root.style.maxHeight).toBe("")
+        expect(document.activeElement).toBe(editor)
+      } finally {
+        viewport.restore()
+      }
+    })
+
+    it("keeps the keyboard cap through a same-orientation split resize", () => {
+      vi.useFakeTimers()
+      const viewport = installOrientationViewport(390, 800, 0)
+      try {
+        const { container } = render(<MessageComposer {...defaultProps} workspaceId="ws_1" initialMobileChromeOpen />)
+        const root = container.firstElementChild as HTMLElement
+        act(() => screen.getByTestId("rich-editor").focus())
+
+        viewport.setViewport(390, 400, 0)
+        act(() => viewport.visualViewport.dispatchEvent(new Event("resize")))
+        expect(root.style.maxHeight).toBe("200px")
+
+        viewport.setViewport(500, 300, 0)
+        act(() => viewport.visualViewport.dispatchEvent(new Event("resize")))
+        act(() => vi.advanceTimersByTime(600))
+        expect(root.style.maxHeight).toBe("150px")
+
+        viewport.setViewport(500, 624, 0)
+        act(() => viewport.visualViewport.dispatchEvent(new Event("resize")))
+        expect(root.style.maxHeight).toBe("")
+      } finally {
+        viewport.restore()
+      }
+    })
+
+    it("commits an angle-only rotation after it settles", () => {
+      vi.useFakeTimers()
+      const viewport = installOrientationViewport(800, 390, 90)
+      try {
+        const { container } = render(<MessageComposer {...defaultProps} workspaceId="ws_1" initialMobileChromeOpen />)
+        const root = container.firstElementChild as HTMLElement
+        act(() => screen.getByTestId("rich-editor").focus())
+
+        viewport.setViewport(800, 390, 270)
+        act(() => window.dispatchEvent(new Event("orientationchange")))
+        act(() => vi.advanceTimersByTime(600))
+        viewport.setViewport(800, 250, 270, 390)
+        act(() => viewport.visualViewport.dispatchEvent(new Event("resize")))
+
+        expect(root.style.maxHeight).toBe("125px")
+      } finally {
+        viewport.restore()
+      }
+    })
+
+    it("reclamps the persisted height when the visible viewport shrinks", () => {
+      const originalVisualViewport = Object.getOwnPropertyDescriptor(window, "visualViewport")
+      const visualViewport = new EventTarget() as EventTarget & { height: number }
+      visualViewport.height = 800
+      Object.defineProperty(window, "visualViewport", { configurable: true, value: visualViewport })
+      localStorage.setItem("threa:composer-drag-height", "700")
+      try {
+        const { container } = render(<MessageComposer {...defaultProps} workspaceId="ws_1" initialMobileChromeOpen />)
+        const root = container.firstElementChild as HTMLElement
+        expect(root.style.maxHeight).toBe("600px")
+        act(() => screen.getByTestId("rich-editor").focus())
+
+        visualViewport.height = 400
+        act(() => visualViewport.dispatchEvent(new Event("resize")))
+
+        expect(root.style.maxHeight).toBe("200px")
+
+        const handle = screen.getByTestId("composer-resize-handle")
+        fireEvent.pointerDown(handle, { pointerId: 1, clientY: 300 })
+        fireEvent.pointerMove(handle, { pointerId: 1, clientY: 280 })
+        fireEvent.pointerUp(handle, { pointerId: 1, clientY: 280 })
+        expect(root.style.maxHeight).toBe("200px")
+        expect(localStorage.getItem("threa:composer-drag-height")).toBe("700")
+
+        visualViewport.height = 800
+        act(() => visualViewport.dispatchEvent(new Event("resize")))
+        expect(root.style.maxHeight).toBe("600px")
+      } finally {
+        if (originalVisualViewport) Object.defineProperty(window, "visualViewport", originalVisualViewport)
+        else Reflect.deleteProperty(window, "visualViewport")
+      }
+    })
+
+    it("reclamps expanded mode when the visible viewport shrinks", () => {
+      const originalVisualViewport = Object.getOwnPropertyDescriptor(window, "visualViewport")
+      const visualViewport = new EventTarget() as EventTarget & { height: number }
+      visualViewport.height = 800
+      Object.defineProperty(window, "visualViewport", { configurable: true, value: visualViewport })
+      try {
+        const { container } = render(<MessageComposer {...defaultProps} workspaceId="ws_1" initialMobileChromeOpen />)
+        const root = container.firstElementChild as HTMLElement
+        act(() => screen.getByTestId("rich-editor").focus())
+        fireEvent.click(screen.getByRole("button", { name: "Expand composer" }))
+        expect(root).toHaveAttribute("data-composer-expanded", "true")
+
+        visualViewport.height = 400
+        act(() => visualViewport.dispatchEvent(new Event("resize")))
+
+        expect(root.style.minHeight).toBe("200px")
+        expect(root.style.maxHeight).toBe("200px")
+
+        visualViewport.height = 800
+        act(() => visualViewport.dispatchEvent(new Event("resize")))
+        expect(root.style.minHeight).toBe("")
+        expect(root.style.maxHeight).toBe("")
+        expect(root).toHaveClass("min-h-[75dvh]", "max-h-[75dvh]")
+      } finally {
+        if (originalVisualViewport) Object.defineProperty(window, "visualViewport", originalVisualViewport)
+        else Reflect.deleteProperty(window, "visualViewport")
+      }
+    })
+
+    it("overlays a compact handle on the card instead of reserving a full-width row", () => {
+      render(<MessageComposer {...defaultProps} workspaceId="ws_1" initialMobileChromeOpen />)
+      const handle = screen.getByTestId("composer-resize-handle")
+      expect(handle.parentElement).toHaveAttribute("data-composer-card")
+      expect(handle).toHaveAttribute("data-suppress-pull-refresh")
+      expect(handle).toHaveClass("absolute", "w-16")
+      expect(handle).not.toHaveClass("-mx-3", "h-5")
     })
 
     it("shows the handle only while the mobile chrome is open", () => {
