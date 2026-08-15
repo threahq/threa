@@ -1,4 +1,8 @@
-import { beforeEach, describe, expect, it } from "vitest"
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
+import { act, renderHook, waitFor } from "@testing-library/react"
+import { createElement, type ReactNode } from "react"
+import { beforeEach, describe, expect, it, vi } from "vitest"
+import { ServicesProvider, type StreamService } from "@/contexts"
 import type { StreamEvent } from "@threa/types"
 import { db, type CachedEvent } from "@/db"
 import { loadStreamPrefix, loadStreamTail, unionStreamRanges } from "@/stores/stream-store"
@@ -13,7 +17,9 @@ import {
   getOldestSequence,
   getRenderableEvents,
   cacheToIndexedDB,
+  useEvents,
 } from "./use-events"
+import * as streamStoreModule from "@/stores/stream-store"
 
 describe("useEvents helpers", () => {
   it("uses the lower older-page floor when scrollback extends past bootstrap", () => {
@@ -278,6 +284,97 @@ describe("cacheToIndexedDB with eventWriteChunking on", () => {
 
     const healed = await db.events.get("evt_120")
     expect(healed?.payload).toMatchObject({ threadId: "str_t", replyCount: 3 })
+  })
+})
+
+describe("useEvents live-tail jump bridge", () => {
+  const workspaceId = "ws_push"
+  const streamId = "stream_push"
+  const getEventsAround = vi.fn<StreamService["getEventsAround"]>()
+
+  function event(id: string, sequence: number, targetStreamId = streamId): CachedEvent {
+    return {
+      id: `event_${id}`,
+      workspaceId,
+      streamId: targetStreamId,
+      sequence: String(sequence),
+      broadcastSequence: String(sequence),
+      _sequenceNum: sequence,
+      _cachedAt: 1,
+      eventType: "message_created",
+      payload: { messageId: `msg_${id}`, contentMarkdown: id },
+      actorId: "usr_1",
+      actorType: "user",
+      createdAt: new Date(2026, 0, 1, 0, 0, sequence).toISOString(),
+    }
+  }
+
+  function wrapper() {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    return function Wrapper({ children }: { children: ReactNode }) {
+      return createElement(
+        QueryClientProvider,
+        { client: queryClient },
+        createElement(ServicesProvider, {
+          services: { streams: { getEventsAround } as unknown as StreamService },
+          children,
+        })
+      )
+    }
+  }
+
+  beforeEach(async () => {
+    vi.restoreAllMocks()
+    getEventsAround.mockReset()
+    await db.events.clear()
+  })
+
+  it("renders a fetched latest message even when the IndexedDB observer misses the write", async () => {
+    const stale = event("stale", 1)
+    const target = event("target", 2)
+    vi.spyOn(streamStoreModule, "useStreamEvents").mockImplementation((requestedStreamId) =>
+      requestedStreamId === streamId ? [stale] : []
+    )
+    getEventsAround.mockResolvedValue({
+      events: [stale, target],
+      hasOlder: false,
+      hasNewer: false,
+    })
+
+    const { result } = renderHook(() => useEvents(workspaceId, streamId), { wrapper: wrapper() })
+    await waitFor(() => expect(result.current.events.map((candidate) => candidate.id)).toEqual([stale.id]))
+
+    let jumpResult: boolean | "superseded" | undefined
+    await act(async () => {
+      jumpResult = await result.current.jumpToEvent("msg_target")
+    })
+
+    expect(jumpResult).toBe(true)
+    expect(result.current.isJumpMode).toBe(false)
+    expect(result.current.events.map((candidate) => candidate.id)).toEqual([stale.id, target.id])
+    expect(getEventsAround).toHaveBeenCalledWith(workspaceId, streamId, "msg_target", 50)
+  })
+
+  it("does not carry a live-tail bridge into another stream", async () => {
+    const stale = event("stale", 1)
+    const target = event("target", 2)
+    const other = event("other", 1, "stream_other")
+    vi.spyOn(streamStoreModule, "useStreamEvents").mockImplementation((requestedStreamId) =>
+      requestedStreamId === streamId ? [stale] : [other]
+    )
+    getEventsAround.mockResolvedValue({ events: [stale, target], hasOlder: false, hasNewer: false })
+
+    const { result, rerender } = renderHook(({ currentStreamId }) => useEvents(workspaceId, currentStreamId), {
+      initialProps: { currentStreamId: streamId },
+      wrapper: wrapper(),
+    })
+    await act(async () => {
+      await result.current.jumpToEvent("msg_target")
+    })
+    expect(result.current.events.map((candidate) => candidate.id)).toContain(target.id)
+
+    rerender({ currentStreamId: "stream_other" })
+    await waitFor(() => expect(result.current.events.map((candidate) => candidate.id)).toEqual([other.id]))
   })
 })
 
