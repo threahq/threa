@@ -312,17 +312,17 @@ function WorkspaceSyncHandler({
     }
   }, [isOnline, socket, syncEngine])
 
-  // Visibility-resume trigger: on phone/tab resume after a background gap,
-  // probe the socket and refresh state. navigator.onLine doesn't flap in that
-  // scenario and socket.io's native pingTimeout can take 20–25s to notice a
-  // zombie transport. The 5s threshold is tight enough that a few seconds away
-  // (a notification-shade peek that delivered a push, a brief tab switch) still
-  // triggers a catch-up — the engine owns the whole resume window now, so there
-  // is no separate lighter freshness hook below the probe threshold. The hook
-  // stores the callback in a ref, so no memoization needed.
-  usePageResume(() => {
+  // Re-read visible event windows after every real away/back cycle: Android can
+  // freeze the PWA and let the service worker write a pushed message even during
+  // a sub-5s app switch. Socket probing and network catch-up keep the threshold
+  // because those are unnecessary for momentary focus loss.
+  usePageResume((awayDurationMs) => {
+    if (awayDurationMs < PAGE_RESUME_THRESHOLD_MS) {
+      void syncEngine.refreshVisibleEventReads()
+      return
+    }
     void syncEngine.handlePageResume()
-  }, PAGE_RESUME_THRESHOLD_MS)
+  }, 0)
 
   // No destroy effect — StrictMode's effect cleanup cycle would destroy the
   // engine before the socket connect effect re-runs. The engine is destroyed

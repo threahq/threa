@@ -441,6 +441,15 @@ export class SyncEngine {
     void this.runCatchUp("resume")
   }
 
+  async refreshVisibleEventReads(): Promise<void> {
+    if (this.isDestroyed) return
+    try {
+      await requestStreamEventReadRefresh(this.getVisibleServerStreamIds())
+    } catch (error) {
+      console.error("Stream event read refresh failed", { workspaceId: this.workspaceId, error })
+    }
+  }
+
   /**
    * Called when the page resumes from a long hidden period (e.g. phone
    * unlocked after app-switch). Probes the socket for liveness; if the
@@ -454,11 +463,7 @@ export class SyncEngine {
     // frozen the page, so Dexie's live query misses the cross-context wake-up.
     // Re-read mounted event windows even when the HTTP delta below is empty
     // because its cursor already sees that service-worker write.
-    void requestStreamEventReadRefresh(
-      [this.currentStreamId, ...this.visibleStreamIds].filter(
-        (streamId): streamId is string => !!streamId && isServerStreamId(streamId)
-      )
-    ).catch((error) => console.error("Stream event read refresh failed", { workspaceId: this.workspaceId, error }))
+    void this.refreshVisibleEventReads()
     if (!this.socket || !this.hasEverConnected) return
     // Warm the open stream over plain HTTP before anything socket-shaped runs.
     // The socket is the slowest thing on a phone resume — a zombie transport

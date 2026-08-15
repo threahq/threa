@@ -95,27 +95,37 @@ describe("SyncEngine.handlePageResume", () => {
     expect(refreshSpy).not.toHaveBeenCalled()
   })
 
-  it("wakes the current stream's IDB read before socket work", async () => {
+  it("wakes every visible stream source before socket work", async () => {
     const engine = new SyncEngine(makeDeps())
-    engine.setCurrentStreamId("stream_1")
+    engine.setCurrentStreamId("stream_route")
+    engine.setVisibleStreamIds(["stream_panel"])
+    engine.setBoardStreamIds(["stream_board"])
+    engine.setPanelStreamIds(["stream_conversation"])
     await new Promise((resolve) => setTimeout(resolve, 25))
-    await db.events.put({
-      id: "evt_resume",
-      workspaceId: "ws_1",
-      streamId: "stream_1",
-      sequence: "1",
-      _sequenceNum: 1,
-      eventType: "message_created",
-      payload: { messageId: "msg_resume", contentMarkdown: "new" },
-      actorId: "user_1",
-      actorType: "user",
-      createdAt: new Date().toISOString(),
-      _cachedAt: 1,
-    })
 
-    await engine.handlePageResume()
+    const streamIds = ["stream_route", "stream_panel", "stream_board", "stream_conversation"]
+    await db.events.bulkPut(
+      streamIds.map((streamId) => ({
+        id: `evt_${streamId}`,
+        workspaceId: "ws_1",
+        streamId,
+        sequence: "1",
+        _sequenceNum: 1,
+        eventType: "message_created" as const,
+        payload: { messageId: `msg_${streamId}`, contentMarkdown: "new" },
+        actorId: "user_1",
+        actorType: "user" as const,
+        createdAt: new Date().toISOString(),
+        _cachedAt: 1,
+      }))
+    )
 
-    await vi.waitFor(async () => expect((await db.events.get("evt_resume"))?._cachedAt).toBeGreaterThan(1))
+    await engine.refreshVisibleEventReads()
+
+    const refreshed = await db.events.bulkGet(streamIds.map((streamId) => `evt_${streamId}`))
+    expect(refreshed.map((event) => ({ streamId: event?.streamId, refreshed: (event?._cachedAt ?? 0) > 1 }))).toEqual(
+      streamIds.map((streamId) => ({ streamId, refreshed: true }))
+    )
   })
 
   it("soft refreshes visible data even before the first socket connect", async () => {
