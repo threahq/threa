@@ -131,11 +131,13 @@ test("mobile composer resizes from its top edge without losing the editor bottom
   await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2 + 120)
   await page.mouse.up()
 
+  await expect
+    .poll(async () => Math.abs((await measure()).scrollBottom - constrained.scrollBottom))
+    .toBeLessThanOrEqual(1)
   const after = await measure()
   expect(after.cardHeight).toBeLessThan(constrained.cardHeight)
   expect(after.cardTop).toBeGreaterThan(constrained.cardTop)
   expect(after.cardBottom).toBeCloseTo(constrained.cardBottom, 0)
-  expect(Math.abs(after.scrollBottom - constrained.scrollBottom)).toBeLessThanOrEqual(1)
   expect(await editor.textContent()).toBe(contentBeforeResize)
   await context.close()
 })

@@ -46,6 +46,7 @@ import { cn } from "@/lib/utils"
 import { COLLAPSED_COMPOSER_ROW, COLLAPSED_COMPOSER_SHADOW } from "@/components/composer/collapsed-composer-bar"
 import { isEmptyContent } from "@/lib/prosemirror-utils"
 import {
+  clearMobileComposerDragHeight,
   loadMobileComposerDragHeight,
   persistMobileComposerDragHeight,
   MOBILE_COMPOSER_DRAG_MIN_PX,
@@ -426,10 +427,27 @@ export function MessageComposer({
     drag.ended = true
     if (mobileDragHeightRef.current !== null) persistMobileComposerDragHeight(mobileDragHeightRef.current)
     const settledAnchor = resizeScrollBottomRef.current
+    const restoreAnchor = () => {
+      const editorScroll = mobileEditorScrollRef.current
+      if (!editorScroll || settledAnchor === null) return
+      editorScroll.scrollTop = Math.max(0, editorScroll.scrollHeight - editorScroll.clientHeight - settledAnchor)
+      mobileEditorBottomOffsetRef.current = settledAnchor
+    }
     requestAnimationFrame(() => {
-      if (resizeDragRef.current === drag) resizeDragRef.current = null
-      if (resizeScrollBottomRef.current === settledAnchor) resizeScrollBottomRef.current = null
+      restoreAnchor()
+      requestAnimationFrame(() => {
+        restoreAnchor()
+        if (resizeDragRef.current === drag) resizeDragRef.current = null
+        if (resizeScrollBottomRef.current === settledAnchor) resizeScrollBottomRef.current = null
+      })
     })
+  }, [])
+  const handleMobileExpandedChange = useCallback((next: boolean) => {
+    setMobileExpanded(next)
+    if (next) return
+    mobileDragHeightRef.current = null
+    setMobileDragHeightState(null)
+    clearMobileComposerDragHeight()
   }, [])
   // Expanded-mode FAB actions are always visible on desktop. Touch has no hover,
   // so a tap on the "+" toggles them instead.
@@ -499,7 +517,11 @@ export function MessageComposer({
       const measuredRootBottom = root?.getBoundingClientRect().bottom ?? 0
       const top = Math.max(zoneTop ?? viewportTop, viewportTop)
       const bottom = Math.min(measuredRootBottom, viewportBottom)
-      const available = bottom > top ? Math.round(bottom - top) : effectiveHeight
+      const parentPaddingTop = root?.parentElement
+        ? Number.parseFloat(getComputedStyle(root.parentElement).paddingTop)
+        : 0
+      const topInset = Number.isFinite(parentPaddingTop) ? parentPaddingTop : 0
+      const available = Math.max(0, (bottom > top ? Math.round(bottom - top) : effectiveHeight) - topInset)
       mobileFullscreenHeightRef.current = available
       setMobileFullscreenHeight((current) => (current === available ? current : available))
     }
@@ -1673,7 +1695,7 @@ export function MessageComposer({
                         formatOpen={formatOpen}
                         onFormatOpenChange={setFormatOpen}
                         mobileExpanded={mobileExpanded}
-                        onMobileExpandedChange={setMobileExpanded}
+                        onMobileExpandedChange={handleMobileExpandedChange}
                         showAttach
                         onAttachClick={handleAttachClick}
                         side={actionSide}
@@ -1727,11 +1749,13 @@ export function MessageComposer({
               </div>
             </div>
 
-            <div className={cn("flex px-1 pt-1", mirrored ? "justify-start" : "justify-end")}>
-              <span className="text-[10px] text-muted-foreground opacity-60 hidden sm:block select-none pointer-events-none">
-                {sendHint}
-              </span>
-            </div>
+            {!isMobile && (
+              <div className={cn("flex px-1 pt-1", mirrored ? "justify-start" : "justify-end")}>
+                <span className="text-[10px] text-muted-foreground opacity-60 select-none pointer-events-none">
+                  {sendHint}
+                </span>
+              </div>
+            )}
           </ComposerPillDndHost>
         </div>
       </StashedDraftsComposerBridgeContext.Provider>

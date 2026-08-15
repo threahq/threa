@@ -1146,7 +1146,8 @@ describe("MessageComposer", () => {
       }
     })
 
-    it("lets the minimize control leave fullscreen after the handle reaches its maximum", () => {
+    it("lets the minimize control return a max-dragged composer to its natural default", () => {
+      localStorage.setItem("threa:composer-drag-height", "260")
       const { container } = render(<MessageComposer {...defaultProps} workspaceId="ws_1" initialMobileChromeOpen />)
       const root = container.firstElementChild as HTMLElement
       const handle = screen.getByTestId("composer-resize-handle")
@@ -1161,6 +1162,7 @@ describe("MessageComposer", () => {
       expect(root).not.toHaveAttribute("data-composer-expanded")
       expect(root.style.minHeight).toBe("")
       expect(root.style.maxHeight).toBe("")
+      expect(localStorage.getItem("threa:composer-drag-height")).toBeNull()
     })
 
     it("ignores a stale keyboard-sized visual viewport until an editor is focused", () => {
@@ -1173,14 +1175,16 @@ describe("MessageComposer", () => {
       try {
         const { container } = render(<MessageComposer {...defaultProps} workspaceId="ws_1" initialMobileChromeOpen />)
         const root = container.firstElementChild as HTMLElement
+        root.parentElement!.style.paddingTop = "12px"
+        act(() => visualViewport.dispatchEvent(new Event("resize")))
 
         fireEvent.click(screen.getByRole("button", { name: "Expand composer" }))
-        expect(root.style.minHeight).toBe("800px")
-        expect(root.style.maxHeight).toBe("800px")
+        expect(root.style.minHeight).toBe("788px")
+        expect(root.style.maxHeight).toBe("788px")
 
         act(() => screen.getByTestId("rich-editor").focus())
-        expect(root.style.minHeight).toBe("400px")
-        expect(root.style.maxHeight).toBe("400px")
+        expect(root.style.minHeight).toBe("388px")
+        expect(root.style.maxHeight).toBe("388px")
       } finally {
         if (originalVisualViewport) Object.defineProperty(window, "visualViewport", originalVisualViewport)
         else Reflect.deleteProperty(window, "visualViewport")

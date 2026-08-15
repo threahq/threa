@@ -174,6 +174,15 @@ export function persistMobileComposerDragHeight(heightPx: number): void {
   }
 }
 
+export function clearMobileComposerDragHeight(): void {
+  if (typeof localStorage === "undefined") return
+  try {
+    localStorage.removeItem(STORAGE_KEY_DRAG_HEIGHT)
+  } catch {
+    // Storage failures shouldn't prevent the composer from minimizing.
+  }
+}
+
 /**
  * Persists a freshly-measured composer height for the next page load, keyed by
  * the current viewport so mobile and desktop never seed each other's fallback.
