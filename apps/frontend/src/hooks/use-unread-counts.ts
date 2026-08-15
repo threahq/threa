@@ -268,14 +268,22 @@ export function useUnreadCounts(workspaceId: string) {
     },
   })
 
-  // Mark a message (and everything after it) unread. The response carries
-  // participation only — no watermark — so nothing moves optimistically: the
-  // `stream:read_set` echo SETs the standalone frontier (an authorized downward
-  // move) and raises the count on the round-trip. Membership is never written on
-  // a read (membership ≠ read state).
   const markUnreadMutation = useMutation({
-    mutationFn: ({ streamId, messageId }: { streamId: string; messageId: string }) =>
-      streamService.markUnread(workspaceId, streamId, messageId),
+    mutationFn: async ({ streamId, messageId }: { streamId: string; messageId: string }) => {
+      const startedAt = Date.now()
+      const result = await streamService.markUnread(workspaceId, streamId, messageId)
+      return { ...result, startedAt }
+    },
+    onSuccess: async ({ readState, startedAt }, { streamId }) => {
+      if (!readState || (await readStateTouchedSince(workspaceId, streamId, startedAt))) return
+      const now = Date.now()
+      await putReadStateIdb(workspaceId, streamId, readState, now)
+      mergeReadStateIntoBootstrapCache(queryClient, workspaceId, streamId, readState)
+      queryClient.setQueryData(streamKeys.bootstrap(workspaceId, streamId), (old: unknown) => {
+        if (!old || typeof old !== "object") return old
+        return { ...old, readState }
+      })
+    },
   })
 
   const markAllAsReadMutation = useMutation({
@@ -385,8 +393,8 @@ export function useUnreadCounts(workspaceId: string) {
       // and reports the whole stream — including the user's own messages — as
       // unread. The auto-read effect re-fires with the real id once the server echo
       // swaps it in.
-      if (lastEventId.startsWith("temp_")) return
-      markAsReadMutation.mutate({ streamId, lastEventId, partial: opts?.partial })
+      if (lastEventId.startsWith("temp_")) return Promise.resolve()
+      const commit = markAsReadMutation.mutateAsync({ streamId, lastEventId, partial: opts?.partial })
       // Dismiss any push notification for this stream — advancing the read pointer
       // (auto-read, manual "Mark as read", or Escape) means the user is here, so
       // the banner is noise. Centralized on this single-stream read-advance funnel
@@ -395,6 +403,7 @@ export function useUnreadCounts(workspaceId: string) {
       // their own socket echo when open, or the bootstrap sweep on next open
       // (lib/notification-sweep.ts) — never via push, which would burn quota.
       navigator.serviceWorker?.controller?.postMessage({ type: SW_MSG_CLEAR_NOTIFICATIONS, streamId })
+      return commit.then(() => undefined)
     },
     [markAsReadMutation]
   )
@@ -404,9 +413,8 @@ export function useUnreadCounts(workspaceId: string) {
   }, [markAllAsReadMutation])
 
   const markUnread = useCallback(
-    (streamId: string, messageId: string) => {
-      markUnreadMutation.mutate({ streamId, messageId })
-    },
+    (streamId: string, messageId: string) =>
+      markUnreadMutation.mutateAsync({ streamId, messageId }).then(({ readState }) => readState?.lastReadEventId),
     [markUnreadMutation]
   )
 

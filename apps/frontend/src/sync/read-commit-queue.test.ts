@@ -1,7 +1,12 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest"
-import { ReadCommitQueue, READ_COMMIT_DEBOUNCE_MS } from "./read-commit-queue"
+import {
+  ReadCommitQueue,
+  READ_COMMIT_DEBOUNCE_MS,
+  READ_COMMIT_MAX_RETRIES,
+  READ_COMMIT_RETRY_MS,
+} from "./read-commit-queue"
 
-const commit = vi.fn()
+const commit = vi.fn<(streamId: string, lastEventId: string, opts: { partial: boolean }) => Promise<void>>()
 
 function makeQueue() {
   return new ReadCommitQueue({
@@ -16,6 +21,7 @@ describe("ReadCommitQueue", () => {
   beforeEach(() => {
     vi.useFakeTimers()
     commit.mockReset()
+    commit.mockResolvedValue(undefined)
     queue = makeQueue()
   })
 
@@ -24,7 +30,7 @@ describe("ReadCommitQueue", () => {
     vi.useRealTimers()
   })
 
-  it("debounces a report and commits the newest mark (coalescing per stream)", () => {
+  it("debounces a report and commits the newest mark (coalescing per stream)", async () => {
     queue.report("stream_a", "event_1", true)
     vi.advanceTimersByTime(READ_COMMIT_DEBOUNCE_MS - 100)
     queue.report("stream_a", "event_2", false)
@@ -33,6 +39,7 @@ describe("ReadCommitQueue", () => {
 
     vi.advanceTimersByTime(100)
     expect(commit).toHaveBeenCalledExactlyOnceWith("stream_a", "event_2", { partial: false })
+    await vi.runAllTimersAsync()
     expect(queue.lastCommitted("stream_a")).toEqual({ lastEventId: "event_2", partial: false })
   })
 
@@ -70,12 +77,90 @@ describe("ReadCommitQueue", () => {
     expect(commit).toHaveBeenCalledWith("stream_b", "event_b", { partial: true })
   })
 
-  it("resetCommitted forgets the record so a fresh open can re-commit the same mark", () => {
+  it("resetCommitted forgets the record so a fresh open can re-commit the same mark", async () => {
     queue.report("stream_a", "event_1", false)
-    vi.advanceTimersByTime(READ_COMMIT_DEBOUNCE_MS)
+    await vi.advanceTimersByTimeAsync(READ_COMMIT_DEBOUNCE_MS)
     expect(queue.lastCommitted("stream_a")).not.toBeNull()
     queue.resetCommitted("stream_a")
     expect(queue.lastCommitted("stream_a")).toBeNull()
+  })
+
+  it("retries a rejected request and records it only after acknowledgement", async () => {
+    commit.mockRejectedValueOnce(new Error("offline")).mockResolvedValueOnce(undefined)
+    queue.report("stream_a", "event_1", false)
+
+    await vi.advanceTimersByTimeAsync(READ_COMMIT_DEBOUNCE_MS)
+    expect(queue.lastCommitted("stream_a")).toBeNull()
+
+    await vi.advanceTimersByTimeAsync(READ_COMMIT_RETRY_MS)
+    expect(commit).toHaveBeenCalledTimes(2)
+    expect(queue.lastCommitted("stream_a")).toEqual({ lastEventId: "event_1", partial: false })
+  })
+
+  it("drops a failed older retry when a newer frontier is already queued", async () => {
+    let rejectRead!: (error: Error) => void
+    commit.mockImplementationOnce(() => new Promise<void>((_resolve, reject) => (rejectRead = reject)))
+    queue.report("stream_a", "event_1", true)
+    await vi.advanceTimersByTimeAsync(READ_COMMIT_DEBOUNCE_MS)
+
+    queue.report("stream_a", "event_2", false)
+    await vi.advanceTimersByTimeAsync(READ_COMMIT_DEBOUNCE_MS)
+    rejectRead(new Error("offline"))
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(commit.mock.calls).toEqual([
+      ["stream_a", "event_1", { partial: true }],
+      ["stream_a", "event_2", { partial: false }],
+    ])
+    await vi.advanceTimersByTimeAsync(READ_COMMIT_RETRY_MS * 2)
+    expect(commit).toHaveBeenCalledTimes(2)
+  })
+
+  it("wakes an exhausted failed mark when the app regains focus", async () => {
+    commit.mockRejectedValue(new Error("offline"))
+    queue.report("stream_a", "event_1", false)
+    await vi.advanceTimersByTimeAsync(
+      READ_COMMIT_DEBOUNCE_MS + READ_COMMIT_RETRY_MS * (2 ** READ_COMMIT_MAX_RETRIES - 1)
+    )
+    expect(commit).toHaveBeenCalledTimes(READ_COMMIT_MAX_RETRIES + 1)
+    expect(queue.lastCommitted("stream_a")).toBeNull()
+
+    commit.mockResolvedValue(undefined)
+    window.dispatchEvent(new Event("focus"))
+    await Promise.resolve()
+
+    expect(commit).toHaveBeenCalledTimes(READ_COMMIT_MAX_RETRIES + 2)
+    expect(queue.lastCommitted("stream_a")).toEqual({ lastEventId: "event_1", partial: false })
+  })
+
+  it("serializes explicit unread behind an in-flight read and blocks reports until the pointer changes", async () => {
+    let releaseRead!: () => void
+    commit.mockImplementationOnce(() => new Promise<void>((resolve) => (releaseRead = resolve)))
+    queue.report("stream_a", "event_3", false)
+    await vi.advanceTimersByTimeAsync(READ_COMMIT_DEBOUNCE_MS)
+
+    const order: string[] = []
+    const unread = queue.runExplicitUnread("stream_a", "event_3", async () => {
+      order.push("unread")
+      return "event_1"
+    })
+    queue.report("stream_a", "event_4", false)
+    await vi.advanceTimersByTimeAsync(READ_COMMIT_DEBOUNCE_MS)
+    expect(order).toEqual([])
+
+    releaseRead()
+    await unread
+    expect(order).toEqual(["unread"])
+
+    queue.report("stream_a", "event_4", false)
+    await vi.advanceTimersByTimeAsync(READ_COMMIT_DEBOUNCE_MS)
+    expect(commit).toHaveBeenCalledTimes(1)
+
+    queue.observeReadPointer("stream_a", "event_1")
+    queue.report("stream_a", "event_4", false)
+    await vi.advanceTimersByTimeAsync(READ_COMMIT_DEBOUNCE_MS)
+    expect(commit).toHaveBeenCalledTimes(2)
   })
 
   it("dispose flushes pending marks (a microtask later — it can run in render) and refuses further reports", async () => {

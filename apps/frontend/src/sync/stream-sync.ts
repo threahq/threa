@@ -687,9 +687,10 @@ export async function applyStreamBootstrap(
 ): Promise<void> {
   const now = Date.now()
   let preservedReadState: StreamReadFrontier | undefined
+  let appliedUnreadCount = false
   await db.transaction(
     "rw",
-    [db.events, db.streams, db.streamReadState, db.pendingMessages, db.pendingOperations, db.slots],
+    [db.events, db.streams, db.streamReadState, db.unreadState, db.pendingMessages, db.pendingOperations, db.slots],
     async () => {
       preservedReadState = await writeBootstrapEventsAndStream(
         workspaceId,
@@ -698,10 +699,28 @@ export async function applyStreamBootstrap(
         now,
         options?.fetchStartedAt
       )
+      const unreadState = await db.unreadState.get(workspaceId)
+      const touchedAt = unreadState?.counterTouchedAt?.[streamId]
+      if (
+        unreadState &&
+        (options?.fetchStartedAt === undefined || touchedAt === undefined || touchedAt < options.fetchStartedAt)
+      ) {
+        await db.unreadState.put({
+          ...unreadState,
+          unreadCounts: { ...unreadState.unreadCounts, [streamId]: bootstrap.unreadCount },
+          _cachedAt: now,
+        })
+        appliedUnreadCount = true
+      }
     }
   )
   if (preservedReadState && options?.queryClient) {
     mergeReadStateIntoBootstrapCache(options.queryClient, workspaceId, streamId, preservedReadState)
+  }
+  if (appliedUnreadCount && options?.queryClient) {
+    options.queryClient.setQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap(workspaceId), (current) =>
+      current ? { ...current, unreadCounts: { ...current.unreadCounts, [streamId]: bootstrap.unreadCount } } : current
+    )
   }
   seedStreamActiveCall(workspaceId, streamId, bootstrap)
 }

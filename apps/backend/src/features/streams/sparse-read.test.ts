@@ -167,7 +167,7 @@ describe("applySparseUnread", () => {
     spyOn(StreamEventRepository, "findEarliestMessageEvent").mockResolvedValue({ sequence: 30n } as never)
     spyOn(StreamEventRepository, "findPreviousMessageEvent").mockResolvedValue({ id: "evt_4", sequence: 25n } as never)
     spyOn(StreamEventRepository, "countMessagesThrough").mockResolvedValue(2)
-    const readStateSet = spyOn(ReadStateRepository, "set").mockResolvedValue(undefined)
+    const readStateSet = spyOn(ReadStateRepository, "set").mockResolvedValue(null)
     const outboxInsert = spyOn(OutboxRepository, "insert").mockResolvedValue(undefined as never)
 
     const snapshot = await applySparseUnread(db, {
@@ -197,7 +197,7 @@ describe("applySparseUnread", () => {
     spyOn(StreamEventRepository, "findEarliestMessageEvent").mockResolvedValue({ sequence: 10n } as never)
     spyOn(StreamEventRepository, "findPreviousMessageEvent").mockResolvedValue(null)
     spyOn(StreamEventRepository, "countMessagesThrough").mockResolvedValue(0)
-    const readStateSet = spyOn(ReadStateRepository, "set").mockResolvedValue(undefined)
+    const readStateSet = spyOn(ReadStateRepository, "set").mockResolvedValue(null)
 
     await applySparseUnread(db, { workspaceId: "ws_1", streamId: "stream_1", memberId: "usr_1", messageIds: ["msg_1"] })
 
@@ -216,7 +216,7 @@ describe("applySparseUnread", () => {
     spyOn(StreamEventRepository, "findEarliestMessageEvent").mockResolvedValue({ sequence: 30n } as never)
     spyOn(StreamEventRepository, "countMessagesThrough").mockResolvedValue(1)
     spyOn(SparseReadRepository, "listOverlayIds").mockResolvedValue(["msg_9"])
-    const readStateSet = spyOn(ReadStateRepository, "set").mockResolvedValue(undefined)
+    const readStateSet = spyOn(ReadStateRepository, "set").mockResolvedValue(null)
     const outboxInsert = spyOn(OutboxRepository, "insert").mockResolvedValue(undefined as never)
 
     const snapshot = await applySparseUnread(db, {

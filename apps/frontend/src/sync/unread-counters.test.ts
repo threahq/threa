@@ -65,64 +65,59 @@ describe("applyStreamActivityOrdinal", () => {
   const seeded = makeState({ unreadCounts: { s1: 1 }, latestOrdinals: { s1: 5 } })
 
   it("sets unread from the ordinal delta for others' messages", () => {
-    const next = applyStreamActivityOrdinal(seeded, "s1", 6, { isOwnMessage: false, isViewing: false })
+    const next = applyStreamActivityOrdinal(seeded, "s1", 6, { isOwnMessage: false })
     expect(next.unreadCounts.s1).toBe(2)
     expect(next.latestOrdinals?.s1).toBe(6)
   })
 
   it("converges on duplicate apply", () => {
-    const once = applyStreamActivityOrdinal(seeded, "s1", 6, { isOwnMessage: false, isViewing: false })
-    const twice = applyStreamActivityOrdinal(once, "s1", 6, { isOwnMessage: false, isViewing: false })
+    const once = applyStreamActivityOrdinal(seeded, "s1", 6, { isOwnMessage: false })
+    const twice = applyStreamActivityOrdinal(once, "s1", 6, { isOwnMessage: false })
     expect(twice).toEqual(once)
   })
 
   it("converges on out-of-order apply (sweep-rescued late sync ids)", () => {
     const inOrder = applyStreamActivityOrdinal(
-      applyStreamActivityOrdinal(seeded, "s1", 6, { isOwnMessage: false, isViewing: false }),
+      applyStreamActivityOrdinal(seeded, "s1", 6, { isOwnMessage: false }),
       "s1",
       7,
-      { isOwnMessage: false, isViewing: false }
+      { isOwnMessage: false }
     )
     const outOfOrder = applyStreamActivityOrdinal(
-      applyStreamActivityOrdinal(seeded, "s1", 7, { isOwnMessage: false, isViewing: false }),
+      applyStreamActivityOrdinal(seeded, "s1", 7, { isOwnMessage: false }),
       "s1",
       6,
-      { isOwnMessage: false, isViewing: false }
+      { isOwnMessage: false }
     )
     expect(outOfOrder).toEqual(inOrder)
     expect(outOfOrder.unreadCounts.s1).toBe(3)
   })
 
   it("advances the read position to the message for own sends (server auto-advance mirror)", () => {
-    const next = applyStreamActivityOrdinal(seeded, "s1", 6, { isOwnMessage: true, isViewing: false })
+    const next = applyStreamActivityOrdinal(seeded, "s1", 6, { isOwnMessage: true })
     expect(next.unreadCounts.s1).toBe(0)
     expect(next.latestOrdinals?.s1).toBe(6)
   })
 
   it("keeps newer messages unread when an own send applies out of order", () => {
-    const other = applyStreamActivityOrdinal(seeded, "s1", 7, { isOwnMessage: false, isViewing: false })
-    const own = applyStreamActivityOrdinal(other, "s1", 6, { isOwnMessage: true, isViewing: false })
+    const other = applyStreamActivityOrdinal(seeded, "s1", 7, { isOwnMessage: false })
+    const own = applyStreamActivityOrdinal(other, "s1", 6, { isOwnMessage: true })
     expect(own.unreadCounts.s1).toBe(1)
     expect(own.latestOrdinals?.s1).toBe(7)
   })
 
-  it("pins the read position to latest while viewing", () => {
-    const next = applyStreamActivityOrdinal(seeded, "s1", 6, { isOwnMessage: false, isViewing: true })
-    expect(next.unreadCounts.s1).toBe(0)
-  })
-
   it("seeds a baseline as the legacy increment when none exists", () => {
     const noBaseline = makeState({ unreadCounts: { s1: 2 }, latestOrdinals: undefined })
-    const next = applyStreamActivityOrdinal(noBaseline, "s1", 9, { isOwnMessage: false, isViewing: false })
+    const next = applyStreamActivityOrdinal(noBaseline, "s1", 9, { isOwnMessage: false })
     expect(next.unreadCounts.s1).toBe(3)
     expect(next.latestOrdinals?.s1).toBe(9)
-    const again = applyStreamActivityOrdinal(next, "s1", 9, { isOwnMessage: false, isViewing: false })
+    const again = applyStreamActivityOrdinal(next, "s1", 9, { isOwnMessage: false })
     expect(again.unreadCounts.s1).toBe(3)
   })
 
   it("seeds a zero-unread baseline for own sends without a baseline", () => {
     const noBaseline = makeState({ unreadCounts: { s1: 2 }, latestOrdinals: undefined })
-    const next = applyStreamActivityOrdinal(noBaseline, "s1", 9, { isOwnMessage: true, isViewing: false })
+    const next = applyStreamActivityOrdinal(noBaseline, "s1", 9, { isOwnMessage: true })
     expect(next.unreadCounts.s1).toBe(0)
   })
 })
@@ -365,7 +360,7 @@ describe("sparse read overlay invariant", () => {
         readMessageIds: { s1: ["m8", "m9"] },
       })
       // A new other-message arrives: unread rises by one, overlay unchanged.
-      const next = applyStreamActivityOrdinal(seeded, "s1", 6, { isOwnMessage: false, isViewing: false })
+      const next = applyStreamActivityOrdinal(seeded, "s1", 6, { isOwnMessage: false })
       expect(next.unreadCounts.s1).toBe(2)
       expect(next.latestOrdinals?.s1).toBe(6)
       expect(next.readMessageIds?.s1).toEqual(["m8", "m9"])
@@ -377,8 +372,8 @@ describe("sparse read overlay invariant", () => {
         latestOrdinals: { s1: 5 },
         readMessageIds: { s1: ["m9"] },
       })
-      const once = applyStreamActivityOrdinal(seeded, "s1", 6, { isOwnMessage: false, isViewing: false })
-      const twice = applyStreamActivityOrdinal(once, "s1", 6, { isOwnMessage: false, isViewing: false })
+      const once = applyStreamActivityOrdinal(seeded, "s1", 6, { isOwnMessage: false })
+      const twice = applyStreamActivityOrdinal(once, "s1", 6, { isOwnMessage: false })
       expect(twice).toEqual(once)
     })
   })
@@ -527,7 +522,7 @@ describe("applyMovedSourceOrdinal", () => {
 
   it("heals the phantom-unread move sequence (activity 2 → move to 1 → read 1 → 0)", () => {
     let state = makeState({ unreadCounts: { s1: 1 }, latestOrdinals: { s1: 1 } })
-    state = applyStreamActivityOrdinal(state, "s1", 2, { isOwnMessage: false, isViewing: false })
+    state = applyStreamActivityOrdinal(state, "s1", 2, { isOwnMessage: false })
     expect(state.unreadCounts.s1).toBe(2)
     state = applyMovedSourceOrdinal(state, "s1", 1)
     expect(state.latestOrdinals?.s1).toBe(1)
@@ -563,7 +558,7 @@ describe("applyMovedSourceOrdinal", () => {
 
   it("without the source-ordinal fix the read cannot clear the phantom (regression guard)", () => {
     let state = makeState({ unreadCounts: { s1: 1 }, latestOrdinals: { s1: 1 } })
-    state = applyStreamActivityOrdinal(state, "s1", 2, { isOwnMessage: false, isViewing: false })
+    state = applyStreamActivityOrdinal(state, "s1", 2, { isOwnMessage: false })
     // Skip applyMovedSourceOrdinal: latest stays inflated at 2 (max-merge only).
     const read = applyStreamReadOrdinal(state, "s1", 1)
     expect(read.unreadCounts.s1).toBe(1) // stuck — the exact bug the fix removes
@@ -764,15 +759,15 @@ describe("coalesced live commit", () => {
 
     const batch = new LiveCommitBatch(queryClient, workspaceId)
     // Two activities for one stream, delivered in the wrong order in one task.
-    batch.applyCounter((state) => applyStreamActivityOrdinal(state, "s1", 7, { isOwnMessage: false, isViewing: false }))
-    batch.applyCounter((state) => applyStreamActivityOrdinal(state, "s1", 6, { isOwnMessage: false, isViewing: false }))
+    batch.applyCounter((state) => applyStreamActivityOrdinal(state, "s1", 7, { isOwnMessage: false }))
+    batch.applyCounter((state) => applyStreamActivityOrdinal(state, "s1", 6, { isOwnMessage: false }))
     await batch.flush()
 
     const perEvent = applyStreamActivityOrdinal(
-      applyStreamActivityOrdinal(seeded, "s1", 7, { isOwnMessage: false, isViewing: false }),
+      applyStreamActivityOrdinal(seeded, "s1", 7, { isOwnMessage: false }),
       "s1",
       6,
-      { isOwnMessage: false, isViewing: false }
+      { isOwnMessage: false }
     )
     const folded = queryClient.getQueryData<{
       unreadCounts: Record<string, number>

@@ -61,6 +61,7 @@ import {
   type JSONContent,
   type AuthorType,
   type DescriptionSetEventPayload,
+  type StreamReadFrontier,
   type StreamReadFrontierSnapshot,
   TitleSources,
 } from "@threa/types"
@@ -148,6 +149,11 @@ const createChannelParamsSchema = z.object({
 })
 
 export type CreateChannelParams = z.infer<typeof createChannelParamsSchema>
+
+export interface MarkUnreadResult {
+  membership: StreamMember | null
+  readState: StreamReadFrontier
+}
 
 const createThreadParamsSchema = z.object({
   workspaceId: z.string(),
@@ -2118,62 +2124,72 @@ export class StreamService {
     memberId: string,
     eventId: string
   ): Promise<StreamMember | null> {
-    return withTransaction(this.pool, async (client) => {
-      // The read pointer must reference a real event in THIS stream. A client can
-      // briefly hold an optimistic event id (temp_…) as its frontier right after a
-      // send, before the server echo swaps it for the persisted id. Persisting an
-      // id with no stream_events row pins last_read_seq to 0 (the unread query's
-      // COALESCE(sequence, 0)), so every message — including the author's own —
-      // reports unread until the watermark is overwritten. Resolve first, no-op on
-      // a miss rather than corrupting the pointer.
-      const position = await StreamEventRepository.getMessageOrdinalForEvent(client, streamId, eventId)
-      if (!position) {
-        logger.warn({ workspaceId, streamId, memberId, eventId }, "Ignored mark-as-read: event not found in stream")
-        return StreamMemberRepository.findByStreamAndMember(client, streamId, memberId)
-      }
+    return withTransaction(this.pool, (client) =>
+      this.markAsReadInTransaction(client, workspaceId, streamId, memberId, eventId)
+    )
+  }
 
-      // Read state is user-anchored, not membership-gated: the advance runs for
-      // every viewer with access (validated in the handler) whether or not a
-      // membership row exists. Membership is fetched read-only for participation
-      // only — it is never written on a read (membership ≠ access ≠ read state).
-      const membership = await StreamMemberRepository.findByStreamAndMember(client, streamId, memberId)
-      // Source the payload from the post-write row: the store is monotonic, so a
-      // stale-device advance is rejected and the post-write frontier — not the raw
-      // event — is the read position this user's other sessions adopt.
-      const postWrite = await ReadStateRepository.advance(client, streamId, memberId, eventId)
-      let readEventId = eventId
-      let readPosition = position
-      if (postWrite?.lastReadEventId && postWrite.lastReadEventId !== eventId) {
-        const resolved = await StreamEventRepository.getMessageOrdinalForEvent(
-          client,
-          streamId,
-          postWrite.lastReadEventId
-        )
-        if (resolved) {
-          readEventId = postWrite.lastReadEventId
-          readPosition = resolved
-        }
-      }
-      // Overlay invariant: every overlay row sits strictly above the watermark.
-      // Advancing the watermark absorbs the run at/below it, so prune those rows
-      // in the same transaction at the effective (post-write) frontier; the
-      // remaining overlay is the absolute set the client keeps.
-      await SparseReadRepository.pruneAtOrBelow(client, streamId, memberId, readPosition.sequence)
-      const readMessageIds = await SparseReadRepository.listOverlayIds(client, streamId, memberId)
-      // Absolute read position (sync phase 2c): clients derive unread as
-      // latestOrdinal - lastReadOrdinal, so the event carries where this read
-      // lands in message-ordinal space.
-      await OutboxRepository.insert(client, "stream:read", {
-        workspaceId,
-        authorId: memberId,
+  async markAsReadInTransaction(
+    client: Querier,
+    workspaceId: string,
+    streamId: string,
+    memberId: string,
+    eventId: string
+  ): Promise<StreamMember | null> {
+    // The read pointer must reference a real event in THIS stream. A client can
+    // briefly hold an optimistic event id (temp_…) as its frontier right after a
+    // send, before the server echo swaps it for the persisted id. Persisting an
+    // id with no stream_events row pins last_read_seq to 0 (the unread query's
+    // COALESCE(sequence, 0)), so every message — including the author's own —
+    // reports unread until the watermark is overwritten. Resolve first, no-op on
+    // a miss rather than corrupting the pointer.
+    const position = await StreamEventRepository.getMessageOrdinalForEvent(client, streamId, eventId)
+    if (!position) {
+      logger.warn({ workspaceId, streamId, memberId, eventId }, "Ignored mark-as-read: event not found in stream")
+      return StreamMemberRepository.findByStreamAndMember(client, streamId, memberId)
+    }
+
+    // Read state is user-anchored, not membership-gated: the advance runs for
+    // every viewer with access (validated in the handler) whether or not a
+    // membership row exists. Membership is fetched read-only for participation
+    // only — it is never written on a read (membership ≠ access ≠ read state).
+    const membership = await StreamMemberRepository.findByStreamAndMember(client, streamId, memberId)
+    // Source the payload from the post-write row: the store is monotonic, so a
+    // stale-device advance is rejected and the post-write frontier — not the raw
+    // event — is the read position this user's other sessions adopt.
+    const postWrite = await ReadStateRepository.advance(client, streamId, memberId, eventId)
+    let readEventId = eventId
+    let readPosition = position
+    if (postWrite?.lastReadEventId && postWrite.lastReadEventId !== eventId) {
+      const resolved = await StreamEventRepository.getMessageOrdinalForEvent(
+        client,
         streamId,
-        lastReadEventId: readEventId,
-        lastReadSequence: readPosition.sequence.toString(),
-        lastReadOrdinal: readPosition.messageOrdinal,
-        readMessageIds,
-      })
-      return membership
+        postWrite.lastReadEventId
+      )
+      if (resolved) {
+        readEventId = postWrite.lastReadEventId
+        readPosition = resolved
+      }
+    }
+    // Overlay invariant: every overlay row sits strictly above the watermark.
+    // Advancing the watermark absorbs the run at/below it, so prune those rows
+    // in the same transaction at the effective (post-write) frontier; the
+    // remaining overlay is the absolute set the client keeps.
+    await SparseReadRepository.pruneAtOrBelow(client, streamId, memberId, readPosition.sequence)
+    const readMessageIds = await SparseReadRepository.listOverlayIds(client, streamId, memberId)
+    // Absolute read position (sync phase 2c): clients derive unread as
+    // latestOrdinal - lastReadOrdinal, so the event carries where this read
+    // lands in message-ordinal space.
+    await OutboxRepository.insert(client, "stream:read", {
+      workspaceId,
+      authorId: memberId,
+      streamId,
+      lastReadEventId: readEventId,
+      lastReadSequence: readPosition.sequence.toString(),
+      lastReadOrdinal: readPosition.messageOrdinal,
+      readMessageIds,
     })
+    return membership
   }
 
   /**
@@ -2191,7 +2207,7 @@ export class StreamService {
     streamId: string,
     memberId: string,
     messageId: string
-  ): Promise<StreamMember | null> {
+  ): Promise<MarkUnreadResult> {
     return withTransaction(this.pool, async (client) => {
       const messageEvent = await StreamEventRepository.findByMessageId(client, streamId, messageId)
       if (!messageEvent) throw new MessageNotFoundError()
@@ -2206,7 +2222,7 @@ export class StreamService {
       // read-only for participation, never written — membership ≠ read state).
       // Explicit unread is one of the sanctioned downward moves.
       const membership = await StreamMemberRepository.findByStreamAndMember(client, streamId, memberId)
-      await ReadStateRepository.set(client, streamId, memberId, lastReadEventId)
+      const postWrite = await ReadStateRepository.set(client, streamId, memberId, lastReadEventId)
       // Mark-unread means "this message and everything after it is unread", so
       // overlay rows at/above the target contradict the intent — drop them. The
       // pointer lands just before the target, which can also ADVANCE it (target
@@ -2228,7 +2244,14 @@ export class StreamService {
         lastReadOrdinal,
         readMessageIds,
       })
-      return membership
+      return {
+        membership,
+        readState: {
+          lastReadEventId,
+          lastReadSequence: previous?.sequence.toString() ?? null,
+          lastReadAt: postWrite?.lastReadAt?.toISOString() ?? null,
+        },
+      }
     })
   }
 

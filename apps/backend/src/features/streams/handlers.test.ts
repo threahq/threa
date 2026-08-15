@@ -477,9 +477,12 @@ describe("createStreamHandlers.markAsRead — access without membership", () => 
     streamService: Partial<StreamService>,
     activityService: { markStreamActivityAsRead: (userId: string, streamId: string) => Promise<void> }
   ) {
-    return createStreamHandlers({ streamService, activityService, pool: {} } as unknown as Parameters<
-      typeof createStreamHandlers
-    >[0])
+    return createStreamHandlers({
+      streamService,
+      streamReadService: { markAsRead: streamService.markAsRead },
+      activityService,
+      pool: {},
+    } as unknown as Parameters<typeof createStreamHandlers>[0])
   }
 
   function makeReq(): Request {
@@ -491,7 +494,7 @@ describe("createStreamHandlers.markAsRead — access without membership", () => 
     } as unknown as Request
   }
 
-  it("clears stream activity and returns null membership for a non-member viewer", async () => {
+  it("returns null membership for a non-member viewer", async () => {
     const validateStreamAccess = mock(() => Promise.resolve({ id: "stream_thread" } as never))
     const markAsRead = mock(() => Promise.resolve(null))
     const markStreamActivityAsRead = mock(() => Promise.resolve())
@@ -506,12 +509,17 @@ describe("createStreamHandlers.markAsRead — access without membership", () => 
     // access from the root (INV-62) gets an activity-only read, not a 404.
     expect(captured.status).not.toBe(404)
     expect(captured.body).toEqual({ membership: null })
-    expect(markStreamActivityAsRead).toHaveBeenCalledWith("usr_viewer", "ws_1", "stream_thread")
+    expect(markAsRead).toHaveBeenCalledWith("ws_1", "stream_thread", "usr_viewer", "evt_1")
   })
 
   it("returns null membership for a non-member unread — the same-class 404 is gone", async () => {
     const validateStreamAccess = mock(() => Promise.resolve({ id: "stream_thread" } as never))
-    const markUnread = mock(() => Promise.resolve(null))
+    const markUnread = mock(() =>
+      Promise.resolve({
+        membership: null,
+        readState: { lastReadEventId: "evt_0", lastReadSequence: "0", lastReadAt: null },
+      })
+    )
     const handlers = makeHandlers({ validateStreamAccess, markUnread } as Partial<StreamService>, {
       markStreamActivityAsRead: mock(() => Promise.resolve()),
     })
@@ -530,7 +538,10 @@ describe("createStreamHandlers.markAsRead — access without membership", () => 
     // Access (not membership) gates the unread (INV-62): null membership is a
     // successful standalone-frontier regress, not a 404.
     expect(captured.status).not.toBe(404)
-    expect(captured.body).toEqual({ membership: null })
+    expect(captured.body).toEqual({
+      membership: null,
+      readState: { lastReadEventId: "evt_0", lastReadSequence: "0", lastReadAt: null },
+    })
   })
 
   it("surfaces MESSAGE_NOT_FOUND from the service when the message isn't in the stream", async () => {
@@ -556,7 +567,7 @@ describe("createStreamHandlers.markAsRead — access without membership", () => 
     ).rejects.toMatchObject({ status: 404, code: "MESSAGE_NOT_FOUND" })
   })
 
-  it("returns the membership for a member read and still clears activity", async () => {
+  it("returns the membership for a member read", async () => {
     const membership = {
       streamId: "stream_thread",
       memberId: "usr_viewer",
@@ -575,6 +586,6 @@ describe("createStreamHandlers.markAsRead — access without membership", () => 
 
     expect(captured.status).toBe(200)
     expect(captured.body).toEqual({ membership })
-    expect(markStreamActivityAsRead).toHaveBeenCalledWith("usr_viewer", "ws_1", "stream_thread")
+    expect(markAsRead).toHaveBeenCalledWith("ws_1", "stream_thread", "usr_viewer", "evt_1")
   })
 })

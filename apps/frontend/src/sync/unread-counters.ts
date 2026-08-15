@@ -176,19 +176,18 @@ export function clearActivities(state: UnreadCounterState): UnreadCounterState {
 
 /**
  * Apply a `stream:activity` message ordinal. Latest max-merges; the implied
- * read position advances to the message for the author's own sends (the
- * server auto-advances the author's read pointer in the send transaction
- * without emitting `stream:read`) and pins to latest while the user is
- * viewing the stream (optimistic — auto-mark-read confirms server-side).
+ * read position advances only for the author's own sends, which the server
+ * also advances in the send transaction. Opening a route does not prove that
+ * another author's message was visible.
  *
  * Without a baseline the event seeds one: others' messages land as the
- * legacy increment would have; own/viewing land read = latest.
+ * legacy increment would have; own messages land read = latest.
  */
 export function applyStreamActivityOrdinal(
   state: UnreadCounterState,
   streamId: string,
   messageOrdinal: number,
-  opts: { isOwnMessage: boolean; isViewing: boolean }
+  opts: { isOwnMessage: boolean }
 ): UnreadCounterState {
   const ov = overlaySize(state, streamId)
   const prevLatest = state.latestOrdinals?.[streamId]
@@ -196,13 +195,11 @@ export function applyStreamActivityOrdinal(
   let read: number
   if (prevLatest === undefined) {
     latest = messageOrdinal
-    read =
-      opts.isOwnMessage || opts.isViewing ? latest : Math.max(0, latest - (state.unreadCounts[streamId] ?? 0) - 1 - ov)
+    read = opts.isOwnMessage ? latest : Math.max(0, latest - (state.unreadCounts[streamId] ?? 0) - 1 - ov)
   } else {
     const prevRead = Math.max(0, prevLatest - (state.unreadCounts[streamId] ?? 0) - ov)
     latest = Math.max(prevLatest, messageOrdinal)
     read = opts.isOwnMessage ? Math.max(prevRead, messageOrdinal) : prevRead
-    if (opts.isViewing) read = latest
   }
   return {
     ...state,

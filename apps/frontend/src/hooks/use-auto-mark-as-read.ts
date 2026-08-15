@@ -27,6 +27,8 @@ interface UseAutoMarkAsReadOptions {
    * server-side; only the handler's activity clear has effect.
    */
   readPointerEventId?: string | null
+  /** Whether the timeline tail is actually visible; required for pointer-only activity healing. */
+  activityHealEnabled?: boolean
 }
 
 /**
@@ -68,7 +70,7 @@ export function useAutoMarkAsRead(
   lastEventId: string | undefined,
   options: UseAutoMarkAsReadOptions = {}
 ) {
-  const { enabled = true, partial = false, readPointerEventId = null } = options
+  const { enabled = true, partial = false, readPointerEventId = null, activityHealEnabled = true } = options
   const { getUnreadCount } = useUnreadCounts(workspaceId)
   const { getActivityCount } = useActivityCounts(workspaceId)
   const canAutoRead = useAutoReadAttention()
@@ -106,7 +108,9 @@ export function useAutoMarkAsRead(
     // below, the normal frontier path owns the (partial) mark that clears
     // activity, and healing early would race a mark-unread's restored badges.
     const healEventId =
-      !lastEventId && activityCount > 0 && unreadCount === 0 && readPointerEventId ? readPointerEventId : undefined
+      activityHealEnabled && !lastEventId && activityCount > 0 && unreadCount === 0 && readPointerEventId
+        ? readPointerEventId
+        : undefined
     const reportEventId = lastEventId ?? healEventId
     const reportPartial = lastEventId ? partial : true
     if (!enabled || !reportEventId || !canAutoRead) {
@@ -153,7 +157,18 @@ export function useAutoMarkAsRead(
       // replaces the pending mark instead.
       if (streamIdRef.current !== streamId) queue.flush(streamId)
     }
-  }, [enabled, streamId, lastEventId, partial, queue, unreadCount, activityCount, canAutoRead, readPointerEventId])
+  }, [
+    enabled,
+    streamId,
+    lastEventId,
+    partial,
+    queue,
+    unreadCount,
+    activityCount,
+    canAutoRead,
+    readPointerEventId,
+    activityHealEnabled,
+  ])
 
   // Unmounting the stream page entirely (navigating to drafts/board) is the
   // other leave path — flush whatever stream was current.

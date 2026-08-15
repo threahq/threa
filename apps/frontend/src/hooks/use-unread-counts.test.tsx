@@ -20,8 +20,9 @@ import { useUnreadCounts } from "./use-unread-counts"
 
 const mockMarkAsRead =
   vi.fn<(workspaceId: string, streamId: string, lastEventId: string) => Promise<StreamMember | null>>()
+type MarkUnreadResponse = { membership: StreamMember | null; readState: StreamReadFrontier }
 const mockMarkUnread =
-  vi.fn<(workspaceId: string, streamId: string, messageId: string) => Promise<StreamMember | null>>()
+  vi.fn<(workspaceId: string, streamId: string, messageId: string) => Promise<MarkUnreadResponse>>()
 const mockMarkAllAsRead = vi.fn<(workspaceId: string) => Promise<MarkAllAsReadResponse>>()
 const mockPostMessage = vi.fn()
 const originalServiceWorker = Object.getOwnPropertyDescriptor(navigator, "serviceWorker")
@@ -708,10 +709,7 @@ describe("useUnreadCounts", () => {
     expect(updated?.streamReadState?.stream_thread?.lastReadEventId).toBe("event_new")
   })
 
-  it("markUnread writes nothing optimistically even with a membership — the stream:read_set echo owns the frontier", async () => {
-    // The unread response carries participation only (no watermark), so the
-    // optimistic path writes nothing for members and non-members alike; the
-    // echo SETs the standalone frontier.
+  it("markUnread applies the returned frontier without writing membership", async () => {
     const queryClient = new QueryClient()
     queryClient.setQueryData(workspaceKeys.bootstrap("ws_1"), makeBootstrap())
     await db.streamMemberships.put({
@@ -725,10 +723,13 @@ describe("useUnreadCounts", () => {
     })
 
     mockMarkUnread.mockResolvedValue({
-      streamId: "stream_1",
-      memberId: "member_1",
-      notificationLevel: "everything",
-      joinedAt: new Date().toISOString(),
+      membership: {
+        streamId: "stream_1",
+        memberId: "member_1",
+        notificationLevel: "everything",
+        joinedAt: new Date().toISOString(),
+      },
+      readState: { lastReadEventId: "evt_1", lastReadSequence: "1", lastReadAt: null },
     })
 
     const { result } = renderHook(() => useUnreadCounts("ws_1"), { wrapper: createWrapper(queryClient) })
@@ -737,18 +738,23 @@ describe("useUnreadCounts", () => {
     })
 
     await waitFor(() => expect(mockMarkUnread).toHaveBeenCalledWith("ws_1", "stream_1", "msg_target"))
-    expect(await db.streamReadState.get("ws_1:stream_1")).toBeUndefined()
+    await waitFor(async () => {
+      expect(await db.streamReadState.get("ws_1:stream_1")).toMatchObject({
+        lastReadEventId: "evt_1",
+        lastReadSequence: "1",
+      })
+    })
     expect(await db.streamMemberships.get("ws_1:stream_1")).toMatchObject({ notificationLevel: "everything" })
   })
 
-  it("markUnread with a null membership writes nothing optimistically — the stream:read_set echo owns the frontier", async () => {
-    // A non-member's unread succeeds with a null membership; the response
-    // carries no watermark, so the optimistic path must not fabricate
-    // membership-shaped rows — the echo SETs the standalone frontier.
+  it("markUnread applies the returned frontier for a non-member without fabricating membership", async () => {
     const queryClient = new QueryClient()
     queryClient.setQueryData(workspaceKeys.bootstrap("ws_1"), makeBootstrap())
 
-    mockMarkUnread.mockResolvedValue(null)
+    mockMarkUnread.mockResolvedValue({
+      membership: null,
+      readState: { lastReadEventId: "evt_1", lastReadSequence: "1", lastReadAt: null },
+    })
 
     const { result } = renderHook(() => useUnreadCounts("ws_1"), { wrapper: createWrapper(queryClient) })
     act(() => {
@@ -757,7 +763,9 @@ describe("useUnreadCounts", () => {
 
     await waitFor(() => expect(mockMarkUnread).toHaveBeenCalledWith("ws_1", "stream_thread", "msg_target"))
     expect(await db.streamMemberships.get("ws_1:stream_thread")).toBeUndefined()
-    expect(await db.streamReadState.get("ws_1:stream_thread")).toBeUndefined()
+    await waitFor(async () => {
+      expect(await db.streamReadState.get("ws_1:stream_thread")).toMatchObject({ lastReadEventId: "evt_1" })
+    })
   })
 
   it("applies the returned frontier snapshot to the cache and IDB when marking all as read (initiating device)", async () => {
@@ -992,7 +1000,7 @@ describe("useUnreadCounts", () => {
     const queryClient = new QueryClient()
     queryClient.setQueryData(workspaceKeys.bootstrap("ws_1"), makeBootstrap())
 
-    let resolveUnread!: (membership: StreamMember | null) => void
+    let resolveUnread!: (response: MarkUnreadResponse) => void
     mockMarkUnread.mockReturnValue(new Promise((resolve) => (resolveUnread = resolve)))
 
     const { result } = renderHook(() => useUnreadCounts("ws_1"), { wrapper: createWrapper(queryClient) })
@@ -1017,7 +1025,10 @@ describe("useUnreadCounts", () => {
     // the response carries participation only, nothing applies optimistically,
     // and the echo owns the frontier.
     await act(async () => {
-      resolveUnread(memberResponse())
+      resolveUnread({
+        membership: memberResponse(),
+        readState: { lastReadEventId: "evt_50", lastReadSequence: "50", lastReadAt: null },
+      })
       await new Promise((resolve) => setTimeout(resolve, 10))
     })
 

@@ -59,7 +59,11 @@ describe("useAutoMarkAsRead", () => {
 
     queue = new ReadCommitQueue({
       workspaceId: "ws_123",
-      commitRef: { current: (streamId, lastEventId, opts) => mockMarkAsRead(streamId, lastEventId, opts) },
+      commitRef: {
+        current: async (streamId, lastEventId, opts) => {
+          mockMarkAsRead(streamId, lastEventId, opts)
+        },
+      },
     })
 
     vi.spyOn(useMobileModule, "useIsMobile").mockImplementation(() => isMobileViewport)
@@ -231,7 +235,7 @@ describe("useAutoMarkAsRead", () => {
     expect(mockMarkAsRead).toHaveBeenCalledWith("stream_123", "event_123", { partial: true })
   })
 
-  it("re-fires a full mark when partial flips to false at the same event (scrolled on to the tail)", () => {
+  it("re-fires a full mark when partial flips to false at the same event (scrolled on to the tail)", async () => {
     const { rerender } = renderHook(
       ({ partial }) => useAutoMarkAsRead("ws_123", "stream_123", "event_123", { partial }),
       {
@@ -245,8 +249,8 @@ describe("useAutoMarkAsRead", () => {
     expect(mockMarkAsRead).toHaveBeenLastCalledWith("stream_123", "event_123", { partial: true })
 
     rerender({ partial: false })
-    act(() => {
-      vi.advanceTimersByTime(500)
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(500)
     })
 
     // Same event, now full — must re-fire so the badge clears optimistically
@@ -255,7 +259,7 @@ describe("useAutoMarkAsRead", () => {
     expect(mockMarkAsRead).toHaveBeenCalledTimes(2)
   })
 
-  it("re-fires the same mark when activity arrives with an unchanged frontier", () => {
+  it("re-fires the same mark when activity arrives with an unchanged frontier", async () => {
     // A reaction while viewing raises activityCount with no new timeline event
     // — lastEventId stays put, so the re-fire rides on the count VALUE being an
     // effect dep. The old code re-ran by accident (markAsRead identity churn);
@@ -271,8 +275,8 @@ describe("useAutoMarkAsRead", () => {
 
     activityCount = 1
     rerender({ v: 1 })
-    act(() => {
-      vi.advanceTimersByTime(500)
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(500)
     })
 
     expect(mockMarkAsRead).toHaveBeenLastCalledWith("stream_123", "event_123", { partial: false })
@@ -351,6 +355,24 @@ describe("useAutoMarkAsRead", () => {
     })
 
     expect(mockMarkAsRead).toHaveBeenCalledWith("stream_123", "event_watermark", { partial: true })
+  })
+
+  it("does not heal pointer-only activity while the viewport is detached from the tail", () => {
+    unreadCount = 0
+    activityCount = 1
+
+    renderHook(() =>
+      useAutoMarkAsRead("ws_123", "stream_123", undefined, {
+        readPointerEventId: "event_watermark",
+        activityHealEnabled: false,
+      })
+    )
+
+    act(() => {
+      vi.advanceTimersByTime(500)
+    })
+
+    expect(mockMarkAsRead).not.toHaveBeenCalled()
   })
 
   it("does NOT heal while real unread remains — the frontier path owns that mark", () => {

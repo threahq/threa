@@ -1,6 +1,7 @@
 import { z } from "zod"
 import type { Request, Response } from "express"
 import type { StreamService } from "./service"
+import type { StreamReadService } from "./read-service"
 import type { EventService } from "../messaging"
 import { collectSharedMessageIds, hydrateSharedMessageIds, toDualSlotMaps, type DualSlotMaps } from "../messaging"
 import type { ActivityService } from "../activity"
@@ -405,6 +406,7 @@ export {
 interface Dependencies {
   pool: Pool
   streamService: StreamService
+  streamReadService: StreamReadService
   eventService: EventService
   activityService?: ActivityService
   linkPreviewService: LinkPreviewService
@@ -551,6 +553,7 @@ function presenceMatchesRuntimeSessionLink(
 export function createStreamHandlers({
   pool,
   streamService,
+  streamReadService,
   eventService,
   activityService,
   linkPreviewService,
@@ -936,16 +939,7 @@ export function createStreamHandlers({
 
       await streamService.validateStreamAccess(streamId, workspaceId, userId)
 
-      const membership = await streamService.markAsRead(workspaceId, streamId, userId, data.lastEventId)
-
-      // Unconditional: thread access is inherited from the root (INV-62), so a
-      // viewer can have access without a membership row (non-member thread leg,
-      // or a public channel never joined). Their activity rows are keyed to this
-      // stream, and viewing is reading for the activity surface — gating the
-      // clear on membership left those rows stuck until clicked one by one in
-      // the Activity feed. A null membership is a successful activity-only read
-      // (no watermark to advance), not a 404; access was validated above.
-      await activityService?.markStreamActivityAsRead(userId, workspaceId, streamId)
+      const membership = await streamReadService.markAsRead(workspaceId, streamId, userId, data.lastEventId)
 
       res.json({ membership: membership ?? null })
     },
@@ -962,9 +956,9 @@ export function createStreamHandlers({
       // A null membership is a successful unread by a viewer with access but no
       // membership row (INV-62) — the service throws MESSAGE_NOT_FOUND itself
       // when the message isn't in the stream; null here must not 404.
-      const membership = await streamService.markUnread(workspaceId, streamId, userId, data.messageId)
+      const { membership, readState } = await streamService.markUnread(workspaceId, streamId, userId, data.messageId)
 
-      res.json({ membership: membership ?? null })
+      res.json({ membership, readState })
     },
 
     async archive(req: Request, res: Response) {

@@ -680,6 +680,43 @@ describe("useLastSeenEvent re-scan triggers", () => {
     expect(result.current.atLastRow).toBe(true)
   })
 
+  it("pins a backward read-set that moves an outside-window pointer into the loaded window", () => {
+    const container = document.createElement("div")
+    container.getBoundingClientRect = () => rect(0, 100)
+    const events = ["e0", "e1", "e2"].map((id, index) => ({
+      id,
+      sequence: String(100 + index),
+    })) as unknown as StreamEvent[]
+    for (const [index, event] of events.entries()) {
+      const row = document.createElement("div")
+      row.setAttribute("data-event-id", event.id)
+      row.getBoundingClientRect = () => rect(5 + index * 30, 30 + index * 30)
+      container.appendChild(row)
+    }
+    const scrollContainerRef = { current: container }
+
+    const { result, rerender } = renderHook(
+      ({ lastReadEventId, lastReadSequence }) =>
+        useLastSeenEvent({
+          scrollContainerRef,
+          events,
+          streamId: "stream_1",
+          lastReadEventId,
+          lastReadSequence,
+          enabled: true,
+        }),
+      { initialProps: { lastReadEventId: "newer_outside_window", lastReadSequence: 200n } }
+    )
+
+    expect(result.current.lastSeenEventId).toBeUndefined()
+    act(() => rerender({ lastReadEventId: "e0", lastReadSequence: 100n }))
+    expect(result.current.lastSeenEventId).toBeUndefined()
+    expect(result.current.atLastRow).toBe(false)
+
+    act(() => container.dispatchEvent(new Event("scroll")))
+    expect(result.current.lastSeenEventId).toBe("e2")
+  })
+
   it("does not emit a mark target while the read pointer sits outside the loaded window", () => {
     // Mark-as-unread on the oldest loaded row moves the pointer to a message below
     // the loaded window, so it is unresolvable in `events`. Emitting the stale

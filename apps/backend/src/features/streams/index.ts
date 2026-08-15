@@ -7,6 +7,7 @@ export { StreamBriefRepository } from "./brief-repository"
 export type { StreamBrief, BriefAuthorKind } from "./brief-repository"
 
 export { StreamService } from "./service"
+export { StreamReadService } from "./read-service"
 export type { CreateScratchpadParams, CreateChannelParams, CreateThreadParams } from "./service"
 
 // Canonical "can this user read this stream?" check (INV-8)

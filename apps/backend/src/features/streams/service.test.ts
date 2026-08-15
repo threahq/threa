@@ -63,7 +63,7 @@ const mockListOverlayIds = spyOn(SparseReadRepository, "listOverlayIds").mockRes
 // Read-state shadow writes run inside every watermark write path; stub against
 // the fake `{}` client so unit tests never touch a real DB.
 const mockReadStateAdvance = spyOn(ReadStateRepository, "advance").mockResolvedValue(null)
-const mockReadStateSet = spyOn(ReadStateRepository, "set").mockResolvedValue(undefined)
+const mockReadStateSet = spyOn(ReadStateRepository, "set").mockResolvedValue(null)
 const mockReadStateBatchAdvance = spyOn(ReadStateRepository, "batchAdvance").mockResolvedValue([])
 const mockReadStateSetForUsers = spyOn(ReadStateRepository, "setForUsers").mockResolvedValue(undefined)
 const mockSlugExists = spyOn(StreamRepository, "slugExistsInWorkspace")
@@ -1819,7 +1819,10 @@ describe("StreamService.markUnread", () => {
 
     const result = await service.markUnread("ws_1", "stream_1", "usr_1", "msg_5")
 
-    expect(result).toBeNull()
+    expect(result).toEqual({
+      membership: null,
+      readState: { lastReadEventId: "evt_4", lastReadSequence: "40", lastReadAt: null },
+    })
     expect(mockFindByStreamAndMember).toHaveBeenCalledWith({}, "stream_1", "usr_1")
     expect(mockReadStateSet).toHaveBeenCalledWith({}, "stream_1", "usr_1", "evt_4")
     expect(mockDeleteAtOrAbove).toHaveBeenCalledWith({}, "stream_1", "usr_1", 50n)

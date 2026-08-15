@@ -13,6 +13,7 @@ import type {
   NotificationLevel,
   CompanionMode,
   ToolPrivacyPolicy,
+  StreamReadFrontier,
 } from "@threa/types"
 
 /**
@@ -217,14 +218,15 @@ export const streamsApi = {
     return res.membership
   },
 
-  async markUnread(workspaceId: string, streamId: string, messageId: string): Promise<StreamMember | null> {
-    // Null membership = a successful unread by a viewer with access but no
-    // membership row (INV-62) — the standalone frontier moved; there is no
-    // membership to return.
-    const res = await api.post<{ membership: StreamMember | null }>(
+  async markUnread(
+    workspaceId: string,
+    streamId: string,
+    messageId: string
+  ): Promise<{ membership: StreamMember | null; readState?: StreamReadFrontier }> {
+    const res = await api.post<{ membership: StreamMember | null; readState?: StreamReadFrontier }>(
       `/api/workspaces/${workspaceId}/streams/${streamId}/unread`,
       { messageId }
     )
-    return res.membership
+    return res
   },
 }

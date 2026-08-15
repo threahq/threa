@@ -15,7 +15,12 @@ import { createAuthHandlers } from "./auth/handlers"
 import { createWorkspaceHandlers, WorkspaceRepository } from "./features/workspaces"
 import { createWorkspaceMemberManagementHandlers } from "./features/workspace-members"
 import type { ControlPlaneClient } from "./lib/control-plane-client"
-import { createStreamHandlers, createStreamBriefHandlers, StreamBriefService } from "./features/streams"
+import {
+  createStreamHandlers,
+  createStreamBriefHandlers,
+  StreamBriefService,
+  StreamReadService,
+} from "./features/streams"
 import { createMessageHandlers, SteeredMessageService } from "./features/messaging"
 import { createAttachmentHandlers } from "./features/attachments"
 import { createSearchHandlers } from "./features/search"
@@ -309,9 +314,11 @@ export function registerRoutes(app: Express, deps: Dependencies) {
   })
   const streamBriefService = new StreamBriefService({ pool })
   const streamBrief = createStreamBriefHandlers({ pool, streamBriefService })
+  const streamReadService = new StreamReadService({ pool, streamService, activityService })
   const stream = createStreamHandlers({
     pool,
     streamService,
+    streamReadService,
     eventService,
     activityService,
     linkPreviewService,

@@ -900,6 +900,63 @@ describe("applyStreamBootstrap (real IndexedDB)", () => {
   })
 })
 
+describe("applyStreamBootstrap — per-stream unread count", () => {
+  beforeEach(async () => {
+    await Promise.all([db.unreadState.clear(), db.events.clear(), db.streams.clear()])
+  })
+
+  it("publishes the stream bootstrap count for access-without-membership viewers", async () => {
+    const streamId = "stream_public"
+    await db.unreadState.put({
+      id: "ws_1",
+      workspaceId: "ws_1",
+      unreadCounts: {},
+      mentionCounts: {},
+      activityCounts: {},
+      unreadActivityCount: 0,
+      unreadActivities: [],
+      latestOrdinals: {},
+      mutedStreamIds: [],
+      counterTouchedAt: {},
+      _cachedAt: Date.now(),
+    })
+    const queryClient = new QueryClient()
+    queryClient.setQueryData(workspaceKeys.bootstrap("ws_1"), {
+      unreadCounts: {},
+    } as WorkspaceBootstrap)
+    const bootstrap = { ...makeBootstrap([], streamId), unreadCount: 4 }
+
+    await applyStreamBootstrap("ws_1", streamId, bootstrap, { fetchStartedAt: Date.now(), queryClient })
+
+    expect((await db.unreadState.get("ws_1"))?.unreadCounts[streamId]).toBe(4)
+    expect(queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap("ws_1"))?.unreadCounts[streamId]).toBe(
+      4
+    )
+  })
+
+  it("preserves a counter touched after the bootstrap request departed", async () => {
+    const streamId = "stream_public"
+    const fetchStartedAt = Date.now() - 100
+    await db.unreadState.put({
+      id: "ws_1",
+      workspaceId: "ws_1",
+      unreadCounts: { [streamId]: 3 },
+      mentionCounts: {},
+      activityCounts: {},
+      unreadActivityCount: 0,
+      unreadActivities: [],
+      latestOrdinals: {},
+      mutedStreamIds: [],
+      counterTouchedAt: { [streamId]: Date.now() },
+      _cachedAt: Date.now(),
+    })
+
+    await applyStreamBootstrap("ws_1", streamId, { ...makeBootstrap([], streamId), unreadCount: 1 }, { fetchStartedAt })
+
+    expect((await db.unreadState.get("ws_1"))?.unreadCounts[streamId]).toBe(3)
+  })
+})
+
 describe("applyStreamBootstrap — read-state freshness (stale response guard)", () => {
   // A bootstrap snapshot begun at T0 may apply its `readState` only when the
   // local frontier row was NOT touched at/after T0 (socket echo or optimistic
