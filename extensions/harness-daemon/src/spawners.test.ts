@@ -4,9 +4,11 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import {
   claudeResumeSessionId,
+  linkPiRemoteSession,
   mcpConfigDir,
   mcpConfigPath,
   parkPiSessionFiles,
+  piLaunchCommand,
   writeChannelMcpConfig,
 } from "./spawners"
 import { profileForWorktree, recordProfileSnapshot } from "./identity-store"
@@ -73,6 +75,67 @@ test("a resume writes the new key and leaves the old name-keyed file in place", 
   expect(JSON.parse(readFileSync(legacy, "utf8"))).toMatchObject({
     mcpServers: { "threa-channel": { args: ["/old/entry.ts"] } },
   })
+})
+
+test("a managed Pi launch carries one stable instance identity into every remote retry", () => {
+  const launch = piLaunchCommand("/opt/pi", "runtime-session", "pi-launch-instance")
+
+  expect(launch).toContain("'THREA_INSTANCE_ID=pi-launch-instance'")
+  expect(launch).toContain("'THREA_RUNTIME_SESSION_ID=runtime-session'")
+  expect(launch).toContain("'/opt/pi' '--session-id' 'runtime-session'")
+})
+
+test("Pi remote linking retries a command lost during startup and stops after the link is persisted", async () => {
+  const linked = {
+    instanceId: "pi-instance",
+    rootStreamId: "stream_scratchpad",
+    scratchpadUrl: "https://app.threa.io/w/workspace/s/stream_scratchpad",
+  }
+  const sleeps: number[] = []
+  let commands = 0
+  let session: typeof linked | undefined
+
+  const result = await linkPiRemoteSession({
+    expectedInstanceId: linked.instanceId,
+    attempts: 3,
+    bootWaitMs: 8_000,
+    responseWaitMs: 6_000,
+    retryBackoffMs: 1_000,
+    maxRetryBackoffMs: 4_000,
+    sleep: async (ms) => {
+      sleeps.push(ms)
+      if (commands === 2 && ms === 6_000) session = linked
+    },
+    sendRemoteCommand: () => {
+      commands++
+    },
+    readSession: () => session,
+  })
+
+  expect(result).toEqual(linked)
+  expect({ commands, sleeps }).toEqual({ commands: 2, sleeps: [8_000, 6_000, 1_000, 6_000] })
+})
+
+test("Pi remote linking rejects a persisted link from another instance", async () => {
+  await expect(
+    linkPiRemoteSession({
+      expectedInstanceId: "pi-launch-instance",
+      attempts: 3,
+      bootWaitMs: 0,
+      responseWaitMs: 0,
+      retryBackoffMs: 0,
+      maxRetryBackoffMs: 0,
+      sleep: async () => {},
+      sendRemoteCommand: () => {
+        throw new Error("must not send after finding a link")
+      },
+      readSession: () => ({
+        instanceId: "pi-other-instance",
+        rootStreamId: "stream_other",
+        scratchpadUrl: "https://app.threa.io/w/workspace/s/stream_other",
+      }),
+    })
+  ).rejects.toThrow("pi-other-instance")
 })
 
 test("a Pi spawn records the profile its directory was provisioned under", () => {

@@ -673,6 +673,40 @@ describe("sanitizeInstanceIdSegment", () => {
   })
 })
 
+describe("instanceIdForRemoteCreate", () => {
+  test("reuses a supervised launch identity across attempts and keeps inherited or manual sessions independent", () => {
+    const savedInstanceId = process.env.THREA_INSTANCE_ID
+    const savedRuntimeSessionId = process.env.THREA_RUNTIME_SESSION_ID
+    try {
+      process.env.THREA_INSTANCE_ID = "pi-launch-instance"
+      process.env.THREA_RUNTIME_SESSION_ID = "runtime-launch"
+      expect([
+        __testing.instanceIdForRemoteCreate("runtime-launch"),
+        __testing.instanceIdForRemoteCreate("runtime-launch"),
+      ]).toEqual(["pi-launch-instance", "pi-launch-instance"])
+
+      expect(__testing.instanceIdForRemoteCreate("runtime-child")).not.toBe(
+        __testing.instanceIdForRemoteCreate("runtime-child")
+      )
+
+      delete process.env.THREA_INSTANCE_ID
+      delete process.env.THREA_RUNTIME_SESSION_ID
+      expect(__testing.instanceIdForRemoteCreate("runtime-manual")).not.toBe(
+        __testing.instanceIdForRemoteCreate("runtime-manual")
+      )
+
+      process.env.THREA_INSTANCE_ID = "pi.invalid"
+      process.env.THREA_RUNTIME_SESSION_ID = "runtime-invalid"
+      expect(() => __testing.instanceIdForRemoteCreate("runtime-invalid")).toThrow("THREA_INSTANCE_ID")
+    } finally {
+      if (savedInstanceId === undefined) delete process.env.THREA_INSTANCE_ID
+      else process.env.THREA_INSTANCE_ID = savedInstanceId
+      if (savedRuntimeSessionId === undefined) delete process.env.THREA_RUNTIME_SESSION_ID
+      else process.env.THREA_RUNTIME_SESSION_ID = savedRuntimeSessionId
+    }
+  })
+})
+
 describe("migrateInstanceId", () => {
   test("rewrites a dotted macOS-hostname id without losing the random suffix", () => {
     // Realistic shape of a macOS-derived id (`hostname()` returns `*.lan`).
