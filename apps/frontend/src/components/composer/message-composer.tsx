@@ -367,6 +367,7 @@ export function MessageComposer({
   // Once chosen it is an explicit height, so even an empty draft follows the
   // handle. A never-resized composer remains content-driven under its natural
   // cap. Persisted per device on release.
+  const mobileSizeScope = scopeId ?? streamId
   const [mobileDragHeight, setMobileDragHeightState] = useState<number | null>(() => loadMobileComposerDragHeight())
   const mobileDragHeightRef = useRef(mobileDragHeight)
   const resizeDragRef = useRef<{
@@ -447,13 +448,27 @@ export function MessageComposer({
       })
     })
   }, [])
-  const handleMobileExpandedChange = useCallback((next: boolean) => {
-    setMobileExpanded(next)
-    if (next) return
+  const resetMobileComposerSize = useCallback(() => {
+    resizeDragRef.current = null
+    resizeScrollBottomRef.current = null
+    setMobileExpanded(false)
     mobileDragHeightRef.current = null
     setMobileDragHeightState(null)
     clearMobileComposerDragHeight()
   }, [])
+  const handleMobileExpandedChange = useCallback(
+    (next: boolean) => {
+      if (next) setMobileExpanded(true)
+      else resetMobileComposerSize()
+    },
+    [resetMobileComposerSize]
+  )
+  const previousMobileSizeScopeRef = useRef(mobileSizeScope)
+  useLayoutEffect(() => {
+    if (previousMobileSizeScopeRef.current === mobileSizeScope) return
+    previousMobileSizeScopeRef.current = mobileSizeScope
+    resetMobileComposerSize()
+  }, [mobileSizeScope, resetMobileComposerSize])
   // Expanded-mode FAB actions are always visible on desktop. Touch has no hover,
   // so a tap on the "+" toggles them instead.
   const [fabActionsOpen, setFabActionsOpen] = useState(false)
@@ -984,15 +999,16 @@ export function MessageComposer({
   const insertSlash = useCallback(() => richEditorRef.current?.insertSlash(), [])
 
   const handleSubmit = useCallback(() => {
+    if (!canSubmit) return
     setFormatOpen(false)
-    setMobileExpanded(false)
+    resetMobileComposerSize()
     setMobileLinkPopoverOpen(false)
     // End any in-flight take first: this flushes the live hypothesis into the
     // editor (so the tail lands in the message) and drops the polish toggle +
     // warnings before we snapshot the content below.
     micRef.current?.prepareSendAsIs()
     onSubmit(richEditorRef.current?.getEditor()?.getJSON() as JSONContent | undefined)
-  }, [onSubmit])
+  }, [canSubmit, onSubmit, resetMobileComposerSize])
 
   // Stable ref so TipTap's captured closure always invokes the current handler
   // without needing to re-register on every render.

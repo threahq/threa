@@ -945,6 +945,77 @@ describe("MessageComposer", () => {
       expect(localStorage.getItem("threa:composer-drag-height")).toBe("260")
     })
 
+    it("returns to natural growth after submitting", () => {
+      const onSubmit = vi.fn()
+      const { container } = render(
+        <MessageComposer
+          {...defaultProps}
+          scopeId="stream_a"
+          workspaceId="ws_1"
+          initialMobileChromeOpen
+          canSubmit
+          onSubmit={onSubmit}
+        />
+      )
+      const handle = screen.getByTestId("composer-resize-handle")
+      const root = container.firstElementChild as HTMLElement
+      fireEvent.pointerDown(handle, { pointerId: 1, clientY: 600 })
+      fireEvent.pointerMove(handle, { pointerId: 1, clientY: 340 })
+      fireEvent.pointerUp(handle, { pointerId: 1, clientY: 340 })
+      expect(root.style.minHeight).toBe("260px")
+      expect(localStorage.getItem("threa:composer-drag-height")).toBe("260")
+
+      fireEvent.click(screen.getByRole("button", { name: /send/i }))
+
+      expect(onSubmit).toHaveBeenCalled()
+      expect(root.style.minHeight).toBe("")
+      expect(root.style.maxHeight).toBe("")
+      expect(localStorage.getItem("threa:composer-drag-height")).toBeNull()
+    })
+
+    it("keeps the chosen size when a disabled submit shortcut is ignored", () => {
+      const onSubmit = vi.fn()
+      const { container } = render(
+        <MessageComposer
+          {...defaultProps}
+          scopeId="stream_a"
+          workspaceId="ws_1"
+          initialMobileChromeOpen
+          onSubmit={onSubmit}
+        />
+      )
+      const handle = screen.getByTestId("composer-resize-handle")
+      const root = container.firstElementChild as HTMLElement
+      fireEvent.pointerDown(handle, { pointerId: 1, clientY: 600 })
+      fireEvent.pointerMove(handle, { pointerId: 1, clientY: 340 })
+      fireEvent.pointerUp(handle, { pointerId: 1, clientY: 340 })
+
+      fireEvent.keyDown(screen.getByTestId("rich-editor"), { key: "Enter", metaKey: true })
+
+      expect(onSubmit).not.toHaveBeenCalled()
+      expect(root.style.minHeight).toBe("260px")
+      expect(root.style.maxHeight).toBe("260px")
+      expect(localStorage.getItem("threa:composer-drag-height")).toBe("260")
+    })
+
+    it("returns to natural growth when the compose scope changes", () => {
+      const { container, rerender } = render(
+        <MessageComposer {...defaultProps} scopeId="stream_a" workspaceId="ws_1" initialMobileChromeOpen />
+      )
+      const handle = screen.getByTestId("composer-resize-handle")
+      const root = container.firstElementChild as HTMLElement
+      fireEvent.pointerDown(handle, { pointerId: 1, clientY: 600 })
+      fireEvent.pointerMove(handle, { pointerId: 1, clientY: 340 })
+      fireEvent.pointerUp(handle, { pointerId: 1, clientY: 340 })
+      expect(root.style.minHeight).toBe("260px")
+
+      rerender(<MessageComposer {...defaultProps} scopeId="stream_b" workspaceId="ws_1" initialMobileChromeOpen />)
+
+      expect(root.style.minHeight).toBe("")
+      expect(root.style.maxHeight).toBe("")
+      expect(localStorage.getItem("threa:composer-drag-height")).toBeNull()
+    })
+
     it("clamps a downward drag to the compact one-line composer", () => {
       const { container } = render(<MessageComposer {...defaultProps} workspaceId="ws_1" initialMobileChromeOpen />)
       const handle = screen.getByTestId("composer-resize-handle")
