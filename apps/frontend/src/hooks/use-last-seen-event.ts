@@ -33,16 +33,22 @@ export function pickVisibleRange(rows: VisibleRow[], viewportTop: number, viewpo
 
 /**
  * Advance the read frontier through a contiguous run only. The frontier moves to
- * the bottom of the viewport when the viewport's top is at or above the first
- * unread row (`frontier + 1`) — i.e. there is no gap of unseen rows between the
- * read frontier and what's on screen. Landing at the live bottom leaves such a
- * gap, so the frontier (and the read pointer) stays put. `topIdx` is the
- * sweep-effective top: recompute substitutes the previous scan's top when two
- * scans link into one continuous user scroll (see SWEEP_LINK_MS), so a fast
- * fling — whose per-frame viewport jumps exceed the viewport height — still
- * reads as the continuous sweep it visually was.
+ * the bottom of the viewport when the viewport's top is at or above `gateIdx` —
+ * i.e. no unread content sits between the read frontier and what's on screen.
+ * Landing at the live bottom leaves such a gap, so the frontier (and the read
+ * pointer) stays put.
+ *
+ * `gateIdx` is {@link readGateIndex}: the first unread MESSAGE after the
+ * frontier, so rows carrying nothing to read are bridged. It is required rather
+ * than defaulted to `frontier + 1` — that default was the old rule, and it wedged
+ * every stream whose bot replies are bracketed by agent-session events.
+ *
+ * `topIdx` is the sweep-effective top: recompute substitutes the previous scan's
+ * top when two scans link into one continuous user scroll (see SWEEP_LINK_MS), so
+ * a fast fling — whose per-frame viewport jumps exceed the viewport height —
+ * still reads as the continuous sweep it visually was.
  */
-export function advanceFrontier(frontier: number, topIdx: number, botIdx: number, gateIdx = frontier + 1): number {
+export function advanceFrontier(frontier: number, topIdx: number, botIdx: number, gateIdx: number): number {
   if (topIdx <= gateIdx && botIdx > frontier) return botIdx
   return frontier
 }
