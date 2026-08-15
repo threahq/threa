@@ -86,13 +86,46 @@ describe("SyncEngine.handlePageResume", () => {
     ])
   })
 
-  it("is a no-op when the engine has never connected", async () => {
+  it("skips network work when the engine has never connected", async () => {
     const engine = new SyncEngine(makeDeps())
     const refreshSpy = vi.spyOn(engine, "refreshAfterConnectivityResume")
 
     await engine.handlePageResume()
 
     expect(refreshSpy).not.toHaveBeenCalled()
+  })
+
+  it("wakes every visible stream source before socket work", async () => {
+    const engine = new SyncEngine(makeDeps())
+    engine.setCurrentStreamId("stream_route")
+    engine.setVisibleStreamIds(["stream_panel"])
+    engine.setBoardStreamIds(["stream_board"])
+    engine.setPanelStreamIds(["stream_conversation"])
+    await new Promise((resolve) => setTimeout(resolve, 25))
+
+    const streamIds = ["stream_route", "stream_panel", "stream_board", "stream_conversation"]
+    await db.events.bulkPut(
+      streamIds.map((streamId) => ({
+        id: `evt_${streamId}`,
+        workspaceId: "ws_1",
+        streamId,
+        sequence: "1",
+        _sequenceNum: 1,
+        eventType: "message_created" as const,
+        payload: { messageId: `msg_${streamId}`, contentMarkdown: "new" },
+        actorId: "user_1",
+        actorType: "user" as const,
+        createdAt: new Date().toISOString(),
+        _cachedAt: 1,
+      }))
+    )
+
+    await engine.refreshVisibleEventReads()
+
+    const refreshed = await db.events.bulkGet(streamIds.map((streamId) => `evt_${streamId}`))
+    expect(refreshed.map((event) => ({ streamId: event?.streamId, refreshed: (event?._cachedAt ?? 0) > 1 }))).toEqual(
+      streamIds.map((streamId) => ({ streamId, refreshed: true }))
+    )
   })
 
   it("soft refreshes visible data even before the first socket connect", async () => {

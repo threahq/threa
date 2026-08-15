@@ -61,6 +61,19 @@ describe("usePageResume", () => {
     expect(onResume).not.toHaveBeenCalled()
   })
 
+  it("reports short away durations when the caller uses a zero threshold", () => {
+    const onResume = vi.fn()
+    renderHook(() => usePageResume(onResume, 0))
+
+    act(() => {
+      setVisibility("hidden")
+      vi.advanceTimersByTime(2_500)
+      setVisibility("visible")
+    })
+
+    expect(onResume).toHaveBeenCalledWith(2_500)
+  })
+
   it("fires exactly once when hide meets the threshold", () => {
     const onResume = vi.fn()
     renderHook(() => usePageResume(onResume, 10_000))

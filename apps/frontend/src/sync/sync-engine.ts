@@ -25,6 +25,7 @@ import { SyncLogCursor } from "./sync-log-cursor"
 import { SocketEventGate, type SyncEventSource } from "./socket-event-gate"
 import { CatchUpBatch, LiveCommitBatch } from "./catch-up-batch"
 import { beginApplyWindow, endApplyWindow } from "@/stores/apply-window"
+import { requestStreamEventReadRefresh } from "@/stores/stream-event-read-refresh"
 import { getPerfCapture } from "@/lib/perf/capture"
 import { SyncStatusStore } from "./sync-status"
 import { streamKeys } from "@/hooks/use-streams"
@@ -440,6 +441,15 @@ export class SyncEngine {
     void this.runCatchUp("resume")
   }
 
+  async refreshVisibleEventReads(): Promise<void> {
+    if (this.isDestroyed) return
+    try {
+      await requestStreamEventReadRefresh(this.getVisibleServerStreamIds())
+    } catch (error) {
+      console.error("Stream event read refresh failed", { workspaceId: this.workspaceId, error })
+    }
+  }
+
   /**
    * Called when the page resumes from a long hidden period (e.g. phone
    * unlocked after app-switch). Probes the socket for liveness; if the
@@ -448,7 +458,13 @@ export class SyncEngine {
    * events may have been missed while the page was backgrounded.
    */
   async handlePageResume(): Promise<void> {
-    if (this.isDestroyed || !this.socket || !this.hasEverConnected) return
+    if (this.isDestroyed) return
+    // A service worker can write the pushed message into IDB while Android has
+    // frozen the page, so Dexie's live query misses the cross-context wake-up.
+    // Re-read mounted event windows even when the HTTP delta below is empty
+    // because its cursor already sees that service-worker write.
+    void this.refreshVisibleEventReads()
+    if (!this.socket || !this.hasEverConnected) return
     // Warm the open stream over plain HTTP before anything socket-shaped runs.
     // The socket is the slowest thing on a phone resume — a zombie transport
     // takes a ping timeout to detect and seconds more to reconnect and rejoin

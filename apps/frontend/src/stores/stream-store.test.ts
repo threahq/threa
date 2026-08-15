@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest"
-import { renderHook, waitFor } from "@testing-library/react"
+import { act, renderHook, waitFor } from "@testing-library/react"
 import Dexie, { liveQuery } from "dexie"
 import { db, sequenceToNum, type CachedEvent, type CachedStream } from "@/db"
 import { computeTimelineHoles } from "@/sync/contiguity"
@@ -23,6 +23,8 @@ import {
 } from "./workspace-table-registry"
 import { makeCachedStream } from "@/test/workspace-rows"
 import { bumpLaterOptimisticAnchors } from "@/sync/stream-sync"
+import { requestStreamEventReadRefresh } from "./stream-event-read-refresh"
+import { BOARD_RAIL_EVENT_TYPES } from "@/lib/board/board-rail-event-types"
 
 const WORKSPACE_ID = "ws_1"
 
@@ -40,6 +42,26 @@ function makeRealEvent(streamId: string, sequence: string): CachedEvent {
     actorType: "user",
     createdAt: new Date(2026, 0, 1, 0, 0, sequenceNum).toISOString(),
     _cachedAt: Date.now(),
+  }
+}
+
+async function putRawEvent(event: CachedEvent): Promise<void> {
+  const request = indexedDB.open(db.name)
+  const database = await new Promise<IDBDatabase>((resolve, reject) => {
+    request.onsuccess = () => resolve(request.result)
+    request.onerror = () => reject(request.error)
+  })
+
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const transaction = database.transaction("events", "readwrite")
+      transaction.objectStore("events").put(event)
+      transaction.oncomplete = () => resolve()
+      transaction.onerror = () => reject(transaction.error)
+      transaction.onabort = () => reject(transaction.error)
+    })
+  } finally {
+    database.close()
   }
 }
 
@@ -875,6 +897,74 @@ describe("useStreamEvents with the bounded read armed", () => {
 
   beforeEach(async () => {
     await db.events.clear()
+  })
+
+  it("re-reads IDB on resume when a frozen page missed the service worker's write notification", async () => {
+    await seed(STREAM, 1)
+    const { result } = renderHook(() => useStreamEvents(STREAM, 1))
+    await waitFor(() => expect(result.current?.map((event) => event.sequence)).toEqual(["1"]))
+
+    await putRawEvent(makeRealEvent(STREAM, "2"))
+    expect((await db.events.where("streamId").equals(STREAM).toArray()).map((event) => event.sequence)).toEqual([
+      "1",
+      "2",
+    ])
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    expect(result.current?.map((event) => event.sequence)).toEqual(["1"])
+
+    await act(() => requestStreamEventReadRefresh([STREAM]))
+
+    await waitFor(() => expect(result.current?.map((event) => event.sequence)).toEqual(["1", "2"]))
+  })
+
+  it("re-reads event-type rails when a newer event falls outside their observed index ranges", async () => {
+    await db.events.bulkPut([
+      { ...makeRealEvent(STREAM, "0"), eventType: "agent:follow_up_scheduled", payload: {} },
+      makeRealEvent(STREAM, "1"),
+    ])
+    let boardEventIds: string[] = []
+    let messageEventIds: string[] = []
+    const boardSubscription = liveQuery(() =>
+      db.events
+        .where("[streamId+eventType]")
+        .anyOf(BOARD_RAIL_EVENT_TYPES.map((eventType) => [STREAM, eventType]))
+        .toArray()
+    ).subscribe((events) => {
+      boardEventIds = events.map((event) => event.id).sort()
+    })
+    const messageSubscription = liveQuery(() =>
+      db.events.where("[streamId+eventType]").equals([STREAM, "message_created"]).toArray()
+    ).subscribe((events) => {
+      messageEventIds = events.map((event) => event.id).sort()
+    })
+
+    try {
+      await waitFor(() =>
+        expect({ boardEventIds, messageEventIds }).toEqual({
+          boardEventIds: [`evt_${STREAM}_0`, `evt_${STREAM}_1`],
+          messageEventIds: [`evt_${STREAM}_1`],
+        })
+      )
+      await putRawEvent(makeRealEvent(STREAM, "2"))
+      await putRawEvent({ ...makeRealEvent(STREAM, "3"), eventType: "member_joined", payload: {} })
+      await new Promise((resolve) => setTimeout(resolve, 10))
+      expect({ boardEventIds, messageEventIds }).toEqual({
+        boardEventIds: [`evt_${STREAM}_0`, `evt_${STREAM}_1`],
+        messageEventIds: [`evt_${STREAM}_1`],
+      })
+
+      await act(() => requestStreamEventReadRefresh([STREAM]))
+
+      await waitFor(() =>
+        expect({ boardEventIds, messageEventIds }).toEqual({
+          boardEventIds: [`evt_${STREAM}_0`, `evt_${STREAM}_1`, `evt_${STREAM}_2`],
+          messageEventIds: [`evt_${STREAM}_1`, `evt_${STREAM}_2`],
+        })
+      )
+    } finally {
+      boardSubscription.unsubscribe()
+      messageSubscription.unsubscribe()
+    }
   })
 
   it("paging older widens the prefix and never re-opens the tail range", async () => {

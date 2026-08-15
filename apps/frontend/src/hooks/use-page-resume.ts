@@ -32,9 +32,13 @@ const DEFAULT_AWAY_THRESHOLD_MS = 10_000
  * both `visibilitychange` and a window `blur`/`focus` pair (and, on a bfcache
  * round-trip, `pagehide`/`pageshow` too) — still resumes exactly once.
  *
- * `onResume` is stored in a ref so consumers don't need to memoize.
+ * `onResume` receives the elapsed away time and is stored in a ref so
+ * consumers don't need to memoize.
  */
-export function usePageResume(onResume: () => void, awayThresholdMs: number = DEFAULT_AWAY_THRESHOLD_MS): void {
+export function usePageResume(
+  onResume: (awayDurationMs: number) => void,
+  awayThresholdMs: number = DEFAULT_AWAY_THRESHOLD_MS
+): void {
   const onResumeRef = useRef(onResume)
   onResumeRef.current = onResume
 
@@ -49,8 +53,9 @@ export function usePageResume(onResume: () => void, awayThresholdMs: number = DE
       // Only resume once the page is genuinely active again — a stray focus
       // event while the tab is still hidden must not consume the away window.
       if (document.visibilityState !== "visible") return
-      if (awaySince !== null && Date.now() - awaySince >= awayThresholdMs) {
-        onResumeRef.current()
+      const awayDurationMs = awaySince === null ? null : Date.now() - awaySince
+      if (awayDurationMs !== null && awayDurationMs >= awayThresholdMs) {
+        onResumeRef.current(awayDurationMs)
       }
       awaySince = null
     }

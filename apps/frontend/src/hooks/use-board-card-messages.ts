@@ -4,29 +4,9 @@ import { db, type CachedEvent } from "@/db"
 import { createDraftPanelId } from "@/contexts/panel-context"
 import { useConversationBackfillMessages } from "@/stores/conversation-messages-store"
 import type { RenderableMessage } from "@/components/message/message-item"
-import { StreamTypes, BOARD_EVENT_ROW_TYPES, type AuthorType, type EventType } from "@threa/types"
+import { StreamTypes, type AuthorType } from "@threa/types"
+import { BOARD_RAIL_EVENT_TYPES } from "@/lib/board/board-rail-event-types"
 import type { BoardViewPost } from "./use-stable-board-view"
-
-/**
- * Event types the board rail reads alongside `message_created`: the non-message
- * rows the board draws (agent sessions, memo captures, follow-ups, delegations,
- * command chips — the whole command lifecycle derives, so completed/failed reach
- * the card that its dispatch named —
- * derived from the shared STREAM_ROW_SPEC) plus the two patches that carry no row
- * of their own: `agent:follow_up_cancelled` flips a scheduled card to "Cancelled",
- * `delegation:status_changed` advances a delegation card's status. Registering a
- * new conversation-scoped row kind in the spec adds it here automatically; a
- * PATCH-classed type never derives, so it is listed by hand. Adding a row type
- * whose live updates arrive as a patch means adding that patch HERE too —
- * `board-event-rows.test.ts` ("BOARD_RAIL_EVENT_TYPES covers every patch
- * belonging to a board row type") holds this list to it.
- */
-export const BOARD_RAIL_EVENT_TYPES: EventType[] = [
-  ...BOARD_EVENT_ROW_TYPES,
-  "agent:follow_up_cancelled",
-  "delegation:status_changed",
-  "message_created",
-]
 
 interface MessageCreatedPayloadShape {
   messageId?: string
